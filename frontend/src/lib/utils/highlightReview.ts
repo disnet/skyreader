@@ -1,4 +1,5 @@
-import type { Highlight, ItemLabelType } from '$lib/types';
+import type { Highlight, ItemLabelType, ReviewIntent } from '$lib/types';
+import type { MarginImportOutcome } from '$lib/utils/marginHighlightImport';
 import { dailyScore, localDateKey } from '$lib/utils/dailyMagazine';
 
 // The review deck: "revisit a handful of your highlights." Deliberately NOT a
@@ -15,17 +16,59 @@ export const HIGHLIGHT_REVIEW_COUNT_DEFAULT: HighlightReviewCount = 5;
 /** Reviewing something you highlighted minutes ago is noise, not a review. */
 export const HIGHLIGHT_REVIEW_FRESHNESS_MS = 24 * 60 * 60 * 1000;
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Frequency tuning, as a shift in the least-recently-reviewed ranking rather
+ * than as a waiting period.
+ *
+ * A highlight is ranked as though it had been reviewed this much earlier or
+ * later than it actually was: 'soon' jumps the queue, 'someday' sinks to the
+ * back. The alternative — a hard interval you have to wait out — would let a
+ * small library go empty for weeks, which is exactly the "nothing to review"
+ * dead end the freshness filter already bends over backwards to avoid. Biasing
+ * the order instead means the deck deals the same number of cards it always
+ * would; tuning only changes *which* ones come first.
+ *
+ * 'later' is the neutral middle, so an untuned highlight and an explicit
+ * 'later' rank identically. 'never' is filtered out before ranking and its
+ * offset is never read.
+ */
+export const REVIEW_INTENT_OFFSET_MS: Record<ReviewIntent, number> = {
+  soon: -30 * DAY_MS,
+  later: 0,
+  someday: 120 * DAY_MS,
+  never: 0,
+};
+
+export const REVIEW_INTENT_DEFAULT: ReviewIntent = 'later';
+
+/**
+ * Stand-in review time for a highlight that has never been reviewed, far enough
+ * below any real timestamp that even the largest offset can't lift one above a
+ * highlight that has been. Never-seen still beats seen, always; intent orders
+ * within each of those two classes rather than across them.
+ */
+const NEVER_REVIEWED_AT = -100 * 365 * DAY_MS;
+
+/** Where a highlight sits in the queue once its intent is taken into account. */
+export function reviewPriority(highlight: Highlight): number {
+  const base =
+    typeof highlight.lastReviewedAt === 'number' ? highlight.lastReviewedAt : NEVER_REVIEWED_AT;
+  return base + REVIEW_INTENT_OFFSET_MS[highlight.reviewIntent ?? REVIEW_INTENT_DEFAULT];
+}
+
 /**
  * Is this highlight still part of the review corpus at all?
  *
- * Retiring ("Don't show again") is the reader saying a highlight isn't worth
- * revisiting — not that it's worth deleting. It stays in the highlights list and
- * on Margin; it just never comes up again, on any device, until they put it
- * back. Unlike the daily filter this is permanent, so it's checked before the
- * pool is built rather than inside it.
+ * 'never' is the reader saying a highlight isn't worth revisiting — not that
+ * it's worth deleting. It stays in the highlights list and on Margin; it just
+ * never comes up again, on any device, until they set it back. Unlike the daily
+ * filter this is permanent, so it's checked before the pool is built rather
+ * than inside it.
  */
 export function isReviewable(highlight: Highlight): boolean {
-  return typeof highlight.reviewRetiredAt !== 'number';
+  return highlight.reviewIntent !== 'never';
 }
 
 /** One entry of the flattened highlight corpus (matches `itemLabelsStore.allHighlights`). */
@@ -38,7 +81,7 @@ export interface HighlightEntry {
 export type HighlightDeckStatus =
   | 'available' // there are cards to review right now
   | 'completed' // the pool is non-empty but everything eligible was reviewed today
-  | 'empty'; // no highlights at all (or only ones too fresh to review)
+  | 'empty'; // nothing in rotation at all — no highlights, or every one retired
 
 export function startOfLocalDay(date: Date): number {
   const start = new Date(date);
@@ -52,19 +95,17 @@ function reviewedToday(highlight: Highlight, dayStart: number): boolean {
 
 /**
  * Rank the eligible pool: least-recently-reviewed first, never-reviewed ahead of
- * everything, ties broken by a date-seeded hash so the ordering is stable for
- * the whole day but rotates tomorrow.
+ * everything, shifted by the reader's per-highlight intent, ties broken by a
+ * date-seeded hash so the ordering is stable for the whole day but rotates
+ * tomorrow.
+ *
+ * The first three rules collapse into one comparable number (`reviewPriority`),
+ * which is why the never-reviewed case needs no branch of its own.
  */
 function rankPool(pool: HighlightEntry[], dateKey: string): HighlightEntry[] {
   return [...pool].sort((a, b) => {
-    const aReviewed = a.highlight.lastReviewedAt;
-    const bReviewed = b.highlight.lastReviewedAt;
-    const aNever = typeof aReviewed !== 'number';
-    const bNever = typeof bReviewed !== 'number';
-    if (aNever !== bNever) return aNever ? -1 : 1;
-    if (!aNever && !bNever && aReviewed !== bReviewed) {
-      return (aReviewed as number) - (bReviewed as number);
-    }
+    const byPriority = reviewPriority(a.highlight) - reviewPriority(b.highlight);
+    if (byPriority !== 0) return byPriority;
     const byScore = dailyScore(dateKey, a.highlight.id) - dailyScore(dateKey, b.highlight.id);
     return byScore || a.highlight.id.localeCompare(b.highlight.id);
   });
@@ -191,10 +232,10 @@ export function buildHighlightDeck(
  * reshuffling mid-session pulls the ground out from under the reader.
  */
 export function shouldRedealAfterImport(
-  result: { imported: number } | null,
+  outcome: MarginImportOutcome,
   progress: DeckProgress
 ): boolean {
-  if (!result || result.imported <= 0) return false;
+  if (outcome.status !== 'imported' || outcome.imported <= 0) return false;
   return deckUntouched(progress);
 }
 

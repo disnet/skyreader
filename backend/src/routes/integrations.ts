@@ -707,6 +707,61 @@ export function buildMarginNoteRecord(body: MarginNoteBody, createdAt: string) {
 }
 
 /**
+ * Did the read establish what the record is, or only that we couldn't tell?
+ *
+ * `mergeMarginNoteUpdate` falls back to rebuilding when there is nothing to
+ * merge onto, and `putRecord` replaces — so answering "absent" for a read that
+ * merely failed is destructive: a 502 or a rate-limit on a record *Margin*
+ * wrote would stamp Skyreader's shape over the reader's own note. Only a
+ * definitive answer may reach the fallback, and `retryable` is what separates
+ * "it isn't there" from "ask again".
+ */
+export function readProvesAbsence(result: { success: boolean; retryable?: boolean }): boolean {
+  return result.success || !result.retryable;
+}
+
+/**
+ * Apply a note edit to the record that is already on the PDS.
+ *
+ * A note edit only ever changes the comment body, but `putRecord` replaces the
+ * whole record — so rebuilding it from the handful of fields Skyreader happens
+ * to know strips everything else. That was harmless while every updatable note
+ * was one Skyreader had written. Margin ingest ends that: the reader can now
+ * annotate a highlight *Margin* made, and a rebuild would stamp Skyreader's
+ * `generator` onto their record, swap `target.source` for our normalized URL,
+ * and drop any field of this third-party lexicon we don't model.
+ *
+ * So the edit is a merge, and the rebuild is only the fallback for a record
+ * that isn't there to merge onto (in which case `putRecord` is creating it, and
+ * Skyreader's own shape is the right one).
+ */
+export function mergeMarginNoteUpdate(
+  existing: unknown,
+  body: MarginNoteBody,
+  createdAt: string
+): Record<string, unknown> {
+  if (!existing || typeof existing !== 'object') return buildMarginNoteRecord(body, createdAt);
+  const record = existing as Record<string, unknown>;
+  if (record.$type !== 'at.margin.note') return buildMarginNoteRecord(body, createdAt);
+
+  const note = body.note?.trim();
+  const next = { ...record };
+  if (!note) {
+    // Clearing the note drops the body; everything else the record carries stays.
+    delete next.body;
+    return next;
+  }
+
+  // Keep whatever format the record already declared — Margin owns that choice
+  // for its own notes, and only a body we're introducing gets our default. A
+  // legacy bare-string body has no format to keep, and reads as undefined here.
+  const previous = next.body as Record<string, unknown> | undefined;
+  const format = typeof previous?.format === 'string' ? previous.format : 'text/plain';
+  next.body = { value: note, format };
+  return next;
+}
+
+/**
  * POST /api/integrations/margin/notes — create an at.margin.note (highlight) on PDS
  */
 export async function handleCreateMarginNote(request: Request, env: Env): Promise<Response> {
@@ -800,12 +855,22 @@ export async function handleUpdateMarginNote(request: Request, env: Env): Promis
 
   const pdsClient = createPDSClient(session);
 
-  // Preserve the record's original creation time — a note edit reuses the rkey
-  // and must not rewrite when the highlight was first made. Fall back to now if
-  // the existing record is missing or carries no createdAt.
-  const existing = await pdsClient.getRecord<{ createdAt?: string }>('at.margin.note', rkey);
-  const createdAt = (existing.success && existing.data.value.createdAt) || new Date().toISOString();
-  const record = buildMarginNoteRecord(body, createdAt);
+  // Read the record before writing it: `putRecord` replaces, so the edit is a
+  // merge onto what's already there (see mergeMarginNoteUpdate). That also
+  // preserves the original creation time — a note edit reuses the rkey and must
+  // not rewrite when the highlight was first made. Only when there's nothing to
+  // merge onto does the record get rebuilt, with `now` as its createdAt.
+  const existing = await pdsClient.getRecord<Record<string, unknown>>('at.margin.note', rkey);
+
+  if (!readProvesAbsence(existing)) {
+    return new Response(JSON.stringify({ error: 'Could not read the note to update' }), {
+      status: 502,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const existingValue = existing.success ? existing.data.value : null;
+  const record = mergeMarginNoteUpdate(existingValue, body, new Date().toISOString());
 
   const result = await pdsClient.putRecord('at.margin.note', rkey, record);
 
@@ -1055,14 +1120,23 @@ async function matchNotesToSaves(
     }
   }
 
+  // Only what the indexed pass couldn't answer. A Semble/Margin-backed account
+  // has a normalized key on every save and matched everything above, so running
+  // this anyway would be one statement per 40 hosts, every poll, over rows that
+  // by definition hold none of them.
+  const unmatched = urls.filter((url) => !matches.has(url));
+  if (unmatched.length === 0) return matches;
+
   // Un-keyed rows: the raw URL may carry tracking parameters or a fragment, so it
   // can't be compared to an already-normalized note URL in SQL. Filter by host in
   // SQL — the one part both forms share — and normalize the survivors in-process.
   // ORDER BY id so two rows normalizing to the same URL (the same article saved
   // twice with different tracking params) always resolve to the same save, the
   // oldest, exactly as `backfillUrlNormalized` picks it.
-  const requested = new Set(urls);
-  const prefixes = [...new Set(urls.map(hostLikePrefix).filter((p): p is string => p !== null))];
+  const requested = new Set(unmatched);
+  const prefixes = [
+    ...new Set(unmatched.map(hostLikePrefix).filter((p): p is string => p !== null)),
+  ];
 
   for (let i = 0; i < prefixes.length; i += MATCH_CHUNK) {
     const chunk = prefixes.slice(i, i + MATCH_CHUNK);

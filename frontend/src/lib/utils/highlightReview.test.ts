@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { Highlight } from '$lib/types';
+import type { MarginImportOutcome } from './marginHighlightImport';
 import {
   buildHighlightDeck,
   deckUntouched,
   describeHighlightSources,
   highlightDeckStatus,
   isReviewable,
+  reviewPriority,
   shouldRedealAfterImport,
   startOfLocalDay,
   summarizeHighlightDeck,
@@ -34,29 +36,29 @@ function ids(entries: HighlightEntry[]): string[] {
   return entries.map((e) => e.highlight.id);
 }
 
-describe('retired highlights', () => {
-  const RETIRED = { reviewRetiredAt: NOW.getTime() - DAY };
+describe('review intent', () => {
+  const NEVER = { reviewIntent: 'never' as const };
 
-  it('never deals a retired highlight', () => {
-    const pool = [entry('kept'), entry('retired', RETIRED)];
+  it('never deals a highlight set to never', () => {
+    const pool = [entry('kept'), entry('hidden', NEVER)];
     expect(ids(buildHighlightDeck(pool, 5, NOW).cards)).toEqual(['kept']);
   });
 
   it('keeps them out of an encore hand too', () => {
-    const pool = [entry('retired', { ...RETIRED, lastReviewedAt: startOfLocalDay(NOW) + 60_000 })];
+    const pool = [entry('hidden', { ...NEVER, lastReviewedAt: startOfLocalDay(NOW) + 60_000 })];
     const deck = buildHighlightDeck(pool, 5, NOW, { includeReviewedToday: true });
     expect(deck.cards).toHaveLength(0);
   });
 
-  it('does not let a retired highlight relax the freshness filter', () => {
-    // The only seasoned highlight is retired: the fresh one should still deal
-    // (freshness relaxes) rather than the retired one sneaking back in.
-    const pool = [entry('retired', RETIRED), entry('fresh', { createdAt: NOW.getTime() - 60_000 })];
+  it('does not let a hidden highlight relax the freshness filter', () => {
+    // The only seasoned highlight is hidden: the fresh one should still deal
+    // (freshness relaxes) rather than the hidden one sneaking back in.
+    const pool = [entry('hidden', NEVER), entry('fresh', { createdAt: NOW.getTime() - 60_000 })];
     expect(ids(buildHighlightDeck(pool, 5, NOW).cards)).toEqual(['fresh']);
   });
 
-  it('reads an all-retired corpus as empty, not as a finished session', () => {
-    const pool = [entry('a', RETIRED), entry('b', RETIRED)];
+  it('reads an all-hidden corpus as empty, not as a finished session', () => {
+    const pool = [entry('a', NEVER), entry('b', NEVER)];
     expect(buildHighlightDeck(pool, 5, NOW).status).toBe('empty');
     expect(summarizeHighlightDeck(pool, 5, NOW).status).toBe('empty');
     expect(highlightDeckStatus(pool, NOW)).toBe('empty');
@@ -64,15 +66,61 @@ describe('retired highlights', () => {
 
   it('still reads as completed when something in rotation was seen today', () => {
     const pool = [
-      entry('retired', RETIRED),
+      entry('hidden', NEVER),
       entry('seen', { lastReviewedAt: startOfLocalDay(NOW) + 60_000 }),
     ];
     expect(summarizeHighlightDeck(pool, 5, NOW).status).toBe('completed');
   });
 
-  it('flags reviewability off the retired stamp alone', () => {
+  it('flags reviewability off the never setting alone', () => {
     expect(isReviewable(entry('a').highlight)).toBe(true);
-    expect(isReviewable(entry('b', RETIRED).highlight)).toBe(false);
+    expect(isReviewable(entry('b', { reviewIntent: 'soon' }).highlight)).toBe(true);
+    expect(isReviewable(entry('c', { reviewIntent: 'someday' }).highlight)).toBe(true);
+    expect(isReviewable(entry('d', NEVER).highlight)).toBe(false);
+  });
+
+  it('treats an unset intent and an explicit later identically', () => {
+    const at = NOW.getTime() - 5 * DAY;
+    expect(reviewPriority(entry('a', { lastReviewedAt: at }).highlight)).toBe(
+      reviewPriority(entry('b', { lastReviewedAt: at, reviewIntent: 'later' }).highlight)
+    );
+  });
+
+  it('pulls soon ahead of the queue and sinks someday to the back', () => {
+    const at = NOW.getTime() - 5 * DAY;
+    const pool = [
+      entry('someday', { lastReviewedAt: at, reviewIntent: 'someday' }),
+      entry('default', { lastReviewedAt: at }),
+      entry('soon', { lastReviewedAt: at, reviewIntent: 'soon' }),
+    ];
+    expect(ids(buildHighlightDeck(pool, 5, NOW).cards)).toEqual(['soon', 'default', 'someday']);
+  });
+
+  it('orders never-reviewed highlights by intent too', () => {
+    const pool = [
+      entry('someday', { reviewIntent: 'someday' }),
+      entry('soon', { reviewIntent: 'soon' }),
+      entry('default'),
+    ];
+    expect(ids(buildHighlightDeck(pool, 5, NOW).cards)).toEqual(['soon', 'default', 'someday']);
+  });
+
+  it('never lets intent lift a reviewed highlight above a never-reviewed one', () => {
+    // Even the strongest pull forward loses to having never been seen, and even
+    // the strongest push back keeps its place ahead of anything already seen.
+    const pool = [
+      entry('seen-soon', { lastReviewedAt: NOW.getTime() - 3650 * DAY, reviewIntent: 'soon' }),
+      entry('unseen-someday', { reviewIntent: 'someday' }),
+    ];
+    expect(ids(buildHighlightDeck(pool, 5, NOW).cards)).toEqual(['unseen-someday', 'seen-soon']);
+  });
+
+  it('deals the same number of cards however the pool is tuned', () => {
+    const tuned = ['a', 'b', 'c', 'd', 'e'].map((id) => entry(id, { reviewIntent: 'someday' }));
+    const untuned = ['a', 'b', 'c', 'd', 'e'].map((id) => entry(id));
+    expect(buildHighlightDeck(tuned, 3, NOW).cards).toHaveLength(
+      buildHighlightDeck(untuned, 3, NOW).cards.length
+    );
   });
 });
 
@@ -153,21 +201,38 @@ describe('highlightDeckStatus', () => {
 });
 
 describe('shouldRedealAfterImport', () => {
+  const brought = (imported: number): MarginImportOutcome => ({
+    status: 'imported',
+    imported,
+    truncated: false,
+  });
+
   it('redeals when the open-time poll imported into an untouched deck', () => {
-    expect(shouldRedealAfterImport({ imported: 2 }, { index: 0, interacted: false })).toBe(true);
+    expect(shouldRedealAfterImport(brought(2), { index: 0, interacted: false })).toBe(true);
   });
 
   it("doesn't redeal when the poll didn't run or brought nothing new", () => {
-    expect(shouldRedealAfterImport(null, { index: 0, interacted: false })).toBe(false);
-    expect(shouldRedealAfterImport({ imported: 0 }, { index: 0, interacted: false })).toBe(false);
+    expect(
+      shouldRedealAfterImport(
+        { status: 'skipped', reason: 'throttled' },
+        { index: 0, interacted: false }
+      )
+    ).toBe(false);
+    expect(shouldRedealAfterImport({ status: 'failed' }, { index: 0, interacted: false })).toBe(
+      false
+    );
+    expect(
+      shouldRedealAfterImport({ status: 'scope-expired' }, { index: 0, interacted: false })
+    ).toBe(false);
+    expect(shouldRedealAfterImport(brought(0), { index: 0, interacted: false })).toBe(false);
   });
 
   it('leaves a hand in progress alone — the dealt deck is fixed', () => {
-    expect(shouldRedealAfterImport({ imported: 2 }, { index: 1, interacted: false })).toBe(false);
+    expect(shouldRedealAfterImport(brought(2), { index: 1, interacted: false })).toBe(false);
   });
 
   it('does not redeal after a removal while the import is still in flight', () => {
-    expect(shouldRedealAfterImport({ imported: 2 }, { index: 0, interacted: true })).toBe(false);
+    expect(shouldRedealAfterImport(brought(2), { index: 0, interacted: true })).toBe(false);
   });
 });
 

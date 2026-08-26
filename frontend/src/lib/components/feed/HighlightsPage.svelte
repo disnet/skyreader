@@ -12,6 +12,7 @@
   import BottomSheet from '$lib/components/common/BottomSheet.svelte';
   import NotificationList from '$lib/components/NotificationList.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
+  import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { articlesStore } from '$lib/stores/articles.svelte';
   import { socialStore } from '$lib/stores/social.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
@@ -29,10 +30,13 @@
   import { formatRelativeTime } from '$lib/utils/date';
   import { buildHighlightSourceLookups, resolveHighlightSource } from '$lib/utils/highlightSource';
   import { highlightReviewStore } from '$lib/stores/highlightReview.svelte';
-  import { isReviewable } from '$lib/utils/highlightReview';
-  import { maybeImportMarginHighlights } from '$lib/services/marginHighlightImport';
+  import { REVIEW_INTENT_DEFAULT } from '$lib/utils/highlightReview';
+  import {
+    maybeImportMarginHighlights,
+    marginImportTruncated,
+  } from '$lib/services/marginHighlightImport';
   import type { FeedDisplayItem } from '$lib/stores/feedView.svelte';
-  import type { Highlight, ItemLabelType } from '$lib/types';
+  import type { Highlight, ItemLabelType, ReviewIntent } from '$lib/types';
 
   // Set the browser-tab title while this page is mounted.
   $effect(() => {
@@ -50,16 +54,34 @@
   onMount(() => {
     window.addEventListener('scroll', handleWindowScroll, { passive: true });
     handleWindowScroll();
-    // Opening the list is one of the two moments we poll Margin for highlights
-    // the reader made elsewhere. Minute-gated; silent when off or offline.
-    void maybeImportMarginHighlights().then((result) => {
-      if (result?.truncated) importTruncated = true;
-    });
   });
   onDestroy(() => window.removeEventListener('scroll', handleWindowScroll));
 
   // A partial poll must say so — otherwise "these are my highlights" is a lie.
   let importTruncated = $state(false);
+
+  // Opening the list is one of the two moments we poll Margin for highlights the
+  // reader made elsewhere. Minute-gated; silent when off or offline.
+  //
+  // Gated on the stores, exactly as the review deck is: the import unions against
+  // the highlights it can see and writes the result back as the item's whole set,
+  // so polling before the local read has landed would import against an empty
+  // corpus and overwrite the item's existing highlights with only the imported
+  // ones. The two surfaces also share one in-flight poll, so an ungated caller
+  // here would defeat the deck's gate as well as its own.
+  let storesReady = $derived(!itemLabelsStore.isLoading && !savesStore.loading);
+  let importStarted = false;
+
+  $effect(() => {
+    if (!storesReady || importStarted) return;
+    importStarted = true;
+    void maybeImportMarginHighlights()
+      .catch(() => {})
+      // Read the flag the service kept rather than this call's return: a poll
+      // that short-circuits on the interval gate reports `skipped`, and the
+      // corpus is no less partial for someone else having done the fetching.
+      .finally(() => (importTruncated = marginImportTruncated()));
+  });
 
   interface HighlightRow {
     id: string;
@@ -67,7 +89,7 @@
     note?: string;
     createdAt: number;
     isMargin: boolean;
-    retired: boolean;
+    intent: ReviewIntent;
     highlight: Highlight;
   }
 
@@ -90,7 +112,8 @@
     buildHighlightSourceLookups(
       articlesStore.allArticles,
       socialStore.documents,
-      savesStore.articles
+      savesStore.articles,
+      subscriptionsStore.subscriptions
     )
   );
 
@@ -132,7 +155,7 @@
         note: highlight.note,
         createdAt: highlight.createdAt,
         isMargin: Boolean(highlight.marginUri),
-        retired: !isReviewable(highlight),
+        intent: highlight.reviewIntent ?? REVIEW_INTENT_DEFAULT,
         highlight,
       });
       if (highlight.createdAt > group.latest) group.latest = highlight.createdAt;
@@ -181,12 +204,24 @@
     void saveHighlightToMargin(group.itemKey, row.highlight, group.url, group.title);
   }
 
-  // The review deck can retire a highlight ("Don't show again"). This is where
-  // that comes back: the list is the whole corpus, so it's the honest place to
-  // see what's been set aside and to put it back in rotation.
-  function toggleReviewRetired(group: HighlightGroup, row: HighlightRow) {
-    void itemLabelsStore.setHighlightReviewRetired(group.itemKey, row.id, !row.retired);
+  // Frequency tuning happens in the review deck, one card at a time. The list
+  // is where you can see what you've set and get back out of 'never', which is
+  // the only setting that hides a highlight from the deck entirely. Clearing it
+  // returns to the default pace rather than to a previous 'soon'/'someday' —
+  // the list reports the state, the deck is where you tune it.
+  function toggleNeverReview(group: HighlightGroup, row: HighlightRow) {
+    void itemLabelsStore.setHighlightReviewIntent(
+      group.itemKey,
+      row.id,
+      row.intent === 'never' ? null : 'never'
+    );
   }
+
+  const REVIEW_INTENT_BADGE: Partial<Record<ReviewIntent, string>> = {
+    soon: 'Soon',
+    someday: 'Someday',
+    never: 'Not in review',
+  };
 
   // Note editor — a floating popover anchored to the "add a note" button, opened
   // straight into its note view. Mirrors the reader's note-editing UX.
@@ -241,9 +276,9 @@
   <header class="highlights-header" class:scrolled>
     <div class="header-inner">
       <NavigationDropdown currentTitle="Highlights" />
-      {#if highlightReviewStore.status === 'available'}
+      {#if highlightReviewStore.hasHighlights}
         <a class="review-link" href="/highlights/review">
-          <Icon name="highlighter" size={15} />
+          <Icon name="quote" size={15} />
           <span>Review</span>
         </a>
       {/if}
@@ -297,10 +332,13 @@
                       {:else}
                         <span class="badge badge-private">Private</span>
                       {/if}
-                      {#if row.retired}
-                        <span class="badge badge-retired">
-                          <Icon name="circle-slash" size={12} />
-                          Not in review
+                      {#if REVIEW_INTENT_BADGE[row.intent]}
+                        <span class="badge badge-intent">
+                          <Icon
+                            name={row.intent === 'never' ? 'circle-slash' : 'clock'}
+                            size={12}
+                          />
+                          {REVIEW_INTENT_BADGE[row.intent]}
                         </span>
                       {/if}
                     </span>
@@ -325,15 +363,15 @@
                       {/if}
                       <button
                         class="action-btn"
-                        class:on={row.retired}
-                        onclick={() => toggleReviewRetired(group, row)}
-                        title={row.retired
+                        class:on={row.intent === 'never'}
+                        onclick={() => toggleNeverReview(group, row)}
+                        title={row.intent === 'never'
                           ? 'Put back in the review deck'
-                          : "Don't show in review again"}
-                        aria-label={row.retired
+                          : 'Never show this in review'}
+                        aria-label={row.intent === 'never'
                           ? 'Put back in the review deck'
-                          : "Don't show in review again"}
-                        aria-pressed={row.retired}
+                          : 'Never show this in review'}
+                        aria-pressed={row.intent === 'never'}
                       >
                         <Icon name="circle-slash" size={15} />
                       </button>
@@ -679,9 +717,9 @@
     background: var(--color-bg-secondary, #f0f0f0);
   }
 
-  /* Set aside from the review deck. Reads as a state on the highlight, not as a
-     warning: nothing was deleted. */
-  .badge-retired {
+  /* A review-pace setting the reader chose. Reads as a state on the highlight,
+     not as a warning: nothing was deleted, even for 'never'. */
+  .badge-intent {
     color: var(--color-text-secondary);
     background: var(--color-bg-secondary, #f0f0f0);
   }
@@ -732,7 +770,7 @@
     }
 
     .badge-private,
-    .badge-retired,
+    .badge-intent,
     .action-btn:hover {
       background: rgba(255, 255, 255, 0.08);
     }

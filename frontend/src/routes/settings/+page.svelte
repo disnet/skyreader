@@ -17,6 +17,7 @@
   import LinkblogTargetPicker from '$lib/components/settings/LinkblogTargetPicker.svelte';
   import DeleteLinkblogModal from '$lib/components/settings/DeleteLinkblogModal.svelte';
   import Diagnostics from '$lib/components/settings/Diagnostics.svelte';
+  import HighlightSettings from '$lib/components/settings/HighlightSettings.svelte';
   import StaticPageChrome from '$lib/components/feed/StaticPageChrome.svelte';
   import { myLinkblogStore } from '$lib/stores/myLinkblog.svelte';
   import { linkblogStore } from '$lib/stores/linkblog.svelte';
@@ -880,14 +881,16 @@
     </p>
   </section>
 
-  <!-- Highlights. Deck size and Margin ingest live with the deck they configure;
-       what stays here is the one place the app states where a highlight lives. -->
+  <!-- Highlights. Deck size lives with the deck it configures; the Margin toggle
+       cannot, because a reader with a Margin library and no Skyreader highlights
+       has no Review entry in the nav to find the deck's gear behind. -->
   <section class="card">
     <h2>Highlights</h2>
     <p class="setting-description" style="margin-top: 0;">
       Your highlights are private to Skyreader. Saving one to Margin publishes that note to your
       public PDS.
     </p>
+    <HighlightSettings showDeckSize={false} />
   </section>
 
   <section class="card">

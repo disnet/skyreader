@@ -1267,6 +1267,13 @@ export interface MarginHighlightNote {
   match: { itemGuid: string | null; uri: string | null } | null;
 }
 
+/**
+ * The reader's answer to "when should this come back?" — the review deck's
+ * frequency tuning. 'later' is the neutral middle and the default, so an
+ * untuned highlight and an explicit 'later' behave identically.
+ */
+export type ReviewIntent = 'soon' | 'later' | 'someday' | 'never';
+
 export interface TextQuoteSelector {
   type: 'TextQuoteSelector';
   exact: string;
@@ -1287,11 +1294,11 @@ export interface Highlight {
   // Last time this highlight came up in the review deck (epoch ms). Rides the
   // normal label sync, so "already reviewed" follows the reader across devices.
   lastReviewedAt?: number;
-  // Set when the reader retires a highlight from the review deck ("Don't show
-  // again", epoch ms). The highlight itself is untouched — it stays in the
-  // highlights list and on Margin; it just stops being dealt. Clearing the field
-  // puts it back in rotation.
-  reviewRetiredAt?: number;
+  // How often the reader wants this one to come back around in the review deck.
+  // Unset means the default pace, which is what 'later' names explicitly. The
+  // highlight itself is never touched by this — even 'never' leaves it in the
+  // highlights list and on Margin, it just stops being dealt.
+  reviewIntent?: ReviewIntent;
   // Source metadata carried on the highlight itself, for highlights imported
   // from Margin whose article isn't in any local cache — without these the
   // highlight has no title or link to show.

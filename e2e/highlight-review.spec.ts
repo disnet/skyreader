@@ -359,7 +359,7 @@ test.describe('highlight review', () => {
     await expect(authedPage.getByText('An Essay Elsewhere')).toBeVisible();
     await expect(authedPage.getByText('Worth coming back to')).toBeVisible();
   });
-  test('"Don\'t show again" retires a highlight without deleting it', async ({
+  test('setting a highlight to Never hides it from the deck without deleting it', async ({
     authedPage,
     testUser,
   }) => {
@@ -368,10 +368,15 @@ test.describe('highlight review', () => {
     await authedPage.goto('/highlights/review');
     await expect(authedPage.getByText('1 of 3')).toBeVisible({ timeout: 15_000 });
 
+    // The control names where the highlight currently sits: untuned reads Later.
+    const control = authedPage.getByRole('button', { name: /When should this come back/ });
+    await expect(control).toContainText('Later');
+
     const written = authedPage.waitForResponse(
       (res) => res.url().includes('/api/labels') && res.request().method() === 'POST'
     );
-    await authedPage.getByRole('button', { name: "Don't show again" }).click();
+    await control.click();
+    await authedPage.getByRole('button', { name: /^Never/ }).click();
     await written;
 
     // The card is gone and the deck is one shorter — no card was "reviewed".
@@ -383,12 +388,128 @@ test.describe('highlight review', () => {
     await expect(authedPage.getByText('3 highlights')).toBeVisible({ timeout: 15_000 });
     await expect(authedPage.getByText('Not in review')).toHaveCount(1);
 
-    // And the stamp survived the round trip: reopening deals two, not three.
+    // And it survived the round trip through D1: reopening deals two, not three.
     await authedPage.goto('/highlights/review');
     await expect(authedPage.getByText('1 of 2')).toBeVisible({ timeout: 15_000 });
   });
 
-  test('the highlights list puts a retired highlight back in rotation', async ({
+  test('retiring the last highlight says so, rather than "highlight a passage"', async ({
+    authedPage,
+    testUser,
+  }) => {
+    await seedHighlights(testUser, 1);
+
+    await authedPage.goto('/highlights/review');
+    await expect(authedPage.getByText('1 of 1')).toBeVisible({ timeout: 15_000 });
+
+    const written = authedPage.waitForResponse(
+      (res) => res.url().includes('/api/labels') && res.request().method() === 'POST'
+    );
+    await authedPage.getByRole('button', { name: /When should this come back/ }).click();
+    await authedPage.getByRole('button', { name: /^Never/ }).click();
+    await written;
+
+    // The highlight is still in the list, so the empty-corpus copy would be a lie.
+    await expect(authedPage.getByRole('heading', { name: 'Nothing in rotation' })).toBeVisible();
+    await expect(authedPage.getByText('Highlight a passage while reading')).toHaveCount(0);
+  });
+
+  test('undoing Never restores the pace it replaced, not the default', async ({
+    authedPage,
+    testUser,
+  }) => {
+    await seedHighlights(testUser, 3);
+
+    await authedPage.goto('/highlights/review');
+    await expect(authedPage.getByText('1 of 3')).toBeVisible({ timeout: 15_000 });
+
+    const control = authedPage.getByRole('button', { name: /When should this come back/ });
+
+    // Set a pace first. The deck holds the highlight as it was dealt, so undo
+    // has to read this back from the store rather than from its own card.
+    let written = authedPage.waitForResponse(
+      (res) => res.url().includes('/api/labels') && res.request().method() === 'POST'
+    );
+    await control.click();
+    await authedPage.getByRole('button', { name: /^Soon/ }).click();
+    await written;
+    await expect(control).toContainText('Soon');
+
+    // Then retire it on the same card, without moving on.
+    written = authedPage.waitForResponse(
+      (res) => res.url().includes('/api/labels') && res.request().method() === 'POST'
+    );
+    await control.click();
+    await authedPage.getByRole('button', { name: /^Never/ }).click();
+    await written;
+    await expect(authedPage.getByText('1 of 2')).toBeVisible();
+
+    written = authedPage.waitForResponse(
+      (res) => res.url().includes('/api/labels') && res.request().method() === 'POST'
+    );
+    await authedPage.getByRole('button', { name: 'Undo' }).click();
+    await written;
+
+    // Back where it was, still on Soon — undo means "as you were".
+    await expect(authedPage.getByText('1 of 3')).toBeVisible();
+    await expect(
+      authedPage.getByRole('button', { name: /When should this come back/ })
+    ).toContainText('Soon');
+
+    // And that's what reached D1, not a reset to the default pace.
+    await authedPage.goto('/highlights');
+    await expect(authedPage.getByText('Soon', { exact: true })).toBeVisible({ timeout: 15_000 });
+    await expect(authedPage.getByText('Not in review')).toHaveCount(0);
+  });
+
+  test('Someday persists and sinks the highlight down the deck', async ({
+    authedPage,
+    testUser,
+  }) => {
+    await seedHighlights(testUser, 3);
+
+    await authedPage.goto('/highlights/review');
+    await expect(authedPage.getByText('1 of 3')).toBeVisible({ timeout: 15_000 });
+
+    const passage = authedPage.locator('.passage');
+    const first = (await passage.textContent())!.trim();
+
+    const control = authedPage.getByRole('button', { name: /When should this come back/ });
+    const written = authedPage.waitForResponse(
+      (res) => res.url().includes('/api/labels') && res.request().method() === 'POST'
+    );
+    await control.click();
+    await authedPage.getByRole('button', { name: /^Someday/ }).click();
+    await written;
+
+    // Unlike Never, a pace setting doesn't change this session: the card stays
+    // put, and the control reports the new setting.
+    await expect(authedPage.getByText('1 of 3')).toBeVisible();
+    await expect(control).toContainText('Someday');
+
+    // It reached D1, and the ranking acts on it: on the next deal the same three
+    // highlights are dealt, but this one is now last instead of first.
+    await authedPage.reload();
+    await expect(authedPage.getByText('1 of 3')).toBeVisible({ timeout: 15_000 });
+    await expect(passage).not.toHaveText(first);
+
+    await authedPage.getByRole('button', { name: 'Next' }).click();
+    await expect(authedPage.getByText('2 of 3')).toBeVisible();
+    await authedPage.getByRole('button', { name: 'Next' }).click();
+    await expect(authedPage.getByText('3 of 3')).toBeVisible();
+    await expect(passage).toHaveText(first);
+    await expect(
+      authedPage.getByRole('button', { name: /When should this come back/ })
+    ).toContainText('Someday');
+
+    // The list reports it too.
+    await authedPage.goto('/highlights');
+    await expect(authedPage.getByText('Someday', { exact: true })).toBeVisible({
+      timeout: 15_000,
+    });
+  });
+
+  test('the highlights list puts a hidden highlight back in rotation', async ({
     authedPage,
     testUser,
   }) => {
@@ -396,11 +517,12 @@ test.describe('highlight review', () => {
 
     await authedPage.goto('/highlights/review');
     await expect(authedPage.getByText('1 of 2')).toBeVisible({ timeout: 15_000 });
-    const retired = authedPage.waitForResponse(
+    const hidden = authedPage.waitForResponse(
       (res) => res.url().includes('/api/labels') && res.request().method() === 'POST'
     );
-    await authedPage.getByRole('button', { name: "Don't show again" }).click();
-    await retired;
+    await authedPage.getByRole('button', { name: /When should this come back/ }).click();
+    await authedPage.getByRole('button', { name: /^Never/ }).click();
+    await hidden;
 
     await authedPage.goto('/highlights');
     const restore = authedPage.getByRole('button', { name: 'Put back in the review deck' });
@@ -432,5 +554,32 @@ test.describe('highlight review', () => {
 
     await back.click();
     await expect(authedPage.getByText('1 of 3')).toBeVisible();
+  });
+
+  // Going back is navigation, not un-reviewing, so coming forward over a card
+  // you already passed must not tally it a second time.
+  test('stepping back and forward again does not double-count the tally', async ({
+    authedPage,
+    testUser,
+  }) => {
+    await seedHighlights(testUser, 3);
+
+    await authedPage.goto('/highlights/review');
+    await expect(authedPage.getByText('1 of 3')).toBeVisible({ timeout: 15_000 });
+
+    const next = authedPage.getByRole('button', { name: 'Next' });
+    await next.click();
+    await expect(authedPage.getByText('2 of 3')).toBeVisible();
+
+    await authedPage.getByRole('button', { name: 'Previous highlight' }).click();
+    await expect(authedPage.getByText('1 of 3')).toBeVisible();
+
+    await next.click();
+    await expect(authedPage.getByText('2 of 3')).toBeVisible();
+    await next.click();
+    await expect(authedPage.getByText('3 of 3')).toBeVisible();
+    await authedPage.getByRole('button', { name: 'Finish' }).click();
+
+    await expect(authedPage.getByText('3 highlights revisited.')).toBeVisible();
   });
 });

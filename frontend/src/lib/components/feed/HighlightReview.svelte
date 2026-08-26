@@ -3,8 +3,6 @@
   // time. Deliberately not a durable issue like the daily magazine: a session is
   // a few minutes, so the deck is derived at open and repeat-avoidance rides the
   // per-highlight `lastReviewedAt` stamp, which syncs with the highlight itself.
-  import { pushState } from '$app/navigation';
-  import { page } from '$app/state';
   import NavigationDropdown from '$lib/components/NavigationDropdown.svelte';
   import Icon from '$lib/components/Icon.svelte';
   import MobileBottomBar from '$lib/components/feed/MobileBottomBar.svelte';
@@ -24,6 +22,7 @@
   import { notificationsStore } from '$lib/stores/notifications.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { mobileStore } from '$lib/stores/mediaQuery.svelte';
+  import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
   import {
     saveHighlightToMargin,
@@ -34,15 +33,17 @@
   import {
     buildHighlightDeck,
     deckUntouched,
+    REVIEW_INTENT_DEFAULT,
     shouldRedealAfterImport,
     type HighlightEntry,
   } from '$lib/utils/highlightReview';
+  import type { ReviewIntent } from '$lib/types';
   import {
     buildHighlightSourceLookups,
     resolveHighlightSource,
     type HighlightSource,
   } from '$lib/utils/highlightSource';
-  import type { FeedDisplayItem } from '$lib/stores/feedView.svelte';
+  import { useReaderStack } from '$lib/hooks/useReaderStack.svelte';
 
   $effect(() => {
     viewTitleStore.set('Review');
@@ -53,7 +54,8 @@
     buildHighlightSourceLookups(
       articlesStore.allArticles,
       socialStore.documents,
-      savesStore.articles
+      savesStore.articles,
+      subscriptionsStore.subscriptions
     )
   );
 
@@ -65,6 +67,12 @@
   // Session tally, across every hand — `index` and `interacted` are per hand.
   let reviewed = $state(0);
   let interacted = $state(false);
+  // What this hand has already tallied. Stepping back and coming forward again
+  // is navigation, not a second review — and the deck can shrink underneath the
+  // reader (a retire, a removal), so a position high-water mark would then skip
+  // the card that slid into a place already passed. The highlight is the mark.
+  // Plain, not `$state`: `reviewed` is the reactive half, this only gates it.
+  let countedThisHand = new Set<string>();
 
   // Deal as soon as the local stores hydrate — everything needed for a session is
   // already on the device, so a Margin poll must never stand between the reader
@@ -160,9 +168,13 @@
     const entry = current;
     if (!entry) return;
     interacted = true;
+    intentOpen = false;
     dismissRetireNotice();
     void itemLabelsStore.markHighlightReviewed(entry.itemKey, entry.highlight.id);
-    reviewed += 1;
+    if (!countedThisHand.has(entry.highlight.id)) {
+      countedThisHand.add(entry.highlight.id);
+      reviewed += 1;
+    }
     index += 1;
   }
 
@@ -173,18 +185,68 @@
   function stepBack() {
     if (index === 0) return;
     interacted = true;
+    intentOpen = false;
     dismissRetireNotice();
     index -= 1;
   }
 
-  // --- Don't show again: retire from the deck without deleting anything ------
+  // --- Frequency tuning: when should this one come back? --------------------
   //
-  // The highlight stays in the highlights list and on Margin; it just stops
-  // being dealt, on every device. Not destructive, so it takes no confirmation
-  // — but the card vanishes on the press, so the undo below is what tells the
-  // reader it worked and what makes the choice cheap to make.
+  // One control per card answering one question. 'later' is the neutral middle
+  // and the default, so an untuned highlight reads as "Later" rather than as an
+  // empty setting. 'never' is the only choice that changes this session: it
+  // drops the card, which is why it alone gets the undo below.
+  const REVIEW_INTENTS: { value: ReviewIntent; label: string; hint: string }[] = [
+    { value: 'soon', label: 'Soon', hint: 'ahead of the rest' },
+    { value: 'later', label: 'Later', hint: 'the usual pace' },
+    { value: 'someday', label: 'Someday', hint: 'now and then' },
+    { value: 'never', label: 'Never', hint: 'stop showing it' },
+  ];
+
+  let intentOpen = $state(false);
+  let intentAnchor = $state<HTMLElement | null>(null);
+  let currentIntent = $derived<ReviewIntent>(live?.reviewIntent ?? REVIEW_INTENT_DEFAULT);
+  let currentIntentLabel = $derived(
+    REVIEW_INTENTS.find((option) => option.value === currentIntent)?.label ?? 'Later'
+  );
+
+  function openIntentMenu() {
+    // Freeze before the menu opens: the import can finish while it's up, and the
+    // setting must land on the card the reader was looking at.
+    interacted = true;
+    intentOpen = true;
+  }
+
+  function chooseIntent(intent: ReviewIntent) {
+    const entry = current;
+    intentOpen = false;
+    if (!entry) return;
+    interacted = true;
+    // Captured before the write, because undo has to put back the pace the
+    // reader was on, not the default. Read from `live`, not the deck entry: the
+    // deck holds the highlight as it was dealt, so a reader who sets Soon and
+    // then Never on the same card would otherwise undo to the default.
+    const previous = (live ?? entry.highlight).reviewIntent ?? null;
+    // Passing null for the default keeps an untuned highlight untouched rather
+    // than writing a field that means "unset" anyway.
+    void itemLabelsStore.setHighlightReviewIntent(
+      entry.itemKey,
+      entry.highlight.id,
+      intent === REVIEW_INTENT_DEFAULT ? null : intent
+    );
+    if (intent === 'never') dropCurrentCard(entry, previous);
+  }
+
+  // 'never' is the one setting that acts on this session. The card vanishes on
+  // the press, so this notice is the only proof it worked and the only cheap way
+  // back from a mis-tap.
   const RETIRE_UNDO_MS = 10000;
-  let retireNotice = $state<{ entry: HighlightEntry; position: number } | null>(null);
+  let retireNotice = $state<{
+    entry: HighlightEntry;
+    position: number;
+    /** The pace the highlight was on before Never, so undo can put it back. */
+    previous: ReviewIntent | null;
+  } | null>(null);
   let retireTimer: ReturnType<typeof setTimeout> | undefined;
 
   function dismissRetireNotice() {
@@ -192,16 +254,12 @@
     retireNotice = null;
   }
 
-  function retireCurrent() {
-    const entry = current;
-    if (!entry) return;
-    interacted = true;
-    void itemLabelsStore.setHighlightReviewRetired(entry.itemKey, entry.highlight.id, true);
-    // Drop it without stamping it reviewed — it isn't a review, it's a recusal.
-    // The index stays put, so the next card slides into this one's place.
+  function dropCurrentCard(entry: HighlightEntry, previous: ReviewIntent | null) {
+    // Dropped without a reviewed stamp — it isn't a review, it's a recusal. The
+    // index stays put, so the next card slides into this one's place.
     if (deck) deck = deck.filter((card) => card.highlight.id !== entry.highlight.id);
     clearTimeout(retireTimer);
-    retireNotice = { entry, position: index };
+    retireNotice = { entry, position: index, previous };
     retireTimer = setTimeout(() => (retireNotice = null), RETIRE_UNDO_MS);
   }
 
@@ -209,10 +267,12 @@
     const pending = retireNotice;
     dismissRetireNotice();
     if (!pending) return;
-    void itemLabelsStore.setHighlightReviewRetired(
+    // Undo means "as you were", so restore the pace Never replaced. Writing null
+    // here would quietly reset a 'soon' or 'someday' highlight to the default.
+    void itemLabelsStore.setHighlightReviewIntent(
       pending.entry.itemKey,
       pending.entry.highlight.id,
-      false
+      pending.previous
     );
     if (!deck) return;
     const restored = [...deck];
@@ -224,8 +284,8 @@
 
   // --- Swipe: the deck is a deck, so it should move like one -----------------
   //
-  // Right carries you forward and left brings the last card back, matching the
-  // arrow keys and the Next button rather than inventing a second grammar. The
+  // Left carries you forward and right brings the last card back: the deck
+  // moves the way the cards do, sliding off toward where you pushed it. The
   // card follows the finger and commits on release, so a half-swipe shows you
   // what it would do and springs back when you don't mean it. Touch only: on a
   // pointer, dragging a passage is how you select it.
@@ -265,6 +325,19 @@
     dragX = 0;
   }
 
+  // Leaving the deck mid-flight would otherwise leave three callbacks queued
+  // against a component that no longer exists, the last of them clearing a
+  // freeze flag the next mount never set.
+  let exitTimer: ReturnType<typeof setTimeout> | undefined;
+  let enterTimer: ReturnType<typeof setTimeout> | undefined;
+  let enterFrame = 0;
+
+  $effect(() => () => {
+    clearTimeout(exitTimer);
+    clearTimeout(enterTimer);
+    cancelAnimationFrame(enterFrame);
+  });
+
   /** Commit a swipe: 1 moves forward through the deck, -1 steps back. */
   function commitSwipe(direction: 1 | -1) {
     if (animating) return;
@@ -272,6 +345,10 @@
       settleBack();
       return;
     }
+    // Freeze here rather than in advance()/stepBack(): those run a frame-time
+    // later, and an import resolving inside that window would find the deck
+    // untouched and redeal it out from under the card already flying off.
+    interacted = true;
     if (prefersReducedMotion()) {
       resetTravel();
       if (direction === 1) advance();
@@ -280,8 +357,9 @@
     }
     animating = true;
     travelMs = EXIT_MS;
-    dragX = direction * ((cardEl?.offsetWidth || 480) + 64);
-    setTimeout(() => {
+    // Forward sends the card off to the left, back sends it off to the right.
+    dragX = -direction * ((cardEl?.offsetWidth || 480) + 64);
+    exitTimer = setTimeout(() => {
       if (direction === 1) advance();
       else stepBack();
       // Nothing left to fly in — the end-of-deck state takes the column.
@@ -289,16 +367,16 @@
         resetTravel();
         return;
       }
-      // Land the incoming card from the side the outgoing one left toward.
+      // Land the incoming card from the side opposite the one that just left.
       travelMs = 0;
-      dragX = -direction * Math.min((cardEl?.offsetWidth || 480) * 0.18, 88);
-      requestAnimationFrame(() =>
-        requestAnimationFrame(() => {
+      dragX = direction * Math.min((cardEl?.offsetWidth || 480) * 0.18, 88);
+      enterFrame = requestAnimationFrame(() => {
+        enterFrame = requestAnimationFrame(() => {
           travelMs = ENTER_MS;
           dragX = 0;
-          setTimeout(() => (animating = false), ENTER_MS);
-        })
-      );
+          enterTimer = setTimeout(() => (animating = false), ENTER_MS);
+        });
+      });
     }, EXIT_MS);
   }
 
@@ -316,7 +394,7 @@
   }
 
   function onTouchStart(event: TouchEvent) {
-    if (animating || event.touches.length !== 1) {
+    if (animating || intentOpen || event.touches.length !== 1) {
       dragging = false;
       touchDecided = false;
       return;
@@ -331,7 +409,7 @@
   }
 
   function onTouchMove(event: TouchEvent) {
-    if (animating || event.touches.length !== 1) return;
+    if (animating || intentOpen || event.touches.length !== 1) return;
     const x = event.touches[0].clientX;
     const dx = x - touchStartX;
     const dy = event.touches[0].clientY - touchStartY;
@@ -352,9 +430,9 @@
       return;
     }
     if (event.cancelable) event.preventDefault();
-    // There's nothing behind the first card, so a leftward pull resists rather
+    // There's nothing behind the first card, so a rightward pull resists rather
     // than promising a move that can't happen.
-    dragX = dx < 0 && index === 0 ? dx * 0.28 : dx;
+    dragX = dx > 0 && index === 0 ? dx * 0.28 : dx;
     const now = performance.now();
     const dt = now - touchLastT;
     if (dt > 0) touchVelocity = (x - touchLastX) / dt;
@@ -374,7 +452,7 @@
       settleBack();
       return;
     }
-    commitSwipe(dragX > 0 ? 1 : -1);
+    commitSwipe(dragX < 0 ? 1 : -1);
   }
 
   // touchmove has to be non-passive to claim the horizontal gesture, so it's
@@ -397,32 +475,23 @@
   $effect(() => () => clearTimeout(retireTimer));
 
   // --- Open the source article (in-app when we have it, else the web) ---
-  let readerItem = $state<FeedDisplayItem | null>(null);
-  let savedScrollY = 0;
-
-  $effect(() => {
-    if (!page.state.readerOpen && readerItem) {
-      readerItem = null;
-      requestAnimationFrame(() => window.scrollTo(0, savedScrollY));
-    }
-  });
+  // The shared reader stack, so the deck gets Back-to-close, scroll restore and a
+  // `?read=` URL on the same terms as every other surface.
+  const reader = useReaderStack();
+  let readerItem = $derived(reader.readerItem);
 
   function openSource() {
     const target = source;
     if (!target) return;
+    // Freeze like every other card action: going off to read the article is
+    // exactly when a late import must not redeal the deck, or closing the
+    // reader would land the reader on a different card than they left.
+    interacted = true;
     if (target.displayItem) {
-      savedScrollY = window.scrollY;
-      readerItem = target.displayItem;
-      pushState('', { readerOpen: true });
+      reader.openReader(target.displayItem);
     } else if (target.url) {
       window.open(target.url, '_blank', 'noopener,noreferrer');
     }
-  }
-
-  function closeReader() {
-    readerItem = null;
-    history.back();
-    requestAnimationFrame(() => window.scrollTo(0, savedScrollY));
   }
 
   // --- Note editing (same popover the reader and the highlights list use) ---
@@ -484,14 +553,30 @@
   }
 
   function handleKeydown(event: KeyboardEvent) {
-    if (readerItem || noteAnchor || removePrompt || !current) return;
+    if (intentOpen && event.key === 'Escape') {
+      intentOpen = false;
+      intentAnchor?.focus();
+      return;
+    }
+    // Every surface this component can put over the deck suppresses the deck's
+    // own shortcuts — the mobile sheets included, or an arrow key would advance
+    // and stamp a card the reader can't even see.
+    if (readerItem || noteAnchor || removePrompt || intentOpen) return;
+    if (feedSwitcherOpen || notifSheetOpen || !current) return;
     const target = event.target as HTMLElement | null;
     if (target && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) {
       return;
     }
     if (event.metaKey || event.ctrlKey || event.altKey) return;
 
-    if (event.key === 'ArrowRight' || event.key === ' ') {
+    // Space already belongs to whatever control has focus — it's how a button or
+    // link is pressed. Claiming it here would advance the deck instead of
+    // activating the button, leaving a keyboard-only reader unable to work any of
+    // the deck's own controls. The arrows and letter shortcuts have no such
+    // owner, so they stay live wherever focus sits.
+    const activatable = target ? /^(BUTTON|A)$/.test(target.tagName) : false;
+
+    if (event.key === 'ArrowRight' || (event.key === ' ' && !activatable)) {
       event.preventDefault();
       if (!animating) commitSwipe(1);
     } else if (event.key === 'ArrowLeft') {
@@ -519,10 +604,17 @@
   let moreDue = $derived(highlightReviewStore.dueCount);
   let isEncore = $derived(moreDue === 0);
   let canReviewMore = $derived(highlightReviewStore.hasHighlights);
+  // A corpus that is entirely retired has nothing to deal, so it takes the same
+  // branch as no highlights at all — but "highlight a passage" is the wrong
+  // instruction for a reader whose list is full and whose every card says never.
+  let corpusEmpty = $derived(itemLabelsStore.allHighlights.length === 0);
 
   function reviewMore() {
     encoreMode = isEncore;
     index = 0;
+    // Per hand, not per session: an encore deals cards seen earlier today, and
+    // revisiting one again really is another review.
+    countedThisHand = new Set();
     interacted = false;
     dismissRetireNotice();
     resetTravel();
@@ -561,6 +653,28 @@
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
+
+{#snippet intentChoices()}
+  {#each REVIEW_INTENTS as option (option.value)}
+    <!-- Never is not a pace, it's an exit: the rule says so before the label has
+         to. -->
+    {#if option.value === 'never'}
+      <div class="intent-divider"></div>
+    {/if}
+    <button
+      class="intent-option"
+      class:selected={option.value === currentIntent}
+      onclick={() => chooseIntent(option.value)}
+      aria-pressed={option.value === currentIntent}
+    >
+      <span class="intent-check">
+        {#if option.value === currentIntent}<Icon name="check" size={14} />{/if}
+      </span>
+      <span class="intent-label">{option.label}</span>
+      <span class="intent-hint">{option.hint}</span>
+    </button>
+  {/each}
+{/snippet}
 
 {#snippet moreButton()}
   {#if canReviewMore}
@@ -639,20 +753,32 @@
         </button>
 
         <div class="actions">
-          <div class="lead">
+          <div class="lead" class:menu-open={intentOpen}>
             <button class="next" onclick={() => commitSwipe(1)} disabled={animating}>
               <span>{index + 1 === total ? 'Finish' : 'Next'}</span>
               <Icon name="arrow-right" size={16} />
             </button>
 
             <button
-              class="retire"
-              onclick={retireCurrent}
-              title="Keep the highlight, stop dealing it in review"
+              class="intent"
+              class:open={intentOpen}
+              bind:this={intentAnchor}
+              onclick={() => (intentOpen ? (intentOpen = false) : openIntentMenu())}
+              aria-expanded={intentOpen}
+              aria-haspopup="true"
+              aria-label="When should this come back? Currently {currentIntentLabel}"
+              title="When should this come back?"
             >
-              <Icon name="circle-slash" size={15} />
-              <span>Don't show again</span>
+              <Icon name="clock" size={15} />
+              <span>{currentIntentLabel}</span>
+              <Icon name="chevron-down" size={14} />
             </button>
+
+            {#if intentOpen && !mobileStore.isMobile}
+              <div class="intent-menu" role="group" aria-label="When should this come back?">
+                {@render intentChoices()}
+              </div>
+            {/if}
           </div>
 
           <div class="secondary">
@@ -695,10 +821,8 @@
         </div>
       </article>
 
-      <p class="hint">→ next · ← back · o open · e note</p>
-      {#if index === 0 && total > 1}
-        <p class="swipe-hint">Swipe to move through the deck.</p>
-      {/if}
+      <p class="hint">→ or space next · ← back · o open · e note</p>
+      <p class="swipe-hint">Swipe to move through the deck.</p>
     {:else if done && reviewed > 0}
       <section class="state" aria-live="polite">
         <h1>That's your review</h1>
@@ -715,10 +839,17 @@
         {@render moreButton()}
         <a href="/highlights">All highlights</a>
       </section>
-    {:else}
+    {:else if corpusEmpty}
       <section class="state" aria-live="polite">
         <h1>Nothing to review right now</h1>
         <p>Highlight a passage while reading and it joins the deck.</p>
+        <a href="/highlights">All highlights</a>
+      </section>
+    {:else}
+      <!-- Highlights exist; every one of them is set to never come back. -->
+      <section class="state" aria-live="polite">
+        <h1>Nothing in rotation</h1>
+        <p>Every highlight is set to never come back. Put one back to start again.</p>
         <a href="/highlights">All highlights</a>
       </section>
     {/if}
@@ -772,6 +903,25 @@
   {/if}
 </div>
 
+{#if intentOpen && !mobileStore.isMobile}
+  <!-- Click-away for the popover. Transparent, and it never covers the trigger,
+       so a second press on the button closes rather than reopening. -->
+  <button class="intent-scrim" onclick={() => (intentOpen = false)} tabindex="-1" aria-hidden="true"
+  ></button>
+{/if}
+
+{#if mobileStore.isMobile}
+  <BottomSheet
+    open={intentOpen}
+    onclose={() => (intentOpen = false)}
+    title="When should this come back?"
+  >
+    <div class="intent-sheet">
+      {@render intentChoices()}
+    </div>
+  </BottomSheet>
+{/if}
+
 {#if noteAnchor}
   <HighlightPopover
     mode="view"
@@ -791,7 +941,7 @@
 />
 
 {#if readerItem}
-  <SavedReader {readerItem} onClose={closeReader} />
+  <SavedReader {readerItem} onClose={reader.closeReader} />
 {/if}
 
 <style>
@@ -1029,14 +1179,15 @@
     cursor: default;
   }
 
-  /* Not destructive and not urgent: nothing is deleted, so it stays a quiet
-     bordered control rather than borrowing the danger red. */
-  .retire {
+  /* Nothing here is destructive, so the control stays a quiet bordered button
+     rather than borrowing the danger red. It carries its own state as its
+     label: the card always says where this highlight sits on the scale. */
+  .intent {
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
     min-height: 44px;
-    padding: 0.5rem 0.9rem;
+    padding: 0.5rem 0.75rem 0.5rem 0.9rem;
     border: 1px solid var(--color-border);
     border-radius: 6px;
     background: none;
@@ -1051,9 +1202,118 @@
       border-color 0.15s ease;
   }
 
-  .retire:hover {
+  .intent:hover,
+  .intent.open {
     color: var(--color-text);
     border-color: var(--color-text-secondary);
+  }
+
+  /* The popover floats above the page, so it is one of the few things in this
+     system that earns a shadow. */
+  .lead {
+    position: relative;
+  }
+
+  .lead.menu-open {
+    z-index: 2;
+  }
+
+  .intent-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    z-index: 2;
+    min-width: 240px;
+    padding: 0.25rem;
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgb(0 0 0 / 15%);
+  }
+
+  /* Diffuse shadow reads weakly on a dark surface, so it carries a night value
+     at roughly triple the alpha. */
+  @media (prefers-color-scheme: dark) {
+    .intent-menu {
+      box-shadow: 0 4px 12px rgb(0 0 0 / 40%);
+    }
+  }
+
+  .intent-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 1;
+    padding: 0;
+    background: none;
+    border: none;
+    cursor: default;
+  }
+
+  .intent-sheet {
+    display: flex;
+    flex-direction: column;
+    padding-bottom: 0.5rem;
+  }
+
+  /* A fixed label track rather than a content-sized one, so the hints line up
+     across rows. Subgrid would express the intent better but its tracks are
+     placed on the parent's content box, which stops coinciding the moment the
+     row carries padding of its own. */
+  .intent-option {
+    display: grid;
+    grid-template-columns: 14px 5.5rem 1fr;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+    padding: 0.5rem 0.625rem;
+    background: none;
+    border: none;
+    border-radius: 6px;
+    color: var(--color-text);
+    font: inherit;
+    font-size: var(--text-md);
+    text-align: left;
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+  }
+
+  .intent-divider {
+    height: 1px;
+    margin: 0.25rem 0.625rem;
+    background: var(--color-border);
+  }
+
+  .intent-option:hover {
+    background: var(--color-bg-secondary, #f5f5f5);
+  }
+
+  /* Fixed-width gutter so the labels stay on one axis whether or not a row is
+     the selected one. */
+  .intent-check {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    flex-shrink: 0;
+    color: var(--color-primary);
+  }
+
+  .intent-option.selected .intent-label {
+    font-weight: var(--weight-semibold);
+  }
+
+  .intent-hint {
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
+    white-space: nowrap;
+  }
+
+  /* A sheet has room the popover doesn't, and a finger needs the target. */
+  @media (max-width: 1000px) {
+    .intent-option {
+      min-height: 48px;
+      padding-inline: 0.25rem;
+    }
   }
 
   .secondary {
@@ -1085,7 +1345,7 @@
   }
 
   .action-btn.danger:hover {
-    color: var(--color-error, #cc0000);
+    color: var(--color-error, #f44336);
   }
 
   .hint,
@@ -1197,18 +1457,37 @@
   }
 
   @media (max-width: 560px) {
-    /* Two decisions deserve the full width down here; the tools follow beneath. */
+    /* Two rows down here, and they line up: the decisions take the full width,
+       the tools sit under them on the same left and right edges. The icons are
+       optically inset by their own padding, so the row is pulled back out by
+       that much to make the columns read as columns. */
+    .actions {
+      row-gap: 1rem;
+    }
+
     .lead {
       width: 100%;
     }
 
-    .retire {
+    /* The primary action takes what the state chip doesn't need. */
+    .next {
       flex: 1;
       justify-content: center;
     }
 
+    .intent {
+      flex: 0 0 auto;
+    }
+
     .secondary {
       width: 100%;
+      margin-inline: -10px;
+    }
+
+    /* Removal is the one action here you can't undo by moving on, so it keeps
+       its distance from the three that are just tools. */
+    .secondary .action-btn.danger {
+      margin-left: auto;
     }
   }
 
@@ -1218,7 +1497,8 @@
   @media (prefers-reduced-motion: reduce) {
     .step-back,
     .next,
-    .retire,
+    .intent,
+    .intent-option,
     .action-btn,
     .gear,
     .more {

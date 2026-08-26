@@ -4,7 +4,9 @@ import worker from '../src/index';
 import {
   MATCH_CHUNK,
   buildMarginNoteRecord,
+  mergeMarginNoteUpdate,
   parseMarginHighlightNote,
+  readProvesAbsence,
 } from '../src/routes/integrations';
 import * as read from '../src/services/backing/read';
 import * as didResolver from '../src/utils/did-resolver';
@@ -295,6 +297,23 @@ describe('GET /api/integrations/margin/highlights', () => {
     expect(res.body.notes[0].match).toBeNull();
   });
 
+  it('skips the un-keyed read when the indexed pass answered every URL', async () => {
+    // A Semble/Margin-backed account has a normalized key on every save, so the
+    // fallback would be one statement per 40 hosts, every poll, over rows that
+    // by definition hold none of them.
+    const url = 'https://example.com/keyed';
+    await seedSave({ rkey: 'k', url, urlNormalized: url, itemGuid: 'guid-k' });
+    mockRecords([highlightNote('one', url)]);
+
+    const prepare = vi.spyOn(env.DB, 'prepare');
+    const res = await call();
+
+    expect(res.body.notes[0].match?.itemGuid).toBe('guid-k');
+    expect(prepare.mock.calls.some(([sql]) => String(sql).includes('url_normalized IS NULL'))).toBe(
+      false
+    );
+  });
+
   it('propagates truncated so the client can say the poll was partial', async () => {
     mockRecords([highlightNote('one', 'https://example.com/a')], true);
     const res = await call();
@@ -321,5 +340,97 @@ describe('Margin highlight records', () => {
     );
 
     expect(record.target.source).toBe('https://chinaunread.substack.com/p/a-post');
+  });
+});
+
+// A note edit reuses the rkey and putRecord replaces the whole record. Now that
+// a reader can annotate a highlight Margin itself made, rebuilding that record
+// from the fields Skyreader models would quietly take it over.
+describe('readProvesAbsence', () => {
+  // mergeMarginNoteUpdate rebuilds when there is nothing to merge onto, and
+  // putRecord replaces — so calling a failed read "absent" would let a transient
+  // PDS error stamp Skyreader's shape over a note Margin wrote.
+  it('accepts a successful read and a definitive miss', () => {
+    expect(readProvesAbsence({ success: true })).toBe(true);
+    expect(readProvesAbsence({ success: false, retryable: false })).toBe(true);
+  });
+
+  it('refuses a read that failed for a reason that might not fail again', () => {
+    expect(readProvesAbsence({ success: false, retryable: true })).toBe(false);
+  });
+});
+
+describe('mergeMarginNoteUpdate', () => {
+  function marginNative(overrides: Record<string, unknown> = {}) {
+    return {
+      $type: 'at.margin.note',
+      motivation: 'highlighting',
+      target: {
+        // Margin's own record, with the query string it chose to keep.
+        source: 'https://example.com/post?ref=margin',
+        selector: { type: 'TextQuoteSelector', exact: 'A passage' },
+      },
+      generator: { name: 'Margin', homepage: 'https://margin.at' },
+      createdAt: '2026-01-01T00:00:00.000Z',
+      marginOnlyField: 'keep me',
+      ...overrides,
+    };
+  }
+
+  const edit = {
+    source: 'https://example.com/post?ref=margin&utm_source=x',
+    exact: 'A passage',
+    note: 'my thought',
+  };
+
+  it('changes only the note body of a record Margin wrote', () => {
+    const merged = mergeMarginNoteUpdate(marginNative(), edit, '2026-08-25T00:00:00.000Z');
+
+    expect(merged.body).toEqual({ value: 'my thought', format: 'text/plain' });
+    // Everything that isn't the note survives: the generator stays Margin's,
+    // the source keeps the form Margin stored it in, unmodelled fields persist,
+    // and the original creation time is untouched.
+    expect(merged.generator).toEqual({ name: 'Margin', homepage: 'https://margin.at' });
+    expect(merged.target).toEqual({
+      source: 'https://example.com/post?ref=margin',
+      selector: { type: 'TextQuoteSelector', exact: 'A passage' },
+    });
+    expect(merged.marginOnlyField).toBe('keep me');
+    expect(merged.createdAt).toBe('2026-01-01T00:00:00.000Z');
+  });
+
+  it('keeps the body format the record already declared', () => {
+    const merged = mergeMarginNoteUpdate(
+      marginNative({ body: { value: 'old', format: 'text/markdown' } }),
+      edit,
+      '2026-08-25T00:00:00.000Z'
+    );
+    expect(merged.body).toEqual({ value: 'my thought', format: 'text/markdown' });
+  });
+
+  it('drops the body when the note is cleared, and nothing else', () => {
+    const merged = mergeMarginNoteUpdate(
+      marginNative({ body: { value: 'old', format: 'text/plain' } }),
+      { source: edit.source, exact: edit.exact },
+      '2026-08-25T00:00:00.000Z'
+    );
+    expect(merged).not.toHaveProperty('body');
+    expect(merged.marginOnlyField).toBe('keep me');
+  });
+
+  it('falls back to building the record when there is nothing to merge onto', () => {
+    // putRecord is creating it here, so Skyreader's own shape is the right one.
+    const merged = mergeMarginNoteUpdate(null, edit, '2026-08-25T00:00:00.000Z');
+    expect(merged.generator).toEqual({ name: 'Skyreader', homepage: 'https://skyreader.app' });
+    expect(merged.createdAt).toBe('2026-08-25T00:00:00.000Z');
+  });
+
+  it('rebuilds rather than merging onto a record of some other type', () => {
+    const merged = mergeMarginNoteUpdate(
+      { $type: 'at.margin.bookmark', createdAt: '2020-01-01T00:00:00.000Z' },
+      edit,
+      '2026-08-25T00:00:00.000Z'
+    );
+    expect(merged.$type).toBe('at.margin.note');
   });
 });

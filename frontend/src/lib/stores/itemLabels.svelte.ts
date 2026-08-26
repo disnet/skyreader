@@ -14,9 +14,10 @@ import { generateTid } from '$lib/utils/tid';
 import {
   mutateHighlightUnion,
   resolveHighlightAliases,
+  savedItemLabelType,
   unionHighlightSources,
 } from '$lib/utils/highlightAliases';
-import type { ItemLabel, ItemLabelType, SocialItemType, Highlight } from '$lib/types';
+import type { ItemLabel, ItemLabelType, SocialItemType, Highlight, ReviewIntent } from '$lib/types';
 
 const BULK_BATCH_SIZE = 500;
 
@@ -1662,22 +1663,23 @@ function createItemLabelsStore() {
   }
 
   /**
-   * Retire a highlight from the review deck, or put it back ("Don't show
-   * again"). Nothing is deleted: the highlight stays in the highlights list and
-   * on Margin, it just stops being dealt. Rides the same union write as every
-   * other highlight mutation, so it syncs across devices and queues offline.
+   * Set how often a highlight should come back around in the review deck, or
+   * pass null to put it back at the default pace. Nothing is deleted, even for
+   * 'never': the highlight stays in the highlights list and on Margin, it just
+   * stops being dealt. Rides the same union write as every other highlight
+   * mutation, so it reaches D1 with the rest of the highlights array (and so
+   * syncs across devices, and queues when offline) for free.
    */
-  async function setHighlightReviewRetired(
+  async function setHighlightReviewIntent(
     itemKey: string,
     highlightId: string,
-    retired: boolean,
-    at = Date.now()
+    intent: ReviewIntent | null
   ) {
     const context = highlightContext(itemKey);
     const mutation = mutateHighlightUnion(context.highlights, {
-      type: 'retire',
+      type: 'intent',
       highlightId,
-      at: retired ? at : null,
+      intent,
     });
     if (!mutation.changed) return;
     await persistHighlightUnion(
@@ -1704,8 +1706,7 @@ function createItemLabelsStore() {
   function getSavedItemKeys(): Map<ItemLabelType, Set<string>> {
     const result = new Map<ItemLabelType, Set<string>>();
     for (const bm of savesStore.articles) {
-      const type: ItemLabelType =
-        bm.source === 'document' ? 'document' : bm.source === 'feed' ? 'article' : 'saved';
+      const type = savedItemLabelType(bm);
       let set = result.get(type);
       if (!set) {
         set = new Set();
@@ -1802,7 +1803,7 @@ function createItemLabelsStore() {
     setHighlightMargin,
     setHighlightNote,
     markHighlightReviewed,
-    setHighlightReviewRetired,
+    setHighlightReviewIntent,
     // Derived helpers
     getSavedArticles,
     getSavedItemKeys,

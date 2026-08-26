@@ -19,7 +19,7 @@
 <Modal {open} {onclose} title="Remove this highlight?" maxWidth="400px" zIndex={300}>
   <p class="prompt">
     {#if onMargin}
-      This also removes it from Margin — the note on your PDS is deleted.
+      This also removes it from Margin. The note on your PDS is deleted.
     {:else}
       It disappears from every device you read on.
     {/if}

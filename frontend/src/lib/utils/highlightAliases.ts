@@ -1,4 +1,16 @@
-import type { Highlight, SavedItem } from '$lib/types';
+import type { Highlight, ItemLabelType, ReviewIntent, SavedItem } from '$lib/types';
+
+/**
+ * What kind of label row a save's highlights belong on. A save is the same
+ * item the reader met in the feed, in the reader or as a bare URL, and the
+ * label type has to name which — `resolveHighlightSource` looks in a different
+ * cache for each.
+ */
+export function savedItemLabelType(save: Pick<SavedItem, 'source'>): ItemLabelType {
+  if (save.source === 'document') return 'document';
+  if (save.source === 'feed') return 'article';
+  return 'saved';
+}
 
 export interface HighlightAliasResolution {
   canonicalKey: string;
@@ -21,7 +33,7 @@ export type HighlightMutation =
       margin: { uri: string; rkey: string } | null;
     }
   | { type: 'reviewed'; highlightId: string; at: number }
-  | { type: 'retire'; highlightId: string; at: number | null };
+  | { type: 'intent'; highlightId: string; intent: ReviewIntent | null };
 
 /** Resolve every persisted key for one save, preferring its article guid. */
 export function resolveHighlightAliases(
@@ -79,14 +91,15 @@ export function mutateHighlightUnion(
       const { note: _note, ...withoutNote } = current;
       next[index] = withoutNote;
     }
-  } else if (mutation.type === 'retire') {
-    const retired = typeof current.reviewRetiredAt === 'number';
-    if (retired === (mutation.at !== null)) return { highlights, changed: false };
-    if (mutation.at === null) {
-      const { reviewRetiredAt: _retired, ...backInRotation } = current;
-      next[index] = backInRotation;
+  } else if (mutation.type === 'intent') {
+    if ((current.reviewIntent ?? null) === mutation.intent) {
+      return { highlights, changed: false };
+    }
+    if (mutation.intent === null) {
+      const { reviewIntent: _intent, ...atDefaultPace } = current;
+      next[index] = atDefaultPace;
     } else {
-      next[index] = { ...current, reviewRetiredAt: mutation.at };
+      next[index] = { ...current, reviewIntent: mutation.intent };
     }
   } else if (mutation.type === 'reviewed') {
     // Only ever moves forward: an out-of-order write (a slow device flushing an

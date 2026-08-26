@@ -11,6 +11,8 @@
   import { auth } from '$lib/stores/auth.svelte';
   import { api } from '$lib/services/api';
   import { syncStore } from '$lib/stores/sync.svelte';
+  import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
+  import { savesStore } from '$lib/stores/saves.svelte';
   import {
     HIGHLIGHT_REVIEW_COUNT_OPTIONS,
     preferences,
@@ -23,12 +25,25 @@
     /** Fired when switching the toggle on actually brought highlights in, so a
         host showing those highlights (the review deck) can react. */
     onImported?: (imported: number) => void;
+    /**
+     * Deck size only makes sense where the deck is: "5" means something when
+     * you can see it. `/settings` renders the Margin toggle alone, because that
+     * one has to be reachable *before* there's a deck to configure — a reader
+     * with a Margin library and no Skyreader highlights has no Review entry in
+     * the nav at all, so the deck's own gear can't be its only home.
+     */
+    showDeckSize?: boolean;
   }
 
-  let { returnUrl = '/settings', onImported }: Props = $props();
+  let { returnUrl = '/settings', onImported, showDeckSize = true }: Props = $props();
 
   let loaded = $state(false);
-  let hasMarginScopes = $state(false);
+  // Three states, not two. Offline and a failed status call both leave the grant
+  // unknown, and treating unknown as missing tells a reader who granted the
+  // scopes months ago to log in again — while offline, where the re-auth button
+  // logs them out and can't log them back in. It also locks the toggle, so they
+  // can't even switch the import off.
+  let marginScopes = $state<'unknown' | 'granted' | 'missing'>('unknown');
   let importing = $state(false);
   let importNote = $state<string | null>(null);
 
@@ -39,7 +54,7 @@
     }
     try {
       const status = await api.getIntegrationStatus();
-      hasMarginScopes = status.scopeStatus.margin;
+      marginScopes = status.scopeStatus.margin ? 'granted' : 'missing';
     } catch (error) {
       console.error('Failed to load integration status:', error);
     }
@@ -51,66 +66,104 @@
     goto(`/auth/login?returnUrl=${encodeURIComponent(returnUrl)}`);
   }
 
+  // Keeping the promise the toggle makes when it lands mid-hydration. The deck
+  // and the list each have an effect that calls the import once their stores are
+  // ready; the panel can be mounted on /settings, where nothing else will.
+  let storesReady = $derived(!itemLabelsStore.isLoading && !savesStore.loading);
+  let awaitingStores = $state(false);
+
+  $effect(() => {
+    if (!awaitingStores || !storesReady) return;
+    awaitingStores = false;
+    void toggleImport(true);
+  });
+
   async function toggleImport(enabled: boolean) {
     preferences.setMarginHighlightImport(enabled);
     importNote = null;
-    if (!enabled) return;
+    if (!enabled) {
+      // Switching off has to cancel the deferred retry too. Without this, a
+      // reader who turned it on mid-hydration and changed their mind before the
+      // stores landed would watch the effect below switch it back on for them.
+      awaitingStores = false;
+      return;
+    }
     // Turning it on should do something visible right away, not in 15 minutes.
     importing = true;
     try {
-      const result = await maybeImportMarginHighlights({ force: true });
-      if (!result) importNote = 'Couldn’t reach Margin just now. Skyreader will try again later.';
-      else if (result.truncated) {
-        importNote = `Brought in ${result.imported}. Some highlights couldn’t be fetched yet.`;
-      } else if (result.imported === 0) {
-        importNote = 'Nothing new to bring in.';
+      const outcome = await maybeImportMarginHighlights({ force: true });
+      if (outcome.status === 'imported') {
+        if (outcome.truncated) {
+          importNote = `Brought in ${outcome.imported}. Some highlights couldn’t be fetched yet.`;
+        } else if (outcome.imported === 0) {
+          importNote = 'Nothing new to bring in.';
+        } else {
+          importNote = `Brought in ${outcome.imported} highlight${
+            outcome.imported === 1 ? '' : 's'
+          }.`;
+        }
+        if (outcome.imported > 0) onImported?.(outcome.imported);
+      } else if (outcome.status === 'scope-expired') {
+        // The grant is gone and the import switched itself back off. Say that,
+        // rather than blaming the network for a permissions problem — and let
+        // the re-auth prompt below appear, which is the only way out of it.
+        marginScopes = 'missing';
+        importNote = null;
+      } else if (outcome.status === 'skipped' && outcome.reason === 'stores-loading') {
+        // The import is gated on the local highlights being read: it writes each
+        // item's whole set, so running early would overwrite what it can't see.
+        awaitingStores = true;
+        importNote = 'Bringing them in as soon as your highlights finish loading.';
+      } else if (outcome.status === 'skipped' && outcome.reason === 'offline') {
+        importNote = 'Offline. Skyreader will bring them in once you’re back.';
       } else {
-        importNote = `Brought in ${result.imported} highlight${result.imported === 1 ? '' : 's'}.`;
+        importNote = 'Couldn’t reach Margin just now. Skyreader will try again later.';
       }
-      if (result && result.imported > 0) onImported?.(result.imported);
     } finally {
       importing = false;
     }
   }
 </script>
 
-<div class="setting-row">
-  <label for="review-count">Review deck</label>
-  <select
-    id="review-count"
-    value={preferences.highlightReviewCount}
-    onchange={(e) =>
-      preferences.setHighlightReviewCount(Number(e.currentTarget.value) as HighlightReviewCount)}
-  >
-    {#each HIGHLIGHT_REVIEW_COUNT_OPTIONS as option}
-      <option value={option}>{option} highlights</option>
-    {/each}
-  </select>
-</div>
-<p class="setting-description">
-  How many highlights a review session brings back. Least recently revisited first.
-</p>
+{#if showDeckSize}
+  <div class="setting-row">
+    <label for="review-count">Review deck</label>
+    <select
+      id="review-count"
+      value={preferences.highlightReviewCount}
+      onchange={(e) =>
+        preferences.setHighlightReviewCount(Number(e.currentTarget.value) as HighlightReviewCount)}
+    >
+      {#each HIGHLIGHT_REVIEW_COUNT_OPTIONS as option}
+        <option value={option}>{option} highlights</option>
+      {/each}
+    </select>
+  </div>
+  <p class="setting-description">How many highlights a review session brings back.</p>
+{/if}
 
 {#if loaded}
   <label class="toggle-setting">
     <input
       type="checkbox"
       checked={preferences.marginHighlightImport}
-      disabled={!hasMarginScopes || importing}
+      disabled={marginScopes === 'missing' || importing}
       onchange={(e) => toggleImport(e.currentTarget.checked)}
     />
     <span>Bring in highlights from Margin</span>
   </label>
-  <p class="setting-description">
-    Highlights you've made in Margin join your review deck here. They stay private on Skyreader —
-    the notes they came from stay public on your PDS.
-  </p>
-  {#if !hasMarginScopes}
+  <p class="setting-description">Highlights you've made in Margin join your review deck here.</p>
+  {#if marginScopes === 'missing'}
     <p class="setting-description">
       This needs permission to read and write your Margin notes.
       <button class="link-btn" onclick={reauthForScopes} type="button">
         Log in again to grant access
       </button>
+    </p>
+  {:else if marginScopes === 'unknown'}
+    <p class="setting-description">
+      Couldn't check your Margin permissions just now. The import will start once you're back
+      online.
     </p>
   {/if}
   {#if importing}
