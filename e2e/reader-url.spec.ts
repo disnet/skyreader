@@ -35,6 +35,16 @@ function readParam(page: Page): string | null {
   return new URL(page.url()).searchParams.get('read');
 }
 
+/**
+ * The reader's Save control, by its title. The overlay mounts both chromes —
+ * the desktop header row and the mobile bottom bar — and hides the one the
+ * viewport isn't using, so two buttons carry the title but only one is on
+ * screen. Match the one the reader is actually showing.
+ */
+function saveControl(page: Page, title: 'Unsave' | 'Save (s)') {
+  return reader(page).getByTitle(title).filter({ visible: true });
+}
+
 test.describe('Reader URLs', () => {
   test('opening an article puts it in the URL, and a reload reopens it', async ({
     authedPage,
@@ -146,10 +156,10 @@ test.describe('Reader URLs', () => {
 
     // Restored from a URL the item is the save it already is, not the feed
     // article — the reader's Save control has to know that and still act.
-    const unsave = authedPage.locator('.reader-overlay').getByTitle('Unsave');
+    const unsave = saveControl(authedPage, 'Unsave');
     await expect(unsave).toBeVisible();
     await unsave.click();
-    await expect(authedPage.locator('.reader-overlay').getByTitle('Save (s)')).toBeVisible();
+    await expect(saveControl(authedPage, 'Save (s)')).toBeVisible();
   });
 
   test('an unresolvable link on an empty surface says so and restores the empty state', async ({
