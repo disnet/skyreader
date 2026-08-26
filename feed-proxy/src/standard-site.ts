@@ -247,6 +247,34 @@ export function buildCanonicalUrl(baseUrl: string, path: string): string {
   return `${normalizedBase}${normalizedPath}`;
 }
 
+/**
+ * Resolve a caller-supplied standard.site document URI to the document's own
+ * canonical public URL. Mention enrichment uses this before attaching an AT-URI
+ * to the shared URL cache, so a client cannot associate an unrelated document
+ * (and its Leaflet comments) with an arbitrary article URL.
+ */
+export async function resolveDocumentCanonicalUrl(
+  db: Database,
+  documentUri: string
+): Promise<string | null> {
+  const parsed = parseAtUri(documentUri);
+  if (!parsed || parsed.collection !== 'site.standard.document') return null;
+
+  const pdsUrl = await resolvePdsUrl(db, parsed.did);
+  if (!pdsUrl) return null;
+  const document = await fetchRecord<DocumentRecord>(
+    pdsUrl,
+    parsed.did,
+    parsed.collection,
+    parsed.rkey
+  );
+  if (!document) return null;
+
+  const { baseUrl } = await resolveSiteMeta(db, document.site || '');
+  if (!baseUrl) return null;
+  return buildCanonicalUrl(baseUrl, document.path || '') || null;
+}
+
 async function fetchRecord<T>(
   pdsUrl: string,
   did: string,

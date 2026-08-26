@@ -318,6 +318,64 @@ describe('enrichMentions + readCachedMentions', () => {
     (globalThis.fetch as ReturnType<typeof spyOn>).mockRestore?.();
   });
 
+  it('persists a document URI only when its canonical URL matches the article', async () => {
+    const db = freshDb();
+    const did = 'did:plc:publisher';
+    const docUri = `at://${did}/site.standard.document/post1`;
+    db.run('INSERT INTO did_cache (did, pds_url, handle, cached_at) VALUES (?, ?, ?, ?)', [
+      did,
+      'https://pds.example',
+      'publisher.test',
+      Date.now(),
+    ]);
+    const spy = spyOn(globalThis, 'fetch').mockImplementation((async (input: unknown) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/xrpc/com.atproto.repo.getRecord') {
+        return new Response(
+          JSON.stringify({ value: { site: 'https://example.com', path: '/the-article' } })
+        );
+      }
+      return new Response(JSON.stringify({ links: {} }));
+    }) as unknown as typeof fetch);
+
+    await enrichMentions(db, normalizeArticleUrl(ARTICLE)!, docUri);
+
+    const row = db.query<{ doc_uri: string | null }, []>('SELECT doc_uri FROM mention_cache').get();
+    expect(row?.doc_uri).toBe(docUri);
+    expect(
+      spy.mock.calls.some(([input]) => new URL(String(input)).searchParams.get('target') === docUri)
+    ).toBe(true);
+  });
+
+  it('rejects a document URI whose canonical URL does not match the article', async () => {
+    const db = freshDb();
+    const did = 'did:plc:attacker';
+    const docUri = `at://${did}/site.standard.document/post1`;
+    db.run('INSERT INTO did_cache (did, pds_url, handle, cached_at) VALUES (?, ?, ?, ?)', [
+      did,
+      'https://pds.example',
+      'attacker.test',
+      Date.now(),
+    ]);
+    const spy = spyOn(globalThis, 'fetch').mockImplementation((async (input: unknown) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/xrpc/com.atproto.repo.getRecord') {
+        return new Response(
+          JSON.stringify({ value: { site: 'https://attacker.example', path: '/bait' } })
+        );
+      }
+      return new Response(JSON.stringify({ links: {} }));
+    }) as unknown as typeof fetch);
+
+    await enrichMentions(db, normalizeArticleUrl(ARTICLE)!, docUri);
+
+    const row = db.query<{ doc_uri: string | null }, []>('SELECT doc_uri FROM mention_cache').get();
+    expect(row?.doc_uri).toBeNull();
+    expect(
+      spy.mock.calls.some(([input]) => new URL(String(input)).searchParams.get('target') === docUri)
+    ).toBe(false);
+  });
+
   it('caches a breakdown and serves it above threshold; flags cold URLs to enrich', async () => {
     const db = freshDb();
     const now = Date.now();
