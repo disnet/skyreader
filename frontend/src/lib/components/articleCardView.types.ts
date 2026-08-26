@@ -267,6 +267,9 @@ export interface ArticleCardViewProps {
   /** Toggle a Semble-connected article into the reader's Saved list. Absent when
    *  the reader can't save; the control then doesn't render. */
   onSaveConnection?: (url: string) => void | Promise<void>;
+  /** Draw a Semble connection of the reader's own from this article. Absent when
+   *  the reader can't write one (signed out). */
+  onCreateConnection?: () => void;
   /** Reactive saved-state predicate for a connected article's URL. */
   isConnectionSaved?: (url: string) => boolean;
   // A @mention in the note/body was clicked — open the add-feed dialog for the DID.

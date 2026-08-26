@@ -15,6 +15,8 @@ import type {
   ParsedFeed,
   SaveBacking,
   SembleCollection,
+  SembleCard,
+  SembleConnectionType,
   SocialContextResult,
   ArticleMentions,
   MentionLaneEntry,
@@ -1066,6 +1068,29 @@ class ApiClient {
     collectionResults?: { uri: string; error?: string }[];
   }> {
     return this.fetch('/api/integrations/semble/cards', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async listSembleCards(): Promise<{ cards: SembleCard[]; truncated: boolean }> {
+    return this.fetch('/api/integrations/semble/cards');
+  }
+
+  /**
+   * Draw a Semble connection: a typed edge from `source` to `target`, written to
+   * the reader's own PDS. Online-only — a connection is a deliberate act on live
+   * context, so there's no queued variant. A session without the connection
+   * scope gets a 403 the shared fetch wrapper turns into `ScopeUpgradeError`
+   * (and the global re-login banner).
+   */
+  async createSembleConnection(data: {
+    source: string;
+    target: string;
+    connectionType?: SembleConnectionType;
+    note?: string;
+  }): Promise<{ uri: string; cid: string; rkey: string }> {
+    return this.fetch('/api/integrations/semble/connections', {
       method: 'POST',
       body: JSON.stringify(data),
     });

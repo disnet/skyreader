@@ -20,6 +20,14 @@ export const SEMBLE_SCOPES = [
   'repo:network.cosmik.collection',
   'repo:network.cosmik.collectionLink',
 ];
+// Writing a Semble *connection* (a typed edge between two URLs) needs its own
+// repo scope. Deliberately NOT folded into SEMBLE_SCOPES: that set is the gate on
+// every existing Semble action (card saves, the collection picker, backed saves),
+// so adding a scope no current session holds would 403 all of them until every
+// user re-authed. Same reasoning as PCKT_SCOPES / ATMOSPHERE_SCOPES below — it
+// only joins ALL_POSSIBLE_SCOPES (what login actually requests) and is checked
+// solely on the connection endpoint.
+export const SEMBLE_CONNECTION_SCOPES = ['repo:network.cosmik.connection'];
 export const MARGIN_SCOPES = [
   // Bookmarks are no longer a distinct collection — Margin folded them into
   // at.margin.note (motivation: 'bookmarking'), so we only need the note +
@@ -60,6 +68,7 @@ export const AT_INTENT_SCOPES = ['repo:dev.at-intent.usage'];
 export const ALL_POSSIBLE_SCOPES = [
   GRANULAR_SCOPES,
   ...SEMBLE_SCOPES,
+  ...SEMBLE_CONNECTION_SCOPES,
   ...MARGIN_SCOPES,
   ...LINKBLOG_SCOPES,
   ...PCKT_SCOPES,

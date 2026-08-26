@@ -22,6 +22,7 @@
   import RefreshProgressBar from '$lib/components/RefreshProgressBar.svelte';
   import ShareComposer from '$lib/components/feed/ShareComposer.svelte';
   import IntegrationSaveDialog from '$lib/components/feed/IntegrationSaveDialog.svelte';
+  import SembleConnectionDialog from '$lib/components/feed/SembleConnectionDialog.svelte';
 
   let { children }: { children: Snippet } = $props();
 
@@ -253,6 +254,7 @@
 <RefreshProgressBar />
 <ShareComposer />
 <IntegrationSaveDialog />
+<SembleConnectionDialog />
 
 <div class="app-container">
   <Sidebar />

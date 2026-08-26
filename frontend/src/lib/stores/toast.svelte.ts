@@ -1,9 +1,16 @@
 type ToastState = 'pending' | 'success' | 'error';
 
+/** One link out, for a result the reader may want to go look at. */
+export interface ToastAction {
+  label: string;
+  href: string;
+}
+
 interface Toast {
   id: number;
   message: string;
   state: ToastState;
+  action?: ToastAction;
 }
 
 let nextId = 0;
@@ -15,13 +22,21 @@ function add(message: string): number {
   return id;
 }
 
-function update(id: number, state: ToastState, message?: string) {
+function update(
+  id: number,
+  state: ToastState,
+  message?: string,
+  action?: { label: string; href?: string }
+) {
   const t = toasts.find((t) => t.id === id);
   if (!t) return;
   t.state = state;
   if (message) t.message = message;
+  if (action?.href) t.action = { label: action.label, href: action.href };
   if (state === 'success' || state === 'error') {
-    setTimeout(() => remove(id), state === 'success' ? 2000 : 4000);
+    // A toast carrying somewhere to go has to outlive the glance that notices it.
+    const linger = t.action ? 6000 : state === 'success' ? 2000 : 4000;
+    setTimeout(() => remove(id), linger);
   }
 }
 
