@@ -46,6 +46,29 @@ describe('cleanDiscussionNote', () => {
     );
   });
 
+  it('keeps a quoted headline that is the subject of the sentence', () => {
+    expect(cleanDiscussionNote('“Never Be Angry at Work” changed my management style', TITLE)).toBe(
+      '“Never Be Angry at Work” changed my management style'
+    );
+    expect(cleanDiscussionNote('"Never Be Angry at Work" is required reading', TITLE)).toBe(
+      '"Never Be Angry at Work" is required reading'
+    );
+  });
+
+  it('keeps a headline that ends in its own question mark mid-sentence', () => {
+    expect(
+      cleanDiscussionNote('What Is the Purpose of Protocols? asks Paul, and answers well', [
+        'What Is the Purpose of Protocols?',
+      ])
+    ).toBe('What Is the Purpose of Protocols? asks Paul, and answers well');
+  });
+
+  it('still strips a quoted headline a bridge sets off with a dash', () => {
+    expect(cleanDiscussionNote('“Never Be Angry at Work” — worth your time', TITLE)).toBe(
+      'worth your time'
+    );
+  });
+
   it('lines up when the title punctuation splits differently', () => {
     expect(cleanDiscussionNote('A/B testing is underrated', 'A/B testing')).toBe(
       'A/B testing is underrated'
@@ -94,6 +117,12 @@ describe('cleanDiscussionNote', () => {
     expect(cleanDiscussionNote('Never Be Angry at Work Discussion', TITLE)).toBe(null);
     expect(cleanDiscussionNote('Comments', TITLE)).toBe(null);
     expect(cleanDiscussionNote('discussion: https://news.ycombinator.com/item?id=1', TITLE)).toBe(
+      null
+    );
+  });
+
+  it('drops a note left as bare punctuation once the link is gone', () => {
+    expect(cleanDiscussionNote('Never Be Angry at Work ( https://example.com/a )', TITLE)).toBe(
       null
     );
   });

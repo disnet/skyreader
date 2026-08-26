@@ -9,8 +9,10 @@
  * just finished is noise wearing a person's handle.
  *
  * So: drop the links, drop titles that stand apart (set off by a link, a line
- * break, punctuation, or the edge of the post), drop a bare link label, and if
- * nothing is left, say nothing. A title woven into the author's sentence stays.
+ * break, a separator, or the edge of the post), drop a bare link label, and if
+ * nothing is left, say nothing. A title woven into the author's sentence stays —
+ * including one they quoted, since the marks around “Never Be Angry at Work”
+ * enclose a noun phrase, they don't set a headline apart from a comment.
  * The caller decides what an entry with no words looks like — see
  * AtmospherePanel, which collects them into one "Also linked" line instead of
  * giving each an empty row.
@@ -101,9 +103,37 @@ const LINK_LABELS = new Set([
   'more',
 ]);
 
-// Whatever dangles once the URLs and the titles are gone: separators, empty
-// brackets, trailing punctuation with nothing in front of it.
-const EDGE_NOISE = /^[\s\-–—·•|:,.;"'“”()[\]]+|[\s\-–—·•|:,;"'“”()[\]]+$/g;
+// Whatever dangles once the URLs and the titles are gone: separators, trailing
+// punctuation with nothing in front of it. Quotes and brackets are left to
+// `dropUnpairedEdges`, which keeps the pair an author actually wrote.
+const EDGE_NOISE = /^[\s\-–—·•|:,.;]+|[\s\-–—·•|:,;]+$/g;
+
+// The other half of a quote or bracket. An author's own marks come in pairs; a
+// lone one is residue from a URL or a title we removed.
+const EDGE_PAIRS = new Map([
+  ['“', '”'],
+  ['”', '“'],
+  ['‘', '’'],
+  ['’', '‘'],
+  ['"', '"'],
+  ["'", "'"],
+  ['(', ')'],
+  [')', '('],
+  ['[', ']'],
+  [']', '['],
+]);
+
+// Punctuation that genuinely sets a headline apart from a person's own words:
+// the dashes, bullets, pipes and colons a bridge puts between the two. Quotes
+// and brackets are deliberately absent — they wrap a title being *used* in a
+// sentence, so treating them as a separator is how a real sentence loses its
+// subject.
+const SEPARATOR_AFTER_TITLE = /[\-–—·•|,:;]$/u;
+const SEPARATOR_BEFORE_REMAINDER = /^[\-–—·•|,:;.…]/u;
+
+// A note the trims reduced to a matched pair of brackets and nothing else is
+// still nothing said. Emoji and other real characters survive this check.
+const PUNCTUATION_ONLY = /^[\s\-–—·•|:,.;!?…"'“”‘’()[\]{}]*$/u;
 
 // Compare loosely — a bridge rewrites punctuation and casing freely, so an exact
 // match would miss almost every real duplicate.
@@ -154,8 +184,11 @@ function withoutTrailingRun(words: string[], key: string): string[] | null {
 function hasLeadingBoundary(runWords: string[], remainderWords: string[]): boolean {
   if (!remainderWords.length) return true;
   if (remainderWords[0] === BOUNDARY) return true;
-  if (/^[\-–—·•|,:;.!?…'"“”‘’([{]/u.test(remainderWords[0])) return true;
-  if (/[\-–—·•|,:;.!?…'"“”‘’\])}]$/u.test(runWords.at(-1) ?? '')) return true;
+  if (SEPARATOR_BEFORE_REMAINDER.test(remainderWords[0])) return true;
+  // Only a separator hanging off the title counts. A closing quote or bracket
+  // means the sentence carried the title, and sentence-ending punctuation is
+  // usually the headline's own ("What Is the Purpose of Protocols? asks Paul").
+  if (SEPARATOR_AFTER_TITLE.test(runWords.at(-1) ?? '')) return true;
   return LINK_LABELS.has(comparable(remainderWords[0]));
 }
 
@@ -182,6 +215,37 @@ function stripTitle(text: string, title: string, gated: boolean): string {
   return text;
 }
 
+// Shed a quote or bracket at either edge only when its partner is gone.
+function dropUnpairedEdges(text: string): string {
+  let out = text;
+  for (;;) {
+    const first = out.at(0) ?? '';
+    const firstPartner = EDGE_PAIRS.get(first);
+    if (firstPartner && !out.slice(1).includes(firstPartner)) {
+      out = out.slice(1).trim();
+      continue;
+    }
+    const last = out.at(-1) ?? '';
+    const lastPartner = EDGE_PAIRS.get(last);
+    if (lastPartner && !out.slice(0, -1).includes(lastPartner)) {
+      out = out.slice(0, -1).trim();
+      continue;
+    }
+    return out;
+  }
+}
+
+// Both trims can expose more of the other's work — a stripped title can leave
+// `— “` behind — so alternate until the edges stop moving.
+function trimEdges(text: string): string {
+  let out = text.trim();
+  for (;;) {
+    const next = dropUnpairedEdges(out.replace(EDGE_NOISE, '').trim());
+    if (next === out) return out;
+    out = next;
+  }
+}
+
 function cleanPass(
   note: string,
   titles: (string | null | undefined)[],
@@ -199,12 +263,10 @@ function cleanPass(
     if (!text.trim()) break;
   }
 
-  const cleaned = text
-    .replaceAll(BOUNDARY, ' ')
-    .replace(/\s+/g, ' ')
-    .replace(EDGE_NOISE, '')
-    .trim();
-  if (!cleaned || LINK_LABELS.has(comparable(cleaned))) return null;
+  const cleaned = trimEdges(text.replaceAll(BOUNDARY, ' ').replace(/\s+/g, ' '));
+  if (!cleaned || PUNCTUATION_ONLY.test(cleaned) || LINK_LABELS.has(comparable(cleaned))) {
+    return null;
+  }
   return cleaned;
 }
 
