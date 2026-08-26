@@ -159,6 +159,7 @@
     notes: [],
     collections: [],
     connections: [],
+    similar: [],
     truncated: { savers: false, notes: false, collections: false, connections: false },
     incomplete: false,
     source: 'semble-api',
@@ -234,7 +235,28 @@
       },
     ],
     connections: [outgoing, incoming, untypedIncoming],
+    similar: [
+      {
+        url: 'https://reading.example/slow-web',
+        title: 'A slower web',
+        siteName: 'Reading Notes',
+        saveCount: 12,
+      },
+      {
+        url: 'https://protocol.example/open-graphs',
+        title: 'Open graphs for readers',
+        siteName: 'Protocol Review',
+        saveCount: 6,
+      },
+    ],
   };
+
+  const similarArticles = Array.from({ length: 8 }, (_, i) => ({
+    url: `https://recommended${i}.example/story`,
+    title: i === 2 ? null : `Recommended article ${i + 1}`,
+    siteName: i === 2 ? null : 'The Reading Review',
+    saveCount: i + 2,
+  }));
 
   // The shape that forced this fold: one curator mapping a topic. Twenty edges
   // come back, all outgoing, all "supplement", all theirs — only the title
@@ -446,6 +468,38 @@
         },
         connections: [outgoing, incoming],
       }}
+      onSaveConnection={toggleSavedLink}
+      isConnectionSaved={isLinkSaved}
+      stream={{ loading: false, entries: [] }}
+    />
+  </Case>
+
+  <Case
+    name="Semble · similar only"
+    note="Algorithmic suggestions remain subordinate to human discussion: a quiet, flat list with clear Semble provenance and the same keep control as connected articles."
+    width="800px"
+    pad
+  >
+    <AtmospherePanel
+      laneRow={[laneVM('semble', { count: 1 })]}
+      filters={[]}
+      sembleContext={{ ...emptyContext, similar: similarArticles.slice(0, 3) }}
+      onSaveConnection={toggleSavedLink}
+      isConnectionSaved={isLinkSaved}
+      stream={{ loading: false, entries: [] }}
+    />
+  </Case>
+
+  <Case
+    name="Semble · similar fold"
+    note="Four recommendations preview the list; the remaining four stay behind one disclosure."
+    width="800px"
+    pad
+  >
+    <AtmospherePanel
+      laneRow={[laneVM('semble', { count: 1 })]}
+      filters={[]}
+      sembleContext={{ ...emptyContext, similar: similarArticles }}
       onSaveConnection={toggleSavedLink}
       isConnectionSaved={isLinkSaved}
       stream={{ loading: false, entries: [] }}

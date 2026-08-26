@@ -30,6 +30,7 @@ const emptyContext: SembleContextVM = {
   notes: [],
   collections: [],
   connections: [],
+  similar: [],
   truncated: { savers: false, notes: false, collections: false, connections: false },
   incomplete: false,
   source: 'semble-api',
@@ -231,6 +232,60 @@ describe('AtmospherePanel Semble connections', () => {
     });
     expect(target.querySelector('.discussion-retry')).not.toBeNull();
     expect(target.querySelector('.semble-context')).not.toBeNull();
+  });
+});
+
+describe('AtmospherePanel Semble similar articles', () => {
+  afterEach(() => {
+    for (const component of mounted.splice(0)) unmount(component);
+    document.body.innerHTML = '';
+  });
+
+  const similar = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      url: `https://similar${i}.example/story`,
+      title: i === 1 ? null : `Similar article ${i}`,
+      siteName: i === 1 ? null : 'Example Review',
+      saveCount: i + 1,
+    }));
+
+  it('renders links, metadata, hostname fallback, and a Semble foot link', () => {
+    const target = render({ sembleContext: { ...emptyContext, similar: similar(2) } });
+    const links = target.querySelectorAll('.similar-list .connection-target');
+    expect(links.length).toBe(2);
+    expect(links[0].getAttribute('href')).toBe('https://similar0.example/story');
+    expect(links[1].textContent).toBe('similar1.example');
+    expect(target.querySelector('.similar-meta')?.textContent).toContain('Example Review');
+    expect(target.querySelector('.semble-foot')?.textContent).toContain('See all on Semble');
+  });
+
+  it('uses the connection save affordance and saved state', () => {
+    const saved: string[] = [];
+    const target = render({
+      sembleContext: { ...emptyContext, similar: similar(1) },
+      onSaveConnection: (url) => void saved.push(url),
+      isConnectionSaved: () => true,
+    });
+    const button = target.querySelector('.semble-similar .connection-save') as HTMLButtonElement;
+    expect(button.getAttribute('aria-pressed')).toBe('true');
+    button.click();
+    expect(saved).toEqual(['https://similar0.example/story']);
+  });
+
+  it('renders nothing when recommendations are empty or absent', () => {
+    expect(render({ sembleContext: emptyContext }).querySelector('.semble-similar')).toBeNull();
+    const { similar: _similar, ...oldContext } = emptyContext;
+    expect(render({ sembleContext: oldContext }).querySelector('.semble-similar')).toBeNull();
+  });
+
+  it('previews four recommendations and reveals the rest', () => {
+    const target = render({ sembleContext: { ...emptyContext, similar: similar(7) } });
+    expect(target.querySelectorAll('.similar-list li').length).toBe(4);
+    const disclose = target.querySelector('.semble-similar .semble-disclose') as HTMLButtonElement;
+    expect(disclose.textContent?.trim()).toBe('3 more');
+    disclose.click();
+    flushSync();
+    expect(target.querySelectorAll('.similar-list li').length).toBe(7);
   });
 });
 

@@ -182,7 +182,8 @@
         sembleContext &&
         (sembleContext.notes.length ||
           sembleContext.collections.length ||
-          sembleContext.connections.length)
+          sembleContext.connections.length ||
+          (sembleContext.similar?.length ?? 0))
       )
   );
   // Whether Semble's own block is on screen. It is where "connect this to
@@ -243,6 +244,7 @@
   let openGroups = $state<string[]>([]);
   let allGroupsOpen = $state(false);
   let collectionsExpanded = $state(false);
+  let similarExpanded = $state(false);
   // A different article is a different graph: nothing stays open across it.
   let openedFor: SembleContextVM | undefined = undefined;
   $effect(() => {
@@ -251,6 +253,7 @@
       openGroups = [];
       allGroupsOpen = false;
       collectionsExpanded = false;
+      similarExpanded = false;
     }
   });
 
@@ -262,6 +265,9 @@
   const foldedCollections = $derived(
     (sembleContext?.collections.length ?? 0) - visibleCollections.length
   );
+  const similar = $derived(sembleContext?.similar ?? []);
+  const visibleSimilar = $derived(similarExpanded ? similar : similar.slice(0, 4));
+  const foldedSimilar = $derived(similar.length - visibleSimilar.length);
 
   const visibleGroups = $derived(
     allGroupsOpen ? connectionGroups : connectionGroups.slice(0, BLOCK_PREVIEW)
@@ -317,6 +323,14 @@
       );
     } catch {
       return connection.other.title || 'Connected article';
+    }
+  }
+
+  function similarLabel(item: NonNullable<SembleContextVM['similar']>[number]): string {
+    try {
+      return item.title || item.siteName || new URL(item.url).hostname;
+    } catch {
+      return item.title || item.siteName || 'Similar article';
     }
   }
 
@@ -628,7 +642,77 @@
           {@render connectCta()}
         {/if}
 
-        {#if sembleContext.cardUrl && (connectionsBeyond > 0 || collectionsBeyond > 0 || sembleContext.incomplete || sembleTruncated)}
+        {#if similar.length > 0}
+          <div class="semble-similar">
+            <h3>Similar on Semble</h3>
+            <ul class="similar-list">
+              {#each visibleSimilar as item (item.url)}
+                {@const saved = isConnectionSaved?.(item.url) ?? false}
+                {@const busy = savingUrls.includes(item.url)}
+                <li>
+                  <div class="connection-row">
+                    <div class="similar-body">
+                      <a
+                        class="connection-target"
+                        href={safeHref(item.url)}
+                        target="_blank"
+                        rel="noopener"
+                        onclick={(e) => e.stopPropagation()}>{similarLabel(item)}</a
+                      >
+                      {#if (item.title && item.siteName) || item.saveCount > 1}
+                        <span class="similar-meta">
+                          {#if item.title && item.siteName}{item.siteName}{/if}
+                          {#if item.title && item.siteName && item.saveCount > 1}<span
+                              aria-hidden="true"
+                            >
+                              ·
+                            </span>{/if}
+                          {#if item.saveCount > 1}{item.saveCount} saves{/if}
+                        </span>
+                      {/if}
+                    </div>
+                    {#if onSaveConnection}
+                      <button
+                        type="button"
+                        class="connection-save"
+                        class:saved
+                        class:busy
+                        disabled={busy}
+                        aria-busy={busy}
+                        aria-pressed={saved}
+                        title={saved
+                          ? 'In your Saved list. Remove it'
+                          : 'Save to read in Skyreader'}
+                        aria-label={saved
+                          ? `Remove “${similarLabel(item)}” from Saved`
+                          : `Save “${similarLabel(item)}” to read in Skyreader`}
+                        onclick={(e) => {
+                          e.stopPropagation();
+                          toggleSave(item.url);
+                        }}
+                      >
+                        <Icon name="bookmark" size={14} />
+                      </button>
+                    {/if}
+                  </div>
+                </li>
+              {/each}
+            </ul>
+            {#if foldedSimilar > 0}
+              <button
+                type="button"
+                class="semble-disclose"
+                aria-expanded={similarExpanded}
+                onclick={(e) => {
+                  e.stopPropagation();
+                  similarExpanded = true;
+                }}>{foldedSimilar} more</button
+              >
+            {/if}
+          </div>
+        {/if}
+
+        {#if sembleContext.cardUrl && (similar.length > 0 || connectionsBeyond > 0 || collectionsBeyond > 0 || sembleContext.incomplete || sembleTruncated)}
           <p class="semble-foot">
             {#if connectionsBeyond > 0}Showing {connectionsGot} of {connectionsHeld} connections.{/if}
             {#if collectionsBeyond > 0}Showing {collectionsGot} of {collectionsHeld} collections.{/if}
@@ -1189,6 +1273,45 @@
     align-items: flex-start;
     gap: 0.5rem;
     min-width: 0;
+  }
+
+  .semble-similar {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+  }
+
+  .semble-similar h3 {
+    margin: 0;
+    font-size: var(--text-xs);
+    font-weight: 500;
+    color: var(--color-text-secondary);
+  }
+
+  .similar-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .similar-body {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .similar-meta {
+    display: block;
+    margin-top: 0.0625rem;
+    font-size: var(--text-xs);
+    line-height: var(--leading-snug);
+    color: var(--color-text-secondary);
+  }
+
+  .similar-list .connection-target {
+    color: var(--color-primary);
   }
 
   /* Quiet at rest and quiet in a column of twenty: the bookmark carries no fill
