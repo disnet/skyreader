@@ -6,6 +6,10 @@ import {
   matchesTerms,
   normalize,
   parseQuery,
+  RANK_BODY,
+  RANK_METADATA,
+  RANK_TITLE,
+  searchRank,
   splitHighlights,
   toIndexText,
   MAX_INDEX_CHARS,
@@ -135,6 +139,44 @@ describe('matchesSearch', () => {
 
   it('treats an empty query as no filter', () => {
     expect(matchesSearch(metadata, [], null, keys)).toBe(true);
+  });
+});
+
+describe('searchRank', () => {
+  const title = normalize('Café Ownership Explained');
+  const metadata = normalize('Café Ownership Explained by Ada example.com');
+  const bodyTerms = new Map([['guid-1', new Set(['quokkatelemetry'])]]);
+
+  it('ranks all-title matches first, including pre-normalized diacritic matches', () => {
+    expect(searchRank(title, metadata, ['cafe', 'ownership'], bodyTerms, () => ['rkey1'])).toBe(
+      RANK_TITLE
+    );
+  });
+
+  it('uses metadata rank when one term only appears outside the title', () => {
+    expect(searchRank(title, metadata, ['ownership', 'ada'], bodyTerms, () => ['rkey1'])).toBe(
+      RANK_METADATA
+    );
+  });
+
+  it('uses body rank when a term matches the corpus under a secondary key', () => {
+    expect(
+      searchRank(title, metadata, ['ownership', 'quokkatelemetry'], bodyTerms, () => [
+        'rkey1',
+        'guid-1',
+      ])
+    ).toBe(RANK_BODY);
+  });
+
+  it('returns null when a term matches nowhere or the body corpus is unavailable', () => {
+    expect(
+      searchRank(title, metadata, ['ownership', 'sourdough'], bodyTerms, () => ['guid-1'])
+    ).toBe(null);
+    expect(searchRank(title, metadata, ['quokkatelemetry'], null, () => ['guid-1'])).toBe(null);
+  });
+
+  it('treats an empty query as a title-tier match', () => {
+    expect(searchRank(title, metadata, [], null, () => [])).toBe(RANK_TITLE);
   });
 });
 

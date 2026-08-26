@@ -19,7 +19,7 @@ import type {
   ReadingLengthFilter,
   SortOrder,
 } from '$lib/types';
-import { htmlToText, matchesSearch, normalize } from '$lib/services/savedSearch';
+import { htmlToText, normalize, searchRank } from '$lib/services/savedSearch';
 import {
   isRssSource,
   isDocumentsSource,
@@ -229,18 +229,8 @@ export function searchHaystack(item: FeedDisplayItem): string {
   return normalize(parts.filter(Boolean).join(' '));
 }
 
-/**
- * A saved item matches a search when every term hits its metadata or the save's
- * full article text — each term free to hit in either (the corpus is built
- * asynchronously, so body hits land a beat after metadata hits on the very
- * first search).
- */
-function matchesSavedSearch(
-  item: FeedDisplayItem,
-  terms: string[],
-  bodyMatchTerms: Map<string, Set<string>> | null
-): boolean {
-  return matchesSearch(searchHaystack(item), terms, bodyMatchTerms, () => searchKeysForItem(item));
+function titleHaystack(item: FeedDisplayItem): string {
+  return normalize(item.item.title ?? '');
 }
 
 function createFeedViewStore() {
@@ -886,12 +876,26 @@ function createFeedViewStore() {
       });
     }
 
-    // Search, last: it runs after the merge/dedup above so it can't perturb the
-    // bookmark-vs-article dedup, and it composes with every channel filter.
+    // Search, last: it runs after merge/dedup and every channel filter, then
+    // owns ordering while active. Stable tier sorting preserves the active
+    // sort within title, metadata, and body matches.
     const searchTerms = savedSearchStore.terms;
     if (searchTerms.length > 0) {
       const bodyMatchTerms = savedSearchStore.bodyMatchTerms;
-      items = items.filter((item) => matchesSavedSearch(item, searchTerms, bodyMatchTerms));
+      const ranks = new Map<FeedDisplayItem, number>();
+      items = items.filter((item) => {
+        const rank = searchRank(
+          titleHaystack(item),
+          searchHaystack(item),
+          searchTerms,
+          bodyMatchTerms,
+          () => searchKeysForItem(item)
+        );
+        if (rank === null) return false;
+        ranks.set(item, rank);
+        return true;
+      });
+      items.sort((a, b) => ranks.get(a)! - ranks.get(b)!);
     }
 
     return items;

@@ -45,6 +45,43 @@ async function seedLibrary(testUser: TestUser) {
 }
 
 test.describe('Saved search', () => {
+  test('ranks title matches above newer body matches and restores date order on clear', async ({
+    authedPage,
+    testUser,
+  }) => {
+    const now = Date.now();
+    await seedSavedArticle(testUser, {
+      url: 'https://example.com/newer-body-match',
+      title: 'A Newer Essay',
+      description: 'A dispatch about the night sky',
+      content: '<p>A field guide to constellations.</p>',
+      savedAt: now,
+    });
+    await seedSavedArticle(testUser, {
+      url: 'https://example.com/older-title-match',
+      title: 'Constellations in the Title',
+      description: 'An older dispatch',
+      savedAt: now - 60_000,
+    });
+
+    await authedPage.goto('/saved');
+    const cards = authedPage.locator('article.bookmark-card');
+    await expect(cards).toHaveCount(2, { timeout: 15_000 });
+    await expect(cards.nth(0)).toContainText('A Newer Essay');
+    await expect(cards.nth(1)).toContainText('Constellations in the Title');
+
+    await authedPage.getByRole('button', { name: 'Search saved items' }).click();
+    const input = authedPage.getByTestId('saved-search-input');
+    await input.fill('constellations');
+    await expect(cards).toHaveCount(2);
+    await expect(cards.nth(0)).toContainText('Constellations in the Title');
+    await expect(cards.nth(1)).toContainText('A Newer Essay');
+
+    await input.fill('');
+    await expect(cards.nth(0)).toContainText('A Newer Essay');
+    await expect(cards.nth(1)).toContainText('Constellations in the Title');
+  });
+
   test('filters the saved list by title, body text, and clears back', async ({
     authedPage,
     testUser,
