@@ -318,21 +318,15 @@ describe('enrichMentions + readCachedMentions', () => {
     (globalThis.fetch as ReturnType<typeof spyOn>).mockRestore?.();
   });
 
-  it('persists a document URI only when its canonical URL matches the article', async () => {
+  it('persists a document URI only when the article advertises it', async () => {
     const db = freshDb();
     const did = 'did:plc:publisher';
     const docUri = `at://${did}/site.standard.document/post1`;
-    db.run('INSERT INTO did_cache (did, pds_url, handle, cached_at) VALUES (?, ?, ?, ?)', [
-      did,
-      'https://pds.example',
-      'publisher.test',
-      Date.now(),
-    ]);
     const spy = spyOn(globalThis, 'fetch').mockImplementation((async (input: unknown) => {
       const url = new URL(String(input));
-      if (url.pathname === '/xrpc/com.atproto.repo.getRecord') {
+      if (url.href === ARTICLE) {
         return new Response(
-          JSON.stringify({ value: { site: 'https://example.com', path: '/the-article' } })
+          `<html><head><link rel="site.standard.document" href="${docUri}"></head>`
         );
       }
       return new Response(JSON.stringify({ links: {} }));
@@ -347,23 +341,19 @@ describe('enrichMentions + readCachedMentions', () => {
     ).toBe(true);
   });
 
-  it('rejects a document URI whose canonical URL does not match the article', async () => {
+  it('rejects an attacker document that self-asserts the article URL', async () => {
     const db = freshDb();
     const did = 'did:plc:attacker';
     const docUri = `at://${did}/site.standard.document/post1`;
-    db.run('INSERT INTO did_cache (did, pds_url, handle, cached_at) VALUES (?, ?, ?, ?)', [
-      did,
-      'https://pds.example',
-      'attacker.test',
-      Date.now(),
-    ]);
     const spy = spyOn(globalThis, 'fetch').mockImplementation((async (input: unknown) => {
       const url = new URL(String(input));
       if (url.pathname === '/xrpc/com.atproto.repo.getRecord') {
         return new Response(
-          JSON.stringify({ value: { site: 'https://attacker.example', path: '/bait' } })
+          JSON.stringify({ value: { site: 'https://example.com', path: '/the-article' } })
         );
       }
+      if (url.href === ARTICLE)
+        return new Response('<html><head></head><body>victim</body></html>');
       return new Response(JSON.stringify({ links: {} }));
     }) as unknown as typeof fetch);
 
@@ -373,6 +363,11 @@ describe('enrichMentions + readCachedMentions', () => {
     expect(row?.doc_uri).toBeNull();
     expect(
       spy.mock.calls.some(([input]) => new URL(String(input)).searchParams.get('target') === docUri)
+    ).toBe(false);
+    expect(
+      spy.mock.calls.some(
+        ([input]) => new URL(String(input)).pathname === '/xrpc/com.atproto.repo.getRecord'
+      )
     ).toBe(false);
   });
 

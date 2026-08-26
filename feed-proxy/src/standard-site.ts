@@ -24,6 +24,8 @@ const PUBLICATION_NEGATIVE_CACHE_TTL_MS = 5 * 60 * 1000;
 export const MAX_DOCUMENTS_PER_AUTHOR = 100;
 const MAX_LIST_PAGES = 5; // listRecords pages of 100 → up to 500 scanned
 const FETCH_TIMEOUT_MS = 30 * 1000;
+const DOCUMENT_ADVERTISEMENT_TIMEOUT_MS = 10 * 1000;
+const DOCUMENT_ADVERTISEMENT_MAX_BYTES = 1024 * 1024;
 // A Standard Reader "Collection" (a site.standard.document carrying a
 // `readerCollection`) curates other documents by at:// URI. We resolve each to a
 // title/canonical-URL preview, bounded so a hostile or runaway edition can't fan
@@ -248,31 +250,62 @@ export function buildCanonicalUrl(baseUrl: string, path: string): string {
 }
 
 /**
- * Resolve a caller-supplied standard.site document URI to the document's own
- * canonical public URL. Mention enrichment uses this before attaching an AT-URI
- * to the shared URL cache, so a client cannot associate an unrelated document
- * (and its Leaflet comments) with an arbitrary article URL.
+ * Verify that an article origin advertises a caller-supplied standard.site
+ * document URI. The document record's site/path fields are author-controlled,
+ * so they cannot establish this binding: the public article itself must name
+ * the exact record in a <link> tag, matching standard.site discovery.
  */
-export async function resolveDocumentCanonicalUrl(
-  db: Database,
+export async function articleAdvertisesDocument(
+  articleUrl: string,
   documentUri: string
-): Promise<string | null> {
+): Promise<boolean> {
   const parsed = parseAtUri(documentUri);
-  if (!parsed || parsed.collection !== 'site.standard.document') return null;
+  if (!parsed || parsed.collection !== 'site.standard.document') return false;
 
-  const pdsUrl = await resolvePdsUrl(db, parsed.did);
-  if (!pdsUrl) return null;
-  const document = await fetchRecord<DocumentRecord>(
-    pdsUrl,
-    parsed.did,
-    parsed.collection,
-    parsed.rkey
-  );
-  if (!document) return null;
+  try {
+    const response = await safeFetch(articleUrl, {
+      headers: {
+        'User-Agent': 'Skyreader/1.0 (+https://skyreader.app)',
+        Accept: 'text/html,application/xhtml+xml',
+      },
+      signal: AbortSignal.timeout(DOCUMENT_ADVERTISEMENT_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => {});
+      return false;
+    }
 
-  const { baseUrl } = await resolveSiteMeta(db, document.site || '');
-  if (!baseUrl) return null;
-  return buildCanonicalUrl(baseUrl, document.path || '') || null;
+    const contentLength = Number(response.headers.get('Content-Length'));
+    if (Number.isFinite(contentLength) && contentLength > DOCUMENT_ADVERTISEMENT_MAX_BYTES) {
+      await response.body?.cancel().catch(() => {});
+      return false;
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) return false;
+    const decoder = new TextDecoder();
+    let total = 0;
+    let html = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > DOCUMENT_ADVERTISEMENT_MAX_BYTES) {
+        await reader.cancel().catch(() => {});
+        return false;
+      }
+      html += decoder.decode(value, { stream: true });
+    }
+    html += decoder.decode();
+
+    for (const match of html.matchAll(/<link\b[^>]*>/gi)) {
+      const href = match[0].match(/\bhref\s*=\s*["']([^"']+)["']/i)?.[1];
+      if (href === documentUri) return true;
+    }
+  } catch (error) {
+    console.error('[standard-site] document advertisement verification error:', error);
+  }
+  return false;
 }
 
 async function fetchRecord<T>(

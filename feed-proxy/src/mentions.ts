@@ -24,7 +24,7 @@ import { Database } from 'bun:sqlite';
 import { normalizeArticleUrl, constellationTargets } from './url-normalize';
 import { LANES, laneForSource, type LaneId } from './lanes';
 import { constellationGet } from './constellation-client';
-import { resolveDocumentCanonicalUrl } from './standard-site';
+import { articleAdvertisesDocument } from './standard-site';
 
 // DIDs paged per (collection, path). One page is exact for the common small
 // count; very popular URLs cap here and render as '<n>+'.
@@ -257,8 +257,7 @@ export async function enrichMentions(
     .get(hashUrl(normUrl));
   let verifiedDocUri = existing?.doc_uri ?? undefined;
   if (docUri && !existing?.doc_uri) {
-    const canonicalUrl = await resolveDocumentCanonicalUrl(db, docUri);
-    if (canonicalUrl && normalizeArticleUrl(canonicalUrl) === normUrl) verifiedDocUri = docUri;
+    if (await articleAdvertisesDocument(normUrl, docUri)) verifiedDocUri = docUri;
   }
   if (existing && !(verifiedDocUri && !existing.doc_uri) && !isDue(existing, now)) return;
   const effectiveDocUri = verifiedDocUri;
