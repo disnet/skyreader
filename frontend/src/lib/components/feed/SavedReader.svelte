@@ -99,15 +99,8 @@
   let tagMenuOpen = $state(false);
   let overflowMenuOpen = $state(false);
   let overflowRef = $state<HTMLDivElement | null>(null);
-  // The mobile Tag popover normally anchors to its bottom-bar button. Saved
-  // articles use that slot for Community instead, so Tag (reached from the
-  // actions sheet) anchors to that stable slot after the sheet closes.
   let tagBtnRef = $state<HTMLButtonElement | null>(null);
   let mobileTagBtnRef = $state<HTMLButtonElement | null>(null);
-  let mobileCommunityBtnRef = $state<HTMLButtonElement | null>(null);
-  let mobileTagAnchorRef = $derived(
-    readerItem.type === 'saved' ? mobileCommunityBtnRef : mobileTagBtnRef
-  );
   let controlsVisible = $state(true);
   // Desktop header hides on scroll-down, but stays put while a header-anchored
   // menu (Style/Tag/overflow ⋯) is open so its popover doesn't slide off-screen.
@@ -757,13 +750,7 @@
     contentEl: () => readerBodyEl,
     itemUrl: () => itemUrl,
     enabled: () => readerItem.type === 'saved' && preferences.communityHighlights,
-    load: () => readerItem.type === 'saved',
   });
-
-  function toggleCommunityHighlights() {
-    if (!preferences.communityHighlights) communityHighlightsHook.retry();
-    preferences.setCommunityHighlights(!preferences.communityHighlights);
-  }
 
   // Set up observer when the reader body is mounted — and re-run it whenever the
   // rendered content changes. Saved/article bodies load lazily (see the lazy*
@@ -908,27 +895,6 @@
 
         <span class="action-separator"></span>
 
-        {#if readerItem.type === 'saved'}
-          <button
-            class="action-btn"
-            class:active={preferences.communityHighlights}
-            aria-pressed={preferences.communityHighlights}
-            aria-label={communityHighlightsHook.count === undefined
-              ? 'Community highlights'
-              : `${communityHighlightsHook.count}${communityHighlightsHook.capped ? ' or more' : ''} community highlight${communityHighlightsHook.count === 1 ? '' : 's'}`}
-            onclick={toggleCommunityHighlights}
-            title="Passages highlighted by readers on margin.at"
-          >
-            <Icon name="users" size={16} />
-            <span class="action-label">Community</span>
-            {#if communityHighlightsHook.count !== undefined}
-              <span class="action-count">
-                ({communityHighlightsHook.count}{communityHighlightsHook.capped ? '+' : ''})
-              </span>
-            {/if}
-          </button>
-        {/if}
-
         {#if canShareLinkblog}
           <button
             class="action-btn"
@@ -1030,12 +996,7 @@
     {isSaved}
     onShare={canShareLinkblog ? openShareComposer : undefined}
     shareActive={sharedNow}
-    onCommunity={readerItem.type === 'saved' ? toggleCommunityHighlights : undefined}
-    communityCount={communityHighlightsHook.count}
-    communityCapped={communityHighlightsHook.capped}
-    communityActive={preferences.communityHighlights}
-    bind:communityButtonEl={mobileCommunityBtnRef}
-    onTag={readerItem.type !== 'saved' ? () => (tagMenuOpen = !tagMenuOpen) : undefined}
+    onTag={() => (tagMenuOpen = !tagMenuOpen)}
     tagCount={itemTags.length}
     tagActive={tagMenuOpen}
     bind:tagButtonEl={mobileTagBtnRef}
@@ -1155,7 +1116,7 @@
         <TagMenu
           {itemKey}
           itemType={labelItemType}
-          anchorEl={mobileTagAnchorRef}
+          anchorEl={mobileTagBtnRef}
           onClose={() => (tagMenuOpen = false)}
         />
       {/if}
@@ -1577,11 +1538,6 @@
   .action-label {
     font-size: var(--text-sm);
     font-weight: var(--weight-medium);
-  }
-
-  .action-count {
-    font-size: var(--text-sm);
-    font-variant-numeric: tabular-nums;
   }
 
   .action-btn:hover:not(.active) {
