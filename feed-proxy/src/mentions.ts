@@ -255,11 +255,23 @@ export async function enrichMentions(
   const existing = db
     .query<MentionCacheRow, [string]>('SELECT * FROM mention_cache WHERE url_hash = ?')
     .get(hashUrl(normUrl));
-  let verifiedDocUri = existing?.doc_uri ?? undefined;
-  if (docUri && !existing?.doc_uri) {
-    if (await articleAdvertisesDocument(normUrl, docUri)) verifiedDocUri = docUri;
+  const due = !existing || isDue(existing, now);
+  if (existing && !due && (existing.doc_uri || !docUri)) return;
+
+  // A document target is shared by every reader of this URL. Revalidate a
+  // persisted target whenever its mention row is due so a removed or temporary
+  // origin advertisement cannot keep contributing Leaflet comments forever.
+  let verifiedDocUri: string | undefined;
+  const candidateDocUri = existing?.doc_uri ?? docUri;
+  if (candidateDocUri && (due || !existing?.doc_uri)) {
+    if (await articleAdvertisesDocument(normUrl, candidateDocUri)) {
+      verifiedDocUri = candidateDocUri;
+    }
+  } else {
+    verifiedDocUri = existing?.doc_uri ?? undefined;
   }
-  if (existing && !(verifiedDocUri && !existing.doc_uri) && !isDue(existing, now)) return;
+  // A fresh URL-only row is recomputed only for a verified document upgrade.
+  if (existing && !due && !verifiedDocUri) return;
   const effectiveDocUri = verifiedDocUri;
 
   let mentions: ArticleMentions;
@@ -278,7 +290,7 @@ export async function enrichMentions(
 			total_dids = excluded.total_dids,
 			lanes_json = excluded.lanes_json,
 			checked_at = excluded.checked_at,
-			doc_uri = COALESCE(excluded.doc_uri, mention_cache.doc_uri)`,
+			doc_uri = excluded.doc_uri`,
     [
       hashUrl(normUrl),
       normUrl,

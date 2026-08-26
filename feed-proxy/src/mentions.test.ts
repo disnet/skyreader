@@ -371,6 +371,47 @@ describe('enrichMentions + readCachedMentions', () => {
     ).toBe(false);
   });
 
+  it('clears a due document target when the article stops advertising it', async () => {
+    const db = freshDb();
+    const docUri = 'at://did:plc:publisher/site.standard.document/post1';
+    let advertisesDocument = true;
+    const queriedDocumentTargets: string[] = [];
+    spyOn(globalThis, 'fetch').mockImplementation((async (input: unknown) => {
+      const url = new URL(String(input));
+      if (url.href === ARTICLE) {
+        return new Response(
+          advertisesDocument
+            ? `<html><head><link rel="site.standard.document" href="${docUri}"></head></html>`
+            : '<html><head></head><body>updated article</body></html>'
+        );
+      }
+      const target = url.searchParams.get('target');
+      if (target === docUri) queriedDocumentTargets.push(target);
+      return new Response(JSON.stringify({ links: {} }));
+    }) as unknown as typeof fetch);
+
+    await enrichMentions(db, normalizeArticleUrl(ARTICLE)!, docUri);
+    expect(
+      db.query<{ doc_uri: string | null }, []>('SELECT doc_uri FROM mention_cache').get()?.doc_uri
+    ).toBe(docUri);
+    expect(queriedDocumentTargets.length).toBeGreaterThan(0);
+
+    advertisesDocument = false;
+    db.run('UPDATE mention_cache SET checked_at = ?', [Date.now() - 2 * 60 * 60 * 1000]);
+    const documentQueriesBeforeRecheck = queriedDocumentTargets.length;
+
+    await enrichMentions(db, normalizeArticleUrl(ARTICLE)!);
+
+    const row = db
+      .query<{ doc_uri: string | null; lanes_json: string }, []>(
+        'SELECT doc_uri, lanes_json FROM mention_cache'
+      )
+      .get();
+    expect(row?.doc_uri).toBeNull();
+    expect(queriedDocumentTargets).toHaveLength(documentQueriesBeforeRecheck);
+    expect(JSON.parse(row?.lanes_json ?? '[]')).toEqual([]);
+  });
+
   it('caches a breakdown and serves it above threshold; flags cold URLs to enrich', async () => {
     const db = freshDb();
     const now = Date.now();
