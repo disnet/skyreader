@@ -20,6 +20,7 @@ import type {
   SortOrder,
 } from '$lib/types';
 import { htmlToText, normalize, searchRank } from '$lib/services/savedSearch';
+import { sameUrlFilters, type UrlFilters } from '$lib/utils/urlFilters';
 import {
   isRssSource,
   isDocumentsSource,
@@ -1525,16 +1526,34 @@ function createFeedViewStore() {
     closeTagMenu() {
       tagMenuItemKey = null;
     },
-    setFilters(filters: {
-      feed: string | null;
-      saved: string | null;
-      sharer: string | null;
-      following: string | null;
-      feeds: string | null;
-      contentType?: 'documents' | null;
-      view?: string | null;
-      category?: string | null;
-    }) {
+    setFilters(filters: UrlFilters) {
+      // Every URL change re-runs this, including ones that don't move the view —
+      // the reader's `?read=` param, a canonicalizing `goto`, re-clicking the
+      // surface you're already on. Resetting pagination and toolbar state there
+      // would truncate the list under an open reader and lose the scroll position
+      // restored on close, so an unchanged filter set is a no-op. The linkblog
+      // view isn't URL-driven, so leaving it always counts as a change.
+      //
+      // The deliberate trade: re-selecting the channel you are already in no
+      // longer re-applies that channel's persisted configuration (sort order,
+      // read filter, tag/type/source filters, the inbox-vs-archive tab below),
+      // so it can't be used to discard unsaved toolbar tweaks. Leaving the
+      // channel and coming back does re-apply it — that path changes the filter
+      // set and runs the whole body. A stable list under an open reader is worth
+      // more than an undocumented reset gesture.
+      if (!myLinkblogFilter) {
+        const current: UrlFilters = {
+          feed: feedFilter,
+          saved: savedFilter,
+          sharer: sharerFilter,
+          following: followingFilter,
+          feeds: feedsFilter,
+          contentType: contentTypeFilter,
+          view: viewFilter,
+          category: categoryFilter,
+        };
+        if (sameUrlFilters(filters, current)) return;
+      }
       // Any URL-driven filter change exits the "Your Linkblog" view.
       myLinkblogFilter = false;
       // Search is ephemeral session state, scoped to one saved surface, so

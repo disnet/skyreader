@@ -12,6 +12,7 @@
   import { shareDraftsStore } from '$lib/stores/shareDrafts.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { useReaderStack } from '$lib/hooks/useReaderStack.svelte';
+  import { toggleSavedItemSave } from '$lib/utils/readerSave';
   import { getDocumentEffectiveUrl } from '$lib/utils/linkPost';
   import type { ShareDraft } from '$lib/types';
 
@@ -72,7 +73,14 @@
   });
 
   function handleReaderSave() {
-    if (!readerItem || readerItem.type !== 'document') return;
+    if (!readerItem) return;
+    if (readerItem.type === 'saved') {
+      // A post opened from its `?read=` URL (reload, Forward, a link) comes back
+      // as the save it already is, not as the document — see readerSave.
+      void toggleSavedItemSave(readerItem.item);
+      return;
+    }
+    if (readerItem.type !== 'document') return;
     const doc = readerItem.item;
     itemLabelsStore.toggleSave(doc.recordUri, 'document', getDocumentEffectiveUrl(doc), doc.title, {
       type: 'document',

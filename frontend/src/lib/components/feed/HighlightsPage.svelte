@@ -1,7 +1,5 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { pushState } from '$app/navigation';
-  import { page } from '$app/state';
   import NavigationDropdown from '$lib/components/NavigationDropdown.svelte';
   import InfiniteScrollSentinel from '$lib/components/common/InfiniteScrollSentinel.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
@@ -21,6 +19,7 @@
   import { notificationsStore } from '$lib/stores/notifications.svelte';
   import { mobileStore } from '$lib/stores/mediaQuery.svelte';
   import { useScrollDirection } from '$lib/hooks/useScrollDirection.svelte';
+  import { useReaderStack } from '$lib/hooks/useReaderStack.svelte';
   import {
     saveHighlightToMargin,
     deleteHighlight,
@@ -177,32 +176,17 @@
   let displayed = $derived(groups.slice(0, loadedCount));
   let hasMore = $derived(loadedCount < groups.length);
 
-  // Reader overlay — mirrors FeedListView: page.state.readerOpen drives the back
-  // button, readerItem holds the data.
-  let readerItem = $state<FeedDisplayItem | null>(null);
-  let savedScrollY = 0;
-
-  $effect(() => {
-    if (!page.state.readerOpen && readerItem) {
-      readerItem = null;
-      requestAnimationFrame(() => window.scrollTo(0, savedScrollY));
-    }
-  });
+  // Reader overlay — the same stack every other surface uses, so /highlights gets
+  // Back-to-close, scroll restore and a `?read=` URL for free.
+  const reader = useReaderStack();
+  let readerItem = $derived(reader.readerItem);
 
   function openGroup(group: HighlightGroup) {
     if (group.displayItem) {
-      savedScrollY = window.scrollY;
-      readerItem = group.displayItem;
-      pushState('', { readerOpen: true });
+      reader.openReader(group.displayItem);
     } else if (group.url) {
       window.open(group.url, '_blank', 'noopener,noreferrer');
     }
-  }
-
-  function closeReader() {
-    readerItem = null;
-    history.back();
-    requestAnimationFrame(() => window.scrollTo(0, savedScrollY));
   }
 
   function handleRemove(group: HighlightGroup, row: HighlightRow) {
@@ -400,7 +384,7 @@
 </div>
 
 {#if readerItem}
-  <SavedReader {readerItem} onClose={closeReader} />
+  <SavedReader {readerItem} onClose={reader.closeReader} />
 {/if}
 
 {#if noteEditor}

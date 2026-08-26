@@ -39,7 +39,9 @@
   import { linkblogStore } from '$lib/stores/linkblog.svelte';
   import { shareComposerStore } from '$lib/stores/shareComposer.svelte';
   import { shareDraftsStore } from '$lib/stores/shareDrafts.svelte';
+  import { toastStore } from '$lib/stores/toast.svelte';
   import { shareTargetForDisplayItem } from '$lib/utils/shareTarget';
+  import { isSavedItemSaved } from '$lib/utils/readerSave';
   import HighlightPopover from '$lib/components/feed/HighlightPopover.svelte';
   import CommunityHighlightPopover from '$lib/components/feed/CommunityHighlightPopover.svelte';
   import NotePeek from '$lib/components/feed/NotePeek.svelte';
@@ -414,7 +416,14 @@
   });
 
   let isArchived = $derived(itemLabelsStore.isArchived(itemKey));
-  let isSaved = $derived(itemLabelsStore.isSaved(itemKey));
+  // A `'saved'` item is keyed by the save's `at://` record uri, which the saves
+  // store indexes by neither guid nor url — asking about that key would answer
+  // "Save" for something plainly already saved. Ask about the save itself.
+  let isSaved = $derived(
+    readerItem.type === 'saved'
+      ? isSavedItemSaved(readerItem.item)
+      : itemLabelsStore.isSaved(itemKey)
+  );
 
   // ── Share from the reader chrome ────────────────────────────────────────────
   // A share control lives in the bar (desktop and mobile) so sharing is in
@@ -613,6 +622,12 @@
       label: 'Open in browser',
       icon: 'external-link',
       onclick: handleOpenUrl,
+    });
+
+    items.push({
+      label: 'Copy link',
+      icon: 'link',
+      onclick: handleCopyLink,
     });
 
     return items;
@@ -822,6 +837,18 @@
 
   function handleOpenUrl() {
     if (itemUrl) window.open(itemUrl, '_blank', 'noopener');
+  }
+
+  // The address bar already names what's open (the reader is shallow-routed, see
+  // `useReaderStack`), so a link back into Skyreader is just the current location.
+  async function handleCopyLink() {
+    const toastId = toastStore.add('Copying link…');
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      toastStore.update(toastId, 'success', 'Link copied');
+    } catch {
+      toastStore.update(toastId, 'error', 'Could not copy link');
+    }
   }
 </script>
 
