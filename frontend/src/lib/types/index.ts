@@ -853,6 +853,12 @@ export interface SembleContext {
       imageUrl: string | null;
     };
   }>;
+  similar?: Array<{
+    url: string;
+    title: string | null;
+    siteName: string | null;
+    saveCount: number;
+  }>;
   truncated: { savers: boolean; notes: boolean; collections: boolean; connections: boolean };
   incomplete: boolean;
   source: 'semble-api' | 'constellation-fallback';

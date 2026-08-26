@@ -648,6 +648,7 @@ export async function getMentionLaneItems(
             notes: [],
             collections: [],
             connections: [],
+            similar: [],
             truncated: { savers: false, notes: false, collections: false, connections: false },
             incomplete: true,
             source: 'constellation-fallback',

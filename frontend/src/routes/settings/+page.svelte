@@ -867,6 +867,17 @@
     <p class="setting-description">
       Automatically mark articles as read when you scroll past them in the feed.
     </p>
+    <label class="toggle-setting">
+      <input
+        type="checkbox"
+        checked={preferences.communityHighlights}
+        onchange={(e) => preferences.setCommunityHighlights(e.currentTarget.checked)}
+      />
+      <span>Show community highlights</span>
+    </label>
+    <p class="setting-description">
+      Show passages highlighted by other readers on Margin while reading saved articles.
+    </p>
   </section>
 
   <section class="card">

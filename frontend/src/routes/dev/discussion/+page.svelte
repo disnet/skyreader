@@ -159,6 +159,7 @@
     notes: [],
     collections: [],
     connections: [],
+    similar: [],
     truncated: { savers: false, notes: false, collections: false, connections: false },
     incomplete: false,
     source: 'semble-api',
@@ -234,7 +235,28 @@
       },
     ],
     connections: [outgoing, incoming, untypedIncoming],
+    similar: [
+      {
+        url: 'https://reading.example/slow-web',
+        title: 'A slower web',
+        siteName: 'Reading Notes',
+        saveCount: 12,
+      },
+      {
+        url: 'https://protocol.example/open-graphs',
+        title: 'Open graphs for readers',
+        siteName: 'Protocol Review',
+        saveCount: 6,
+      },
+    ],
   };
+
+  const similarArticles = Array.from({ length: 8 }, (_, i) => ({
+    url: `https://recommended${i}.example/story`,
+    title: i === 2 ? null : `Recommended article ${i + 1}`,
+    siteName: i === 2 ? null : 'The Reading Review',
+    saveCount: i + 2,
+  }));
 
   // The shape that forced this fold: one curator mapping a topic. Twenty edges
   // come back, all outgoing, all "supplement", all theirs — only the title
@@ -349,6 +371,11 @@
   }
   const isLinkSaved = (url: string) => savedLinks.includes(url);
 
+  // Drawing an edge is a real dialog in the app; here it just has to be present,
+  // so the one control the Connections tab owns is visible in the harness.
+  let connectClicks = $state(0);
+  const createConnection = () => connectClicks++;
+
   let activeFilter = $state<DiscussionFilterId>('all');
   const filtered = $derived(
     activeFilter === 'all' ? entries : entries.filter((e) => e.lane === activeFilter)
@@ -361,11 +388,11 @@
 
 <Showcase
   title="Discussion"
-  description="What the Atmosphere said about one article, merged into a single stream ranked by engagement — most-liked first, newest as the tiebreak. Lanes are filters over it, not four lists to click between. The filter chips below are live."
+  description="One article's discussion, split by KIND rather than by network: Conversation (what people said, every network merged and ranked by engagement — most-liked first, newest as the tiebreak), Connections (where Semble has it filed and what it is tied to), and Related (what to read next). The network stays a property of a row — the glyph on each avatar — and survives as a filter inside Conversation, the one tab made of rows. The tabs and the filter chips below are live."
 >
   <Case
     name="Reader · the whole discussion"
-    note="How it reads under a finished article: heading, total, filters, stream, then the ways to answer. Try the chips."
+    note="How it reads under a finished article, with all three kinds populated: heading, the tab row carrying each kind and its count, then the conversation — filters, stream, the ways to answer. Try the tabs, then the chips inside Conversation. Arrow keys move between tabs."
     width="800px"
     pad
   >
@@ -377,13 +404,14 @@
       {sembleContext}
       onSaveConnection={toggleSavedLink}
       isConnectionSaved={isLinkSaved}
+      onCreateConnection={createConnection}
       onSelectFilter={(id) => (activeFilter = id)}
     />
   </Case>
 
   <Case
-    name="Semble · a mapped topic"
-    note="The shape that forced the fold: one curator, twenty outgoing edges of the same type, only the title varying. Unfolded that was sixty lines of the same sentence. Folded on (curator, relation, direction) the sentence is said once and the titles are the only thing left. Semble held twenty-seven and returned twenty; the foot says so where the reader can act on it."
+    name="Connections · a mapped topic"
+    note="The shape that forced the fold: one curator, twenty outgoing edges of the same type, only the title varying. Unfolded that was sixty lines of the same sentence. Folded on (curator, relation, direction) the sentence is said once and the titles are the only thing left. Semble held twenty-seven and returned twenty; the tab count carries a + and the foot says how many. Open the Connections tab."
     width="800px"
     pad
   >
@@ -398,8 +426,8 @@
   </Case>
 
   <Case
-    name="Semble · filed everywhere"
-    note="A URL every mapper has filed. Twenty collections came back and unfolded they were a wall of pills between the reader and the discussion they introduce; six read as a set, the rest open on request. A name long enough to eat the panel gives up its tail and keeps it in the title. Semble holds forty-seven, and the foot says so."
+    name="Connections · filed everywhere"
+    note="A URL every mapper has filed. Twenty collections came back and unfolded they were a wall of pills between the reader and the discussion they introduce; six read as a set, the rest open on request. A name long enough to eat the panel gives up its tail and keeps it in the title. Semble holds forty-seven, and the foot says so. A URL with no edges but plenty of shelves still earns the tab: a collection membership is an edge too."
     width="800px"
     pad
   >
@@ -412,8 +440,8 @@
   </Case>
 
   <Case
-    name="Semble · everything it knows"
-    note="What Semble holds about this URL that isn't a person in the stream: the counts, where it's filed, notes nobody attached to a save, and the typed edges. Outbound reads this → type → other; inbound reads other → type → this, so the arrow never lies about which way the claim points. Shown under All and Semble only — switch the chips above to watch it leave."
+    name="Connections · everything it knows"
+    note="What Semble holds about this URL: where it's filed and the typed edges. Outbound reads this → type → other; inbound reads other → type → this, so the arrow never lies about which way the claim points. The standalone notes are NOT here — they are somebody's words about the article, so they lead the Conversation stream with everyone else's."
     width="800px"
     pad
   >
@@ -428,8 +456,8 @@
   </Case>
 
   <Case
-    name="Semble · connections only"
-    note="Nobody said anything and nobody saved it — the URL exists in Semble purely as the endpoint of other people's edges. That still counts as readable content, so the panel must not claim nothing came back."
+    name="Connections · edges only"
+    note="Nobody said anything and nobody saved it — the URL exists in Semble purely as the endpoint of other people's edges. Conversation opens empty and says so plainly, which is now honest: the Connections tab's own count says where the rest of it went."
     width="800px"
     pad
   >
@@ -453,7 +481,39 @@
   </Case>
 
   <Case
-    name="Semble · partial and truncated"
+    name="Related · recommendations only"
+    note="What to read next is not discussion at all, which is why it kept reading as a wall bolted onto the end of one. Behind its own tab it is a quiet, flat list with clear Semble provenance and the same keep control as a connected article — subordinate to the conversation by position, not by styling."
+    width="800px"
+    pad
+  >
+    <AtmospherePanel
+      laneRow={[laneVM('semble', { count: 1 })]}
+      filters={[]}
+      sembleContext={{ ...emptyContext, similar: similarArticles.slice(0, 3) }}
+      onSaveConnection={toggleSavedLink}
+      isConnectionSaved={isLinkSaved}
+      stream={{ loading: false, entries: [] }}
+    />
+  </Case>
+
+  <Case
+    name="Related · the fold"
+    note="Four recommendations preview the list; the remaining four stay behind one disclosure."
+    width="800px"
+    pad
+  >
+    <AtmospherePanel
+      laneRow={[laneVM('semble', { count: 1 })]}
+      filters={[]}
+      sembleContext={{ ...emptyContext, similar: similarArticles }}
+      onSaveConnection={toggleSavedLink}
+      isConnectionSaved={isLinkSaved}
+      stream={{ loading: false, entries: [] }}
+    />
+  </Case>
+
+  <Case
+    name="Connections · partial and truncated"
     note="One category timed out and another had more than one page. Both are disclosed in a line rather than silently rounded off — what returned still renders."
     width="800px"
     pad
@@ -472,7 +532,7 @@
   </Case>
 
   <Case
-    name="Semble · saver fallback"
+    name="Conversation · saver fallback"
     note="The API was unreachable and the Constellation/PDS resolver answered instead: the people it found still read normally, and no aggregate is invented to fill the space."
     width="800px"
     pad
@@ -487,7 +547,7 @@
 
   <Case
     name="Card · no heading"
-    note="Inside the feed card's sticky footer the Discussion button already names the section, so the panel drops its heading."
+    note="Inside the feed card's sticky footer the Discussion button already names the section, so the panel drops its heading — and at this width the tab row tightens rather than wrapping."
     width="620px"
     pad
   >
@@ -496,7 +556,30 @@
       {filters}
       activeFilter="all"
       stream={{ loading: false, ...allStream }}
+      {sembleContext}
+      onSaveConnection={toggleSavedLink}
+      isConnectionSaved={isLinkSaved}
+      onCreateConnection={createConnection}
       showHeading={false}
+    />
+  </Case>
+
+  <Case
+    name="Tabs · a phone-width column"
+    note="Three labels and three counts in 360px. The strip scrolls rather than wrapping: a second row of navigation over a reading surface is the thing this whole change was undoing."
+    width="360px"
+    pad
+  >
+    <AtmospherePanel
+      laneRow={lanes}
+      {filters}
+      {activeFilter}
+      {stream}
+      {sembleContext}
+      onSaveConnection={toggleSavedLink}
+      isConnectionSaved={isLinkSaved}
+      onCreateConnection={createConnection}
+      onSelectFilter={(id) => (activeFilter = id)}
     />
   </Case>
 
@@ -562,8 +645,8 @@
   </Case>
 
   <Case
-    name="One source only"
-    note="A single populated lane needs no filter row — there is nothing to filter to."
+    name="One kind, one source"
+    note="A single populated lane needs no filter row, and a single kind needs no tab row: with nothing from Semble there is only the conversation, so neither strip renders. One tab is not a tab strip."
     width="800px"
     pad
   >
