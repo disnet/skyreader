@@ -25,6 +25,7 @@ async function seedHighlights(user: TestUser, count: number) {
   await seedSavedArticle(user, {
     url: ARTICLE_URL,
     title: 'The Highlighted Article',
+    author: 'Ada Lovelace',
     itemGuid: ARTICLE_GUID,
     source: 'feed',
     domain: 'example.com',
@@ -105,9 +106,133 @@ test.describe('highlight review', () => {
 
     // The deck itself reports it, calmly, rather than dealing the same cards again.
     await authedPage.goto('/highlights/review');
+    await expect(authedPage.getByRole('heading', { name: "That's today's review" })).toBeVisible({
+      timeout: 15_000,
+    });
+  });
+
+  test('the Home card names who the deck draws from', async ({ authedPage, testUser }) => {
+    await seedHighlights(testUser, 3);
+    await seedSavedArticle(testUser, {
+      url: 'https://elsewhere.test/review/other',
+      title: 'Another Article',
+      // No byline: this one falls back to where it came from rather than
+      // dropping out of the sentence.
+      itemGuid: 'review-other-guid',
+      source: 'feed',
+      domain: 'elsewhere.test',
+      contentType: 'article',
+    });
+    await seedItemLabel(testUser, {
+      itemKey: 'review-other-guid',
+      itemType: 'article',
+      label: 'highlights',
+      props: JSON.stringify({
+        highlights: [
+          {
+            id: 'hl-other',
+            selector: { type: 'TextQuoteSelector', exact: 'A passage from the other article' },
+            createdAt: OLD,
+          },
+        ],
+      }).replaceAll("'", "''"),
+    });
+
+    await authedPage.goto('/home');
+    // Both sources are named; which comes first is the deck's date-seeded order.
+    await expect(
+      authedPage.getByText(
+        /^Highlights from (Ada Lovelace and elsewhere\.test|elsewhere\.test and Ada Lovelace)\.$/
+      )
+    ).toBeVisible({ timeout: 15_000 });
+  });
+
+  test('finishing a deck offers another hand of what is still due', async ({
+    authedPage,
+    testUser,
+  }) => {
+    // Two full decks' worth plus one, so the second hand is short.
+    await seedHighlights(testUser, DECK_SIZE * 2 + 1);
+
+    await authedPage.goto('/highlights/review');
+    await expect(authedPage.getByText(`1 of ${DECK_SIZE}`)).toBeVisible({ timeout: 15_000 });
+
+    async function finishHand(size: number) {
+      for (let card = 1; card <= size; card++) {
+        const written = authedPage.waitForResponse(
+          (res) => res.url().includes('/api/labels') && res.request().method() === 'POST'
+        );
+        await authedPage.getByRole('button', { name: card === size ? 'Finish' : 'Next' }).click();
+        await written;
+      }
+    }
+
+    await finishHand(DECK_SIZE);
+    await expect(authedPage.getByText(`${DECK_SIZE} highlights revisited.`)).toBeVisible();
+
+    const more = authedPage.getByRole('button', { name: `Review ${DECK_SIZE} more` });
+    await expect(more).toBeVisible();
+    await more.click();
+
+    // The stamps from the first hand make its cards ineligible, so this is the
+    // next ones due rather than the same deck again.
+    await expect(authedPage.getByText(`1 of ${DECK_SIZE}`)).toBeVisible();
+    await expect(authedPage.getByText('Seeded highlight number 1')).toHaveCount(0);
+
+    await finishHand(DECK_SIZE);
+    // The tally is the session's, not the hand's.
+    await expect(authedPage.getByText(`${DECK_SIZE * 2} highlights revisited.`)).toBeVisible();
+
+    // One highlight left: the offer says so, and disappears once it's spent.
+    await authedPage.getByRole('button', { name: 'Review 1 more' }).click();
+    await expect(authedPage.getByText('1 of 1')).toBeVisible();
+    await finishHand(1);
+    await expect(authedPage.getByText(`${DECK_SIZE * 2 + 1} highlights revisited.`)).toBeVisible();
+    await expect(authedPage.getByRole('button', { name: /^Review \d+ more$/ })).toHaveCount(0);
+  });
+
+  test('an exhausted deck still offers to keep going', async ({ authedPage, testUser }) => {
+    // Everything already reviewed today: what a reader sees on coming back after
+    // finishing, rather than by finishing in this session.
+    const reviewedToday = Date.now();
+    await seedSavedArticle(testUser, {
+      url: ARTICLE_URL,
+      title: 'The Highlighted Article',
+      author: 'Ada Lovelace',
+      itemGuid: ARTICLE_GUID,
+      source: 'feed',
+      domain: 'example.com',
+      contentType: 'article',
+    });
+    await seedItemLabel(testUser, {
+      itemKey: ARTICLE_GUID,
+      itemType: 'article',
+      label: 'highlights',
+      props: JSON.stringify({
+        highlights: highlights(3).map((h) => ({ ...h, lastReviewedAt: reviewedToday })),
+      }).replaceAll("'", "''"),
+    });
+
+    await authedPage.goto('/highlights/review');
+    await expect(authedPage.getByRole('heading', { name: "That's today's review" })).toBeVisible({
+      timeout: 15_000,
+    });
+    // Not the empty state: there are highlights, they're just spent for today.
     await expect(
       authedPage.getByRole('heading', { name: 'Nothing to review right now' })
-    ).toBeVisible({ timeout: 15_000 });
+    ).toHaveCount(0);
+
+    // No count on the offer — going around again isn't new material, and it says so.
+    const more = authedPage.getByRole('button', { name: 'Review more', exact: true });
+    await expect(more).toBeVisible();
+    await expect(
+      authedPage.getByText('This brings back the ones you saw earliest today.')
+    ).toBeVisible();
+
+    await more.click();
+    await expect(authedPage.getByText('1 of 3')).toBeVisible();
+    // Which of the three leads is the date-seeded tie-break; that one is back.
+    await expect(authedPage.getByText(/^Seeded highlight number [123]$/)).toBeVisible();
   });
 
   test('the nav carries a quiet count that clears when the deck is done', async ({

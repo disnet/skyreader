@@ -16,6 +16,7 @@
   import HighlightPopover from '$lib/components/feed/HighlightPopover.svelte';
   import RemoveHighlightModal from '$lib/components/feed/RemoveHighlightModal.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
+  import { highlightReviewStore } from '$lib/stores/highlightReview.svelte';
   import { articlesStore } from '$lib/stores/articles.svelte';
   import { socialStore } from '$lib/stores/social.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
@@ -61,6 +62,7 @@
   // is marked reviewed and pull the ground out from under the reader.
   let deck = $state<HighlightEntry[] | null>(null);
   let index = $state(0);
+  // Session tally, across every hand — `index` and `interacted` are per hand.
   let reviewed = $state(0);
   let interacted = $state(false);
 
@@ -84,9 +86,15 @@
   // writes it, and it exists only to notice a change in the preference.
   let dealtCount = 0;
 
+  // Sticky for the rest of the visit: a redeal triggered by a settings change
+  // must not quietly drop an encore hand back to the (empty) daily pool.
+  let encoreMode = false;
+
   function dealDeck() {
     dealtCount = preferences.highlightReviewCount;
-    deck = buildHighlightDeck(itemLabelsStore.allHighlights, dealtCount).cards;
+    deck = buildHighlightDeck(itemLabelsStore.allHighlights, dealtCount, new Date(), {
+      includeReviewedToday: encoreMode,
+    }).cards;
     emptyOnDeal = deck.length === 0;
   }
 
@@ -102,7 +110,7 @@
   $effect(() => {
     const size = preferences.highlightReviewCount;
     if (!dealt || size === dealtCount) return;
-    if (deckUntouched({ index, reviewed, interacted })) dealDeck();
+    if (deckUntouched({ index, interacted })) dealDeck();
     else dealtCount = size;
   });
 
@@ -118,7 +126,7 @@
     const timer = setTimeout(() => (importWaitElapsed = true), EMPTY_DECK_IMPORT_WAIT_MS);
     void maybeImportMarginHighlights()
       .then((result) => {
-        if (shouldRedealAfterImport(result, { index, reviewed, interacted })) dealDeck();
+        if (shouldRedealAfterImport(result, { index, interacted })) dealDeck();
       })
       .catch(() => {})
       .finally(() => {
@@ -266,6 +274,25 @@
     }
   }
 
+  // Finishing the deck is where the day's review ends by design, but a reader
+  // who wants to keep going shouldn't have to leave and come back to do it.
+  //
+  // Two shapes of "more". While highlights are still due today, another hand is
+  // genuinely the next ones due — the hand just finished stamped its own cards,
+  // so they can't come back. Once the day's portion is spent, "more" can only
+  // mean going around again, which the button says plainly rather than dressing
+  // up with a count.
+  let moreDue = $derived(highlightReviewStore.dueCount);
+  let isEncore = $derived(moreDue === 0);
+  let canReviewMore = $derived(highlightReviewStore.hasHighlights);
+
+  function reviewMore() {
+    encoreMode = isEncore;
+    index = 0;
+    interacted = false;
+    dealDeck();
+  }
+
   // --- Settings, in reach of the deck they configure (deck size, Margin
   // ingest). An inline disclosure rather than an overlay: the page is one card
   // tall, so there's nothing for a modal to protect.
@@ -275,7 +302,7 @@
   // session — turning the toggle on and still reading "nothing to review" is
   // the opposite of what the control promised.
   function handleSettingsImport() {
-    if (deckUntouched({ index, reviewed, interacted })) dealDeck();
+    if (deckUntouched({ index, interacted })) dealDeck();
   }
 
   // --- Mobile chrome. The installed PWA has no browser back button, so the
@@ -298,6 +325,18 @@
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
+
+{#snippet moreButton()}
+  {#if canReviewMore}
+    <button class="more" onclick={reviewMore}>
+      <span>{isEncore ? 'Review more' : `Review ${moreDue} more`}</span>
+      <Icon name="arrow-right" size={16} />
+    </button>
+    {#if isEncore}
+      <p class="more-note">This brings back the ones you saw earliest today.</p>
+    {/if}
+  {/if}
+{/snippet}
 
 <div class="review-page">
   <header class="review-header">
@@ -397,15 +436,22 @@
       <section class="state" aria-live="polite">
         <h1>That's your review</h1>
         <p>{reviewed} highlight{reviewed === 1 ? '' : 's'} revisited.</p>
+        {@render moreButton()}
+        <a href="/highlights">All highlights</a>
+      </section>
+    {:else if canReviewMore}
+      <!-- Highlights exist, but today's portion is already spent — arrived at by
+           coming back after a session rather than by finishing one here. -->
+      <section class="state" aria-live="polite">
+        <h1>That's today's review</h1>
+        <p>Come back tomorrow for the next handful.</p>
+        {@render moreButton()}
         <a href="/highlights">All highlights</a>
       </section>
     {:else}
       <section class="state" aria-live="polite">
         <h1>Nothing to review right now</h1>
-        <p>
-          Highlight a passage while reading and it joins the deck. Come back tomorrow for another
-          handful.
-        </p>
+        <p>Highlight a passage while reading and it joins the deck.</p>
         <a href="/highlights">All highlights</a>
       </section>
     {/if}
@@ -714,6 +760,37 @@
   .state p {
     margin: 0;
     color: var(--color-text-secondary);
+  }
+
+  /* Quiet: another hand is offered, not urged. The primary button belongs to
+     the card you're reading, not to going around again. */
+  .more {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    width: fit-content;
+    min-height: 44px;
+    margin-top: 0.5rem;
+    padding: 0.5rem 1.1rem;
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    background: none;
+    color: var(--color-text);
+    font: inherit;
+    font-weight: var(--weight-medium);
+    cursor: pointer;
+    transition:
+      color 0.15s ease,
+      border-color 0.15s ease;
+  }
+
+  .more:hover {
+    color: var(--color-primary);
+    border-color: var(--color-primary);
+  }
+
+  .more-note {
+    font-size: var(--text-sm);
   }
 
   .state a {

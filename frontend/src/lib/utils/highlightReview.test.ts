@@ -3,6 +3,7 @@ import type { Highlight } from '$lib/types';
 import {
   buildHighlightDeck,
   deckUntouched,
+  describeHighlightSources,
   highlightDeckStatus,
   shouldRedealAfterImport,
   startOfLocalDay,
@@ -110,31 +111,20 @@ describe('highlightDeckStatus', () => {
 
 describe('shouldRedealAfterImport', () => {
   it('redeals when the open-time poll imported into an untouched deck', () => {
-    expect(
-      shouldRedealAfterImport({ imported: 2 }, { index: 0, reviewed: 0, interacted: false })
-    ).toBe(true);
+    expect(shouldRedealAfterImport({ imported: 2 }, { index: 0, interacted: false })).toBe(true);
   });
 
   it("doesn't redeal when the poll didn't run or brought nothing new", () => {
-    expect(shouldRedealAfterImport(null, { index: 0, reviewed: 0, interacted: false })).toBe(false);
-    expect(
-      shouldRedealAfterImport({ imported: 0 }, { index: 0, reviewed: 0, interacted: false })
-    ).toBe(false);
+    expect(shouldRedealAfterImport(null, { index: 0, interacted: false })).toBe(false);
+    expect(shouldRedealAfterImport({ imported: 0 }, { index: 0, interacted: false })).toBe(false);
   });
 
-  it('leaves a session in progress alone — the dealt deck is fixed', () => {
-    expect(
-      shouldRedealAfterImport({ imported: 2 }, { index: 1, reviewed: 1, interacted: false })
-    ).toBe(false);
-    expect(
-      shouldRedealAfterImport({ imported: 2 }, { index: 0, reviewed: 3, interacted: false })
-    ).toBe(false);
+  it('leaves a hand in progress alone — the dealt deck is fixed', () => {
+    expect(shouldRedealAfterImport({ imported: 2 }, { index: 1, interacted: false })).toBe(false);
   });
 
   it('does not redeal after a removal while the import is still in flight', () => {
-    expect(
-      shouldRedealAfterImport({ imported: 2 }, { index: 0, reviewed: 0, interacted: true })
-    ).toBe(false);
+    expect(shouldRedealAfterImport({ imported: 2 }, { index: 0, interacted: true })).toBe(false);
   });
 });
 
@@ -172,11 +162,63 @@ describe('summarizeHighlightDeck', () => {
 });
 
 describe('deckUntouched', () => {
-  it('is true only before the reader has done anything with the deck', () => {
-    expect(deckUntouched({ index: 0, reviewed: 0, interacted: false })).toBe(true);
-    expect(deckUntouched({ index: 1, reviewed: 0, interacted: false })).toBe(false);
-    expect(deckUntouched({ index: 0, reviewed: 1, interacted: false })).toBe(false);
+  it('is true only before the reader has done anything with the hand', () => {
+    expect(deckUntouched({ index: 0, interacted: false })).toBe(true);
+    expect(deckUntouched({ index: 1, interacted: false })).toBe(false);
     // Opening the article or the note editor counts, even with no card advanced.
-    expect(deckUntouched({ index: 0, reviewed: 0, interacted: true })).toBe(false);
+    expect(deckUntouched({ index: 0, interacted: true })).toBe(false);
+  });
+});
+
+describe('describeHighlightSources', () => {
+  it("names the articles, and only counts what it can't fit", () => {
+    expect(describeHighlightSources([])).toBe('');
+    expect(describeHighlightSources(['One Essay'])).toBe('One Essay');
+    expect(describeHighlightSources(['One Essay', 'Two Essay'])).toBe('One Essay and Two Essay');
+    // Exactly one over the cap is named rather than counted: "and 1 more" costs
+    // the same room as the title it hides.
+    expect(describeHighlightSources(['A', 'B', 'C'])).toBe('A, B and C');
+    expect(describeHighlightSources(['A', 'B', 'C', 'D'])).toBe('A, B and 2 more');
+    expect(describeHighlightSources(['A', 'B', 'C', 'D'], 3)).toBe('A, B, C and D');
+  });
+});
+
+describe("reviewing more than the day's portion", () => {
+  it('deals nothing once everything eligible was reviewed today', () => {
+    const pool = ['a', 'b'].map((id) =>
+      entry(id, { lastReviewedAt: startOfLocalDay(NOW) + 60_000 })
+    );
+    expect(buildHighlightDeck(pool, 5, NOW).cards).toHaveLength(0);
+    expect(summarizeHighlightDeck(pool, 5, NOW).status).toBe('completed');
+  });
+
+  it('lifts the daily filter when the reader asks to keep going', () => {
+    const pool = ['a', 'b'].map((id) =>
+      entry(id, { lastReviewedAt: startOfLocalDay(NOW) + 60_000 })
+    );
+    const encore = buildHighlightDeck(pool, 5, NOW, { includeReviewedToday: true });
+    expect(ids(encore.cards).sort()).toEqual(['a', 'b']);
+    expect(summarizeHighlightDeck(pool, 5, NOW, { includeReviewedToday: true }).dueCount).toBe(2);
+  });
+
+  it('brings back what was seen earliest, not what was seen last', () => {
+    const dayStart = startOfLocalDay(NOW);
+    const pool = [
+      entry('late', { lastReviewedAt: dayStart + 5 * 60 * 60 * 1000 }),
+      entry('early', { lastReviewedAt: dayStart + 60_000 }),
+    ];
+    const encore = buildHighlightDeck(pool, 1, NOW, { includeReviewedToday: true });
+    expect(ids(encore.cards)).toEqual(['early']);
+  });
+
+  it('still prefers what is genuinely due over a repeat', () => {
+    const pool = [
+      entry('fresh-eyes'),
+      entry('seen', { lastReviewedAt: startOfLocalDay(NOW) + 60_000 }),
+    ];
+    // Never-reviewed sorts ahead of everything, encore or not.
+    expect(ids(buildHighlightDeck(pool, 1, NOW, { includeReviewedToday: true }).cards)).toEqual([
+      'fresh-eyes',
+    ]);
   });
 });

@@ -25,7 +25,17 @@ had; it still hides itself once the deck is done.
 
 All four entry points read one derived summary (`highlightReviewStore`, over
 `summarizeHighlightDeck`) rather than each walking the corpus, so they can't disagree about the
-number and the scan is paid once.
+number and the scan is paid once. The Home panel additionally reads the ranked deck
+(`highlightReviewStore.cards`, a separate `$derived` so the nav badge never pays to rank) and names
+_who_ it draws from: a person is a better reason to open the deck than a description of how it works.
+
+Bylines are missing more often than not — RSS rarely carries one, and a Margin import never does —
+so `resolveHighlightSource` returns `author` unguessed (null) and the panel falls back to the domain,
+then the title, rather than letting a source drop out of the sentence. A document carries only its
+author's DID, and resolving that to a profile is an async fetch, so the lookups map DID to the name
+the reader subscribed under: same name, already on the device.
+`describeHighlightSources` caps the list at two names plus a count, naming a third rather than
+writing "and 1 more" — that costs the same room as the name it hides.
 
 **The deck is a page, so it wears the app's chrome.** On mobile it mounts `MobileBottomBar` and its
 switcher/notification sheets exactly as `/highlights` does — in the installed PWA there is no
@@ -69,6 +79,31 @@ them: you can see what "5" means. `/settings` keeps no pointer to them — its H
 now only the statement of where a highlight lives, which is the app's one place saying it. The Home
 panel's own deck-size select went with them; the count in its button already says how big the deck
 is.
+
+**"Review more" is offered wherever the deck runs out**, in two shapes, both as a secondary button:
+another hand is offered, never urged.
+
+While highlights are still due today, it reads "Review N more" and deals from what's left. That one
+costs nothing to make honest — the hand just finished stamped its own cards, so they're ineligible
+and the next hand is genuinely the next ones due.
+
+Once the day's portion is spent, "more" can only mean going around again, so `DeckOptions
+.includeReviewedToday` lifts the daily filter for that one deal. The button drops its count (a count
+would imply new material) and says what it does: "This brings back the ones you saw earliest today."
+The existing rank order needs no special case — least-recently-reviewed-first means an encore starts
+with the morning's cards, and anything never reviewed still sorts ahead of every repeat. The lifted
+filter is sticky for the visit (`encoreMode`), so a settings-driven redeal can't quietly drop an
+encore hand back to the empty daily pool. Nothing but the button ever sets it: the daily filter is
+what keeps the deck from nagging, and only the reader may waive it.
+
+That exhausted state is also now a state of its own — "That's today's review", reached by coming
+back after finishing rather than by finishing here. It used to share "Nothing to review right now"
+with the genuinely-empty case, which read as "you have no highlights" to a reader who has plenty.
+
+The session tally (`reviewed`) spans every hand, so a reader who takes three says "13 highlights
+revisited" rather than restarting the count. `index` and `interacted` are per hand, which is what
+`deckUntouched` reads — a fresh hand at index 0 is untouched no matter what came before it, so
+resizing the deck there redeals rather than silently waiting.
 
 Changing either mid-session is governed by `deckUntouched`: an untouched deck redeals immediately —
 resizing a deck and watching nothing happen would make the control look broken — and a deck the

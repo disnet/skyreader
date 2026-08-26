@@ -69,21 +69,39 @@ function deckSize(count: number): number {
   return Number.isFinite(count) ? Math.max(1, Math.floor(count)) : 1;
 }
 
+export interface DeckOptions {
+  /**
+   * Deal past the day's portion, from highlights already reviewed today.
+   *
+   * This is only ever the reader asking to keep going after the deck ran out
+   * ("Review more"), never something the app does on its own — the daily filter
+   * is what stops the deck nagging. Ranking is unchanged, so an encore brings
+   * back what was seen earliest, not what was seen last.
+   */
+  includeReviewedToday?: boolean;
+}
+
 /**
  * The pool today's deck deals from: not already reviewed today, and not created
  * in the last 24 h. The freshness filter RELAXES when it would empty an
  * otherwise non-empty pool — a reader whose only highlights are from this
  * morning still gets a deck rather than a confusing "nothing to review."
  */
-function eligiblePool(entries: HighlightEntry[], now: Date): HighlightEntry[] {
+function eligiblePool(
+  entries: HighlightEntry[],
+  now: Date,
+  options: DeckOptions = {}
+): HighlightEntry[] {
   const dayStart = startOfLocalDay(now);
   const nowMs = now.getTime();
 
-  const unreviewedToday = entries.filter((entry) => !reviewedToday(entry.highlight, dayStart));
-  const seasoned = unreviewedToday.filter(
+  const due = options.includeReviewedToday
+    ? entries
+    : entries.filter((entry) => !reviewedToday(entry.highlight, dayStart));
+  const seasoned = due.filter(
     (entry) => nowMs - entry.highlight.createdAt >= HIGHLIGHT_REVIEW_FRESHNESS_MS
   );
-  return seasoned.length > 0 ? seasoned : unreviewedToday;
+  return seasoned.length > 0 ? seasoned : due;
 }
 
 export interface HighlightDeckSummary {
@@ -101,9 +119,10 @@ export interface HighlightDeckSummary {
 export function summarizeHighlightDeck(
   entries: HighlightEntry[],
   count: number,
-  now: Date = new Date()
+  now: Date = new Date(),
+  options: DeckOptions = {}
 ): HighlightDeckSummary {
-  const pool = eligiblePool(entries, now);
+  const pool = eligiblePool(entries, now, options);
   if (pool.length === 0) {
     return { status: entries.length > 0 ? 'completed' : 'empty', dueCount: 0, poolSize: 0 };
   }
@@ -121,10 +140,11 @@ export function summarizeHighlightDeck(
 export function buildHighlightDeck(
   entries: HighlightEntry[],
   count: number,
-  now: Date = new Date()
+  now: Date = new Date(),
+  options: DeckOptions = {}
 ): HighlightDeck {
   const dateKey = localDateKey(now);
-  const pool = eligiblePool(entries, now);
+  const pool = eligiblePool(entries, now, options);
 
   if (pool.length === 0) {
     return {
@@ -163,18 +183,34 @@ export function shouldRedealAfterImport(
 
 export interface DeckProgress {
   index: number;
-  reviewed: number;
   interacted: boolean;
 }
 
 /**
  * A deck the reader hasn't started yet is free to redeal — nothing is pulled out
- * from under them. Once a card has been reviewed, opened or annotated, the deck
+ * from under them. Once a card has been advanced, opened or annotated, the deck
  * they were dealt is the deck they keep, and a change (a Margin import, a new
- * deck size) applies to the next session instead.
+ * deck size) applies to the next hand instead.
+ *
+ * Per hand, not per session: a reader who asks for another hand after finishing
+ * one is back at an untouched deck, whatever they've already reviewed today.
  */
 export function deckUntouched(progress: DeckProgress): boolean {
-  return !progress.interacted && progress.index === 0 && progress.reviewed === 0;
+  return !progress.interacted && progress.index === 0;
+}
+
+/**
+ * Name the articles a deck draws from: "A", "A and B", "A, B and C", then
+ * "A, B and 3 more". The overflow only kicks in past `max + 1`, because "and 1
+ * more" costs the same room as the title it's hiding.
+ */
+export function describeHighlightSources(titles: string[], max = 2): string {
+  if (titles.length === 0) return '';
+  if (titles.length === 1) return titles[0];
+  if (titles.length <= max + 1) {
+    return `${titles.slice(0, -1).join(', ')} and ${titles[titles.length - 1]}`;
+  }
+  return `${titles.slice(0, max).join(', ')} and ${titles.length - max} more`;
 }
 
 /** Cheap status probe for entry points that only need "is there a deck?". */

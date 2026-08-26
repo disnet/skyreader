@@ -1,4 +1,11 @@
-import type { Article, Highlight, ItemLabelType, SavedItem, SocialDocument } from '$lib/types';
+import type {
+  Article,
+  Highlight,
+  ItemLabelType,
+  SavedItem,
+  SocialDocument,
+  Subscription,
+} from '$lib/types';
 import type { FeedDisplayItem } from '$lib/stores/feedView.svelte';
 import { decodeEntities } from '$lib/utils/entities';
 
@@ -13,10 +20,16 @@ export interface HighlightSourceLookups {
   articlesByGuid: Map<string, Article>;
   documentsByUri: Map<string, SocialDocument>;
   savedByKey: Map<string, SavedItem>;
+  /** DID → the name the reader subscribed under. A document carries only its
+      author's DID, and resolving that to a profile is an async fetch; the
+      subscription is the same name, already on the device. */
+  authorsByDid: Map<string, string>;
 }
 
 export interface HighlightSource {
   title: string;
+  /** Who wrote it, when anything on the device says so. */
+  author: string | null;
   url: string | null;
   domain: string | null;
   /** The item to open in the in-app reader; null when nothing local backs it. */
@@ -26,17 +39,24 @@ export interface HighlightSource {
 export function buildHighlightSourceLookups(
   articles: Article[],
   documents: SocialDocument[],
-  saves: SavedItem[]
+  saves: SavedItem[],
+  subscriptions: Subscription[] = []
 ): HighlightSourceLookups {
   const savedByKey = new Map<string, SavedItem>();
   for (const save of saves) {
     if (save.itemGuid) savedByKey.set(save.itemGuid, save);
     if (save.uri) savedByKey.set(save.uri, save);
   }
+  const authorsByDid = new Map<string, string>();
+  for (const sub of subscriptions) {
+    const name = sub.customTitle || sub.title;
+    if (sub.subjectDid && name) authorsByDid.set(sub.subjectDid, name);
+  }
   return {
     articlesByGuid: new Map(articles.map((a) => [a.guid, a])),
     documentsByUri: new Map(documents.map((d) => [d.recordUri, d])),
     savedByKey,
+    authorsByDid,
   };
 }
 
@@ -62,6 +82,7 @@ export function resolveHighlightSource(
   highlight?: Pick<Highlight, 'sourceUrl' | 'sourceTitle'>
 ): HighlightSource {
   let title = '';
+  let author: string | null = null;
   let url: string | null = null;
   let displayItem: FeedDisplayItem | null = null;
 
@@ -69,6 +90,7 @@ export function resolveHighlightSource(
     const article = lookups.articlesByGuid.get(itemKey);
     if (article) {
       title = article.title;
+      author = article.author ?? null;
       url = article.url;
       displayItem = { type: 'article', item: article, key: article.guid };
     }
@@ -76,6 +98,7 @@ export function resolveHighlightSource(
     const document = lookups.documentsByUri.get(itemKey);
     if (document) {
       title = document.title;
+      author = lookups.authorsByDid.get(document.authorDid) ?? null;
       url = document.canonicalUrl ?? null;
       displayItem = { type: 'document', item: document, key: document.recordUri };
     }
@@ -86,6 +109,7 @@ export function resolveHighlightSource(
     const save = lookups.savedByKey.get(itemKey);
     if (save) {
       title = title || save.title || '';
+      author = author || save.author || null;
       url = url || save.url || null;
       displayItem = { type: 'saved', item: save, key: save.itemGuid || save.uri };
     }
@@ -98,5 +122,11 @@ export function resolveHighlightSource(
   if (!url && /^https?:\/\//i.test(itemKey)) url = itemKey;
 
   const resolvedTitle = decodeEntities(title) || domainFromUrl(url) || 'Untitled';
-  return { title: resolvedTitle, url, domain: domainFromUrl(url), displayItem };
+  return {
+    title: resolvedTitle,
+    author: author ? decodeEntities(author) : null,
+    url,
+    domain: domainFromUrl(url),
+    displayItem,
+  };
 }
