@@ -111,6 +111,7 @@ export interface SeedSavedArticleOpts {
   wordCount?: number;
   author?: string;
   description?: string;
+  savedAt?: number;
 }
 
 export async function seedSavedArticle(
@@ -119,7 +120,7 @@ export async function seedSavedArticle(
 ): Promise<string> {
   const rkey = opts.rkey || generateTid();
   const recordUri = `at://${user.did}/app.skyreader.feed.saved/${rkey}`;
-  const nowMs = Date.now();
+  const nowMs = opts.savedAt ?? Date.now();
   const source = opts.source || 'url';
   const domain = sqlNullableString(opts.domain);
   const contentType = opts.contentType || 'webpage';
