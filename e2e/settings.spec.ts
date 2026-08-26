@@ -59,6 +59,23 @@ test.describe('Settings', () => {
     await expect(toggle).not.toBeChecked();
   });
 
+  test('migrates the former implicit community highlights default to on', async ({
+    authedPage,
+  }) => {
+    await authedPage.goto('/settings');
+    await authedPage.evaluate(() => {
+      localStorage.setItem(
+        'skyreader-preferences',
+        JSON.stringify({ communityHighlights: false, articleFont: 'serif' })
+      );
+    });
+    await authedPage.reload();
+
+    await expect(
+      authedPage.getByRole('checkbox', { name: 'Show community highlights' })
+    ).toBeChecked();
+  });
+
   test('logout shows confirm dialog', async ({ authedPage }) => {
     await authedPage.goto('/settings');
 

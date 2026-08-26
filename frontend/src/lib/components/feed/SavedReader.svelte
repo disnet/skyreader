@@ -750,7 +750,6 @@
     contentEl: () => readerBodyEl,
     itemUrl: () => itemUrl,
     enabled: () => readerItem.type === 'saved' && preferences.communityHighlights,
-    load: () => readerItem.type === 'saved',
   });
 
   // Set up observer when the reader body is mounted — and re-run it whenever the

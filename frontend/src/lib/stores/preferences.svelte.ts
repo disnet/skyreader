@@ -75,6 +75,9 @@ interface PreferencesState {
   dailyMagazineMinutes: DailyMagazineMinutes;
   dailyMagazineOrder: DailyMagazineOrder;
   communityHighlights: boolean;
+  // Distinguishes an explicit opt-out from the former default-off value that
+  // was written whenever any preference was saved.
+  communityHighlightsConfigured: boolean;
 }
 
 const STORAGE_KEY = 'skyreader-preferences';
@@ -100,6 +103,7 @@ function createPreferencesStore() {
     dailyMagazineMinutes: 20,
     dailyMagazineOrder: 'shuffle',
     communityHighlights: true,
+    communityHighlightsConfigured: false,
   });
 
   // Restore from localStorage on init
@@ -154,8 +158,13 @@ function createPreferencesStore() {
         if (DAILY_MAGAZINE_ORDER_OPTIONS.some((o) => o.value === parsed.dailyMagazineOrder)) {
           state.dailyMagazineOrder = parsed.dailyMagazineOrder;
         }
-        if (typeof parsed.communityHighlights === 'boolean')
+        if (
+          parsed.communityHighlightsConfigured === true &&
+          typeof parsed.communityHighlights === 'boolean'
+        ) {
           state.communityHighlights = parsed.communityHighlights;
+          state.communityHighlightsConfigured = true;
+        }
       } catch {
         localStorage.removeItem(STORAGE_KEY);
       }
@@ -268,6 +277,7 @@ function createPreferencesStore() {
   }
   function setCommunityHighlights(enabled: boolean) {
     state.communityHighlights = enabled;
+    state.communityHighlightsConfigured = true;
     save();
   }
 
