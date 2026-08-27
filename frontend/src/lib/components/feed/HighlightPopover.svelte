@@ -19,6 +19,8 @@
     onHighlightToMargin?: (note?: string) => void;
     onRemove?: () => void;
     onAdjust?: () => void;
+    /** Leave adjust mode with the highlight's original bounds intact. */
+    onCancelAdjust?: () => void;
     onSaveToMargin?: () => void;
     onSaveNote?: (note: string) => void;
     /** Present while a share draft is open for this article: add the selected
@@ -41,6 +43,7 @@
     onHighlightToMargin,
     onRemove,
     onAdjust,
+    onCancelAdjust,
     onSaveToMargin,
     onSaveNote,
     onQuoteToShare,
@@ -177,7 +180,7 @@
         if (e.key !== 'Escape') e.stopPropagation();
       }}></textarea>
     <div class="note-actions">
-      {#if mode === 'create' || mode === 'adjust'}
+      {#if mode === 'create'}
         <button
           class="note-btn"
           onclick={() => {
@@ -185,8 +188,8 @@
             onClose();
           }}
         >
-          <Icon name={mode === 'adjust' ? 'check' : 'highlighter'} size={16} />
-          {mode === 'adjust' ? 'Save adjustment' : 'Save private'}
+          <Icon name="highlighter" size={16} />
+          Save private
         </button>
         {#if onHighlightToMargin}
           <button
@@ -213,11 +216,38 @@
         </button>
       {/if}
     </div>
-  {:else if mode === 'create' || mode === 'adjust'}
+  {:else if mode === 'adjust'}
+    <!-- Adjust re-bounds an existing highlight, so the toolbar is just confirm /
+         cancel: its note, Margin link and review state are already set and ride
+         along untouched. Offering "add a note" or "save to Margin" here would
+         promise an edit the adjustment write doesn't carry. -->
     <button
       class="popover-btn icon-only highlight"
-      use:tooltip={mode === 'adjust' ? 'Save adjustment' : 'Save private highlight'}
-      aria-label={mode === 'adjust' ? 'Save adjustment' : 'Save private highlight'}
+      use:tooltip={'Save adjustment'}
+      aria-label="Save adjustment"
+      onclick={() => {
+        onHighlight?.();
+        onClose();
+      }}
+    >
+      <Icon name="check" size={20} />
+    </button>
+    <button
+      class="popover-btn icon-only remove"
+      use:tooltip={'Cancel adjustment'}
+      aria-label="Cancel adjustment"
+      onclick={() => {
+        onCancelAdjust?.();
+        onClose();
+      }}
+    >
+      <Icon name="x" size={20} />
+    </button>
+  {:else if mode === 'create'}
+    <button
+      class="popover-btn icon-only highlight"
+      use:tooltip={'Save private highlight'}
+      aria-label="Save private highlight"
       onclick={() => {
         onHighlight?.();
         onClose();

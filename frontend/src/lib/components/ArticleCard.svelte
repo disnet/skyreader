@@ -66,6 +66,7 @@
   import { useLinkInterception } from '$lib/hooks/useLinkInterception.svelte';
   import { useHighlights } from '$lib/hooks/useHighlights.svelte';
   import HighlightPopover from '$lib/components/feed/HighlightPopover.svelte';
+  import HighlightAdjustBar from '$lib/components/feed/HighlightAdjustBar.svelte';
   import NotePeek from '$lib/components/feed/NotePeek.svelte';
   import type { ItemTags, ItemLabelType } from '$lib/types';
   import { tick } from 'svelte';
@@ -1034,6 +1035,7 @@
       onHighlightToMargin={highlights.createHighlightFromPopoverToMargin}
       onRemove={highlights.removeHighlightFromPopover}
       onAdjust={highlights.adjustHighlightFromPopover}
+      onCancelAdjust={highlights.cancelAdjust}
       onSaveToMargin={highlights.savePopoverHighlightToMargin}
       onSaveNote={highlights.saveNoteFromPopover}
       onQuoteToShare={composerOpenHere ? quoteSelectionToShare : undefined}
@@ -1041,6 +1043,10 @@
       marginSaved={highlights.popoverHighlightSavedToMargin}
       onClose={highlights.closePopover}
     />
+  {/if}
+
+  {#if highlights.adjusting && !highlights.popoverState}
+    <HighlightAdjustBar onCancel={highlights.cancelAdjust} />
   {/if}
 
   {#if highlights.notePeek}

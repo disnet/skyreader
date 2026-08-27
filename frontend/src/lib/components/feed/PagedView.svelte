@@ -6,6 +6,7 @@
     firstVisibleTextPoint,
     lastVisibleTextPoint,
     selectionFocusRect,
+    settledViewportRect,
   } from '$lib/utils/paginatedSelection';
 
   export interface PagedController {
@@ -50,20 +51,22 @@
     getViewportEl: () => viewportEl,
     getContentEl: () => contentEl,
     deps: () => deps?.(),
-    onPageChange: (page, total) => {
-      bridgeSelection(page - lastCommittedPage);
-      lastCommittedPage = page;
-      onpagechange?.(page, total);
-    },
+    onPageChange: (page, total) => onpagechange?.(page, total),
+    // Only a real turn bridges the selection; a re-measure (resize, images, the
+    // highlight marks being wrapped) must not extend whatever the reader has
+    // selected, nor cancel a pending edge dwell.
+    onTurn: (direction) => bridgeSelection(direction),
   });
 
-  let lastCommittedPage = 0;
-  let programmaticExtend = false;
   let dwellTimer: ReturnType<typeof setTimeout> | undefined;
   let edgeArmed = true;
-  let lastFocusSignature = '';
+  let lastFocusNode: Node | null = null;
+  let lastFocusOffset = -1;
   let lastFocusMoveAt = 0;
   let lastAutoTurnAt = 0;
+  // Where the bridge just parked the focus, so the `selectionchange` our own
+  // extend fires isn't read back as the reader dragging a handle.
+  let bridgedFocus: { node: Node; offset: number } | null = null;
 
   function selectionInContent(): Selection | null {
     const selection = window.getSelection();
@@ -76,43 +79,89 @@
     dwellTimer = undefined;
   }
 
+  /**
+   * The page window as it will be once a turn's transform transition settles,
+   * in the current (possibly mid-animation) rect frame. Measuring the live
+   * viewport instead would describe a page that is still sliding: one frame
+   * into a 340ms turn the old page is barely 5% gone, so the bridge would
+   * decide the focus is still on screen and never fire.
+   */
+  function settledViewport(): DOMRect | null {
+    if (!viewportEl || !contentEl) return null;
+    return settledViewportRect(
+      viewportEl.getBoundingClientRect(),
+      contentEl.getBoundingClientRect(),
+      pagination.currentPage,
+      pagination.pageStride
+    );
+  }
+
   function bridgeSelection(direction: number) {
     clearDwell();
     if (!direction) return;
     requestAnimationFrame(() => {
       const selection = selectionInContent();
-      if (!selection || !viewportEl || !contentEl || !selection.extend) return;
-      const viewport = viewportEl.getBoundingClientRect();
+      const viewport = settledViewport();
+      if (!selection || !viewport || !contentEl || !selection.extend) return;
       const focus = selectionFocusRect(selection);
+      // Focus already lands on the page being turned to (e.g. a two-column page
+      // stepped back by one): nothing to bridge.
       if (focus && focus.right > viewport.left && focus.left < viewport.right) return;
       const point =
         direction > 0
           ? firstVisibleTextPoint(contentEl, viewport)
           : lastVisibleTextPoint(contentEl, viewport);
       if (!point) return;
-      programmaticExtend = true;
-      selection.extend(point.node, point.offset);
-      requestAnimationFrame(() => (programmaticExtend = false));
+      // Recorded before the call: a browser that dispatches `selectionchange`
+      // synchronously would otherwise see the extend as reader movement.
+      bridgedFocus = { node: point.node, offset: point.offset };
+      try {
+        selection.extend(point.node, point.offset);
+      } catch {
+        // The point can go stale if the marks are re-wrapped between the walk
+        // and the call. The turn still happened; only the extend is lost.
+        bridgedFocus = null;
+      }
     });
   }
 
   function handleSelectionChange() {
-    if (programmaticExtend) return;
+    const bridged = bridgedFocus;
+    bridgedFocus = null;
     const selection = selectionInContent();
     if (!selection || !viewportEl) {
       clearDwell();
       edgeArmed = true;
-      lastFocusSignature = '';
+      lastFocusNode = null;
+      lastFocusOffset = -1;
       return;
     }
-    const signature = `${selection.focusNode ? Array.prototype.indexOf.call(selection.focusNode.parentNode?.childNodes ?? [], selection.focusNode) : -1}:${selection.focusOffset}`;
-    if (signature !== lastFocusSignature) {
-      lastFocusSignature = signature;
+    if (
+      bridged &&
+      selection.focusNode === bridged.node &&
+      selection.focusOffset === bridged.offset
+    ) {
+      // Our own bridge put the focus here. Adopt it as the baseline without
+      // counting it as reader movement, and make the focus leave the edge zone
+      // before another auto-turn can arm (otherwise the leading-edge landing
+      // spot would immediately dwell the page back).
+      lastFocusNode = selection.focusNode;
+      lastFocusOffset = selection.focusOffset;
+      clearDwell();
+      edgeArmed = false;
+      return;
+    }
+    // Node identity, not a positional signature: two text nodes under different
+    // parents share an index, and a collision would look like "the focus didn't
+    // move" and suppress the dwell for a focus that really did.
+    if (selection.focusNode !== lastFocusNode || selection.focusOffset !== lastFocusOffset) {
+      lastFocusNode = selection.focusNode;
+      lastFocusOffset = selection.focusOffset;
       lastFocusMoveAt = performance.now();
     }
     const rect = selectionFocusRect(selection);
-    const viewport = viewportEl.getBoundingClientRect();
-    if (!rect) return;
+    const viewport = settledViewport();
+    if (!rect || !viewport) return;
     const edge = rect.right >= viewport.right - 32 ? 1 : rect.left <= viewport.left + 32 ? -1 : 0;
     if (!edge) {
       clearDwell();

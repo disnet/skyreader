@@ -28,6 +28,40 @@ function characterRect(node: Text, offset: number, measure: RangeMeasurer): DOMR
   return measure(range);
 }
 
+function nodeRect(node: Text, measure: RangeMeasurer): DOMRect {
+  const range = document.createRange();
+  range.selectNodeContents(node);
+  return measure(range);
+}
+
+/**
+ * The viewport window the reader ends up looking at once a page turn's transform
+ * transition has settled — expressed in the *current* client-rect frame, so it
+ * can be compared against rects measured right now.
+ *
+ * A committed turn animates `.paged-content` for ~340ms, so every live rect
+ * (the content's and every character's) is mid-flight. Rather than waiting the
+ * animation out, we ask where the viewport will sit *relative to the content*:
+ * at rest the content's origin is the viewport's left edge minus the page
+ * offset, so the settled window starts at `content.left + page * pageStride` in
+ * whatever frame the content is currently drawn in. At rest this is exactly the
+ * live viewport rect.
+ */
+export function settledViewportRect(
+  viewport: DOMRect,
+  content: DOMRect,
+  page: number,
+  pageStride: number
+): DOMRect {
+  if (!(pageStride > 0)) return viewport;
+  return new DOMRect(
+    content.left + page * pageStride,
+    viewport.top,
+    viewport.width,
+    viewport.height
+  );
+}
+
 export function selectionFocusRect(
   selection: Selection,
   measure: RangeMeasurer = defaultMeasure
@@ -59,20 +93,25 @@ function visibleTextPoint(
   const nodes = textNodes(root);
   if (fromEnd) nodes.reverse();
   for (const node of nodes) {
+    // Reject whole nodes with a single measurement first. In a paginated flow
+    // all but a handful of the article's text nodes sit pages away, and binary
+    // searching each of them costs a forced layout per probe — this runs on the
+    // page-turn frame, so the scan has to stay cheap.
+    if (!intersects(nodeRect(node, measure), viewport)) continue;
     let low = 0;
     let high = node.length - 1;
     let found = -1;
     while (low <= high) {
       const mid = Math.floor((low + high) / 2);
-      const visible = intersects(characterRect(node, mid, measure), viewport);
-      if (visible) {
+      const rect = characterRect(node, mid, measure);
+      if (intersects(rect, viewport)) {
         found = mid;
         if (fromEnd) low = mid + 1;
         else high = mid - 1;
+      } else if (rect.right <= viewport.left || rect.bottom <= viewport.top) {
+        low = mid + 1;
       } else {
-        const rect = characterRect(node, mid, measure);
-        if (rect.right <= viewport.left || rect.bottom <= viewport.top) low = mid + 1;
-        else high = mid - 1;
+        high = mid - 1;
       }
     }
     if (found >= 0) return { node, offset: fromEnd ? found + 1 : found };

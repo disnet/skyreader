@@ -76,6 +76,7 @@ export function useHighlights(params: HighlightParams) {
   let clickHandler: ((e: MouseEvent) => void) | null = null;
   let touchendHandler: ((e: TouchEvent) => void) | null = null;
   let selectionchangeHandler: (() => void) | null = null;
+  let keydownHandler: ((e: KeyboardEvent) => void) | null = null;
   let mouseoverHandler: ((e: MouseEvent) => void) | null = null;
   let mouseoutHandler: ((e: MouseEvent) => void) | null = null;
   let appliedMarks: HTMLElement[] = [];
@@ -91,7 +92,10 @@ export function useHighlights(params: HighlightParams) {
   let lastTapY = 0;
   let sawTouch = false;
   let pendingTouchSelector: TextQuoteSelector | null = null;
-  let adjustingHighlightId: string | null = null;
+  // Set while the reader is re-bounding an existing highlight. Reactive so the
+  // host can show (and offer a way out of) that mode — an invisible mode with no
+  // exit would quietly re-bind whatever they selected next.
+  let adjustingHighlightId = $state<string | null>(null);
 
   function applyHighlights() {
     clearMarks();
@@ -223,13 +227,6 @@ export function useHighlights(params: HighlightParams) {
     if (e.changedTouches.length !== 1) return;
     sawTouch = true;
 
-    // Selection-handle drags can end close to the previous tap. Never let that
-    // gesture accidentally toggle an entire paragraph.
-    if (window.getSelection() && !window.getSelection()!.isCollapsed) {
-      lastTapTime = 0;
-      return;
-    }
-
     const touch = e.changedTouches[0];
     const now = Date.now();
     const dt = now - lastTapTime;
@@ -251,6 +248,18 @@ export function useHighlights(params: HighlightParams) {
       return;
     }
 
+    // A touch that ends with text still selected belongs to the selection
+    // gesture (a handle drag, or the tap that will dismiss it), never to the
+    // first half of a double tap — don't seed a pair it could complete. This
+    // runs *after* the double-tap branch on purpose: the second tap of a pair
+    // also has a live word selection, and bailing before that branch would kill
+    // double-tap-to-highlight-a-paragraph outright.
+    const liveSelection = window.getSelection();
+    if (liveSelection && !liveSelection.isCollapsed) {
+      lastTapTime = 0;
+      return;
+    }
+
     // Otherwise remember the tap so the next one can complete a double-tap.
     // Text selections are tracked via `selectionchange`, not here.
     lastTapTime = now;
@@ -265,7 +274,21 @@ export function useHighlights(params: HighlightParams) {
    * user clears it (selection collapses).
    */
   function handleSelectionChange() {
-    if (!sawTouch || !params.enabled()) return;
+    if (!params.enabled()) return;
+
+    if (!sawTouch) {
+      // Pointer devices never commit on collapse — the popover's "Save
+      // adjustment" does. So a collapsed selection while adjusting means the
+      // reader clicked away and changed their mind: leave adjust mode instead
+      // of letting the flag latch and re-bind the *next* unrelated selection.
+      // While the adjust popover is open the collapse is usually its own button
+      // taking focus, so that case is left to the popover's own actions.
+      const live = window.getSelection();
+      if (adjustingHighlightId && popoverState?.mode !== 'adjust' && (!live || live.isCollapsed)) {
+        cancelAdjust();
+      }
+      return;
+    }
 
     const selection = window.getSelection();
     if (selection && !selection.isCollapsed && selection.rangeCount) {
@@ -284,7 +307,13 @@ export function useHighlights(params: HighlightParams) {
     }
 
     // Selection collapsed: realize the pending highlight, if any.
-    if (!pendingTouchSelector) return;
+    if (!pendingTouchSelector) {
+      // Nothing to commit (the selection never got long enough, or left the
+      // article). Leave adjust mode rather than letting it wait for a later,
+      // unrelated selection to re-bind the highlight onto.
+      cancelAdjust();
+      return;
+    }
     const selector = pendingTouchSelector;
     pendingTouchSelector = null;
     if (adjustingHighlightId) {
@@ -396,6 +425,9 @@ export function useHighlights(params: HighlightParams) {
   function createHighlightFromPopover(note?: string, toMargin = false) {
     if (!popoverState?.pendingSelector) return;
 
+    // Adjust only ever moves the bounds: the popover hides the note / Margin /
+    // quote actions in that mode, so there is no `note` or `toMargin` here to
+    // silently drop. Everything else on the highlight is carried through.
     if (popoverState.mode === 'adjust' && popoverState.highlightId) {
       const highlightId = popoverState.highlightId;
       const selector = popoverState.pendingSelector;
@@ -433,10 +465,31 @@ export function useHighlights(params: HighlightParams) {
     if (!range) return;
     popoverState = null;
     adjustingHighlightId = highlightId;
+    // Seeds the touch commit-on-collapse path with the *current* bounds, so a
+    // reader who taps away without dragging anything writes nothing (the union
+    // mutation drops an identical selector).
     pendingTouchSelector = highlight.selector;
     const selection = window.getSelection();
     selection?.removeAllRanges();
     selection?.addRange(range);
+  }
+
+  /** Leave adjust mode with the highlight's bounds untouched. */
+  function cancelAdjust() {
+    if (!adjustingHighlightId) return;
+    adjustingHighlightId = null;
+    pendingTouchSelector = null;
+    if (popoverState?.mode === 'adjust') popoverState = null;
+    window.getSelection()?.removeAllRanges();
+  }
+
+  function handleKeydown(e: KeyboardEvent) {
+    // Escape is the universal way out of adjust mode; the popover handles its
+    // own Escape, so only the popover-less "drag the handles" state gets here.
+    if (e.key !== 'Escape' || !adjustingHighlightId || popoverState) return;
+    e.preventDefault();
+    e.stopPropagation();
+    cancelAdjust();
   }
 
   /** Create a highlight from the current selection and push it to Margin. */
@@ -475,7 +528,10 @@ export function useHighlights(params: HighlightParams) {
   }
 
   function closePopover() {
-    if (popoverState?.mode === 'adjust') adjustingHighlightId = null;
+    if (popoverState?.mode === 'adjust') {
+      adjustingHighlightId = null;
+      pendingTouchSelector = null;
+    }
     popoverState = null;
   }
 
@@ -618,6 +674,7 @@ export function useHighlights(params: HighlightParams) {
     clickHandler = handleClick;
     touchendHandler = handleTouchEnd;
     selectionchangeHandler = handleSelectionChange;
+    keydownHandler = handleKeydown;
     mouseoverHandler = handleMouseOver;
     mouseoutHandler = handleMouseOut;
 
@@ -633,6 +690,9 @@ export function useHighlights(params: HighlightParams) {
     el.addEventListener('touchend', touchendHandler, { passive: false });
     // Touch selections are realized into highlights when the user clears them.
     document.addEventListener('selectionchange', selectionchangeHandler);
+    // Escape leaves adjust mode (capture, so the reader's own Escape doesn't
+    // close out from under it).
+    document.addEventListener('keydown', keydownHandler, true);
 
     // Apply existing highlights
     applyHighlights();
@@ -649,6 +709,7 @@ export function useHighlights(params: HighlightParams) {
     }
     if (selectionchangeHandler)
       document.removeEventListener('selectionchange', selectionchangeHandler);
+    if (keydownHandler) document.removeEventListener('keydown', keydownHandler, true);
     clearMarks();
     currentEl = null;
     dblclickHandler = null;
@@ -656,6 +717,7 @@ export function useHighlights(params: HighlightParams) {
     clickHandler = null;
     touchendHandler = null;
     selectionchangeHandler = null;
+    keydownHandler = null;
     mouseoverHandler = null;
     mouseoutHandler = null;
     pendingTouchSelector = null;
@@ -685,6 +747,10 @@ export function useHighlights(params: HighlightParams) {
     saveNoteFromPopover,
     removeHighlightFromPopover,
     adjustHighlightFromPopover,
+    cancelAdjust,
+    get adjusting() {
+      return adjustingHighlightId !== null;
+    },
     closePopover,
     toggleParagraphHighlight,
     savePopoverHighlightToMargin,

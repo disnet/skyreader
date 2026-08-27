@@ -123,4 +123,31 @@ describe('selector mutation', () => {
     expect(result.highlights[0]).toEqual({ ...base[0], selector });
     expect(result.highlights[1]).toBe(base[1]);
   });
+
+  it('reports no change when the bounds are identical', () => {
+    // The touch adjust flow commits on selection collapse, so tapping away
+    // without dragging re-sends the highlight's own selector. That must not
+    // queue a write (and a Margin round-trip) for a no-op.
+    const base = [{ ...highlight('one', 'same quote'), note: 'kept' }];
+    const result = mutateHighlightUnion(base, {
+      type: 'selector',
+      highlightId: 'one',
+      selector: { type: 'TextQuoteSelector', exact: 'same quote' },
+    });
+
+    expect(result.changed).toBe(false);
+    expect(result.highlights).toBe(base);
+  });
+
+  it('treats a changed prefix as a re-bound even when the quote is the same', () => {
+    const base = [highlight('one', 'same quote')];
+    const result = mutateHighlightUnion(base, {
+      type: 'selector',
+      highlightId: 'one',
+      selector: { type: 'TextQuoteSelector', exact: 'same quote', suffix: ' and on' },
+    });
+
+    expect(result.changed).toBe(true);
+    expect(result.highlights[0].selector.suffix).toBe(' and on');
+  });
 });

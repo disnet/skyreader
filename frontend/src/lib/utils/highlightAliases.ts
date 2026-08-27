@@ -64,6 +64,14 @@ export function unionHighlightSources(sources: HighlightSource[]): Highlight[] {
   return [...byId.values()];
 }
 
+function sameSelector(a: Highlight['selector'], b: Highlight['selector']): boolean {
+  return (
+    a.exact === b.exact &&
+    (a.prefix ?? '') === (b.prefix ?? '') &&
+    (a.suffix ?? '') === (b.suffix ?? '')
+  );
+}
+
 /** Apply every highlight mutation to the same alias-aware union used by reads. */
 export function mutateHighlightUnion(
   highlights: Highlight[],
@@ -93,6 +101,13 @@ export function mutateHighlightUnion(
       next[index] = withoutNote;
     }
   } else if (mutation.type === 'selector') {
+    // Re-bounding to the same text is a no-op, and it happens routinely: the
+    // touch adjust flow commits on collapse, so tapping away without dragging
+    // anything arrives here with the original selector. Without this guard that
+    // would cost a full union write plus a Margin round-trip for nothing.
+    if (sameSelector(current.selector, mutation.selector)) {
+      return { highlights, changed: false };
+    }
     next[index] = { ...current, selector: mutation.selector };
   } else if (mutation.type === 'intent') {
     if ((current.reviewIntent ?? null) === mutation.intent) {
