@@ -114,7 +114,13 @@ function visibleTextPoint(
         high = mid - 1;
       }
     }
-    if (found >= 0) return { node, offset: fromEnd ? found + 1 : found };
+    // Put the focus strictly inside the visible page in both directions. A
+    // forward point at `found` sits before the first visible character; when
+    // that character begins a new column Chromium resolves the zero-width
+    // caret to the preceding page, leaving the native selection handle stuck
+    // off-screen. The position after the character is unambiguously on the
+    // page the reader just turned to.
+    if (found >= 0) return { node, offset: found + 1 };
   }
   return null;
 }

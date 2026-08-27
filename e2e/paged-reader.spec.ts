@@ -343,7 +343,17 @@ async function selectionSnapshot(page: Page): Promise<SelectionSnapshot | null> 
     const focus = document.createRange();
     focus.setStart(selection.focusNode!, selection.focusOffset);
     focus.collapse(true);
-    const rect = focus.getBoundingClientRect();
+    let rect = focus.getBoundingClientRect();
+    // Collapsed ranges at a text boundary often report an empty rect. Match
+    // the production geometry helper by measuring the preceding character so
+    // this assertion checks where the browser will draw the focus handle.
+    if (!rect.width && !rect.height && selection.focusNode?.nodeType === Node.TEXT_NODE) {
+      const text = selection.focusNode as Text;
+      const offset = Math.max(0, Math.min(selection.focusOffset - 1, text.length - 1));
+      focus.setStart(text, offset);
+      focus.setEnd(text, Math.min(offset + 1, text.length));
+      rect = focus.getBoundingClientRect();
+    }
     return {
       text: selection.toString(),
       focusOnPage: rect.right > bounds.left && rect.left < bounds.right,
@@ -490,7 +500,7 @@ test.describe('Selection across page turns', () => {
 });
 
 test.describe('Adjusting a highlight', () => {
-  test('leaving adjust mode never re-binds the next selection', async ({
+  test('a pointer drag adjusts in place and leaving never re-binds the next selection', async ({
     authedPage,
     testUser,
   }) => {
@@ -512,6 +522,23 @@ test.describe('Adjusting a highlight', () => {
     await authedPage.getByRole('button', { name: 'Adjust highlight' }).click();
     const adjustBar = authedPage.getByText('Adjusting a highlight');
     await expect(adjustBar).toBeVisible();
+
+    // A normal pointer drag starts by collapsing the programmatic selection on
+    // mousedown. Adjust mode must survive that collapse until mouseup can see
+    // the completed range, then update the existing id rather than creating an
+    // overlapping second highlight.
+    await dragSelect(authedPage, await textDragPoints(authedPage));
+    await authedPage.getByRole('button', { name: 'Save adjustment' }).click();
+    await expect(marks).toHaveCount(1);
+    const adjustedId = await marks.first().getAttribute('data-highlight-id');
+
+    const adjustedMarkPoint = await marks.first().evaluate((el) => {
+      const line = el.getClientRects()[0];
+      return { x: line.left + Math.min(8, line.width / 2), y: line.top + line.height / 2 };
+    });
+    await authedPage.mouse.click(adjustedMarkPoint.x, adjustedMarkPoint.y);
+    await authedPage.getByRole('button', { name: 'Adjust highlight' }).click();
+    await expect(adjustBar).toBeVisible();
     const elsewhere = await plainTextPoint(authedPage);
     await authedPage.mouse.click(elsewhere.x, elsewhere.y);
     await expect(adjustBar).toBeHidden();
@@ -529,5 +556,6 @@ test.describe('Adjusting a highlight', () => {
       nodes.map((node) => (node as HTMLElement).dataset.highlightId)
     );
     expect(new Set(ids).size).toBe(2);
+    expect(ids).toContain(adjustedId);
   });
 });

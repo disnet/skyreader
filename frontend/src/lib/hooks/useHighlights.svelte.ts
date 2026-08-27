@@ -276,19 +276,11 @@ export function useHighlights(params: HighlightParams) {
   function handleSelectionChange() {
     if (!params.enabled()) return;
 
-    if (!sawTouch) {
-      // Pointer devices never commit on collapse — the popover's "Save
-      // adjustment" does. So a collapsed selection while adjusting means the
-      // reader clicked away and changed their mind: leave adjust mode instead
-      // of letting the flag latch and re-bind the *next* unrelated selection.
-      // While the adjust popover is open the collapse is usually its own button
-      // taking focus, so that case is left to the popover's own actions.
-      const live = window.getSelection();
-      if (adjustingHighlightId && popoverState?.mode !== 'adjust' && (!live || live.isCollapsed)) {
-        cancelAdjust();
-      }
-      return;
-    }
+    // Pointer devices commit from the mouseup popover. In particular, do not
+    // cancel an adjustment on the collapsed selectionchange emitted by
+    // mousedown: that is also how an ordinary drag starts. Mouseup can tell a
+    // click-away (still collapsed) from a completed re-selection.
+    if (!sawTouch) return;
 
     const selection = window.getSelection();
     if (selection && !selection.isCollapsed && selection.rangeCount) {
@@ -329,11 +321,15 @@ export function useHighlights(params: HighlightParams) {
   function handleMouseUp(e: MouseEvent) {
     if (!params.enabled()) return;
     const target = e.target as HTMLElement;
-    if (target.closest(INTERACTIVE_MEDIA_SELECTOR)) return;
     // Small delay to let selection finalize
     setTimeout(() => {
       const selection = window.getSelection();
-      if (!selection || selection.isCollapsed || !selection.rangeCount) return;
+      if (!selection || selection.isCollapsed || !selection.rangeCount) {
+        if (adjustingHighlightId && popoverState?.mode !== 'adjust') cancelAdjust();
+        return;
+      }
+
+      if (target.closest(INTERACTIVE_MEDIA_SELECTOR)) return;
 
       const range = selection.getRangeAt(0);
       const container = params.contentEl();
@@ -432,6 +428,7 @@ export function useHighlights(params: HighlightParams) {
       const highlightId = popoverState.highlightId;
       const selector = popoverState.pendingSelector;
       adjustingHighlightId = null;
+      pendingTouchSelector = null;
       popoverState = null;
       window.getSelection()?.removeAllRanges();
       void commitSelectorAdjustment(highlightId, selector);
@@ -440,6 +437,7 @@ export function useHighlights(params: HighlightParams) {
 
     const highlight = makeHighlight(popoverState.pendingSelector, note);
     itemLabelsStore.addHighlight(params.itemKey(), params.itemType(), highlight);
+    pendingTouchSelector = null;
     window.getSelection()?.removeAllRanges();
     popoverState = null;
     requestAnimationFrame(applyHighlights);

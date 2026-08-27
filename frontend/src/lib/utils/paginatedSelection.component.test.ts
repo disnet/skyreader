@@ -41,7 +41,7 @@ describe('paginated selection geometry', () => {
 
   it('finds the first and last character visible in a page viewport', () => {
     const viewport = rect(30, 70);
-    expect(firstVisibleTextPoint(root, viewport, measure)).toEqual({ node: text, offset: 3 });
+    expect(firstVisibleTextPoint(root, viewport, measure)).toEqual({ node: text, offset: 4 });
     expect(lastVisibleTextPoint(root, viewport, measure)).toEqual({ node: text, offset: 7 });
   });
 
@@ -84,7 +84,7 @@ describe('paginated selection geometry', () => {
 
     expect(firstVisibleTextPoint(root, rect(1000, 1100), measurePages)).toEqual({
       node: nodes[1],
-      offset: 0,
+      offset: 1,
     });
     // One whole-node rejection each for the two off-page paragraphs, then the
     // search inside the one that's actually visible.
