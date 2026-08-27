@@ -558,4 +558,41 @@ test.describe('Adjusting a highlight', () => {
     expect(new Set(ids).size).toBe(2);
     expect(ids).toContain(adjustedId);
   });
+
+  // Hybrid machines (a touchscreen laptop) fire both event families, and one
+  // stray tap is enough to arm the touch selection path for the rest of the
+  // session. That path commits an adjustment the moment the selection collapses
+  // — which is also how every mouse drag begins — so a mouse adjustment after a
+  // tap used to commit the *old* bounds and then create a second, overlapping
+  // highlight for the new ones.
+  test('a stray tap earlier in the session does not split a mouse adjustment in two', async ({
+    authedPage,
+    testUser,
+  }) => {
+    await openPagedReader(authedPage, testUser);
+    const marks = authedPage.locator('.paged-content mark.highlight');
+
+    const tapped = await plainTextPoint(authedPage);
+    await authedPage.touchscreen.tap(tapped.x, tapped.y);
+    await settleCompatibilityClick(authedPage);
+
+    await dragSelect(authedPage, await textDragPoints(authedPage));
+    await authedPage.getByRole('button', { name: 'Save private highlight' }).click();
+    await expect(marks).toHaveCount(1);
+    const originalId = await marks.first().getAttribute('data-highlight-id');
+
+    const markPoint = await marks.first().evaluate((el) => {
+      const line = el.getClientRects()[0];
+      return { x: line.left + Math.min(8, line.width / 2), y: line.top + line.height / 2 };
+    });
+    await authedPage.mouse.click(markPoint.x, markPoint.y);
+    await authedPage.getByRole('button', { name: 'Adjust highlight' }).click();
+    await expect(authedPage.getByText('Adjusting a highlight')).toBeVisible();
+
+    await dragSelect(authedPage, await textDragPoints(authedPage));
+    await authedPage.getByRole('button', { name: 'Save adjustment' }).click();
+
+    await expect(marks).toHaveCount(1);
+    expect(await marks.first().getAttribute('data-highlight-id')).toBe(originalId);
+  });
 });

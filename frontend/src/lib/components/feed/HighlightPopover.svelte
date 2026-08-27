@@ -101,7 +101,11 @@
     if (e.key === 'Escape') {
       e.preventDefault();
       e.stopPropagation();
-      onClose();
+      // In adjust mode this toolbar is one half of a mode the reader is in —
+      // closing it alone would leave them still adjusting, so Escape cancels the
+      // adjustment outright (which closes the toolbar with it).
+      if (mode === 'adjust' && onCancelAdjust) onCancelAdjust();
+      else onClose();
     }
   }
 

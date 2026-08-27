@@ -72,6 +72,8 @@ export function useHighlights(params: HighlightParams) {
 
   let currentEl: HTMLElement | null = null;
   let dblclickHandler: ((e: MouseEvent) => void) | null = null;
+  let mousedownHandler: ((e: MouseEvent) => void) | null = null;
+  let pointerdownHandler: ((e: PointerEvent) => void) | null = null;
   let mouseupHandler: ((e: MouseEvent) => void) | null = null;
   let clickHandler: ((e: MouseEvent) => void) | null = null;
   let touchendHandler: ((e: TouchEvent) => void) | null = null;
@@ -92,6 +94,22 @@ export function useHighlights(params: HighlightParams) {
   let lastTapY = 0;
   let sawTouch = false;
   let pendingTouchSelector: TextQuoteSelector | null = null;
+  // Pointer bookkeeping, recorded on the way down so `mouseup` knows what kind of
+  // gesture it is finishing.
+  //
+  // `pressStartedInContent` separates a drag through the prose (which should
+  // offer a popover, even when the pointer is released past the edge of the
+  // article — the reason the mouseup listener is on `document`) from a press on
+  // the chrome around it. Without it, the mouseup of the *Adjust highlight*
+  // button re-opens a toolbar over the selection that button just made
+  // programmatically, hiding the adjust bar a few milliseconds after it appears.
+  //
+  // `lastPointerWasMouse` refines `sawTouch`, which latches on the first touch
+  // and never resets: on a hybrid machine (a touchscreen laptop) it stays true
+  // for subsequent mouse gestures, so it can't decide on its own whether a
+  // collapse came from a touch.
+  let pressStartedInContent = false;
+  let lastPointerWasMouse = false;
   // Set while the reader is re-bounding an existing highlight. Reactive so the
   // host can show (and offer a way out of) that mode — an invisible mode with no
   // exit would quietly re-bind whatever they selected next.
@@ -279,8 +297,11 @@ export function useHighlights(params: HighlightParams) {
     // Pointer devices commit from the mouseup popover. In particular, do not
     // cancel an adjustment on the collapsed selectionchange emitted by
     // mousedown: that is also how an ordinary drag starts. Mouseup can tell a
-    // click-away (still collapsed) from a completed re-selection.
-    if (!sawTouch) return;
+    // click-away (still collapsed) from a completed re-selection. This asks for
+    // a touch *gesture*, not merely a touch-capable device: on a hybrid machine
+    // the sticky `sawTouch` would otherwise route mouse drags down here, where a
+    // mousedown's collapse commits the adjustment before it was ever dragged.
+    if (!touchGesture()) return;
 
     const selection = window.getSelection();
     if (selection && !selection.isCollapsed && selection.rangeCount) {
@@ -318,17 +339,41 @@ export function useHighlights(params: HighlightParams) {
     requestAnimationFrame(applyHighlights);
   }
 
+  /** True when the gesture in progress is a touch, not a mouse press. */
+  function touchGesture(): boolean {
+    return sawTouch && !lastPointerWasMouse;
+  }
+
+  /** Remember where (and with what) the pointer went down. See the fields' notes. */
+  function handleMouseDown(e: MouseEvent) {
+    const container = params.contentEl();
+    const target = e.target as Node | null;
+    pressStartedInContent = !!container && !!target && container.contains(target);
+  }
+
+  function handlePointerDown(e: PointerEvent) {
+    lastPointerWasMouse = e.pointerType === 'mouse';
+  }
+
   function handleMouseUp(e: MouseEvent) {
     if (!params.enabled()) return;
     const target = e.target as HTMLElement;
+    // Only a press that began in the prose is a selection gesture; one that
+    // began on the popover, the adjust bar or the pager is chrome finishing its
+    // own click, and must not be answered with a toolbar.
+    const fromContent = pressStartedInContent;
     // Small delay to let selection finalize
     setTimeout(() => {
       const selection = window.getSelection();
       if (!selection || selection.isCollapsed || !selection.rangeCount) {
-        if (adjustingHighlightId && popoverState?.mode !== 'adjust') cancelAdjust();
+        // A press in the article that ends with nothing selected is a click
+        // away: leave adjust mode rather than letting it wait to re-bind the
+        // reader's next, unrelated selection.
+        if (fromContent && adjustingHighlightId) cancelAdjust();
         return;
       }
 
+      if (!fromContent) return;
       if (target.closest(INTERACTIVE_MEDIA_SELECTOR)) return;
 
       const range = selection.getRangeAt(0);
@@ -525,11 +570,17 @@ export function useHighlights(params: HighlightParams) {
     requestAnimationFrame(applyHighlights);
   }
 
+  /**
+   * Dismiss the popover without deciding anything about the highlight — the
+   * outside-click and scrolled-away paths. This deliberately leaves adjust mode
+   * running: the press that starts a fresh drag through the article is itself an
+   * outside click, and dropping the mode there would turn that drag into a
+   * second highlight overlapping the one being adjusted. Adjust mode ends only
+   * through Cancel, Escape, a click that leaves nothing selected, or a committed
+   * adjustment — and while it runs without a popover the adjust bar is up, so it
+   * is never invisible.
+   */
   function closePopover() {
-    if (popoverState?.mode === 'adjust') {
-      adjustingHighlightId = null;
-      pendingTouchSelector = null;
-    }
     popoverState = null;
   }
 
@@ -668,6 +719,8 @@ export function useHighlights(params: HighlightParams) {
     currentEl = el;
 
     dblclickHandler = handleDblClick;
+    mousedownHandler = handleMouseDown;
+    pointerdownHandler = handlePointerDown;
     mouseupHandler = handleMouseUp;
     clickHandler = handleClick;
     touchendHandler = handleTouchEnd;
@@ -678,7 +731,11 @@ export function useHighlights(params: HighlightParams) {
 
     el.addEventListener('dblclick', dblclickHandler);
     // Listen on document so we catch mouseup even when the user
-    // drag-selects past the edge of the content element
+    // drag-selects past the edge of the content element, and the matching
+    // mousedown so that mouseup knows whether the press began in the article.
+    // Capture, because the popover stops mousedown propagating.
+    document.addEventListener('mousedown', mousedownHandler, true);
+    document.addEventListener('pointerdown', pointerdownHandler, true);
     document.addEventListener('mouseup', mouseupHandler);
     el.addEventListener('click', clickHandler);
     el.addEventListener('mouseover', mouseoverHandler);
@@ -699,6 +756,8 @@ export function useHighlights(params: HighlightParams) {
   function detach() {
     if (currentEl) {
       if (dblclickHandler) currentEl.removeEventListener('dblclick', dblclickHandler);
+      if (mousedownHandler) document.removeEventListener('mousedown', mousedownHandler, true);
+      if (pointerdownHandler) document.removeEventListener('pointerdown', pointerdownHandler, true);
       if (mouseupHandler) document.removeEventListener('mouseup', mouseupHandler);
       if (clickHandler) currentEl.removeEventListener('click', clickHandler);
       if (touchendHandler) currentEl.removeEventListener('touchend', touchendHandler);
@@ -711,6 +770,8 @@ export function useHighlights(params: HighlightParams) {
     clearMarks();
     currentEl = null;
     dblclickHandler = null;
+    mousedownHandler = null;
+    pointerdownHandler = null;
     mouseupHandler = null;
     clickHandler = null;
     touchendHandler = null;
@@ -722,6 +783,8 @@ export function useHighlights(params: HighlightParams) {
     adjustingHighlightId = null;
     popoverState = null;
     notePeek = null;
+    pressStartedInContent = false;
+    lastPointerWasMouse = false;
   }
 
   onDestroy(detach);
