@@ -149,19 +149,22 @@
   let total = $derived(deck?.length ?? 0);
   let current = $derived(deck && index < deck.length ? deck[index] : null);
   // Re-read from the store so a note edit or Margin save shows immediately —
-  // the deck itself holds the highlight as it was when the deck was dealt.
-  let live = $derived.by(() => {
-    if (!current) return null;
-    const found = itemLabelsStore
-      .getHighlights(current.itemKey)
-      .find((entry) => entry.id === current.highlight.id);
-    return found ?? current.highlight;
-  });
-  let source = $derived.by((): HighlightSource | null =>
-    current
-      ? resolveHighlightSource(current.itemKey, current.itemType, sourceLookups, live ?? undefined)
-      : null
-  );
+  // the deck itself holds the highlight as it was when the deck was dealt. Taken
+  // per entry rather than only for the current one, because the cards on either
+  // side of it are on screen during a swipe and have to show the same truth.
+  function liveOf(entry: HighlightEntry): HighlightEntry['highlight'] {
+    return (
+      itemLabelsStore.getHighlights(entry.itemKey).find((h) => h.id === entry.highlight.id) ??
+      entry.highlight
+    );
+  }
+
+  function sourceOf(entry: HighlightEntry): HighlightSource | null {
+    return resolveHighlightSource(entry.itemKey, entry.itemType, sourceLookups, liveOf(entry));
+  }
+
+  let live = $derived(current ? liveOf(current) : null);
+  let source = $derived(current ? sourceOf(current) : null);
   let done = $derived(Boolean(deck) && ready && index >= total);
 
   function advance() {
@@ -284,27 +287,119 @@
 
   // --- Swipe: the deck is a deck, so it should move like one -----------------
   //
-  // Left carries you forward and right brings the last card back: the deck
-  // moves the way the cards do, sliding off toward where you pushed it. The
-  // card follows the finger and commits on release, so a half-swipe shows you
-  // what it would do and springs back when you don't mean it. Touch only: on a
-  // pointer, dragging a passage is how you select it.
+  // Three rules, in the order they matter:
+  //
+  //  1. Two cards, always. Going forward, the next card was already underneath
+  //     and gets uncovered as the front one leaves; going back, the card you
+  //     passed comes over the top from the right. Nothing waits offstage and
+  //     flies in after a gap, because that isn't a thing cards do.
+  //  2. The moving card lifts. At rest the passage is flat text in the column
+  //     like everything else here; the moment it moves it takes a surface and a
+  //     shadow. That lift is most of why a swipe reads as a card at all rather
+  //     than as text sliding around.
+  //  3. Weight. The card pivots around wherever the finger took hold of it, and
+  //     it leaves at the speed it was thrown — a flick snaps out, a shove drifts.
+  //  4. Up is out of the deck. Across moves through it; lifting a card off the
+  //     top is how you say never show this one again, which is the one thing a
+  //     card can do that isn't navigation.
+  //
+  // Touch only: on a pointer, dragging a passage is how you select it.
   const AXIS_DECIDE_PX = 8;
   const COMMIT_RATIO = 0.22;
   const FLICK_VELOCITY = 0.4; // px per ms
-  const EXIT_MS = 190;
-  const ENTER_MS = 260;
-  const SETTLE_MS = 240;
+  const SETTLE_MS = 260;
+  const MIN_EXIT_MS = 140;
+  const MAX_EXIT_MS = 320;
+  /** Speed floor, px/ms, so a pressed button throws the card as firmly as a hand. */
+  const MIN_EXIT_SPEED = 1.6;
+  /** Clear air between the card that left and the one that took its place. */
+  const DECK_GAP = 32;
+  const MAX_TILT_DEG = 4.5;
+  /** How far up a card has to go before letting go retires it, as a share of its
+      own height — capped, so a very tall passage doesn't ask for a whole arm. */
+  const RETIRE_RATIO = 0.2;
+  const RETIRE_MAX_PX = 150;
+  /** Back drags move the incoming card faster than the finger: it starts a whole
+      card-width offstage, and 1:1 would mean crossing the screen to see it. */
+  const BACK_GAIN = 2.2;
+  // A thrown card barely slows down before it's gone. Easing out hard is the
+  // tell that nothing was really thrown.
+  const EXIT_EASE = 'cubic-bezier(0.25, 0.6, 0.4, 1)';
+  // One that didn't go far enough drops back into the stack with a little
+  // overshoot rather than gliding to a halt.
+  const SETTLE_EASE = 'cubic-bezier(0.22, 1.3, 0.42, 1)';
 
   let cardEl = $state<HTMLElement | null>(null);
   let dragX = $state(0);
+  let dragY = $state(0);
   let travelMs = $state(0);
+  let travelEase = $state(EXIT_EASE);
   let animating = $state(false);
+  let dragging = false;
+  /** Measured on grab rather than derived, so a mid-flight resize can't restate
+      the geometry the animation in progress was aimed at. */
+  let cardWidth = $state(480);
+  let cardHeight = $state(420);
+  /** What the deck is doing. Held rather than read off the drag offsets, because
+      a card springing back is still mid-gesture at 0 and the card behind it has
+      to stay where it is until the spring is done. */
+  let gesture = $state<'none' | 'forward' | 'back' | 'retire'>('none');
+  /** Whether the finger took the card by its top half. Paper pivots around a
+      point on the far side of the grip, so this decides which way it swings. */
+  let grabbedTop = $state(true);
 
-  // The card thins out as it leaves rather than sliding at full strength, so the
-  // passage reads as handed off instead of yanked away.
-  let cardOpacity = $derived(
-    dragX === 0 ? 1 : Math.max(0.25, 1 - Math.abs(dragX) / ((cardEl?.offsetWidth || 480) * 0.9))
+  let nextEntry = $derived(deck && index + 1 < deck.length ? deck[index + 1] : null);
+  let prevEntry = $derived(deck && index > 0 ? deck[index - 1] : null);
+  /** The card underneath shows whenever this one is leaving, whether it's being
+      moved past or lifted out; the one coming back over the top only going back. */
+  let showUnder = $derived((gesture === 'forward' || gesture === 'retire') && Boolean(nextEntry));
+  let showOver = $derived(gesture === 'back' && Boolean(prevEntry));
+
+  // Going back, the front card isn't the one moving — it's being covered — so it
+  // only drifts, and it doesn't tilt.
+  let coveredByPrev = $derived(gesture === 'back' && Boolean(prevEntry));
+
+  let tilt = $derived.by(() => {
+    if (coveredByPrev || dragX === 0) return 0;
+    const raw = (dragX / cardWidth) * 14;
+    const capped = Math.max(-MAX_TILT_DEG, Math.min(MAX_TILT_DEG, raw));
+    return grabbedTop ? capped : -capped;
+  });
+
+  let frontTransform = $derived(
+    dragX === 0 && dragY === 0
+      ? undefined
+      : `translate3d(${coveredByPrev ? dragX * 0.05 : dragX}px, ${dragY}px, 0) rotate(${tilt}deg)`
+  );
+  // Far outside the card, on the side away from the grip.
+  let frontOrigin = $derived(grabbedTop ? '50% 220%' : '50% -120%');
+
+  /** The lift a release has to beat to retire the card. */
+  let retireDistance = $derived(Math.min(RETIRE_MAX_PX, cardHeight * RETIRE_RATIO));
+  /** Far enough up that letting go now would stop showing this highlight. */
+  let retireArmed = $derived(gesture === 'retire' && -dragY >= retireDistance);
+
+  /** How far the deck has been pushed, 0..1 — what the card underneath rises on. */
+  let uncovered = $derived(
+    gesture === 'retire'
+      ? Math.min(1, -dragY / (retireDistance * 1.6))
+      : Math.min(1, Math.abs(dragX) / (cardWidth * 0.55))
+  );
+  let underTransform = $derived(
+    `translate3d(0, ${((1 - uncovered) * 10).toFixed(2)}px, 0) scale(${(0.94 + 0.06 * uncovered).toFixed(4)})`
+  );
+  let underOpacity = $derived(0.35 + 0.65 * uncovered);
+  let overTransform = $derived(
+    `translate3d(${Math.min(0, -(cardWidth + DECK_GAP) + dragX * BACK_GAIN).toFixed(2)}px, 0, 0)`
+  );
+
+  // The lift is never animated with the travel: a card under the finger has to
+  // track it exactly, so only the surface it takes on fades in.
+  const LIFT_TRANSITION = 'box-shadow 0.18s ease, border-radius 0.18s ease';
+  let cardTransition = $derived(
+    travelMs === 0
+      ? LIFT_TRANSITION
+      : `transform ${travelMs}ms ${travelEase}, opacity ${travelMs}ms ${travelEase}, ${LIFT_TRANSITION}`
   );
 
   function prefersReducedMotion(): boolean {
@@ -315,31 +410,51 @@
   }
 
   function resetTravel() {
+    clearTimeout(settleTimer);
     travelMs = 0;
     dragX = 0;
+    dragY = 0;
+    gesture = 'none';
     animating = false;
   }
 
+  let settleTimer: ReturnType<typeof setTimeout> | undefined;
+
   function settleBack() {
-    travelMs = prefersReducedMotion() ? 0 : SETTLE_MS;
+    if (prefersReducedMotion()) {
+      resetTravel();
+      return;
+    }
+    travelEase = SETTLE_EASE;
+    travelMs = SETTLE_MS;
     dragX = 0;
+    dragY = 0;
+    // The gesture is still live until the card is home: dropping it now would
+    // yank the card behind out of the picture while the front one is still
+    // sliding back over it. A hand that's already taken hold again by then owns
+    // the deck, so the spring doesn't get to end its gesture.
+    clearTimeout(settleTimer);
+    settleTimer = setTimeout(() => {
+      if (animating || dragging) return;
+      gesture = 'none';
+      travelMs = 0;
+    }, SETTLE_MS);
   }
 
-  // Leaving the deck mid-flight would otherwise leave three callbacks queued
-  // against a component that no longer exists, the last of them clearing a
-  // freeze flag the next mount never set.
+  // Leaving the deck mid-flight would otherwise leave callbacks queued against a
+  // component that no longer exists, the last of them clearing a freeze flag the
+  // next mount never set.
   let exitTimer: ReturnType<typeof setTimeout> | undefined;
-  let enterTimer: ReturnType<typeof setTimeout> | undefined;
-  let enterFrame = 0;
+  let mountFrame = 0;
 
   $effect(() => () => {
     clearTimeout(exitTimer);
-    clearTimeout(enterTimer);
-    cancelAnimationFrame(enterFrame);
+    clearTimeout(settleTimer);
+    cancelAnimationFrame(mountFrame);
   });
 
   /** Commit a swipe: 1 moves forward through the deck, -1 steps back. */
-  function commitSwipe(direction: 1 | -1) {
+  function commitSwipe(direction: 1 | -1, velocity = 0) {
     if (animating) return;
     if (direction === -1 && index === 0) {
       settleBack();
@@ -355,38 +470,127 @@
       else stepBack();
       return;
     }
+    clearTimeout(settleTimer);
+    measureCard();
     animating = true;
-    travelMs = EXIT_MS;
-    // Forward sends the card off to the left, back sends it off to the right.
-    dragX = -direction * ((cardEl?.offsetWidth || 480) + 64);
+    const fromRest = gesture === 'none';
+    gesture = direction === 1 ? 'forward' : 'back';
+    if (fromRest) {
+      // A press, not a drag: the second card hasn't been mounted yet, and it has
+      // to exist at its resting position for a frame before it can animate off
+      // it. Two frames — one to mount, one to let the browser see it there.
+      grabbedTop = true;
+      travelMs = 0;
+      dragX = 0;
+      mountFrame = requestAnimationFrame(() => {
+        mountFrame = requestAnimationFrame(() => throwCard(direction, velocity));
+      });
+    } else {
+      throwCard(direction, velocity);
+    }
+  }
+
+  function throwCard(direction: 1 | -1, velocity: number) {
+    // Back drags are geared up, so the finger's speed isn't the card's speed.
+    const gain = direction === 1 ? 1 : BACK_GAIN;
+    const target = direction === 1 ? -(cardWidth + DECK_GAP) : (cardWidth + DECK_GAP) / BACK_GAIN;
+    const travel = Math.abs(target - dragX) * gain;
+    const speed = Math.max(Math.abs(velocity) * gain, MIN_EXIT_SPEED);
+    const ms = Math.round(Math.min(MAX_EXIT_MS, Math.max(MIN_EXIT_MS, travel / speed)));
+    travelEase = EXIT_EASE;
+    travelMs = ms;
+    dragX = target;
     exitTimer = setTimeout(() => {
       if (direction === 1) advance();
       else stepBack();
-      // Nothing left to fly in — the end-of-deck state takes the column.
-      if (!deck || index >= deck.length) {
-        resetTravel();
-        return;
-      }
-      // Land the incoming card from the side opposite the one that just left.
-      travelMs = 0;
-      dragX = direction * Math.min((cardEl?.offsetWidth || 480) * 0.18, 88);
-      enterFrame = requestAnimationFrame(() => {
-        enterFrame = requestAnimationFrame(() => {
-          travelMs = ENTER_MS;
-          dragX = 0;
-          enterTimer = setTimeout(() => (animating = false), ENTER_MS);
-        });
-      });
-    }, EXIT_MS);
+      // The card that was underneath — or the one that came over the top — is
+      // the card now, already sitting exactly where it belongs. Nothing to fly
+      // in: drop the travel and let it stand.
+      resetTravel();
+    }, ms);
   }
+
+  /** Lift the card off the deck for good: it goes out the top and the highlight
+      is set to never come back. Not a review — the card is being recused, which
+      is why it leaves through `chooseIntent` and takes the undo notice with it. */
+  function commitRetire(velocity = 0) {
+    if (animating) return;
+    const entry = current;
+    if (!entry) return;
+    interacted = true;
+    if (prefersReducedMotion()) {
+      resetTravel();
+      chooseIntent('never');
+      return;
+    }
+    clearTimeout(settleTimer);
+    measureCard();
+    animating = true;
+    const fromRest = gesture === 'none';
+    gesture = 'retire';
+    if (fromRest) {
+      travelMs = 0;
+      dragY = 0;
+      mountFrame = requestAnimationFrame(() => {
+        mountFrame = requestAnimationFrame(() => throwCardOut(velocity));
+      });
+    } else {
+      throwCardOut(velocity);
+    }
+  }
+
+  function throwCardOut(velocity: number) {
+    const target = -(cardHeight + DECK_GAP);
+    const speed = Math.max(Math.abs(velocity), MIN_EXIT_SPEED);
+    const ms = Math.round(
+      Math.min(MAX_EXIT_MS, Math.max(MIN_EXIT_MS, Math.abs(target - dragY) / speed))
+    );
+    travelEase = EXIT_EASE;
+    travelMs = ms;
+    dragY = target;
+    exitTimer = setTimeout(() => {
+      // Still the card that was thrown: `chooseIntent` reads `current`, and the
+      // deck hasn't moved under it yet.
+      chooseIntent('never');
+      resetTravel();
+    }, ms);
+  }
+
+  function measureCard() {
+    cardWidth = cardEl?.offsetWidth || cardWidth;
+    cardHeight = cardEl?.offsetHeight || cardHeight;
+  }
+
+  /** An upward swipe is only ours when the page has nothing left to scroll —
+      otherwise up means read on, and the card has no claim on it. This decides
+      `touch-action` too, so it has to be known before the finger lands, not
+      measured once it has. */
+  let pageScrollable = $state(false);
+
+  $effect(() => {
+    const measure = () => {
+      const doc = document.documentElement;
+      pageScrollable = doc.scrollHeight - doc.clientHeight > 2;
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(document.body);
+    window.addEventListener('resize', measure);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', measure);
+    };
+  });
 
   let touchStartX = 0;
   let touchStartY = 0;
   let touchLastX = 0;
+  let touchLastY = 0;
   let touchLastT = 0;
   let touchVelocity = 0;
   let touchDecided = false;
-  let dragging = false;
+  /** Which axis this gesture claimed: across the deck, or up out of it. */
+  let touchAxis: 'x' | 'y' | null = null;
 
   function hasActiveSelection(): boolean {
     const selection = typeof window !== 'undefined' ? window.getSelection() : null;
@@ -395,17 +599,25 @@
 
   function onTouchStart(event: TouchEvent) {
     if (animating || intentOpen || event.touches.length !== 1) {
-      dragging = false;
-      touchDecided = false;
+      // A second finger means this stopped being a swipe. Dropping the drag
+      // without settling would strand the card wherever it was: `touchend` bails
+      // on `!dragging`, so nothing else would ever put it back.
+      abandonDrag();
       return;
     }
     touchStartX = event.touches[0].clientX;
     touchStartY = event.touches[0].clientY;
     touchLastX = touchStartX;
+    touchLastY = touchStartY;
     touchLastT = performance.now();
     touchVelocity = 0;
     touchDecided = false;
+    touchAxis = null;
     dragging = false;
+    const rect = cardEl?.getBoundingClientRect();
+    cardWidth = rect?.width || cardWidth;
+    cardHeight = rect?.height || cardHeight;
+    grabbedTop = rect ? touchStartY - rect.top < rect.height / 2 : true;
   }
 
   function onTouchMove(event: TouchEvent) {
@@ -413,14 +625,24 @@
     const x = event.touches[0].clientX;
     const dx = x - touchStartX;
     const dy = event.touches[0].clientY - touchStartY;
+    const y = event.touches[0].clientY;
     if (!touchDecided) {
       if (Math.abs(dx) < AXIS_DECIDE_PX && Math.abs(dy) < AXIS_DECIDE_PX) return;
       touchDecided = true;
-      // Vertical intent scrolls the page; a live selection belongs to the
-      // browser's own handles, not to us.
-      if (Math.abs(dx) > Math.abs(dy) && !hasActiveSelection()) {
+      // A live selection belongs to the browser's own handles, not to us.
+      if (hasActiveSelection()) return;
+      if (Math.abs(dx) > Math.abs(dy)) {
+        touchAxis = 'x';
         dragging = true;
         travelMs = 0;
+      } else if (dy < 0 && !pageScrollable) {
+        // Up, with nothing left to read: the card comes off the deck. When the
+        // page can still scroll, up means read on and this never fires — the
+        // browser has the gesture, and `touch-action` has already said so.
+        touchAxis = 'y';
+        dragging = true;
+        travelMs = 0;
+        gesture = 'retire';
       }
     }
     if (!dragging) return;
@@ -430,47 +652,92 @@
       return;
     }
     if (event.cancelable) event.preventDefault();
-    // There's nothing behind the first card, so a rightward pull resists rather
-    // than promising a move that can't happen.
-    dragX = dx > 0 && index === 0 ? dx * 0.28 : dx;
     const now = performance.now();
     const dt = now - touchLastT;
-    if (dt > 0) touchVelocity = (x - touchLastX) / dt;
+    if (touchAxis === 'y') {
+      // Pulled back down past where it started, the card resists rather than
+      // sinking into the deck it's already on top of.
+      dragY = dy < 0 ? dy : dy * 0.28;
+      if (dt > 0) touchVelocity = (y - touchLastY) / dt;
+    } else {
+      // There's nothing behind the first card, so a rightward pull resists
+      // rather than promising a move that can't happen.
+      dragX = dx > 0 && index === 0 ? dx * 0.28 : dx;
+      // Cross back over where the finger started and the deck follows: the
+      // other card comes up, at zero offset, so there's nothing to jump.
+      if (dragX < 0) gesture = 'forward';
+      else if (dragX > 0) gesture = 'back';
+      if (dt > 0) touchVelocity = (x - touchLastX) / dt;
+    }
     touchLastX = x;
+    touchLastY = y;
     touchLastT = now;
   }
 
   function onTouchEnd() {
     const wasDragging = dragging;
+    const axis = touchAxis;
     dragging = false;
     touchDecided = false;
+    touchAxis = null;
     if (!wasDragging) return;
-    const width = cardEl?.offsetWidth || 480;
-    const far = Math.abs(dragX) > width * COMMIT_RATIO;
+    if (axis === 'y') {
+      const lifted = -dragY;
+      const far = lifted >= retireDistance;
+      const flicked = touchVelocity < -FLICK_VELOCITY && lifted > 24;
+      if (!far && !flicked) settleBack();
+      else commitRetire(touchVelocity);
+      return;
+    }
+    const far = Math.abs(dragX) > cardWidth * COMMIT_RATIO;
     const flicked = Math.abs(touchVelocity) > FLICK_VELOCITY && Math.abs(dragX) > 24;
     if (!far && !flicked) {
       settleBack();
       return;
     }
-    commitSwipe(dragX < 0 ? 1 : -1);
+    commitSwipe(dragX < 0 ? 1 : -1, touchVelocity);
   }
 
-  // touchmove has to be non-passive to claim the horizontal gesture, so it's
-  // attached by hand rather than through the (passive) on* attributes.
+  /** The gesture stopped being ours rather than ending: the system took it back,
+      or another finger landed. Whatever the card was promising, the reader never
+      released it, so it goes back on the deck instead of committing on the way
+      out — a cancelled lift must not retire a highlight. A card already in
+      flight is left alone; its own landing clears the travel. */
+  function abandonDrag() {
+    const wasDragging = dragging;
+    dragging = false;
+    touchDecided = false;
+    touchAxis = null;
+    if (wasDragging && !animating) settleBack();
+  }
+
+  // touchmove has to be non-passive to claim the gesture, so it's attached by
+  // hand rather than through the (passive) on* attributes.
   $effect(() => {
     const el = cardEl;
     if (!el) return;
     el.addEventListener('touchstart', onTouchStart, { passive: true });
     el.addEventListener('touchmove', onTouchMove, { passive: false });
     el.addEventListener('touchend', onTouchEnd, { passive: true });
-    el.addEventListener('touchcancel', onTouchEnd, { passive: true });
+    el.addEventListener('touchcancel', abandonDrag, { passive: true });
     return () => {
       el.removeEventListener('touchstart', onTouchStart);
       el.removeEventListener('touchmove', onTouchMove);
       el.removeEventListener('touchend', onTouchEnd);
-      el.removeEventListener('touchcancel', onTouchEnd);
+      el.removeEventListener('touchcancel', abandonDrag);
     };
   });
+
+  /** The intent button is the popover's anchor, but only the real card's — the
+      cards behind it render the same face and must not claim it. */
+  function anchorIntent(node: HTMLElement, live: boolean) {
+    if (live) intentAnchor = node;
+    return {
+      destroy() {
+        if (intentAnchor === node) intentAnchor = null;
+      },
+    };
+  }
 
   $effect(() => () => clearTimeout(retireTimer));
 
@@ -676,6 +943,97 @@
   {/each}
 {/snippet}
 
+{#snippet cardFace(entry: HighlightEntry, position: number, isCurrent: boolean)}
+  {@const shown = liveOf(entry)}
+  {@const src = sourceOf(entry)}
+  {@const intent = shown.reviewIntent ?? REVIEW_INTENT_DEFAULT}
+  {@const intentLabel = REVIEW_INTENTS.find((option) => option.value === intent)?.label ?? 'Later'}
+  {@const menuOpen = isCurrent && intentOpen}
+
+  <blockquote class="passage">{shown.selector.exact}</blockquote>
+
+  {#if shown.note}
+    <p class="note">{shown.note}</p>
+  {/if}
+
+  {#if src}
+    <button class="source" onclick={openSource}>
+      <span class="source-title">{src.title}</span>
+      {#if src.domain}
+        <span class="source-domain">{src.domain}</span>
+      {/if}
+    </button>
+  {/if}
+
+  <div class="actions">
+    <div class="lead" class:menu-open={menuOpen}>
+      <button class="next" onclick={() => commitSwipe(1)} disabled={animating}>
+        <span>{position === total ? 'Finish' : 'Next'}</span>
+        <Icon name="arrow-right" size={16} />
+      </button>
+
+      <button
+        class="intent"
+        class:open={menuOpen}
+        use:anchorIntent={isCurrent}
+        onclick={() => (intentOpen ? (intentOpen = false) : openIntentMenu())}
+        aria-expanded={menuOpen}
+        aria-haspopup="true"
+        aria-label="When should this come back? Currently {intentLabel}"
+        title="When should this come back?"
+      >
+        <Icon name="clock" size={15} />
+        <span>{intentLabel}</span>
+        <Icon name="chevron-down" size={14} />
+      </button>
+
+      {#if menuOpen && !mobileStore.isMobile}
+        <div class="intent-menu" role="group" aria-label="When should this come back?">
+          {@render intentChoices()}
+        </div>
+      {/if}
+    </div>
+
+    <div class="secondary">
+      <button
+        class="action-btn"
+        data-review-note={isCurrent ? '' : undefined}
+        onclick={openNoteEditor}
+        title={shown.note ? 'Edit note (e)' : 'Add a note (e)'}
+        aria-label={shown.note ? 'Edit note' : 'Add a note'}
+      >
+        <Icon name="message-circle" size={16} />
+      </button>
+      {#if !shown.marginUri}
+        <button
+          class="action-btn"
+          onclick={handleSaveToMargin}
+          title="Save to Margin"
+          aria-label="Save to Margin"
+        >
+          <Icon name="margin" size={16} />
+        </button>
+      {/if}
+      <button
+        class="action-btn"
+        onclick={openSource}
+        title="Open the article (o)"
+        aria-label="Open the article"
+      >
+        <Icon name="external-link" size={16} />
+      </button>
+      <button
+        class="action-btn danger"
+        onclick={openRemovePrompt}
+        title="Remove highlight"
+        aria-label="Remove highlight"
+      >
+        <Icon name="trash" size={16} />
+      </button>
+    </div>
+  </div>
+{/snippet}
+
 {#snippet moreButton()}
   {#if canReviewMore}
     <button class="more" onclick={reviewMore}>
@@ -730,99 +1088,58 @@
     {#if !ready || !deck}
       <p class="state-note" aria-live="polite">Gathering your highlights…</p>
     {:else if current && source && live}
-      <article
-        class="deck-card"
-        bind:this={cardEl}
-        style:transform={dragX === 0 ? undefined : `translate3d(${dragX}px, 0, 0)`}
-        style:opacity={cardOpacity === 1 ? undefined : cardOpacity}
-        style:transition={travelMs === 0
-          ? 'none'
-          : `transform ${travelMs}ms cubic-bezier(0.22, 1, 0.36, 1), opacity ${travelMs}ms ease`}
-      >
-        <blockquote class="passage">{live.selector.exact}</blockquote>
+      <!-- A stack, not a slot: the neighbouring cards are real cards on the
+           page for as long as the gesture lasts, so one can be uncovered and
+           the other can come over the top. -->
+      <div class="deck">
+        <article
+          class="deck-card"
+          class:lifted={gesture !== 'none'}
+          class:above-scrim={intentOpen}
+          class:owns-vertical={!pageScrollable}
+          bind:this={cardEl}
+          style:transform={frontTransform}
+          style:transform-origin={gesture === 'none' ? undefined : frontOrigin}
+          style:transition={cardTransition}
+        >
+          <!-- The gesture says what it will do while there's still time to take
+               it back. It rides the card because the card is what it's about. -->
+          {#if gesture === 'retire'}
+            <span class="retire-cue" class:armed={retireArmed} aria-hidden="true">
+              Never show again
+            </span>
+          {/if}
+          {@render cardFace(current, index + 1, true)}
+        </article>
 
-        {#if live.note}
-          <p class="note">{live.note}</p>
+        {#if showUnder && nextEntry}
+          <article
+            class="deck-card behind under lifted"
+            inert
+            style:transform={underTransform}
+            style:opacity={underOpacity}
+            style:transition={cardTransition}
+          >
+            {@render cardFace(nextEntry, index + 2, false)}
+          </article>
         {/if}
 
-        <button class="source" onclick={openSource}>
-          <span class="source-title">{source.title}</span>
-          {#if source.domain}
-            <span class="source-domain">{source.domain}</span>
-          {/if}
-        </button>
-
-        <div class="actions">
-          <div class="lead" class:menu-open={intentOpen}>
-            <button class="next" onclick={() => commitSwipe(1)} disabled={animating}>
-              <span>{index + 1 === total ? 'Finish' : 'Next'}</span>
-              <Icon name="arrow-right" size={16} />
-            </button>
-
-            <button
-              class="intent"
-              class:open={intentOpen}
-              bind:this={intentAnchor}
-              onclick={() => (intentOpen ? (intentOpen = false) : openIntentMenu())}
-              aria-expanded={intentOpen}
-              aria-haspopup="true"
-              aria-label="When should this come back? Currently {currentIntentLabel}"
-              title="When should this come back?"
-            >
-              <Icon name="clock" size={15} />
-              <span>{currentIntentLabel}</span>
-              <Icon name="chevron-down" size={14} />
-            </button>
-
-            {#if intentOpen && !mobileStore.isMobile}
-              <div class="intent-menu" role="group" aria-label="When should this come back?">
-                {@render intentChoices()}
-              </div>
-            {/if}
-          </div>
-
-          <div class="secondary">
-            <button
-              class="action-btn"
-              data-review-note
-              onclick={openNoteEditor}
-              title={live.note ? 'Edit note (e)' : 'Add a note (e)'}
-              aria-label={live.note ? 'Edit note' : 'Add a note'}
-            >
-              <Icon name="message-circle" size={16} />
-            </button>
-            {#if !live.marginUri}
-              <button
-                class="action-btn"
-                onclick={handleSaveToMargin}
-                title="Save to Margin"
-                aria-label="Save to Margin"
-              >
-                <Icon name="margin" size={16} />
-              </button>
-            {/if}
-            <button
-              class="action-btn"
-              onclick={openSource}
-              title="Open the article (o)"
-              aria-label="Open the article"
-            >
-              <Icon name="external-link" size={16} />
-            </button>
-            <button
-              class="action-btn danger"
-              onclick={openRemovePrompt}
-              title="Remove highlight"
-              aria-label="Remove highlight"
-            >
-              <Icon name="trash" size={16} />
-            </button>
-          </div>
-        </div>
-      </article>
+        {#if showOver && prevEntry}
+          <article
+            class="deck-card behind over lifted"
+            inert
+            style:transform={overTransform}
+            style:transition={cardTransition}
+          >
+            {@render cardFace(prevEntry, index, false)}
+          </article>
+        {/if}
+      </div>
 
       <p class="hint">→ or space next · ← back · o open · e note</p>
-      <p class="swipe-hint">Swipe to move through the deck.</p>
+      <p class="swipe-hint">
+        Swipe across to move through the deck{pageScrollable ? '.' : ', up to stop showing one.'}
+      </p>
     {:else if done && reviewed > 0}
       <section class="state" aria-live="polite">
         <h1>That's your review</h1>
@@ -945,8 +1262,15 @@
 {/if}
 
 <style>
+  /* The clip sits out here, not on the reading column: a card thrown off the
+     deck should leave the screen, not vanish at the edge of the column while
+     it's still in plain sight. Horizontal only — clipping the vertical too
+     would take the intent popover's bottom off with it. `clip` (not `hidden`)
+     so this doesn't become a scroll container and take the sticky header down
+     with it. */
   .review-page {
     width: 100%;
+    overflow-x: clip;
   }
 
   /* Flat header matching the highlights page: no border at rest, no shadow. */
@@ -954,6 +1278,20 @@
     position: sticky;
     top: 0;
     z-index: 10;
+    background: var(--color-bg);
+  }
+
+  /* A card lifted out of the deck goes up and under the header, and the shell
+     leaves a strip of page above it for the card to show through. The header
+     carries its own background up over that strip rather than the page getting
+     clipped to hide it. */
+  .review-header::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 100%;
+    height: 2rem;
     background: var(--color-bg);
   }
 
@@ -1041,13 +1379,10 @@
     border-radius: 8px;
   }
 
-  /* `overflow-x: clip` gives the card somewhere to go on a swipe without turning
-     the column into a scroll container. */
   .review-body {
     max-width: 680px;
     margin: 0 auto;
     padding: 1.5rem 1rem 4rem;
-    overflow-x: clip;
   }
 
   @media (max-width: 1000px) {
@@ -1073,16 +1408,109 @@
     }
   }
 
+  /* The three cards share one cell, so one can sit under the other. Height comes
+     from the front card; the others are laid over or under it and take no room. */
+  .deck {
+    position: relative;
+  }
+
   /* The card is the highlight, so marking the passage would be marking the whole
      surface. No gold, no chrome: the reader's own article face at reading size,
      alone in the column, with everything else stepping back to metadata scale.
      `touch-action: pan-y` leaves vertical scrolling to the page and claims the
-     horizontal axis for the swipe. */
+     horizontal axis for the swipe.
+
+     The horizontal padding is cancelled by an equal negative margin, so the
+     painted surface reaches the full width of the column while the text stays
+     exactly where it sat before there was a surface at all. */
   .deck-card {
+    position: relative;
+    z-index: 1;
     display: flex;
     flex-direction: column;
     padding-top: clamp(0.5rem, 3vh, 1.5rem);
+    padding-inline: 1rem;
+    margin-inline: -1rem;
+    background: var(--color-bg);
     touch-action: pan-y;
+    will-change: transform;
+  }
+
+  /* Flat by default, like the rest of the app — and a real object the moment it
+     moves. This is the one state where the passage is genuinely floating over
+     the page, which is what a shadow is for. */
+  .deck-card.lifted {
+    border-radius: 12px;
+    box-shadow:
+      0 1px 2px rgb(0 0 0 / 8%),
+      0 18px 40px -14px rgb(0 0 0 / 28%);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .deck-card.lifted {
+      box-shadow:
+        0 1px 2px rgb(0 0 0 / 30%),
+        0 18px 40px -12px rgb(0 0 0 / 60%);
+    }
+  }
+
+  /* The card now stacks (it has to, to sit over the one behind it), which puts
+     its popover inside its own stacking context — under the click-away scrim
+     unless the whole card comes up with it. */
+  .deck-card.above-scrim {
+    z-index: 3;
+  }
+
+  .deck-card.behind {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+  }
+
+  /* The next card was always under this one, at its own size — a deck of uneven
+     cards is uneven, and squaring it to the front card's height would mean the
+     surface changing shape at the moment the two swap. */
+  .deck-card.under {
+    z-index: 0;
+  }
+
+  /* With nothing left to scroll, the card takes the vertical axis too, so an
+     upward swipe can lift it out of the deck. Pinch-zoom is never ours to take. */
+  .deck-card.owns-vertical {
+    touch-action: pinch-zoom;
+  }
+
+  /* Hung off the bottom edge of the card, because the card is on its way up and
+     out: a tag at the top would be off the screen before it could be read.
+     Metadata scale, quiet border, no red — nothing is being deleted here, the
+     highlight is only being taken out of rotation. It firms up once the card is
+     far enough that letting go would do it. */
+  .retire-cue {
+    position: absolute;
+    bottom: -0.85rem;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 0.25rem 0.7rem;
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+    background: var(--color-bg);
+    font-size: var(--text-xs);
+    color: var(--color-text-secondary);
+    white-space: nowrap;
+    transition:
+      color 0.15s ease,
+      border-color 0.15s ease;
+  }
+
+  .retire-cue.armed {
+    color: var(--color-text);
+    border-color: var(--color-text-secondary);
+  }
+
+  /* The one you already passed, coming back over the top. */
+  .deck-card.over {
+    z-index: 2;
   }
 
   .passage {
