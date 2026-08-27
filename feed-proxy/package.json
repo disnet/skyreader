@@ -1,6 +1,7 @@
 {
   "name": "skyreader-feed-proxy",
   "version": "0.0.1",
+  "license": "AGPL-3.0-only",
   "type": "module",
   "scripts": {
     "dev": "bun run --watch src/index.ts",

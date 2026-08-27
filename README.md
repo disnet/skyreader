@@ -78,3 +78,9 @@ npm run test:e2e
 ## Documentation
 
 See `CLAUDE.md` for architecture details and development guidance. Each package also has its own `CLAUDE.md`.
+
+## License
+
+Skyreader is open source under the [GNU AGPL-3.0](LICENSE). You're free to run,
+modify, and self-host it; if you run a modified version as a network service, the
+AGPL requires you to share your changes. The `cli/` package is MIT licensed.
