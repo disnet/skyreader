@@ -27,6 +27,7 @@ export type HighlightMutation =
   | { type: 'add'; highlight: Highlight }
   | { type: 'remove'; highlightId: string }
   | { type: 'note'; highlightId: string; note?: string }
+  | { type: 'selector'; highlightId: string; selector: Highlight['selector'] }
   | {
       type: 'margin';
       highlightId: string;
@@ -91,6 +92,8 @@ export function mutateHighlightUnion(
       const { note: _note, ...withoutNote } = current;
       next[index] = withoutNote;
     }
+  } else if (mutation.type === 'selector') {
+    next[index] = { ...current, selector: mutation.selector };
   } else if (mutation.type === 'intent') {
     if ((current.reviewIntent ?? null) === mutation.intent) {
       return { highlights, changed: false };

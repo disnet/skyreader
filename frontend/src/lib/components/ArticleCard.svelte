@@ -1033,6 +1033,7 @@
       onHighlight={highlights.createHighlightFromPopover}
       onHighlightToMargin={highlights.createHighlightFromPopoverToMargin}
       onRemove={highlights.removeHighlightFromPopover}
+      onAdjust={highlights.adjustHighlightFromPopover}
       onSaveToMargin={highlights.savePopoverHighlightToMargin}
       onSaveNote={highlights.saveNoteFromPopover}
       onQuoteToShare={composerOpenHere ? quoteSelectionToShare : undefined}

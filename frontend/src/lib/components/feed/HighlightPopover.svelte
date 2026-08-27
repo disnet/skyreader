@@ -5,7 +5,7 @@
   import { followAnchor, positionFloating } from '$lib/utils/floating';
 
   interface Props {
-    mode: 'create' | 'remove' | 'view';
+    mode: 'create' | 'adjust' | 'remove' | 'view';
     anchorRect: DOMRect;
     /**
      * Live position of the passage this popover belongs to. Supplied by callers
@@ -18,6 +18,7 @@
     onHighlight?: (note?: string) => void;
     onHighlightToMargin?: (note?: string) => void;
     onRemove?: () => void;
+    onAdjust?: () => void;
     onSaveToMargin?: () => void;
     onSaveNote?: (note: string) => void;
     /** Present while a share draft is open for this article: add the selected
@@ -39,6 +40,7 @@
     onHighlight,
     onHighlightToMargin,
     onRemove,
+    onAdjust,
     onSaveToMargin,
     onSaveNote,
     onQuoteToShare,
@@ -175,7 +177,7 @@
         if (e.key !== 'Escape') e.stopPropagation();
       }}></textarea>
     <div class="note-actions">
-      {#if mode === 'create'}
+      {#if mode === 'create' || mode === 'adjust'}
         <button
           class="note-btn"
           onclick={() => {
@@ -183,8 +185,8 @@
             onClose();
           }}
         >
-          <Icon name="highlighter" size={16} />
-          Save private
+          <Icon name={mode === 'adjust' ? 'check' : 'highlighter'} size={16} />
+          {mode === 'adjust' ? 'Save adjustment' : 'Save private'}
         </button>
         {#if onHighlightToMargin}
           <button
@@ -211,11 +213,11 @@
         </button>
       {/if}
     </div>
-  {:else if mode === 'create'}
+  {:else if mode === 'create' || mode === 'adjust'}
     <button
       class="popover-btn icon-only highlight"
-      use:tooltip={'Save private highlight'}
-      aria-label="Save private highlight"
+      use:tooltip={mode === 'adjust' ? 'Save adjustment' : 'Save private highlight'}
+      aria-label={mode === 'adjust' ? 'Save adjustment' : 'Save private highlight'}
       onclick={() => {
         onHighlight?.();
         onClose();
@@ -276,6 +278,16 @@
       </button>
     </div>
   {:else}
+    {#if onAdjust}
+      <button
+        class="popover-btn icon-only"
+        use:tooltip={'Adjust highlight'}
+        aria-label="Adjust highlight"
+        onclick={() => onAdjust?.()}
+      >
+        <Icon name="edit" size={20} />
+      </button>
+    {/if}
     <button
       class="popover-btn icon-only remove"
       use:tooltip={'Remove highlight'}

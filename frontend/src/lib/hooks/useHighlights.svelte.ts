@@ -8,6 +8,7 @@ import {
 } from '$lib/services/marginHighlights';
 import type { ItemLabelType, Highlight, TextQuoteSelector } from '$lib/types';
 import { wrapTextRange } from '$lib/utils/wrapTextRange';
+import { visibleClientRect } from '$lib/utils/paginatedSelection';
 
 const BLOCK_SELECTORS = 'p, h1, h2, h3, h4, h5, h6, blockquote, pre, figure, li';
 const INTERACTIVE_MEDIA_SELECTOR = 'video, audio, iframe, embed, object';
@@ -54,7 +55,7 @@ export function useHighlights(params: HighlightParams) {
   // by clicking the inline note marker; `create`/`remove` are the selection and
   // existing-highlight toolbars.
   let popoverState = $state<{
-    mode: 'create' | 'remove' | 'view';
+    mode: 'create' | 'adjust' | 'remove' | 'view';
     anchorRect: DOMRect;
     pendingSelector?: TextQuoteSelector;
     highlightId?: string;
@@ -90,6 +91,7 @@ export function useHighlights(params: HighlightParams) {
   let lastTapY = 0;
   let sawTouch = false;
   let pendingTouchSelector: TextQuoteSelector | null = null;
+  let adjustingHighlightId: string | null = null;
 
   function applyHighlights() {
     clearMarks();
@@ -221,6 +223,13 @@ export function useHighlights(params: HighlightParams) {
     if (e.changedTouches.length !== 1) return;
     sawTouch = true;
 
+    // Selection-handle drags can end close to the previous tap. Never let that
+    // gesture accidentally toggle an entire paragraph.
+    if (window.getSelection() && !window.getSelection()!.isCollapsed) {
+      lastTapTime = 0;
+      return;
+    }
+
     const touch = e.changedTouches[0];
     const now = Date.now();
     const dt = now - lastTapTime;
@@ -278,7 +287,13 @@ export function useHighlights(params: HighlightParams) {
     if (!pendingTouchSelector) return;
     const selector = pendingTouchSelector;
     pendingTouchSelector = null;
-    itemLabelsStore.addHighlight(params.itemKey(), params.itemType(), makeHighlight(selector));
+    if (adjustingHighlightId) {
+      const highlightId = adjustingHighlightId;
+      adjustingHighlightId = null;
+      void commitSelectorAdjustment(highlightId, selector);
+    } else {
+      itemLabelsStore.addHighlight(params.itemKey(), params.itemType(), makeHighlight(selector));
+    }
     requestAnimationFrame(applyHighlights);
   }
 
@@ -298,13 +313,15 @@ export function useHighlights(params: HighlightParams) {
       const selectedText = range.toString().trim();
       if (!selectedText || selectedText.length < 3) return;
 
-      const rect = range.getBoundingClientRect();
+      const rect = selectionAnchorRect(range);
+      if (!rect) return;
       const selector = createSelector(range, container);
 
       popoverState = {
-        mode: 'create',
+        mode: adjustingHighlightId ? 'adjust' : 'create',
         anchorRect: rect,
         pendingSelector: selector,
+        highlightId: adjustingHighlightId ?? undefined,
         anchorRange: range.cloneRange(),
       };
     }, 10);
@@ -379,12 +396,47 @@ export function useHighlights(params: HighlightParams) {
   function createHighlightFromPopover(note?: string, toMargin = false) {
     if (!popoverState?.pendingSelector) return;
 
+    if (popoverState.mode === 'adjust' && popoverState.highlightId) {
+      const highlightId = popoverState.highlightId;
+      const selector = popoverState.pendingSelector;
+      adjustingHighlightId = null;
+      popoverState = null;
+      window.getSelection()?.removeAllRanges();
+      void commitSelectorAdjustment(highlightId, selector);
+      return;
+    }
+
     const highlight = makeHighlight(popoverState.pendingSelector, note);
     itemLabelsStore.addHighlight(params.itemKey(), params.itemType(), highlight);
     window.getSelection()?.removeAllRanges();
     popoverState = null;
     requestAnimationFrame(applyHighlights);
     if (toMargin) void saveHighlightToMargin(highlight);
+  }
+
+  async function commitSelectorAdjustment(highlightId: string, selector: TextQuoteSelector) {
+    const itemKey = params.itemKey();
+    await itemLabelsStore.setHighlightSelector(itemKey, highlightId, selector);
+    requestAnimationFrame(applyHighlights);
+    const updated = itemLabelsStore.getHighlights(itemKey).find((h) => h.id === highlightId);
+    if (updated?.marginRkey) await updateNoteOnMargin(updated);
+  }
+
+  function adjustHighlightFromPopover() {
+    const highlightId = popoverState?.highlightId;
+    const container = params.contentEl();
+    const highlight = itemLabelsStore
+      .getHighlights(params.itemKey())
+      .find((entry) => entry.id === highlightId);
+    if (!highlightId || !container || !highlight) return;
+    const range = findTextInDOM(highlight.selector, container);
+    if (!range) return;
+    popoverState = null;
+    adjustingHighlightId = highlightId;
+    pendingTouchSelector = highlight.selector;
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
   }
 
   /** Create a highlight from the current selection and push it to Margin. */
@@ -423,7 +475,15 @@ export function useHighlights(params: HighlightParams) {
   }
 
   function closePopover() {
+    if (popoverState?.mode === 'adjust') adjustingHighlightId = null;
     popoverState = null;
+  }
+
+  function selectionAnchorRect(range: Range): DOMRect | null {
+    const container = params.contentEl();
+    const viewport = container?.closest('.paged-viewport') as HTMLElement | null;
+    if (!viewport) return range.getBoundingClientRect();
+    return visibleClientRect(range.getClientRects(), viewport.getBoundingClientRect());
   }
 
   // --- Margin (at.margin.note) sync ---
@@ -476,9 +536,9 @@ export function useHighlights(params: HighlightParams) {
     const state = popoverState;
     if (!state) return null;
     if (state.anchorRange) {
-      const rect = state.anchorRange.getBoundingClientRect();
+      const rect = selectionAnchorRect(state.anchorRange);
       // A range whose nodes have been replaced measures as an empty rect.
-      return rect.width || rect.height ? rect : null;
+      return rect && (rect.width || rect.height) ? rect : null;
     }
     const live =
       state.anchorEl?.isConnected === true
@@ -490,7 +550,17 @@ export function useHighlights(params: HighlightParams) {
                 `mark.highlight[data-highlight-id="${CSS.escape(state.highlightId)}"]`
               ) ?? null)
           : null;
-    return live?.getBoundingClientRect() ?? null;
+    if (!live) return null;
+    const container = params.contentEl();
+    const viewport = container?.closest('.paged-viewport') as HTMLElement | null;
+    if (!viewport || !state.highlightId) return live.getBoundingClientRect();
+    const marks = container?.querySelectorAll<HTMLElement>(
+      `mark.highlight[data-highlight-id="${CSS.escape(state.highlightId)}"]`
+    );
+    return visibleClientRect(
+      Array.from(marks ?? [], (mark) => mark.getBoundingClientRect()),
+      viewport.getBoundingClientRect()
+    );
   }
 
   /** The current note on the highlight targeted by the popover (for prefill). */
@@ -589,6 +659,7 @@ export function useHighlights(params: HighlightParams) {
     mouseoverHandler = null;
     mouseoutHandler = null;
     pendingTouchSelector = null;
+    adjustingHighlightId = null;
     popoverState = null;
     notePeek = null;
   }
@@ -613,6 +684,7 @@ export function useHighlights(params: HighlightParams) {
     createHighlightFromPopoverToMargin,
     saveNoteFromPopover,
     removeHighlightFromPopover,
+    adjustHighlightFromPopover,
     closePopover,
     toggleParagraphHighlight,
     savePopoverHighlightToMargin,

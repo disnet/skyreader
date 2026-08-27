@@ -104,3 +104,23 @@ describe('reviewed mutation', () => {
     expect(result.highlights[0]).toMatchObject({ note: 'kept', marginRkey: 'rk1' });
   });
 });
+
+describe('selector mutation', () => {
+  it('re-bounds only the named highlight and preserves its metadata', () => {
+    const base = [
+      {
+        ...highlight('one', 'old quote'),
+        note: 'kept',
+        marginRkey: 'margin-key',
+        lastReviewedAt: 42,
+      },
+      highlight('two'),
+    ];
+    const selector = { type: 'TextQuoteSelector' as const, exact: 'new quote', prefix: 'before' };
+    const result = mutateHighlightUnion(base, { type: 'selector', highlightId: 'one', selector });
+
+    expect(result.changed).toBe(true);
+    expect(result.highlights[0]).toEqual({ ...base[0], selector });
+    expect(result.highlights[1]).toBe(base[1]);
+  });
+});

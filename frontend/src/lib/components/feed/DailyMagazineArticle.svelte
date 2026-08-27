@@ -256,6 +256,7 @@
     onHighlight={highlightsHook.createHighlightFromPopover}
     onHighlightToMargin={highlightsHook.createHighlightFromPopoverToMargin}
     onRemove={highlightsHook.removeHighlightFromPopover}
+    onAdjust={highlightsHook.adjustHighlightFromPopover}
     onSaveToMargin={highlightsHook.savePopoverHighlightToMargin}
     onSaveNote={highlightsHook.saveNoteFromPopover}
     existingNote={highlightsHook.popoverHighlightNote}
