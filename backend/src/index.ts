@@ -74,6 +74,7 @@ import {
 } from './routes/saved';
 import { handleExtract } from './routes/extract';
 import { handleGetSettings, handleUpdateSettings } from './routes/settings';
+import { handleCreateCheckout, handlePolarWebhook } from './routes/billing';
 import {
   handleGetMagazines,
   handleUpsertMagazine,
@@ -254,6 +255,15 @@ async function route(
   // DID; the handler owns that limit, so this also stops paying for two.
   if (url.pathname === TELEMETRY_PATH) {
     return withCors(await handleTelemetryError(request, env), headers);
+  }
+
+  // Polar billing webhooks: server-to-server, gated by a standard-webhooks HMAC
+  // signature rather than a session. Answered before session resolution for the
+  // same reason as telemetry — no cookie is ever present, and a D1 blip in the
+  // session path must not turn a signed delivery into a 500 Polar will retry.
+  // Skipping per-DID rate limiting is correct here: the signature is the gate.
+  if (url.pathname === '/api/webhook/polar') {
+    return withCors(await handlePolarWebhook(request, env), headers);
   }
 
   // Track user activity for authenticated requests (non-blocking)
@@ -582,6 +592,11 @@ async function route(
       } else {
         response = await handleGetSettings(request, env);
       }
+      break;
+
+    // Billing (Polar checkout; the webhook is mounted pre-session above)
+    case url.pathname === '/api/billing/checkout':
+      response = await handleCreateCheckout(request, env, session);
       break;
 
     // Magazine routes (durable, cross-device reading issues)

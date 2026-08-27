@@ -167,12 +167,7 @@
     <div class="error-message">
       {error}
       {#if isAtLimit && auth.user?.tier !== 'supporter'}
-        <a
-          href="https://github.com/sponsors/disnet"
-          target="_blank"
-          rel="noopener noreferrer"
-          class="sponsor-link">Become a sponsor</a
-        > to get raised limits.
+        <a href="/settings" class="sponsor-link">Upgrade your plan</a> to get raised limits.
       {/if}
     </div>
   {/if}

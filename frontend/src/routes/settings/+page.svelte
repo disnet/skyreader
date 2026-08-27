@@ -47,6 +47,26 @@
 
   let showImportModal = $state(false);
 
+  // Upgrade flow: ask the backend for a Polar hosted-checkout URL, then
+  // navigate to it top-level (same shape as the OAuth login redirect).
+  let upgradeLoading = $state(false);
+  let upgradeError = $state<string | null>(null);
+
+  async function handleUpgrade() {
+    upgradeError = null;
+    upgradeLoading = true;
+    try {
+      const { url } = await api.createCheckout();
+      window.location.href = url;
+      // Keep the button disabled while the navigation happens; only a failure
+      // hands control back to this page.
+    } catch (error) {
+      console.error('Failed to start checkout:', error);
+      upgradeError = error instanceof Error ? error.message : 'Failed to start checkout.';
+      upgradeLoading = false;
+    }
+  }
+
   // "Save from anywhere" — browser bookmarklets + a Share Sheet shortcut.
   // Paste a published iCloud Shortcut link (icloud.com/shortcuts/...) into either
   // constant to turn the manual steps into a one-tap "Add Shortcut" button.
@@ -135,6 +155,10 @@
       goto('/auth/login?returnUrl=/settings');
       return;
     }
+    // Refresh tier/limits from the server — this is the page the user lands
+    // back on after paying at Polar's hosted checkout, and the webhook has
+    // usually flipped users.tier by then. Non-blocking; offline is a no-op.
+    void auth.verifySession();
     // Load subscriptions if not already loaded
     if (subscriptionsStore.subscriptions.length === 0) {
       await subscriptionsStore.load();
@@ -499,6 +523,14 @@
   }
 </script>
 
+<!-- Checkout happens on Polar's site with no return redirect, so refresh the
+     tier when the user tabs/navigates back here and it hasn't flipped yet. -->
+<svelte:window
+  onfocus={() => {
+    if (auth.user && auth.user.tier !== 'supporter') void auth.verifySession();
+  }}
+/>
+
 <StaticPageChrome title="Settings" />
 
 {#snippet visBadge(isPublic: boolean)}
@@ -581,12 +613,16 @@
 
       {#if auth.user.tier !== 'supporter'}
         <p class="plan-upgrade">
-          <a href="https://github.com/sponsors/disnet" target="_blank" rel="noopener noreferrer"
-            >Become a sponsor</a
-          >
-          to get raised limits, help Skyreader become self-sustaining, and support
+          Become a Supporter to get raised limits, help Skyreader become self-sustaining, and
+          support
           <a href="https://bsky.app/profile/disnetdev.com" target="_blank">Tim</a>!
         </p>
+        <button class="btn btn-primary" onclick={handleUpgrade} disabled={upgradeLoading}>
+          {upgradeLoading ? 'Opening checkout…' : 'Upgrade'}
+        </button>
+        {#if upgradeError}
+          <p class="sync-error">{upgradeError}</p>
+        {/if}
       {/if}
     </section>
   {/if}

@@ -990,6 +990,14 @@ class ApiClient {
     });
   }
 
+  // Billing (Polar). The backend owns the product default; pass a product id
+  // only to override it. The returned url is Polar's hosted checkout — navigate
+  // to it top-level, same shape as the OAuth login redirect.
+  async createCheckout(productId?: string): Promise<{ url: string }> {
+    const qs = productId ? `?products=${encodeURIComponent(productId)}` : '';
+    return this.fetch(`/api/billing/checkout${qs}`, { method: 'POST' });
+  }
+
   // Settings
   async getSettings(): Promise<{
     pdsSyncEnabled: boolean;
