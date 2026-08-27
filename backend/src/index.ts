@@ -88,6 +88,7 @@ import {
   handleListSembleCollections,
   handleCreateMarginBookmark,
   handleListMarginCollections,
+  handleListMarginHighlights,
   handleCreateMarginNote,
   handleUpdateMarginNote,
   handleDeleteMarginNote,
@@ -658,6 +659,17 @@ async function route(
     case url.pathname === '/api/integrations/margin/collections':
       if (!session) return unauthorizedResponse(headers);
       response = await handleListMarginCollections(request, env);
+      break;
+    case url.pathname === '/api/integrations/margin/highlights':
+      if (!session) return unauthorizedResponse(headers);
+      if (request.method !== 'GET') {
+        response = new Response(JSON.stringify({ error: 'Method not allowed' }), {
+          status: 405,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      } else {
+        response = await handleListMarginHighlights(request, env);
+      }
       break;
     case url.pathname === '/api/integrations/margin/notes':
       if (!session) return unauthorizedResponse(headers);

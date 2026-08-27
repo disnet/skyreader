@@ -15,6 +15,7 @@
   import NotificationList from '$lib/components/NotificationList.svelte';
   import HomeLane from '$lib/components/feed/HomeLane.svelte';
   import MagazineRail from '$lib/components/feed/MagazineRail.svelte';
+  import HighlightReviewCard from '$lib/components/feed/HighlightReviewCard.svelte';
   import { goto } from '$app/navigation';
   import type { LaneCardVM } from '$lib/components/feed/homeLane';
   import { savesStore } from '$lib/stores/saves.svelte';
@@ -401,6 +402,7 @@
     </div>
 
     {#if !isLoading}
+      <HighlightReviewCard />
       <MagazineRail
         issues={magazineStore.magazines}
         generating={magazineStore.generating}

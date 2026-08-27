@@ -8,9 +8,11 @@
   import MobileBottomBar from '$lib/components/feed/MobileBottomBar.svelte';
   import MobileFeedSwitcher from '$lib/components/feed/MobileFeedSwitcher.svelte';
   import HighlightPopover from '$lib/components/feed/HighlightPopover.svelte';
+  import RemoveHighlightModal from '$lib/components/feed/RemoveHighlightModal.svelte';
   import BottomSheet from '$lib/components/common/BottomSheet.svelte';
   import NotificationList from '$lib/components/NotificationList.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
+  import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { articlesStore } from '$lib/stores/articles.svelte';
   import { socialStore } from '$lib/stores/social.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
@@ -26,9 +28,15 @@
     updateHighlightNoteOnMargin,
   } from '$lib/services/marginHighlights';
   import { formatRelativeTime } from '$lib/utils/date';
-  import { decodeEntities } from '$lib/utils/entities';
+  import { buildHighlightSourceLookups, resolveHighlightSource } from '$lib/utils/highlightSource';
+  import { highlightReviewStore } from '$lib/stores/highlightReview.svelte';
+  import { REVIEW_INTENT_DEFAULT } from '$lib/utils/highlightReview';
+  import {
+    maybeImportMarginHighlights,
+    marginImportTruncated,
+  } from '$lib/services/marginHighlightImport';
   import type { FeedDisplayItem } from '$lib/stores/feedView.svelte';
-  import type { Highlight, ItemLabelType, SavedItem } from '$lib/types';
+  import type { Highlight, ItemLabelType, ReviewIntent } from '$lib/types';
 
   // Set the browser-tab title while this page is mounted.
   $effect(() => {
@@ -49,12 +57,39 @@
   });
   onDestroy(() => window.removeEventListener('scroll', handleWindowScroll));
 
+  // A partial poll must say so — otherwise "these are my highlights" is a lie.
+  let importTruncated = $state(false);
+
+  // Opening the list is one of the two moments we poll Margin for highlights the
+  // reader made elsewhere. Minute-gated; silent when off or offline.
+  //
+  // Gated on the stores, exactly as the review deck is: the import unions against
+  // the highlights it can see and writes the result back as the item's whole set,
+  // so polling before the local read has landed would import against an empty
+  // corpus and overwrite the item's existing highlights with only the imported
+  // ones. The two surfaces also share one in-flight poll, so an ungated caller
+  // here would defeat the deck's gate as well as its own.
+  let storesReady = $derived(!itemLabelsStore.isLoading && !savesStore.loading);
+  let importStarted = false;
+
+  $effect(() => {
+    if (!storesReady || importStarted) return;
+    importStarted = true;
+    void maybeImportMarginHighlights()
+      .catch(() => {})
+      // Read the flag the service kept rather than this call's return: a poll
+      // that short-circuits on the interval gate reports `skipped`, and the
+      // corpus is no less partial for someone else having done the fetching.
+      .finally(() => (importTruncated = marginImportTruncated()));
+  });
+
   interface HighlightRow {
     id: string;
     text: string;
     note?: string;
     createdAt: number;
     isMargin: boolean;
+    intent: ReviewIntent;
     highlight: Highlight;
   }
 
@@ -72,26 +107,15 @@
     latest: number;
   }
 
-  function domainFromUrl(url: string | null | undefined): string | null {
-    if (!url) return null;
-    try {
-      return new URL(url).hostname.replace(/^www\./, '');
-    } catch {
-      return null;
-    }
-  }
-
   // Lookups for enriching a highlight's parent item with title/url/body.
-  let articlesByGuid = $derived(new Map(articlesStore.allArticles.map((a) => [a.guid, a])));
-  let documentsByUri = $derived(new Map(socialStore.documents.map((d) => [d.recordUri, d])));
-  let savedByKey = $derived.by(() => {
-    const m = new Map<string, SavedItem>();
-    for (const s of savesStore.articles) {
-      if (s.itemGuid) m.set(s.itemGuid, s);
-      if (s.uri) m.set(s.uri, s);
-    }
-    return m;
-  });
+  let sourceLookups = $derived(
+    buildHighlightSourceLookups(
+      articlesStore.allArticles,
+      socialStore.documents,
+      savesStore.articles,
+      subscriptionsStore.subscriptions
+    )
+  );
 
   // Group every highlight under its source item, newest-source first.
   let groups = $derived.by((): HighlightGroup[] => {
@@ -107,43 +131,18 @@
       const groupKey = itemLabelsStore.canonicalKey(itemKey);
       let group = byKey.get(groupKey);
       if (!group) {
-        let title = '';
-        let url: string | null = null;
-        let displayItem: FeedDisplayItem | null = null;
-
-        if (itemType === 'article') {
-          const a = articlesByGuid.get(groupKey);
-          if (a) {
-            title = a.title;
-            url = a.url;
-            displayItem = { type: 'article', item: a, key: a.guid };
-          }
-        } else if (itemType === 'document') {
-          const d = documentsByUri.get(groupKey);
-          if (d) {
-            title = d.title;
-            url = d.canonicalUrl ?? null;
-            displayItem = { type: 'document', item: d, key: d.recordUri };
-          }
-        }
-
-        // Fall back to a saved copy (carries title/url, and can open in the reader).
-        if (!displayItem) {
-          const s = savedByKey.get(groupKey);
-          if (s) {
-            title = title || s.title || '';
-            url = url || s.url || null;
-            displayItem = { type: 'saved', item: s, key: s.itemGuid || s.uri };
-          }
-        }
+        // Imported Margin highlights may have no local article at all — the
+        // resolver falls back to the metadata carried on the highlight so the
+        // group still renders a title and stays openable.
+        const source = resolveHighlightSource(groupKey, itemType, sourceLookups, highlight);
 
         group = {
           itemKey: groupKey,
           itemType,
-          title: decodeEntities(title) || 'Untitled',
-          url,
-          domain: domainFromUrl(url),
-          displayItem,
+          title: source.title,
+          url: source.url,
+          domain: source.domain,
+          displayItem: source.displayItem,
           rows: [],
           latest: 0,
         };
@@ -156,6 +155,7 @@
         note: highlight.note,
         createdAt: highlight.createdAt,
         isMargin: Boolean(highlight.marginUri),
+        intent: highlight.reviewIntent ?? REVIEW_INTENT_DEFAULT,
         highlight,
       });
       if (highlight.createdAt > group.latest) group.latest = highlight.createdAt;
@@ -189,13 +189,39 @@
     }
   }
 
-  function handleRemove(group: HighlightGroup, row: HighlightRow) {
-    void deleteHighlight(group.itemKey, row.highlight);
+  // Removing a Margin-backed highlight deletes the user's own PDS record too —
+  // always confirm, so a cross-app delete can't happen on a stray tap.
+  let removePrompt = $state<{ group: HighlightGroup; row: HighlightRow } | null>(null);
+
+  function confirmRemove() {
+    const pending = removePrompt;
+    removePrompt = null;
+    if (!pending) return;
+    void deleteHighlight(pending.group.itemKey, pending.row.highlight);
   }
 
   function handleSaveToMargin(group: HighlightGroup, row: HighlightRow) {
     void saveHighlightToMargin(group.itemKey, row.highlight, group.url, group.title);
   }
+
+  // Frequency tuning happens in the review deck, one card at a time. The list
+  // is where you can see what you've set and get back out of 'never', which is
+  // the only setting that hides a highlight from the deck entirely. Clearing it
+  // returns to the default pace rather than to a previous 'soon'/'someday' —
+  // the list reports the state, the deck is where you tune it.
+  function toggleNeverReview(group: HighlightGroup, row: HighlightRow) {
+    void itemLabelsStore.setHighlightReviewIntent(
+      group.itemKey,
+      row.id,
+      row.intent === 'never' ? null : 'never'
+    );
+  }
+
+  const REVIEW_INTENT_BADGE: Partial<Record<ReviewIntent, string>> = {
+    soon: 'Soon',
+    someday: 'Someday',
+    never: 'Not in review',
+  };
 
   // Note editor — a floating popover anchored to the "add a note" button, opened
   // straight into its note view. Mirrors the reader's note-editing UX.
@@ -250,10 +276,19 @@
   <header class="highlights-header" class:scrolled>
     <div class="header-inner">
       <NavigationDropdown currentTitle="Highlights" />
+      {#if highlightReviewStore.hasHighlights}
+        <a class="review-link" href="/highlights/review">
+          <Icon name="quote" size={15} />
+          <span>Review</span>
+        </a>
+      {/if}
     </div>
   </header>
 
   <div class="highlights-body">
+    {#if importTruncated}
+      <p class="import-notice">Some Margin highlights couldn't be fetched yet.</p>
+    {/if}
     {#if totalHighlights === 0}
       <EmptyState
         title="No highlights yet"
@@ -297,6 +332,15 @@
                       {:else}
                         <span class="badge badge-private">Private</span>
                       {/if}
+                      {#if REVIEW_INTENT_BADGE[row.intent]}
+                        <span class="badge badge-intent">
+                          <Icon
+                            name={row.intent === 'never' ? 'circle-slash' : 'clock'}
+                            size={12}
+                          />
+                          {REVIEW_INTENT_BADGE[row.intent]}
+                        </span>
+                      {/if}
                     </span>
                     <span class="row-actions">
                       <button
@@ -318,8 +362,22 @@
                         </button>
                       {/if}
                       <button
+                        class="action-btn"
+                        class:on={row.intent === 'never'}
+                        onclick={() => toggleNeverReview(group, row)}
+                        title={row.intent === 'never'
+                          ? 'Put back in the review deck'
+                          : 'Never show this in review'}
+                        aria-label={row.intent === 'never'
+                          ? 'Put back in the review deck'
+                          : 'Never show this in review'}
+                        aria-pressed={row.intent === 'never'}
+                      >
+                        <Icon name="circle-slash" size={15} />
+                      </button>
+                      <button
                         class="action-btn danger"
-                        onclick={() => handleRemove(group, row)}
+                        onclick={() => (removePrompt = { group, row })}
                         title="Remove highlight"
                         aria-label="Remove highlight"
                       >
@@ -398,6 +456,13 @@
   />
 {/if}
 
+<RemoveHighlightModal
+  open={Boolean(removePrompt)}
+  onMargin={Boolean(removePrompt?.row.isMargin)}
+  onRemove={confirmRemove}
+  onclose={() => (removePrompt = null)}
+/>
+
 <style>
   .highlights-page {
     width: 100%;
@@ -454,12 +519,43 @@
     padding: 0.625rem 1rem;
     display: flex;
     align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+
+  /* Quiet entry into the review deck — a link, not a call to action. */
+  .review-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    min-height: 36px;
+    padding: 0.25rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+    text-decoration: none;
+    transition:
+      color 0.15s ease,
+      border-color 0.15s ease;
+  }
+
+  .review-link:hover {
+    color: var(--color-primary);
+    border-color: var(--color-primary);
   }
 
   .highlights-body {
     max-width: 800px;
     margin: 0 auto;
     padding: 0.5rem;
+  }
+
+  .import-notice {
+    margin: 0.5rem 0.5rem 0;
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
   }
 
   .group-list {
@@ -621,6 +717,13 @@
     background: var(--color-bg-secondary, #f0f0f0);
   }
 
+  /* A review-pace setting the reader chose. Reads as a state on the highlight,
+     not as a warning: nothing was deleted, even for 'never'. */
+  .badge-intent {
+    color: var(--color-text-secondary);
+    background: var(--color-bg-secondary, #f0f0f0);
+  }
+
   .row-actions {
     display: flex;
     align-items: center;
@@ -654,14 +757,26 @@
     background: rgba(220, 38, 38, 0.1);
   }
 
+  /* A toggle that's on, not a selected row: the tint says the state, the badge
+     beside it says what the state means. */
+  .action-btn.on {
+    color: var(--color-primary);
+    background: var(--color-sidebar-active, rgba(0, 102, 204, 0.1));
+  }
+
   @media (prefers-color-scheme: dark) {
     .group-card:hover {
       background-color: var(--color-bg-hover, rgba(255, 255, 255, 0.03));
     }
 
     .badge-private,
+    .badge-intent,
     .action-btn:hover {
       background: rgba(255, 255, 255, 0.08);
+    }
+
+    .action-btn.on {
+      background: var(--color-sidebar-active, rgba(77, 166, 255, 0.15));
     }
   }
 </style>

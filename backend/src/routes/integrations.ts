@@ -11,6 +11,8 @@ import {
 } from '../services/integration-membership';
 import { SEMBLE_SCOPES, MARGIN_SCOPES } from './auth';
 import { SEMBLE_CONNECTION_SCOPES } from '../config/scopes';
+import { listAllRecordsPublic } from '../services/backing/read';
+import { resolvePdsUrl } from '../utils/did-resolver';
 
 /**
  * The scope sets a request can be gated on. `semble-connections` is a *separate*
@@ -705,6 +707,61 @@ export function buildMarginNoteRecord(body: MarginNoteBody, createdAt: string) {
 }
 
 /**
+ * Did the read establish what the record is, or only that we couldn't tell?
+ *
+ * `mergeMarginNoteUpdate` falls back to rebuilding when there is nothing to
+ * merge onto, and `putRecord` replaces — so answering "absent" for a read that
+ * merely failed is destructive: a 502 or a rate-limit on a record *Margin*
+ * wrote would stamp Skyreader's shape over the reader's own note. Only a
+ * definitive answer may reach the fallback, and `retryable` is what separates
+ * "it isn't there" from "ask again".
+ */
+export function readProvesAbsence(result: { success: boolean; retryable?: boolean }): boolean {
+  return result.success || !result.retryable;
+}
+
+/**
+ * Apply a note edit to the record that is already on the PDS.
+ *
+ * A note edit only ever changes the comment body, but `putRecord` replaces the
+ * whole record — so rebuilding it from the handful of fields Skyreader happens
+ * to know strips everything else. That was harmless while every updatable note
+ * was one Skyreader had written. Margin ingest ends that: the reader can now
+ * annotate a highlight *Margin* made, and a rebuild would stamp Skyreader's
+ * `generator` onto their record, swap `target.source` for our normalized URL,
+ * and drop any field of this third-party lexicon we don't model.
+ *
+ * So the edit is a merge, and the rebuild is only the fallback for a record
+ * that isn't there to merge onto (in which case `putRecord` is creating it, and
+ * Skyreader's own shape is the right one).
+ */
+export function mergeMarginNoteUpdate(
+  existing: unknown,
+  body: MarginNoteBody,
+  createdAt: string
+): Record<string, unknown> {
+  if (!existing || typeof existing !== 'object') return buildMarginNoteRecord(body, createdAt);
+  const record = existing as Record<string, unknown>;
+  if (record.$type !== 'at.margin.note') return buildMarginNoteRecord(body, createdAt);
+
+  const note = body.note?.trim();
+  const next = { ...record };
+  if (!note) {
+    // Clearing the note drops the body; everything else the record carries stays.
+    delete next.body;
+    return next;
+  }
+
+  // Keep whatever format the record already declared — Margin owns that choice
+  // for its own notes, and only a body we're introducing gets our default. A
+  // legacy bare-string body has no format to keep, and reads as undefined here.
+  const previous = next.body as Record<string, unknown> | undefined;
+  const format = typeof previous?.format === 'string' ? previous.format : 'text/plain';
+  next.body = { value: note, format };
+  return next;
+}
+
+/**
  * POST /api/integrations/margin/notes — create an at.margin.note (highlight) on PDS
  */
 export async function handleCreateMarginNote(request: Request, env: Env): Promise<Response> {
@@ -798,12 +855,22 @@ export async function handleUpdateMarginNote(request: Request, env: Env): Promis
 
   const pdsClient = createPDSClient(session);
 
-  // Preserve the record's original creation time — a note edit reuses the rkey
-  // and must not rewrite when the highlight was first made. Fall back to now if
-  // the existing record is missing or carries no createdAt.
-  const existing = await pdsClient.getRecord<{ createdAt?: string }>('at.margin.note', rkey);
-  const createdAt = (existing.success && existing.data.value.createdAt) || new Date().toISOString();
-  const record = buildMarginNoteRecord(body, createdAt);
+  // Read the record before writing it: `putRecord` replaces, so the edit is a
+  // merge onto what's already there (see mergeMarginNoteUpdate). That also
+  // preserves the original creation time — a note edit reuses the rkey and must
+  // not rewrite when the highlight was first made. Only when there's nothing to
+  // merge onto does the record get rebuilt, with `now` as its createdAt.
+  const existing = await pdsClient.getRecord<Record<string, unknown>>('at.margin.note', rkey);
+
+  if (!readProvesAbsence(existing)) {
+    return new Response(JSON.stringify({ error: 'Could not read the note to update' }), {
+      status: 502,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const existingValue = existing.success ? existing.data.value : null;
+  const record = mergeMarginNoteUpdate(existingValue, body, new Date().toISOString());
 
   const result = await pdsClient.putRecord('at.margin.note', rkey, record);
 
@@ -895,6 +962,257 @@ export async function handleListMarginCollections(request: Request, env: Env): P
   }));
 
   return new Response(JSON.stringify({ collections }), {
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+// --- Margin highlight import (the READ direction) -------------------------
+//
+// Skyreader has always pushed highlights out as at.margin.note records; this is
+// the only path that reads the user's own notes back, so the review deck can
+// cover everything they've highlighted across the Atmosphere. The read itself is
+// public XRPC against their own repo (same auth-free primitive the backed-saves
+// snapshot uses), but it is still gated on the margin scopes: without them a
+// note edit on an imported highlight would queue a PDS write the session can't
+// perform, which is a worse state than not importing at all.
+//
+// at.margin.note is a third-party lexicon that has already changed shape once,
+// so every field is parsed defensively — one malformed record is skipped, never
+// thrown, so a single bad note can't lose the whole poll.
+
+// How many URLs (or host prefixes) one save-matching statement carries. Keep
+// comfortably below D1's 100 bound-parameter cap.
+export const MATCH_CHUNK = 40;
+
+export interface MarginHighlightNote {
+  uri: string;
+  rkey: string;
+  url: string;
+  urlNormalized: string;
+  title?: string;
+  selector: { type: 'TextQuoteSelector'; exact: string; prefix?: string; suffix?: string };
+  note?: string;
+  createdAt?: string;
+  /** The user's save this note's URL landed on, when there is one. */
+  match: { itemGuid: string | null; uri: string | null } | null;
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
+}
+
+/**
+ * Parse one at.margin.note into a highlight, or null when it isn't one we can
+ * use: a bookmarking note (that's a save, not a highlight), a missing or
+ * non-TextQuote selector, an empty quote, or a source that isn't an http(s) URL.
+ */
+export function parseMarginHighlightNote(
+  uri: string,
+  value: unknown
+): Omit<MarginHighlightNote, 'match'> | null {
+  if (!value || typeof value !== 'object') return null;
+  const record = value as Record<string, unknown>;
+  if (record.motivation !== 'highlighting') return null;
+
+  const target = record.target;
+  if (!target || typeof target !== 'object') return null;
+  const targetRecord = target as Record<string, unknown>;
+
+  const source = optionalString(targetRecord.source);
+  if (!source) return null;
+  const urlNormalized = normalizeArticleUrl(source);
+  if (!urlNormalized) return null;
+
+  const selector = targetRecord.selector;
+  if (!selector || typeof selector !== 'object') return null;
+  const selectorRecord = selector as Record<string, unknown>;
+  if (selectorRecord.type !== 'TextQuoteSelector') return null;
+  const exact = optionalString(selectorRecord.exact);
+  if (!exact) return null;
+
+  const rkey = uri.split('/').pop();
+  if (!rkey) return null;
+
+  // The note body is a W3C comment body ({ value, format }); older records may
+  // carry a bare string.
+  let note: string | undefined;
+  const body = record.body;
+  if (typeof body === 'string') note = optionalString(body);
+  else if (body && typeof body === 'object') {
+    note = optionalString((body as Record<string, unknown>).value);
+  }
+
+  return {
+    uri,
+    rkey,
+    url: source,
+    urlNormalized,
+    title: optionalString(targetRecord.title),
+    selector: {
+      type: 'TextQuoteSelector',
+      exact,
+      prefix: optionalString(selectorRecord.prefix),
+      suffix: optionalString(selectorRecord.suffix),
+    },
+    note,
+    createdAt: optionalString(record.createdAt),
+  };
+}
+
+/**
+ * A LIKE prefix that every raw save URL keying to `normalized` must start with:
+ * scheme + host, the two parts normalization preserves (it lowercases the host —
+ * LIKE is ASCII-case-insensitive, so that still matches — and only ever edits the
+ * port, query, fragment and trailing slash after it). Narrowing the un-keyed read
+ * by host is what keeps it from being "every save this user has ever made".
+ */
+function hostLikePrefix(normalized: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(normalized);
+  } catch {
+    return null;
+  }
+  // `\` escapes LIKE's own wildcards so a host containing `_` or `%` (legal in a
+  // stored URL, rare in practice) stays a literal.
+  const literal = `${url.protocol}//${url.hostname}`.replace(/[\\%_]/g, '\\$&');
+  return `${literal}%`;
+}
+
+/**
+ * Join parsed notes onto the user's saves by normalized URL. Returns a lookup
+ * keyed by normalized URL.
+ *
+ * Two passes, because `url_normalized` is only written on the backed-save path
+ * (`saved.ts` — the native inserts omit it, and `backfillUrlNormalized` runs only
+ * when a user turns Semble/Margin backing on). So for a default-backing account
+ * every save has a NULL key and the second pass is the one that matches; for a
+ * backed account the first, indexed pass is. Neither is the "legacy tail".
+ */
+async function matchNotesToSaves(
+  env: Env,
+  did: string,
+  urls: string[]
+): Promise<Map<string, { itemGuid: string | null; uri: string | null }>> {
+  const matches = new Map<string, { itemGuid: string | null; uri: string | null }>();
+  if (urls.length === 0) return matches;
+
+  // Current rows have an indexed normalized key, so keep that lookup bounded.
+  for (let i = 0; i < urls.length; i += MATCH_CHUNK) {
+    const chunk = urls.slice(i, i + MATCH_CHUNK);
+    const placeholders = chunk.map(() => '?').join(', ');
+    const result = await env.DB.prepare(
+      `SELECT url, url_normalized, item_guid, record_uri FROM saved_articles
+       WHERE user_did = ? AND url_normalized IN (${placeholders})`
+    )
+      .bind(did, ...chunk)
+      .all<{
+        url: string | null;
+        url_normalized: string | null;
+        item_guid: string | null;
+        record_uri: string | null;
+      }>();
+
+    for (const row of result.results || []) {
+      const key = row.url_normalized;
+      if (!key || matches.has(key)) continue;
+      matches.set(key, { itemGuid: row.item_guid, uri: row.record_uri });
+    }
+  }
+
+  // Only what the indexed pass couldn't answer. A Semble/Margin-backed account
+  // has a normalized key on every save and matched everything above, so running
+  // this anyway would be one statement per 40 hosts, every poll, over rows that
+  // by definition hold none of them.
+  const unmatched = urls.filter((url) => !matches.has(url));
+  if (unmatched.length === 0) return matches;
+
+  // Un-keyed rows: the raw URL may carry tracking parameters or a fragment, so it
+  // can't be compared to an already-normalized note URL in SQL. Filter by host in
+  // SQL — the one part both forms share — and normalize the survivors in-process.
+  // ORDER BY id so two rows normalizing to the same URL (the same article saved
+  // twice with different tracking params) always resolve to the same save, the
+  // oldest, exactly as `backfillUrlNormalized` picks it.
+  const requested = new Set(unmatched);
+  const prefixes = [
+    ...new Set(unmatched.map(hostLikePrefix).filter((p): p is string => p !== null)),
+  ];
+
+  for (let i = 0; i < prefixes.length; i += MATCH_CHUNK) {
+    const chunk = prefixes.slice(i, i + MATCH_CHUNK);
+    const clauses = chunk.map(() => `url LIKE ? ESCAPE '\\'`).join(' OR ');
+    const unkeyed = await env.DB.prepare(
+      `SELECT url, item_guid, record_uri FROM saved_articles
+       WHERE user_did = ? AND url_normalized IS NULL AND (${clauses})
+       ORDER BY id`
+    )
+      .bind(did, ...chunk)
+      .all<{ url: string | null; item_guid: string | null; record_uri: string | null }>();
+
+    for (const row of unkeyed.results || []) {
+      const key = row.url ? normalizeArticleUrl(row.url) : null;
+      if (!key || !requested.has(key) || matches.has(key)) continue;
+      matches.set(key, { itemGuid: row.item_guid, uri: row.record_uri });
+    }
+  }
+  return matches;
+}
+
+/**
+ * GET /api/integrations/margin/highlights — the user's own at.margin.note
+ * highlights, matched against their saves. The client turns these into normal
+ * Skyreader highlights (see services/marginHighlightImport.ts).
+ */
+export async function handleListMarginHighlights(request: Request, env: Env): Promise<Response> {
+  const session = await getSessionFromRequest(request, env);
+  if (!session) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const checkResult = checkIntegrationScopes(session, 'margin');
+  if (checkResult) return checkResult;
+
+  const pds = (await resolvePdsUrl(session.did)) || session.pdsUrl;
+  if (!pds) {
+    return new Response(JSON.stringify({ error: 'Could not resolve your PDS' }), {
+      status: 502,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  let records: { uri: string; value: unknown }[];
+  let truncated = false;
+  try {
+    const listed = await listAllRecordsPublic(pds, session.did, 'at.margin.note');
+    records = listed.records;
+    truncated = listed.truncated;
+  } catch (error) {
+    console.error('Failed to list at.margin.note records:', error);
+    return new Response(JSON.stringify({ error: 'Could not read your Margin highlights' }), {
+      status: 502,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const parsed: Omit<MarginHighlightNote, 'match'>[] = [];
+  for (const record of records) {
+    const note = parseMarginHighlightNote(record.uri, record.value);
+    if (note) parsed.push(note);
+  }
+
+  const matches = await matchNotesToSaves(env, session.did, [
+    ...new Set(parsed.map((note) => note.urlNormalized)),
+  ]);
+
+  const notes: MarginHighlightNote[] = parsed.map((note) => ({
+    ...note,
+    match: matches.get(note.urlNormalized) ?? null,
+  }));
+
+  return new Response(JSON.stringify({ notes, truncated }), {
     headers: { 'Content-Type': 'application/json' },
   });
 }

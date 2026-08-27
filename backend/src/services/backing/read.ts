@@ -76,7 +76,7 @@ const MAX_PAGES = 50;
 // once (Workers caps them); the per-snapshot caches dedup repeats and cross-repo PDS.
 const RESOLVE_CONCURRENCY = 8;
 
-interface RawRecord<T = Record<string, unknown>> {
+export interface RawRecord<T = Record<string, unknown>> {
   uri: string;
   cid: string;
   value: T;
@@ -86,8 +86,11 @@ interface RawRecord<T = Record<string, unknown>> {
  * Public, auth-free paginated listRecords over a repo+collection. Returns
  * `truncated: true` when it stopped on the page cap with a cursor still pending
  * (an INCOMPLETE snapshot). Mirrors pds-client.ts listAllRecords but needs no session.
+ *
+ * Exported because the Margin highlight import reads the user's own
+ * `at.margin.note` collection the same auth-free way (see routes/integrations.ts).
  */
-async function listAllRecordsPublic<T = Record<string, unknown>>(
+export async function listAllRecordsPublic<T = Record<string, unknown>>(
   pds: string,
   repo: string,
   collection: string

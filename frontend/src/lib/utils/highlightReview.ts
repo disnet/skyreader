@@ -1,0 +1,280 @@
+import type { Highlight, ItemLabelType, ReviewIntent } from '$lib/types';
+import type { MarginImportOutcome } from '$lib/utils/marginHighlightImport';
+import { dailyScore, localDateKey } from '$lib/utils/dailyMagazine';
+
+// The review deck: "revisit a handful of your highlights." Deliberately NOT a
+// durable issue like the daily magazine — a session is a few minutes over a
+// handful of cards, so the deck is derived at open and repeat-avoidance comes
+// from the per-highlight `lastReviewedAt` stamp that syncs with the highlight
+// itself. Same day + same pool => same deck, so opening the deck twice on one
+// device doesn't reshuffle mid-session.
+
+export const HIGHLIGHT_REVIEW_COUNT_OPTIONS = [3, 5, 10] as const;
+export type HighlightReviewCount = (typeof HIGHLIGHT_REVIEW_COUNT_OPTIONS)[number];
+export const HIGHLIGHT_REVIEW_COUNT_DEFAULT: HighlightReviewCount = 5;
+
+/** Reviewing something you highlighted minutes ago is noise, not a review. */
+export const HIGHLIGHT_REVIEW_FRESHNESS_MS = 24 * 60 * 60 * 1000;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Frequency tuning, as a shift in the least-recently-reviewed ranking rather
+ * than as a waiting period.
+ *
+ * A highlight is ranked as though it had been reviewed this much earlier or
+ * later than it actually was: 'soon' jumps the queue, 'someday' sinks to the
+ * back. The alternative — a hard interval you have to wait out — would let a
+ * small library go empty for weeks, which is exactly the "nothing to review"
+ * dead end the freshness filter already bends over backwards to avoid. Biasing
+ * the order instead means the deck deals the same number of cards it always
+ * would; tuning only changes *which* ones come first.
+ *
+ * 'later' is the neutral middle, so an untuned highlight and an explicit
+ * 'later' rank identically. 'never' is filtered out before ranking and its
+ * offset is never read.
+ */
+export const REVIEW_INTENT_OFFSET_MS: Record<ReviewIntent, number> = {
+  soon: -30 * DAY_MS,
+  later: 0,
+  someday: 120 * DAY_MS,
+  never: 0,
+};
+
+export const REVIEW_INTENT_DEFAULT: ReviewIntent = 'later';
+
+/**
+ * Stand-in review time for a highlight that has never been reviewed, far enough
+ * below any real timestamp that even the largest offset can't lift one above a
+ * highlight that has been. Never-seen still beats seen, always; intent orders
+ * within each of those two classes rather than across them.
+ */
+const NEVER_REVIEWED_AT = -100 * 365 * DAY_MS;
+
+/** Where a highlight sits in the queue once its intent is taken into account. */
+export function reviewPriority(highlight: Highlight): number {
+  const base =
+    typeof highlight.lastReviewedAt === 'number' ? highlight.lastReviewedAt : NEVER_REVIEWED_AT;
+  return base + REVIEW_INTENT_OFFSET_MS[highlight.reviewIntent ?? REVIEW_INTENT_DEFAULT];
+}
+
+/**
+ * Is this highlight still part of the review corpus at all?
+ *
+ * 'never' is the reader saying a highlight isn't worth revisiting — not that
+ * it's worth deleting. It stays in the highlights list and on Margin; it just
+ * never comes up again, on any device, until they set it back. Unlike the daily
+ * filter this is permanent, so it's checked before the pool is built rather
+ * than inside it.
+ */
+export function isReviewable(highlight: Highlight): boolean {
+  return highlight.reviewIntent !== 'never';
+}
+
+/** One entry of the flattened highlight corpus (matches `itemLabelsStore.allHighlights`). */
+export interface HighlightEntry {
+  itemKey: string;
+  itemType: ItemLabelType;
+  highlight: Highlight;
+}
+
+export type HighlightDeckStatus =
+  | 'available' // there are cards to review right now
+  | 'completed' // the pool is non-empty but everything eligible was reviewed today
+  | 'empty'; // nothing in rotation at all — no highlights, or every one retired
+
+export function startOfLocalDay(date: Date): number {
+  const start = new Date(date);
+  start.setHours(0, 0, 0, 0);
+  return start.getTime();
+}
+
+function reviewedToday(highlight: Highlight, dayStart: number): boolean {
+  return typeof highlight.lastReviewedAt === 'number' && highlight.lastReviewedAt >= dayStart;
+}
+
+/**
+ * Rank the eligible pool: least-recently-reviewed first, never-reviewed ahead of
+ * everything, shifted by the reader's per-highlight intent, ties broken by a
+ * date-seeded hash so the ordering is stable for the whole day but rotates
+ * tomorrow.
+ *
+ * The first three rules collapse into one comparable number (`reviewPriority`),
+ * which is why the never-reviewed case needs no branch of its own.
+ */
+function rankPool(pool: HighlightEntry[], dateKey: string): HighlightEntry[] {
+  return [...pool].sort((a, b) => {
+    const byPriority = reviewPriority(a.highlight) - reviewPriority(b.highlight);
+    if (byPriority !== 0) return byPriority;
+    const byScore = dailyScore(dateKey, a.highlight.id) - dailyScore(dateKey, b.highlight.id);
+    return byScore || a.highlight.id.localeCompare(b.highlight.id);
+  });
+}
+
+export interface HighlightDeck {
+  dateKey: string;
+  status: HighlightDeckStatus;
+  cards: HighlightEntry[];
+  /** Size of the eligible pool the deck was drawn from (>= cards.length). */
+  poolSize: number;
+}
+
+function deckSize(count: number): number {
+  return Number.isFinite(count) ? Math.max(1, Math.floor(count)) : 1;
+}
+
+export interface DeckOptions {
+  /**
+   * Deal past the day's portion, from highlights already reviewed today.
+   *
+   * This is only ever the reader asking to keep going after the deck ran out
+   * ("Review more"), never something the app does on its own — the daily filter
+   * is what stops the deck nagging. Ranking is unchanged, so an encore brings
+   * back what was seen earliest, not what was seen last.
+   */
+  includeReviewedToday?: boolean;
+}
+
+/**
+ * The pool today's deck deals from: not already reviewed today, and not created
+ * in the last 24 h. The freshness filter RELAXES when it would empty an
+ * otherwise non-empty pool — a reader whose only highlights are from this
+ * morning still gets a deck rather than a confusing "nothing to review."
+ */
+function eligiblePool(
+  entries: HighlightEntry[],
+  now: Date,
+  options: DeckOptions = {}
+): HighlightEntry[] {
+  const dayStart = startOfLocalDay(now);
+  const nowMs = now.getTime();
+
+  const inRotation = entries.filter((entry) => isReviewable(entry.highlight));
+  const due = options.includeReviewedToday
+    ? inRotation
+    : inRotation.filter((entry) => !reviewedToday(entry.highlight, dayStart));
+  const seasoned = due.filter(
+    (entry) => nowMs - entry.highlight.createdAt >= HIGHLIGHT_REVIEW_FRESHNESS_MS
+  );
+  return seasoned.length > 0 ? seasoned : due;
+}
+
+export interface HighlightDeckSummary {
+  status: HighlightDeckStatus;
+  /** Cards today's deck would deal right now — what the nav badge counts. */
+  dueCount: number;
+  /** Size of the eligible pool (>= dueCount). */
+  poolSize: number;
+}
+
+/**
+ * What today's deck holds, without paying to rank it. Entry points that only
+ * show a count or a presence use this; only the deck itself needs the order.
+ */
+export function summarizeHighlightDeck(
+  entries: HighlightEntry[],
+  count: number,
+  now: Date = new Date(),
+  options: DeckOptions = {}
+): HighlightDeckSummary {
+  const pool = eligiblePool(entries, now, options);
+  if (pool.length === 0) {
+    // "Completed" has to mean "you've seen today's portion", so a corpus that is
+    // entirely retired reads as empty, not as a finished session.
+    const inRotation = entries.some((entry) => isReviewable(entry.highlight));
+    return { status: inRotation ? 'completed' : 'empty', dueCount: 0, poolSize: 0 };
+  }
+  return {
+    status: 'available',
+    dueCount: Math.min(pool.length, deckSize(count)),
+    poolSize: pool.length,
+  };
+}
+
+/**
+ * Build today's deck from the whole highlight corpus. Eligibility is
+ * `eligiblePool`; order is least-recently-reviewed first.
+ */
+export function buildHighlightDeck(
+  entries: HighlightEntry[],
+  count: number,
+  now: Date = new Date(),
+  options: DeckOptions = {}
+): HighlightDeck {
+  const dateKey = localDateKey(now);
+  const pool = eligiblePool(entries, now, options);
+
+  if (pool.length === 0) {
+    return {
+      dateKey,
+      status: entries.some((entry) => isReviewable(entry.highlight)) ? 'completed' : 'empty',
+      cards: [],
+      poolSize: 0,
+    };
+  }
+
+  return {
+    dateKey,
+    status: 'available',
+    cards: rankPool(pool, dateKey).slice(0, deckSize(count)),
+    poolSize: pool.length,
+  };
+}
+
+/**
+ * Should the open-time Margin poll redeal the deck it raced?
+ *
+ * The deck deals from the local pool the moment the stores hydrate — a network
+ * round-trip must never stand between the reader and their first card — so the
+ * poll can land after the deal. When it imported something and the reader hasn't
+ * touched a card yet, redealing is free and makes the poll count for this
+ * session. Once a card has been reviewed or dropped, the fixed deck wins:
+ * reshuffling mid-session pulls the ground out from under the reader.
+ */
+export function shouldRedealAfterImport(
+  outcome: MarginImportOutcome,
+  progress: DeckProgress
+): boolean {
+  if (outcome.status !== 'imported' || outcome.imported <= 0) return false;
+  return deckUntouched(progress);
+}
+
+export interface DeckProgress {
+  index: number;
+  interacted: boolean;
+}
+
+/**
+ * A deck the reader hasn't started yet is free to redeal — nothing is pulled out
+ * from under them. Once a card has been advanced, opened or annotated, the deck
+ * they were dealt is the deck they keep, and a change (a Margin import, a new
+ * deck size) applies to the next hand instead.
+ *
+ * Per hand, not per session: a reader who asks for another hand after finishing
+ * one is back at an untouched deck, whatever they've already reviewed today.
+ */
+export function deckUntouched(progress: DeckProgress): boolean {
+  return !progress.interacted && progress.index === 0;
+}
+
+/**
+ * Name the articles a deck draws from: "A", "A and B", "A, B and C", then
+ * "A, B and 3 more". The overflow only kicks in past `max + 1`, because "and 1
+ * more" costs the same room as the title it's hiding.
+ */
+export function describeHighlightSources(titles: string[], max = 2): string {
+  if (titles.length === 0) return '';
+  if (titles.length === 1) return titles[0];
+  if (titles.length <= max + 1) {
+    return `${titles.slice(0, -1).join(', ')} and ${titles[titles.length - 1]}`;
+  }
+  return `${titles.slice(0, max).join(', ')} and ${titles.length - max} more`;
+}
+
+/** Cheap status probe for entry points that only need "is there a deck?". */
+export function highlightDeckStatus(
+  entries: HighlightEntry[],
+  now: Date = new Date()
+): HighlightDeckStatus {
+  return summarizeHighlightDeck(entries, 1, now).status;
+}

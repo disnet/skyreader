@@ -5,6 +5,7 @@
   import { getSourceDisplay } from '$lib/utils/sourceDisplay';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
+  import { highlightReviewStore } from '$lib/stores/highlightReview.svelte';
   import { unreadCounts } from '$lib/stores/unreadCounts.svelte';
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
@@ -67,7 +68,8 @@
     | 'file-text'
     | 'folder'
     | 'users'
-    | 'highlighter';
+    | 'highlighter'
+    | 'quote';
 
   type NavItem =
     | {
@@ -202,6 +204,19 @@
         label: 'Highlights',
         icon: 'highlighter' as IconName,
       },
+      // Review is its own destination; the count is today's deck, and it goes
+      // quiet once the deck is done. Hidden until there's a corpus to review.
+      ...(highlightReviewStore.hasHighlights
+        ? [
+            {
+              type: 'utility',
+              id: 'highlights/review',
+              label: 'Review',
+              count: highlightReviewStore.dueCount,
+              icon: 'quote' as IconName,
+            } as NavItem,
+          ]
+        : []),
       {
         type: 'utility',
         id: 'discover',

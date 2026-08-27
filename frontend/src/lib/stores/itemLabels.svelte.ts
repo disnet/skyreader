@@ -14,9 +14,10 @@ import { generateTid } from '$lib/utils/tid';
 import {
   mutateHighlightUnion,
   resolveHighlightAliases,
+  savedItemLabelType,
   unionHighlightSources,
 } from '$lib/utils/highlightAliases';
-import type { ItemLabel, ItemLabelType, SocialItemType, Highlight } from '$lib/types';
+import type { ItemLabel, ItemLabelType, SocialItemType, Highlight, ReviewIntent } from '$lib/types';
 
 const BULK_BATCH_SIZE = 500;
 
@@ -1571,6 +1572,21 @@ function createItemLabelsStore() {
     await persistHighlightUnion(itemKey, itemType, mutation.highlights);
   }
 
+  /**
+   * Add several highlights to one item in a single union write. Used by the
+   * Margin import, where a heavily-annotated article can arrive with dozens of
+   * highlights at once and one write per highlight would mean one API round trip
+   * (and one full-array rewrite) each.
+   */
+  async function addHighlights(itemKey: string, itemType: ItemLabelType, highlights: Highlight[]) {
+    if (highlights.length === 0) return;
+    let merged = getHighlights(itemKey);
+    for (const highlight of highlights) {
+      merged = mutateHighlightUnion(merged, { type: 'add', highlight }).highlights;
+    }
+    await persistHighlightUnion(itemKey, itemType, merged);
+  }
+
   async function removeHighlight(itemKey: string, highlightId: string) {
     const context = highlightContext(itemKey);
     const mutation = mutateHighlightUnion(context.highlights, { type: 'remove', highlightId });
@@ -1626,6 +1642,53 @@ function createItemLabelsStore() {
     );
   }
 
+  /**
+   * Stamp a highlight as reviewed (review deck). Rides the same union write as
+   * every other highlight mutation, so it syncs and queues offline for free.
+   * No-op when the stamp wouldn't move forward.
+   */
+  async function markHighlightReviewed(itemKey: string, highlightId: string, at = Date.now()) {
+    const context = highlightContext(itemKey);
+    const mutation = mutateHighlightUnion(context.highlights, {
+      type: 'reviewed',
+      highlightId,
+      at,
+    });
+    if (!mutation.changed) return;
+    await persistHighlightUnion(
+      itemKey,
+      context.labels[0]?.itemType || 'saved',
+      mutation.highlights
+    );
+  }
+
+  /**
+   * Set how often a highlight should come back around in the review deck, or
+   * pass null to put it back at the default pace. Nothing is deleted, even for
+   * 'never': the highlight stays in the highlights list and on Margin, it just
+   * stops being dealt. Rides the same union write as every other highlight
+   * mutation, so it reaches D1 with the rest of the highlights array (and so
+   * syncs across devices, and queues when offline) for free.
+   */
+  async function setHighlightReviewIntent(
+    itemKey: string,
+    highlightId: string,
+    intent: ReviewIntent | null
+  ) {
+    const context = highlightContext(itemKey);
+    const mutation = mutateHighlightUnion(context.highlights, {
+      type: 'intent',
+      highlightId,
+      intent,
+    });
+    if (!mutation.changed) return;
+    await persistHighlightUnion(
+      itemKey,
+      context.labels[0]?.itemType || 'saved',
+      mutation.highlights
+    );
+  }
+
   // --- Derived helpers ---
 
   function getSavedArticles(): SavedArticle[] {
@@ -1643,8 +1706,7 @@ function createItemLabelsStore() {
   function getSavedItemKeys(): Map<ItemLabelType, Set<string>> {
     const result = new Map<ItemLabelType, Set<string>>();
     for (const bm of savesStore.articles) {
-      const type: ItemLabelType =
-        bm.source === 'document' ? 'document' : bm.source === 'feed' ? 'article' : 'saved';
+      const type = savedItemLabelType(bm);
       let set = result.get(type);
       if (!set) {
         set = new Set();
@@ -1736,9 +1798,12 @@ function createItemLabelsStore() {
     canonicalKey,
     hasHighlights,
     addHighlight,
+    addHighlights,
     removeHighlight,
     setHighlightMargin,
     setHighlightNote,
+    markHighlightReviewed,
+    setHighlightReviewIntent,
     // Derived helpers
     getSavedArticles,
     getSavedItemKeys,

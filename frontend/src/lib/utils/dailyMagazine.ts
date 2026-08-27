@@ -70,8 +70,9 @@ export function savedItemLabelKeys(item: SavedItem): string[] {
 
 // FNV-1a gives each stable key a repeatable daily sort score. It is not used
 // for security or randomness; it simply rotates the pile without persisting an
-// issue record.
-function dailyScore(dateKey: string, key: string): number {
+// issue record. Shared with the highlight review deck, which rotates its own
+// pile the same way.
+export function dailyScore(dateKey: string, key: string): number {
   const value = `${dateKey}\0${key}`;
   let hash = 0x811c9dc5;
   for (let i = 0; i < value.length; i += 1) {

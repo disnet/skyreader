@@ -12,6 +12,7 @@ import type {
   MagazineParams,
   MagazinePosition,
   MarginCollection,
+  MarginHighlightNote,
   ParsedFeed,
   SaveBacking,
   SembleCollection,
@@ -1154,6 +1155,14 @@ class ApiClient {
       method: 'POST',
       body: JSON.stringify(data),
     });
+  }
+
+  /** The user's own Margin highlights, matched against their saves server-side. */
+  async listMarginHighlights(): Promise<{
+    notes: MarginHighlightNote[];
+    truncated: boolean;
+  }> {
+    return this.fetch('/api/integrations/margin/highlights');
   }
 
   async createMarginNote(data: {

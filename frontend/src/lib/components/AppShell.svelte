@@ -14,6 +14,7 @@
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
   import { keyboardStore } from '$lib/stores/keyboard.svelte';
+  import { highlightReviewStore } from '$lib/stores/highlightReview.svelte';
   import { savedSearchStore } from '$lib/stores/savedSearch.svelte';
   import { notificationsStore } from '$lib/stores/notifications.svelte';
   import { feedPath, FEEDS_PATH, SAVED_PATH } from '$lib/utils/viewNav';
@@ -142,6 +143,16 @@
       category: 'Views',
       action: () => goto('/settings'),
       condition: () => auth.isAuthenticated,
+    });
+
+    // Gated on the corpus like every other Review entry point: a new account
+    // pressing 8 would otherwise land on a page with nothing to deal.
+    keyboardStore.register({
+      key: '8',
+      description: 'Review highlights',
+      category: 'Views',
+      action: () => goto('/highlights/review'),
+      condition: () => auth.isAuthenticated && highlightReviewStore.hasHighlights,
     });
 
     // Feed/user cycling shortcuts
