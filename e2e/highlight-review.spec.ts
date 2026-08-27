@@ -39,6 +39,63 @@ async function seedHighlights(user: TestUser, count: number) {
   });
 }
 
+type SwipePage = import('@playwright/test').Page;
+type SwipeWindow = Window & { __finishSwipe?: (how: string) => void };
+
+/** Drags the front card by (dx, dy) and leaves the finger down. How the gesture
+    ends is the test's business: `finishSwipe` releases it, cancels it, or lands
+    a second finger on it. */
+async function swipeCard(page: SwipePage, delta: { dx?: number; dy?: number }) {
+  await page.evaluate(
+    async ({ dx, dy }) => {
+      const card = document.querySelector('.deck-card') as HTMLElement;
+      const rect = card.getBoundingClientRect();
+      const startX = rect.left + rect.width / 2;
+      const startY = rect.top + 40;
+      const at = (step: number) => [startX + (dx * step) / 10, startY + (dy * step) / 10];
+      const touch = (atX: number, atY: number, identifier = 1) =>
+        new Touch({ identifier, target: card, clientX: atX, clientY: atY });
+      const event = (type: string, touches: Touch[], changed: Touch[]) =>
+        new TouchEvent(type, { bubbles: true, cancelable: true, touches, changedTouches: changed });
+
+      const [x0, y0] = at(0);
+      card.dispatchEvent(event('touchstart', [touch(x0, y0)], [touch(x0, y0)]));
+      for (let step = 1; step <= 10; step++) {
+        const [x, y] = at(step);
+        card.dispatchEvent(event('touchmove', [touch(x, y)], [touch(x, y)]));
+        await new Promise((resolve) => setTimeout(resolve, 16));
+      }
+
+      const [x, y] = at(10);
+      (window as SwipeWindow).__finishSwipe = (how) => {
+        if (how === 'end') card.dispatchEvent(event('touchend', [], [touch(x, y)]));
+        else if (how === 'cancel') card.dispatchEvent(event('touchcancel', [], [touch(x, y)]));
+        // A second finger arrives as a touchstart carrying both points, and no
+        // touchend for the first ever follows.
+        else {
+          const second = touch(x + 40, y + 40, 2);
+          card.dispatchEvent(event('touchstart', [touch(x, y), second], [second]));
+        }
+      };
+    },
+    { dx: delta.dx ?? 0, dy: delta.dy ?? 0 }
+  );
+}
+
+async function finishSwipe(page: SwipePage, how: 'end' | 'cancel' | 'second-finger') {
+  await page.evaluate((mode) => (window as SwipeWindow).__finishSwipe?.(mode), how);
+  await page.waitForTimeout(400);
+}
+
+const endSwipe = (page: SwipePage) => finishSwipe(page, 'end');
+
+/** 'none' once the card is square on the deck again. */
+async function cardTransform(page: SwipePage) {
+  return page.evaluate(
+    () => getComputedStyle(document.querySelector('.deck-card') as HTMLElement).transform
+  );
+}
+
 test.describe('highlight review', () => {
   test('Home offers a deck, the session completes, and the stamp lands in D1', async ({
     authedPage,
@@ -554,6 +611,89 @@ test.describe('highlight review', () => {
 
     await back.click();
     await expect(authedPage.getByText('1 of 3')).toBeVisible();
+  });
+
+  // The one gesture that isn't navigation: lifting a card off the top of the
+  // deck says never show this one again. Synthetic touches, because the deck
+  // owns the vertical axis by hand rather than through a pointer event.
+  test('swiping a card up takes it out of rotation', async ({ authedPage, testUser }) => {
+    await seedHighlights(testUser, 3);
+
+    await authedPage.goto('/highlights/review');
+    await expect(authedPage.getByText('1 of 3')).toBeVisible({ timeout: 15_000 });
+    const first = await authedPage.locator('.deck-card .passage').first().textContent();
+
+    // Short of the threshold the cue shows what it would do, and the card
+    // springs back when the finger says no.
+    await swipeCard(authedPage, { dy: -30 });
+    await expect(authedPage.locator('.retire-cue')).toHaveText('Never show again');
+    await expect(authedPage.locator('.retire-cue')).not.toHaveClass(/armed/);
+    await endSwipe(authedPage);
+    await expect(authedPage.getByText('1 of 3')).toBeVisible();
+    expect(await authedPage.locator('.deck-card .passage').first().textContent()).toBe(first);
+
+    const written = authedPage.waitForResponse(
+      (res) => res.url().includes('/api/labels') && res.request().method() === 'POST'
+    );
+    await swipeCard(authedPage, { dy: -90 });
+    await expect(authedPage.locator('.retire-cue')).toHaveClass(/armed/);
+    await endSwipe(authedPage);
+    await written;
+
+    // Retired, not reviewed: the deck is one shorter and the card is undoable.
+    await expect(authedPage.getByText('1 of 2')).toBeVisible();
+    await expect(authedPage.getByText("won't come up in review again")).toBeVisible();
+    expect(await authedPage.locator('.deck-card .passage').first().textContent()).not.toBe(first);
+
+    await authedPage.getByRole('button', { name: 'Undo' }).click();
+    await expect(authedPage.getByText('1 of 3')).toBeVisible();
+    expect(await authedPage.locator('.deck-card .passage').first().textContent()).toBe(first);
+  });
+
+  // A gesture the reader never released isn't a decision. When the system takes
+  // the touch back mid-lift, the card goes down again — retiring a highlight on
+  // an interruption would spend the one action that isn't navigation.
+  test('a cancelled touch puts the card back instead of retiring it', async ({
+    authedPage,
+    testUser,
+  }) => {
+    await seedHighlights(testUser, 3);
+
+    await authedPage.goto('/highlights/review');
+    await expect(authedPage.getByText('1 of 3')).toBeVisible({ timeout: 15_000 });
+    const first = await authedPage.locator('.deck-card .passage').first().textContent();
+
+    // Far enough that releasing here would retire it.
+    await swipeCard(authedPage, { dy: -90 });
+    await expect(authedPage.locator('.retire-cue')).toHaveClass(/armed/);
+    await finishSwipe(authedPage, 'cancel');
+
+    await expect(authedPage.getByText('1 of 3')).toBeVisible();
+    await expect(authedPage.getByText("won't come up in review again")).toHaveCount(0);
+    expect(await authedPage.locator('.deck-card .passage').first().textContent()).toBe(first);
+    expect(await cardTransform(authedPage)).toBe('none');
+  });
+
+  // A second finger ends the gesture without a touchend, so the card has to be
+  // put back by hand — nothing else is coming to do it.
+  test('a second finger mid-swipe puts the card back on the deck', async ({
+    authedPage,
+    testUser,
+  }) => {
+    await seedHighlights(testUser, 3);
+
+    await authedPage.goto('/highlights/review');
+    await expect(authedPage.getByText('1 of 3')).toBeVisible({ timeout: 15_000 });
+    const first = await authedPage.locator('.deck-card .passage').first().textContent();
+
+    // Well past the commit threshold: held there, not thrown.
+    await swipeCard(authedPage, { dx: -260 });
+    expect(await cardTransform(authedPage)).not.toBe('none');
+    await finishSwipe(authedPage, 'second-finger');
+
+    await expect(authedPage.getByText('1 of 3')).toBeVisible();
+    expect(await authedPage.locator('.deck-card .passage').first().textContent()).toBe(first);
+    expect(await cardTransform(authedPage)).toBe('none');
   });
 
   // Going back is navigation, not un-reviewing, so coming forward over a card
