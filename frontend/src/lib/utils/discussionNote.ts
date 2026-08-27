@@ -152,6 +152,15 @@ function looksLikeLink(match: string): boolean {
   return LINK_TLDS.has(tld);
 }
 
+// A Bluesky handle is domain-shaped, but it is prose rather than a display URL.
+// Check the source boundary for the whole regex match so the matcher cannot
+// consume either the full handle or a suffix of it after starting past `@`.
+function belongsToMentionToken(source: string, offset: number): boolean {
+  let cursor = offset - 1;
+  while (cursor >= 0 && /[a-z0-9.-]/i.test(source[cursor])) cursor -= 1;
+  return cursor >= 0 && source[cursor] === '@';
+}
+
 // The words that remain once a leading run matching `key` is consumed, or null
 // when the text doesn't open with that title. Matching walks the ORIGINAL words
 // and compares their normalized form, so a title whose punctuation splits into a
@@ -254,7 +263,9 @@ function cleanPass(
   const replacement = gated ? ` ${BOUNDARY} ` : ' ';
   let text = note
     .replace(URL_PATTERN, replacement)
-    .replace(BARE_URL_PATTERN, (match) => (looksLikeLink(match) ? replacement : match));
+    .replace(BARE_URL_PATTERN, (match, offset, source) =>
+      belongsToMentionToken(source, offset) || !looksLikeLink(match) ? match : replacement
+    );
   if (gated) text = text.replace(/[\r\n]+/g, replacement);
 
   for (const title of titles) {
