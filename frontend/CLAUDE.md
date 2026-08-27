@@ -103,6 +103,26 @@ in any local cache). Because the whole array is written to `item_labels_cache.pr
 any new per-highlight field reaches D1 and syncs across devices with no migration. `utils/highlightSource.ts` is the shared resolver both the list and the deck use so
 they degrade identically. See [`docs/plans/HIGHLIGHT_REVIEW.md`](../docs/plans/HIGHLIGHT_REVIEW.md).
 
+#### Selecting and re-bounding in paged mode
+
+Paged mode has no scroller, so a native selection used to stop at the page edge.
+`PagedView` now carries a live selection through every page turn (`onTurn` →
+`utils/paginatedSelection.ts` finds a text point strictly inside the newly visible
+page and `Selection.extend()`s onto it), and a selection focus that dwells in the
+trailing edge zone turns the page by itself. Both are DOM-anchored, so the
+`translateX` that shows a page never touches the selection.
+
+An existing highlight can be re-bounded: _Adjust highlight_ in its popover
+re-selects it natively and puts `useHighlights` in adjust mode, which ends only
+through Cancel, Escape, a click that leaves nothing selected, or a confirmed
+adjustment — a dismissed popover deliberately leaves it running, because the
+mousedown that starts the re-drag is itself an outside click. The commit replaces
+the selector in place (`mutateHighlightUnion`'s `selector` op), so the id, note,
+review state and Margin linkage survive. Because a selection can now run across
+pages, it can also outgrow the selector's 5 000-character `exact` cap; over-long
+selections are refused with a toast (`exceedsSelectorLimit`) rather than saved
+silently short.
+
 #### The `?read=` contract
 
 Any surface that hosts the fullscreen reader (`/feeds`, `/saved`, `/home`,

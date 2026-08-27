@@ -1,6 +1,12 @@
 import { onDestroy } from 'svelte';
 import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
-import { createSelector, createSelectorForElement, findTextInDOM } from '$lib/utils/textSelector';
+import {
+  createSelector,
+  createSelectorForElement,
+  exceedsSelectorLimit,
+  findTextInDOM,
+} from '$lib/utils/textSelector';
+import { toastStore } from '$lib/stores/toast.svelte';
 import {
   saveHighlightToMargin as saveToMargin,
   removeHighlightFromMargin,
@@ -94,6 +100,10 @@ export function useHighlights(params: HighlightParams) {
   let lastTapY = 0;
   let sawTouch = false;
   let pendingTouchSelector: TextQuoteSelector | null = null;
+  // A live touch selection that has grown past what a selector can carry. Held
+  // until the selection collapses so the reader hears about it once, when they
+  // let go, instead of on every `selectionchange` of the drag.
+  let touchSelectionTooLong = false;
   // Pointer bookkeeping, recorded on the way down so `mouseup` knows what kind of
   // gesture it is finishing.
   //
@@ -114,6 +124,15 @@ export function useHighlights(params: HighlightParams) {
   // host can show (and offer a way out of) that mode — an invisible mode with no
   // exit would quietly re-bind whatever they selected next.
   let adjustingHighlightId = $state<string | null>(null);
+
+  /**
+   * A highlight longer than `MAX_EXACT_LENGTH` can't be stored without quietly
+   * dropping its tail, so nothing is written and the reader is told. Paged
+   * reading is what made this reachable: a selection now runs across page turns.
+   */
+  function reportTooLong() {
+    toastStore.update(toastStore.add('Selection too long to highlight'), 'error');
+  }
 
   function applyHighlights() {
     clearMarks();
@@ -228,6 +247,10 @@ export function useHighlights(params: HighlightParams) {
     }
 
     // Create a highlight for the whole paragraph
+    if (exceedsSelectorLimit(paragraphText)) {
+      reportTooLong();
+      return true;
+    }
     const selector = createSelectorForElement(blockEl, container);
     itemLabelsStore.addHighlight(params.itemKey(), params.itemType(), makeHighlight(selector));
     requestAnimationFrame(applyHighlights);
@@ -310,17 +333,35 @@ export function useHighlights(params: HighlightParams) {
       if (container && container.contains(range.commonAncestorContainer)) {
         const selectedText = range.toString().trim();
         if (selectedText.length >= 3) {
+          // Report over-long only once the reader lets go: `selectionchange`
+          // fires on every handle movement, and a toast per frame of a drag
+          // that is merely passing through 5 000 characters is noise.
+          if (exceedsSelectorLimit(range.toString())) {
+            pendingTouchSelector = null;
+            touchSelectionTooLong = true;
+            return;
+          }
+          touchSelectionTooLong = false;
           pendingTouchSelector = createSelector(range, container);
           return;
         }
       }
       // Selection is outside our content or too short — nothing to highlight.
       pendingTouchSelector = null;
+      touchSelectionTooLong = false;
       return;
     }
 
     // Selection collapsed: realize the pending highlight, if any.
     if (!pendingTouchSelector) {
+      if (touchSelectionTooLong) {
+        // The reader made a selection we can't store faithfully. Say so, and
+        // stay in adjust mode if we were in it — the bounds are untouched and
+        // the next drag can be shorter.
+        touchSelectionTooLong = false;
+        reportTooLong();
+        return;
+      }
       // Nothing to commit (the selection never got long enough, or left the
       // article). Leave adjust mode rather than letting it wait for a later,
       // unrelated selection to re-bind the highlight onto.
@@ -382,6 +423,12 @@ export function useHighlights(params: HighlightParams) {
 
       const selectedText = range.toString().trim();
       if (!selectedText || selectedText.length < 3) return;
+      // Refuse rather than offer a toolbar that would save a quietly shortened
+      // quote. Adjust mode stays on, so the reader can drag a smaller range.
+      if (exceedsSelectorLimit(range.toString())) {
+        reportTooLong();
+        return;
+      }
 
       const rect = selectionAnchorRect(range);
       if (!rect) return;
@@ -780,6 +827,7 @@ export function useHighlights(params: HighlightParams) {
     mouseoverHandler = null;
     mouseoutHandler = null;
     pendingTouchSelector = null;
+    touchSelectionTooLong = false;
     adjustingHighlightId = null;
     popoverState = null;
     notePeek = null;

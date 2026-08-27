@@ -1,7 +1,21 @@
 import type { TextQuoteSelector } from '$lib/types';
 
 const MAX_CONTEXT_LENGTH = 150;
-const MAX_EXACT_LENGTH = 5000;
+export const MAX_EXACT_LENGTH = 5000;
+
+/**
+ * Whether a passage is longer than a selector can carry. `createSelector` keeps
+ * the first `MAX_EXACT_LENGTH` characters and computes the suffix around that
+ * cut, so an over-long passage yields a *valid* selector for a shorter quote:
+ * the reader would get back less text than they selected, with nothing to say
+ * so. Callers ask first and refuse the highlight instead.
+ *
+ * Paged reading is what makes the cap reachable — a selection can now run
+ * across page turns, where a scroll-mode drag rarely got near 5 000 characters.
+ */
+export function exceedsSelectorLimit(text: string): boolean {
+  return text.length > MAX_EXACT_LENGTH;
+}
 
 /**
  * Build a map of text nodes and their character offsets within a container.

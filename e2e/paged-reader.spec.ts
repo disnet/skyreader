@@ -596,3 +596,39 @@ test.describe('Adjusting a highlight', () => {
     expect(await marks.first().getAttribute('data-highlight-id')).toBe(originalId);
   });
 });
+
+// A selection that keeps going across page turns can now outgrow what a
+// TextQuoteSelector carries (5 000 characters). The selector would still be
+// well-formed — just for a shorter quote than the reader made — so the only
+// honest answer is to refuse it and say so.
+test.describe('A selection past the selector length cap', () => {
+  test('is refused rather than saved a few thousand characters short', async ({
+    authedPage,
+    testUser,
+  }) => {
+    await openPagedReader(authedPage, testUser);
+    const marks = authedPage.locator('.paged-content mark.highlight');
+
+    const points = await textDragPoints(authedPage);
+    await authedPage.mouse.move(points.from.x, points.from.y);
+    await authedPage.mouse.down();
+    await authedPage.mouse.move(points.to.x, points.to.y, { steps: 5 });
+    // Run the live selection out to the end of the article — the reach the
+    // bridge gives a drag, compressed into one step because dragging page by
+    // page to the same place would only be slower.
+    const selected = await authedPage.evaluate(() => {
+      const selection = window.getSelection();
+      const paragraphs = document.querySelectorAll('.paged-content p');
+      const end = paragraphs[paragraphs.length - 1]?.lastChild;
+      if (!selection || !end) return 0;
+      selection.extend(end, end.textContent?.length ?? 0);
+      return selection.toString().length;
+    });
+    expect(selected).toBeGreaterThan(5000);
+    await authedPage.mouse.up();
+
+    await expect(authedPage.getByText('Selection too long to highlight')).toBeVisible();
+    await expect(authedPage.getByRole('button', { name: 'Save private highlight' })).toHaveCount(0);
+    await expect(marks).toHaveCount(0);
+  });
+});
