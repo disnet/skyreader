@@ -507,6 +507,14 @@ describe('AtmospherePanel entry engagement', () => {
       '2 likes',
     ]);
   });
+
+  it('renders dotted handles in Bluesky post text verbatim', () => {
+    const post = entry('did:plc:handles', null);
+    post.cleanNote = 'Fascinating that @alice.example.com and @bob.example.com published this';
+    const target = render({ stream: { loading: false, entries: [post] } });
+
+    expect(target.querySelector('.entry-note')?.textContent).toBe(post.cleanNote);
+  });
 });
 
 // Three different kinds of thing had piled up in one column with no boundary

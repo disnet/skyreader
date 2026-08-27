@@ -103,6 +103,33 @@ describe('cleanDiscussionNote', () => {
     ).toBe('Some weekend thoughts on how LLMs change the way we start new projects.');
   });
 
+  it('keeps dotted Bluesky handles while stripping an article URL', () => {
+    expect(
+      cleanDiscussionNote(
+        'Fascinating that @alice.example.com and @bob.example.com published these thoughts https://example.com/article',
+        TITLE
+      )
+    ).toBe('Fascinating that @alice.example.com and @bob.example.com published these thoughts');
+  });
+
+  it('keeps dotted handles at the edges of a note', () => {
+    expect(cleanDiscussionNote('@alice.example.com said it first', TITLE)).toBe(
+      '@alice.example.com said it first'
+    );
+    expect(cleanDiscussionNote('Credit to @bob.example.com', TITLE)).toBe(
+      'Credit to @bob.example.com'
+    );
+  });
+
+  it('still strips bare and truncated URLs beside a handle', () => {
+    expect(
+      cleanDiscussionNote(
+        '@alice.example.com shared example.com/story and example.org/another…',
+        TITLE
+      )
+    ).toBe('@alice.example.com shared and');
+  });
+
   it('strips the publication name as well as the headline', () => {
     // The real case: a bridge leads with the FEED title, not the article's.
     expect(
