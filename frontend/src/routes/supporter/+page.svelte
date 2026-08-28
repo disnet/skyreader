@@ -8,6 +8,7 @@
   import { api, type BillingProduct } from '$lib/services/api';
   import StaticPageChrome from '$lib/components/feed/StaticPageChrome.svelte';
   import { countUrlSavesThisMonth } from '$lib/utils/usage';
+  import Icon from '$lib/components/Icon.svelte';
 
   let isSupporter = $derived(auth.user?.tier === 'supporter');
 
@@ -48,29 +49,62 @@
     }
   }
 
-  function formatPrice(product: BillingProduct): string {
+  function formatCents(cents: number, currency: string): string {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
-      currency: product.priceCurrency,
-      maximumFractionDigits: product.priceAmount % 100 === 0 ? 0 : 2,
-    }).format(product.priceAmount / 100);
+      currency,
+      maximumFractionDigits: cents % 100 === 0 ? 0 : 2,
+    }).format(cents / 100);
   }
 
-  // "Save $21 a year" on the annual option, computed from the actual prices so
+  // Both options are framed as a monthly price; the annual plan's headline is
+  // its per-month equivalent, with the real charge named on the billing line.
+  function monthlyPrice(product: BillingProduct): string {
+    const cents =
+      product.interval === 'year' ? Math.round(product.priceAmount / 12) : product.priceAmount;
+    return formatCents(cents, product.priceCurrency);
+  }
+
+  // The actual charge cadence, always stating the true billed amount so the
+  // per-month framing never hides what the card is charged.
+  function billingLine(product: BillingProduct): string {
+    return product.interval === 'year'
+      ? `${formatCents(product.priceAmount, product.priceCurrency)} billed annually`
+      : 'Billed monthly';
+  }
+
+  // Polar may carry two live annual products at once: the standard price and
+  // a discounted founding-supporter price. The card always offers the cheapest
+  // annual product; the dearest one becomes the struck-through "normally"
+  // reference. When the founding product is archived, both collapse to the one
+  // standard product and the founding framing disappears on its own.
+  const monthlyProduct = $derived(products.find((p) => p.interval === 'month'));
+  const yearProducts = $derived(products.filter((p) => p.interval === 'year'));
+  const yearlyOffer = $derived(
+    yearProducts.length > 0
+      ? yearProducts.reduce((a, b) => (a.priceAmount <= b.priceAmount ? a : b))
+      : undefined
+  );
+  const yearlyCompareAt = $derived.by(() => {
+    if (!yearlyOffer || yearProducts.length < 2) return null;
+    const dearest = yearProducts.reduce((a, b) => (a.priceAmount >= b.priceAmount ? a : b));
+    return dearest.priceAmount > yearlyOffer.priceAmount ? dearest : null;
+  });
+
+  // "Save $45 a year", computed against the annual price actually offered, so
   // the Polar dashboard stays the single source of truth.
   const annualSavings = $derived.by(() => {
-    const monthly = products.find((p) => p.interval === 'month');
-    const annual = products.find((p) => p.interval === 'year');
-    if (!monthly || !annual) return null;
-    const savedCents = monthly.priceAmount * 12 - annual.priceAmount;
+    if (!monthlyProduct || !yearlyOffer) return null;
+    const savedCents = monthlyProduct.priceAmount * 12 - yearlyOffer.priceAmount;
     if (savedCents <= 0) return null;
-    const saved = new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: annual.priceCurrency,
-      maximumFractionDigits: savedCents % 100 === 0 ? 0 : 2,
-    }).format(savedCents / 100);
-    return `Save ${saved} a year`;
+    return `Save ${formatCents(savedCents, yearlyOffer.priceCurrency)} a year`;
   });
+
+  // One card, two cadences: the toggle picks which Polar product the CTA
+  // checks out. Yearly is the default, as the anchor of the monthly-priced,
+  // billed-annually framing.
+  let billingInterval = $state<'year' | 'month'>('year');
+  const selectedProduct = $derived(billingInterval === 'year' ? yearlyOffer : monthlyProduct);
 
   // Current usage makes the raised limits concrete. Only shown once the
   // backing store actually has data, so a not-yet-loaded store never reads
@@ -123,6 +157,15 @@ directly, no concept tournament.
   onfocus={() => {
     if (auth.user && auth.user.tier !== 'supporter') void auth.verifySession();
   }}
+  onpageshow={(e) => {
+    // Backing out of Polar's checkout restores this page from the bfcache with
+    // `upgradeLoading` still true (set on the way out), leaving the CTA
+    // disabled. A restored page never has a checkout in flight, so reset it.
+    if (e.persisted) {
+      upgradeLoading = false;
+      upgradeError = null;
+    }
+  }}
 />
 
 <StaticPageChrome title="Supporter" />
@@ -168,85 +211,115 @@ directly, no concept tournament.
           Skyreader is independent software, built and run by
           <a href="https://bsky.app/profile/disnetdev.com" target="_blank" rel="noopener noreferrer"
             >Tim</a
-          >. No ads, no algorithm, no growth team. Supporters keep it that way
+          >. No ads, no algorithm, no growth team. Supporters keep it that way.
         </p>
       </header>
 
-      <ul class="benefits">
-        <li class="benefit">
-          <span class="benefit-figure">1,000 active feeds</span>
-          <span class="benefit-desc">Up from 100. Follow widely without rationing slots.</span>
-          {#if feedsInUse > 0}
-            <span class="benefit-usage">You're using {feedsInUse} today.</span>
-          {/if}
-        </li>
-        <li class="benefit">
-          <span class="benefit-figure">1,000 saves a month</span>
-          <span class="benefit-desc"
-            >Up from 100. Save from the web, your phone, or the extension.</span
-          >
-          {#if hasSavesData}
-            <span class="benefit-usage">You've saved {savesThisMonth} this month.</span>
-          {/if}
-        </li>
-        <li class="benefit">
-          <span class="benefit-figure">5,000 mirrored subscriptions</span>
-          <span class="benefit-desc"
-            >Up from 1,000. Headroom for everything Atmospheric sync brings along.</span
-          >
-        </li>
-        <li class="benefit">
-          <span class="benefit-figure">A reader that answers to you</span>
-          <span class="benefit-desc"
-            >Your support goes straight to keeping Skyreader calm, fast, and sustainable.</span
-          >
-        </li>
-      </ul>
-
       <section class="checkout">
-        {#if !syncStore.isOnline}
-          <p class="offline-note">You're offline. Becoming a Supporter needs a connection.</p>
-        {:else if productsState === 'loaded'}
-          <div class="plan-options">
-            {#each products as product (product.id)}
-              <button
-                class="plan-option"
-                onclick={() => handleUpgrade(product.id)}
-                disabled={upgradeLoading}
-              >
-                <span class="plan-option-interval"
-                  >{product.interval === 'year' ? 'Annual' : 'Monthly'}</span
+        <div class="plan-card">
+          <div class="plan-card-top">
+            <span class="plan-card-name">Supporter</span>
+            {#if productsState === 'loaded'}
+              <div class="plan-toggle" role="group" aria-label="Billing cadence">
+                <button
+                  class="plan-toggle-option"
+                  class:selected={billingInterval === 'year'}
+                  aria-pressed={billingInterval === 'year'}
+                  onclick={() => (billingInterval = 'year')}
                 >
-                <span class="plan-option-price">
-                  {formatPrice(product)}<span class="plan-option-per"
-                    >/{product.interval === 'year' ? 'year' : 'month'}</span
+                  Yearly
+                </button>
+                <button
+                  class="plan-toggle-option"
+                  class:selected={billingInterval === 'month'}
+                  aria-pressed={billingInterval === 'month'}
+                  onclick={() => (billingInterval = 'month')}
+                >
+                  Monthly
+                </button>
+              </div>
+            {/if}
+          </div>
+
+          {#if selectedProduct}
+            <div class="plan-card-price-row">
+              <span class="plan-card-price">
+                {monthlyPrice(selectedProduct)}<span class="plan-card-per">/month</span>
+              </span>
+              <span class="plan-card-billing">
+                {#if billingInterval === 'year' && yearlyCompareAt}
+                  <!-- The spoken version of the strike lives in the note below,
+                       so screen readers hear "normally $120 a year" in words. -->
+                  <s class="plan-card-compare" aria-hidden="true"
+                    >{formatCents(yearlyCompareAt.priceAmount, yearlyCompareAt.priceCurrency)}</s
                   >
-                </span>
-                {#if product.interval === 'year' && annualSavings}
-                  <span class="plan-option-note">{annualSavings}</span>
                 {/if}
-              </button>
-            {/each}
-          </div>
-        {:else if productsState === 'loading'}
-          <!-- Same footprint as the loaded options, so nothing jumps and no
-               resting blue flashes before the plans arrive. -->
-          <div class="plan-options" aria-hidden="true">
-            {#each ['Monthly', 'Annual'] as interval (interval)}
-              <button class="plan-option" disabled>
-                <span class="plan-option-interval">{interval}</span>
-                <span class="plan-option-price">…</span>
-              </button>
-            {/each}
-          </div>
-        {:else}
-          <button class="btn btn-primary" onclick={() => handleUpgrade()} disabled={upgradeLoading}>
+                {billingLine(selectedProduct)}
+              </span>
+            </div>
+            {#if billingInterval === 'year' && yearlyCompareAt}
+              <p class="plan-card-savings">
+                Founding supporter price, normally {formatCents(
+                  yearlyCompareAt.priceAmount,
+                  yearlyCompareAt.priceCurrency
+                )} a year. Thank you for being early.
+              </p>
+            {:else if annualSavings}
+              <p class="plan-card-savings">{annualSavings} with annual billing</p>
+            {/if}
+          {:else if productsState === 'loading'}
+            <p class="plan-card-loading">Loading plans…</p>
+          {/if}
+
+          <ul class="plan-features">
+            <li>
+              <span class="feature-check"><Icon name="check" size={16} strokeWidth={2.5} /></span>
+              <span class="feature-text">
+                1,000 active feeds
+                <span class="feature-sub"
+                  >up from 100{feedsInUse > 0 ? `, ${feedsInUse} in use today` : ''}</span
+                >
+              </span>
+            </li>
+            <li>
+              <span class="feature-check"><Icon name="check" size={16} strokeWidth={2.5} /></span>
+              <span class="feature-text">
+                1,000 saves a month
+                <span class="feature-sub"
+                  >up from 100{hasSavesData ? `, ${savesThisMonth} saved this month` : ''}</span
+                >
+              </span>
+            </li>
+            <li>
+              <span class="feature-check"><Icon name="check" size={16} strokeWidth={2.5} /></span>
+              <span class="feature-text">
+                5,000 mirrored subscriptions
+                <span class="feature-sub">headroom for everything Atmospheric sync brings</span>
+              </span>
+            </li>
+            <li>
+              <span class="feature-check"><Icon name="check" size={16} strokeWidth={2.5} /></span>
+              <span class="feature-text">
+                An independent, ad-free Skyreader
+                <span class="feature-sub">your support keeps it calm, fast, and sustainable</span>
+              </span>
+            </li>
+          </ul>
+
+          <button
+            class="btn btn-primary plan-card-cta"
+            onclick={() => handleUpgrade(selectedProduct?.id)}
+            disabled={upgradeLoading || !syncStore.isOnline || productsState === 'loading'}
+          >
             {upgradeLoading ? 'Opening checkout…' : 'Become a Supporter'}
           </button>
-        {/if}
-        {#if upgradeError}
-          <p class="checkout-error">{upgradeError}</p>
-        {/if}
+          {#if !syncStore.isOnline}
+            <p class="offline-note">You're offline. Becoming a Supporter needs a connection.</p>
+          {/if}
+          {#if upgradeError}
+            <p class="checkout-error">{upgradeError}</p>
+          {/if}
+        </div>
         <p class="fine-print">
           Checkout is handled by <a
             href="https://polar.sh"
@@ -332,83 +405,154 @@ directly, no concept tournament.
     max-width: 60ch;
   }
 
-  .benefit-usage {
-    font-size: var(--text-sm);
-    color: var(--color-text-secondary);
-    font-variant-numeric: tabular-nums;
-  }
-
-  /* Flat option buttons per the design system: 1px Divider borders, tonal
-     hover, One Blue reserved for the savings note and the focus ring. */
-  .plan-options {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.75rem;
-  }
-
-  .plan-option {
-    flex: 1 1 10rem;
-    max-width: 16rem;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 0.125rem;
-    padding: 0.875rem 1rem;
-    background: var(--color-bg);
+  /* The one plan card: flat per the system — 1px Divider border, Surface
+     background, no resting shadow. One Blue is reserved for the savings note,
+     the CTA, and focus. */
+  .plan-card {
     border: 1px solid var(--color-border);
     border-radius: 8px;
-    cursor: pointer;
-    text-align: left;
-    font: inherit;
-    color: var(--color-text);
-    transition:
-      border-color 0.2s ease,
-      background-color 0.2s ease;
+    padding: 1.25rem;
   }
 
-  .plan-option:hover:not(:disabled) {
-    border-color: var(--color-primary);
+  .plan-card-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+
+  .plan-card-name {
+    font-size: var(--text-lg);
+    font-weight: var(--weight-semibold);
+  }
+
+  /* Segmented cadence toggle: pill container on Sunken, selected segment
+     lifted to Surface with a Divider stroke. Transparent border keeps the
+     unselected segment the same size. */
+  .plan-toggle {
+    display: inline-flex;
+    padding: 2px;
     background: var(--color-bg-secondary);
+    border-radius: 999px;
   }
 
-  .plan-option:focus-visible {
+  .plan-toggle-option {
+    border: 1px solid transparent;
+    background: transparent;
+    padding: 0.25rem 0.75rem;
+    border-radius: 999px;
+    font: inherit;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition:
+      background-color 0.15s ease,
+      color 0.15s ease;
+  }
+
+  .plan-toggle-option.selected {
+    background: var(--color-bg);
+    border-color: var(--color-border);
+    color: var(--color-text);
+  }
+
+  .plan-toggle-option:focus-visible {
     outline: none;
     border-color: var(--color-primary);
     box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.1);
   }
 
-  .plan-option:disabled {
-    opacity: 0.6;
-    cursor: default;
-  }
-
   @media (prefers-reduced-motion: reduce) {
-    .plan-option {
+    .plan-toggle-option {
       transition: none;
     }
   }
 
-  .plan-option-interval {
-    font-size: var(--text-sm);
-    font-weight: var(--weight-medium);
-    color: var(--color-text-secondary);
+  .plan-card-price-row {
+    display: flex;
+    align-items: baseline;
+    gap: 0.625rem;
+    flex-wrap: wrap;
+    margin-top: 0.875rem;
   }
 
-  .plan-option-price {
-    font-size: var(--text-xl);
+  .plan-card-price {
+    font-size: var(--text-2xl);
     font-weight: var(--weight-semibold);
-    color: var(--color-text);
+    letter-spacing: var(--tracking-tight);
   }
 
-  .plan-option-per {
+  .plan-card-per {
     font-size: var(--text-sm);
-    font-weight: 400;
+    font-weight: var(--weight-regular);
     color: var(--color-text-secondary);
   }
 
-  .plan-option-note {
+  .plan-card-billing {
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+  }
+
+  .plan-card-compare {
+    text-decoration: line-through;
+    margin-right: 0.125rem;
+  }
+
+  .plan-card-savings {
     font-size: var(--text-sm);
     color: var(--color-primary);
+    margin: 0.375rem 0 0;
+  }
+
+  .plan-card-loading {
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+    margin: 0.875rem 0 0;
+  }
+
+  .plan-features {
+    list-style: none;
+    margin: 1rem 0;
+    padding: 1rem 0 0;
+    border-top: 1px solid var(--color-border);
+    display: flex;
+    flex-direction: column;
+    gap: 0.625rem;
+  }
+
+  .plan-features li {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+
+  .feature-check {
+    color: var(--color-text-secondary);
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+
+  .feature-text {
+    font-size: var(--text-md);
+    line-height: var(--leading-normal);
+  }
+
+  .feature-sub {
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .plan-card-cta {
+    width: 100%;
+    padding: 0.625rem 1rem;
+  }
+
+  .plan-card-cta:disabled {
+    opacity: 0.6;
+    cursor: default;
   }
 
   .offline-note {
