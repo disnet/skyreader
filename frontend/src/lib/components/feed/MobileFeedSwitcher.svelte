@@ -10,6 +10,7 @@
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
+  import { auth } from '$lib/stores/auth.svelte';
   import { channelPath, feedPath, categoryPath, FEEDS_PATH, SAVED_PATH } from '$lib/utils/viewNav';
   import Icon from '$lib/components/Icon.svelte';
   import type { Subscription } from '$lib/types';
@@ -69,7 +70,8 @@
     | 'folder'
     | 'users'
     | 'highlighter'
-    | 'quote';
+    | 'quote'
+    | 'heart';
 
   type NavItem =
     | {
@@ -235,6 +237,17 @@
         label: 'Settings',
         icon: 'settings' as IconName,
       },
+      // Quiet upsell, mirroring the sidebar: gone once the user is a Supporter.
+      ...(auth.user && auth.user.tier !== 'supporter'
+        ? [
+            {
+              type: 'utility',
+              id: 'supporter',
+              label: 'Support Skyreader',
+              icon: 'heart' as IconName,
+            } as NavItem,
+          ]
+        : []),
     ];
 
     const sourceChannelItems: NavItem[] = filteredViewsStore.views

@@ -5,6 +5,7 @@
   import { auth } from '$lib/stores/auth.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
+  import { countUrlSavesThisMonth } from '$lib/utils/usage';
   import {
     preferences,
     type ArticleFont,
@@ -22,7 +23,7 @@
   import { myLinkblogStore } from '$lib/stores/myLinkblog.svelte';
   import { linkblogStore } from '$lib/stores/linkblog.svelte';
   import { downloadOPML } from '$lib/utils/opml-exporter';
-  import { api, RateLimitError, type BillingProduct } from '$lib/services/api';
+  import { api, RateLimitError } from '$lib/services/api';
   import { syncStore } from '$lib/stores/sync.svelte';
   import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
   import type { LinkblogPublication, LinkblogPublicationChoice, SaveBacking } from '$lib/types';
@@ -46,64 +47,6 @@
   ];
 
   let showImportModal = $state(false);
-
-  // Upgrade flow: ask the backend for a Polar hosted-checkout URL, then
-  // navigate to it top-level (same shape as the OAuth login redirect).
-  let upgradeLoading = $state(false);
-  let upgradeError = $state<string | null>(null);
-  // Plans mirrored from the Polar dashboard. Empty until loaded (or on
-  // failure), in which case a plain Upgrade button using the backend's default
-  // product renders instead — the flow never depends on this fetch.
-  let billingProducts = $state<BillingProduct[]>([]);
-
-  async function loadBillingProducts() {
-    if (!syncStore.isOnline || auth.user?.tier === 'supporter') return;
-    try {
-      const { products } = await api.getBillingProducts();
-      billingProducts = products;
-    } catch (error) {
-      console.error('Failed to load billing products:', error);
-    }
-  }
-
-  async function handleUpgrade(productId?: string) {
-    upgradeError = null;
-    upgradeLoading = true;
-    try {
-      const { url } = await api.createCheckout(productId);
-      window.location.href = url;
-      // Keep the buttons disabled while the navigation happens; only a failure
-      // hands control back to this page.
-    } catch (error) {
-      console.error('Failed to start checkout:', error);
-      upgradeError = error instanceof Error ? error.message : 'Failed to start checkout.';
-      upgradeLoading = false;
-    }
-  }
-
-  function formatPrice(product: BillingProduct): string {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: product.priceCurrency,
-      maximumFractionDigits: product.priceAmount % 100 === 0 ? 0 : 2,
-    }).format(product.priceAmount / 100);
-  }
-
-  // "Save $21 a year" on the annual option, computed from the actual prices so
-  // the dashboard stays the single source of truth.
-  const annualSavings = $derived.by(() => {
-    const monthly = billingProducts.find((p) => p.interval === 'month');
-    const annual = billingProducts.find((p) => p.interval === 'year');
-    if (!monthly || !annual) return null;
-    const savedCents = monthly.priceAmount * 12 - annual.priceAmount;
-    if (savedCents <= 0) return null;
-    const saved = new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: annual.priceCurrency,
-      maximumFractionDigits: savedCents % 100 === 0 ? 0 : 2,
-    }).format(savedCents / 100);
-    return `Save ${saved} a year`;
-  });
 
   // "Save from anywhere" — browser bookmarklets + a Share Sheet shortcut.
   // Paste a published iCloud Shortcut link (icloud.com/shortcuts/...) into either
@@ -193,11 +136,8 @@
       goto('/auth/login?returnUrl=/settings');
       return;
     }
-    // Refresh tier/limits from the server — this is the page the user lands
-    // back on after paying at Polar's hosted checkout, and the webhook has
-    // usually flipped users.tier by then. Non-blocking; offline is a no-op.
+    // Refresh tier/limits from the server. Non-blocking; offline is a no-op.
     void auth.verifySession();
-    void loadBillingProducts();
     // Load subscriptions if not already loaded
     if (subscriptionsStore.subscriptions.length === 0) {
       await subscriptionsStore.load();
@@ -562,14 +502,6 @@
   }
 </script>
 
-<!-- Checkout happens on Polar's site with no return redirect, so refresh the
-     tier when the user tabs/navigates back here and it hasn't flipped yet. -->
-<svelte:window
-  onfocus={() => {
-    if (auth.user && auth.user.tier !== 'supporter') void auth.verifySession();
-  }}
-/>
-
 <StaticPageChrome title="Settings" />
 
 {#snippet visBadge(isPublic: boolean)}
@@ -611,12 +543,7 @@
         {@const subCount = subscriptionsStore.subscriptions.length}
         {@const subLimit = auth.user.limits.maxSubscriptions}
         {@const urlSaveLimit = auth.user.limits.maxUrlSavesPerMonth}
-        {@const monthStart = new Date(
-          Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1)
-        ).toISOString()}
-        {@const urlSaveCount = savesStore.articles.filter(
-          (a) => a.source === 'url' && a.savedAt >= monthStart
-        ).length}
+        {@const urlSaveCount = countUrlSavesThisMonth(savesStore.articles)}
         <div class="plan-limits">
           <div class="limit-row">
             <div class="limit-label">
@@ -652,40 +579,9 @@
 
       {#if auth.user.tier !== 'supporter'}
         <p class="plan-upgrade">
-          Become a Supporter to get raised limits, help Skyreader become self-sustaining, and
-          support
-          <a href="https://bsky.app/profile/disnetdev.com" target="_blank">Tim</a>!
+          Supporters get 1,000 feeds, 1,000 saves a month, and keep Skyreader independent.
         </p>
-        {#if billingProducts.length > 0}
-          <div class="plan-options">
-            {#each billingProducts as product (product.id)}
-              <button
-                class="plan-option"
-                onclick={() => handleUpgrade(product.id)}
-                disabled={upgradeLoading}
-              >
-                <span class="plan-option-interval"
-                  >{product.interval === 'year' ? 'Annual' : 'Monthly'}</span
-                >
-                <span class="plan-option-price">
-                  {formatPrice(product)}<span class="plan-option-per"
-                    >/{product.interval === 'year' ? 'year' : 'month'}</span
-                  >
-                </span>
-                {#if product.interval === 'year' && annualSavings}
-                  <span class="plan-option-note">{annualSavings}</span>
-                {/if}
-              </button>
-            {/each}
-          </div>
-        {:else}
-          <button class="btn btn-primary" onclick={() => handleUpgrade()} disabled={upgradeLoading}>
-            {upgradeLoading ? 'Opening checkout…' : 'Upgrade'}
-          </button>
-        {/if}
-        {#if upgradeError}
-          <p class="sync-error">{upgradeError}</p>
-        {/if}
+        <a href="/supporter" class="btn btn-primary plan-upgrade-cta">Become a Supporter</a>
       {/if}
     </section>
   {/if}
@@ -1208,75 +1104,10 @@
     color: var(--color-text-secondary);
   }
 
-  .plan-upgrade a {
-    color: var(--color-primary);
+  /* An anchor wearing the shared .btn styles; the sell lives on /supporter. */
+  .plan-upgrade-cta {
+    display: inline-block;
     text-decoration: none;
-  }
-
-  /* Flat option buttons per the design system: 1px Divider borders, tonal
-     hover, One Blue reserved for the price and the hover ring. */
-  .plan-options {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.75rem;
-    margin-top: 0.75rem;
-  }
-
-  .plan-option {
-    flex: 1 1 10rem;
-    max-width: 16rem;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 0.125rem;
-    padding: 0.75rem 1rem;
-    background: var(--color-bg);
-    border: 1px solid var(--color-border);
-    border-radius: 8px;
-    cursor: pointer;
-    text-align: left;
-    font: inherit;
-    color: var(--color-text);
-    transition:
-      border-color 0.2s ease,
-      background-color 0.2s ease;
-  }
-
-  .plan-option:hover:not(:disabled) {
-    border-color: var(--color-primary);
-    background: var(--color-bg-secondary);
-  }
-
-  .plan-option:disabled {
-    opacity: 0.6;
-    cursor: default;
-  }
-
-  .plan-option-interval {
-    font-size: var(--text-sm);
-    font-weight: var(--weight-medium);
-    color: var(--color-text-secondary);
-  }
-
-  .plan-option-price {
-    font-size: var(--text-xl);
-    font-weight: var(--weight-semibold);
-    color: var(--color-text);
-  }
-
-  .plan-option-per {
-    font-size: var(--text-sm);
-    font-weight: 400;
-    color: var(--color-text-secondary);
-  }
-
-  .plan-option-note {
-    font-size: var(--text-sm);
-    color: var(--color-primary);
-  }
-
-  .plan-upgrade a:hover {
-    text-decoration: underline;
   }
 
   .plan-limits {

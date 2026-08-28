@@ -523,6 +523,20 @@
       <span class="nav-label">Settings</span>
     </a>
 
+    <!-- Quiet upsell: a plain nav row, gone entirely once the user is a
+         Supporter. The sell itself lives on /supporter. -->
+    {#if auth.user && auth.user.tier !== 'supporter'}
+      <a
+        href="/supporter"
+        class="nav-item nav-link"
+        class:active={$page.url.pathname === '/supporter'}
+        onclick={() => sidebarStore.closeMobile()}
+      >
+        <span class="nav-icon"><Icon name="heart" /></span>
+        <span class="nav-label">Support Skyreader</span>
+      </a>
+    {/if}
+
     <!-- Sources section -->
     <div class="sources-separator"></div>
     <NavSection
