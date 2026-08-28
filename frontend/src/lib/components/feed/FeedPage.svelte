@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { appScrollTo } from '$lib/utils/appScroll';
   import { onMount, onDestroy, tick, untrack } from 'svelte';
   import { page } from '$app/stores';
   import { browser } from '$app/environment';
@@ -83,7 +84,7 @@
   }
 
   function scrollToTop() {
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    appScrollTo({ top: 0, behavior: 'smooth' });
   }
 
   let hasActiveFilters = $derived(

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { appScrollTo, appScrollBy, appScrollTop, appViewportRect } from '$lib/utils/appScroll';
   import { tick } from 'svelte';
   import ArticleCard from '$lib/components/ArticleCard.svelte';
   import SavedReader from '$lib/components/feed/SavedReader.svelte';
@@ -77,7 +78,7 @@
       const after = el?.getBoundingClientRect().top;
       if (before !== undefined && after !== undefined && Math.abs(after - before) > 1) {
         // An absolute post-layout scroll avoids racing Chrome mobile's URL-bar resize.
-        window.scrollTo({ top: window.scrollY + (after - before), behavior: 'instant' });
+        appScrollTo({ top: appScrollTop() + (after - before), behavior: 'instant' });
       }
     } finally {
       await endAnchorTransition();
@@ -85,7 +86,15 @@
   }
 
   async function collapseAndReanchor(index: number, collapse: () => void) {
-    const wasAboveViewport = (articleElements[index]?.getBoundingClientRect().top ?? 0) < 0;
+    // Against the pane's top edge, not the window's: on desktop the scroll
+    // viewport starts below the toolbar strip and the card border, so a card
+    // that has scrolled off the visible top still reports a small positive
+    // `top`. Measuring against 0 would call it "still in view", skip the
+    // re-anchor, and strand the reader far down the feed — the exact thing the
+    // re-anchor exists to prevent.
+    const viewportTop = appViewportRect().top;
+    const wasAboveViewport =
+      (articleElements[index]?.getBoundingClientRect().top ?? viewportTop) < viewportTop;
     await beginAnchorTransition();
     try {
       collapse();
@@ -103,11 +112,13 @@
     const el = articleElements[targetIndex];
     if (!el) return;
 
+    // A quarter of the way down the *scroll viewport*, which on desktop is the
+    // framed content card — inset from the window by the toolbar strip.
     const rect = el.getBoundingClientRect();
-    const targetY = window.innerHeight / 4;
-    const offset = rect.top - targetY;
+    const viewport = appViewportRect();
+    const offset = rect.top - (viewport.top + viewport.height / 4);
 
-    window.scrollBy({ top: offset, behavior: 'instant' });
+    appScrollBy({ top: offset, behavior: 'instant' });
   }
 
   async function handleExpand(index: number) {
@@ -299,17 +310,12 @@
     overflow-anchor: none;
   }
 
-  /* When a collapse re-anchors a card to the top (see handleExpand), land it
-     below the fixed feed header — mirrors .feed-page's padding-top so the card
-     sits where the top of the list naturally would. */
+  /* When a collapse re-anchors a card to the top (see handleExpand), leave a
+     little air above it. The control bar no longer overlaps the list — it sits
+     on the shell's ground above the content card — so this is breathing room
+     now, not clearance. */
   .article-item-anchor {
-    scroll-margin-top: 3.5rem;
-  }
-
-  @media (max-width: 1000px) {
-    .article-item-anchor {
-      scroll-margin-top: 0.5rem;
-    }
+    scroll-margin-top: 0.5rem;
   }
 
   .hidden-behind-reader {

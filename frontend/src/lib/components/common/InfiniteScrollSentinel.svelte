@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { appScrollElement, onAppScrollRootChange } from '$lib/utils/appScroll';
+
   interface Props {
     hasMore: boolean;
     isLoading: boolean;
@@ -10,8 +12,18 @@
 
   let sentinel = $state<HTMLDivElement>();
 
+  // `appScrollElement()` is not reactive, so bump a counter when the shell
+  // crosses its breakpoint and read it below: otherwise the observer stays
+  // rooted on the pane after a resize down to mobile, where the pane no longer
+  // scrolls, until the next isLoading flip happens to rebuild it.
+  let rootEpoch = $state(0);
+  $effect(() => onAppScrollRootChange(() => rootEpoch++));
+
   $effect(() => {
     if (!sentinel) return;
+
+    // Tracked so the observer is rebuilt on the new root. See rootEpoch above.
+    void rootEpoch;
 
     // Track isLoading so the observer is recreated when loading state changes.
     // This ensures that when an async load completes (isLoading: true → false)
@@ -24,7 +36,9 @@
           onLoadMore();
         }
       },
-      { rootMargin: `0px 0px ${rootMargin} 0px` }
+      // Rooted on whatever is actually scrolling: the framed content card on
+      // desktop, the window on mobile (see utils/appScroll).
+      { root: appScrollElement(), rootMargin: `0px 0px ${rootMargin} 0px` }
     );
 
     observer.observe(sentinel);

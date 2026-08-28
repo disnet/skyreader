@@ -1,6 +1,7 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { seedSavedArticle, type SeedSavedArticleOpts, type TestUser } from './seed';
+import { appScrollTo, appScrollTop } from './appScroll';
 
 // The reader is an overlay stack, not a route — but every level now rides a
 // shallow-routed `?read=<item key>` URL, so a reading session survives a reload,
@@ -193,20 +194,16 @@ test.describe('Reader URLs', () => {
     await authedPage.goto('/saved');
     await expect(authedPage.getByText('Scroll fixture 0').first()).toBeVisible({ timeout: 15_000 });
 
-    await authedPage.evaluate(() => window.scrollTo(0, 600));
-    await expect
-      .poll(() => authedPage.evaluate(() => Math.round(window.scrollY)))
-      .toBeGreaterThan(400);
-    const before = await authedPage.evaluate(() => Math.round(window.scrollY));
+    await appScrollTo(authedPage, 600);
+    await expect.poll(() => appScrollTop(authedPage)).toBeGreaterThan(400);
+    const before = await appScrollTop(authedPage);
 
     await authedPage.getByText('Scroll fixture 8').first().click();
     await expect(reader(authedPage)).toBeVisible({ timeout: 15_000 });
     await authedPage.goBack();
     await expect(reader(authedPage)).toBeHidden();
 
-    await expect
-      .poll(() => authedPage.evaluate(() => Math.round(window.scrollY)))
-      .toBeGreaterThan(before - 50);
+    await expect.poll(() => appScrollTop(authedPage)).toBeGreaterThan(before - 50);
     // The whole list is still rendered — the URL write must not have reset paging.
     await expect(authedPage.getByText('Scroll fixture 19').first()).toBeAttached();
   });

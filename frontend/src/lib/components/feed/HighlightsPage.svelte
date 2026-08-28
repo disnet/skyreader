@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { shellToolbar } from '$lib/actions/shell-toolbar';
+  import { appScrollTo } from '$lib/utils/appScroll';
   import NavigationDropdown from '$lib/components/NavigationDropdown.svelte';
   import InfiniteScrollSentinel from '$lib/components/common/InfiniteScrollSentinel.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
@@ -43,19 +44,6 @@
     viewTitleStore.set('Highlights');
     return () => viewTitleStore.set('');
   });
-
-  // Scroll-aware header divider — matches FeedPageHeader: the bar blends into the
-  // page at the top and grows a divider once content scrolls underneath.
-  let scrolled = $state(false);
-  function handleWindowScroll() {
-    const next = window.scrollY > 4;
-    if (next !== scrolled) scrolled = next;
-  }
-  onMount(() => {
-    window.addEventListener('scroll', handleWindowScroll, { passive: true });
-    handleWindowScroll();
-  });
-  onDestroy(() => window.removeEventListener('scroll', handleWindowScroll));
 
   // A partial poll must say so — otherwise "these are my highlights" is a lie.
   let importTruncated = $state(false);
@@ -256,7 +244,7 @@
   let notifSheetOpen = $state(false);
 
   function scrollToTop() {
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    appScrollTo({ top: 0, behavior: 'smooth' });
   }
 
   // Channel create/edit from the mobile switcher routes through the always-mounted
@@ -273,7 +261,7 @@
 </script>
 
 <div class="highlights-page">
-  <header class="highlights-header" class:scrolled>
+  <header class="highlights-header" use:shellToolbar>
     <div class="header-inner">
       <NavigationDropdown currentTitle="Highlights" />
       {#if highlightReviewStore.hasHighlights}
@@ -468,36 +456,11 @@
     width: 100%;
   }
 
-  /* Flat, solid header bar matching FeedPageHeader — scroll-aware divider, no
-     border at rest, no shadow. */
+  /* Moved into the shell's toolbar strip (see FeedPageHeader): it rides on the
+     ground colour above the content card, which supplies the separation the
+     scroll-aware divider used to. */
   .highlights-header {
-    position: sticky;
-    top: 0;
-    z-index: 10;
-    background: var(--color-bg);
-  }
-
-  .highlights-header::after {
-    content: '';
-    position: absolute;
-    inset-inline: 0;
-    bottom: 0;
-    margin-inline: auto;
-    max-width: 800px;
-    height: 1px;
-    background: var(--color-border);
-    opacity: 0;
-    transition: opacity 0.2s ease;
-  }
-
-  .highlights-header.scrolled::after {
-    opacity: 1;
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .highlights-header::after {
-      transition: none;
-    }
+    background: transparent;
   }
 
   /* Below 1000px the floating mobile bottom bar takes over navigation, so the
@@ -513,10 +476,12 @@
     }
   }
 
+  /* Full card width: title on the card's left edge, Review on its right — see
+     FeedPageHeader. The pill's own border is its visual edge, so unlike the
+     borderless icon buttons there it needs no negative margin to sit flush. */
   .header-inner {
-    max-width: 800px;
-    margin: 0 auto;
-    padding: 0.625rem 1rem;
+    min-height: var(--shell-bar-height);
+    padding: 0.25rem var(--shell-bar-inset);
     display: flex;
     align-items: center;
     justify-content: space-between;

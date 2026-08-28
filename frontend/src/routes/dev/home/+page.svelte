@@ -9,7 +9,7 @@
   import Showcase from '../_harness/Showcase.svelte';
   import Case from '../_harness/Case.svelte';
 
-  let width = $state(880);
+  let width = $state(1200);
 
   function save(partial: Partial<SavedItem>): SavedItem {
     return {
@@ -201,7 +201,7 @@
   {#snippet controls()}
     <label class="control">
       Width: {width}px
-      <input type="range" min="320" max="980" step="10" bind:value={width} />
+      <input type="range" min="320" max="1440" step="10" bind:value={width} />
     </label>
   {/snippet}
 

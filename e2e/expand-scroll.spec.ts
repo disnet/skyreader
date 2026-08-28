@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { seedSubscription } from './seed';
+import { cleanupFeedItems, seedFeedItems, seedSubscription } from './seed';
 import type { Locator, Page } from '@playwright/test';
 
 const FEED_URL = 'https://example.com/expand-scroll.xml';
@@ -31,42 +31,43 @@ function fillerItems() {
   }));
 }
 
+// Seed the server-side archive the timeline serves from, rather than mocking the
+// legacy `POST /api/v2/feeds/batch` fan-out.
+//
+// The client only takes the batch path when the timeline answers
+// `ingestActive: false`, and that is `crawlerFresh` — whether a crawler has
+// checked into this D1 within CRAWLER_HEARTBEAT_FRESH_SECONDS (30 min). So a
+// batch-mock fixture passed or failed on ambient environment state: with the
+// local feed proxy running, the timeline served an empty archive, the mock was
+// never reached, and the feed rendered "No unread articles". `seedFeedItems`
+// stamps that heartbeat itself, which puts these tests on the production
+// timeline path deterministically — and keeps them working when the batch path
+// is finally removed.
 async function seedLongFeed(page: Page, user: Parameters<typeof seedSubscription>[0]) {
   await seedSubscription(user, { feedUrl: FEED_URL, title: 'Long articles' });
-  await page.route('**/api/v2/feeds/batch', async (route) => {
-    await route.fulfill({
-      contentType: 'application/json',
-      body: JSON.stringify({
-        feeds: {
-          [FEED_URL]: {
-            title: 'Long articles',
-            status: 'ready',
-            hasMore: false,
-            items: [
-              {
-                guid: 'long-article-a',
-                url: 'https://example.com/a',
-                title: 'Long article A',
-                summary: 'A summary '.repeat(80),
-                content: longBody('A'),
-                publishedAt: '2026-08-12T12:00:00.000Z',
-              },
-              {
-                guid: 'long-article-b',
-                url: 'https://example.com/b',
-                title: 'Long article B',
-                summary: 'B summary '.repeat(80),
-                content: longBody('B'),
-                publishedAt: '2026-08-12T11:00:00.000Z',
-              },
-              ...fillerItems(),
-            ],
-          },
-        },
-        readCursor: Math.floor(Date.now() / 1000),
-      }),
-    });
-  });
+  await seedFeedItems(
+    FEED_URL,
+    [
+      {
+        guid: 'long-article-a',
+        url: 'https://example.com/a',
+        title: 'Long article A',
+        summary: 'A summary '.repeat(80),
+        content: longBody('A'),
+        publishedAt: '2026-08-12T12:00:00.000Z',
+      },
+      {
+        guid: 'long-article-b',
+        url: 'https://example.com/b',
+        title: 'Long article B',
+        summary: 'B summary '.repeat(80),
+        content: longBody('B'),
+        publishedAt: '2026-08-12T11:00:00.000Z',
+      },
+      ...fillerItems(),
+    ],
+    { title: 'Long articles', siteUrl: 'https://example.com' }
+  );
   await page.goto('/feeds');
   // Wait on the card wrapper the assertions measure, not on the title text.
   await expect(card(page, 'Long article B')).toBeVisible({ timeout: 15_000 });
@@ -83,6 +84,10 @@ function card(page: Page, title: string): Locator {
   });
 }
 
+// Every position in this file is measured from the top of the surface that
+// actually scrolls: the app shell's framed content card above 1000px, the window
+// below it. The app makes the same distinction (frontend/src/lib/utils/appScroll.ts),
+// so measuring against the window here would read a viewport that never moves.
 // Scroll until the card sits at `top` and stays there. Each attempt scrolls, then
 // re-measures after a beat: scrolling into a fresh part of a long expanded article
 // can shift the layout slightly (read-marking, the sticky action bar), and the
@@ -95,11 +100,17 @@ async function moveCardTo(target: Locator, top: number) {
         target.evaluate(
           (element, targetTop) =>
             new Promise<number>((resolve) => {
-              window.scrollTo({
-                top: window.scrollY + element.getBoundingClientRect().top - targetTop,
-                behavior: 'instant',
-              });
-              setTimeout(() => resolve(element.getBoundingClientRect().top), 250);
+              const pane = window.matchMedia('(min-width: 1001px)').matches
+                ? document.getElementById('app-scroll')
+                : null;
+              const origin = pane ? pane.getBoundingClientRect().top : 0;
+              const delta = element.getBoundingClientRect().top - origin - targetTop;
+              if (pane) pane.scrollTop += delta;
+              else window.scrollTo({ top: window.scrollY + delta, behavior: 'instant' });
+              setTimeout(() => {
+                const nextOrigin = pane ? pane.getBoundingClientRect().top : 0;
+                resolve(element.getBoundingClientRect().top - nextOrigin);
+              }, 250);
             }),
           top
         ),
@@ -109,7 +120,12 @@ async function moveCardTo(target: Locator, top: number) {
 }
 
 function cardTop(target: Locator): Promise<number> {
-  return target.evaluate((element) => element.getBoundingClientRect().top);
+  return target.evaluate((element) => {
+    const pane = window.matchMedia('(min-width: 1001px)').matches
+      ? document.getElementById('app-scroll')
+      : null;
+    return element.getBoundingClientRect().top - (pane ? pane.getBoundingClientRect().top : 0);
+  });
 }
 
 // The component's compensation runs across a `tick()` and a `requestAnimationFrame`,
@@ -120,11 +136,16 @@ async function settledTop(target: Locator): Promise<number> {
   return target.evaluate(
     (element) =>
       new Promise<number>((resolve) => {
+        const pane = window.matchMedia('(min-width: 1001px)').matches
+          ? document.getElementById('app-scroll')
+          : null;
+        const measure = () =>
+          element.getBoundingClientRect().top - (pane ? pane.getBoundingClientRect().top : 0);
         const deadline = performance.now() + 4000;
-        let previous = element.getBoundingClientRect().top;
+        let previous = measure();
         let stableFrames = 0;
         const step = () => {
-          const top = element.getBoundingClientRect().top;
+          const top = measure();
           stableFrames = Math.abs(top - previous) < 0.5 ? stableFrames + 1 : 0;
           previous = top;
           // Report the last position rather than hanging until the test timeout if
@@ -145,6 +166,10 @@ async function expectSettledTopNear(target: Locator, expected: number, tolerance
 }
 
 test.describe('expand scroll anchoring', () => {
+  test.afterEach(async () => {
+    await cleanupFeedItems(FEED_URL);
+  });
+
   test('keeps a tapped card fixed when selecting it collapses a long card above', async ({
     authedPage,
     testUser,

@@ -63,9 +63,29 @@
   --sidebar-width: 320px;
   --color-sidebar-active: rgba(0, 102, 204, 0.1);
 
-  /* Safe area and bottom bar */
+  /* ── The shell frame (desktop only, >1000px) ─────────────────
+     The app sits on a recessed ground; the content pane is a
+     white card lifted off it by tone and one hairline border.
+     Sunken (--color-bg-secondary) can't play this role: in dark
+     mode it sits *above* Surface, and the ground has to recede
+     in both themes. Hence its own token pair. */
+  --color-canvas: #f1f1f1;
+  --shell-gap: 0.5rem;
+  --shell-radius: 12px;
+  --shell-bar-height: 2.75rem;
+  /* How far a page's toolbar controls sit from the card's outside edges. The
+     bar spans the card's full width — the leading group hugs the left edge, the
+     trailing group the right — so this inset is what keeps them clear of the
+     card's rounded corners. It matches --shell-radius for that reason. */
+  --shell-bar-inset: 0.75rem;
+
+  /* Safe area and bottom bar. The viewport is `viewport-fit=cover`, so the
+     background runs under the notch / home indicator / rounded corners and
+     it is on layout to keep content out of them. */
   --safe-area-bottom: env(safe-area-inset-bottom, 0px);
   --safe-area-top: env(safe-area-inset-top, 0px);
+  --safe-area-left: env(safe-area-inset-left, 0px);
+  --safe-area-right: env(safe-area-inset-right, 0px);
   --bottom-bar-height: 3.5rem;
 
   /* Article font families (reader-selectable). The sans stack also
@@ -145,6 +165,9 @@
     --color-text-secondary: #999999;
     --color-border: #404040;
     --color-sidebar-active: rgba(77, 166, 255, 0.15);
+    /* Darker than Surface, so the ground recedes and the card lifts —
+       the same relationship as light mode, inverted. */
+    --color-canvas: #111111;
   }
 }
 
@@ -156,8 +179,61 @@
 
 html,
 body {
+  /* `dvh`, not `vh`: on iOS `100vh` is the *large* viewport (the one you get
+     with the address bar collapsed), so a `vh` floor forces the document
+     taller than what is actually on screen and the whole app scrolls by the
+     height of the bar. `dvh` tracks the visible viewport. The `vh` line stays
+     first as the fallback for engines without `dvh`. */
   min-height: 100vh;
+  min-height: 100dvh;
   overscroll-behavior-y: contain;
+}
+
+/* ── The framed shell is pinned ──────────────────────────────────
+   Above the shell breakpoint the app is a fixed frame and all
+   scrolling happens inside the content card (#app-scroll, see
+   appScroll.ts). The document itself must not scroll at all —
+   otherwise iOS Safari drags the whole frame up with its address
+   bar, and desktop rubber-bands it away from the viewport edge.
+   `overscroll-behavior: none` (not `contain`) is what kills that
+   bounce; `contain` only stops the scroll chaining.
+
+   The ground colour moves onto the document here too, so it runs
+   full bleed — behind the address bar, into the overscroll gutter,
+   and under the safe-area insets — instead of stopping at the
+   shell's own box with the body's white showing around it.
+
+   Two things scope it, and both are load-bearing. The breakpoint:
+   below it the window is the scroller by design (the mobile URL-bar
+   collapse and pull-to-refresh both need it). And `.has-app-shell`,
+   which AppShell puts on the document for its own lifetime — the
+   logged-out marketing pages, /terms, /privacy and the /dev harness
+   share this stylesheet but are ordinary window-scrolling documents
+   on Surface, and locking *them* would leave a wide screen unable to
+   reach the bottom of the page. */
+@media (min-width: 1001px) {
+  html.has-app-shell,
+  html.has-app-shell body {
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+    background: var(--color-canvas);
+  }
+}
+
+/* Mid-drag on the rail's resize handle. The cursor has to hold for the whole
+   gesture wherever the pointer has got to, text must not select under it, and
+   the rail's own width transition — right for a layout change, wrong for a
+   direct manipulation — has to be out of the way so the edge tracks the
+   pointer exactly. AppShell puts the class on the document; see .shell-resizer. */
+html.is-rail-resizing,
+html.is-rail-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+html.is-rail-resizing .sidebar {
+  transition: none !important;
 }
 
 a {

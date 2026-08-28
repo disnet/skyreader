@@ -7,6 +7,7 @@
   import CollectionReader from '$lib/components/feed/CollectionReader.svelte';
   import { bskyEmbed } from '$lib/actions/bsky-embed';
   import { overlapShadow } from '$lib/actions/overlap-shadow';
+  import { appScrollElement } from '$lib/utils/appScroll';
   import type { ArticleCardViewProps } from './articleCardView.types';
   import { safeHref } from '$lib/utils/sanitize';
   import { handleFootnoteClick } from '$lib/utils/footnoteNav';
@@ -683,6 +684,7 @@
           onChange: (v) => {
             actionBarFloating = v;
           },
+          root: appScrollElement,
         }}
       ></div>{/if}
 
