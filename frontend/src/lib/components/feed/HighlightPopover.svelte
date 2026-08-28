@@ -69,9 +69,15 @@
     return getAnchorRect?.() ?? anchorRect;
   }
 
+  // A highlight's toolbar shares its passage with the grab handles. Their knobs
+  // reach 24px past the first and last line, and the toolbar is the higher layer
+  // — anything less than that and it silently eats the press that would grab a
+  // handle. A fresh selection has no handles, so it keeps the tight gap.
+  const gap = untrack(() => (mode === 'create' ? 4 : 26));
+
   function positionMenu() {
     if (!menuEl) return;
-    positionFloating(currentAnchorRect(), menuEl, { gap: 4, align: 'center' });
+    positionFloating(currentAnchorRect(), menuEl, { gap, align: 'center' });
   }
 
   // The on-screen keyboard (raised by focusing the note editor) shrinks the
@@ -114,7 +120,7 @@
     // passage, and only leaves when the passage itself scrolls out of view.
     if (getAnchorRect) {
       stopFollowing = followAnchor(() => menuEl, getAnchorRect, {
-        gap: 4,
+        gap,
         align: 'center',
         onLost: () => {
           if (view === 'toolbar') onClose();

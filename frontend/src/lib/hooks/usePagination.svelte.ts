@@ -31,7 +31,14 @@ interface PaginationParams {
   // Read inside an effect so the layout recomputes when the content (or anything
   // else the caller wants to depend on, e.g. font size) changes.
   deps?: () => unknown;
+  // Fires whenever the page *or the page count* may have changed, including from
+  // a plain re-measure (resize, images loading, marks being wrapped).
   onPageChange?: (page: number, total: number) => void;
+  // Fires only for a deliberate page turn (buttons, keys, wheel, a committed
+  // drag), with the signed number of pages turned. Re-measures never fire it, so
+  // callers can react to "the reader turned the page" without being woken by
+  // every reflow.
+  onTurn?: (direction: number) => void;
 }
 
 export function usePagination(params: PaginationParams) {
@@ -178,9 +185,11 @@ export function usePagination(params: PaginationParams) {
     pendingElement = null; // a deliberate page turn drops any pinned target
     const clamped = Math.max(0, Math.min(totalPages - 1, page));
     if (clamped === currentPage) return;
+    const direction = clamped - currentPage;
     currentPage = clamped;
     applyTransform();
     params.onPageChange?.(currentPage, totalPages);
+    params.onTurn?.(direction);
   }
 
   // Turn to the page an element sits on and keep it pinned there through any
@@ -249,9 +258,11 @@ export function usePagination(params: PaginationParams) {
     if (target === currentPage) {
       applyTransform(); // spring back to the current page
     } else {
+      const direction = target - currentPage;
       currentPage = target;
       applyTransform(); // animate to the committed page
       params.onPageChange?.(currentPage, totalPages);
+      params.onTurn?.(direction);
     }
   }
 
@@ -293,6 +304,11 @@ export function usePagination(params: PaginationParams) {
     },
     get totalPages() {
       return totalPages;
+    },
+    // Horizontal distance between two pages, so a caller can reason about where
+    // the flow will sit once a turn's transform transition settles.
+    get pageStride() {
+      return pageStride;
     },
     next,
     prev,

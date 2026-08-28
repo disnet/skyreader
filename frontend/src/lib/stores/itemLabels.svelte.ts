@@ -1642,6 +1642,25 @@ function createItemLabelsStore() {
     );
   }
 
+  async function setHighlightSelector(
+    itemKey: string,
+    highlightId: string,
+    selector: Highlight['selector']
+  ) {
+    const context = highlightContext(itemKey);
+    const mutation = mutateHighlightUnion(context.highlights, {
+      type: 'selector',
+      highlightId,
+      selector,
+    });
+    if (!mutation.changed) return;
+    await persistHighlightUnion(
+      itemKey,
+      context.labels[0]?.itemType || 'saved',
+      mutation.highlights
+    );
+  }
+
   /**
    * Stamp a highlight as reviewed (review deck). Rides the same union write as
    * every other highlight mutation, so it syncs and queues offline for free.
@@ -1802,6 +1821,7 @@ function createItemLabelsStore() {
     removeHighlight,
     setHighlightMargin,
     setHighlightNote,
+    setHighlightSelector,
     markHighlightReviewed,
     setHighlightReviewIntent,
     // Derived helpers

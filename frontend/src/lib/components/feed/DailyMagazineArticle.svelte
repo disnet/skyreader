@@ -13,6 +13,7 @@
   import { savedItemDisplayKey, savedItemLabelKeys } from '$lib/utils/dailyMagazine';
   import Icon from '$lib/components/Icon.svelte';
   import HighlightPopover from './HighlightPopover.svelte';
+  import HighlightHandles from './HighlightHandles.svelte';
   import NotePeek from './NotePeek.svelte';
   import LinkContextMenu from './LinkContextMenu.svelte';
   import ReaderDiscussion from './ReaderDiscussion.svelte';
@@ -261,6 +262,15 @@
     existingNote={highlightsHook.popoverHighlightNote}
     marginSaved={highlightsHook.popoverHighlightSavedToMargin}
     onClose={highlightsHook.closePopover}
+  />
+{/if}
+
+{#if highlightsHook.selectedHighlightId}
+  <HighlightHandles
+    highlightId={highlightsHook.selectedHighlightId}
+    contentEl={() => bodyEl}
+    onAdjust={(range) =>
+      highlightsHook.adjustHighlightRange(highlightsHook.selectedHighlightId!, range)}
   />
 {/if}
 

@@ -103,6 +103,42 @@ in any local cache). Because the whole array is written to `item_labels_cache.pr
 any new per-highlight field reaches D1 and syncs across devices with no migration. `utils/highlightSource.ts` is the shared resolver both the list and the deck use so
 they degrade identically. See [`docs/plans/HIGHLIGHT_REVIEW.md`](../docs/plans/HIGHLIGHT_REVIEW.md).
 
+#### Selecting and re-bounding in paged mode
+
+Paged mode has no scroller, so a native selection used to stop at the page edge.
+`PagedView` now carries a live selection through every page turn (`onTurn` →
+`utils/paginatedSelection.ts` finds a text point strictly inside the newly visible
+page and `Selection.extend()`s onto it), and a selection focus that dwells in the
+trailing edge zone turns the page by itself. Both are DOM-anchored, so the
+`translateX` that shows a page never touches the selection.
+
+An existing highlight can be re-bounded by direct manipulation: clicking one
+selects it (`useHighlights.selectedHighlightId`), which raises its toolbar _and_
+`HighlightHandles` — a grab knob just off each end of the passage. Dragging a knob
+re-bounds it; releasing commits. There is no mode to be in or fall out of, and no
+"adjust" state to make visible: the handles are the affordance, and clicking
+anywhere else puts them down.
+
+Nothing in the article is mutated during a drag. The highlight's own marks are
+dimmed with an inline `background-color`, the dragged bounds are painted as a
+fixed overlay, and the pivot boundary stays a live `Range` — so caret hit-testing
+(`caretPositionFromPoint`) and the pivot both survive the whole gesture. Geometry
+is re-read every frame because the text under a handle moves for reasons that
+emit no event: a page turn animates a transform, a font change reflows, a commit
+replaces the marks. In paged mode a handle is drawn only when its own end is on
+the visible page.
+
+Two constants are coupled and must move together: the knob's touch target
+reaches 24px past its line, and `HighlightPopover`'s `gap` is 26px for an
+existing highlight — the toolbar is the higher layer, so a smaller gap silently
+eats the press that would grab a handle.
+
+The commit replaces the selector in place (`mutateHighlightUnion`'s `selector`
+op), so the id, note, review state and Margin linkage survive. Because a
+selection can run across pages, it can also outgrow the selector's
+5 000-character `exact` cap; over-long selections are refused with a toast
+(`exceedsSelectorLimit`) rather than saved silently short.
+
 #### The `?read=` contract
 
 Any surface that hosts the fullscreen reader (`/feeds`, `/saved`, `/home`,

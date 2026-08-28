@@ -66,6 +66,7 @@
   import { useLinkInterception } from '$lib/hooks/useLinkInterception.svelte';
   import { useHighlights } from '$lib/hooks/useHighlights.svelte';
   import HighlightPopover from '$lib/components/feed/HighlightPopover.svelte';
+  import HighlightHandles from '$lib/components/feed/HighlightHandles.svelte';
   import NotePeek from '$lib/components/feed/NotePeek.svelte';
   import type { ItemTags, ItemLabelType } from '$lib/types';
   import { tick } from 'svelte';
@@ -1039,6 +1040,14 @@
       existingNote={highlights.popoverHighlightNote}
       marginSaved={highlights.popoverHighlightSavedToMargin}
       onClose={highlights.closePopover}
+    />
+  {/if}
+
+  {#if highlights.selectedHighlightId}
+    <HighlightHandles
+      highlightId={highlights.selectedHighlightId}
+      contentEl={() => bodyEl}
+      onAdjust={(range) => highlights.adjustHighlightRange(highlights.selectedHighlightId!, range)}
     />
   {/if}
 

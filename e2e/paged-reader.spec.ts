@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { seedSavedArticle, type TestUser } from './seed';
 
@@ -241,6 +241,175 @@ async function settleCompatibilityClick(page: Page) {
   await page.waitForTimeout(800);
 }
 
+interface DragPoints {
+  from: { x: number; y: number };
+  to: { x: number; y: number };
+}
+
+/**
+ * Two points on the visible page that a mouse drag can select between. The rects
+ * come from a Range over the prose text node (a block element's own
+ * `getClientRects()` is per column fragment, not per line) and skip the link
+ * every seeded paragraph opens with — pressing the mouse down on a link starts a
+ * link drag instead of a selection.
+ */
+async function textDragPoints(page: Page): Promise<DragPoints> {
+  const points = await page.evaluate(() => {
+    const viewport = document.querySelector('.paged-viewport');
+    if (!viewport) return null;
+    const bounds = viewport.getBoundingClientRect();
+    const onPage = (r: DOMRect) =>
+      r.left >= bounds.left &&
+      r.right <= bounds.right &&
+      r.top >= bounds.top &&
+      r.bottom <= bounds.bottom &&
+      r.width > 60 &&
+      r.height > 8;
+    const plainText = (x: number, y: number) => {
+      const el = document.elementFromPoint(x, y);
+      return !!el && !!el.closest('.paged-content') && !el.closest('a, button, mark.highlight');
+    };
+    for (const paragraph of document.querySelectorAll<HTMLElement>('.paged-content p')) {
+      const prose = Array.from(paragraph.childNodes).find(
+        (node): node is Text =>
+          node.nodeType === Node.TEXT_NODE && (node.textContent?.trim().length ?? 0) > 100
+      );
+      if (!prose) continue;
+      const range = document.createRange();
+      range.selectNodeContents(prose);
+      const lines = Array.from(range.getClientRects()).filter(onPage);
+      if (lines.length < 2) continue;
+      const first = lines[0];
+      const last = lines[lines.length - 1];
+      const from = { x: first.left + 6, y: first.top + first.height / 2 };
+      // Keep the drag's end clear of the trailing edge zone: a selection focus
+      // resting there is what arms the dwell auto-turn, and these tests want to
+      // decide when the page turns.
+      const to = {
+        x: Math.max(last.left + 6, Math.min(last.right - 6, bounds.right - 60)),
+        y: last.top + last.height / 2,
+      };
+      if (!plainText(from.x, from.y) || !plainText(to.x, to.y)) continue;
+      return { from, to };
+    }
+    return null;
+  });
+  expect(points, 'found a paragraph on the current page to drag-select').not.toBeNull();
+  return points!;
+}
+
+/** A point over plain prose on the visible page — no link, control or highlight. */
+async function plainTextPoint(page: Page) {
+  const point = await page.evaluate(() => {
+    const viewport = document.querySelector('.paged-viewport');
+    if (!viewport) return null;
+    const bounds = viewport.getBoundingClientRect();
+    for (let fx = 0.2; fx <= 0.8; fx += 0.1) {
+      for (let fy = 0.2; fy <= 0.85; fy += 0.05) {
+        const x = bounds.left + bounds.width * fx;
+        const y = bounds.top + bounds.height * fy;
+        const el = document.elementFromPoint(x, y);
+        if (!el || !el.closest('.paged-content')) continue;
+        if (el.closest('a, button, mark.highlight')) continue;
+        return { x, y };
+      }
+    }
+    return null;
+  });
+  expect(point, 'found plain prose on the current page').not.toBeNull();
+  return point!;
+}
+
+/** Everything the highlight's marks currently cover, in reading order. */
+async function highlightText(page: Page): Promise<string> {
+  const parts = await page.locator('.paged-content mark.highlight').allTextContents();
+  return parts.join('');
+}
+
+/**
+ * Click a highlight to select it — through its first line box, since an inline
+ * element wrapping several lines has a bounding box whose centre isn't over the
+ * mark at all — and wait for its grab handles.
+ */
+async function selectHighlight(page: Page) {
+  const point = await page
+    .locator('.paged-content mark.highlight')
+    .first()
+    .evaluate((el) => {
+      const line = el.getClientRects()[0];
+      return { x: line.left + Math.min(8, line.width / 2), y: line.top + line.height / 2 };
+    });
+  await page.mouse.click(point.x, point.y);
+}
+
+/**
+ * Drag one of the highlight's handles to `fraction` of the way along the line it
+ * currently ends (or starts) on. The knob sits off the line by a fixed offset,
+ * which the component subtracts back out to find the character under the finger
+ * — so the drop point carries the same offset.
+ */
+async function dragHandle(page: Page, knob: Locator, fraction: number) {
+  const box = await knob.boundingBox();
+  expect(box, 'the handle is on screen').not.toBeNull();
+  const grab = { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 };
+
+  const line = await page
+    .locator('.paged-content mark.highlight')
+    .last()
+    .evaluate((el) => {
+      const rects = el.getClientRects();
+      const last = rects[rects.length - 1];
+      return { left: last.left, width: last.width, centreY: last.top + last.height / 2 };
+    });
+
+  const offsetY = grab.y - line.centreY;
+  await page.mouse.move(grab.x, grab.y);
+  await page.mouse.down();
+  await page.mouse.move(line.left + line.width * fraction, line.centreY + offsetY, { steps: 12 });
+  await page.mouse.up();
+}
+
+/** Drag-select a run of prose on the page the reader is showing. */
+async function dragSelect(page: Page, points: DragPoints) {
+  await page.mouse.move(points.from.x, points.from.y);
+  await page.mouse.down();
+  await page.mouse.move(points.to.x, points.to.y, { steps: 10 });
+  await page.mouse.up();
+}
+
+interface SelectionSnapshot {
+  text: string;
+  focusOnPage: boolean;
+}
+
+/** What the live selection is, and whether its focus sits on the visible page. */
+async function selectionSnapshot(page: Page): Promise<SelectionSnapshot | null> {
+  return page.evaluate(() => {
+    const selection = window.getSelection();
+    const viewport = document.querySelector('.paged-viewport');
+    if (!selection || selection.isCollapsed || !selection.rangeCount || !viewport) return null;
+    const bounds = viewport.getBoundingClientRect();
+    const focus = document.createRange();
+    focus.setStart(selection.focusNode!, selection.focusOffset);
+    focus.collapse(true);
+    let rect = focus.getBoundingClientRect();
+    // Collapsed ranges at a text boundary often report an empty rect. Match
+    // the production geometry helper by measuring the preceding character so
+    // this assertion checks where the browser will draw the focus handle.
+    if (!rect.width && !rect.height && selection.focusNode?.nodeType === Node.TEXT_NODE) {
+      const text = selection.focusNode as Text;
+      const offset = Math.max(0, Math.min(selection.focusOffset - 1, text.length - 1));
+      focus.setStart(text, offset);
+      focus.setEnd(text, Math.min(offset + 1, text.length));
+      rect = focus.getBoundingClientRect();
+    }
+    return {
+      text: selection.toString(),
+      focusOnPage: rect.right > bounds.left && rect.left < bounds.right,
+    };
+  });
+}
+
 test.describe('Paged reader interactions', () => {
   test('a tap in the right reading area never turns the page', async ({ authedPage, testUser }) => {
     await openPagedReader(authedPage, testUser);
@@ -339,5 +508,170 @@ test.describe('Paged reader interactions', () => {
 
     await swipe(authedPage, 'left');
     await expect(count).toHaveText(/^Page 2 of \d+$/);
+  });
+});
+
+// The complaint this answers is "I get stuck on the page": a selection can't reach
+// text that hasn't been turned to yet. Turning the page has to carry the selection
+// with it — and it has to do that with the page-turn *animation running*, which is
+// the default. Measured against the sliding page, one frame into a 340ms turn the
+// old text is still on screen and the bridge decides there's nothing to do, so the
+// motion setting is load-bearing for this test.
+test.describe('Selection across page turns', () => {
+  test.use({ reducedMotion: 'no-preference' });
+
+  test('a page turn carries a live selection onto the new page', async ({
+    authedPage,
+    testUser,
+  }) => {
+    await openPagedReader(authedPage, testUser);
+    await dragSelect(authedPage, await textDragPoints(authedPage));
+
+    const before = await selectionSnapshot(authedPage);
+    expect(before, 'drag-selected some prose').not.toBeNull();
+    expect(before!.text.length).toBeGreaterThan(10);
+    expect(before!.focusOnPage).toBe(true);
+
+    // The keyboard turn is the affordance that always works mid-selection —
+    // clicking the pager would take focus and collapse the selection first.
+    await authedPage.keyboard.press('ArrowRight');
+    await expect(authedPage.locator('.paged-count')).toHaveText(/^Page 2 of \d+$/);
+    await settlePageTransform(authedPage);
+
+    const after = await selectionSnapshot(authedPage);
+    expect(after, 'the selection survived the turn').not.toBeNull();
+    // It grew forward across the page boundary...
+    expect(after!.text.startsWith(before!.text)).toBe(true);
+    expect(after!.text.length).toBeGreaterThan(before!.text.length);
+    // ...and its end is back on screen, where the reader can keep dragging it.
+    expect(after!.focusOnPage).toBe(true);
+  });
+});
+
+test.describe('Adjusting a highlight', () => {
+  test('dragging a grab handle re-bounds the highlight in place', async ({
+    authedPage,
+    testUser,
+  }) => {
+    await openPagedReader(authedPage, testUser);
+    const marks = authedPage.locator('.paged-content mark.highlight');
+
+    await dragSelect(authedPage, await textDragPoints(authedPage));
+    await authedPage.getByRole('button', { name: 'Save private highlight' }).click();
+    await expect(marks).toHaveCount(1);
+    const originalId = await marks.first().getAttribute('data-highlight-id');
+    const originalText = await highlightText(authedPage);
+
+    // Selecting the highlight is what raises its handles. The mark is clicked
+    // through its first line box: an inline element wrapping several lines has a
+    // bounding box whose centre isn't over the mark at all.
+    await selectHighlight(authedPage);
+    const endKnob = authedPage.getByRole('button', { name: 'Adjust where the highlight ends' });
+    await expect(endKnob).toBeVisible();
+    await expect(
+      authedPage.getByRole('button', { name: 'Adjust where the highlight starts' })
+    ).toBeVisible();
+
+    // Pull the end handle back into the highlight's own last line: the passage
+    // keeps its id, its place and everything hanging off it, and only shrinks.
+    await dragHandle(authedPage, endKnob, 0.4);
+    // The write is async — the marks are re-drawn once it has landed.
+    await expect.poll(() => highlightText(authedPage)).not.toBe(originalText);
+    await expect(marks).toHaveCount(1);
+    expect(await marks.first().getAttribute('data-highlight-id')).toBe(originalId);
+    const adjustedText = await highlightText(authedPage);
+    expect(adjustedText.length).toBeGreaterThan(0);
+    expect(adjustedText.length).toBeLessThan(originalText.length);
+    expect(originalText.startsWith(adjustedText)).toBe(true);
+
+    // The handles belong to the highlight, not to a mode: clicking away puts
+    // them down, and the next selection is a new highlight rather than a
+    // re-binding of the old one.
+    const elsewhere = await plainTextPoint(authedPage);
+    await authedPage.mouse.click(elsewhere.x, elsewhere.y);
+    await expect(endKnob).toBeHidden();
+
+    await authedPage.getByRole('button', { name: 'Next page' }).click();
+    await expect(authedPage.locator('.paged-count')).toHaveText(/^Page 2 of \d+$/);
+    await settlePageTransform(authedPage);
+    await dragSelect(authedPage, await textDragPoints(authedPage));
+    await authedPage.getByRole('button', { name: 'Save private highlight' }).click();
+
+    await expect(marks).toHaveCount(2);
+    const ids = await marks.evaluateAll((nodes) =>
+      nodes.map((node) => (node as HTMLElement).dataset.highlightId)
+    );
+    expect(new Set(ids).size).toBe(2);
+    expect(ids).toContain(originalId);
+  });
+
+  // Hybrid machines (a touchscreen laptop) fire both event families, and one
+  // stray tap is enough to arm the touch selection path for the rest of the
+  // session. That path realises a highlight the moment a selection collapses —
+  // which is also how every mouse press begins — so a handle drag after a tap
+  // must not leave a second, overlapping highlight behind it.
+  test('a stray tap earlier in the session does not split an adjustment in two', async ({
+    authedPage,
+    testUser,
+  }) => {
+    await openPagedReader(authedPage, testUser);
+    const marks = authedPage.locator('.paged-content mark.highlight');
+
+    const tapped = await plainTextPoint(authedPage);
+    await authedPage.touchscreen.tap(tapped.x, tapped.y);
+    await settleCompatibilityClick(authedPage);
+
+    await dragSelect(authedPage, await textDragPoints(authedPage));
+    await authedPage.getByRole('button', { name: 'Save private highlight' }).click();
+    await expect(marks).toHaveCount(1);
+    const originalId = await marks.first().getAttribute('data-highlight-id');
+
+    const originalText = await highlightText(authedPage);
+    await selectHighlight(authedPage);
+    await dragHandle(
+      authedPage,
+      authedPage.getByRole('button', { name: 'Adjust where the highlight ends' }),
+      0.4
+    );
+
+    await expect.poll(() => highlightText(authedPage)).not.toBe(originalText);
+    await expect(marks).toHaveCount(1);
+    expect(await marks.first().getAttribute('data-highlight-id')).toBe(originalId);
+  });
+});
+
+// A selection that keeps going across page turns can now outgrow what a
+// TextQuoteSelector carries (5 000 characters). The selector would still be
+// well-formed — just for a shorter quote than the reader made — so the only
+// honest answer is to refuse it and say so.
+test.describe('A selection past the selector length cap', () => {
+  test('is refused rather than saved a few thousand characters short', async ({
+    authedPage,
+    testUser,
+  }) => {
+    await openPagedReader(authedPage, testUser);
+    const marks = authedPage.locator('.paged-content mark.highlight');
+
+    const points = await textDragPoints(authedPage);
+    await authedPage.mouse.move(points.from.x, points.from.y);
+    await authedPage.mouse.down();
+    await authedPage.mouse.move(points.to.x, points.to.y, { steps: 5 });
+    // Run the live selection out to the end of the article — the reach the
+    // bridge gives a drag, compressed into one step because dragging page by
+    // page to the same place would only be slower.
+    const selected = await authedPage.evaluate(() => {
+      const selection = window.getSelection();
+      const paragraphs = document.querySelectorAll('.paged-content p');
+      const end = paragraphs[paragraphs.length - 1]?.lastChild;
+      if (!selection || !end) return 0;
+      selection.extend(end, end.textContent?.length ?? 0);
+      return selection.toString().length;
+    });
+    expect(selected).toBeGreaterThan(5000);
+    await authedPage.mouse.up();
+
+    await expect(authedPage.getByText('Selection too long to highlight')).toBeVisible();
+    await expect(authedPage.getByRole('button', { name: 'Save private highlight' })).toHaveCount(0);
+    await expect(marks).toHaveCount(0);
   });
 });

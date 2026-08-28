@@ -2,6 +2,12 @@
   import type { Snippet } from 'svelte';
   import Icon from '$lib/components/Icon.svelte';
   import { usePagination } from '$lib/hooks/usePagination.svelte';
+  import {
+    firstVisibleTextPoint,
+    lastVisibleTextPoint,
+    selectionFocusRect,
+    settledViewportRect,
+  } from '$lib/utils/paginatedSelection';
 
   export interface PagedController {
     goToPage: (page: number) => void;
@@ -46,7 +52,134 @@
     getContentEl: () => contentEl,
     deps: () => deps?.(),
     onPageChange: (page, total) => onpagechange?.(page, total),
+    // Only a real turn bridges the selection; a re-measure (resize, images, the
+    // highlight marks being wrapped) must not extend whatever the reader has
+    // selected, nor cancel a pending edge dwell.
+    onTurn: (direction) => bridgeSelection(direction),
   });
+
+  let dwellTimer: ReturnType<typeof setTimeout> | undefined;
+  let edgeArmed = true;
+  let lastFocusNode: Node | null = null;
+  let lastFocusOffset = -1;
+  let lastFocusMoveAt = 0;
+  let lastAutoTurnAt = 0;
+  // Where the bridge just parked the focus, so the `selectionchange` our own
+  // extend fires isn't read back as the reader dragging a handle.
+  let bridgedFocus: { node: Node; offset: number } | null = null;
+
+  function selectionInContent(): Selection | null {
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed || !selection.rangeCount || !contentEl) return null;
+    return contentEl.contains(selection.getRangeAt(0).commonAncestorContainer) ? selection : null;
+  }
+
+  function clearDwell() {
+    clearTimeout(dwellTimer);
+    dwellTimer = undefined;
+  }
+
+  /**
+   * The page window as it will be once a turn's transform transition settles,
+   * in the current (possibly mid-animation) rect frame. Measuring the live
+   * viewport instead would describe a page that is still sliding: one frame
+   * into a 340ms turn the old page is barely 5% gone, so the bridge would
+   * decide the focus is still on screen and never fire.
+   */
+  function settledViewport(): DOMRect | null {
+    if (!viewportEl || !contentEl) return null;
+    return settledViewportRect(
+      viewportEl.getBoundingClientRect(),
+      contentEl.getBoundingClientRect(),
+      pagination.currentPage,
+      pagination.pageStride
+    );
+  }
+
+  function bridgeSelection(direction: number) {
+    clearDwell();
+    if (!direction) return;
+    requestAnimationFrame(() => {
+      const selection = selectionInContent();
+      const viewport = settledViewport();
+      if (!selection || !viewport || !contentEl || !selection.extend) return;
+      const focus = selectionFocusRect(selection);
+      // Focus already lands on the page being turned to (e.g. a two-column page
+      // stepped back by one): nothing to bridge.
+      if (focus && focus.right > viewport.left && focus.left < viewport.right) return;
+      const point =
+        direction > 0
+          ? firstVisibleTextPoint(contentEl, viewport)
+          : lastVisibleTextPoint(contentEl, viewport);
+      if (!point) return;
+      // Recorded before the call: a browser that dispatches `selectionchange`
+      // synchronously would otherwise see the extend as reader movement.
+      bridgedFocus = { node: point.node, offset: point.offset };
+      try {
+        selection.extend(point.node, point.offset);
+      } catch {
+        // The point can go stale if the marks are re-wrapped between the walk
+        // and the call. The turn still happened; only the extend is lost.
+        bridgedFocus = null;
+      }
+    });
+  }
+
+  function handleSelectionChange() {
+    const bridged = bridgedFocus;
+    bridgedFocus = null;
+    const selection = selectionInContent();
+    if (!selection || !viewportEl) {
+      clearDwell();
+      edgeArmed = true;
+      lastFocusNode = null;
+      lastFocusOffset = -1;
+      return;
+    }
+    if (
+      bridged &&
+      selection.focusNode === bridged.node &&
+      selection.focusOffset === bridged.offset
+    ) {
+      // Our own bridge put the focus here. Adopt it as the baseline without
+      // counting it as reader movement, and make the focus leave the edge zone
+      // before another auto-turn can arm (otherwise the leading-edge landing
+      // spot would immediately dwell the page back).
+      lastFocusNode = selection.focusNode;
+      lastFocusOffset = selection.focusOffset;
+      clearDwell();
+      edgeArmed = false;
+      return;
+    }
+    // Node identity, not a positional signature: two text nodes under different
+    // parents share an index, and a collision would look like "the focus didn't
+    // move" and suppress the dwell for a focus that really did.
+    if (selection.focusNode !== lastFocusNode || selection.focusOffset !== lastFocusOffset) {
+      lastFocusNode = selection.focusNode;
+      lastFocusOffset = selection.focusOffset;
+      lastFocusMoveAt = performance.now();
+    }
+    const rect = selectionFocusRect(selection);
+    const viewport = settledViewport();
+    if (!rect || !viewport) return;
+    const edge = rect.right >= viewport.right - 32 ? 1 : rect.left <= viewport.left + 32 ? -1 : 0;
+    if (!edge) {
+      clearDwell();
+      edgeArmed = true;
+      return;
+    }
+    const now = performance.now();
+    if (!edgeArmed || dwellTimer || now - lastFocusMoveAt > 300 || now - lastAutoTurnAt < 700)
+      return;
+    dwellTimer = setTimeout(() => {
+      dwellTimer = undefined;
+      if (!selectionInContent()) return;
+      edgeArmed = false;
+      lastAutoTurnAt = performance.now();
+      if (edge > 0) pagination.next();
+      else pagination.prev();
+    }, 500);
+  }
 
   // Mirror the paginator's state onto the bindable props so host chrome (the
   // reader header / magazine chrome) can show "Page X / N" too.
@@ -183,7 +316,12 @@
 
   $effect(() => {
     document.addEventListener('keydown', handleKeydown, true);
-    return () => document.removeEventListener('keydown', handleKeydown, true);
+    document.addEventListener('selectionchange', handleSelectionChange);
+    return () => {
+      clearDwell();
+      document.removeEventListener('keydown', handleKeydown, true);
+      document.removeEventListener('selectionchange', handleSelectionChange);
+    };
   });
 
   // Wheel + touch need non-passive listeners to preventDefault, so attach them

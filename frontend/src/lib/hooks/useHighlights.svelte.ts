@@ -1,6 +1,12 @@
 import { onDestroy } from 'svelte';
 import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
-import { createSelector, createSelectorForElement, findTextInDOM } from '$lib/utils/textSelector';
+import {
+  createSelector,
+  createSelectorForElement,
+  exceedsSelectorLimit,
+  findTextInDOM,
+} from '$lib/utils/textSelector';
+import { toastStore } from '$lib/stores/toast.svelte';
 import {
   saveHighlightToMargin as saveToMargin,
   removeHighlightFromMargin,
@@ -8,6 +14,7 @@ import {
 } from '$lib/services/marginHighlights';
 import type { ItemLabelType, Highlight, TextQuoteSelector } from '$lib/types';
 import { wrapTextRange } from '$lib/utils/wrapTextRange';
+import { visibleClientRect } from '$lib/utils/paginatedSelection';
 
 const BLOCK_SELECTORS = 'p, h1, h2, h3, h4, h5, h6, blockquote, pre, figure, li';
 const INTERACTIVE_MEDIA_SELECTOR = 'video, audio, iframe, embed, object';
@@ -71,10 +78,13 @@ export function useHighlights(params: HighlightParams) {
 
   let currentEl: HTMLElement | null = null;
   let dblclickHandler: ((e: MouseEvent) => void) | null = null;
+  let mousedownHandler: ((e: MouseEvent) => void) | null = null;
+  let pointerdownHandler: ((e: PointerEvent) => void) | null = null;
   let mouseupHandler: ((e: MouseEvent) => void) | null = null;
   let clickHandler: ((e: MouseEvent) => void) | null = null;
   let touchendHandler: ((e: TouchEvent) => void) | null = null;
   let selectionchangeHandler: (() => void) | null = null;
+  let keydownHandler: ((e: KeyboardEvent) => void) | null = null;
   let mouseoverHandler: ((e: MouseEvent) => void) | null = null;
   let mouseoutHandler: ((e: MouseEvent) => void) | null = null;
   let appliedMarks: HTMLElement[] = [];
@@ -90,6 +100,39 @@ export function useHighlights(params: HighlightParams) {
   let lastTapY = 0;
   let sawTouch = false;
   let pendingTouchSelector: TextQuoteSelector | null = null;
+  // A live touch selection that has grown past what a selector can carry. Held
+  // until the selection collapses so the reader hears about it once, when they
+  // let go, instead of on every `selectionchange` of the drag.
+  let touchSelectionTooLong = false;
+  // Pointer bookkeeping, recorded on the way down so `mouseup` knows what kind of
+  // gesture it is finishing.
+  //
+  // `pressStartedInContent` separates a drag through the prose (which should
+  // offer a popover, even when the pointer is released past the edge of the
+  // article — the reason the mouseup listener is on `document`) from a press on
+  // the chrome around it, whose own mouseup must not be answered with a
+  // selection toolbar.
+  //
+  // `lastPointerWasMouse` refines `sawTouch`, which latches on the first touch
+  // and never resets: on a hybrid machine (a touchscreen laptop) it stays true
+  // for subsequent mouse gestures, so it can't decide on its own whether a
+  // collapse came from a touch.
+  let pressStartedInContent = false;
+  let lastPointerWasMouse = false;
+  // The highlight the reader has tapped, and so the one wearing grab handles.
+  // Reactive: the host renders the handles from it. It outlives the popover on
+  // purpose — grabbing a handle is a press outside the popover, which closes it,
+  // and the handles have to survive their own drag.
+  let selectedHighlightId = $state<string | null>(null);
+
+  /**
+   * A highlight longer than `MAX_EXACT_LENGTH` can't be stored without quietly
+   * dropping its tail, so nothing is written and the reader is told. Paged
+   * reading is what made this reachable: a selection now runs across page turns.
+   */
+  function reportTooLong() {
+    toastStore.update(toastStore.add('Selection too long to highlight'), 'error');
+  }
 
   function applyHighlights() {
     clearMarks();
@@ -204,6 +247,10 @@ export function useHighlights(params: HighlightParams) {
     }
 
     // Create a highlight for the whole paragraph
+    if (exceedsSelectorLimit(paragraphText)) {
+      reportTooLong();
+      return true;
+    }
     const selector = createSelectorForElement(blockEl, container);
     itemLabelsStore.addHighlight(params.itemKey(), params.itemType(), makeHighlight(selector));
     requestAnimationFrame(applyHighlights);
@@ -242,6 +289,18 @@ export function useHighlights(params: HighlightParams) {
       return;
     }
 
+    // A touch that ends with text still selected belongs to the selection
+    // gesture (a handle drag, or the tap that will dismiss it), never to the
+    // first half of a double tap — don't seed a pair it could complete. This
+    // runs *after* the double-tap branch on purpose: the second tap of a pair
+    // also has a live word selection, and bailing before that branch would kill
+    // double-tap-to-highlight-a-paragraph outright.
+    const liveSelection = window.getSelection();
+    if (liveSelection && !liveSelection.isCollapsed) {
+      lastTapTime = 0;
+      return;
+    }
+
     // Otherwise remember the tap so the next one can complete a double-tap.
     // Text selections are tracked via `selectionchange`, not here.
     lastTapTime = now;
@@ -256,7 +315,12 @@ export function useHighlights(params: HighlightParams) {
    * user clears it (selection collapses).
    */
   function handleSelectionChange() {
-    if (!sawTouch || !params.enabled()) return;
+    if (!params.enabled()) return;
+
+    // Pointer devices commit from the mouseup popover. This asks for a touch
+    // *gesture*, not merely a touch-capable device: on a hybrid machine the
+    // sticky `sawTouch` would otherwise route mouse drags down here too.
+    if (!touchGesture()) return;
 
     const selection = window.getSelection();
     if (selection && !selection.isCollapsed && selection.rangeCount) {
@@ -265,31 +329,80 @@ export function useHighlights(params: HighlightParams) {
       if (container && container.contains(range.commonAncestorContainer)) {
         const selectedText = range.toString().trim();
         if (selectedText.length >= 3) {
+          // Report over-long only once the reader lets go: `selectionchange`
+          // fires on every handle movement, and a toast per frame of a drag
+          // that is merely passing through 5 000 characters is noise.
+          if (exceedsSelectorLimit(range.toString())) {
+            pendingTouchSelector = null;
+            touchSelectionTooLong = true;
+            return;
+          }
+          touchSelectionTooLong = false;
           pendingTouchSelector = createSelector(range, container);
           return;
         }
       }
       // Selection is outside our content or too short — nothing to highlight.
       pendingTouchSelector = null;
+      touchSelectionTooLong = false;
       return;
     }
 
     // Selection collapsed: realize the pending highlight, if any.
-    if (!pendingTouchSelector) return;
+    if (!pendingTouchSelector) {
+      if (touchSelectionTooLong) {
+        // The reader made a selection we can't store faithfully. Say so — the
+        // next drag can be shorter.
+        touchSelectionTooLong = false;
+        reportTooLong();
+      }
+      return;
+    }
     const selector = pendingTouchSelector;
     pendingTouchSelector = null;
     itemLabelsStore.addHighlight(params.itemKey(), params.itemType(), makeHighlight(selector));
     requestAnimationFrame(applyHighlights);
   }
 
+  /** True when the gesture in progress is a touch, not a mouse press. */
+  function touchGesture(): boolean {
+    return sawTouch && !lastPointerWasMouse;
+  }
+
+  /** Remember where (and with what) the pointer went down. See the fields' notes. */
+  function handleMouseDown(e: MouseEvent) {
+    const container = params.contentEl();
+    const target = e.target as Node | null;
+    pressStartedInContent = !!container && !!target && container.contains(target);
+  }
+
+  function handlePointerDown(e: PointerEvent) {
+    lastPointerWasMouse = e.pointerType === 'mouse';
+    if (!selectedHighlightId) return;
+    const target = e.target as HTMLElement | null;
+    // A press on the handles, on the toolbar that came up with them, or on the
+    // highlight they belong to is part of working on that highlight. Anything
+    // else — including a press that starts a fresh selection — deselects it.
+    if (target?.closest?.('.highlight-handles, .highlight-popover')) return;
+    const mark = target?.closest?.('mark.highlight') as HTMLElement | null;
+    if (mark?.dataset.highlightId === selectedHighlightId) return;
+    selectedHighlightId = null;
+  }
+
   function handleMouseUp(e: MouseEvent) {
     if (!params.enabled()) return;
     const target = e.target as HTMLElement;
-    if (target.closest(INTERACTIVE_MEDIA_SELECTOR)) return;
+    // Only a press that began in the prose is a selection gesture; one that
+    // began on the popover, the handles or the pager is chrome finishing its own
+    // click, and must not be answered with a toolbar.
+    const fromContent = pressStartedInContent;
     // Small delay to let selection finalize
     setTimeout(() => {
       const selection = window.getSelection();
       if (!selection || selection.isCollapsed || !selection.rangeCount) return;
+
+      if (!fromContent) return;
+      if (target.closest(INTERACTIVE_MEDIA_SELECTOR)) return;
 
       const range = selection.getRangeAt(0);
       const container = params.contentEl();
@@ -297,8 +410,15 @@ export function useHighlights(params: HighlightParams) {
 
       const selectedText = range.toString().trim();
       if (!selectedText || selectedText.length < 3) return;
+      // Refuse rather than offer a toolbar that would save a quietly shortened
+      // quote.
+      if (exceedsSelectorLimit(range.toString())) {
+        reportTooLong();
+        return;
+      }
 
-      const rect = range.getBoundingClientRect();
+      const rect = selectionAnchorRect(range);
+      if (!rect) return;
       const selector = createSelector(range, container);
 
       popoverState = {
@@ -322,6 +442,7 @@ export function useHighlights(params: HighlightParams) {
       e.preventDefault();
       e.stopPropagation();
       notePeek = null;
+      selectedHighlightId = highlightId;
       popoverState = {
         mode: 'view',
         anchorRect: marker.getBoundingClientRect(),
@@ -340,10 +461,12 @@ export function useHighlights(params: HighlightParams) {
     e.preventDefault();
     e.stopPropagation();
 
-    const rect = mark.getBoundingClientRect();
+    // Selecting a highlight raises its grab handles as well as its toolbar: the
+    // handles are how its bounds are changed, the toolbar is everything else.
+    selectedHighlightId = highlightId;
     popoverState = {
       mode: 'remove',
-      anchorRect: rect,
+      anchorRect: mark.getBoundingClientRect(),
       highlightId,
       anchorEl: mark,
     };
@@ -381,10 +504,82 @@ export function useHighlights(params: HighlightParams) {
 
     const highlight = makeHighlight(popoverState.pendingSelector, note);
     itemLabelsStore.addHighlight(params.itemKey(), params.itemType(), highlight);
+    pendingTouchSelector = null;
     window.getSelection()?.removeAllRanges();
     popoverState = null;
     requestAnimationFrame(applyHighlights);
     if (toMargin) void saveHighlightToMargin(highlight);
+  }
+
+  async function commitSelectorAdjustment(highlightId: string, selector: TextQuoteSelector) {
+    const itemKey = params.itemKey();
+    await itemLabelsStore.setHighlightSelector(itemKey, highlightId, selector);
+    requestAnimationFrame(applyHighlights);
+    const updated = itemLabelsStore.getHighlights(itemKey).find((h) => h.id === highlightId);
+    if (updated?.marginRkey) await updateNoteOnMargin(updated);
+  }
+
+  /**
+   * Re-bound the selected highlight from the range a grab handle was dragged to.
+   * Everything but the bounds rides along untouched — the id, note, review state
+   * and Margin linkage — because the write only replaces the selector.
+   */
+  function adjustHighlightRange(highlightId: string, range: Range) {
+    const container = params.contentEl();
+    if (!container || !container.contains(range.commonAncestorContainer)) return;
+    // Refuse rather than store a quietly shortened quote; the handles are still
+    // up, so the reader can drag a smaller range.
+    if (exceedsSelectorLimit(range.toString())) {
+      reportTooLong();
+      return;
+    }
+    const selector = createSelector(range, container);
+    void (async () => {
+      await commitSelectorAdjustment(highlightId, selector);
+      // `commitSelectorAdjustment` re-applies the marks on the next frame; the
+      // toolbar has to point at the ones that come back, not the ones the drag
+      // replaced.
+      requestAnimationFrame(() => openHighlightPopover(highlightId));
+    })();
+  }
+
+  /**
+   * Put the existing-highlight toolbar back over a highlight. Grabbing a handle
+   * is a press outside the popover, so it closes on the way into a drag; the
+   * highlight is still selected afterwards, and so is still wearing its toolbar.
+   */
+  function openHighlightPopover(highlightId: string) {
+    const container = params.contentEl();
+    if (!container || selectedHighlightId !== highlightId) return;
+    const marks = container.querySelectorAll<HTMLElement>(
+      `mark.highlight[data-highlight-id="${CSS.escape(highlightId)}"]`
+    );
+    const first = marks[0];
+    if (!first) return;
+    const viewport = container.closest('.paged-viewport') as HTMLElement | null;
+    const rect = viewport
+      ? visibleClientRect(
+          Array.from(marks, (mark) => mark.getBoundingClientRect()),
+          viewport.getBoundingClientRect()
+        )
+      : first.getBoundingClientRect();
+    if (!rect) return;
+    popoverState = { mode: 'remove', anchorRect: rect, highlightId, anchorEl: first };
+  }
+
+  /** Deselect the highlight, taking its handles down with it. */
+  function deselectHighlight() {
+    selectedHighlightId = null;
+  }
+
+  function handleKeydown(e: KeyboardEvent) {
+    // Escape deselects the highlight. The popover and the handles each handle
+    // their own Escape first (and stop it), so this only fires for the bare
+    // "a highlight is selected" state.
+    if (e.key !== 'Escape' || !selectedHighlightId || popoverState) return;
+    e.preventDefault();
+    e.stopPropagation();
+    selectedHighlightId = null;
   }
 
   /** Create a highlight from the current selection and push it to Margin. */
@@ -419,11 +614,26 @@ export function useHighlights(params: HighlightParams) {
     if (existing) void removeFromMargin(existing);
     itemLabelsStore.removeHighlight(params.itemKey(), highlightId);
     popoverState = null;
+    if (selectedHighlightId === highlightId) selectedHighlightId = null;
     requestAnimationFrame(applyHighlights);
   }
 
+  /**
+   * Dismiss the popover without deciding anything about the highlight — the
+   * outside-click and scrolled-away paths. Whether the highlight stays selected
+   * (and so keeps its handles) is decided by the press itself, in
+   * `handlePointerDown`: grabbing a handle closes this toolbar but must not end
+   * the adjustment it is starting.
+   */
   function closePopover() {
     popoverState = null;
+  }
+
+  function selectionAnchorRect(range: Range): DOMRect | null {
+    const container = params.contentEl();
+    const viewport = container?.closest('.paged-viewport') as HTMLElement | null;
+    if (!viewport) return range.getBoundingClientRect();
+    return visibleClientRect(range.getClientRects(), viewport.getBoundingClientRect());
   }
 
   // --- Margin (at.margin.note) sync ---
@@ -476,9 +686,9 @@ export function useHighlights(params: HighlightParams) {
     const state = popoverState;
     if (!state) return null;
     if (state.anchorRange) {
-      const rect = state.anchorRange.getBoundingClientRect();
+      const rect = selectionAnchorRect(state.anchorRange);
       // A range whose nodes have been replaced measures as an empty rect.
-      return rect.width || rect.height ? rect : null;
+      return rect && (rect.width || rect.height) ? rect : null;
     }
     const live =
       state.anchorEl?.isConnected === true
@@ -490,7 +700,17 @@ export function useHighlights(params: HighlightParams) {
                 `mark.highlight[data-highlight-id="${CSS.escape(state.highlightId)}"]`
               ) ?? null)
           : null;
-    return live?.getBoundingClientRect() ?? null;
+    if (!live) return null;
+    const container = params.contentEl();
+    const viewport = container?.closest('.paged-viewport') as HTMLElement | null;
+    if (!viewport || !state.highlightId) return live.getBoundingClientRect();
+    const marks = container?.querySelectorAll<HTMLElement>(
+      `mark.highlight[data-highlight-id="${CSS.escape(state.highlightId)}"]`
+    );
+    return visibleClientRect(
+      Array.from(marks ?? [], (mark) => mark.getBoundingClientRect()),
+      viewport.getBoundingClientRect()
+    );
   }
 
   /** The current note on the highlight targeted by the popover (for prefill). */
@@ -544,16 +764,23 @@ export function useHighlights(params: HighlightParams) {
     currentEl = el;
 
     dblclickHandler = handleDblClick;
+    mousedownHandler = handleMouseDown;
+    pointerdownHandler = handlePointerDown;
     mouseupHandler = handleMouseUp;
     clickHandler = handleClick;
     touchendHandler = handleTouchEnd;
     selectionchangeHandler = handleSelectionChange;
+    keydownHandler = handleKeydown;
     mouseoverHandler = handleMouseOver;
     mouseoutHandler = handleMouseOut;
 
     el.addEventListener('dblclick', dblclickHandler);
     // Listen on document so we catch mouseup even when the user
-    // drag-selects past the edge of the content element
+    // drag-selects past the edge of the content element, and the matching
+    // mousedown so that mouseup knows whether the press began in the article.
+    // Capture, because the popover stops mousedown propagating.
+    document.addEventListener('mousedown', mousedownHandler, true);
+    document.addEventListener('pointerdown', pointerdownHandler, true);
     document.addEventListener('mouseup', mouseupHandler);
     el.addEventListener('click', clickHandler);
     el.addEventListener('mouseover', mouseoverHandler);
@@ -563,6 +790,9 @@ export function useHighlights(params: HighlightParams) {
     el.addEventListener('touchend', touchendHandler, { passive: false });
     // Touch selections are realized into highlights when the user clears them.
     document.addEventListener('selectionchange', selectionchangeHandler);
+    // Escape deselects a highlight (capture, so the reader's own Escape doesn't
+    // close out from under it).
+    document.addEventListener('keydown', keydownHandler, true);
 
     // Apply existing highlights
     applyHighlights();
@@ -571,6 +801,8 @@ export function useHighlights(params: HighlightParams) {
   function detach() {
     if (currentEl) {
       if (dblclickHandler) currentEl.removeEventListener('dblclick', dblclickHandler);
+      if (mousedownHandler) document.removeEventListener('mousedown', mousedownHandler, true);
+      if (pointerdownHandler) document.removeEventListener('pointerdown', pointerdownHandler, true);
       if (mouseupHandler) document.removeEventListener('mouseup', mouseupHandler);
       if (clickHandler) currentEl.removeEventListener('click', clickHandler);
       if (touchendHandler) currentEl.removeEventListener('touchend', touchendHandler);
@@ -579,18 +811,26 @@ export function useHighlights(params: HighlightParams) {
     }
     if (selectionchangeHandler)
       document.removeEventListener('selectionchange', selectionchangeHandler);
+    if (keydownHandler) document.removeEventListener('keydown', keydownHandler, true);
     clearMarks();
     currentEl = null;
     dblclickHandler = null;
+    mousedownHandler = null;
+    pointerdownHandler = null;
     mouseupHandler = null;
     clickHandler = null;
     touchendHandler = null;
     selectionchangeHandler = null;
+    keydownHandler = null;
     mouseoverHandler = null;
     mouseoutHandler = null;
     pendingTouchSelector = null;
+    touchSelectionTooLong = false;
+    selectedHighlightId = null;
     popoverState = null;
     notePeek = null;
+    pressStartedInContent = false;
+    lastPointerWasMouse = false;
   }
 
   onDestroy(detach);
@@ -613,6 +853,12 @@ export function useHighlights(params: HighlightParams) {
     createHighlightFromPopoverToMargin,
     saveNoteFromPopover,
     removeHighlightFromPopover,
+    adjustHighlightRange,
+    deselectHighlight,
+    /** The highlight wearing grab handles, if any. */
+    get selectedHighlightId() {
+      return selectedHighlightId;
+    },
     closePopover,
     toggleParagraphHighlight,
     savePopoverHighlightToMargin,
