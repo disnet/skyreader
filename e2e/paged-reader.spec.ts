@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { seedSavedArticle, type TestUser } from './seed';
 
@@ -320,6 +320,55 @@ async function plainTextPoint(page: Page) {
   return point!;
 }
 
+/** Everything the highlight's marks currently cover, in reading order. */
+async function highlightText(page: Page): Promise<string> {
+  const parts = await page.locator('.paged-content mark.highlight').allTextContents();
+  return parts.join('');
+}
+
+/**
+ * Click a highlight to select it — through its first line box, since an inline
+ * element wrapping several lines has a bounding box whose centre isn't over the
+ * mark at all — and wait for its grab handles.
+ */
+async function selectHighlight(page: Page) {
+  const point = await page
+    .locator('.paged-content mark.highlight')
+    .first()
+    .evaluate((el) => {
+      const line = el.getClientRects()[0];
+      return { x: line.left + Math.min(8, line.width / 2), y: line.top + line.height / 2 };
+    });
+  await page.mouse.click(point.x, point.y);
+}
+
+/**
+ * Drag one of the highlight's handles to `fraction` of the way along the line it
+ * currently ends (or starts) on. The knob sits off the line by a fixed offset,
+ * which the component subtracts back out to find the character under the finger
+ * — so the drop point carries the same offset.
+ */
+async function dragHandle(page: Page, knob: Locator, fraction: number) {
+  const box = await knob.boundingBox();
+  expect(box, 'the handle is on screen').not.toBeNull();
+  const grab = { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 };
+
+  const line = await page
+    .locator('.paged-content mark.highlight')
+    .last()
+    .evaluate((el) => {
+      const rects = el.getClientRects();
+      const last = rects[rects.length - 1];
+      return { left: last.left, width: last.width, centreY: last.top + last.height / 2 };
+    });
+
+  const offsetY = grab.y - line.centreY;
+  await page.mouse.move(grab.x, grab.y);
+  await page.mouse.down();
+  await page.mouse.move(line.left + line.width * fraction, line.centreY + offsetY, { steps: 12 });
+  await page.mouse.up();
+}
+
 /** Drag-select a run of prose on the page the reader is showing. */
 async function dragSelect(page: Page, points: DragPoints) {
   await page.mouse.move(points.from.x, points.from.y);
@@ -500,7 +549,7 @@ test.describe('Selection across page turns', () => {
 });
 
 test.describe('Adjusting a highlight', () => {
-  test('a pointer drag adjusts in place and leaving never re-binds the next selection', async ({
+  test('dragging a grab handle re-bounds the highlight in place', async ({
     authedPage,
     testUser,
   }) => {
@@ -510,41 +559,38 @@ test.describe('Adjusting a highlight', () => {
     await dragSelect(authedPage, await textDragPoints(authedPage));
     await authedPage.getByRole('button', { name: 'Save private highlight' }).click();
     await expect(marks).toHaveCount(1);
+    const originalId = await marks.first().getAttribute('data-highlight-id');
+    const originalText = await highlightText(authedPage);
 
-    // Enter adjust mode, then think better of it and click away. The mark is
-    // clicked through its first line box: an inline element wrapping several
-    // lines has a bounding box whose centre isn't over the mark at all.
-    const markPoint = await marks.first().evaluate((el) => {
-      const line = el.getClientRects()[0];
-      return { x: line.left + Math.min(8, line.width / 2), y: line.top + line.height / 2 };
-    });
-    await authedPage.mouse.click(markPoint.x, markPoint.y);
-    await authedPage.getByRole('button', { name: 'Adjust highlight' }).click();
-    const adjustBar = authedPage.getByText('Adjusting a highlight');
-    await expect(adjustBar).toBeVisible();
+    // Selecting the highlight is what raises its handles. The mark is clicked
+    // through its first line box: an inline element wrapping several lines has a
+    // bounding box whose centre isn't over the mark at all.
+    await selectHighlight(authedPage);
+    const endKnob = authedPage.getByRole('button', { name: 'Adjust where the highlight ends' });
+    await expect(endKnob).toBeVisible();
+    await expect(
+      authedPage.getByRole('button', { name: 'Adjust where the highlight starts' })
+    ).toBeVisible();
 
-    // A normal pointer drag starts by collapsing the programmatic selection on
-    // mousedown. Adjust mode must survive that collapse until mouseup can see
-    // the completed range, then update the existing id rather than creating an
-    // overlapping second highlight.
-    await dragSelect(authedPage, await textDragPoints(authedPage));
-    await authedPage.getByRole('button', { name: 'Save adjustment' }).click();
+    // Pull the end handle back into the highlight's own last line: the passage
+    // keeps its id, its place and everything hanging off it, and only shrinks.
+    await dragHandle(authedPage, endKnob, 0.4);
+    // The write is async — the marks are re-drawn once it has landed.
+    await expect.poll(() => highlightText(authedPage)).not.toBe(originalText);
     await expect(marks).toHaveCount(1);
-    const adjustedId = await marks.first().getAttribute('data-highlight-id');
+    expect(await marks.first().getAttribute('data-highlight-id')).toBe(originalId);
+    const adjustedText = await highlightText(authedPage);
+    expect(adjustedText.length).toBeGreaterThan(0);
+    expect(adjustedText.length).toBeLessThan(originalText.length);
+    expect(originalText.startsWith(adjustedText)).toBe(true);
 
-    const adjustedMarkPoint = await marks.first().evaluate((el) => {
-      const line = el.getClientRects()[0];
-      return { x: line.left + Math.min(8, line.width / 2), y: line.top + line.height / 2 };
-    });
-    await authedPage.mouse.click(adjustedMarkPoint.x, adjustedMarkPoint.y);
-    await authedPage.getByRole('button', { name: 'Adjust highlight' }).click();
-    await expect(adjustBar).toBeVisible();
+    // The handles belong to the highlight, not to a mode: clicking away puts
+    // them down, and the next selection is a new highlight rather than a
+    // re-binding of the old one.
     const elsewhere = await plainTextPoint(authedPage);
     await authedPage.mouse.click(elsewhere.x, elsewhere.y);
-    await expect(adjustBar).toBeHidden();
+    await expect(endKnob).toBeHidden();
 
-    // A later, unrelated selection must create its own highlight rather than
-    // silently moving the first one onto it.
     await authedPage.getByRole('button', { name: 'Next page' }).click();
     await expect(authedPage.locator('.paged-count')).toHaveText(/^Page 2 of \d+$/);
     await settlePageTransform(authedPage);
@@ -556,16 +602,15 @@ test.describe('Adjusting a highlight', () => {
       nodes.map((node) => (node as HTMLElement).dataset.highlightId)
     );
     expect(new Set(ids).size).toBe(2);
-    expect(ids).toContain(adjustedId);
+    expect(ids).toContain(originalId);
   });
 
   // Hybrid machines (a touchscreen laptop) fire both event families, and one
   // stray tap is enough to arm the touch selection path for the rest of the
-  // session. That path commits an adjustment the moment the selection collapses
-  // — which is also how every mouse drag begins — so a mouse adjustment after a
-  // tap used to commit the *old* bounds and then create a second, overlapping
-  // highlight for the new ones.
-  test('a stray tap earlier in the session does not split a mouse adjustment in two', async ({
+  // session. That path realises a highlight the moment a selection collapses —
+  // which is also how every mouse press begins — so a handle drag after a tap
+  // must not leave a second, overlapping highlight behind it.
+  test('a stray tap earlier in the session does not split an adjustment in two', async ({
     authedPage,
     testUser,
   }) => {
@@ -581,17 +626,15 @@ test.describe('Adjusting a highlight', () => {
     await expect(marks).toHaveCount(1);
     const originalId = await marks.first().getAttribute('data-highlight-id');
 
-    const markPoint = await marks.first().evaluate((el) => {
-      const line = el.getClientRects()[0];
-      return { x: line.left + Math.min(8, line.width / 2), y: line.top + line.height / 2 };
-    });
-    await authedPage.mouse.click(markPoint.x, markPoint.y);
-    await authedPage.getByRole('button', { name: 'Adjust highlight' }).click();
-    await expect(authedPage.getByText('Adjusting a highlight')).toBeVisible();
+    const originalText = await highlightText(authedPage);
+    await selectHighlight(authedPage);
+    await dragHandle(
+      authedPage,
+      authedPage.getByRole('button', { name: 'Adjust where the highlight ends' }),
+      0.4
+    );
 
-    await dragSelect(authedPage, await textDragPoints(authedPage));
-    await authedPage.getByRole('button', { name: 'Save adjustment' }).click();
-
+    await expect.poll(() => highlightText(authedPage)).not.toBe(originalText);
     await expect(marks).toHaveCount(1);
     expect(await marks.first().getAttribute('data-highlight-id')).toBe(originalId);
   });

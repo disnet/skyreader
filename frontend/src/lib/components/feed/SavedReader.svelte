@@ -43,7 +43,7 @@
   import { shareTargetForDisplayItem } from '$lib/utils/shareTarget';
   import { isSavedItemSaved } from '$lib/utils/readerSave';
   import HighlightPopover from '$lib/components/feed/HighlightPopover.svelte';
-  import HighlightAdjustBar from '$lib/components/feed/HighlightAdjustBar.svelte';
+  import HighlightHandles from '$lib/components/feed/HighlightHandles.svelte';
   import CommunityHighlightPopover from '$lib/components/feed/CommunityHighlightPopover.svelte';
   import NotePeek from '$lib/components/feed/NotePeek.svelte';
   import CollectionMagazine from '$lib/components/feed/CollectionMagazine.svelte';
@@ -1246,8 +1246,6 @@
     onHighlight={highlightsHook.createHighlightFromPopover}
     onHighlightToMargin={highlightsHook.createHighlightFromPopoverToMargin}
     onRemove={highlightsHook.removeHighlightFromPopover}
-    onAdjust={highlightsHook.adjustHighlightFromPopover}
-    onCancelAdjust={highlightsHook.cancelAdjust}
     onSaveToMargin={highlightsHook.savePopoverHighlightToMargin}
     onSaveNote={highlightsHook.saveNoteFromPopover}
     onQuoteToShare={composerOpenHere ? quoteSelectionToShare : undefined}
@@ -1257,8 +1255,13 @@
   />
 {/if}
 
-{#if highlightsHook.adjusting && !highlightsHook.popoverState}
-  <HighlightAdjustBar onCancel={highlightsHook.cancelAdjust} />
+{#if highlightsHook.selectedHighlightId}
+  <HighlightHandles
+    highlightId={highlightsHook.selectedHighlightId}
+    contentEl={() => readerBodyEl}
+    onAdjust={(range) =>
+      highlightsHook.adjustHighlightRange(highlightsHook.selectedHighlightId!, range)}
+  />
 {/if}
 
 {#if communityHighlightsHook.popoverState}

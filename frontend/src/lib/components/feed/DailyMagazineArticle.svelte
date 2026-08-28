@@ -13,7 +13,7 @@
   import { savedItemDisplayKey, savedItemLabelKeys } from '$lib/utils/dailyMagazine';
   import Icon from '$lib/components/Icon.svelte';
   import HighlightPopover from './HighlightPopover.svelte';
-  import HighlightAdjustBar from './HighlightAdjustBar.svelte';
+  import HighlightHandles from './HighlightHandles.svelte';
   import NotePeek from './NotePeek.svelte';
   import LinkContextMenu from './LinkContextMenu.svelte';
   import ReaderDiscussion from './ReaderDiscussion.svelte';
@@ -257,8 +257,6 @@
     onHighlight={highlightsHook.createHighlightFromPopover}
     onHighlightToMargin={highlightsHook.createHighlightFromPopoverToMargin}
     onRemove={highlightsHook.removeHighlightFromPopover}
-    onAdjust={highlightsHook.adjustHighlightFromPopover}
-    onCancelAdjust={highlightsHook.cancelAdjust}
     onSaveToMargin={highlightsHook.savePopoverHighlightToMargin}
     onSaveNote={highlightsHook.saveNoteFromPopover}
     existingNote={highlightsHook.popoverHighlightNote}
@@ -267,8 +265,13 @@
   />
 {/if}
 
-{#if highlightsHook.adjusting && !highlightsHook.popoverState}
-  <HighlightAdjustBar onCancel={highlightsHook.cancelAdjust} />
+{#if highlightsHook.selectedHighlightId}
+  <HighlightHandles
+    highlightId={highlightsHook.selectedHighlightId}
+    contentEl={() => bodyEl}
+    onAdjust={(range) =>
+      highlightsHook.adjustHighlightRange(highlightsHook.selectedHighlightId!, range)}
+  />
 {/if}
 
 {#if highlightsHook.notePeek}

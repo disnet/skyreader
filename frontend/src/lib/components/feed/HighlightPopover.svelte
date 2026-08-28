@@ -5,7 +5,7 @@
   import { followAnchor, positionFloating } from '$lib/utils/floating';
 
   interface Props {
-    mode: 'create' | 'adjust' | 'remove' | 'view';
+    mode: 'create' | 'remove' | 'view';
     anchorRect: DOMRect;
     /**
      * Live position of the passage this popover belongs to. Supplied by callers
@@ -18,9 +18,6 @@
     onHighlight?: (note?: string) => void;
     onHighlightToMargin?: (note?: string) => void;
     onRemove?: () => void;
-    onAdjust?: () => void;
-    /** Leave adjust mode with the highlight's original bounds intact. */
-    onCancelAdjust?: () => void;
     onSaveToMargin?: () => void;
     onSaveNote?: (note: string) => void;
     /** Present while a share draft is open for this article: add the selected
@@ -42,8 +39,6 @@
     onHighlight,
     onHighlightToMargin,
     onRemove,
-    onAdjust,
-    onCancelAdjust,
     onSaveToMargin,
     onSaveNote,
     onQuoteToShare,
@@ -74,9 +69,15 @@
     return getAnchorRect?.() ?? anchorRect;
   }
 
+  // A highlight's toolbar shares its passage with the grab handles. Their knobs
+  // reach 24px past the first and last line, and the toolbar is the higher layer
+  // — anything less than that and it silently eats the press that would grab a
+  // handle. A fresh selection has no handles, so it keeps the tight gap.
+  const gap = untrack(() => (mode === 'create' ? 4 : 26));
+
   function positionMenu() {
     if (!menuEl) return;
-    positionFloating(currentAnchorRect(), menuEl, { gap: 4, align: 'center' });
+    positionFloating(currentAnchorRect(), menuEl, { gap, align: 'center' });
   }
 
   // The on-screen keyboard (raised by focusing the note editor) shrinks the
@@ -101,11 +102,7 @@
     if (e.key === 'Escape') {
       e.preventDefault();
       e.stopPropagation();
-      // In adjust mode this toolbar is one half of a mode the reader is in —
-      // closing it alone would leave them still adjusting, so Escape cancels the
-      // adjustment outright (which closes the toolbar with it).
-      if (mode === 'adjust' && onCancelAdjust) onCancelAdjust();
-      else onClose();
+      onClose();
     }
   }
 
@@ -123,7 +120,7 @@
     // passage, and only leaves when the passage itself scrolls out of view.
     if (getAnchorRect) {
       stopFollowing = followAnchor(() => menuEl, getAnchorRect, {
-        gap: 4,
+        gap,
         align: 'center',
         onLost: () => {
           if (view === 'toolbar') onClose();
@@ -220,33 +217,6 @@
         </button>
       {/if}
     </div>
-  {:else if mode === 'adjust'}
-    <!-- Adjust re-bounds an existing highlight, so the toolbar is just confirm /
-         cancel: its note, Margin link and review state are already set and ride
-         along untouched. Offering "add a note" or "save to Margin" here would
-         promise an edit the adjustment write doesn't carry. -->
-    <button
-      class="popover-btn icon-only highlight"
-      use:tooltip={'Save adjustment'}
-      aria-label="Save adjustment"
-      onclick={() => {
-        onHighlight?.();
-        onClose();
-      }}
-    >
-      <Icon name="check" size={20} />
-    </button>
-    <button
-      class="popover-btn icon-only remove"
-      use:tooltip={'Cancel adjustment'}
-      aria-label="Cancel adjustment"
-      onclick={() => {
-        onCancelAdjust?.();
-        onClose();
-      }}
-    >
-      <Icon name="x" size={20} />
-    </button>
   {:else if mode === 'create'}
     <button
       class="popover-btn icon-only highlight"
@@ -312,16 +282,6 @@
       </button>
     </div>
   {:else}
-    {#if onAdjust}
-      <button
-        class="popover-btn icon-only"
-        use:tooltip={'Adjust highlight'}
-        aria-label="Adjust highlight"
-        onclick={() => onAdjust?.()}
-      >
-        <Icon name="edit" size={20} />
-      </button>
-    {/if}
     <button
       class="popover-btn icon-only remove"
       use:tooltip={'Remove highlight'}
