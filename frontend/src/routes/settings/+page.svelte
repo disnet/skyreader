@@ -22,7 +22,7 @@
   import { myLinkblogStore } from '$lib/stores/myLinkblog.svelte';
   import { linkblogStore } from '$lib/stores/linkblog.svelte';
   import { downloadOPML } from '$lib/utils/opml-exporter';
-  import { api, RateLimitError } from '$lib/services/api';
+  import { api, RateLimitError, type BillingProduct } from '$lib/services/api';
   import { syncStore } from '$lib/stores/sync.svelte';
   import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
   import type { LinkblogPublication, LinkblogPublicationChoice, SaveBacking } from '$lib/types';
@@ -51,14 +51,28 @@
   // navigate to it top-level (same shape as the OAuth login redirect).
   let upgradeLoading = $state(false);
   let upgradeError = $state<string | null>(null);
+  // Plans mirrored from the Polar dashboard. Empty until loaded (or on
+  // failure), in which case a plain Upgrade button using the backend's default
+  // product renders instead — the flow never depends on this fetch.
+  let billingProducts = $state<BillingProduct[]>([]);
 
-  async function handleUpgrade() {
+  async function loadBillingProducts() {
+    if (!syncStore.isOnline || auth.user?.tier === 'supporter') return;
+    try {
+      const { products } = await api.getBillingProducts();
+      billingProducts = products;
+    } catch (error) {
+      console.error('Failed to load billing products:', error);
+    }
+  }
+
+  async function handleUpgrade(productId?: string) {
     upgradeError = null;
     upgradeLoading = true;
     try {
-      const { url } = await api.createCheckout();
+      const { url } = await api.createCheckout(productId);
       window.location.href = url;
-      // Keep the button disabled while the navigation happens; only a failure
+      // Keep the buttons disabled while the navigation happens; only a failure
       // hands control back to this page.
     } catch (error) {
       console.error('Failed to start checkout:', error);
@@ -66,6 +80,30 @@
       upgradeLoading = false;
     }
   }
+
+  function formatPrice(product: BillingProduct): string {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: product.priceCurrency,
+      maximumFractionDigits: product.priceAmount % 100 === 0 ? 0 : 2,
+    }).format(product.priceAmount / 100);
+  }
+
+  // "Save $21 a year" on the annual option, computed from the actual prices so
+  // the dashboard stays the single source of truth.
+  const annualSavings = $derived.by(() => {
+    const monthly = billingProducts.find((p) => p.interval === 'month');
+    const annual = billingProducts.find((p) => p.interval === 'year');
+    if (!monthly || !annual) return null;
+    const savedCents = monthly.priceAmount * 12 - annual.priceAmount;
+    if (savedCents <= 0) return null;
+    const saved = new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: annual.priceCurrency,
+      maximumFractionDigits: savedCents % 100 === 0 ? 0 : 2,
+    }).format(savedCents / 100);
+    return `Save ${saved} a year`;
+  });
 
   // "Save from anywhere" — browser bookmarklets + a Share Sheet shortcut.
   // Paste a published iCloud Shortcut link (icloud.com/shortcuts/...) into either
@@ -159,6 +197,7 @@
     // back on after paying at Polar's hosted checkout, and the webhook has
     // usually flipped users.tier by then. Non-blocking; offline is a no-op.
     void auth.verifySession();
+    void loadBillingProducts();
     // Load subscriptions if not already loaded
     if (subscriptionsStore.subscriptions.length === 0) {
       await subscriptionsStore.load();
@@ -617,9 +656,33 @@
           support
           <a href="https://bsky.app/profile/disnetdev.com" target="_blank">Tim</a>!
         </p>
-        <button class="btn btn-primary" onclick={handleUpgrade} disabled={upgradeLoading}>
-          {upgradeLoading ? 'Opening checkout…' : 'Upgrade'}
-        </button>
+        {#if billingProducts.length > 0}
+          <div class="plan-options">
+            {#each billingProducts as product (product.id)}
+              <button
+                class="plan-option"
+                onclick={() => handleUpgrade(product.id)}
+                disabled={upgradeLoading}
+              >
+                <span class="plan-option-interval"
+                  >{product.interval === 'year' ? 'Annual' : 'Monthly'}</span
+                >
+                <span class="plan-option-price">
+                  {formatPrice(product)}<span class="plan-option-per"
+                    >/{product.interval === 'year' ? 'year' : 'month'}</span
+                  >
+                </span>
+                {#if product.interval === 'year' && annualSavings}
+                  <span class="plan-option-note">{annualSavings}</span>
+                {/if}
+              </button>
+            {/each}
+          </div>
+        {:else}
+          <button class="btn btn-primary" onclick={() => handleUpgrade()} disabled={upgradeLoading}>
+            {upgradeLoading ? 'Opening checkout…' : 'Upgrade'}
+          </button>
+        {/if}
         {#if upgradeError}
           <p class="sync-error">{upgradeError}</p>
         {/if}
@@ -1148,6 +1211,68 @@
   .plan-upgrade a {
     color: var(--color-primary);
     text-decoration: none;
+  }
+
+  /* Flat option buttons per the design system: 1px Divider borders, tonal
+     hover, One Blue reserved for the price and the hover ring. */
+  .plan-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-top: 0.75rem;
+  }
+
+  .plan-option {
+    flex: 1 1 10rem;
+    max-width: 16rem;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.125rem;
+    padding: 0.75rem 1rem;
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    cursor: pointer;
+    text-align: left;
+    font: inherit;
+    color: var(--color-text);
+    transition:
+      border-color 0.2s ease,
+      background-color 0.2s ease;
+  }
+
+  .plan-option:hover:not(:disabled) {
+    border-color: var(--color-primary);
+    background: var(--color-bg-secondary);
+  }
+
+  .plan-option:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+
+  .plan-option-interval {
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+    color: var(--color-text-secondary);
+  }
+
+  .plan-option-price {
+    font-size: var(--text-xl);
+    font-weight: var(--weight-semibold);
+    color: var(--color-text);
+  }
+
+  .plan-option-per {
+    font-size: var(--text-sm);
+    font-weight: 400;
+    color: var(--color-text-secondary);
+  }
+
+  .plan-option-note {
+    font-size: var(--text-sm);
+    color: var(--color-primary);
   }
 
   .plan-upgrade a:hover {

@@ -8,7 +8,8 @@ import {
 import { log, serializeError } from '../utils/logger';
 import { reportError } from '../observability/sentry';
 
-// Polar billing (merchant of record). Two surfaces:
+// Polar billing (merchant of record). Three surfaces:
+//   GET  /api/billing/products  - authed; the purchasable plans for the upgrade UI
 //   POST /api/billing/checkout  - authed; creates a hosted checkout, returns { url }
 //   POST /api/webhook/polar     - server-to-server; standard-webhooks HMAC, no session
 //
@@ -21,6 +22,53 @@ function json(body: unknown, status = 200): Response {
     status,
     headers: { 'Content-Type': 'application/json' },
   });
+}
+
+// GET /api/billing/products - the purchasable plans, straight from Polar.
+// Settings renders one option per product (monthly/annual), so prices live in
+// exactly one place: the Polar dashboard. No cache — this is a settings-page
+// visit, not a hot path.
+export async function handleListBillingProducts(
+  request: Request,
+  env: Env,
+  session: Session | null
+): Promise<Response> {
+  if (request.method !== 'GET') {
+    return json({ error: 'Method not allowed' }, 405);
+  }
+  if (!session) {
+    return json({ error: 'Unauthorized' }, 401);
+  }
+  if (!env.POLAR_ACCESS_TOKEN) {
+    return json({ error: 'Billing is not configured' }, 503);
+  }
+
+  try {
+    const page = await getPolarClient(env).products.list({ isArchived: false, limit: 100 });
+    const products = page.result.items
+      .filter((p) => p.recurringInterval === 'month' || p.recurringInterval === 'year')
+      .flatMap((p) => {
+        const price = p.prices.find(
+          (pr) => 'amountType' in pr && pr.amountType === 'fixed' && 'priceAmount' in pr
+        );
+        if (!price || !('priceAmount' in price)) return [];
+        return [
+          {
+            id: p.id,
+            name: p.name,
+            interval: p.recurringInterval as 'month' | 'year',
+            priceAmount: price.priceAmount,
+            priceCurrency: price.priceCurrency,
+          },
+        ];
+      })
+      .sort((a, b) => (a.interval === b.interval ? 0 : a.interval === 'month' ? -1 : 1));
+    return json({ products });
+  } catch (error) {
+    log.error('polar_products_failed', serializeError(error));
+    reportError(error, { tags: { route: 'billing/products' } });
+    return json({ error: 'Failed to load plans' }, 502);
+  }
 }
 
 // POST /api/billing/checkout[?products=<id>] - start a hosted checkout

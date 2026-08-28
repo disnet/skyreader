@@ -74,7 +74,11 @@ import {
 } from './routes/saved';
 import { handleExtract } from './routes/extract';
 import { handleGetSettings, handleUpdateSettings } from './routes/settings';
-import { handleCreateCheckout, handlePolarWebhook } from './routes/billing';
+import {
+  handleCreateCheckout,
+  handleListBillingProducts,
+  handlePolarWebhook,
+} from './routes/billing';
 import {
   handleGetMagazines,
   handleUpsertMagazine,
@@ -595,6 +599,9 @@ async function route(
       break;
 
     // Billing (Polar checkout; the webhook is mounted pre-session above)
+    case url.pathname === '/api/billing/products':
+      response = await handleListBillingProducts(request, env, session);
+      break;
     case url.pathname === '/api/billing/checkout':
       response = await handleCreateCheckout(request, env, session);
       break;

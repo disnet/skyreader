@@ -94,6 +94,16 @@ export class SessionRefreshError extends Error {
 
 // One page of GET /api/v2/timeline. Items carry their archive `seq` and the feed
 // they belong to; `cursor`/`generation` are stored and echoed on the next poll.
+/** A purchasable plan, mirrored from the Polar dashboard by the backend. */
+export interface BillingProduct {
+  id: string;
+  name: string;
+  interval: 'month' | 'year';
+  /** Price in cents. */
+  priceAmount: number;
+  priceCurrency: string;
+}
+
 export interface TimelineResponse {
   items: Array<FeedItem & { seq: number; feedUrl: string; read: boolean }>;
   cursor: number;
@@ -990,9 +1000,15 @@ class ApiClient {
     });
   }
 
-  // Billing (Polar). The backend owns the product default; pass a product id
-  // only to override it. The returned url is Polar's hosted checkout — navigate
-  // to it top-level, same shape as the OAuth login redirect.
+  // Billing (Polar). Products come from the Polar dashboard via the backend, so
+  // prices are authored in exactly one place. The backend owns the checkout
+  // product default; pass a product id only to override it. The returned url is
+  // Polar's hosted checkout — navigate to it top-level, same shape as the OAuth
+  // login redirect.
+  async getBillingProducts(): Promise<{ products: BillingProduct[] }> {
+    return this.fetch('/api/billing/products');
+  }
+
   async createCheckout(productId?: string): Promise<{ url: string }> {
     const qs = productId ? `?products=${encodeURIComponent(productId)}` : '';
     return this.fetch(`/api/billing/checkout${qs}`, { method: 'POST' });
