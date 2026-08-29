@@ -104,6 +104,20 @@ export interface BillingProduct {
   priceCurrency: string;
 }
 
+/** The user's active Polar subscription, summarized for the Settings plan card. */
+export interface BillingSubscription {
+  productName: string | null;
+  /** Price in cents. */
+  amount: number;
+  currency: string;
+  interval: 'month' | 'year';
+  /** ISO timestamp: when the current period renews. */
+  currentPeriodEnd: string;
+  cancelAtPeriodEnd: boolean;
+  /** ISO timestamp: set once the subscription is scheduled to end. */
+  endsAt: string | null;
+}
+
 export interface TimelineResponse {
   items: Array<FeedItem & { seq: number; feedUrl: string; read: boolean }>;
   cursor: number;
@@ -1012,6 +1026,20 @@ class ApiClient {
   async createCheckout(productId?: string): Promise<{ url: string }> {
     const qs = productId ? `?products=${encodeURIComponent(productId)}` : '';
     return this.fetch(`/api/billing/checkout${qs}`, { method: 'POST' });
+  }
+
+  // Polar's hosted customer portal (invoices, plan changes, cancellation),
+  // as a short-lived signed URL. 404s for a supporter Polar has never seen
+  // (admin-granted tiers) — callers fall back to the receipt-email framing.
+  async createBillingPortal(): Promise<{ url: string }> {
+    return this.fetch('/api/billing/portal', { method: 'POST' });
+  }
+
+  // The active subscription behind the user's tier, straight from Polar.
+  // Null for anyone whose tier didn't come through a Polar subscription, so
+  // callers render nothing rather than an error.
+  async getBillingSubscription(): Promise<{ subscription: BillingSubscription | null }> {
+    return this.fetch('/api/billing/subscription');
   }
 
   // Settings

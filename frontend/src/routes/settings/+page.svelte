@@ -23,7 +23,7 @@
   import { myLinkblogStore } from '$lib/stores/myLinkblog.svelte';
   import { linkblogStore } from '$lib/stores/linkblog.svelte';
   import { downloadOPML } from '$lib/utils/opml-exporter';
-  import { api, RateLimitError } from '$lib/services/api';
+  import { api, RateLimitError, type BillingSubscription } from '$lib/services/api';
   import { syncStore } from '$lib/stores/sync.svelte';
   import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
   import type { LinkblogPublication, LinkblogPublicationChoice, SaveBacking } from '$lib/types';
@@ -146,6 +146,45 @@
     // Load PDS sync settings
     await loadSyncSettings();
     await loadLinkblog();
+    // Non-blocking; null for anyone without a Polar subscription.
+    void loadBillingSubscription();
+  });
+
+  // The renewal/end date behind the plan badge, straight from Polar via the
+  // backend. Stays null (and renders nothing) offline, for free users, and
+  // for supporters granted outside Polar.
+  let billingSub = $state<BillingSubscription | null>(null);
+
+  async function loadBillingSubscription() {
+    if (!syncStore.isOnline) return;
+    try {
+      const { subscription } = await api.getBillingSubscription();
+      billingSub = subscription;
+    } catch (error) {
+      console.error('Failed to load billing subscription:', error);
+    }
+  }
+
+  // A Believer subscription is still tier 'supporter' in D1; the Polar product
+  // name is what distinguishes the badge.
+  const planName = $derived.by(() => {
+    if (auth.user?.tier !== 'supporter') return 'Free';
+    return billingSub?.productName && /believer/i.test(billingSub.productName)
+      ? 'Believer'
+      : 'Supporter';
+  });
+
+  const renewalLine = $derived.by(() => {
+    if (!billingSub || auth.user?.tier !== 'supporter') return null;
+    const end = billingSub.cancelAtPeriodEnd
+      ? (billingSub.endsAt ?? billingSub.currentPeriodEnd)
+      : billingSub.currentPeriodEnd;
+    const date = new Date(end).toLocaleDateString('en-US', {
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric',
+    });
+    return billingSub.cancelAtPeriodEnd ? `Ends ${date}` : `Renews ${date}`;
   });
 
   async function loadLinkblog() {
@@ -536,7 +575,10 @@
     <section class="card">
       <h2>Plan</h2>
       <div class="plan-header">
-        <span class="plan-name">{auth.user.tier === 'supporter' ? 'Supporter' : 'Free'}</span>
+        <span class="plan-name">{planName}</span>
+        {#if renewalLine}
+          <span class="plan-renewal">{renewalLine}</span>
+        {/if}
       </div>
 
       {#if auth.user.limits}
@@ -555,7 +597,7 @@
                 class="limit-bar-fill"
                 class:limit-bar-warning={subCount / subLimit > 0.8}
                 class:limit-bar-full={subCount >= subLimit}
-                style:width="{Math.min((subCount / subLimit) * 100, 100)}%"
+                style:transform="translateX({Math.min((subCount / subLimit) * 100, 100) - 100}%)"
               ></div>
             </div>
           </div>
@@ -570,7 +612,8 @@
                 class="limit-bar-fill"
                 class:limit-bar-warning={urlSaveCount / urlSaveLimit > 0.8}
                 class:limit-bar-full={urlSaveCount >= urlSaveLimit}
-                style:width="{Math.min((urlSaveCount / urlSaveLimit) * 100, 100)}%"
+                style:transform="translateX({Math.min((urlSaveCount / urlSaveLimit) * 100, 100) -
+                  100}%)"
               ></div>
             </div>
           </div>
@@ -582,6 +625,12 @@
           Supporters get 1,000 feeds, 1,000 saves a month, and keep Skyreader independent.
         </p>
         <a href="/supporter" class="btn btn-primary plan-upgrade-cta">Become a Supporter</a>
+      {:else}
+        <!-- The billing portal itself is launched from /supporter, which owns
+             the async Polar-session handler; this stays a plain link. -->
+        <p class="plan-upgrade">
+          Manage billing, change plans, or cancel from the <a href="/supporter">Supporter page</a>.
+        </p>
       {/if}
     </section>
   {/if}
@@ -1083,7 +1132,15 @@
   }
 
   .plan-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
     margin-bottom: 1rem;
+  }
+
+  .plan-renewal {
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
   }
 
   .plan-name {
@@ -1136,19 +1193,22 @@
   .limit-bar {
     height: 6px;
     background: var(--color-bg-secondary);
-    border-radius: 3px;
+    border-radius: 999px;
     overflow: hidden;
   }
 
   .limit-bar-fill {
+    /* Full-width fill slid left and clipped by the track, so the fill
+       percentage animates on transform instead of layout. */
+    width: 100%;
     height: 100%;
     background: var(--color-primary);
-    border-radius: 3px;
-    transition: width 0.3s ease;
+    border-radius: 999px;
+    transition: transform 0.3s ease;
   }
 
   .limit-bar-warning {
-    background: var(--color-warning, #f59e0b);
+    background: var(--color-warning);
   }
 
   .limit-bar-full {
@@ -1537,7 +1597,7 @@
   }
 
   .sync-success {
-    color: var(--color-success, #22c55e);
+    color: var(--color-success);
     font-size: var(--text-md);
     margin-top: 0.5rem;
   }

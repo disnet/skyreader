@@ -95,7 +95,7 @@ name = "skyreader-api-staging"
 # Staging is MEANT to talk to its own Fly proxy (skyreader-feed-proxy-staging),
 # which pushes only into the staging D1 — prod and staging as two fully isolated
 # pairs, no cross-links, distinct PROXY_SECRET/FEED_PROXY_SECRET values.
-vars = { FRONTEND_URL = "https://staging.skyreader.app", ALLOWED_ORIGINS = "https://staging.skyreader.app,https://staging-linkblogs.skyreader.app", FEED_PROXY_URL = "https://skyreader-feed-proxy-staging.fly.dev", LINKBLOG_PUBLIC_URL = "https://staging-linkblogs.skyreader.app", SENTRY_ENVIRONMENT = "staging", POLAR_SERVER = "production", POLAR_PRODUCT_ID = "b1be3773-3cd5-4fa3-b3c4-2471e492e7d9" }
+vars = { FRONTEND_URL = "https://staging.skyreader.app", ALLOWED_ORIGINS = "https://staging.skyreader.app,https://staging-linkblogs.skyreader.app", FEED_PROXY_URL = "https://skyreader-feed-proxy-staging.fly.dev", LINKBLOG_PUBLIC_URL = "https://staging-linkblogs.skyreader.app", SENTRY_ENVIRONMENT = "staging", POLAR_SERVER = "sandbox", POLAR_PRODUCT_ID = "b1be3773-3cd5-4fa3-b3c4-2471e492e7d9" }
 routes = [{ pattern = "api-staging.skyreader.app", custom_domain = true }]
 
 # Smart Placement — STAGING ONLY, deliberately, until it is measured.

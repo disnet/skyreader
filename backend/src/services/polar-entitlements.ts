@@ -40,6 +40,22 @@ export async function grantSupporterFromSubscription(
 }
 
 /**
+ * order.paid with the marketing checkbox ticked (migration 0074). The email is
+ * refreshed on every consenting order (subscription cycles redeliver the
+ * original checkout's custom_field_data), but the consent timestamp keeps its
+ * first value — it is the GDPR consent record, not a last-seen marker. A
+ * cleared row (future unsubscribe flow) re-consents naturally: the COALESCE
+ * finds NULL and stamps a fresh time.
+ */
+export async function recordMarketingConsent(env: Env, did: string, email: string): Promise<void> {
+  await env.DB.prepare(
+    'UPDATE users SET marketing_email = ?, marketing_email_consent_at = COALESCE(marketing_email_consent_at, unixepoch()), updated_at = unixepoch() WHERE did = ?'
+  )
+    .bind(email, did)
+    .run();
+}
+
+/**
  * customer.state_changed with no active subscriptions and no granted benefits.
  * Downgrades only rows the subscription path upgraded; still stamps the Polar
  * customer id on the row either way so the linkage survives.

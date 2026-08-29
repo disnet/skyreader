@@ -75,7 +75,9 @@ import {
 import { handleExtract } from './routes/extract';
 import { handleGetSettings, handleUpdateSettings } from './routes/settings';
 import {
+  handleCreateBillingPortal,
   handleCreateCheckout,
+  handleGetBillingSubscription,
   handleListBillingProducts,
   handlePolarWebhook,
 } from './routes/billing';
@@ -604,6 +606,12 @@ async function route(
       break;
     case url.pathname === '/api/billing/checkout':
       response = await handleCreateCheckout(request, env, session);
+      break;
+    case url.pathname === '/api/billing/portal':
+      response = await handleCreateBillingPortal(request, env, session);
+      break;
+    case url.pathname === '/api/billing/subscription':
+      response = await handleGetBillingSubscription(request, env, session);
       break;
 
     // Magazine routes (durable, cross-device reading issues)

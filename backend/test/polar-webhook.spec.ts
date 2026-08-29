@@ -29,6 +29,11 @@ const userRow = () =>
     .bind(DID)
     .first<{ tier: string; tier_source: string | null; polar_customer_id: string | null }>();
 
+const marketingRow = () =>
+  env.DB.prepare('SELECT marketing_email, marketing_email_consent_at FROM users WHERE did = ?')
+    .bind(DID)
+    .first<{ marketing_email: string | null; marketing_email_consent_at: number | null }>();
+
 const seedUser = (tier = 'free', tierSource: string | null = null) =>
   env.DB.prepare(
     `INSERT INTO users (did, handle, pds_url, tier, tier_source, created_at) VALUES (?, 'polar.test', 'https://pds.test', ?, ?, unixepoch())`
@@ -59,10 +64,14 @@ const wireCustomer = (externalId: string | null) => ({
   avatar_url: null,
 });
 
-const orderPaid = (externalId: string | null = DID) => ({
+const orderPaid = (
+  externalId: string | null = DID,
+  customFieldData: Record<string, unknown> = {}
+) => ({
   type: 'order.paid',
   timestamp: NOW,
   data: {
+    custom_field_data: customFieldData,
     id: '99999999-8888-7777-6666-555555555555',
     created_at: NOW,
     modified_at: null,
@@ -207,6 +216,55 @@ describe('POST /api/webhook/polar', () => {
     const replay = await signedPost(orderPaid(), 'msg_first');
     expect(replay.status).toBe(200);
     expect((await userRow())?.tier).toBe('supporter');
+  });
+
+  it('order.paid with the marketing checkbox ticked records email + consent time', async () => {
+    await seedUser('free');
+    const before = Math.floor(Date.now() / 1000);
+    const response = await signedPost(orderPaid(DID, { marketing_opt_in: true }));
+    expect(response.status).toBe(200);
+    const row = await marketingRow();
+    expect(row?.marketing_email).toBe('reader@example.com');
+    expect(row?.marketing_email_consent_at).toBeGreaterThanOrEqual(before);
+  });
+
+  it.each([
+    ['no custom fields', {}],
+    ['the checkbox unticked', { marketing_opt_in: false }],
+    ['a non-boolean value', { marketing_opt_in: 'yes' }],
+  ])('order.paid with %s records no marketing email', async (_label, fields) => {
+    await seedUser('free');
+    const response = await signedPost(orderPaid(DID, fields as Record<string, unknown>));
+    expect(response.status).toBe(200);
+    // The tier grant still lands; only the consent capture is skipped.
+    expect((await userRow())?.tier).toBe('supporter');
+    expect(await marketingRow()).toEqual({
+      marketing_email: null,
+      marketing_email_consent_at: null,
+    });
+  });
+
+  it('a later consenting order refreshes the email but keeps the original consent time', async () => {
+    await seedUser('free');
+    await env.DB.prepare(
+      'UPDATE users SET marketing_email = ?, marketing_email_consent_at = ? WHERE did = ?'
+    )
+      .bind('old@example.com', 12345, DID)
+      .run();
+    const response = await signedPost(orderPaid(DID, { marketing_opt_in: true }), 'msg_cycle_2');
+    expect(response.status).toBe(200);
+    expect(await marketingRow()).toEqual({
+      marketing_email: 'reader@example.com',
+      marketing_email_consent_at: 12345,
+    });
+  });
+
+  it('an unticked order never withdraws previously recorded consent', async () => {
+    await seedUser('free');
+    await signedPost(orderPaid(DID, { marketing_opt_in: true }), 'msg_optin');
+    const response = await signedPost(orderPaid(DID, {}), 'msg_later');
+    expect(response.status).toBe(200);
+    expect((await marketingRow())?.marketing_email).toBe('reader@example.com');
   });
 
   it('customer.state_changed with an active subscription grants supporter', async () => {

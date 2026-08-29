@@ -139,7 +139,7 @@ describe('POST /api/billing/checkout', () => {
     // POLAR_PRODUCT_ID is pinned to 'prod-test' in vitest.config.mts
     expect(sent.products).toEqual(['prod-test']);
     expect(sent.external_customer_id).toBe(session.did);
-    expect(sent.success_url).toBeUndefined();
+    expect(sent.success_url).toBe(`${env.FRONTEND_URL}/supporter?checkout=success`);
   });
 
   it('lets ?products= override the default product', async () => {
