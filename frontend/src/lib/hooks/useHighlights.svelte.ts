@@ -19,6 +19,16 @@ import { visibleClientRect } from '$lib/utils/paginatedSelection';
 const BLOCK_SELECTORS = 'p, h1, h2, h3, h4, h5, h6, blockquote, pre, figure, li';
 const INTERACTIVE_MEDIA_SELECTOR = 'video, audio, iframe, embed, object';
 
+// How far a finger may travel and still count as a tap rather than a drag.
+// Matches the slop a double-tap pair is allowed between its two taps.
+const TAP_SLOP_PX = 10;
+
+// How long after a touch ends the browser may still be replaying that gesture as
+// emulated mouse events. Comfortably past what iOS actually takes (~20ms), and
+// far short of any interval a person could produce between letting go of the
+// screen and double-clicking a mouse.
+const EMULATED_MOUSE_MS = 700;
+
 // The inline note marker appended after a highlight that carries a note. A small
 // comment glyph (Lucide message-circle), tinted into the highlight gold so it
 // reads as part of the highlight rather than new chrome. Injected as raw DOM
@@ -82,6 +92,8 @@ export function useHighlights(params: HighlightParams) {
   let pointerdownHandler: ((e: PointerEvent) => void) | null = null;
   let mouseupHandler: ((e: MouseEvent) => void) | null = null;
   let clickHandler: ((e: MouseEvent) => void) | null = null;
+  let touchstartHandler: ((e: TouchEvent) => void) | null = null;
+  let touchmoveHandler: ((e: TouchEvent) => void) | null = null;
   let touchendHandler: ((e: TouchEvent) => void) | null = null;
   let selectionchangeHandler: (() => void) | null = null;
   let keydownHandler: ((e: KeyboardEvent) => void) | null = null;
@@ -99,6 +111,17 @@ export function useHighlights(params: HighlightParams) {
   let lastTapX = 0;
   let lastTapY = 0;
   let sawTouch = false;
+  // Where the finger landed, and whether it travelled far enough to be a drag
+  // rather than a tap. A drag that ends on live text is a selection gesture
+  // (drag-select, or a native handle being moved) and must not seed a
+  // double-tap; a stationary tap never is, however much text happens to be
+  // selected at the time. See `handleTouchEnd`.
+  let touchStartX = 0;
+  let touchStartY = 0;
+  let touchDragged = false;
+  // When the last touch lifted, so the emulated mouse events the browser replays
+  // from it can be told apart from a real mouse. See `handleDblClick`.
+  let lastTouchEndAt = 0;
   let pendingTouchSelector: TextQuoteSelector | null = null;
   // A live touch selection that has grown past what a selector can carry. Held
   // until the selection collapses so the reader hears about it once, when they
@@ -259,11 +282,44 @@ export function useHighlights(params: HighlightParams) {
 
   function handleDblClick(e: MouseEvent) {
     if (!params.enabled()) return;
+    // iOS synthesizes a full mouse sequence — `click` *and* `dblclick` — from a
+    // double tap, and does it even when the `touchend` was `preventDefault()`ed
+    // (measured on iPadOS 26: dblclick lands ~20ms after the touchend that
+    // already handled the gesture). `highlightParagraph` toggles, so acting on
+    // that echo would remove the highlight the touch path had just created and
+    // the gesture would look like it did nothing at all. The touch path owns
+    // double-tap; this handler is for real mouse double-clicks only.
+    if (Date.now() - lastTouchEndAt < EMULATED_MOUSE_MS) return;
     highlightParagraph(e.target as HTMLElement);
+  }
+
+  /** Record where the finger landed, so `touchend` can tell a tap from a drag. */
+  function handleTouchStart(e: TouchEvent) {
+    sawTouch = true;
+    if (e.touches.length !== 1) {
+      // A second finger ends any single-finger reasoning about this gesture.
+      touchDragged = true;
+      return;
+    }
+    touchStartX = e.touches[0].clientX;
+    touchStartY = e.touches[0].clientY;
+    touchDragged = false;
+  }
+
+  function handleTouchMove(e: TouchEvent) {
+    if (touchDragged || e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    if (
+      Math.abs(touch.clientX - touchStartX) > TAP_SLOP_PX ||
+      Math.abs(touch.clientY - touchStartY) > TAP_SLOP_PX
+    ) {
+      touchDragged = true;
+    }
   }
 
   function handleTouchEnd(e: TouchEvent) {
     if (!params.enabled()) return;
+    lastTouchEndAt = Date.now();
     // Only single-finger gestures participate.
     if (e.changedTouches.length !== 1) return;
     sawTouch = true;
@@ -289,14 +345,17 @@ export function useHighlights(params: HighlightParams) {
       return;
     }
 
-    // A touch that ends with text still selected belongs to the selection
-    // gesture (a handle drag, or the tap that will dismiss it), never to the
-    // first half of a double tap — don't seed a pair it could complete. This
-    // runs *after* the double-tap branch on purpose: the second tap of a pair
-    // also has a live word selection, and bailing before that branch would kill
-    // double-tap-to-highlight-a-paragraph outright.
-    const liveSelection = window.getSelection();
-    if (liveSelection && !liveSelection.isCollapsed) {
+    // A *drag* that ends on live text is a selection gesture — a drag-select, or
+    // a native selection handle being moved — never the first half of a double
+    // tap, so don't seed a pair it could complete. The movement test is what
+    // keeps this narrow: on iOS a word stays selected (with its callout) long
+    // after the gesture that made it, including through the taps that dismiss
+    // it, so keying off a live selection alone would zero the seed on every tap
+    // that followed a selection and kill double-tap-to-highlight outright.
+    //
+    // This also runs *after* the double-tap branch on purpose: the second tap of
+    // a pair has a live word selection of its own on iOS.
+    if (touchDragged && selectionInContent()) {
       lastTapTime = 0;
       return;
     }
@@ -367,6 +426,14 @@ export function useHighlights(params: HighlightParams) {
   /** True when the gesture in progress is a touch, not a mouse press. */
   function touchGesture(): boolean {
     return sawTouch && !lastPointerWasMouse;
+  }
+
+  /** A live, non-collapsed selection inside the article — anything else is not ours. */
+  function selectionInContent(): boolean {
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed || !selection.rangeCount) return false;
+    const container = params.contentEl();
+    return !!container && container.contains(selection.getRangeAt(0).commonAncestorContainer);
   }
 
   /** Remember where (and with what) the pointer went down. See the fields' notes. */
@@ -768,6 +835,8 @@ export function useHighlights(params: HighlightParams) {
     pointerdownHandler = handlePointerDown;
     mouseupHandler = handleMouseUp;
     clickHandler = handleClick;
+    touchstartHandler = handleTouchStart;
+    touchmoveHandler = handleTouchMove;
     touchendHandler = handleTouchEnd;
     selectionchangeHandler = handleSelectionChange;
     keydownHandler = handleKeydown;
@@ -787,6 +856,8 @@ export function useHighlights(params: HighlightParams) {
     el.addEventListener('mouseout', mouseoutHandler);
     // Touch: synthesize double-tap (paragraph) since mobile browsers don't fire
     // dblclick. Non-passive so we can suppress the default double-tap gesture.
+    el.addEventListener('touchstart', touchstartHandler, { passive: true });
+    el.addEventListener('touchmove', touchmoveHandler, { passive: true });
     el.addEventListener('touchend', touchendHandler, { passive: false });
     // Touch selections are realized into highlights when the user clears them.
     document.addEventListener('selectionchange', selectionchangeHandler);
@@ -805,6 +876,8 @@ export function useHighlights(params: HighlightParams) {
       if (pointerdownHandler) document.removeEventListener('pointerdown', pointerdownHandler, true);
       if (mouseupHandler) document.removeEventListener('mouseup', mouseupHandler);
       if (clickHandler) currentEl.removeEventListener('click', clickHandler);
+      if (touchstartHandler) currentEl.removeEventListener('touchstart', touchstartHandler);
+      if (touchmoveHandler) currentEl.removeEventListener('touchmove', touchmoveHandler);
       if (touchendHandler) currentEl.removeEventListener('touchend', touchendHandler);
       if (mouseoverHandler) currentEl.removeEventListener('mouseover', mouseoverHandler);
       if (mouseoutHandler) currentEl.removeEventListener('mouseout', mouseoutHandler);
@@ -819,6 +892,8 @@ export function useHighlights(params: HighlightParams) {
     pointerdownHandler = null;
     mouseupHandler = null;
     clickHandler = null;
+    touchstartHandler = null;
+    touchmoveHandler = null;
     touchendHandler = null;
     selectionchangeHandler = null;
     keydownHandler = null;
@@ -826,6 +901,8 @@ export function useHighlights(params: HighlightParams) {
     mouseoutHandler = null;
     pendingTouchSelector = null;
     touchSelectionTooLong = false;
+    touchDragged = false;
+    lastTouchEndAt = 0;
     selectedHighlightId = null;
     popoverState = null;
     notePeek = null;
