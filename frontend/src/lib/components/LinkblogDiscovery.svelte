@@ -3,7 +3,14 @@
   import { linkblogDiscoveryStore } from '$lib/stores/linkblogDiscovery.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import type { LinkblogPerson } from '$lib/types';
+  import DiscoveryToolbar from './DiscoveryToolbar.svelte';
   import Icon from './Icon.svelte';
+  import ShowMoreButton from './ShowMoreButton.svelte';
+
+  // The registry arrives whole, so windowing is purely about what we put in the
+  // DOM: show a screenful, reveal the rest a batch at a time.
+  const INITIAL_WINDOW = 10;
+  const WINDOW_STEP = 25;
 
   interface Props {
     /**
@@ -55,6 +62,42 @@
   $effect(() => {
     totalAvailable = eligible.length;
   });
+
+  // Full-view filters. Both are inert outside `full` — the suggestions and
+  // friends variants never render the toolbar that drives them.
+  let query = $state('');
+  let hideAdded = $state(false);
+
+  function matches(p: LinkblogPerson, q: string): boolean {
+    if (hideAdded && subscribedPubUris.has(p.publicationUri)) return false;
+    if (!q) return true;
+    return (
+      (p.displayName?.toLowerCase().includes(q) ?? false) ||
+      (p.handle?.toLowerCase().includes(q) ?? false)
+    );
+  }
+
+  let normalizedQuery = $derived(query.trim().toLowerCase());
+  let filteredFriends = $derived(friends.filter((p) => matches(p, normalizedQuery)));
+  let filteredOthers = $derived(others.filter((p) => matches(p, normalizedQuery)));
+  let totalPeople = $derived(friends.length + others.length);
+  let shownPeople = $derived(filteredFriends.length + filteredOthers.length);
+  let filtering = $derived(normalizedQuery.length > 0 || hideAdded);
+
+  // Windowing runs after filtering, so a match beyond the initial window is
+  // never hidden behind an unexpanded list.
+  let visibleFriends = $state(INITIAL_WINDOW);
+  let visibleOthers = $state(INITIAL_WINDOW);
+
+  // Reset both windows whenever the filter changes — and *only* then. A broader
+  // dependency (the people array) would collapse an expanded list on refresh.
+  $effect(() => {
+    void query;
+    void hideAdded;
+    visibleFriends = INITIAL_WINDOW;
+    visibleOthers = INITIAL_WINDOW;
+  });
+
   let loading = $derived(
     variant === 'friends'
       ? linkblogDiscoveryStore.loadingFriends
@@ -164,31 +207,69 @@
     {/if}
   {:else if loading && !loaded}
     <p class="status">Looking for linkblogs…</p>
+  {:else if variant === 'full'}
+    {#if totalPeople > 0}
+      <DiscoveryToolbar bind:query bind:hideAdded searchLabel="Search linkblogs">
+        {#snippet count()}
+          {#if filtering}
+            {shownPeople} of {totalPeople}
+            {totalPeople === 1 ? 'linkblog' : 'linkblogs'}
+          {:else}
+            {totalPeople}
+            {totalPeople === 1 ? 'linkblog' : 'linkblogs'} · {friends.length} from people you follow
+          {/if}
+        {/snippet}
+      </DiscoveryToolbar>
+    {/if}
+
+    {#if filteredFriends.length > 0}
+      <h3 class="group-title">People you follow</h3>
+      <ul class="person-list">
+        {#each filteredFriends.slice(0, visibleFriends) as p (p.did)}
+          {@render personRow(p)}
+        {/each}
+      </ul>
+      <ShowMoreButton
+        remaining={filteredFriends.length - visibleFriends}
+        batchSize={WINDOW_STEP}
+        onclick={() => (visibleFriends += WINDOW_STEP)}
+      />
+    {/if}
+
+    {#if filteredOthers.length > 0}
+      <h3 class="group-title">More on Skyreader</h3>
+      <ul class="person-list">
+        {#each filteredOthers.slice(0, visibleOthers) as p (p.did)}
+          {@render personRow(p)}
+        {/each}
+      </ul>
+      <ShowMoreButton
+        remaining={filteredOthers.length - visibleOthers}
+        batchSize={WINDOW_STEP}
+        onclick={() => (visibleOthers += WINDOW_STEP)}
+      />
+    {/if}
+
+    {#if shownPeople === 0}
+      {#if totalPeople === 0}
+        {#if loaded}
+          <p class="status">No linkblogs to show yet — check back as more people start one.</p>
+        {/if}
+      {:else if normalizedQuery}
+        <p class="status">No linkblogs match “{query.trim()}”.</p>
+      {:else}
+        <p class="status">You've already added every linkblog here.</p>
+      {/if}
+    {/if}
   {:else}
     {#if friends.length > 0}
-      {#if variant === 'full'}
-        <h3 class="group-title">People you follow</h3>
-      {/if}
       <ul class="person-list">
         {#each friends as p (p.did)}
           {@render personRow(p)}
         {/each}
       </ul>
-    {:else if variant === 'friends' && loaded}
+    {:else if loaded}
       <p class="status">None of the people you follow have a linkblog yet.</p>
-    {/if}
-
-    {#if variant === 'full' && others.length > 0}
-      <h3 class="group-title">More on Skyreader</h3>
-      <ul class="person-list">
-        {#each others as p (p.did)}
-          {@render personRow(p)}
-        {/each}
-      </ul>
-    {/if}
-
-    {#if variant === 'full' && loaded && friends.length === 0 && others.length === 0}
-      <p class="status">No linkblogs to show yet — check back as more people start one.</p>
     {/if}
   {/if}
 </div>

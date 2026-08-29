@@ -4,7 +4,14 @@
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import type { FollowingPublication } from '$lib/types';
   import { safeHref } from '$lib/utils/sanitize';
+  import DiscoveryToolbar from './DiscoveryToolbar.svelte';
   import Icon from './Icon.svelte';
+  import ShowMoreButton from './ShowMoreButton.svelte';
+
+  // The scan keeps appending accounts for minutes on a large follow graph; the
+  // window is what keeps that out of the DOM until the reader asks for it.
+  const INITIAL_WINDOW = 10;
+  const WINDOW_STEP = 25;
 
   interface Props {
     /**
@@ -67,13 +74,22 @@
     return [...map.values()];
   }
 
-  // Full view: every account, grouped.
-  let groups = $derived(groupByAccount(followingPublicationsStore.publications, false));
-
-  // Full-view counts (total scanned so far) and free-text filter.
-  let pubCount = $derived(followingPublicationsStore.publications.length);
-  let accountCount = $derived(groups.length);
+  // Full view: every account, grouped. "Hide added" drops publications the user
+  // already subscribes to, then any account left with nothing to offer.
   let query = $state('');
+  let hideAdded = $state(false);
+  let allGroups = $derived(groupByAccount(followingPublicationsStore.publications, false));
+  let groups = $derived(
+    hideAdded
+      ? groupByAccount(followingPublicationsStore.publications, true).filter(
+          (g) => g.publications.length > 0
+        )
+      : allGroups
+  );
+
+  // Full-view counts — what the scan has found so far, not what's on screen.
+  let pubCount = $derived(followingPublicationsStore.publications.length);
+  let accountCount = $derived(allGroups.length);
 
   // Filter the grouped list by query, matching the account (name/handle) or any
   // of its publications (name/description). An account match keeps all its pubs.
@@ -92,6 +108,21 @@
       if (pubs.length) out.push({ ...g, publications: pubs });
     }
     return out;
+  });
+
+  let filtering = $derived(query.trim().length > 0 || hideAdded);
+
+  // Windowing runs after filtering, so a match beyond the initial window is
+  // never hidden behind an unexpanded list. New accounts from the background
+  // scan append, so they grow the "Show N more" count instead of reshuffling.
+  let visibleAccounts = $state(INITIAL_WINDOW);
+
+  // Reset the window whenever the filter changes — and *only* then. Depending on
+  // the publications array here would collapse an expanded list mid-scan.
+  $effect(() => {
+    void query;
+    void hideAdded;
+    visibleAccounts = INITIAL_WINDOW;
   });
 
   // Suggestions: accounts with at least one not-yet-subscribed publication.
@@ -319,37 +350,40 @@
     {/if}
   {:else if loading && !loaded}
     <p class="status">Looking for publications…</p>
-  {:else if groups.length === 0 && loaded && !scanning}
+  {:else if allGroups.length === 0 && loaded && !scanning}
     <p class="status">No publications found among the people you follow.</p>
-  {:else if groups.length > 0}
-    <div class="discovery-toolbar">
-      <p class="count">
-        {pubCount}
-        {pubCount === 1 ? 'publication' : 'publications'} from {accountCount}
-        {accountCount === 1 ? 'account' : 'accounts'} you follow
+  {:else if allGroups.length > 0}
+    <DiscoveryToolbar bind:query bind:hideAdded searchLabel="Search publications">
+      {#snippet count()}
+        {#if filtering}
+          {filteredGroups.length} of {accountCount}
+          {accountCount === 1 ? 'account' : 'accounts'} you follow
+        {:else}
+          {pubCount}
+          {pubCount === 1 ? 'publication' : 'publications'} from {accountCount}
+          {accountCount === 1 ? 'account' : 'accounts'} you follow
+        {/if}
         {#if scanning}<span class="count-scanning"
             ><span class="spinner dark"></span> finding more…</span
           >{/if}
-      </p>
-      <div class="search">
-        <Icon name="search" size={15} />
-        <input
-          type="search"
-          placeholder="Search publications"
-          aria-label="Search publications"
-          bind:value={query}
-        />
-      </div>
-    </div>
+      {/snippet}
+    </DiscoveryToolbar>
 
     {#if filteredGroups.length > 0}
       <ul class="account-list">
-        {#each filteredGroups as g (g.did)}
+        {#each filteredGroups.slice(0, visibleAccounts) as g (g.did)}
           {@render accountBlock(g, true)}
         {/each}
       </ul>
-    {:else}
+      <ShowMoreButton
+        remaining={filteredGroups.length - visibleAccounts}
+        batchSize={WINDOW_STEP}
+        onclick={() => (visibleAccounts += WINDOW_STEP)}
+      />
+    {:else if query.trim()}
       <p class="status">No publications match “{query.trim()}”.</p>
+    {:else}
+      <p class="status">You've already added every publication here.</p>
     {/if}
   {:else if scanning}
     <p class="status"><span class="spinner dark"></span> Searching the people you follow…</p>
@@ -414,60 +448,6 @@
     font-weight: var(--weight-semibold);
     color: var(--color-text-secondary);
     margin: 0 0 0.375rem;
-  }
-
-  .discovery-toolbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
-    flex-wrap: wrap;
-    margin-bottom: 0.25rem;
-  }
-
-  .count {
-    font-size: var(--text-sm);
-    color: var(--color-text-secondary);
-    margin: 0;
-  }
-
-  .search {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.375rem;
-    padding: 0.375rem 0.625rem;
-    color: var(--color-text-secondary);
-    background: var(--color-bg-secondary, rgba(0, 0, 0, 0.04));
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md, 6px);
-    transition: border-color 0.15s;
-  }
-
-  .search:focus-within {
-    border-color: var(--color-primary);
-  }
-
-  .search input {
-    width: 14rem;
-    max-width: 100%;
-    font: inherit;
-    font-size: var(--text-sm);
-    color: var(--color-text);
-    background: transparent;
-    border: none;
-    outline: none;
-    padding: 0;
-  }
-
-  .search input::placeholder {
-    color: var(--color-text-secondary);
-  }
-
-  @media (max-width: 520px) {
-    .search,
-    .search input {
-      width: 100%;
-    }
   }
 
   .account-list {
