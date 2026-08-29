@@ -31,11 +31,10 @@
 
 <style>
   .discovery-toolbar {
-    display: flex;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
-    justify-content: space-between;
     gap: 0.75rem;
-    flex-wrap: wrap;
     margin-bottom: 0.25rem;
   }
 
@@ -48,6 +47,7 @@
   .controls {
     display: flex;
     align-items: center;
+    justify-self: end;
     gap: 0.75rem;
     flex-wrap: wrap;
   }
@@ -105,8 +105,13 @@
   }
 
   @media (max-width: 520px) {
+    .discovery-toolbar {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
     .controls {
       width: 100%;
+      justify-self: stretch;
     }
 
     .search {
