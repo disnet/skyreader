@@ -39,6 +39,7 @@ import {
   resolveReaderItem,
 } from '$lib/utils/readerLink';
 import type { ReaderCollectionItem } from '$lib/types';
+import { appScrollTo, appScrollTop } from '$lib/utils/appScroll';
 
 export function useReaderStack(config: { onReaderChange?: (open: boolean) => void } = {}) {
   let readerStack = $state<FeedDisplayItem[]>([]);
@@ -65,7 +66,7 @@ export function useReaderStack(config: { onReaderChange?: (open: boolean) => voi
       if (depth === 0) {
         config.onReaderChange?.(false);
         requestAnimationFrame(() => {
-          window.scrollTo(0, savedScrollY);
+          appScrollTo({ top: savedScrollY });
         });
       }
     }
@@ -162,7 +163,7 @@ export function useReaderStack(config: { onReaderChange?: (open: boolean) => voi
   }
 
   function openReader(item: FeedDisplayItem) {
-    if (readerStack.length === 0) savedScrollY = window.scrollY;
+    if (readerStack.length === 0) savedScrollY = appScrollTop();
     const url = readerUrl(currentUrl(), item.key);
     readerStack = [...readerStack, item];
     pushState(url, { readerDepth: readerStack.length });

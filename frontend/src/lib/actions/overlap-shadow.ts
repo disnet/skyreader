@@ -11,11 +11,15 @@
  * presentation layer free of store wiring.
  *
  * `root` defaults to the viewport (`null`) to match the app's window scroll;
- * pass a scroll-container element to scope detection to it.
+ * pass a scroll-container element to scope detection to it. Pass a *function*
+ * when the container depends on the shell breakpoint — it is re-resolved on
+ * every re-arm, including the one triggered when the breakpoint flips.
  */
+import { onAppScrollRootChange } from '$lib/utils/appScroll';
+
 export interface OverlapShadowOptions {
   onChange: (overlapping: boolean) => void;
-  root?: Element | null;
+  root?: Element | null | (() => Element | null);
 }
 
 // Dead-band (px) between the float-on and float-off thresholds. Toggling the
@@ -29,7 +33,10 @@ const HYSTERESIS_PX = 32;
 
 export function overlapShadow(node: HTMLElement, options: OverlapShadowOptions) {
   let onChange = options.onChange;
-  const root = options.root ?? null;
+  const resolveRoot = () => {
+    const root = options.root ?? null;
+    return typeof root === 'function' ? root() : root;
+  };
 
   // Assume not-overlapping on mount: a freshly expanded card is scrolled to its
   // top, so this matches reality and avoids a one-frame shadow flash before the
@@ -38,6 +45,7 @@ export function overlapShadow(node: HTMLElement, options: OverlapShadowOptions) 
   onChange(false);
 
   let observer: IntersectionObserver;
+  let armedRoot: Element | null = null;
 
   // Re-arm the observer for the current state. While resting we flip to floating
   // the moment the sentinel leaves the viewport (margin 0); while floating we
@@ -45,6 +53,7 @@ export function overlapShadow(node: HTMLElement, options: OverlapShadowOptions) 
   // margin). That gap is the dead-band that absorbs the bar's own resize.
   function arm() {
     observer?.disconnect();
+    armedRoot = resolveRoot();
     const rootMargin = overlapping ? `0px 0px -${HYSTERESIS_PX}px 0px` : '0px';
     observer = new IntersectionObserver(
       ([entry]) => {
@@ -54,18 +63,31 @@ export function overlapShadow(node: HTMLElement, options: OverlapShadowOptions) 
         onChange(next);
         arm();
       },
-      { root, threshold: 0, rootMargin }
+      { root: armedRoot, threshold: 0, rootMargin }
     );
     observer.observe(node);
   }
 
   arm();
 
+  // The scrolling surface changes when the shell crosses its breakpoint, and a
+  // stale root is not merely imprecise: rooted on the pane while the window is
+  // scrolling, the pane's padding box spans all the content, so the sentinel
+  // intersects forever and the bar never floats again.
+  const stopRootWatch = onAppScrollRootChange(() => {
+    if (resolveRoot() !== armedRoot) arm();
+  });
+
   return {
     update(next: OverlapShadowOptions) {
       onChange = next.onChange;
+      options = next;
+      // Only re-arm on a real root change: tearing the observer down and back
+      // up on every prop update would churn for nothing.
+      if (resolveRoot() !== armedRoot) arm();
     },
     destroy() {
+      stopRootWatch();
       observer?.disconnect();
     },
   };

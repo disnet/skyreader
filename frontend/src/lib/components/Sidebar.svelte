@@ -283,8 +283,13 @@
         <span class="tier-badge">{auth.user.tier}</span>
       {/if}
     </a>
-    <NotificationBell />
-    <AddSourceInput />
+    <!-- Grouped, so `space-between` puts the handle at one end and this pair at
+         the other. Left as three children it spaced all three evenly and the
+         bell floated into the middle of the row. -->
+    <div class="header-actions">
+      <NotificationBell />
+      <AddSourceInput />
+    </div>
   </div>
 
   <!-- Navigation items -->
@@ -698,19 +703,23 @@
     -webkit-tap-highlight-color: transparent;
   }
 
+  /* In the framed shell the rail sits directly on the ground colour — no
+     surface of its own, no border. Its grid cell already gives it width and
+     height, so it fills that rather than sticking to the viewport. Below the
+     shell breakpoint it reverts to an opaque full-screen drawer (see the
+     max-width block at the end of this file). */
   .sidebar {
-    position: sticky;
-    top: 0;
-    height: 100vh;
+    position: relative;
+    height: 100%;
     width: var(--sidebar-width, 260px);
     flex-shrink: 0;
-    background: var(--color-bg);
+    background: transparent;
     display: flex;
     flex-direction: column;
     z-index: 50;
     transition: width 0.2s ease;
     overflow-y: auto;
-    padding: 0 0.5rem;
+    padding: 0 0.5rem 0.5rem;
   }
 
   .sidebar-header {
@@ -718,6 +727,42 @@
     align-items: center;
     justify-content: space-between;
     padding: 0.75rem 0;
+    flex-shrink: 0;
+  }
+
+  /* In the framed shell this row *is* the head of the frame — it sits in the
+     toolbar strip's row, opposite the page's control bar, so it takes the same
+     height and centres on the same line. The account then reads as the first
+     item in the rail rather than as a caption above it, which is why the avatar
+     drops to the nav icons' width: at 1.25rem the handle starts exactly where
+     every nav label below it does. */
+  @media (min-width: 1001px) {
+    .sidebar-header {
+      /* Right padding only, matching .nav-row's: it lands the add button's
+         edge on the disclosure chevrons below, the way the avatar lands on the
+         nav icons. The left side needs none — .user-info carries its own. */
+      padding: 0 0.75rem 0 0;
+      min-height: var(--shell-bar-height);
+    }
+
+    /* Scoped to the header so these win over the rules further down the file,
+       wherever this block ends up sitting. The gap matches .nav-item's, which
+       is the other half of landing the handle on the nav labels' edge. */
+    .sidebar-header .user-info {
+      gap: 0.75rem;
+    }
+
+    .sidebar-header .avatar,
+    .sidebar-header .avatar-placeholder {
+      width: 1.25rem;
+      height: 1.25rem;
+    }
+  }
+
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.125rem;
     flex-shrink: 0;
   }
 
@@ -775,12 +820,18 @@
     line-height: 1.2;
   }
 
+  /* One rhythm for every top-level entry. Expanded groups used to add 8px of
+     their own on top of the row gap, to keep two adjacent tinted blocks from
+     merging — which made the Feeds/Saved seam the one uneven gap in the list.
+     The gap that separation needs is now simply the gap, so the tint no longer
+     has a say in the spacing. Nested rows (.nav-children) stay tighter: inside
+     a group, closer means subordinate. */
   .sidebar-nav {
     flex: 1;
     padding: 0.5rem 0;
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 0.375rem;
   }
 
   .nav-item {
@@ -802,10 +853,6 @@
   .nav-group {
     border-radius: 12px;
     transition: background-color 0.15s;
-  }
-
-  .nav-group + .nav-group {
-    margin-top: 0.5rem;
   }
 
   .nav-group.expanded {
@@ -1065,6 +1112,9 @@
       top: 0;
       width: 100% !important;
       height: 100%;
+      /* The drawer floats over the page, so unlike the framed rail it needs
+         its own opaque surface. */
+      background: var(--color-bg);
       transform: translateX(-100%);
       transition: transform 0.25s ease-out;
     }

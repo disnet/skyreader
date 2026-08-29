@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { appScrollTo } from '$lib/utils/appScroll';
   // Highlight review — a finite deck of a handful of highlights, one card at a
   // time. Deliberately not a durable issue like the daily magazine: a session is
   // a few minutes, so the deck is derived at open and repeat-avoidance rides the
@@ -6,6 +7,7 @@
   import NavigationDropdown from '$lib/components/NavigationDropdown.svelte';
   import Icon from '$lib/components/Icon.svelte';
   import MobileBottomBar from '$lib/components/feed/MobileBottomBar.svelte';
+  import { shellToolbar } from '$lib/actions/shell-toolbar';
   import MobileFeedSwitcher from '$lib/components/feed/MobileFeedSwitcher.svelte';
   import BottomSheet from '$lib/components/common/BottomSheet.svelte';
   import NotificationList from '$lib/components/NotificationList.svelte';
@@ -1046,37 +1048,48 @@
   {/if}
 {/snippet}
 
-<div class="review-page">
-  <header class="review-header">
-    <div class="header-inner">
-      <div class="header-nav"><NavigationDropdown currentTitle="Review" /></div>
-      <div class="header-actions">
-        {#if current}
-          <button
-            class="step-back"
-            onclick={() => commitSwipe(-1)}
-            disabled={index === 0 || animating}
-            title="Previous highlight (left arrow)"
-            aria-label="Previous highlight"
-          >
-            <Icon name="chevron-left" size={16} />
-          </button>
-          <span class="progress">{index + 1} of {total}</span>
-        {/if}
+{#snippet reviewBar()}
+  <div class="header-inner">
+    <div class="header-nav"><NavigationDropdown currentTitle="Review" /></div>
+    <div class="header-actions">
+      {#if current}
         <button
-          class="gear"
-          class:open={settingsOpen}
-          onclick={() => (settingsOpen = !settingsOpen)}
-          aria-expanded={settingsOpen}
-          aria-controls="review-settings"
-          title="Review settings"
-          aria-label="Review settings"
+          class="step-back"
+          onclick={() => commitSwipe(-1)}
+          disabled={index === 0 || animating}
+          title="Previous highlight (left arrow)"
+          aria-label="Previous highlight"
         >
-          <Icon name="settings" size={16} />
+          <Icon name="chevron-left" size={16} />
         </button>
-      </div>
+        <span class="progress">{index + 1} of {total}</span>
+      {/if}
+      <button
+        class="gear"
+        class:open={settingsOpen}
+        onclick={() => (settingsOpen = !settingsOpen)}
+        aria-expanded={settingsOpen}
+        aria-controls="review-settings"
+        title="Review settings"
+        aria-label="Review settings"
+      >
+        <Icon name="settings" size={16} />
+      </button>
     </div>
-  </header>
+  </div>
+{/snippet}
+
+<div class="review-page">
+  <!-- Above the shell breakpoint the bar moves into the toolbar strip, like
+       every other page's; below it, it stays on the page, because the mobile
+       bottom bar has nowhere to put the deck's progress or its settings. The
+       two are rendered one at a time rather than moved back and forth, so only
+       one copy of the controls is ever live. -->
+  {#if mobileStore.isMobile}
+    <header class="review-header">{@render reviewBar()}</header>
+  {:else}
+    <header class="review-header in-shell" use:shellToolbar>{@render reviewBar()}</header>
+  {/if}
 
   <div class="review-body">
     {#if settingsOpen}
@@ -1183,7 +1196,7 @@
     <MobileBottomBar
       controlsVisible={true}
       currentTitle="Review"
-      onScrollToTop={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+      onScrollToTop={() => appScrollTo({ top: 0, behavior: 'smooth' })}
       onOpenFeedSwitcher={() => (feedSwitcherOpen = true)}
       onOpenNotifications={() => {
         notifSheetOpen = true;
@@ -1274,18 +1287,42 @@
   }
 
   /* Flat header matching the highlights page: no border at rest, no shadow. */
-  .review-header {
+  /* On the page, below the shell breakpoint: a sticky bar on the card's own
+     surface. */
+  .review-header:not(.in-shell) {
     position: sticky;
     top: 0;
     z-index: 10;
     background: var(--color-bg);
   }
 
+  /* In the shell's toolbar strip (see FeedPageHeader): it rides the ground
+     colour above the card, which supplies the separation the surface used to,
+     and the card's own overflow clips a lifted deck card — so no surface, no
+     sticky, and no background bridge. Full card width, title on the left edge
+     and the deck's controls on the right; the gear centres a 16px glyph in a
+     36px box, and pulling that padding back out lands it on the same inset as
+     the title. */
+  .review-header.in-shell {
+    background: transparent;
+  }
+
+  .review-header.in-shell .header-inner {
+    max-width: none;
+    margin: 0;
+    min-height: var(--shell-bar-height);
+    padding: 0.25rem var(--shell-bar-inset);
+  }
+
+  .review-header.in-shell .header-actions {
+    margin-right: -0.625rem;
+  }
+
   /* A card lifted out of the deck goes up and under the header, and the shell
      leaves a strip of page above it for the card to show through. The header
      carries its own background up over that strip rather than the page getting
      clipped to hide it. */
-  .review-header::before {
+  .review-header:not(.in-shell)::before {
     content: '';
     position: absolute;
     left: 0;

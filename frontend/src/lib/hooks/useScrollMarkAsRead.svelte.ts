@@ -1,4 +1,10 @@
 import { onDestroy } from 'svelte';
+import {
+  appScrollElement,
+  appScrollTop,
+  onAppScroll,
+  onAppScrollRootChange,
+} from '$lib/utils/appScroll';
 
 interface ScrollMarkAsReadParams {
   getArticleElements: () => HTMLElement[];
@@ -9,15 +15,19 @@ interface ScrollMarkAsReadParams {
 
 /**
  * Hook for scroll-to-mark-as-read functionality.
- * Observes article elements and marks them as read when they scroll past the top of the viewport.
+ * Observes article elements and marks them as read when they scroll past the top
+ * of the scroll viewport — the framed content card on desktop, the window on
+ * mobile (see utils/appScroll).
  */
 export function useScrollMarkAsRead(params: ScrollMarkAsReadParams) {
   let lastScrollY = 0;
   let scrollDirection: 'up' | 'down' | null = null;
   let scrollMarkObserver: IntersectionObserver | null = null;
+  let stopScrollListener: (() => void) | null = null;
+  let stopRootListener: (() => void) | null = null;
 
   function updateScrollDirection() {
-    const currentScrollY = window.scrollY;
+    const currentScrollY = appScrollTop();
     if (currentScrollY > lastScrollY) {
       scrollDirection = 'down';
     } else if (currentScrollY < lastScrollY) {
@@ -45,8 +55,12 @@ export function useScrollMarkAsRead(params: ScrollMarkAsReadParams) {
         if (scrollDirection !== 'down') return;
 
         entries.forEach((entry) => {
-          // Article left viewport from top (boundingClientRect.top < 0) and is no longer intersecting
-          if (!entry.isIntersecting && entry.boundingClientRect.top < 0) {
+          // Article left the scroll viewport from the top and is no longer
+          // intersecting. Both rects are in client coordinates, so comparing
+          // against the root's own top (not 0) is what makes this correct when
+          // the scroller is the inset content card rather than the window.
+          const rootTop = entry.rootBounds?.top ?? 0;
+          if (!entry.isIntersecting && entry.boundingClientRect.top < rootTop) {
             const key = (entry.target as HTMLElement).dataset.key;
             if (key) {
               params.onMarkAsRead(key);
@@ -55,7 +69,7 @@ export function useScrollMarkAsRead(params: ScrollMarkAsReadParams) {
         });
       },
       {
-        root: null, // viewport
+        root: appScrollElement(), // the content card, or null for the window
         rootMargin: '0px',
         threshold: 0,
       }
@@ -73,13 +87,24 @@ export function useScrollMarkAsRead(params: ScrollMarkAsReadParams) {
   }
 
   function init() {
-    window.addEventListener('scroll', updateScrollDirection, { passive: true });
-    lastScrollY = window.scrollY;
+    stopScrollListener?.();
+    stopScrollListener = onAppScroll(updateScrollDirection);
+    // Crossing the shell breakpoint changes which element is the scroller, and
+    // so which element the observer must be rooted on.
+    stopRootListener?.();
+    stopRootListener = onAppScrollRootChange(() => {
+      lastScrollY = appScrollTop();
+      setupObserver();
+    });
+    lastScrollY = appScrollTop();
     setupObserver();
   }
 
   function cleanup() {
-    window.removeEventListener('scroll', updateScrollDirection);
+    stopScrollListener?.();
+    stopScrollListener = null;
+    stopRootListener?.();
+    stopRootListener = null;
     scrollMarkObserver?.disconnect();
     scrollMarkObserver = null;
   }

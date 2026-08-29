@@ -10,6 +10,7 @@
   import { formatRelativeTime } from '$lib/utils/date';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
   import { savedSearchStore } from '$lib/stores/savedSearch.svelte';
+  import { shellToolbar } from '$lib/actions/shell-toolbar';
 
   interface Props {
     title: string;
@@ -47,14 +48,6 @@
   let tick = $state(0);
   let intervalId: ReturnType<typeof setInterval> | null = null;
 
-  // Scroll-aware divider: the header blends into the page at the top and only
-  // grows its divider once content scrolls underneath it.
-  let scrolled = $state(false);
-  function handleWindowScroll() {
-    const next = window.scrollY > 4;
-    if (next !== scrolled) scrolled = next;
-  }
-
   // Debounce refresh button
   let lastRefreshClick = 0;
   const DEBOUNCE_MS = 2000;
@@ -72,14 +65,11 @@
       tick++;
     }, 60000);
     document.addEventListener('click', handleClickOutside);
-    window.addEventListener('scroll', handleWindowScroll, { passive: true });
-    handleWindowScroll();
   });
 
   onDestroy(() => {
     if (intervalId) clearInterval(intervalId);
     document.removeEventListener('click', handleClickOutside);
-    window.removeEventListener('scroll', handleWindowScroll);
   });
 
   // Use tick to force re-evaluation (void to suppress unused warning)
@@ -139,7 +129,7 @@
   });
 </script>
 
-<div class="feed-header-fixed" class:scrolled bind:this={headerRef}>
+<div class="feed-header-fixed" bind:this={headerRef} use:shellToolbar>
   <div class="feed-header-controls">
     <div class="control-left feed-title-group" class:dropdown-open={dropdownOpen}>
       <NavigationDropdown currentTitle={title} />
@@ -318,52 +308,25 @@
 </div>
 
 <style>
-  /* A flat, solid header bar pinned to the top of the content area. It spans the
-     full main-column width (next to the sidebar) and stays in normal flow as a
-     sticky element, so its inline filter/style rows push the list down instead of
-     floating over it. Flat-by-default: one 1px divider, no blur, no shadow. */
+  /* The page's control bar. `shellToolbar` moves it out of the content card
+     and into the shell's toolbar strip, where it sits on the ground colour
+     directly above the card — so the card's top edge stays put and no divider
+     or scroll-aware state is needed to separate the two. The strip is the
+     bar's background; the bar itself is transparent. */
   .feed-header-fixed {
-    position: sticky;
-    top: 0;
-    z-index: 10;
-    background: var(--color-bg);
+    background: transparent;
   }
 
-  /* The divider spans only the reading column, not the full bar width — so it
-     never trails off into the blank gutters on either side of the content.
-     Scroll-aware: hidden while the page is at the top (the bar blends into the
-     white page) and fades in once content scrolls underneath. */
-  .feed-header-fixed::after {
-    content: '';
-    position: absolute;
-    inset-inline: 0;
-    bottom: 0;
-    margin-inline: auto;
-    max-width: 800px;
-    height: 1px;
-    background: var(--color-border);
-    opacity: 0;
-    transition: opacity 0.2s ease;
-  }
-
-  .feed-header-fixed.scrolled::after {
-    opacity: 1;
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .feed-header-fixed::after {
-      transition: none;
-    }
-  }
-
+  /* The bar spans the card's full width rather than tracking the 800px reading
+     column: the title anchors the card's left edge and the controls its right,
+     so the strip frames the card instead of floating a second column above it. */
   .feed-header-controls {
     display: flex;
     justify-content: space-between;
     align-items: center;
     gap: 0.75rem;
-    max-width: 800px;
-    margin: 0 auto;
-    padding: 0.625rem 1rem;
+    min-height: var(--shell-bar-height);
+    padding: 0.25rem var(--shell-bar-inset);
   }
 
   .control-left {
@@ -371,11 +334,15 @@
     flex: 0 1 auto;
   }
 
+  /* The buttons carry their own 0.6rem of padding; pulling it back out lands
+     their glyphs on the same inset as the title on the other edge, instead of
+     leaving the right side visibly further from the card than the left. */
   .control-right {
     display: flex;
     align-items: center;
     gap: 0.5rem;
     flex-shrink: 0;
+    margin-right: -0.6rem;
   }
 
   .feed-title-group {
@@ -414,6 +381,10 @@
 
     .view-toggle button {
       padding: 0.4rem;
+    }
+
+    .control-right {
+      margin-right: -0.4rem;
     }
   }
 
@@ -498,8 +469,11 @@
       color 0.15s ease;
   }
 
+  /* On the ground colour a Sunken fill would be invisible, so the selected
+     control takes the card's own surface — it reads as the chip being lifted
+     to the same plane as the content it controls. */
   .view-toggle button.active {
-    background: var(--color-bg-secondary, #f5f5f5);
+    background: var(--color-bg);
     color: var(--color-text);
   }
 
@@ -529,9 +503,7 @@
      The child toolbars carry a floating glass-pill style for mobile/reader use;
      strip it here so they read as a flat extension of the solid bar. */
   .filter-toolbar-row {
-    max-width: 800px;
-    margin: 0 auto;
-    padding: 0 1rem 0.625rem;
+    padding: 0 var(--shell-bar-inset) 0.5rem;
     display: flex;
     justify-content: flex-end;
   }

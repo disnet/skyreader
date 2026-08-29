@@ -1,4 +1,5 @@
 import { onMount, onDestroy } from 'svelte';
+import { appScrollTop, onAppScroll } from '$lib/utils/appScroll';
 
 const SCROLL_THRESHOLD = 60;
 
@@ -7,7 +8,7 @@ export function useScrollDirection(options?: { onHide?: () => void }) {
   let lastScrollY = $state(0);
 
   function handleScroll() {
-    const currentY = window.scrollY;
+    const currentY = appScrollTop();
     if (currentY > lastScrollY && currentY > SCROLL_THRESHOLD) {
       if (controlsVisible) {
         controlsVisible = false;
@@ -19,12 +20,15 @@ export function useScrollDirection(options?: { onHide?: () => void }) {
     lastScrollY = currentY;
   }
 
+  let stop: (() => void) | null = null;
+
   onMount(() => {
-    window.addEventListener('scroll', handleScroll, { passive: true });
+    stop = onAppScroll(handleScroll);
   });
 
   onDestroy(() => {
-    window.removeEventListener('scroll', handleScroll);
+    stop?.();
+    stop = null;
   });
 
   return {

@@ -802,9 +802,10 @@
      to the drawer instead of the viewport.
 
      Inset by the sidebar so the card centers on the content column, not the
-     whole window — .app-container is a centered max-width band, so insetting the
-     left edge by the sidebar width lands the card's center exactly on the feed
-     column's center at every viewport size. */
+     whole window. Above the shell breakpoint the content lives in a framed card
+     inset from the window by --shell-gap, so the desktop block below matches
+     those insets and the drawer rests inside the frame rather than straddling
+     its bottom edge. */
   .composer,
   .composer-minibar {
     --float-gap: 0.5rem;
@@ -823,6 +824,19 @@
     border: 1px solid var(--color-border, #e0e0e0);
     border-radius: 12px;
     box-shadow: 0 6px 24px rgba(0, 0, 0, 0.16);
+  }
+
+  @media (min-width: 1001px) {
+    .composer,
+    .composer-minibar {
+      --float-gap: 1rem;
+      --composer-inset: calc(var(--sidebar-width, 320px) + var(--shell-gap));
+      right: var(--shell-gap);
+      width: min(
+        800px,
+        calc(100vw - var(--composer-inset) - var(--shell-gap) - 2 * var(--float-gap))
+      );
+    }
   }
 
   .composer {

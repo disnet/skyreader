@@ -6,6 +6,7 @@
   import NotificationList from '$lib/components/NotificationList.svelte';
   import { notificationsStore } from '$lib/stores/notifications.svelte';
   import { mobileStore } from '$lib/stores/mediaQuery.svelte';
+  import { appScrollTo } from '$lib/utils/appScroll';
 
   // Navigation chrome for static (non-feed) pages like Settings, Sources, and
   // Discover. On desktop it renders the sticky FeedPageHeader (title + nav
@@ -29,7 +30,7 @@
   <MobileBottomBar
     controlsVisible={true}
     currentTitle={title}
-    onScrollToTop={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+    onScrollToTop={() => appScrollTo({ top: 0, behavior: 'smooth' })}
     onOpenFeedSwitcher={() => (feedSwitcherOpen = true)}
     onOpenFilterSheet={() => {}}
     onOpenNotifications={() => {

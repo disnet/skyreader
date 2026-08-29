@@ -1,5 +1,18 @@
 import { browser } from '$app/environment';
 
+/* The framed shell's navigation rail is drag-resizable, so its width is a user
+   setting rather than a token. The bounds are the rail's own: below the minimum
+   a channel name has nowhere to go, and past the maximum the reading card — the
+   thing the rail exists to fill — starts losing more than it gains. */
+export const RAIL_MIN_WIDTH = 220;
+export const RAIL_MAX_WIDTH = 480;
+export const RAIL_DEFAULT_WIDTH = 320;
+
+function clampRailWidth(px: number): number {
+  if (!Number.isFinite(px)) return RAIL_DEFAULT_WIDTH;
+  return Math.round(Math.min(RAIL_MAX_WIDTH, Math.max(RAIL_MIN_WIDTH, px)));
+}
+
 interface SidebarState {
   isOpen: boolean; // For mobile overlay
   addFeedModalOpen: boolean;
@@ -21,6 +34,8 @@ interface SidebarState {
   sortedFeedIds: number[];
   // Which categories are expanded in the Sources section
   expandedCategories: Record<string, boolean>;
+  // Width of the desktop navigation rail, in px (see RAIL_* bounds above).
+  railWidth: number;
 }
 
 function createSidebarStore() {
@@ -43,6 +58,7 @@ function createSidebarStore() {
     },
     sortedFeedIds: [],
     expandedCategories: {},
+    railWidth: RAIL_DEFAULT_WIDTH,
   });
 
   // Restore from localStorage on init
@@ -71,6 +87,10 @@ function createSidebarStore() {
           feeds: false,
         };
         state.expandedCategories = parsed.expandedCategories ?? {};
+        // Clamped on the way in as well as the way out: the bounds can move
+        // between releases, and a stored width outside them would otherwise
+        // stick until the user next dragged the handle.
+        if (parsed.railWidth != null) state.railWidth = clampRailWidth(parsed.railWidth);
       } catch {
         // Ignore parse errors
       }
@@ -85,9 +105,26 @@ function createSidebarStore() {
           expandedSections: state.expandedSections,
           showOnlyUnread: state.showOnlyUnread,
           expandedCategories: state.expandedCategories,
+          railWidth: state.railWidth,
         })
       );
     }
+  }
+
+  /* Written on every pointermove of a drag, so it stays cheap: the clamp is
+     arithmetic and the localStorage write is deferred to the end of the drag
+     (commitRailWidth). */
+  function setRailWidth(px: number) {
+    state.railWidth = clampRailWidth(px);
+  }
+
+  function commitRailWidth() {
+    persist();
+  }
+
+  function resetRailWidth() {
+    state.railWidth = RAIL_DEFAULT_WIDTH;
+    persist();
   }
 
   function toggleMobile() {
@@ -239,6 +276,9 @@ function createSidebarStore() {
     get expandedCategories() {
       return state.expandedCategories;
     },
+    get railWidth() {
+      return state.railWidth;
+    },
     toggleMobile,
     closeMobile,
     toggleSection,
@@ -258,6 +298,9 @@ function createSidebarStore() {
     toggleAddMenu,
     closeAddMenu,
     setSortedFeedIds,
+    setRailWidth,
+    commitRailWidth,
+    resetRailWidth,
     openChannelModal,
     closeChannelModal,
   };

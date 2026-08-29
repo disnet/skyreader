@@ -1,10 +1,12 @@
 <script lang="ts">
+  import { shellToolbar } from '$lib/actions/shell-toolbar';
+  import { appScrollTo } from '$lib/utils/appScroll';
   // The Home view: the default landing surface. Not a feed — a fixed composition
   // of lanes drawn from the reader's saved pile (Continue reading / From your saved
   // / Recently saved, then one lane per saved channel), so opening the app offers
   // something to read rather than an undifferentiated river. Reuses the saved-list
   // reader stack so a tile opens the same in-app reader as everywhere else.
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount } from 'svelte';
   import NavigationDropdown from '$lib/components/NavigationDropdown.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import LibraryEmptyState from '$lib/components/LibraryEmptyState.svelte';
@@ -80,18 +82,6 @@
       day: 'numeric',
     });
   });
-
-  // --- Scroll-aware header divider (matches FeedPageHeader / HighlightsPage) ---
-  let scrolled = $state(false);
-  function handleWindowScroll() {
-    const next = window.scrollY > 4;
-    if (next !== scrolled) scrolled = next;
-  }
-  onMount(() => {
-    window.addEventListener('scroll', handleWindowScroll, { passive: true });
-    handleWindowScroll();
-  });
-  onDestroy(() => window.removeEventListener('scroll', handleWindowScroll));
 
   // --- Helpers ---
   function keysFor(s: SavedItem): string[] {
@@ -344,7 +334,7 @@
   let notifSheetOpen = $state(false);
 
   function scrollToTop() {
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    appScrollTo({ top: 0, behavior: 'smooth' });
   }
 
   function handleCreateChannel(type: 'feed' | 'saved' = 'feed') {
@@ -358,10 +348,39 @@
   }
 </script>
 
+{#snippet homeControls()}
+  <label class="control-group">
+    <span class="control-label">Opens to</span>
+    <select
+      class="control-select"
+      value={preferences.defaultView}
+      onchange={(e) => preferences.setDefaultView(e.currentTarget.value as DefaultView)}
+    >
+      {#each defaultViewOptions as option}
+        <option value={option.value}>{option.label}</option>
+      {/each}
+    </select>
+  </label>
+
+  <label class="control-group">
+    <span class="control-label">Cards</span>
+    <select
+      class="control-select"
+      value={preferences.cardDensity}
+      onchange={(e) => preferences.setCardDensity(e.currentTarget.value as CardDensity)}
+    >
+      {#each densityOptions as option}
+        <option value={option.value}>{option.label}</option>
+      {/each}
+    </select>
+  </label>
+{/snippet}
+
 <div class="home-page">
-  <header class="home-header" class:scrolled>
+  <header class="home-header" use:shellToolbar>
     <div class="header-inner">
       <NavigationDropdown currentTitle="Home" />
+      <div class="home-controls">{@render homeControls()}</div>
     </div>
   </header>
 
@@ -372,33 +391,9 @@
         <h1 class="masthead-greeting">{greeting}</h1>
       </div>
 
-      <div class="home-controls">
-        <label class="control-group">
-          <span class="control-label">Opens to</span>
-          <select
-            class="control-select"
-            value={preferences.defaultView}
-            onchange={(e) => preferences.setDefaultView(e.currentTarget.value as DefaultView)}
-          >
-            {#each defaultViewOptions as option}
-              <option value={option.value}>{option.label}</option>
-            {/each}
-          </select>
-        </label>
-
-        <label class="control-group">
-          <span class="control-label">Cards</span>
-          <select
-            class="control-select"
-            value={preferences.cardDensity}
-            onchange={(e) => preferences.setCardDensity(e.currentTarget.value as CardDensity)}
-          >
-            {#each densityOptions as option}
-              <option value={option.value}>{option.label}</option>
-            {/each}
-          </select>
-        </label>
-      </div>
+      <!-- Below 1000px the toolbar strip is gone (mobile uses the bottom bar), so
+           the same controls ride in the masthead there instead. -->
+      <div class="home-controls masthead-controls">{@render homeControls()}</div>
     </div>
 
     {#if !isLoading}
@@ -530,36 +525,11 @@
     width: 100%;
   }
 
-  /* Flat, scroll-aware header bar matching FeedPageHeader — no border at rest, a
-     divider grows in once content scrolls under it. */
+  /* Moved into the shell's toolbar strip (see FeedPageHeader for the rationale):
+     it rides on the ground colour above the content card, which supplies the
+     separation a divider used to. */
   .home-header {
-    position: sticky;
-    top: 0;
-    z-index: 10;
-    background: var(--color-bg);
-  }
-
-  .home-header::after {
-    content: '';
-    position: absolute;
-    inset-inline: 0;
-    bottom: 0;
-    margin-inline: auto;
-    max-width: 880px;
-    height: 1px;
-    background: var(--color-border);
-    opacity: 0;
-    transition: opacity 0.2s ease;
-  }
-
-  .home-header.scrolled::after {
-    opacity: 1;
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .home-header::after {
-      transition: none;
-    }
+    background: transparent;
   }
 
   @media (max-width: 1000px) {
@@ -573,16 +543,28 @@
     }
   }
 
+  /* Full card width, title on the card's left edge and the preferences on its
+     right — matching FeedPageHeader, so the bar reads as the card's own chrome
+     and not as a floating column. Home's two preferences live here rather than
+     in the masthead: the strip is already the width of the card, so it absorbs
+     them for free, and the greeting is left to be a greeting. */
   .header-inner {
-    max-width: 880px;
-    margin: 0 auto;
-    padding: 0.625rem 1rem;
+    min-height: var(--shell-bar-height);
+    padding: 0.25rem var(--shell-bar-inset);
     display: flex;
     align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
   }
 
+  /* Home is a browse surface, not a reading surface: the 800px band belongs to the
+     feed body and the reader, where measure governs. Here the content unit is a
+     horizontal lane, which is the one layout that turns width directly into value —
+     more tiles seen, less scrolling. So Home fills the card instead of stranding a
+     narrow column in it, capped only so the lanes stay a scannable sweep on very
+     wide displays. */
   .home-body {
-    max-width: 880px;
+    max-width: 1440px;
     margin: 0 auto;
     padding: 0.5rem 0.75rem 2rem;
     /* Density tokens for the lane tiles (read by HomeLaneCard / HomeLane skeletons,
@@ -621,9 +603,11 @@
     --lane-gap: 0.95rem;
   }
 
-  /* Greeting on the left, the preferences strip bottom-aligned on the right of the
-     same row. They wrap (controls drop below) when the row runs out of width; the
-     hairline under the whole masthead separates it from the lanes. */
+  /* Just the greeting on the framed layout — the preferences moved up to the
+     toolbar strip, which spans the card and so doesn't strand them a full card's
+     width from the text they used to share a row with. The hairline under the
+     masthead separates it from the lanes. Below 1000px there is no strip, so the
+     controls come back into this row (see .masthead-controls). */
   .masthead {
     display: flex;
     flex-wrap: wrap;
@@ -633,6 +617,21 @@
     padding: 1rem 0.25rem 0.875rem;
     margin-bottom: 0.875rem;
     border-bottom: 1px solid var(--color-border);
+  }
+
+  /* Two-class selector so it outranks the `.home-controls` display below,
+     whichever order they end up in. */
+  .home-controls.masthead-controls {
+    display: none;
+  }
+
+  @media (max-width: 1000px) {
+    .home-controls.masthead-controls {
+      display: flex;
+      /* Sit level with the greeting's text rather than its descenders when the
+         row bottom-aligns the two. */
+      padding-bottom: 0.15rem;
+    }
   }
 
   .masthead-text {
@@ -656,15 +655,14 @@
 
   /* Quiet preferences strip. Two compact <select>s styled to match the daily-magazine
      dropdowns that share this screen (MagazineRail's `.control` / `.control select`),
-     so the masthead and the magazine rail read as one control vocabulary. */
+     so the toolbar and the magazine rail read as one control vocabulary. */
   .home-controls {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: 0.4rem 1.25rem;
-    /* Nudge up so the dropdowns sit level with the greeting's text rather than its
-       descenders when bottom-aligned in the masthead row. */
-    padding-bottom: 0.15rem;
+    flex-shrink: 0;
+    min-width: 0;
   }
 
   .control-group {

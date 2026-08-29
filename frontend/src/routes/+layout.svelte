@@ -228,7 +228,10 @@
 
 <style>
   .app {
+    /* dvh so this floor can't outgrow the visible viewport on iOS and push a
+       scrollbar onto a shell that is meant to be pinned (see app.css). */
     min-height: 100vh;
+    min-height: 100dvh;
     display: flex;
     flex-direction: column;
   }
@@ -302,6 +305,7 @@
     align-items: center;
     justify-content: center;
     height: 100vh;
+    height: 100dvh;
     font-size: var(--text-2xl);
     color: var(--color-text-secondary, #666);
   }

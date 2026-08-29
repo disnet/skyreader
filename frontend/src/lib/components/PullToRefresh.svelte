@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import type { Snippet } from 'svelte';
+  import { appScrollElement, appScrollTop } from '$lib/utils/appScroll';
 
   let {
     onRefresh,
@@ -27,16 +28,28 @@
   let indicatorOpacity = $derived(Math.min(pullDistance / THRESHOLD, 1));
   let indicatorRotation = $derived(pastThreshold ? 180 : (pullDistance / THRESHOLD) * 180);
 
+  // Above the shell breakpoint the framed content card scrolls and the window
+  // never does, so `window.scrollY` is a constant 0 there (see utils/appScroll).
+  // Reading it directly would make the "page is at top" guard always pass on a
+  // touch-capable desktop viewport (tablet in landscape, touchscreen laptop):
+  // every downward drag would be swallowed as a pull, blocking the card's own
+  // scroll and firing a spurious refresh. Pull-to-refresh is a mobile
+  // affordance, so switch it off entirely once the pane is the scroller, and
+  // measure through `appScrollTop()` for the position it still cares about.
+  function inactive() {
+    return disabled || refreshing || appScrollElement() !== null;
+  }
+
   function handleTouchStart(e: TouchEvent) {
-    if (disabled || refreshing) return;
-    startScrollY = window.scrollY;
+    if (inactive()) return;
+    startScrollY = appScrollTop();
     if (startScrollY > 0) return;
     startY = e.touches[0].clientY;
     pulling = true;
   }
 
   function handleTouchMove(e: TouchEvent) {
-    if (!pulling || disabled || refreshing) return;
+    if (!pulling || inactive()) return;
 
     // If the page had scroll position when touch started, don't activate
     if (startScrollY > 0) {
@@ -45,7 +58,7 @@
     }
 
     // Only activate if page is at top
-    if (window.scrollY > 0) {
+    if (appScrollTop() > 0) {
       pulling = false;
       pullDistance = 0;
       return;
@@ -74,7 +87,7 @@
     if (!pulling) return;
     pulling = false;
 
-    if (pastThreshold && !disabled && !refreshing) {
+    if (pastThreshold && !inactive()) {
       refreshing = true;
       pullDistance = THRESHOLD; // Hold at threshold during refresh
       try {
@@ -173,6 +186,17 @@
   .pull-content {
     position: relative;
     z-index: 0;
+  }
+
+  /* The pull gesture is touch-only, so above the shell breakpoint this wrapper
+     has no layering to do — and `z-index: 0` there is actively harmful: it makes
+     a stacking context that traps the fullscreen reader inside the content
+     card's order, leaving it painted under the navigation rail. `auto` keeps the
+     containing block and drops the context. */
+  @media (min-width: 1001px) {
+    .pull-content {
+      z-index: auto;
+    }
   }
 
   .arrow {

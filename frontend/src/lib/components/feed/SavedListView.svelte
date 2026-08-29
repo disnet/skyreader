@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { appScrollBy, appViewportRect } from '$lib/utils/appScroll';
   import SavedCard from './SavedCard.svelte';
   import SavedReader from './SavedReader.svelte';
   import InfiniteScrollSentinel from '$lib/components/common/InfiniteScrollSentinel.svelte';
@@ -32,11 +33,13 @@
     const el = articleElements[targetIndex];
     if (!el) return;
 
+    // A quarter of the way down the *scroll viewport*, which on desktop is the
+    // framed content card — inset from the window by the toolbar strip.
     const rect = el.getBoundingClientRect();
-    const targetY = window.innerHeight / 4;
-    const offset = rect.top - targetY;
+    const viewport = appViewportRect();
+    const offset = rect.top - (viewport.top + viewport.height / 4);
 
-    window.scrollBy({ top: offset, behavior: 'instant' });
+    appScrollBy({ top: offset, behavior: 'instant' });
   }
 
   // When a URL is added, open its reader as soon as the new item lands in the

@@ -11,10 +11,6 @@
 <StaticPageChrome title="Discover" />
 
 <div class="discover-page">
-  <header class="discover-header">
-    <h1>Discover</h1>
-  </header>
-
   <section class="discover-section">
     <h2 class="section-title">Skyreader Linkblogs</h2>
     <LinkblogDiscovery variant="full" />
@@ -42,24 +38,6 @@
       padding-top: 0.5rem;
       padding-bottom: calc(var(--bottom-bar-height) + var(--safe-area-bottom) + 4rem);
     }
-  }
-
-  .discover-header {
-    margin-bottom: 1.5rem;
-  }
-
-  h1 {
-    font-size: var(--text-2xl);
-    font-weight: var(--weight-semibold);
-    margin: 0 0 0.5rem;
-  }
-
-  .header-desc {
-    font-size: var(--text-md);
-    color: var(--color-text-secondary);
-    line-height: var(--leading-normal);
-    margin: 0;
-    max-width: 52ch;
   }
 
   .discover-section {
