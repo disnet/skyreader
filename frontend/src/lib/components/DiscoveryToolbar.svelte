@@ -116,5 +116,9 @@
     .search input {
       width: 100%;
     }
+
+    .hide-added {
+      min-height: 44px;
+    }
   }
 </style>

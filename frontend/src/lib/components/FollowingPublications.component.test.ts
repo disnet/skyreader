@@ -99,6 +99,17 @@ describe('FollowingPublications full variant windowing', () => {
     expect(showMore()).toHaveLength(0);
   });
 
+  it('labels each click with no more than the 25 groups it will reveal', () => {
+    store.publications = Array.from({ length: 100 }, (_, i) => pub(i));
+    render();
+
+    expect(showMore()[0].textContent).toContain('Show 25 more');
+    showMore()[0].click();
+    flushSync();
+    expect(accounts()).toHaveLength(35);
+    expect(showMore()[0].textContent).toContain('Show 25 more');
+  });
+
   it('keeps the count line reporting what the scan found, not what is on screen', () => {
     render();
     expect(countText()).toContain('30 publications from 30 accounts you follow');

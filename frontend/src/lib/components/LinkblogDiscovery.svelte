@@ -231,6 +231,7 @@
       </ul>
       <ShowMoreButton
         remaining={filteredFriends.length - visibleFriends}
+        batchSize={WINDOW_STEP}
         onclick={() => (visibleFriends += WINDOW_STEP)}
       />
     {/if}
@@ -244,6 +245,7 @@
       </ul>
       <ShowMoreButton
         remaining={filteredOthers.length - visibleOthers}
+        batchSize={WINDOW_STEP}
         onclick={() => (visibleOthers += WINDOW_STEP)}
       />
     {/if}

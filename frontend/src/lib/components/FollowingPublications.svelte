@@ -377,6 +377,7 @@
       </ul>
       <ShowMoreButton
         remaining={filteredGroups.length - visibleAccounts}
+        batchSize={WINDOW_STEP}
         onclick={() => (visibleAccounts += WINDOW_STEP)}
       />
     {:else if query.trim()}

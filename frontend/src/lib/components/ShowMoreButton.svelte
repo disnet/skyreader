@@ -4,9 +4,11 @@
   interface Props {
     /** How many rows are still hidden behind the current window. */
     remaining: number;
+    /** Maximum number of rows the next click reveals. */
+    batchSize: number;
     onclick: () => void;
   }
-  let { remaining, onclick }: Props = $props();
+  let { remaining, batchSize, onclick }: Props = $props();
 </script>
 
 <!-- Progressive disclosure, not a call to action: quiet text button, same
@@ -14,7 +16,7 @@
 {#if remaining > 0}
   <button class="show-more" type="button" {onclick}>
     <Icon name="chevron-down" size={14} />
-    Show {remaining} more
+    Show {Math.min(remaining, batchSize)} more
   </button>
 {/if}
 
@@ -38,5 +40,11 @@
 
   .show-more:hover {
     color: var(--color-text);
+  }
+
+  @media (max-width: 520px) {
+    .show-more {
+      min-height: 44px;
+    }
   }
 </style>
