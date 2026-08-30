@@ -180,9 +180,9 @@ export type FeedHealthDecision =
  * omission. That omission is what clears an error, including one left over from
  * the batch path.
  *
- * A feed with no status yet (never fetched, or still 'pending') is left alone
- * when it isn't in the report: absence means "not broken", not "confirmed
- * fetched", and inventing a success would show a fetch that never happened.
+ * A feed with no status yet (never fetched in this session) is left alone when it
+ * isn't in the report: absence means "not broken", not "confirmed fetched", and
+ * inventing a success would show a fetch that never happened.
  */
 export function reconcileFeedHealth(
   unhealthy: Record<string, TimelineFeedHealth>,

@@ -570,20 +570,15 @@
                 {#each cat.subscriptions as sub (sub.rkey)}
                   {@const feedUrl = sub.feedUrl ?? ''}
                   {@const status = feedStatusStore.getStatus(feedUrl)}
-                  {@const loadingState = !feedUrl
-                    ? 'ready'
-                    : status?.status === 'error' || status?.status === 'circuit-open'
-                      ? 'error'
-                      : status?.status === 'pending'
-                        ? 'loading'
-                        : 'ready'}
+                  {@const hasError =
+                    status?.status === 'error' || status?.status === 'circuit-open'}
                   {@const subUnread = sub.id ? (unreadCounts.feedCounts.get(sub.id) ?? 0) : 0}
                   {#if !sidebarStore.showOnlyUnread.feeds || subUnread > 0}
                     <FeedItem
                       subscription={sub}
                       unreadCount={subUnread}
                       isActive={currentFilter().type === 'feed' && currentFilter().id === sub.id}
-                      {loadingState}
+                      {hasError}
                       errorMessage={status?.errorMessage ?? ''}
                       errorDetails={feedStatusStore.getErrorDetails(feedUrl)}
                       onSelect={() => sub.id && selectFilter('feed', sub.id)}
@@ -603,20 +598,14 @@
         {#each uncategorizedSources as sub (sub.rkey)}
           {@const feedUrl = sub.feedUrl ?? ''}
           {@const status = feedStatusStore.getStatus(feedUrl)}
-          {@const loadingState = !feedUrl
-            ? 'ready'
-            : status?.status === 'error' || status?.status === 'circuit-open'
-              ? 'error'
-              : status?.status === 'pending'
-                ? 'loading'
-                : 'ready'}
+          {@const hasError = status?.status === 'error' || status?.status === 'circuit-open'}
           {@const subUnread = sub.id ? (unreadCounts.feedCounts.get(sub.id) ?? 0) : 0}
           {#if !sidebarStore.showOnlyUnread.feeds || subUnread > 0}
             <FeedItem
               subscription={sub}
               unreadCount={subUnread}
               isActive={currentFilter().type === 'feed' && currentFilter().id === sub.id}
-              {loadingState}
+              {hasError}
               errorMessage={status?.errorMessage ?? ''}
               errorDetails={feedStatusStore.getErrorDetails(feedUrl)}
               onSelect={() => sub.id && selectFilter('feed', sub.id)}

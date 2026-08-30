@@ -6,13 +6,14 @@
   import Icon from '../Icon.svelte';
   import { getSourceDisplay } from '$lib/utils/sourceDisplay';
 
-  type LoadingState = 'loading' | 'error' | 'ready';
-
   interface Props {
     subscription: Subscription;
     unreadCount: number;
     isActive: boolean;
-    loadingState?: LoadingState;
+    // Per-feed state is binary: the crawler either reports this feed as broken or
+    // it doesn't. There is no per-feed "loading" — a refresh is one archive-wide
+    // timeline request, not a fetch of this feed. See feedStatus.svelte.ts.
+    hasError?: boolean;
     errorMessage?: string;
     errorDetails?: ErrorDetails | null;
     onSelect: () => void;
@@ -30,7 +31,7 @@
     subscription,
     unreadCount,
     isActive,
-    loadingState = 'ready',
+    hasError = false,
     errorMessage = '',
     errorDetails = null,
     onSelect,
@@ -122,16 +123,14 @@
   <button
     class="nav-item sub-item feed-item {sourceDisplay.pillClass}"
     class:active={isActive}
-    class:has-error={loadingState === 'error'}
+    class:has-error={hasError}
     onclick={onSelect}
     oncontextmenu={onContextMenu}
     ontouchstart={onTouchStart}
     ontouchend={onTouchEnd}
     ontouchmove={onTouchMove}
   >
-    {#if loadingState === 'loading'}
-      <span class="feed-loading-spinner"></span>
-    {:else if loadingState === 'error'}
+    {#if hasError}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <span
         bind:this={errorIconRef}
@@ -172,7 +171,7 @@
     >
       <Icon name="more-horizontal" size={14} />
     </span>
-    {#if loadingState === 'error'}
+    {#if hasError}
       <span
         class="retry-btn"
         class:retrying
@@ -338,16 +337,6 @@
     flex-shrink: 0;
     background: var(--color-border);
     border-radius: 2px;
-  }
-
-  .feed-loading-spinner {
-    width: 16px;
-    height: 16px;
-    flex-shrink: 0;
-    border: 2px solid var(--color-border);
-    border-top-color: var(--color-primary);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
   }
 
   @keyframes spin {

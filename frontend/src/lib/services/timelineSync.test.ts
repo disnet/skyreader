@@ -200,7 +200,7 @@ describe('reconcileFeedHealth', () => {
     expect(decisions).toEqual([{ feedUrl: 'https://a.example/f', kind: 'recovered' }]);
   });
 
-  it('leaves a healthy feed with no error alone, so pending never becomes a fake success', () => {
+  it('leaves a healthy feed with no error alone, so absence never becomes a fake success', () => {
     expect(reconcileFeedHealth({}, ['https://a.example/f'], () => false)).toEqual([]);
   });
 

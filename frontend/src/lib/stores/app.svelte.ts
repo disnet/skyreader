@@ -78,12 +78,10 @@ function createAppManager() {
         magazineStore.load(),
       ]);
 
-      // Initialize feed statuses for existing subscriptions
-      const feedUrls = liveDb.subscriptions
-        .filter((s) => !s.sourceType?.startsWith('atproto.'))
-        .map((s) => s.feedUrl)
-        .filter((u): u is string => !!u);
-      feedStatusStore.initializeFeeds(feedUrls);
+      // Feed statuses are NOT seeded here. A feed is healthy until the crawler's
+      // health report says otherwise, and that report is the only thing that can
+      // ever change a feed's status under the timeline path — see
+      // feedStatus.svelte.ts.
 
       // Initialize pending count and process queue if online
       await syncStore.updatePendingCount();
@@ -260,7 +258,6 @@ function createAppManager() {
           const id = await liveDb.addSubscription(subscription);
           result.added.push(subscription.feedUrl || '');
           result.addedSubs.push({ ...subscription, id });
-          if (subscription.feedUrl && !isAtProto) feedStatusStore.markPending(subscription.feedUrl);
         }
       }
 

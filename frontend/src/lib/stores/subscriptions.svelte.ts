@@ -134,9 +134,6 @@ function createSubscriptionsStore() {
       };
 
       const id = await liveDb.addSubscription(subscription);
-      if (!isAtProto && feedUrl) {
-        feedStatusStore.markPending(feedUrl);
-      }
 
       return id;
     });
@@ -251,7 +248,6 @@ function createSubscriptionsStore() {
         try {
           const id = await liveDb.addSubscription(subscription);
           added.push(id);
-          feedStatusStore.markPending(feed.feedUrl);
         } catch (e) {
           failed.push({
             url: feed.feedUrl,
