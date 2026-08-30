@@ -68,6 +68,13 @@ clears an error**, so `applyHealthSnapshot` runs after the per-feed `markReady` 
 it. The payload is sent on every cold start and whenever the echoed `health_rev` is stale, so a
 steady-state poll pays nothing for it.
 
+There is deliberately **no per-feed loading state** to go with it — `feedStatus.svelte.ts` has no
+`'pending'`, and the sidebar renders a source's favicon or its error badge, nothing in between. A
+refresh is one archive-wide request, so nothing per-feed ever arrives to settle a per-feed spinner;
+seeding one at boot left it spinning for the life of the tab. Sync progress belongs to the
+app-level indicators (`RefreshProgressBar`, the header ↻, the mobile bottom-bar rail), which key off
+`appManager.isRefreshing`.
+
 The legacy per-feed `/api/v2/feeds/batch` path (`fetchAllFeedsViaBatch`, with per-subscription
 `feedCursors`) is kept for one release as a fallback: it runs when the timeline 404s and whenever
 the server reports `ingestActive: false` (this environment's crawler isn't pushing into D1). See

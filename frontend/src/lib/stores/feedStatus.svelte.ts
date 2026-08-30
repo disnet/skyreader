@@ -14,7 +14,15 @@ import {
   type TimelineFeedHealth,
 } from '$lib/services/timelineSync';
 
-export type FeedStatusType = 'ready' | 'pending' | 'error' | 'circuit-open';
+/**
+ * There is deliberately no 'pending' state. A refresh is one archive-wide
+ * `GET /api/v2/timeline` request, not a per-feed fetch, so nothing ever arrives
+ * to settle a per-feed "loading": the crawler's health report is the only
+ * per-feed signal, and it says either "broken" or — by omission — "not broken".
+ * Seeding every subscription 'pending' at boot therefore left a spinner next to
+ * every source in the sidebar that never settled.
+ */
+export type FeedStatusType = 'ready' | 'error' | 'circuit-open';
 export type ErrorType = 'transient' | 'permanent';
 
 export interface ErrorDetails {
@@ -242,18 +250,6 @@ function createFeedStatusStore() {
   }
 
   /**
-   * Mark a feed as pending (initial state for new subscriptions)
-   */
-  function markPending(feedUrl: string): void {
-    statuses.set(feedUrl, {
-      status: 'pending',
-      errorCount: 0,
-      lastCheckedAt: Date.now(),
-    });
-    statuses = new Map(statuses);
-  }
-
-  /**
    * Mark a feed as ready
    */
   function markReady(feedUrl: string): void {
@@ -330,8 +326,6 @@ function createFeedStatusStore() {
     switch (status.status) {
       case 'ready':
         return '';
-      case 'pending':
-        return 'Loading...';
       case 'error':
         if (status.errorMessage?.toLowerCase().includes('blocking automated access')) {
           return 'Blocked by site';
@@ -445,22 +439,6 @@ function createFeedStatusStore() {
     };
   }
 
-  /**
-   * Initialize statuses for a list of feed URLs (mark as pending)
-   */
-  function initializeFeeds(feedUrls: string[]): void {
-    for (const url of feedUrls) {
-      if (!statuses.has(url)) {
-        statuses.set(url, {
-          status: 'pending',
-          errorCount: 0,
-          lastCheckedAt: Date.now(),
-        });
-      }
-    }
-    statuses = new Map(statuses);
-  }
-
   return {
     get statuses() {
       return statuses;
@@ -476,7 +454,6 @@ function createFeedStatusStore() {
     },
     updateFromV2Result,
     applyHealthSnapshot,
-    markPending,
     markReady,
     markError,
     clearStatus,
@@ -485,7 +462,6 @@ function createFeedStatusStore() {
     canFetch,
     getStatusMessage,
     getErrorDetails,
-    initializeFeeds,
   };
 }
 

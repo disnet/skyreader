@@ -139,10 +139,12 @@ function createAppManager() {
 
 ### 3. Feed Status Store (`feedStatus.svelte.ts`)
 
-Tracks per-feed status for error display and circuit breaker awareness.
+Tracks per-feed status for error display and circuit breaker awareness. There is
+no 'pending' state: a refresh is one archive-wide timeline request, not a per-feed
+fetch, so a feed is healthy until the crawler's health report says otherwise.
 
 ```typescript
-type FeedStatusType = 'ready' | 'pending' | 'error' | 'circuit-open';
+type FeedStatusType = 'ready' | 'error' | 'circuit-open';
 
 interface FeedStatus {
   status: FeedStatusType;
@@ -279,8 +281,8 @@ function createSubscriptionsStore() {
     // 2. Store locally after success
     await liveDb.addSubscription(subscription);
 
-    // 3. Mark feed as pending
-    feedStatusStore.markPending(feedUrl);
+    // No feed status is written: a feed is healthy until the crawler's health
+    // report says otherwise (feedStatusStore has no 'pending' state).
   }
 
   async function remove(id: number) {
@@ -414,11 +416,6 @@ function createFeedViewStore() {
 ┌──────────────────────────────┐
 │  liveDb.addSubscription()    │
 │  subscriptionsVersion++      │  → Sidebar re-renders
-└────────┬─────────────────────┘
-         │
-         ▼
-┌──────────────────────────────┐
-│  feedStatusStore.markPending │
 └────────┬─────────────────────┘
          │
          ▼ (background)
