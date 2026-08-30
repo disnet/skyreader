@@ -19,7 +19,14 @@ import {
 } from './routes/feeds-v2';
 import { handleIngest, handleCrawlSet, handleFeedHealth } from './routes/ingest';
 import { handleDocumentBackfill, handleDocumentShadowCompare } from './routes/documents';
-import { reconcileStaleAuthors } from './services/document-store';
+import {
+  createDocumentApplyContext,
+  createQueryLedger,
+  reconcileStaleAuthors,
+  CRON_DOCUMENT_QUERY_BUDGET,
+  CRON_HOURLY_RECONCILE_AUTHORS,
+  CRON_MINUTE_RECONCILE_AUTHORS,
+} from './services/document-store';
 import { readDocumentFlags } from './services/document-flags';
 import { handleTimeline } from './routes/timeline';
 import {
@@ -966,8 +973,14 @@ async function runScheduled(
     // the hourly tick's afternoon. This writes documents, so the ingest kill switch
     // stops it like every other background write.
     const documentFlags = await readDocumentFlags(env);
+    // One ledger for both reconcile passes: on the hour they run in the same
+    // invocation, so a budget held per pass would let the pair add up past D1's
+    // per-invocation ceiling and fail the later walks mid-write.
+    const documentCtx = createDocumentApplyContext(createQueryLedger(CRON_DOCUMENT_QUERY_BUDGET));
     try {
-      const reconciled = documentFlags.ingestEnabled ? await reconcileStaleAuthors(env, 1) : [];
+      const reconciled = documentFlags.ingestEnabled
+        ? await reconcileStaleAuthors(env, CRON_MINUTE_RECONCILE_AUTHORS, documentCtx)
+        : [];
       if (reconciled.length > 0) {
         log.info('cron_documents_cold_start', {
           authors: reconciled.length,
@@ -1103,7 +1116,9 @@ async function runScheduled(
       // author. The operator backfill endpoint stays available regardless — that
       // one is a deliberate repair, not a background loop.
       try {
-        const reconciled = documentFlags.ingestEnabled ? await reconcileStaleAuthors(env, 3) : [];
+        const reconciled = documentFlags.ingestEnabled
+          ? await reconcileStaleAuthors(env, CRON_HOURLY_RECONCILE_AUTHORS, documentCtx)
+          : [];
         if (reconciled.length > 0) {
           log.info('cron_documents_reconcile', {
             authors: reconciled.length,

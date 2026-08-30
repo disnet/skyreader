@@ -34,7 +34,12 @@ export const PUBLICATION_NEGATIVE_CACHE_TTL_MS = 5 * 60 * 1000;
 // How many documents (most recent) to keep per author. Bounds payload, storage and
 // work; matches what the proxy blob enforced, so it changes nothing observable.
 export const MAX_DOCUMENTS_PER_AUTHOR = 100;
-const MAX_LIST_PAGES = 5; // listRecords pages of 100 → up to 500 scanned
+/**
+ * listRecords pages of 100 → up to 500 scanned. Exported because a backfill's
+ * subrequest budget counts these pages: they come out of the same per-invocation
+ * ceiling as its D1 writes.
+ */
+export const MAX_LIST_PAGES = 5;
 const FETCH_TIMEOUT_MS = 15 * 1000;
 // A Standard Reader "Collection" curates other documents by at:// URI. Resolving
 // each to a preview is a cross-PDS fetch, so bound the fan-out.

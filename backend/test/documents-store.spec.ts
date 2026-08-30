@@ -4,7 +4,11 @@ import {
   applyDocumentEvent,
   authorRetryBackoffMs,
   backfillAuthorDocuments,
+  chargeQueries,
+  createBackfillScheduler,
+  createDocumentApplyContext,
   createDocumentDrain,
+  createQueryLedger,
   ensureAuthorDocuments,
   loadAuthorDocuments,
   reconcileStaleAuthors,
@@ -17,6 +21,17 @@ import {
   AUTHOR_RETRY_BASE_MS,
   AUTHOR_RETRY_MAX_MS,
   BACKFILL_FRESHNESS_MS,
+  BACKFILL_QUERY_COST,
+  CRON_DOCUMENT_QUERY_BUDGET,
+  CRON_HOURLY_RECONCILE_AUTHORS,
+  CRON_MINUTE_RECONCILE_AUTHORS,
+  CYCLE_BACKFILL_QUERY_BUDGET,
+  D1_QUERIES_PER_INVOCATION,
+  DOCUMENT_CYCLE_QUERY_RESERVE,
+  DOCUMENT_DRAIN_QUERY_BUDGET,
+  MAX_COLLECTION_WRITES_PER_BACKFILL,
+  MAX_CYCLE_BACKFILLS,
+  SCHEDULED_BACKFILL_QUERY_COST,
   type DocumentCommitEvent,
 } from '../src/services/document-store';
 import { digestScope, MAX_DOCUMENTS_PER_AUTHOR } from '../src/services/standard-site';
@@ -309,7 +324,7 @@ describe('the per-cycle apply cap (spike drill)', () => {
       allowed,
       cap: 1_000,
       cursor: '1_000',
-      queryBudget: 12,
+      queryBudget: 20,
     });
     for (const event of burst) await drain.handle(event);
 
@@ -337,8 +352,10 @@ describe('the per-cycle apply cap (spike drill)', () => {
     const drain = createDocumentDrain(env, { allowed, cap: 100, cursor: '2_999' });
     for (const event of burst) await drain.handle(event);
 
-    // Eight writes plus the one publication-metadata resolve they share.
-    expect(drain.queries).toBe(burst.length + 2);
+    // Eight writes plus the one publication resolve they share — charged whole, at
+    // five subrequests, because its three cross-PDS fetches come out of the same
+    // per-invocation ceiling as its two D1 statements.
+    expect(drain.queries).toBe(burst.length + 5);
     // Bookkeeping is deferred with the trim, so nothing has stamped the author yet.
     const before = await env.DB.prepare(
       'SELECT last_event_at FROM document_authors WHERE author_did = ?'
@@ -355,7 +372,31 @@ describe('the per-cycle apply cap (spike drill)', () => {
       .first<{ last_event_at: number | null }>();
     expect(after?.last_event_at).toBeTruthy();
     // Two statements for the one author written, whatever the event count.
-    expect(drain.queries).toBe(burst.length + 4);
+    expect(drain.queries).toBe(burst.length + 7);
+  });
+
+  // `last_event_at` is meant to read as "the last event we applied for this
+  // author". A cycle that only deletes applies events too, and used to leave the
+  // author unstamped because only the upsert path marked them.
+  it('stamps an author whose cycle only deleted', async () => {
+    await applyDocumentEvent(env, docEvent('gone'), allowed);
+    await env.DB.prepare('UPDATE document_authors SET last_event_at = NULL WHERE author_did = ?')
+      .bind(AUTHOR)
+      .run();
+
+    const drain = createDocumentDrain(env, { allowed, cap: 10, cursor: '5_000' });
+    expect(await drain.handle(docEvent('gone', { operation: 'delete', time_us: 5_001 }))).toBe(
+      'applied'
+    );
+    await drain.flush();
+
+    const row = await env.DB.prepare(
+      'SELECT last_event_at FROM document_authors WHERE author_did = ?'
+    )
+      .bind(AUTHOR)
+      .first<{ last_event_at: number | null }>();
+    expect(row?.last_event_at).toBeTruthy();
+    expect((await loadAuthorDocuments(env, AUTHOR)).length).toBe(0);
   });
 
   // The per-author row cap is layer 4 of the spike guard. It now lands at the
@@ -654,6 +695,220 @@ describe('backfill and reconcile', () => {
 
     expect(await ensureAuthorDocuments(env, AUTHOR)).toBeNull();
     expect(vi.mocked(globalThis.fetch).mock.calls.length).toBe(calls);
+  });
+});
+
+// D1 refuses everything past `D1_QUERIES_PER_INVOCATION`, and a fan-out of walks is
+// the one place where crossing it mutates D1 half way and then throws. So the
+// per-author cost has to be a real worst case, and the fan-out has to be admitted
+// against one shared ledger rather than against a per-loop rule.
+describe('the backfill query budget', () => {
+  beforeEach(async () => {
+    await cleanup();
+    await seedPublication();
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await cleanup();
+  });
+
+  /** A PDS with `documents` documents and `collections` curated editions. */
+  function mockBigPds(documents: number, collections: number): void {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes('plc.directory')) {
+        return new Response(
+          JSON.stringify({
+            id: AUTHOR,
+            service: [
+              {
+                id: '#atproto_pds',
+                type: 'AtprotoPersonalDataServer',
+                serviceEndpoint: 'https://pds.example',
+              },
+            ],
+          })
+        );
+      }
+      if (url.includes('listRecords') && url.includes('app.standard-reader.collection')) {
+        return new Response(
+          JSON.stringify({
+            records: Array.from({ length: collections }, (_, i) => ({
+              uri: `at://${AUTHOR}/app.standard-reader.collection/new${String(i).padStart(3, '0')}`,
+              value: { document: `at://${AUTHOR}/site.standard.document/new${i}`, items: [] },
+            })),
+          })
+        );
+      }
+      if (url.includes('listRecords') && url.includes('site.standard.document')) {
+        return new Response(
+          JSON.stringify({
+            records: Array.from({ length: documents }, (_, i) => {
+              const rkey = `new${String(i).padStart(3, '0')}`;
+              return {
+                uri: `at://${AUTHOR}/site.standard.document/${rkey}`,
+                cid: `cid-${rkey}`,
+                value: {
+                  site: PUBLICATION,
+                  title: `New ${i}`,
+                  path: `/${rkey}`,
+                  publishedAt: '2026-02-01T00:00:00.000Z',
+                },
+              };
+            }),
+          })
+        );
+      }
+      if (url.includes('listRecords')) return new Response(JSON.stringify({ records: [] }));
+      return new Response('{}', { status: 404 });
+    });
+  }
+
+  /** Stored rows a re-list will find nothing for — the prune-heavy shape. */
+  async function seedStoredDocuments(count: number): Promise<void> {
+    const stamp = Date.now() - 60_000;
+    await env.DB.batch(
+      Array.from({ length: count }, (_, i) =>
+        env.DB.prepare(
+          `INSERT INTO documents_v2
+             (record_uri, author_did, rkey, record_cid, site_uri, published_at, canonical_url, record_json, indexed_at, updated_at)
+           VALUES (?, ?, ?, 'cid-old', ?, ?, NULL, '{"site":"","title":"Old"}', ?, ?)`
+        ).bind(
+          `at://${AUTHOR}/site.standard.document/old${String(i).padStart(3, '0')}`,
+          AUTHOR,
+          `old${String(i).padStart(3, '0')}`,
+          PUBLICATION,
+          stamp,
+          stamp,
+          stamp
+        )
+      )
+    );
+  }
+
+  // The shape the old constant (`MAX_DOCUMENTS_PER_AUTHOR + 12`) was three times
+  // short on: a full stored set that shares nothing with the listing, so the prune
+  // is as large as the write loop, plus a sidecar page to go with it.
+  it('stays under the per-author cost on a prune-heavy author', async () => {
+    await seedStoredDocuments(MAX_DOCUMENTS_PER_AUTHOR);
+    mockBigPds(MAX_DOCUMENTS_PER_AUTHOR, 100);
+
+    const ctx = createDocumentApplyContext(createQueryLedger());
+    const result = await backfillAuthorDocuments(env, AUTHOR, ctx);
+
+    expect(result.ok).toBe(true);
+    expect(ctx.ledger.spent).toBeLessThanOrEqual(BACKFILL_QUERY_COST);
+    // The whole stored set was replaced, in one statement rather than a hundred.
+    const rows = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM documents_v2 WHERE author_did = ? AND rkey LIKE 'old%'"
+    )
+      .bind(AUTHOR)
+      .first<{ n: number }>();
+    expect(rows?.n).toBe(0);
+    expect((await loadAuthorDocuments(env, AUTHOR)).length).toBe(MAX_DOCUMENTS_PER_AUTHOR);
+  });
+
+  // Sidecars are the other per-row term. Capped per walk, and each walk writes the
+  // ones it can afford — so the remainder shrinks instead of recurring forever.
+  it('caps sidecar writes per walk and converges over the next one', async () => {
+    const editions = MAX_COLLECTION_WRITES_PER_BACKFILL + 10;
+    mockBigPds(1, editions);
+
+    await backfillAuthorDocuments(env, AUTHOR);
+    const afterFirst = await env.DB.prepare(
+      'SELECT COUNT(*) AS n FROM collections_v2 WHERE author_did = ?'
+    )
+      .bind(AUTHOR)
+      .first<{ n: number }>();
+    expect(afterFirst?.n).toBe(MAX_COLLECTION_WRITES_PER_BACKFILL);
+
+    await backfillAuthorDocuments(env, AUTHOR);
+    const afterSecond = await env.DB.prepare(
+      'SELECT COUNT(*) AS n FROM collections_v2 WHERE author_did = ?'
+    )
+      .bind(AUTHOR)
+      .first<{ n: number }>();
+    expect(afterSecond?.n).toBe(editions);
+  });
+
+  // The fan-out bound the reviewer's scenario broke: five authors sized against a
+  // per-author constant that did not hold. Now the loop asks the ledger before each
+  // one and leaves the rest in the queue, where they still sort to the front.
+  it('stops the reconcile at the author the invocation can no longer afford', async () => {
+    await seedReader();
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO subscriptions_cache (user_did, record_uri, feed_url, source_type, subject_did, created_at)
+         VALUES (?, ?, ?, 'atproto.documents', ?, unixepoch())`
+      ).bind(READER, 'at://reader/app.skyreader.feed.subscription/1', PUBLICATION, AUTHOR),
+      env.DB.prepare(
+        `INSERT INTO subscriptions_cache (user_did, record_uri, feed_url, source_type, subject_did, created_at)
+         VALUES (?, ?, ?, 'atproto.documents', ?, unixepoch())`
+      ).bind(READER, 'at://reader/app.skyreader.feed.subscription/2', OTHER_PUBLICATION, OTHER),
+    ]);
+    mockBigPds(2, 0);
+
+    // Room for exactly one worst-case walk (plus the queue query it charges first).
+    const ctx = createDocumentApplyContext(createQueryLedger(BACKFILL_QUERY_COST + 1));
+    const results = await reconcileStaleAuthors(env, 5, ctx);
+
+    expect(results.length).toBe(1);
+    expect(ctx.ledger.spent).toBeLessThanOrEqual(ctx.ledger.limit);
+    // Nothing was recorded against the author it skipped, so they are still at the
+    // front of the queue rather than in a retry backoff.
+    expect(await staleDocumentAuthors(env, 5)).toHaveLength(1);
+  });
+
+  // The arithmetic each fan-out is sized by, pinned: a constant edited without its
+  // budget is exactly how "five authors is well under" became untrue.
+  it('sizes every fan-out budget to the worst case it admits', () => {
+    // The poll cycle: what the drain reserves must actually cover its walks.
+    expect(CYCLE_BACKFILL_QUERY_BUDGET).toBeGreaterThanOrEqual(
+      MAX_CYCLE_BACKFILLS * SCHEDULED_BACKFILL_QUERY_COST
+    );
+    expect(DOCUMENT_CYCLE_QUERY_RESERVE).toBeGreaterThanOrEqual(CYCLE_BACKFILL_QUERY_BUDGET);
+    expect(DOCUMENT_DRAIN_QUERY_BUDGET + DOCUMENT_CYCLE_QUERY_RESERVE).toBe(
+      D1_QUERIES_PER_INVOCATION
+    );
+
+    // The hourly cron runs both reconcile passes in one invocation.
+    expect(CRON_DOCUMENT_QUERY_BUDGET).toBeGreaterThanOrEqual(
+      (CRON_MINUTE_RECONCILE_AUTHORS + CRON_HOURLY_RECONCILE_AUTHORS) * BACKFILL_QUERY_COST
+    );
+    expect(CRON_DOCUMENT_QUERY_BUDGET).toBeLessThan(D1_QUERIES_PER_INVOCATION);
+
+    // An apply-cap override can never claim more events than the cycle can fund.
+    expect(MAX_DOCUMENT_APPLY_CAP).toBe(DOCUMENT_DRAIN_QUERY_BUDGET);
+  });
+
+  // The sync paths schedule their walks into the same invocation that just ran the
+  // pull. A restore big enough to spend the budget schedules none of them.
+  it('schedules no walks once the request has spent its budget', async () => {
+    const ledger = createQueryLedger(BACKFILL_QUERY_COST * 2);
+    const scheduled: Array<Promise<unknown>> = [];
+    const schedule = createBackfillScheduler(env, (p) => scheduled.push(p), { ledger });
+
+    chargeQueries(ledger, 900);
+    expect(schedule(AUTHOR)).toBe(false);
+    expect(scheduled.length).toBe(0);
+  });
+
+  it('reserves the whole worst case for every walk it has already scheduled', async () => {
+    mockBigPds(1, 0);
+    const ledger = createQueryLedger(SCHEDULED_BACKFILL_QUERY_COST * 2);
+    const scheduled: Array<Promise<unknown>> = [];
+    const schedule = createBackfillScheduler(env, (p) => scheduled.push(p), {
+      ledger,
+      limit: 5,
+    });
+
+    // Two fit; the third would only fit if the first two were assumed free.
+    expect(schedule(AUTHOR)).toBe(true);
+    expect(schedule(OTHER)).toBe(true);
+    expect(schedule('did:plc:athirdauthor')).toBe(false);
+    await Promise.all(scheduled);
+    expect(ledger.spent).toBeLessThanOrEqual(ledger.limit);
   });
 });
 

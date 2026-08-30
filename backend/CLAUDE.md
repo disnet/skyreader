@@ -35,13 +35,28 @@ reconcile — leaving only the operator backfill endpoint. Every path that creat
 `atproto.documents` subscription — the API, the Atmosphere subscribe button, the Atmosphere graph
 import, the PDS→local subscription pull, and a subscription mirrored in by the poller — goes
 through `ensureAuthorDocuments`, because a subscription whose author was never listed serves
-`status:'error'` on every poll until something lists them. The two sync paths bound their fan-out
-at `MAX_SYNC_BACKFILLS` and leave the tail to the reconcile (a never-listed author sorts to the
-front of that queue, drained one a minute plus three an hour): every walk they schedule runs in
-the same invocation, and D1 allows `D1_QUERIES_PER_INVOCATION` queries per one. That ceiling is
-what the drain budgets against too, and why an applied event costs a single statement — the cap
-eviction and bookkeeping settle once per author at the end of a cycle. See
-`docs/plans/DOCUMENTS_TO_D1.md` and RUNBOOK §4e.
+`status:'error'` on every poll until something lists them. (Those subscribe/sync paths are
+deliberately **not** gated by `documents_ingest_enabled`: a reader subscribing during an incident
+should still see their linkblog, and each walk is one author, deduped to one an hour. The switch
+governs the background loops — the drain, the poller's queue, the cron's reconcile.)
+
+**The budget everything here is sized against** is `D1_QUERIES_PER_INVOCATION`: 1,000 per Worker
+invocation, counting each statement inside a `batch` separately _and_ sharing that ceiling with
+outbound `fetch()`es (it is the read-subrequest limit), so `document-store.ts` counts both as
+subrequests. A `QueryLedger` is per invocation, not per loop: the cron's two reconcile passes
+share one, the operator endpoint's batch shares one, and `/api/sync` threads one through both of
+its halves so the walks it schedules are admitted against what the request has already spent.
+Each fan-out asks `canAffordBackfill` before starting an author and leaves the rest in the
+reconcile queue rather than throwing halfway through a walk that has already written rows.
+`BACKFILL_QUERY_COST` is a true worst case — every per-row term is either one statement (the
+prune is a single `updated_at`-scoped DELETE; the sidecars are one read plus one capped batch) or
+capped (`MAX_SITE_RESOLVES_PER_BACKFILL`, `MAX_COLLECTION_WRITES_PER_BACKFILL`). The same ceiling
+is why an applied event costs a single statement: the cap eviction and bookkeeping settle once per
+author at the end of a cycle. **Still unbounded:** the PDS→local subscription pull's insert batch
+is one statement per restored row, capped only by the plan's mirror limit (1000/5000), so a very
+large restore can exhaust the invocation on its own — it charges the ledger (which is what stops
+walks being scheduled on top of it) and logs `subscription_pull_batch_large`, but nothing chunks
+it. See `docs/plans/DOCUMENTS_TO_D1.md` and RUNBOOK §4e.
 
 ## Key Concepts
 

@@ -17,9 +17,14 @@ import {
 } from '../services/feed-proxy-client';
 import {
   backfillAuthorDocuments,
+  canAffordBackfill,
+  createDocumentApplyContext,
+  createQueryLedger,
   loadAuthorDocuments,
   staleDocumentAuthors,
   subscribedDocumentAuthorPage,
+  BACKFILL_QUERY_COST,
+  D1_QUERIES_PER_INVOCATION,
   type BackfillResult,
 } from '../services/document-store';
 import { digestScope } from '../services/standard-site';
@@ -27,12 +32,26 @@ import { log } from '../utils/logger';
 
 /**
  * Authors backfilled per call. A backfill is a `listRecords` walk plus a write per
- * document — up to `BACKFILL_QUERY_COST` D1 queries — so the operator drives the
+ * document — up to `BACKFILL_QUERY_COST` subrequests — so the operator drives the
  * migration as a loop of bounded calls rather than one request that would outlive
  * its CPU budget or run into `D1_QUERIES_PER_INVOCATION` partway through and lose
- * the walks it hadn't reached. Five authors is ~560 queries, well under.
+ * the walks it hadn't reached.
  */
 const MAX_BACKFILL_BATCH = 5;
+
+/** What the endpoint's own queries (the stale-author picks) may spend. */
+const ENDPOINT_QUERY_RESERVE = 50;
+
+/**
+ * What one call may spend on walks. Sized so the batch fits with room to spare, and
+ * enforced per author rather than assumed: the loop stops at the author it can no
+ * longer afford and reports the rest as still queued, instead of throwing partway
+ * through a walk that has already written rows.
+ */
+const BACKFILL_QUERY_BUDGET = Math.min(
+  MAX_BACKFILL_BATCH * BACKFILL_QUERY_COST,
+  D1_QUERIES_PER_INVOCATION - ENDPOINT_QUERY_RESERVE
+);
 
 function unauthorized(): Response {
   return new Response(JSON.stringify({ error: 'Unauthorized' }), {
@@ -75,9 +94,17 @@ export async function handleDocumentBackfill(request: Request, env: Env): Promis
     ? body.dids.slice(0, limit)
     : await staleDocumentAuthors(env, limit);
 
+  // One ledger for the whole call: the ceiling is per invocation, so the walks have
+  // to be admitted against their shared spend rather than against a per-walk rule.
+  const ctx = createDocumentApplyContext(createQueryLedger(BACKFILL_QUERY_BUDGET));
   const results: BackfillResult[] = [];
+  let deferred = 0;
   for (const did of dids) {
-    results.push(await backfillAuthorDocuments(env, did));
+    if (!canAffordBackfill(ctx.ledger)) {
+      deferred = dids.length - results.length;
+      break;
+    }
+    results.push(await backfillAuthorDocuments(env, did, ctx));
   }
 
   // Authors still queued after this chunk. An author whose PDS can't be listed at
@@ -90,11 +117,17 @@ export async function handleDocumentBackfill(request: Request, env: Env): Promis
     requested: dids.length,
     ok: results.filter((r) => r.ok).length,
     failed: results.filter((r) => !r.ok).length,
+    deferred,
+    queries: ctx.ledger.spent,
   });
 
   return json({
     backfilled: results.length,
     results,
+    // Walks this call declined to start because the invocation's budget was spent.
+    // They are still in the queue; call again. Silence here would read as "all five
+    // were done" when the request stopped at three.
+    deferred,
     // Non-null only for the "next chunk" form: how many of this chunk's size still
     // need work, so a driving loop knows when to stop. 0 means the migration is done.
     remaining,

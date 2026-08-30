@@ -40,7 +40,12 @@ import {
 import { pushSubscriptionToPds, deleteSubscriptionFromPds } from './subscription-sync';
 import type { LimitNotice } from './subscription-sync';
 import { log } from '../utils/logger';
-import { createBackfillScheduler, MAX_SYNC_BACKFILLS } from './document-store';
+import {
+  chargeQueries,
+  createBackfillScheduler,
+  MAX_SYNC_BACKFILLS,
+  type QueryLedger,
+} from './document-store';
 
 const SUBSCRIPTION_NSID = 'app.skyreader.feed.subscription';
 
@@ -150,7 +155,11 @@ async function titleFor(meta: PublicationMeta): Promise<string> {
 export async function reconcileAtmosphereSubscriptions(
   session: Session,
   env: Env,
-  ctx: ExecutionContext
+  ctx: ExecutionContext,
+  // The invocation's subrequest ledger. On `/api/sync` this is the same one the
+  // subscription sync just charged its pull to, so the walks scheduled here are
+  // admitted against everything the request has spent — both halves of it.
+  ledger?: QueryLedger
 ): Promise<AtmosphereSyncResult> {
   const result: AtmosphereSyncResult = {
     success: true,
@@ -166,7 +175,7 @@ export async function reconcileAtmosphereSubscriptions(
   let ops = 0;
   // Imports fan out into this one invocation, so the back-catalogue walks they
   // trigger are bounded the way the poller's are (see `MAX_SYNC_BACKFILLS`).
-  const scheduleBackfill = createBackfillScheduler(env, (p) => ctx.waitUntil(p));
+  const scheduleBackfill = createBackfillScheduler(env, (p) => ctx.waitUntil(p), { ledger });
   let deferredBackfills = 0;
 
   try {
@@ -278,6 +287,7 @@ export async function reconcileAtmosphereSubscriptions(
       // publication first; the unique (user, source_type, feed_url) index makes
       // our insert a no-op. Skip the follow-up work so we don't double-count or
       // write a second, orphaned PDS record under our throwaway rkey.
+      if (ledger) chargeQueries(ledger, 1);
       if (insert.meta && insert.meta.changes === 0) continue;
 
       // An imported follow needs the author's back catalogue pulled in like any

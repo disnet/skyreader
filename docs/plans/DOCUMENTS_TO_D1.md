@@ -49,18 +49,21 @@ collection stream would eat all of it, so:
    an error, cursor walked over the burst the cap exists to protect. Applying an event is
    one statement for exactly this reason: the cap eviction (layer 4) and the ingest
    bookkeeping are settled once per author at the end of the cycle rather than riding every
-   write.
+   write. The spend it counts includes the cross-PDS fetches a publication resolve makes —
+   see "The invocation budget" below for why they belong in the same number.
 4. **Per-author row cap** — 100 rows, oldest evicted by `published_at`. This is the only
    layer that helps against the dangerous case: an author we _subscribe to_ dumping
    thousands of documents passes the DID filter by design.
 5. **Observability + kill switch** — the document stream has its own `streamLagMs`, its own
    Sentry alert, a cap-saturation streak counter surfaced on the admin ops panel, and
    `documents_ingest_enabled` to pause writes without touching reads or the subscriptions
-   stream. "Writes" means every background one: the drain, the back catalogues the poller
+   stream. "Writes" means every background _loop_: the drain, the back catalogues the poller
    pulls for mirrored subscriptions, and the cron's reconcile. Otherwise the switch would
    leave the poller writing up to a hundred rows an author a minute, because the
-   subscriptions stream keeps enqueuing DIDs while it is off. The operator backfill
-   endpoint is the deliberate exception.
+   subscriptions stream keeps enqueuing DIDs while it is off. Two deliberate exceptions: the
+   operator backfill endpoint, and the subscribe-time walk (`ensureAuthorDocuments`), which a
+   reader subscribing during an incident needs or their new linkblog serves nothing but an
+   error — one author, 100 rows, one walk an hour, at most `MAX_SYNC_BACKFILLS` per request.
 
 ## What's in D1
 
@@ -118,6 +121,33 @@ no `document_authors` row already sorts to the front of the queue. That queue is
 the every-minute cron at one author a tick as well as by the hourly three, so the tail of a
 large restore is minutes rather than an afternoon.
 
+## The invocation budget
+
+The ceiling is per Worker invocation, so the budget is too: a `QueryLedger` is created once
+per invocation and shared by everything that writes documents in it — the cron's two
+reconcile passes, the operator endpoint's batch, and both halves of `/api/sync` including
+the walks they schedule into `waitUntil`. Two things share the 1,000: D1 counts each
+statement inside a `batch` separately, and the limit is the _read subrequest_ limit, so a
+cross-PDS `fetch()` comes out of it as well. Everything is therefore counted in subrequests —
+a cold publication resolve is charged its two D1 statements _and_ its three fetches, since a
+budget counting only the D1 half would report a cycle as halfway through when it was already
+at the ceiling.
+
+`BACKFILL_QUERY_COST` is a real worst case rather than an estimate: the document prune is a
+single `updated_at`-scoped DELETE (every kept row was just upserted, so "untouched by this
+walk" is the stale set) instead of a read plus a DELETE per row, the sidecars are one read
+plus one capped batch instead of a SELECT each, and what remains per-row is capped —
+`MAX_SITE_RESOLVES_PER_BACKFILL`, `MAX_COLLECTION_WRITES_PER_BACKFILL`, both converging on
+the next reconcile rather than being dropped. Each fan-out asks `canAffordBackfill` before
+starting an author, so an invocation that is out of budget leaves the author in the queue
+instead of throwing partway through a walk that has already written rows and not yet pruned.
+
+One thing is still unbounded: the PDS→local pull's insert batch is one statement per restored
+row, capped only by the plan's mirror limit (1000 / 5000). A very large restore can exhaust
+the invocation by itself — it is charged to the ledger, which is what keeps walks from being
+scheduled on top of it, and logged as `subscription_pull_batch_large`, but chunking it (and
+resuming across syncs) is still open.
+
 ## Rollout
 
 Both switches are `sync_state` rows; flipping either is a D1 write, not a deploy. Operator
@@ -136,6 +166,11 @@ soaked; rollback is the same flag set back to `'0'`.
   the budget is also the most events any cap could buy. A `cappedBy: 'query-budget'` line
   in `documents_apply_cap_hit` means the cycle's events were costlier than that common
   case — many distinct authors, or cold publications — not that the cap is set too low.
+- **Chunk the PDS→local subscription pull.** Its insert batch is the one unbounded term
+  left in an invocation that has to fit 1,000 subrequests (see "The invocation budget"): a
+  restore of ~900 mirrored rows can exhaust the ceiling on its own, and the fix — cap the
+  rows one sync materialises and resume on the next — is a user-visible behaviour change on
+  the restore path, so it wants deciding rather than assuming.
 - **`linkblog-site`** still fetches documents from the proxy's `/documents`. It moves to
   the Worker after the prod flag flip, so both apps cut over from the same store.
 - **Decommission.** Once the soak passes: remove `DocumentFirehose`, `document_cache`, its

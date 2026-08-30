@@ -2,9 +2,13 @@ import * as Sentry from '@sentry/cloudflare';
 import type { Env } from '../types';
 import { upsertSubscriptionFromFirehose } from '../services/firehose-subscription';
 import {
+  createDocumentApplyContext,
   createDocumentDrain,
+  createQueryLedger,
   ensureAuthorDocuments,
   subscribedDocumentAuthors,
+  CYCLE_BACKFILL_QUERY_BUDGET,
+  MAX_CYCLE_BACKFILLS,
   type DocumentCommitEvent,
 } from '../services/document-store';
 import { readDocumentFlags, type DocumentFlags } from '../services/document-flags';
@@ -85,15 +89,13 @@ export const JETSTREAM_MAX_WANTED_DIDS = 10_000;
 
 const CAP_STREAK_KEY = 'documents_cap_streak';
 
-// Back catalogues pulled per cycle for subscriptions mirrored in from a PDS. Each
-// is up to five `listRecords` pages against a foreign PDS and up to
-// `BACKFILL_QUERY_COST` D1 queries, so this is deliberately small: the alarm's job
-// is draining streams, the drain's budget already reserves
-// `DOCUMENT_CYCLE_QUERY_RESERVE` for this and the subscriptions stream, and the
-// queue survives to the next cycle.
-const MAX_CYCLE_BACKFILLS = 2;
-
-// Ceiling on that queue. A device syncing a very long subscription list can enqueue
+// `MAX_CYCLE_BACKFILLS` — how many back catalogues a cycle pulls for subscriptions
+// mirrored in from a PDS — lives in `document-store` next to the budget it is sized
+// against: each walk is up to `BACKFILL_QUERY_COST` subrequests, and
+// `DOCUMENT_CYCLE_QUERY_RESERVE` is what the drain leaves the rest of the cycle.
+//
+// Ceiling on the queue those walks come from. A device syncing a very long
+// subscription list can enqueue
 // faster than a couple a cycle drains, and this is in-memory state on a long-lived
 // object; past the ceiling the surplus authors are left to the cron's reconcile,
 // which is where they would have been before any of this existed.
@@ -450,9 +452,12 @@ class JetstreamPollerBase implements DurableObject {
     // Only the ones being worked leave the queue; the remainder wait for the next
     // cycle rather than being dropped.
     for (const did of dids) this.pendingDocumentBackfills.delete(did);
+    // These share the alarm's invocation with the drain that just ran, so they draw
+    // on the reserve that drain left rather than on a budget of their own.
+    const ctx = createDocumentApplyContext(createQueryLedger(CYCLE_BACKFILL_QUERY_BUDGET));
     for (const did of dids) {
       try {
-        await ensureAuthorDocuments(this.env, did);
+        await ensureAuthorDocuments(this.env, did, Date.now(), ctx);
       } catch (error) {
         log.warn('documents_backfill_failed', {
           authorDid: did,

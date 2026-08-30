@@ -605,7 +605,9 @@ npx wrangler d1 execute skyreader --remote --command \
    The cron re-lists stale authors anyway — one a minute plus three on the hour — so
    this only makes the migration finish in an afternoon instead of over days. Each
    call takes a handful of authors, sized so one request stays inside D1's
-   per-invocation query ceiling; loop it. `remaining` does reach 0
+   per-invocation query ceiling; loop it. The response's `deferred` is how many of
+   the chunk the call declined to start because that budget ran out before them —
+   they are still queued, so just call again. `remaining` does reach 0
    even with authors nobody can list (deleted account, dead PDS): a failed list holds
    that author out of the queue for a backoff window that doubles per consecutive
    failure, up to the 7-day reconcile interval. Their `last_error` is on
@@ -661,12 +663,24 @@ The subscriptions stream keeps running, reads keep serving whatever D1 holds, an
 the document cursor stays put — so re-enabling resumes the drain rather than
 skipping the backlog. Expect `Document Stream Lag` to read "Paused" while it's off.
 
-The switch stops **every background write**, not just the drain: the poller's
+The switch stops **every background loop that writes**: the drain, the poller's
 per-cycle back catalogues and the cron's reconcile pause with it, since either would
 otherwise keep writing up to a hundred rows an author while the flood is supposedly
-paused. Their queues survive the pause. The one path that still writes is the
-backfill endpoint below — an operator asking for a specific repair, which is what
-you want available during an incident.
+paused. Their queues survive the pause.
+
+Two kinds of write are deliberately exempt, so read the switch as "the loops stop",
+not "nothing writes":
+
+- **The backfill endpoint below** — an operator asking for a specific repair, which
+  is what you want available during an incident.
+- **Subscribe-time walks** (`ensureAuthorDocuments`, from the API subscribe, the
+  Atmosphere subscribe/import and the PDS→local pull). A reader subscribing during
+  an incident would otherwise see nothing but `status:'error'` on that linkblog.
+  Each is one author, capped at 100 rows and deduped to one walk an hour, and the
+  sync paths schedule at most `MAX_SYNC_BACKFILLS` of them per request — so this is
+  a trickle, not a channel the flood can come back through. If a flood is arriving
+  _via_ subscriptions, unsubscribe/park the author — the fix under
+  `documents_cap_saturated` — rather than expecting this switch to stop it.
 
 **A held cursor is only worth as much as Jetstream's replay buffer.** That buffer is
 hours, not days: past it, reconnecting is served from the oldest event the server
