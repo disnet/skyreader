@@ -7,7 +7,7 @@ import {
   subscribedDocumentAuthors,
   type DocumentCommitEvent,
 } from '../services/document-store';
-import { readDocumentFlags } from '../services/document-flags';
+import { readDocumentFlags, type DocumentFlags } from '../services/document-flags';
 import { DOCUMENT_COLLECTION, READER_COLLECTION } from '../services/standard-site';
 import { sentryOptions, reportError } from '../observability/sentry';
 import { log, serializeError } from '../utils/logger';
@@ -86,13 +86,16 @@ export const JETSTREAM_MAX_WANTED_DIDS = 10_000;
 const CAP_STREAK_KEY = 'documents_cap_streak';
 
 // Back catalogues pulled per cycle for subscriptions mirrored in from a PDS. Each
-// is up to five `listRecords` pages against a foreign PDS, so this is deliberately
-// small: the alarm's job is draining streams, and the queue survives to next cycle.
-const MAX_CYCLE_BACKFILLS = 3;
+// is up to five `listRecords` pages against a foreign PDS and up to
+// `BACKFILL_QUERY_COST` D1 queries, so this is deliberately small: the alarm's job
+// is draining streams, the drain's budget already reserves
+// `DOCUMENT_CYCLE_QUERY_RESERVE` for this and the subscriptions stream, and the
+// queue survives to the next cycle.
+const MAX_CYCLE_BACKFILLS = 2;
 
 // Ceiling on that queue. A device syncing a very long subscription list can enqueue
-// faster than three a cycle drains, and this is in-memory state on a long-lived
-// object; past the ceiling the surplus authors are left to the hourly reconcile,
+// faster than a couple a cycle drains, and this is in-memory state on a long-lived
+// object; past the ceiling the surplus authors are left to the cron's reconcile,
 // which is where they would have been before any of this existed.
 const MAX_PENDING_BACKFILLS = 200;
 
@@ -347,6 +350,11 @@ class JetstreamPollerBase implements DurableObject {
         lastPollAt: startTime,
       };
 
+      // One read for the whole cycle: the document stream and the back-catalogue
+      // walks below are both "the poller writing documents", and the kill switch
+      // has to mean the same thing to both of them.
+      const flags = await readDocumentFlags(this.env);
+
       try {
         // Subscriptions (app.skyreader.feed.subscription) - global watch, filter by sync-enabled
         const subscriptionsResult = await this.pollSubscriptionsStream();
@@ -361,7 +369,7 @@ class JetstreamPollerBase implements DurableObject {
       // its cycle, which is the same isolation the ingest kill switch gives an
       // operator during a flood.
       try {
-        stats.documents = await this.pollDocumentsStream();
+        stats.documents = await this.pollDocumentsStream(flags);
       } catch (error) {
         log.error('jetstream_documents_poll_failed', { ...serializeError(error) });
         reportError(error, { tags: { source: 'jetstream-poller', phase: 'documents' } });
@@ -371,7 +379,7 @@ class JetstreamPollerBase implements DurableObject {
       // sockets are closed by now, and the count is bounded, so a slow PDS costs
       // this cycle's tail rather than the drain window.
       try {
-        await this.backfillPendingAuthors();
+        await this.backfillPendingAuthors(flags);
       } catch (error) {
         log.error('jetstream_documents_backfill_failed', { ...serializeError(error) });
       }
@@ -430,8 +438,14 @@ class JetstreamPollerBase implements DurableObject {
    * device syncs a long subscription list at once — the rest are picked up by the
    * next cycle's queue or, failing that, by the hourly reconcile.
    */
-  private async backfillPendingAuthors(): Promise<void> {
+  private async backfillPendingAuthors(flags: DocumentFlags): Promise<void> {
     if (this.pendingDocumentBackfills.size === 0) return;
+    // A backfill writes documents, so the ingest kill switch stops it too —
+    // otherwise "pause writes" would still let the poller write up to
+    // MAX_CYCLE_BACKFILLS × the per-author cap every minute, because the
+    // subscriptions stream keeps enqueuing DIDs while the switch is off. The queue
+    // is kept, not dropped: flipping the switch back resumes it.
+    if (!flags.ingestEnabled) return;
     const dids = [...this.pendingDocumentBackfills].slice(0, MAX_CYCLE_BACKFILLS);
     // Only the ones being worked leave the queue; the remainder wait for the next
     // cycle rather than being dropped.
@@ -591,7 +605,7 @@ class JetstreamPollerBase implements DurableObject {
   // server-side to the DIDs someone actually subscribes to, then re-checked
   // per event before any write. See §3a of the plan for why the filter is the
   // first of five layers and what each of the others bounds.
-  private async pollDocumentsStream(): Promise<DocumentPollStats> {
+  private async pollDocumentsStream(flags: DocumentFlags): Promise<DocumentPollStats> {
     const empty: DocumentPollStats = {
       processed: 0,
       errors: 0,
@@ -601,7 +615,6 @@ class JetstreamPollerBase implements DurableObject {
       skipped: false,
     };
 
-    const flags = await readDocumentFlags(this.env);
     if (!flags.ingestEnabled) {
       // The flood switch. Reads keep serving whatever D1 holds, the subscriptions
       // stream is untouched, and the cursor stays exactly where it was — so
@@ -679,6 +692,9 @@ class JetstreamPollerBase implements DurableObject {
         // Let in-flight writes finish before the cursor is persisted, or a cycle
         // could record progress past an event it never applied.
         await queue.catch(() => {});
+        // Then settle what the drain deferred: one cap eviction and one bookkeeping
+        // row per author written this cycle, rather than a pair per event.
+        await drain.flush().catch((e) => console.error('[JetstreamPoller] documents flush:', e));
 
         await this.state.storage.put(CURSOR_KEY.documents, drain.cursor);
 
@@ -693,6 +709,11 @@ class JetstreamPollerBase implements DurableObject {
           log.warn('documents_apply_cap_hit', {
             applied: drain.applied,
             cap: flags.applyCap,
+            // Which bound stopped the cycle. `query-budget` means the events were
+            // costlier than the common one-query case (many distinct authors or
+            // cold publications), not that the cap is set too low.
+            cappedBy: drain.cappedBy,
+            queries: drain.queries,
             capStreak,
           });
         }

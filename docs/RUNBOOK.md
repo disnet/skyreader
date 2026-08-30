@@ -305,6 +305,12 @@ GROUP BY author_did ORDER BY 2 DESC LIMIT 5;
 (§4e) and unsubscribe/park the author before resuming — the subscriptions stream
 and document reads are untouched either way.
 
+`documents_apply_cap_hit` also carries `cappedBy`. `apply-cap` is the tunable
+bound above. `query-budget` means the cycle ran out of D1 queries first, which
+raising the cap will not change: its events were costlier than the usual one
+statement apiece — many distinct authors in one cycle, or publications whose
+metadata had to be resolved cold. That drains too, just at fewer events per cycle.
+
 ### `source: client` errors after a deploy
 
 **Means:** the browser is throwing. One report is a user with an extension or a
@@ -575,7 +581,7 @@ readers stay on the proxy.
 
 | Key                        | Default          | Governs                                                      |
 | -------------------------- | ---------------- | ------------------------------------------------------------ |
-| `documents_ingest_enabled` | on (absent = on) | The poller's document stream. `'0'` = flood kill switch.     |
+| `documents_ingest_enabled` | on (absent = on) | Every background document write. `'0'` = flood kill switch.  |
 | `documents_v2_enabled`     | off (only `'1'`) | Reads served from D1 instead of the proxy. The rollout gate. |
 | `documents_apply_cap`      | 500              | Applied events per poll cycle before the drain carries over. |
 
@@ -596,8 +602,10 @@ npx wrangler d1 execute skyreader --remote --command \
      https://api.skyreader.app/api/internal/documents/backfill | jq '.backfilled, .remaining'
    ```
 
-   The hourly cron re-lists the three stalest authors anyway, so this only makes the
-   migration finish in an afternoon instead of over weeks. `remaining` does reach 0
+   The cron re-lists stale authors anyway — one a minute plus three on the hour — so
+   this only makes the migration finish in an afternoon instead of over days. Each
+   call takes a handful of authors, sized so one request stays inside D1's
+   per-invocation query ceiling; loop it. `remaining` does reach 0
    even with authors nobody can list (deleted account, dead PDS): a failed list holds
    that author out of the queue for a backoff window that doubles per consecutive
    failure, up to the 7-day reconcile interval. Their `last_error` is on
@@ -652,6 +660,13 @@ npx wrangler d1 execute skyreader --remote --command \
 The subscriptions stream keeps running, reads keep serving whatever D1 holds, and
 the document cursor stays put — so re-enabling resumes the drain rather than
 skipping the backlog. Expect `Document Stream Lag` to read "Paused" while it's off.
+
+The switch stops **every background write**, not just the drain: the poller's
+per-cycle back catalogues and the cron's reconcile pause with it, since either would
+otherwise keep writing up to a hundred rows an author while the flood is supposedly
+paused. Their queues survive the pause. The one path that still writes is the
+backfill endpoint below — an operator asking for a specific repair, which is what
+you want available during an incident.
 
 **A held cursor is only worth as much as Jetstream's replay buffer.** That buffer is
 hours, not days: past it, reconnecting is served from the oldest event the server

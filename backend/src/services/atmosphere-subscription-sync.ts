@@ -39,7 +39,8 @@ import {
 } from './atmosphere-subscription';
 import { pushSubscriptionToPds, deleteSubscriptionFromPds } from './subscription-sync';
 import type { LimitNotice } from './subscription-sync';
-import { scheduleAuthorDocuments } from './document-store';
+import { log } from '../utils/logger';
+import { createBackfillScheduler, MAX_SYNC_BACKFILLS } from './document-store';
 
 const SUBSCRIPTION_NSID = 'app.skyreader.feed.subscription';
 
@@ -163,6 +164,10 @@ export async function reconcileAtmosphereSubscriptions(
 
   const pdsClient = createPDSClient(session);
   let ops = 0;
+  // Imports fan out into this one invocation, so the back-catalogue walks they
+  // trigger are bounded the way the poller's are (see `MAX_SYNC_BACKFILLS`).
+  const scheduleBackfill = createBackfillScheduler(env, (p) => ctx.waitUntil(p));
+  let deferredBackfills = 0;
 
   try {
     // Step 1: the user's graph edges → set of followed publication URIs.
@@ -277,8 +282,10 @@ export async function reconcileAtmosphereSubscriptions(
 
       // An imported follow needs the author's back catalogue pulled in like any
       // other new subscription — otherwise the reader shows an error for this
-      // linkblog until the hourly reconcile happens to reach that author.
-      scheduleAuthorDocuments(env, (p) => ctx.waitUntil(p), meta.subjectDid);
+      // linkblog until the reconcile happens to reach that author. Past the bound,
+      // the reconcile is exactly where it goes: an author with no
+      // `document_authors` row sorts to the front of that queue.
+      if (!scheduleBackfill(meta.subjectDid)) deferredBackfills++;
 
       // Mirror to the user's app.skyreader subscription list on the PDS, so an
       // imported follow looks identical to an in-app one. Best-effort.
@@ -330,9 +337,15 @@ export async function reconcileAtmosphereSubscriptions(
       });
     }
 
-    // No backfill step: an imported follow's posts are fetched from the proxy on
-    // first open (POST /api/v2/documents/batch in routes/feeds-v2.ts), so there is
-    // nothing to warm ahead of time.
+    // Imports warm themselves: the loop above schedules up to MAX_SYNC_BACKFILLS
+    // back-catalogue walks (documents are read from D1 now, so an unlisted author
+    // has nothing to serve). Anything past that bound waits for the reconcile.
+    if (deferredBackfills > 0) {
+      log.info('atmosphere_import_backfills_deferred', {
+        deferred: deferredBackfills,
+        scheduled: MAX_SYNC_BACKFILLS,
+      });
+    }
 
     // Step 4: reconcile each local pub-sub against the graph.
     for (const [pubUri, sub] of localByPub) {

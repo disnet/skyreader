@@ -79,7 +79,7 @@ export async function handleFullSync(
     // Sync subscriptions. Pass the session id so the PDS client can self-heal a
     // stale host after a PDS migration (re-resolve + persist + retry).
     const sessionId = getSessionIdFromRequest(request) ?? undefined;
-    const subResult = await syncSubscriptions(session, env, sessionId);
+    const subResult = await syncSubscriptions(session, env, sessionId, (p) => ctx.waitUntil(p));
     result.subscriptions = subResult;
 
     if (subResult.success) {
@@ -127,7 +127,11 @@ export async function handleFullSync(
 }
 
 // POST /api/sync/subscriptions - Sync subscriptions only
-export async function handleSyncSubscriptions(request: Request, env: Env): Promise<Response> {
+export async function handleSyncSubscriptions(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext
+): Promise<Response> {
   if (request.method !== 'POST') {
     return new Response(JSON.stringify({ error: 'Method not allowed' }), {
       status: 405,
@@ -160,7 +164,7 @@ export async function handleSyncSubscriptions(request: Request, env: Env): Promi
 
   try {
     const sessionId = getSessionIdFromRequest(request) ?? undefined;
-    const result = await syncSubscriptions(session, env, sessionId);
+    const result = await syncSubscriptions(session, env, sessionId, (p) => ctx.waitUntil(p));
 
     if (result.success) {
       await updateSyncTimestamp(env, session.did, 'subscriptions');

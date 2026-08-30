@@ -27,10 +27,12 @@ import { log } from '../utils/logger';
 
 /**
  * Authors backfilled per call. A backfill is a `listRecords` walk plus a write per
- * document, so the operator drives the migration as a loop of bounded calls rather
- * than one request that would outlive its own CPU budget.
+ * document — up to `BACKFILL_QUERY_COST` D1 queries — so the operator drives the
+ * migration as a loop of bounded calls rather than one request that would outlive
+ * its CPU budget or run into `D1_QUERIES_PER_INVOCATION` partway through and lose
+ * the walks it hadn't reached. Five authors is ~560 queries, well under.
  */
-const MAX_BACKFILL_BATCH = 20;
+const MAX_BACKFILL_BATCH = 5;
 
 function unauthorized(): Response {
   return new Response(JSON.stringify({ error: 'Unauthorized' }), {

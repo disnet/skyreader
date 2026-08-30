@@ -71,6 +71,50 @@ export function authorRetryBackoffMs(errorCount: number): number {
 }
 
 /**
+ * D1's ceiling on queries per Worker invocation (paid plan), and the number every
+ * bounded loop in this file is really sized against.
+ *
+ * The unit is the *statement*, not the call: each statement inside a `DB.batch`
+ * counts on its own, so "one batch per event" is not one query per event. Hitting
+ * the ceiling is quiet in exactly the case the bounds exist for — the drain catches
+ * each throw per event, counts it as an error and advances its cursor past it — so
+ * the cost of every write here is counted rather than assumed.
+ * https://developers.cloudflare.com/d1/platform/limits/
+ */
+export const D1_QUERIES_PER_INVOCATION = 1000;
+
+/**
+ * What the drain leaves for the rest of a poll cycle: the subscriptions stream's
+ * writes, the flag and author-set reads, and the back-catalogue walks the alarm runs
+ * once both sockets are closed (`MAX_CYCLE_BACKFILLS` × `BACKFILL_QUERY_COST`).
+ */
+export const DOCUMENT_CYCLE_QUERY_RESERVE = 300;
+
+/** Queries one poll cycle's document drain may spend. */
+export const DOCUMENT_DRAIN_QUERY_BUDGET = D1_QUERIES_PER_INVOCATION - DOCUMENT_CYCLE_QUERY_RESERVE;
+
+/**
+ * Worst-case queries one applied event costs: the record write, plus a first-seen
+ * publication's cache read and its refresh. Every later event for that publication
+ * costs the write alone, because the resolved metadata is memoised on the context.
+ *
+ * Charging every event the cold-publication price is also what keeps the *fetch*
+ * subrequest budget in range: a resolve is three cross-PDS fetches, and a cycle of
+ * nothing but cold publications stops at a quarter of the query budget.
+ */
+const QUERIES_PER_APPLIED_EVENT = 4;
+
+/** Queries the end-of-run flush spends per author written during the run. */
+const QUERIES_PER_FLUSHED_AUTHOR = 2;
+
+/**
+ * Worst-case queries one author's backfill spends: a write per document up to the
+ * per-author cap, plus the prune, the sidecar reads and the bookkeeping. Callers
+ * that fan backfills out inside one invocation size their fan-out against this.
+ */
+export const BACKFILL_QUERY_COST = MAX_DOCUMENTS_PER_AUTHOR + 12;
+
+/**
  * `authorRetryBackoffMs` as SQL, so the queue query can apply it per row. Binds, in
  * order: the ceiling, the base. `1 << n` is SQLite's shift; the exponent is clamped
  * before shifting so a long-broken author can't overflow it.
@@ -116,6 +160,82 @@ function parseRecord<T>(raw: string): T | null {
 // --- Write path --------------------------------------------------------------
 
 /**
+ * State shared by a run of writes — one poll cycle's drain, or one author's
+ * backfill. Both of its jobs are about the query budget above.
+ *
+ * Publication metadata resolved once is reused by every later write in the run. A
+ * flood is one author and usually one publication, so this is the difference
+ * between one cache read for the burst and one per event.
+ *
+ * The per-author cap eviction and the ingest bookkeeping are settled once, in
+ * {@link flushDocumentApplyContext}, rather than riding every write: trimming after
+ * each of 500 events deletes nothing 499 times and spends 500 queries doing it. The
+ * trade is that the eviction is no longer atomic with the write that made it
+ * necessary — an author sits over the cap between the two, and a run that dies in
+ * between leaves them there until the next drain, backfill or reconcile trims,
+ * all of which do.
+ */
+export interface DocumentApplyContext {
+  /** Publication metadata already resolved during this run. */
+  siteMeta: Map<string, SiteMeta>;
+  /** Authors written during this run, trimmed and stamped at the flush. */
+  touched: Set<string>;
+  /** D1 queries spent so far — what the drain stops on. */
+  queries: number;
+  /** Timestamp of the most recent applied event, for the flush's bookkeeping. */
+  lastEventAt: number;
+}
+
+export function createDocumentApplyContext(): DocumentApplyContext {
+  return { siteMeta: new Map(), touched: new Set(), queries: 0, lastEventAt: 0 };
+}
+
+/**
+ * Settle the deferred per-author work: cap eviction and ingest bookkeeping, one
+ * pair of statements per author written during the run. Best effort — losing it
+ * costs a delayed eviction, never a document.
+ */
+export async function flushDocumentApplyContext(
+  env: Env,
+  ctx: DocumentApplyContext
+): Promise<void> {
+  if (ctx.touched.size === 0) return;
+  const authors = [...ctx.touched];
+  ctx.touched.clear();
+  const lastEventAt = ctx.lastEventAt || Date.now();
+  const statements = authors.flatMap((authorDid) => [
+    trimAuthorDocumentsStatement(env, authorDid),
+    authorBookkeepingStatement(env, { authorDid, lastEventAt }),
+  ]);
+  ctx.queries += statements.length;
+  try {
+    await env.DB.batch(statements);
+  } catch (error) {
+    console.error('[document-store] apply flush failed:', error);
+  }
+}
+
+/**
+ * Publication metadata for a write, resolved at most once per run. Cheap enough to
+ * do at write time — and doing it here is what keeps the serve path from ever
+ * blocking on a PDS for a canonical URL.
+ */
+async function siteMetaForWrite(
+  env: Env,
+  siteUri: string,
+  ctx: DocumentApplyContext
+): Promise<SiteMeta> {
+  const memoised = ctx.siteMeta.get(siteUri);
+  if (memoised) return memoised;
+  // A cold publication is a cache read plus a refresh write; a warm one is the
+  // read alone. Charged at the worst case, which is what the drain budgets for.
+  ctx.queries += 2;
+  const meta = await resolveSiteMeta(env, siteUri);
+  ctx.siteMeta.set(siteUri, meta);
+  return meta;
+}
+
+/**
  * The statement that upserts one `site.standard.document` record. Idempotent by
  * `record_uri`, so a replayed firehose event or a re-run backfill converges on the
  * same row — which is what makes Jetstream's at-least-once delivery safe here.
@@ -130,13 +250,14 @@ async function documentUpsertStatement(
   recordUri: string,
   recordCid: string,
   record: DocumentRecord,
-  now: number
+  now: number,
+  ctx: DocumentApplyContext
 ): Promise<D1PreparedStatement | null> {
   const parsed = parseAtUri(recordUri);
   if (!parsed) return null;
 
   const siteUri = record.site || '';
-  const meta = await resolveSiteMeta(env, siteUri);
+  const meta = await siteMetaForWrite(env, siteUri, ctx);
   const canonicalUrl = meta.baseUrl
     ? buildCanonicalUrl(meta.baseUrl, record.path || '')
     : record.path || '';
@@ -173,17 +294,22 @@ export async function upsertDocument(
   recordUri: string,
   recordCid: string,
   record: DocumentRecord,
-  now = Date.now()
+  now = Date.now(),
+  context?: DocumentApplyContext
 ): Promise<void> {
+  const ctx = context ?? createDocumentApplyContext();
   const statement = await documentUpsertStatement(
     env,
     authorDid,
     recordUri,
     recordCid,
     record,
-    now
+    now,
+    ctx
   );
-  if (statement) await statement.run();
+  if (!statement) return;
+  ctx.queries++;
+  await statement.run();
 }
 
 /**
@@ -270,20 +396,38 @@ export async function applyDocumentEvent(
   env: Env,
   event: DocumentCommitEvent,
   allowedDids: Set<string>,
-  now = Date.now()
+  now = Date.now(),
+  context?: DocumentApplyContext
 ): Promise<boolean> {
   const commit = event.commit;
   if (!commit) return false;
   if (!allowedDids.has(event.did)) return false;
 
+  // Without a caller-owned context this is a one-off write, so it flushes its own
+  // deferred work before returning and stays self-contained.
+  const ctx = context ?? createDocumentApplyContext();
+  const wrote = await applyToContext(env, event, now, ctx);
+  if (!context) await flushDocumentApplyContext(env, ctx);
+  return wrote;
+}
+
+async function applyToContext(
+  env: Env,
+  event: DocumentCommitEvent,
+  now: number,
+  ctx: DocumentApplyContext
+): Promise<boolean> {
+  const commit = event.commit!;
   const { collection, operation, rkey } = commit;
 
   if (collection === READER_COLLECTION) {
     if (operation === 'delete') {
+      ctx.queries++;
       await deleteCollection(env, event.did, rkey);
       return true;
     }
     if (!commit.record) return false;
+    ctx.queries++;
     await upsertCollection(env, event.did, rkey, commit.record as CollectionRecord, now);
     return true;
   }
@@ -293,6 +437,7 @@ export async function applyDocumentEvent(
   const recordUri = `at://${event.did}/${DOCUMENT_COLLECTION}/${rkey}`;
 
   if (operation === 'delete') {
+    ctx.queries++;
     await deleteDocument(env, recordUri);
     return true;
   }
@@ -304,21 +449,19 @@ export async function applyDocumentEvent(
     recordUri,
     commit.cid || '',
     commit.record as DocumentRecord,
-    now
+    now,
+    ctx
   );
   if (!upsert) return false;
 
-  // One `batch` rather than three `run`s: D1 calls count against the Worker's
-  // per-invocation subrequest budget, and the drain's whole job is to apply a
-  // burst's worth of events inside one alarm. Three statements per event would put
-  // the apply cap (500) at ~1500 subrequests, over the 1000 ceiling — see the cap's
-  // note in `document-flags.ts`. Batching also makes the write atomic: the cap
-  // eviction and the bookkeeping either land with the document or not at all.
-  await env.DB.batch([
-    upsert,
-    trimAuthorDocumentsStatement(env, event.did),
-    authorBookkeepingStatement(env, { authorDid: event.did, lastEventAt: now }),
-  ]);
+  // One statement per applied event. The cap eviction and the bookkeeping this
+  // write implies are recorded on the context and settled once at the flush — see
+  // `DocumentApplyContext` for why, and `D1_QUERIES_PER_INVOCATION` for the ceiling
+  // that makes per-event statement count the thing to economise on.
+  ctx.queries++;
+  await upsert.run();
+  ctx.touched.add(event.did);
+  ctx.lastEventAt = Math.max(ctx.lastEventAt, now);
   return true;
 }
 
@@ -327,11 +470,17 @@ export type DrainOutcome = 'applied' | 'skipped' | 'error' | 'capped';
 
 export interface DocumentDrain {
   handle(event: DocumentCommitEvent & { time_us?: number }): Promise<DrainOutcome>;
+  /** Settle the cycle's deferred per-author work. Call once, after the socket closes. */
+  flush(): Promise<void>;
   /** Events actually written this cycle. */
   readonly applied: number;
   readonly errors: number;
-  /** The cycle stopped on the apply cap. */
+  /** The cycle stopped early — on the apply cap or on the query budget. */
   readonly capped: boolean;
+  /** Which of the two stopped it, for the log line. */
+  readonly cappedBy: 'apply-cap' | 'query-budget' | null;
+  /** D1 queries this cycle's drain has spent, flush included. */
+  readonly queries: number;
   /** Cursor to persist: the last event this cycle finished handling, never past it. */
   readonly cursor: string;
 }
@@ -347,17 +496,37 @@ export interface DocumentDrain {
  * overrunning the alarm, and because the cursor never advances past unapplied work,
  * draining slowly costs latency rather than data.
  *
+ * `queryBudget` is the harder of the two bounds and the one that has to hold: D1
+ * refuses everything past `D1_QUERIES_PER_INVOCATION` in an invocation, and the
+ * drain would meet that ceiling by catching a throw per event and walking its cursor
+ * over the burst it was meant to protect. So the cycle stops while it can still
+ * afford another event *and* the flush its writes have already earned, whatever the
+ * configured cap says.
+ *
  * Kept out of the Durable Object so the spike behaviour can be driven directly with
  * M ≫ N events instead of through a WebSocket.
  */
 export function createDocumentDrain(
   env: Env,
-  options: { allowed: Set<string>; cap: number; cursor?: string; now?: () => number }
+  options: {
+    allowed: Set<string>;
+    cap: number;
+    cursor?: string;
+    now?: () => number;
+    queryBudget?: number;
+  }
 ): DocumentDrain {
   let applied = 0;
   let errors = 0;
-  let capped = false;
+  let cappedBy: 'apply-cap' | 'query-budget' | null = null;
   let cursor = options.cursor ?? String((options.now?.() ?? Date.now()) * 1000);
+  const ctx = createDocumentApplyContext();
+  const queryBudget = options.queryBudget ?? DOCUMENT_DRAIN_QUERY_BUDGET;
+
+  /** Room for one more event and for flushing the author it would touch. */
+  const affordable = () =>
+    ctx.queries + QUERIES_PER_APPLIED_EVENT + QUERIES_PER_FLUSHED_AUTHOR * (ctx.touched.size + 1) <=
+    queryBudget;
 
   return {
     get applied() {
@@ -367,23 +536,37 @@ export function createDocumentDrain(
       return errors;
     },
     get capped() {
-      return capped;
+      return cappedBy !== null;
+    },
+    get cappedBy() {
+      return cappedBy;
+    },
+    get queries() {
+      return ctx.queries;
     },
     get cursor() {
       return cursor;
+    },
+    async flush() {
+      await flushDocumentApplyContext(env, ctx);
     },
     async handle(event) {
       const collection = event.commit?.collection;
       if (collection !== DOCUMENT_COLLECTION && collection !== READER_COLLECTION) return 'skipped';
 
       if (applied >= options.cap) {
-        capped = true;
+        cappedBy = 'apply-cap';
+        return 'capped';
+      }
+
+      if (!affordable()) {
+        cappedBy = 'query-budget';
         return 'capped';
       }
 
       let outcome: DrainOutcome = 'skipped';
       try {
-        const wrote = await applyDocumentEvent(env, event, options.allowed, options.now?.());
+        const wrote = await applyDocumentEvent(env, event, options.allowed, options.now?.(), ctx);
         if (wrote) {
           applied++;
           outcome = 'applied';
@@ -478,7 +661,10 @@ export interface BackfillResult {
  */
 export async function backfillAuthorDocuments(
   env: Env,
-  authorDid: string
+  authorDid: string,
+  // One context per author: their documents nearly all share one publication, so
+  // the metadata behind every canonical URL is resolved once instead of per record.
+  ctx: DocumentApplyContext = createDocumentApplyContext()
 ): Promise<BackfillResult> {
   if (!isValidDid(authorDid)) {
     return {
@@ -515,7 +701,7 @@ export async function backfillAuthorDocuments(
   for (const record of kept) {
     const parsed = parseAtUri(record.uri);
     if (!parsed || parsed.did !== authorDid) continue;
-    await upsertDocument(env, authorDid, record.uri, record.cid, record.value, now);
+    await upsertDocument(env, authorDid, record.uri, record.cid, record.value, now, ctx);
   }
 
   // Anything not in the listed set is gone from the repo (or past the cap), which
@@ -720,7 +906,11 @@ export async function staleDocumentAuthors(
   return (result.results ?? []).map((r) => r.did).filter((did): did is string => isValidDid(did));
 }
 
-/** Re-list the stalest authors. Bounded per call — this rides the hourly cron. */
+/**
+ * Re-list the stalest authors. Bounded per call — this rides the cron, one author a
+ * minute plus three on the hour, and never more than `BACKFILL_QUERY_COST` queries
+ * an author of that run's budget.
+ */
 export async function reconcileStaleAuthors(env: Env, limit = 3): Promise<BackfillResult[]> {
   const dids = await staleDocumentAuthors(env, limit);
   const results: BackfillResult[] = [];
@@ -789,6 +979,45 @@ export function scheduleAuthorDocuments(
       });
     })
   );
+}
+
+/**
+ * Back catalogues one sync request may pull.
+ *
+ * A single subscribe schedules one walk and is done. The sync paths are different:
+ * they can import or mirror dozens of `atproto.documents` rows in one pass, and
+ * every scheduled walk runs in that same invocation via `waitUntil` — up to
+ * `BACKFILL_QUERY_COST` D1 queries each, against the same
+ * `D1_QUERIES_PER_INVOCATION` ceiling the drain budgets for. Fifteen of them would
+ * take the whole request past it, failing the surviving walks *and* whatever else
+ * the sync had scheduled there.
+ *
+ * Two per path, then — `/api/sync` runs both — with the rest left to the reconcile,
+ * where a never-listed author already sorts to the front of the queue.
+ */
+export const MAX_SYNC_BACKFILLS = 2;
+
+/**
+ * A bounded, de-duplicating scheduler for the sync paths. Returns a function that
+ * schedules a walk and reports whether it did, so a caller can say how many authors
+ * it left to the reconcile.
+ */
+export function createBackfillScheduler(
+  env: Env,
+  waitUntil: (promise: Promise<unknown>) => void,
+  limit = MAX_SYNC_BACKFILLS
+): (authorDid: string) => boolean {
+  const scheduled = new Set<string>();
+  return (authorDid: string) => {
+    if (!isValidDid(authorDid)) return false;
+    // Two publications by the same author are one walk, and the second caller is
+    // told it is covered rather than deferred.
+    if (scheduled.has(authorDid)) return true;
+    if (scheduled.size >= limit) return false;
+    scheduled.add(authorDid);
+    scheduleAuthorDocuments(env, waitUntil, authorDid);
+    return true;
+  };
 }
 
 // --- Read path ---------------------------------------------------------------

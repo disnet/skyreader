@@ -2,15 +2,21 @@
  * The two operator switches for standard.site documents, both `sync_state` rows so
  * a flip is a D1 write, not a deploy (same pattern as `timeline_enabled`).
  *
- * They are deliberately separate. `documents_ingest_enabled` stops the poller
- * *writing* — the flood response, which must not touch the subscriptions stream and
- * must leave reads serving whatever D1 already holds. `documents_v2_enabled` chooses
+ * They are deliberately separate. `documents_ingest_enabled` stops every background
+ * path that *writes* documents — the poller's drain, the back catalogues it pulls
+ * for mirrored subscriptions, and the cron's reconcile — which is the flood
+ * response: it must not touch the subscriptions stream and must leave reads serving
+ * whatever D1 already holds. (The operator backfill endpoint is deliberately exempt:
+ * it is a deliberate repair, not a loop that would keep the flood fed.) The queues
+ * survive the pause, so flipping it back resumes rather than skips.
+ * `documents_v2_enabled` chooses
  * where reads *come from* — the rollout gate and the one-flip rollback to the proxy.
  * Sequencing the cutover needs both: ingest on and filling for as long as it takes,
  * reads flipped only once a shadow-compare says D1 agrees with the proxy.
  */
 
 import type { Env } from '../types';
+import { DOCUMENT_DRAIN_QUERY_BUDGET } from './document-store';
 
 /** Reads served from D1 rather than the Fly proxy. Off until explicitly enabled. */
 export const DOCUMENTS_V2_ENABLED_KEY = 'documents_v2_enabled';
@@ -30,17 +36,16 @@ export const DEFAULT_DOCUMENT_APPLY_CAP = 500;
 /**
  * Hard ceiling on the cap, whatever the override says.
  *
- * Burst shape is not the only constraint on this number: every D1 call inside the
- * alarm counts against the Worker's per-invocation subrequest budget (1000 on the
- * paid plan), and hitting that ceiling is quiet — each throw is caught per event,
- * counted as an error, and the cursor advances past it, so the case the cap exists
- * to make safe would be the one most likely to drop events. `applyDocumentEvent`
- * batches its writes into a single call, so an applied event costs ~1 subrequest
- * (plus, on a cold publication, its metadata resolve); 900 leaves headroom for the
- * cycle's own reads and those resolves. Phase 0's measurement sizes the cap under
- * this, never over it.
+ * Burst shape is not the only constraint on this number, and it is not the binding
+ * one. D1 allows `D1_QUERIES_PER_INVOCATION` queries per invocation — counting each
+ * statement inside a `batch` separately — and the drain budgets against that
+ * directly (`DOCUMENT_DRAIN_QUERY_BUDGET`), stopping while it can still pay for the
+ * events it has already applied. An applied event costs one query in the common
+ * case, so the budget is also the most events any cap could ever buy: clamping here
+ * keeps an override from claiming a number the cycle cannot fund. Phase 0's
+ * measurement sizes the cap under this, never over it.
  */
-export const MAX_DOCUMENT_APPLY_CAP = 900;
+export const MAX_DOCUMENT_APPLY_CAP = DOCUMENT_DRAIN_QUERY_BUDGET;
 
 export interface DocumentFlags {
   /** Serve reads from D1 (opt-in: only an explicit '1'). */

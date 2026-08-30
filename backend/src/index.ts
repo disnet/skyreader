@@ -20,6 +20,7 @@ import {
 import { handleIngest, handleCrawlSet, handleFeedHealth } from './routes/ingest';
 import { handleDocumentBackfill, handleDocumentShadowCompare } from './routes/documents';
 import { reconcileStaleAuthors } from './services/document-store';
+import { readDocumentFlags } from './services/document-flags';
 import { handleTimeline } from './routes/timeline';
 import {
   handleGuestMarginHighlights,
@@ -819,7 +820,7 @@ async function route(
       break;
     case url.pathname === '/api/sync/subscriptions':
       if (!session) return unauthorizedResponse(headers);
-      response = await handleSyncSubscriptions(request, env);
+      response = await handleSyncSubscriptions(request, env, ctx);
       break;
     case url.pathname === '/api/sync/status':
       if (!session) return unauthorizedResponse(headers);
@@ -958,6 +959,26 @@ async function runScheduled(
       await runRecordingStep('proxy-stats', () => recordProxyStats(env));
     }
 
+    // Phase 1c: one document author per minute, which is what makes "the rest is
+    // the reconcile's job" an honest thing for the bounded sync paths to say. The
+    // queue takes never-listed authors first, so a restore that brought back more
+    // linkblogs than one request may warm is served in minutes rather than across
+    // the hourly tick's afternoon. This writes documents, so the ingest kill switch
+    // stops it like every other background write.
+    const documentFlags = await readDocumentFlags(env);
+    try {
+      const reconciled = documentFlags.ingestEnabled ? await reconcileStaleAuthors(env, 1) : [];
+      if (reconciled.length > 0) {
+        log.info('cron_documents_cold_start', {
+          authors: reconciled.length,
+          failed: reconciled.filter((r) => !r.ok).length,
+        });
+      }
+    } catch (error) {
+      log.error('cron_phase_failed', { phase: 'documents-cold-start', ...serializeError(error) });
+      reportError(error, { tags: { source: 'cron', phase: 'documents-cold-start' } });
+    }
+
     // Phase 2: Clean up rate limit records
     let rateLimitDuration = 0;
     let rateLimitDeleted = 0;
@@ -1077,8 +1098,12 @@ async function runScheduled(
       // nothing else fills — the proxy closed those by full-replacing its blob on
       // every refresh. A few of the stalest authors per hour re-lists everyone
       // inside the reconcile interval without ever making the cron the bottleneck.
+      // Paused with ingest, like every other background write of documents: the
+      // kill switch is a flood response, and this writes up to a hundred rows an
+      // author. The operator backfill endpoint stays available regardless — that
+      // one is a deliberate repair, not a background loop.
       try {
-        const reconciled = await reconcileStaleAuthors(env, 3);
+        const reconciled = documentFlags.ingestEnabled ? await reconcileStaleAuthors(env, 3) : [];
         if (reconciled.length > 0) {
           log.info('cron_documents_reconcile', {
             authors: reconciled.length,

@@ -297,6 +297,96 @@ describe('the per-cycle apply cap (spike drill)', () => {
     expect(drain.applied).toBe(0);
     expect(drain.capped).toBe(false);
   });
+
+  // D1 refuses every query past its per-invocation ceiling, and the drain would
+  // meet that ceiling the worst possible way: a throw per event, counted as an
+  // error, cursor walked past the burst. So the budget stops the cycle first, with
+  // the same cursor-carry the apply cap gets.
+  it('stops on the query budget before D1 would refuse the write', async () => {
+    const burst = Array.from({ length: 20 }, (_, i) => docEvent(`b${i}`, { time_us: 2_000 + i }));
+    // Room for a handful of events plus the flush they earn, far below `cap`.
+    const drain = createDocumentDrain(env, {
+      allowed,
+      cap: 1_000,
+      cursor: '1_000',
+      queryBudget: 12,
+    });
+    for (const event of burst) await drain.handle(event);
+
+    expect(drain.capped).toBe(true);
+    expect(drain.cappedBy).toBe('query-budget');
+    expect(drain.applied).toBeGreaterThan(0);
+    expect(drain.applied).toBeLessThan(burst.length);
+    expect(drain.errors).toBe(0);
+    // The cursor sits at the last event it applied, so the rest replay next cycle.
+    expect(drain.cursor).toBe(String(2_000 + drain.applied - 1));
+
+    await drain.flush();
+    // Nothing was lost: what it refused, the next cycle applies.
+    const second = createDocumentDrain(env, { allowed, cap: 1_000, cursor: drain.cursor });
+    for (const event of burst.slice(drain.applied)) await second.handle(event);
+    await second.flush();
+    expect(second.capped).toBe(false);
+    expect((await loadAuthorDocuments(env, AUTHOR)).length).toBe(burst.length);
+  });
+
+  // One statement per applied event is what makes the budget above affordable: the
+  // cap eviction and the bookkeeping ride the flush, once per author.
+  it('spends one query per applied event and evicts past the cap at the flush', async () => {
+    const burst = Array.from({ length: 8 }, (_, i) => docEvent(`q${i}`, { time_us: 3_000 + i }));
+    const drain = createDocumentDrain(env, { allowed, cap: 100, cursor: '2_999' });
+    for (const event of burst) await drain.handle(event);
+
+    // Eight writes plus the one publication-metadata resolve they share.
+    expect(drain.queries).toBe(burst.length + 2);
+    // Bookkeeping is deferred with the trim, so nothing has stamped the author yet.
+    const before = await env.DB.prepare(
+      'SELECT last_event_at FROM document_authors WHERE author_did = ?'
+    )
+      .bind(AUTHOR)
+      .first<{ last_event_at: number | null }>();
+    expect(before).toBeNull();
+
+    await drain.flush();
+    const after = await env.DB.prepare(
+      'SELECT last_event_at FROM document_authors WHERE author_did = ?'
+    )
+      .bind(AUTHOR)
+      .first<{ last_event_at: number | null }>();
+    expect(after?.last_event_at).toBeTruthy();
+    // Two statements for the one author written, whatever the event count.
+    expect(drain.queries).toBe(burst.length + 4);
+  });
+
+  // The per-author row cap is layer 4 of the spike guard. It now lands at the
+  // flush rather than on every write, so the drill is: burst past the cap in one
+  // cycle, and check the cycle still ends under it.
+  it('holds the per-author row cap across a burst that overshoots it', async () => {
+    const overshoot = 5;
+    const burst = Array.from({ length: MAX_DOCUMENTS_PER_AUTHOR + overshoot }, (_, i) =>
+      docEvent(`cap${String(i).padStart(3, '0')}`, {
+        time_us: 4_000 + i,
+        publishedAt: new Date(Date.UTC(2026, 0, 1) + i * 60_000).toISOString(),
+      })
+    );
+    const drain = createDocumentDrain(env, { allowed, cap: burst.length, cursor: '3_999' });
+    for (const event of burst) await drain.handle(event);
+    await drain.flush();
+
+    const count = await env.DB.prepare(
+      'SELECT COUNT(*) AS n FROM documents_v2 WHERE author_did = ?'
+    )
+      .bind(AUTHOR)
+      .first<{ n: number }>();
+    expect(count?.n).toBe(MAX_DOCUMENTS_PER_AUTHOR);
+    // The oldest are the ones evicted, exactly as the per-event trim did.
+    const oldest = await env.DB.prepare(
+      'SELECT rkey FROM documents_v2 WHERE author_did = ? ORDER BY published_at ASC LIMIT 1'
+    )
+      .bind(AUTHOR)
+      .first<{ rkey: string }>();
+    expect(oldest?.rkey).toBe(`cap${String(overshoot).padStart(3, '0')}`);
+  });
 });
 
 describe('the connect-time DID filter', () => {

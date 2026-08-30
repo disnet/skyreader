@@ -1,6 +1,8 @@
 import type { Env, Session } from '../types';
 import { createPDSClient, type PDSResult, type WriteOp } from './pds-client';
 import { getUserTierLimits } from './user-tier';
+import { createBackfillScheduler } from './document-store';
+import { log } from '../utils/logger';
 
 const COLLECTION = 'app.skyreader.feed.subscription';
 
@@ -191,7 +193,10 @@ export async function countDirtySubscriptions(env: Env, did: string): Promise<nu
 export async function syncSubscriptions(
   session: Session,
   env: Env,
-  sessionId?: string
+  sessionId?: string,
+  // Lets the pull step warm the linkblogs it restores. Absent (a background or
+  // test caller), those authors are left to the reconcile.
+  waitUntil?: (promise: Promise<unknown>) => void
 ): Promise<SyncResult> {
   const result: SyncResult = {
     success: true,
@@ -429,6 +434,23 @@ export async function syncSubscriptions(
       await env.DB.batch(statements);
       result.pulledFromPds = toAddLocally.length;
       console.log(`[SubscriptionSync] Successfully inserted ${toAddLocally.length} subscriptions`);
+
+      // A restored `atproto.documents` row needs the author's back catalogue like
+      // any other new subscription: documents are served from D1, so an author
+      // nobody has listed serves `status:'error'` on every poll. This is the
+      // restore-from-the-Atmosphere case — the PDS records survive, the local rows
+      // don't — and it can pull in far more rows at once than a subscribe does,
+      // hence the bound. The rest are left to the reconcile, which takes
+      // never-listed authors first.
+      if (waitUntil) {
+        const scheduleBackfill = createBackfillScheduler(env, waitUntil);
+        let deferred = 0;
+        for (const sub of toAddLocally) {
+          if (!sub.sourceType?.startsWith('atproto.') || !sub.subjectDid) continue;
+          if (!scheduleBackfill(sub.subjectDid)) deferred++;
+        }
+        if (deferred > 0) log.info('subscription_sync_backfills_deferred', { deferred });
+      }
     }
 
     // Step 3b: Auto-fill freed active slots from capacity-parked rows. Rows the

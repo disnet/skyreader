@@ -42,14 +42,25 @@ collection stream would eat all of it, so:
    `documents_apply_cap` (500) events per cycle and only ever advances its cursor past an
    event it finished. A burst drains over successive cycles instead of starving the
    subscriptions stream or overrunning the alarm, and slow draining costs latency, not
-   data.
+   data. The cap has a harder twin: the drain also counts the D1 queries it spends and
+   stops at `DOCUMENT_DRAIN_QUERY_BUDGET`, because D1 refuses everything past
+   `D1_QUERIES_PER_INVOCATION` (1000, counting each statement in a `batch` separately) and
+   the drain would meet that ceiling the worst possible way — a throw per event, counted as
+   an error, cursor walked over the burst the cap exists to protect. Applying an event is
+   one statement for exactly this reason: the cap eviction (layer 4) and the ingest
+   bookkeeping are settled once per author at the end of the cycle rather than riding every
+   write.
 4. **Per-author row cap** — 100 rows, oldest evicted by `published_at`. This is the only
    layer that helps against the dangerous case: an author we _subscribe to_ dumping
    thousands of documents passes the DID filter by design.
 5. **Observability + kill switch** — the document stream has its own `streamLagMs`, its own
    Sentry alert, a cap-saturation streak counter surfaced on the admin ops panel, and
    `documents_ingest_enabled` to pause writes without touching reads or the subscriptions
-   stream.
+   stream. "Writes" means every background one: the drain, the back catalogues the poller
+   pulls for mirrored subscriptions, and the cron's reconcile. Otherwise the switch would
+   leave the poller writing up to a hundred rows an author a minute, because the
+   subscriptions stream keeps enqueuing DIDs while it is off. The operator backfill
+   endpoint is the deliberate exception.
 
 ## What's in D1
 
@@ -93,11 +104,19 @@ accounts at the front of the queue would starve every other author forever, sile
 
 Cold start is the reconcile's other job, and it is not supposed to have to do it: every
 path that creates an `atproto.documents` subscription — the API, the Atmosphere subscribe
-button, the PDS→local sync, and a subscription mirrored in by the poller — calls
-`ensureAuthorDocuments`, which lists the author unless we hold a fresh listing or are
-inside their backoff. A subscription whose author has never been listed serves
-`status:'error'` on every poll, so leaving that to the hourly reconcile means an hour of a
-visibly broken linkblog.
+button, the Atmosphere graph import, the PDS→local subscription pull, and a subscription
+mirrored in by the poller — calls `ensureAuthorDocuments`, which lists the author unless we
+hold a fresh listing or are inside their backoff. A subscription whose author has never
+been listed serves `status:'error'` on every poll, so leaving that to the reconcile means a
+visibly broken linkblog in the meantime.
+
+The two sync paths are the ones that can create many subscriptions at once, and every walk
+they schedule runs in the same invocation via `waitUntil` — a dozen of them would exhaust
+`D1_QUERIES_PER_INVOCATION` and take down the mirrors scheduled alongside. So each warms
+`MAX_SYNC_BACKFILLS` (2) authors and leaves the rest to the reconcile, where an author with
+no `document_authors` row already sorts to the front of the queue. That queue is drained by
+the every-minute cron at one author a tick as well as by the hourly three, so the tail of a
+large restore is minutes rather than an afternoon.
 
 ## Rollout
 
@@ -111,9 +130,12 @@ soaked; rollback is the same flag set back to `'0'`.
 
 - **Phase 0 measurement.** The apply cap (500) is a strawman sized by reasoning, not by a
   measured burst shape. `documents_apply_cap` exists so it can be tuned from the observed
-  `documents_apply_cap_hit` rate without a deploy — under `MAX_DOCUMENT_APPLY_CAP` (900),
-  which is the Worker subrequest budget rather than the burst shape talking: an applied
-  event costs one batched D1 call plus, on a cold publication, its metadata resolve.
+  `documents_apply_cap_hit` rate without a deploy — clamped at `MAX_DOCUMENT_APPLY_CAP`,
+  which is the query budget rather than the burst shape talking: an applied event costs one
+  D1 statement (plus, on a publication this cycle has not seen, its metadata resolve), so
+  the budget is also the most events any cap could buy. A `cappedBy: 'query-budget'` line
+  in `documents_apply_cap_hit` means the cycle's events were costlier than that common
+  case — many distinct authors, or cold publications — not that the cap is set too low.
 - **`linkblog-site`** still fetches documents from the proxy's `/documents`. It moves to
   the Worker after the prod flag flip, so both apps cut over from the same store.
 - **Decommission.** Once the soak passes: remove `DocumentFirehose`, `document_cache`, its

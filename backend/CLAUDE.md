@@ -30,11 +30,18 @@ and the subscription-gated pull-through in `/api/v2/feeds/fetch`.
 and `/api/v2/documents/get` serve from D1 once `sync_state.documents_v2_enabled` is `'1'` and from
 the proxy until then, wire-identical either way. Writes have their own switch
 (`documents_ingest_enabled`) so a flood can be paused without touching reads or the subscriptions
-stream. Every path that creates an `atproto.documents` subscription — the API, the Atmosphere
-subscribe button, the PDS→local sync, and a subscription mirrored in by the poller — goes through
-`ensureAuthorDocuments`, because a subscription whose author was never listed serves
-`status:'error'` on every poll until something lists them. See `docs/plans/DOCUMENTS_TO_D1.md` and
-RUNBOOK §4e.
+stream; it stops every background write — the drain, the poller's back catalogues and the cron's
+reconcile — leaving only the operator backfill endpoint. Every path that creates an
+`atproto.documents` subscription — the API, the Atmosphere subscribe button, the Atmosphere graph
+import, the PDS→local subscription pull, and a subscription mirrored in by the poller — goes
+through `ensureAuthorDocuments`, because a subscription whose author was never listed serves
+`status:'error'` on every poll until something lists them. The two sync paths bound their fan-out
+at `MAX_SYNC_BACKFILLS` and leave the tail to the reconcile (a never-listed author sorts to the
+front of that queue, drained one a minute plus three an hour): every walk they schedule runs in
+the same invocation, and D1 allows `D1_QUERIES_PER_INVOCATION` queries per one. That ceiling is
+what the drain budgets against too, and why an applied event costs a single statement — the cap
+eviction and bookkeeping settle once per author at the end of a cycle. See
+`docs/plans/DOCUMENTS_TO_D1.md` and RUNBOOK §4e.
 
 ## Key Concepts
 
