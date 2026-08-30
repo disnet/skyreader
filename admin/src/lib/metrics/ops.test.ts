@@ -128,7 +128,7 @@ describe('ops tiles', () => {
 
   it('renders a full set of tiles before the cron has ever run', () => {
     const metrics = opsMetricsFrom({ cron: null, poller: null, proxy: null }, NOW);
-    expect(metrics).toHaveLength(6);
+    expect(metrics).toHaveLength(7);
     expect(metrics.every((m) => m.status === 'error')).toBe(true);
   });
 });

@@ -362,6 +362,32 @@ describe('POST /documents', () => {
     expect(json.authors[0].status).toBe('error');
   });
 
+  it('shortens a legacy error-placeholder backoff when the author is requested', async () => {
+    const { db, app } = createTestApp();
+    const now = Date.now();
+    insertDocCache(db, {
+      documents: [],
+      fetchedAt: now,
+      listedAt: now,
+      lastRequestedAt: now - 1000,
+      errorCount: 5,
+      nextRetryAt: now + 7 * 24 * 60 * 60 * 1000,
+    });
+
+    const json = (await (await postDocuments(app, [{ did: AUTHOR }])).json()) as {
+      authors: Array<{ status: string; nextRetryAt?: number }>;
+    };
+    const row = db
+      .query<{ next_retry_at: number }, [string]>(
+        'SELECT next_retry_at FROM document_cache WHERE did = ?'
+      )
+      .get(AUTHOR);
+
+    expect(json.authors[0].status).toBe('error');
+    expect(row!.next_retry_at).toBeLessThanOrEqual(Date.now() + 6 * 60 * 60 * 1000);
+    expect(json.authors[0].nextRetryAt).toBe(row!.next_retry_at);
+  });
+
   it('rejects an empty authors array', async () => {
     const { app } = createTestApp();
     const res = await postDocuments(app, []);
@@ -841,6 +867,51 @@ describe('POST /documents firehose-covered re-list floor', () => {
     await postDocuments(app, [{ did: AUTHOR, siteUri: EMPTY_PUB }]);
     expect(inFlightDocs.size).toBe(0);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('document cache repair guards', () => {
+  it('backfills a pre-migration NULL listed_at from fetched_at', () => {
+    const db = new Database(':memory:');
+    initDatabase(db);
+    const fetchedAt = Date.now() - 123_000;
+    db.run(
+      `INSERT INTO document_cache
+       (did, documents_json, cached_at, fetched_at, listed_at, last_requested_at)
+       VALUES (?, '[]', ?, ?, NULL, ?)`,
+      [AUTHOR, fetchedAt, fetchedAt, fetchedAt]
+    );
+
+    initDatabase(db);
+
+    const row = db
+      .query<{ listed_at: number }, [string]>('SELECT listed_at FROM document_cache WHERE did = ?')
+      .get(AUTHOR);
+    expect(row?.listed_at).toBe(fetchedAt);
+  });
+
+  it('caps permanent-error backoff for an actively requested author', async () => {
+    const { db, app } = createTestApp({ cacheTtlMs: 1, staleTtlMs: 2 });
+    const now = Date.now();
+    insertDocCache(db, {
+      documents: [proxyDoc({ recordUri: 'real' })],
+      fetchedAt: now - 10_000,
+      listedAt: now - 10_000,
+      lastRequestedAt: now,
+      errorCount: 4,
+    });
+    const fetchMock = mockAtprotoFetch({ listStatus: 500 });
+
+    await postDocuments(app, [{ did: AUTHOR }]);
+
+    const row = db
+      .query<{ error_count: number; next_retry_at: number }, [string]>(
+        'SELECT error_count, next_retry_at FROM document_cache WHERE did = ?'
+      )
+      .get(AUTHOR);
+    expect(row?.error_count).toBe(5);
+    expect(row!.next_retry_at).toBeLessThanOrEqual(Date.now() + 6 * 60 * 60 * 1000);
+    fetchMock.mockRestore();
   });
 });
 

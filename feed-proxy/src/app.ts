@@ -316,6 +316,7 @@ const DEFAULT_WARM_TARGET_CYCLE_MS = 60 * 60 * 1000;
 // a record that predates the cache row). One list per author per day is a
 // rounding error against the warm loop's ordinary volume.
 const FIREHOSE_RELIST_MS = 24 * 60 * 60 * 1000; // 24 hours
+const ACTIVE_DOCUMENT_BACKOFF_MAX_MS = 6 * 60 * 60 * 1000;
 const MAX_RESPONSE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
 // Extracted article content is effectively immutable per URL; cache it for a long
 // time so repeat (and cross-user) saves of the same article are free.
@@ -1123,6 +1124,10 @@ export function initDatabase(db: Database): void {
   if (!new Set(docColumns.map((c) => c.name)).has('listed_at')) {
     db.run(`ALTER TABLE document_cache ADD COLUMN listed_at INTEGER`);
   }
+  // Preserve the pre-migration freshness rather than forcing every cached
+  // author to re-list at once. From here on listed_at is the sole list clock;
+  // firehose splices may safely continue bumping fetched_at.
+  db.run(`UPDATE document_cache SET listed_at = fetched_at WHERE listed_at IS NULL`);
 
   // Small key/value store for sync bookkeeping (e.g. the Jetstream document
   // firehose cursor), so the stream resumes across restarts without replaying
@@ -1305,7 +1310,16 @@ export function createApp(db: Database, config: AppConfig) {
   // Default: firehose absent → unhealthy, nothing subscribed (serve path keeps
   // its existing age-based refresh behavior).
   const getFirehoseStatus =
-    config.getFirehoseStatus ?? (() => ({ healthy: false, isSubscribed: () => false }));
+    config.getFirehoseStatus ??
+    (() => ({
+      healthy: false,
+      connected: false,
+      subscribedDids: 0,
+      lastEventAt: null,
+      reconnectAttempts: 0,
+      cursor: null,
+      isSubscribed: () => false,
+    }));
 
   // Track in-flight fetches to avoid duplicate requests
   const inFlight = new Map<string, Promise<ParsedFeed | null>>();
@@ -1902,6 +1916,20 @@ export function createApp(db: Database, config: AppConfig) {
 
     // Circuit breaker: respect backoff window.
     if (cached?.next_retry_at && now < cached.next_retry_at) {
+      // Rows may already carry the old seven-day tier from before this guard
+      // shipped. A current reader is itself the signal to shorten that freeze;
+      // persist the clamp so a later poll can retry even if this process exits.
+      if (
+        cached.last_requested_at &&
+        cached.last_requested_at > now - warmActiveWindowMs &&
+        cached.next_retry_at > now + ACTIVE_DOCUMENT_BACKOFF_MAX_MS
+      ) {
+        cached.next_retry_at = now + ACTIVE_DOCUMENT_BACKOFF_MAX_MS;
+        db.run('UPDATE document_cache SET next_retry_at = ? WHERE did = ?', [
+          cached.next_retry_at,
+          did,
+        ]);
+      }
       return cached.documents_json ? (JSON.parse(cached.documents_json) as ProxyDocument[]) : null;
     }
 
@@ -1930,10 +1958,13 @@ export function createApp(db: Database, config: AppConfig) {
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Unknown error';
       const newErrorCount = (cached?.error_count || 0) + 1;
-      const nextRetryAt =
+      let nextRetryAt =
         newErrorCount >= MAX_RECOVERABLE_ERRORS
           ? now + PERMANENT_ERROR_DELAY_MS
           : now + calculateBackoff(newErrorCount);
+      if (cached?.last_requested_at && cached.last_requested_at > now - warmActiveWindowMs) {
+        nextRetryAt = Math.min(nextRetryAt, now + ACTIVE_DOCUMENT_BACKOFF_MAX_MS);
+      }
       console.error(
         `[Proxy] documents ${did}: ${msg} (retry at ${new Date(nextRetryAt).toISOString()})`
       );
@@ -1945,9 +1976,9 @@ export function createApp(db: Database, config: AppConfig) {
         );
       } else {
         db.run(
-          `INSERT INTO document_cache (did, documents_json, cached_at, fetched_at, error_count, last_error, last_error_at, next_retry_at, last_requested_at)
-					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [did, '[]', now, now, newErrorCount, msg, now, nextRetryAt, now]
+          `INSERT INTO document_cache (did, documents_json, cached_at, fetched_at, listed_at, error_count, last_error, last_error_at, next_retry_at, last_requested_at)
+					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [did, '[]', now, now, now, newErrorCount, msg, now, nextRetryAt, now]
         );
       }
 
@@ -2171,6 +2202,26 @@ export function createApp(db: Database, config: AppConfig) {
       )
       .get(now + 6 * 24 * 60 * 60 * 1000); // More than 6 days means it's a permanent error
 
+    const activeDocumentCutoff = now - warmActiveWindowMs;
+    const activeDocuments = db
+      .query<{ count: number }, [number]>(
+        'SELECT COUNT(*) as count FROM document_cache WHERE last_requested_at > ?'
+      )
+      .get(activeDocumentCutoff);
+    const frozenDocuments = db
+      .query<{ count: number }, [number, number]>(
+        `SELECT COUNT(*) as count FROM document_cache
+         WHERE last_requested_at > ? AND listed_at > 0 AND listed_at < ?`
+      )
+      .get(activeDocumentCutoff, now - 2 * firehoseRelistMs);
+    const documentBackoff = db
+      .query<{ count: number }, [number, number]>(
+        `SELECT COUNT(*) as count FROM document_cache
+         WHERE last_requested_at > ? AND error_count > 0 AND next_retry_at > ?`
+      )
+      .get(activeDocumentCutoff, now);
+    const firehose = getFirehoseStatus();
+
     // Ingest push (see ingest-push.ts). `pending` is the outbox backlog — the
     // number that should hover near zero once a push cycle keeps up.
     const itemCount = db
@@ -2248,6 +2299,25 @@ export function createApp(db: Database, config: AppConfig) {
         total: inError?.count || 0,
         inBackoff: inBackoff?.count || 0,
         permanent: permanentErrors?.count || 0,
+      },
+      firehose: {
+        healthy: firehose.healthy,
+        connected: firehose.connected ?? false,
+        subscribedDids: firehose.subscribedDids ?? 0,
+        lastEventAt: firehose.lastEventAt ?? null,
+        lastEventAgeSeconds: firehose.lastEventAt
+          ? Math.max(0, Math.round((now - firehose.lastEventAt) / 1000))
+          : null,
+        reconnectAttempts: firehose.reconnectAttempts ?? 0,
+        cursorAgeSeconds: firehose.cursor
+          ? Math.max(0, Math.round((now - Number(firehose.cursor) / 1000) / 1000))
+          : null,
+      },
+      documents: {
+        active: activeDocuments?.count || 0,
+        frozen: frozenDocuments?.count || 0,
+        inBackoff: documentBackoff?.count || 0,
+        relistFloorSeconds: firehoseRelistMs / 1000,
       },
     });
   });
@@ -2857,6 +2927,7 @@ export function createApp(db: Database, config: AppConfig) {
           .query<DocumentCacheRow, [string]>('SELECT * FROM document_cache WHERE did = ?')
           .get(did);
         recordDocumentRequest(did, now);
+        if (cached) cached.last_requested_at = now;
 
         let documents: ProxyDocument[] | null = null;
         // Infinity when there is no cache row at all: nothing has been listed, so
@@ -2864,11 +2935,25 @@ export function createApp(db: Database, config: AppConfig) {
         let listedAge = Number.POSITIVE_INFINITY;
 
         if (cached && cached.documents_json) {
+          // Polling is the activity signal for an error placeholder, and this
+          // branch otherwise returns before fetchAndCacheDocuments can shorten
+          // a legacy seven-day backoff. Persist the active-reader cap first.
+          if (
+            cached.next_retry_at &&
+            now < cached.next_retry_at &&
+            cached.next_retry_at > now + ACTIVE_DOCUMENT_BACKOFF_MAX_MS
+          ) {
+            cached.next_retry_at = now + ACTIVE_DOCUMENT_BACKOFF_MAX_MS;
+            db.run('UPDATE document_cache SET next_retry_at = ? WHERE did = ?', [
+              cached.next_retry_at,
+              did,
+            ]);
+          }
           const age = now - cached.fetched_at;
           // Age since the last real PDS list. Splices bump `fetched_at` but not
           // `listed_at`, so this is the only measure that reflects whether we
           // have actually looked for documents we never saw written.
-          listedAge = now - (cached.listed_at ?? cached.fetched_at);
+          listedAge = now - cached.listed_at!;
           const inErrorBackoff =
             cached.error_count > 0 && cached.next_retry_at && now < cached.next_retry_at;
           const stale = JSON.parse(cached.documents_json) as ProxyDocument[];

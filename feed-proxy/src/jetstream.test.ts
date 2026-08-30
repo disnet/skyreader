@@ -1,4 +1,4 @@
-import { test, expect, describe, beforeEach } from 'bun:test';
+import { test, expect, describe, beforeEach, jest } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { initDatabase } from './app';
 import { DocumentFirehose } from './jetstream';
@@ -205,7 +205,8 @@ describe('DocumentFirehose reconcile / active-author set', () => {
 
     fh.reconcile(); // not running → updates the set without connecting
 
-    expect(fh.isSubscribed('did:plc:fresh')).toBe(true);
+    // Desired authors are not trusted until their filter reaches Jetstream.
+    expect(fh.isSubscribed('did:plc:fresh')).toBe(false);
     expect(fh.isSubscribed('did:plc:stale')).toBe(false);
   });
 
@@ -280,5 +281,71 @@ describe('DocumentFirehose.isHealthy', () => {
     internals.connected = true;
     internals.lastActivityAt = Date.now();
     expect(fh.isHealthy()).toBe(false);
+  });
+});
+
+describe('DocumentFirehose repair scheduling', () => {
+  test('keeps the desired filter dirty and backs off repeated options_update failures', () => {
+    jest.useFakeTimers();
+    const db = makeDb();
+    const fh = new DocumentFirehose(db, { enabled: false });
+    const internals = fh as unknown as {
+      running: boolean;
+      subscribedDids: Set<string>;
+      sentDids: Set<string>;
+      ws: WebSocket;
+      connect: () => void;
+      sendOptionsUpdate: (ws: WebSocket) => boolean;
+    };
+    internals.running = true;
+    internals.subscribedDids = new Set([DID]);
+    const ws = {
+      send: () => {
+        throw new Error('closed');
+      },
+    } as unknown as WebSocket;
+    internals.ws = ws;
+    let connects = 0;
+    internals.connect = () => connects++;
+
+    expect(internals.sendOptionsUpdate(ws)).toBe(false);
+    expect(internals.sentDids.size).toBe(0);
+    expect(fh.isSubscribed(DID)).toBe(false);
+    expect(connects).toBe(0);
+    jest.advanceTimersByTime(999);
+    expect(connects).toBe(0);
+    jest.advanceTimersByTime(1);
+    expect(connects).toBe(1);
+
+    // A second failed connection uses the next exponential-backoff tier.
+    internals.ws = ws;
+    expect(internals.sendOptionsUpdate(ws)).toBe(false);
+    jest.advanceTimersByTime(1999);
+    expect(connects).toBe(1);
+    jest.advanceTimersByTime(1);
+    expect(connects).toBe(2);
+    jest.useRealTimers();
+  });
+
+  test('marks an author for re-list when applying an event throws', async () => {
+    const db = makeDb();
+    const now = Date.now();
+    seedAuthor(db, DID, [], now);
+    db.run('UPDATE document_cache SET listed_at = ? WHERE did = ?', [now, DID]);
+    const fh = new DocumentFirehose(db, { enabled: false });
+    const internals = fh as unknown as {
+      applyDocumentEvent: () => Promise<boolean>;
+      handleMessage: (data: string) => Promise<void>;
+    };
+    internals.applyDocumentEvent = async () => {
+      throw new Error('splice failed');
+    };
+
+    await internals.handleMessage(JSON.stringify(event(DID, 'p1', 'delete')));
+
+    const row = db
+      .query<{ listed_at: number }, [string]>('SELECT listed_at FROM document_cache WHERE did = ?')
+      .get(DID);
+    expect(row?.listed_at).toBe(0);
   });
 });

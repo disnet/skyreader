@@ -141,7 +141,16 @@ const { app, warmStaleFeeds, warmStaleDocuments } = createApp(db, {
   extractQueueMax: EXTRACT_QUEUE_MAX,
   feedFetchConcurrency: FEED_FETCH_CONCURRENCY,
   feedFetchQueueMax: FEED_FETCH_QUEUE_MAX,
-  getFirehoseStatus: () => firehose?.status() ?? { healthy: false, isSubscribed: () => false },
+  getFirehoseStatus: () =>
+    firehose?.status() ?? {
+      healthy: false,
+      connected: false,
+      subscribedDids: 0,
+      lastEventAt: null,
+      reconnectAttempts: 0,
+      cursor: null,
+      isSubscribed: () => false,
+    },
   ingestEnabled: INGEST_ENABLED,
 });
 
