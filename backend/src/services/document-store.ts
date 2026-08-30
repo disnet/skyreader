@@ -119,6 +119,13 @@ export function chargeQueries(ledger: QueryLedger, subrequests: number): void {
   ledger.spent += subrequests;
 }
 
+/** Reserve subrequests only when the invocation still has room for all of them. */
+export function tryChargeQueries(ledger: QueryLedger, subrequests: number): boolean {
+  if (ledger.spent + subrequests > ledger.limit) return false;
+  chargeQueries(ledger, subrequests);
+  return true;
+}
+
 /**
  * Subrequests one cold publication resolve costs: the cache read, the author's DID
  * document, the publication record, its theme sidecar and the cache write — two D1

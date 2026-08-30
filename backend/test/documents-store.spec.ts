@@ -9,6 +9,7 @@ import {
   createDocumentApplyContext,
   createDocumentDrain,
   createQueryLedger,
+  tryChargeQueries,
   ensureAuthorDocuments,
   loadAuthorDocuments,
   reconcileStaleAuthors,
@@ -710,6 +711,16 @@ describe('backfill and reconcile', () => {
 // per-author cost has to be a real worst case, and the fan-out has to be admitted
 // against one shared ledger rather than against a per-loop rule.
 describe('the backfill query budget', () => {
+  it('admits a charged operation atomically', () => {
+    const ledger = createQueryLedger(10);
+
+    chargeQueries(ledger, 3);
+    expect(tryChargeQueries(ledger, 7)).toBe(true);
+    expect(ledger.spent).toBe(10);
+    expect(tryChargeQueries(ledger, 1)).toBe(false);
+    expect(ledger.spent).toBe(10);
+  });
+
   beforeEach(async () => {
     await cleanup();
     await seedPublication();

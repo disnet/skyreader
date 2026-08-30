@@ -44,6 +44,7 @@ import {
   chargeQueries,
   createBackfillScheduler,
   MAX_SYNC_BACKFILLS,
+  tryChargeQueries,
   type QueryLedger,
 } from './document-store';
 
@@ -201,8 +202,9 @@ export async function reconcileAtmosphereSubscriptions(
   // Every op this reconcile performs comes out of the same invocation as the
   // subscription pull and the back-catalogue walks. Charging them is what lets
   // `/api/sync` reserve for what it does *not* charge rather than for this.
-  const charge = (subrequests: number) => {
-    if (ledger) chargeQueries(ledger, subrequests);
+  const charge = (subrequests: number): boolean => {
+    if (!ledger) return true;
+    return tryChargeQueries(ledger, subrequests);
   };
   const chargeOp = () => charge(SUBREQUESTS_PER_ATMOSPHERE_OP);
   // Imports fan out into this one invocation, so the back-catalogue walks they
@@ -219,7 +221,14 @@ export async function reconcileAtmosphereSubscriptions(
     if (!graphResult.success) {
       return { ...result, success: false, error: `Failed to list graph: ${graphResult.error}` };
     }
-    charge(graphListSubrequests(graphResult.data.length, graphResult.truncated === true));
+    // The listing has already happened, so this charge is accounting rather than
+    // admission. Later work will defer if the listing consumed the headroom.
+    if (ledger) {
+      chargeQueries(
+        ledger,
+        graphListSubrequests(graphResult.data.length, graphResult.truncated === true)
+      );
+    }
     const graphPubs = new Set<string>();
     for (const rec of graphResult.data) {
       if (isPublicationUri(rec.value.publication)) graphPubs.add(rec.value.publication);
@@ -299,7 +308,10 @@ export async function reconcileAtmosphereSubscriptions(
       // Charged before the work, not after: an import that bails part way (an
       // unparseable URI, a concurrent reconcile that inserted the row first) has
       // still spent the fetches it made by then.
-      chargeOp();
+      if (!chargeOp()) {
+        result.hasMore = true;
+        break;
+      }
       const meta = await resolvePublicationMeta(pubUri);
       if (!meta) continue; // unparseable URI — skip
       const title = await titleFor(meta);
@@ -402,7 +414,10 @@ export async function reconcileAtmosphereSubscriptions(
             result.hasMore = true;
             break;
           }
-          chargeOp();
+          if (!chargeOp()) {
+            result.hasMore = true;
+            break;
+          }
           const removeOld = await deleteAtmosphereSubscription(session, previousPubUri);
           if (!removeOld.success) {
             result.warnings.push(
@@ -419,7 +434,10 @@ export async function reconcileAtmosphereSubscriptions(
             result.hasMore = true;
             break;
           }
-          chargeOp();
+          if (!chargeOp()) {
+            result.hasMore = true;
+            break;
+          }
           const writeNew = await writeAtmosphereSubscription(session, pubUri);
           if (!writeNew.success) {
             result.warnings.push(
@@ -434,7 +452,10 @@ export async function reconcileAtmosphereSubscriptions(
 
         // Not gated by `MAX_OPS` — it is one statement per local row, so the loop
         // as a whole is bounded only by the mirror cap. Charged for that reason.
-        charge(1);
+        if (!charge(1)) {
+          result.hasMore = true;
+          break;
+        }
         await env.DB.prepare(
           `UPDATE subscriptions_cache
            SET atmosphere_synced = unixepoch(), atmosphere_previous_feed_url = NULL
@@ -448,7 +469,10 @@ export async function reconcileAtmosphereSubscriptions(
       if (graphPubs.has(pubUri)) {
         // Present both places — claim it if not yet marked (e.g. an in-app follow).
         if (sub.atmosphere_synced === null) {
-          charge(1);
+          if (!charge(1)) {
+            result.hasMore = true;
+            break;
+          }
           await env.DB.prepare(
             `UPDATE subscriptions_cache SET atmosphere_synced = unixepoch() WHERE record_uri = ?`
           )
@@ -471,7 +495,10 @@ export async function reconcileAtmosphereSubscriptions(
         if (graphTruncated) continue;
         // Delete the PDS record first (so a subscription sync can't re-import it),
         // then the local row.
-        chargeOp();
+        if (!chargeOp()) {
+          result.hasMore = true;
+          break;
+        }
         const rkey = extractRkey(sub.record_uri);
         const del = await deleteSubscriptionFromPds(session, rkey);
         if (!del.success) {
@@ -485,7 +512,10 @@ export async function reconcileAtmosphereSubscriptions(
         ops++;
       } else {
         // Local-only (edge write hasn't landed) → write it back, then mark synced.
-        chargeOp();
+        if (!chargeOp()) {
+          result.hasMore = true;
+          break;
+        }
         const write = await writeAtmosphereSubscription(session, pubUri);
         if (!write.success) {
           result.warnings.push(`Failed to push edge for ${pubUri}: ${write.error}`);
