@@ -3,6 +3,7 @@
   import Icon from '$lib/components/Icon.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { notificationsStore } from '$lib/stores/notifications.svelte';
+  import { auth } from '$lib/stores/auth.svelte';
   import { appManager } from '$lib/stores/app.svelte';
   import { bottomRail } from '$lib/stores/bottomRail.svelte';
   import { bottomBarInset } from '$lib/stores/bottomBarInset.svelte';
@@ -135,54 +136,70 @@
               <Icon name="rss" size={16} />
               <span>Add RSS Feed</span>
             </button>
-            <button
-              class="add-menu-item"
-              onclick={() => {
-                addMenuOpen = false;
-                sidebarStore.openAddHandleModal();
-              }}
-            >
-              <Icon name="users" size={16} />
-              <span>Add @handle</span>
-            </button>
-            <button
-              class="add-menu-item"
-              onclick={() => {
-                addMenuOpen = false;
-                sidebarStore.openSaveArticleModal();
-              }}
-            >
-              <Icon name="bookmark" size={16} />
-              <span>Save URL</span>
-            </button>
-            <button
-              class="add-menu-item"
-              onclick={() => {
-                addMenuOpen = false;
-                goto('/settings#save-anywhere');
-              }}
-            >
-              <Icon name="share" size={16} />
-              <span>Save from anywhere</span>
-            </button>
+            {#if auth.isGuest}
+              <!-- Following an account and saving both need one. -->
+              <button
+                class="add-menu-item"
+                onclick={() => {
+                  addMenuOpen = false;
+                  goto('/auth/login?returnUrl=/feeds');
+                }}
+              >
+                <Icon name="user" size={16} />
+                <span>Sign in to save</span>
+              </button>
+            {:else}
+              <button
+                class="add-menu-item"
+                onclick={() => {
+                  addMenuOpen = false;
+                  sidebarStore.openAddHandleModal();
+                }}
+              >
+                <Icon name="users" size={16} />
+                <span>Add @handle</span>
+              </button>
+              <button
+                class="add-menu-item"
+                onclick={() => {
+                  addMenuOpen = false;
+                  sidebarStore.openSaveArticleModal();
+                }}
+              >
+                <Icon name="bookmark" size={16} />
+                <span>Save URL</span>
+              </button>
+              <button
+                class="add-menu-item"
+                onclick={() => {
+                  addMenuOpen = false;
+                  goto('/settings#save-anywhere');
+                }}
+              >
+                <Icon name="share" size={16} />
+                <span>Save from anywhere</span>
+              </button>
+            {/if}
           </div>
         {/if}
       </div>
-      <button
-        class="bar-btn"
-        onclick={onOpenNotifications}
-        aria-label={notificationsStore.unreadCount > 0
-          ? `Notifications, ${notificationsStore.unreadCount} unread`
-          : 'Notifications'}
-        title="Notifications"
-      >
-        <Icon name="bell" size={20} />
-        {#if notificationsStore.unreadCount > 0}
-          <span class="notif-count"
-            >{notificationsStore.unreadCount > 99 ? '99+' : notificationsStore.unreadCount}</span
-          >
-        {/if}
-      </button>
+      {#if !auth.isGuest}
+        <button
+          class="bar-btn"
+          onclick={onOpenNotifications}
+          aria-label={notificationsStore.unreadCount > 0
+            ? `Notifications, ${notificationsStore.unreadCount} unread`
+            : 'Notifications'}
+          title="Notifications"
+        >
+          <Icon name="bell" size={20} />
+          {#if notificationsStore.unreadCount > 0}
+            <span class="notif-count"
+              >{notificationsStore.unreadCount > 99 ? '99+' : notificationsStore.unreadCount}</span
+            >
+          {/if}
+        </button>
+      {/if}
       {#if onOpenSearch}
         <button
           class="bar-btn"

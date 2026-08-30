@@ -22,7 +22,12 @@ export interface LastUser {
 // device so the login screen can offer any of them, not just the latest.
 const RECENT_USERS_KEY = 'skyreader-recent-users';
 const MAX_RECENT_USERS = 5;
+// Guest reading mode: no account, subscriptions live only in this browser.
 const GUEST_KEY = 'skyreader-guest';
+// The rkeys of the curated starter feeds seeded by "Start Reading". Kept apart
+// from the feeds the guest actually chose so signing in to an EXISTING library
+// doesn't silently bulk-add nine sample feeds to it (see app.svelte.ts).
+const GUEST_STARTER_KEY = 'skyreader-guest-starter';
 
 function parseRecentUsers(raw: string | null): LastUser[] {
   if (!raw) return [];
@@ -82,9 +87,22 @@ function createAuthStore() {
     scopeUpgradeRequired: false,
   });
 
+  // Guest mode is a SIGNAL, not a localStorage read: every consumer gates
+  // rendering on it (the AppShell import, the route guard, the sidebar), and a
+  // plain `localStorage.getItem` in a getter tracks nothing — clicking "Start
+  // Reading" would set the key and re-run no effect, leaving the reader rendered
+  // bare inside the marketing chrome until a manual reload. localStorage stays
+  // the durable copy; this is the reactive one.
+  let isGuestMode = $state(browser && localStorage.getItem(GUEST_KEY) === '1');
+
   // Handle 401 - session expired/invalid on the backend
   function handleUnauthorized() {
-    if (browser && !state.user && localStorage.getItem(GUEST_KEY) === '1') return;
+    // A guest has no session to expire. Bouncing them to /auth/login because a
+    // stray authenticated call leaked would eject them mid-read.
+    if (isGuestMode && !state.user) {
+      console.log('Ignoring unauthorized in guest mode');
+      return;
+    }
     console.log('Handling unauthorized - clearing session');
     state.user = null;
 
@@ -135,11 +153,31 @@ function createAuthStore() {
   function enterGuestMode() {
     if (!browser) return;
     localStorage.setItem(GUEST_KEY, '1');
+    isGuestMode = true;
   }
 
   function exitGuestMode() {
     if (!browser) return;
     localStorage.removeItem(GUEST_KEY);
+    localStorage.removeItem(GUEST_STARTER_KEY);
+    isGuestMode = false;
+  }
+
+  // Record which local subscriptions came from the curated starter channels
+  // rather than from the reader's own choices.
+  function rememberStarterRkeys(rkeys: string[]) {
+    if (!browser) return;
+    localStorage.setItem(GUEST_STARTER_KEY, JSON.stringify(rkeys));
+  }
+
+  function starterRkeys(): string[] {
+    if (!browser) return [];
+    try {
+      const parsed = JSON.parse(localStorage.getItem(GUEST_STARTER_KEY) || '[]');
+      return Array.isArray(parsed) ? parsed.filter((r): r is string => typeof r === 'string') : [];
+    } catch {
+      return [];
+    }
   }
 
   // Prime the display cache WITHOUT flipping auth state. Used by the OAuth
@@ -219,10 +257,18 @@ function createAuthStore() {
       return !!state.user;
     },
     get isGuest() {
-      return browser && !state.user && localStorage.getItem(GUEST_KEY) === '1';
+      return isGuestMode && !state.user;
     },
+    // Guest data is waiting to be migrated: the marker is still set even though
+    // an account is now signed in.
     get hasGuestData() {
-      return browser && localStorage.getItem(GUEST_KEY) === '1';
+      return isGuestMode;
+    },
+    // "Is the reader inside the app at all" — true for an account and a guest.
+    // The reading surfaces gate on this; account actions keep gating on
+    // isAuthenticated.
+    get isInApp() {
+      return !!state.user || isGuestMode;
     },
     get error() {
       return state.error;
@@ -237,6 +283,8 @@ function createAuthStore() {
     cacheUser,
     enterGuestMode,
     exitGuestMode,
+    rememberStarterRkeys,
+    starterRkeys,
     verifySession,
     logout,
     setError,

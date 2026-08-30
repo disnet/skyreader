@@ -24,6 +24,7 @@ import {
   handleGuestFeedWarm,
   handleGuestStarterFeeds,
   handleGuestTimeline,
+  reapOrphanGuestFeeds,
 } from './routes/guest';
 import { handleDetectContent } from './routes/social';
 import {
@@ -319,7 +320,7 @@ async function route(
       response = handleGuestStarterFeeds(request);
       break;
     case url.pathname === '/api/guest/timeline':
-      response = await handleGuestTimeline(request, env);
+      response = await handleGuestTimeline(request, env, ctx);
       break;
     case url.pathname === '/api/guest/feeds/discover':
       response = await handleGuestFeedDiscover(request, env);
@@ -1041,6 +1042,18 @@ async function runScheduled(
           ...serializeError(error),
         });
         reportError(error, { tags: { source: 'cron', phase: 'magazine-tombstone-purge' } });
+      }
+
+      // Collect guest-warmed feeds nobody subscribes to. These are the only rows
+      // in `feeds` with no account behind them (see migration 0073): a guest adds
+      // a feed, reads it for a session, and the row would otherwise sit in the
+      // archive forever. Bounded per run, so a backlog drains over hours.
+      try {
+        const reaped = await reapOrphanGuestFeeds(env);
+        if (reaped > 0) log.info('cron_guest_feed_reap', { deleted: reaped });
+      } catch (error) {
+        log.error('cron_phase_failed', { phase: 'guest-feed-reap', ...serializeError(error) });
+        reportError(error, { tags: { source: 'cron', phase: 'guest-feed-reap' } });
       }
 
       d1CleanupDuration = Date.now() - cleanupStart;

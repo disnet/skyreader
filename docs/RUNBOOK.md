@@ -536,6 +536,52 @@ batch path re-drains from wherever those cursors were left. The proxy's K=200
 window bounds that, and the merge dedupes by GUID, so the cost is one heavier
 sync, not duplicates.
 
+**Guests have no batch path.** `/api/v2/feeds/batch` needs a session, so shutting
+the gate doesn't move guest readers to a fallback — it empties their refresh
+(they keep whatever is cached, and the client retries on the next poll rather
+than fanning out to endpoints that would 401). Guest reading mode is therefore
+only meaningful with the gate open; check it before announcing the feature.
+
+---
+
+## 4e. Guest reading mode (unauthenticated surface)
+
+Four public endpoints, all under `/api/guest/` (`backend/src/routes/guest.ts`),
+all keyed by `CF-Connecting-IP` because there is no DID:
+
+| Endpoint                         | Limit  | What it does                                                               |
+| -------------------------------- | ------ | -------------------------------------------------------------------------- |
+| `GET /api/guest/starter-feeds`   | —      | Static curated channels, `Cache-Control: public, max-age=3600`.            |
+| `POST /api/guest/timeline`       | 60/min | Read-only archive query over ≤50 caller-supplied feed URLs. Never fetches. |
+| `POST /api/guest/feeds/discover` | 10/min | Delegates to the existing discover logic (reaches the proxy).              |
+| `POST /api/guest/feeds/warm`     | 10/min | The one unauthenticated WRITE into the shared archive.                     |
+
+The warm endpoint deliberately relaxes the `callerSubscribes` invariant that
+protects `feeds`/`feed_items` from arbitrary writes, because a guest has no
+subscription rows anywhere. What bounds it, in the order it applies:
+
+1. **10/min per IP** (rate)
+2. **Starter feeds short-circuit** — they ride the crawl set, so a warm is a no-op.
+3. **15-minute per-feed freshness**, stamped in `feeds.guest_warmed_at` _before_
+   the fetch, so a hot or broken URL is fetched at most once per window. Durable,
+   unlike a `rate_limits` row.
+4. **200 new guest feeds per day, globally** — counted through
+   `guest_warmed_at IS NOT NULL AND created_at > unixepoch() - 86400`. Over the
+   cap, a NEW feed gets a 429 (`guest_warm_capped` in the logs) while feeds
+   already in the archive still refresh.
+5. **The hourly reaper** — `reapOrphanGuestFeeds` deletes ≤100 guest-warmed feeds
+   per run that have no subscriber and no guest touch in 30 days, items and all
+   (`cron_guest_feed_reap`).
+
+The read path additionally re-warms at most **2** guest-added feeds per request,
+in `ctx.waitUntil`, and only ones already in the archive — serving a guest
+timeline can never create a feed row.
+
+What to watch after enabling it: `guest_timeline` log volume and its `d1Ms` /
+`d1RowsRead`, `guest_warm_capped` (the daily ceiling being hit means either real
+growth or a URL-cycling client), 429 rates on the two write endpoints, and the
+crawl-set size delta (~+9 for the starter channels).
+
 ---
 
 ## 5. Post-deploy smoke checks

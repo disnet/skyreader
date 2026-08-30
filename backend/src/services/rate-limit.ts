@@ -30,6 +30,12 @@ const RATE_LIMITS: Record<string, RateLimitConfig> = {
   // for a client stuck in an error loop — the client samples before it sends, and
   // anything above this is a bug in the client, not signal worth keeping.
   '/api/telemetry/error': { limit: 20, windowMs: 60000 },
+  // Guest reading mode. Keyed by client IP (there is no did). The timeline is a
+  // read over the archive that never fetches, so it gets a poll-sized limit; the
+  // two add-a-feed endpoints reach the proxy, so they get an expensive-op one.
+  // The warm endpoint's real ceiling is not here — a per-IP rate can't bound how
+  // many feeds guests add in total, so `feeds.guest_warmed_at` carries a per-feed
+  // freshness gate and a global daily cap (routes/guest.ts).
   '/api/guest/timeline': { limit: 60, windowMs: 60000 },
   '/api/guest/feeds/discover': { limit: 10, windowMs: 60000 },
   '/api/guest/feeds/warm': { limit: 10, windowMs: 60000 },

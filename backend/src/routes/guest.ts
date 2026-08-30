@@ -1,14 +1,39 @@
 import type { Env, FeedItem } from '../types';
-import { STARTER_CHANNELS } from '../config/starter-feeds';
-import { checkRateLimit, getRateLimitConfig } from '../services/rate-limit';
+import { STARTER_CHANNELS, STARTER_FEED_URLS } from '../config/starter-feeds';
+import { checkRateLimit } from '../services/rate-limit';
 import { readArchiveState } from './timeline';
 import { timedAll, timedBatch } from '../utils/d1-timing';
 import { log } from '../utils/logger';
 import { handleV2FeedDiscover, warmFeedIntoArchive } from './feeds-v2';
 
+/**
+ * The unauthenticated reading surface: starter channels, a timeline over a
+ * caller-supplied feed list, and the two endpoints that let a guest add a feed
+ * of their own. Everything here reads (or, for `warm`, writes) the SHARED
+ * archive with no account behind it, so each handler is per-IP rate limited and
+ * the two write paths are additionally bounded by `feeds.guest_warmed_at` — see
+ * migration 0073 and `claimGuestWarm` below.
+ */
+
 const MAX_FEEDS = 50;
 const MAX_LIMIT = 200;
 const COLD_PER_FEED = 30;
+// Feeds per cold-start page. 25 × 30 items is the same order as the authed
+// path's cold budget.
+const COLD_FEEDS_PER_PAGE = 25;
+
+// A guest warm re-fetches a feed at most this often; a fresher feed is a no-op.
+const WARM_FRESH_SECONDS = 15 * 60;
+// The read path re-warms guest-added feeds staler than this, a couple at a time.
+const LAZY_REWARM_SECONDS = 30 * 60;
+const LAZY_REWARM_PER_REQUEST = 2;
+// Ceiling on how many feeds guests can add to the archive per day, across all
+// callers. The per-IP limit alone bounds one client's rate, not the total, and
+// nothing subscribes to these feeds — this is what keeps a URL-cycling client
+// from growing `feeds` without limit. Sized well above real guest demand.
+const NEW_FEEDS_PER_DAY = 200;
+
+const STARTER_FEED_SET = new Set(STARTER_FEED_URLS);
 
 function json(value: unknown, status = 200, headers: HeadersInit = {}): Response {
   return new Response(JSON.stringify(value), {
@@ -57,6 +82,50 @@ export async function handleGuestFeedDiscover(request: Request, env: Env): Promi
   return handleV2FeedDiscover(request, env);
 }
 
+interface FeedWarmState {
+  last_ingest_at: number | null;
+  guest_warmed_at: number | null;
+}
+
+async function readWarmState(env: Env, feedUrl: string): Promise<FeedWarmState | null> {
+  return env.DB.prepare('SELECT last_ingest_at, guest_warmed_at FROM feeds WHERE feed_url = ?')
+    .bind(feedUrl)
+    .first<FeedWarmState>();
+}
+
+function warmedWithin(state: FeedWarmState | null, seconds: number, nowSeconds: number): boolean {
+  if (!state) return false;
+  const last = Math.max(state.last_ingest_at ?? 0, state.guest_warmed_at ?? 0);
+  return last > nowSeconds - seconds;
+}
+
+/**
+ * Take the warm slot for `feedUrl` by stamping `guest_warmed_at`, creating the
+ * row if this is a feed the archive has never seen.
+ *
+ * Stamped BEFORE the fetch on purpose: a failing URL burns its slot exactly like
+ * a succeeding one, so a broken feed can't be retried on every poll. The row is
+ * created up front for the same reason — it is what the daily ceiling counts and
+ * what the reaper later collects, and neither can depend on the proxy answering.
+ */
+async function claimGuestWarm(env: Env, feedUrl: string): Promise<void> {
+  await env.DB.prepare(
+    `INSERT INTO feeds (feed_url, guest_warmed_at) VALUES (?, unixepoch())
+     ON CONFLICT(feed_url) DO UPDATE SET guest_warmed_at = unixepoch()`
+  )
+    .bind(feedUrl)
+    .run();
+}
+
+/** Guest-created feeds added in the last 24h, against the global daily ceiling. */
+async function newGuestFeedsToday(env: Env): Promise<number> {
+  const row = await env.DB.prepare(
+    `SELECT COUNT(*) AS count FROM feeds
+     WHERE guest_warmed_at IS NOT NULL AND created_at > unixepoch() - 86400`
+  ).first<{ count: number }>();
+  return row?.count ?? 0;
+}
+
 export async function handleGuestFeedWarm(request: Request, env: Env): Promise<Response> {
   if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
   const limited = await guestRateLimit(request, env, '/api/guest/feeds/warm');
@@ -68,17 +137,68 @@ export async function handleGuestFeedWarm(request: Request, env: Env): Promise<R
     return json({ error: 'Invalid JSON' }, 400);
   }
   const urls = validFeedUrls([feedUrl]);
-  if (!urls?.[0]) return json({ error: 'feedUrl must be an HTTP(S) URL' }, 400);
-  const existing = await env.DB.prepare('SELECT last_ingest_at FROM feeds WHERE feed_url = ?')
-    .bind(urls[0])
-    .first<{ last_ingest_at: number | null }>();
-  if (existing?.last_ingest_at && existing.last_ingest_at > Date.now() / 1000 - 15 * 60) {
+  const url = urls?.[0];
+  if (!url) return json({ error: 'feedUrl must be an HTTP(S) URL' }, 400);
+
+  // Starter feeds ride the crawl set (see handleCrawlSet), so they are already
+  // as fresh as the crawler can make them.
+  if (STARTER_FEED_SET.has(url)) return json({ ok: true, fresh: true });
+
+  const state = await readWarmState(env, url);
+  if (warmedWithin(state, WARM_FRESH_SECONDS, Math.floor(Date.now() / 1000))) {
     return json({ ok: true, fresh: true });
   }
-  // Deliberate bounded exception to subscription-gated warming: guest rows are
-  // local-only, so this IP-limited endpoint is their only archive freshness path.
-  const result = await warmFeedIntoArchive(env, urls[0]);
+
+  // Deliberate bounded exception to subscription-gated warming (feeds-v2.ts's
+  // `callerSubscribes`): guest rows are local-only, so this endpoint is their
+  // only path into the archive. Bounded per IP above, per feed by the freshness
+  // check, and — for a feed nobody has crawled before — globally per day here.
+  if (!state && (await newGuestFeedsToday(env)) >= NEW_FEEDS_PER_DAY) {
+    log.info('guest_warm_capped', { feedUrl: url });
+    return json({ ok: false, error: 'Guest feed capacity reached; try again tomorrow' }, 429, {
+      'Retry-After': '3600',
+    });
+  }
+
+  await claimGuestWarm(env, url);
+  const result = await warmFeedIntoArchive(env, url);
   return json({ ok: result.success, itemCount: result.itemCount, error: result.error });
+}
+
+/**
+ * Re-warm the stalest guest-added feeds in this request's list.
+ *
+ * Nothing else keeps them current: the crawl set is derived from subscriptions
+ * plus the starter channels, and a guest has neither. Bounded to
+ * LAZY_REWARM_PER_REQUEST feeds per request, only feeds already in the archive
+ * (so the read path can never create one), and each one claims the same
+ * per-feed slot the explicit warm endpoint uses.
+ */
+async function rewarmStaleGuestFeeds(env: Env, feedUrls: string[]): Promise<void> {
+  const candidates = feedUrls.filter((url) => !STARTER_FEED_SET.has(url));
+  if (candidates.length === 0) return;
+  const placeholders = candidates.map(() => '?').join(',');
+  const stale = await env.DB.prepare(
+    `SELECT feed_url FROM feeds
+     WHERE feed_url IN (${placeholders})
+       AND guest_warmed_at IS NOT NULL
+       AND guest_warmed_at < unixepoch() - ?
+     ORDER BY guest_warmed_at ASC LIMIT ?`
+  )
+    .bind(...candidates, LAZY_REWARM_SECONDS, LAZY_REWARM_PER_REQUEST)
+    .all<{ feed_url: string }>();
+
+  for (const row of stale.results) {
+    try {
+      await claimGuestWarm(env, row.feed_url);
+      await warmFeedIntoArchive(env, row.feed_url);
+    } catch (error) {
+      log.warn('guest_rewarm_failed', {
+        feedUrl: row.feed_url,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
 }
 
 interface GuestRow {
@@ -106,7 +226,11 @@ function items(
   });
 }
 
-export async function handleGuestTimeline(request: Request, env: Env): Promise<Response> {
+export async function handleGuestTimeline(
+  request: Request,
+  env: Env,
+  ctx?: ExecutionContext
+): Promise<Response> {
   if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
   const limited = await guestRateLimit(request, env, '/api/guest/timeline');
   if (limited) return limited;
@@ -165,7 +289,7 @@ export async function handleGuestTimeline(request: Request, env: Env): Promise<R
     const offset = Number.isInteger(Number(body.cold_offset))
       ? Math.max(Number(body.cold_offset), 0)
       : 0;
-    const selected = feedUrls.slice(offset, offset + 25);
+    const selected = feedUrls.slice(offset, offset + COLD_FEEDS_PER_PAGE);
     const results = selected.length
       ? await timedBatch<GuestRow>(
           'guest_timeline_cold',
@@ -186,6 +310,10 @@ export async function handleGuestTimeline(request: Request, env: Env): Promise<R
     ? (page.at(-1)?.seq ?? since)
     : Math.max(0, ...page.map((row) => row.seq));
   log.info('guest_timeline', { feedCount: feedUrls.length, itemCount: page.length, incremental });
+
+  // Serving never fetches; the re-warm runs after the response is sent.
+  if (ctx) ctx.waitUntil(rewarmStaleGuestFeeds(env, feedUrls));
+
   return json({
     items: items(page),
     cursor,
@@ -197,4 +325,39 @@ export async function handleGuestTimeline(request: Request, env: Env): Promise<R
     coldStart: !incremental,
     healthRev,
   });
+}
+
+/**
+ * Delete guest-warmed feeds nobody subscribes to and no guest has touched in
+ * `maxAgeDays`, items and all. The daily ceiling bounds how fast this set can
+ * grow; this is what stops it growing forever. Bounded per run — the hourly
+ * cron catches up over the following hours rather than deleting in one gulp.
+ */
+export async function reapOrphanGuestFeeds(
+  env: Env,
+  maxAgeDays = 30,
+  limit = 100
+): Promise<number> {
+  const cutoff = Math.floor(Date.now() / 1000) - maxAgeDays * 24 * 60 * 60;
+  const orphans = await env.DB.prepare(
+    `SELECT feed_url FROM feeds
+     WHERE guest_warmed_at IS NOT NULL
+       AND guest_warmed_at < ?
+       AND NOT EXISTS (SELECT 1 FROM subscriptions_cache s WHERE s.feed_url = feeds.feed_url)
+     LIMIT ?`
+  )
+    .bind(cutoff, limit)
+    .all<{ feed_url: string }>();
+
+  const urls = orphans.results
+    .map((row) => row.feed_url)
+    .filter((url) => !STARTER_FEED_SET.has(url));
+  if (urls.length === 0) return 0;
+
+  const placeholders = urls.map(() => '?').join(',');
+  await env.DB.batch([
+    env.DB.prepare(`DELETE FROM feed_items WHERE feed_url IN (${placeholders})`).bind(...urls),
+    env.DB.prepare(`DELETE FROM feeds WHERE feed_url IN (${placeholders})`).bind(...urls),
+  ]);
+  return urls.length;
 }

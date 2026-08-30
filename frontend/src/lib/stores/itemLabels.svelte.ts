@@ -15,6 +15,7 @@ import {
   type LabelPayload,
 } from '$lib/services/sync-queue';
 import { syncStore } from './sync.svelte';
+import { auth } from './auth.svelte';
 import { savesStore } from './saves.svelte';
 import { generateTid } from '$lib/utils/tid';
 import {
@@ -26,6 +27,18 @@ import {
 import type { ItemLabel, ItemLabelType, SocialItemType, Highlight, ReviewIntent } from '$lib/types';
 
 const BULK_BATCH_SIZE = 500;
+
+/**
+ * Whether label writes/reads can reach the backend at all.
+ *
+ * A guest has no account to sync to, so every branch in this store behaves
+ * exactly as it does offline: the label is written to IndexedDB and the
+ * server-bound half is queued. That queue is also the read-state migration —
+ * signing in flushes it to the new account through the ordinary sync run.
+ */
+function canReachBackend(): boolean {
+  return syncStore.isOnline && !auth.isGuest;
+}
 
 // Re-export for consumers that used this type from reading store
 export interface SavedArticle {
@@ -209,7 +222,7 @@ function createItemLabelsStore() {
     pendingMarkRead = [];
     debounceTimer = null;
 
-    if (syncStore.isOnline) {
+    if (canReachBackend()) {
       try {
         const bulkItems = itemsToFlush.map((item) => ({
           itemGuid: item.articleGuid,
@@ -309,7 +322,7 @@ function createItemLabelsStore() {
     }
 
     // 2. Fetch from backend and reconcile (skip when offline)
-    if (syncStore.isOnline) {
+    if (canReachBackend()) {
       try {
         await Promise.all([loadReadDeltaFromBackend(), loadManagedLabelsFromBackend()]);
         hasLoaded = true;
@@ -849,7 +862,7 @@ function createItemLabelsStore() {
       await safeBulkPut(db.itemLabels, dbOps);
     }
 
-    if (syncStore.isOnline) {
+    if (canReachBackend()) {
       try {
         if (scope) {
           // One call covers the whole window, including items this device never
@@ -904,7 +917,7 @@ function createItemLabelsStore() {
       console.error('Failed to remove read label from DB:', e);
     }
 
-    if (syncStore.isOnline) {
+    if (canReachBackend()) {
       try {
         await api.markAsUnread(articleGuid, now);
       } catch (e) {
@@ -993,7 +1006,7 @@ function createItemLabelsStore() {
       props: { archivedAt: Date.now() },
     };
     if (archived) {
-      if (syncStore.isOnline) {
+      if (canReachBackend()) {
         try {
           await api.addLabel({
             itemKey,
@@ -1009,7 +1022,7 @@ function createItemLabelsStore() {
         await syncQueue.enqueue('create', 'label', `${itemKey}\0archived`, payload);
       }
     } else {
-      if (syncStore.isOnline) {
+      if (canReachBackend()) {
         try {
           await api.deleteLabel(itemKey, 'archived');
         } catch (e) {
@@ -1084,7 +1097,7 @@ function createItemLabelsStore() {
     };
     if (tags.length === 0) {
       // No tags left — delete the label
-      if (syncStore.isOnline) {
+      if (canReachBackend()) {
         try {
           await api.deleteLabel(itemKey, 'tagged');
         } catch (e) {
@@ -1096,7 +1109,7 @@ function createItemLabelsStore() {
       }
     } else {
       // Upsert the tagged label with current tags
-      if (syncStore.isOnline) {
+      if (canReachBackend()) {
         try {
           await api.addLabel({
             itemKey,
@@ -1278,7 +1291,7 @@ function createItemLabelsStore() {
     // /api/reading writers, parameterized by itemType. The sync-queue
     // 'socialReading' collection routes to those writers too.
     try {
-      if (syncStore.isOnline) {
+      if (canReachBackend()) {
         try {
           await api.markAsRead({
             itemGuid: itemUri,
@@ -1364,7 +1377,7 @@ function createItemLabelsStore() {
     }));
 
     try {
-      if (syncStore.isOnline) {
+      if (canReachBackend()) {
         try {
           for (let i = 0; i < apiItems.length; i += BULK_BATCH_SIZE) {
             // Unified read path: documents bulk-mark through /api/reading too.
@@ -1435,7 +1448,7 @@ function createItemLabelsStore() {
     // Unified unread: keyed by itemUri (item_key), so it goes through the same
     // soft-delete writer as articles. The backend tombstones the row so the
     // un-read carries on the forward read delta to other devices.
-    if (syncStore.isOnline) {
+    if (canReachBackend()) {
       try {
         await api.markAsUnread(itemUri, now);
       } catch (e) {
@@ -1472,7 +1485,7 @@ function createItemLabelsStore() {
     triggerReactivity();
 
     const props = { paragraphIndex, totalParagraphs, lastReadAt: now };
-    if (syncStore.isOnline) {
+    if (canReachBackend()) {
       try {
         await api.addLabel({
           itemKey,
@@ -1650,7 +1663,7 @@ function createItemLabelsStore() {
       props: { highlights },
     };
     if (highlights.length === 0) {
-      if (syncStore.isOnline) {
+      if (canReachBackend()) {
         try {
           await api.deleteLabel(itemKey, 'highlights');
         } catch (e) {
@@ -1661,7 +1674,7 @@ function createItemLabelsStore() {
         await syncQueue.enqueue('delete', 'label', `${itemKey}\0highlights`, payload);
       }
     } else {
-      if (syncStore.isOnline) {
+      if (canReachBackend()) {
         try {
           await api.addLabel({ itemKey, itemType, label: 'highlights', props: { highlights } });
         } catch (e) {

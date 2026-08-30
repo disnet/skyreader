@@ -106,8 +106,10 @@
 
   // Register global keyboard shortcuts on mount. keyboardStore.register() keys by
   // shortcut, so re-registering on remount (e.g. logout → login) just overwrites.
-  // The auth conditions are redundant here (this component only mounts when
-  // authenticated) but kept to preserve the original gating semantics.
+  // The auth conditions are redundant here (this component only mounts inside the
+  // app) but kept to preserve the original gating semantics. `isInApp` marks the
+  // ones a guest can use — reading and source management; the rest stay on
+  // `isAuthenticated` so a guest's keypress doesn't jump at an account surface.
   onMount(() => {
     // View switching shortcuts
     keyboardStore.register({
@@ -123,7 +125,7 @@
       description: 'Feeds',
       category: 'Views',
       action: () => goto(FEEDS_PATH),
-      condition: () => auth.isAuthenticated,
+      condition: () => auth.isInApp,
     });
 
     keyboardStore.register({
@@ -163,7 +165,7 @@
       description: 'Manage Sources',
       category: 'Views',
       action: () => goto('/sources'),
-      condition: () => auth.isAuthenticated,
+      condition: () => auth.isInApp,
     });
 
     keyboardStore.register({
@@ -190,7 +192,7 @@
       description: 'Previous feed',
       category: 'Feed',
       action: () => cycleFeeds(-1),
-      condition: () => auth.isAuthenticated,
+      condition: () => auth.isInApp,
     });
 
     keyboardStore.register({
@@ -198,7 +200,7 @@
       description: 'Next feed',
       category: 'Feed',
       action: () => cycleFeeds(1),
-      condition: () => auth.isAuthenticated,
+      condition: () => auth.isInApp,
     });
 
     // Add menu shortcut (Add feed / @handle / Save URL / …)
@@ -207,7 +209,7 @@
       description: 'Toggle add menu',
       category: 'Other',
       action: () => sidebarStore.toggleAddMenu(),
-      condition: () => auth.isAuthenticated,
+      condition: () => auth.isInApp,
     });
 
     // Navigation switcher shortcut. In a saved view "/" means what it means
@@ -327,7 +329,9 @@
   // reader opens) would tear down polling for the other. start() is idempotent;
   // stop() also clears per-account state, so it doubles as logout cleanup.
   $effect(() => {
-    if (!browser) return;
+    // @mentions are an account feature and the poll is session-gated, so a guest
+    // would just 401 on a timer.
+    if (!browser || !auth.isAuthenticated) return;
     notificationsStore.start();
     return () => notificationsStore.stop();
   });

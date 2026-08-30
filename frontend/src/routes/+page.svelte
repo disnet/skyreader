@@ -44,7 +44,17 @@
   }
 
   $effect(() => {
-    if (browser && (auth.isAuthenticated || auth.isGuest)) {
+    if (!browser) return;
+    if (auth.isGuest) {
+      // A guest's app is /feeds. `targetFor` can land on /home or /saved (the
+      // default-view preference, an old ?saved= link), both of which need an
+      // account — so anything outside /feeds becomes /feeds rather than a bounce
+      // through the sign-in screen.
+      const target = targetFor(new URL(window.location.href));
+      goto(target.startsWith('/feeds') ? target : '/feeds', { replaceState: true });
+      return;
+    }
+    if (auth.isAuthenticated) {
       goto(targetFor(new URL(window.location.href)), { replaceState: true });
     }
   });

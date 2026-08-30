@@ -195,10 +195,26 @@ function createAppManager() {
   // failed boot safely retries while the marker remains set.
   async function migrateGuestSubscriptions(): Promise<void> {
     if (!auth.isAuthenticated || !auth.hasGuestData) return;
-    const rss = liveDb.subscriptions.filter((subscription) => subscription.feedUrl);
-    for (let index = 0; index < rss.length; index += 50) {
+
+    let rows = liveDb.subscriptions.filter((subscription) => subscription.feedUrl);
+
+    // The nine curated starter feeds are a sample, not a choice. Pushing them
+    // into an account that already HAS a library (someone who tried the reader
+    // out and then signed in) would silently add feeds the reader never picked —
+    // and mirror them to their PDS with Atmospheric sync on. So they only travel
+    // when the account is empty; otherwise they stay local and syncSubscriptions
+    // clears them below, leaving the reader's real library untouched.
+    const starterRkeys = new Set(auth.starterRkeys());
+    if (starterRkeys.size > 0 && rows.some((row) => starterRkeys.has(row.rkey))) {
+      const remote = await api.listRecords('app.skyreader.feed.subscription');
+      if (remote.records.length > 0) {
+        rows = rows.filter((row) => !starterRkeys.has(row.rkey));
+      }
+    }
+
+    for (let index = 0; index < rows.length; index += 50) {
       await api.bulkCreateSubscriptions(
-        rss.slice(index, index + 50).map((subscription) => ({
+        rows.slice(index, index + 50).map((subscription) => ({
           rkey: subscription.rkey,
           feedUrl: subscription.feedUrl!,
           title: subscription.title,

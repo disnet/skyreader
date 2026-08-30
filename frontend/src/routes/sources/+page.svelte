@@ -25,6 +25,8 @@
   import SourcesDiscovery from '$lib/components/sources/SourcesDiscovery.svelte';
   import LimitNotice from '$lib/components/LimitNotice.svelte';
   import { feedLimitLine } from '$lib/utils/limitCopy';
+  import { auth } from '$lib/stores/auth.svelte';
+
   import type { Subscription, BlueskyProfile } from '$lib/types';
 
   interface DetectedPublication {
@@ -426,6 +428,9 @@
 
   // -- Parked feeds --
   async function loadParked() {
+    // Parking is an account concept (PDS records over the plan's active
+    // capacity). A guest's library is local and capped locally.
+    if (auth.isGuest) return;
     try {
       const res = await api.getParkedSubscriptions();
       parkedFeeds = res.records.map((r) => {

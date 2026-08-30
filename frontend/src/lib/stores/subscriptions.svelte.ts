@@ -12,6 +12,9 @@ import type { Subscription, SubscriptionSourceType } from '$lib/types';
  * Uses liveDb for storage. Feed fetching is handled separately by feedFetcher.
  * Article queries are handled by articlesStore.
  */
+// Matches the guest timeline endpoint's feedUrls cap (backend/src/routes/guest.ts).
+const GUEST_MAX_SUBSCRIPTIONS = 50;
+
 function createSubscriptionsStore() {
   let isLoading = $state(false);
   let error = $state<string | null>(null);
@@ -33,8 +36,13 @@ function createSubscriptionsStore() {
   // Derived: subscription count
   let count = $derived(subscriptions.length);
 
-  // Derived: max subscriptions from user tier (fallback to 100 for free)
-  let maxSubscriptions = $derived(auth.user?.limits?.maxSubscriptions ?? 100);
+  // Derived: max subscriptions from user tier (fallback to 100 for free).
+  // A guest's ceiling is the guest timeline's per-request feed cap: the whole
+  // library travels in every refresh, and going over it would 400 the request —
+  // costing them the timeline rather than just the overflow.
+  let maxSubscriptions = $derived(
+    auth.isGuest ? GUEST_MAX_SUBSCRIPTIONS : (auth.user?.limits?.maxSubscriptions ?? 100)
+  );
 
   // Derived: can add more subscriptions
   let canAddMore = $derived(count < maxSubscriptions);
@@ -150,8 +158,6 @@ function createSubscriptionsStore() {
       };
 
       const id = await liveDb.addSubscription(subscription);
-      if (!isAtProto && feedUrl && auth.isGuest)
-        api.warmGuestFeed(feedUrl).catch(() => undefined);
 
       return id;
     });
@@ -228,8 +234,16 @@ function createSubscriptionsStore() {
         source,
       }));
 
+      // A guest has no server to park overflow, so the cap is enforced here:
+      // everything that fits is kept and the rest is reported dropped — the same
+      // shape the backend returns, so the bookkeeping below is unchanged.
+      const guestRoom = Math.max(0, maxSubscriptions - count);
       const res = auth.isGuest
-        ? { parked: [] as string[], skipped: [] as string[], dropped: [] as string[] }
+        ? {
+            parked: [] as string[],
+            skipped: [] as string[],
+            dropped: localRecords.slice(guestRoom).map(({ rkey }) => rkey),
+          }
         : await api.bulkCreateSubscriptions(subscriptionsToCreate);
       const parkedRkeys = new Set(res.parked ?? []);
       const skippedRkeys = new Set(res.skipped ?? []);

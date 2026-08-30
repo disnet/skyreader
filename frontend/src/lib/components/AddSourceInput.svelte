@@ -4,6 +4,7 @@
   import { goto } from '$app/navigation';
   import Icon from '$lib/components/Icon.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
+  import { auth } from '$lib/stores/auth.svelte';
 
   // Open state lives in the store so the keyboard shortcut ("a") can toggle
   // this menu as well as the trigger button.
@@ -78,6 +79,13 @@
     if (!v) return;
 
     close();
+
+    // Following an Atmosphere account writes a subscription record to the
+    // reader's own repo, so it needs one. A guest gets the sign-in screen.
+    if (auth.isGuest && inputType === 'handle') {
+      goto('/auth/login?returnUrl=/feeds');
+      return;
+    }
 
     if (inputType === 'handle') {
       const handle = v.startsWith('@') ? v.slice(1) : v;
@@ -178,7 +186,7 @@
           <input
             bind:this={inputRef}
             bind:value={inputValue}
-            placeholder="Paste URL or @handle..."
+            placeholder={auth.isGuest ? 'Paste a feed URL...' : 'Paste URL or @handle...'}
             class="menu-input"
           />
           {#if inputValue.trim()}
@@ -195,27 +203,38 @@
           <span class="item-icon"><Icon name="rss" size={16} /></span>
           Add RSS Feed
         </button>
-        <button
-          class="menu-item"
-          onclick={(e) => handleAction(() => sidebarStore.openAddHandleModal(), e)}
-        >
-          <span class="item-icon"><Icon name="users" size={16} /></span>
-          Add Atmosphere account
-        </button>
-        <button
-          class="menu-item"
-          onclick={(e) => handleAction(() => sidebarStore.openSaveArticleModal(), e)}
-        >
-          <span class="item-icon"><Icon name="bookmark" size={16} /></span>
-          Save article by URL
-        </button>
-        <button
-          class="menu-item"
-          onclick={(e) => handleAction(() => goto('/settings#save-anywhere'), e)}
-        >
-          <span class="item-icon"><Icon name="share" size={16} /></span>
-          Save from anywhere
-        </button>
+        {#if auth.isGuest}
+          <!-- Following accounts and saving both write to the reader's own repo. -->
+          <button
+            class="menu-item"
+            onclick={(e) => handleAction(() => goto('/auth/login?returnUrl=/feeds'), e)}
+          >
+            <span class="item-icon"><Icon name="user" size={16} /></span>
+            Sign in to save & follow accounts
+          </button>
+        {:else}
+          <button
+            class="menu-item"
+            onclick={(e) => handleAction(() => sidebarStore.openAddHandleModal(), e)}
+          >
+            <span class="item-icon"><Icon name="users" size={16} /></span>
+            Add Atmosphere account
+          </button>
+          <button
+            class="menu-item"
+            onclick={(e) => handleAction(() => sidebarStore.openSaveArticleModal(), e)}
+          >
+            <span class="item-icon"><Icon name="bookmark" size={16} /></span>
+            Save article by URL
+          </button>
+          <button
+            class="menu-item"
+            onclick={(e) => handleAction(() => goto('/settings#save-anywhere'), e)}
+          >
+            <span class="item-icon"><Icon name="share" size={16} /></span>
+            Save from anywhere
+          </button>
+        {/if}
       </div>
     </div>
   {/if}

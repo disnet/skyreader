@@ -33,24 +33,40 @@
   // to the marketing landing instead. Public routes (/, /auth/*, /terms, the /save
   // and /subscribe share targets) are left to render.
   const APP_ROUTES = ['/home', '/feeds', '/saved', '/daily'];
+
+  // Guest mode is the READING surface and nothing else. Everything below needs an
+  // account — saves, highlights, the linkblog, channels, settings — and these are
+  // exactly the features that make signing in worth it, so a guest who reaches
+  // one gets the sign-in screen (returning here afterwards), not a page whose
+  // every load 401s.
+  const GUEST_ROUTES = ['/feeds', '/sources'];
+  const ACCOUNT_ROUTES = [
+    '/home',
+    '/saved',
+    '/daily',
+    '/linkblog',
+    '/highlights',
+    '/discover',
+    '/settings',
+    '/channels',
+  ];
+  function isAccountOnly(pathname: string): boolean {
+    if (GUEST_ROUTES.includes(pathname)) return false;
+    return ACCOUNT_ROUTES.some((route) => pathname === route || pathname.startsWith(`${route}/`));
+  }
+
   $effect(() => {
-    if (
-      browser &&
-      !auth.isLoading &&
-      auth.isGuest &&
-      APP_ROUTES.includes($page.url.pathname) &&
-      $page.url.pathname !== '/feeds'
-    ) {
-      goto('/feeds', { replaceState: true });
+    if (!browser || auth.isLoading) return;
+    const pathname = $page.url.pathname;
+
+    if (auth.isGuest) {
+      if (isAccountOnly(pathname)) {
+        goto(`/auth/login?returnUrl=${encodeURIComponent(pathname)}`, { replaceState: true });
+      }
       return;
     }
-    if (
-      browser &&
-      !auth.isLoading &&
-      !auth.isAuthenticated &&
-      !auth.isGuest &&
-      APP_ROUTES.includes($page.url.pathname)
-    ) {
+
+    if (!auth.isAuthenticated && APP_ROUTES.includes(pathname)) {
       goto('/', { replaceState: true });
     }
   });
