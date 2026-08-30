@@ -22,6 +22,7 @@ export interface LastUser {
 // device so the login screen can offer any of them, not just the latest.
 const RECENT_USERS_KEY = 'skyreader-recent-users';
 const MAX_RECENT_USERS = 5;
+const GUEST_KEY = 'skyreader-guest';
 
 function parseRecentUsers(raw: string | null): LastUser[] {
   if (!raw) return [];
@@ -83,6 +84,7 @@ function createAuthStore() {
 
   // Handle 401 - session expired/invalid on the backend
   function handleUnauthorized() {
+    if (browser && !state.user && localStorage.getItem(GUEST_KEY) === '1') return;
     console.log('Handling unauthorized - clearing session');
     state.user = null;
 
@@ -128,6 +130,16 @@ function createAuthStore() {
       localStorage.setItem('skyreader-auth', JSON.stringify({ user }));
       rememberLastUser(user);
     }
+  }
+
+  function enterGuestMode() {
+    if (!browser) return;
+    localStorage.setItem(GUEST_KEY, '1');
+  }
+
+  function exitGuestMode() {
+    if (!browser) return;
+    localStorage.removeItem(GUEST_KEY);
   }
 
   // Prime the display cache WITHOUT flipping auth state. Used by the OAuth
@@ -206,6 +218,12 @@ function createAuthStore() {
     get isAuthenticated() {
       return !!state.user;
     },
+    get isGuest() {
+      return browser && !state.user && localStorage.getItem(GUEST_KEY) === '1';
+    },
+    get hasGuestData() {
+      return browser && localStorage.getItem(GUEST_KEY) === '1';
+    },
     get error() {
       return state.error;
     },
@@ -217,6 +235,8 @@ function createAuthStore() {
     },
     setUser,
     cacheUser,
+    enterGuestMode,
+    exitGuestMode,
     verifySession,
     logout,
     setError,

@@ -1,6 +1,30 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import Icon from '$lib/components/Icon.svelte';
+  import { goto } from '$app/navigation';
+  import { auth } from '$lib/stores/auth.svelte';
+  import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
+  import { api } from '$lib/services/api';
+
+  let starting = $state(false);
+  async function startReading() {
+    if (starting) return;
+    starting = true;
+    auth.enterGuestMode();
+    try {
+      const { channels } = await api.getStarterFeeds();
+      await subscriptionsStore.addBulk(
+        channels.flatMap((channel) =>
+          channel.feeds.map((feed) => ({ ...feed, category: channel.name }))
+        )
+      );
+      await goto('/feeds');
+    } catch (error) {
+      auth.exitGuestMode();
+      console.error('Could not start guest reading:', error);
+      starting = false;
+    }
+  }
 
   // ── Reveal-on-scroll action ──────────────────────────────────
   // Default (no JS / reduced motion): content is fully visible. The
@@ -363,7 +387,9 @@
   <!-- ── Final CTA ─────────────────────────────────────────── -->
   <section class="section section--cta" aria-label="Get started">
     <div class="cta-inner" use:reveal>
-      <a href="/auth/login" class="cta-primary cta-primary--lg"> Start Reading </a>
+      <button class="cta-primary cta-primary--lg" onclick={startReading} disabled={starting}>
+        {starting ? 'Preparing your reading room…' : 'Start Reading'}
+      </button>
     </div>
   </section>
 </div>

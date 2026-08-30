@@ -17,6 +17,7 @@ import {
 } from './timelineSync';
 import { loadDigests, saveDigests, scopeKey } from './documentDigests';
 import type { Subscription } from '$lib/types';
+import { auth } from '$lib/stores/auth.svelte';
 
 // Max authors per /documents request (matches the proxy/backend cap).
 const DOCUMENT_BATCH_SIZE = 50;
@@ -153,7 +154,7 @@ async function fetchTimeline(
 
     let page;
     try {
-      page = await api.fetchTimeline(
+      const params =
         coldOffset === undefined
           ? {
               since_seq: cursor,
@@ -167,8 +168,13 @@ async function fetchTimeline(
               limit: TIMELINE_PAGE_LIMIT,
               health_rev: feedHealthRev,
               include_counts: includeCounts,
-            }
-      );
+            };
+      page = auth.isGuest
+        ? await api.fetchGuestTimeline(
+            rssSubs.map((subscription) => subscription.feedUrl!).filter(Boolean),
+            params
+          )
+        : await api.fetchTimeline(params);
     } catch (e) {
       if (e instanceof ApiError && e.status === 404) {
         // Backend predates the timeline (or was rolled back): stay on /batch.
@@ -182,7 +188,7 @@ async function fetchTimeline(
     // archive. Until it is, use the legacy batch path and commit no cursor.
     if (shouldFallBackToBatch(page, rssSubs.length)) return null;
 
-    if (page.readCursor) await itemLabelsStore.seedReadCursor(page.readCursor);
+    if (!auth.isGuest && page.readCursor) await itemLabelsStore.seedReadCursor(page.readCursor);
 
     if (page.unreadCounts) {
       serverCounts = page.unreadCounts;
@@ -197,7 +203,7 @@ async function fetchTimeline(
     if (toMerge.length > 0) {
       result.newArticles += await liveDb.mergeArticlesBatch(toMerge, savedGuids);
     }
-    if (readGuids.length > 0) {
+    if (!auth.isGuest && readGuids.length > 0) {
       await itemLabelsStore.applyAnnotatedReads(readGuids, 'article');
     }
 

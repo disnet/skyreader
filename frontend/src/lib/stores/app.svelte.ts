@@ -15,6 +15,7 @@ import { api } from '$lib/services/api';
 import { dedupeRemoteSubscriptionRecords } from '$lib/services/subscriptionDedup';
 import { getMetadata, setMetadata, checkDbHealth } from '$lib/services/db';
 import type { Subscription } from '$lib/types';
+import { auth } from './auth.svelte';
 
 const LAST_REFRESH_KEY = 'lastRefreshAt';
 
@@ -67,16 +68,23 @@ function createAppManager() {
       }
 
       // Phase 1: Hydrate from cache (parallel)
-      await Promise.all([
+      const guestLoads = [
         liveDb.loadSubscriptions(),
         liveDb.loadArticles(),
         itemLabelsStore.load(),
-        linkblogStore.load(),
-        shareDraftsStore.load(),
-        filteredViewsStore.load(),
-        savesStore.load(),
-        magazineStore.load(),
-      ]);
+      ];
+      await Promise.all(
+        auth.isGuest
+          ? guestLoads
+          : [
+              ...guestLoads,
+              linkblogStore.load(),
+              shareDraftsStore.load(),
+              filteredViewsStore.load(),
+              savesStore.load(),
+              magazineStore.load(),
+            ]
+      );
 
       // Feed statuses are NOT seeded here. A feed is healthy until the crawler's
       // health report says otherwise, and that report is the only thing that can
@@ -84,8 +92,8 @@ function createAppManager() {
       // feedStatus.svelte.ts.
 
       // Initialize pending count and process queue if online
-      await syncStore.updatePendingCount();
-      if (syncStore.isOnline && syncStore.pendingCount > 0) {
+      if (!auth.isGuest) await syncStore.updatePendingCount();
+      if (!auth.isGuest && syncStore.isOnline && syncStore.pendingCount > 0) {
         // Process queue in background - don't block initialization
         syncStore.triggerSync();
       }
@@ -127,6 +135,15 @@ function createAppManager() {
     let newArticles = 0;
 
     try {
+      if (auth.isGuest) {
+        if (liveDb.subscriptions.length > 0) {
+          newArticles = (await fetchAllFeeds(liveDb.subscriptions, articlesStore.savedGuids))
+            .newArticles;
+        }
+        return newArticles;
+      }
+
+      await migrateGuestSubscriptions();
       // Sync subscriptions and reload every server-backed user collection in parallel.
       // Saves must participate here (not only during initialize): another device can
       // add one while this tab stays open, and an explicit refresh is the user's way
@@ -171,6 +188,27 @@ function createAppManager() {
     }
 
     return newArticles;
+  }
+
+  // Runs before reconciliation: otherwise syncSubscriptions would interpret the
+  // guest-only rkeys as remote deletions. The bulk endpoint is idempotent, so a
+  // failed boot safely retries while the marker remains set.
+  async function migrateGuestSubscriptions(): Promise<void> {
+    if (!auth.isAuthenticated || !auth.hasGuestData) return;
+    const rss = liveDb.subscriptions.filter((subscription) => subscription.feedUrl);
+    for (let index = 0; index < rss.length; index += 50) {
+      await api.bulkCreateSubscriptions(
+        rss.slice(index, index + 50).map((subscription) => ({
+          rkey: subscription.rkey,
+          feedUrl: subscription.feedUrl!,
+          title: subscription.title,
+          siteUrl: subscription.siteUrl,
+          category: subscription.category,
+          source: subscription.source,
+        }))
+      );
+    }
+    auth.exitGuestMode();
   }
 
   /**

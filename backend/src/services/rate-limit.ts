@@ -30,6 +30,9 @@ const RATE_LIMITS: Record<string, RateLimitConfig> = {
   // for a client stuck in an error loop — the client samples before it sends, and
   // anything above this is a bug in the client, not signal worth keeping.
   '/api/telemetry/error': { limit: 20, windowMs: 60000 },
+  '/api/guest/timeline': { limit: 60, windowMs: 60000 },
+  '/api/guest/feeds/discover': { limit: 10, windowMs: 60000 },
+  '/api/guest/feeds/warm': { limit: 10, windowMs: 60000 },
 
   // Expensive operations (external API calls, complex queries)
   '/api/social/feed': EXPENSIVE_LIMIT,

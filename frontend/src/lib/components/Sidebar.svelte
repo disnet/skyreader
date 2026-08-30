@@ -272,22 +272,28 @@
 <aside class="sidebar" class:open={sidebarStore.isOpen}>
   <!-- Header row -->
   <div class="sidebar-header">
-    <a href="/settings" class="user-info" onclick={() => sidebarStore.closeMobile()}>
-      {#if auth.user?.avatarUrl}
-        <img src={auth.user.avatarUrl} alt="" class="avatar" />
-      {:else}
-        <div class="avatar-placeholder"></div>
-      {/if}
-      <span class="username">@{auth.user?.handle}</span>
-      {#if auth.user?.tier && auth.user.tier !== 'free'}
-        <span class="tier-badge">{auth.user.tier}</span>
-      {/if}
-    </a>
+    {#if auth.isGuest}
+      <a href="/auth/login" class="user-info" onclick={() => sidebarStore.closeMobile()}>
+        <span class="username">Sign in to sync</span>
+      </a>
+    {:else}
+      <a href="/settings" class="user-info" onclick={() => sidebarStore.closeMobile()}>
+        {#if auth.user?.avatarUrl}
+          <img src={auth.user.avatarUrl} alt="" class="avatar" />
+        {:else}
+          <div class="avatar-placeholder"></div>
+        {/if}
+        <span class="username">@{auth.user?.handle}</span>
+        {#if auth.user?.tier && auth.user.tier !== 'free'}
+          <span class="tier-badge">{auth.user.tier}</span>
+        {/if}
+      </a>
+    {/if}
     <!-- Grouped, so `space-between` puts the handle at one end and this pair at
          the other. Left as three children it spaced all three evenly and the
          bell floated into the middle of the row. -->
     <div class="header-actions">
-      <NotificationBell />
+      {#if !auth.isGuest}<NotificationBell />{/if}
       <AddSourceInput />
     </div>
   </div>

@@ -44,12 +44,12 @@
   }
 
   $effect(() => {
-    if (browser && auth.isAuthenticated) {
+    if (browser && (auth.isAuthenticated || auth.isGuest)) {
       goto(targetFor(new URL(window.location.href)), { replaceState: true });
     }
   });
 </script>
 
-{#if !auth.isAuthenticated}
+{#if !auth.isAuthenticated && !auth.isGuest}
   <WelcomePage />
 {/if}

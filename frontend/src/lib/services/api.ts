@@ -213,6 +213,13 @@ export interface TimelineFeedHealth {
   lastFetchedAt?: number;
 }
 
+export interface StarterChannel {
+  key: string;
+  name: string;
+  description: string;
+  feeds: Array<{ feedUrl: string; title: string; siteUrl: string }>;
+}
+
 export interface ExtractedArticle {
   title: string | null;
   author: string | null;
@@ -480,6 +487,27 @@ class ApiClient {
     return this.fetch(`/api/v2/timeline${query ? `?${query}` : ''}`);
   }
 
+  async fetchGuestTimeline(
+    feedUrls: string[],
+    params: { since_seq?: number; generation?: string; limit?: number; cold_offset?: number }
+  ): Promise<TimelineResponse> {
+    return this.fetch('/api/guest/timeline', {
+      method: 'POST',
+      body: JSON.stringify({ feedUrls, ...params }),
+    });
+  }
+
+  async getStarterFeeds(): Promise<{ channels: StarterChannel[] }> {
+    return this.fetch('/api/guest/starter-feeds');
+  }
+
+  async warmGuestFeed(feedUrl: string): Promise<void> {
+    await this.fetch('/api/guest/feeds/warm', {
+      method: 'POST',
+      body: JSON.stringify({ feedUrl }),
+    });
+  }
+
   async fetchFeedsBatchV2(
     feeds: Array<{
       url: string;
@@ -567,6 +595,10 @@ class ApiClient {
     } | null;
   }> {
     return this.fetch(`/api/v2/feeds/discover?url=${encodeURIComponent(url)}`);
+  }
+
+  async discoverFeedsGuest(url: string): ReturnType<ApiClient['discoverFeedsV2']> {
+    return this.fetch(`/api/guest/feeds/discover?url=${encodeURIComponent(url)}`);
   }
 
   // Content detection

@@ -7,6 +7,7 @@
   import { fetchSingleFeed, fetchAllDocuments } from '$lib/services/feedFetcher';
   import { api } from '$lib/services/api';
   import { syncStore } from '$lib/stores/sync.svelte';
+  import { auth } from '$lib/stores/auth.svelte';
   import {
     crossTypeDuplicatesForAdded,
     type CrossTypeDuplicate,
@@ -99,7 +100,9 @@
         url = 'https://' + url;
       }
 
-      const result = await api.discoverFeedsV2(url);
+      const result = auth.isGuest
+        ? await api.discoverFeedsGuest(url)
+        : await api.discoverFeedsV2(url);
       const site = result.standardSite ?? null;
       const feeds = result.feeds;
       // standard.site is the preferred option, so it counts ahead of RSS/Atom feeds.

@@ -109,18 +109,20 @@ function createSubscriptionsStore() {
       const rkey = generateTid();
       const now = new Date().toISOString();
 
-      // Sync to backend first
-      const created = await api.createSubscription({
-        rkey,
-        feedUrl: feedUrl || undefined,
-        title,
-        siteUrl: options?.siteUrl,
-        category: options?.category,
-        tags: options?.tags,
-        sourceType: options?.sourceType,
-        subjectDid: options?.subjectDid,
-        collectionNsid: options?.collectionNsid,
-      });
+      // Guest libraries stay entirely on this device until sign-in migration.
+      const created = auth.isGuest
+        ? undefined
+        : await api.createSubscription({
+            rkey,
+            feedUrl: feedUrl || undefined,
+            title,
+            siteUrl: options?.siteUrl,
+            category: options?.category,
+            tags: options?.tags,
+            sourceType: options?.sourceType,
+            subjectDid: options?.subjectDid,
+            collectionNsid: options?.collectionNsid,
+          });
 
       // The server may answer with a record that already exists instead of the
       // one we proposed: re-subscribing to a feed that was PARKED, which this
@@ -148,6 +150,8 @@ function createSubscriptionsStore() {
       };
 
       const id = await liveDb.addSubscription(subscription);
+      if (!isAtProto && feedUrl && auth.isGuest)
+        api.warmGuestFeed(feedUrl).catch(() => undefined);
 
       return id;
     });
@@ -213,7 +217,7 @@ function createSubscriptionsStore() {
 
     onProgress?.(Math.floor(feedsToAdd.length / 4), feedsToAdd.length);
 
-    // Bulk sync to backend
+    // Bulk sync to backend (or accept every row locally for a guest).
     try {
       const subscriptionsToCreate = localRecords.map(({ rkey, feed }) => ({
         rkey,
@@ -224,7 +228,9 @@ function createSubscriptionsStore() {
         source,
       }));
 
-      const res = await api.bulkCreateSubscriptions(subscriptionsToCreate);
+      const res = auth.isGuest
+        ? { parked: [] as string[], skipped: [] as string[], dropped: [] as string[] }
+        : await api.bulkCreateSubscriptions(subscriptionsToCreate);
       const parkedRkeys = new Set(res.parked ?? []);
       const skippedRkeys = new Set(res.skipped ?? []);
       const droppedRkeys = new Set(res.dropped ?? []);
@@ -291,6 +297,15 @@ function createSubscriptionsStore() {
 
     const now = new Date().toISOString();
 
+    if (auth.isGuest) {
+      await liveDb.updateSubscription(id, {
+        ...updates,
+        updatedAt: now,
+        localUpdatedAt: Date.now(),
+      });
+      return;
+    }
+
     // Delete old and recreate (API limitation)
     await api.deleteSubscription(sub.rkey);
 
@@ -339,9 +354,10 @@ function createSubscriptionsStore() {
       if (updates.customIconUrl !== undefined) patch.customIconUrl = updates.customIconUrl ?? null;
       if (updates.category !== undefined) patch.category = updates.category ?? null;
 
-      api.updateSubscription(sub.rkey, patch).catch((err) => {
-        console.error('[Subscriptions] Failed to sync custom fields to backend:', err);
-      });
+      if (!auth.isGuest)
+        api.updateSubscription(sub.rkey, patch).catch((err) => {
+          console.error('[Subscriptions] Failed to sync custom fields to backend:', err);
+        });
     }
   }
 
@@ -364,7 +380,7 @@ function createSubscriptionsStore() {
       .map((id) => liveDb.getSubscriptionById(id)?.rkey)
       .filter((rkey): rkey is string => !!rkey);
 
-    if (rkeys.length > 0) {
+    if (rkeys.length > 0 && !auth.isGuest) {
       const patch: {
         customTitle?: string | null;
         customIconUrl?: string | null;
@@ -388,7 +404,7 @@ function createSubscriptionsStore() {
     if (!sub) return;
 
     // Sync delete to backend
-    await api.deleteSubscription(sub.rkey);
+    if (!auth.isGuest) await api.deleteSubscription(sub.rkey);
 
     // Delete locally (includes articles)
     await liveDb.deleteSubscription(id);
@@ -406,7 +422,7 @@ function createSubscriptionsStore() {
     const rkeys = allSubs.map((sub) => sub.rkey);
 
     // Single bulk request to backend
-    await api.bulkDeleteSubscriptions(rkeys);
+    if (!auth.isGuest) await api.bulkDeleteSubscriptions(rkeys);
 
     // Clear all local data
     await liveDb.clearAllSubscriptions();

@@ -564,7 +564,7 @@
 
 <EditFeedModal open={editModalOpen} subscription={editingSubscription} onclose={closeEditModal} />
 
-{#if !auth.isAuthenticated}
+{#if !auth.isAuthenticated && !auth.isGuest}
   <WelcomePage />
 {:else}
   <!-- Lift any floating action bar above the fixed mobile nav while it's visible;

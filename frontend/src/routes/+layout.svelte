@@ -20,7 +20,7 @@
   // just this layout plus the landing page, not the whole app.
   let AppShell = $state<Component<{ children: Snippet }> | null>(null);
   $effect(() => {
-    if (browser && auth.isAuthenticated && !AppShell) {
+    if (browser && (auth.isAuthenticated || auth.isGuest) && !AppShell) {
       import('$lib/components/AppShell.svelte').then((m) => {
         AppShell = m.default;
       });
@@ -37,7 +37,18 @@
     if (
       browser &&
       !auth.isLoading &&
+      auth.isGuest &&
+      APP_ROUTES.includes($page.url.pathname) &&
+      $page.url.pathname !== '/feeds'
+    ) {
+      goto('/feeds', { replaceState: true });
+      return;
+    }
+    if (
+      browser &&
+      !auth.isLoading &&
       !auth.isAuthenticated &&
+      !auth.isGuest &&
       APP_ROUTES.includes($page.url.pathname)
     ) {
       goto('/', { replaceState: true });
@@ -181,7 +192,7 @@
          a confirmation. -->
     {@render children()}
   {:else if !auth.isLoading}
-    {#if auth.isAuthenticated}
+    {#if auth.isAuthenticated || auth.isGuest}
       {#if AppShell}
         <AppShell {children} />
       {:else}
