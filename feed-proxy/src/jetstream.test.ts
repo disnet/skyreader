@@ -1,4 +1,4 @@
-import { test, expect, describe, beforeEach } from 'bun:test';
+import { test, expect, describe, beforeEach, jest } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { initDatabase } from './app';
 import { DocumentFirehose } from './jetstream';
@@ -205,7 +205,8 @@ describe('DocumentFirehose reconcile / active-author set', () => {
 
     fh.reconcile(); // not running → updates the set without connecting
 
-    expect(fh.isSubscribed('did:plc:fresh')).toBe(true);
+    // Desired authors are not trusted until their filter reaches Jetstream.
+    expect(fh.isSubscribed('did:plc:fresh')).toBe(false);
     expect(fh.isSubscribed('did:plc:stale')).toBe(false);
   });
 
@@ -284,16 +285,19 @@ describe('DocumentFirehose.isHealthy', () => {
 });
 
 describe('DocumentFirehose repair scheduling', () => {
-  test('keeps the desired filter dirty and reconnects when options_update throws', () => {
+  test('keeps the desired filter dirty and backs off repeated options_update failures', () => {
+    jest.useFakeTimers();
     const db = makeDb();
     const fh = new DocumentFirehose(db, { enabled: false });
     const internals = fh as unknown as {
+      running: boolean;
       subscribedDids: Set<string>;
       sentDids: Set<string>;
       ws: WebSocket;
-      reconnect: () => void;
+      connect: () => void;
       sendOptionsUpdate: (ws: WebSocket) => boolean;
     };
+    internals.running = true;
     internals.subscribedDids = new Set([DID]);
     const ws = {
       send: () => {
@@ -301,14 +305,26 @@ describe('DocumentFirehose repair scheduling', () => {
       },
     } as unknown as WebSocket;
     internals.ws = ws;
-    let reconnects = 0;
-    internals.reconnect = () => {
-      reconnects++;
-    };
+    let connects = 0;
+    internals.connect = () => connects++;
 
     expect(internals.sendOptionsUpdate(ws)).toBe(false);
     expect(internals.sentDids.size).toBe(0);
-    expect(reconnects).toBe(1);
+    expect(fh.isSubscribed(DID)).toBe(false);
+    expect(connects).toBe(0);
+    jest.advanceTimersByTime(999);
+    expect(connects).toBe(0);
+    jest.advanceTimersByTime(1);
+    expect(connects).toBe(1);
+
+    // A second failed connection uses the next exponential-backoff tier.
+    internals.ws = ws;
+    expect(internals.sendOptionsUpdate(ws)).toBe(false);
+    jest.advanceTimersByTime(1999);
+    expect(connects).toBe(1);
+    jest.advanceTimersByTime(1);
+    expect(connects).toBe(2);
+    jest.useRealTimers();
   });
 
   test('marks an author for re-list when applying an event throws', async () => {

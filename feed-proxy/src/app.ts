@@ -2211,7 +2211,7 @@ export function createApp(db: Database, config: AppConfig) {
     const frozenDocuments = db
       .query<{ count: number }, [number, number]>(
         `SELECT COUNT(*) as count FROM document_cache
-         WHERE last_requested_at > ? AND listed_at < ?`
+         WHERE last_requested_at > ? AND listed_at > 0 AND listed_at < ?`
       )
       .get(activeDocumentCutoff, now - 2 * firehoseRelistMs);
     const documentBackoff = db
@@ -2935,6 +2935,20 @@ export function createApp(db: Database, config: AppConfig) {
         let listedAge = Number.POSITIVE_INFINITY;
 
         if (cached && cached.documents_json) {
+          // Polling is the activity signal for an error placeholder, and this
+          // branch otherwise returns before fetchAndCacheDocuments can shorten
+          // a legacy seven-day backoff. Persist the active-reader cap first.
+          if (
+            cached.next_retry_at &&
+            now < cached.next_retry_at &&
+            cached.next_retry_at > now + ACTIVE_DOCUMENT_BACKOFF_MAX_MS
+          ) {
+            cached.next_retry_at = now + ACTIVE_DOCUMENT_BACKOFF_MAX_MS;
+            db.run('UPDATE document_cache SET next_retry_at = ? WHERE did = ?', [
+              cached.next_retry_at,
+              did,
+            ]);
+          }
           const age = now - cached.fetched_at;
           // Age since the last real PDS list. Splices bump `fetched_at` but not
           // `listed_at`, so this is the only measure that reflects whether we

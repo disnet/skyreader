@@ -1345,6 +1345,25 @@ describe('Integration Tests', () => {
 				VALUES (?, ?, ?, ?, ?, ?)`,
         ['healthy', 'https://example.com/ok', '{}', Date.now(), Date.now(), 0]
       );
+      // listed_at=0 means a splice repair is pending, not that the author has
+      // genuinely gone 48h without a list. Only the latter belongs in frozen.
+      const activeAt = Date.now();
+      db.run(
+        `INSERT INTO document_cache
+          (did, documents_json, cached_at, fetched_at, listed_at, error_count, last_requested_at)
+         VALUES (?, '[]', ?, ?, 0, 0, ?), (?, '[]', ?, ?, ?, 0, ?)`,
+        [
+          'did:plc:repairpending',
+          activeAt,
+          activeAt,
+          activeAt,
+          'did:plc:genuinelyfrozen',
+          activeAt,
+          activeAt,
+          activeAt - 3 * 24 * 60 * 60 * 1000,
+          activeAt,
+        ]
+      );
 
       const res = await app.request('/stats', {
         headers: { 'X-Proxy-Secret': 'test-secret' },
@@ -1354,6 +1373,7 @@ describe('Integration Tests', () => {
       expect(json.errors).toBeDefined();
       expect(json.errors.total).toBe(2); // Both error feeds
       expect(json.errors.inBackoff).toBe(2); // Both in backoff
+      expect(json.documents.frozen).toBe(1);
     });
 
     it('returns error info in bulk feed response for real content with errors', async () => {

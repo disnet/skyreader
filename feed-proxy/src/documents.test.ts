@@ -362,6 +362,32 @@ describe('POST /documents', () => {
     expect(json.authors[0].status).toBe('error');
   });
 
+  it('shortens a legacy error-placeholder backoff when the author is requested', async () => {
+    const { db, app } = createTestApp();
+    const now = Date.now();
+    insertDocCache(db, {
+      documents: [],
+      fetchedAt: now,
+      listedAt: now,
+      lastRequestedAt: now - 1000,
+      errorCount: 5,
+      nextRetryAt: now + 7 * 24 * 60 * 60 * 1000,
+    });
+
+    const json = (await (await postDocuments(app, [{ did: AUTHOR }])).json()) as {
+      authors: Array<{ status: string; nextRetryAt?: number }>;
+    };
+    const row = db
+      .query<{ next_retry_at: number }, [string]>(
+        'SELECT next_retry_at FROM document_cache WHERE did = ?'
+      )
+      .get(AUTHOR);
+
+    expect(json.authors[0].status).toBe('error');
+    expect(row!.next_retry_at).toBeLessThanOrEqual(Date.now() + 6 * 60 * 60 * 1000);
+    expect(json.authors[0].nextRetryAt).toBe(row!.next_retry_at);
+  });
+
   it('rejects an empty authors array', async () => {
     const { app } = createTestApp();
     const res = await postDocuments(app, []);

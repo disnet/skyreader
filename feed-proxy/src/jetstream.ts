@@ -179,7 +179,10 @@ export class DocumentFirehose {
   }
 
   isSubscribed(did: string): boolean {
-    return this.subscribedDids.has(did);
+    // The serve path uses this as permission to trust the spliced cache. Only
+    // report filters successfully sent on the current socket, not desired DIDs
+    // still waiting for an options_update/reconnect.
+    return this.sentDids.has(did);
   }
 
   status(): FirehoseStatus {
@@ -289,10 +292,13 @@ export class DocumentFirehose {
     } catch (err) {
       console.error('[Firehose] options_update send failed:', err);
       this.sentDids.clear();
-      // The socket's server-side filter is now unknowable. Reconnect so the
-      // next open sends the complete desired set, and retain the dirty sent set
-      // so a later reconcile also retries if reconnect cannot start.
-      if (this.ws === ws) this.reconnect();
+      // The socket's server-side filter is now unknowable. Close it and use the
+      // normal capped reconnect backoff; reconnecting immediately here creates
+      // a handshake-rate loop when every open socket rejects send().
+      if (this.ws === ws) {
+        this.closeSocket();
+        this.scheduleReconnect();
+      }
       return false;
     }
   }
