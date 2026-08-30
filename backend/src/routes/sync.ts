@@ -15,8 +15,10 @@ import { createQueryLedger, D1_QUERIES_PER_INVOCATION } from '../services/docume
 /**
  * What a sync request keeps back from the ledger for the D1 work it does outside the
  * terms it charges: the tier and count reads, the PDS-push bookkeeping, the settings
- * and session rows. The pull's insert batch — the one term big enough to matter — is
- * charged for real.
+ * and session rows. The terms big enough to matter are charged for real — the pull's
+ * insert batch, and the Atmosphere reconcile's graph listing plus its `MAX_OPS`
+ * cross-PDS operations, which on their own could account for the whole of this
+ * reserve if they were left inside it.
  */
 const SYNC_QUERY_RESERVE = 100;
 

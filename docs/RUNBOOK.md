@@ -607,7 +607,13 @@ npx wrangler d1 execute skyreader --remote --command \
    call takes a handful of authors, sized so one request stays inside D1's
    per-invocation query ceiling; loop it. The response's `deferred` is how many of
    the chunk the call declined to start because that budget ran out before them —
-   they are still queued, so just call again. `remaining` does reach 0
+   they are still queued, so just call again. An author can also come back in the
+   queue after a successful walk: a repo with more curated editions than one walk's
+   budget covers records the rest as `document_authors.collections_pending` and stays
+   eligible so the next pass writes them, rather than dripping them out one walk's
+   worth per reconcile interval. That converges — a walk only requeues an author when
+   it wrote some — so it costs a few extra chunks, not a loop that never ends.
+   `remaining` does reach 0
    even with authors nobody can list (deleted account, dead PDS): a failed list holds
    that author out of the queue for a backoff window that doubles per consecutive
    failure, up to the 7-day reconcile interval. Their `last_error` is on

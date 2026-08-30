@@ -208,6 +208,17 @@ async function fetchRecord<T>(
 }
 
 /**
+ * A loose `https://` site is its own base URL: there is no publication record to
+ * fetch and no cache row to read, so resolving one costs nothing. Callers that
+ * budget for a resolve check this first — charging for a site that never touches
+ * D1 or a PDS spends a bounded allowance on no I/O at all.
+ */
+export function looseSiteMeta(siteUri: string): SiteMeta | null {
+  if (!siteUri.startsWith('http://') && !siteUri.startsWith('https://')) return null;
+  return { ...EMPTY_SITE_META, baseUrl: siteUri };
+}
+
+/**
  * Read a publication's cached metadata, or null when there is no fresh row.
  * Separate from `resolveSiteMeta` because the serve path wants "what do we already
  * know?" without ever blocking on a PDS: a stale row still renders a document.
@@ -218,9 +229,8 @@ export async function cachedSiteMeta(
   { allowStale = false }: { allowStale?: boolean } = {}
 ): Promise<SiteMeta | null> {
   if (!siteUri) return null;
-  if (siteUri.startsWith('http://') || siteUri.startsWith('https://')) {
-    return { ...EMPTY_SITE_META, baseUrl: siteUri };
-  }
+  const loose = looseSiteMeta(siteUri);
+  if (loose) return loose;
   const row = await env.DB.prepare(
     `SELECT publication_uri, base_url, icon, name, theme, fonts, cached_at
        FROM publications_cache_v2 WHERE publication_uri = ?`
@@ -434,14 +444,50 @@ export interface ListedRecord<T> {
 }
 
 /**
+ * One walk's memo of resolved PDS endpoints.
+ *
+ * `fetchDidDocument` has no cache of its own, so every `resolvePdsUrl` is a live
+ * plc.directory fetch — and a backfill needs the author's PDS twice, once for the
+ * document listing and once for the sidecar listing. Without a memo shared between
+ * them a walk spends two DID documents where its budget
+ * (`BACKFILL_LIST_SUBREQUESTS`) counts one, which is enough to put a worst-case
+ * walk one subrequest over the bound its fan-outs are sized in.
+ *
+ * Promises rather than values, so two lookups of the same DID share one in-flight
+ * fetch. Scoped to a walk, not to the process: a stale PDS endpoint is a real
+ * failure mode (account migration) and this must not outlive the listing pair.
+ */
+export type PdsMemo = Map<string, Promise<string | null>>;
+
+export function createPdsMemo(): PdsMemo {
+  return new Map();
+}
+
+function resolveAuthorPds(authorDid: string, memo?: PdsMemo): Promise<string | null> {
+  if (!memo) return resolvePdsUrl(authorDid);
+  let pending = memo.get(authorDid);
+  if (!pending) {
+    // `resolvePdsUrl` resolves to null rather than rejecting, so a memoised
+    // failure is a null for the rest of the walk, never an unhandled rejection.
+    pending = resolvePdsUrl(authorDid);
+    memo.set(authorDid, pending);
+  }
+  return pending;
+}
+
+/**
  * List an author's recent `site.standard.document` records, newest-repo-order,
  * capped at `MAX_DOCUMENTS_PER_AUTHOR`. Throws on PDS resolution / fetch failure so
  * the caller records the error + backoff.
+ *
+ * Pass the same {@link PdsMemo} here and to {@link listAuthorCollections} to resolve
+ * the author's DID once for the pair.
  */
 export async function listAuthorDocuments(
-  authorDid: string
+  authorDid: string,
+  pds?: PdsMemo
 ): Promise<Array<ListedRecord<DocumentRecord>>> {
-  const pdsUrl = await resolvePdsUrl(authorDid);
+  const pdsUrl = await resolveAuthorPds(authorDid, pds);
   if (!pdsUrl) throw new Error(`Could not resolve PDS for ${authorDid}`);
 
   const raw: Array<ListedRecord<DocumentRecord>> = [];
@@ -492,11 +538,17 @@ const COLLECTION_PAGE_SIZE = 100;
  * collection shares its rkey with the document it renders). Best-effort: a fetch
  * failure yields an empty, non-exhaustive listing — no magazine enrichment, not a
  * failed backfill. Collections are few, so one page suffices.
+ *
+ * Takes the walk's {@link PdsMemo} so the author's DID document is fetched once for
+ * both listings rather than once each.
  */
-export async function listAuthorCollections(authorDid: string): Promise<AuthorCollectionListing> {
+export async function listAuthorCollections(
+  authorDid: string,
+  pds?: PdsMemo
+): Promise<AuthorCollectionListing> {
   const byRkey = new Map<string, CollectionRecord>();
   try {
-    const pdsUrl = await resolvePdsUrl(authorDid);
+    const pdsUrl = await resolveAuthorPds(authorDid, pds);
     if (!pdsUrl) return { exhaustive: false, byRkey };
     const params = new URLSearchParams({
       repo: authorDid,

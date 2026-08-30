@@ -75,6 +75,11 @@ CREATE TABLE IF NOT EXISTS document_authors (
     -- the stored set is the author's complete repo (what the batch response's
     -- `complete` flag reports).
     complete INTEGER NOT NULL DEFAULT 0,
+    -- Curated editions the last walk could not afford to write. Non-zero keeps the
+    -- author in the reconcile queue despite a fresh `last_listed_at`, so a back
+    -- catalogue's sidecars land over the next passes rather than one walk's worth
+    -- per reconcile interval.
+    collections_pending INTEGER NOT NULL DEFAULT 0,
     error_count INTEGER NOT NULL DEFAULT 0,
     last_error TEXT,
     last_error_at INTEGER

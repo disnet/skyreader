@@ -50,7 +50,12 @@ Each fan-out asks `canAffordBackfill` before starting an author and leaves the r
 reconcile queue rather than throwing halfway through a walk that has already written rows.
 `BACKFILL_QUERY_COST` is a true worst case — every per-row term is either one statement (the
 prune is a single `updated_at`-scoped DELETE; the sidecars are one read plus one capped batch) or
-capped (`MAX_SITE_RESOLVES_PER_BACKFILL`, `MAX_COLLECTION_WRITES_PER_BACKFILL`). The same ceiling
+capped (`MAX_SITE_RESOLVES_PER_BACKFILL`, `MAX_COLLECTION_WRITES_PER_BACKFILL`). A walk resolves
+the author's DID once for both of its listings (`PdsMemo`) — `resolvePdsUrl` is an uncached fetch,
+and the second one is a subrequest the listing term does not budget. The sidecar cap is the floor
+that arithmetic leaves at every other cap at once, not a flat limit: a walk spends its unspent
+headroom on sidecars and records what it still couldn't afford as `collections_pending`, which
+keeps the author in the reconcile queue instead of parking them for an interval. The same ceiling
 is why an applied event costs a single statement: the cap eviction and bookkeeping settle once per
 author at the end of a cycle. **Still unbounded:** the PDS→local subscription pull's insert batch
 is one statement per restored row, capped only by the plan's mirror limit (1000/5000), so a very

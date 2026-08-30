@@ -21,6 +21,7 @@ import {
   AUTHOR_RETRY_BASE_MS,
   AUTHOR_RETRY_MAX_MS,
   BACKFILL_FRESHNESS_MS,
+  BACKFILL_LIST_SUBREQUESTS,
   BACKFILL_QUERY_COST,
   CRON_DOCUMENT_QUERY_BUDGET,
   CRON_HOURLY_RECONCILE_AUTHORS,
@@ -31,10 +32,16 @@ import {
   DOCUMENT_DRAIN_QUERY_BUDGET,
   MAX_COLLECTION_WRITES_PER_BACKFILL,
   MAX_CYCLE_BACKFILLS,
+  MAX_SITE_RESOLVES_PER_BACKFILL,
   SCHEDULED_BACKFILL_QUERY_COST,
+  SUBREQUESTS_PER_SITE_RESOLVE,
   type DocumentCommitEvent,
 } from '../src/services/document-store';
-import { digestScope, MAX_DOCUMENTS_PER_AUTHOR } from '../src/services/standard-site';
+import {
+  digestScope,
+  MAX_DOCUMENTS_PER_AUTHOR,
+  MAX_LIST_PAGES,
+} from '../src/services/standard-site';
 import {
   readDocumentFlags,
   setDocumentFlag,
@@ -765,6 +772,82 @@ describe('the backfill query budget', () => {
     });
   }
 
+  const DID_DOCUMENT = JSON.stringify({
+    id: AUTHOR,
+    service: [
+      {
+        id: '#atproto_pds',
+        type: 'AtprotoPersonalDataServer',
+        serviceEndpoint: 'https://pds.example',
+      },
+    ],
+  });
+
+  function listedDocument(i: number) {
+    const rkey = `new${String(i).padStart(3, '0')}`;
+    return {
+      uri: `at://${AUTHOR}/site.standard.document/${rkey}`,
+      cid: `cid-${rkey}`,
+      value: {
+        site: PUBLICATION,
+        title: `New ${i}`,
+        path: `/${rkey}`,
+        publishedAt: '2026-02-01T00:00:00.000Z',
+      },
+    };
+  }
+
+  /** What the walk actually spent on the network, by kind of request. */
+  interface PdsFetchCounts {
+    didDocuments: number;
+    documentPages: number;
+    collectionPages: number;
+  }
+
+  /**
+   * A PDS that pages its document listing — a page is whatever the server chooses to
+   * return, so `MAX_LIST_PAGES` fetches for one repo is a real shape, not a
+   * hypothetical. Returns the per-kind counts so a test can check what the walk spent
+   * rather than what it charged itself.
+   */
+  function mockBigPdsPaged(documents: number, collections: number, pageSize = 20): PdsFetchCounts {
+    const counts: PdsFetchCounts = { didDocuments: 0, documentPages: 0, collectionPages: 0 };
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = new URL(String(input));
+      if (url.hostname === 'plc.directory') {
+        counts.didDocuments++;
+        return new Response(DID_DOCUMENT);
+      }
+      const collection = url.searchParams.get('collection');
+      if (collection === 'app.standard-reader.collection') {
+        counts.collectionPages++;
+        return new Response(
+          JSON.stringify({
+            records: Array.from({ length: collections }, (_, i) => ({
+              uri: `at://${AUTHOR}/app.standard-reader.collection/new${String(i).padStart(3, '0')}`,
+              value: { document: `at://${AUTHOR}/site.standard.document/new${i}`, items: [] },
+            })),
+          })
+        );
+      }
+      if (collection === 'site.standard.document') {
+        counts.documentPages++;
+        const page = Number(url.searchParams.get('cursor') ?? '0');
+        const start = page * pageSize;
+        const records = Array.from(
+          { length: Math.max(0, Math.min(pageSize, documents - start)) },
+          (_, i) => listedDocument(start + i)
+        );
+        const more = start + records.length < documents;
+        return new Response(
+          JSON.stringify({ records, ...(more ? { cursor: String(page + 1) } : {}) })
+        );
+      }
+      return new Response('{}', { status: 404 });
+    });
+    return counts;
+  }
+
   /** Stored rows a re-list will find nothing for — the prune-heavy shape. */
   async function seedStoredDocuments(count: number): Promise<void> {
     const stamp = Date.now() - 60_000;
@@ -809,27 +892,69 @@ describe('the backfill query budget', () => {
     expect((await loadAuthorDocuments(env, AUTHOR)).length).toBe(MAX_DOCUMENTS_PER_AUTHOR);
   });
 
-  // Sidecars are the other per-row term. Capped per walk, and each walk writes the
-  // ones it can afford — so the remainder shrinks instead of recurring forever.
-  it('caps sidecar writes per walk and converges over the next one', async () => {
+  /** Sidecars stored for the author. */
+  async function storedCollections(): Promise<number> {
+    const row = await env.DB.prepare(
+      'SELECT COUNT(*) AS n FROM collections_v2 WHERE author_did = ?'
+    )
+      .bind(AUTHOR)
+      .first<{ n: number }>();
+    return row?.n ?? 0;
+  }
+
+  // A small author leaves most of the document term unspent, and the sidecars get
+  // it: the flat 20 was the worst case's share, not every walk's.
+  it('spends its unused headroom on sidecars rather than a flat cap', async () => {
     const editions = MAX_COLLECTION_WRITES_PER_BACKFILL + 10;
     mockBigPds(1, editions);
 
-    await backfillAuthorDocuments(env, AUTHOR);
-    const afterFirst = await env.DB.prepare(
-      'SELECT COUNT(*) AS n FROM collections_v2 WHERE author_did = ?'
-    )
-      .bind(AUTHOR)
-      .first<{ n: number }>();
-    expect(afterFirst?.n).toBe(MAX_COLLECTION_WRITES_PER_BACKFILL);
+    const result = await backfillAuthorDocuments(env, AUTHOR);
 
-    await backfillAuthorDocuments(env, AUTHOR);
-    const afterSecond = await env.DB.prepare(
-      'SELECT COUNT(*) AS n FROM collections_v2 WHERE author_did = ?'
+    expect(result.ok).toBe(true);
+    expect(await storedCollections()).toBe(editions);
+    const author = await env.DB.prepare(
+      'SELECT collections_pending FROM document_authors WHERE author_did = ?'
     )
       .bind(AUTHOR)
-      .first<{ n: number }>();
-    expect(afterSecond?.n).toBe(editions);
+      .first<{ collections_pending: number }>();
+    expect(author?.collections_pending).toBe(0);
+  });
+
+  // The author who does hit the cap — a full repo of curated editions, which is the
+  // magazine back catalogue a subscribe-time walk exists to pull. Each walk writes
+  // what it can afford; the remainder stays in the reconcile queue instead of
+  // waiting a full interval, so the whole set lands over the next passes.
+  it('defers the sidecars it cannot afford and requeues the author for them', async () => {
+    const editions = 90;
+    mockBigPdsPaged(MAX_DOCUMENTS_PER_AUTHOR, editions);
+    await seedReader();
+    await env.DB.prepare(
+      `INSERT INTO subscriptions_cache (user_did, record_uri, feed_url, source_type, subject_did, created_at)
+       VALUES (?, ?, ?, 'atproto.documents', ?, unixepoch())`
+    )
+      .bind(READER, 'at://reader/app.skyreader.feed.subscription/1', PUBLICATION, AUTHOR)
+      .run();
+
+    const ctx = createDocumentApplyContext(createQueryLedger());
+    await backfillAuthorDocuments(env, AUTHOR, ctx);
+
+    const first = await storedCollections();
+    expect(first).toBeGreaterThanOrEqual(MAX_COLLECTION_WRITES_PER_BACKFILL);
+    expect(first).toBeLessThan(editions);
+    expect(ctx.ledger.spent).toBeLessThanOrEqual(BACKFILL_QUERY_COST);
+
+    // Freshly listed, so the interval alone would park them for a week — the
+    // pending sidecars are what keeps them eligible, and they are still eligible
+    // only because the walk made progress.
+    expect(await staleDocumentAuthors(env, 5)).toEqual([AUTHOR]);
+
+    // Each further pass advances by at least as much again, and stops requeueing
+    // once nothing is left over.
+    for (let pass = 0; pass < 3 && (await staleDocumentAuthors(env, 5)).length > 0; pass++) {
+      await backfillAuthorDocuments(env, AUTHOR);
+    }
+    expect(await storedCollections()).toBe(editions);
+    expect(await staleDocumentAuthors(env, 5)).toEqual([]);
   });
 
   // The fan-out bound the reviewer's scenario broke: five authors sized against a
@@ -860,6 +985,120 @@ describe('the backfill query budget', () => {
     expect(await staleDocumentAuthors(env, 5)).toHaveLength(1);
   });
 
+  /**
+   * A PDS whose authors publish to whatever publications the test names, none of
+   * them cached — so every one of them costs a resolve out of the walk's allowance.
+   */
+  function mockPdsWithPublications(sites: Record<string, string[]>): void {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = new URL(String(input));
+      if (url.hostname === 'plc.directory') {
+        return new Response(
+          JSON.stringify({
+            id: url.pathname.slice(1),
+            service: [
+              {
+                id: '#atproto_pds',
+                type: 'AtprotoPersonalDataServer',
+                serviceEndpoint: 'https://pds.example',
+              },
+            ],
+          })
+        );
+      }
+      const collection = url.searchParams.get('collection');
+      const repo = url.searchParams.get('repo') ?? '';
+      if (url.pathname.endsWith('getRecord') && collection === 'site.standard.publication') {
+        const rkey = url.searchParams.get('rkey');
+        return new Response(JSON.stringify({ value: { url: `https://${rkey}.example` } }));
+      }
+      if (url.pathname.endsWith('listRecords') && collection === 'site.standard.document') {
+        return new Response(
+          JSON.stringify({
+            records: (sites[repo] ?? []).map((site, i) => ({
+              uri: `at://${repo}/site.standard.document/doc${i}`,
+              cid: `cid-doc${i}`,
+              value: { site, title: `Doc ${i}`, path: `/doc${i}` },
+            })),
+          })
+        );
+      }
+      if (url.pathname.endsWith('listRecords'))
+        return new Response(JSON.stringify({ records: [] }));
+      return new Response('{}', { status: 404 });
+    });
+  }
+
+  async function canonicalUrlOf(authorDid: string, rkey: string): Promise<string | null> {
+    const row = await env.DB.prepare(
+      'SELECT canonical_url FROM documents_v2 WHERE author_did = ? AND rkey = ?'
+    )
+      .bind(authorDid, rkey)
+      .first<{ canonical_url: string | null }>();
+    return row?.canonical_url ?? null;
+  }
+
+  // A loose `https://` site is its own base URL — no cache row, no PDS record. It
+  // used to be charged a full resolve anyway, so five of them starved the walk's
+  // allowance on requests it never made.
+  it('does not spend its resolve allowance on loose https sites', async () => {
+    const loose = Array.from(
+      { length: MAX_SITE_RESOLVES_PER_BACKFILL + 1 },
+      (_, i) => `https://loose${i}.example`
+    );
+    mockPdsWithPublications({
+      [AUTHOR]: [...loose, `at://${AUTHOR}/site.standard.publication/pub9`],
+    });
+
+    await backfillAuthorDocuments(env, AUTHOR);
+
+    // The one document that actually needed a resolve still got one.
+    expect(await canonicalUrlOf(AUTHOR, `doc${loose.length}`)).toBe(
+      `https://pub9.example/doc${loose.length}`
+    );
+  });
+
+  // The allowance is per author but the context is shared by a fan-out. A
+  // publication starved during one author's walk must not stay starved for the next.
+  it('gives each author in a fan-out a fresh allowance for the same publication', async () => {
+    const pubs = Array.from(
+      { length: MAX_SITE_RESOLVES_PER_BACKFILL + 1 },
+      (_, i) => `at://${AUTHOR}/site.standard.publication/pub${i}`
+    );
+    const starved = pubs[pubs.length - 1];
+    mockPdsWithPublications({ [AUTHOR]: pubs, [OTHER]: [starved] });
+
+    const ctx = createDocumentApplyContext(createQueryLedger());
+    await backfillAuthorDocuments(env, AUTHOR, ctx);
+    // The last publication is past the first author's allowance: path only.
+    expect(await canonicalUrlOf(AUTHOR, `doc${pubs.length - 1}`)).toBe(`/doc${pubs.length - 1}`);
+
+    await backfillAuthorDocuments(env, OTHER, ctx);
+    expect(await canonicalUrlOf(OTHER, 'doc0')).toBe(
+      `https://pub${MAX_SITE_RESOLVES_PER_BACKFILL}.example/doc0`
+    );
+  });
+
+  // The listing term, counted against the network rather than against itself. A
+  // walk needs the author's PDS twice — once per listing — and `resolvePdsUrl` is an
+  // uncached plc.directory fetch, so without the shared memo this is 8 spent against
+  // 7 charged and the whole per-author bound is off by one.
+  it('resolves the author once for both of its listings', async () => {
+    const counts = mockBigPdsPaged(MAX_DOCUMENTS_PER_AUTHOR, 10);
+
+    const ctx = createDocumentApplyContext(createQueryLedger());
+    const result = await backfillAuthorDocuments(env, AUTHOR, ctx);
+
+    expect(result.ok).toBe(true);
+    expect(counts.didDocuments).toBe(1);
+    expect(counts.documentPages).toBe(MAX_LIST_PAGES);
+    expect(counts.collectionPages).toBe(1);
+    expect(counts.didDocuments + counts.documentPages + counts.collectionPages).toBe(
+      BACKFILL_LIST_SUBREQUESTS
+    );
+    expect(ctx.ledger.spent).toBeLessThanOrEqual(BACKFILL_QUERY_COST);
+  });
+
   // The arithmetic each fan-out is sized by, pinned: a constant edited without its
   // budget is exactly how "five authors is well under" became untrue.
   it('sizes every fan-out budget to the worst case it admits', () => {
@@ -880,6 +1119,21 @@ describe('the backfill query budget', () => {
 
     // An apply-cap override can never claim more events than the cycle can fund.
     expect(MAX_DOCUMENT_APPLY_CAP).toBe(DOCUMENT_DRAIN_QUERY_BUDGET);
+
+    // The sidecar allowance is derived from what a walk has left, so the flat
+    // constant has to be exactly what that arithmetic leaves at every other cap at
+    // once — the listing, a full repo of documents, every resolve, the prune, the
+    // sidecar read and the bookkeeping. Raise a term without this and the "floor"
+    // silently becomes a walk that overspends its own reservation.
+    const worstCaseBeforeSidecars =
+      BACKFILL_LIST_SUBREQUESTS +
+      MAX_DOCUMENTS_PER_AUTHOR +
+      MAX_SITE_RESOLVES_PER_BACKFILL * SUBREQUESTS_PER_SITE_RESOLVE +
+      // the prune, the sidecar read
+      2;
+    expect(BACKFILL_QUERY_COST - worstCaseBeforeSidecars - 1).toBe(
+      MAX_COLLECTION_WRITES_PER_BACKFILL
+    );
   });
 
   // The sync paths schedule their walks into the same invocation that just ran the

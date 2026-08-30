@@ -25,11 +25,13 @@ import {
   EMPTY_SITE_META,
   buildCanonicalUrl,
   cachedSiteMeta,
+  createPdsMemo,
   digestScope,
   getDocumentRecord,
   isValidDid,
   listAuthorCollections,
   listAuthorDocuments,
+  looseSiteMeta,
   publishedAtMs,
   recordToDocument,
   resolveReaderCollection,
@@ -124,7 +126,7 @@ export function chargeQueries(ledger: QueryLedger, subrequests: number): void {
  * a given resolve skips (a warm cache, a loose `https://` site) is not knowable
  * before spending it.
  */
-const SUBREQUESTS_PER_SITE_RESOLVE = 5;
+export const SUBREQUESTS_PER_SITE_RESOLVE = 5;
 
 /**
  * Worst-case subrequests one applied event costs: the record write, plus a
@@ -149,16 +151,28 @@ const QUERIES_PER_FLUSHED_AUTHOR = 2;
 export const MAX_SITE_RESOLVES_PER_BACKFILL = 4;
 
 /**
- * Sidecar statements one backfill may spend: changed curated editions written plus
- * deleted ones pruned. The listing is a page of up to 100, and each one that changed
- * is its own statement, so this is the term that could otherwise rival the document
- * writes. The remainder converges on the next reconcile — each run writes the ones it
- * can afford, so they stop being "changed".
+ * Sidecar statements one backfill is *guaranteed* to be able to spend: changed
+ * curated editions written plus deleted ones pruned. The listing is a page of up to
+ * 100, and each one that changed is its own statement, so this is the term that
+ * could otherwise rival the document writes.
+ *
+ * It is a floor, not the actual allowance: a walk spends whatever is left of its
+ * `BACKFILL_QUERY_COST` reservation once the listing, the upserts, the resolves and
+ * the prune are paid for (see `collectionWriteAllowance`), and this constant is what
+ * that arithmetic leaves in the worst case. A walk that still has to defer sidecars
+ * says so on the author row, and the reconcile picks it back up on its next pass
+ * rather than a reconcile interval later — an author's whole back catalogue landing
+ * 20 curated editions a week is a month of half-rendered magazines.
  */
 export const MAX_COLLECTION_WRITES_PER_BACKFILL = 20;
 
-/** Fetches a backfill's own listing spends: document pages, the DID doc, the sidecar page. */
-const BACKFILL_LIST_SUBREQUESTS = MAX_LIST_PAGES + 2;
+/**
+ * Fetches a backfill's own listing spends: document pages, the DID doc, the sidecar
+ * page. One DID document, not two, because the walk hands the same `PdsMemo` to both
+ * listings — `resolvePdsUrl` is an uncached plc.directory fetch, so without that memo
+ * this term is short by one and a worst-case walk lands a subrequest over the bound.
+ */
+export const BACKFILL_LIST_SUBREQUESTS = MAX_LIST_PAGES + 2;
 
 /**
  * Worst-case subrequests one author's backfill spends, and the unit every fan-out
@@ -183,6 +197,26 @@ export const BACKFILL_QUERY_COST =
 /** Room for one more worst-case backfill, on top of any already reserved. */
 export function canAffordBackfill(ledger: QueryLedger, reserved = 0): boolean {
   return ledger.spent + (reserved + 1) * BACKFILL_QUERY_COST <= ledger.limit;
+}
+
+/** The bookkeeping statement a walk still owes after its sidecar writes. */
+const BACKFILL_QUERIES_AFTER_COLLECTIONS = 1;
+
+/**
+ * Sidecar statements a walk can still afford inside its own `BACKFILL_QUERY_COST`
+ * reservation: the reservation, less what this walk has already spent, less the
+ * bookkeeping it still owes.
+ *
+ * Derived rather than fixed, so the bound enforces itself instead of resting on the
+ * comment above the constant. At every other cap at once it comes out at exactly
+ * `MAX_COLLECTION_WRITES_PER_BACKFILL` (pinned in the budget tests); below them —
+ * the ordinary author, with a handful of documents and one publication — it hands
+ * the unspent headroom to the sidecars, which is what keeps a newly subscribed
+ * author's curated editions from arriving 20 a week.
+ */
+function collectionWriteAllowance(ledger: QueryLedger, spentAtWalkStart: number): number {
+  const spentByWalk = ledger.spent - spentAtWalkStart;
+  return Math.max(0, BACKFILL_QUERY_COST - spentByWalk - BACKFILL_QUERIES_AFTER_COLLECTIONS);
 }
 
 /**
@@ -360,12 +394,26 @@ async function siteMetaForWrite(
   if (memoised) return memoised;
   // A freestanding document has no publication to resolve and costs nothing.
   if (!siteUri) return EMPTY_SITE_META;
+  // Neither does a loose `https://` site: it is its own base URL, with no record to
+  // fetch and no cache row to read. Charging for one would spend a walk's bounded
+  // allowance on no I/O — an author with five loose sites would starve the resolves
+  // their actual publications need. Decide the charge after the free cases, not before.
+  const loose = looseSiteMeta(siteUri);
+  if (loose) {
+    ctx.siteMeta.set(siteUri, loose);
+    return loose;
+  }
   if (ctx.siteResolves <= 0) {
     // Out of resolve budget for this run: store the row without publication
     // metadata rather than spending past the bound. The canonical URL falls back to
     // the record's path, and the serve path resolves the publication from the same
     // cache on the first read, so this costs a fallback URL until then.
-    ctx.siteMeta.set(siteUri, EMPTY_SITE_META);
+    //
+    // Deliberately *not* memoised. The allowance is per author but the context is
+    // shared by a whole fan-out, so a negative entry here would follow a starved
+    // publication into every later author's walk and skip it there too, even though
+    // each of those authors was given a fresh allowance. Re-entering this branch is
+    // free — it is the same comparison, not a re-resolve.
     return EMPTY_SITE_META;
   }
   ctx.siteResolves--;
@@ -753,6 +801,13 @@ interface AuthorBookkeeping {
   lastEventAt?: number;
   lastListedAt?: number;
   complete?: boolean;
+  /**
+   * Curated editions the walk that just listed this author could not afford to
+   * write. Non-zero holds the author in the reconcile queue (see
+   * {@link staleDocumentAuthors}) instead of parking them for a whole interval.
+   * Only meaningful alongside `lastListedAt`; a drain's bookkeeping leaves it alone.
+   */
+  collectionsPending?: number;
   error?: string | null;
 }
 
@@ -775,12 +830,13 @@ function authorBookkeepingStatement(
     ).bind(fields.authorDid, fields.error.slice(0, 500), now);
   }
   return env.DB.prepare(
-    `INSERT INTO document_authors (author_did, last_listed_at, last_event_at, complete, error_count, last_error, last_error_at)
-     VALUES (?, ?, ?, ?, 0, NULL, NULL)
+    `INSERT INTO document_authors (author_did, last_listed_at, last_event_at, complete, collections_pending, error_count, last_error, last_error_at)
+     VALUES (?, ?, ?, ?, ?, 0, NULL, NULL)
      ON CONFLICT(author_did) DO UPDATE SET
        last_listed_at = COALESCE(excluded.last_listed_at, document_authors.last_listed_at),
        last_event_at = COALESCE(excluded.last_event_at, document_authors.last_event_at),
        complete = CASE WHEN excluded.last_listed_at IS NULL THEN document_authors.complete ELSE excluded.complete END,
+       collections_pending = CASE WHEN excluded.last_listed_at IS NULL THEN document_authors.collections_pending ELSE excluded.collections_pending END,
        error_count = CASE WHEN excluded.last_listed_at IS NULL THEN document_authors.error_count ELSE 0 END,
        last_error = CASE WHEN excluded.last_listed_at IS NULL THEN document_authors.last_error ELSE NULL END,
        last_error_at = CASE WHEN excluded.last_listed_at IS NULL THEN document_authors.last_error_at ELSE NULL END`
@@ -788,7 +844,8 @@ function authorBookkeepingStatement(
     fields.authorDid,
     fields.lastListedAt ?? null,
     fields.lastEventAt ?? null,
-    fields.complete ? 1 : 0
+    fields.complete ? 1 : 0,
+    fields.collectionsPending ?? 0
   );
 }
 
@@ -867,13 +924,21 @@ export async function backfillAuthorDocuments(
   // Resolves are per author, not per invocation: the fan-out bound above is stated
   // per author, so each one has to get the same allowance.
   ctx.siteResolves = MAX_SITE_RESOLVES_PER_BACKFILL;
+  // What this walk may spend is `BACKFILL_QUERY_COST` from here, which is what
+  // `canAffordBackfill` just admitted it against.
+  const spentAtWalkStart = ctx.ledger.spent;
+
+  // Both listings need the author's PDS and `resolvePdsUrl` is an uncached fetch, so
+  // they share one resolution — the difference between the budgeted one DID document
+  // and two.
+  const pds = createPdsMemo();
 
   const now = Date.now();
   let listed: Awaited<ReturnType<typeof listAuthorDocuments>>;
   // The listing's pages are subrequests too, spent whether or not it succeeds.
   chargeQueries(ctx.ledger, BACKFILL_LIST_SUBREQUESTS);
   try {
-    listed = await listAuthorDocuments(authorDid);
+    listed = await listAuthorDocuments(authorDid, pds);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'listRecords failed';
     chargeQueries(ctx.ledger, 1);
@@ -907,7 +972,7 @@ export async function backfillAuthorDocuments(
   chargeQueries(ctx.ledger, 1);
   const removed = pruned.meta?.changes ?? 0;
 
-  const collections = await listAuthorCollections(authorDid);
+  const collections = await listAuthorCollections(authorDid, pds);
 
   // One read of the stored sidecars answers both questions — which listed editions
   // changed, and which stored ones are gone — instead of a SELECT per edition plus
@@ -922,6 +987,12 @@ export async function backfillAuthorDocuments(
     (storedCollections.results ?? []).map((row) => [row.rkey, row.record_json])
   );
 
+  // Whatever is left of this walk's reservation, rather than a flat 20: the terms
+  // above are worst cases, and an author who did not hit them has already paid for
+  // headroom the sidecars can use. Only an author at every cap at once is held to
+  // `MAX_COLLECTION_WRITES_PER_BACKFILL`, which is what this arithmetic leaves there.
+  const collectionAllowance = collectionWriteAllowance(ctx.ledger, spentAtWalkStart);
+
   // Only editions whose record actually changed are rewritten: a re-run over
   // unchanged ones would drop every resolved preview and make the next read pay the
   // whole cross-PDS fan-out again.
@@ -930,7 +1001,7 @@ export async function backfillAuthorDocuments(
   for (const [rkey, record] of collections.byRkey) {
     const next = JSON.stringify(record);
     if (storedByRkey.get(rkey) === next) continue;
-    if (collectionWrites.length >= MAX_COLLECTION_WRITES_PER_BACKFILL) {
+    if (collectionWrites.length >= collectionAllowance) {
       deferredCollections++;
       continue;
     }
@@ -946,7 +1017,7 @@ export async function backfillAuthorDocuments(
   if (collections.exhaustive) {
     for (const rkey of storedByRkey.keys()) {
       if (collections.byRkey.has(rkey)) continue;
-      if (collectionWrites.length >= MAX_COLLECTION_WRITES_PER_BACKFILL) {
+      if (collectionWrites.length >= collectionAllowance) {
         deferredCollections++;
         continue;
       }
@@ -965,17 +1036,29 @@ export async function backfillAuthorDocuments(
     await env.DB.batch(collectionWrites);
   }
 
+  // Sidecar work this walk could not afford is recorded on the author row, so the
+  // reconcile queue picks the author back up on its next pass instead of holding
+  // them for a full `AUTHOR_RECONCILE_INTERVAL_MS` — 20 curated editions a week is
+  // weeks of documents rendering without their item lists, and the back catalogue
+  // at subscribe time is exactly what this walk exists to serve.
+  //
+  // Only when the walk actually wrote some: a walk that wrote none made no progress,
+  // and requeueing it immediately would spin the reconcile on one author forever
+  // rather than converging. Written rows stop being "changed", so each requeued pass
+  // strictly advances.
+  const collectionsPending = collectionWrites.length > 0 ? deferredCollections : 0;
   chargeQueries(ctx.ledger, 1);
-  await touchAuthor(env, { authorDid, lastListedAt: now, complete });
+  await touchAuthor(env, { authorDid, lastListedAt: now, complete, collectionsPending });
   log.info('documents_backfilled', {
     authorDid,
     documents: kept.length,
     collections: collections.byRkey.size,
     removed,
     removedCollections,
-    // Sidecar work past the per-walk cap, picked up by the next reconcile: each run
-    // writes what it can afford, so the remainder shrinks rather than recurring.
+    // Sidecar work past what this walk could afford, left to the next reconcile pass:
+    // each run writes what it can, so the remainder shrinks rather than recurring.
     deferredCollections,
+    collectionAllowance,
     complete,
     queries: ctx.ledger.spent,
   });
@@ -1072,6 +1155,13 @@ export async function subscribedDocumentAuthorPage(
  * queue on every run, forever: the reconcile is the only self-heal in this design,
  * and three such authors would starve it silently. It also lets the migration's
  * `remaining` counter reach 0, which it otherwise never could.
+ *
+ * An author whose last walk ran out of budget for their curated editions
+ * (`collections_pending`) stays eligible even though they were just listed, because
+ * the alternative is a document rendering without its item list until the next
+ * interval. They sort *last* — their `last_listed_at` is fresh — so they take a slot
+ * only when nothing staler wants it, and a walk only sets the flag when it wrote
+ * some, so each pass strictly reduces the remainder.
  */
 export async function staleDocumentAuthors(
   env: Env,
@@ -1086,7 +1176,7 @@ export async function staleDocumentAuthors(
        LEFT JOIN document_authors a ON a.author_did = s.subject_did
       WHERE s.source_type IN ('atproto.documents', 'atproto.collection')
         AND s.subject_did IS NOT NULL
-        AND (a.last_listed_at IS NULL OR a.last_listed_at < ?)
+        AND (a.last_listed_at IS NULL OR a.last_listed_at < ? OR COALESCE(a.collections_pending, 0) > 0)
         AND (a.last_error_at IS NULL OR a.last_error_at + ${RETRY_BACKOFF_SQL} <= ?)
       ORDER BY staleness ASC
       LIMIT ?`

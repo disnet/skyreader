@@ -142,6 +142,20 @@ the next reconcile rather than being dropped. Each fan-out asks `canAffordBackfi
 starting an author, so an invocation that is out of budget leaves the author in the queue
 instead of throwing partway through a walk that has already written rows and not yet pruned.
 
+Two details make that constant true rather than nearly true. A walk resolves the author's DID
+**once** and hands the memo to both listings: `resolvePdsUrl` is an uncached plc.directory
+fetch, so a walk that let each listing resolve for itself spent one subrequest more than the
+listing term budgets — enough to put a batch of worst-case authors over the endpoint ledger
+that is sized as batch × cost. And the sidecar cap is a **floor**, not the actual allowance:
+a walk spends whatever is left of its own reservation once the listing, the upserts, the
+resolves and the prune are paid for, which is exactly `MAX_COLLECTION_WRITES_PER_BACKFILL`
+when every other term is at its cap and much more for an ordinary author. What it still can't
+afford is recorded as `document_authors.collections_pending`, which keeps the author in the
+reconcile queue (sorted last, behind everything genuinely stale) instead of parking them for
+a full `AUTHOR_RECONCILE_INTERVAL_MS` — a back catalogue of curated editions landing 20 a
+week is weeks of magazines rendering without their item lists. Only a walk that wrote some
+sets the flag, so each requeued pass strictly advances.
+
 One thing is still unbounded: the PDS→local pull's insert batch is one statement per restored
 row, capped only by the plan's mirror limit (1000 / 5000). A very large restore can exhaust
 the invocation by itself — it is charged to the ledger, which is what keeps walks from being
