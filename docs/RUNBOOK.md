@@ -564,11 +564,17 @@ subscription rows anywhere. What bounds it, in the order it applies:
 2. **Starter feeds short-circuit** — they ride the crawl set, so a warm is a no-op.
 3. **15-minute per-feed freshness**, stamped in `feeds.guest_warmed_at` _before_
    the fetch, so a hot or broken URL is fetched at most once per window. Durable,
-   unlike a `rate_limits` row.
-4. **200 new guest feeds per day, globally** — counted through
-   `guest_warmed_at IS NOT NULL AND created_at > unixepoch() - 86400`. Over the
-   cap, a NEW feed gets a 429 (`guest_warm_capped` in the logs) while feeds
-   already in the archive still refresh.
+   unlike a `rate_limits` row. The stamp is a **claim**, not a check: one
+   conditional `UPDATE … WHERE guest_warmed_at <= now - 15min … RETURNING`, so of
+   N simultaneous warms of the same feed exactly one fetches. (Read-then-stamp
+   let a whole burst through, which is the concurrency the bound exists to stop.)
+4. **200 new guest feeds per UTC day, globally** — an atomic counter in
+   `guest_feed_quota` (one row per `unixepoch() / 86400`), taken by a conditional
+   upsert that only increments while it is under the cap. Reserved before the
+   feed row is created and released if the create was a no-op, so it errs toward
+   spent rather than toward letting extra feeds through. Over the cap, a NEW feed
+   gets a 429 (`guest_warm_capped` in the logs) while feeds already in the
+   archive still refresh. The hourly reaper drops quota rows older than 7 days.
 5. **The hourly reaper** — `reapOrphanGuestFeeds` deletes ≤100 guest-warmed feeds
    per run that have no subscriber and no guest touch in 30 days, items and all
    (`cron_guest_feed_reap`).

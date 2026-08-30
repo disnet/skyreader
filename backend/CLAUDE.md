@@ -89,8 +89,11 @@ into `GET /api/internal/crawl-set`, so the curated feeds stay crawler-fresh with
 no subscriber behind them. A feed a _guest_ adds has no subscriber either, so
 `POST /api/guest/feeds/warm` is a deliberate, bounded exception to the
 `callerSubscribes` invariant in `feeds-v2.ts` — bounded per IP, per feed
-(`feeds.guest_warmed_at`, stamped before the fetch), by a global daily ceiling on
-new guest feeds, and by an hourly reaper for orphans. See §4e of
+(`feeds.guest_warmed_at`, claimed with one conditional `UPDATE … RETURNING`
+before the fetch), by a global daily ceiling on new guest feeds (the atomic
+counter in `guest_feed_quota`), and by an hourly reaper for orphans. Both bounds
+are single-statement claims on purpose: a check followed by a write let a
+concurrent burst past them. See §4e of
 [`docs/RUNBOOK.md`](../docs/RUNBOOK.md) before changing any of those numbers.
 
 Integration writes are gated per-capability, not per-app: `POST /api/integrations/semble/connections`
