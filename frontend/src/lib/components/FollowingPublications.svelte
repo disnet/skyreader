@@ -7,6 +7,9 @@
   import DiscoveryToolbar from './DiscoveryToolbar.svelte';
   import Icon from './Icon.svelte';
   import ShowMoreButton from './ShowMoreButton.svelte';
+  import LimitNotice from './LimitNotice.svelte';
+  import { SubscriptionLimitError } from '$lib/services/api';
+  import { feedLimitLine } from '$lib/utils/limitCopy';
 
   // The scan keeps appending accounts for minutes on a large follow graph; the
   // window is what keeps that out of the DOM until the reader asks for it.
@@ -147,6 +150,9 @@
   // Per-publication follow state (keyed by URI): in-flight + last error.
   let pending = $state<Record<string, boolean>>({});
   let failed = $state<Record<string, string>>({});
+  // Same wall for every row, so it gets one notice above the list rather than a
+  // red span repeated per publication.
+  let limitHit = $state(false);
 
   // Hidden-accounts affordance: collapsed by default, with per-account unhide
   // state (unhiding triggers a re-scan, so it can take a moment).
@@ -189,6 +195,7 @@
   async function follow(p: FollowingPublication) {
     if (pending[p.publicationUri]) return;
     pending = { ...pending, [p.publicationUri]: true };
+    limitHit = false;
     if (failed[p.publicationUri]) {
       const { [p.publicationUri]: _, ...rest } = failed;
       failed = rest;
@@ -196,10 +203,14 @@
     try {
       await followingPublicationsStore.subscribe(p);
     } catch (e) {
-      failed = {
-        ...failed,
-        [p.publicationUri]: e instanceof Error ? e.message : 'Could not follow',
-      };
+      if (e instanceof SubscriptionLimitError) {
+        limitHit = true;
+      } else {
+        failed = {
+          ...failed,
+          [p.publicationUri]: e instanceof Error ? e.message : 'Could not follow',
+        };
+      }
     } finally {
       const { [p.publicationUri]: _, ...rest } = pending;
       pending = rest;
@@ -336,6 +347,13 @@
 {/snippet}
 
 <div class="following-publications">
+  {#if limitHit}
+    <div class="limit-wrap">
+      <LimitNotice kind="feeds">
+        <p>{feedLimitLine(subscriptionsStore.maxSubscriptions)}</p>
+      </LimitNotice>
+    </div>
+  {/if}
   {#if variant === 'suggestions'}
     <!-- Quiet by design: render nothing while loading or when none are found. -->
     {#if visibleSuggestions.length > 0}
@@ -648,6 +666,10 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .limit-wrap {
+    margin-bottom: 0.75rem;
   }
 
   .follow-error {

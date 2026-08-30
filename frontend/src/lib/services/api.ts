@@ -60,6 +60,43 @@ export class UrlSaveLimitError extends Error {
   }
 }
 
+/**
+ * One plan cap a sync ran into. `kind` names the cap, so the client can pair the
+ * sentence with the raise that actually applies — never the other one, and never
+ * the upsell that belongs on a plain failure.
+ */
+export interface SyncLimitNotice {
+  kind: 'feeds' | 'mirror';
+  /**
+   * What `count` counts, and the cap it went over. Optional because a client
+   * can outlive the backend that fed it: without these the message is shown as
+   * the backend wrote it, with them the client can add up a batched sync and
+   * state one total. See `mergeNotices` in $lib/utils/limitCopy.
+   */
+  subject?: 'feeds' | 'linkblogs';
+  count?: number;
+  limit?: number;
+  message: string;
+}
+
+/**
+ * The tier's active-feed cap. Thrown both by the 403 handler below and by the
+ * subscriptions store's own pre-check, so a caller never has to care which side
+ * noticed first. Over-limit feeds are parked, not lost, so callers should say
+ * "park a feed to free a slot" rather than "remove some feeds".
+ */
+export class SubscriptionLimitError extends Error {
+  limit: number;
+  current: number;
+
+  constructor(message: string, limit: number, current: number) {
+    super(message);
+    this.name = 'SubscriptionLimitError';
+    this.limit = limit;
+    this.current = current;
+  }
+}
+
 // A non-2xx the client may want to branch on by status (the feed path uses it to
 // detect a backend that predates /api/v2/timeline and fall back). `message` is
 // unchanged from the generic error path, so existing `e.message` handling still
@@ -310,6 +347,10 @@ class ApiClient {
             resetsAt: string;
           };
           throw new UrlSaveLimitError(b.message, b.limit, b.current, b.resetsAt);
+        }
+        if ((body as { error: string }).error === 'subscription_limit_reached') {
+          const b = body as { message: string; limit: number; current: number };
+          throw new SubscriptionLimitError(b.message, b.limit, b.current);
         }
         throw new Error((body as { error: string }).error || `HTTP ${response.status}`);
       }
@@ -1379,7 +1420,13 @@ class ApiClient {
       pulledFromPds: number;
       pushedToPds: number;
       skipped: number;
+      /** Things that went wrong. Never paired with an upgrade prompt. */
       warnings: string[];
+      /**
+       * Plan-limit outcomes (parked / not mirrored). These get the upsell, and
+       * `kind` says which raise to quote.
+       */
+      limitNotices?: SyncLimitNotice[];
       hasMore?: boolean;
       needsReauth?: boolean;
     };
@@ -1390,6 +1437,7 @@ class ApiClient {
       pushed: number;
       skipped: number;
       warnings: string[];
+      limitNotices?: SyncLimitNotice[];
       hasMore?: boolean;
       error?: string;
     };

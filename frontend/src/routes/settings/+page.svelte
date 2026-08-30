@@ -14,6 +14,9 @@
     ARTICLE_FONT_SIZE_MAX,
   } from '$lib/stores/preferences.svelte';
   import ImportOPMLModal from '$lib/components/ImportOPMLModal.svelte';
+  import LimitNotice from '$lib/components/LimitNotice.svelte';
+  import { mergeNotices } from '$lib/utils/limitCopy';
+  import type { SyncLimitNotice } from '$lib/services/api';
   import SaveBackingPicker from '$lib/components/settings/SaveBackingPicker.svelte';
   import LinkblogTargetPicker from '$lib/components/settings/LinkblogTargetPicker.svelte';
   import DeleteLinkblogModal from '$lib/components/settings/DeleteLinkblogModal.svelte';
@@ -90,6 +93,18 @@
   let isSyncing = $state(false);
   let syncError = $state<string | null>(null);
   let syncSuccess = $state<string | null>(null);
+  // Parked / mirror-cap outcomes from the sync. Held apart from `syncSuccess`,
+  // which is a green line: "12 of your feeds were parked" is not good news, and
+  // appending it to a success message is how it went unread.
+  let syncLimitNotices = $state<SyncLimitNotice[]>([]);
+  // Grouped by which cap was hit, so each group carries the raise that applies:
+  // an active-feed wall must not be answered with the mirror number.
+  const syncFeedNotices = $derived(syncLimitNotices.filter((n) => n.kind === 'feeds'));
+  const syncMirrorNotices = $derived(syncLimitNotices.filter((n) => n.kind === 'mirror'));
+  // Everything else the sync wants to report — a failed PDS write, a graph
+  // listing that was too big to read. These are not plan problems, so they get
+  // no upgrade prompt: the backend tells the two apart, we don't guess.
+  let syncWarnings = $state<string[]>([]);
 
   // External-backed saves: which engine holds the Saved list. Owned/managed by
   // <SaveBackingPicker bind:backing>; kept here so the "Privacy & sharing" overview
@@ -378,6 +393,8 @@
 
     syncError = null;
     syncSuccess = null;
+    syncWarnings = [];
+    syncLimitNotices = [];
 
     if (!syncStore.isOnline) {
       syncError = 'You are offline. Connect to the internet to change sync settings.';
@@ -416,6 +433,8 @@
     isSyncing = true;
     syncError = null;
     syncSuccess = null;
+    syncWarnings = [];
+    syncLimitNotices = [];
 
     // Track totals across multiple sync calls (for batched hasMore syncs)
     let totalPulled = 0;
@@ -423,6 +442,7 @@
     let totalImported = 0;
     let totalRemoved = 0;
     let allWarnings: string[] = [];
+    let allLimitNotices: SyncLimitNotice[] = [];
     let batchCount = 0;
     const maxBatches = 50; // Safety limit to prevent infinite loops
 
@@ -467,11 +487,16 @@
         totalImported += result.atmosphere?.imported || 0;
         totalRemoved += result.atmosphere?.removed || 0;
 
-        // Collect warnings
+        // Collect warnings, keeping plan limits apart from failures.
         allWarnings = [
           ...allWarnings,
           ...(result.subscriptions?.warnings || []),
           ...(result.atmosphere?.warnings || []),
+        ];
+        allLimitNotices = [
+          ...allLimitNotices,
+          ...(result.subscriptions?.limitNotices || []),
+          ...(result.atmosphere?.limitNotices || []),
         ];
 
         // Check if there's more to sync
@@ -486,10 +511,11 @@
         syncSuccess += ` (${batchCount} batches)`;
       }
 
-      // Show warnings if any
-      if (allWarnings.length > 0) {
-        syncSuccess += `. Warning: ${allWarnings.join(', ')}`;
-      }
+      // Each pass reports only what it parked or dropped, so the counts are
+      // summed into one line per cap — deduping on the sentence would leave a
+      // stack of numbers ("20 feeds…", then "30 feeds…"), none of them true.
+      syncWarnings = [...new Set(allWarnings)];
+      syncLimitNotices = mergeNotices(allLimitNotices);
 
       // Refresh sync status
       const status = await api.getSyncStatus();
@@ -705,6 +731,34 @@
 
         {#if syncSuccess}
           <p class="sync-success">{syncSuccess}</p>
+        {/if}
+
+        {#if syncFeedNotices.length > 0}
+          <div class="sync-warnings">
+            <LimitNotice kind="feeds">
+              {#each syncFeedNotices as notice}
+                <p>{notice.message}</p>
+              {/each}
+            </LimitNotice>
+          </div>
+        {/if}
+
+        {#if syncMirrorNotices.length > 0}
+          <div class="sync-warnings">
+            <LimitNotice kind="mirror">
+              {#each syncMirrorNotices as notice}
+                <p>{notice.message}</p>
+              {/each}
+            </LimitNotice>
+          </div>
+        {/if}
+
+        {#if syncWarnings.length > 0}
+          <div class="sync-warnings">
+            {#each syncWarnings as warning}
+              <p class="sync-warning">{warning}</p>
+            {/each}
+          </div>
         {/if}
       {/if}
     {/if}
@@ -1594,6 +1648,16 @@
     color: var(--color-danger);
     font-size: var(--text-md);
     margin-top: 0.5rem;
+  }
+
+  .sync-warnings {
+    margin-top: 0.75rem;
+  }
+
+  .sync-warning {
+    color: var(--color-text-secondary);
+    font-size: var(--text-md);
+    margin: 0 0 0.25rem;
   }
 
   .sync-success {

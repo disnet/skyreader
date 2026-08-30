@@ -190,11 +190,29 @@ function feedRow(feed) {
     btn.disabled = true;
   } else {
     btn.textContent = 'Subscribe';
-    btn.addEventListener('click', () => subscribe(feed, btn));
+    // One listener for the life of the row; what a click *does* is carried by
+    // btn.dataset.action, because a second addEventListener would stack on top
+    // of this one rather than replace it.
+    btn.dataset.action = 'subscribe';
+    btn.addEventListener('click', () => {
+      if (btn.dataset.action === 'upgrade') return openUpgrade();
+      return subscribe(feed, btn);
+    });
   }
   row.appendChild(btn);
 
   return row;
+}
+
+/** Open a Skyreader page and close the popup behind it. */
+async function openTab(path) {
+  const cfg = await getConfig();
+  chrome.tabs.create({ url: `${cfg.frontendBase}${path}` });
+  window.close();
+}
+
+function openUpgrade() {
+  return openTab('/supporter');
 }
 
 async function subscribe(feed, btn) {
@@ -210,21 +228,24 @@ async function subscribe(feed, btn) {
       btn.className = 'subscribe done';
       break;
     case 'auth': {
-      const cfg = await getConfig();
-      chrome.tabs.create({ url: cfg.frontendBase });
-      window.close();
+      await openTab('');
       return;
     }
     case 'limit':
+      // The cap isn't something a retry fixes, so the button stops being a
+      // retry and becomes the way out: one tap to the upgrade page.
       btn.textContent = 'Feed limit';
       btn.className = 'subscribe failed';
-      btn.title = result.message || 'Feed limit reached';
+      btn.title = result.message || 'Feed limit reached. Open Skyreader to raise it.';
+      btn.disabled = false;
+      btn.dataset.action = 'upgrade';
       break;
     default:
       btn.textContent = 'Retry';
       btn.className = 'subscribe failed';
       btn.title = result?.message || 'Subscribe failed';
       btn.disabled = false;
+      btn.dataset.action = 'subscribe';
   }
 }
 

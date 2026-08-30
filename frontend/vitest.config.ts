@@ -7,6 +7,7 @@ const alias = {
   // SvelteKit's virtual modules don't exist outside its build; the stub is what
   // lets a module that reads `browser`/`dev`/`version` be unit tested at all.
   '$app/environment': path.resolve(__dirname, 'test/stubs/app-environment.ts'),
+  '$app/navigation': path.resolve(__dirname, 'test/stubs/app-navigation.ts'),
 };
 
 export default defineConfig({
@@ -28,6 +29,8 @@ export default defineConfig({
           name: 'component',
           include: ['src/**/*.component.test.ts'],
           environment: 'jsdom',
+          // jsdom alone isn't enough on current Node — see the setup file.
+          setupFiles: ['./test/setup/browser-storage.ts'],
         },
         resolve: { alias, conditions: ['browser'] },
       },

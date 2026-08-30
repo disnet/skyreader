@@ -1,6 +1,6 @@
 import { liveDb } from '$lib/services/liveDb.svelte';
 import { feedStatusStore } from './feedStatus.svelte';
-import { api } from '$lib/services/api';
+import { api, SubscriptionLimitError } from '$lib/services/api';
 import { auth } from './auth.svelte';
 import { subscriptionDedupKey, createInFlightGuard } from '$lib/services/subscriptionDedup';
 import { generateTid } from '$lib/utils/tid';
@@ -64,7 +64,13 @@ function createSubscriptionsStore() {
     options?: Partial<Subscription>
   ): Promise<number> {
     if (count >= maxSubscriptions) {
-      throw new Error(`Feed limit reached. You can have up to ${maxSubscriptions} feeds.`);
+      // Same error type the backend's 403 produces, so callers can render one
+      // limit notice without caring which side caught it first.
+      throw new SubscriptionLimitError(
+        `You have reached the maximum of ${maxSubscriptions} active feeds. Park a feed to free a slot.`,
+        maxSubscriptions,
+        count
+      );
     }
 
     const isAtProto = options?.sourceType && options.sourceType.startsWith('atproto.');

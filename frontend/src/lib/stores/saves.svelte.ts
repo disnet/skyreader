@@ -1,6 +1,6 @@
 import { db } from '$lib/services/db';
 import { safePut, safeBulkPut } from '$lib/services/safeDb.svelte';
-import { api, UrlSaveLimitError } from '$lib/services/api';
+import { api } from '$lib/services/api';
 import { generateTid } from '$lib/utils/tid';
 import { urlKey } from '$lib/utils/urlKey';
 import { syncQueue, type SavedPayload } from '$lib/services/sync-queue';

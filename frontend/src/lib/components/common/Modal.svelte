@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
+  import { beforeNavigate } from '$app/navigation';
 
   interface Props {
     open: boolean;
@@ -28,6 +29,36 @@
       onclose();
     }
   }
+
+  /**
+   * Come down when the app navigates.
+   *
+   * A modal that outlives a navigation leaves the reader on the new page with a
+   * dialog still covering it, and these are rendered by the persistent shell
+   * (the sidebar owns the add-feed modal), so nothing unmounts them on the way
+   * out. In-app links reach modals inside shared children — LimitNotice's route
+   * to /supporter, UnifyNotice's two feeds, the re-login prompt — so each one
+   * would otherwise have to remember to close its host. Every modal that
+   * navigates by hand already closes itself first; this is that same rule, in
+   * one place, for the links it can't see.
+   *
+   * Watching the navigation rather than the click is what makes it reliable: a
+   * click handler can't tell whether a link will actually navigate, and by the
+   * time one would run SvelteKit's router has already called `preventDefault()`
+   * on the event, which is indistinguishable from a child that handled its own
+   * click.
+   *
+   * `beforeNavigate` specifically, because it fires when a navigation *starts*.
+   * A redirect that was already in flight when the modal opened (the app moving
+   * off `/` a moment after load) announced itself before there was anything to
+   * close, so it passes by — where `afterNavigate` would land afterwards and
+   * dismiss a dialog the reader had only just opened. Shallow routing (the
+   * reader's `?read=` pushState) doesn't come through here at all.
+   */
+  beforeNavigate(({ type }) => {
+    // `leave` is the tab closing; there's no page left to uncover.
+    if (type !== 'leave' && open) onclose();
+  });
 
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') {

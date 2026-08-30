@@ -12,6 +12,8 @@
   import { getFaviconUrl } from '$lib/utils/favicon';
   import Modal from '$lib/components/common/Modal.svelte';
   import Icon from '$lib/components/Icon.svelte';
+  import LimitNotice from '$lib/components/LimitNotice.svelte';
+  import { feedLimitLine } from '$lib/utils/limitCopy';
 
   interface Publication {
     uri: string;
@@ -31,6 +33,18 @@
 
   let { open, onclose, initialValue = '' }: Props = $props();
   let error = $state<string | null>(null);
+  // Set when a subscribe run stops at the active-feed cap. Kept apart from
+  // `error` so the limit renders as a notice with a way forward, not as a red
+  // failure line the reader can do nothing about.
+  //
+  // It can only be set while the reader is *at* the cap, so it must not be
+  // gated on `!isAtLimit` — that combination is unsatisfiable, and gating on it
+  // is how this notice went silent in the select-content step, where the
+  // step-scoped notice below never renders.
+  let limitHit = $state(false);
+  // True when the cap stopped a *batch* partway, so the notice can say that some
+  // of the selection did land. False for a single add, where nothing did.
+  let limitPartial = $state(false);
 
   // Search state
   let inputValue = $state('');
@@ -134,6 +148,8 @@
     inputValue = '';
     step = 'search';
     error = null;
+    limitHit = false;
+    limitPartial = false;
     searchResults = [];
     isSearching = false;
     selectedAccount = null;
@@ -215,6 +231,8 @@
     selectedPublications = new Set();
     unsubscribePublicationUris = new Set();
     error = null;
+    limitHit = false;
+    limitPartial = false;
   }
 
   function togglePublication(uri: string) {
@@ -373,7 +391,7 @@
   async function subscribeStandardSub(sub: StandardSub) {
     if (subscribedPublisherDids.has(sub.publisherDid)) return;
     if (!subscriptionsStore.canAddMore) {
-      error = 'Subscription limit reached';
+      limitHit = true;
       return;
     }
 
@@ -431,6 +449,8 @@
     if (!selectedAccount || changeCount === 0) return;
 
     error = null;
+    limitHit = false;
+    limitPartial = false;
     isSubscribing = true;
     let firstAddedId: number | null = null;
 
@@ -444,7 +464,7 @@
       // Subscribe to newly selected items
       if (selectedPublications.size > 0) {
         if (!subscriptionsStore.canAddMore) {
-          error = `Subscription limit reached (${subscriptionsStore.maxSubscriptions} max)`;
+          limitHit = true;
           return;
         }
       }
@@ -454,7 +474,7 @@
         if (!pub) continue;
 
         if (!subscriptionsStore.canAddMore) {
-          error = `Subscription limit reached (${subscriptionsStore.maxSubscriptions} max)`;
+          limitHit = true;
           break;
         }
 
@@ -476,6 +496,15 @@
       // Fetch the new publications' documents now so they appear immediately
       // (also refreshed on the regular cycle).
       void fetchAllDocuments(subscriptionsStore.subscriptions);
+
+      // Stop at the wall with the modal open. Closing here would take the limit
+      // notice with it and leave the reader believing the whole selection went
+      // through, which is exactly the silence this notice exists to end.
+      if (limitHit) {
+        limitPartial = firstAddedId !== null;
+        return;
+      }
+
       handleClose();
 
       if (firstAddedId) {
@@ -548,11 +577,10 @@
         Follow an Atmosphere account (Bluesky, Blacksky, npmx, etc.) to see their published posts
         and publications.
       </p>
-      {#if isAtLimit}
-        <p class="limit-message">
-          You've reached the maximum of {subscriptionsStore.maxSubscriptions} feeds. Remove some feeds
-          to add new ones.
-        </p>
+      {#if isAtLimit && !limitHit}
+        <LimitNotice kind="feeds">
+          <p>{feedLimitLine(subscriptionsStore.maxSubscriptions)}</p>
+        </LimitNotice>
       {/if}
       <div class="input-group">
         <input
@@ -685,6 +713,17 @@
           {/if}
         </button>
       {/if}
+    </div>
+  {/if}
+
+  {#if limitHit}
+    <div class="limit-wrap">
+      <LimitNotice kind="feeds">
+        <p>{feedLimitLine(subscriptionsStore.maxSubscriptions)}</p>
+        {#if limitPartial}
+          <p class="limit-aside">Anything added before that went through.</p>
+        {/if}
+      </LimitNotice>
     </div>
   {/if}
 
@@ -1065,10 +1104,12 @@
     cursor: not-allowed;
   }
 
-  .limit-message {
+  .limit-wrap {
+    padding: 0 1rem 1rem;
+  }
+
+  .limit-aside {
     color: var(--color-text-secondary);
-    text-align: center;
-    padding: 1rem;
   }
 
   .error-message {

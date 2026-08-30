@@ -4,9 +4,11 @@
   import { page } from '$app/stores';
   import { auth } from '$lib/stores/auth.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
-  import { api, ScopeUpgradeError } from '$lib/services/api';
+  import { api, ScopeUpgradeError, SubscriptionLimitError } from '$lib/services/api';
   import Logo from '$lib/assets/logo.svg';
   import Icon from '$lib/components/Icon.svelte';
+  import LimitNotice from '$lib/components/LimitNotice.svelte';
+  import { feedLimitLine } from '$lib/utils/limitCopy';
 
   // Lightweight share-target / bookmarklet endpoint for subscribing. An Apple
   // Shortcut (or bookmarklet, or future PWA share_target) opens
@@ -23,7 +25,8 @@
     iconUrl?: string;
   }
 
-  type Status = 'working' | 'select' | 'success' | 'already' | 'invalid' | 'scope' | 'error';
+  type Status =
+    'working' | 'select' | 'success' | 'already' | 'invalid' | 'scope' | 'limit' | 'error';
 
   let status = $state<Status>('working');
   let isSubscribing = $state(false);
@@ -99,6 +102,10 @@
   function handleError(err: unknown) {
     if (err instanceof ScopeUpgradeError) {
       status = 'scope';
+      return;
+    }
+    if (err instanceof SubscriptionLimitError) {
+      status = 'limit';
       return;
     }
     const msg = err instanceof Error ? err.message : 'Something went wrong';
@@ -236,6 +243,14 @@
       <p class="title">Log in again to subscribe</p>
       <p class="sub">Subscribing needs updated permissions for your account.</p>
       <a class="btn-primary" href={loginReturnUrl}>Log in again</a>
+    {:else if status === 'limit'}
+      <p class="title">Your feed list is full</p>
+      <div class="limit-wrap">
+        <LimitNotice kind="feeds">
+          <p>{feedLimitLine(subscriptionsStore.maxSubscriptions)}</p>
+        </LimitNotice>
+      </div>
+      <a class="btn-secondary" href="/sources">Manage sources</a>
     {:else}
       <p class="title">Couldn't subscribe</p>
       <p class="sub">{errorMessage}</p>
@@ -245,6 +260,11 @@
 </div>
 
 <style>
+  .limit-wrap {
+    width: 100%;
+    text-align: left;
+  }
+
   .subscribe-page {
     min-height: 100vh;
     display: flex;

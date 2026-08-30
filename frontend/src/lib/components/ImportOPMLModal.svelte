@@ -6,6 +6,8 @@
   import { liveDb } from '$lib/services/liveDb.svelte';
   import { fetchNewSubscriptionFeeds } from '$lib/services/feedFetcher';
   import Modal from '$lib/components/common/Modal.svelte';
+  import LimitNotice from '$lib/components/LimitNotice.svelte';
+  import { mirrorLimitLine } from '$lib/utils/limitCopy';
 
   interface Props {
     open: boolean;
@@ -172,24 +174,23 @@
       </div>
     </div>
     {#if willExceedLimit}
-      <div class="limit-warning">
-        Your plan services {subscriptionsStore.maxSubscriptions} active feed{subscriptionsStore.maxSubscriptions ===
-        1
-          ? ''
-          : 's'}{availableSlots > 0
-          ? ` (${availableSlots} slot${availableSlots === 1 ? '' : 's'} left)`
-          : ''}.
-        {#if availableSlots > 0}
-          The first {availableSlots} fill them; the rest are parked — saved to your account, just not
-          shown until you reactivate one.
-        {:else}
-          All of these will be parked — saved to your account, just not shown until you free an
-          active slot.
-        {/if}
-        {#if auth.user?.tier !== 'supporter'}
-          <a href="/settings" class="sponsor-link">Upgrade your plan</a> to get raised limits.
-        {/if}
-      </div>
+      <LimitNotice kind="feeds">
+        <p>
+          Your plan provides {subscriptionsStore.maxSubscriptions} active feed{subscriptionsStore.maxSubscriptions ===
+          1
+            ? ''
+            : 's'}{availableSlots > 0
+            ? ` (${availableSlots} slot${availableSlots === 1 ? '' : 's'} left)`
+            : ''}.
+          {#if availableSlots > 0}
+            The first {availableSlots} fill them; the rest are parked, saved to your account and just
+            not shown until you reactivate one.
+          {:else}
+            All of these will be parked, saved to your account and just not shown until you free an
+            active slot.
+          {/if}
+        </p>
+      </LimitNotice>
     {/if}
     <ul class="feed-list">
       {#each parsedFeeds as feed}
@@ -252,6 +253,37 @@
         <dd>{results.failed.length}</dd>
       {/if}
     </dl>
+    <!-- An import can hit both caps at once, and they raise separately. One
+         notice would have to pick a single upsell, quoting the raise for the
+         active limit under a sentence about the mirror limit (or the reverse),
+         so each cap gets its own block with its own pitch. -->
+    {#if results.parked > 0 || results.dropped > 0}
+      <div class="limit-notices">
+        {#if results.parked > 0}
+          <LimitNotice kind="feeds">
+            <p>
+              {results.parked} feed{results.parked === 1 ? '' : 's'} went over your
+              {subscriptionsStore.maxSubscriptions}-feed active limit and {results.parked === 1
+                ? 'was'
+                : 'were'} parked. Nothing was lost: park or remove an active feed and reactivate
+              {results.parked === 1 ? 'it' : 'them'} from Sources.
+            </p>
+          </LimitNotice>
+        {/if}
+        {#if results.dropped > 0}
+          <LimitNotice kind="mirror">
+            <p>
+              {results.dropped}
+              {results.parked > 0 ? 'more' : `feed${results.dropped === 1 ? '' : 's'}`}
+              {results.dropped === 1 ? 'was' : 'were'} over your mirror limit and
+              {results.dropped === 1 ? "wasn't" : "weren't"} imported. {mirrorLimitLine(
+                auth.user?.limits?.maxMirroredSubscriptions ?? 1000
+              )}
+            </p>
+          </LimitNotice>
+        {/if}
+      </div>
+    {/if}
     {#if results.failed.length > 0}
       <details class="failed-list">
         <summary>View failed imports</summary>
@@ -315,24 +347,6 @@
     justify-content: space-between;
     align-items: center;
     margin-bottom: 1rem;
-  }
-
-  .limit-warning {
-    background: var(--color-warning-bg, #fef3c7);
-    color: var(--color-warning-text, #92400e);
-    padding: 0.75rem;
-    border-radius: 4px;
-    font-size: var(--text-md);
-    margin-bottom: 1rem;
-  }
-
-  .sponsor-link {
-    color: var(--color-primary);
-    text-decoration: none;
-  }
-
-  .sponsor-link:hover {
-    text-decoration: underline;
   }
 
   .selection-actions {
@@ -454,6 +468,12 @@
 
   .results dt {
     font-weight: var(--weight-medium);
+  }
+
+  .limit-notices {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
   }
 
   .failed-list {

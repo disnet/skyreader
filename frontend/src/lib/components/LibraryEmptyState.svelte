@@ -6,6 +6,8 @@
   import { api, RateLimitError } from '$lib/services/api';
   import SourcesDiscovery from '$lib/components/sources/SourcesDiscovery.svelte';
   import ImportOPMLModal from '$lib/components/ImportOPMLModal.svelte';
+  import { syncNoticesStore } from '$lib/stores/syncNotices.svelte';
+  import type { SyncLimitNotice } from '$lib/services/api';
   import SaveBackingPicker from '$lib/components/settings/SaveBackingPicker.svelte';
   import Icon from '$lib/components/Icon.svelte';
 
@@ -43,13 +45,32 @@
 
   // Enabling sync may pull subscriptions you've stored from another app —
   // run a sync so an existing PDS library lands here right away.
+  //
+  // That library can be far bigger than the plan services. The backend says
+  // which feeds it parked or skipped, and dropping that on the floor is how a
+  // reader ends up with a short list and no idea why. The results go to
+  // syncNoticesStore rather than to state here, because a sync that pulls
+  // anything fills the library and unmounts this whole screen — notices held
+  // locally would be destroyed the instant they became worth reading. The
+  // shell's banner renders them; see stores/syncNotices.
   async function runFullSync() {
     let hasMore = true;
     let batches = 0;
+    const allWarnings: string[] = [];
+    const allNotices: SyncLimitNotice[] = [];
+    syncNoticesStore.clear();
     while (hasMore && batches < 20) {
       batches++;
       try {
         const result = await api.triggerFullSync();
+        allWarnings.push(
+          ...(result.subscriptions?.warnings || []),
+          ...(result.atmosphere?.warnings || [])
+        );
+        allNotices.push(
+          ...(result.subscriptions?.limitNotices || []),
+          ...(result.atmosphere?.limitNotices || [])
+        );
         hasMore = result.hasMore || false;
       } catch (e) {
         if (e instanceof RateLimitError) {
@@ -60,6 +81,9 @@
         throw e;
       }
     }
+    // Reported once the whole run is in: each batch counts only its own share,
+    // so a per-batch report would quote a number that was never the total.
+    syncNoticesStore.report(allNotices, allWarnings);
     await subscriptionsStore.load();
   }
 

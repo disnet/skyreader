@@ -40,6 +40,25 @@ interface LocalSubscription {
 }
 
 /**
+ * One plan cap the sync ran into, and what it did about it.
+ *
+ * The counts are per-call, and a full sync is a client-driven loop of calls, so
+ * the client has to add them up before showing a number to the reader. That is
+ * why `kind`/`subject`/`count`/`limit` are carried separately: two batches that
+ * park feeds merge into one true total instead of two contradicting sentences.
+ * `message` is the same fact as prose, kept for callers that only want a string;
+ * the reader-facing wording lives in frontend/src/lib/utils/limitCopy.ts.
+ */
+export interface LimitNotice {
+  kind: 'feeds' | 'mirror';
+  /** What the count counts — the two syncs park different things. */
+  subject: 'feeds' | 'linkblogs';
+  count: number;
+  limit: number;
+  message: string;
+}
+
+/**
  * Result of a sync operation
  */
 export interface SyncResult {
@@ -51,6 +70,16 @@ export interface SyncResult {
   /** Parked rows promoted back to active because the active limit had headroom */
   reactivated: number;
   warnings: string[];
+  /**
+   * Plan-limit outcomes (feeds parked over the active cap, records dropped over
+   * the mirror cap). Kept apart from `warnings`, which carries things that went
+   * *wrong* — the client renders these two differently, and an upgrade prompt
+   * attached to a failed PDS write would be both confusing and dishonest.
+   *
+   * `kind` says which cap was hit, so the client can quote the raise that
+   * actually applies instead of guessing from the sentence.
+   */
+  limitNotices: LimitNotice[];
   /** If true, there are more records to push - call sync again */
   hasMore?: boolean;
   /**
@@ -104,6 +133,7 @@ export async function syncSubscriptions(
     skipped: 0,
     reactivated: 0,
     warnings: [],
+    limitNotices: [],
   };
 
   // With a sessionId, the client can self-heal a stale PDS host (PDS migration)
@@ -274,19 +304,29 @@ export async function syncSubscriptions(
     }
 
     if (parkedOnPull > 0) {
-      result.warnings.push(
-        `${parkedOnPull} feed${parkedOnPull === 1 ? '' : 's'} over your plan's active limit of ${maxSubscriptions} ` +
-          `${parkedOnPull === 1 ? 'was' : 'were'} parked — still saved to your account, just not shown. ` +
-          `Reactivate from Manage feeds.`
-      );
+      result.limitNotices.push({
+        kind: 'feeds',
+        subject: 'feeds',
+        count: parkedOnPull,
+        limit: maxSubscriptions,
+        message:
+          `${parkedOnPull} feed${parkedOnPull === 1 ? '' : 's'} over your plan's active limit of ${maxSubscriptions} ` +
+          `${parkedOnPull === 1 ? 'was' : 'were'} parked, still saved to your account and just not shown. ` +
+          `Reactivate from Manage feeds.`,
+      });
     }
 
     if (droppedOverCap > 0) {
-      result.warnings.push(
-        `${droppedOverCap} feed${droppedOverCap === 1 ? '' : 's'} over your plan's mirror limit of ${maxMirrored} ` +
+      result.limitNotices.push({
+        kind: 'mirror',
+        subject: 'feeds',
+        count: droppedOverCap,
+        limit: maxMirrored,
+        message:
+          `${droppedOverCap} feed${droppedOverCap === 1 ? '' : 's'} over your plan's mirror limit of ${maxMirrored} ` +
           `${droppedOverCap === 1 ? 'was' : 'were'} not synced to this device. ` +
-          `${droppedOverCap === 1 ? 'It is' : 'They are'} still on your PDS.`
-      );
+          `${droppedOverCap === 1 ? 'It is' : 'They are'} still on your PDS.`,
+      });
     }
 
     // Insert pulled records into local D1

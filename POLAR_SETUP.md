@@ -65,9 +65,11 @@ Unset/empty = billing off: checkout answers 503, the webhook fails closed.
 - `frontend/src/lib/services/api.ts` — `createCheckout()`
 - `frontend/src/routes/settings/+page.svelte` — Upgrade button on the Plan
   card; tier refresh on mount/focus
-- `frontend/src/lib/components/ImportOPMLModal.svelte`,
-  `frontend/src/lib/components/sidebar/FeedAddCompact.svelte` — sponsor links
-  now point at `/settings`
+- `frontend/src/lib/components/LimitNotice.svelte`,
+  `frontend/src/lib/utils/limitCopy.ts` — the shared limit notice and its copy;
+  every limit-hit surface routes to `/supporter` through them
+  (`sidebar/FeedAddCompact.svelte` and `sidebar/SidebarAddFeed.svelte` were
+  deleted here: both were unreferenced, and held the only `/settings` upsells)
 
 ## Verify before merging / after deploy
 

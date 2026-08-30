@@ -7,7 +7,7 @@
   import { fetchSingleFeed, fetchAllDocuments } from '$lib/services/feedFetcher';
   import { articlesStore } from '$lib/stores/articles.svelte';
   import { profileService } from '$lib/services/profiles';
-  import { api } from '$lib/services/api';
+  import { api, SubscriptionLimitError } from '$lib/services/api';
   import { getSourceDisplay, isLinkblogPublication } from '$lib/utils/sourceDisplay';
   import { findCrossTypeDuplicates } from '$lib/services/subscriptionDedup';
   import { loadDismissedUnifyHosts, dismissUnifyHost } from '$lib/services/unifyDismiss';
@@ -23,6 +23,8 @@
   import BulkActionBar from '$lib/components/sources/BulkActionBar.svelte';
   import SourceSectionHeader from '$lib/components/sources/SourceSectionHeader.svelte';
   import SourcesDiscovery from '$lib/components/sources/SourcesDiscovery.svelte';
+  import LimitNotice from '$lib/components/LimitNotice.svelte';
+  import { feedLimitLine } from '$lib/utils/limitCopy';
   import type { Subscription, BlueskyProfile } from '$lib/types';
 
   interface DetectedPublication {
@@ -58,6 +60,10 @@
   }
   let parkedFeeds = $state<ParkedRecord[]>([]);
   let parkedError = $state<string | null>(null);
+  // Atmosphere-panel subscribe outcome. Split so the active-feed cap renders as
+  // a notice with a way forward, not as a red line.
+  let atmoError = $state<string | null>(null);
+  let atmoLimitHit = $state(false);
 
   // -- Section collapse (persisted) --
   const COLLAPSE_KEY = 'skyreader:sources-collapsed';
@@ -292,21 +298,31 @@
     return group.profile?.displayName || group.profile?.handle || group.did;
   }
 
+  // Subscribing from the Atmosphere panel used to have no catch at all, so
+  // hitting the active-feed cap here was an unhandled rejection: the row just
+  // reset and the reader was told nothing.
   async function subscribePublication(did: string, pub: DetectedPublication) {
-    const subId = await subscriptionsStore.add(pub.uri, pub.name || pub.url, {
-      sourceType: 'atproto.documents',
-      subjectDid: did,
-      siteUrl: pub.url,
-      feedUrl: pub.uri,
-    });
-    if (pub.iconUrl) {
-      await subscriptionsStore.updateLocal(subId, {
-        customIconUrl: pub.iconUrl,
+    atmoError = null;
+    atmoLimitHit = false;
+    try {
+      const subId = await subscriptionsStore.add(pub.uri, pub.name || pub.url, {
+        sourceType: 'atproto.documents',
+        subjectDid: did,
+        siteUrl: pub.url,
+        feedUrl: pub.uri,
       });
+      if (pub.iconUrl) {
+        await subscriptionsStore.updateLocal(subId, {
+          customIconUrl: pub.iconUrl,
+        });
+      }
+      // Fetch this publication's documents now so its feed isn't empty until the
+      // next full refresh (also refreshed on the regular cycle).
+      void fetchAllDocuments(subscriptionsStore.subscriptions);
+    } catch (e) {
+      if (e instanceof SubscriptionLimitError) atmoLimitHit = true;
+      else atmoError = e instanceof Error ? e.message : 'Could not subscribe to that publication.';
     }
-    // Fetch this publication's documents now so its feed isn't empty until the
-    // next full refresh (also refreshed on the regular cycle).
-    void fetchAllDocuments(subscriptionsStore.subscriptions);
   }
 
   // -- Actions --
@@ -450,9 +466,11 @@
       await appManager.syncSubscriptions();
       void fetchAllDocuments(subscriptionsStore.subscriptions);
     } catch (e) {
+      // The backend's 403 arrives as a typed error, so this reads the type
+      // rather than sniffing the message text for the word "limit".
       parkedError =
-        e instanceof Error && e.message.toLowerCase().includes('limit')
-          ? `You're at your ${subscriptionsStore.maxSubscriptions}-feed active limit. Park a feed to free a slot.`
+        e instanceof SubscriptionLimitError
+          ? feedLimitLine(subscriptionsStore.maxSubscriptions, { onSources: true })
           : 'Could not reactivate this feed.';
     }
   }
@@ -625,6 +643,15 @@
       />
 
       {#if atmoOpen}
+        {#if atmoLimitHit}
+          <div class="atmo-notice">
+            <LimitNotice kind="feeds">
+              <p>{feedLimitLine(subscriptionsStore.maxSubscriptions, { onSources: true })}</p>
+            </LimitNotice>
+          </div>
+        {:else if atmoError}
+          <p class="parked-error">{atmoError}</p>
+        {/if}
         {#if filteredPeople.length > 0}
           <div class="source-list person-list">
             {#each filteredPeople as group (group.did)}
@@ -796,11 +823,26 @@
         Parked
         <span class="group-count">{parkedFeeds.length}</span>
       </h2>
-      <p class="section-empty">
-        Over your {subscriptionsStore.maxSubscriptions}-feed active limit. These stay saved to your
-        account and on your PDS — reactivate one to read it (park or remove an active feed first if
-        you're full).
-      </p>
+      <!-- The upgrade prompt belongs here only when the cap is what put these
+           feeds here. A reader can also park a feed by hand at any count, and
+           telling someone with 3 of 100 feeds that they're over their limit is
+           both false and a pitch for a plan they don't need. -->
+      {#if !subscriptionsStore.canAddMore}
+        <div class="parked-notice">
+          <LimitNotice kind="feeds">
+            <p>
+              Over your {subscriptionsStore.maxSubscriptions}-feed active limit. These stay saved to
+              your account. Reactivate one to read it, parking or removing an active feed first if
+              you're full.
+            </p>
+          </LimitNotice>
+        </div>
+      {:else}
+        <p class="parked-note">
+          Parked feeds stay saved to your account and just aren't fetched. Reactivate one to start
+          reading it again.
+        </p>
+      {/if}
       {#if parkedError}
         <p class="parked-error">{parkedError}</p>
       {/if}
@@ -966,6 +1008,17 @@
     color: var(--color-text);
     margin: 0 0 0.375rem;
     padding: 0 0.25rem;
+  }
+
+  .atmo-notice,
+  .parked-note {
+    margin: 0 0 0.75rem;
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+  }
+
+  .parked-notice {
+    padding: 0.5rem 0 0.75rem;
   }
 
   .parked-error {

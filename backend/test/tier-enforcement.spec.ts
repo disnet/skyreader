@@ -222,11 +222,15 @@ describe('Tier-Aware Enforcement', () => {
       const result = await syncSubscriptions(session, env);
 
       expect(result.success).toBe(true);
-      // 100 active, 50 parked — the warning names the parked overflow.
-      const parkedWarning = result.warnings.find((w) => w.includes('parked'));
+      // 100 active, 50 parked — the limit notice names the parked overflow.
+      // It rides `limitNotices`, not `warnings`: the client pairs the former
+      // with an upgrade prompt, and a failed PDS write must never get one.
+      const parkedWarning = result.limitNotices.find((n) => n.message.includes('parked'));
       expect(parkedWarning).toBeDefined();
-      expect(parkedWarning).toContain('50 feeds');
-      expect(parkedWarning).toContain('active limit of 100');
+      expect(result.warnings).toHaveLength(0);
+      expect(parkedWarning?.kind).toBe('feeds');
+      expect(parkedWarning?.message).toContain('50 feeds');
+      expect(parkedWarning?.message).toContain('active limit of 100');
       expect(await getActiveCount(TEST_DID)).toBe(100);
       expect(await getSubscriptionCount(TEST_DID)).toBe(150);
     });
@@ -255,9 +259,8 @@ describe('Tier-Aware Enforcement', () => {
       const result = await syncSubscriptions(session, env);
 
       expect(result.success).toBe(true);
-      // No warning about exceeding limit for supporter
-      const limitWarnings = result.warnings.filter((w) => w.includes('can be synced'));
-      expect(limitWarnings).toHaveLength(0);
+      // No limit notice for a supporter whose library fits under the cap.
+      expect(result.limitNotices).toHaveLength(0);
       expect(result.pulledFromPds).toBe(150);
     });
 

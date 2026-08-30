@@ -6,6 +6,8 @@
   import { savesStore } from '$lib/stores/saves.svelte';
   import { ScopeUpgradeError, UrlSaveLimitError } from '$lib/services/api';
   import Logo from '$lib/assets/logo.svg';
+  import LimitNotice from '$lib/components/LimitNotice.svelte';
+  import { saveLimitLine } from '$lib/utils/limitCopy';
   import type { SavedItem } from '$lib/types';
 
   // Lightweight share-target / bookmarklet endpoint. An Apple Shortcut (or a
@@ -141,10 +143,11 @@
       <a class="btn-secondary" href="/">Go to Skyreader</a>
     {:else if status === 'limit'}
       <p class="title">Monthly save limit reached</p>
-      <p class="sub">
-        You've used all {limitInfo?.limit} URL saves for this month.{#if limitInfo?.resetsAt}
-          Resets {new Date(limitInfo.resetsAt).toLocaleDateString()}.{/if}
-      </p>
+      <div class="limit-wrap">
+        <LimitNotice kind="saves">
+          <p>{saveLimitLine(limitInfo?.limit ?? 0, limitInfo?.resetsAt)}</p>
+        </LimitNotice>
+      </div>
       <a class="btn-secondary" href="/">Go to Skyreader</a>
     {:else if status === 'scope'}
       <p class="title">Log in again to save</p>
@@ -160,6 +163,11 @@
 </div>
 
 <style>
+  .limit-wrap {
+    width: 100%;
+    text-align: left;
+  }
+
   .save-page {
     min-height: 100vh;
     display: flex;

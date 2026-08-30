@@ -334,10 +334,17 @@ describe('Subscription Sync', () => {
       expect(result.success).toBe(true);
       // Everything is pulled — 100 active, 50 parked. Well under the 1000 mirror cap.
       expect(result.pulledFromPds).toBe(150);
-      const parkedWarning = result.warnings.find((w) => w.includes('parked'));
+      const parkedWarning = result.limitNotices.find((n) => n.message.includes('parked'));
       expect(parkedWarning).toBeDefined();
-      expect(parkedWarning).toContain('50 feeds');
-      expect(parkedWarning).toContain('active limit of 100');
+      expect(parkedWarning?.kind).toBe('feeds');
+      expect(parkedWarning?.message).toContain('50 feeds');
+      expect(parkedWarning?.message).toContain('active limit of 100');
+      // A full sync is a loop of these calls, and the client has to add the
+      // counts up before it can quote a total. Pinned because the prose alone
+      // can't be summed: two batches produce two different sentences.
+      expect(parkedWarning?.subject).toBe('feeds');
+      expect(parkedWarning?.count).toBe(50);
+      expect(parkedWarning?.limit).toBe(100);
 
       const active = await env.DB.prepare(
         `SELECT COUNT(*) as count FROM subscriptions_cache WHERE user_did = ? AND active = 1`

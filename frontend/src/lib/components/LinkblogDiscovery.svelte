@@ -6,6 +6,9 @@
   import DiscoveryToolbar from './DiscoveryToolbar.svelte';
   import Icon from './Icon.svelte';
   import ShowMoreButton from './ShowMoreButton.svelte';
+  import LimitNotice from './LimitNotice.svelte';
+  import { SubscriptionLimitError } from '$lib/services/api';
+  import { feedLimitLine } from '$lib/utils/limitCopy';
 
   // The registry arrives whole, so windowing is purely about what we put in the
   // DOM: show a screenful, reveal the rest a batch at a time.
@@ -112,6 +115,9 @@
   // Per-person follow state (keyed by DID): in-flight + last error.
   let pending = $state<Record<string, boolean>>({});
   let failed = $state<Record<string, string>>({});
+  // The active-feed cap isn't a per-row failure: it's the same wall for every
+  // row, so it gets one notice above the list instead of N red spans.
+  let limitHit = $state(false);
 
   function displayName(p: LinkblogPerson): string {
     return p.displayName?.trim() || (p.handle ? `@${p.handle}` : p.did);
@@ -125,6 +131,7 @@
   async function follow(p: LinkblogPerson) {
     if (pending[p.did]) return;
     pending = { ...pending, [p.did]: true };
+    limitHit = false;
     if (failed[p.did]) {
       const { [p.did]: _, ...rest } = failed;
       failed = rest;
@@ -132,10 +139,14 @@
     try {
       await linkblogDiscoveryStore.subscribe(p);
     } catch (e) {
-      failed = {
-        ...failed,
-        [p.did]: e instanceof Error ? e.message : 'Could not follow',
-      };
+      if (e instanceof SubscriptionLimitError) {
+        limitHit = true;
+      } else {
+        failed = {
+          ...failed,
+          [p.did]: e instanceof Error ? e.message : 'Could not follow',
+        };
+      }
     } finally {
       const { [p.did]: _, ...rest } = pending;
       pending = rest;
@@ -193,6 +204,13 @@
 {/snippet}
 
 <div class="linkblog-discovery">
+  {#if limitHit}
+    <div class="limit-wrap">
+      <LimitNotice kind="feeds">
+        <p>{feedLimitLine(subscriptionsStore.maxSubscriptions)}</p>
+      </LimitNotice>
+    </div>
+  {/if}
   {#if variant === 'suggestions'}
     <!-- Quiet by design: render nothing while loading or when none are found. -->
     {#if suggestions.length > 0}
@@ -279,6 +297,10 @@
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
+  }
+
+  .limit-wrap {
+    margin-bottom: 0.75rem;
   }
 
   .group-title {
