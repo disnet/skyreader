@@ -54,6 +54,11 @@ const STABLE_CONNECTION_MS = 60_000;
  *  authors the firehose is actively keeping fresh. */
 export interface FirehoseStatus {
   healthy: boolean;
+  connected?: boolean;
+  subscribedDids?: number;
+  lastEventAt?: number | null;
+  reconnectAttempts?: number;
+  cursor?: string | null;
   isSubscribed: (did: string) => boolean;
 }
 
@@ -99,6 +104,10 @@ export class DocumentFirehose {
   private connected = false;
   private ws: WebSocket | null = null;
   private subscribedDids = new Set<string>();
+  // The filter the server has actually accepted for the current socket. Keep it
+  // separate from the desired set: a failed options_update must remain dirty so
+  // reconcile retries it instead of trusting a filter the server never saw.
+  private sentDids = new Set<string>();
   private lastCursor: string | null = null;
   private lastEventAt = 0;
   // Timestamp of the last frame of *any* kind (message/ping/pong) on the live
@@ -174,7 +183,15 @@ export class DocumentFirehose {
   }
 
   status(): FirehoseStatus {
-    return { healthy: this.isHealthy(), isSubscribed: (did) => this.isSubscribed(did) };
+    return {
+      healthy: this.isHealthy(),
+      connected: this.connected,
+      subscribedDids: this.subscribedDids.size,
+      lastEventAt: this.lastEventAt || null,
+      reconnectAttempts: this.reconnectAttempts,
+      cursor: this.lastCursor,
+      isSubscribed: (did) => this.isSubscribed(did),
+    };
   }
 
   // --- Active-author set ------------------------------------------------------
@@ -230,12 +247,13 @@ export class DocumentFirehose {
    *  wantedDids filter is fixed per-connection). Public for tests. */
   reconcile(): void {
     const next = new Set(this.computeActiveDids(Date.now()));
-    if (setsEqual(next, this.subscribedDids)) {
+    const desiredChanged = !setsEqual(next, this.subscribedDids);
+    if (!desiredChanged && setsEqual(next, this.sentDids)) {
       this.flushCursor();
       return;
     }
     this.subscribedDids = next;
-    console.log(`[Firehose] active author set changed → ${next.size}`);
+    if (desiredChanged) console.log(`[Firehose] active author set changed → ${next.size}`);
     this.flushCursor();
     if (!this.running) return;
     if (next.size === 0) {
@@ -256,7 +274,7 @@ export class DocumentFirehose {
    *  message. Used both on `open` (the URL carries no DIDs) and on reconcile to
    *  narrow/widen the watched set without reconnecting. The message replaces the
    *  connection's whole filter, so it must carry both fields. */
-  private sendOptionsUpdate(ws: WebSocket): void {
+  private sendOptionsUpdate(ws: WebSocket): boolean {
     const message = {
       type: 'options_update',
       payload: {
@@ -266,8 +284,16 @@ export class DocumentFirehose {
     };
     try {
       ws.send(JSON.stringify(message));
+      this.sentDids = new Set(this.subscribedDids);
+      return true;
     } catch (err) {
       console.error('[Firehose] options_update send failed:', err);
+      this.sentDids.clear();
+      // The socket's server-side filter is now unknowable. Reconnect so the
+      // next open sends the complete desired set, and retain the dirty sent set
+      // so a later reconcile also retries if reconnect cannot start.
+      if (this.ws === ws) this.reconnect();
+      return false;
     }
   }
 
@@ -380,7 +406,7 @@ export class DocumentFirehose {
       this.lastEventAt = now;
       this.lastActivityAt = now;
       console.log(`[Firehose] connected, watching ${this.subscribedDids.size} author(s)`);
-      this.sendOptionsUpdate(ws);
+      if (!this.sendOptionsUpdate(ws)) return;
       this.startPingTimer(ws);
       // Clear the backoff only once the connection has *held*. Resetting on
       // `open` alone turns any instant-close condition (a rejected
@@ -451,8 +477,13 @@ export class DocumentFirehose {
         await this.applyDocumentEvent(event);
       } catch (err) {
         console.error(`[Firehose] failed to apply event for ${event.did}:`, err);
+        this.markAuthorForRelist(event.did);
       }
     }
+  }
+
+  private markAuthorForRelist(did: string): void {
+    this.db.run('UPDATE document_cache SET listed_at = 0 WHERE did = ?', [did]);
   }
 
   /** Ping the server every PING_INTERVAL_MS and force a reconnect if no frame
@@ -518,6 +549,7 @@ export class DocumentFirehose {
         /* ignore */
       }
     }
+    this.sentDids.clear();
     this.connected = false;
   }
 

@@ -464,6 +464,35 @@ Fix, once you know which one it is: a wedged warm loop or push loop is
 `fly machine restart <id>` (never `fly scale count` — see §4's proxy-warmer entry);
 a heartbeat that never arrives is configuration, not a restart.
 
+### Document publication feed goes quiet
+
+The admin's **Document Sync** tile and proxy `/stats` → `documents` cover the
+Jetstream lane used by standard.site/Leaflet publications. `frozen > 0` means an
+actively read author has not had a full PDS re-list for more than twice the
+24-hour floor; `inBackoff > 0` explains why a repair is waiting. A persistent
+frozen count emits the `proxy-document-cache-frozen` alert.
+
+On the production proxy, inspect the affected author before changing it:
+
+```sql
+SELECT fetched_at, listed_at, error_count, last_error, last_error_at,
+       next_retry_at, last_requested_at
+FROM document_cache WHERE did = 'did:plc:...';
+```
+
+Confirm the record exists on the author's PDS, then schedule a safe re-list:
+
+```sql
+UPDATE document_cache
+SET listed_at = 0, error_count = 0, next_retry_at = NULL
+WHERE did = 'did:plc:...';
+```
+
+The next client poll serves the existing cache and refreshes it in the
+background; a changed scope digest replaces the stale list without user action.
+For multiple victims, update small batches of recently requested rows so the
+upstream PDSes are not hit in a stampede.
+
 ### The timeline rollout gate
 
 `ingestActive` is the AND of two things: a fresh crawler heartbeat and

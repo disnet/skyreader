@@ -282,3 +282,54 @@ describe('DocumentFirehose.isHealthy', () => {
     expect(fh.isHealthy()).toBe(false);
   });
 });
+
+describe('DocumentFirehose repair scheduling', () => {
+  test('keeps the desired filter dirty and reconnects when options_update throws', () => {
+    const db = makeDb();
+    const fh = new DocumentFirehose(db, { enabled: false });
+    const internals = fh as unknown as {
+      subscribedDids: Set<string>;
+      sentDids: Set<string>;
+      ws: WebSocket;
+      reconnect: () => void;
+      sendOptionsUpdate: (ws: WebSocket) => boolean;
+    };
+    internals.subscribedDids = new Set([DID]);
+    const ws = {
+      send: () => {
+        throw new Error('closed');
+      },
+    } as unknown as WebSocket;
+    internals.ws = ws;
+    let reconnects = 0;
+    internals.reconnect = () => {
+      reconnects++;
+    };
+
+    expect(internals.sendOptionsUpdate(ws)).toBe(false);
+    expect(internals.sentDids.size).toBe(0);
+    expect(reconnects).toBe(1);
+  });
+
+  test('marks an author for re-list when applying an event throws', async () => {
+    const db = makeDb();
+    const now = Date.now();
+    seedAuthor(db, DID, [], now);
+    db.run('UPDATE document_cache SET listed_at = ? WHERE did = ?', [now, DID]);
+    const fh = new DocumentFirehose(db, { enabled: false });
+    const internals = fh as unknown as {
+      applyDocumentEvent: () => Promise<boolean>;
+      handleMessage: (data: string) => Promise<void>;
+    };
+    internals.applyDocumentEvent = async () => {
+      throw new Error('splice failed');
+    };
+
+    await internals.handleMessage(JSON.stringify(event(DID, 'p1', 'delete')));
+
+    const row = db
+      .query<{ listed_at: number }, [string]>('SELECT listed_at FROM document_cache WHERE did = ?')
+      .get(DID);
+    expect(row?.listed_at).toBe(0);
+  });
+});

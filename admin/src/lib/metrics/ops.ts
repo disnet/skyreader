@@ -113,12 +113,21 @@ function pollerMetrics(status: OpsStatus, now: number): MetricValue[] {
 
 function proxyMetrics(status: OpsStatus, now: number): MetricValue[] {
   const proxy = status.proxy;
-  if (!proxy) return [unknown('Proxy Cache Fresh'), unknown('Proxy Feeds in Error')];
+  if (!proxy)
+    return [
+      unknown('Proxy Cache Fresh'),
+      unknown('Proxy Feeds in Error'),
+      unknown('Document Sync'),
+    ];
 
   // Nobody refreshed these, so don't dress them up as current.
   const rowAge = now - proxy.updatedAt;
   if (rowAge > PROXY_STALE_MS) {
-    return [stale('Proxy Cache Fresh', rowAge), stale('Proxy Feeds in Error', rowAge)];
+    return [
+      stale('Proxy Cache Fresh', rowAge),
+      stale('Proxy Feeds in Error', rowAge),
+      stale('Document Sync', rowAge),
+    ];
   }
 
   const { freshPct, total, feedsInError, feedsPermanentlyFailed } = proxy.value;
@@ -141,6 +150,17 @@ function proxyMetrics(status: OpsStatus, now: number): MetricValue[] {
       value: feedsInError,
       unit: feedsPermanentlyFailed > 0 ? `${feedsPermanentlyFailed} permanent` : undefined,
       status: feedsPermanentlyFailed > 0 ? 'error' : feedsInError > 0 ? 'warning' : 'healthy',
+    },
+    {
+      label: 'Document Sync',
+      value: proxy.value.documentAuthorsFrozen ?? 0,
+      unit: `${proxy.value.documentAuthorsActive ?? 0} active · ${proxy.value.documentAuthorsInBackoff ?? 0} retrying`,
+      status:
+        (proxy.value.documentAuthorsFrozen ?? 0) > 0
+          ? 'error'
+          : proxy.value.documentFirehoseHealthy === false
+            ? 'warning'
+            : 'healthy',
     },
   ];
 }

@@ -80,6 +80,13 @@ export interface ProxyStatsValue {
   feedsInBackoff: number;
   feedsPermanentlyFailed: number;
   cacheTtlSeconds: number | null;
+  documentFirehoseHealthy: boolean | null;
+  documentFirehoseConnected: boolean | null;
+  documentAuthorsActive: number;
+  documentAuthorsFrozen: number;
+  documentAuthorsInBackoff: number;
+  /** Alert dedupe state; not displayed. */
+  documentFrozenAlertAt: number | null;
 }
 
 export async function writeSystemStatus(
@@ -212,6 +219,8 @@ interface ProxyStatsResponse {
   inFlight?: number;
   cacheTtlSeconds?: number;
   errors?: { total?: number; inBackoff?: number; permanent?: number };
+  firehose?: { healthy?: boolean; connected?: boolean };
+  documents?: { active?: number; frozen?: number; inBackoff?: number };
 }
 
 /**
@@ -237,6 +246,7 @@ export async function recordProxyStats(env: Env, now = Date.now()): Promise<Prox
 
   const total = stats.total ?? 0;
   const fresh = stats.fresh ?? 0;
+  const previous = await readSystemStatus<ProxyStatsValue>(env, 'proxy_stats');
   const value: ProxyStatsValue = {
     total,
     fresh,
@@ -248,9 +258,34 @@ export async function recordProxyStats(env: Env, now = Date.now()): Promise<Prox
     feedsInBackoff: stats.errors?.inBackoff ?? 0,
     feedsPermanentlyFailed: stats.errors?.permanent ?? 0,
     cacheTtlSeconds: stats.cacheTtlSeconds ?? null,
+    documentFirehoseHealthy: stats.firehose?.healthy ?? null,
+    documentFirehoseConnected: stats.firehose?.connected ?? null,
+    documentAuthorsActive: stats.documents?.active ?? 0,
+    documentAuthorsFrozen: stats.documents?.frozen ?? 0,
+    documentAuthorsInBackoff: stats.documents?.inBackoff ?? 0,
+    documentFrozenAlertAt: previous?.value.documentFrozenAlertAt ?? null,
   };
 
+  const frozenStayedHigh =
+    value.documentAuthorsFrozen > 0 && (previous?.value.documentAuthorsFrozen ?? 0) > 0;
+  const shouldAlert =
+    frozenStayedHigh &&
+    (!value.documentFrozenAlertAt || now - value.documentFrozenAlertAt >= FIREHOSE_LAG_REALERT_MS);
+  if (value.documentAuthorsFrozen === 0) value.documentFrozenAlertAt = null;
+  else if (shouldAlert) value.documentFrozenAlertAt = now;
+
   await writeSystemStatus(env, 'proxy_stats', value, now);
+  if (shouldAlert) {
+    reportMessage('Actively read document authors are past the re-list floor', {
+      level: 'warning',
+      fingerprint: ['proxy-document-cache-frozen'],
+      extra: {
+        frozen: value.documentAuthorsFrozen,
+        active: value.documentAuthorsActive,
+        inBackoff: value.documentAuthorsInBackoff,
+      },
+    });
+  }
   return value;
 }
 

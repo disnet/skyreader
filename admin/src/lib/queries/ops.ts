@@ -35,6 +35,11 @@ export interface ProxyStatsValue {
   feedsInBackoff: number;
   feedsPermanentlyFailed: number;
   cacheTtlSeconds: number | null;
+  documentFirehoseHealthy?: boolean | null;
+  documentFirehoseConnected?: boolean | null;
+  documentAuthorsActive?: number;
+  documentAuthorsFrozen?: number;
+  documentAuthorsInBackoff?: number;
 }
 
 export interface StatusRow<T> {
