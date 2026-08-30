@@ -15,6 +15,17 @@ export interface PollerStatusValue {
   processed: number;
   errors: number;
   alarmScheduled: boolean;
+  // The document stream (site.standard.document + reader collections), which the
+  // poller drains alongside subscriptions. Optional: a backend that predates it
+  // writes rows without these, and the tiles say "no data" rather than "0".
+  documentsLagMs?: number | null;
+  documentsProcessed?: number;
+  documentsErrors?: number;
+  /** Consecutive cycles that stopped on the per-cycle apply cap. */
+  documentsCapStreak?: number;
+  documentsAuthors?: number;
+  /** `documents_ingest_enabled` is off — a deliberate pause, not a stall. */
+  documentsIngestPaused?: boolean;
 }
 
 export interface CronLastRunValue {

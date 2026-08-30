@@ -218,7 +218,8 @@ AT Protocol (Bluesky PDS) + Fly.io Feed Proxy + Jetstream Firehose
 - **Framework:** SvelteKit 2.x with Svelte 5 runes
 - **Runtime:** Cloudflare Pages
 - **Database:** D1 (SQLite) - reads the same database as the backend
-- **Features:** Ops panel (cron liveness, firehose lag, proxy cache health) with 30-day trend
+- **Features:** Ops panel (cron liveness, firehose lag, document-stream lag + ingest saturation,
+  proxy cache health) with 30-day trend
   sparklines, system metrics, user management, feed health monitoring, search/sort/pagination
 - **Pages:** Dashboard (ops + metrics + trends), Users (list + detail), Feeds (health + error tracking).
   Feed health is the crawler's own verdict from `feeds.error_count` / `feeds.crawl_stale`, not an
@@ -234,6 +235,11 @@ AT Protocol (Bluesky PDS) + Fly.io Feed Proxy + Jetstream Firehose
    frontend refreshes with one `GET /api/v2/timeline` query that joins subscriptions and read
    state. Reads never touch Fly — see `docs/plans/D1_FEED_TIMELINE.md`
 4. **Social:** Jetstream firehose → D1 shares table → frontend polls for updates
+5. **Documents:** the JetstreamPoller DO drains `site.standard.document` (filtered to
+   subscribed authors) into D1, backfilling an author's back catalogue from their PDS at
+   subscribe time; `/api/v2/documents/batch` serves from D1 behind the
+   `documents_v2_enabled` gate, from the Fly proxy until it's flipped — see
+   `docs/plans/DOCUMENTS_TO_D1.md`
 
 ## AT Protocol Integration
 

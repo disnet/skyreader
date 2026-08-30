@@ -18,6 +18,8 @@ import {
   handleV2MarginHighlights,
 } from './routes/feeds-v2';
 import { handleIngest, handleCrawlSet, handleFeedHealth } from './routes/ingest';
+import { handleDocumentBackfill, handleDocumentShadowCompare } from './routes/documents';
+import { reconcileStaleAuthors } from './services/document-store';
 import { handleTimeline } from './routes/timeline';
 import {
   handleGuestMarginHighlights,
@@ -376,6 +378,14 @@ async function route(
       break;
     case url.pathname === '/api/internal/feed-health':
       response = await handleFeedHealth(request, env);
+      break;
+    // Document store operator endpoints: the one-time (and ongoing) backfill, and
+    // the proxy-vs-D1 shadow compare that gates the read cutover.
+    case url.pathname === '/api/internal/documents/backfill':
+      response = await handleDocumentBackfill(request, env);
+      break;
+    case url.pathname === '/api/internal/documents/shadow-compare':
+      response = await handleDocumentShadowCompare(request, env);
       break;
 
     // The reader's whole refresh, served from the D1 archive in one query.
@@ -1061,6 +1071,24 @@ async function runScheduled(
       // a multiple of 5), so the snapshot reads fresh values rather than
       // five-minute-old ones. Prunes its own tail at 90 days.
       await runRecordingStep('metrics-snapshot', () => writeMetricsSnapshot(env));
+
+      // Document self-heal. The firehose only carries writes made while we were
+      // watching, so a gap (reconnect, cursor reset, a paused ingest) leaves a hole
+      // nothing else fills — the proxy closed those by full-replacing its blob on
+      // every refresh. A few of the stalest authors per hour re-lists everyone
+      // inside the reconcile interval without ever making the cron the bottleneck.
+      try {
+        const reconciled = await reconcileStaleAuthors(env, 3);
+        if (reconciled.length > 0) {
+          log.info('cron_documents_reconcile', {
+            authors: reconciled.length,
+            failed: reconciled.filter((r) => !r.ok).length,
+          });
+        }
+      } catch (error) {
+        log.error('cron_phase_failed', { phase: 'documents-reconcile', ...serializeError(error) });
+        reportError(error, { tags: { source: 'cron', phase: 'documents-reconcile' } });
+      }
     }
 
     // The run summary. `durationMs` is the number to watch as the cron takes on

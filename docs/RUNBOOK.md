@@ -223,10 +223,10 @@ reach Jetstream at all, so subscription records written on a user's PDS (another
 device, another Atmospheric app) stop reaching Skyreader. Their feed list quietly
 stops converging.
 
-This is the poller's **only** stream. The `site.standard.document` stream that used
-to run beside it was removed when documents moved to on-demand proxy fetch
-(`fetchDocumentsBatch` in `backend/src/routes/feeds-v2.ts`); the alert that surfaced
-its 32h backlog is what found the leftover.
+This alert is about the **subscriptions** stream only. The poller also drains a
+`site.standard.document` stream (documents came back to the DO from the proxy), and
+it is measured and alerted separately — see `documents_stream_lag_high` below. One
+stream stuck while the other is healthy is exactly what a shared number would hide.
 
 Lag is time since the most recent **proof** the stream was current, from either of
 two one-sided signals (see `streamLagMs` in
@@ -255,6 +255,55 @@ backlog, and one at the live edge points at the drain signal instead.
 **Fix:** usually none — a backlog after a Jetstream outage drains on its own; watch
 that the number is falling. If it's flat or growing over 30 minutes, redeploy the
 backend to recycle the DO (it resumes from its stored cursor, so nothing is lost).
+
+### `documents_stream_lag_high` (Sentry message)
+
+**Means:** the poller's `site.standard.document` stream (plus its
+`app.standard-reader.collection` sidecar) has gone more than **15 minutes** without
+being confirmed current. New posts from standard.site / Leaflet publications stop
+appearing for their subscribers; nothing else is affected, and every document
+already in D1 keeps serving.
+
+Same threshold, same lag definition and the same fingerprint-once behaviour as
+`firehose_lag_high`, decided independently. Two states are deliberately **not**
+alerts: an ingest paused with `documents_ingest_enabled = '0'` (its lag climbs by
+construction, and the tile says "Paused"), and an empty subscribed-author set
+(nothing to be behind on, so the stream marks itself caught up).
+
+**Check:** the Ops panel's **Document Stream Lag** and **Document Ingest** tiles,
+then `event = jetstream_poll` in Workers Logs — `documentsProcessed`,
+`documentsCapped`, `documentsAuthors`. A cycle capping every minute is the next
+alert, not this one. `documentsAuthors: 0` with lag climbing means no subscription
+rows carry `source_type = 'atproto.documents'`, which is a data problem, not a
+stream problem.
+**Fix:** usually none — a backlog drains at up to the apply cap per minute. If it's
+flat over 30 minutes, redeploy the backend to recycle the DO; it resumes from its
+stored cursor.
+
+### `documents_cap_saturated` (Sentry message)
+
+**Means:** ten consecutive poll cycles stopped on the per-cycle apply cap. One or
+two capped cycles is a burst draining exactly as designed; ten in a row is a
+sustained flood — most likely a **subscribed** author dumping thousands of
+documents, which the server-side DID filter passes by design.
+
+Nothing is lost while this lasts: the cursor is carried at the last applied event,
+so the backlog keeps draining a capful per cycle, and the per-author 100-row cap
+bounds what any single author can cost in storage. The risk it flags is the
+document stream monopolising cycles while a flood lasts.
+
+**Check:** who is writing — `event = documents_apply_cap_hit` for the streak, and
+
+```sql
+SELECT author_did, COUNT(*) FROM documents_v2
+WHERE indexed_at > (unixepoch() - 3600) * 1000
+GROUP BY author_did ORDER BY 2 DESC LIMIT 5;
+```
+
+**Fix:** if it's a legitimate large publisher, raise the cap
+(`sync_state.documents_apply_cap`) and let it drain. If it's abuse, pause ingest
+(§4e) and unsubscribe/park the author before resuming — the subscriptions stream
+and document reads are untouched either way.
 
 ### `source: client` errors after a deploy
 
@@ -344,14 +393,16 @@ The first section of the admin dashboard. It reads two D1 tables the backend cro
 writes (migration `0067_system_status.sql`) — no API token, no production-only
 path, so it works in local dev and staging the moment the cron has run once.
 
-| Tile                     | Source                        | Green            | Amber        | Red                          |
-| ------------------------ | ----------------------------- | ---------------- | ------------ | ---------------------------- |
-| Cron Last Run            | `system_status.cron_last_run` | <3 min ago       | <10 min ago  | ≥10 min, or the run failed   |
-| Firehose Lag             | `poller_status.lagMs`         | <5 min (SLO bar) | <15 min      | ≥15 min (= the Sentry alert) |
-| Last Poll                | `poller_status.lastPollAt`    | <5 min ago       | never polled | ≥5 min ago                   |
-| Poll Errors (last cycle) | `poller_status.errors`        | 0                | ≥1           | —                            |
-| Proxy Cache Fresh        | `proxy_stats.freshPct`        | ≥95% (SLO bar)   | ≥80%         | <80%, or stats >15 min old   |
-| Proxy Feeds in Error     | `proxy_stats.feedsInError`    | 0                | ≥1           | any permanent failures       |
+| Tile                     | Source                             | Green             | Amber              | Red                            |
+| ------------------------ | ---------------------------------- | ----------------- | ------------------ | ------------------------------ |
+| Cron Last Run            | `system_status.cron_last_run`      | <3 min ago        | <10 min ago        | ≥10 min, or the run failed     |
+| Firehose Lag             | `poller_status.lagMs`              | <5 min (SLO bar)  | <15 min            | ≥15 min (= the Sentry alert)   |
+| Last Poll                | `poller_status.lastPollAt`         | <5 min ago        | never polled       | ≥5 min ago                     |
+| Poll Errors (last cycle) | `poller_status.errors`             | 0                 | ≥1                 | —                              |
+| Document Stream Lag      | `poller_status.documentsLagMs`     | <5 min            | <15 min, or paused | ≥15 min (= the Sentry alert)   |
+| Document Ingest          | `poller_status.documentsCapStreak` | 0–2 capped cycles | ≥3 capped cycles   | ≥10 capped, or ingest disabled |
+| Proxy Cache Fresh        | `proxy_stats.freshPct`             | ≥95% (SLO bar)    | ≥80%               | <80%, or stats >15 min old     |
+| Proxy Feeds in Error     | `proxy_stats.feedsInError`         | 0                 | ≥1                 | any permanent failures         |
 
 "SLO bar" means the tile grades the **latest reading** against the number §7's SLO
 uses; the SLO itself is that bar held across a month of hourly points, so an amber
@@ -361,12 +412,12 @@ tile right now is not a breach and a green one is not compliance.
 values are written by the cron, so they stop moving exactly when it does. Cross-check
 against the `backend-cron` heartbeat before assuming the panel is broken.
 
-Staleness is graded on the **row**, not on the numbers inside it: the three poller
+Staleness is graded on the **row**, not on the numbers inside it: the five poller
 tiles go red together once `poller_status` is more than 5 minutes old, and both
 proxy tiles once `proxy_stats` is more than 15 minutes old. That's the case a
 value can't see about itself — the cron alive and healthy, but its DO `/status` or
 proxy `/stats` fetch failing, leaving a green lag from an hour ago in the table.
-Three stale poller tiles with a green Cron Last Run means **the collector is
+Stale poller tiles with a green Cron Last Run mean **the collector is
 broken, not the poller**: look for `event = ops_metrics_failed` → `step`.
 
 Below the tiles, **Trends (30 days, hourly)** sparklines the same numbers plus the
@@ -514,6 +565,84 @@ background; a changed scope digest replaces the stale list without user action.
 For multiple victims, update small batches of recently requested rows so the
 upstream PDSes are not hit in a stampede.
 
+## 4e. standard.site documents in D1
+
+Documents are moving off the Fly proxy the same way feeds did: the poller DO writes
+`site.standard.document` (and its reader-collection sidecar) straight into D1, and
+reads are served from there. Two independent `sync_state` switches govern it — one
+for writes, one for reads — so ingest can run and fill for as long as it takes while
+readers stay on the proxy.
+
+| Key                        | Default          | Governs                                                      |
+| -------------------------- | ---------------- | ------------------------------------------------------------ |
+| `documents_ingest_enabled` | on (absent = on) | The poller's document stream. `'0'` = flood kill switch.     |
+| `documents_v2_enabled`     | off (only `'1'`) | Reads served from D1 instead of the proxy. The rollout gate. |
+| `documents_apply_cap`      | 500              | Applied events per poll cycle before the drain carries over. |
+
+```bash
+# State of all three.
+npx wrangler d1 execute skyreader --remote --command \
+  "SELECT key, value, updated_at FROM sync_state WHERE key LIKE 'documents%'"
+```
+
+**Cutover, in order.** Nothing here needs a deploy.
+
+1. **Backfill.** The firehose never replays history, so every already-subscribed
+   author needs one `listRecords` walk. Drive it as a loop of bounded calls until
+   `remaining` is 0 (new subscriptions backfill themselves at subscribe time):
+
+   ```bash
+   curl -sX POST -H "X-Proxy-Secret: $FEED_PROXY_SECRET" \
+     https://api.skyreader.app/api/internal/documents/backfill | jq '.backfilled, .remaining'
+   ```
+
+   The hourly cron re-lists the three stalest authors anyway, so this only makes the
+   migration finish in an afternoon instead of over weeks.
+
+2. **Shadow-compare.** The gate on flipping reads: serve authors both ways and diff.
+
+   ```bash
+   curl -sX POST -H "X-Proxy-Secret: $FEED_PROXY_SECRET" \
+     -d '{"limit":25}' https://api.skyreader.app/api/internal/documents/shadow-compare \
+     | jq '{clean, drift: [.scopes[] | select(.clean|not)]}'
+   ```
+
+   `missingInD1` is the one that costs a reader content; `cidMismatches` is an edit
+   one side hasn't seen (usually a race, gone on the next run);
+   `canonicalMismatches` points at a publication-cache divergence, not at documents.
+
+3. **Flip reads**, after a clean compare and a soak:
+
+   ```bash
+   npx wrangler d1 execute skyreader --remote --command \
+     "INSERT INTO sync_state (key, value, updated_at) VALUES ('documents_v2_enabled','1',unixepoch())
+      ON CONFLICT(key) DO UPDATE SET value='1', updated_at=unixepoch()"
+   ```
+
+   **Rollback is the same statement with `'0'`** — every client is back on the proxy
+   path at its next poll, and D1 keeps ingesting the whole time.
+
+**Flood response.** `documents_cap_saturated`, or a `Document Ingest` tile stuck
+red, means pausing writes:
+
+```bash
+npx wrangler d1 execute skyreader --remote --command \
+  "INSERT INTO sync_state (key, value, updated_at) VALUES ('documents_ingest_enabled','0',unixepoch())
+   ON CONFLICT(key) DO UPDATE SET value='0', updated_at=unixepoch()"
+```
+
+The subscriptions stream keeps running, reads keep serving whatever D1 holds, and
+the document cursor stays put — so re-enabling resumes the drain rather than
+skipping the backlog. Expect `Document Stream Lag` to read "Paused" while it's off.
+
+**Repairing one author** (the D1 equivalent of the proxy re-list below): force them
+to the front of the reconcile queue, or backfill them directly.
+
+```bash
+curl -sX POST -H "X-Proxy-Secret: $FEED_PROXY_SECRET" \
+  -d '{"dids":["did:plc:..."]}' https://api.skyreader.app/api/internal/documents/backfill
+```
+
 ### The timeline rollout gate
 
 `ingestActive` is the AND of two things: a fresh crawler heartbeat and
@@ -557,7 +686,7 @@ only meaningful with the gate open; check it before announcing the feature.
 
 ---
 
-## 4e. Guest reading mode (unauthenticated surface)
+## 4f. Guest reading mode (unauthenticated surface)
 
 Two public endpoints, both under `/api/guest/` (`backend/src/routes/guest.ts`),
 both keyed by `CF-Connecting-IP` because there is no DID, and **both read-only**:

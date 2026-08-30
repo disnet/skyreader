@@ -39,10 +39,22 @@ function envWithPollerStatus(status: Record<string, unknown>): Env {
   } as unknown as Env;
 }
 
-const pollerStatusBody = (lagMs: number | null) => ({
-  lag: { subscriptionsMs: lagMs },
+const pollerStatusBody = (
+  lagMs: number | null,
+  documents: Record<string, unknown> = {
+    processed: 5,
+    errors: 0,
+    capped: false,
+    capStreak: 0,
+    authors: 7,
+    skipped: false,
+  },
+  documentsLagMs: number | null = 1000
+) => ({
+  lag: { subscriptionsMs: lagMs, documentsMs: documentsLagMs },
   lastStats: {
     subscriptions: { processed: 3, errors: 1 },
+    documents,
     duration: 4200,
     lastPollAt: 1_700_000_000_000,
   },
@@ -262,6 +274,70 @@ describe('recordPollerStatus', () => {
 
     const row = await readSystemStatus<PollerStatusValue>(env as Env, 'poller_status');
     expect(row?.value.lagAlertAt).toBe(now);
+  });
+
+  it('records the document stream alongside subscriptions', async () => {
+    const value = await recordPollerStatus(envWithPollerStatus(pollerStatusBody(30_000)), 5000);
+    expect(value.documentsLagMs).toBe(1000);
+    expect(value.documentsProcessed).toBe(5);
+    expect(value.documentsAuthors).toBe(7);
+    expect(value.documentsCapStreak).toBe(0);
+    expect(value.documentsIngestPaused).toBe(false);
+  });
+
+  it('alerts on document lag independently of the subscriptions stream', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    // Subscriptions healthy, documents stalled: a shared number would hide this.
+    const env2 = envWithPollerStatus(
+      pollerStatusBody(1000, undefined, FIREHOSE_LAG_ALERT_MS + 60_000)
+    );
+
+    await recordPollerStatus(env2, 1_000_000_000);
+
+    const events = errors.mock.calls.map(([entry]) => (entry as { event?: string })?.event);
+    expect(events).toContain('documents_stream_lag_high');
+    expect(events).not.toContain('firehose_lag_high');
+  });
+
+  it('stays quiet about a deliberately paused ingest', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    // The kill switch is off, so lag climbs by construction. That is a state, not
+    // an incident.
+    const paused = envWithPollerStatus(
+      pollerStatusBody(
+        1000,
+        { processed: 0, errors: 0, capped: false, capStreak: 0, authors: 0, skipped: true },
+        FIREHOSE_LAG_ALERT_MS + 60_000
+      )
+    );
+
+    const value = await recordPollerStatus(paused, 1_000_000_000);
+    expect(value.documentsIngestPaused).toBe(true);
+    const events = errors.mock.calls.map(([entry]) => (entry as { event?: string })?.event);
+    expect(events).not.toContain('documents_stream_lag_high');
+  });
+
+  it('alerts once when the apply cap saturates for ten straight cycles', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const flooded = envWithPollerStatus(
+      pollerStatusBody(1000, {
+        processed: 500,
+        errors: 0,
+        capped: true,
+        capStreak: 12,
+        authors: 7,
+        skipped: false,
+      })
+    );
+    const now = 1_000_000_000;
+
+    await recordPollerStatus(flooded, now);
+    await recordPollerStatus(flooded, now + 60_000);
+
+    const alerts = errors.mock.calls
+      .map(([entry]) => entry as { event?: string })
+      .filter((entry) => entry?.event === 'documents_cap_saturated');
+    expect(alerts).toHaveLength(1);
   });
 
   it('throws when the poller cannot be reached, so the caller records the failure', async () => {

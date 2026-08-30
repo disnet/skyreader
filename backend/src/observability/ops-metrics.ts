@@ -90,6 +90,25 @@ export interface PollerStatusValue {
   alarmScheduled: boolean;
   /** When the lag alert last fired. Dedupe state, not a display value. */
   lagAlertAt: number | null;
+  // --- The document stream (site.standard.document + reader collections) ---
+  /** Its own lag: the two streams fail independently, so they're measured apart. */
+  documentsLagMs: number | null;
+  documentsProcessed: number;
+  documentsErrors: number;
+  /**
+   * Consecutive cycles that stopped on the per-cycle apply cap. One or two is a
+   * burst draining as designed; a climbing streak is a flood, and the number an
+   * operator reads before flipping `documents_ingest_enabled`.
+   */
+  documentsCapStreak: number;
+  /** Authors in the connect-time DID filter — how much of the stream we ask for. */
+  documentsAuthors: number;
+  /** Ingest is paused by the kill switch. Not an alert; a deliberate state. */
+  documentsIngestPaused: boolean;
+  /** Cap-saturation alert dedupe stamp; not displayed. */
+  documentsCapAlertAt: number | null;
+  /** Document-lag alert dedupe stamp, separate from the subscriptions one. */
+  documentsLagAlertAt: number | null;
 }
 
 export interface CronLastRunValue {
@@ -152,15 +171,30 @@ export async function readSystemStatus<T>(
 }
 
 interface PollerStatusResponse {
-  lag?: { subscriptionsMs?: number | null };
+  lag?: { subscriptionsMs?: number | null; documentsMs?: number | null };
   lastStats?: {
     subscriptions?: { processed?: number; errors?: number };
+    documents?: {
+      processed?: number;
+      errors?: number;
+      capped?: boolean;
+      capStreak?: number;
+      authors?: number;
+      skipped?: boolean;
+    };
     duration?: number;
     lastPollAt?: number;
   };
   nextPoll?: number | null;
   isRunning?: boolean;
 }
+
+/**
+ * Consecutive capped document cycles that mean a sustained flood rather than a
+ * burst draining as designed. Mirrors `CAP_SATURATION_ALERT_STREAK` in the poller;
+ * ~10 minutes of every cycle hitting the cap is not a spike any more.
+ */
+export const DOCUMENT_CAP_SATURATION_ALERT_STREAK = 10;
 
 export interface LagAlertDecision {
   /** Send an event now. */
@@ -262,9 +296,27 @@ export async function recordPollerStatus(env: Env, now = Date.now()): Promise<Po
   const status = (await response.json()) as PollerStatusResponse;
 
   const lagMs = status.lag?.subscriptionsMs ?? null;
+  const documentsLagMs = status.lag?.documentsMs ?? null;
+  const documents = status.lastStats?.documents;
+  const capStreak = documents?.capStreak ?? 0;
 
   const previous = await readSystemStatus<PollerStatusValue>(env, 'poller_status');
   const decision = decideLagAlert(lagMs, previous?.value.lagAlertAt ?? null, now);
+  // The document stream gets the same threshold and the same "alert once, remind
+  // at the re-alert interval" behaviour, decided independently: one stream stuck
+  // while the other is healthy is exactly the case a shared number would hide.
+  const documentsDecision = decideLagAlert(
+    // A paused ingest is a deliberate state, not a stalled stream. Its lag climbs
+    // by construction while the switch is off, so don't page on it.
+    documents?.skipped ? null : documentsLagMs,
+    previous?.value.documentsLagAlertAt ?? null,
+    now
+  );
+
+  const capSaturated = capStreak >= DOCUMENT_CAP_SATURATION_ALERT_STREAK;
+  const previousCapAlertAt = previous?.value.documentsCapAlertAt ?? null;
+  const capAlert =
+    capSaturated && (!previousCapAlertAt || now - previousCapAlertAt >= FIREHOSE_LAG_REALERT_MS);
 
   const value: PollerStatusValue = {
     lagMs,
@@ -274,9 +326,45 @@ export async function recordPollerStatus(env: Env, now = Date.now()): Promise<Po
     errors: status.lastStats?.subscriptions?.errors ?? 0,
     alarmScheduled: Boolean(status.isRunning),
     lagAlertAt: decision.lagAlertAt,
+    documentsLagMs,
+    documentsProcessed: documents?.processed ?? 0,
+    documentsErrors: documents?.errors ?? 0,
+    documentsCapStreak: capStreak,
+    documentsAuthors: documents?.authors ?? 0,
+    documentsIngestPaused: Boolean(documents?.skipped),
+    documentsCapAlertAt: capSaturated ? (capAlert ? now : previousCapAlertAt) : null,
+    documentsLagAlertAt: documentsDecision.lagAlertAt,
   };
 
   await writeSystemStatus(env, 'poller_status', value, now);
+
+  if (documentsDecision.alert) {
+    log.error('documents_stream_lag_high', {
+      lagMs: documentsLagMs,
+      thresholdMs: FIREHOSE_LAG_ALERT_MS,
+    });
+    reportMessage(`Document stream lag above ${Math.round(FIREHOSE_LAG_ALERT_MS / 60000)}m`, {
+      level: 'error',
+      fingerprint: ['documents-stream-lag-high'],
+      tags: { source: 'cron', check: 'documents-lag' },
+      extra: { lagMs: documentsLagMs, authors: value.documentsAuthors },
+    });
+  } else if (documentsDecision.recovered) {
+    log.info('documents_stream_lag_recovered', {
+      lagMs: documentsLagMs,
+      thresholdMs: FIREHOSE_LAG_ALERT_MS,
+    });
+  }
+
+  if (capAlert) {
+    log.error('documents_cap_saturated', { capStreak, processed: value.documentsProcessed });
+    reportMessage('Document ingest has hit its per-cycle apply cap for 10 cycles', {
+      level: 'error',
+      fingerprint: ['documents-cap-saturated'],
+      tags: { source: 'cron', check: 'documents-cap' },
+      extra: { capStreak, processed: value.documentsProcessed, authors: value.documentsAuthors },
+    });
+  }
 
   if (decision.alert) {
     log.error('firehose_lag_high', {

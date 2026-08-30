@@ -21,8 +21,16 @@ the gate is what actually admits readers to the archive (and, set back to `'0'`,
 rollback that returns every client to the legacy batch path with no deploy). Either half false and
 clients stay on `/batch`; the request short-circuits rather than building a page they will discard.
 See `docs/plans/D1_FEED_TIMELINE.md`. The proxy is still on the path for `/api/extract`, feed
-discovery, standard.site documents, and social context — plus the one crawl per new subscription
-(`warmFeedIntoArchive`) and the subscription-gated pull-through in `/api/v2/feeds/fetch`.
+discovery, and social context — plus the one crawl per new subscription (`warmFeedIntoArchive`)
+and the subscription-gated pull-through in `/api/v2/feeds/fetch`.
+
+**standard.site documents are following feeds into D1.** The JetstreamPoller DO now drains
+`site.standard.document` (+ its `app.standard-reader.collection` sidecar) straight into
+`documents_v2`, filtered server-side to the subscribed-author DID set; `/api/v2/documents/batch`
+and `/api/v2/documents/get` serve from D1 once `sync_state.documents_v2_enabled` is `'1'` and from
+the proxy until then, wire-identical either way. Writes have their own switch
+(`documents_ingest_enabled`) so a flood can be paused without touching reads or the subscriptions
+stream. See `docs/plans/DOCUMENTS_TO_D1.md` and RUNBOOK §4e.
 
 ## Key Concepts
 
@@ -61,26 +69,27 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed documentation.
 
 ### Routes
 
-| File                          | Purpose                                                |
-| ----------------------------- | ------------------------------------------------------ |
-| `src/routes/auth.ts`          | OAuth flow (login, callback, logout, client metadata)  |
-| `src/routes/timeline.ts`      | `GET /api/v2/timeline` — the whole refresh, one query  |
-| `src/routes/ingest.ts`        | Crawler endpoints: item ingest, crawl set, feed health |
-| `src/routes/feeds-v2.ts`      | Single-feed read (D1 + pull-through), discover, docs   |
-| `src/routes/social.ts`        | Social feed, popular, grouped, detect-content          |
-| `src/routes/shares.ts`        | User shares CRUD (with PDS sync)                       |
-| `src/routes/subscriptions.ts` | Subscription CRUD (with PDS sync)                      |
-| `src/routes/records.ts`       | PDS record listing                                     |
-| `src/routes/reading.ts`       | Article + document read positions (forward delta)      |
-| `src/routes/labels.ts`        | Unified item labels (read/starred/archived/tags)       |
-| `src/routes/saved.ts`         | Saved articles CRUD                                    |
-| `src/routes/integrations.ts`  | Semble/Margin writes to the user's PDS                 |
-| `src/routes/settings.ts`      | User settings                                          |
-| `src/routes/sync.ts`          | PDS full sync, subscription sync, sync status          |
-| `src/routes/lexicons.ts`      | Serve lexicon schemas at /.well-known/lexicons         |
-| `src/routes/health.ts`        | `/api/health` (shallow) + `/api/health/deep` (gated)   |
-| `src/routes/telemetry.ts`     | `/api/telemetry/error` — sampled client error reports  |
-| `src/routes/guest.ts`         | `/api/guest/*` — the unauthenticated reading surface   |
+| File                          | Purpose                                                   |
+| ----------------------------- | --------------------------------------------------------- |
+| `src/routes/auth.ts`          | OAuth flow (login, callback, logout, client metadata)     |
+| `src/routes/timeline.ts`      | `GET /api/v2/timeline` — the whole refresh, one query     |
+| `src/routes/ingest.ts`        | Crawler endpoints: item ingest, crawl set, feed health    |
+| `src/routes/documents.ts`     | Document backfill + proxy-vs-D1 shadow compare (internal) |
+| `src/routes/feeds-v2.ts`      | Single-feed read (D1 + pull-through), discover, docs      |
+| `src/routes/social.ts`        | Social feed, popular, grouped, detect-content             |
+| `src/routes/shares.ts`        | User shares CRUD (with PDS sync)                          |
+| `src/routes/subscriptions.ts` | Subscription CRUD (with PDS sync)                         |
+| `src/routes/records.ts`       | PDS record listing                                        |
+| `src/routes/reading.ts`       | Article + document read positions (forward delta)         |
+| `src/routes/labels.ts`        | Unified item labels (read/starred/archived/tags)          |
+| `src/routes/saved.ts`         | Saved articles CRUD                                       |
+| `src/routes/integrations.ts`  | Semble/Margin writes to the user's PDS                    |
+| `src/routes/settings.ts`      | User settings                                             |
+| `src/routes/sync.ts`          | PDS full sync, subscription sync, sync status             |
+| `src/routes/lexicons.ts`      | Serve lexicon schemas at /.well-known/lexicons            |
+| `src/routes/health.ts`        | `/api/health` (shallow) + `/api/health/deep` (gated)      |
+| `src/routes/telemetry.ts`     | `/api/telemetry/error` — sampled client error reports     |
+| `src/routes/guest.ts`         | `/api/guest/*` — the unauthenticated reading surface      |
 
 Guest reading mode is the only unauthenticated surface that reads the archive,
 and it is **read-only**. `POST /api/guest/timeline` is a query over
@@ -94,7 +103,7 @@ unauthenticated path can steer a fetch at a caller-chosen URL and nothing
 relaxes the `callerSubscribes` rule in `feeds-v2.ts`. Preserve that if you ever
 reopen guest adds — an earlier version had a bounded warm endpoint, and its
 bounds (per-IP rate, a per-feed freshness claim, a global daily ceiling, and an
-orphan reaper) all existed to contain exactly that one write path. See §4e of
+orphan reaper) all existed to contain exactly that one write path. See §4f of
 [`docs/RUNBOOK.md`](../docs/RUNBOOK.md).
 
 Integration writes are gated per-capability, not per-app: `POST /api/integrations/semble/connections`
@@ -106,17 +115,20 @@ saves until they re-authed. `GET /api/integrations/status` reports the two separ
 
 ### Services
 
-| File                                | Purpose                                           |
-| ----------------------------------- | ------------------------------------------------- |
-| `src/services/oauth.ts`             | PKCE, DPoP, handle resolution, session management |
-| `src/services/feed-parser.ts`       | RSS/Atom/RDF parsing                              |
-| `src/services/feed-proxy-client.ts` | Client for Fly.io feed proxy                      |
-| `src/services/pds-client.ts`        | PDS API client                                    |
-| `src/services/client-auth.ts`       | Confidential client auth helpers                  |
-| `src/services/share-sync.ts`        | Push/delete shares to/from PDS                    |
-| `src/services/subscription-sync.ts` | Sync subscriptions to/from PDS                    |
-| `src/services/rate-limit.ts`        | Per-user per-endpoint rate limiting (D1-backed)   |
-| `src/services/user-tier.ts`         | Tier lookup (free/supporter)                      |
+| File                                | Purpose                                                      |
+| ----------------------------------- | ------------------------------------------------------------ |
+| `src/services/oauth.ts`             | PKCE, DPoP, handle resolution, session management            |
+| `src/services/feed-parser.ts`       | RSS/Atom/RDF parsing                                         |
+| `src/services/feed-proxy-client.ts` | Client for Fly.io feed proxy                                 |
+| `src/services/standard-site.ts`     | standard.site record mapping, digest, publication cache      |
+| `src/services/document-store.ts`    | The D1 document store: apply, backfill, reconcile, serve     |
+| `src/services/document-flags.ts`    | `documents_v2_enabled` / `documents_ingest_enabled` switches |
+| `src/services/pds-client.ts`        | PDS API client                                               |
+| `src/services/client-auth.ts`       | Confidential client auth helpers                             |
+| `src/services/share-sync.ts`        | Push/delete shares to/from PDS                               |
+| `src/services/subscription-sync.ts` | Sync subscriptions to/from PDS                               |
+| `src/services/rate-limit.ts`        | Per-user per-endpoint rate limiting (D1-backed)              |
+| `src/services/user-tier.ts`         | Tier lookup (free/supporter)                                 |
 
 ### Observability
 
@@ -164,9 +176,9 @@ procedures: [`docs/RUNBOOK.md`](../docs/RUNBOOK.md).
 
 ### Durable Objects
 
-| File                                      | Purpose                                               |
-| ----------------------------------------- | ----------------------------------------------------- |
-| `src/durable-objects/jetstream-poller.ts` | Long-running Jetstream firehose connection via alarms |
+| File                                      | Purpose                                                            |
+| ----------------------------------------- | ------------------------------------------------------------------ |
+| `src/durable-objects/jetstream-poller.ts` | Two Jetstream streams (subscriptions, documents) drained per alarm |
 
 ### Storage
 
@@ -186,16 +198,29 @@ Key tables:
 - `feed_items` - The feed archive the timeline serves: every item the crawler has ever pushed,
   keyed `(feed_url, guid)` with a monotonic `seq`. Never pruned in ordinary operation — see
   `docs/plans/D1_FEED_TIMELINE.md`
-- `documents` / `publications_cache` - orphaned after standard.site document reads moved to the
-  feed proxy; retained in place but no longer read or written
+- `documents_v2` - One row per `site.standard.document` record: the raw record (`record_json`)
+  plus the scalars the serve path queries on. Written by the poller and by backfill, capped at 100
+  rows per author
+- `collections_v2` - `app.standard-reader.collection` sidecars (curated magazine editions), paired
+  to their document by rkey, with the resolved item previews persisted after the first read
+- `publications_cache_v2` - Publication base URL / icon / name / theme / fonts, 24h TTL and a 5m
+  negative TTL. Replaces 0031's `publications_cache`, whose `base_url` is NOT NULL and so can't
+  hold a negative entry
+- `document_authors` - Per-author ingest bookkeeping: last successful list (drives the reconcile
+  queue), whether the stored set is the author's complete repo, and the last backfill error
+- `documents` / `publications_cache` - orphaned from the pre-proxy era; still not read or written.
+  They stay until the proxy document path is decommissioned
 - `item_labels_cache` - Unified labels (read/starred/archived/tags)
 - `saved_articles` - Saved/bookmarked articles
 - `social_read_positions_cache` - Legacy social read tracking (superseded; document
   reads now live in `item_labels_cache` as `item_type='document'`/`label='read'`)
 - `user_settings` - User preferences
 - `rate_limits` - Per-user rate limiting
-- `sync_state` - Jetstream cursor, the archive generation token, the crawler heartbeat, and
-  `timeline_enabled` (the rollout gate: only an explicit `'0'` holds clients on the batch path)
+- `sync_state` - Jetstream cursor, the archive generation token, the crawler heartbeat,
+  `timeline_enabled` (the rollout gate: only an explicit `'0'` holds clients on the batch path),
+  and the document switches: `documents_v2_enabled` (reads from D1; only an explicit `'1'`),
+  `documents_ingest_enabled` (the poller's document stream; only an explicit `'0'` stops it) and
+  the `documents_apply_cap` override
 - `system_status` - Cron-written health board (cron liveness, poller lag, proxy stats)
 - `metrics_snapshots` - Hourly trend points behind the admin's sparklines (90-day retention)
 
