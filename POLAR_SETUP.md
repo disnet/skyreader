@@ -2,9 +2,11 @@
 
 Polar (merchant of record) powers the paid **Supporter** tier. Checkout and
 webhook handling live in the backend Worker; entitlements are the existing
-`users.tier` system. **This integration points at Polar's LIVE production
-environment** (org `disnetdev-llc`) — every checkout without a discount code is
-a real charge.
+`users.tier` system. Each deploy environment points at its own Polar org:
+**production runs against Polar LIVE** (org `disnetdev-llc`), where every
+checkout without a discount code is a real charge, and **staging runs against a
+separate sandbox org** where nothing is. The switch is `POLAR_SERVER` per
+environment; there is no shared state between the two.
 
 ## How it works
 
@@ -29,21 +31,51 @@ a real charge.
 
 ## Provisioned resources (production)
 
-- Product: **Skyreader Pro**, $10/month recurring —
-  `b1be3773-3cd5-4fa3-b3c4-2471e492e7d9`
 - Webhook endpoint: `https://api.skyreader.app/api/webhook/polar`
   (`d3a7904a-93d9-4c2c-bd4b-dc114ac6da1c`), format `raw`, events `order.paid`,
   `customer.state_changed`
 - Dashboard: https://polar.sh/dashboard/disnetdev-llc
 
+## Provisioned resources (staging / sandbox)
+
+Staging talks to a **separate Polar sandbox org**, reached by `POLAR_SERVER =
+"sandbox"` in `[env.staging]`. Sandbox is its own account at
+https://sandbox.polar.sh, not a mode on the production org: products, customers,
+tokens, and webhook endpoints are all distinct, and a production id or token is
+meaningless there. Checkouts are play money (test card `4242 4242 4242 4242`),
+so unlike production no discount-code dance is needed to exercise the flow.
+
+- Default checkout product: `4f3e636c-8dd5-4af1-af3d-b88e85b104e4`
+  (`POLAR_PRODUCT_ID` in `[env.staging]`)
+- Webhook endpoint: `https://api-staging.skyreader.app/api/webhook/polar`,
+  format `raw`, events `order.paid`, `customer.state_changed`
+- Secrets: `POLAR_ACCESS_TOKEN` / `POLAR_WEBHOOK_SECRET`, set per environment
+  with `wrangler secret put <NAME> --env staging` (a named environment shares
+  nothing with production, secrets included)
+
+The sandbox products have to **mirror the production catalog's shape**, because
+the UI derives everything from `GET /api/billing/products`:
+
+- Only non-archived products with a fixed price and a `month`/`year` recurring
+  interval survive the filter in `routes/billing.ts` — anything else is
+  invisible to the app.
+- One product's name must match `/believer/i`: that regex is how
+  `routes/supporter/+page.svelte` splits patronage out of the supporter plans,
+  and how the Settings plan card names the tier back from the live subscription.
+- Each supporter product needs the `marketing_opt_in` checkbox custom field
+  (unticked by default). The slug is matched exactly; a rename silently stops
+  consent capture with no error.
+- A second, cheaper annual supporter product is optional — it's what exercises
+  the founding-price compare-at path.
+
 ## Env keys (names only — values in `.dev.vars` locally, `wrangler secret put` in prod)
 
-| Key                    | Where                        | Meaning                                        |
-| ---------------------- | ---------------------------- | ---------------------------------------------- |
-| `POLAR_ACCESS_TOKEN`   | secret                       | Org token (products/checkouts/webhooks, r+w)   |
-| `POLAR_WEBHOOK_SECRET` | secret                       | Signing secret from the webhook endpoint       |
-| `POLAR_SERVER`         | `[vars]` (`"production"`)    | Polar environment                              |
-| `POLAR_PRODUCT_ID`     | `[vars]`                     | Default checkout product (Skyreader Pro)       |
+| Key                    | Where                                               | Meaning                                      |
+| ---------------------- | --------------------------------------------------- | -------------------------------------------- |
+| `POLAR_ACCESS_TOKEN`   | secret                                              | Org token (products/checkouts/webhooks, r+w) |
+| `POLAR_WEBHOOK_SECRET` | secret                                              | Signing secret from the webhook endpoint     |
+| `POLAR_SERVER`         | `[vars]` (prod `"production"`, staging `"sandbox"`) | Polar environment                            |
+| `POLAR_PRODUCT_ID`     | `[vars]`, per environment                           | Default checkout product for that org        |
 
 Unset/empty = billing off: checkout answers 503, the webhook fails closed.
 
@@ -89,13 +121,30 @@ Unset/empty = billing off: checkout answers 503, the webhook fails closed.
       to Settings → plan flips to Supporter (focus refresh); D1 row shows
       `tier_source='polar_subscription'`.
 
+## Verify staging against the sandbox org
+
+- [ ] `[env.staging]` `POLAR_SERVER = "sandbox"` and `POLAR_PRODUCT_ID` is a
+      sandbox id
+- [ ] `wrangler secret put POLAR_ACCESS_TOKEN --env staging` and
+      `POLAR_WEBHOOK_SECRET --env staging` (from `backend/`)
+- [ ] `curl -X POST https://api-staging.skyreader.app/api/webhook/polar` →
+      **403**. A **500** means the webhook secret didn't land — the handler
+      fails closed before it ever verifies a signature.
+- [ ] `GET /api/billing/products` (authed, staging) lists the sandbox catalog,
+      Believer included
+- [ ] Log in on staging → `/supporter` → checkout with `4242 4242 4242 4242` →
+      staging D1 row shows `tier = 'supporter'`,
+      `tier_source = 'polar_subscription'`
+- [ ] Cancel the subscription in the sandbox dashboard → `customer.state_changed`
+      with an empty state → the row reconciles back to `free`
+
 ## Caveats
 
-- **Staging**: shares the production Polar org but has no webhook endpoint and
-  no secrets set, so staging checkout answers 503 and staging tiers never flip.
-  Acceptable for now; register a second endpoint at
-  `https://api-staging.skyreader.app/api/webhook/polar` (+ staging secrets) if
-  staging billing is ever needed.
+- **Staging** runs against its own sandbox org (above). The failure mode to know:
+  a production product id left in `[env.staging]` under a sandbox token names a
+  product that exists nowhere, and surfaces only as an opaque 502 from
+  `/api/billing/checkout`. Same for the reverse. Ids and tokens must never cross
+  environments.
 - Webhook deliveries 404 until the backend deploy that includes
   `/api/webhook/polar` ships; Polar retries with backoff, and no checkouts can
   exist before the Upgrade button ships anyway.
