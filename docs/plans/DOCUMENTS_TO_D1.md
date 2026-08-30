@@ -66,7 +66,9 @@ that grows a field needs no migration — the mapper reads it back out.
 ## Wire compatibility
 
 `/api/v2/documents/batch` keeps the proxy's contract exactly: `ready` / `unchanged` /
-`error`, the same `complete` semantics, and a digest computed over the same sorted
+`error`, the same `complete` semantics (recomputed per serve from the author's stored row
+count, as the proxy did from the set it was about to return — the stored flag alone would
+still claim completeness after cap eviction), and a digest computed over the same sorted
 `(recordUri, recordCid)` pairs with the same algorithm (parity pinned in
 `test/standard-site.spec.ts`). **The frontend does not change.** The one thing that cannot
 be reproduced is the proxy's per-author fetch backoff (`errorCount` / `nextRetryAt`); an
@@ -78,7 +80,24 @@ client holding what it has rather than clearing the scope.
 The proxy self-healed drift by full-replacing its blob on every refresh. Here that's two
 things: deletes applied live from the firehose, and a low-frequency reconcile — the hourly
 cron re-lists the three stalest authors (`AUTHOR_RECONCILE_INTERVAL_MS`, 7 days), which is
-also what closes a hole left by a cursor gap or a paused ingest.
+also what closes a hole left by a cursor gap or a paused ingest. A re-list prunes both
+documents and reader-collection sidecars the repo no longer has, but only against a
+listing that succeeded _and_ was exhaustive — a failed fetch and an author with no
+editions produce the same empty result, and pruning on the first would delete everything.
+
+Because the reconcile is the only self-heal, it must never be monopolised: a failed list
+holds that author out of the queue for `authorRetryBackoffMs` (1h, doubling per
+consecutive failure, capped at the reconcile interval) and sorts them by that failure
+rather than by their still-NULL `last_listed_at`. Without both halves, three deleted
+accounts at the front of the queue would starve every other author forever, silently.
+
+Cold start is the reconcile's other job, and it is not supposed to have to do it: every
+path that creates an `atproto.documents` subscription — the API, the Atmosphere subscribe
+button, the PDS→local sync, and a subscription mirrored in by the poller — calls
+`ensureAuthorDocuments`, which lists the author unless we hold a fresh listing or are
+inside their backoff. A subscription whose author has never been listed serves
+`status:'error'` on every poll, so leaving that to the hourly reconcile means an hour of a
+visibly broken linkblog.
 
 ## Rollout
 
@@ -92,7 +111,9 @@ soaked; rollback is the same flag set back to `'0'`.
 
 - **Phase 0 measurement.** The apply cap (500) is a strawman sized by reasoning, not by a
   measured burst shape. `documents_apply_cap` exists so it can be tuned from the observed
-  `documents_apply_cap_hit` rate without a deploy.
+  `documents_apply_cap_hit` rate without a deploy — under `MAX_DOCUMENT_APPLY_CAP` (900),
+  which is the Worker subrequest budget rather than the burst shape talking: an applied
+  event costs one batched D1 call plus, on a cold publication, its metadata resolve.
 - **`linkblog-site`** still fetches documents from the proxy's `/documents`. It moves to
   the Worker after the prod flag flip, so both apps cut over from the same store.
 - **Decommission.** Once the soak passes: remove `DocumentFirehose`, `document_cache`, its

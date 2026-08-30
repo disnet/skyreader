@@ -27,6 +27,21 @@ export const DOCUMENTS_APPLY_CAP_KEY = 'documents_apply_cap';
 /** Applied events per poll cycle before the drain stops and carries its cursor. */
 export const DEFAULT_DOCUMENT_APPLY_CAP = 500;
 
+/**
+ * Hard ceiling on the cap, whatever the override says.
+ *
+ * Burst shape is not the only constraint on this number: every D1 call inside the
+ * alarm counts against the Worker's per-invocation subrequest budget (1000 on the
+ * paid plan), and hitting that ceiling is quiet — each throw is caught per event,
+ * counted as an error, and the cursor advances past it, so the case the cap exists
+ * to make safe would be the one most likely to drop events. `applyDocumentEvent`
+ * batches its writes into a single call, so an applied event costs ~1 subrequest
+ * (plus, on a cold publication, its metadata resolve); 900 leaves headroom for the
+ * cycle's own reads and those resolves. Phase 0's measurement sizes the cap under
+ * this, never over it.
+ */
+export const MAX_DOCUMENT_APPLY_CAP = 900;
+
 export interface DocumentFlags {
   /** Serve reads from D1 (opt-in: only an explicit '1'). */
   serveFromD1: boolean;
@@ -51,7 +66,9 @@ export async function readDocumentFlags(env: Env): Promise<DocumentFlags> {
       else if (row.key === DOCUMENTS_INGEST_ENABLED_KEY) flags.ingestEnabled = row.value !== '0';
       else if (row.key === DOCUMENTS_APPLY_CAP_KEY) {
         const cap = Number(row.value);
-        if (Number.isFinite(cap) && cap > 0) flags.applyCap = Math.floor(cap);
+        if (Number.isFinite(cap) && cap > 0) {
+          flags.applyCap = Math.min(Math.floor(cap), MAX_DOCUMENT_APPLY_CAP);
+        }
       }
     }
     return flags;

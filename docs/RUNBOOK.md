@@ -597,19 +597,37 @@ npx wrangler d1 execute skyreader --remote --command \
    ```
 
    The hourly cron re-lists the three stalest authors anyway, so this only makes the
-   migration finish in an afternoon instead of over weeks.
+   migration finish in an afternoon instead of over weeks. `remaining` does reach 0
+   even with authors nobody can list (deleted account, dead PDS): a failed list holds
+   that author out of the queue for a backoff window that doubles per consecutive
+   failure, up to the 7-day reconcile interval. Their `last_error` is on
+   `document_authors`, and their scopes serve `status:'error'` — which is what keeps
+   a reader's existing copy on screen rather than clearing it.
 
 2. **Shadow-compare.** The gate on flipping reads: serve authors both ways and diff.
+   It compares **one page** per call — pass the returned `cursor` back for the next
+   one, and keep going until it comes back `null`. A single call says nothing about
+   the authors behind its page, so the gate is _every page clean_, not one clean
+   response.
 
    ```bash
-   curl -sX POST -H "X-Proxy-Secret: $FEED_PROXY_SECRET" \
-     -d '{"limit":25}' https://api.skyreader.app/api/internal/documents/shadow-compare \
-     | jq '{clean, drift: [.scopes[] | select(.clean|not)]}'
+   cursor=null
+   while :; do
+     out=$(curl -sX POST -H "X-Proxy-Secret: $FEED_PROXY_SECRET" \
+       -d "{\"limit\":25,\"cursor\":$( [ "$cursor" = null ] && echo null || echo "\"$cursor\"" )}" \
+       https://api.skyreader.app/api/internal/documents/shadow-compare)
+     echo "$out" | jq '{clean, remaining, drift: [.scopes[] | select(.clean|not)]}'
+     cursor=$(echo "$out" | jq -r '.cursor')
+     [ "$cursor" = null ] && break
+   done
    ```
 
    `missingInD1` is the one that costs a reader content; `cidMismatches` is an edit
    one side hasn't seen (usually a race, gone on the next run);
    `canonicalMismatches` points at a publication-cache divergence, not at documents.
+   An author the proxy returned no entry for is reported as drift too
+   (`No proxy entry returned`) — coverage of the walk has to be a fact, not an
+   assumption. Pass `{"dids":[…]}` to re-check specific authors after a fix.
 
 3. **Flip reads**, after a clean compare and a soak:
 
@@ -635,6 +653,14 @@ The subscriptions stream keeps running, reads keep serving whatever D1 holds, an
 the document cursor stays put — so re-enabling resumes the drain rather than
 skipping the backlog. Expect `Document Stream Lag` to read "Paused" while it's off.
 
+**A held cursor is only worth as much as Jetstream's replay buffer.** That buffer is
+hours, not days: past it, reconnecting is served from the oldest event the server
+still holds and everything in between is simply gone from the stream. So treat a
+pause of a few hours as resumable and anything longer as lossy — after a long pause,
+force the affected authors through the backfill endpoint rather than waiting on the
+7-day reconcile to find the holes. (Jetstream v2's network replay is what removes
+this bound; see `docs/plans/DOCUMENTS_TO_D1.md`.)
+
 **Repairing one author** (the D1 equivalent of the proxy re-list below): force them
 to the front of the reconcile queue, or backfill them directly.
 
@@ -642,6 +668,9 @@ to the front of the reconcile queue, or backfill them directly.
 curl -sX POST -H "X-Proxy-Secret: $FEED_PROXY_SECRET" \
   -d '{"dids":["did:plc:..."]}' https://api.skyreader.app/api/internal/documents/backfill
 ```
+
+An explicit `dids` list ignores both the reconcile interval and the failure backoff,
+so this is also how you retry an author sooner than their backoff would allow.
 
 ### The timeline rollout gate
 

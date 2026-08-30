@@ -10,12 +10,16 @@
 
 import type { Env } from '../types';
 import { isAuthorizedProxyRequest } from './ingest';
-import { FeedProxyClient, type ProxyDocument } from '../services/feed-proxy-client';
+import {
+  FeedProxyClient,
+  type ProxyDocument,
+  type ProxyDocumentEntry,
+} from '../services/feed-proxy-client';
 import {
   backfillAuthorDocuments,
   loadAuthorDocuments,
   staleDocumentAuthors,
-  subscribedDocumentAuthors,
+  subscribedDocumentAuthorPage,
   type BackfillResult,
 } from '../services/document-store';
 import { digestScope } from '../services/standard-site';
@@ -74,6 +78,9 @@ export async function handleDocumentBackfill(request: Request, env: Env): Promis
     results.push(await backfillAuthorDocuments(env, did));
   }
 
+  // Authors still queued after this chunk. An author whose PDS can't be listed at
+  // all drops out for a backoff window rather than pinning this above 0 forever,
+  // so the driving loop terminates on a repo we will never be able to read.
   const remaining = Array.isArray(body.dids)
     ? null
     : (await staleDocumentAuthors(env, limit)).length;
@@ -119,28 +126,46 @@ function byUri(documents: ProxyDocument[]): Map<string, ProxyDocument> {
 /**
  * POST /api/internal/documents/shadow-compare
  *
- * Body: `{ dids?: string[], limit?: number }`. Serves each author both ways — proxy
- * blob and D1 rows — and reports the difference. This is Phase 3's gate: the flip to
- * `documents_v2_enabled` waits on a clean report, because a silent hole in the store
- * looks exactly like an author who stopped publishing.
+ * Body: `{ dids?: string[], limit?: number, cursor?: string }`. Serves each author
+ * both ways — proxy blob and D1 rows — and reports the difference. This is Phase 3's
+ * gate: the flip to `documents_v2_enabled` waits on a clean report, because a silent
+ * hole in the store looks exactly like an author who stopped publishing.
+ *
+ * Without `dids` the endpoint walks the whole subscribed-author set one page at a
+ * time: pass the returned `cursor` back to get the next page, and keep going until
+ * it comes back null. Only "every page clean" is the gate — a single call compares
+ * the page it was given and says nothing about the authors behind it.
  */
 export async function handleDocumentShadowCompare(request: Request, env: Env): Promise<Response> {
   if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
   if (!isAuthorizedProxyRequest(request, env)) return unauthorized();
 
-  let body: { dids?: string[]; limit?: number } = {};
+  let body: { dids?: string[]; limit?: number; cursor?: string } = {};
   try {
     body = (await request.json()) as typeof body;
   } catch {
-    /* empty body → compare the first chunk of subscribed authors */
+    /* empty body → compare the first page of subscribed authors */
   }
 
   const limit = Math.min(Math.max(1, Math.floor(body.limit ?? 10)), 50);
-  const dids = Array.isArray(body.dids)
-    ? body.dids.slice(0, limit)
-    : (await subscribedDocumentAuthors(env)).slice(0, limit);
+  const explicit = Array.isArray(body.dids);
+  const page = explicit
+    ? { dids: body.dids!.slice(0, limit), cursor: null, remaining: 0 }
+    : await subscribedDocumentAuthorPage(env, {
+        limit,
+        after: typeof body.cursor === 'string' ? body.cursor : undefined,
+      });
+  const dids = page.dids;
 
-  if (dids.length === 0) return json({ compared: 0, clean: true, scopes: [] });
+  if (dids.length === 0) {
+    return json({
+      compared: 0,
+      clean: true,
+      cursor: page.cursor,
+      remaining: page.remaining,
+      scopes: [],
+    });
+  }
 
   const client = new FeedProxyClient(env);
   let proxyEntries;
@@ -150,8 +175,18 @@ export async function handleDocumentShadowCompare(request: Request, env: Env): P
     return json({ error: error instanceof Error ? error.message : 'Proxy fetch failed' }, 502);
   }
 
+  const byDid = new Map(proxyEntries.map((entry) => [entry.did, entry]));
   const scopes: ScopeDrift[] = [];
-  for (const entry of proxyEntries) {
+  for (const did of dids) {
+    // An author the proxy answered nothing for is drift too: the compare has to
+    // account for every author it was asked about, or the walk's coverage is a
+    // claim rather than a fact.
+    const entry: ProxyDocumentEntry = byDid.get(did) ?? {
+      did,
+      status: 'error',
+      error: 'No proxy entry returned',
+      documents: [],
+    };
     const proxyDocs = entry.documents ?? [];
     const d1Docs = await loadAuthorDocuments(env, entry.did, {
       // Comparison is about which records exist, not about warming magazine
@@ -201,7 +236,16 @@ export async function handleDocumentShadowCompare(request: Request, env: Env): P
     compared: scopes.length,
     clean,
     drifted: scopes.filter((s) => !s.clean).length,
+    remaining: page.remaining,
   });
 
-  return json({ compared: scopes.length, clean, scopes });
+  return json({
+    compared: scopes.length,
+    // This page only. The cutover gate is every page of the walk clean, which the
+    // caller establishes by following `cursor` to the end.
+    clean,
+    cursor: page.cursor,
+    remaining: page.remaining,
+    scopes,
+  });
 }

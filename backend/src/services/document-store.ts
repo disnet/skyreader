@@ -58,6 +58,25 @@ export const MAX_COLLECTION_RESOLVES_PER_REQUEST = 3;
  */
 export const AUTHOR_RECONCILE_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
 
+/** First wait after a failed list; doubles per consecutive failure. */
+export const AUTHOR_RETRY_BASE_MS = 60 * 60 * 1000;
+
+/** Ceiling on that wait — a dead author is still retried once a reconcile interval. */
+export const AUTHOR_RETRY_MAX_MS = AUTHOR_RECONCILE_INTERVAL_MS;
+
+/** How long after a failure an author is held out of the reconcile queue. */
+export function authorRetryBackoffMs(errorCount: number): number {
+  const exponent = Math.min(Math.max(Math.floor(errorCount), 1) - 1, 12);
+  return Math.min(AUTHOR_RETRY_BASE_MS * 2 ** exponent, AUTHOR_RETRY_MAX_MS);
+}
+
+/**
+ * `authorRetryBackoffMs` as SQL, so the queue query can apply it per row. Binds, in
+ * order: the ceiling, the base. `1 << n` is SQLite's shift; the exponent is clamped
+ * before shifting so a long-broken author can't overflow it.
+ */
+const RETRY_BACKOFF_SQL = 'MIN(?, ? * (1 << MIN(MAX(COALESCE(a.error_count, 1), 1) - 1, 12)))';
+
 export interface DocumentRow {
   record_uri: string;
   author_did: string;
@@ -97,23 +116,24 @@ function parseRecord<T>(raw: string): T | null {
 // --- Write path --------------------------------------------------------------
 
 /**
- * Upsert one `site.standard.document` record. Idempotent by `record_uri`, so a
- * replayed firehose event or a re-run backfill converges on the same row — which
- * is what makes Jetstream's at-least-once delivery safe here.
+ * The statement that upserts one `site.standard.document` record. Idempotent by
+ * `record_uri`, so a replayed firehose event or a re-run backfill converges on the
+ * same row — which is what makes Jetstream's at-least-once delivery safe here.
  *
- * Publication metadata is resolved (and D1-cached) at write time, so the serve
- * path never blocks on a PDS for a canonical URL.
+ * Publication metadata is resolved (and D1-cached) here, at write time, so the
+ * serve path never blocks on a PDS for a canonical URL. Returns null for a URI we
+ * can't parse an rkey out of, which is not a row we could ever address again.
  */
-export async function upsertDocument(
+async function documentUpsertStatement(
   env: Env,
   authorDid: string,
   recordUri: string,
   recordCid: string,
   record: DocumentRecord,
-  now = Date.now()
-): Promise<void> {
+  now: number
+): Promise<D1PreparedStatement | null> {
   const parsed = parseAtUri(recordUri);
-  if (!parsed) return;
+  if (!parsed) return null;
 
   const siteUri = record.site || '';
   const meta = await resolveSiteMeta(env, siteUri);
@@ -121,7 +141,7 @@ export async function upsertDocument(
     ? buildCanonicalUrl(meta.baseUrl, record.path || '')
     : record.path || '';
 
-  await env.DB.prepare(
+  return env.DB.prepare(
     `INSERT INTO documents_v2
        (record_uri, author_did, rkey, record_cid, site_uri, published_at, canonical_url, record_json, indexed_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -132,20 +152,38 @@ export async function upsertDocument(
        canonical_url = excluded.canonical_url,
        record_json = excluded.record_json,
        updated_at = excluded.updated_at`
-  )
-    .bind(
-      recordUri,
-      authorDid,
-      parsed.rkey,
-      recordCid,
-      siteUri,
-      publishedAtMs(record, now),
-      canonicalUrl || null,
-      JSON.stringify(record),
-      now,
-      now
-    )
-    .run();
+  ).bind(
+    recordUri,
+    authorDid,
+    parsed.rkey,
+    recordCid,
+    siteUri,
+    publishedAtMs(record, now),
+    canonicalUrl || null,
+    JSON.stringify(record),
+    now,
+    now
+  );
+}
+
+/** Upsert one record on its own (the backfill's per-record write). */
+export async function upsertDocument(
+  env: Env,
+  authorDid: string,
+  recordUri: string,
+  recordCid: string,
+  record: DocumentRecord,
+  now = Date.now()
+): Promise<void> {
+  const statement = await documentUpsertStatement(
+    env,
+    authorDid,
+    recordUri,
+    recordCid,
+    record,
+    now
+  );
+  if (statement) await statement.run();
 }
 
 /**
@@ -155,8 +193,8 @@ export async function upsertDocument(
  * defence no DID filter can provide, because a *subscribed* author's flood passes
  * the filter by design.
  */
-export async function trimAuthorDocuments(env: Env, authorDid: string): Promise<number> {
-  const result = await env.DB.prepare(
+function trimAuthorDocumentsStatement(env: Env, authorDid: string): D1PreparedStatement {
+  return env.DB.prepare(
     `DELETE FROM documents_v2
       WHERE record_uri IN (
         SELECT record_uri FROM documents_v2
@@ -164,9 +202,11 @@ export async function trimAuthorDocuments(env: Env, authorDid: string): Promise<
          ORDER BY published_at DESC, record_uri DESC
          LIMIT -1 OFFSET ?
       )`
-  )
-    .bind(authorDid, MAX_DOCUMENTS_PER_AUTHOR)
-    .run();
+  ).bind(authorDid, MAX_DOCUMENTS_PER_AUTHOR);
+}
+
+export async function trimAuthorDocuments(env: Env, authorDid: string): Promise<number> {
+  const result = await trimAuthorDocumentsStatement(env, authorDid).run();
   return result.meta?.changes ?? 0;
 }
 
@@ -258,7 +298,7 @@ export async function applyDocumentEvent(
   }
 
   if (!commit.record) return false;
-  await upsertDocument(
+  const upsert = await documentUpsertStatement(
     env,
     event.did,
     recordUri,
@@ -266,8 +306,19 @@ export async function applyDocumentEvent(
     commit.record as DocumentRecord,
     now
   );
-  await trimAuthorDocuments(env, event.did);
-  await touchAuthor(env, { authorDid: event.did, lastEventAt: now });
+  if (!upsert) return false;
+
+  // One `batch` rather than three `run`s: D1 calls count against the Worker's
+  // per-invocation subrequest budget, and the drain's whole job is to apply a
+  // burst's worth of events inside one alarm. Three statements per event would put
+  // the apply cap (500) at ~1500 subrequests, over the 1000 ceiling — see the cap's
+  // note in `document-flags.ts`. Batching also makes the write atomic: the cap
+  // eviction and the bookkeeping either land with the document or not at all.
+  await env.DB.batch([
+    upsert,
+    trimAuthorDocumentsStatement(env, event.did),
+    authorBookkeepingStatement(env, { authorDid: event.did, lastEventAt: now }),
+  ]);
   return true;
 }
 
@@ -351,49 +402,54 @@ export function createDocumentDrain(
   };
 }
 
-/** Record ingest bookkeeping for an author (best effort — never fails a write). */
-async function touchAuthor(
+interface AuthorBookkeeping {
+  authorDid: string;
+  lastEventAt?: number;
+  lastListedAt?: number;
+  complete?: boolean;
+  error?: string | null;
+}
+
+/** The statement that records one author's ingest bookkeeping. */
+function authorBookkeepingStatement(
   env: Env,
-  fields: {
-    authorDid: string;
-    lastEventAt?: number;
-    lastListedAt?: number;
-    complete?: boolean;
-    error?: string | null;
-  }
-): Promise<void> {
-  const now = Date.now();
-  try {
-    if (fields.error) {
-      await env.DB.prepare(
-        `INSERT INTO document_authors (author_did, error_count, last_error, last_error_at)
-         VALUES (?, 1, ?, ?)
-         ON CONFLICT(author_did) DO UPDATE SET
-           error_count = document_authors.error_count + 1,
-           last_error = excluded.last_error,
-           last_error_at = excluded.last_error_at`
-      )
-        .bind(fields.authorDid, fields.error.slice(0, 500), now)
-        .run();
-      return;
-    }
-    await env.DB.prepare(
-      `INSERT INTO document_authors (author_did, last_listed_at, last_event_at, complete, error_count, last_error, last_error_at)
-       VALUES (?, ?, ?, ?, 0, NULL, NULL)
+  fields: AuthorBookkeeping,
+  now = Date.now()
+): D1PreparedStatement {
+  if (fields.error) {
+    // A failed list stamps `last_error_at`, which is what the reconcile queue's
+    // backoff reads: an author who can never be listed has to give its slot back.
+    return env.DB.prepare(
+      `INSERT INTO document_authors (author_did, error_count, last_error, last_error_at)
+       VALUES (?, 1, ?, ?)
        ON CONFLICT(author_did) DO UPDATE SET
-         last_listed_at = COALESCE(excluded.last_listed_at, document_authors.last_listed_at),
-         last_event_at = COALESCE(excluded.last_event_at, document_authors.last_event_at),
-         complete = CASE WHEN excluded.last_listed_at IS NULL THEN document_authors.complete ELSE excluded.complete END,
-         error_count = CASE WHEN excluded.last_listed_at IS NULL THEN document_authors.error_count ELSE 0 END,
-         last_error = CASE WHEN excluded.last_listed_at IS NULL THEN document_authors.last_error ELSE NULL END`
-    )
-      .bind(
-        fields.authorDid,
-        fields.lastListedAt ?? null,
-        fields.lastEventAt ?? null,
-        fields.complete ? 1 : 0
-      )
-      .run();
+         error_count = document_authors.error_count + 1,
+         last_error = excluded.last_error,
+         last_error_at = excluded.last_error_at`
+    ).bind(fields.authorDid, fields.error.slice(0, 500), now);
+  }
+  return env.DB.prepare(
+    `INSERT INTO document_authors (author_did, last_listed_at, last_event_at, complete, error_count, last_error, last_error_at)
+     VALUES (?, ?, ?, ?, 0, NULL, NULL)
+     ON CONFLICT(author_did) DO UPDATE SET
+       last_listed_at = COALESCE(excluded.last_listed_at, document_authors.last_listed_at),
+       last_event_at = COALESCE(excluded.last_event_at, document_authors.last_event_at),
+       complete = CASE WHEN excluded.last_listed_at IS NULL THEN document_authors.complete ELSE excluded.complete END,
+       error_count = CASE WHEN excluded.last_listed_at IS NULL THEN document_authors.error_count ELSE 0 END,
+       last_error = CASE WHEN excluded.last_listed_at IS NULL THEN document_authors.last_error ELSE NULL END,
+       last_error_at = CASE WHEN excluded.last_listed_at IS NULL THEN document_authors.last_error_at ELSE NULL END`
+  ).bind(
+    fields.authorDid,
+    fields.lastListedAt ?? null,
+    fields.lastEventAt ?? null,
+    fields.complete ? 1 : 0
+  );
+}
+
+/** Record ingest bookkeeping for an author (best effort — never fails a write). */
+async function touchAuthor(env: Env, fields: AuthorBookkeeping): Promise<void> {
+  try {
+    await authorBookkeepingStatement(env, fields).run();
   } catch (error) {
     console.error('[document-store] author bookkeeping failed:', error);
   }
@@ -478,16 +534,43 @@ export async function backfillAuthorDocuments(
   }
 
   const collections = await listAuthorCollections(authorDid);
-  for (const [rkey, record] of collections) {
+  for (const [rkey, record] of collections.byRkey) {
     await upsertCollectionIfChanged(env, authorDid, rkey, record, now);
+  }
+
+  // Sidecars drift the same way documents do — a delete missed during a pause
+  // leaves a curated edition attached to a document the author has since changed.
+  // Only a listing that both succeeded and covered the whole collection can prove
+  // absence, hence `exhaustive`: an empty map from a failed fetch would otherwise
+  // delete every edition we hold.
+  let removedCollections = 0;
+  if (collections.exhaustive) {
+    const storedRkeys = await env.DB.prepare('SELECT rkey FROM collections_v2 WHERE author_did = ?')
+      .bind(authorDid)
+      .all<{ rkey: string }>();
+    const goneRkeys = (storedRkeys.results ?? [])
+      .map((r) => r.rkey)
+      .filter((rkey) => !collections.byRkey.has(rkey));
+    if (goneRkeys.length > 0) {
+      await env.DB.batch(
+        goneRkeys.map((rkey) =>
+          env.DB.prepare('DELETE FROM collections_v2 WHERE author_did = ? AND rkey = ?').bind(
+            authorDid,
+            rkey
+          )
+        )
+      );
+      removedCollections = goneRkeys.length;
+    }
   }
 
   await touchAuthor(env, { authorDid, lastListedAt: now, complete });
   log.info('documents_backfilled', {
     authorDid,
     documents: kept.length,
-    collections: collections.size,
+    collections: collections.byRkey.size,
     removed: stale.length,
+    removedCollections,
     complete,
   });
 
@@ -495,7 +578,7 @@ export async function backfillAuthorDocuments(
     did: authorDid,
     ok: true,
     documents: kept.length,
-    collections: collections.size,
+    collections: collections.byRkey.size,
     complete,
   };
 }
@@ -548,9 +631,71 @@ export async function subscribedDocumentAuthors(env: Env): Promise<string[]> {
   return (result.results ?? []).map((r) => r.did).filter((did): did is string => isValidDid(did));
 }
 
+/** One page of the subscribed-author set, in a stable order. */
+export interface AuthorPage {
+  dids: string[];
+  /** Resume token for the next page; null when this page reached the end. */
+  cursor: string | null;
+  /** Authors still after this page — 0 only when the whole set has been walked. */
+  remaining: number;
+}
+
+/**
+ * A page of {@link subscribedDocumentAuthors}, ordered by DID and resumable.
+ *
+ * The shadow-compare is a gate on the read cutover, so it has to be able to cover
+ * *every* subscribed author: comparing the same first N of them repeatedly says
+ * nothing about author N+1, and a clean verdict from a partial walk would admit a
+ * lossy cutover. Ordering by `subject_did` gives a total order that a concurrent
+ * subscribe can't shuffle a page out of.
+ */
+export async function subscribedDocumentAuthorPage(
+  env: Env,
+  options: { limit: number; after?: string }
+): Promise<AuthorPage> {
+  const after = options.after ?? '';
+  const result = await env.DB.prepare(
+    `SELECT DISTINCT subject_did AS did FROM subscriptions_cache
+      WHERE source_type IN ('atproto.documents', 'atproto.collection')
+        AND subject_did IS NOT NULL AND subject_did > ?
+      ORDER BY subject_did ASC LIMIT ?`
+  )
+    .bind(after, options.limit)
+    .all<{ did: string }>();
+
+  const page = (result.results ?? []).map((r) => r.did);
+  // The cursor is the last DID *examined*, valid or not, so a malformed row can
+  // never stall the walk — it is simply skipped and left behind.
+  const cursor = page.length === options.limit ? page[page.length - 1] : null;
+  const tail = cursor
+    ? await env.DB.prepare(
+        `SELECT COUNT(*) AS n FROM (
+           SELECT DISTINCT subject_did FROM subscriptions_cache
+            WHERE source_type IN ('atproto.documents', 'atproto.collection')
+              AND subject_did IS NOT NULL AND subject_did > ?)`
+      )
+        .bind(cursor)
+        .first<{ n: number }>()
+    : null;
+
+  return {
+    dids: page.filter((did): did is string => isValidDid(did)),
+    cursor,
+    remaining: tail?.n ?? 0,
+  };
+}
+
 /**
  * Authors whose stored set is stalest, for the reconcile loop. Never-listed authors
  * sort first (a subscription created before this shipped, or a failed backfill).
+ *
+ * An author whose last attempt *failed* is held off for a backoff window derived
+ * from their error count, and sorts by that failure rather than by their (still
+ * NULL) `last_listed_at`. Without both halves, an author who can never be listed —
+ * deleted account, unresolvable DID, dead PDS — is re-selected at the front of the
+ * queue on every run, forever: the reconcile is the only self-heal in this design,
+ * and three such authors would starve it silently. It also lets the migration's
+ * `remaining` counter reach 0, which it otherwise never could.
  */
 export async function staleDocumentAuthors(
   env: Env,
@@ -559,16 +704,18 @@ export async function staleDocumentAuthors(
 ): Promise<string[]> {
   const cutoff = now - AUTHOR_RECONCILE_INTERVAL_MS;
   const result = await env.DB.prepare(
-    `SELECT DISTINCT s.subject_did AS did
+    `SELECT DISTINCT s.subject_did AS did,
+            COALESCE(a.last_listed_at, a.last_error_at, 0) AS staleness
        FROM subscriptions_cache s
        LEFT JOIN document_authors a ON a.author_did = s.subject_did
       WHERE s.source_type IN ('atproto.documents', 'atproto.collection')
         AND s.subject_did IS NOT NULL
         AND (a.last_listed_at IS NULL OR a.last_listed_at < ?)
-      ORDER BY COALESCE(a.last_listed_at, 0) ASC
+        AND (a.last_error_at IS NULL OR a.last_error_at + ${RETRY_BACKOFF_SQL} <= ?)
+      ORDER BY staleness ASC
       LIMIT ?`
   )
-    .bind(cutoff, limit)
+    .bind(cutoff, AUTHOR_RETRY_MAX_MS, AUTHOR_RETRY_BASE_MS, now, limit)
     .all<{ did: string }>();
   return (result.results ?? []).map((r) => r.did).filter((did): did is string => isValidDid(did));
 }
@@ -581,6 +728,67 @@ export async function reconcileStaleAuthors(env: Env, limit = 3): Promise<Backfi
     results.push(await backfillAuthorDocuments(env, did));
   }
   return results;
+}
+
+/**
+ * How recently an author must have been listed for a new subscription to skip its
+ * backfill. Ten readers subscribing to the same linkblog in an hour should cost one
+ * `listRecords` walk, not ten.
+ */
+export const BACKFILL_FRESHNESS_MS = 60 * 60 * 1000;
+
+/**
+ * Backfill an author unless we already hold a fresh listing or are inside the retry
+ * backoff for a failing one.
+ *
+ * Every path that creates an `atproto.documents` subscription calls this, because a
+ * subscription whose author was never listed serves `status:'error'` on every poll
+ * until the hourly reconcile happens to reach it — the reader sees an error and an
+ * empty linkblog in the meantime. The proxy had no such window: it listed the author
+ * inline on the first read.
+ */
+export async function ensureAuthorDocuments(
+  env: Env,
+  authorDid: string,
+  now = Date.now()
+): Promise<BackfillResult | null> {
+  if (!isValidDid(authorDid)) return null;
+
+  const author = await env.DB.prepare(
+    'SELECT last_listed_at, last_error_at, error_count FROM document_authors WHERE author_did = ?'
+  )
+    .bind(authorDid)
+    .first<{ last_listed_at: number | null; last_error_at: number | null; error_count: number }>();
+
+  if (author?.last_listed_at && now - author.last_listed_at < BACKFILL_FRESHNESS_MS) return null;
+  if (
+    author?.last_error_at &&
+    now - author.last_error_at < authorRetryBackoffMs(author.error_count)
+  ) {
+    return null;
+  }
+
+  return backfillAuthorDocuments(env, authorDid);
+}
+
+/**
+ * Fire {@link ensureAuthorDocuments} in the background of a request. A `listRecords`
+ * walk is several PDS round-trips and no subscribe response should wait on them; a
+ * failure is recorded on the author row and retried by the reconcile.
+ */
+export function scheduleAuthorDocuments(
+  env: Env,
+  waitUntil: (promise: Promise<unknown>) => void,
+  authorDid: string
+): void {
+  waitUntil(
+    ensureAuthorDocuments(env, authorDid).catch((error) => {
+      log.warn('documents_backfill_schedule_failed', {
+        authorDid,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    })
+  );
 }
 
 // --- Read path ---------------------------------------------------------------
@@ -732,6 +940,11 @@ export async function loadAuthorDocuments(
       meta,
       {
         indexedAt: new Date(row.indexed_at).toISOString(),
+        // The URL resolved when the row was written, used only while the
+        // publication itself won't resolve — otherwise a five-minute negative
+        // cache entry would serve a relative path next to a row holding the
+        // absolute one.
+        canonicalUrlFallback: row.canonical_url,
       }
     );
     const collectionRow = byRkey.get(row.rkey);
@@ -814,9 +1027,24 @@ export async function serveDocumentScope(
     status: 'ready',
     digest,
     // The author's whole repo fits under the cap, so an absent record means
-    // deleted rather than merely beyond the cap.
-    complete: author?.complete === 1,
+    // deleted rather than merely beyond the cap. The stored flag alone can't say
+    // that: it was set at the last successful *list*, and the poller keeps writing
+    // afterwards, so an author listed at 40 documents who has since published past
+    // the cap would still claim completeness while cap eviction drops their oldest.
+    // The proxy recomputed this per serve from the set it was about to return; the
+    // row count reproduces that, and the flag keeps "never listed ⇒ not
+    // authoritative".
+    complete:
+      author?.complete === 1 && (await storedDocumentCount(env, did)) < MAX_DOCUMENTS_PER_AUTHOR,
   };
+}
+
+/** How many documents we hold for an author, across every publication of theirs. */
+async function storedDocumentCount(env: Env, authorDid: string): Promise<number> {
+  const row = await env.DB.prepare('SELECT COUNT(*) AS n FROM documents_v2 WHERE author_did = ?')
+    .bind(authorDid)
+    .first<{ n: number }>();
+  return row?.n ?? 0;
 }
 
 /**
@@ -848,7 +1076,10 @@ export async function serveSingleDocument(env: Env, uri: string): Promise<ProxyD
         row.record_cid,
         record,
         meta,
-        { indexedAt: new Date(row.indexed_at).toISOString() }
+        {
+          indexedAt: new Date(row.indexed_at).toISOString(),
+          canonicalUrlFallback: row.canonical_url,
+        }
       );
       const collectionRow = await env.DB.prepare(
         'SELECT author_did, rkey, record_json, preview_json, preview_at FROM collections_v2 WHERE author_did = ? AND rkey = ?'

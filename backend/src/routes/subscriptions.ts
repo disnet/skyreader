@@ -14,7 +14,7 @@ import {
   deleteAtmosphereSubscription,
 } from '../services/atmosphere-subscription';
 import { createPDSClient, type WriteOp } from '../services/pds-client';
-import { backfillAuthorDocuments } from '../services/document-store';
+import { scheduleAuthorDocuments } from '../services/document-store';
 import { isValidRkey, invalidRkeyResponse } from '../utils/validation';
 import { generateTid } from '../utils/tid';
 import { fetchProfiles } from '../services/bsky-appview';
@@ -608,6 +608,11 @@ export async function ensureLocalDocumentSubscription(
     )
     .run();
 
+  // Same back-catalogue pull the API subscribe does. Without it this row exists with
+  // nothing behind it, and every poll of the new linkblog serves `status:'error'`
+  // until the hourly reconcile reaches that author.
+  scheduleAuthorDocuments(env, (p) => ctx.waitUntil(p), subjectDid);
+
   // Mirror to the user's PDS subscription list when Atmospheric sync is on, so the
   // reader follow behaves exactly like an in-app one (best-effort, background).
   ctx.waitUntil(
@@ -1026,14 +1031,9 @@ export async function handleCreateSubscription(
     // The documents equivalent of `warmFeedIntoArchive`: pull the author's back
     // catalogue into D1 so the first read of a brand-new subscription isn't empty.
     // The firehose only carries writes made while we were watching, so nothing else
-    // would ever supply it. In the background — a listRecords walk is several PDS
-    // round-trips and the subscribe response shouldn't wait on them.
+    // would ever supply it.
     if (isAtProto && subjectDid) {
-      ctx.waitUntil(
-        backfillAuthorDocuments(env, subjectDid).catch((error) => {
-          console.error(`Document backfill failed for ${subjectDid}:`, error);
-        })
-      );
+      scheduleAuthorDocuments(env, (p) => ctx.waitUntil(p), subjectDid);
     }
 
     // Crawl the feed once and ingest it into the archive, so the client's first

@@ -39,6 +39,7 @@ import {
 } from './atmosphere-subscription';
 import { pushSubscriptionToPds, deleteSubscriptionFromPds } from './subscription-sync';
 import type { LimitNotice } from './subscription-sync';
+import { scheduleAuthorDocuments } from './document-store';
 
 const SUBSCRIPTION_NSID = 'app.skyreader.feed.subscription';
 
@@ -273,6 +274,11 @@ export async function reconcileAtmosphereSubscriptions(
       // our insert a no-op. Skip the follow-up work so we don't double-count or
       // write a second, orphaned PDS record under our throwaway rkey.
       if (insert.meta && insert.meta.changes === 0) continue;
+
+      // An imported follow needs the author's back catalogue pulled in like any
+      // other new subscription — otherwise the reader shows an error for this
+      // linkblog until the hourly reconcile happens to reach that author.
+      scheduleAuthorDocuments(env, (p) => ctx.waitUntil(p), meta.subjectDid);
 
       // Mirror to the user's app.skyreader subscription list on the PDS, so an
       // imported follow looks identical to an in-app one. Best-effort.

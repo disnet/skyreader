@@ -30,7 +30,11 @@ and the subscription-gated pull-through in `/api/v2/feeds/fetch`.
 and `/api/v2/documents/get` serve from D1 once `sync_state.documents_v2_enabled` is `'1'` and from
 the proxy until then, wire-identical either way. Writes have their own switch
 (`documents_ingest_enabled`) so a flood can be paused without touching reads or the subscriptions
-stream. See `docs/plans/DOCUMENTS_TO_D1.md` and RUNBOOK §4e.
+stream. Every path that creates an `atproto.documents` subscription — the API, the Atmosphere
+subscribe button, the PDS→local sync, and a subscription mirrored in by the poller — goes through
+`ensureAuthorDocuments`, because a subscription whose author was never listed serves
+`status:'error'` on every poll until something lists them. See `docs/plans/DOCUMENTS_TO_D1.md` and
+RUNBOOK §4e.
 
 ## Key Concepts
 
@@ -207,7 +211,9 @@ Key tables:
   negative TTL. Replaces 0031's `publications_cache`, whose `base_url` is NOT NULL and so can't
   hold a negative entry
 - `document_authors` - Per-author ingest bookkeeping: last successful list (drives the reconcile
-  queue), whether the stored set is the author's complete repo, and the last backfill error
+  queue), whether the last list saw the author's whole repo, and the last backfill error with its
+  timestamp — a failed list holds that author out of the reconcile queue for a doubling backoff, so
+  an author nobody can list (deleted account, dead PDS) can't monopolise the only self-heal there is
 - `documents` / `publications_cache` - orphaned from the pre-proxy era; still not read or written.
   They stay until the proxy document path is decommissioned
 - `item_labels_cache` - Unified labels (read/starred/archived/tags)

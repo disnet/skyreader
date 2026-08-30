@@ -320,6 +320,12 @@ export function publishedAtMs(doc: DocumentRecord, fallbackMs: number): number {
  * `indexedAt` is the row's ingest time rather than "now" (the proxy had no such
  * stamp and used fetch time); the frontend uses it only for display ordering
  * fallbacks.
+ *
+ * `canonicalUrl` is re-derived from `meta` whenever the publication resolves, so a
+ * repaired publication cache fixes served links without rewriting rows. When it
+ * does not resolve — a `getRecord` blip puts a negative entry in the cache for five
+ * minutes — `canonicalUrlFallback` (the absolute URL stored on the row at write
+ * time) is used instead of degrading the link to a bare relative path.
  */
 export function recordToDocument(
   authorDid: string,
@@ -327,13 +333,17 @@ export function recordToDocument(
   recordCid: string,
   doc: DocumentRecord,
   meta: SiteMeta,
-  options: { indexedAt?: string; readerCollection?: ProxyReaderCollection | null } = {}
+  options: {
+    indexedAt?: string;
+    readerCollection?: ProxyReaderCollection | null;
+    canonicalUrlFallback?: string | null;
+  } = {}
 ): ProxyDocument {
   const nowISO = new Date().toISOString();
   const siteUri = doc.site || '';
   const canonicalUrl = meta.baseUrl
     ? buildCanonicalUrl(meta.baseUrl, doc.path || '')
-    : doc.path || '';
+    : options.canonicalUrlFallback || doc.path || '';
 
   // Surface external resource refs (the shared article URL for link posts),
   // keeping only entries with a real uri.
@@ -457,39 +467,54 @@ export async function listAuthorDocuments(
   return raw;
 }
 
+/** One page of collection sidecars, plus whether absence from it proves deletion. */
+export interface AuthorCollectionListing {
+  /**
+   * True only when the listing succeeded *and* covered the whole collection. A
+   * failed fetch and an author with no editions both produce an empty map, so a
+   * caller that prunes stored rows against this listing has to be able to tell
+   * them apart — otherwise one blip deletes every curated edition we hold.
+   */
+  exhaustive: boolean;
+  byRkey: Map<string, CollectionRecord>;
+}
+
+/** listRecords page size; a full page means there may be more behind a cursor. */
+const COLLECTION_PAGE_SIZE = 100;
+
 /**
  * List an author's `app.standard-reader.collection` sidecars, keyed by rkey (a
  * collection shares its rkey with the document it renders). Best-effort: a fetch
- * failure yields an empty map — no magazine enrichment, not a failed backfill.
- * Collections are few, so one page suffices.
+ * failure yields an empty, non-exhaustive listing — no magazine enrichment, not a
+ * failed backfill. Collections are few, so one page suffices.
  */
-export async function listAuthorCollections(
-  authorDid: string
-): Promise<Map<string, CollectionRecord>> {
+export async function listAuthorCollections(authorDid: string): Promise<AuthorCollectionListing> {
   const byRkey = new Map<string, CollectionRecord>();
   try {
     const pdsUrl = await resolvePdsUrl(authorDid);
-    if (!pdsUrl) return byRkey;
+    if (!pdsUrl) return { exhaustive: false, byRkey };
     const params = new URLSearchParams({
       repo: authorDid,
       collection: READER_COLLECTION,
-      limit: '100',
+      limit: String(COLLECTION_PAGE_SIZE),
     });
     const res = await fetch(`${pdsUrl}/xrpc/com.atproto.repo.listRecords?${params}`, {
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
-    if (!res.ok) return byRkey;
+    if (!res.ok) return { exhaustive: false, byRkey };
     const data = (await res.json()) as {
       records?: Array<{ uri: string; value: CollectionRecord }>;
     };
-    for (const record of data.records ?? []) {
+    const records = data.records ?? [];
+    for (const record of records) {
       const parsed = parseAtUri(record.uri);
       if (parsed) byRkey.set(parsed.rkey, record.value);
     }
+    return { exhaustive: records.length < COLLECTION_PAGE_SIZE, byRkey };
   } catch (error) {
     console.error('[standard-site] listCollections error:', error);
+    return { exhaustive: false, byRkey };
   }
-  return byRkey;
 }
 
 /** Fetch one `site.standard.document` record from its author's PDS. */

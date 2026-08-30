@@ -3,6 +3,7 @@ import type { Env } from '../types';
 import { upsertSubscriptionFromFirehose } from '../services/firehose-subscription';
 import {
   createDocumentDrain,
+  ensureAuthorDocuments,
   subscribedDocumentAuthors,
   type DocumentCommitEvent,
 } from '../services/document-store';
@@ -83,6 +84,17 @@ export const CAP_SATURATION_ALERT_STREAK = 10;
 export const JETSTREAM_MAX_WANTED_DIDS = 10_000;
 
 const CAP_STREAK_KEY = 'documents_cap_streak';
+
+// Back catalogues pulled per cycle for subscriptions mirrored in from a PDS. Each
+// is up to five `listRecords` pages against a foreign PDS, so this is deliberately
+// small: the alarm's job is draining streams, and the queue survives to next cycle.
+const MAX_CYCLE_BACKFILLS = 3;
+
+// Ceiling on that queue. A device syncing a very long subscription list can enqueue
+// faster than three a cycle drains, and this is in-memory state on a long-lived
+// object; past the ceiling the surplus authors are left to the hourly reconcile,
+// which is where they would have been before any of this existed.
+const MAX_PENDING_BACKFILLS = 200;
 
 // How long after an alarm *started* we still consider the poller alive without a
 // scheduled alarm. `getAlarm()` returns null while the handler runs, so both
@@ -201,6 +213,15 @@ export function buildDocumentSubscribeUrl(
 class JetstreamPollerBase implements DurableObject {
   private state: DurableObjectState;
   private env: Env;
+
+  /**
+   * Authors whose documents this cycle's subscription events asked for. A
+   * subscription created on another device arrives here rather than through the
+   * API, so this is the fourth path that has to pull a back catalogue — but a
+   * `listRecords` walk must not happen inside the drain, where it would stall the
+   * socket, so the DIDs are collected and worked after both streams are closed.
+   */
+  private pendingDocumentBackfills = new Set<string>();
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
@@ -346,6 +367,15 @@ class JetstreamPollerBase implements DurableObject {
         reportError(error, { tags: { source: 'jetstream-poller', phase: 'documents' } });
       }
 
+      // Back catalogues for subscriptions this cycle mirrored in from a PDS. Both
+      // sockets are closed by now, and the count is bounded, so a slow PDS costs
+      // this cycle's tail rather than the drain window.
+      try {
+        await this.backfillPendingAuthors();
+      } catch (error) {
+        log.error('jetstream_documents_backfill_failed', { ...serializeError(error) });
+      }
+
       stats.duration = Date.now() - startTime;
 
       // Save stats (best effort)
@@ -388,6 +418,32 @@ class JetstreamPollerBase implements DurableObject {
         // this one is worth a page rather than a log line.
         console.error('[JetstreamPoller] CRITICAL: Error scheduling next alarm:', error);
         reportError(error, { tags: { source: 'jetstream-poller', phase: 'alarm-scheduling' } });
+      }
+    }
+  }
+
+  /**
+   * Pull back catalogues for the authors this cycle's mirrored subscriptions
+   * introduced. `ensureAuthorDocuments` skips an author we listed recently or one
+   * inside their retry backoff, so a burst of subscription mirrors for a popular
+   * linkblog is still one walk; the per-cycle bound keeps the tail short when a
+   * device syncs a long subscription list at once — the rest are picked up by the
+   * next cycle's queue or, failing that, by the hourly reconcile.
+   */
+  private async backfillPendingAuthors(): Promise<void> {
+    if (this.pendingDocumentBackfills.size === 0) return;
+    const dids = [...this.pendingDocumentBackfills].slice(0, MAX_CYCLE_BACKFILLS);
+    // Only the ones being worked leave the queue; the remainder wait for the next
+    // cycle rather than being dropped.
+    for (const did of dids) this.pendingDocumentBackfills.delete(did);
+    for (const did of dids) {
+      try {
+        await ensureAuthorDocuments(this.env, did);
+      } catch (error) {
+        log.warn('documents_backfill_failed', {
+          authorDid: did,
+          ...serializeError(error),
+        });
       }
     }
   }
@@ -735,6 +791,16 @@ class JetstreamPollerBase implements DurableObject {
       }
 
       const recAny = record as Record<string, unknown>;
+      // A mirrored `atproto.*` subscription needs the same back-catalogue pull the
+      // API path does; queued, not run, so the drain stays a D1-only loop.
+      if (
+        typeof recAny.sourceType === 'string' &&
+        recAny.sourceType.startsWith('atproto.') &&
+        typeof recAny.subjectDid === 'string' &&
+        this.pendingDocumentBackfills.size < MAX_PENDING_BACKFILLS
+      ) {
+        this.pendingDocumentBackfills.add(recAny.subjectDid);
+      }
       console.log(
         `[JetstreamPoller] ${did} ${operation}d subscription: ${
           record.feedUrl || `${recAny.sourceType}:${recAny.subjectDid}`

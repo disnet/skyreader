@@ -2,22 +2,30 @@ import { env } from 'cloudflare:test';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   applyDocumentEvent,
+  authorRetryBackoffMs,
   backfillAuthorDocuments,
   createDocumentDrain,
+  ensureAuthorDocuments,
   loadAuthorDocuments,
   reconcileStaleAuthors,
   serveDocumentScope,
   serveSingleDocument,
   staleDocumentAuthors,
+  subscribedDocumentAuthorPage,
   subscribedDocumentAuthors,
   trimAuthorDocuments,
+  AUTHOR_RETRY_BASE_MS,
+  AUTHOR_RETRY_MAX_MS,
+  BACKFILL_FRESHNESS_MS,
   type DocumentCommitEvent,
 } from '../src/services/document-store';
 import { digestScope, MAX_DOCUMENTS_PER_AUTHOR } from '../src/services/standard-site';
 import {
   readDocumentFlags,
   setDocumentFlag,
+  DOCUMENTS_APPLY_CAP_KEY,
   DOCUMENTS_V2_ENABLED_KEY,
+  MAX_DOCUMENT_APPLY_CAP,
 } from '../src/services/document-flags';
 import {
   buildDocumentSubscribeUrl,
@@ -348,9 +356,23 @@ describe('backfill and reconcile', () => {
     await cleanup();
   });
 
-  function mockPds(records: Array<{ rkey: string; cid: string; title: string }>): void {
+  function mockPds(
+    records: Array<{ rkey: string; cid: string; title: string }>,
+    collections: { rkeys?: string[]; fails?: boolean } = {}
+  ): void {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
       const url = String(input);
+      if (url.includes('listRecords') && url.includes('app.standard-reader.collection')) {
+        if (collections.fails) return new Response('nope', { status: 503 });
+        return new Response(
+          JSON.stringify({
+            records: (collections.rkeys ?? []).map((rkey) => ({
+              uri: `at://${AUTHOR}/app.standard-reader.collection/${rkey}`,
+              value: { document: `at://${AUTHOR}/site.standard.document/${rkey}`, items: [] },
+            })),
+          })
+        );
+      }
       if (url.includes('plc.directory')) {
         return new Response(
           JSON.stringify({
@@ -426,6 +448,47 @@ describe('backfill and reconcile', () => {
     expect(author?.error_count).toBe(1);
   });
 
+  it('prunes a curated edition the author deleted', async () => {
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO collections_v2 (author_did, rkey, record_json, indexed_at) VALUES (?, 'keep', '{}', ?)`
+      ).bind(AUTHOR, Date.now()),
+      env.DB.prepare(
+        `INSERT INTO collections_v2 (author_did, rkey, record_json, indexed_at) VALUES (?, 'gone', '{}', ?)`
+      ).bind(AUTHOR, Date.now()),
+    ]);
+
+    mockPds([{ rkey: 'one', cid: 'cid1', title: 'One' }], { rkeys: ['keep'] });
+    await backfillAuthorDocuments(env, AUTHOR);
+
+    const rows = await env.DB.prepare(
+      'SELECT rkey FROM collections_v2 WHERE author_did = ? ORDER BY rkey'
+    )
+      .bind(AUTHOR)
+      .all<{ rkey: string }>();
+    expect(rows.results?.map((r) => r.rkey)).toEqual(['keep']);
+  });
+
+  // An empty map from a failed fetch and an empty map from an author with no
+  // editions look identical; pruning against the first would delete every curated
+  // edition we hold on one blip.
+  it('leaves stored editions alone when the collection listing fails', async () => {
+    await env.DB.prepare(
+      `INSERT INTO collections_v2 (author_did, rkey, record_json, indexed_at) VALUES (?, 'keep', '{}', ?)`
+    )
+      .bind(AUTHOR, Date.now())
+      .run();
+
+    mockPds([{ rkey: 'one', cid: 'cid1', title: 'One' }], { fails: true });
+    const result = await backfillAuthorDocuments(env, AUTHOR);
+    expect(result.ok).toBe(true);
+
+    const row = await env.DB.prepare('SELECT rkey FROM collections_v2 WHERE author_did = ?')
+      .bind(AUTHOR)
+      .first();
+    expect(row).not.toBeNull();
+  });
+
   it('picks never-listed subscribed authors first and re-lists them', async () => {
     await seedReader();
     await env.DB.prepare(
@@ -442,6 +505,121 @@ describe('backfill and reconcile', () => {
     expect(results.map((r) => r.ok)).toEqual([true]);
     // Freshly listed: it drops out of the stale set until the reconcile interval.
     expect(await staleDocumentAuthors(env, 5)).toEqual([]);
+  });
+
+  // The reconcile is the only self-heal in this design. An author who can never be
+  // listed — deleted account, dead PDS — used to sort first on every run forever
+  // (their `last_listed_at` stays NULL), so a handful of them starved it silently.
+  it('yields the reconcile slot after a failed list instead of monopolising it', async () => {
+    await seedReader();
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO subscriptions_cache (user_did, record_uri, feed_url, source_type, subject_did, created_at)
+         VALUES (?, ?, ?, 'atproto.documents', ?, unixepoch())`
+      ).bind(READER, 'at://reader/app.skyreader.feed.subscription/1', PUBLICATION, AUTHOR),
+      env.DB.prepare(
+        `INSERT INTO subscriptions_cache (user_did, record_uri, feed_url, source_type, subject_did, created_at)
+         VALUES (?, ?, ?, 'atproto.documents', ?, unixepoch())`
+      ).bind(READER, 'at://reader/app.skyreader.feed.subscription/2', OTHER_PUBLICATION, OTHER),
+    ]);
+
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('gone', { status: 404 }));
+    expect((await backfillAuthorDocuments(env, AUTHOR)).ok).toBe(false);
+
+    // Inside its backoff the dead author is out of the queue, so the other one —
+    // which the old ordering could never reach — gets the slot.
+    expect(await staleDocumentAuthors(env, 5)).toEqual([OTHER]);
+
+    // Held off, not abandoned: it is retried once the backoff expires.
+    const later = Date.now() + authorRetryBackoffMs(1) + 1_000;
+    expect(await staleDocumentAuthors(env, 5, later)).toContain(AUTHOR);
+  });
+
+  it('backs off further with each consecutive failure', () => {
+    expect(authorRetryBackoffMs(1)).toBe(AUTHOR_RETRY_BASE_MS);
+    expect(authorRetryBackoffMs(3)).toBe(AUTHOR_RETRY_BASE_MS * 4);
+    expect(authorRetryBackoffMs(50)).toBe(AUTHOR_RETRY_MAX_MS);
+  });
+
+  // Every path that creates an atproto.documents subscription funnels through
+  // this, and the same author subscribed by ten readers must cost one walk.
+  it('skips a backfill for an author listed recently', async () => {
+    mockPds([{ rkey: 'one', cid: 'cid1', title: 'One' }]);
+    expect((await ensureAuthorDocuments(env, AUTHOR))?.ok).toBe(true);
+    const callsAfterFirst = vi.mocked(globalThis.fetch).mock.calls.length;
+
+    expect(await ensureAuthorDocuments(env, AUTHOR)).toBeNull();
+    expect(vi.mocked(globalThis.fetch).mock.calls.length).toBe(callsAfterFirst);
+
+    // Past the freshness window it lists again — this is also the reconcile's path.
+    const later = Date.now() + BACKFILL_FRESHNESS_MS + 1_000;
+    expect((await ensureAuthorDocuments(env, AUTHOR, later))?.ok).toBe(true);
+    expect(vi.mocked(globalThis.fetch).mock.calls.length).toBeGreaterThan(callsAfterFirst);
+  });
+
+  it('does not retry an author inside their failure backoff', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('gone', { status: 404 }));
+    expect((await ensureAuthorDocuments(env, AUTHOR))?.ok).toBe(false);
+    const calls = vi.mocked(globalThis.fetch).mock.calls.length;
+
+    expect(await ensureAuthorDocuments(env, AUTHOR)).toBeNull();
+    expect(vi.mocked(globalThis.fetch).mock.calls.length).toBe(calls);
+  });
+});
+
+describe('walking the subscribed-author set', () => {
+  const AUTHOR_A = 'did:plc:aaaaaaaaaaaaaaaa';
+  const AUTHOR_B = 'did:plc:bbbbbbbbbbbbbbbb';
+  const AUTHOR_C = 'did:plc:cccccccccccccccc';
+
+  beforeEach(async () => {
+    await cleanup();
+    await seedReader();
+    await env.DB.batch(
+      [AUTHOR_A, AUTHOR_B, AUTHOR_C].map((did, i) =>
+        env.DB.prepare(
+          `INSERT INTO subscriptions_cache (user_did, record_uri, feed_url, source_type, subject_did, created_at)
+           VALUES (?, ?, ?, 'atproto.documents', ?, unixepoch())`
+        ).bind(
+          READER,
+          `at://reader/app.skyreader.feed.subscription/${i}`,
+          `at://${did}/site.standard.publication/pub`,
+          did
+        )
+      )
+    );
+  });
+
+  afterEach(cleanup);
+
+  // The shadow-compare is the gate on the read cutover, so it has to be able to
+  // reach author 26 — comparing the same first page repeatedly says nothing about
+  // the rest of the set.
+  it('pages the whole set and reports what is left behind each page', async () => {
+    const first = await subscribedDocumentAuthorPage(env, { limit: 2 });
+    expect(first.dids).toEqual([AUTHOR_A, AUTHOR_B]);
+    expect(first.cursor).toBe(AUTHOR_B);
+    expect(first.remaining).toBe(1);
+
+    const second = await subscribedDocumentAuthorPage(env, { limit: 2, after: first.cursor! });
+    expect(second.dids).toEqual([AUTHOR_C]);
+    expect(second.cursor).toBeNull();
+    expect(second.remaining).toBe(0);
+  });
+
+  it('walks past a malformed DID rather than stalling on it', async () => {
+    await env.DB.prepare(
+      `INSERT INTO subscriptions_cache (user_did, record_uri, feed_url, source_type, subject_did, created_at)
+       VALUES (?, ?, ?, 'atproto.documents', 'did:', unixepoch())`
+    )
+      .bind(READER, 'at://reader/app.skyreader.feed.subscription/junk', 'at://junk/pub')
+      .run();
+
+    const first = await subscribedDocumentAuthorPage(env, { limit: 1 });
+    expect(first.dids).toEqual([]); // 'did:' sorts first and is dropped…
+    expect(first.cursor).toBe('did:'); // …but the cursor still moves past it.
+    const second = await subscribedDocumentAuthorPage(env, { limit: 10, after: first.cursor! });
+    expect(second.dids).toEqual([AUTHOR_A, AUTHOR_B, AUTHOR_C]);
   });
 });
 
@@ -536,6 +714,66 @@ describe('serveDocumentScope', () => {
     expect(entry.status).toBe('error');
     expect(entry.error).toBe('Invalid DID');
   });
+
+  // `complete` says "an absent record is deleted, not merely evicted". The flag on
+  // the author row was set at the last successful list and the poller keeps writing
+  // afterwards, so an author listed under the cap who has since published past it
+  // would otherwise claim completeness while eviction drops their oldest.
+  it('reports complete from the stored row count, not the last list alone', async () => {
+    await ingest();
+    expect((await serveDocumentScope(env, { did: AUTHOR }, { remaining: 0 })).complete).toBe(true);
+
+    const filler = [];
+    for (let i = 0; i < MAX_DOCUMENTS_PER_AUTHOR; i++) {
+      filler.push(
+        env.DB.prepare(
+          `INSERT INTO documents_v2 (record_uri, author_did, rkey, record_cid, site_uri, published_at, canonical_url, record_json, indexed_at)
+           VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)`
+        ).bind(
+          `at://${AUTHOR}/site.standard.document/fill${i}`,
+          AUTHOR,
+          `fill${i}`,
+          `cid-fill${i}`,
+          PUBLICATION,
+          Date.now() - i,
+          JSON.stringify({ title: `Fill ${i}`, site: PUBLICATION }),
+          Date.now()
+        )
+      );
+    }
+    await env.DB.batch(filler);
+
+    const atCap = await serveDocumentScope(env, { did: AUTHOR }, { remaining: 0 });
+    expect(atCap.status).toBe('ready');
+    expect(atCap.complete).toBe(false);
+  });
+
+  // The row's stored URL is the durable one. A publication `getRecord` blip writes
+  // a five-minute negative cache entry; without the fallback every document of that
+  // publication serves a bare relative path for the duration.
+  it('falls back to the stored canonical URL while the publication will not resolve', async () => {
+    await ingest();
+    await env.DB.prepare(
+      'UPDATE publications_cache_v2 SET base_url = NULL, cached_at = ? WHERE publication_uri = ?'
+    )
+      .bind(Date.now(), PUBLICATION)
+      .run();
+
+    const entry = await serveDocumentScope(
+      env,
+      { did: AUTHOR, siteUri: PUBLICATION },
+      {
+        remaining: 0,
+      }
+    );
+    expect(entry.documents?.map((d) => d.canonicalUrl)).toEqual([
+      'https://ex.com/b',
+      'https://ex.com/a',
+    ]);
+
+    const single = await serveSingleDocument(env, `at://${AUTHOR}/site.standard.document/a`);
+    expect(single?.canonicalUrl).toBe('https://ex.com/a');
+  });
 });
 
 describe('the read rollout gate', () => {
@@ -556,6 +794,17 @@ describe('the read rollout gate', () => {
       body: JSON.stringify(body),
     });
   }
+
+  // The cap is sized from burst shape, but it also has to fit the Worker's
+  // per-invocation subrequest budget — an override typed past that would make the
+  // drain fail quietly, dropping the events the cap exists to protect.
+  it('clamps an apply-cap override to the subrequest budget', async () => {
+    await setDocumentFlag(env, DOCUMENTS_APPLY_CAP_KEY, '5000');
+    expect((await readDocumentFlags(env)).applyCap).toBe(MAX_DOCUMENT_APPLY_CAP);
+
+    await setDocumentFlag(env, DOCUMENTS_APPLY_CAP_KEY, '120');
+    expect((await readDocumentFlags(env)).applyCap).toBe(120);
+  });
 
   it('defaults to the proxy and switches to D1 on the flag', async () => {
     expect((await readDocumentFlags(env)).serveFromD1).toBe(false);
