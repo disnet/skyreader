@@ -8,7 +8,7 @@ export const userMetrics: MetricDefinition[] = [
       const r = await db
         .prepare('SELECT COUNT(*) as count FROM users WHERE registered_at IS NOT NULL')
         .first<{ count: number }>();
-      const cap = 500;
+      const cap = 2000;
       const count = r?.count ?? 0;
       const pct = (count / cap) * 100;
       return {
