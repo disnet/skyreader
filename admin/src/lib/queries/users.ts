@@ -55,7 +55,7 @@ export async function getUser(db: D1Database, did: string): Promise<UserRow | nu
   return db
     .prepare(
       `SELECT did, handle, display_name, avatar_url, pds_url,
-				last_active_at, registered_at, created_at, tier
+				last_active_at, registered_at, created_at, tier, tier_source, granted_tier
 			FROM users WHERE did = ?`
     )
     .bind(did)
@@ -70,9 +70,15 @@ export async function updateUserTier(db: D1Database, did: string, tier: string):
   }
   // tier_source 'admin' shields the row from Polar webhook downgrades (a real
   // payment still upgrades it unconditionally) — see backend migration 0073.
+  //
+  // granted_tier records the same grant as an entitlement the user keeps for
+  // free (migration 0075): if they later start paying through Polar and then
+  // cancel, the webhook downgrade lands them back here instead of on free.
+  // Setting someone to 'free' is a revocation, so it clears the grant.
+  const grantedTier = tier === 'free' ? null : tier;
   await db
-    .prepare("UPDATE users SET tier = ?, tier_source = 'admin' WHERE did = ?")
-    .bind(tier, did)
+    .prepare("UPDATE users SET tier = ?, tier_source = 'admin', granted_tier = ? WHERE did = ?")
+    .bind(tier, grantedTier, did)
     .run();
 }
 

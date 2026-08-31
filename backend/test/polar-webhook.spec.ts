@@ -34,12 +34,22 @@ const marketingRow = () =>
     .bind(DID)
     .first<{ marketing_email: string | null; marketing_email_consent_at: number | null }>();
 
-const seedUser = (tier = 'free', tierSource: string | null = null) =>
+const seedUser = (
+  tier = 'free',
+  tierSource: string | null = null,
+  grantedTier: string | null = null
+) =>
   env.DB.prepare(
-    `INSERT INTO users (did, handle, pds_url, tier, tier_source, created_at) VALUES (?, 'polar.test', 'https://pds.test', ?, ?, unixepoch())`
+    `INSERT INTO users (did, handle, pds_url, tier, tier_source, granted_tier, created_at) VALUES (?, 'polar.test', 'https://pds.test', ?, ?, ?, unixepoch())`
   )
-    .bind(DID, tier, tierSource)
+    .bind(DID, tier, tierSource, grantedTier)
     .run();
+
+const grantedTier = () =>
+  env.DB.prepare('SELECT granted_tier FROM users WHERE did = ?')
+    .bind(DID)
+    .first<{ granted_tier: string | null }>()
+    .then((row) => row?.granted_tier ?? null);
 
 // Wire-format (snake_case) fixtures, shaped like real Polar deliveries — the
 // handler reads this JSON directly (runtime-guarded), so the fixtures stay in
@@ -303,6 +313,27 @@ describe('POST /api/webhook/polar', () => {
       expect(row?.polar_customer_id).toBe(CUSTOMER_ID);
     }
   );
+
+  // An early supporter was given the tier for good. Choosing to pay for a
+  // while, then cancelling, must land them back on that grant.
+  it('an empty customer state returns a granted supporter to their grant, not to free', async () => {
+    await seedUser('supporter', 'polar_subscription', 'supporter');
+    const response = await signedPost(customerState());
+    expect(response.status).toBe(200);
+    const row = await userRow();
+    expect(row?.tier).toBe('supporter');
+    // Back to the source the grant had before the subscription overwrote it,
+    // which also shields the row from the next empty state.
+    expect(row?.tier_source).toBe('admin');
+    expect(row?.polar_customer_id).toBe(CUSTOMER_ID);
+  });
+
+  it('paying keeps the grant intact underneath', async () => {
+    await seedUser('supporter', 'admin', 'supporter');
+    await signedPost(customerState(DID, [wireSubscription()]));
+    expect((await userRow())?.tier_source).toBe('polar_subscription');
+    expect(await grantedTier()).toBe('supporter');
+  });
 
   it('a subscribed-but-unhandled event type acks 200 without touching tiers', async () => {
     await seedUser('free');

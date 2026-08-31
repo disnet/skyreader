@@ -8,9 +8,16 @@
   import { api, type BillingProduct } from '$lib/services/api';
   import StaticPageChrome from '$lib/components/feed/StaticPageChrome.svelte';
   import { countUrlSavesThisMonth } from '$lib/utils/usage';
+  import { isPaidTier, isGrantedSupporter, hasGrantFallback } from '$lib/utils/tier';
   import Icon from '$lib/components/Icon.svelte';
 
-  let isSupporter = $derived(auth.user?.tier === 'supporter');
+  // Three states, not two. A paid supporter has a Polar customer and a billing
+  // portal; a granted supporter (everyone who was given the tier before paid
+  // plans existed) has neither, keeps their access for good, and is offered a
+  // paid plan only as something optional.
+  let isPaidSupporter = $derived(isPaidTier(auth.user));
+  let grantedSupporter = $derived(isGrantedSupporter(auth.user));
+  let keepsGrantIfCancelled = $derived(hasGrantFallback(auth.user));
 
   // Plans mirrored from the Polar dashboard. The flow never depends on this
   // fetch: 'failed' falls back to a plain button that uses the backend's
@@ -21,7 +28,9 @@
   let upgradeError = $state<string | null>(null);
 
   async function loadProducts() {
-    if (!syncStore.isOnline || auth.user?.tier === 'supporter') return;
+    // Granted supporters still need plans: paying is offered to them as an
+    // option. Only someone already on a paid plan has nothing to buy here.
+    if (!syncStore.isOnline || isPaidSupporter) return;
     try {
       const { products: loaded } = await api.getBillingProducts();
       products = loaded;
@@ -37,6 +46,7 @@
   async function handleUpgrade(productId?: string) {
     upgradeError = null;
     upgradeLoading = true;
+    checkoutStarted = true;
     try {
       const { url } = await api.createCheckout(productId);
       window.location.href = url;
@@ -145,19 +155,25 @@
   // isSupporter branch take over.
   let confirming = $state(false);
 
+  // Waits for the paid source, not just the tier: a granted supporter who
+  // chooses to start paying is already tier 'supporter', so only tier_source
+  // flipping to a Polar one actually confirms their checkout.
   async function confirmPurchase() {
     confirming = true;
-    for (let i = 0; i < 15 && auth.user?.tier !== 'supporter'; i++) {
+    for (let i = 0; i < 15 && !isPaidTier(auth.user); i++) {
       await new Promise((resolve) => setTimeout(resolve, 2000));
       await auth.verifySession();
     }
     // Webhook still hasn't landed after ~30s: fall back to the pitch page,
     // but say why, so a paid-up reader isn't staring at a buy button.
-    confirmSlow = auth.user?.tier !== 'supporter';
+    confirmSlow = !isPaidTier(auth.user);
     confirming = false;
   }
 
   let confirmSlow = $state(false);
+  // Set once checkout is opened, so the focus refresh below only chases a
+  // purchase that's actually in flight.
+  let checkoutStarted = $state(false);
 
   onMount(async () => {
     if (!auth.isAuthenticated) {
@@ -167,7 +183,7 @@
     if (new URL(window.location.href).searchParams.get('checkout') === 'success') {
       // Strip the param so a reload or bookmark doesn't re-enter confirming.
       window.history.replaceState(window.history.state, '', '/supporter');
-      if (auth.user?.tier !== 'supporter') void confirmPurchase();
+      if (!isPaidTier(auth.user)) void confirmPurchase();
     }
     // Refresh tier from the server; non-blocking, offline is a no-op.
     void auth.verifySession();
@@ -207,7 +223,10 @@ directly, no concept tournament.
      the window regains focus and it hasn't flipped yet. -->
 <svelte:window
   onfocus={() => {
-    if (auth.user && auth.user.tier !== 'supporter') void auth.verifySession();
+    // A free reader's tier can flip at any time; a granted supporter's only
+    // moves if they opened checkout, so don't poll the ones who never did.
+    if (!auth.user || isPaidSupporter) return;
+    if (checkoutStarted || auth.user.tier !== 'supporter') void auth.verifySession();
   }}
   onpageshow={(e) => {
     // Backing out of Polar's checkout restores this page from the bfcache with
@@ -224,9 +243,168 @@ directly, no concept tournament.
 
 <StaticPageChrome title="Supporter" />
 
+{#snippet benefitsLedger()}
+  <ul class="benefits">
+    <li class="benefit">
+      <span class="benefit-figure">1,000 active feeds</span>
+      <span class="benefit-desc">Follow widely without rationing slots.</span>
+    </li>
+    <li class="benefit">
+      <span class="benefit-figure">1,000 saves a month</span>
+      <span class="benefit-desc">Save from the web, your phone, or the extension.</span>
+    </li>
+    <li class="benefit">
+      <span class="benefit-figure">5,000 mirrored subscriptions</span>
+      <span class="benefit-desc">Headroom for everything Atmospheric sync brings along.</span>
+    </li>
+  </ul>
+{/snippet}
+
+{#snippet planOptions(ctaLabel: string, showFeatures: boolean)}
+  <section class="checkout">
+    <div class="plan-card">
+      <div class="plan-card-top">
+        <span class="plan-card-name">Supporter</span>
+        {#if productsState === 'loaded'}
+          <div class="plan-toggle" role="group" aria-label="Billing cadence">
+            <button
+              class="plan-toggle-option"
+              class:selected={billingInterval === 'year'}
+              aria-pressed={billingInterval === 'year'}
+              onclick={() => (billingInterval = 'year')}
+            >
+              Yearly
+            </button>
+            <button
+              class="plan-toggle-option"
+              class:selected={billingInterval === 'month'}
+              aria-pressed={billingInterval === 'month'}
+              onclick={() => (billingInterval = 'month')}
+            >
+              Monthly
+            </button>
+          </div>
+        {/if}
+      </div>
+
+      {#if selectedProduct}
+        <div class="plan-card-price-row">
+          <span class="plan-card-price">
+            {monthlyPrice(selectedProduct)}<span class="plan-card-per">/month</span>
+          </span>
+          <span class="plan-card-billing">
+            {#if billingInterval === 'year' && yearlyCompareAt}
+              <!-- The spoken version of the strike lives in the note below,
+                       so screen readers hear "normally $120 a year" in words. -->
+              <s class="plan-card-compare" aria-hidden="true"
+                >{formatCents(yearlyCompareAt.priceAmount, yearlyCompareAt.priceCurrency)}</s
+              >
+            {/if}
+            {billingLine(selectedProduct)}
+          </span>
+        </div>
+        {#if billingInterval === 'year' && yearlyCompareAt}
+          <p class="plan-card-savings">
+            Founding supporter price, normally {formatCents(
+              yearlyCompareAt.priceAmount,
+              yearlyCompareAt.priceCurrency
+            )} a year. Thank you for being early.
+          </p>
+        {:else if annualSavings}
+          <p class="plan-card-savings">{annualSavings} with annual billing</p>
+        {/if}
+      {:else if productsState === 'loading'}
+        <p class="plan-card-loading">Loading plans…</p>
+      {/if}
+
+      {#if showFeatures}
+        <ul class="plan-features">
+          <li>
+            <span class="feature-check"><Icon name="check" size={16} strokeWidth={2.5} /></span>
+            <span class="feature-text">
+              1,000 active feeds
+              <span class="feature-sub"
+                >up from 100{feedsInUse > 0 ? `, ${feedsInUse} in use today` : ''}</span
+              >
+            </span>
+          </li>
+          <li>
+            <span class="feature-check"><Icon name="check" size={16} strokeWidth={2.5} /></span>
+            <span class="feature-text">
+              1,000 saves a month
+              <span class="feature-sub"
+                >up from 100{hasSavesData ? `, ${savesThisMonth} saved this month` : ''}</span
+              >
+            </span>
+          </li>
+          <li>
+            <span class="feature-check"><Icon name="check" size={16} strokeWidth={2.5} /></span>
+            <span class="feature-text">
+              5,000 mirrored subscriptions
+              <span class="feature-sub">headroom for everything Atmospheric sync brings</span>
+            </span>
+          </li>
+          <li>
+            <span class="feature-check"><Icon name="check" size={16} strokeWidth={2.5} /></span>
+            <span class="feature-text">
+              An independent, ad-free Skyreader
+              <span class="feature-sub">your support keeps it calm, fast, and sustainable</span>
+            </span>
+          </li>
+        </ul>
+      {/if}
+
+      <button
+        class="btn btn-primary plan-card-cta"
+        onclick={() => handleUpgrade(selectedProduct?.id)}
+        disabled={upgradeLoading || !syncStore.isOnline || productsState === 'loading'}
+      >
+        {upgradeLoading ? 'Opening checkout…' : ctaLabel}
+      </button>
+      {#if !syncStore.isOnline}
+        <p class="offline-note">You're offline. Becoming a Supporter needs a connection.</p>
+      {/if}
+      {#if upgradeError}
+        <p class="checkout-error">{upgradeError}</p>
+      {/if}
+    </div>
+
+    <!-- Believer: a ruled patronage row in the ledger's voice, deliberately
+             not a second card so the page never becomes a tier grid. -->
+    {#if believerProduct}
+      <div class="believer">
+        <div class="believer-top">
+          <span class="believer-name">Believer</span>
+          <span class="believer-price">
+            {formatCents(believerProduct.priceAmount, believerProduct.priceCurrency)}<span
+              class="believer-per">/year</span
+            >
+          </span>
+        </div>
+        <p class="believer-desc">
+          Fund the future of reading on the Atmosphere. Everything in Supporter plus early access to
+          new features.
+        </p>
+        <button
+          class="btn btn-secondary believer-cta"
+          onclick={() => handleUpgrade(believerProduct.id)}
+          disabled={upgradeLoading || !syncStore.isOnline}
+        >
+          Become a Believer
+        </button>
+      </div>
+    {/if}
+    <p class="fine-print">
+      Checkout is handled by <a href="https://polar.sh" target="_blank" rel="noopener noreferrer"
+        >Polar</a
+      >.
+    </p>
+  </section>
+{/snippet}
+
 {#if auth.user}
   <div class="supporter-page">
-    {#if isSupporter}
+    {#if isPaidSupporter}
       <header class="page-header">
         <h1>You're a Supporter</h1>
         <p class="lede">
@@ -235,20 +413,7 @@ directly, no concept tournament.
         </p>
       </header>
 
-      <ul class="benefits">
-        <li class="benefit">
-          <span class="benefit-figure">1,000 active feeds</span>
-          <span class="benefit-desc">Follow widely without rationing slots.</span>
-        </li>
-        <li class="benefit">
-          <span class="benefit-figure">1,000 saves a month</span>
-          <span class="benefit-desc">Save from the web, your phone, or the extension.</span>
-        </li>
-        <li class="benefit">
-          <span class="benefit-figure">5,000 mirrored subscriptions</span>
-          <span class="benefit-desc">Headroom for everything Atmospheric sync brings along.</span>
-        </li>
-      </ul>
+      {@render benefitsLedger()}
 
       <button
         class="btn btn-secondary manage-billing"
@@ -261,6 +426,13 @@ directly, no concept tournament.
         <p class="checkout-error">{portalError}</p>
       {/if}
 
+      {#if keepsGrantIfCancelled}
+        <p class="fine-print">
+          You had Supporter access before Skyreader had paid plans, and that still stands: if you
+          ever cancel, your account goes back to the access you were given, not to the free tier.
+        </p>
+      {/if}
+
       <p class="fine-print">
         Your usage lives in <a href="/settings">Settings</a>. Manage billing opens your Polar
         portal, where you can change plans or cancel anytime. Questions? Email support at
@@ -271,6 +443,41 @@ directly, no concept tournament.
         <h1>Thank you</h1>
         <p class="lede">Payment received. Confirming your purchase…</p>
       </header>
+    {:else if grantedSupporter}
+      <!-- Supporter access given by hand, before Skyreader charged for
+           anything. This branch never sells: it confirms the access is theirs
+           to keep, and only then mentions that paying is possible. -->
+      <header class="page-header">
+        <h1>You're a Supporter</h1>
+        <p class="lede">
+          You've had Supporter access since before Skyreader had paid plans. It stays yours, at no
+          charge, for as long as Skyreader runs. Thank you for backing this early.
+        </p>
+      </header>
+
+      {@render benefitsLedger()}
+
+      {#if confirmSlow}
+        <p class="fine-print confirm-slow">
+          Your payment went through, but confirmation is taking longer than usual. This page updates
+          on its own once it lands; your receipt email has the details.
+        </p>
+      {/if}
+
+      <section class="optional-paid">
+        <h2 class="optional-heading">Paying is optional</h2>
+        <p class="optional-intro">
+          Nothing changes if you leave things as they are. If you'd rather chip in, a paid plan
+          helps keep Skyreader independent, and your Supporter access is still here if you ever stop
+          paying.
+        </p>
+        {@render planOptions('Start a paid plan', false)}
+      </section>
+
+      <p class="fine-print">
+        Your usage lives in <a href="/settings">Settings</a>. Questions? Email support at
+        <a href="mailto:support@skyreader.app">support@skyreader.app</a>.
+      </p>
     {:else}
       <header class="page-header">
         <h1>Support Skyreader</h1>
@@ -290,145 +497,7 @@ directly, no concept tournament.
         </p>
       {/if}
 
-      <section class="checkout">
-        <div class="plan-card">
-          <div class="plan-card-top">
-            <span class="plan-card-name">Supporter</span>
-            {#if productsState === 'loaded'}
-              <div class="plan-toggle" role="group" aria-label="Billing cadence">
-                <button
-                  class="plan-toggle-option"
-                  class:selected={billingInterval === 'year'}
-                  aria-pressed={billingInterval === 'year'}
-                  onclick={() => (billingInterval = 'year')}
-                >
-                  Yearly
-                </button>
-                <button
-                  class="plan-toggle-option"
-                  class:selected={billingInterval === 'month'}
-                  aria-pressed={billingInterval === 'month'}
-                  onclick={() => (billingInterval = 'month')}
-                >
-                  Monthly
-                </button>
-              </div>
-            {/if}
-          </div>
-
-          {#if selectedProduct}
-            <div class="plan-card-price-row">
-              <span class="plan-card-price">
-                {monthlyPrice(selectedProduct)}<span class="plan-card-per">/month</span>
-              </span>
-              <span class="plan-card-billing">
-                {#if billingInterval === 'year' && yearlyCompareAt}
-                  <!-- The spoken version of the strike lives in the note below,
-                       so screen readers hear "normally $120 a year" in words. -->
-                  <s class="plan-card-compare" aria-hidden="true"
-                    >{formatCents(yearlyCompareAt.priceAmount, yearlyCompareAt.priceCurrency)}</s
-                  >
-                {/if}
-                {billingLine(selectedProduct)}
-              </span>
-            </div>
-            {#if billingInterval === 'year' && yearlyCompareAt}
-              <p class="plan-card-savings">
-                Founding supporter price, normally {formatCents(
-                  yearlyCompareAt.priceAmount,
-                  yearlyCompareAt.priceCurrency
-                )} a year. Thank you for being early.
-              </p>
-            {:else if annualSavings}
-              <p class="plan-card-savings">{annualSavings} with annual billing</p>
-            {/if}
-          {:else if productsState === 'loading'}
-            <p class="plan-card-loading">Loading plans…</p>
-          {/if}
-
-          <ul class="plan-features">
-            <li>
-              <span class="feature-check"><Icon name="check" size={16} strokeWidth={2.5} /></span>
-              <span class="feature-text">
-                1,000 active feeds
-                <span class="feature-sub"
-                  >up from 100{feedsInUse > 0 ? `, ${feedsInUse} in use today` : ''}</span
-                >
-              </span>
-            </li>
-            <li>
-              <span class="feature-check"><Icon name="check" size={16} strokeWidth={2.5} /></span>
-              <span class="feature-text">
-                1,000 saves a month
-                <span class="feature-sub"
-                  >up from 100{hasSavesData ? `, ${savesThisMonth} saved this month` : ''}</span
-                >
-              </span>
-            </li>
-            <li>
-              <span class="feature-check"><Icon name="check" size={16} strokeWidth={2.5} /></span>
-              <span class="feature-text">
-                5,000 mirrored subscriptions
-                <span class="feature-sub">headroom for everything Atmospheric sync brings</span>
-              </span>
-            </li>
-            <li>
-              <span class="feature-check"><Icon name="check" size={16} strokeWidth={2.5} /></span>
-              <span class="feature-text">
-                An independent, ad-free Skyreader
-                <span class="feature-sub">your support keeps it calm, fast, and sustainable</span>
-              </span>
-            </li>
-          </ul>
-
-          <button
-            class="btn btn-primary plan-card-cta"
-            onclick={() => handleUpgrade(selectedProduct?.id)}
-            disabled={upgradeLoading || !syncStore.isOnline || productsState === 'loading'}
-          >
-            {upgradeLoading ? 'Opening checkout…' : 'Become a Supporter'}
-          </button>
-          {#if !syncStore.isOnline}
-            <p class="offline-note">You're offline. Becoming a Supporter needs a connection.</p>
-          {/if}
-          {#if upgradeError}
-            <p class="checkout-error">{upgradeError}</p>
-          {/if}
-        </div>
-
-        <!-- Believer: a ruled patronage row in the ledger's voice, deliberately
-             not a second card so the page never becomes a tier grid. -->
-        {#if believerProduct}
-          <div class="believer">
-            <div class="believer-top">
-              <span class="believer-name">Believer</span>
-              <span class="believer-price">
-                {formatCents(believerProduct.priceAmount, believerProduct.priceCurrency)}<span
-                  class="believer-per">/year</span
-                >
-              </span>
-            </div>
-            <p class="believer-desc">
-              Fund the future of reading on the Atmosphere. Everything in Supporter plus early
-              access to new features.
-            </p>
-            <button
-              class="btn btn-secondary believer-cta"
-              onclick={() => handleUpgrade(believerProduct.id)}
-              disabled={upgradeLoading || !syncStore.isOnline}
-            >
-              Become a Believer
-            </button>
-          </div>
-        {/if}
-        <p class="fine-print">
-          Checkout is handled by <a
-            href="https://polar.sh"
-            target="_blank"
-            rel="noopener noreferrer">Polar</a
-          >.
-        </p>
-      </section>
+      {@render planOptions('Become a Supporter', true)}
     {/if}
   </div>
 {/if}
@@ -504,6 +573,29 @@ directly, no concept tournament.
     line-height: var(--leading-normal);
     color: var(--color-text-secondary);
     max-width: 60ch;
+  }
+
+  /* The optional paid block on a granted supporter's page: ruled off from the
+     thank-you above it so it reads as an aside, never as the main event. */
+  .optional-paid {
+    margin-top: 0.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--color-border);
+  }
+
+  .optional-heading {
+    font-size: var(--text-lg);
+    font-weight: var(--weight-semibold);
+    letter-spacing: var(--tracking-tight);
+    margin: 0 0 0.375rem;
+  }
+
+  .optional-intro {
+    font-size: var(--text-md);
+    line-height: var(--leading-normal);
+    color: var(--color-text-secondary);
+    max-width: 60ch;
+    margin: 0 0 1.25rem;
   }
 
   /* The one plan card: flat per the system — 1px Divider border, Surface

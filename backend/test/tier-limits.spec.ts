@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:test';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { getLimitsForTier, isValidTier, ALL_TIERS } from '../src/config/tier-limits';
-import { getUserTier, getUserTierLimits } from '../src/services/user-tier';
+import { getUserTier, getUserTierInfo, getUserTierLimits } from '../src/services/user-tier';
 
 const TEST_DID = 'did:plc:tiertest123';
 
@@ -142,6 +142,48 @@ describe('User Tier Service', () => {
     it('returns free for a non-existent user', async () => {
       const tier = await getUserTier(env, 'did:plc:nonexistent');
       expect(tier).toBe('free');
+    });
+  });
+
+  describe('getUserTierInfo', () => {
+    it('reports the source and the grant behind a tier', async () => {
+      await env.DB.prepare(
+        `INSERT INTO users (did, handle, pds_url, tier, tier_source, granted_tier, created_at)
+         VALUES (?, ?, ?, 'supporter', 'polar_subscription', 'supporter', unixepoch())`
+      )
+        .bind(TEST_DID, 'test.bsky.social', 'https://test.pds.example')
+        .run();
+
+      expect(await getUserTierInfo(env, TEST_DID)).toEqual({
+        tier: 'supporter',
+        tierSource: 'polar_subscription',
+        grantedTier: 'supporter',
+      });
+    });
+
+    it('reads a pre-Polar supporter as a granted one', async () => {
+      // Migration 0075 backfilled granted_tier for these rows; tier_source
+      // stays NULL, which the client reads as "not paid for".
+      await env.DB.prepare(
+        `INSERT INTO users (did, handle, pds_url, tier, granted_tier, created_at)
+         VALUES (?, ?, ?, 'supporter', 'supporter', unixepoch())`
+      )
+        .bind(TEST_DID, 'test.bsky.social', 'https://test.pds.example')
+        .run();
+
+      expect(await getUserTierInfo(env, TEST_DID)).toEqual({
+        tier: 'supporter',
+        tierSource: null,
+        grantedTier: 'supporter',
+      });
+    });
+
+    it('returns the free defaults for a non-existent user', async () => {
+      expect(await getUserTierInfo(env, 'did:plc:nonexistent')).toEqual({
+        tier: 'free',
+        tierSource: null,
+        grantedTier: null,
+      });
     });
   });
 

@@ -6,6 +6,7 @@
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
   import { countUrlSavesThisMonth } from '$lib/utils/usage';
+  import { isGrantedSupporter } from '$lib/utils/tier';
   import {
     preferences,
     type ArticleFont,
@@ -179,6 +180,11 @@
       console.error('Failed to load billing subscription:', error);
     }
   }
+
+  // Supporter access given by hand (every pre-Polar supporter) has no billing
+  // to manage, so the plan card points at the Supporter page for the thank-you
+  // rather than for a portal that has no Polar customer behind it.
+  const grantedSupporter = $derived(isGrantedSupporter(auth.user));
 
   // A Believer subscription is still tier 'supporter' in D1; the Polar product
   // name is what distinguishes the badge.
@@ -651,6 +657,11 @@
           Supporters get 1,000 feeds, 1,000 saves a month, and keep Skyreader independent.
         </p>
         <a href="/supporter" class="btn btn-primary plan-upgrade-cta">Become a Supporter</a>
+      {:else if grantedSupporter}
+        <p class="plan-upgrade">
+          Supporter access is yours at no charge, as thanks for supporting Skyreader early. More on
+          the <a href="/supporter">Supporter page</a>.
+        </p>
       {:else}
         <!-- The billing portal itself is launched from /supporter, which owns
              the async Polar-session handler; this stays a plain link. -->

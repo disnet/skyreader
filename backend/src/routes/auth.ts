@@ -30,7 +30,7 @@ import {
   OFFPRINT_SCOPES,
   ALL_POSSIBLE_SCOPES,
 } from '../config/scopes';
-import { getUserTier } from '../services/user-tier';
+import { getUserTier, getUserTierInfo } from '../services/user-tier';
 import { writeUsageRecord } from '../services/at-intent-usage';
 import { getLimitsForTier } from '../config/tier-limits';
 import {
@@ -819,7 +819,10 @@ export async function handleAuthMe(request: Request, env: Env): Promise<Response
     });
   }
 
-  const tier = await getUserTier(env, session.did);
+  // tierSource/grantedTier let the client tell a paid plan from a hand-granted
+  // one: only a paid supporter has a Polar customer to send to the billing
+  // portal, and only a granted one is told their access is a keep-it thank-you.
+  const { tier, tierSource, grantedTier } = await getUserTierInfo(env, session.did);
   const limits = getLimitsForTier(tier);
 
   return new Response(
@@ -830,6 +833,8 @@ export async function handleAuthMe(request: Request, env: Env): Promise<Response
       avatarUrl: session.avatarUrl,
       pdsUrl: session.pdsUrl,
       tier,
+      tierSource,
+      grantedTier,
       limits,
     }),
     {

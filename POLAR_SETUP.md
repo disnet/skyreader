@@ -24,6 +24,16 @@ environment; there is no shared state between the two.
   `tier_source='polar_subscription'`. Admin-granted (`'admin'` via the admin
   app), one-time-purchase (`'polar_order'`), and legacy `NULL` supporters are
   never auto-downgraded. See `backend/migrations/0073_polar_billing.sql`.
+- Grandfathered supporters: `users.granted_tier`
+  (`backend/migrations/0075_granted_tier.sql`) records the tier a user keeps for
+  free no matter what Polar says. It was backfilled for every non-free tier that
+  Polar didn't pay for, the admin app keeps it in step with hand-set tiers, and
+  the empty-state downgrade lands on it instead of `'free'` — so an early
+  supporter who chooses to start paying and later cancels returns to their
+  grant. `/api/auth/me` ships `tierSource` + `grantedTier` so the client can
+  tell a paid plan from a grant: a granted supporter has no Polar customer (the
+  billing portal 404s for them), is told their access is theirs to keep, and is
+  offered a paid plan only as an explicit option.
 - There is no in-app billing management: **Polar hosts the customer portal and
   emails customers the link** — no app code needed. There's also no
   `success_url`; Polar shows its own confirmation, and the Settings page
@@ -92,8 +102,17 @@ Unset/empty = billing off: checkout answers 503, the webhook fails closed.
   env plumbing (staging vars duplicated — named envs inherit nothing)
 - `backend/test/polar-webhook.spec.ts`, `backend/test/polar-checkout.spec.ts`,
   `backend/test/helpers/polar-webhook.ts`
+- `backend/migrations/0075_granted_tier.sql` — `users.granted_tier`, the
+  free-forever floor behind an early supporter's tier
+- `backend/src/services/user-tier.ts` — `getUserTierInfo()` (tier + source +
+  grant), served by `/api/auth/me`
 - `admin/src/lib/queries/users.ts` — admin tier changes stamp
-  `tier_source='admin'`
+  `tier_source='admin'` and maintain `granted_tier`; the user detail page shows
+  both
+- `frontend/src/lib/utils/tier.ts` — paid vs granted, the one place that
+  distinction is defined for the UI
+- `frontend/src/routes/supporter/+page.svelte` — three states: paid (billing
+  portal), granted (thank-you plus an optional paid plan), free (the pitch)
 - `frontend/src/lib/services/api.ts` — `createCheckout()`
 - `frontend/src/routes/settings/+page.svelte` — Upgrade button on the Plan
   card; tier refresh on mount/focus
