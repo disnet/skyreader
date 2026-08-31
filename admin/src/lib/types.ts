@@ -22,6 +22,10 @@ export interface UserRow {
   created_at: number;
   subscription_count?: number;
   tier: string;
+  /** Who last set `tier`: 'admin', 'polar_order', 'polar_subscription', or null (legacy grant). */
+  tier_source?: string | null;
+  /** Tier the user keeps for free regardless of Polar (migration 0075). */
+  granted_tier?: string | null;
 }
 
 export interface FeedRow {

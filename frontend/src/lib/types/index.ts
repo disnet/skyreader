@@ -5,6 +5,14 @@ export interface User {
   avatarUrl?: string;
   pdsUrl: string;
   tier?: string;
+  /**
+   * Where `tier` came from. 'admin' and null are hand-granted (including every
+   * pre-Polar supporter); the 'polar_' sources are paid plans, and only those
+   * have a Polar customer behind them for the billing portal.
+   */
+  tierSource?: 'admin' | 'polar_order' | 'polar_subscription' | null;
+  /** Tier the user keeps at no charge, whatever happens to a paid plan. */
+  grantedTier?: string | null;
   limits?: {
     maxSubscriptions: number;
     /** Ceiling on total mirrored rows (active + parked); overflow stays on the PDS. */

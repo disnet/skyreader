@@ -8,7 +8,9 @@ import type { Env } from '../types';
  * tier_source semantics (migration 0073): upgrades are unconditional (a payment
  * beats any prior source), but downgrades only ever touch rows the subscription
  * path itself upgraded ('polar_subscription'). 'admin', 'polar_order', and NULL
- * (legacy/manual grants) are never auto-downgraded.
+ * (legacy/manual grants) are never auto-downgraded. Separately, users.granted_tier
+ * (migration 0075) is the tier a user keeps for free regardless of Polar; it is
+ * the floor a subscription downgrade lands on.
  */
 
 /** order.paid: one-time purchase. Returns false when no user row matched the DID. */
@@ -59,6 +61,13 @@ export async function recordMarketingConsent(env: Env, did: string, email: strin
  * customer.state_changed with no active subscriptions and no granted benefits.
  * Downgrades only rows the subscription path upgraded; still stamps the Polar
  * customer id on the row either way so the linkage survives.
+ *
+ * The landing tier is granted_tier, not 'free' (migration 0075): an early
+ * supporter whose tier was comped keeps it forever, so choosing to pay for a
+ * while and then cancelling must return them to the grant. Landing back on a
+ * grant also restores tier_source 'admin', which is what the grant was before
+ * the subscription overwrote it — and what shields the row from the next empty
+ * state.
  */
 export async function reconcileEmptyCustomerState(
   env: Env,
@@ -66,7 +75,11 @@ export async function reconcileEmptyCustomerState(
   polarCustomerId: string
 ): Promise<void> {
   await env.DB.prepare(
-    "UPDATE users SET tier = 'free', updated_at = unixepoch() WHERE did = ? AND tier_source = 'polar_subscription'"
+    `UPDATE users
+        SET tier = COALESCE(granted_tier, 'free'),
+            tier_source = CASE WHEN granted_tier IS NOT NULL THEN 'admin' ELSE tier_source END,
+            updated_at = unixepoch()
+      WHERE did = ? AND tier_source = 'polar_subscription'`
   )
     .bind(did)
     .run();

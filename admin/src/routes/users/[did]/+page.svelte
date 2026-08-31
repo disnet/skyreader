@@ -6,6 +6,18 @@
   let tierError = $state('');
   let tierSuccess = $state('');
   let currentTier = $state(data.user.tier ?? 'free');
+  // Where the tier came from, and whether the user holds a free-forever grant.
+  // Both move together when this page sets a tier, so they're local state too.
+  let currentSource = $state(data.user.tier_source ?? null);
+  let currentGrant = $state(data.user.granted_tier ?? null);
+
+  // 'admin' and a null source are both hand-granted; only Polar sources are paid.
+  const tierOrigin = $derived.by(() => {
+    if (currentTier === 'free') return 'free';
+    if (currentSource === 'polar_subscription') return 'paid (Polar subscription)';
+    if (currentSource === 'polar_order') return 'paid (Polar one-time)';
+    return currentSource === 'admin' ? 'granted (admin)' : 'granted (legacy)';
+  });
 
   function formatDate(ts: number | null): string {
     if (!ts) return '—';
@@ -36,6 +48,8 @@
         select.value = currentTier;
       } else {
         currentTier = newTier;
+        currentSource = 'admin';
+        currentGrant = newTier === 'free' ? null : newTier;
         tierSuccess = `Tier updated to ${newTier}`;
         setTimeout(() => {
           tierSuccess = '';
@@ -79,6 +93,10 @@
       <dd>{data.user.pds_url}</dd>
       <dt>Tier</dt>
       <dd>{currentTier}</dd>
+      <dt>Tier source</dt>
+      <dd>{tierOrigin}</dd>
+      <dt>Kept free</dt>
+      <dd>{currentGrant ?? '—'}</dd>
     </dl>
   </div>
   <div class="actions">
