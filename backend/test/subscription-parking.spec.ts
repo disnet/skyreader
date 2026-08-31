@@ -369,9 +369,10 @@ describe('Subscription parking', () => {
 
       expect(result.success).toBe(true);
       expect(await countWhere('')).toBe(1000); // hard ceiling, not 1003
-      const capWarning = result.warnings.find((w) => w.includes('mirror limit'));
+      const capWarning = result.limitNotices.find((n) => n.message.includes('mirror limit'));
       expect(capWarning).toBeDefined();
-      expect(capWarning).toContain('3 feeds');
+      expect(capWarning?.kind).toBe('mirror');
+      expect(capWarning?.message).toContain('3 feeds');
     });
   });
 

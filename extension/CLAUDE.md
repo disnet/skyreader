@@ -85,8 +85,10 @@ The popup mirrors the frontend's `AddFeedModal`:
    - standard.site: `{ rkey, feedUrl: publicationUri, sourceType: 'atproto.documents',
      subjectDid: did, siteUrl, customIconUrl }` — matching `addStandardSite`.
    The backend uses `INSERT OR REPLACE`, so re-subscribing is idempotent (no 409).
-   `403 subscription_limit_reached` → the row shows "Feed limit"; `401` → open the
-   web app to log in.
+   `403 subscription_limit_reached` → the row becomes a "Feed limit" button that
+   opens `/supporter` (the row's single click listener dispatches on
+   `btn.dataset.action`, so the button can change jobs without stacking a second
+   listener on top of the first); `401` → open the web app to log in.
 
 ## Already-saved / already-subscribed state
 

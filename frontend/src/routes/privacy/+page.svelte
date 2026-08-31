@@ -8,7 +8,7 @@
 
 <div class="privacy-page">
   <h1>Privacy Policy</h1>
-  <p class="last-updated">Last updated: July 2026</p>
+  <p class="last-updated">Last updated: August 2026</p>
 
   <section>
     <p class="lede">
@@ -54,6 +54,16 @@
       <li>
         <strong>Feed content.</strong> We fetch and cache the feeds and articles you subscribe to so they
         load quickly. This is public content from the sites you follow.
+      </li>
+      <li>
+        <strong>Billing, if you support Skyreader.</strong> Paid plans are handled by Polar, our merchant
+        of record. We store your plan and a reference to your Polar customer record. Your payment details
+        and billing address go to Polar; we never see your card number.
+      </li>
+      <li>
+        <strong>An email for product updates, only if you ask.</strong> Checkout includes an unticked
+        box offering occasional product updates by email. If you tick it, we store the email address you
+        gave Polar and the time you opted in. If you leave it unticked, we store no email address at all.
       </li>
     </ul>
     <p>
@@ -121,6 +131,12 @@
       <li><strong>Cloudflare</strong> hosts the app, API, and database.</li>
       <li><strong>Fly.io</strong> runs the proxy that fetches and caches feeds.</li>
       <li>
+        <strong>Polar</strong> processes payments as our merchant of record. When you start a
+        checkout, we send Polar your account identifier so the purchase can be linked back to your
+        account. Polar handles your payment details under its own
+        <a href="https://polar.sh/legal/privacy" target="_blank" rel="noopener">privacy policy</a>.
+      </li>
+      <li>
         <strong>Your PDS and Bluesky</strong> handle sign-in and, if you enable it, receive the data you
         choose to sync. Public social data may be read from the Bluesky firehose and related public directories.
       </li>
@@ -145,8 +161,10 @@
     <p>
       We keep your account data for as long as your account is active. Cached feed content and
       sessions are cleared on a rolling basis. When you delete your account, we remove your data
-      from our servers. Data you synced to your own PDS stays there under your control, and anything
-      held by an external integration you connected is governed by that service.
+      from our servers, including your product-updates email if you gave one. Data you synced to
+      your own PDS stays there under your control, and anything held by an external integration you
+      connected is governed by that service. Polar keeps its own billing records for as long as tax
+      law requires.
     </p>
   </section>
 
@@ -156,6 +174,10 @@
       <li>You can turn Atmospheric sync and external backing on or off at any time in settings.</li>
       <li>
         You can export your data, since your synced records live in your own PDS and are portable.
+      </li>
+      <li>
+        If you opted into product updates, you can opt out at any time. Every update email includes
+        an unsubscribe link, or you can email us and we will delete your address.
       </li>
       <li>You can ask us for a copy of the data we hold about you, or ask us to delete it.</li>
       <li>You can sign out to clear the copy stored in your browser.</li>

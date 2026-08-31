@@ -60,6 +60,43 @@ export class UrlSaveLimitError extends Error {
   }
 }
 
+/**
+ * One plan cap a sync ran into. `kind` names the cap, so the client can pair the
+ * sentence with the raise that actually applies — never the other one, and never
+ * the upsell that belongs on a plain failure.
+ */
+export interface SyncLimitNotice {
+  kind: 'feeds' | 'mirror';
+  /**
+   * What `count` counts, and the cap it went over. Optional because a client
+   * can outlive the backend that fed it: without these the message is shown as
+   * the backend wrote it, with them the client can add up a batched sync and
+   * state one total. See `mergeNotices` in $lib/utils/limitCopy.
+   */
+  subject?: 'feeds' | 'linkblogs';
+  count?: number;
+  limit?: number;
+  message: string;
+}
+
+/**
+ * The tier's active-feed cap. Thrown both by the 403 handler below and by the
+ * subscriptions store's own pre-check, so a caller never has to care which side
+ * noticed first. Over-limit feeds are parked, not lost, so callers should say
+ * "park a feed to free a slot" rather than "remove some feeds".
+ */
+export class SubscriptionLimitError extends Error {
+  limit: number;
+  current: number;
+
+  constructor(message: string, limit: number, current: number) {
+    super(message);
+    this.name = 'SubscriptionLimitError';
+    this.limit = limit;
+    this.current = current;
+  }
+}
+
 // A non-2xx the client may want to branch on by status (the feed path uses it to
 // detect a backend that predates /api/v2/timeline and fall back). `message` is
 // unchanged from the generic error path, so existing `e.message` handling still
@@ -94,6 +131,30 @@ export class SessionRefreshError extends Error {
 
 // One page of GET /api/v2/timeline. Items carry their archive `seq` and the feed
 // they belong to; `cursor`/`generation` are stored and echoed on the next poll.
+/** A purchasable plan, mirrored from the Polar dashboard by the backend. */
+export interface BillingProduct {
+  id: string;
+  name: string;
+  interval: 'month' | 'year';
+  /** Price in cents. */
+  priceAmount: number;
+  priceCurrency: string;
+}
+
+/** The user's active Polar subscription, summarized for the Settings plan card. */
+export interface BillingSubscription {
+  productName: string | null;
+  /** Price in cents. */
+  amount: number;
+  currency: string;
+  interval: 'month' | 'year';
+  /** ISO timestamp: when the current period renews. */
+  currentPeriodEnd: string;
+  cancelAtPeriodEnd: boolean;
+  /** ISO timestamp: set once the subscription is scheduled to end. */
+  endsAt: string | null;
+}
+
 export interface TimelineResponse {
   items: Array<FeedItem & { seq: number; feedUrl: string; read: boolean }>;
   cursor: number;
@@ -286,6 +347,10 @@ class ApiClient {
             resetsAt: string;
           };
           throw new UrlSaveLimitError(b.message, b.limit, b.current, b.resetsAt);
+        }
+        if ((body as { error: string }).error === 'subscription_limit_reached') {
+          const b = body as { message: string; limit: number; current: number };
+          throw new SubscriptionLimitError(b.message, b.limit, b.current);
         }
         throw new Error((body as { error: string }).error || `HTTP ${response.status}`);
       }
@@ -990,6 +1055,34 @@ class ApiClient {
     });
   }
 
+  // Billing (Polar). Products come from the Polar dashboard via the backend, so
+  // prices are authored in exactly one place. The backend owns the checkout
+  // product default; pass a product id only to override it. The returned url is
+  // Polar's hosted checkout — navigate to it top-level, same shape as the OAuth
+  // login redirect.
+  async getBillingProducts(): Promise<{ products: BillingProduct[] }> {
+    return this.fetch('/api/billing/products');
+  }
+
+  async createCheckout(productId?: string): Promise<{ url: string }> {
+    const qs = productId ? `?products=${encodeURIComponent(productId)}` : '';
+    return this.fetch(`/api/billing/checkout${qs}`, { method: 'POST' });
+  }
+
+  // Polar's hosted customer portal (invoices, plan changes, cancellation),
+  // as a short-lived signed URL. 404s for a supporter Polar has never seen
+  // (admin-granted tiers) — callers fall back to the receipt-email framing.
+  async createBillingPortal(): Promise<{ url: string }> {
+    return this.fetch('/api/billing/portal', { method: 'POST' });
+  }
+
+  // The active subscription behind the user's tier, straight from Polar.
+  // Null for anyone whose tier didn't come through a Polar subscription, so
+  // callers render nothing rather than an error.
+  async getBillingSubscription(): Promise<{ subscription: BillingSubscription | null }> {
+    return this.fetch('/api/billing/subscription');
+  }
+
   // Settings
   async getSettings(): Promise<{
     pdsSyncEnabled: boolean;
@@ -1327,7 +1420,13 @@ class ApiClient {
       pulledFromPds: number;
       pushedToPds: number;
       skipped: number;
+      /** Things that went wrong. Never paired with an upgrade prompt. */
       warnings: string[];
+      /**
+       * Plan-limit outcomes (parked / not mirrored). These get the upsell, and
+       * `kind` says which raise to quote.
+       */
+      limitNotices?: SyncLimitNotice[];
       hasMore?: boolean;
       needsReauth?: boolean;
     };
@@ -1338,6 +1437,7 @@ class ApiClient {
       pushed: number;
       skipped: number;
       warnings: string[];
+      limitNotices?: SyncLimitNotice[];
       hasMore?: boolean;
       error?: string;
     };

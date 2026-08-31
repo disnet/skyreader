@@ -3,6 +3,8 @@
   import Icon from '$lib/components/Icon.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
   import { toastStore } from '$lib/stores/toast.svelte';
+  import { UrlSaveLimitError } from '$lib/services/api';
+  import { saveLimitLine } from '$lib/utils/limitCopy';
 
   interface Props {
     url: string;
@@ -28,7 +30,18 @@
     savesStore
       .saveFromUrl(saveUrl)
       .then(() => toastStore.update(toastId, 'success', 'Article saved'))
-      .catch(() => toastStore.update(toastId, 'error', 'Failed to save article'));
+      .catch((err) => {
+        // The monthly save cap has a reason and a way out, so it says so
+        // instead of hiding behind a generic failure.
+        if (err instanceof UrlSaveLimitError) {
+          toastStore.update(toastId, 'error', saveLimitLine(err.limit, err.resetsAt), {
+            label: 'Become a Supporter',
+            href: '/supporter',
+          });
+          return;
+        }
+        toastStore.update(toastId, 'error', 'Failed to save article');
+      });
   }
 
   async function handleCopy() {

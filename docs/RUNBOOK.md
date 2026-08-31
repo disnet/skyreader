@@ -107,11 +107,19 @@ errors stay visible in the issue stream; they just don't ring.
 
 ### Backend (`npx wrangler secret put <NAME>`, per environment)
 
-| Name                  | Required | Purpose                                                          |
-| --------------------- | -------- | ---------------------------------------------------------------- |
-| `SENTRY_DSN`          | no       | Error reporting. Unset ⇒ reporting is a silent no-op.            |
-| `HEARTBEAT_URL`       | no       | Cron dead-man ping URL. Unset ⇒ no ping (correct for local/dev). |
-| `HEALTH_CHECK_SECRET` | no       | Gates `/api/health/deep`. Unset ⇒ the endpoint 503s, by design.  |
+| Name                   | Required | Purpose                                                          |
+| ---------------------- | -------- | ---------------------------------------------------------------- |
+| `SENTRY_DSN`           | no       | Error reporting. Unset ⇒ reporting is a silent no-op.            |
+| `HEARTBEAT_URL`        | no       | Cron dead-man ping URL. Unset ⇒ no ping (correct for local/dev). |
+| `HEALTH_CHECK_SECRET`  | no       | Gates `/api/health/deep`. Unset ⇒ the endpoint 503s, by design.  |
+| `POLAR_ACCESS_TOKEN`   | no       | Polar API. Unset ⇒ billing off: checkout 503s.                   |
+| `POLAR_WEBHOOK_SECRET` | no       | Polar webhook signing. Unset ⇒ the webhook fails closed (500).   |
+
+The two `POLAR_*` secrets are **per Polar org, and the orgs differ per
+environment**: production uses the live org, staging a separate sandbox one
+(`POLAR_SERVER` in `wrangler.toml` picks which host the SDK talks to). Setting a
+production token on staging authenticates against the wrong catalog and every
+checkout 502s. Set them with `--env staging` and see [`POLAR_SETUP.md`](../POLAR_SETUP.md).
 
 `SENTRY_ENVIRONMENT` is a plain var in `wrangler.toml` (`production` / `staging`).
 `GIT_COMMIT_SHA` is passed by CI at deploy time (`--var GIT_COMMIT_SHA:<sha>`); a

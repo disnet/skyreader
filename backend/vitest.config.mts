@@ -38,6 +38,14 @@ export default defineConfig({
           // Assertions hardcode the production linkblog base, which only held
           // on a machine with no .dev.vars.
           LINKBLOG_PUBLIC_URL: 'https://linkblogs.skyreader.app',
+          // Polar billing: fixed test values so the webhook signature tests and
+          // checkout handler don't depend on the developer's .dev.vars. The
+          // secret is an opaque string (its UTF-8 bytes are the HMAC key — see
+          // services/polar.ts); checkout tests stub fetch, so the token never
+          // leaves the process.
+          POLAR_WEBHOOK_SECRET: 'test-polar-webhook-secret',
+          POLAR_PRODUCT_ID: 'prod-test',
+          POLAR_ACCESS_TOKEN: 'polar-test-token',
         },
       },
     }),

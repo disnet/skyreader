@@ -38,6 +38,7 @@ import {
   writeAtmosphereSubscription,
 } from './atmosphere-subscription';
 import { pushSubscriptionToPds, deleteSubscriptionFromPds } from './subscription-sync';
+import type { LimitNotice } from './subscription-sync';
 
 const SUBSCRIPTION_NSID = 'app.skyreader.feed.subscription';
 
@@ -61,6 +62,13 @@ export interface AtmosphereSyncResult {
   /** Not imported because the tier subscription limit was reached. */
   skipped: number;
   warnings: string[];
+  /**
+   * Plan-limit outcomes (follows parked over the active cap, follows not
+   * imported over the mirror cap). Separate from `warnings` for the same reason
+   * as in subscription-sync.ts: the client pairs these with an upgrade prompt,
+   * and a failed graph write must never be dressed up as one.
+   */
+  limitNotices: LimitNotice[];
   /** More work remains — call reconcile again. */
   hasMore?: boolean;
 }
@@ -149,6 +157,7 @@ export async function reconcileAtmosphereSubscriptions(
     pushed: 0,
     skipped: 0,
     warnings: [],
+    limitNotices: [],
   };
 
   const pdsClient = createPDSClient(session);
@@ -290,19 +299,29 @@ export async function reconcileAtmosphereSubscriptions(
     }
 
     if (parkedOnImport > 0) {
-      result.warnings.push(
-        `${parkedOnImport} followed linkblog${parkedOnImport === 1 ? '' : 's'} over your plan's ` +
+      result.limitNotices.push({
+        kind: 'feeds',
+        subject: 'linkblogs',
+        count: parkedOnImport,
+        limit: limits.maxSubscriptions,
+        message:
+          `${parkedOnImport} followed linkblog${parkedOnImport === 1 ? '' : 's'} over your plan's ` +
           `active limit of ${limits.maxSubscriptions} ${parkedOnImport === 1 ? 'was' : 'were'} parked. ` +
-          `Reactivate from Manage feeds.`
-      );
+          `Reactivate from Manage feeds.`,
+      });
     }
 
     if (droppedOverCap > 0) {
-      result.warnings.push(
-        `${droppedOverCap} followed linkblog${droppedOverCap === 1 ? '' : 's'} over your plan's ` +
+      result.limitNotices.push({
+        kind: 'mirror',
+        subject: 'linkblogs',
+        count: droppedOverCap,
+        limit: maxMirrored,
+        message:
+          `${droppedOverCap} followed linkblog${droppedOverCap === 1 ? '' : 's'} over your plan's ` +
           `mirror limit of ${maxMirrored} ${droppedOverCap === 1 ? 'was' : 'were'} not imported. ` +
-          `${droppedOverCap === 1 ? 'It stays' : 'They stay'} in your Atmosphere graph.`
-      );
+          `${droppedOverCap === 1 ? 'It stays' : 'They stay'} in your Atmosphere graph.`,
+      });
     }
 
     // No backfill step: an imported follow's posts are fetched from the proxy on

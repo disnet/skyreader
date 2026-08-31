@@ -26,6 +26,7 @@
   import ShareComposer from '$lib/components/feed/ShareComposer.svelte';
   import IntegrationSaveDialog from '$lib/components/feed/IntegrationSaveDialog.svelte';
   import SembleConnectionDialog from '$lib/components/feed/SembleConnectionDialog.svelte';
+  import SyncLimitBanner from '$lib/components/SyncLimitBanner.svelte';
 
   let { children }: { children: Snippet } = $props();
 
@@ -434,6 +435,8 @@
       <button class="dismiss-btn" onclick={() => auth.dismissScopeUpgrade()}>Dismiss</button>
     </div>
   {/if}
+
+  <SyncLimitBanner />
 
   <div class="shell-frame">
     <!-- The toolbar strip: the current page's own control bar, on the ground

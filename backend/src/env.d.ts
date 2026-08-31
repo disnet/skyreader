@@ -20,4 +20,14 @@ interface Env {
   GIT_COMMIT_SHA?: string;
   HEARTBEAT_URL?: string;
   HEALTH_CHECK_SECRET?: string;
+  // Polar billing. Declared non-optional like FEED_PROXY_SECRET — cf-typegen
+  // also reads .dev.vars, where these keys exist, and emits them as `string`;
+  // an optional redeclaration here would be a merge conflict. Empty/unset still
+  // means billing is off: checkout answers 503, the webhook fails closed (500).
+  //   POLAR_ACCESS_TOKEN   - secret; org access token (products/checkouts/webhooks)
+  //   POLAR_WEBHOOK_SECRET - secret; standard-webhooks signing secret (whsec_...)
+  // POLAR_SERVER and POLAR_PRODUCT_ID are [vars] — cf-typegen emits them, so they
+  // must NOT be redeclared here (merge conflict, per the note above).
+  POLAR_ACCESS_TOKEN: string;
+  POLAR_WEBHOOK_SECRET: string;
 }

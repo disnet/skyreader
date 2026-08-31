@@ -14,6 +14,8 @@
   import { dismissUnifyHost } from '$lib/services/unifyDismiss';
   import Modal from '$lib/components/common/Modal.svelte';
   import UnifyNotice from '$lib/components/UnifyNotice.svelte';
+  import LimitNotice from '$lib/components/LimitNotice.svelte';
+  import { feedLimitLine } from '$lib/utils/limitCopy';
   import Icon from '$lib/components/Icon.svelte';
 
   type Step = 'input' | 'select-feeds' | 'unify';
@@ -266,10 +268,12 @@
       {/each}
     </div>
   {:else if isAtLimit}
-    <p class="limit-message">
-      You've reached the maximum of {subscriptionsStore.maxSubscriptions} feeds. Remove some feeds to
-      add new ones.
-    </p>
+    <div class="limit-wrap">
+      <LimitNotice kind="feeds">
+        <p>{feedLimitLine(subscriptionsStore.maxSubscriptions)}</p>
+        <p class="limit-aside">Parked feeds stay saved to your account, nothing is deleted.</p>
+      </LimitNotice>
+    </div>
   {:else if step === 'input'}
     <div class="modal-content">
       <p class="modal-desc">Enter an RSS/Atom feed URL or a website URL to discover feeds.</p>
@@ -513,10 +517,12 @@
     margin: 0;
   }
 
-  .limit-message {
-    color: var(--color-text-secondary);
-    text-align: center;
+  .limit-wrap {
     padding: 1rem;
+  }
+
+  .limit-aside {
+    color: var(--color-text-secondary);
   }
 
   .error-message {

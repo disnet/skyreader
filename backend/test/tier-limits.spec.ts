@@ -72,6 +72,43 @@ describe('Tier Limits Config', () => {
       expect(ALL_TIERS).toHaveLength(2);
     });
   });
+
+  // The frontend's upgrade prompt quotes these numbers back at the reader
+  // ("Supporters get 1,000 active feeds", LimitNotice.svelte). A raised limit
+  // that isn't actually raised turns that pitch into a false claim, so the
+  // relationship is pinned, not just the values.
+  describe('the supporter pitch', () => {
+    it('raises every free limit, so no advertised benefit is hollow', () => {
+      const free = getLimitsForTier('free');
+      const supporter = getLimitsForTier('supporter');
+      for (const key of Object.keys(free) as Array<keyof typeof free>) {
+        expect(supporter[key], `supporter.${key} should exceed free.${key}`).toBeGreaterThan(
+          free[key]
+        );
+      }
+    });
+
+    // Pinning the relationship isn't enough on its own: LimitNotice.svelte
+    // states the supporter numbers as prose it cannot derive from the current
+    // plan's limits, so raising a cap here without editing that file leaves the
+    // app quoting a number it no longer honours. Change both together.
+    it('matches the figures the upgrade prompt quotes verbatim', () => {
+      const supporter = getLimitsForTier('supporter');
+      // frontend/src/lib/components/LimitNotice.svelte → RAISED
+      expect(supporter.maxSubscriptions, 'Supporters get 1,000 active feeds.').toBe(1000);
+      expect(supporter.maxUrlSavesPerMonth, 'Supporters get 1,000 saves a month.').toBe(1000);
+      expect(supporter.maxMirroredSubscriptions, 'Supporters mirror 5,000 subscriptions.').toBe(
+        5000
+      );
+    });
+
+    it("treats a Believer purchase's product name as not a tier of its own", () => {
+      // A Believer subscription writes tier='supporter' in D1; 'believer' is a
+      // Polar product name the Settings page reads off the subscription, never
+      // a tier. If it ever became one, it would silently fall back to free.
+      expect(isValidTier('believer')).toBe(false);
+    });
+  });
 });
 
 describe('User Tier Service', () => {

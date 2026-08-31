@@ -2,7 +2,9 @@
   import { goto } from '$app/navigation';
   import Modal from '$lib/components/common/Modal.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
-  import { ScopeUpgradeError } from '$lib/services/api';
+  import { ScopeUpgradeError, UrlSaveLimitError } from '$lib/services/api';
+  import LimitNotice from '$lib/components/LimitNotice.svelte';
+  import { saveLimitLine } from '$lib/utils/limitCopy';
 
   interface Props {
     open: boolean;
@@ -15,6 +17,9 @@
   let error = $state<string | null>(null);
   let inputEl = $state<HTMLInputElement | null>(null);
   let showScopeUpgrade = $state(false);
+  // Set when the monthly URL-save cap refuses the save. Held apart from `error`
+  // so it renders as a notice with a way forward rather than a red line.
+  let limitInfo = $state<{ limit: number; resetsAt: string } | null>(null);
 
   // Auto-focus input when modal opens
   $effect(() => {
@@ -22,6 +27,7 @@
       urlValue = '';
       error = null;
       showScopeUpgrade = false;
+      limitInfo = null;
       requestAnimationFrame(() => inputEl?.focus());
     }
   });
@@ -38,6 +44,7 @@
     }
 
     error = null;
+    limitInfo = null;
     try {
       const saved = await savesStore.saveFromUrl(url);
       urlValue = '';
@@ -51,6 +58,8 @@
     } catch (err) {
       if (err instanceof ScopeUpgradeError) {
         showScopeUpgrade = true;
+      } else if (err instanceof UrlSaveLimitError) {
+        limitInfo = { limit: err.limit, resetsAt: err.resetsAt };
       } else {
         error = err instanceof Error ? err.message : 'Failed to save article';
       }
@@ -66,7 +75,14 @@
 </script>
 
 <Modal {open} {onclose} title="Save URL">
-  {#if showScopeUpgrade}
+  {#if limitInfo}
+    <div class="limit-wrap">
+      <LimitNotice kind="saves">
+        <p>{saveLimitLine(limitInfo.limit, limitInfo.resetsAt)}</p>
+        <p class="limit-aside">Saving from a feed you subscribe to doesn't count against this.</p>
+      </LimitNotice>
+    </div>
+  {:else if showScopeUpgrade}
     <div class="scope-upgrade">
       <p>Saving articles requires updated permissions. Please log in again to grant access.</p>
       <div class="scope-upgrade-actions">
@@ -104,6 +120,14 @@
 </Modal>
 
 <style>
+  .limit-wrap {
+    padding: 0.25rem 0 0.5rem;
+  }
+
+  .limit-aside {
+    color: var(--color-text-secondary);
+  }
+
   .form {
     display: flex;
     flex-direction: column;

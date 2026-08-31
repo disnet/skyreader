@@ -5,6 +5,7 @@
   import { auth } from '$lib/stores/auth.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
+  import { countUrlSavesThisMonth } from '$lib/utils/usage';
   import {
     preferences,
     type ArticleFont,
@@ -13,6 +14,9 @@
     ARTICLE_FONT_SIZE_MAX,
   } from '$lib/stores/preferences.svelte';
   import ImportOPMLModal from '$lib/components/ImportOPMLModal.svelte';
+  import LimitNotice from '$lib/components/LimitNotice.svelte';
+  import { mergeNotices } from '$lib/utils/limitCopy';
+  import type { SyncLimitNotice } from '$lib/services/api';
   import SaveBackingPicker from '$lib/components/settings/SaveBackingPicker.svelte';
   import LinkblogTargetPicker from '$lib/components/settings/LinkblogTargetPicker.svelte';
   import DeleteLinkblogModal from '$lib/components/settings/DeleteLinkblogModal.svelte';
@@ -22,7 +26,7 @@
   import { myLinkblogStore } from '$lib/stores/myLinkblog.svelte';
   import { linkblogStore } from '$lib/stores/linkblog.svelte';
   import { downloadOPML } from '$lib/utils/opml-exporter';
-  import { api, RateLimitError } from '$lib/services/api';
+  import { api, RateLimitError, type BillingSubscription } from '$lib/services/api';
   import { syncStore } from '$lib/stores/sync.svelte';
   import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
   import type { LinkblogPublication, LinkblogPublicationChoice, SaveBacking } from '$lib/types';
@@ -89,6 +93,18 @@
   let isSyncing = $state(false);
   let syncError = $state<string | null>(null);
   let syncSuccess = $state<string | null>(null);
+  // Parked / mirror-cap outcomes from the sync. Held apart from `syncSuccess`,
+  // which is a green line: "12 of your feeds were parked" is not good news, and
+  // appending it to a success message is how it went unread.
+  let syncLimitNotices = $state<SyncLimitNotice[]>([]);
+  // Grouped by which cap was hit, so each group carries the raise that applies:
+  // an active-feed wall must not be answered with the mirror number.
+  const syncFeedNotices = $derived(syncLimitNotices.filter((n) => n.kind === 'feeds'));
+  const syncMirrorNotices = $derived(syncLimitNotices.filter((n) => n.kind === 'mirror'));
+  // Everything else the sync wants to report — a failed PDS write, a graph
+  // listing that was too big to read. These are not plan problems, so they get
+  // no upgrade prompt: the backend tells the two apart, we don't guess.
+  let syncWarnings = $state<string[]>([]);
 
   // External-backed saves: which engine holds the Saved list. Owned/managed by
   // <SaveBackingPicker bind:backing>; kept here so the "Privacy & sharing" overview
@@ -135,6 +151,8 @@
       goto('/auth/login?returnUrl=/settings');
       return;
     }
+    // Refresh tier/limits from the server. Non-blocking; offline is a no-op.
+    void auth.verifySession();
     // Load subscriptions if not already loaded
     if (subscriptionsStore.subscriptions.length === 0) {
       await subscriptionsStore.load();
@@ -143,6 +161,45 @@
     // Load PDS sync settings
     await loadSyncSettings();
     await loadLinkblog();
+    // Non-blocking; null for anyone without a Polar subscription.
+    void loadBillingSubscription();
+  });
+
+  // The renewal/end date behind the plan badge, straight from Polar via the
+  // backend. Stays null (and renders nothing) offline, for free users, and
+  // for supporters granted outside Polar.
+  let billingSub = $state<BillingSubscription | null>(null);
+
+  async function loadBillingSubscription() {
+    if (!syncStore.isOnline) return;
+    try {
+      const { subscription } = await api.getBillingSubscription();
+      billingSub = subscription;
+    } catch (error) {
+      console.error('Failed to load billing subscription:', error);
+    }
+  }
+
+  // A Believer subscription is still tier 'supporter' in D1; the Polar product
+  // name is what distinguishes the badge.
+  const planName = $derived.by(() => {
+    if (auth.user?.tier !== 'supporter') return 'Free';
+    return billingSub?.productName && /believer/i.test(billingSub.productName)
+      ? 'Believer'
+      : 'Supporter';
+  });
+
+  const renewalLine = $derived.by(() => {
+    if (!billingSub || auth.user?.tier !== 'supporter') return null;
+    const end = billingSub.cancelAtPeriodEnd
+      ? (billingSub.endsAt ?? billingSub.currentPeriodEnd)
+      : billingSub.currentPeriodEnd;
+    const date = new Date(end).toLocaleDateString('en-US', {
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric',
+    });
+    return billingSub.cancelAtPeriodEnd ? `Ends ${date}` : `Renews ${date}`;
   });
 
   async function loadLinkblog() {
@@ -336,6 +393,8 @@
 
     syncError = null;
     syncSuccess = null;
+    syncWarnings = [];
+    syncLimitNotices = [];
 
     if (!syncStore.isOnline) {
       syncError = 'You are offline. Connect to the internet to change sync settings.';
@@ -374,6 +433,8 @@
     isSyncing = true;
     syncError = null;
     syncSuccess = null;
+    syncWarnings = [];
+    syncLimitNotices = [];
 
     // Track totals across multiple sync calls (for batched hasMore syncs)
     let totalPulled = 0;
@@ -381,6 +442,7 @@
     let totalImported = 0;
     let totalRemoved = 0;
     let allWarnings: string[] = [];
+    let allLimitNotices: SyncLimitNotice[] = [];
     let batchCount = 0;
     const maxBatches = 50; // Safety limit to prevent infinite loops
 
@@ -425,11 +487,16 @@
         totalImported += result.atmosphere?.imported || 0;
         totalRemoved += result.atmosphere?.removed || 0;
 
-        // Collect warnings
+        // Collect warnings, keeping plan limits apart from failures.
         allWarnings = [
           ...allWarnings,
           ...(result.subscriptions?.warnings || []),
           ...(result.atmosphere?.warnings || []),
+        ];
+        allLimitNotices = [
+          ...allLimitNotices,
+          ...(result.subscriptions?.limitNotices || []),
+          ...(result.atmosphere?.limitNotices || []),
         ];
 
         // Check if there's more to sync
@@ -444,10 +511,11 @@
         syncSuccess += ` (${batchCount} batches)`;
       }
 
-      // Show warnings if any
-      if (allWarnings.length > 0) {
-        syncSuccess += `. Warning: ${allWarnings.join(', ')}`;
-      }
+      // Each pass reports only what it parked or dropped, so the counts are
+      // summed into one line per cap — deduping on the sentence would leave a
+      // stack of numbers ("20 feeds…", then "30 feeds…"), none of them true.
+      syncWarnings = [...new Set(allWarnings)];
+      syncLimitNotices = mergeNotices(allLimitNotices);
 
       // Refresh sync status
       const status = await api.getSyncStatus();
@@ -533,19 +601,17 @@
     <section class="card">
       <h2>Plan</h2>
       <div class="plan-header">
-        <span class="plan-name">{auth.user.tier === 'supporter' ? 'Supporter' : 'Free'}</span>
+        <span class="plan-name">{planName}</span>
+        {#if renewalLine}
+          <span class="plan-renewal">{renewalLine}</span>
+        {/if}
       </div>
 
       {#if auth.user.limits}
         {@const subCount = subscriptionsStore.subscriptions.length}
         {@const subLimit = auth.user.limits.maxSubscriptions}
         {@const urlSaveLimit = auth.user.limits.maxUrlSavesPerMonth}
-        {@const monthStart = new Date(
-          Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1)
-        ).toISOString()}
-        {@const urlSaveCount = savesStore.articles.filter(
-          (a) => a.source === 'url' && a.savedAt >= monthStart
-        ).length}
+        {@const urlSaveCount = countUrlSavesThisMonth(savesStore.articles)}
         <div class="plan-limits">
           <div class="limit-row">
             <div class="limit-label">
@@ -557,7 +623,7 @@
                 class="limit-bar-fill"
                 class:limit-bar-warning={subCount / subLimit > 0.8}
                 class:limit-bar-full={subCount >= subLimit}
-                style:width="{Math.min((subCount / subLimit) * 100, 100)}%"
+                style:transform="translateX({Math.min((subCount / subLimit) * 100, 100) - 100}%)"
               ></div>
             </div>
           </div>
@@ -572,7 +638,8 @@
                 class="limit-bar-fill"
                 class:limit-bar-warning={urlSaveCount / urlSaveLimit > 0.8}
                 class:limit-bar-full={urlSaveCount >= urlSaveLimit}
-                style:width="{Math.min((urlSaveCount / urlSaveLimit) * 100, 100)}%"
+                style:transform="translateX({Math.min((urlSaveCount / urlSaveLimit) * 100, 100) -
+                  100}%)"
               ></div>
             </div>
           </div>
@@ -581,11 +648,14 @@
 
       {#if auth.user.tier !== 'supporter'}
         <p class="plan-upgrade">
-          <a href="https://github.com/sponsors/disnet" target="_blank" rel="noopener noreferrer"
-            >Become a sponsor</a
-          >
-          to get raised limits, help Skyreader become self-sustaining, and support
-          <a href="https://bsky.app/profile/disnetdev.com" target="_blank">Tim</a>!
+          Supporters get 1,000 feeds, 1,000 saves a month, and keep Skyreader independent.
+        </p>
+        <a href="/supporter" class="btn btn-primary plan-upgrade-cta">Become a Supporter</a>
+      {:else}
+        <!-- The billing portal itself is launched from /supporter, which owns
+             the async Polar-session handler; this stays a plain link. -->
+        <p class="plan-upgrade">
+          Manage billing, change plans, or cancel from the <a href="/supporter">Supporter page</a>.
         </p>
       {/if}
     </section>
@@ -661,6 +731,34 @@
 
         {#if syncSuccess}
           <p class="sync-success">{syncSuccess}</p>
+        {/if}
+
+        {#if syncFeedNotices.length > 0}
+          <div class="sync-warnings">
+            <LimitNotice kind="feeds">
+              {#each syncFeedNotices as notice}
+                <p>{notice.message}</p>
+              {/each}
+            </LimitNotice>
+          </div>
+        {/if}
+
+        {#if syncMirrorNotices.length > 0}
+          <div class="sync-warnings">
+            <LimitNotice kind="mirror">
+              {#each syncMirrorNotices as notice}
+                <p>{notice.message}</p>
+              {/each}
+            </LimitNotice>
+          </div>
+        {/if}
+
+        {#if syncWarnings.length > 0}
+          <div class="sync-warnings">
+            {#each syncWarnings as warning}
+              <p class="sync-warning">{warning}</p>
+            {/each}
+          </div>
         {/if}
       {/if}
     {/if}
@@ -1088,7 +1186,15 @@
   }
 
   .plan-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
     margin-bottom: 1rem;
+  }
+
+  .plan-renewal {
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
   }
 
   .plan-name {
@@ -1109,13 +1215,10 @@
     color: var(--color-text-secondary);
   }
 
-  .plan-upgrade a {
-    color: var(--color-primary);
+  /* An anchor wearing the shared .btn styles; the sell lives on /supporter. */
+  .plan-upgrade-cta {
+    display: inline-block;
     text-decoration: none;
-  }
-
-  .plan-upgrade a:hover {
-    text-decoration: underline;
   }
 
   .plan-limits {
@@ -1144,19 +1247,22 @@
   .limit-bar {
     height: 6px;
     background: var(--color-bg-secondary);
-    border-radius: 3px;
+    border-radius: 999px;
     overflow: hidden;
   }
 
   .limit-bar-fill {
+    /* Full-width fill slid left and clipped by the track, so the fill
+       percentage animates on transform instead of layout. */
+    width: 100%;
     height: 100%;
     background: var(--color-primary);
-    border-radius: 3px;
-    transition: width 0.3s ease;
+    border-radius: 999px;
+    transition: transform 0.3s ease;
   }
 
   .limit-bar-warning {
-    background: var(--color-warning, #f59e0b);
+    background: var(--color-warning);
   }
 
   .limit-bar-full {
@@ -1544,8 +1650,18 @@
     margin-top: 0.5rem;
   }
 
+  .sync-warnings {
+    margin-top: 0.75rem;
+  }
+
+  .sync-warning {
+    color: var(--color-text-secondary);
+    font-size: var(--text-md);
+    margin: 0 0 0.25rem;
+  }
+
   .sync-success {
-    color: var(--color-success, #22c55e);
+    color: var(--color-success);
     font-size: var(--text-md);
     margin-top: 0.5rem;
   }

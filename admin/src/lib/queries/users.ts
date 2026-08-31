@@ -68,7 +68,12 @@ export async function updateUserTier(db: D1Database, did: string, tier: string):
   if (!VALID_TIERS.includes(tier)) {
     throw new Error(`Invalid tier: ${tier}`);
   }
-  await db.prepare('UPDATE users SET tier = ? WHERE did = ?').bind(tier, did).run();
+  // tier_source 'admin' shields the row from Polar webhook downgrades (a real
+  // payment still upgrades it unconditionally) — see backend migration 0073.
+  await db
+    .prepare("UPDATE users SET tier = ?, tier_source = 'admin' WHERE did = ?")
+    .bind(tier, did)
+    .run();
 }
 
 export async function getUserSubscriptions(

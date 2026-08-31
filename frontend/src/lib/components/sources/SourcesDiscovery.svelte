@@ -4,10 +4,12 @@
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { getFaviconUrl } from '$lib/utils/favicon';
   import type { StandardSub } from '$lib/stores/standardSubs.svelte';
-  import { api } from '$lib/services/api';
+  import { api, SubscriptionLimitError } from '$lib/services/api';
   import Icon from '$lib/components/Icon.svelte';
   import LinkblogDiscovery from '$lib/components/LinkblogDiscovery.svelte';
   import FollowingPublications from '$lib/components/FollowingPublications.svelte';
+  import LimitNotice from '$lib/components/LimitNotice.svelte';
+  import { feedLimitLine } from '$lib/utils/limitCopy';
 
   // When Atmospheric sync is on, standard.site follows are imported and
   // reconciled automatically — so we show a synced summary instead of a list of
@@ -57,11 +59,22 @@
   let moreFollowingPubs = $state(0);
 
   let adding = $state<string | null>(null);
+  // Adding here used to have no catch: a failure was an unhandled rejection and
+  // the button silently reset. The active-feed cap gets its own state so it can
+  // render as a notice rather than a red line.
+  let addError = $state<string | null>(null);
+  let limitHit = $state(false);
+
   async function add(sub: StandardSub) {
     if (adding) return;
     adding = sub.uri;
+    addError = null;
+    limitHit = false;
     try {
       await standardSubsStore.subscribe(sub);
+    } catch (e) {
+      if (e instanceof SubscriptionLimitError) limitHit = true;
+      else addError = e instanceof Error ? e.message : 'Could not add that subscription.';
     } finally {
       adding = null;
     }
@@ -98,6 +111,15 @@
       <h3 class="block-title">
         <Icon name="standard-site" size={13} /> Your standard.site subscriptions
       </h3>
+      {#if limitHit}
+        <div class="add-notice">
+          <LimitNotice kind="feeds">
+            <p>{feedLimitLine(subscriptionsStore.maxSubscriptions)}</p>
+          </LimitNotice>
+        </div>
+      {:else if addError}
+        <p class="status add-error">{addError}</p>
+      {/if}
       {#if standardSubsStore.loading && !standardSubsStore.loaded}
         <p class="status">Looking for subscriptions…</p>
       {:else}
@@ -181,6 +203,14 @@
 
   .block {
     margin-bottom: 1rem;
+  }
+
+  .add-notice {
+    margin-bottom: 0.75rem;
+  }
+
+  .add-error {
+    color: var(--color-error);
   }
 
   .block-title {

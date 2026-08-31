@@ -7,6 +7,8 @@ export interface User {
   tier?: string;
   limits?: {
     maxSubscriptions: number;
+    /** Ceiling on total mirrored rows (active + parked); overflow stays on the PDS. */
+    maxMirroredSubscriptions: number;
     maxUrlSavesPerMonth: number;
   };
 }

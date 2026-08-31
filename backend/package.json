@@ -1,7 +1,7 @@
 {
   "name": "skyreader-backend",
   "version": "0.0.0",
-  "license": "GPL-3.0",
+  "license": "AGPL-3.0-only",
   "private": true,
   "scripts": {
     "deploy": "wrangler deploy",
@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@noble/curves": "^2.3.0",
+    "@polar-sh/sdk": "^0.49.0",
     "@scure/base": "^2.3.0",
     "@sentry/cloudflare": "^10.71.0",
     "fast-xml-parser": "^5.11.0"

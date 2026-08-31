@@ -2,6 +2,7 @@
   "name": "skyreader-extension",
   "version": "0.2.0",
   "private": true,
+  "license": "AGPL-3.0-only",
   "description": "Skyreader Chrome extension",
   "scripts": {
     "build": "esbuild src/extract-entry.js --bundle --format=iife --minify --outfile=content/extract.js",
