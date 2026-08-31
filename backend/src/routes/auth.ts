@@ -44,7 +44,7 @@ import {
 } from '../utils/cookies';
 
 // Maximum number of users allowed during beta
-const MAX_USERS = 1000;
+const MAX_USERS = 2000;
 
 // Curated set of provider hosts the server-first sign-up flow may target. Because
 // the `pds` param is user-controlled and we fetch its well-known OAuth metadata,
