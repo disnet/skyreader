@@ -16,6 +16,10 @@ export interface ProxyDocument {
   siteIcon?: string;
   links?: Array<{ uri: string; rel?: string }>;
   content?: unknown;
+  // The author opted into the trailing "Posted from skyreader.app" line. Used to
+  // exclude that block from the note by the flag rather than by string match
+  // alone — someone whose own last line reads exactly that keeps their words.
+  skyreaderAttribution?: boolean;
 }
 
 export interface Profile {

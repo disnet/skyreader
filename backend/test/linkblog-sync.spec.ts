@@ -1,12 +1,16 @@
 import { describe, it, expect } from 'vitest';
 import {
+  ATTRIBUTION_TEXT,
   buildLinkblogDocument,
   contentFormatOf,
+  formattingFromRow,
   noteToLeafletBlocks,
   replaceItemsNoteRegion,
   replaceLeafletNoteRegion,
   replaceMarkpubNote,
   publicationUri,
+  stripTitleDecoration,
+  websiteCardMeta,
   LINKBLOG_RKEY,
 } from '../src/services/linkblog-sync';
 
@@ -74,7 +78,7 @@ describe('buildLinkblogDocument', () => {
     const bare = buildLinkblogDocument(DID, RKEY, {
       articleUrl: 'https://example.com/x',
     });
-    expect(bare.title).toBe('https://example.com/x');
+    expect(bare.title).toBe('🔗 https://example.com/x');
     const content = bare.content as {
       pages: Array<{ blocks: Array<{ block: { $type: string } }> }>;
     };
@@ -99,24 +103,24 @@ describe('connected publication formats', () => {
     expect(doc.links).toEqual([{ uri: input.articleUrl, rel: 'related' }]);
   });
 
-  it('closes a pckt post with its flat website card', () => {
+  it('gives a pckt post its flat website card', () => {
     const pckt = buildLinkblogDocument(DID, RKEY, input, undefined, target, 'pckt').content as {
       items: Array<{ $type: string; src?: string; attrs?: unknown }>;
     };
-    const card = pckt.items.at(-1);
+    const card = pckt.items.find((i) => i.$type === 'blog.pckt.block.website');
     // Top level, not nested under `attrs` — the shape pckt's lexicon requires and
     // its own posts use.
-    expect(card?.$type).toBe('blog.pckt.block.website');
+    expect(card).toBeDefined();
     expect(card?.src).toBe(input.articleUrl);
     expect(card?.attrs).toBeUndefined();
   });
 
-  it('closes an Offprint post with its native bookmark card, not a text line', () => {
+  it('gives an Offprint post its native bookmark card, not a text line', () => {
     const offprint = buildLinkblogDocument(DID, RKEY, input, undefined, target, 'offprint')
       .content as { items: Array<{ $type: string; href?: string; title?: string }> };
-    const card = offprint.items.at(-1);
+    const card = offprint.items.find((i) => i.$type === 'app.offprint.block.webBookmark');
     // `href`, and a title that's required rather than optional.
-    expect(card?.$type).toBe('app.offprint.block.webBookmark');
+    expect(card).toBeDefined();
     expect(card?.href).toBe(input.articleUrl);
     expect(card?.title).toBe(input.articleTitle);
   });
@@ -247,32 +251,299 @@ describe('note runs in the block-item formats', () => {
     const prefix = format === 'pckt' ? 'blog.pckt.block.' : 'app.offprint.block.';
     const card = format === 'pckt' ? `${prefix}website` : `${prefix}webBookmark`;
 
+    // The card lands between the quote and the commentary under the default
+    // 'context' layout — the reader meets what's being responded to before the
+    // response.
     it(`${format}: a quote followed by commentary on the next line stays two blocks`, () => {
       const items = build(format, '> A quoted sentence.\nMy commentary.');
-      expect(items.map((i) => i.$type)).toEqual([`${prefix}blockquote`, `${prefix}text`, card]);
+      expect(items.map((i) => i.$type)).toEqual([`${prefix}blockquote`, card, `${prefix}text`]);
       expect(items[0].content).toEqual([
         { $type: `${prefix}text`, plaintext: 'A quoted sentence.' },
       ]);
-      expect(items[1].plaintext).toBe('My commentary.');
+      expect(items[2].plaintext).toBe('My commentary.');
     });
 
     it(`${format}: commentary followed by a quote on the next line keeps the quote`, () => {
       const items = build(format, 'My commentary.\n> A quoted sentence.');
-      expect(items.map((i) => i.$type)).toEqual([`${prefix}text`, `${prefix}blockquote`, card]);
-      expect(items[0].plaintext).toBe('My commentary.');
-      expect(items[1].content).toEqual([
+      // Nothing is quoted up front, so the card leads instead.
+      expect(items.map((i) => i.$type)).toEqual([card, `${prefix}text`, `${prefix}blockquote`]);
+      expect(items[1].plaintext).toBe('My commentary.');
+      expect(items[2].content).toEqual([
         { $type: `${prefix}text`, plaintext: 'A quoted sentence.' },
       ]);
     });
 
     it(`${format}: a multiline quote stays one block with its markers stripped`, () => {
       const items = build(format, '> line one\n> line two\n\nAfter.');
-      expect(items.map((i) => i.$type)).toEqual([`${prefix}blockquote`, `${prefix}text`, card]);
+      expect(items.map((i) => i.$type)).toEqual([`${prefix}blockquote`, card, `${prefix}text`]);
       expect(items[0].content).toEqual([
         { $type: `${prefix}text`, plaintext: 'line one\nline two' },
       ]);
     });
   }
+});
+
+// ── Formatting preferences ───────────────────────────────────────────────────
+//
+// The two answers to the external-formatting feedback are per-user settings with
+// new defaults, not hardcoded changes: 'link' + 'context'.
+
+describe('title style', () => {
+  const input = { articleUrl: 'https://example.com/a', articleTitle: 'The Article' };
+  const titleFor = (style: 'link' | 'quoted' | 'plain') =>
+    buildLinkblogDocument(DID, RKEY, input, undefined, publicationUri(DID), 'leaflet', {
+      titleStyle: style,
+      cardPosition: 'context',
+    }).title;
+
+  it('decorates the document title so a link post is not a repost of the article', () => {
+    expect(titleFor('link')).toBe('🔗 The Article');
+    expect(titleFor('quoted')).toBe('“The Article”');
+    expect(titleFor('plain')).toBe('The Article');
+  });
+
+  it('leaves the website card title plain whatever the document title says', () => {
+    const content = buildLinkblogDocument(
+      DID,
+      RKEY,
+      input,
+      undefined,
+      publicationUri(DID),
+      'leaflet',
+      { titleStyle: 'link', cardPosition: 'context' }
+    ).content as { pages: Array<{ blocks: Array<{ block: { $type: string; title?: string } }> }> };
+    const card = content.pages[0].blocks.find(
+      (b) => b.block.$type === 'pub.leaflet.blocks.website'
+    );
+    expect(card?.block.title).toBe('The Article');
+  });
+
+  it('round-trips through stripTitleDecoration', () => {
+    expect(stripTitleDecoration('🔗 The Article')).toBe('The Article');
+    expect(stripTitleDecoration('“The Article”')).toBe('The Article');
+    expect(stripTitleDecoration('The Article')).toBe('The Article');
+    // A title the author really did wrap in straight quotes is left alone.
+    expect(stripTitleDecoration('"Quoted" for real')).toBe('"Quoted" for real');
+  });
+});
+
+describe('card position', () => {
+  const NOTE = '> A quoted sentence.\n\nMy commentary.';
+  const blocksFor = (cardPosition: 'context' | 'top' | 'bottom', note = NOTE) =>
+    (
+      buildLinkblogDocument(
+        DID,
+        RKEY,
+        { articleUrl: 'https://example.com/a', articleTitle: 'A', note },
+        undefined,
+        publicationUri(DID),
+        'leaflet',
+        { titleStyle: 'link', cardPosition }
+      ).content as { pages: Array<{ blocks: Array<{ block: { $type: string } }> }> }
+    ).pages[0].blocks.map((b) => b.block.$type);
+
+  it('puts the card between the quote and the commentary by default', () => {
+    expect(blocksFor('context')).toEqual([
+      'pub.leaflet.blocks.blockquote',
+      'pub.leaflet.blocks.website',
+      'pub.leaflet.blocks.text',
+    ]);
+  });
+
+  it('leads with the card when nothing is quoted', () => {
+    expect(blocksFor('context', 'Just commentary.')).toEqual([
+      'pub.leaflet.blocks.website',
+      'pub.leaflet.blocks.text',
+    ]);
+  });
+
+  it('honors top and bottom', () => {
+    expect(blocksFor('top')[0]).toBe('pub.leaflet.blocks.website');
+    expect(blocksFor('bottom').at(-1)).toBe('pub.leaflet.blocks.website');
+  });
+
+  it('splits markpub markdown around the link line', () => {
+    const markpub = (cardPosition: 'context' | 'top' | 'bottom') =>
+      (
+        buildLinkblogDocument(
+          DID,
+          RKEY,
+          { articleUrl: 'https://example.com/a', articleTitle: 'A', note: NOTE },
+          undefined,
+          publicationUri(DID),
+          'markpub',
+          { titleStyle: 'link', cardPosition }
+        ).content as { text: { markdown: string } }
+      ).text.markdown;
+    expect(markpub('context')).toBe(
+      '> A quoted sentence.\n\n[A](https://example.com/a)\n\nMy commentary.'
+    );
+    // With the link at either end the note text is emitted verbatim.
+    expect(markpub('bottom')).toBe(`${NOTE}\n\n[A](https://example.com/a)`);
+    expect(markpub('top')).toBe(`[A](https://example.com/a)\n\n${NOTE}`);
+  });
+});
+
+describe('attribution', () => {
+  const input = {
+    articleUrl: 'https://example.com/a',
+    articleTitle: 'A',
+    note: '> Quoted.\n\nMine.',
+    attribution: true,
+  };
+
+  it('is opt-in and absent by default', () => {
+    const doc = buildLinkblogDocument(DID, RKEY, { ...input, attribution: undefined });
+    expect(doc.skyreaderAttribution).toBeUndefined();
+    expect(JSON.stringify(doc.content)).not.toContain(ATTRIBUTION_TEXT);
+  });
+
+  it.each(['leaflet', 'pckt', 'offprint', 'markpub'] as const)(
+    'appends a trailing %s attribution block and stamps the flag',
+    (format) => {
+      const doc = buildLinkblogDocument(DID, RKEY, input, undefined, publicationUri(DID), format, {
+        titleStyle: 'link',
+        cardPosition: 'context',
+      });
+      expect(doc.skyreaderAttribution).toBe(true);
+      const content = doc.content as {
+        pages?: Array<{ blocks: Array<{ block: { plaintext?: string } }> }>;
+        items?: Array<{ plaintext?: string }>;
+        text?: { markdown: string };
+      };
+      const last =
+        content.pages?.[0].blocks.at(-1)?.block.plaintext ??
+        content.items?.at(-1)?.plaintext ??
+        content.text?.markdown.split('\n').at(-1);
+      expect(last).toBe(ATTRIBUTION_TEXT);
+      // The user's words + excerpt are what textContent is for; the attribution
+      // is ours and stays out of it.
+      expect(doc.textContent ?? '').not.toContain(ATTRIBUTION_TEXT);
+    }
+  );
+
+  it('survives a note edit without being duplicated', () => {
+    const doc = buildLinkblogDocument(DID, RKEY, input);
+    const edited = replaceLeafletNoteRegion(doc.content, '> Quoted.\n\nRevised.') as {
+      pages: Array<{ blocks: Array<{ block: { $type: string; plaintext?: string } }> }>;
+    };
+    const plaintexts = edited.pages[0].blocks.map((b) => b.block.plaintext);
+    expect(plaintexts.filter((t) => t === ATTRIBUTION_TEXT)).toHaveLength(1);
+    expect(edited.pages[0].blocks.at(-1)?.block.plaintext).toBe(ATTRIBUTION_TEXT);
+    // …and the note the reader sees never contains it.
+    expect(plaintexts).toContain('Revised.');
+  });
+});
+
+describe('edits preserve the layout they find', () => {
+  const card = { $type: 'pub.leaflet.blocks.website', src: 'https://example.com/a' };
+  const wrap = (blocks: Array<Record<string, unknown>>) => ({
+    $type: 'pub.leaflet.content',
+    pages: [
+      { $type: 'pub.leaflet.pages.linearDocument', blocks: blocks.map((b) => ({ block: b })) },
+    ],
+  });
+  const typesAfterEdit = (blocks: Array<Record<string, unknown>>, note: string) =>
+    (
+      replaceLeafletNoteRegion(wrap(blocks), note) as {
+        pages: Array<{ blocks: Array<{ block: { $type: string } }> }>;
+      }
+    ).pages[0].blocks.map((b) => b.block.$type);
+
+  it('keeps a legacy note-leads/card-closes record at the bottom', () => {
+    expect(
+      typesAfterEdit(
+        [{ $type: 'pub.leaflet.blocks.text', plaintext: 'old' }, card],
+        '> quote\n\nnew'
+      )
+    ).toEqual([
+      'pub.leaflet.blocks.blockquote',
+      'pub.leaflet.blocks.text',
+      'pub.leaflet.blocks.website',
+    ]);
+  });
+
+  it('keeps a context-layout record in context layout', () => {
+    expect(
+      typesAfterEdit(
+        [
+          { $type: 'pub.leaflet.blocks.blockquote', plaintext: 'old quote' },
+          card,
+          { $type: 'pub.leaflet.blocks.text', plaintext: 'old' },
+        ],
+        '> quote\n\nnew'
+      )
+    ).toEqual([
+      'pub.leaflet.blocks.blockquote',
+      'pub.leaflet.blocks.website',
+      'pub.leaflet.blocks.text',
+    ]);
+  });
+
+  it('keeps commentary that sits after a mid-post card', () => {
+    const content = replaceLeafletNoteRegion(
+      wrap([
+        { $type: 'pub.leaflet.blocks.blockquote', plaintext: 'q' },
+        card,
+        { $type: 'pub.leaflet.blocks.text', plaintext: 'old' },
+      ]),
+      '> q\n\nnew commentary'
+    ) as { pages: Array<{ blocks: Array<{ block: { plaintext?: string } }> }> };
+    expect(content.pages[0].blocks.at(-1)?.block.plaintext).toBe('new commentary');
+  });
+
+  it('keeps a card-first record card-first', () => {
+    expect(
+      typesAfterEdit([card, { $type: 'pub.leaflet.blocks.text', plaintext: 'old' }], 'new')
+    ).toEqual(['pub.leaflet.blocks.website', 'pub.leaflet.blocks.text']);
+  });
+});
+
+describe('websiteCardMeta', () => {
+  it('reads the plain article title back off the card', () => {
+    const doc = buildLinkblogDocument(DID, RKEY, {
+      articleUrl: 'https://example.com/a',
+      articleTitle: 'The Article',
+      excerpt: 'An excerpt.',
+    });
+    expect(doc.title).toBe('🔗 The Article');
+    expect(websiteCardMeta(doc.content)).toEqual({
+      title: 'The Article',
+      excerpt: 'An excerpt.',
+    });
+  });
+
+  it.each(['pckt', 'offprint'] as const)('reads a %s card', (format) => {
+    const doc = buildLinkblogDocument(
+      DID,
+      RKEY,
+      { articleUrl: 'https://example.com/a', articleTitle: 'The Article', excerpt: 'An excerpt.' },
+      undefined,
+      publicationUri(DID),
+      format
+    );
+    expect(websiteCardMeta(doc.content).title).toBe('The Article');
+  });
+});
+
+describe('formattingFromRow', () => {
+  it('treats NULL and anything unrecognized as the defaults', () => {
+    expect(formattingFromRow(null, null)).toEqual({
+      titleStyle: 'link',
+      cardPosition: 'context',
+    });
+    expect(formattingFromRow('nonsense', 'nonsense')).toEqual({
+      titleStyle: 'link',
+      cardPosition: 'context',
+    });
+  });
+
+  it('takes stored values it recognizes', () => {
+    expect(formattingFromRow('plain', 'bottom')).toEqual({
+      titleStyle: 'plain',
+      cardPosition: 'bottom',
+    });
+  });
 });
 
 describe('replaceItemsNoteRegion', () => {

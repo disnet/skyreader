@@ -20,6 +20,7 @@
   import { bottomBarInset } from '$lib/stores/bottomBarInset.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
+  import { myLinkblogStore } from '$lib/stores/myLinkblog.svelte';
   import { getFaviconUrl } from '$lib/utils/favicon';
   import { formatQuoteSeed } from '$lib/utils/linkPost';
   import { positionFloating } from '$lib/utils/floating';
@@ -45,6 +46,44 @@
   let noteLength = $derived(composer.note.length);
   let nearLimit = $derived(noteLength > MAX - 200);
   let overLimit = $derived(noteLength > MAX);
+
+  // ── Where the link card sits ────────────────────────────────────────────────
+  // The published post puts the article's card wherever the user's card-position
+  // setting says, so the draft shows it there too — the composer and the post
+  // agree instead of the composer implying one layout and the post publishing
+  // another. Mirrors the backend's cardIndexFor: 'context' (the default) drops
+  // the card after the opening quote block(s), before the first commentary.
+  let cardPosition = $derived(myLinkblogStore.publication?.formatting?.cardPosition ?? 'context');
+  // Offered only when the user turned the feature on, and only on a new share —
+  // v1 doesn't add or remove the line on an edit (the backend preserves whatever
+  // the record already has).
+  let showAttribution = $derived(!isEdit && preferences.linkblogAttributionOffered);
+
+  // The composer needs the publication's formatting to draw the card where the
+  // post will put it. Unforced, so it piggybacks on whatever is already loaded.
+  $effect(() => {
+    if (session && !myLinkblogStore.publication) void myLinkblogStore.load();
+  });
+
+  let cardIndex = $derived.by(() => {
+    // The composer's block list and the published note's runs line up one-to-one
+    // once empty blocks (the trailing "type here" text block) are discounted.
+    const filled = composer.blocks.map((b) => b.text.trim() !== '');
+    const runs = composer.blocks.filter((_, i) => filled[i]);
+    if (cardPosition === 'top') return 0;
+    if (cardPosition === 'bottom') return composer.blocks.length;
+    let leadingQuotes = 0;
+    while (leadingQuotes < runs.length && runs[leadingQuotes].kind === 'quote') leadingQuotes++;
+    if (leadingQuotes === 0) return 0;
+    // Translate a run index back to a block index (skipping the empty blocks).
+    let seen = 0;
+    for (let i = 0; i < composer.blocks.length; i++) {
+      if (!filled[i]) continue;
+      if (seen === leadingQuotes) return i;
+      seen++;
+    }
+    return composer.blocks.length;
+  });
 
   // ── Quote picker ────────────────────────────────────────────────────────────
   // Saved highlights on the article, shown in full with their surrounding
@@ -593,8 +632,19 @@
         </div>
       </header>
 
+      <!-- What the post carries besides your words: the article's link card,
+           drawn where the published post will actually put it. -->
+      {#snippet linkCard()}
+        <div class="link-card" title={article.url}>
+          {#if faviconUrl}<img src={faviconUrl} alt="" class="link-card-favicon" />{/if}
+          <span class="link-card-title">{article.title}</span>
+          {#if domain}<span class="link-card-domain">{domain}</span>{/if}
+        </div>
+      {/snippet}
+
       <div class="composer-blocks" class:picking={quotesOpen}>
         {#each composer.blocks as block, i (i)}
+          {#if i === cardIndex}{@render linkCard()}{/if}
           {#if block.kind === 'quote'}
             <div class="quote-block">
               <textarea
@@ -637,13 +687,11 @@
             </div>
           {/if}
         {/each}
+        {#if cardIndex >= composer.blocks.length}{@render linkCard()}{/if}
 
-        <!-- What the post carries besides your words: the article's link card. -->
-        <div class="link-card" title={article.url}>
-          {#if faviconUrl}<img src={faviconUrl} alt="" class="link-card-favicon" />{/if}
-          <span class="link-card-title">{article.title}</span>
-          {#if domain}<span class="link-card-domain">{domain}</span>{/if}
-        </div>
+        {#if showAttribution && composer.attribution}
+          <p class="attribution-preview">Posted from skyreader.app</p>
+        {/if}
       </div>
 
       <footer class="composer-foot">
@@ -712,6 +760,19 @@
                 </div>
               {/if}
             </div>
+          {/if}
+          {#if showAttribution}
+            <!-- Off unless the user turned the feature on in Settings → Shared
+                 links: a checkbox in the way of every draft is exactly the kind
+                 of thing that stops being useful and starts being noise. -->
+            <label class="attribution-toggle">
+              <input
+                type="checkbox"
+                checked={composer.attribution}
+                onchange={(e) => composer.setAttribution(e.currentTarget.checked)}
+              />
+              <span class="foot-btn-label">Posted from Skyreader</span>
+            </label>
           {/if}
           {#if isEdit}
             <!-- Taking the share down lives here: the Share control opens this
@@ -1076,8 +1137,9 @@
     color: var(--color-error, #f44336);
   }
 
-  /* The trailing link card every share carries — shown so the draft reads as
-     the finished post: your words, then the article. */
+  /* The link card every share carries, drawn at the position the published post
+     will use — so the draft reads as the finished post rather than implying a
+     layout the post won't have. */
   .link-card {
     display: flex;
     align-items: center;
@@ -1108,6 +1170,30 @@
   .link-card-domain {
     flex-shrink: 0;
     color: var(--color-text-secondary);
+  }
+
+  /* The attribution line as it will appear in the post — quiet, because it is
+     the one line here that isn't the user's writing. */
+  .attribution-preview {
+    margin: 0.125rem 0 0;
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+  }
+
+  .attribution-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.3125rem 0.5rem;
+    color: var(--color-text-secondary);
+    font-size: var(--text-md);
+    font-weight: var(--weight-medium);
+    cursor: pointer;
+  }
+
+  .attribution-toggle input {
+    margin: 0;
+    cursor: pointer;
   }
 
   /* ── Footer ─────────────────────────────────────────────────────────────── */
@@ -1362,6 +1448,12 @@
     }
 
     .foot-btn.discard.confirming .foot-btn-label {
+      display: inline;
+    }
+
+    /* The checkbox's label is the only thing that says what it does, so unlike
+       the icon buttons beside it, it keeps its words on a phone. */
+    .attribution-toggle .foot-btn-label {
       display: inline;
     }
 

@@ -73,6 +73,10 @@ export interface ProxyDocument {
   // Passed through verbatim from the record (see DocumentRecord). Clients use it
   // to decide whether a document is theirs to edit or delete.
   skyreaderLinkblog?: string;
+  // The author opted into the trailing "Posted from skyreader.app" line. Passed
+  // through so note parsers can exclude that block by the flag rather than by
+  // string match alone — someone whose own last line reads exactly that keeps it.
+  skyreaderAttribution?: boolean;
 }
 
 /**
@@ -175,6 +179,9 @@ export interface DocumentRecord {
   // publication shares that publication with the posts its home app writes, so
   // this is the only thing separating "a share" from "an essay that links out".
   skyreaderLinkblog?: string;
+  // Set when the author asked for the "Posted from skyreader.app" line, so
+  // readers can tell that trailing block from the author's own last paragraph.
+  skyreaderAttribution?: boolean;
 }
 
 interface PublicationRecord {
@@ -630,6 +637,7 @@ export async function recordToProxyDocument(
     readerCollection: readerCollection || undefined,
     skyreaderLinkblog:
       typeof doc.skyreaderLinkblog === 'string' ? doc.skyreaderLinkblog : undefined,
+    skyreaderAttribution: doc.skyreaderAttribution === true ? true : undefined,
   };
 }
 
