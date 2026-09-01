@@ -48,7 +48,6 @@ const READ_POSITIONS_MAX_LIMIT = 1000;
  */
 const READ_UPSERT_CONFLICT = `ON CONFLICT(user_did, item_key, label) DO UPDATE SET
         props = excluded.props,
-        rkey = excluded.rkey,
         item_type = excluded.item_type,
         deleted_at = NULL,
         updated_at = excluded.updated_at,

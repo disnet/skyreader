@@ -259,8 +259,19 @@ describe('POST /api/reading/mark-feed-read', () => {
     await subscribe(FEED);
 
     await markFeedRead({ feedUrl: FEED });
+    const before = await env.DB.prepare(
+      "SELECT item_key, rkey FROM item_labels_cache WHERE user_did = ? AND label = 'read' ORDER BY item_key"
+    )
+      .bind(TEST_DID)
+      .all<{ item_key: string; rkey: string }>();
     const second = await markFeedRead({ feedUrl: FEED });
     expect(await second.json()).toEqual({ success: true, marked: 8 });
+    const after = await env.DB.prepare(
+      "SELECT item_key, rkey FROM item_labels_cache WHERE user_did = ? AND label = 'read' ORDER BY item_key"
+    )
+      .bind(TEST_DID)
+      .all<{ item_key: string; rkey: string }>();
+    expect(after.results).toEqual(before.results);
   });
 
   it('covers every subscribed feed when no feedUrl is given', async () => {
