@@ -319,20 +319,27 @@ describe('POST /api/reading/mark-unread (soft-delete)', () => {
 
   it('re-read resurrects a tombstoned row (deleted_at cleared)', async () => {
     const now = Math.floor(Date.now() / 1000);
-    await insertReadLabel('article-y', { updatedAt: now - 100, deletedAt: now - 100 });
+    await insertReadLabel('article-y', {
+      updatedAt: now - 100,
+      deletedAt: now - 100,
+      rkey: 'tombstone-rkey',
+    });
 
     const res = await postJson('/api/reading/mark-read', {
       itemGuid: 'article-y',
       itemUrl: 'https://example.com/y',
     });
     expect(res.status).toBe(200);
+    const body = await res.json<{ rkey: string }>();
 
     const row = await env.DB.prepare(
-      "SELECT deleted_at FROM item_labels_cache WHERE user_did = ? AND item_key = ? AND label = 'read'"
+      "SELECT rkey, deleted_at FROM item_labels_cache WHERE user_did = ? AND item_key = ? AND label = 'read'"
     )
       .bind(TEST_DID, 'article-y')
-      .first<{ deleted_at: number | null }>();
+      .first<{ rkey: string; deleted_at: number | null }>();
     expect(row?.deleted_at).toBeNull();
+    expect(row?.rkey).toBe(body.rkey);
+    expect(row?.rkey).not.toBe('tombstone-rkey');
   });
 });
 
