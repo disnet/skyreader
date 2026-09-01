@@ -58,6 +58,12 @@ const MAX_DEPTH = 4;
 // text block in every format, so without this the snippet for a bare share —
 // no commentary, just a quote and the line — would read as the linker's prose.
 // Keep in sync with the backend constant.
+//
+// The string alone is the tell here, unlike the note parsers, which require the
+// record's `skyreaderAttribution` flag before treating that sentence as ours.
+// This is a snippet, not a note: nothing is rewritten from it, so an author whose
+// lead line happens to be that sentence loses one snippet candidate to the next
+// block rather than losing the line itself.
 const ATTRIBUTION_TEXT = 'Posted from skyreader.app';
 
 function isAttributionText(text: string): boolean {
