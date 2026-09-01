@@ -67,11 +67,13 @@ function createAppManager() {
         lastRefreshAt = persistedRefreshAt;
       }
 
-      // Phase 1: Hydrate from cache (parallel)
+      // Phase 1: Hydrate from cache (parallel). savesStore is a guest surface
+      // too — local-only saves; its load() stops at the Dexie cache for guests.
       const guestLoads = [
         liveDb.loadSubscriptions(),
         liveDb.loadArticles(),
         itemLabelsStore.load(),
+        savesStore.load(),
       ];
       await Promise.all(
         auth.isGuest
@@ -81,7 +83,6 @@ function createAppManager() {
               linkblogStore.load(),
               shareDraftsStore.load(),
               filteredViewsStore.load(),
-              savesStore.load(),
               magazineStore.load(),
             ]
       );

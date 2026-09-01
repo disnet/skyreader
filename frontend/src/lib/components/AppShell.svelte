@@ -108,8 +108,9 @@
   // shortcut, so re-registering on remount (e.g. logout → login) just overwrites.
   // The auth conditions are redundant here (this component only mounts inside the
   // app) but kept to preserve the original gating semantics. `isInApp` marks the
-  // ones a guest can use — reading and source management; the rest stay on
-  // `isAuthenticated` so a guest's keypress doesn't jump at an account surface.
+  // ones a guest can use — reading (Home, Feeds, Saved), search and source
+  // management; the rest stay on `isAuthenticated` so a guest's keypress
+  // doesn't jump at an account surface.
   onMount(() => {
     // View switching shortcuts
     keyboardStore.register({
@@ -117,7 +118,7 @@
       description: 'Home',
       category: 'Views',
       action: () => goto('/home'),
-      condition: () => auth.isAuthenticated,
+      condition: () => auth.isInApp,
     });
 
     keyboardStore.register({
@@ -133,7 +134,7 @@
       description: 'Saved',
       category: 'Views',
       action: () => goto(SAVED_PATH),
-      condition: () => auth.isAuthenticated,
+      condition: () => auth.isInApp,
     });
 
     keyboardStore.register({
@@ -228,7 +229,7 @@
         if (savedSearchStore.available) savedSearchStore.openSearch();
         else sidebarStore.toggleNavigationDropdown();
       },
-      condition: () => auth.isAuthenticated,
+      condition: () => auth.isInApp,
     });
 
     // Font size shortcuts (use resulting character from Shift+key)

@@ -137,7 +137,9 @@
               <span>Add RSS Feed</span>
             </button>
             {#if auth.isGuest}
-              <!-- Following an account and saving both need one. -->
+              <!-- Feed saves are local for a guest; following an @handle and
+                   saving arbitrary URLs (extraction is session-gated) still
+                   need an account. -->
               <button
                 class="add-menu-item"
                 onclick={() => {
@@ -146,7 +148,7 @@
                 }}
               >
                 <Icon name="user" size={16} />
-                <span>Sign in to save</span>
+                <span>Sign in to sync</span>
               </button>
             {:else}
               <button

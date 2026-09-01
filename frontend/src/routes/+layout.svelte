@@ -34,15 +34,15 @@
   // and /subscribe share targets) are left to render.
   const APP_ROUTES = ['/home', '/feeds', '/saved', '/daily'];
 
-  // Guest mode is the READING surface and nothing else. Everything below needs an
-  // account — saves, highlights, the linkblog, channels, settings — and these are
-  // exactly the features that make signing in worth it, so a guest who reaches
-  // one gets the sign-in screen (returning here afterwards), not a page whose
-  // every load 401s.
-  const GUEST_ROUTES = ['/feeds', '/sources'];
+  // Guest mode is the READING surface: the feeds, the home lanes, and the
+  // saved pile all work from local data (saves are local-only for a guest —
+  // see savesStore). Everything below still needs an account — highlights,
+  // the linkblog, channels, settings — and those are exactly the features
+  // that make signing in worth it, so a guest who reaches one gets the
+  // sign-in screen (returning here afterwards), not a page whose every load
+  // 401s.
+  const GUEST_ROUTES = ['/feeds', '/sources', '/home', '/saved'];
   const ACCOUNT_ROUTES = [
-    '/home',
-    '/saved',
     '/daily',
     '/linkblog',
     '/highlights',

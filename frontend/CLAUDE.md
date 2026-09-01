@@ -112,8 +112,13 @@ returning zero rows, and the product is calm.
 "Start Reading" on the landing page drops a visitor into the real reader with no account:
 `auth.enterGuestMode()` sets a reactive signal (backed by the `skyreader-guest` localStorage key),
 the curated starter channels are seeded into Dexie, and every write stays local — the subscription
-store skips its backend calls, and `itemLabels` behaves exactly as it does offline (write locally,
-queue), so the sync queue that accumulates IS the read-state migration on sign-in.
+store skips its backend calls, and `itemLabels` and `savesStore` behave exactly as they do offline
+(write locally, queue), so the sync queue that accumulates IS the migration on sign-in: read state
+and saved articles alike. `syncStore.triggerSync` holds the queue while `auth.isGuest` — a drain
+would 401 (no session), and a 401 is non-retryable, which would mark the migration entries
+permanently failed. Guest saves keep the RSS body from `db.articles` (extraction is
+session-gated); `savesStore.load()` stops at the Dexie cache for a guest, and the body-fetch
+fallbacks never fire.
 
 Reads go through `POST /api/guest/timeline` with the local feed-URL list (`feedFetcher`'s guest
 branch), capped at 50 feeds — the same number the store caps a guest's library at. **The batch path
@@ -123,11 +128,14 @@ Single-feed reads (add-feed, retry, backfill) route through the same endpoint, w
 first — a guest's feeds are not in the crawl set.
 
 `auth.isInApp` (account **or** guest) gates the reading surfaces; `auth.isAuthenticated` still gates
-every account action. The route guard in `+layout.svelte` allows a guest `/feeds` and `/sources` and
-turns any account-only route into the sign-in screen with a `returnUrl`. On the first authenticated
-boot, `appManager.migrateGuestSubscriptions()` bulk-creates the local rows (rkeys preserved) before
-`syncSubscriptions()` — the curated starter rows are left behind when the account already has a
-library, so trying the reader out never adds sample feeds to a real one.
+every account action. The route guard in `+layout.svelte` allows a guest `/feeds`, `/home`, `/saved`
+and `/sources` (Home and Saved run entirely off the local saves pile — the account-only rails and
+channel affordances hide for guests) and turns any account-only route into the sign-in screen with
+a `returnUrl`. On the first authenticated boot, `appManager.migrateGuestSubscriptions()`
+bulk-creates the local rows (rkeys preserved) before `syncSubscriptions()` — the curated starter
+rows are left behind when the account already has a library, so trying the reader out never adds
+sample feeds to a real one. Queued guest saves and reads drain through the ordinary sync run on
+that same boot.
 
 Client errors flow through `/api/telemetry/error`; no Sentry SDK ships in the frontend bundle.
 See [`docs/RUNBOOK.md`](../docs/RUNBOOK.md) for sampling and recovery details.

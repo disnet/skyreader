@@ -189,54 +189,65 @@
       count: savedCount,
       icon: 'bookmark',
     };
+    // Account-only destinations stay out of a guest's switcher (mirroring the
+    // sidebar): a guest tapping one would just land on the sign-in screen.
+    const accountItems: NavItem[] = auth.isGuest
+      ? []
+      : [
+          ...(!preferences.linkblogDisabled
+            ? [
+                {
+                  type: 'utility',
+                  id: 'linkblog',
+                  label: 'Linkblog',
+                  icon: 'share' as IconName,
+                } as NavItem,
+              ]
+            : []),
+          {
+            type: 'utility',
+            id: 'highlights',
+            label: 'Highlights',
+            icon: 'highlighter' as IconName,
+          },
+          // Review is its own destination; the count is today's deck, and it goes
+          // quiet once the deck is done. Hidden until there's a corpus to review.
+          ...(highlightReviewStore.hasHighlights
+            ? [
+                {
+                  type: 'utility',
+                  id: 'highlights/review',
+                  label: 'Review',
+                  count: highlightReviewStore.dueCount,
+                  icon: 'quote' as IconName,
+                } as NavItem,
+              ]
+            : []),
+          {
+            type: 'utility',
+            id: 'discover',
+            label: 'Discover',
+            icon: 'users' as IconName,
+          },
+        ];
     const otherItems: NavItem[] = [
-      ...(!preferences.linkblogDisabled
-        ? [
-            {
-              type: 'utility',
-              id: 'linkblog',
-              label: 'Linkblog',
-              icon: 'share' as IconName,
-            } as NavItem,
-          ]
-        : []),
-      {
-        type: 'utility',
-        id: 'highlights',
-        label: 'Highlights',
-        icon: 'highlighter' as IconName,
-      },
-      // Review is its own destination; the count is today's deck, and it goes
-      // quiet once the deck is done. Hidden until there's a corpus to review.
-      ...(highlightReviewStore.hasHighlights
-        ? [
-            {
-              type: 'utility',
-              id: 'highlights/review',
-              label: 'Review',
-              count: highlightReviewStore.dueCount,
-              icon: 'quote' as IconName,
-            } as NavItem,
-          ]
-        : []),
-      {
-        type: 'utility',
-        id: 'discover',
-        label: 'Discover',
-        icon: 'users' as IconName,
-      },
+      ...accountItems,
       {
         type: 'utility',
         id: 'sources',
         label: 'Manage Sources',
         icon: 'rss' as IconName,
       },
-      {
-        type: 'utility',
-        id: 'settings',
-        label: 'Settings',
-        icon: 'settings' as IconName,
-      },
+      ...(auth.isGuest
+        ? []
+        : [
+            {
+              type: 'utility',
+              id: 'settings',
+              label: 'Settings',
+              icon: 'settings' as IconName,
+            } as NavItem,
+          ]),
       // Quiet upsell, mirroring the sidebar: gone once the user is a Supporter.
       ...(auth.user && auth.user.tier !== 'supporter'
         ? [
@@ -448,7 +459,7 @@
           </div>
         {/if}
         {#each items as item}
-          {#if item.type === 'view' && (item.id === 'all' || item.id === 'saved') && onCreateChannel}
+          {#if item.type === 'view' && (item.id === 'all' || item.id === 'saved') && onCreateChannel && !auth.isGuest}
             <div class="nav-item-row" class:active={isItemActive(item)}>
               <button class="nav-item-main" onclick={() => selectItem(item)}>
                 <span class="item-icon"><Icon name={item.icon} size={18} /></span>
@@ -521,7 +532,7 @@
             </button>
           {/if}
         {/each}
-        {#if groupId === 'everything' && !searchQuery}
+        {#if groupId === 'everything' && !searchQuery && !auth.isGuest}
           <a
             href="/channels/discover"
             class="nav-item more-suggestions-link"
@@ -531,7 +542,7 @@
             <span class="item-label">More channel ideas</span>
           </a>
         {/if}
-        {#if groupId === 'saved' && !searchQuery}
+        {#if groupId === 'saved' && !searchQuery && !auth.isGuest}
           <a
             href="/channels/discover"
             class="nav-item more-suggestions-link"

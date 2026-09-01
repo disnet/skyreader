@@ -35,6 +35,7 @@
   import { decodeEntities } from '$lib/utils/entities';
   import { savedItemLabelKeys } from '$lib/utils/dailyMagazine';
   import { preferences, type CardDensity, type DefaultView } from '$lib/stores/preferences.svelte';
+  import { auth } from '$lib/stores/auth.svelte';
   import {
     datePresetToMs,
     matchesReadingLength,
@@ -396,7 +397,9 @@
       <div class="home-controls masthead-controls">{@render homeControls()}</div>
     </div>
 
-    {#if !isLoading}
+    {#if !isLoading && !auth.isGuest}
+      <!-- Highlights and the daily magazine are account features (both are
+           server-backed); a guest's Home is just the lanes over local saves. -->
       <HighlightReviewCard />
       <MagazineRail
         issues={magazineStore.magazines}

@@ -22,7 +22,8 @@
   let brokenAvatars = $state<Set<string>>(new Set());
 
   // Someone arriving from guest mode: their local library migrates on the first
-  // authenticated boot (see appManager.migrateGuestSubscriptions), so say so.
+  // authenticated boot (appManager.migrateGuestSubscriptions for feeds; the
+  // sync queue carries reads and local saves up), so say so.
   let hasGuestFeeds = $derived(auth.hasGuestData);
 
   function markAvatarBroken(handle: string) {
@@ -244,7 +245,7 @@
     <p class="tagline">Log in with your Atmosphere account</p>
 
     {#if hasGuestFeeds}
-      <p class="guest-note">Your feeds come with you.</p>
+      <p class="guest-note">Your feeds and saves come with you.</p>
     {/if}
 
     <button

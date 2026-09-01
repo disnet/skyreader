@@ -45,16 +45,11 @@
 
   $effect(() => {
     if (!browser) return;
-    if (auth.isGuest) {
-      // A guest's app is /feeds. `targetFor` can land on /home or /saved (the
-      // default-view preference, an old ?saved= link), both of which need an
-      // account — so anything outside /feeds becomes /feeds rather than a bounce
-      // through the sign-in screen.
-      const target = targetFor(new URL(window.location.href));
-      goto(target.startsWith('/feeds') ? target : '/feeds', { replaceState: true });
-      return;
-    }
-    if (auth.isAuthenticated) {
+    // Guests land wherever targetFor says, same as an account: /home, /feeds
+    // and /saved are all guest surfaces now (saves are local-only for a guest).
+    // A target outside those (nothing targetFor returns today) would hit the
+    // layout's route guard and turn into the sign-in screen, not a 401 page.
+    if (auth.isGuest || auth.isAuthenticated) {
       goto(targetFor(new URL(window.location.href)), { replaceState: true });
     }
   });

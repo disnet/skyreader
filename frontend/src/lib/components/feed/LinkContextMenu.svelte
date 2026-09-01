@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import Icon from '$lib/components/Icon.svelte';
+  import { auth } from '$lib/stores/auth.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
   import { toastStore } from '$lib/stores/toast.svelte';
   import { UrlSaveLimitError } from '$lib/services/api';
@@ -114,10 +115,14 @@
     <Icon name="external-link" size={15} />
     <span>Open in new tab</span>
   </button>
-  <button class="menu-item" onclick={handleSave}>
-    <Icon name="bookmark" size={15} />
-    <span>Add to saved</span>
-  </button>
+  {#if !auth.isGuest}
+    <!-- A URL save runs server-side extraction, which is session-gated; a
+         guest's saves come from the feed and home views instead. -->
+    <button class="menu-item" onclick={handleSave}>
+      <Icon name="bookmark" size={15} />
+      <span>Add to saved</span>
+    </button>
+  {/if}
   <button class="menu-item" onclick={handleCopy}>
     <Icon name="copy" size={15} />
     <span>{copyState === 'copied' ? 'Copied!' : 'Copy URL'}</span>

@@ -5,10 +5,24 @@ import { generateTid } from '$lib/utils/tid';
 import { urlKey } from '$lib/utils/urlKey';
 import { syncQueue, type SavedPayload } from '$lib/services/sync-queue';
 import { syncStore } from './sync.svelte';
+import { auth } from './auth.svelte';
 import { extractArticle } from '$lib/services/extract';
 import { computeContentStats } from '$lib/services/articleMerge';
 import { savedSearchStore } from './savedSearch.svelte';
 import type { SavedItem } from '$lib/types';
+
+/**
+ * Whether save writes/reads can reach the backend at all.
+ *
+ * A guest has no account, so every mutation takes the offline branch: the save
+ * is written to IndexedDB and the server-bound half is queued. That queue is
+ * also the migration — signing in flushes it to the new account through the
+ * ordinary sync run, the same way itemLabels migrates read state. Guest saves
+ * keep the RSS body (extraction is session-gated), matching an offline save.
+ */
+function canReachBackend(): boolean {
+  return syncStore.isOnline && !auth.isGuest;
+}
 
 // Derive a word count from the best available body text, returning null when
 // there's nothing to count. Used so a saved item's read time never silently
@@ -87,7 +101,7 @@ function createSavesStore() {
   }
 
   function pushWordCountBackfills(backfilled: SavedItem[]) {
-    if (backfilled.length > 0 && syncStore.isOnline) {
+    if (backfilled.length > 0 && canReachBackend()) {
       void Promise.all(
         backfilled.map((a) =>
           api.updateSaved(a.rkey, { wordCount: a.wordCount! }).catch((err) => {
@@ -146,6 +160,10 @@ function createSavesStore() {
         articles = cached.map(toLightSaved);
         rebuildMaps();
       }
+
+      // A guest's saves live only in this browser: the cache IS the list, and
+      // there is no backend to reconcile against (the list endpoint would 401).
+      if (auth.isGuest) return;
 
       // Fetch the first page. The backend pages newest-first over a keyset
       // cursor; `full` means an external-backed snapshot that must replace the
@@ -345,7 +363,7 @@ function createSavesStore() {
       await safePut(db.saved, savedItem);
       savedSearchStore.upsert(savedItem);
 
-      if (syncStore.isOnline) {
+      if (canReachBackend()) {
         try {
           // Prefer a clean, full-text extraction of the article (same source as
           // URL saves) over the RSS body. Fall back to the RSS body if
@@ -419,9 +437,10 @@ function createSavesStore() {
           return savedItem;
         }
       } else {
-        // Offline: queue the API call with the RSS body. Extraction needs the
-        // network, and the queue replays the save directly via the API (not this
-        // path), so offline saves keep the RSS body rather than the extracted one.
+        // Offline or guest: queue the API call with the RSS body. Extraction
+        // needs the network (and a session), and the queue replays the save
+        // directly via the API (not this path), so these saves keep the RSS
+        // body rather than the extracted one.
         await syncQueue.enqueue('create', 'saved', article.guid, {
           rkey,
           url: article.url,
@@ -487,7 +506,7 @@ function createSavesStore() {
       await safePut(db.saved, savedItem);
       savedSearchStore.upsert(savedItem);
 
-      if (syncStore.isOnline) {
+      if (canReachBackend()) {
         try {
           const result = await api.saveFromUrl(doc.url || '', rkey, {
             source: 'document',
@@ -562,7 +581,7 @@ function createSavesStore() {
     savedSearchStore.remove(item.rkey, guid);
     await db.saved.where('itemGuid').equals(guid).delete();
 
-    if (syncStore.isOnline) {
+    if (canReachBackend()) {
       try {
         await api.deleteSavedByGuid(guid);
       } catch (err) {
@@ -592,7 +611,7 @@ function createSavesStore() {
     savedSearchStore.remove(rkey, item?.itemGuid);
     await db.saved.delete(rkey);
 
-    if (syncStore.isOnline) {
+    if (canReachBackend()) {
       try {
         await api.deleteSaved(rkey);
       } catch (err) {
@@ -667,7 +686,8 @@ function createSavesStore() {
       // batch error, a backed stub awaiting extraction) the body never lands and
       // the incremental refresh won't revisit an already-cached row. Fetch it on
       // demand here as a self-healing fallback, and cache it so the next open is local.
-      if (!syncStore.isOnline) return null;
+      // A guest's saves have no server copy to fall back to.
+      if (!canReachBackend()) return null;
       const { bodies } = await api.getSavedBodies([rkey]);
       const body = bodies[rkey] ?? null;
       if (body != null && row) {

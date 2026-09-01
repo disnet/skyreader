@@ -301,23 +301,22 @@
   </div>
 
   <!-- Navigation items. A guest sees only what works without an account: the
-       feeds list and source management. The account-only destinations are the
-       reason to sign in (the route guard in +layout.svelte turns a deep link to
-       one into the sign-in screen), so offering them here as dead ends would be
-       the opposite of calm. -->
+       feeds list, home, the saved pile (local-only saves) and source
+       management. The account-only destinations are the reason to sign in
+       (the route guard in +layout.svelte turns a deep link to one into the
+       sign-in screen), so offering them here as dead ends would be the
+       opposite of calm. -->
   <nav class="sidebar-nav">
     <!-- Home: the default landing surface (a route, not a feed filter) -->
-    {#if !auth.isGuest}
-      <a
-        href="/home"
-        class="nav-item nav-link"
-        class:active={$page.url.pathname === '/home'}
-        onclick={() => sidebarStore.closeMobile()}
-      >
-        <span class="nav-icon"><Icon name="home" /></span>
-        <span class="nav-label">Home</span>
-      </a>
-    {/if}
+    <a
+      href="/home"
+      class="nav-item nav-link"
+      class:active={$page.url.pathname === '/home'}
+      onclick={() => sidebarStore.closeMobile()}
+    >
+      <span class="nav-icon"><Icon name="home" /></span>
+      <span class="nav-label">Home</span>
+    </a>
 
     <!-- Everything: top-level filter + nested source channels -->
     <div class="nav-group" class:expanded={sidebarStore.expandedSections.everything}>
@@ -396,14 +395,15 @@
       {/if}
     </div>
 
-    <!-- Saved: top-level filter + nested saved channels -->
-    {#if !auth.isGuest}
-      <div class="nav-group" class:expanded={sidebarStore.expandedSections.saved}>
-        <div class="nav-row" class:active={currentFilter().type === 'saved'}>
-          <button class="nav-row-main" onclick={() => selectFilter('saved')}>
-            <span class="nav-icon"><Icon name="bookmark" /></span>
-            <span class="nav-label">Saved</span>
-          </button>
+    <!-- Saved: top-level filter + nested saved channels. Guests get the pile
+         (saves are local-only for them) but not channels — those sync. -->
+    <div class="nav-group" class:expanded={sidebarStore.expandedSections.saved}>
+      <div class="nav-row" class:active={currentFilter().type === 'saved'}>
+        <button class="nav-row-main" onclick={() => selectFilter('saved')}>
+          <span class="nav-icon"><Icon name="bookmark" /></span>
+          <span class="nav-label">Saved</span>
+        </button>
+        {#if !auth.isGuest}
           <button
             class="row-add-btn"
             onclick={(e) => {
@@ -414,50 +414,52 @@
           >
             <Icon name="plus" size={14} strokeWidth={2} />
           </button>
-          {#if itemLabelsStore.inboxCount > 0}
-            <span class="nav-count">{itemLabelsStore.inboxCount}</span>
-          {/if}
-          <button
-            class="row-disclosure-btn"
-            onclick={(e) => {
-              e.stopPropagation();
-              sidebarStore.toggleSection('saved');
-            }}
-            aria-label="Toggle saved channels"
-          >
-            <Icon
-              name={sidebarStore.expandedSections.saved ? 'chevron-down' : 'chevron-right'}
-              size={14}
-              strokeWidth={2.5}
+        {/if}
+        {#if itemLabelsStore.inboxCount > 0}
+          <span class="nav-count">{itemLabelsStore.inboxCount}</span>
+        {/if}
+        <button
+          class="row-disclosure-btn"
+          onclick={(e) => {
+            e.stopPropagation();
+            sidebarStore.toggleSection('saved');
+          }}
+          aria-label="Toggle saved channels"
+        >
+          <Icon
+            name={sidebarStore.expandedSections.saved ? 'chevron-down' : 'chevron-right'}
+            size={14}
+            strokeWidth={2.5}
+          />
+        </button>
+      </div>
+      {#if sidebarStore.expandedSections.saved}
+        <div class="nav-children">
+          {#each savedChannels as view (view.uuid)}
+            <ViewItem
+              {view}
+              isActive={currentFilter().type === 'view' && currentFilter().id === view.uuid}
+              isRenaming={renamingViewId === view.id}
+              unreadCount={view.id != null ? (unreadCounts.channelCounts.get(view.id) ?? 0) : 0}
+              onSelect={() => selectFilter('view', view.uuid)}
+              onContextMenu={(e) => view.id != null && handleViewContextMenu(e, view.id)}
+              onTouchStart={(e) => view.id != null && handleViewTouchStart(e, view.id)}
+              onTouchEnd={handleViewTouchEnd}
+              onTouchMove={handleViewTouchMove}
+              onMoreClick={(e) => view.id != null && handleViewContextMenu(e, view.id)}
+              onRename={async (name) => {
+                if (view.id != null) {
+                  await filteredViewsStore.update(view.id, { name });
+                }
+                renamingViewId = null;
+              }}
+              onRenameCancel={() => (renamingViewId = null)}
             />
-          </button>
-        </div>
-        {#if sidebarStore.expandedSections.saved}
-          <div class="nav-children">
-            {#each savedChannels as view (view.uuid)}
-              <ViewItem
-                {view}
-                isActive={currentFilter().type === 'view' && currentFilter().id === view.uuid}
-                isRenaming={renamingViewId === view.id}
-                unreadCount={view.id != null ? (unreadCounts.channelCounts.get(view.id) ?? 0) : 0}
-                onSelect={() => selectFilter('view', view.uuid)}
-                onContextMenu={(e) => view.id != null && handleViewContextMenu(e, view.id)}
-                onTouchStart={(e) => view.id != null && handleViewTouchStart(e, view.id)}
-                onTouchEnd={handleViewTouchEnd}
-                onTouchMove={handleViewTouchMove}
-                onMoreClick={(e) => view.id != null && handleViewContextMenu(e, view.id)}
-                onRename={async (name) => {
-                  if (view.id != null) {
-                    await filteredViewsStore.update(view.id, { name });
-                  }
-                  renamingViewId = null;
-                }}
-                onRenameCancel={() => (renamingViewId = null)}
-              />
-            {/each}
-            {#if savedChannels.length === 0}
-              <div class="empty-section">No saved channels yet</div>
-            {/if}
+          {/each}
+          {#if savedChannels.length === 0}
+            <div class="empty-section">No saved channels yet</div>
+          {/if}
+          {#if !auth.isGuest}
             <a
               href="/channels/discover"
               class="more-suggestions-link"
@@ -466,10 +468,10 @@
               More channel ideas
               <Icon name="arrow-right" size={12} />
             </a>
-          </div>
-        {/if}
-      </div>
-    {/if}
+          {/if}
+        </div>
+      {/if}
+    </div>
 
     <!-- Bottom nav. The linkblog entry hides once the user deletes their
          linkblog; the rest of the nav is unrelated to it and always shows. -->
@@ -536,11 +538,12 @@
     </a>
 
     {#if auth.isGuest}
-      <!-- The one account affordance a guest sees in the nav. Saves, highlights
-           and the linkblog are what it buys; the feeds already here come along. -->
+      <!-- The one account affordance a guest sees in the nav. Sync across
+           devices, highlights and the linkblog are what it buys; the feeds and
+           saves already here come along. -->
       <a href="/auth/login" class="nav-item nav-link" onclick={() => sidebarStore.closeMobile()}>
         <span class="nav-icon"><Icon name="user" /></span>
-        <span class="nav-label">Sign in to save & sync</span>
+        <span class="nav-label">Sign in to sync</span>
       </a>
     {:else}
       <a

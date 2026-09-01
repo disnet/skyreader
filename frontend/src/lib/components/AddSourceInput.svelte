@@ -204,13 +204,14 @@
           Add RSS Feed
         </button>
         {#if auth.isGuest}
-          <!-- Following accounts and saving both write to the reader's own repo. -->
+          <!-- Feed saves are local for a guest; following an @handle and saving
+               arbitrary URLs (extraction is session-gated) still need an account. -->
           <button
             class="menu-item"
             onclick={(e) => handleAction(() => goto('/auth/login?returnUrl=/feeds'), e)}
           >
             <span class="item-icon"><Icon name="user" size={16} /></span>
-            Sign in to save & follow accounts
+            Sign in to sync & follow accounts
           </button>
         {:else}
           <button

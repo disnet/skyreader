@@ -1,5 +1,6 @@
 import { browser } from '$app/environment';
 import { syncQueue } from '$lib/services/sync-queue';
+import { auth } from './auth.svelte';
 
 function createSyncStore() {
   let isOnline = $state(browser ? navigator.onLine : true);
@@ -55,6 +56,13 @@ function createSyncStore() {
 
   async function triggerSync() {
     if (!isOnline) return;
+    // A guest's queue is the sign-in migration, not a backlog: every replay
+    // would 401 (there is no session), and a 401 is a non-retryable error that
+    // marks the entry permanently failed — silently losing the reads and saves
+    // it was holding for the future account. Hold the queue until sign-in
+    // (isGuest goes false the moment a user is set, while the guest marker
+    // stays up for the migration).
+    if (auth.isGuest) return;
 
     const result = await syncQueue.processQueue();
     if (result.processed > 0 || result.failed > 0) {
