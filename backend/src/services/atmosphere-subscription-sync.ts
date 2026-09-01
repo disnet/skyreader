@@ -37,8 +37,11 @@ import {
   isPublicationUri,
   writeAtmosphereSubscription,
 } from './atmosphere-subscription';
-import { pushSubscriptionToPds, deleteSubscriptionFromPds } from './subscription-sync';
-import type { LimitNotice } from './subscription-sync';
+import {
+  pushSubscriptionToPds,
+  deleteSubscriptionFromPds,
+  type LimitNotice,
+} from './subscription-sync';
 import { log } from '../utils/logger';
 import {
   chargeQueries,

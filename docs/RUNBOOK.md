@@ -399,16 +399,17 @@ The first section of the admin dashboard. It reads two D1 tables the backend cro
 writes (migration `0067_system_status.sql`) — no API token, no production-only
 path, so it works in local dev and staging the moment the cron has run once.
 
-| Tile                     | Source                             | Green             | Amber              | Red                            |
-| ------------------------ | ---------------------------------- | ----------------- | ------------------ | ------------------------------ |
-| Cron Last Run            | `system_status.cron_last_run`      | <3 min ago        | <10 min ago        | ≥10 min, or the run failed     |
-| Firehose Lag             | `poller_status.lagMs`              | <5 min (SLO bar)  | <15 min            | ≥15 min (= the Sentry alert)   |
-| Last Poll                | `poller_status.lastPollAt`         | <5 min ago        | never polled       | ≥5 min ago                     |
-| Poll Errors (last cycle) | `poller_status.errors`             | 0                 | ≥1                 | —                              |
-| Document Stream Lag      | `poller_status.documentsLagMs`     | <5 min            | <15 min, or paused | ≥15 min (= the Sentry alert)   |
-| Document Ingest          | `poller_status.documentsCapStreak` | 0–2 capped cycles | ≥3 capped cycles   | ≥10 capped, or ingest disabled |
-| Proxy Cache Fresh        | `proxy_stats.freshPct`             | ≥95% (SLO bar)    | ≥80%               | <80%, or stats >15 min old     |
-| Proxy Feeds in Error     | `proxy_stats.feedsInError`         | 0                 | ≥1                 | any permanent failures         |
+| Tile                     | Source                              | Green             | Amber                                             | Red                                               |
+| ------------------------ | ----------------------------------- | ----------------- | ------------------------------------------------- | ------------------------------------------------- |
+| Cron Last Run            | `system_status.cron_last_run`       | <3 min ago        | <10 min ago                                       | ≥10 min, or the run failed                        |
+| Firehose Lag             | `poller_status.lagMs`               | <5 min (SLO bar)  | <15 min                                           | ≥15 min (= the Sentry alert)                      |
+| Last Poll                | `poller_status.lastPollAt`          | <5 min ago        | never polled                                      | ≥5 min ago                                        |
+| Poll Errors (last cycle) | `poller_status.errors`              | 0                 | ≥1                                                | —                                                 |
+| Document Stream Lag      | `poller_status.documentsLagMs`      | <5 min            | <15 min, or paused                                | ≥15 min (= the Sentry alert)                      |
+| Document Ingest          | `poller_status.documentsCapStreak`  | 0–2 capped cycles | ≥3 capped cycles                                  | ≥10 capped, or ingest disabled                    |
+| Proxy Cache Fresh        | `proxy_stats.freshPct`              | ≥95% (SLO bar)    | ≥80%                                              | <80%, or stats >15 min old                        |
+| Proxy Feeds in Error     | `proxy_stats.feedsInError`          | 0                 | ≥1                                                | any permanent failures                            |
+| Document Sync            | `proxy_stats.documentAuthorsFrozen` | 0 frozen          | 1–2 frozen, or the proxy's document firehose down | ≥3 frozen, or ≥25% of active (= the Sentry alert) |
 
 "SLO bar" means the tile grades the **latest reading** against the number §7's SLO
 uses; the SLO itself is that bar held across a month of hourly points, so an amber
@@ -419,8 +420,8 @@ values are written by the cron, so they stop moving exactly when it does. Cross-
 against the `backend-cron` heartbeat before assuming the panel is broken.
 
 Staleness is graded on the **row**, not on the numbers inside it: the five poller
-tiles go red together once `poller_status` is more than 5 minutes old, and both
-proxy tiles once `proxy_stats` is more than 15 minutes old. That's the case a
+tiles go red together once `poller_status` is more than 5 minutes old, and all
+three proxy tiles once `proxy_stats` is more than 15 minutes old. That's the case a
 value can't see about itself — the cron alive and healthy, but its DO `/status` or
 proxy `/stats` fetch failing, leaving a green lag from an hour ago in the table.
 Stale poller tiles with a green Cron Last Run mean **the collector is
@@ -532,9 +533,12 @@ a heartbeat that never arrives is configuration, not a restart.
 ### Document publication feed goes quiet
 
 The admin's **Document Sync** tile and proxy `/stats` → `documents` cover the
-Jetstream lane used by standard.site/Leaflet publications. `frozen > 0` means an
-actively read author has not had a full PDS re-list for more than twice the
-24-hour floor; `inBackoff > 0` explains why a repair is waiting.
+Jetstream lane used by standard.site/Leaflet publications. This is the **proxy**
+read path, which is the live one only while `documents_v2_enabled` is off; once it
+is on, these numbers decay to zero by construction and §4e's D1 tiles are what a
+reader depends on. `frozen > 0` means an actively read author has not had a full
+PDS re-list for more than twice the 24-hour floor; `inBackoff > 0` explains why a
+repair is waiting.
 
 The `proxy-document-cache-frozen` alert fires when **3 or more** authors are
 frozen, or when frozen authors are **25% or more** of the active ones (whichever
@@ -570,6 +574,49 @@ The next client poll serves the existing cache and refreshes it in the
 background; a changed scope digest replaces the stale list without user action.
 For multiple victims, update small batches of recently requested rows so the
 upstream PDSes are not hit in a stampede.
+
+### The timeline rollout gate
+
+`ingestActive` is the AND of two things: a fresh crawler heartbeat and
+`sync_state.timeline_enabled`. They are separate because the heartbeat lands
+_seconds_ into the first backfill of an environment and that backfill takes hours
+— without the gate, every reader switches to the timeline at the moment the
+archive is emptiest and then drags the whole backfill through the incremental
+drain (the expensive global scan, at its worst case, for the duration).
+
+Only an explicit `'0'` gates. Migration 0071 sets it for a database that already
+has users, so prod and staging start shut and a fresh environment (local dev,
+e2e, CI) starts open.
+
+```bash
+# Open it — after ingest.pending has trended to ~0.
+npx wrangler d1 execute skyreader --remote --command \
+  "UPDATE sync_state SET value='1', updated_at=unixepoch() WHERE key='timeline_enabled'"
+
+# Shut it — every client is back on the legacy batch path at its next poll.
+npx wrangler d1 execute skyreader --remote --command \
+  "UPDATE sync_state SET value='0', updated_at=unixepoch() WHERE key='timeline_enabled'"
+```
+
+Shutting it is the **fast rollback for the read path**, and the first thing to
+reach for if the timeline misbehaves after a rollout: no Worker deploy, no waiting
+out the 30-minute heartbeat freshness window, and the crawler keeps filling the
+archive the whole time. It is not a fix for a bad Worker deploy generally — only
+for "readers should not be on the timeline right now".
+
+One caveat when shutting it: clients hold a committed `timelineCursor` and stop
+advancing their per-subscription `feedCursors` while on the timeline, so the
+batch path re-drains from wherever those cursors were left. The proxy's K=200
+window bounds that, and the merge dedupes by GUID, so the cost is one heavier
+sync, not duplicates.
+
+**Guests have no batch path.** `/api/v2/feeds/batch` needs a session, so shutting
+the gate doesn't move guest readers to a fallback — it empties their refresh
+(they keep whatever is cached, and the client retries on the next poll rather
+than fanning out to endpoints that would 401). Guest reading mode is therefore
+only meaningful with the gate open; check it before announcing the feature.
+
+---
 
 ## 4e. standard.site documents in D1
 
@@ -656,6 +703,25 @@ npx wrangler d1 execute skyreader --remote --command \
    **Rollback is the same statement with `'0'`** — every client is back on the proxy
    path at its next poll, and D1 keeps ingesting the whole time.
 
+**Which document verdict is the live one.** The ops panel carries two while this
+rollout is in flight, and the gate decides which one means a reader is missing
+documents. Until the flip that is the proxy's: `Document Sync` and
+`proxy-document-cache-frozen` (§4d), with `Document Stream Lag` / `Document Ingest`
+saying only whether the D1 copy is keeping up. After the flip it inverts — the D1
+tiles are the read path, and the proxy tile grades a cache nobody reads.
+
+Nothing needs silencing by hand. `frozen` and `active` count only authors requested
+inside the proxy's 14-day warm window, and the warm loop re-lists those rows on its
+own clock, so after the flip the counts don't spike — they drain to zero as rows age
+out, and both the tile and the alert go quiet within that window. A `frozen` count
+that keeps climbing after the flip means something is still on the proxy read path;
+check the gate before touching the threshold.
+
+Retire the proxy document cache and its alert together, in a pruning pass (§8), once
+the flip has held long enough that you would not roll back — not at the flip itself.
+For as long as `documents_v2_enabled` can go back to `'0'`, that cache is the
+rollback target and its verdict still has to be trustworthy.
+
 **Flood response.** `documents_cap_saturated`, or a `Document Ingest` tile stuck
 red, means pausing writes:
 
@@ -706,47 +772,6 @@ curl -sX POST -H "X-Proxy-Secret: $FEED_PROXY_SECRET" \
 
 An explicit `dids` list ignores both the reconcile interval and the failure backoff,
 so this is also how you retry an author sooner than their backoff would allow.
-
-### The timeline rollout gate
-
-`ingestActive` is the AND of two things: a fresh crawler heartbeat and
-`sync_state.timeline_enabled`. They are separate because the heartbeat lands
-_seconds_ into the first backfill of an environment and that backfill takes hours
-— without the gate, every reader switches to the timeline at the moment the
-archive is emptiest and then drags the whole backfill through the incremental
-drain (the expensive global scan, at its worst case, for the duration).
-
-Only an explicit `'0'` gates. Migration 0071 sets it for a database that already
-has users, so prod and staging start shut and a fresh environment (local dev,
-e2e, CI) starts open.
-
-```bash
-# Open it — after ingest.pending has trended to ~0.
-npx wrangler d1 execute skyreader --remote --command \
-  "UPDATE sync_state SET value='1', updated_at=unixepoch() WHERE key='timeline_enabled'"
-
-# Shut it — every client is back on the legacy batch path at its next poll.
-npx wrangler d1 execute skyreader --remote --command \
-  "UPDATE sync_state SET value='0', updated_at=unixepoch() WHERE key='timeline_enabled'"
-```
-
-Shutting it is the **fast rollback for the read path**, and the first thing to
-reach for if the timeline misbehaves after a rollout: no Worker deploy, no waiting
-out the 30-minute heartbeat freshness window, and the crawler keeps filling the
-archive the whole time. It is not a fix for a bad Worker deploy generally — only
-for "readers should not be on the timeline right now".
-
-One caveat when shutting it: clients hold a committed `timelineCursor` and stop
-advancing their per-subscription `feedCursors` while on the timeline, so the
-batch path re-drains from wherever those cursors were left. The proxy's K=200
-window bounds that, and the merge dedupes by GUID, so the cost is one heavier
-sync, not duplicates.
-
-**Guests have no batch path.** `/api/v2/feeds/batch` needs a session, so shutting
-the gate doesn't move guest readers to a fallback — it empties their refresh
-(they keep whatever is cached, and the client retries on the next poll rather
-than fanning out to endpoints that would 401). Guest reading mode is therefore
-only meaningful with the gate open; check it before announcing the feature.
 
 ---
 
@@ -978,7 +1003,7 @@ regression. The steady state to protect is a quiet phone that you still trust.
 
 ### Pruning log
 
-| Date        | Change                                                       | Why |
-| ----------- | ------------------------------------------------------------ | --- |
+| Date        | Change                                                                                                  | Why                                                                                                                                                                                    |
+| ----------- | ------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 2026-09-03  | `proxy-document-cache-frozen`: threshold `frozen > 0` → 3 authors or 25% of active; re-alert 30m → 24h. | One stuck author fired 93 events over two days with no action available. Root cause fixed in the proxy the same day (the re-list floor was only checked on the firehose-covered path). |
-| _(pending)_ | First pass due 2–4 weeks after the §2 checks are configured. | —   |
+| _(pending)_ | First pass due 2–4 weeks after the §2 checks are configured.                                            | —                                                                                                                                                                                      |
