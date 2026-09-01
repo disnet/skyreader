@@ -32,6 +32,7 @@ import {
   handleConnectPublication,
   handleResolvePublication,
   handleSetPageVisibility,
+  handleSetLinkblogFormatting,
   handleDeletePublication,
   handleRestorePublication,
 } from './routes/linkblog';
@@ -434,6 +435,10 @@ async function route(
       } else {
         response = await handleUpdatePublication(request, env);
       }
+      break;
+    case url.pathname === '/api/linkblog/formatting':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleSetLinkblogFormatting(request, env);
       break;
     case url.pathname === '/api/linkblog/publications':
       if (!session) return unauthorizedResponse(headers);

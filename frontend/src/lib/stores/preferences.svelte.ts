@@ -75,6 +75,15 @@ interface PreferencesState {
   // or its deleted linkblog.
   linkblogShareConfirmedDids: string[];
   linkblogDisabledDids: string[];
+  // The "Posted from Skyreader" line: whether the composer OFFERS the checkbox
+  // at all (the settings kill-switch — a feature that would be annoying if it
+  // were always in the way), and whether the box is ticked by default. Both are
+  // per-account for the same reason as the two lists above: a second account on
+  // this browser must not inherit the first one's publishing habits. Client-side
+  // only — the server acts on the per-request flag, so this is UI state, and the
+  // tradeoff is that it doesn't follow you to another device.
+  linkblogAttributionOfferedDids: string[];
+  linkblogAttributionOnDids: string[];
   // Which surface a cold app load lands on (consumed by the `/` redirector).
   defaultView: DefaultView;
   // How tightly the Home lane tiles are packed.
@@ -110,6 +119,8 @@ function createPreferencesStore() {
     sortOrder: 'newest',
     linkblogShareConfirmedDids: [],
     linkblogDisabledDids: [],
+    linkblogAttributionOfferedDids: [],
+    linkblogAttributionOnDids: [],
     defaultView: 'home',
     cardDensity: 'cozy',
     dailyMagazineMinutes: 20,
@@ -152,6 +163,8 @@ function createPreferencesStore() {
         // the safe direction for something that publishes publicly.
         state.linkblogShareConfirmedDids = didList(parsed.linkblogShareConfirmedDids);
         state.linkblogDisabledDids = didList(parsed.linkblogDisabledDids);
+        state.linkblogAttributionOfferedDids = didList(parsed.linkblogAttributionOfferedDids);
+        state.linkblogAttributionOnDids = didList(parsed.linkblogAttributionOnDids);
         if (
           parsed.defaultView === 'home' ||
           parsed.defaultView === 'feeds' ||
@@ -274,6 +287,30 @@ function createPreferencesStore() {
     save();
   }
 
+  // A per-account DID membership flag, the shape the four linkblog preferences
+  // share: present in the list = on for this account, logged out = off.
+  function setDidFlag(list: string[], on: boolean): string[] | null {
+    const did = auth.user?.did;
+    if (!did || on === list.includes(did)) return null;
+    return on ? [...list, did] : list.filter((d) => d !== did);
+  }
+
+  /** Whether the composer offers the "Posted from Skyreader" checkbox at all. */
+  function setLinkblogAttributionOffered(offered: boolean) {
+    const next = setDidFlag(state.linkblogAttributionOfferedDids, offered);
+    if (!next) return;
+    state.linkblogAttributionOfferedDids = next;
+    save();
+  }
+
+  /** Whether that checkbox starts ticked — sticky across drafts, per account. */
+  function setLinkblogAttributionOn(on: boolean) {
+    const next = setDidFlag(state.linkblogAttributionOnDids, on);
+    if (!next) return;
+    state.linkblogAttributionOnDids = next;
+    save();
+  }
+
   function setDefaultView(view: DefaultView) {
     state.defaultView = view;
     save();
@@ -341,6 +378,16 @@ function createPreferencesStore() {
       const did = auth.user?.did;
       return !!did && state.linkblogDisabledDids.includes(did);
     },
+    // Default OFF: the checkbox is a feature you opt into, not one that greets
+    // every draft. Turned on in Settings → Shared links.
+    get linkblogAttributionOffered() {
+      const did = auth.user?.did;
+      return !!did && state.linkblogAttributionOfferedDids.includes(did);
+    },
+    get linkblogAttributionOn() {
+      const did = auth.user?.did;
+      return !!did && state.linkblogAttributionOnDids.includes(did);
+    },
     get defaultView() {
       return state.defaultView;
     },
@@ -366,6 +413,8 @@ function createPreferencesStore() {
     setMarginHighlightImport,
     confirmLinkblogShare,
     setLinkblogDisabled,
+    setLinkblogAttributionOffered,
+    setLinkblogAttributionOn,
     setDefaultView,
     setCardDensity,
     setDailyMagazineMinutes,

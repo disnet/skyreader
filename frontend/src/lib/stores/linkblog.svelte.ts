@@ -135,7 +135,9 @@ function createLinkblogStore() {
   async function shareLink(
     article: Article,
     note?: string,
-    repostUri?: string
+    repostUri?: string,
+    // Ticked in the composer: append the "Posted from skyreader.app" line.
+    attribution?: boolean
   ): Promise<ShareLinkResult> {
     // Guard against both a local duplicate and one already shared on another
     // device (surfaced via the overlay) — re-sharing would create a second copy.
@@ -172,6 +174,7 @@ function createLinkblogStore() {
         articlePublishedAt: article.publishedAt,
         note,
         repostUri,
+        attribution,
       });
       const stored = shares.get(article.url);
       if (stored) {

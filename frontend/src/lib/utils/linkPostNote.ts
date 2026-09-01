@@ -32,6 +32,26 @@ export function noteToLeafletBlocks(note: string | null | undefined): LeafletBlo
   return blocks;
 }
 
+/**
+ * The opt-in "this came from Skyreader" line. MUST match the backend's
+ * ATTRIBUTION_TEXT — it's the fallback tell for records whose top-level
+ * `skyreaderAttribution` flag didn't survive whatever pulled them.
+ */
+export const ATTRIBUTION_TEXT = 'Posted from skyreader.app';
+
+/**
+ * Whether a block is the attribution line rather than the author's words.
+ *
+ * `hasAttribution` (the record's own flag) is the reliable signal; the string
+ * match is the fallback, and it's why the flag exists — someone whose last line
+ * happens to be that exact sentence would otherwise lose it. Bounded to a
+ * trailing-line match either way.
+ */
+export function isAttributionText(plaintext: string, hasAttribution?: boolean): boolean {
+  if (hasAttribution === false) return false;
+  return plaintext.trim() === ATTRIBUTION_TEXT;
+}
+
 export interface ReconstructedMention {
   byteStart: number;
   byteEnd: number;
@@ -57,7 +77,23 @@ function quoteOffset(plaintext: string, byteOffset: number): number {
   return byteOffset + 2 * (newlines + 1);
 }
 
-export function reconstructLinkPostNote(blocks: LeafletBlockWrapper[]): {
+/**
+ * The user's commentary, rebuilt from the native text and blockquote blocks.
+ *
+ * The website card no longer closes the post — it can sit between the quote and
+ * the commentary, or lead — so non-note blocks are SKIPPED rather than treated as
+ * the end of the note. (Breaking at the first one silently truncated every note
+ * written in the new layout at the card.) The card contributes no note bytes, so
+ * mention byte offsets are unaffected by where it sits.
+ *
+ * The "Posted from Skyreader" line is ours, not the author's, so it's excluded —
+ * by the record's `skyreaderAttribution` flag where the caller has it, and by the
+ * constant string otherwise.
+ */
+export function reconstructLinkPostNote(
+  blocks: LeafletBlockWrapper[],
+  options: { hasAttribution?: boolean } = {}
+): {
   note?: string;
   mentions: ReconstructedMention[];
 } {
@@ -71,8 +107,9 @@ export function reconstructLinkPostNote(blocks: LeafletBlockWrapper[]): {
       block.$type !== 'pub.leaflet.blocks.text' &&
       block.$type !== 'pub.leaflet.blocks.blockquote'
     )
-      break;
+      continue;
     if (!('plaintext' in block) || !block.plaintext.trim()) continue;
+    if (isAttributionText(block.plaintext, options.hasAttribution)) continue;
     const isQuote = block.$type === 'pub.leaflet.blocks.blockquote';
     const rendered = isQuote
       ? block.plaintext

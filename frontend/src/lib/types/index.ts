@@ -608,6 +608,10 @@ export interface SocialDocument {
   // whatever its home app publishes there, so this is what separates a share from
   // someone's essay — see isSkyreaderShare in utils/linkPost.
   skyreaderLinkblog?: string;
+  // The author opted into the trailing "Posted from skyreader.app" line. Note
+  // parsers exclude that block by this flag rather than by string match alone, so
+  // an author whose own last line reads exactly that keeps their words.
+  skyreaderAttribution?: boolean;
 }
 
 // A single curated piece in a Collection, resolved by the proxy to a renderable
@@ -921,6 +925,17 @@ export interface LinkblogPublication {
   // Informational — `url` above is always the Skyreader linkblog page, which
   // renders the connected publication's link posts too.
   externalUrl?: string;
+  // How this user's link posts are written where other people read them: whether
+  // the post title is decorated (so a share doesn't read as a repost of the
+  // article) and where the article's link card sits among the note's blocks.
+  formatting: LinkblogFormatting;
+}
+
+export interface LinkblogFormatting {
+  /** 🔗 <title> | “<title>” | the article title verbatim. */
+  titleStyle: 'link' | 'quoted' | 'plain';
+  /** After the opening quote | first | last. */
+  cardPosition: 'context' | 'top' | 'bottom';
 }
 
 // One publication the user could publish their links to, as offered by

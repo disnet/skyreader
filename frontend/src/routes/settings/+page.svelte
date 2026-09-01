@@ -30,7 +30,12 @@
   import { api, RateLimitError, type BillingSubscription } from '$lib/services/api';
   import { syncStore } from '$lib/stores/sync.svelte';
   import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
-  import type { LinkblogPublication, LinkblogPublicationChoice, SaveBacking } from '$lib/types';
+  import type {
+    LinkblogFormatting,
+    LinkblogPublication,
+    LinkblogPublicationChoice,
+    SaveBacking,
+  } from '$lib/types';
 
   $effect(() => {
     viewTitleStore.set('Settings');
@@ -145,6 +150,59 @@
   let showLinkblogPage = $state(true);
   $effect(() => {
     showLinkblogPage = !linkblogPub?.pageHidden;
+  });
+
+  // Post formatting. Same local-mirror reasoning as the page toggle above: a
+  // select moves itself, so a failed save needs somewhere to be put back from.
+  let titleStyle = $state<LinkblogFormatting['titleStyle']>('link');
+  let cardPosition = $state<LinkblogFormatting['cardPosition']>('context');
+  $effect(() => {
+    titleStyle = linkblogPub?.formatting?.titleStyle ?? 'link';
+    cardPosition = linkblogPub?.formatting?.cardPosition ?? 'context';
+  });
+
+  // The article title a preview uses. Deliberately generic — the point is the
+  // shape of the decoration, not this user's last share.
+  const SAMPLE_TITLE = 'The article you linked';
+  const titlePreview = $derived(
+    titleStyle === 'link'
+      ? `🔗 ${SAMPLE_TITLE}`
+      : titleStyle === 'quoted'
+        ? `“${SAMPLE_TITLE}”`
+        : SAMPLE_TITLE
+  );
+
+  async function handleSaveFormatting(patch: Partial<LinkblogFormatting>) {
+    const revert = () => {
+      titleStyle = linkblogPub?.formatting?.titleStyle ?? 'link';
+      cardPosition = linkblogPub?.formatting?.cardPosition ?? 'context';
+    };
+    if (isSavingLinkblog) return revert();
+    if (!syncStore.isOnline) {
+      linkblogError = 'You are offline. Connect to the internet to change this.';
+      return revert();
+    }
+    isSavingLinkblog = true;
+    linkblogError = null;
+    linkblogSuccess = null;
+    try {
+      linkblogPub = await api.setLinkblogFormatting(patch);
+      linkblogSuccess = 'Saved. Posts you already published keep the shape they were written in.';
+    } catch (error) {
+      linkblogError = error instanceof Error ? error.message : 'Could not change this.';
+      revert();
+    } finally {
+      isSavingLinkblog = false;
+    }
+  }
+
+  // Whether the composer offers the "Posted from Skyreader" checkbox at all.
+  // Client-side and per-account (see preferences): the server only ever acts on
+  // the per-share flag, so this is about what the composer shows, not what the
+  // post carries. The trade is that it doesn't follow you to another device.
+  let offerAttribution = $state(false);
+  $effect(() => {
+    offerAttribution = preferences.linkblogAttributionOffered;
   });
 
   onMount(async () => {
@@ -853,6 +911,66 @@
           </p>
         {/if}
       {/if}
+
+      <!-- How a post reads where other people read it. These matter most on a
+           connected publication (leaflet.pub, Offprint), where a link post sits
+           beside that site's own writing — but they're written into every record,
+           so they're offered either way. -->
+      <h3 class="subhead">How your posts read</h3>
+      <div class="linkblog-field">
+        <label for="linkblog-title-style">Post title</label>
+        <select
+          id="linkblog-title-style"
+          bind:value={titleStyle}
+          disabled={isSavingLinkblog}
+          onchange={(e) =>
+            handleSaveFormatting({
+              titleStyle: e.currentTarget.value as LinkblogFormatting['titleStyle'],
+            })}
+        >
+          <option value="link">🔗 with the article title</option>
+          <option value="quoted">The article title in quotes</option>
+          <option value="plain">The article title exactly</option>
+        </select>
+      </div>
+      <p class="setting-description">
+        Marks the post as a link rather than a copy of the article. Shows as
+        <strong>{titlePreview}</strong>. Skyreader always shows the plain title.
+      </p>
+
+      <div class="linkblog-field">
+        <label for="linkblog-card-position">Link card</label>
+        <select
+          id="linkblog-card-position"
+          bind:value={cardPosition}
+          disabled={isSavingLinkblog}
+          onchange={(e) =>
+            handleSaveFormatting({
+              cardPosition: e.currentTarget.value as LinkblogFormatting['cardPosition'],
+            })}
+        >
+          <option value="context">With the quote, above your commentary</option>
+          <option value="top">First</option>
+          <option value="bottom">Last</option>
+        </select>
+      </div>
+      <p class="setting-description">
+        Where the article sits in the post. With the quote, a reader knows what you're responding to
+        before they read the response.
+      </p>
+
+      <label class="toggle-setting">
+        <input
+          type="checkbox"
+          bind:checked={offerAttribution}
+          onchange={(e) => preferences.setLinkblogAttributionOffered(e.currentTarget.checked)}
+        />
+        <span>Offer a “Posted from Skyreader” line when sharing</span>
+      </label>
+      <p class="setting-description">
+        Adds a checkbox to the composer. Nothing is added to a post unless you tick it. This switch
+        is for this device.
+      </p>
 
       <!-- Name/description belong to the Skyreader linkblog only. A connected
            publication is its home app's record; Skyreader doesn't rename it. -->
@@ -1689,6 +1807,7 @@
   }
 
   .linkblog-field input,
+  .linkblog-field select,
   .linkblog-field textarea {
     width: 100%;
     padding: 0.5rem 0.625rem;

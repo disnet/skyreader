@@ -1,6 +1,10 @@
 import type { LeafletContent, SocialDocument } from '$lib/types';
 import { isLeafletContent } from '$lib/utils/leaflet-renderer';
-import { noteToLeafletBlocks, reconstructLinkPostNote } from '$lib/utils/linkPostNote';
+import {
+  isAttributionText,
+  noteToLeafletBlocks,
+  reconstructLinkPostNote,
+} from '$lib/utils/linkPostNote';
 
 /**
  * Link-post helpers (Linkblog Phase 2).
@@ -126,20 +130,82 @@ export function getLinkPostNote(doc: SocialDocument): string | undefined {
   if (isLeafletContent(doc.content)) {
     const content = doc.content as LeafletContent;
     for (const page of content.pages ?? []) {
-      const note = reconstructLinkPostNote(page.blocks ?? []).note;
+      const note = reconstructLinkPostNote(page.blocks ?? [], {
+        hasAttribution: doc.skyreaderAttribution,
+      }).note;
       if (note) return note;
     }
     return undefined;
   }
-  return foreignNote(doc.content, getExternalArticleLink(doc));
+  return foreignNote(doc.content, getExternalArticleLink(doc), doc.skyreaderAttribution);
 }
+
+/**
+ * The article's own title for a link post, undecorated.
+ *
+ * The document's `title` may carry the author's chosen decoration (🔗 …, “…”) —
+ * that decoration exists for FOREIGN sites, where a byte-identical title made a
+ * share indistinguishable from a repost of the article. Skyreader's own surfaces
+ * (and the RSS feed, and og:title) want the plain one, so they read the website
+ * card, which always holds it. Stripping `doc.title` is the fallback for records
+ * that predate the card carrying a title.
+ */
+export function getLinkPostTitle(doc: SocialDocument): string {
+  return websiteCardTitle(doc.content) ?? stripTitleDecoration(doc.title ?? '');
+}
+
+/** The plain article title stored on the website link-card block, if there is one. */
+function websiteCardTitle(content: unknown): string | undefined {
+  const shape = content as
+    | {
+        pages?: Array<{ blocks?: Array<{ block?: { $type?: string; title?: unknown } }> }>;
+        items?: Array<{ $type?: string; title?: unknown }>;
+      }
+    | undefined;
+  const usable = (value: unknown) =>
+    typeof value === 'string' && value.trim() ? value : undefined;
+  for (const page of shape?.pages ?? []) {
+    for (const wrapper of page.blocks ?? []) {
+      if (wrapper.block?.$type === 'pub.leaflet.blocks.website') return usable(wrapper.block.title);
+    }
+  }
+  for (const item of shape?.items ?? []) {
+    if (
+      item?.$type === 'blog.pckt.block.website' ||
+      item?.$type === 'app.offprint.block.webBookmark'
+    ) {
+      return usable(item.title);
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Strip the decorations Skyreader writes onto a link post's title. Only ours —
+ * the link emoji and typographic quotes — so a title the author really did wrap
+ * in "straight quotes" survives. MUST match the backend's stripTitleDecoration.
+ */
+export function stripTitleDecoration(title: string): string {
+  let out = title.trim();
+  if (out.startsWith(TITLE_LINK_PREFIX)) out = out.slice(TITLE_LINK_PREFIX.length).trim();
+  else if (out.startsWith('\u{1f517}')) out = out.slice('\u{1f517}'.length).trim();
+  const quoted = /^“([\s\S]*)”$/.exec(out);
+  if (quoted) out = quoted[1].trim();
+  return out;
+}
+
+/** MUST match the backend's TITLE_LINK_PREFIX. */
+export const TITLE_LINK_PREFIX = '🔗 ';
 
 // ── Notes in a connected publication's own content lexicon ───────────────────
 //
 // pckt and Offprint share an `items` array of text/blockquote blocks; Markdown
-// (at.markpub) stores one string. In each, the note leads and the shared article
-// closes the post — as a native link card (pckt, Offprint) or a trailing Markdown
-// link. Rendered back into the same small Markdown subset the Leaflet reader
+// (at.markpub) stores one string. In each, the shared article rides along as a
+// native link card (pckt, Offprint) or a Markdown link line — and, since the
+// card-position preference, it can sit before, between or after the note's runs.
+// So the card is SKIPPED wherever it appears rather than ending the note; the
+// same for the opt-in "Posted from Skyreader" line, which is ours, not the
+// author's. Rendered back into the same small Markdown subset the Leaflet reader
 // produces (`> ` for quotes).
 
 interface ForeignBlock {
@@ -153,17 +219,22 @@ function blockText(block: ForeignBlock): string {
   return (block.content ?? []).map(blockText).filter(Boolean).join('\n');
 }
 
-function itemsNote(items: ForeignBlock[], prefix: string, articleUrl?: string): string | undefined {
+function itemsNote(
+  items: ForeignBlock[],
+  prefix: string,
+  articleUrl?: string,
+  hasAttribution?: boolean
+): string | undefined {
   const parts: string[] = [];
   for (const item of items) {
     const isQuote = item?.$type === `${prefix}blockquote`;
-    if (!isQuote && item?.$type !== `${prefix}text`) break;
+    if (!isQuote && item?.$type !== `${prefix}text`) continue;
     const text = blockText(item).trim();
     if (!text) continue;
-    // A link card ends the note by not being a text block at all. Shares written
-    // before Offprint's card was used put the article in a trailing text line
-    // instead, so a text block carrying the URL ends it too.
-    if (!isQuote && articleUrl && text.includes(articleUrl)) break;
+    // Shares written before Offprint's card was used put the article in a text
+    // line instead of a card, so a text block carrying the URL is the card too.
+    if (!isQuote && articleUrl && text.includes(articleUrl)) continue;
+    if (!isQuote && isAttributionText(text, hasAttribution)) continue;
     parts.push(
       isQuote
         ? text
@@ -177,8 +248,12 @@ function itemsNote(items: ForeignBlock[], prefix: string, articleUrl?: string): 
   return note || undefined;
 }
 
-function markdownNote(markdown: string, articleUrl?: string): string | undefined {
-  const lines = markdown.split('\n');
+function markdownNote(
+  markdown: string,
+  articleUrl?: string,
+  hasAttribution?: boolean
+): string | undefined {
+  let lines = markdown.split('\n');
   if (articleUrl) {
     for (let i = lines.length - 1; i >= 0; i--) {
       if (lines[i].includes(`](${articleUrl})`)) {
@@ -187,19 +262,29 @@ function markdownNote(markdown: string, articleUrl?: string): string | undefined
       }
     }
   }
-  const note = lines.join('\n').trim();
+  lines = lines.filter((line) => !isAttributionText(line, hasAttribution));
+  // Removing a line from the middle leaves the blank lines that flanked it back
+  // to back; collapse so a mid-post link doesn't open a hole in the note.
+  const note = lines
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
   return note || undefined;
 }
 
-function foreignNote(content: unknown, articleUrl?: string): string | undefined {
+function foreignNote(
+  content: unknown,
+  articleUrl?: string,
+  hasAttribution?: boolean
+): string | undefined {
   const shape = content as { $type?: string; items?: ForeignBlock[]; text?: { markdown?: string } };
   switch (shape?.$type) {
     case 'blog.pckt.content':
-      return itemsNote(shape.items ?? [], 'blog.pckt.block.', articleUrl);
+      return itemsNote(shape.items ?? [], 'blog.pckt.block.', articleUrl, hasAttribution);
     case 'app.offprint.content':
-      return itemsNote(shape.items ?? [], 'app.offprint.block.', articleUrl);
+      return itemsNote(shape.items ?? [], 'app.offprint.block.', articleUrl, hasAttribution);
     case 'at.markpub.markdown':
-      return markdownNote(shape.text?.markdown ?? '', articleUrl);
+      return markdownNote(shape.text?.markdown ?? '', articleUrl, hasAttribution);
     default:
       return undefined;
   }
@@ -224,7 +309,9 @@ export function getLinkPostNoteMentions(doc: SocialDocument): MentionFacet[] {
   if (!doc.content || !isLeafletContent(doc.content)) return [];
   const content = doc.content as LeafletContent;
   for (const page of content.pages ?? []) {
-    const result = reconstructLinkPostNote(page.blocks ?? []);
+    const result = reconstructLinkPostNote(page.blocks ?? [], {
+      hasAttribution: doc.skyreaderAttribution,
+    });
     if (result.note) return result.mentions;
   }
   return [];
