@@ -565,7 +565,14 @@ class ApiClient {
     sourceType?: string;
     subjectDid?: string;
     collectionNsid?: string;
-  }): Promise<{ rkey: string; uri: string }> {
+  }): Promise<{
+    rkey: string;
+    uri: string;
+    /** The feed was already subscribed and active; nothing changed. */
+    alreadySubscribed?: boolean;
+    /** The feed was parked and has been reactivated in place, keeping its rkey. */
+    reactivated?: boolean;
+  }> {
     return this.fetch('/api/subscriptions', {
       method: 'POST',
       body: JSON.stringify(data),
@@ -1450,6 +1457,8 @@ class ApiClient {
   async getSyncStatus(): Promise<{
     pdsSyncEnabled: boolean;
     lastSyncSubscriptions: number | null;
+    /** Feeds whose local edits haven't reached the PDS yet. 0 is the normal state. */
+    pendingSubscriptions: number;
   }> {
     return this.fetch('/api/sync/status');
   }

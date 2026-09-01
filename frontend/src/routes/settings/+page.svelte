@@ -91,6 +91,10 @@
   // PDS Sync state
   let pdsSyncEnabled = $state(false);
   let lastSyncSubscriptions = $state<number | null>(null);
+  // Feeds whose local edits haven't reached the PDS yet. Normally 0 — every
+  // mutation write-throughs — so a non-zero value is the one thing worth saying
+  // out loud here, and the manual check is what clears it.
+  let pendingSubscriptions = $state(0);
   let isSyncLoading = $state(false);
   let isSyncing = $state(false);
   let syncError = $state<string | null>(null);
@@ -383,6 +387,12 @@
       const settings = await api.getSettings();
       pdsSyncEnabled = settings.pdsSyncEnabled;
       lastSyncSubscriptions = settings.lastPdsSyncSubscriptions;
+      // Only the sync route counts pending writes, and only when sync is on.
+      if (settings.pdsSyncEnabled) {
+        pendingSubscriptions = (await api.getSyncStatus()).pendingSubscriptions;
+      } else {
+        pendingSubscriptions = 0;
+      }
       // Runs before loadLinkblog and doesn't touch the PDS, so on a device that
       // has never seen this account the linkblog nav hides a beat sooner —
       // and still corrects itself if the publication fetch disagrees.
@@ -517,7 +527,9 @@
       // plumbing and stays out of it.
       const parts: string[] = [];
       if (totalPulled > 0) parts.push(`${totalPulled} added here`);
-      if (totalPushed > 0) parts.push(`${totalPushed} added to your PDS`);
+      // "sent", not "added": a push here is as often a repair of a record the PDS
+      // already holds as it is a new one.
+      if (totalPushed > 0) parts.push(`${totalPushed} sent to your PDS`);
       if (totalImported > 0) parts.push(`${totalImported} imported from the Atmosphere`);
       if (totalRemoved > 0) parts.push(`${totalRemoved} removed`);
       syncSuccess = parts.length === 0 ? 'Everything is in step.' : `Done: ${parts.join(', ')}.`;
@@ -531,6 +543,7 @@
       // Refresh sync status
       const status = await api.getSyncStatus();
       lastSyncSubscriptions = status.lastSyncSubscriptions;
+      pendingSubscriptions = status.pendingSubscriptions;
 
       // Reload subscriptions to show any pulled items
       await subscriptionsStore.load();
@@ -728,10 +741,21 @@
 
       {#if pdsSyncEnabled}
         <div class="sync-status">
-          <p class="sync-live">
-            <Icon name="check" size={14} />
-            <span>On. Feeds you add, rename, or remove go to your PDS as you change them.</span>
-          </p>
+          {#if pendingSubscriptions > 0}
+            <p class="sync-live sync-pending">
+              <Icon name="clock" size={14} />
+              <span>
+                {pendingSubscriptions}
+                {pendingSubscriptions === 1 ? 'feed has' : 'feeds have'} changes that haven't reached
+                your PDS yet.
+              </span>
+            </p>
+          {:else}
+            <p class="sync-live">
+              <Icon name="check" size={14} />
+              <span>On. Feeds you add, rename, or remove go to your PDS as you change them.</span>
+            </p>
+          {/if}
 
           <div class="sync-recheck">
             <span class="sync-time">Last full check: {formatSyncTime(lastSyncSubscriptions)}</span>
@@ -743,7 +767,11 @@
               {/if}
             </button>
           </div>
-          <p class="sync-recheck-hint">Use it if your feed list looks out of step with your PDS.</p>
+          <p class="sync-recheck-hint">
+            {pendingSubscriptions > 0
+              ? 'A check will send them.'
+              : 'Use it if your feed list looks out of step with your PDS.'}
+          </p>
         </div>
 
         {#if syncError}
@@ -1675,6 +1703,12 @@
     flex-shrink: 0;
     margin-top: 0.15rem;
     color: var(--color-success);
+  }
+
+  /* Pending work is a normal, self-clearing state, not a failure — it gets the
+     secondary tone rather than the danger red used by .sync-error. */
+  .sync-pending :global(svg) {
+    color: var(--color-text-secondary);
   }
 
   /* The manual check is a repair tool, so it sits below the divider as

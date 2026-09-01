@@ -3,6 +3,7 @@ import { getSessionFromRequest, getSessionIdFromRequest } from '../services/oaut
 import { getUserSettings, updateSyncTimestamp } from './settings';
 import {
   syncSubscriptions,
+  countDirtySubscriptions,
   type SyncResult as SubscriptionSyncResult,
 } from '../services/subscription-sync';
 import {
@@ -28,6 +29,12 @@ export interface FullSyncResult {
 export interface SyncStatusResponse {
   pdsSyncEnabled: boolean;
   lastSyncSubscriptions: number | null;
+  /**
+   * Subscriptions carrying a local edit that hasn't reached the PDS. Zero is the
+   * steady state — every mutation write-throughs — so this is the honest answer
+   * to "is my feed list in step?", which a last-synced timestamp never was.
+   */
+  pendingSubscriptions: number;
 }
 
 // POST /api/sync/full - Full sync (subscriptions only)
@@ -193,6 +200,9 @@ export async function handleSyncStatus(request: Request, env: Env): Promise<Resp
     const response: SyncStatusResponse = {
       pdsSyncEnabled: settings.pdsSyncEnabled,
       lastSyncSubscriptions: settings.lastPdsSyncSubscriptions,
+      pendingSubscriptions: settings.pdsSyncEnabled
+        ? await countDirtySubscriptions(env, session.did)
+        : 0,
     };
 
     return new Response(JSON.stringify(response), {
