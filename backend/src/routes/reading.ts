@@ -55,6 +55,12 @@ const READ_UPSERT_CONFLICT = `ON CONFLICT(user_did, item_key, label) DO UPDATE S
         client_updated_at = excluded.client_updated_at
       WHERE excluded.client_updated_at >= COALESCE(item_labels_cache.client_updated_at, 0)`;
 
+const UNREAD_UPSERT_CONFLICT = `ON CONFLICT(user_did, item_key, label) DO UPDATE SET
+        deleted_at = excluded.deleted_at,
+        updated_at = excluded.updated_at,
+        client_updated_at = excluded.client_updated_at
+      WHERE excluded.client_updated_at >= COALESCE(item_labels_cache.client_updated_at, 0)`;
+
 /**
  * Read-state join used by the feed/document annotation path (see feeds-v2.ts).
  * Returns the subset of `keys` the user has an active (non-tombstoned) `read`
@@ -260,18 +266,14 @@ export async function handleMarkAsRead(request: Request, env: Env): Promise<Resp
   const readAt = clientUpdatedAt;
 
   try {
-    // Check if already read (and live — a tombstoned row must resurrect, not skip).
+    // Preserve the stable rkey for an existing live row, but never skip the
+    // guarded upsert: a later read is itself new user intent and must advance
+    // client_updated_at so an older, delayed unread cannot win afterward.
     const existing = await env.DB.prepare(
-      "SELECT id FROM item_labels_cache WHERE user_did = ? AND item_key = ? AND label = 'read' AND deleted_at IS NULL"
+      "SELECT rkey FROM item_labels_cache WHERE user_did = ? AND item_key = ? AND label = 'read' AND deleted_at IS NULL"
     )
       .bind(session.did, itemGuid)
-      .first();
-
-    if (existing) {
-      return new Response(JSON.stringify({ success: true, alreadyRead: true }), {
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
+      .first<{ rkey: string | null }>();
 
     const props = buildReadProps({ readAt, itemUrl, itemTitle, authorDid });
 
@@ -287,12 +289,24 @@ export async function handleMarkAsRead(request: Request, env: Env): Promise<Resp
       ${READ_UPSERT_CONFLICT}
     `
     )
-      .bind(session.did, itemGuid, itemType, props, rkey, now, now, clientUpdatedAt)
+      .bind(
+        session.did,
+        itemGuid,
+        itemType,
+        props,
+        existing?.rkey ?? rkey,
+        now,
+        now,
+        clientUpdatedAt
+      )
       .run();
 
-    return new Response(JSON.stringify({ success: true, rkey }), {
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return new Response(
+      JSON.stringify({ success: true, rkey: existing?.rkey ?? rkey, alreadyRead: !!existing }),
+      {
+        headers: { 'Content-Type': 'application/json' },
+      }
+    );
   } catch (error) {
     console.error('Failed to mark as read:', error);
     return new Response(JSON.stringify({ error: 'Failed to mark as read' }), {
@@ -357,11 +371,12 @@ export async function handleMarkAsUnread(request: Request, env: Env): Promise<Re
     const now = Math.floor(nowMs / 1000);
     const clientUpdatedAt = clampClientUpdatedAt(body.updatedAt, nowMs);
     await env.DB.prepare(
-      `UPDATE item_labels_cache SET deleted_at = ?, updated_at = ?, client_updated_at = ?
-        WHERE user_did = ? AND item_key = ? AND label = 'read'
-          AND ? >= COALESCE(client_updated_at, 0)`
+      `INSERT INTO item_labels_cache
+         (user_did, item_key, item_type, label, props, rkey, created_at, updated_at, deleted_at, client_updated_at)
+       VALUES (?, ?, 'article', 'read', NULL, ?, ?, ?, ?, ?)
+       ${UNREAD_UPSERT_CONFLICT}`
     )
-      .bind(now, now, clientUpdatedAt, session.did, itemGuid, clientUpdatedAt)
+      .bind(session.did, itemGuid, generateTid(), now, now, now, clientUpdatedAt)
       .run();
 
     return new Response(JSON.stringify({ success: true }), {
@@ -439,10 +454,9 @@ export async function handleBulkMarkAsRead(request: Request, env: Env): Promise<
   const results: Array<{ itemGuid: string; rkey: string }> = [];
 
   try {
-    // Get already-read (live) labels for these items so we skip them. Tombstoned
-    // rows are intentionally NOT skipped — they must resurrect (chunked to avoid
-    // SQL variable limit).
-    const existingGuids = new Set<string>();
+    // Preserve stable rkeys for existing live rows. They still go through the
+    // conditional upsert so this read intent advances client_updated_at.
+    const existingRkeys = new Map<string, string>();
     const guidChunks = chunkArray(
       items.map((i) => i.itemGuid),
       MAX_SQL_PARAMS - 1
@@ -451,23 +465,20 @@ export async function handleBulkMarkAsRead(request: Request, env: Env): Promise<
     for (const chunk of guidChunks) {
       const placeholders = chunk.map(() => '?').join(',');
       const existingResult = await env.DB.prepare(
-        `SELECT item_key FROM item_labels_cache WHERE user_did = ? AND label = 'read' AND deleted_at IS NULL AND item_key IN (${placeholders})`
+        `SELECT item_key, rkey FROM item_labels_cache WHERE user_did = ? AND label = 'read' AND deleted_at IS NULL AND item_key IN (${placeholders})`
       )
         .bind(session.did, ...chunk)
-        .all<{ item_key: string }>();
+        .all<{ item_key: string; rkey: string | null }>();
 
       for (const row of existingResult.results) {
-        existingGuids.add(row.item_key);
+        if (row.rkey) existingRkeys.set(row.item_key, row.rkey);
       }
     }
 
-    // Filter out already-read items
-    const newItems = items.filter((item) => !existingGuids.has(item.itemGuid));
-
     // Generate rkeys and prepare batch insert
-    const itemsWithRkeys = newItems.map((item) => ({
+    const itemsWithRkeys = items.map((item) => ({
       ...item,
-      rkey: item.rkey || generateTid(),
+      rkey: existingRkeys.get(item.itemGuid) ?? item.rkey ?? generateTid(),
     }));
 
     // Batch insert/resurrect read labels using D1 batch to avoid subrequest limit
@@ -625,9 +636,9 @@ export async function handleMarkFeedRead(
     for (let i = 0; i < feedUrls.length; i += MARK_FEED_CHUNK) {
       const chunk = feedUrls.slice(i, i + MARK_FEED_CHUNK);
 
-      // The unread GUIDs inside each feed's newest-K window. `NOT EXISTS` rather
-      // than a join so a duplicate label row can't multiply the result, matching
-      // the timeline's read probe.
+      // Every GUID inside each feed's newest-K window. Already-live rows still
+      // need the guarded upsert: mark-all-read is fresh user intent and must
+      // advance its user-time clock so an older queued unread cannot beat it.
       const selects = chunk.map((feedUrl) =>
         env.DB.prepare(
           `SELECT w.guid, json_extract(w.item_json, '$.url') AS url,
@@ -635,12 +646,7 @@ export async function handleMarkFeedRead(
              FROM (SELECT fi.guid, fi.item_json FROM feed_items fi
                     WHERE fi.feed_url = ?2 ${beforeSeq !== null ? 'AND fi.seq <= ?4' : ''}
                     ORDER BY fi.published_at DESC, fi.seq DESC
-                    LIMIT ?3) w
-            WHERE NOT EXISTS (
-                    SELECT 1 FROM item_labels_cache il
-                     WHERE il.user_did = ?1 AND il.item_key = w.guid
-                       AND il.item_type = 'article' AND il.label = 'read'
-                       AND il.deleted_at IS NULL)`
+                    LIMIT ?3) w`
         ).bind(
           ...(beforeSeq !== null
             ? [session.did, feedUrl, ARTICLE_WINDOW_PER_FEED, beforeSeq]

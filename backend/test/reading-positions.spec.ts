@@ -393,9 +393,7 @@ describe('POST /api/reading write path (documents, resurrect, skip)', () => {
     });
   });
 
-  // The positive skip: a LIVE read short-circuits as alreadyRead and is left
-  // untouched (the complement of the existing resurrect-a-tombstone test).
-  it('mark-read on a live row returns alreadyRead and does not rewrite it', async () => {
+  it('mark-read on a live row preserves its rkey and advances the intent time', async () => {
     const now = Math.floor(Date.now() / 1000);
     await insertReadLabel('article-live', { updatedAt: now - 100, rkey: 'original-rkey' });
 
@@ -406,12 +404,18 @@ describe('POST /api/reading write path (documents, resurrect, skip)', () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ alreadyRead: true });
 
-    // rkey/props untouched — the handler returned before any write.
+    // The stable identity stays put, but the later read intent is durable.
     const row = await readRow('article-live');
     expect(row?.rkey).toBe('original-rkey');
+    const intent = await env.DB.prepare(
+      "SELECT client_updated_at FROM item_labels_cache WHERE user_did = ? AND item_key = ? AND label = 'read'"
+    )
+      .bind(TEST_DID, 'article-live')
+      .first<{ client_updated_at: number }>();
+    expect(intent!.client_updated_at).toBeGreaterThan((now - 100) * 1000);
   });
 
-  it('bulk mark-read resurrects a tombstoned row but skips a live one', async () => {
+  it('bulk mark-read resurrects a tombstoned row and refreshes a live one', async () => {
     const now = Math.floor(Date.now() / 1000);
     await insertReadLabel('live-guid', { updatedAt: now - 100, rkey: 'live-rkey' });
     await insertReadLabel('tombstoned-guid', {
@@ -424,12 +428,9 @@ describe('POST /api/reading write path (documents, resurrect, skip)', () => {
       items: [{ itemGuid: 'live-guid' }, { itemGuid: 'tombstoned-guid', rkey: 'new-rkey' }],
     });
     expect(res.status).toBe(200);
-    // Only the tombstoned item is "new" (the live one is filtered out by the
-    // deleted_at IS NULL existing-check), so exactly one row is marked and the
-    // live one is skipped.
     const body = (await res.json()) as { marked: number; skipped: number };
-    expect(body.marked).toBe(1);
-    expect(body.skipped).toBe(1);
+    expect(body.marked).toBe(2);
+    expect(body.skipped).toBe(0);
 
     // The tombstone resurrected (deleted_at cleared, rkey updated)...
     const resurrected = await readRow('tombstoned-guid');
@@ -698,6 +699,54 @@ describe('read writes ordered by user time', () => {
     await postJson('/api/reading/mark-unread', { itemGuid: 'later-unread', updatedAt: now });
 
     expect((await readRow('later-unread'))!.deleted_at).not.toBeNull();
+  });
+
+  it('a repeated read advances user time so an older delayed unread loses', async () => {
+    const now = Date.now();
+    await postJson('/api/reading/mark-read', { itemGuid: 'reread', updatedAt: now - 120_000 });
+    await postJson('/api/reading/mark-read', { itemGuid: 'reread', updatedAt: now });
+    await postJson('/api/reading/mark-unread', {
+      itemGuid: 'reread',
+      updatedAt: now - 60_000,
+    });
+
+    const row = await readRow('reread');
+    expect(row!.deleted_at).toBeNull();
+    expect(row!.client_updated_at).toBe(now);
+  });
+
+  it('an unread arriving before its older read creates a winning tombstone', async () => {
+    const now = Date.now();
+    await postJson('/api/reading/mark-unread', {
+      itemGuid: 'unread-first',
+      updatedAt: now,
+    });
+    await postJson('/api/reading/mark-read', {
+      itemGuid: 'unread-first',
+      updatedAt: now - 60_000,
+    });
+
+    const row = await readRow('unread-first');
+    expect(row).not.toBeNull();
+    expect(row!.deleted_at).not.toBeNull();
+    expect(row!.client_updated_at).toBe(now);
+  });
+
+  it('a repeated bulk read also advances user time', async () => {
+    const now = Date.now();
+    await postJson('/api/reading/mark-read', {
+      itemGuid: 'bulk-reread',
+      updatedAt: now - 120_000,
+    });
+    await postJson('/api/reading/mark-read-bulk', {
+      items: [{ itemGuid: 'bulk-reread', updatedAt: now }],
+    });
+    await postJson('/api/reading/mark-unread', {
+      itemGuid: 'bulk-reread',
+      updatedAt: now - 60_000,
+    });
+
+    expect((await readRow('bulk-reread'))!.deleted_at).toBeNull();
   });
 
   it('a stale bulk read cannot resurrect an item un-read more recently', async () => {

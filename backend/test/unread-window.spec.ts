@@ -254,13 +254,13 @@ describe('POST /api/reading/mark-feed-read', () => {
     expect(await res.json()).toEqual({ success: true, marked: 10 });
   });
 
-  it('is idempotent — a second call marks nothing new', async () => {
+  it('reasserts read intent for the whole window on a second call', async () => {
     await seedFeed(FEED, 8);
     await subscribe(FEED);
 
     await markFeedRead({ feedUrl: FEED });
     const second = await markFeedRead({ feedUrl: FEED });
-    expect(await second.json()).toEqual({ success: true, marked: 0 });
+    expect(await second.json()).toEqual({ success: true, marked: 8 });
   });
 
   it('covers every subscribed feed when no feedUrl is given', async () => {
