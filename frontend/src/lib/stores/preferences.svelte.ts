@@ -300,6 +300,13 @@ function createPreferencesStore() {
     const next = setDidFlag(state.linkblogAttributionOfferedDids, offered);
     if (!next) return;
     state.linkblogAttributionOfferedDids = next;
+    // Disabling is a kill-switch: also drop the sticky ticked state. Left in
+    // place, it would seed the next draft's (now invisible) checkbox to true
+    // and keep publishing the line. Re-enabling starts from an unticked box.
+    if (!offered) {
+      const on = setDidFlag(state.linkblogAttributionOnDids, false);
+      if (on) state.linkblogAttributionOnDids = on;
+    }
     save();
   }
 
@@ -384,9 +391,16 @@ function createPreferencesStore() {
       const did = auth.user?.did;
       return !!did && state.linkblogAttributionOfferedDids.includes(did);
     },
+    // Gated on the offer, not just the ticked list: builds before the
+    // kill-switch cleared the sticky value on disable may have persisted a
+    // ticked state with the offer off, and that must never seed a draft.
     get linkblogAttributionOn() {
       const did = auth.user?.did;
-      return !!did && state.linkblogAttributionOnDids.includes(did);
+      return (
+        !!did &&
+        state.linkblogAttributionOfferedDids.includes(did) &&
+        state.linkblogAttributionOnDids.includes(did)
+      );
     },
     get defaultView() {
       return state.defaultView;
