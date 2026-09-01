@@ -97,7 +97,7 @@
       <p class="status synced">
         <Icon name="check" size={14} />
         {#if standardSubsStore.loaded}
-          Syncing automatically — {standardSubsStore.subs.length} publication{standardSubsStore.subs
+          Syncing automatically. {standardSubsStore.subs.length} publication{standardSubsStore.subs
             .length === 1
             ? ''
             : 's'} from the Atmosphere.

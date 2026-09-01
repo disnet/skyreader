@@ -29,6 +29,7 @@
   import { downloadOPML } from '$lib/utils/opml-exporter';
   import { api, RateLimitError, type BillingSubscription } from '$lib/services/api';
   import { syncStore } from '$lib/stores/sync.svelte';
+  import Icon from '$lib/components/Icon.svelte';
   import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
   import type { LinkblogPublication, LinkblogPublicationChoice, SaveBacking } from '$lib/types';
 
@@ -458,7 +459,7 @@
       while (hasMore && batchCount < maxBatches) {
         batchCount++;
         if (batchCount > 1) {
-          syncSuccess = `Syncing batch ${batchCount}...`;
+          syncSuccess = 'Still checking...';
         }
 
         let result;
@@ -509,13 +510,17 @@
         hasMore = result.hasMore || false;
       }
 
-      syncSuccess = `Sync complete: ${totalPulled} pulled, ${totalPushed} pushed`;
-      if (totalImported > 0 || totalRemoved > 0) {
-        syncSuccess += `. Atmosphere: ${totalImported} imported, ${totalRemoved} removed`;
-      }
-      if (batchCount > 1) {
-        syncSuccess += ` (${batchCount} batches)`;
-      }
+      // Every subscription edit already writes through to the PDS, so a check
+      // that moves nothing is the normal outcome, not a dud. Reporting it as a
+      // row of zeroes ("0 pulled, 0 pushed") reads like a failure and is what
+      // made this button look like the only thing that syncs. Batch count is
+      // plumbing and stays out of it.
+      const parts: string[] = [];
+      if (totalPulled > 0) parts.push(`${totalPulled} added here`);
+      if (totalPushed > 0) parts.push(`${totalPushed} added to your PDS`);
+      if (totalImported > 0) parts.push(`${totalImported} imported from the Atmosphere`);
+      if (totalRemoved > 0) parts.push(`${totalRemoved} removed`);
+      syncSuccess = parts.length === 0 ? 'Everything is in step.' : `Done: ${parts.join(', ')}.`;
 
       // Each pass reports only what it parked or dropped, so the counts are
       // summed into one line per cap — deduping on the sentence would leave a
@@ -723,18 +728,23 @@
 
       {#if pdsSyncEnabled}
         <div class="sync-status">
-          <p class="sync-time">
-            Subscriptions last synced: {formatSyncTime(lastSyncSubscriptions)}
+          <p class="sync-live">
+            <Icon name="check" size={14} />
+            <span>On. Feeds you add, rename, or remove go to your PDS as you change them.</span>
           </p>
-        </div>
 
-        <button class="btn btn-secondary" onclick={handleSync} disabled={isSyncing}>
-          {#if isSyncing}
-            Syncing...
-          {:else}
-            Sync Now
-          {/if}
-        </button>
+          <div class="sync-recheck">
+            <span class="sync-time">Last full check: {formatSyncTime(lastSyncSubscriptions)}</span>
+            <button class="btn btn-secondary" onclick={handleSync} disabled={isSyncing}>
+              {#if isSyncing}
+                Checking...
+              {:else}
+                Check for changes
+              {/if}
+            </button>
+          </div>
+          <p class="sync-recheck-hint">Use it if your feed list looks out of step with your PDS.</p>
+        </div>
 
         {#if syncError}
           <p class="sync-error">{syncError}</p>
@@ -1649,10 +1659,47 @@
     border-radius: 6px;
   }
 
-  .sync-time {
+  /* The automatic state is the headline: it's what's actually true most of the
+     time, and burying it under a "Sync Now" button is what taught readers the
+     feed list only moves when they push it. */
+  .sync-live {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.4rem;
+    margin: 0;
     font-size: var(--text-md);
+    color: var(--color-text);
+  }
+
+  .sync-live :global(svg) {
+    flex-shrink: 0;
+    margin-top: 0.15rem;
+    color: var(--color-success);
+  }
+
+  /* The manual check is a repair tool, so it sits below the divider as
+     secondary chrome rather than the primary thing to do here. */
+  .sync-recheck {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.5rem 0.75rem;
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--color-border);
+  }
+
+  .sync-time {
+    font-size: var(--text-sm);
     color: var(--color-text-secondary);
-    margin: 0.25rem 0;
+    margin: 0;
+  }
+
+  .sync-recheck-hint {
+    margin: 0.5rem 0 0;
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
   }
 
   .sync-error {
