@@ -241,7 +241,10 @@ function createShareComposerStore() {
           article,
           noteText || undefined,
           repostUri,
-          attribution
+          // Re-check the kill-switch at post time: Settings may have disabled
+          // the offer while this draft sat open, hiding the checkbox — a value
+          // the user can no longer see must not be published.
+          attribution && preferences.linkblogAttributionOffered
         );
         if (result === 'failed') return false;
         if (result === 'duplicate') await linkblogStore.setNote(article.url, noteText);
