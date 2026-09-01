@@ -255,6 +255,26 @@ step deleting `feeds`/`feed_items` rows whose feed has had **zero active subscri
   `Date.now() + backoff`; D1 stores seconds like the rest of the backend and converts back on the
   way out. Rescaling it a second time is what put every retry ~50,000 years out and made
   `canFetch` retire a feed permanently after one transient error.
+- **One K, enforced in three places.** `ARTICLE_WINDOW_PER_FEED` (`backend/src/config/window.ts`)
+  is the cold start's per-feed slice, the window the server's `unread_counts` are computed over, and
+  the client's `MAX_ARTICLES_PER_FEED`. They were 30 / — / 100, which meant a fresh device and an
+  established one were counting unread over different sets: the same feed showed different numbers
+  on a phone and a laptop no matter how well read state synced, and no amount of sync work could
+  have fixed it. Changing one without the others reintroduces exactly that.
+- **Unread counts are the server's, not each device's.** `include_counts=1` on the first page of a
+  refresh returns a per-feed count over the newest-K window (per-feed index seeks, bounded by
+  K × subscriptions). Clients display it when online and fall back to their local derivation
+  offline; a mismatch after a completed refresh is reported as `unread_count_drift` telemetry, so
+  divergence is something we see rather than something a user reports.
+- **Mark-all-read is a server operation.** `POST /api/reading/mark-feed-read` writes read rows for
+  the canonical window (≤ K per feed, `beforeSeq` bounding it to what the client saw), because a
+  client-side loop can only mark what THAT device holds — leaving items another device held below
+  its window unread there.
+- **Eviction is not deletion.** D1 still never prunes; the client's per-feed cap is a cache bound.
+  `GET /api/v2/feeds/fetch?offset=K` pages below the local window ("Show older"), so an evicted
+  unread item is a cache miss rather than something the reader experiences as lost. Starred, tagged
+  and highlighted items are exempt from eviction; unread deliberately is not, since exempting it
+  would let each device's set grow past K and diverge again.
 
 ## Known scaling knob
 

@@ -186,11 +186,19 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
 
   function debouncedSave() {
     if (saveTimer) clearTimeout(saveTimer);
+    // Whose scroll this is, captured when the save was QUEUED. A delta arriving
+    // during the debounce may replace the stored progress with another device's
+    // newer position; publishing this one afterwards would rewind that device
+    // and, worse, republish the older position as authoritative.
+    const queuedAt = Date.now();
     saveTimer = setTimeout(() => {
       saveTimer = null;
       // Re-checked at flush time rather than when the save was queued: the full
       // body may have arrived in the meantime, which makes the position real.
       if (bodyIsPartial()) return;
+      const stored = itemLabelsStore.getLabel(params.itemKey(), 'readProgress');
+      const storedAt = stored?.props.lastReadAt as number | undefined;
+      if (typeof storedAt === 'number' && storedAt > queuedAt) return;
       itemLabelsStore.setReadProgress(
         params.itemKey(),
         params.itemType(),

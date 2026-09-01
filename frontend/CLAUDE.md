@@ -27,15 +27,16 @@ Skyreader frontend is a SvelteKit PWA that provides an RSS reading experience wi
 
 All stores use Svelte 5 runes (`.svelte.ts` files):
 
-| Store                     | Purpose                              |
-| ------------------------- | ------------------------------------ |
-| `auth.svelte.ts`          | User session state                   |
-| `subscriptions.svelte.ts` | Feed subscriptions CRUD              |
-| `reading.svelte.ts`       | Read/starred state for articles      |
-| `social.svelte.ts`        | Social feed from followed users      |
-| `sync.svelte.ts`          | Online status and pending sync count |
-| `preferences.svelte.ts`   | User preferences                     |
-| `realtime.svelte.ts`      | WebSocket connection state           |
+| Store                     | Purpose                                             |
+| ------------------------- | --------------------------------------------------- |
+| `auth.svelte.ts`          | User session state                                  |
+| `subscriptions.svelte.ts` | Feed subscriptions CRUD                             |
+| `itemLabels.svelte.ts`    | Read/tag/archive/highlight labels + the delta sync  |
+| `unreadCounts.svelte.ts`  | Unread counts (server's when online, local offline) |
+| `feedArchive.svelte.ts`   | Transient "Show older" items below the local window |
+| `social.svelte.ts`        | Social feed from followed users                     |
+| `sync.svelte.ts`          | Online status, pending queue count, last sync       |
+| `preferences.svelte.ts`   | User preferences                                    |
 
 ### Services
 
@@ -46,7 +47,7 @@ All stores use Svelte 5 runes (`.svelte.ts` files):
 | `feedFetcher.ts`  | Feed refresh (timeline sync + legacy batch path)   |
 | `timelineSync.ts` | Pure helpers for the timeline sync (unit-tested)   |
 | `sync-queue.ts`   | Queue operations when offline, process when online |
-| `realtime.ts`     | WebSocket connection management                    |
+| `readDelta.ts`    | Pure delta/merge decisions (unit-tested)           |
 | `telemetry.ts`    | Sampled client error reports to the backend        |
 
 ### Feed refresh
@@ -79,6 +80,32 @@ The legacy per-feed `/api/v2/feeds/batch` path (`fetchAllFeedsViaBatch`, with pe
 `feedCursors`) is kept for one release as a fallback: it runs when the timeline 404s and whenever
 the server reports `ingestActive: false` (this environment's crawler isn't pushing into D1). See
 `docs/plans/D1_FEED_TIMELINE.md`.
+
+### Label sync (read state, tags, progress, highlights)
+
+Two forward deltas, both in `itemLabels.svelte.ts`: `GET /api/reading/positions` for `read`, and
+`GET /api/labels?labels=…` for tagged/archived/readProgress/highlights. Four rules keep them from
+diverging across devices — each one is a bug that was actually shipped:
+
+- **The cursor is compound `(updated_at, id)`**, base64 on the wire, and it is the last row
+  _delivered_, never a clock reading. `updated_at` has one-second resolution, so a timestamp-only
+  cursor with a strictly-greater predicate silently dropped every row written in its own second and
+  never offered them again. A legacy numeric cursor is still accepted (read as `(seconds, 0)`).
+- **The cursor moves only after the Dexie write succeeds.** It used to be committed in a separate
+  `try`, so a failed IndexedDB write lost the batch _and_ skipped past it — permanently, since the
+  delta is forward-only. Both deltas are paged; drain until `hasMore` is false.
+- **Conflicts resolve by user time, not arrival time.** Every write carries `updatedAt` (unix ms —
+  the sync queue's own enqueue time, or `Date.now()` for an optimistic call), and the server keeps
+  the later one. Without it, a queue draining an hour late re-marked-unread something the user had
+  since read elsewhere. `planReadDelta` applies the same comparison inbound; `readProgress` merges
+  by `props.lastReadAt` (never `paragraphIndex` — re-reading legitimately moves backwards).
+- **Timestamps are milliseconds everywhere in the label store.** Server rows arrive in seconds and
+  are converted once, at the boundary (`localTimestamps`).
+
+Freshness: `refreshFromBackend` pulls both, plus `itemLabelsStore.pullDelta()` on `online` (after
+the queue drains), on `visibilitychange`, and on a 5-minute while-open timer — all gated to one
+pull a minute. There is deliberately **no push channel**: a no-change delta is one indexed query
+returning zero rows, and the product is calm.
 
 Client errors flow through `/api/telemetry/error`; no Sentry SDK ships in the frontend bundle.
 See [`docs/RUNBOOK.md`](../docs/RUNBOOK.md) for sampling and recovery details.

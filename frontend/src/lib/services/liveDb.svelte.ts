@@ -276,7 +276,18 @@ class LiveDatabase {
 
     // One limit-enforcement pass across every feed we touched. _articles is
     // sorted newest-first, which computeArticleLimitDeletions relies on.
-    const { ids, dropByFeed } = computeArticleLimitDeletions(this._articles, affected, savedGuids);
+    // Items carrying a tag or a highlight are exempt alongside starred ones:
+    // evicting them would leave the annotation in the label store with nothing
+    // to attach it to. Imported lazily to keep this module free of the label
+    // store's import cycle.
+    const { itemLabelsStore } = await import('$lib/stores/itemLabels.svelte');
+    const { ids, dropByFeed } = computeArticleLimitDeletions(
+      this._articles,
+      affected,
+      savedGuids,
+      undefined,
+      (guid) => itemLabelsStore.hasLabel(guid, 'tagged') || itemLabelsStore.hasHighlights(guid)
+    );
     if (ids.length > 0) {
       // One delete from IndexedDB.
       await db.articles.bulkDelete(ids);
