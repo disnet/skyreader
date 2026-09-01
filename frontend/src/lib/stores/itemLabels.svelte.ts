@@ -1,7 +1,13 @@
 import { api } from '$lib/services/api';
 import { db, getMetadata, setMetadata } from '$lib/services/db';
 import { safePut, safeBulkPut } from '$lib/services/safeDb.svelte';
-import { planReadDelta, planAnnotatedReads, advanceCursor } from '$lib/services/readDelta';
+import {
+  planReadDelta,
+  planAnnotatedReads,
+  advanceCursor,
+  mergeReadProgress,
+  type ReadProgressProps,
+} from '$lib/services/readDelta';
 import {
   syncQueue,
   type ReadingPayload,
@@ -37,28 +43,34 @@ function createItemLabelsStore() {
   let isLoading = $state(true);
   let hasLoaded = false;
 
-  // Forward-read-delta cursor (max updated_at seen, in unix seconds), persisted
-  // across sessions in IndexedDB (same pattern as the managed-labels cursor).
-  // Bootstrap read state arrives via inline annotation on the fetch response, so
-  // there is no full/windowed snapshot: the cursor is *seeded* from the batch
-  // fetch's `readCursor`, then every refresh fetches only the read changes since
-  // it (live rows + tombstones), for both articles and documents. A client with
-  // no seeded cursor yet skips the delta (annotation covers it) until the next
-  // refresh, by which point the batch fetch has seeded it.
+  // Forward-read-delta cursor, persisted across sessions in IndexedDB (same
+  // pattern as the managed-labels cursor). Bootstrap read state arrives via
+  // inline annotation on the fetch response, so there is no full/windowed
+  // snapshot: the cursor is *seeded* from the batch fetch's `readCursor`, then
+  // every refresh fetches only the read changes since it (live rows +
+  // tombstones), for both articles and documents. A client with no seeded cursor
+  // yet skips the delta (annotation covers it) until the next refresh, by which
+  // point the batch fetch has seeded it.
+  //
+  // The value is the server's opaque compound `(updated_at, id)` cursor — a bare
+  // unix-seconds number only at seeding, and after the first delta always the
+  // string the server handed back. Seconds alone couldn't express "everything
+  // after this row", so any row written in the cursor's own second was dropped
+  // and never asked for again.
   const READ_CURSOR_KEY = 'readPositionsCursor';
-  let readPositionsCursor = 0;
+  let readPositionsCursor: number | string = 0;
   let readPositionsCursorLoaded = false;
   let readPositionsCursorHasValue = false;
 
-  // Managed-labels (tagged/archived/readProgress) delta-sync cursor (max
-  // updated_at seen, in unix seconds). Unlike read positions, this cursor is
-  // PERSISTED across sessions in IndexedDB: the backend tombstones deletions, so
-  // the delta is lossless and a cold start can resume from the saved cursor
-  // instead of re-fetching the whole label history. A brand-new client (no saved
-  // cursor) does one full snapshot to bootstrap; every sync after that is a
-  // delta. Hydrated once per session from `MANAGED_LABELS_CURSOR_KEY`.
+  // Managed-labels (tagged/archived/readProgress) delta-sync cursor, same
+  // compound form. Unlike read positions, this cursor is PERSISTED across
+  // sessions in IndexedDB: the backend tombstones deletions, so the delta is
+  // lossless and a cold start can resume from the saved cursor instead of
+  // re-fetching the whole label history. A brand-new client (no saved cursor)
+  // does one full snapshot to bootstrap; every sync after that is a delta.
+  // Hydrated once per session from `MANAGED_LABELS_CURSOR_KEY`.
   const MANAGED_LABELS_CURSOR_KEY = 'managedLabelsCursor';
-  let managedLabelsCursor = 0;
+  let managedLabelsCursor: number | string = 0;
   let managedLabelsCursorLoaded = false;
   let managedLabelsCursorHasValue = false;
 
@@ -67,6 +79,9 @@ function createItemLabelsStore() {
     articleGuid: string;
     articleUrl: string;
     articleTitle?: string;
+    // When the user actually read it, not when the debounce happened to flush.
+    // Carried all the way to the server as the last-write-wins key.
+    readAt: number;
   }> = [];
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   const DEBOUNCE_MS = 300;
@@ -86,6 +101,35 @@ function createItemLabelsStore() {
     return (
       pendingDocumentMarkRead.has(key) || pendingMarkRead.some((item) => item.articleGuid === key)
     );
+  }
+
+  // When this device last marked an item UNREAD, unix ms. The mirror of the
+  // in-flight read guard: removing the local `read` label leaves nothing behind
+  // to compare a stale remote row against, so a delta carrying another device's
+  // older read would silently re-read the item. Bounded and expiring — this is a
+  // race window, not a second source of truth, and the server's own user-time
+  // LWW settles the durable answer once the push lands.
+  const UNREAD_INTENT_TTL_MS = 10 * 60 * 1000;
+  const MAX_UNREAD_INTENTS = 500;
+  const unreadIntent = new Map<string, number>();
+
+  function recordUnreadIntent(key: string, at: number) {
+    unreadIntent.set(key, at);
+    if (unreadIntent.size > MAX_UNREAD_INTENTS) {
+      // Map iterates in insertion order, so the head is the oldest.
+      const oldest = unreadIntent.keys().next();
+      if (!oldest.done) unreadIntent.delete(oldest.value);
+    }
+  }
+
+  function unreadIntentAt(key: string): number | undefined {
+    const at = unreadIntent.get(key);
+    if (at === undefined) return undefined;
+    if (Date.now() - at > UNREAD_INTENT_TTL_MS) {
+      unreadIntent.delete(key);
+      return undefined;
+    }
+    return at;
   }
 
   // --- Internal helpers ---
@@ -124,6 +168,24 @@ function createItemLabelsStore() {
     labelsByItem = new Map(labelsByItem);
   }
 
+  /**
+   * Convert a server label row's timestamps to the store's unit at the boundary.
+   *
+   * The invariant is MILLISECONDS everywhere in the label store — that is what
+   * every local write (`Date.now()`) already produced. Rows arriving from the
+   * delta carried unix SECONDS, so a delta-written label and a locally-written
+   * one were being compared across a factor of a thousand: `getReadActivity`
+   * ranked any locally-touched item above every synced one, and the highlight
+   * union's per-row recency ordering was decided by which device wrote last
+   * rather than when. Converting here, once, is what makes the invariant true.
+   */
+  function localTimestamps(raw: { createdAt: number; updatedAt: number }): {
+    createdAt: number;
+    updatedAt: number;
+  } {
+    return { createdAt: raw.createdAt * 1000, updatedAt: raw.updatedAt * 1000 };
+  }
+
   async function putLabel(lbl: ItemLabel) {
     addToState(lbl);
     await safePut(db.itemLabels, lbl);
@@ -153,6 +215,7 @@ function createItemLabelsStore() {
           itemGuid: item.articleGuid,
           itemUrl: item.articleUrl,
           itemTitle: item.articleTitle,
+          updatedAt: item.readAt,
         }));
         for (let i = 0; i < bulkItems.length; i += BULK_BATCH_SIZE) {
           await api.markAsReadBulk(bulkItems.slice(i, i + BULK_BATCH_SIZE));
@@ -179,6 +242,45 @@ function createItemLabelsStore() {
   }
 
   // --- Load ---
+
+  // Delta-only pull state. A full `load()` re-reads the whole Dexie table; this
+  // is the cheap path the freshness triggers use — two indexed queries that
+  // usually return zero rows.
+  let deltaPullInFlight: Promise<void> | null = null;
+  let lastDeltaPullAt = 0;
+
+  /**
+   * Pull both deltas without the local cache rebuild.
+   *
+   * Labels used to be pulled only at app init, on a manual refresh, on
+   * tab-visible-and-≥30-minutes-stale, or through Chromium's periodic background
+   * sync — so an open tab never observed another device's changes, and
+   * "phone → laptop" felt broken even though the sync itself worked. There is no
+   * push channel and deliberately none planned; a delta that finds nothing is
+   * one indexed query returning zero rows, which is cheap enough to just ask.
+   *
+   * `minIntervalMs` lets a noisy trigger (visibility flapping) stay quiet
+   * without each caller keeping its own timestamp. Concurrent calls share the
+   * in-flight promise rather than racing two drains against one cursor.
+   */
+  async function pullDelta(minIntervalMs = 0): Promise<void> {
+    if (!syncStore.isOnline) return;
+    if (deltaPullInFlight) return deltaPullInFlight;
+    if (minIntervalMs > 0 && Date.now() - lastDeltaPullAt < minIntervalMs) return;
+
+    deltaPullInFlight = (async () => {
+      try {
+        await Promise.all([loadReadDeltaFromBackend(), loadManagedLabelsFromBackend()]);
+        lastDeltaPullAt = Date.now();
+        syncStore.markSynced();
+      } catch (e) {
+        console.error('Failed to pull label delta:', e);
+      } finally {
+        deltaPullInFlight = null;
+      }
+    })();
+    return deltaPullInFlight;
+  }
 
   async function load() {
     isLoading = true;
@@ -232,8 +334,8 @@ function createItemLabelsStore() {
   async function seedReadCursor(cursor: number) {
     if (!cursor) return;
     if (!readPositionsCursorLoaded) {
-      const persisted = await getMetadata<number>(READ_CURSOR_KEY);
-      if (typeof persisted === 'number') {
+      const persisted = await getMetadata<number | string>(READ_CURSOR_KEY);
+      if (typeof persisted === 'number' || typeof persisted === 'string') {
         readPositionsCursor = persisted;
         readPositionsCursorHasValue = true;
       }
@@ -277,10 +379,15 @@ function createItemLabelsStore() {
   // see isMarkReadInFlight, which covers both articles and documents). Closes the
   // only gap annotation can't: an already-cached item read or un-read on another
   // device, which this device won't re-fetch.
+  // Rounds of the read-delta drain. A page is 500 rows, so this covers 5 000
+  // read changes in one pull; anything beyond continues on the next one, in
+  // order, because the cursor only ever sits on a row we actually applied.
+  const MAX_READ_DELTA_PAGES = 10;
+
   async function loadReadDeltaFromBackend() {
     if (!readPositionsCursorLoaded) {
-      const persisted = await getMetadata<number>(READ_CURSOR_KEY);
-      if (typeof persisted === 'number') {
+      const persisted = await getMetadata<number | string>(READ_CURSOR_KEY);
+      if (typeof persisted === 'number' || typeof persisted === 'string') {
         readPositionsCursor = persisted;
         readPositionsCursorHasValue = true;
       }
@@ -291,40 +398,58 @@ function createItemLabelsStore() {
     // cursor this cycle, and the next refresh runs the delta from there.
     if (!readPositionsCursorHasValue) return;
 
-    const { positions, cursor } = await api.getReadPositions(readPositionsCursor);
+    for (let round = 0; round < MAX_READ_DELTA_PAGES; round++) {
+      const { positions, cursor, nextSince, hasMore } =
+        await api.getReadPositions(readPositionsCursor);
 
-    // Reconcile the delta into adds/removes — the optimistic-race guard (skip
-    // tombstone removals for in-flight local reads) lives in planReadDelta.
-    const { puts: dbPuts, deletes: dbDeletes } = planReadDelta(positions, {
-      isInFlight: isMarkReadInFlight,
-      now: Date.now(),
-    });
+      // Reconcile the delta into adds/removes. The race guards — an in-flight
+      // local mark-read, a newer local read, a newer local un-read — all live in
+      // planReadDelta.
+      const { puts: dbPuts, deletes: dbDeletes } = planReadDelta(positions, {
+        isInFlight: isMarkReadInFlight,
+        now: Date.now(),
+        localReadAt: (key) => getLabel(key, 'read')?.updatedAt,
+        unreadIntentAt,
+      });
 
-    for (const readLabel of dbPuts) addToState(readLabel);
-    for (const [itemKey, label] of dbDeletes) removeFromState(itemKey, label);
+      for (const readLabel of dbPuts) addToState(readLabel);
+      for (const [itemKey, label] of dbDeletes) removeFromState(itemKey, label);
 
-    triggerReactivity();
+      triggerReactivity();
 
-    try {
-      for (const [itemKey, label] of dbDeletes) {
-        await db.itemLabels.where('[itemKey+label]').equals([itemKey, label]).delete();
+      // The cursor moves only after the batch is DURABLE. It used to advance in
+      // a separate try, so a failed IndexedDB write lost the batch and still
+      // skipped past it — permanently, since the delta is forward-only.
+      try {
+        for (const [itemKey, label] of dbDeletes) {
+          await db.itemLabels.where('[itemKey+label]').equals([itemKey, label]).delete();
+        }
+        if (dbPuts.length > 0) {
+          await safeBulkPut(db.itemLabels, dbPuts);
+        }
+      } catch (e) {
+        console.error('Failed to sync read delta to cache; keeping cursor for retry:', e);
+        return;
       }
-      if (dbPuts.length > 0) {
-        await safeBulkPut(db.itemLabels, dbPuts);
-      }
-    } catch (e) {
-      console.error('Failed to sync read delta to cache:', e);
-    }
 
-    const nextCursor = advanceCursor(readPositionsCursor, cursor);
-    if (nextCursor !== null) {
-      readPositionsCursor = nextCursor;
+      // Prefer the compound cursor. `advanceCursor` still guards the legacy
+      // numeric one, whose forward-only comparison is all it ever had.
+      let next: number | string | null = nextSince ?? null;
+      if (next === null && typeof readPositionsCursor === 'number') {
+        next = advanceCursor(readPositionsCursor, cursor);
+      }
+      if (next === null || next === readPositionsCursor) return;
+
+      readPositionsCursor = next;
       try {
         await setMetadata(READ_CURSOR_KEY, readPositionsCursor);
       } catch (e) {
         console.error('Failed to persist read cursor:', e);
       }
+
+      if (!hasMore) return;
     }
+    console.warn('[itemLabels] Read delta page cap reached; the rest continues on the next pull.');
   }
 
   // The backend-managed (non-read) label types stored in item_labels_cache.
@@ -347,8 +472,8 @@ function createItemLabelsStore() {
     // Hydrate the persisted cursor once per session. A saved value means a prior
     // session already bootstrapped the full snapshot, so we can delta from here.
     if (!managedLabelsCursorLoaded) {
-      const persisted = await getMetadata<number>(MANAGED_LABELS_CURSOR_KEY);
-      if (typeof persisted === 'number') {
+      const persisted = await getMetadata<number | string>(MANAGED_LABELS_CURSOR_KEY);
+      if (typeof persisted === 'number' || typeof persisted === 'string') {
         managedLabelsCursor = persisted;
         managedLabelsCursorHasValue = true;
       }
@@ -361,21 +486,17 @@ function createItemLabelsStore() {
     // enough batch could spill into extra pagination round-trips.
     const labels = [...MANAGED_LABELS];
     const isFull = !managedLabelsCursorHasValue;
-    const fetched = await api.getAllLabels(
+    const { labels: fetched, nextSince } = await api.getAllLabels(
       isFull ? { labels } : { since: managedLabelsCursor, labels }
     );
 
-    // Walk the fetched rows: track the newest updated_at (unix seconds) for the
-    // next cursor, apply tombstones as removals, and group live rows by type.
-    // Only the server-sourced timestamp is used — local labels store updatedAt
-    // in ms. (A full snapshot never contains tombstones — the backend filters
+    // Walk the fetched rows: apply tombstones as removals and group live rows by
+    // type. (A full snapshot never contains tombstones — the backend filters
     // them — so the deletedAt branch only fires on deltas.)
-    let maxUpdatedAt = managedLabelsCursor;
     const removed: Array<[string, string]> = [];
     const byLabel = new Map<string, typeof fetched>();
     for (const raw of fetched) {
       if (!managed.has(raw.label)) continue;
-      if (raw.updatedAt > maxUpdatedAt) maxUpdatedAt = raw.updatedAt;
       if (raw.deletedAt != null) {
         removeFromState(raw.itemKey, raw.label);
         removed.push([raw.itemKey, raw.label]);
@@ -404,8 +525,7 @@ function createItemLabelsStore() {
         itemType: raw.itemType as ItemLabelType,
         label: 'tagged',
         props: { tags },
-        createdAt: raw.createdAt,
-        updatedAt: raw.updatedAt,
+        ...localTimestamps(raw),
       };
       addToState(lbl);
       dbOps.push(lbl);
@@ -416,20 +536,28 @@ function createItemLabelsStore() {
         itemType: (raw.itemType as ItemLabelType) || 'article',
         label: 'archived',
         props: raw.props || {},
-        createdAt: raw.createdAt,
-        updatedAt: raw.updatedAt,
+        ...localTimestamps(raw),
       };
       addToState(lbl);
       dbOps.push(lbl);
     }
     for (const raw of byLabel.get('readProgress') || []) {
+      // Progress is merged by `lastReadAt`, not overwritten. The delta used to
+      // clobber it unconditionally, so a device mid-scroll — its 500 ms debounce
+      // still pending — was rewound to another device's older position and then
+      // republished that older position as authoritative when the debounce
+      // fired. Position may legitimately move backwards on a re-read, so
+      // `lastReadAt` is the ordering and `paragraphIndex` never is.
+      const remoteProps = (raw.props || {}) as ReadProgressProps;
+      const localProps = getLabel(raw.itemKey, 'readProgress')?.props as
+        ReadProgressProps | undefined;
+      if (mergeReadProgress(localProps, remoteProps) === 'local') continue;
       const lbl: ItemLabel = {
         itemKey: raw.itemKey,
         itemType: (raw.itemType as ItemLabelType) || 'article',
         label: 'readProgress',
         props: raw.props || {},
-        createdAt: raw.createdAt,
-        updatedAt: raw.updatedAt,
+        ...localTimestamps(raw),
       };
       addToState(lbl);
       dbOps.push(lbl);
@@ -461,8 +589,7 @@ function createItemLabelsStore() {
         itemType: (raw.itemType as ItemLabelType) || 'article',
         label: 'highlights',
         props: { highlights: merged },
-        createdAt: raw.createdAt,
-        updatedAt: raw.updatedAt,
+        ...localTimestamps(raw),
       };
       addToState(lbl);
       dbOps.push(lbl);
@@ -470,7 +597,10 @@ function createItemLabelsStore() {
 
     triggerReactivity();
 
-    // Sync to IndexedDB: delete removed labels, then bulk-put the changed set.
+    // Sync to IndexedDB, THEN move the cursor — never the other way round. The
+    // cursor used to be committed in its own try, so a failed Dexie write lost
+    // the batch and still advanced past it, permanently: the delta is
+    // forward-only and never re-offers a row it has already delivered.
     try {
       for (const [itemKey, label] of removed) {
         await db.itemLabels.where('[itemKey+label]').equals([itemKey, label]).delete();
@@ -479,11 +609,21 @@ function createItemLabelsStore() {
         await safeBulkPut(db.itemLabels, dbOps);
       }
     } catch (e) {
-      console.error('Failed to sync managed labels to cache:', e);
+      console.error('Failed to sync managed labels to cache; keeping cursor for retry:', e);
+      return;
     }
 
-    // Advance and persist the cursor so the next cold start resumes as a delta.
-    managedLabelsCursor = maxUpdatedAt;
+    // The cursor is the last row the server DELIVERED — compound `(updated_at,
+    // id)`, so the next delta resumes strictly after it without dropping
+    // same-second siblings. `nextSince` is absent only on an older backend; the
+    // legacy max-updatedAt fallback keeps that case working.
+    const nextCursor =
+      nextSince ??
+      fetched.reduce(
+        (max, raw) => (raw.updatedAt > max ? raw.updatedAt : max),
+        typeof managedLabelsCursor === 'number' ? managedLabelsCursor : 0
+      );
+    managedLabelsCursor = nextCursor;
     managedLabelsCursorHasValue = true;
     try {
       await setMetadata(MANAGED_LABELS_CURSOR_KEY, managedLabelsCursor);
@@ -656,18 +796,30 @@ function createItemLabelsStore() {
     triggerReactivity();
     safePut(db.itemLabels, readLabel);
 
-    pendingMarkRead.push({ articleGuid, articleUrl, articleTitle });
+    pendingMarkRead.push({ articleGuid, articleUrl, articleTitle, readAt: now });
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(flushPendingMarkRead, DEBOUNCE_MS);
   }
 
+  /**
+   * Mark a set of articles read.
+   *
+   * `scope` turns this into a SERVER operation over the canonical per-feed
+   * window rather than a loop over whatever this device happens to hold. That
+   * distinction is the whole point: the local list stops at this device's
+   * window, so items another device holds below it stayed unread there — the one
+   * action that should force every device to agree didn't. The optimistic local
+   * pass still runs first (the UI must not wait on a round trip), and the
+   * per-item queue path is still the offline fallback.
+   */
   async function markAllAsRead(
     articles: Array<{
       subscriptionRkey: string;
       articleGuid: string;
       articleUrl: string;
       articleTitle?: string;
-    }>
+    }>,
+    scope?: { feedUrl?: string; beforeSeq?: number }
   ) {
     const unreadArticles = articles.filter((a) => !isRead(a.articleGuid));
     if (unreadArticles.length === 0) return;
@@ -699,13 +851,21 @@ function createItemLabelsStore() {
 
     if (syncStore.isOnline) {
       try {
-        const bulkItems = unreadArticles.map((a) => ({
-          itemGuid: a.articleGuid,
-          itemUrl: a.articleUrl,
-          itemTitle: a.articleTitle,
-        }));
-        for (let i = 0; i < bulkItems.length; i += BULK_BATCH_SIZE) {
-          await api.markAsReadBulk(bulkItems.slice(i, i + BULK_BATCH_SIZE));
+        if (scope) {
+          // One call covers the whole window, including items this device never
+          // held; the resulting rows ride the existing forward delta out to
+          // every other device.
+          await api.markFeedRead({ ...scope, updatedAt: now });
+        } else {
+          const bulkItems = unreadArticles.map((a) => ({
+            itemGuid: a.articleGuid,
+            itemUrl: a.articleUrl,
+            itemTitle: a.articleTitle,
+            updatedAt: now,
+          }));
+          for (let i = 0; i < bulkItems.length; i += BULK_BATCH_SIZE) {
+            await api.markAsReadBulk(bulkItems.slice(i, i + BULK_BATCH_SIZE));
+          }
         }
       } catch (e) {
         console.error('Failed to mark all as read, queueing for retry:', e);
@@ -731,7 +891,11 @@ function createItemLabelsStore() {
   async function markAsUnread(articleGuid: string) {
     if (!isRead(articleGuid)) return;
 
+    const now = Date.now();
     removeFromState(articleGuid, 'read');
+    // Removing the label leaves nothing for the delta to compare against, so
+    // remember the intent for the length of the race window.
+    recordUnreadIntent(articleGuid, now);
     triggerReactivity();
 
     try {
@@ -742,7 +906,7 @@ function createItemLabelsStore() {
 
     if (syncStore.isOnline) {
       try {
-        await api.markAsUnread(articleGuid);
+        await api.markAsUnread(articleGuid, now);
       } catch (e) {
         console.error('Failed to mark as unread, queueing for retry:', e);
         await syncQueue.enqueue('delete', 'reading', articleGuid, {
@@ -1248,7 +1412,11 @@ function createItemLabelsStore() {
     const rkey = (readLabel.props.rkey as string) || '';
     const authorDid = (readLabel.props.authorDid as string) || '';
 
+    const now = Date.now();
     removeFromState(itemUri, 'read');
+    // Same guard as articles: the removed label leaves nothing for the delta to
+    // compare against, so the un-read intent is remembered for the race window.
+    recordUnreadIntent(itemUri, now);
     triggerReactivity();
 
     try {
@@ -1269,7 +1437,7 @@ function createItemLabelsStore() {
     // un-read carries on the forward read delta to other devices.
     if (syncStore.isOnline) {
       try {
-        await api.markAsUnread(itemUri);
+        await api.markAsUnread(itemUri, now);
       } catch (e) {
         console.error('Failed to mark social item as unread, queueing for retry:', e);
         await syncQueue.enqueue('delete', 'socialReading', itemUri, payload);
@@ -1311,6 +1479,7 @@ function createItemLabelsStore() {
           itemType,
           label: 'readProgress',
           props,
+          updatedAt: now,
         });
       } catch (e) {
         console.error('Failed to sync read progress, queueing for retry:', e);
@@ -1387,9 +1556,18 @@ function createItemLabelsStore() {
     paragraphIndex: number,
     totalParagraphs: number
   ) {
-    // Skip if position hasn't changed
+    // Skip only when NOTHING changed. Comparing paragraphIndex alone dropped
+    // updates that carried a corrected `totalParagraphs` — the reader learns the
+    // real total after layout, so the first write for an article was usually the
+    // one with the wrong denominator, and it was the one that stuck.
     const current = getReadProgress(itemKey);
-    if (current && paragraphIndex === current.paragraphIndex) return;
+    if (
+      current &&
+      paragraphIndex === current.paragraphIndex &&
+      totalParagraphs === current.totalParagraphs
+    ) {
+      return;
+    }
 
     // Debounce the actual persist
     if (readProgressDebounceTimer) clearTimeout(readProgressDebounceTimer);
@@ -1775,9 +1953,15 @@ function createItemLabelsStore() {
     },
     // Lifecycle
     load,
+    // Cheap mid-session freshness: both deltas, no cache rebuild.
+    pullDelta,
     // Inline read annotation (called by feedFetcher after a batch fetch)
     seedReadCursor,
     applyAnnotatedReads,
+    // Raw label access — the eviction guard needs "does this item carry a tag",
+    // and the count reconciliation needs a label's own timestamp.
+    hasLabel,
+    getLabel,
     // Article read
     isRead,
     markAsRead,

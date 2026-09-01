@@ -290,6 +290,10 @@ class SyncQueue {
             itemGuid: payload.articleGuid,
             itemUrl: payload.articleUrl,
             itemTitle: payload.articleTitle,
+            // The enqueue time IS the user's action time. Sending it is what
+            // stops a queue draining an hour late from overwriting what the
+            // user has since done on another device.
+            updatedAt: item.timestamp,
           };
         });
 
@@ -341,9 +345,10 @@ class SyncQueue {
       }
 
       try {
-        const bulkItems = batch.map((item) =>
-          toUnifiedReadItem(JSON.parse(item.payload) as SocialReadingPayload)
-        );
+        const bulkItems = batch.map((item) => ({
+          ...toUnifiedReadItem(JSON.parse(item.payload) as SocialReadingPayload),
+          updatedAt: item.timestamp,
+        }));
 
         // Document reads are unified onto the article read path (/api/reading).
         await api.markAsReadBulk(bulkItems);
@@ -414,13 +419,21 @@ class SyncQueue {
 
     switch (entry.collection) {
       case 'reading':
-        await this.executeReadingOperation(entry.operation, payload as ReadingPayload);
+        await this.executeReadingOperation(
+          entry.operation,
+          payload as ReadingPayload,
+          entry.timestamp
+        );
         break;
       case 'socialReading':
-        await this.executeSocialReadingOperation(entry.operation, payload as SocialReadingPayload);
+        await this.executeSocialReadingOperation(
+          entry.operation,
+          payload as SocialReadingPayload,
+          entry.timestamp
+        );
         break;
       case 'label':
-        await this.executeLabelOperation(entry.operation, payload as LabelPayload);
+        await this.executeLabelOperation(entry.operation, payload as LabelPayload, entry.timestamp);
         break;
       case 'saved':
         await this.executeSavedOperation(entry.operation, payload as SavedPayload);
@@ -465,9 +478,14 @@ class SyncQueue {
     }
   }
 
+  // `queuedAt` is the entry's own enqueue time — the moment the USER acted. It
+  // rides every write as the last-write-wins key, so a queue that drains long
+  // after the fact loses to anything the user did more recently elsewhere
+  // instead of winning on arrival order.
   private async executeReadingOperation(
     operation: SyncOperation,
-    payload: ReadingPayload
+    payload: ReadingPayload,
+    queuedAt: number
   ): Promise<void> {
     switch (operation) {
       case 'create':
@@ -476,32 +494,35 @@ class SyncQueue {
           itemGuid: payload.articleGuid,
           itemUrl: payload.articleUrl,
           itemTitle: payload.articleTitle,
+          updatedAt: queuedAt,
         });
         break;
       case 'delete':
-        await api.markAsUnread(payload.articleGuid);
+        await api.markAsUnread(payload.articleGuid, queuedAt);
         break;
     }
   }
 
   private async executeSocialReadingOperation(
     operation: SyncOperation,
-    payload: SocialReadingPayload
+    payload: SocialReadingPayload,
+    queuedAt: number
   ): Promise<void> {
     switch (operation) {
       case 'create':
         // Document reads are unified onto the article read path (/api/reading).
-        await api.markAsRead(toUnifiedReadItem(payload));
+        await api.markAsRead({ ...toUnifiedReadItem(payload), updatedAt: queuedAt });
         break;
       case 'delete':
-        await api.markAsUnread(payload.itemUri);
+        await api.markAsUnread(payload.itemUri, queuedAt);
         break;
     }
   }
 
   private async executeLabelOperation(
     operation: SyncOperation,
-    payload: LabelPayload
+    payload: LabelPayload,
+    queuedAt: number
   ): Promise<void> {
     switch (operation) {
       case 'create':
@@ -510,10 +531,11 @@ class SyncQueue {
           itemType: payload.itemType as 'article' | 'document',
           label: payload.label,
           props: payload.props,
+          updatedAt: queuedAt,
         });
         break;
       case 'delete':
-        await api.deleteLabel(payload.itemKey, payload.label);
+        await api.deleteLabel(payload.itemKey, payload.label, queuedAt);
         break;
     }
   }

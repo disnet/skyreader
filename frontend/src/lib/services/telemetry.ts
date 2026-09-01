@@ -33,7 +33,8 @@ const MAX_REPORTS_PER_LOAD = 5;
 const MAX_MESSAGE_CHARS = 300;
 const MAX_STACK_CHARS = 2000;
 
-export type ClientErrorKind = 'render' | 'uncaught' | 'rejection' | 'preload_recovery_failed';
+export type ClientErrorKind =
+  'render' | 'uncaught' | 'rejection' | 'preload_recovery_failed' | 'unread_count_drift';
 
 /**
  * Kinds that bypass sampling: the app told us it tried to recover from a bad

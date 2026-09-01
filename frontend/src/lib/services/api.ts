@@ -69,6 +69,19 @@ function undecorateLinkPostTitle(doc: SocialDocument): SocialDocument {
   return title && title !== doc.title ? { ...doc, title } : doc;
 }
 
+/** One `item_labels_cache` row as `GET /api/labels` serves it. */
+export interface LabelRowDTO {
+  itemKey: string;
+  itemType: string;
+  label: string;
+  props: Record<string, unknown>;
+  rkey?: string;
+  createdAt: number;
+  updatedAt: number;
+  deletedAt?: number | null;
+  clientUpdatedAt?: number | null;
+}
+
 export class RateLimitError extends Error {
   retryAfter: number;
 
@@ -221,6 +234,14 @@ export interface TimelineResponse {
   // communicated. Present on every cold start and whenever `healthRev` moved.
   // Absent entirely on a backend that predates feed-health reporting.
   feedHealth?: Record<string, TimelineFeedHealth>;
+  // Server-computed unread counts per feed URL, over the canonical newest-K
+  // window. Requested with `include_counts=1` on the first page of a refresh.
+  // These are what makes two devices agree: a locally-derived count is taken
+  // over whatever slice THIS device holds, and no two devices hold the same one.
+  unreadCounts?: Record<string, number>;
+  // The archive head as of the counts response — passed back as `beforeSeq` when
+  // marking a feed read, so items ingested after the press stay unread.
+  head?: number;
 }
 
 /** One broken feed as the timeline reports it. Timestamps are unix ms. */
@@ -457,6 +478,24 @@ class ApiClient {
   }
 
   /**
+   * One page of a feed's archive BELOW the local window.
+   *
+   * D1 never pruned anything, but each device only keeps the newest K per feed
+   * and trims oldest-first — so an older unread item simply disappeared from the
+   * only copy the reader could see, which reads as data loss. This is the read
+   * that gets it back. Deliberately separate from `fetchFeedV2`: the result is a
+   * transient archive view, never merged into the capped local set.
+   */
+  async fetchFeedArchive(url: string, offset: number, limit: number): Promise<ParsedFeed> {
+    const params = new URLSearchParams({
+      url,
+      offset: String(offset),
+      limit: String(limit),
+    });
+    return this.fetch(`/api/v2/feeds/fetch?${params}`);
+  }
+
+  /**
    * The whole feed refresh in one request: every new item across every
    * subscription, with read state already stamped on. `since_seq` + `generation`
    * are the client's global cursor into the server-side archive; `hasMore` drives
@@ -468,6 +507,7 @@ class ApiClient {
     limit?: number;
     cold_offset?: number;
     health_rev?: string;
+    include_counts?: boolean;
   }): Promise<TimelineResponse> {
     const search = new URLSearchParams();
     if (params.since_seq !== undefined) search.set('since_seq', String(params.since_seq));
@@ -475,6 +515,7 @@ class ApiClient {
     if (params.limit) search.set('limit', String(params.limit));
     if (params.cold_offset) search.set('cold_offset', String(params.cold_offset));
     if (params.health_rev) search.set('health_rev', params.health_rev);
+    if (params.include_counts) search.set('include_counts', '1');
     const query = search.toString();
     return this.fetch(`/api/v2/timeline${query ? `?${query}` : ''}`);
   }
@@ -591,7 +632,14 @@ class ApiClient {
     sourceType?: string;
     subjectDid?: string;
     collectionNsid?: string;
-  }): Promise<{ rkey: string; uri: string }> {
+  }): Promise<{
+    rkey: string;
+    uri: string;
+    /** The feed was already subscribed and active; nothing changed. */
+    alreadySubscribed?: boolean;
+    /** The feed was parked and has been reactivated in place, keeping its rkey. */
+    reactivated?: boolean;
+  }> {
     return this.fetch('/api/subscriptions', {
       method: 'POST',
       body: JSON.stringify(data),
@@ -882,17 +930,24 @@ class ApiClient {
   // AND tombstones (deleted=true) — across articles and documents. Bootstrap read
   // state arrives via inline annotation on the fetch response, not here, so this
   // is always a delta. Returns the new cursor to send next time.
-  async getReadPositions(since?: number): Promise<{
+  // `since` is the opaque compound cursor (`nextSince` from the previous call);
+  // a legacy numeric cursor is still accepted by the backend. Pages are bounded
+  // now — drain while `hasMore`, and only persist `nextSince` once the batch is
+  // durable, or a failed write loses rows the cursor has already moved past.
+  async getReadPositions(since?: number | string): Promise<{
     positions: Array<{
       item_guid: string;
       item_type: 'article' | 'document';
       read_at: number | string | null;
       rkey: string | null;
       deleted: boolean;
+      client_updated_at?: number | null;
     }>;
     cursor: number;
+    nextSince?: string;
+    hasMore?: boolean;
   }> {
-    const params = since ? `?since=${since}` : '';
+    const params = since ? `?since=${encodeURIComponent(String(since))}` : '';
     return this.fetch(`/api/reading/positions${params}`);
   }
 
@@ -903,6 +958,10 @@ class ApiClient {
     itemTitle?: string;
     rkey?: string;
     authorDid?: string;
+    // When the USER acted, unix ms — the last-write-wins key. Without it the
+    // server falls back to arrival time, which is what let a late queue drain
+    // resurrect stale intent.
+    updatedAt?: number;
   }): Promise<{ success: boolean; rkey?: string; alreadyRead?: boolean }> {
     return this.fetch('/api/reading/mark-read', {
       method: 'POST',
@@ -910,10 +969,10 @@ class ApiClient {
     });
   }
 
-  async markAsUnread(itemGuid: string): Promise<{ success: boolean }> {
+  async markAsUnread(itemGuid: string, updatedAt?: number): Promise<{ success: boolean }> {
     return this.fetch('/api/reading/mark-unread', {
       method: 'POST',
-      body: JSON.stringify({ itemGuid }),
+      body: JSON.stringify({ itemGuid, updatedAt }),
     });
   }
 
@@ -925,11 +984,32 @@ class ApiClient {
       itemTitle?: string;
       rkey?: string;
       authorDid?: string;
-    }>
+      updatedAt?: number;
+    }>,
+    updatedAt?: number
   ): Promise<{ success: boolean; marked: number; skipped: number }> {
     return this.fetch('/api/reading/mark-read-bulk', {
       method: 'POST',
-      body: JSON.stringify({ items }),
+      body: JSON.stringify({ items, updatedAt }),
+    });
+  }
+
+  /**
+   * Mark a feed's canonical window read on the SERVER.
+   *
+   * The client-side loop could only mark what this device happened to hold, so
+   * items another device held below this device's window stayed unread there.
+   * Omit `feedUrl` for every subscribed feed. `beforeSeq` is the archive head
+   * the client saw, so anything ingested after the press stays unread.
+   */
+  async markFeedRead(options: {
+    feedUrl?: string;
+    beforeSeq?: number;
+    updatedAt?: number;
+  }): Promise<{ success: boolean; marked: number }> {
+    return this.fetch('/api/reading/mark-feed-read', {
+      method: 'POST',
+      body: JSON.stringify(options),
     });
   }
 
@@ -941,7 +1021,7 @@ class ApiClient {
       itemType?: ItemLabelType;
       cursor?: string;
       limit?: number;
-      since?: number;
+      since?: number | string;
     } = {}
   ): Promise<{
     labels: Array<{
@@ -955,8 +1035,14 @@ class ApiClient {
       // Tombstone marker: set (unix seconds) when the label was deleted; only
       // appears in delta (`since`) responses. Live snapshots never include it.
       deletedAt?: number | null;
+      // When the USER made this change, unix ms. Absent on an older backend.
+      clientUpdatedAt?: number | null;
     }>;
     cursor?: string;
+    // The compound delta cursor to persist once this batch is durable — the
+    // last row DELIVERED, never a clock reading. Delta responses only.
+    nextSince?: string;
+    hasMore?: boolean;
   }> {
     const params = new URLSearchParams();
     if (options.label) params.set('label', options.label);
@@ -969,43 +1055,33 @@ class ApiClient {
     return this.fetch(`/api/labels${query ? `?${query}` : ''}`);
   }
 
+  /**
+   * Drain every page of a labels fetch.
+   *
+   * Returns the rows AND the compound cursor to persist. The caller must only
+   * persist that cursor once the rows are durable locally — the whole point of
+   * the compound form is that a cursor can never sit past a row the client
+   * never applied.
+   */
   async getAllLabels(
     options: {
       label?: string;
       labels?: string[];
       itemType?: ItemLabelType;
-      since?: number;
+      since?: number | string;
     } = {}
-  ): Promise<
-    Array<{
-      itemKey: string;
-      itemType: string;
-      label: string;
-      props: Record<string, unknown>;
-      rkey?: string;
-      createdAt: number;
-      updatedAt: number;
-      deletedAt?: number | null;
-    }>
-  > {
-    const all: Array<{
-      itemKey: string;
-      itemType: string;
-      label: string;
-      props: Record<string, unknown>;
-      rkey?: string;
-      createdAt: number;
-      updatedAt: number;
-      deletedAt?: number | null;
-    }> = [];
+  ): Promise<{ labels: LabelRowDTO[]; nextSince?: string }> {
+    const all: LabelRowDTO[] = [];
     let cursor: string | undefined;
+    let nextSince: string | undefined;
     do {
       // Use the backend max page size to minimise round-trips when paginating.
       const response = await this.getLabels({ ...options, cursor, limit: 500 });
       all.push(...response.labels);
       cursor = response.cursor;
+      if (response.nextSince) nextSince = response.nextSince;
     } while (cursor);
-    return all;
+    return { labels: all, nextSince };
   }
 
   async addLabel(data: {
@@ -1013,6 +1089,7 @@ class ApiClient {
     itemType: ItemLabelType;
     label: string;
     props?: Record<string, unknown>;
+    updatedAt?: number;
   }): Promise<{ success: boolean }> {
     return this.fetch('/api/labels', {
       method: 'POST',
@@ -1020,10 +1097,14 @@ class ApiClient {
     });
   }
 
-  async deleteLabel(itemKey: string, label: string): Promise<{ success: boolean }> {
+  async deleteLabel(
+    itemKey: string,
+    label: string,
+    updatedAt?: number
+  ): Promise<{ success: boolean }> {
     return this.fetch('/api/labels', {
       method: 'DELETE',
-      body: JSON.stringify({ itemKey, label }),
+      body: JSON.stringify({ itemKey, label, updatedAt }),
     });
   }
 
@@ -1033,6 +1114,7 @@ class ApiClient {
       itemType: ItemLabelType;
       label: string;
       props?: Record<string, unknown>;
+      updatedAt?: number;
     }>
   ): Promise<{ success: boolean; added: number }> {
     return this.fetch('/api/labels/bulk', {
@@ -1490,6 +1572,8 @@ class ApiClient {
   async getSyncStatus(): Promise<{
     pdsSyncEnabled: boolean;
     lastSyncSubscriptions: number | null;
+    /** Feeds whose local edits haven't reached the PDS yet. 0 is the normal state. */
+    pendingSubscriptions: number;
   }> {
     return this.fetch('/api/sync/status');
   }

@@ -44,6 +44,12 @@ const KINDS = new Set([
   // The stale-chunk reload guard tripped twice: recovery itself failed, which is
   // the "a deploy bricked the PWA" signal. Never sampled away by the client.
   'preload_recovery_failed',
+  // The server's per-feed unread counts disagreed with the client's own
+  // derivation after a completed refresh. Not an exception — a reconciliation
+  // signal. Cross-device count divergence was only ever discoverable by a user
+  // noticing two devices showing different numbers and filing a report; this is
+  // what makes the next occurrence visible to us first.
+  'unread_count_drift',
 ]);
 
 interface ClientErrorReport {

@@ -143,8 +143,8 @@
     <h3>Take your subscriptions with you</h3>
     <p>
       By default your feed list is stored privately on the Skyreader servers. Turn on Atmospheric
-      sync to also store your subscriptions on your atproto PDS — portable to other Atmospheric
-      apps, and kept in step with your standard.site subscriptions. Your subscription list becomes
+      sync to also store your subscriptions on your atproto PDS, portable to other Atmospheric apps
+      and kept in step with your standard.site subscriptions. Your subscription list becomes
       <strong>publicly visible</strong> when synced.
     </p>
 
@@ -165,7 +165,7 @@
         <p class="status">Saving…</p>
       {:else if pdsSyncEnabled}
         <p class="status confirm">
-          On — new subscriptions sync to the Atmosphere automatically.
+          On. Feeds you add, rename, or remove go to your PDS as you change them.
           {#if auth.user}
             <a
               href="https://pdsls.dev/at://{auth.user.did}"

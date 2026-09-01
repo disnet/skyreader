@@ -2,7 +2,12 @@ import type { Env, Session } from '../types';
 import { getSessionFromRequest } from '../services/oauth';
 import { warmFeedIntoArchive, warmFeedsIntoArchive } from './feeds-v2';
 import { getUserSettings } from './settings';
-import { pushSubscriptionToPds, deleteSubscriptionFromPds } from '../services/subscription-sync';
+import {
+  pushSubscriptionToPds,
+  deleteSubscriptionFromPds,
+  clearSubscriptionDirty,
+  clearSubscriptionsDirty,
+} from '../services/subscription-sync';
 import {
   linkblogPublicationUri,
   writeAtmosphereSubscription,
@@ -25,6 +30,7 @@ import {
  * Accepts pdsSyncEnabled to avoid redundant DB lookups
  */
 async function maybePushToPds(
+  env: Env,
   session: Session,
   pdsSyncEnabled: boolean,
   rkey: string,
@@ -71,6 +77,11 @@ async function maybePushToPds(
       category
     );
     if (result.success) {
+      // Only now is the record's debt settled. The flag was written in the
+      // request path before this fire-and-forget push was scheduled, so a
+      // failure here (or a worker that never runs it) leaves it standing and
+      // the next sync repairs the record instead of losing the edit silently.
+      await clearSubscriptionDirty(env, session.did, rkey);
       console.log('[PDS Sync] Successfully pushed subscription to PDS');
     } else {
       console.error(`[PDS Sync] Failed to push subscription: ${result.error}`);
@@ -165,6 +176,7 @@ async function deleteAtmosphereSubscriptionIfEnabled(
  * Lists existing PDS records first to build proper create/update/skip operations
  */
 async function maybeBulkPushToPds(
+  env: Env,
   session: Session,
   pdsSyncEnabled: boolean,
   subscriptions: Array<{
@@ -223,11 +235,22 @@ async function maybeBulkPushToPds(
   const writes: WriteOp[] = [];
   let skippedExisting = 0;
   let skippedNoOp = 0;
+  // Rows this run puts in step with the PDS: a landed write, or a record the PDS
+  // already holds identically. Anything left out keeps its flag and is repaired
+  // by the next sync.
+  const settledRkeys: string[] = [];
 
   for (const sub of subscriptions) {
     // Skip if this feedUrl already exists in PDS (avoid duplicates)
+    //
+    // Settled rather than repaired, unlike the same situation in syncSubscriptions:
+    // these rows were just created by the import, so the only thing they "owe" the
+    // PDS is a record for this feed — which it already has. An import carries no
+    // customTitle/customIconUrl, so updating the existing record with these values
+    // would strip fields off it rather than repair anything.
     if (pdsByFeedUrl.has(sub.feedUrl)) {
       skippedExisting++;
+      settledRkeys.push(sub.rkey);
       continue;
     }
 
@@ -250,6 +273,7 @@ async function maybeBulkPushToPds(
         (existingRecord.customIconUrl || undefined) === sub.customIconUrl
       ) {
         skippedNoOp++;
+        settledRkeys.push(sub.rkey);
         continue;
       }
       // Content differs - use update
@@ -279,6 +303,7 @@ async function maybeBulkPushToPds(
 
   if (writes.length === 0) {
     console.log('[PDS Sync] No writes needed');
+    await settle(env, session.did, settledRkeys);
     return;
   }
 
@@ -290,6 +315,7 @@ async function maybeBulkPushToPds(
 
   const result = await pdsClient.applyWrites(writes);
   if (result.success) {
+    for (const write of writes) settledRkeys.push(write.rkey);
     console.log(`[PDS Sync] Batch push complete: ${result.data.results.length} succeeded`);
   } else {
     console.error(`[PDS Sync] Batch push failed: ${result.error}`);
@@ -314,6 +340,7 @@ async function maybeBulkPushToPds(
       const putResult = await pdsClient.putRecord(collection, write.rkey, write.value);
       if (putResult.success) {
         succeeded++;
+        settledRkeys.push(write.rkey);
       } else {
         console.error(
           `[PDS Sync] Failed to put ${write.rkey} (${value.feedUrl}): ${putResult.error}`
@@ -330,6 +357,15 @@ async function maybeBulkPushToPds(
       console.log(`[PDS Sync] Fallback complete: ${succeeded}/${writes.length} succeeded`);
     }
   }
+
+  await settle(env, session.did, settledRkeys);
+}
+
+/**
+ * Clear the pending-write flag for records now known to match the PDS.
+ */
+async function settle(env: Env, did: string, rkeys: string[]): Promise<void> {
+  await clearSubscriptionsDirty(env, did, rkeys);
 }
 
 /**
@@ -550,19 +586,32 @@ export async function ensureLocalDocumentSubscription(
 
   const rkey = generateTid();
   const recordUri = `at://${session.did}/app.skyreader.feed.subscription/${rkey}`;
+  // Settings are read before the insert so the row can be born owing a write to
+  // the PDS: the push below is fire-and-forget, and a flag set afterwards would
+  // miss a worker that dies in between.
+  const settings = await getUserSettings(env, session.did);
   await env.DB.prepare(
     `INSERT OR REPLACE INTO subscriptions_cache
-     (user_did, record_uri, feed_url, title, site_url, category, created_at, source_type, subject_did, custom_title, custom_icon_url, active)
-     VALUES (?, ?, ?, ?, ?, NULL, unixepoch(), 'atproto.documents', ?, NULL, NULL, ?)`
+     (user_did, record_uri, feed_url, title, site_url, category, created_at, source_type, subject_did, custom_title, custom_icon_url, active, pds_dirty)
+     VALUES (?, ?, ?, ?, ?, NULL, unixepoch(), 'atproto.documents', ?, NULL, NULL, ?, ?)`
   )
-    .bind(session.did, recordUri, publicationUri, title, siteUrl, subjectDid, active)
+    .bind(
+      session.did,
+      recordUri,
+      publicationUri,
+      title,
+      siteUrl,
+      subjectDid,
+      active,
+      settings.pdsSyncEnabled ? 1 : 0
+    )
     .run();
 
   // Mirror to the user's PDS subscription list when Atmospheric sync is on, so the
   // reader follow behaves exactly like an in-app one (best-effort, background).
-  const settings = await getUserSettings(env, session.did);
   ctx.waitUntil(
     maybePushToPds(
+      env,
       session,
       settings.pdsSyncEnabled,
       rkey,
@@ -755,6 +804,168 @@ export async function handleCreateSubscription(
     }
   }
 
+  // Is this feed already subscribed? The client can't answer this for itself:
+  // /api/records/list serves it active rows only, so a PARKED feed is invisible
+  // to the store's duplicate check (and is actively evicted from its cache when
+  // it gets parked). Without this lookup the INSERT OR REPLACE below either wiped
+  // the parked row's user_parked and orphaned its PDS record under the old rkey
+  // (atproto sources, where the unique index matches), or left it in place and
+  // added a second active row for the same feed (RSS, where a NULL source_type
+  // makes the unique index not match). The import, extension, and linkblog-site
+  // paths already dedupe against parked rows; this one didn't.
+  //
+  // Matched on the same key subscription-sync uses, so the two agree on what
+  // "the same subscription" means.
+  type ExistingSub = {
+    record_uri: string;
+    active: number;
+    title: string | null;
+    site_url: string | null;
+    source_type: string | null;
+    subject_did: string | null;
+    custom_title: string | null;
+    custom_icon_url: string | null;
+    category: string | null;
+  };
+  const existingSub = isAtProto
+    ? await env.DB.prepare(
+        `SELECT record_uri, active, title, site_url, source_type, subject_did, custom_title, custom_icon_url, category
+         FROM subscriptions_cache
+         WHERE user_did = ? AND source_type = ? AND subject_did = ? AND feed_url = ?`
+      )
+        .bind(session.did, sourceType, subjectDid, feedUrl || '')
+        .first<ExistingSub>()
+    : // Ordered, because this one can match more than one row: the unique index
+      // on (user_did, source_type, feed_url) doesn't constrain legacy RSS rows,
+      // whose source_type is NULL — and SQLite treats NULLs in a unique index as
+      // distinct — so duplicate rows for one feed exist in the wild. That is the
+      // bug being fixed here; picking the parked one while an active one already
+      // exists would answer it with a second active row. Prefer the live row, and
+      // fall back to the oldest for a stable answer across calls.
+      await env.DB.prepare(
+        `SELECT record_uri, active, title, site_url, source_type, subject_did, custom_title, custom_icon_url, category
+         FROM subscriptions_cache
+         WHERE user_did = ? AND feed_url = ?
+         ORDER BY active DESC, id ASC`
+      )
+        .bind(session.did, feedUrl || '')
+        .first<ExistingSub>();
+
+  if (existingSub) {
+    const existingRkey = existingSub.record_uri.split('/').pop()!;
+
+    // A re-subscribe often arrives from a richer surface than the original add
+    // and carries facts the stored row is missing — most importantly siteUrl,
+    // which for a linkblog follow is the only durable "this is a linkblog" tell.
+    // Fill what's absent, never overwrite: title and site_url are the feed's own
+    // facts, while custom_title / custom_icon_url / category are the user's edits
+    // and re-subscribing is not a request to reset them.
+    // `|| null` on the incoming side, matching the create path: an empty string
+    // from a client is an absent value, not a title, and must not be written
+    // over a NULL.
+    const filledTitle = existingSub.title ?? (title || null);
+    const filledSiteUrl = existingSub.site_url ?? (siteUrl || null);
+    const filled = filledTitle !== existingSub.title || filledSiteUrl !== existingSub.site_url;
+
+    // Both are mirrored to the PDS record, so a fill leaves the row owing it a
+    // write. Marked in the same statement as the fill, and settled by the
+    // fire-and-forget push below only once that push confirms.
+    const fillClause = filled
+      ? ', title = ?, site_url = ?, pds_dirty = CASE WHEN ? THEN 1 ELSE pds_dirty END'
+      : '';
+    const fillSettings = filled ? await getUserSettings(env, session.did) : null;
+    const fillValues = filled
+      ? [filledTitle, filledSiteUrl, fillSettings!.pdsSyncEnabled ? 1 : 0]
+      : [];
+
+    const pushFill = () => {
+      if (!filled || !fillSettings) return;
+      ctx.waitUntil(
+        maybePushToPds(
+          env,
+          session,
+          fillSettings.pdsSyncEnabled,
+          existingRkey,
+          feedUrl || '',
+          filledTitle || undefined,
+          filledSiteUrl || undefined,
+          existingSub.source_type || undefined,
+          existingSub.subject_did || undefined,
+          collectionNsid,
+          existingSub.custom_title || undefined,
+          existingSub.custom_icon_url || undefined,
+          existingSub.category || undefined
+        )
+      );
+    };
+
+    // Already active: nothing to do beyond that fill. Answer with the record they
+    // already own rather than minting a second rkey for the same feed.
+    if (existingSub.active === 1) {
+      if (filled) {
+        await env.DB.prepare(
+          `UPDATE subscriptions_cache SET title = ?, site_url = ?,
+             pds_dirty = CASE WHEN ? THEN 1 ELSE pds_dirty END
+           WHERE user_did = ? AND record_uri = ?`
+        )
+          .bind(...fillValues, session.did, existingSub.record_uri)
+          .run();
+        pushFill();
+      }
+
+      return new Response(
+        JSON.stringify({
+          rkey: existingRkey,
+          uri: existingSub.record_uri,
+          alreadySubscribed: true,
+        }),
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Parked. Re-subscribing is an explicit request for this feed, so honour it
+    // by reactivating in place — same row, same rkey, same PDS record. Activating
+    // consumes a slot, so it answers to the plan cap like any other activation.
+    try {
+      const limits = await getUserTierLimits(env, session.did);
+      const currentCount = await countActiveSubscriptions(env, session.did);
+      if (currentCount >= limits.maxSubscriptions) {
+        return new Response(
+          JSON.stringify({
+            error: 'subscription_limit_reached',
+            message: `You have reached the maximum of ${limits.maxSubscriptions} active feeds. Park a feed to free a slot.`,
+            limit: limits.maxSubscriptions,
+            current: currentCount,
+          }),
+          { status: 403, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+    } catch (countError) {
+      console.error('Failed to check subscription count:', countError);
+    }
+
+    // active/user_parked are local servicing state and never reach the PDS, so
+    // on their own the record needs no push and the row stays clean. Only the
+    // fill above, if there was one, owes the PDS anything.
+    await env.DB.prepare(
+      `UPDATE subscriptions_cache SET active = 1, user_parked = 0${fillClause}
+       WHERE user_did = ? AND record_uri = ?`
+    )
+      .bind(...fillValues, session.did, existingSub.record_uri)
+      .run();
+
+    pushFill();
+
+    if (!isAtProto && feedUrl) {
+      ctx.waitUntil(warmFeedIntoArchive(env, feedUrl).then(() => undefined));
+    }
+
+    return new Response(
+      JSON.stringify({ rkey: existingRkey, uri: existingSub.record_uri, reactivated: true }),
+      { headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+
   // Check subscription limit
   try {
     const limits = await getUserTierLimits(env, session.did);
@@ -781,11 +992,15 @@ export async function handleCreateSubscription(
     const collection = 'app.skyreader.feed.subscription';
     const recordUri = `at://${session.did}/${collection}/${rkey}`;
 
+    // Read before the insert so the new row records that it owes the PDS a write
+    // before the fire-and-forget push is scheduled; the push clears it on success.
+    const settings = await getUserSettings(env, session.did);
+
     await env.DB.prepare(
       `
 			INSERT OR REPLACE INTO subscriptions_cache
-			(user_did, record_uri, feed_url, title, site_url, category, created_at, source_type, subject_did, custom_title, custom_icon_url)
-			VALUES (?, ?, ?, ?, ?, ?, unixepoch(), ?, ?, ?, ?)
+			(user_did, record_uri, feed_url, title, site_url, category, created_at, source_type, subject_did, custom_title, custom_icon_url, pds_dirty)
+			VALUES (?, ?, ?, ?, ?, ?, unixepoch(), ?, ?, ?, ?, ?)
 			`
     )
       .bind(
@@ -802,7 +1017,8 @@ export async function handleCreateSubscription(
         sourceType || null,
         subjectDid || null,
         customTitle || null,
-        customIconUrl || null
+        customIconUrl || null,
+        settings.pdsSyncEnabled ? 1 : 0
       )
       .run();
 
@@ -818,10 +1034,9 @@ export async function handleCreateSubscription(
     }
 
     // Push to PDS in background if sync is enabled (fire and forget)
-    // Fetch settings once here to avoid redundant lookups in the helper
-    const settings = await getUserSettings(env, session.did);
     ctx.waitUntil(
       maybePushToPds(
+        env,
         session,
         settings.pdsSyncEnabled,
         rkey,
@@ -1000,8 +1215,13 @@ export async function handleUpdateSubscription(
 
   try {
     // Read existing row to get full record for PDS push
+    // site_url is selected because the push below is a putRecord — a full
+    // replace. Leaving it out wrote a record without it, stripping siteUrl from
+    // the PDS, and for a linkblog follow that is the only durable "this is a
+    // linkblog" tell. The clear settled the row's flag on the way out, so a
+    // later sync saw nothing to repair.
     const existing = await env.DB.prepare(
-      `SELECT feed_url, title, source_type, subject_did, custom_title, custom_icon_url, category
+      `SELECT feed_url, title, site_url, source_type, subject_did, custom_title, custom_icon_url, category
        FROM subscriptions_cache
        WHERE user_did = ? AND record_uri LIKE ?`
     )
@@ -1009,6 +1229,7 @@ export async function handleUpdateSubscription(
       .first<{
         feed_url: string;
         title: string | null;
+        site_url: string | null;
         source_type: string | null;
         subject_did: string | null;
         custom_title: string | null;
@@ -1030,23 +1251,43 @@ export async function handleUpdateSubscription(
       body.customIconUrl === null ? null : (body.customIconUrl ?? existing.custom_icon_url);
     const newCategory = body.category === null ? null : (body.category ?? existing.category);
 
+    // This is the edit that used to go missing: the push below is fire-and-forget,
+    // and the sync's push phase skipped any record already on the PDS, so a failed
+    // rename stayed stale forever. Marking the row in the same statement that
+    // changes it means the debt is durable before anything can drop it.
+    //
+    // Marked, never cleared: with sync off this edit isn't owed to the PDS, but a
+    // debt already standing on the row still is — from an earlier edit whose push
+    // failed, or from the linkblog route, which flags regardless of the setting.
+    // Writing a flat 0 here discarded that, so turning sync off and back on could
+    // strand a record stale forever: exactly the drift the flag exists to end.
+    const settings = await getUserSettings(env, session.did);
     await env.DB.prepare(
-      `UPDATE subscriptions_cache SET custom_title = ?, custom_icon_url = ?, category = ?
+      `UPDATE subscriptions_cache
+       SET custom_title = ?, custom_icon_url = ?, category = ?,
+           pds_dirty = CASE WHEN ? THEN 1 ELSE pds_dirty END
        WHERE user_did = ? AND record_uri LIKE ?`
     )
-      .bind(newCustomTitle, newCustomIconUrl, newCategory, session.did, `%/${rkey}`)
+      .bind(
+        newCustomTitle,
+        newCustomIconUrl,
+        newCategory,
+        settings.pdsSyncEnabled ? 1 : 0,
+        session.did,
+        `%/${rkey}`
+      )
       .run();
 
     // Push full record to PDS in background
-    const settings = await getUserSettings(env, session.did);
     ctx.waitUntil(
       maybePushToPds(
+        env,
         session,
         settings.pdsSyncEnabled,
         rkey,
         existing.feed_url,
         existing.title || undefined,
-        undefined,
+        existing.site_url || undefined,
         existing.source_type || undefined,
         existing.subject_did || undefined,
         undefined,
@@ -1160,6 +1401,10 @@ export async function handleBulkCreateSubscriptions(
     console.error('Failed to check subscription count:', countError);
   }
 
+  // Read up front so each inserted row can carry its PDS debt from birth; the
+  // background bulk push clears the flag for whatever actually lands.
+  const bulkSettings = await getUserSettings(env, session.did);
+
   // Dedupe against feeds the user already has — ACTIVE or PARKED. The reader's
   // client list only knows active subs, so a re-import could otherwise create a
   // second (parked) row for a feed that's already parked. Skip any incoming feed
@@ -1223,10 +1468,18 @@ export async function handleBulkCreateSubscriptions(
         env.DB.prepare(
           `
 					INSERT OR REPLACE INTO subscriptions_cache
-					(user_did, record_uri, feed_url, title, category, created_at, active)
-					VALUES (?, ?, ?, ?, ?, unixepoch(), ?)
+					(user_did, record_uri, feed_url, title, category, created_at, active, pds_dirty)
+					VALUES (?, ?, ?, ?, ?, unixepoch(), ?, ?)
 					`
-        ).bind(session.did, recordUri, sub.feedUrl, sub.title || null, sub.category || null, active)
+        ).bind(
+          session.did,
+          recordUri,
+          sub.feedUrl,
+          sub.title || null,
+          sub.category || null,
+          active,
+          bulkSettings.pdsSyncEnabled ? 1 : 0
+        )
       );
 
       // Only warm feeds we'll actually service/show; parked feeds stay cold.
@@ -1263,8 +1516,7 @@ export async function handleBulkCreateSubscriptions(
 
     // Push to PDS in background if sync is enabled — inserted rows only, so a
     // re-import of an already-owned feed can't write a duplicate PDS record.
-    const settings = await getUserSettings(env, session.did);
-    ctx.waitUntil(maybeBulkPushToPds(session, settings.pdsSyncEnabled, inserted));
+    ctx.waitUntil(maybeBulkPushToPds(env, session, bulkSettings.pdsSyncEnabled, inserted));
 
     return new Response(JSON.stringify({ results, parked, skipped, dropped }), {
       headers: { 'Content-Type': 'application/json' },
@@ -1367,6 +1619,13 @@ export async function handleBulkUpdateSubscriptions(
       });
     }
 
+    // Rides the same UPDATE as the fields themselves, so every touched row is
+    // marked before the per-row pushes below are scheduled.
+    const settings = await getUserSettings(env, session.did);
+    if (settings.pdsSyncEnabled) {
+      setClauses.push('pds_dirty = 1');
+    }
+
     const batchStatements = rkeys.map((rkey) =>
       env.DB.prepare(
         `UPDATE subscriptions_cache SET ${setClauses.join(', ')}
@@ -1377,10 +1636,12 @@ export async function handleBulkUpdateSubscriptions(
     await env.DB.batch(batchStatements);
 
     // Push updated records to PDS in background
-    const settings = await getUserSettings(env, session.did);
     if (settings.pdsSyncEnabled) {
+      // site_url rides along for the same reason as the single-record update:
+      // the push is a full-record putRecord, so omitting it strips siteUrl from
+      // the PDS record.
       const rows = await env.DB.prepare(
-        `SELECT record_uri, feed_url, title, source_type, subject_did, custom_title, custom_icon_url, category
+        `SELECT record_uri, feed_url, title, site_url, source_type, subject_did, custom_title, custom_icon_url, category
          FROM subscriptions_cache
          WHERE user_did = ? AND (${rkeys.map(() => 'record_uri LIKE ?').join(' OR ')})`
       )
@@ -1389,6 +1650,7 @@ export async function handleBulkUpdateSubscriptions(
           record_uri: string;
           feed_url: string;
           title: string | null;
+          site_url: string | null;
           source_type: string | null;
           subject_did: string | null;
           custom_title: string | null;
@@ -1400,12 +1662,13 @@ export async function handleBulkUpdateSubscriptions(
         const rkey = row.record_uri.split('/').pop()!;
         ctx.waitUntil(
           maybePushToPds(
+            env,
             session,
             true,
             rkey,
             row.feed_url,
             row.title || undefined,
-            undefined,
+            row.site_url || undefined,
             row.source_type || undefined,
             row.subject_did || undefined,
             undefined,

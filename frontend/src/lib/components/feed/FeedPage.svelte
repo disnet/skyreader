@@ -157,6 +157,14 @@
   // Tab visibility state
   let lastVisibleTime = $state(Date.now());
   const STALE_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
+  // Floor between delta-only pulls, so a flapping tab doesn't poll.
+  const DELTA_MIN_INTERVAL_MS = 60 * 1000;
+  // Gentle while-open cadence. A tab left open all afternoon used to observe
+  // nothing another device did; this is what makes read state converge without
+  // adding a push channel (deliberately out of scope — the delta is cheap and
+  // the product is calm).
+  const DELTA_POLL_INTERVAL_MS = 5 * 60 * 1000;
+  let deltaPollTimer: ReturnType<typeof setInterval> | null = null;
 
   // Reference to FeedListView or SavedListView component for accessing article elements
   let feedListView = $state<ReturnType<typeof FeedListView> | null>(null);
@@ -325,7 +333,17 @@
       []
     );
 
-    await itemLabelsStore.markAllAsRead(articlesToMark);
+    // Scoped to the feed so the server marks its whole canonical window, not
+    // just the slice this device happens to hold — otherwise another device
+    // holding older items would still show them unread after this. Only RSS:
+    // atproto sources aren't in the archive and reconcile by digest instead.
+    const isRss = !sub.sourceType || sub.sourceType === 'rss';
+    await itemLabelsStore.markAllAsRead(
+      articlesToMark,
+      isRss && sub.feedUrl
+        ? { feedUrl: sub.feedUrl, beforeSeq: unreadCounts.serverCountsHead }
+        : undefined
+    );
   }
 
   async function markAllAsReadInCurrentView() {
@@ -398,7 +416,21 @@
     // Mark all using bulk operations
     const promises: Promise<void>[] = [];
     if (articlesToMark.length > 0) {
-      promises.push(itemLabelsStore.markAllAsRead(articlesToMark));
+      // The all-feeds server variant only applies to the unfiltered view: a
+      // channel or source filter means the user asked to clear THAT set, and
+      // marking every subscribed feed would read as the action doing far more
+      // than it said. Filtered views keep the per-item path.
+      const wholeView =
+        !feedViewStore.feedFilter &&
+        !feedViewStore.viewFilter &&
+        !feedViewStore.sharerFilter &&
+        !feedViewStore.categoryFilter;
+      promises.push(
+        itemLabelsStore.markAllAsRead(
+          articlesToMark,
+          wholeView ? { beforeSeq: unreadCounts.serverCountsHead } : undefined
+        )
+      );
     }
     if (socialItemsToMark.length > 0) {
       promises.push(itemLabelsStore.markAllSocialAsRead(socialItemsToMark));
@@ -428,6 +460,12 @@
         console.log('Data is stale, refreshing...');
         await appManager.refreshFromBackend();
         feedViewStore.clearReadThisSession();
+      } else {
+        // Not stale enough for a full refresh, but coming back to this tab is
+        // exactly when someone expects their phone's reading to be here. A
+        // delta-only pull is two indexed queries that usually return nothing,
+        // so it gets a one-minute gate rather than the full refresh's thirty.
+        void itemLabelsStore.pullDelta(DELTA_MIN_INTERVAL_MS);
       }
     }
     lastVisibleTime = Date.now();
@@ -461,6 +499,15 @@
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
     lastVisibleTime = Date.now();
+
+    deltaPollTimer = setInterval(() => {
+      // Skipped when hidden or offline — pullDelta no-ops offline, and a hidden
+      // tab has no one to show the result to (visibilitychange covers the
+      // return). Same scheduling shape as the notifications timer.
+      if (!auth.isAuthenticated) return;
+      if (document.visibilityState !== 'visible') return;
+      void itemLabelsStore.pullDelta(DELTA_MIN_INTERVAL_MS);
+    }, DELTA_POLL_INTERVAL_MS);
   });
 
   // The linkblog stream carries unposted drafts alongside published entries, so
@@ -511,6 +558,7 @@
     // pre-applied (and silently emptying the list) on the next visit.
     savedSearchStore.setSurfaceActive(false);
     document.removeEventListener('visibilitychange', handleVisibilityChange);
+    if (deltaPollTimer) clearInterval(deltaPollTimer);
   });
 </script>
 

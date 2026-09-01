@@ -410,6 +410,10 @@ export async function migrateLinkblogFollowers(
              ?
            ),
            site_url = COALESCE(site_url, ?),
+           -- site_url is part of the PDS subscription record, so a row this
+           -- statement actually fills now differs from the record and owes it a
+           -- write. The key is unchanged, so nothing else would ever notice.
+           pds_dirty = CASE WHEN site_url IS NULL THEN 1 ELSE pds_dirty END,
            atmosphere_synced = NULL
        WHERE source_type = 'atproto.documents' AND subject_did = ? AND feed_url = ?
          AND EXISTS (
@@ -443,6 +447,9 @@ export async function migrateLinkblogFollowers(
        SET feed_url = ?,
            atmosphere_previous_feed_url = COALESCE(atmosphere_previous_feed_url, ?),
            site_url = COALESCE(site_url, ?),
+           -- Both feed_url and site_url are mirrored to the PDS record, so the
+           -- row now owes it a write.
+           pds_dirty = 1,
            atmosphere_synced = NULL
        WHERE source_type = 'atproto.documents' AND subject_did = ? AND feed_url = ?`
     ).bind(nextSiteUri, previousSiteUri, linkblogPage, subjectDid, previousSiteUri),
@@ -470,12 +477,12 @@ async function applyPageVisibilityToFollowers(
     pageHidden
       ? env.DB.prepare(
           `UPDATE subscriptions_cache
-         SET site_url = NULL, atmosphere_synced = NULL
+         SET site_url = NULL, pds_dirty = 1, atmosphere_synced = NULL
          WHERE source_type = 'atproto.documents' AND subject_did = ? AND site_url = ?`
         ).bind(subjectDid, linkblogPage)
       : env.DB.prepare(
           `UPDATE subscriptions_cache
-         SET site_url = ?, atmosphere_synced = NULL
+         SET site_url = ?, pds_dirty = 1, atmosphere_synced = NULL
          WHERE source_type = 'atproto.documents' AND subject_did = ? AND feed_url = ?
            AND site_url IS NULL`
         ).bind(linkblogPage, subjectDid, siteUri)

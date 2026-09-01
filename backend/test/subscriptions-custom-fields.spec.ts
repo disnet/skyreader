@@ -70,8 +70,10 @@ async function insertSubscription(opts?: {
   rkey?: string;
   feedUrl?: string;
   title?: string;
+  siteUrl?: string | null;
   customTitle?: string | null;
   customIconUrl?: string | null;
+  pdsDirty?: 0 | 1;
 }) {
   const rkey = opts?.rkey ?? TEST_RKEY;
   const feedUrl = opts?.feedUrl ?? 'https://example.com/feed.xml';
@@ -79,18 +81,29 @@ async function insertSubscription(opts?: {
 
   await env.DB.prepare(
     `INSERT INTO subscriptions_cache
-		 (user_did, record_uri, feed_url, title, created_at, custom_title, custom_icon_url)
-		 VALUES (?, ?, ?, ?, unixepoch(), ?, ?)`
+		 (user_did, record_uri, feed_url, title, site_url, created_at, custom_title, custom_icon_url, pds_dirty)
+		 VALUES (?, ?, ?, ?, ?, unixepoch(), ?, ?, ?)`
   )
     .bind(
       TEST_DID,
       recordUri,
       feedUrl,
       opts?.title ?? 'Test Feed',
+      opts?.siteUrl ?? null,
       opts?.customTitle ?? null,
-      opts?.customIconUrl ?? null
+      opts?.customIconUrl ?? null,
+      opts?.pdsDirty ?? 0
     )
     .run();
+}
+
+async function getDirtyFlag(rkey: string): Promise<number | undefined> {
+  const row = await env.DB.prepare(
+    'SELECT pds_dirty FROM subscriptions_cache WHERE user_did = ? AND record_uri LIKE ?'
+  )
+    .bind(TEST_DID, `%/${rkey}`)
+    .first<{ pds_dirty: number }>();
+  return row?.pds_dirty;
 }
 
 async function getSubscriptionFromDb(rkey: string) {
@@ -331,6 +344,107 @@ describe('Subscription Custom Fields', () => {
 
       expect(response.status).toBe(200);
       expect(putRecordCalled).toBe(false);
+    });
+
+    it('pushes siteUrl, so a rename does not strip it from the PDS record', async () => {
+      // The push is a putRecord — a full replace — so any field left out of it is
+      // deleted from the record. site_url was omitted, and for a linkblog follow
+      // it is the only durable "this is a linkblog" tell. Worse, the push then
+      // settled the row's flag, so no later sync saw anything to repair.
+      await setupTestUser({ pdsSyncEnabled: true });
+      await insertSubscription({ siteUrl: 'https://author.example/links' });
+
+      let putRecordBody: unknown = null;
+      globalThis.fetch = vi.fn().mockImplementation(async (url: string, options?: RequestInit) => {
+        if (typeof url === 'string' && url.includes('putRecord')) {
+          putRecordBody = JSON.parse(options?.body as string);
+          return {
+            ok: true,
+            headers: new Headers(),
+            json: async () => ({
+              uri: `at://${TEST_DID}/${COLLECTION}/${TEST_RKEY}`,
+              cid: 'bafyreipushed',
+            }),
+          };
+        }
+        return { ok: true, headers: new Headers(), json: async () => ({}) };
+      });
+
+      const ctx = createExecutionContext();
+      const response = await worker.fetch(
+        makeAuthRequest(`/api/subscriptions/${TEST_RKEY}`, {
+          method: 'PATCH',
+          body: { customTitle: 'Renamed' },
+        }),
+        env,
+        ctx
+      );
+      await waitOnExecutionContext(ctx);
+
+      expect(response.status).toBe(200);
+      const body = putRecordBody as { record?: { siteUrl?: string; customTitle?: string } };
+      expect(body?.record?.siteUrl).toBe('https://author.example/links');
+      expect(body?.record?.customTitle).toBe('Renamed');
+    });
+
+    it('keeps a standing pending-write flag when sync is off', async () => {
+      // A debt already on the row is owed whatever the current setting says: it
+      // came from an earlier edit whose push failed, or from the linkblog route,
+      // which flags regardless. Writing a flat 0 here discarded it, so turning
+      // sync off and back on could strand a record stale forever.
+      await setupTestUser({ pdsSyncEnabled: false });
+      await insertSubscription({ pdsDirty: 1 });
+
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        headers: new Headers(),
+        json: async () => ({}),
+      });
+
+      const ctx = createExecutionContext();
+      const response = await worker.fetch(
+        makeAuthRequest(`/api/subscriptions/${TEST_RKEY}`, {
+          method: 'PATCH',
+          body: { customTitle: 'Edited While Off' },
+        }),
+        env,
+        ctx
+      );
+      await waitOnExecutionContext(ctx);
+
+      expect(response.status).toBe(200);
+      expect(await getDirtyFlag(TEST_RKEY)).toBe(1);
+    });
+
+    it('leaves the flag set when the push fails, so the next sync repairs it', async () => {
+      await setupTestUser({ pdsSyncEnabled: true });
+      await insertSubscription();
+
+      globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+        if (typeof url === 'string' && url.includes('putRecord')) {
+          return {
+            ok: false,
+            status: 500,
+            headers: new Headers(),
+            text: async () => JSON.stringify({ error: 'InternalServerError' }),
+          };
+        }
+        return { ok: true, headers: new Headers(), json: async () => ({}) };
+      });
+
+      const ctx = createExecutionContext();
+      const response = await worker.fetch(
+        makeAuthRequest(`/api/subscriptions/${TEST_RKEY}`, {
+          method: 'PATCH',
+          body: { customTitle: 'Push Will Fail' },
+        }),
+        env,
+        ctx
+      );
+      await waitOnExecutionContext(ctx);
+
+      expect(response.status).toBe(200);
+      expect(await getDirtyFlag(TEST_RKEY)).toBe(1);
     });
   });
 

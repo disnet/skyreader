@@ -110,7 +110,7 @@ function createSubscriptionsStore() {
       const now = new Date().toISOString();
 
       // Sync to backend first
-      await api.createSubscription({
+      const created = await api.createSubscription({
         rkey,
         feedUrl: feedUrl || undefined,
         title,
@@ -122,9 +122,17 @@ function createSubscriptionsStore() {
         collectionNsid: options?.collectionNsid,
       });
 
+      // The server may answer with a record that already exists instead of the
+      // one we proposed: re-subscribing to a feed that was PARKED, which this
+      // store cannot see (parked rows are filtered out of /api/records/list, so
+      // the duplicate check above passes). It reactivates that row and returns
+      // its rkey. Caching our own would leave a record_uri the server has never
+      // heard of, which the next sync reads as "removed" and deletes.
+      const effectiveRkey = created?.rkey || rkey;
+
       // Store locally after successful backend sync
       const subscription: Omit<Subscription, 'id'> = {
-        rkey,
+        rkey: effectiveRkey,
         feedUrl,
         title,
         siteUrl: options?.siteUrl,

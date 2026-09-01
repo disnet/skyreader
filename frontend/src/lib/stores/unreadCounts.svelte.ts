@@ -13,6 +13,7 @@ import {
   matchesReadingLength,
 } from './feedView.svelte';
 import { liveDb } from '$lib/services/liveDb.svelte';
+import { reportClientError } from '$lib/services/telemetry';
 import {
   isRssSource,
   isDocumentsSource,
@@ -26,6 +27,38 @@ import {
  * Used by Sidebar, NavigationDropdown, and page title.
  */
 function createUnreadCountsStore() {
+  // Server-computed per-feed unread counts, keyed by feed URL, over the
+  // canonical newest-K window (see backend/src/config/window.ts).
+  //
+  // The local derivations below count over whatever articles THIS device holds,
+  // and no two devices hold the same slice — a fresh device cold-started with
+  // one window while an established one had accumulated another, so the same
+  // feed showed different numbers on a phone and a laptop no matter how well
+  // read state synced. That is the user-visible bug. When the server has told us
+  // its number, that is what we display; offline (or on a backend that doesn't
+  // send them) we fall back to the local count, which looks identical.
+  let serverCounts = $state<Record<string, number> | null>(null);
+  let serverCountsAt = $state(0);
+  let serverCountsHead = $state<number | undefined>(undefined);
+
+  // Local reads since the server's snapshot. The server number is a photograph;
+  // between refreshes the reader keeps reading, and a badge that ignored that
+  // would sit still while items visibly grey out. Counting our own marks off it
+  // keeps the display live without giving up the cross-device anchor.
+  let localReadsSince = $derived.by(() => {
+    itemLabelsStore.readPositions;
+    liveDb.articlesVersion;
+    const since = serverCountsAt;
+    const perFeed = new Map<number, number>();
+    if (!serverCounts || since === 0) return perFeed;
+    for (const article of articlesStore.allArticles) {
+      const lbl = itemLabelsStore.getLabel(article.guid, 'read');
+      if (!lbl || lbl.updatedAt < since) continue;
+      perFeed.set(article.subscriptionId, (perFeed.get(article.subscriptionId) ?? 0) + 1);
+    }
+    return perFeed;
+  });
+
   // Per-source unread counts. RSS sources count unread feed articles; ATProto sources
   // count unread social records scoped to the subscribed author/publication.
   let feedCounts = $derived.by(() => {
@@ -38,7 +71,13 @@ function createUnreadCountsStore() {
       if (!sub.id) continue;
 
       if (!sub.sourceType || sub.sourceType === 'rss') {
-        counts.set(sub.id, articlesStore.getUnreadCount(sub.id));
+        const fromServer = sub.feedUrl ? serverCounts?.[sub.feedUrl] : undefined;
+        counts.set(
+          sub.id,
+          fromServer === undefined
+            ? articlesStore.getUnreadCount(sub.id)
+            : Math.max(0, fromServer - (localReadsSince.get(sub.id) ?? 0))
+        );
         continue;
       }
 
@@ -68,6 +107,23 @@ function createUnreadCountsStore() {
   let totalArticles = $derived.by(() => {
     liveDb.articlesVersion;
     itemLabelsStore.readPositions; // Access for reactivity
+
+    // Sum the per-source counts when the server supplied them, so the header
+    // total and the sidebar rows can never disagree with each other — a total
+    // derived locally while the rows came from the server would be its own
+    // small version of the bug this is fixing. The local path still dedupes by
+    // GUID; the server path can double-count a GUID that appears in two
+    // subscribed feeds, which is rare and self-consistent with the rows.
+    if (serverCounts) {
+      let total = 0;
+      for (const sub of subscriptionsStore.subscriptions) {
+        if (!sub.id) continue;
+        if (sub.sourceType && sub.sourceType !== 'rss') continue;
+        total += feedCounts.get(sub.id) ?? 0;
+      }
+      return total;
+    }
+
     const seen = new Set<string>();
     let count = 0;
     for (const article of articlesStore.allArticles) {
@@ -268,10 +324,58 @@ function createUnreadCountsStore() {
     return counts;
   });
 
+  /**
+   * Adopt the server's per-feed counts (called once per completed refresh).
+   *
+   * Divergence between the server number and the locally-derived one is now a
+   * reconciliation SIGNAL rather than something only a user can notice: a
+   * sampled report makes drift observable in the same place client errors land,
+   * so the next version of this bug shows up in telemetry before it shows up in
+   * a discussion thread.
+   */
+  function applyServerCounts(counts: Record<string, number>, head?: number) {
+    const drifted: string[] = [];
+    for (const sub of subscriptionsStore.subscriptions) {
+      if (!sub.id || !sub.feedUrl) continue;
+      if (sub.sourceType && sub.sourceType !== 'rss') continue;
+      const server = counts[sub.feedUrl];
+      if (server === undefined) continue;
+      if (server !== articlesStore.getUnreadCount(sub.id)) drifted.push(sub.feedUrl);
+    }
+
+    serverCounts = counts;
+    serverCountsHead = head;
+    serverCountsAt = Date.now();
+
+    if (drifted.length > 0) {
+      // No feed URLs in the payload — the reporter sends no identifiers, and
+      // which feeds someone reads is exactly that. Two numbers are enough to
+      // tell "one feed off by a bit" from "the window rule is wrong".
+      reportClientError(
+        'unread_count_drift',
+        new Error(`unread counts diverged on ${drifted.length}/${Object.keys(counts).length} feeds`)
+      );
+    }
+  }
+
+  /** Forget the server's numbers — used when the timeline path isn't in play. */
+  function clearServerCounts() {
+    serverCounts = null;
+    serverCountsHead = undefined;
+    serverCountsAt = 0;
+  }
+
   return {
     get feedCounts() {
       return feedCounts;
     },
+    // The archive head the server's counts were taken at — the `beforeSeq` a
+    // mark-feed-read should use so items ingested since stay unread.
+    get serverCountsHead() {
+      return serverCountsHead;
+    },
+    applyServerCounts,
+    clearServerCounts,
     get totalArticles() {
       return totalArticles;
     },

@@ -77,8 +77,11 @@ type LabelsResponse = {
     props: Record<string, unknown>;
     updatedAt: number;
     deletedAt: number | null;
+    clientUpdatedAt?: number | null;
   }>;
   cursor?: string;
+  nextSince?: string;
+  hasMore?: boolean;
 };
 
 async function getLabels(path: string): Promise<{ status: number; body: LabelsResponse }> {
@@ -180,13 +183,49 @@ describe('GET /api/labels', () => {
   });
 
   describe('delta sync (?since=)', () => {
-    it('returns only rows changed strictly after the cursor', async () => {
+    // A legacy numeric cursor is read as `(seconds, 0)`, so the cursor's own
+    // second is re-delivered exactly once rather than dropped forever — the
+    // same-second loss the compound cursor exists to fix. Application is an
+    // idempotent upsert, so a single repeat costs nothing.
+    it('re-delivers the cursor second with a legacy numeric cursor, then moves past it', async () => {
       const now = Math.floor(Date.now() / 1000);
       await insertLabel('at-cursor', { updatedAt: now - 100 });
       await insertLabel('after-cursor', { updatedAt: now - 50 });
 
       const { body } = await getLabels(`/api/labels?since=${now - 100}`);
-      expect(body.labels.map((l) => l.itemKey)).toEqual(['after-cursor']);
+      expect(body.labels.map((l) => l.itemKey)).toEqual(['at-cursor', 'after-cursor']);
+
+      const { body: second } = await getLabels(
+        `/api/labels?since=${encodeURIComponent(body.nextSince!)}`
+      );
+      expect(second.labels).toHaveLength(0);
+    });
+
+    it('delivers same-second rows exactly once across pages', async () => {
+      const now = Math.floor(Date.now() / 1000);
+      await insertLabel('same-1', { updatedAt: now - 10 });
+      await insertLabel('same-2', { updatedAt: now - 10 });
+      await insertLabel('same-3', { updatedAt: now - 10 });
+
+      const seen: string[] = [];
+      let since = '0';
+      for (let page = 0; page < 5; page++) {
+        const { body } = await getLabels(`/api/labels?since=${encodeURIComponent(since)}&limit=1`);
+        seen.push(...body.labels.map((l) => l.itemKey));
+        since = body.nextSince!;
+        if (!body.hasMore) break;
+      }
+
+      expect(seen).toEqual(['same-1', 'same-2', 'same-3']);
+    });
+
+    it('echoes the caller cursor back on an empty delta rather than a clock reading', async () => {
+      const now = Math.floor(Date.now() / 1000);
+      await insertLabel('existing', { updatedAt: now - 100 });
+
+      const { body } = await getLabels(`/api/labels?since=${now}`);
+      expect(body.labels).toHaveLength(0);
+      expect(atob(body.nextSince!)).toBe(`${now}:0`);
     });
 
     it('returns an empty delta when nothing is newer', async () => {
@@ -259,5 +298,108 @@ describe('GET /api/labels', () => {
       expect(body.labels[0].deletedAt).toBeNull();
       expect(body.labels[0].props).toEqual({ tags: ['b'] });
     });
+  });
+});
+
+// The user-time last-write-wins guard (migration 0076). Before it, the winner
+// was whichever HTTP request arrived last, so a device draining an offline
+// queue overwrote everything the user had done elsewhere in the meantime.
+describe('/api/labels user-time last-write-wins', () => {
+  beforeEach(async () => {
+    await env.DB.prepare('DELETE FROM item_labels_cache').run();
+    await env.DB.prepare('DELETE FROM sessions').run();
+    await env.DB.prepare('DELETE FROM users').run();
+    await setupTestUser();
+  });
+
+  async function readRow(itemKey: string) {
+    return env.DB.prepare(
+      `SELECT props, deleted_at, client_updated_at FROM item_labels_cache
+        WHERE user_did = ? AND item_key = ? AND label = 'tagged'`
+    )
+      .bind(TEST_DID, itemKey)
+      .first<{ props: string; deleted_at: number | null; client_updated_at: number }>();
+  }
+
+  it('rejects a write whose user time is older than the stored one', async () => {
+    const now = Date.now();
+    await mutateLabels('POST', {
+      itemKey: 'lww',
+      itemType: 'article',
+      label: 'tagged',
+      props: { tags: ['recent'] },
+      updatedAt: now,
+    });
+    // The late-draining queue: enqueued an hour ago, arriving now.
+    await mutateLabels('POST', {
+      itemKey: 'lww',
+      itemType: 'article',
+      label: 'tagged',
+      props: { tags: ['stale'] },
+      updatedAt: now - 3600_000,
+    });
+
+    const row = await readRow('lww');
+    expect(JSON.parse(row!.props)).toEqual({ tags: ['recent'] });
+  });
+
+  it('accepts an equal user time so an idempotent retry still lands', async () => {
+    const at = Date.now() - 1000;
+    await mutateLabels('POST', {
+      itemKey: 'retry',
+      itemType: 'article',
+      label: 'tagged',
+      props: { tags: ['first'] },
+      updatedAt: at,
+    });
+    await mutateLabels('POST', {
+      itemKey: 'retry',
+      itemType: 'article',
+      label: 'tagged',
+      props: { tags: ['second'] },
+      updatedAt: at,
+    });
+
+    const row = await readRow('retry');
+    expect(JSON.parse(row!.props)).toEqual({ tags: ['second'] });
+  });
+
+  it('applies the guard to deletes too, so a stale un-tag cannot win', async () => {
+    const now = Date.now();
+    await mutateLabels('POST', {
+      itemKey: 'del',
+      itemType: 'article',
+      label: 'tagged',
+      props: { tags: ['a'] },
+      updatedAt: now,
+    });
+    await mutateLabels('DELETE', { itemKey: 'del', label: 'tagged', updatedAt: now - 3600_000 });
+
+    const row = await readRow('del');
+    expect(row!.deleted_at).toBeNull();
+  });
+
+  it('clamps a forward-skewed clock to server now instead of pinning the row', async () => {
+    const future = Date.now() + 10 * 365 * 24 * 3600_000;
+    await mutateLabels('POST', {
+      itemKey: 'skew',
+      itemType: 'article',
+      label: 'tagged',
+      props: { tags: ['from-the-future'] },
+      updatedAt: future,
+    });
+
+    const row = await readRow('skew');
+    expect(row!.client_updated_at).toBeLessThanOrEqual(Date.now());
+
+    // A subsequent honest write still wins, which is the point of clamping.
+    await mutateLabels('POST', {
+      itemKey: 'skew',
+      itemType: 'article',
+      label: 'tagged',
+      props: { tags: ['now'] },
+      updatedAt: Date.now(),
+    });
+    expect(JSON.parse((await readRow('skew'))!.props)).toEqual({ tags: ['now'] });
   });
 });

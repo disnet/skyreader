@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:test';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { syncSubscriptions } from '../src/services/subscription-sync';
+import { upsertSubscriptionFromFirehose } from '../src/services/firehose-subscription';
 import type { Session } from '../src/types';
 
 // Test DPoP key pair (ES256)
@@ -696,6 +697,527 @@ describe('Subscription Sync', () => {
 
       expect(result.success).toBe(false);
       expect(result.needsReauth).toBe(true);
+    });
+  });
+  describe('pending-write repair (pds_dirty)', () => {
+    // The bug this exists for: subscription edits write through to the PDS
+    // fire-and-forget, and the push phase used to skip anything already present
+    // on the PDS — so a rename whose push failed stayed stale forever, and the
+    // manual sync reported everything in step.
+    it('repairs a record on the PDS when the local row has an unpaid edit', async () => {
+      const session = createTestSession();
+
+      await env.DB.prepare(
+        `INSERT INTO subscriptions_cache (user_did, record_uri, feed_url, title, custom_title, created_at, pds_dirty)
+         VALUES (?, ?, ?, ?, ?, unixepoch(), 1)`
+      )
+        .bind(
+          TEST_DID,
+          `at://${TEST_DID}/${COLLECTION}/rkey1`,
+          'https://example.com/feed.xml',
+          'Feed',
+          'My Renamed Feed'
+        )
+        .run();
+
+      // The PDS still holds the pre-rename record under the same rkey/feedUrl.
+      let written: { rkey: string; customTitle?: string; $type: string } | null = null;
+      globalThis.fetch = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+        if (url.includes('listRecords')) {
+          return {
+            ok: true,
+            headers: new Headers(),
+            json: async () => ({
+              records: [
+                createPdsSubscriptionRecord('rkey1', 'https://example.com/feed.xml', 'Feed'),
+              ],
+            }),
+          };
+        }
+        if (url.includes('applyWrites')) {
+          const body = JSON.parse(String(init?.body)) as {
+            writes: Array<{ $type: string; rkey: string; value: { customTitle?: string } }>;
+          };
+          written = {
+            $type: body.writes[0].$type,
+            rkey: body.writes[0].rkey,
+            customTitle: body.writes[0].value.customTitle,
+          };
+          return {
+            ok: true,
+            headers: new Headers(),
+            json: async () => ({
+              commit: { cid: 'bafycommit', rev: 'rev1' },
+              results: [{ uri: `at://${TEST_DID}/${COLLECTION}/rkey1`, cid: 'bafyrepaired' }],
+            }),
+          };
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      });
+
+      const result = await syncSubscriptions(session, env);
+
+      expect(result.success).toBe(true);
+      expect(written).not.toBeNull();
+      expect(written!.$type).toBe('com.atproto.repo.applyWrites#update');
+      expect(written!.rkey).toBe('rkey1');
+      expect(written!.customTitle).toBe('My Renamed Feed');
+
+      // Debt settled, so a later sync leaves it alone.
+      const row = await env.DB.prepare(
+        'SELECT pds_dirty FROM subscriptions_cache WHERE user_did = ? AND record_uri LIKE ?'
+      )
+        .bind(TEST_DID, '%/rkey1')
+        .first<{ pds_dirty: number }>();
+      expect(row?.pds_dirty).toBe(0);
+    });
+
+    it('leaves the flag set when the repair write fails, so the next sync retries', async () => {
+      const session = createTestSession();
+
+      await env.DB.prepare(
+        `INSERT INTO subscriptions_cache (user_did, record_uri, feed_url, title, custom_title, created_at, pds_dirty)
+         VALUES (?, ?, ?, ?, ?, unixepoch(), 1)`
+      )
+        .bind(
+          TEST_DID,
+          `at://${TEST_DID}/${COLLECTION}/rkey1`,
+          'https://example.com/feed.xml',
+          'Feed',
+          'My Renamed Feed'
+        )
+        .run();
+
+      globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+        if (url.includes('listRecords')) {
+          return {
+            ok: true,
+            headers: new Headers(),
+            json: async () => ({
+              records: [
+                createPdsSubscriptionRecord('rkey1', 'https://example.com/feed.xml', 'Feed'),
+              ],
+            }),
+          };
+        }
+        // Both the batch and the individual-put fallback fail.
+        return {
+          ok: false,
+          status: 500,
+          headers: new Headers(),
+          text: async () => JSON.stringify({ error: 'InternalServerError' }),
+        };
+      });
+
+      await syncSubscriptions(session, env);
+
+      const row = await env.DB.prepare(
+        'SELECT pds_dirty FROM subscriptions_cache WHERE user_did = ? AND record_uri LIKE ?'
+      )
+        .bind(TEST_DID, '%/rkey1')
+        .first<{ pds_dirty: number }>();
+      expect(row?.pds_dirty).toBe(1);
+    });
+
+    it('clears the flag without a write when the PDS already matches', async () => {
+      const session = createTestSession();
+
+      // Flagged, but the push actually landed before the flag could be cleared.
+      await env.DB.prepare(
+        `INSERT INTO subscriptions_cache (user_did, record_uri, feed_url, title, created_at, pds_dirty)
+         VALUES (?, ?, ?, ?, unixepoch(), 1)`
+      )
+        .bind(
+          TEST_DID,
+          `at://${TEST_DID}/${COLLECTION}/rkey1`,
+          'https://example.com/feed.xml',
+          'Feed'
+        )
+        .run();
+
+      let applyWritesCalled = false;
+      globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+        if (url.includes('listRecords')) {
+          return {
+            ok: true,
+            headers: new Headers(),
+            json: async () => ({
+              records: [
+                createPdsSubscriptionRecord('rkey1', 'https://example.com/feed.xml', 'Feed'),
+              ],
+            }),
+          };
+        }
+        if (url.includes('applyWrites')) {
+          applyWritesCalled = true;
+          return {
+            ok: true,
+            headers: new Headers(),
+            json: async () => ({ commit: { cid: 'c', rev: 'r' }, results: [] }),
+          };
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      });
+
+      await syncSubscriptions(session, env);
+
+      expect(applyWritesCalled).toBe(false);
+      const row = await env.DB.prepare(
+        'SELECT pds_dirty FROM subscriptions_cache WHERE user_did = ? AND record_uri LIKE ?'
+      )
+        .bind(TEST_DID, '%/rkey1')
+        .first<{ pds_dirty: number }>();
+      expect(row?.pds_dirty).toBe(0);
+    });
+
+    it('repairs the record under the other rkey rather than dropping the edit', async () => {
+      // Same shape as the test below — a local row whose feed the PDS holds under
+      // a different rkey — but this one carries a rename. Settling it would clear
+      // the flag without paying it: the rename would vanish while settings said
+      // everything was in step. The repair has to land on the record the PDS
+      // actually has, not on a second one under our rkey.
+      const session = createTestSession();
+
+      await env.DB.prepare(
+        `INSERT INTO subscriptions_cache (user_did, record_uri, feed_url, title, custom_title, created_at, pds_dirty)
+         VALUES (?, ?, ?, ?, ?, unixepoch(), 1)`
+      )
+        .bind(
+          TEST_DID,
+          `at://${TEST_DID}/${COLLECTION}/local-rkey`,
+          'https://example.com/feed.xml',
+          'Feed',
+          'My Renamed Feed'
+        )
+        .run();
+
+      let written: { $type: string; rkey: string; customTitle?: string } | null = null;
+      globalThis.fetch = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+        if (url.includes('listRecords')) {
+          return {
+            ok: true,
+            headers: new Headers(),
+            json: async () => ({
+              records: [
+                createPdsSubscriptionRecord('other-rkey', 'https://example.com/feed.xml', 'Feed'),
+              ],
+            }),
+          };
+        }
+        if (url.includes('applyWrites')) {
+          const body = JSON.parse(String(init?.body)) as {
+            writes: Array<{ $type: string; rkey: string; value: { customTitle?: string } }>;
+          };
+          expect(body.writes).toHaveLength(1);
+          written = {
+            $type: body.writes[0].$type,
+            rkey: body.writes[0].rkey,
+            customTitle: body.writes[0].value.customTitle,
+          };
+          return {
+            ok: true,
+            headers: new Headers(),
+            json: async () => ({
+              commit: { cid: 'c', rev: 'r' },
+              results: [{ uri: `at://${TEST_DID}/${COLLECTION}/other-rkey`, cid: 'bafyrepaired' }],
+            }),
+          };
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      });
+
+      await syncSubscriptions(session, env);
+
+      // Updated in place on the PDS — no second record for the same feed.
+      expect(written).not.toBeNull();
+      expect(written!.$type).toBe('com.atproto.repo.applyWrites#update');
+      expect(written!.rkey).toBe('other-rkey');
+      expect(written!.customTitle).toBe('My Renamed Feed');
+
+      // The flag lives on the local row, whose rkey the write never mentions.
+      const row = await env.DB.prepare(
+        'SELECT pds_dirty FROM subscriptions_cache WHERE user_did = ? AND record_uri LIKE ?'
+      )
+        .bind(TEST_DID, '%/local-rkey')
+        .first<{ pds_dirty: number }>();
+      expect(row?.pds_dirty).toBe(0);
+    });
+
+    it('leaves the other rkey alone when a local row already owns it', async () => {
+      // Two local rows for one feed (possible for legacy RSS rows, whose NULL
+      // source_type the unique index doesn't constrain). The row that owns the
+      // PDS record keeps it accurate, so the flagged duplicate is redundant, not
+      // stale: settle it and write nothing.
+      const session = createTestSession();
+
+      await env.DB.batch([
+        env.DB.prepare(
+          `INSERT INTO subscriptions_cache (user_did, record_uri, feed_url, title, created_at, pds_dirty)
+           VALUES (?, ?, ?, ?, unixepoch(), 0)`
+        ).bind(
+          TEST_DID,
+          `at://${TEST_DID}/${COLLECTION}/owner-rkey`,
+          'https://example.com/feed.xml',
+          'Feed'
+        ),
+        env.DB.prepare(
+          `INSERT INTO subscriptions_cache (user_did, record_uri, feed_url, title, custom_title, created_at, pds_dirty)
+           VALUES (?, ?, ?, ?, ?, unixepoch(), 1)`
+        ).bind(
+          TEST_DID,
+          `at://${TEST_DID}/${COLLECTION}/dupe-rkey`,
+          'https://example.com/feed.xml',
+          'Feed',
+          'Renamed On The Duplicate'
+        ),
+      ]);
+
+      let applyWritesCalled = false;
+      globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+        if (url.includes('listRecords')) {
+          return {
+            ok: true,
+            headers: new Headers(),
+            json: async () => ({
+              records: [
+                createPdsSubscriptionRecord('owner-rkey', 'https://example.com/feed.xml', 'Feed'),
+              ],
+            }),
+          };
+        }
+        if (url.includes('applyWrites')) {
+          applyWritesCalled = true;
+          return {
+            ok: true,
+            headers: new Headers(),
+            json: async () => ({ commit: { cid: 'c', rev: 'r' }, results: [] }),
+          };
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      });
+
+      await syncSubscriptions(session, env);
+
+      expect(applyWritesCalled).toBe(false);
+      const row = await env.DB.prepare(
+        'SELECT pds_dirty FROM subscriptions_cache WHERE user_did = ? AND record_uri LIKE ?'
+      )
+        .bind(TEST_DID, '%/dupe-rkey')
+        .first<{ pds_dirty: number }>();
+      expect(row?.pds_dirty).toBe(0);
+    });
+
+    it('does not create a duplicate when the feed is on the PDS under another rkey', async () => {
+      // Bulk import keeps a local row for a feed the PDS already holds under an
+      // rkey some other device created. That row can be left flagged if its push
+      // never ran — repairing it as a `create` would write a second record for
+      // the same feed.
+      const session = createTestSession();
+
+      await env.DB.prepare(
+        `INSERT INTO subscriptions_cache (user_did, record_uri, feed_url, title, created_at, pds_dirty)
+         VALUES (?, ?, ?, ?, unixepoch(), 1)`
+      )
+        .bind(
+          TEST_DID,
+          `at://${TEST_DID}/${COLLECTION}/local-rkey`,
+          'https://example.com/feed.xml',
+          'Feed'
+        )
+        .run();
+
+      let applyWritesCalled = false;
+      globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+        if (url.includes('listRecords')) {
+          return {
+            ok: true,
+            headers: new Headers(),
+            json: async () => ({
+              records: [
+                createPdsSubscriptionRecord('other-rkey', 'https://example.com/feed.xml', 'Feed'),
+              ],
+            }),
+          };
+        }
+        if (url.includes('applyWrites')) {
+          applyWritesCalled = true;
+          return {
+            ok: true,
+            headers: new Headers(),
+            json: async () => ({ commit: { cid: 'c', rev: 'r' }, results: [] }),
+          };
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      });
+
+      await syncSubscriptions(session, env);
+
+      expect(applyWritesCalled).toBe(false);
+      const row = await env.DB.prepare(
+        'SELECT pds_dirty FROM subscriptions_cache WHERE user_did = ? AND record_uri LIKE ?'
+      )
+        .bind(TEST_DID, '%/local-rkey')
+        .first<{ pds_dirty: number }>();
+      expect(row?.pds_dirty).toBe(0);
+    });
+
+    it('does not leave a duplicate local row when the firehose mirrors a repair back', async () => {
+      // The repair above writes to an rkey no local row owns, so the commit it
+      // produces comes back through the firehose as a record_uri D1 has never
+      // seen: the mirror's UPDATE misses and it falls through to its INSERT.
+      // That insert leans on the (user_did, source_type, feed_url) unique index
+      // to swallow a duplicate feed — but legacy RSS rows carry a NULL
+      // source_type, and SQLite treats NULLs in a unique index as distinct, so
+      // nothing stops it. The user ends up with the same feed twice.
+      const session = createTestSession();
+
+      await env.DB.prepare(
+        `INSERT INTO subscriptions_cache (user_did, record_uri, feed_url, title, custom_title, created_at, pds_dirty)
+         VALUES (?, ?, ?, ?, ?, unixepoch(), 1)`
+      )
+        .bind(
+          TEST_DID,
+          `at://${TEST_DID}/${COLLECTION}/local-rkey`,
+          'https://example.com/feed.xml',
+          'Feed',
+          'My Renamed Feed'
+        )
+        .run();
+
+      let repaired: { rkey: string; value: Record<string, unknown> } | null = null;
+      globalThis.fetch = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+        if (url.includes('listRecords')) {
+          return {
+            ok: true,
+            headers: new Headers(),
+            json: async () => ({
+              records: [
+                createPdsSubscriptionRecord('other-rkey', 'https://example.com/feed.xml', 'Feed'),
+              ],
+            }),
+          };
+        }
+        if (url.includes('applyWrites')) {
+          const body = JSON.parse(String(init?.body)) as {
+            writes: Array<{ rkey: string; value: Record<string, unknown> }>;
+          };
+          repaired = { rkey: body.writes[0].rkey, value: body.writes[0].value };
+          return {
+            ok: true,
+            headers: new Headers(),
+            json: async () => ({
+              commit: { cid: 'c', rev: 'r' },
+              results: [{ uri: `at://${TEST_DID}/${COLLECTION}/other-rkey`, cid: 'bafyrepaired' }],
+            }),
+          };
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      });
+
+      await syncSubscriptions(session, env);
+      expect(repaired).not.toBeNull();
+      expect(repaired!.rkey).toBe('other-rkey');
+
+      // Jetstream delivers the commit the repair just made.
+      await upsertSubscriptionFromFirehose(env.DB, TEST_DID, 'other-rkey', repaired!.value);
+
+      const all = await env.DB.prepare(
+        'SELECT record_uri, custom_title FROM subscriptions_cache WHERE user_did = ? AND feed_url = ?'
+      )
+        .bind(TEST_DID, 'https://example.com/feed.xml')
+        .all<{ record_uri: string; custom_title: string | null }>();
+
+      expect(all.results).toHaveLength(1);
+      expect(all.results[0].record_uri).toContain('local-rkey');
+      expect(all.results[0].custom_title).toBe('My Renamed Feed');
+    });
+
+    it('still mirrors a genuinely new feed the user does not have', async () => {
+      // The duplicate guard must not swallow ordinary new records: this is the
+      // path that materializes a subscription made on another device.
+      await upsertSubscriptionFromFirehose(env.DB, TEST_DID, 'brandnewrkey', {
+        feedUrl: 'https://example.com/brand-new.xml',
+        title: 'Brand New',
+        createdAt: new Date().toISOString(),
+      });
+
+      const row = await env.DB.prepare(
+        'SELECT record_uri FROM subscriptions_cache WHERE user_did = ? AND feed_url = ?'
+      )
+        .bind(TEST_DID, 'https://example.com/brand-new.xml')
+        .first<{ record_uri: string }>();
+      expect(row?.record_uri).toContain('brandnewrkey');
+    });
+
+    it('treats an atproto source sharing a feedUrl as a different subscription', async () => {
+      // subscriptionKey() keys atproto sources on sourceType+subjectDid+feedUrl
+      // and everything else on feedUrl alone, so these two are not the same
+      // subscription and the guard must not collapse them.
+      await env.DB.prepare(
+        `INSERT INTO subscriptions_cache (user_did, record_uri, feed_url, title, created_at)
+         VALUES (?, ?, ?, ?, unixepoch())`
+      )
+        .bind(
+          TEST_DID,
+          `at://${TEST_DID}/${COLLECTION}/rss-rkey`,
+          'https://shared.example/x',
+          'RSS'
+        )
+        .run();
+
+      await upsertSubscriptionFromFirehose(env.DB, TEST_DID, 'atproto-rkey', {
+        feedUrl: 'https://shared.example/x',
+        title: 'Docs',
+        sourceType: 'atproto.documents',
+        subjectDid: 'did:plc:author',
+        createdAt: new Date().toISOString(),
+      });
+
+      const all = await env.DB.prepare(
+        'SELECT record_uri FROM subscriptions_cache WHERE user_did = ? AND feed_url = ? ORDER BY record_uri'
+      )
+        .bind(TEST_DID, 'https://shared.example/x')
+        .all<{ record_uri: string }>();
+      expect(all.results).toHaveLength(2);
+    });
+
+    it('never deletes a PDS record that has no local row', async () => {
+      // A record on the PDS but not in D1 is normal: over the plan's mirror cap,
+      // past the listing page limit, or simply not mirrored to this device. The
+      // sync must never resolve that by deleting from the user's own repo.
+      const session = createTestSession();
+
+      globalThis.fetch = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+        if (url.includes('listRecords')) {
+          return {
+            ok: true,
+            headers: new Headers(),
+            json: async () => ({
+              records: [
+                createPdsSubscriptionRecord('orphan', 'https://example.com/orphan.xml', 'Orphan'),
+              ],
+            }),
+          };
+        }
+        if (url.includes('applyWrites')) {
+          const body = JSON.parse(String(init?.body)) as {
+            writes: Array<{ $type: string }>;
+          };
+          expect(body.writes.every((w) => !w.$type.endsWith('#delete'))).toBe(true);
+          return {
+            ok: true,
+            headers: new Headers(),
+            json: async () => ({ commit: { cid: 'c', rev: 'r' }, results: [] }),
+          };
+        }
+        if (url.includes('deleteRecord')) {
+          throw new Error('sync must never delete from the PDS');
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      });
+
+      const result = await syncSubscriptions(session, env);
+      expect(result.success).toBe(true);
     });
   });
 });
