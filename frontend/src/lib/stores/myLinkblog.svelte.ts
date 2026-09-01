@@ -229,9 +229,16 @@ function createMyLinkblogStore() {
   // Mirrors the backend's replaceLeafletNoteRegion, which this is the optimistic
   // preview of: the card no longer closes the post, so "everything from the first
   // non-note block onward" is no longer the tail — it's whatever isn't the note,
-  // re-inserted at the same layout position it was found in. The attribution line
-  // is carried through as-is (the edit path never adds or removes one).
-  function rebuildContentWithNote(existing: unknown, note: string): unknown {
+  // re-inserted at the same layout position it was found in. An attribution line
+  // WE added — the record's `skyreaderAttribution` flag is the only thing that
+  // says so — is carried through as-is (the edit path never adds or removes one);
+  // on any other record that same sentence is the author's, and belongs to the
+  // note like any other line.
+  function rebuildContentWithNote(
+    existing: unknown,
+    note: string,
+    hasAttribution: boolean
+  ): unknown {
     const pages =
       (
         existing as {
@@ -249,7 +256,7 @@ function createMyLinkblogStore() {
       const type = wrapper.block.$type;
       const isNoteType =
         type === 'pub.leaflet.blocks.text' || type === 'pub.leaflet.blocks.blockquote';
-      if (isNoteType && isAttributionText(wrapper.block.plaintext ?? '')) {
+      if (isNoteType && isAttributionText(wrapper.block.plaintext ?? '', hasAttribution)) {
         attribution = { block: wrapper.block };
         continue;
       }
@@ -301,7 +308,7 @@ function createMyLinkblogStore() {
     const doc = documents[idx];
     const next: SocialDocument = {
       ...doc,
-      content: rebuildContentWithNote(doc.content, note.trim()),
+      content: rebuildContentWithNote(doc.content, note.trim(), doc.skyreaderAttribution === true),
     };
     documents = [...documents.slice(0, idx), next, ...documents.slice(idx + 1)];
   }

@@ -148,14 +148,14 @@ function blockMentions(block: LeafletTextBlock, base: number, isQuote: boolean):
 }
 
 // Skyreader's opt-in "posted from" line (the backend's ATTRIBUTION_TEXT). It's
-// ours, not the author's words, so every note parser here skips it. The record's
-// own `skyreaderAttribution` flag is the reliable tell; the string match is the
-// fallback for anything that lost the flag on the way here.
+// ours, not the author's words, so every note parser here skips it — but only on
+// a record whose own `skyreaderAttribution` flag says we added it. The string
+// alone can't tell our line from an author who wrote that exact sentence, and
+// skipping theirs would drop their words from their own post.
 export const ATTRIBUTION_TEXT = 'Posted from skyreader.app';
 
 function isAttributionLine(text: string, hasAttribution?: boolean): boolean {
-  if (hasAttribution === false) return false;
-  return text.trim() === ATTRIBUTION_TEXT;
+  return hasAttribution === true && text.trim() === ATTRIBUTION_TEXT;
 }
 
 // Rebuild the note from the text and blockquote blocks — the same restricted

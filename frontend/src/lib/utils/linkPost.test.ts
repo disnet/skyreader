@@ -118,6 +118,32 @@ describe('getLinkPostNote across connected publication formats', () => {
     ).toBe('Worth reading.');
   });
 
+  // The flag is what makes that line ours. Without it the author wrote it, and
+  // dropping it would both hide their words and delete them on the next edit —
+  // this note is what the composer reloads.
+  it("keeps an author's own attribution-shaped line when the record isn't flagged", () => {
+    expect(
+      getLinkPostNote(
+        doc({
+          $type: 'app.offprint.content',
+          items: [
+            { $type: 'app.offprint.block.text', plaintext: 'Worth reading.' },
+            { $type: 'app.offprint.block.webBookmark', href: ARTICLE, title: 'Post' },
+            { $type: 'app.offprint.block.text', plaintext: ATTRIBUTION_TEXT },
+          ],
+        })
+      )
+    ).toBe(`Worth reading.\n\n${ATTRIBUTION_TEXT}`);
+    expect(
+      getLinkPostNote(
+        doc({
+          $type: 'at.markpub.markdown',
+          text: { markdown: `Worth reading.\n\n[Post](${ARTICLE})\n\n${ATTRIBUTION_TEXT}` },
+        })
+      )
+    ).toBe(`Worth reading.\n\n${ATTRIBUTION_TEXT}`);
+  });
+
   it('reads a pckt note and stops at the website card', () => {
     const note = getLinkPostNote(
       doc({

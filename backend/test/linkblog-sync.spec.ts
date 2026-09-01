@@ -424,7 +424,12 @@ describe('attribution', () => {
 
   it('survives a note edit without being duplicated', () => {
     const doc = buildLinkblogDocument(DID, RKEY, input);
-    const edited = replaceLeafletNoteRegion(doc.content, '> Quoted.\n\nRevised.') as {
+    const edited = replaceLeafletNoteRegion(
+      doc.content,
+      '> Quoted.\n\nRevised.',
+      undefined,
+      doc.skyreaderAttribution === true
+    ) as {
       pages: Array<{ blocks: Array<{ block: { $type: string; plaintext?: string } }> }>;
     };
     const plaintexts = edited.pages[0].blocks.map((b) => b.block.plaintext);
@@ -432,6 +437,110 @@ describe('attribution', () => {
     expect(edited.pages[0].blocks.at(-1)?.block.plaintext).toBe(ATTRIBUTION_TEXT);
     // …and the note the reader sees never contains it.
     expect(plaintexts).toContain('Revised.');
+  });
+});
+
+// The attribution sentence is only OURS when the record says so. Without the flag
+// an identical last line is the author's own words: an edit rebuilds it from the
+// submitted note like any other line — it must not be lifted out and re-appended
+// (which duplicated the sentence), and deleting it from the note must delete it.
+describe("an author's own attribution-shaped line", () => {
+  const ARTICLE = { url: 'https://example.com/post', title: 'Post' };
+  const CARD = { $type: 'pub.leaflet.blocks.website', src: ARTICLE.url, title: 'Post' };
+  const NOTE = `Worth reading.\n\n${ATTRIBUTION_TEXT}`;
+
+  it('is kept once, not duplicated, when a leaflet note is edited', () => {
+    const existing = {
+      $type: 'pub.leaflet.content',
+      pages: [
+        {
+          $type: 'pub.leaflet.pages.linearDocument',
+          blocks: [
+            { block: { $type: 'pub.leaflet.blocks.text', plaintext: 'Worth reading.' } },
+            { block: { $type: 'pub.leaflet.blocks.text', plaintext: ATTRIBUTION_TEXT } },
+            { block: CARD },
+          ],
+        },
+      ],
+    };
+    const edited = replaceLeafletNoteRegion(existing, NOTE) as {
+      pages: Array<{ blocks: Array<{ block: { $type: string; plaintext?: string } }> }>;
+    };
+    const plaintexts = edited.pages[0].blocks.map((b) => b.block.plaintext);
+    expect(plaintexts.filter((t) => t === ATTRIBUTION_TEXT)).toHaveLength(1);
+    // The card still closes the post: the author's line is note text, so the
+    // layout the record was written in is unchanged.
+    expect(edited.pages[0].blocks.at(-1)?.block.$type).toBe('pub.leaflet.blocks.website');
+  });
+
+  it('can be removed by editing it out of a leaflet note', () => {
+    const existing = {
+      $type: 'pub.leaflet.content',
+      pages: [
+        {
+          $type: 'pub.leaflet.pages.linearDocument',
+          blocks: [
+            { block: { $type: 'pub.leaflet.blocks.text', plaintext: 'Worth reading.' } },
+            { block: { $type: 'pub.leaflet.blocks.text', plaintext: ATTRIBUTION_TEXT } },
+            { block: CARD },
+          ],
+        },
+      ],
+    };
+    const edited = replaceLeafletNoteRegion(existing, 'Worth reading.') as {
+      pages: Array<{ blocks: Array<{ block: { plaintext?: string } }> }>;
+    };
+    expect(edited.pages[0].blocks.map((b) => b.block.plaintext)).not.toContain(ATTRIBUTION_TEXT);
+  });
+
+  it.each(['pckt', 'offprint'] as const)('is kept once when a %s note is edited', (format) => {
+    const prefix = format === 'pckt' ? 'blog.pckt.block.' : 'app.offprint.block.';
+    const card =
+      format === 'pckt'
+        ? { $type: `${prefix}website`, src: ARTICLE.url }
+        : { $type: `${prefix}webBookmark`, href: ARTICLE.url, title: 'Post' };
+    const existing = {
+      $type: format === 'pckt' ? 'blog.pckt.content' : 'app.offprint.content',
+      items: [
+        { $type: `${prefix}text`, plaintext: 'Worth reading.' },
+        { $type: `${prefix}text`, plaintext: ATTRIBUTION_TEXT },
+        card,
+      ],
+    };
+    const edited = replaceItemsNoteRegion(existing, format, NOTE, ARTICLE) as {
+      items: Array<{ $type: string; plaintext?: string }>;
+    };
+    expect(edited.items.filter((i) => i.plaintext === ATTRIBUTION_TEXT)).toHaveLength(1);
+    expect(edited.items.at(-1)?.$type).toBe(card.$type);
+    // …and editing it out removes it.
+    const cleared = replaceItemsNoteRegion(existing, format, 'Worth reading.', ARTICLE) as {
+      items: Array<{ plaintext?: string }>;
+    };
+    expect(cleared.items.map((i) => i.plaintext)).not.toContain(ATTRIBUTION_TEXT);
+  });
+
+  it('is kept once when a markpub note is edited', () => {
+    const existing = {
+      $type: 'at.markpub.markdown',
+      text: { markdown: `Worth reading.\n\n${ATTRIBUTION_TEXT}\n\n[Post](${ARTICLE.url})` },
+    };
+    const edited = replaceMarkpubNote(existing, NOTE, ARTICLE) as { text: { markdown: string } };
+    expect(edited.text.markdown).toBe(`${NOTE}\n\n[Post](${ARTICLE.url})`);
+    const cleared = replaceMarkpubNote(existing, 'Worth reading.', ARTICLE) as {
+      text: { markdown: string };
+    };
+    expect(cleared.text.markdown).toBe(`Worth reading.\n\n[Post](${ARTICLE.url})`);
+  });
+
+  it('is still ours to carry when the record flag says we added it', () => {
+    const existing = {
+      $type: 'at.markpub.markdown',
+      text: { markdown: `Worth reading.\n\n[Post](${ARTICLE.url})\n\n${ATTRIBUTION_TEXT}` },
+    };
+    const edited = replaceMarkpubNote(existing, 'Revised.', ARTICLE, true) as {
+      text: { markdown: string };
+    };
+    expect(edited.text.markdown).toBe(`Revised.\n\n[Post](${ARTICLE.url})\n\n${ATTRIBUTION_TEXT}`);
   });
 });
 

@@ -185,6 +185,21 @@ function isAttributionText(value: unknown): boolean {
   return typeof value === 'string' && value.trim() === ATTRIBUTION_TEXT;
 }
 
+/**
+ * Is this block the attribution line WE added, as opposed to an author who wrote
+ * that same sentence themselves?
+ *
+ * Only the record's own `skyreaderAttribution` flag can tell those apart, so an
+ * edit must consult it rather than string-match alone. Without the flag the
+ * sentence is the author's words like any other line: it belongs to the note,
+ * gets rebuilt from the submitted note, and can be edited away. Lifting it out on
+ * the string match alone re-appended it beside the rebuilt copy — duplicating the
+ * author's sentence and making it impossible to remove.
+ */
+function isGeneratedAttribution(value: unknown, hasAttribution: boolean): boolean {
+  return hasAttribution && isAttributionText(value);
+}
+
 const CONTENT_FORMATS = new Set<ContentFormat>(['leaflet', 'pckt', 'offprint', 'markpub']);
 
 export function defaultLinkblogTarget(did: string): LinkblogTarget {
@@ -935,12 +950,15 @@ function leafletAttributionBlock(): NoteBlock {
 }
 
 // Is this wrapper part of the note (as opposed to the card, a home-app block, or
-// the attribution line)?
-function isLeafletNoteBlock(wrapper: { block?: Record<string, unknown> }): boolean {
+// an attribution line we added)?
+function isLeafletNoteBlock(
+  wrapper: { block?: Record<string, unknown> },
+  hasAttribution: boolean
+): boolean {
   const type = wrapper.block?.$type;
   if (type === 'pub.leaflet.blocks.blockquote') return true;
   if (type !== 'pub.leaflet.blocks.text') return false;
-  return !isAttributionText(wrapper.block?.plaintext);
+  return !isGeneratedAttribution(wrapper.block?.plaintext, hasAttribution);
 }
 
 /**
@@ -952,11 +970,16 @@ function isLeafletNoteBlock(wrapper: { block?: Record<string, unknown> }): boole
  * sorted into note / not-note, the not-note run is re-inserted at the same
  * layout position it occupied, and an attribution line found on the record is
  * carried through (v1 offers no way to remove one on edit — delete and reshare).
+ *
+ * `hasAttribution` is the record's own `skyreaderAttribution` flag: only a record
+ * that says so has a generated attribution line to carry. On any other record the
+ * same sentence is the author's, and stays part of the note.
  */
 export function replaceLeafletNoteRegion(
   existing: unknown,
   note: string,
-  resolvedHandles: Map<string, string> = new Map()
+  resolvedHandles: Map<string, string> = new Map(),
+  hasAttribution = false
 ): unknown {
   const oldContent = existing as {
     $type?: string;
@@ -969,11 +992,11 @@ export function replaceLeafletNoteRegion(
   let oldNotes = 0;
   let notesBeforeExtras = -1;
   for (const wrapper of oldBlocks) {
-    if (isAttributionText(wrapper.block?.plaintext)) {
+    if (isGeneratedAttribution(wrapper.block?.plaintext, hasAttribution)) {
       hadAttribution = true;
       continue;
     }
-    if (isLeafletNoteBlock(wrapper)) {
+    if (isLeafletNoteBlock(wrapper, hasAttribution)) {
       oldNotes++;
       continue;
     }
@@ -1237,25 +1260,33 @@ export function contentFormatOf(content: unknown): ContentFormat | null {
 }
 
 // Is this item part of the note (as opposed to the article card, a home-app
-// block, or the attribution line)? Older Offprint shares carried the article as
-// an ordinary text line rather than a card, so a text block holding the article
-// URL is the card too.
-function isNoteItem(item: unknown, prefix: string, articleUrl: string | undefined): boolean {
+// block, or an attribution line we added)? Older Offprint shares carried the
+// article as an ordinary text line rather than a card, so a text block holding
+// the article URL is the card too.
+function isNoteItem(
+  item: unknown,
+  prefix: string,
+  articleUrl: string | undefined,
+  hasAttribution: boolean
+): boolean {
   const block = item as { $type?: string; plaintext?: unknown } | undefined;
   if (block?.$type === `${prefix}blockquote`) return true;
   if (block?.$type !== `${prefix}text`) return false;
   const plaintext = typeof block.plaintext === 'string' ? block.plaintext : '';
-  if (isAttributionText(plaintext)) return false;
+  if (isGeneratedAttribution(plaintext, hasAttribution)) return false;
   return !(articleUrl && plaintext.includes(articleUrl));
 }
 
 // Swap the note region of a pckt/Offprint body, keeping the article block where
 // it was found and preserving anything the home app added alongside it.
+// `hasAttribution` is the record's `skyreaderAttribution` flag — see
+// replaceLeafletNoteRegion.
 export function replaceItemsNoteRegion(
   existing: unknown,
   format: 'pckt' | 'offprint',
   note: string,
-  article: { url?: string; title?: string }
+  article: { url?: string; title?: string },
+  hasAttribution = false
 ): unknown {
   const content = existing as { $type?: string; items?: unknown[] } | undefined;
   const prefix = ITEM_PREFIX[format];
@@ -1267,11 +1298,11 @@ export function replaceItemsNoteRegion(
   let notesBeforeExtras = -1;
   for (const item of items) {
     const plaintext = (item as { plaintext?: unknown } | undefined)?.plaintext;
-    if (isAttributionText(plaintext)) {
+    if (isGeneratedAttribution(plaintext, hasAttribution)) {
       hadAttribution = true;
       continue;
     }
-    if (isNoteItem(item, prefix, article.url)) {
+    if (isNoteItem(item, prefix, article.url, hasAttribution)) {
       oldNotes++;
       continue;
     }
@@ -1303,12 +1334,15 @@ export function replaceItemsNoteRegion(
 }
 
 // Swap the note in a Markdown body, keeping the article link line verbatim and in
-// the same place, and preserving an attribution line. (The old implementation
-// rebuilt the body as `[note, linkLine]` and so dropped anything after the link.)
+// the same place, and preserving an attribution line we added. (The old
+// implementation rebuilt the body as `[note, linkLine]` and so dropped anything
+// after the link.) `hasAttribution` is the record's `skyreaderAttribution` flag —
+// see replaceLeafletNoteRegion.
 export function replaceMarkpubNote(
   existing: unknown,
   note: string,
-  article: { url?: string; title?: string }
+  article: { url?: string; title?: string },
+  hasAttribution = false
 ): unknown {
   const content = existing as { text?: { markdown?: string } } | undefined;
   const markdown = content?.text?.markdown ?? '';
@@ -1329,7 +1363,7 @@ export function replaceMarkpubNote(
       : article.url
         ? markpubLinkLine(article.url, article.title)
         : '';
-  const hadAttribution = lines.some((line) => isAttributionText(line));
+  const hadAttribution = lines.some((line) => isGeneratedAttribution(line, hasAttribution));
 
   // Where the link sat relative to the note text is the layout to preserve. With
   // no link line found there's no evidence, and 'bottom' is what such a record was
@@ -1337,7 +1371,7 @@ export function replaceMarkpubNote(
   const noteText = (from: number, to: number) =>
     lines
       .slice(from, to)
-      .filter((line) => !isAttributionText(line))
+      .filter((line) => !isGeneratedAttribution(line, hasAttribution))
       .join('\n')
       .trim();
   const position: LinkblogCardPosition =
@@ -1839,6 +1873,10 @@ export async function updateLinkblogShareNote(
   // richtext feature; the other formats store the note as plain text.)
   const resolvedHandles =
     format === 'leaflet' ? await resolveNoteMentionHandles(trimmedNote) : new Map<string, string>();
+  // Only a record that opted into attribution has a generated line to carry
+  // through. On every other record that sentence is the author's own — rebuilt
+  // from the submitted note like any other line, and removable.
+  const hasAttribution = rec.skyreaderAttribution === true;
 
   const updated: DocumentRecord = {
     ...rec,
@@ -1848,10 +1886,10 @@ export async function updateLinkblogShareNote(
     textContent: [trimmedNote, excerpt].filter(Boolean).join('\n\n') || undefined,
     content:
       format === 'leaflet'
-        ? replaceLeafletNoteRegion(rec.content, trimmedNote, resolvedHandles)
+        ? replaceLeafletNoteRegion(rec.content, trimmedNote, resolvedHandles, hasAttribution)
         : format === 'markpub'
-          ? replaceMarkpubNote(rec.content, trimmedNote, article)
-          : replaceItemsNoteRegion(rec.content, format, trimmedNote, article),
+          ? replaceMarkpubNote(rec.content, trimmedNote, article, hasAttribution)
+          : replaceItemsNoteRegion(rec.content, format, trimmedNote, article, hasAttribution),
   };
 
   const written = await pdsClient.putRecord(DOCUMENT_COLLECTION, rkey, updated);

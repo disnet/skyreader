@@ -78,9 +78,10 @@ describe('link post note conversion', () => {
       { block: { $type: 'pub.leaflet.blocks.text', plaintext: ATTRIBUTION_TEXT } },
     ];
     expect(reconstructLinkPostNote(blocks, { hasAttribution: true }).note).toBe('commentary');
-    // Absent the record's flag, the constant string is the fallback tell…
-    expect(reconstructLinkPostNote(blocks).note).toBe('commentary');
-    // …but a record that says it has no attribution keeps the author's line.
+    // …but only the record's flag says the line is ours. Without it, an author who
+    // wrote that exact sentence keeps their words — on the page and, because this
+    // is what the composer reloads, through a note edit.
+    expect(reconstructLinkPostNote(blocks).note).toBe(`commentary\n\n${ATTRIBUTION_TEXT}`);
     expect(reconstructLinkPostNote(blocks, { hasAttribution: false }).note).toBe(
       `commentary\n\n${ATTRIBUTION_TEXT}`
     );

@@ -32,24 +32,21 @@ export function noteToLeafletBlocks(note: string | null | undefined): LeafletBlo
   return blocks;
 }
 
-/**
- * The opt-in "this came from Skyreader" line. MUST match the backend's
- * ATTRIBUTION_TEXT — it's the fallback tell for records whose top-level
- * `skyreaderAttribution` flag didn't survive whatever pulled them.
- */
+/** The opt-in "this came from Skyreader" line. MUST match the backend's ATTRIBUTION_TEXT. */
 export const ATTRIBUTION_TEXT = 'Posted from skyreader.app';
 
 /**
  * Whether a block is the attribution line rather than the author's words.
  *
- * `hasAttribution` (the record's own flag) is the reliable signal; the string
- * match is the fallback, and it's why the flag exists — someone whose last line
- * happens to be that exact sentence would otherwise lose it. Bounded to a
- * trailing-line match either way.
+ * The record's own `skyreaderAttribution` flag is what decides — the string alone
+ * can't tell our line from an author who wrote that exact sentence, and it's why
+ * the flag exists. The writer stamps it top-level on the document and every read
+ * path carries it, so an unflagged record simply has no line of ours to exclude.
+ * (Erring the other way ate the author's words; this way a flag that somehow went
+ * missing only shows a line the reader can see is there.)
  */
 export function isAttributionText(plaintext: string, hasAttribution?: boolean): boolean {
-  if (hasAttribution === false) return false;
-  return plaintext.trim() === ATTRIBUTION_TEXT;
+  return hasAttribution === true && plaintext.trim() === ATTRIBUTION_TEXT;
 }
 
 export interface ReconstructedMention {
@@ -87,8 +84,8 @@ function quoteOffset(plaintext: string, byteOffset: number): number {
  * mention byte offsets are unaffected by where it sits.
  *
  * The "Posted from Skyreader" line is ours, not the author's, so it's excluded —
- * by the record's `skyreaderAttribution` flag where the caller has it, and by the
- * constant string otherwise.
+ * on the records whose `skyreaderAttribution` flag says we added it, and only
+ * those. See isAttributionText.
  */
 export function reconstructLinkPostNote(
   blocks: LeafletBlockWrapper[],
