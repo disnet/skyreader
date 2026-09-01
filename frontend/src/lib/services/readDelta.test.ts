@@ -3,6 +3,7 @@ import {
   planReadDelta,
   planAnnotatedReads,
   advanceCursor,
+  mergeReadProgress,
   type ReadDeltaPosition,
 } from './readDelta';
 
@@ -137,5 +138,95 @@ describe('advanceCursor', () => {
     expect(advanceCursor(100, 0)).toBeNull();
     expect(advanceCursor(100, null)).toBeNull();
     expect(advanceCursor(100, undefined)).toBeNull();
+  });
+});
+
+// Generalizing the in-flight guard to user time. The in-flight set only covers
+// the seconds a push is in the air; the same race exists whenever this device's
+// intent is simply newer than the row the server is offering back.
+describe('planReadDelta newer-local-intent guard', () => {
+  const never = () => false;
+
+  it('drops a tombstone older than the local read label', () => {
+    const { deletes } = planReadDelta(
+      [pos({ item_guid: 'a', deleted: true, client_updated_at: NOW - 10_000 })],
+      { isInFlight: never, now: NOW, localReadAt: () => NOW }
+    );
+    expect(deletes).toEqual([]);
+  });
+
+  it('applies a tombstone newer than the local read label', () => {
+    const { deletes } = planReadDelta(
+      [pos({ item_guid: 'a', deleted: true, client_updated_at: NOW })],
+      { isInFlight: never, now: NOW, localReadAt: () => NOW - 10_000 }
+    );
+    expect(deletes).toEqual([['a', 'read']]);
+  });
+
+  // The mirror case: removing a label locally leaves nothing to compare, so the
+  // un-read intent has to be remembered separately or the server's older read
+  // row silently re-reads the item.
+  it('drops a live row older than a local un-read', () => {
+    const { puts } = planReadDelta(
+      [pos({ item_guid: 'a', read_at: 1, client_updated_at: NOW - 10_000 })],
+      { isInFlight: never, now: NOW, unreadIntentAt: () => NOW }
+    );
+    expect(puts).toEqual([]);
+  });
+
+  it('applies a live row newer than a local un-read', () => {
+    const { puts } = planReadDelta([pos({ item_guid: 'a', read_at: 1, client_updated_at: NOW })], {
+      isInFlight: never,
+      now: NOW,
+      unreadIntentAt: () => NOW - 10_000,
+    });
+    expect(puts.map((p) => p.itemKey)).toEqual(['a']);
+  });
+
+  // A backend that predates user-time LWW sends no client_updated_at. Guessing
+  // would be worse than the old behaviour, so it degrades to exactly that.
+  it('degrades to in-flight-only when the server reports no user time', () => {
+    const { deletes } = planReadDelta([pos({ item_guid: 'a', deleted: true })], {
+      isInFlight: never,
+      now: NOW,
+      localReadAt: () => NOW,
+    });
+    expect(deletes).toEqual([['a', 'read']]);
+  });
+
+  it('stamps a put with the server-reported user time so later comparisons line up', () => {
+    const { puts } = planReadDelta(
+      [pos({ item_guid: 'a', read_at: 5, client_updated_at: NOW - 500 })],
+      { isInFlight: never, now: NOW }
+    );
+    expect(puts[0].updatedAt).toBe(NOW - 500);
+  });
+});
+
+describe('mergeReadProgress', () => {
+  it('keeps whichever side was read more recently', () => {
+    expect(mergeReadProgress({ lastReadAt: 200 }, { lastReadAt: 100 })).toBe('local');
+    expect(mergeReadProgress({ lastReadAt: 100 }, { lastReadAt: 200 })).toBe('remote');
+  });
+
+  // Position is not the ordering: re-reading an article legitimately moves it
+  // backwards, and treating "further along" as "newer" would make a re-read
+  // impossible to sync.
+  it('ignores paragraphIndex entirely', () => {
+    expect(
+      mergeReadProgress(
+        { paragraphIndex: 90, lastReadAt: 100 },
+        { paragraphIndex: 2, lastReadAt: 200 }
+      )
+    ).toBe('remote');
+  });
+
+  it('takes remote on a tie so a re-pull is idempotent', () => {
+    expect(mergeReadProgress({ lastReadAt: 100 }, { lastReadAt: 100 })).toBe('remote');
+  });
+
+  it('takes remote when there is nothing local, and local when remote is unstamped', () => {
+    expect(mergeReadProgress(undefined, { lastReadAt: 100 })).toBe('remote');
+    expect(mergeReadProgress({ lastReadAt: 100 }, {})).toBe('local');
   });
 });

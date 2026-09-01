@@ -128,6 +128,11 @@ async function fetchTimeline(
   let coldRounds = 0;
   // Set when we stop because of a round cap rather than because we're done.
   let cappedOut = false;
+  // The server's per-feed unread counts, held until the drain finishes. Adopting
+  // them mid-drain would compare the server's numbers against a local set this
+  // sync hasn't finished merging into, which is drift we manufactured ourselves.
+  let serverCounts: Record<string, number> | undefined;
+  let serverHead: number | undefined;
 
   for (;;) {
     if (
@@ -141,6 +146,11 @@ async function fetchTimeline(
     if (coldOffset === undefined) incrementalRounds++;
     else coldRounds++;
 
+    // Counts ride the FIRST page of a refresh only: they're per-feed index seeks
+    // over the whole subscription list, and they don't change between drain
+    // pages of the same sync.
+    const includeCounts = incrementalRounds + coldRounds === 1;
+
     let page;
     try {
       page = await api.fetchTimeline(
@@ -150,8 +160,14 @@ async function fetchTimeline(
               generation,
               limit: TIMELINE_PAGE_LIMIT,
               health_rev: feedHealthRev,
+              include_counts: includeCounts,
             }
-          : { cold_offset: coldOffset, limit: TIMELINE_PAGE_LIMIT, health_rev: feedHealthRev }
+          : {
+              cold_offset: coldOffset,
+              limit: TIMELINE_PAGE_LIMIT,
+              health_rev: feedHealthRev,
+              include_counts: includeCounts,
+            }
       );
     } catch (e) {
       if (e instanceof ApiError && e.status === 404) {
@@ -167,6 +183,11 @@ async function fetchTimeline(
     if (shouldFallBackToBatch(page, rssSubs.length)) return null;
 
     if (page.readCursor) await itemLabelsStore.seedReadCursor(page.readCursor);
+
+    if (page.unreadCounts) {
+      serverCounts = page.unreadCounts;
+      serverHead = page.head;
+    }
 
     const { toMerge, readGuids, feedUrls } = groupTimelineItems(page.items, subIdByUrl);
 
@@ -245,6 +266,19 @@ async function fetchTimeline(
   // Subscriptions that arrived from another device sit below the global cursor,
   // so only the per-feed endpoint can deliver their history.
   result.newArticles += await backfillMissingSubscriptions(rssSubs, savedGuids);
+
+  // Adopt the server's counts only once every page has merged and its read
+  // annotations have been applied — comparing them against a half-merged local
+  // set would report drift this sync created and hasn't finished resolving.
+  // A capped-out drain is a half-merged set by definition, so it keeps the
+  // local numbers until the next sync completes.
+  if (serverCounts && !cappedOut) {
+    // Imported lazily: unreadCounts reaches the subscriptions store, which
+    // imports this module. A dynamic import keeps that cycle out of the static
+    // graph rather than relying on evaluation order to make it harmless.
+    const { unreadCounts } = await import('$lib/stores/unreadCounts.svelte');
+    unreadCounts.applyServerCounts(serverCounts, serverHead);
+  }
 
   result.successfulFeeds = rssSubs.length;
   return result;
@@ -326,6 +360,11 @@ export async function fetchAllFeeds(
     }
   }
 
+  // The legacy path has no server-side counts, so anything we're still holding
+  // is about to go stale. Drop back to the local derivation rather than let a
+  // frozen number sit in the sidebar looking authoritative.
+  const { unreadCounts } = await import('$lib/stores/unreadCounts.svelte');
+  unreadCounts.clearServerCounts();
   return fetchAllFeedsViaBatch(subscriptions, savedGuids);
 }
 

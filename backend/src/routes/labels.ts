@@ -1,6 +1,16 @@
 import type { Env } from '../types';
 import { getSessionFromRequest } from '../services/oauth';
 import { generateTid } from '../utils/tid';
+import {
+  afterCursorParams,
+  afterCursorSql,
+  clampClientUpdatedAt,
+  decodeDeltaCursor,
+  encodeDeltaCursor,
+  maxCursor,
+  parseSince,
+  type DeltaCursor,
+} from '../utils/delta-cursor';
 
 interface LabelRow {
   item_key: string;
@@ -11,27 +21,11 @@ interface LabelRow {
   created_at: number;
   updated_at: number;
   deleted_at: number | null;
+  client_updated_at: number | null;
 }
 
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 500;
-
-function encodeCursor(updatedAt: number, id: number): string {
-  return btoa(`${updatedAt}:${id}`);
-}
-
-function decodeCursor(cursor: string): { updatedAt: number; id: number } | null {
-  try {
-    const decoded = atob(cursor);
-    const [updatedAtStr, idStr] = decoded.split(':');
-    const updatedAt = Number(updatedAtStr);
-    const id = Number(idStr);
-    if (isNaN(updatedAt) || isNaN(id)) return null;
-    return { updatedAt, id };
-  } catch {
-    return null;
-  }
-}
 
 // GET /api/labels - Get all labels for the current user
 export async function handleGetLabels(request: Request, env: Env): Promise<Response> {
@@ -56,13 +50,15 @@ export async function handleGetLabels(request: Request, env: Env): Promise<Respo
   const cursor = url.searchParams.get('cursor');
   const limitParam = url.searchParams.get('limit');
   const limit = Math.min(Math.max(1, Number(limitParam) || DEFAULT_LIMIT), MAX_LIMIT);
-  // Delta sync: `?since=<unix_seconds>` returns only rows changed since the
-  // client's cursor (updated_at strictly greater). Omit it for a full fetch.
-  const sinceParam = url.searchParams.get('since');
-  const since = sinceParam !== null ? parseInt(sinceParam, 10) : NaN;
+  // Delta sync: `?since=` returns only rows changed since the client's cursor.
+  // The cursor is compound — base64 `updatedAt:id` — so strictly-greater is
+  // lossless across same-second rows; a bare unix-seconds value from the
+  // previous release is still accepted (see parseSince). Omit for a full fetch.
+  const since = parseSince(url.searchParams.get('since'));
+  const isDelta = since !== null;
 
   try {
-    let query = `SELECT id, item_key, item_type, label, props, rkey, created_at, updated_at, deleted_at
+    let query = `SELECT id, item_key, item_type, label, props, rkey, created_at, updated_at, deleted_at, client_updated_at
       FROM item_labels_cache
       WHERE user_did = ?`;
     const params: (string | number)[] = [session.did];
@@ -79,29 +75,39 @@ export async function handleGetLabels(request: Request, env: Env): Promise<Respo
       query += ' AND item_type = ?';
       params.push(itemTypeFilter);
     }
-    if (Number.isFinite(since)) {
-      // Delta: include tombstones (deleted_at set) so the client can replay
-      // deletions made on other devices. The row stays until GC purges it.
-      query += ' AND updated_at > ?';
-      params.push(since);
-    } else {
-      // Full snapshot: live rows only — a fresh client has nothing to remove.
-      query += ' AND deleted_at IS NULL';
-    }
-
+    let parsedCursor: DeltaCursor | null = null;
     if (cursor) {
-      const parsed = decodeCursor(cursor);
-      if (!parsed) {
+      parsedCursor = decodeDeltaCursor(cursor);
+      if (!parsedCursor) {
         return new Response(JSON.stringify({ error: 'Invalid cursor' }), {
           status: 400,
           headers: { 'Content-Type': 'application/json' },
         });
       }
-      query += ' AND (updated_at < ? OR (updated_at = ? AND id < ?))';
-      params.push(parsed.updatedAt, parsed.updatedAt, parsed.id);
     }
 
-    query += ' ORDER BY updated_at DESC, id DESC';
+    if (isDelta) {
+      // Delta: include tombstones (deleted_at set) so the client can replay
+      // deletions made on other devices. The row stays until GC purges it.
+      //
+      // Ordered ASCENDING, unlike the full snapshot: a delta is drained forward
+      // from the client's cursor, so pages must be contiguous and the last row
+      // of the last page is the new cursor. Pagination therefore uses the SAME
+      // compound bound as `since` — whichever is larger — rather than a second,
+      // opposite-direction predicate.
+      const lower = maxCursor(since, parsedCursor)!;
+      query += ` AND ${afterCursorSql()}`;
+      params.push(...afterCursorParams(lower));
+      query += ' ORDER BY updated_at ASC, id ASC';
+    } else {
+      // Full snapshot: live rows only — a fresh client has nothing to remove.
+      query += ' AND deleted_at IS NULL';
+      if (parsedCursor) {
+        query += ' AND (updated_at < ? OR (updated_at = ? AND id < ?))';
+        params.push(parsedCursor.updatedAt, parsedCursor.updatedAt, parsedCursor.id);
+      }
+      query += ' ORDER BY updated_at DESC, id DESC';
+    }
     query += ' LIMIT ?';
     params.push(limit + 1);
 
@@ -121,13 +127,26 @@ export async function handleGetLabels(request: Request, env: Env): Promise<Respo
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       deletedAt: row.deleted_at,
+      // The user's own action time (unix ms). The client compares it against
+      // its local label before applying a remote row, so a late-arriving old
+      // write can't overwrite a newer local one.
+      clientUpdatedAt: row.client_updated_at,
     }));
 
-    const nextCursor = hasMore
-      ? encodeCursor(rows[rows.length - 1].updated_at, rows[rows.length - 1].id)
+    const last = rows[rows.length - 1];
+    const nextCursor = hasMore && last ? encodeDeltaCursor(last.updated_at, last.id) : undefined;
+
+    // The delta cursor to persist: the last row DELIVERED, or the caller's own
+    // cursor when the page was empty. Never a clock reading — a cursor that
+    // moved past rows the client didn't receive is exactly the silent loss this
+    // endpoint is meant to be free of. Only meaningful in delta mode.
+    const nextSince = isDelta
+      ? last
+        ? encodeDeltaCursor(last.updated_at, last.id)
+        : encodeDeltaCursor(since.updatedAt, since.id)
       : undefined;
 
-    return new Response(JSON.stringify({ labels, cursor: nextCursor }), {
+    return new Response(JSON.stringify({ labels, cursor: nextCursor, nextSince, hasMore }), {
       headers: { 'Content-Type': 'application/json' },
     });
   } catch (error) {
@@ -144,7 +163,28 @@ interface AddLabelRequest {
   itemType: string;
   label: string;
   props?: Record<string, unknown>;
+  // When the USER made this change, unix ms. Optional: an older client omits it
+  // and gets server-now, i.e. today's arrival-ordered behaviour.
+  updatedAt?: number;
 }
+
+/**
+ * The conflict clause every label write shares.
+ *
+ * `WHERE excluded.client_updated_at >= client_updated_at` is what makes the
+ * winner the later USER action rather than the later HTTP request: a queue
+ * draining an hour after the fact no longer overwrites what the user did on
+ * another device in the meantime. `>=` (not `>`) so an idempotent retry of the
+ * same write still lands.
+ *
+ * COALESCE covers a row an older Worker inserted mid-deploy with no value.
+ */
+const LABEL_UPSERT_CONFLICT = `ON CONFLICT(user_did, item_key, label) DO UPDATE SET
+         props = excluded.props,
+         updated_at = excluded.updated_at,
+         client_updated_at = excluded.client_updated_at,
+         deleted_at = NULL
+       WHERE excluded.client_updated_at >= COALESCE(item_labels_cache.client_updated_at, 0)`;
 
 // POST /api/labels - Add or update a label
 export async function handleAddLabel(request: Request, env: Env): Promise<Response> {
@@ -176,16 +216,15 @@ export async function handleAddLabel(request: Request, env: Env): Promise<Respon
   }
 
   const rkey = generateTid();
-  const now = Math.floor(Date.now() / 1000);
+  const nowMs = Date.now();
+  const now = Math.floor(nowMs / 1000);
+  const clientUpdatedAt = clampClientUpdatedAt(body.updatedAt, nowMs);
 
   try {
     await env.DB.prepare(
-      `INSERT INTO item_labels_cache (user_did, item_key, item_type, label, props, rkey, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(user_did, item_key, label) DO UPDATE SET
-         props = excluded.props,
-         updated_at = excluded.updated_at,
-         deleted_at = NULL`
+      `INSERT INTO item_labels_cache (user_did, item_key, item_type, label, props, rkey, created_at, updated_at, client_updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ${LABEL_UPSERT_CONFLICT}`
     )
       .bind(
         session.did,
@@ -195,7 +234,8 @@ export async function handleAddLabel(request: Request, env: Env): Promise<Respon
         props ? JSON.stringify(props) : null,
         rkey,
         now,
-        now
+        now,
+        clientUpdatedAt
       )
       .run();
 
@@ -214,6 +254,7 @@ export async function handleAddLabel(request: Request, env: Env): Promise<Respon
 interface DeleteLabelRequest {
   itemKey: string;
   label: string;
+  updatedAt?: number;
 }
 
 // DELETE /api/labels - Remove a label
@@ -251,11 +292,19 @@ export async function handleDeleteLabel(request: Request, env: Env): Promise<Res
     // resurrects it (ON CONFLICT clears deleted_at); the hourly cron GCs old
     // tombstones. `read` positions are owned by the reading route and are still
     // hard-deleted there — they never reach this handler.
-    const now = Math.floor(Date.now() / 1000);
+    //
+    // Guarded by the same user-time comparison as the upsert, so a late-draining
+    // queue can't resurrect stale intent in EITHER direction: removing a label
+    // is as much a user action as adding one.
+    const nowMs = Date.now();
+    const now = Math.floor(nowMs / 1000);
+    const clientUpdatedAt = clampClientUpdatedAt(body.updatedAt, nowMs);
     await env.DB.prepare(
-      'UPDATE item_labels_cache SET deleted_at = ?, updated_at = ? WHERE user_did = ? AND item_key = ? AND label = ?'
+      `UPDATE item_labels_cache SET deleted_at = ?, updated_at = ?, client_updated_at = ?
+        WHERE user_did = ? AND item_key = ? AND label = ?
+          AND ? >= COALESCE(client_updated_at, 0)`
     )
-      .bind(now, now, session.did, itemKey, label)
+      .bind(now, now, clientUpdatedAt, session.did, itemKey, label, clientUpdatedAt)
       .run();
 
     return new Response(JSON.stringify({ success: true }), {
@@ -276,7 +325,10 @@ interface BulkAddLabelsRequest {
     itemType: string;
     label: string;
     props?: Record<string, unknown>;
+    updatedAt?: number;
   }>;
+  // Per-request fallback for callers whose items share one intent time.
+  updatedAt?: number;
 }
 
 // POST /api/labels/bulk - Bulk add labels
@@ -315,18 +367,17 @@ export async function handleBulkAddLabels(request: Request, env: Env): Promise<R
     });
   }
 
-  const now = Math.floor(Date.now() / 1000);
+  const nowMs = Date.now();
+  const now = Math.floor(nowMs / 1000);
 
   try {
     const statements = labels.map((item) => {
       const rkey = generateTid();
+      const clientUpdatedAt = clampClientUpdatedAt(item.updatedAt ?? body.updatedAt, nowMs);
       return env.DB.prepare(
-        `INSERT INTO item_labels_cache (user_did, item_key, item_type, label, props, rkey, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(user_did, item_key, label) DO UPDATE SET
-           props = excluded.props,
-           updated_at = excluded.updated_at,
-           deleted_at = NULL`
+        `INSERT INTO item_labels_cache (user_did, item_key, item_type, label, props, rkey, created_at, updated_at, client_updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ${LABEL_UPSERT_CONFLICT}`
       ).bind(
         session.did,
         item.itemKey,
@@ -335,7 +386,8 @@ export async function handleBulkAddLabels(request: Request, env: Env): Promise<R
         item.props ? JSON.stringify(item.props) : null,
         rkey,
         now,
-        now
+        now,
+        clientUpdatedAt
       );
     });
 

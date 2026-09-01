@@ -1,4 +1,5 @@
 import type { Env, FeedItem, Session } from '../types';
+import { ARTICLE_WINDOW_PER_FEED } from '../config/window';
 import { log } from '../utils/logger';
 import { timedAll, timedBatch, timedFirst, getD1Timings, d1Summary } from '../utils/d1-timing';
 import {
@@ -28,7 +29,14 @@ const DEFAULT_LIMIT = 200;
 
 // Cold start delivers a per-feed newest slice, not a global one: a global
 // `ORDER BY seq DESC LIMIT n` would let one chatty feed starve every other.
-const COLD_START_PER_FEED = 30;
+//
+// This is K — the same window the client caps its local set at and the same
+// window the unread counts below are computed over. It was 30 while the client
+// kept 100, which is why a fresh device and an established one showed different
+// unread numbers for the same feed however well read state synced. Cold start
+// is paged (COLD_START_MAX_ITEMS), so the larger value costs more pages, not a
+// heavier response.
+const COLD_START_PER_FEED = ARTICLE_WINDOW_PER_FEED;
 // Statements per D1 batch on the cold-start path.
 const COLD_START_CHUNK = 25;
 // A cold start touches every subscribed feed; bound the work (and log if hit —
@@ -82,12 +90,24 @@ function toTimelineItems(rows: ItemRow[]): TimelineItem[] {
 /**
  * Newest slice of one feed, read-annotated — the single-feed read path
  * (`GET /api/v2/feeds/fetch`), which now serves D1 like everything else.
+ *
+ * `offset` pages DOWN into the archive: the client's local set is capped at K
+ * per feed and trims oldest-first, so anything below that is invisible to it
+ * even though D1 never pruned a thing. The "Show older" affordance starts at
+ * `offset = K` and walks down — which is what turns local eviction back into a
+ * cache miss instead of something the reader experiences as lost data.
+ *
+ * Offset rather than a keyset cursor because the client doesn't hold `seq` for
+ * its own articles, and the ordering key (`published_at`) is not unique. This is
+ * a manual, transient browse of an append-mostly list: an item ingested
+ * mid-browse can shift a row by one, which is not worth a wire-level cursor.
  */
 export async function readFeedSlice(
   env: Env,
   userDid: string,
   feedUrl: string,
-  limit: number
+  limit: number,
+  offset = 0
 ): Promise<TimelineItem[]> {
   const rows = await timedAll<ItemRow>(
     'feed_slice',
@@ -96,8 +116,8 @@ export async function readFeedSlice(
          FROM feed_items fi
         WHERE fi.feed_url = ?2
         ORDER BY fi.published_at DESC, fi.seq DESC
-        LIMIT ?3`
-    ).bind(userDid, feedUrl, limit)
+        LIMIT ?3 OFFSET ?4`
+    ).bind(userDid, feedUrl, limit, offset)
   );
   return toTimelineItems(rows.results);
 }
@@ -304,6 +324,67 @@ async function subscribedFeedMetadata(
   return feeds;
 }
 
+// Statements per D1 batch on the counts path.
+const COUNTS_CHUNK = 25;
+
+/**
+ * Per-feed unread counts over the canonical newest-K window.
+ *
+ * These numbers were derived client-side, over whatever articles the device
+ * happened to hold — and no two devices hold the same slice, so the same feed
+ * showed different unread numbers on a phone and a laptop even with read state
+ * perfectly in sync. Computing them here, over one window every device agrees
+ * on, is what makes them converge; the client displays these when online and
+ * falls back to its local derivation offline.
+ *
+ * One per-feed index seek (`idx_feed_items_feed_seq` / the published_at order
+ * the cold start already uses), bounded by K × subscriptions, and only on
+ * requests that ask for it — once per refresh, not per drain page.
+ */
+async function subscribedUnreadCounts(
+  env: Env,
+  userDid: string,
+  allFeedUrls: string[]
+): Promise<Record<string, number>> {
+  // Same bound as the cold start, for the same reason: one request must not turn
+  // into unbounded work. A feed past the cap simply has no server count and the
+  // client keeps deriving that one locally — degraded, not wrong.
+  const feedUrls = allFeedUrls.slice(0, COLD_START_MAX_FEEDS);
+  if (allFeedUrls.length > feedUrls.length) {
+    console.warn(
+      `[timeline] Unread counts covering ${feedUrls.length} of ${allFeedUrls.length} feeds for ${userDid}.`
+    );
+  }
+
+  const counts: Record<string, number> = {};
+  for (let i = 0; i < feedUrls.length; i += COUNTS_CHUNK) {
+    const chunk = feedUrls.slice(i, i + COUNTS_CHUNK);
+    const statements = chunk.map((feedUrl) =>
+      env.DB.prepare(
+        `SELECT ?2 AS feed_url, COUNT(*) AS unread FROM (
+                SELECT fi.guid FROM feed_items fi
+                 WHERE fi.feed_url = ?2
+                 ORDER BY fi.published_at DESC, fi.seq DESC
+                 LIMIT ?3) w
+          WHERE NOT EXISTS (
+                  SELECT 1 FROM item_labels_cache il
+                   WHERE il.user_did = ?1 AND il.item_key = w.guid
+                     AND il.item_type = 'article' AND il.label = 'read'
+                     AND il.deleted_at IS NULL)`
+      ).bind(userDid, feedUrl, ARTICLE_WINDOW_PER_FEED)
+    );
+    const results = await timedBatch<{ feed_url: string; unread: number }>(
+      'unread_counts',
+      env.DB,
+      statements
+    );
+    for (const result of results) {
+      for (const row of result.results ?? []) counts[row.feed_url] = row.unread;
+    }
+  }
+  return counts;
+}
+
 export async function handleTimeline(
   request: Request,
   env: Env,
@@ -379,6 +460,9 @@ async function runTimeline(request: Request, env: Env, session: Session): Promis
   // The feed-health revision this client already holds. Absent (a fresh page
   // load, whose status store is empty) means "send it".
   const healthRevParam = url.searchParams.get('health_rev');
+  // Server-authoritative per-feed unread counts. Asked for once per refresh (the
+  // first page), never on drain pages — the numbers don't change between them.
+  const wantsCounts = url.searchParams.get('include_counts') === '1';
 
   const parsedLimit = limitParam ? parseInt(limitParam, 10) : DEFAULT_LIMIT;
   const limit = Number.isInteger(parsedLimit)
@@ -494,6 +578,17 @@ async function runTimeline(request: Request, env: Env, session: Session): Promis
           feeds: items.length > 0 ? await subscribedFeedMetadata(env, session.did) : undefined,
           healthRev,
           feedHealth: healthStale ? await subscribedFeedHealth(env, session.did) : undefined,
+          unreadCounts: wantsCounts
+            ? await subscribedUnreadCounts(
+                env,
+                session.did,
+                await subscribedFeedUrls(env, session.did)
+              )
+            : undefined,
+          // The archive head as of this response — what the client passes back as
+          // `beforeSeq` when it marks a feed read, so items ingested after the
+          // user pressed the button stay unread.
+          head: wantsCounts ? await archiveHead(env) : undefined,
         });
       }
     }
@@ -554,6 +649,12 @@ async function runTimeline(request: Request, env: Env, session: Session): Promis
       feeds: items.length > 0 ? await subscribedFeedMetadata(env, session.did) : undefined,
       healthRev,
       feedHealth: await subscribedFeedHealth(env, session.did),
+      // Counts cover every subscribed feed, not just the page's slice — a paged
+      // cold start would otherwise report a partial picture on its first page.
+      unreadCounts: wantsCounts
+        ? await subscribedUnreadCounts(env, session.did, allFeedUrls)
+        : undefined,
+      head: wantsCounts ? cursor : undefined,
     });
   } catch (error) {
     console.error('[timeline] Query error:', error);

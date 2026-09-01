@@ -123,6 +123,12 @@ function proxyErrorFields(error: unknown): Record<string, unknown> {
  *   feed — the "retry this feed" action, the one path that still asks the
  *   crawler for a fresh fetch on demand.
  * - since_guids: accepted and ignored (legacy); the client dedupes by GUID.
+ * - offset: skip N items into the feed's ordered archive. This is the "Show
+ *   older" read — the client's local set is capped per feed, so it asks for the
+ *   page below its own window rather than being told those items are gone. An
+ *   offset read never triggers the pull-through: it is a deliberate walk down an
+ *   archive that already exists, and an empty page means the bottom, not a
+ *   missing feed.
  */
 export async function handleV2FeedFetch(
   request: Request,
@@ -157,13 +163,16 @@ export async function handleV2FeedFetch(
 
   const forceRefresh = url.searchParams.get('refresh') === '1';
 
+  const parsedOffset = parseInt(url.searchParams.get('offset') ?? '', 10);
+  const offset = Number.isInteger(parsedOffset) && parsedOffset > 0 ? parsedOffset : 0;
+
   // Hoisted out of the try so the outer catch can log it. Whether the archive
   // had anything is what separates a fatal pull-through (nothing to serve, so
   // the error is the response) from a refresh failure we swallow.
   let archiveEmpty = false;
 
   try {
-    let items = await readFeedSlice(env, session.did, feedUrl, limit);
+    let items = await readFeedSlice(env, session.did, feedUrl, limit, offset);
     let metadata = await readFeedMetadata(env, feedUrl);
 
     // Pull-through: the archive has nothing for this feed (first subscriber, so
@@ -172,7 +181,9 @@ export async function handleV2FeedFetch(
     // every other user — comes from D1. Gated on the caller's own subscription
     // (see the note above); a non-subscriber just reads whatever D1 already holds.
     archiveEmpty = items.length === 0;
-    const wantsPullThrough = archiveEmpty || forceRefresh;
+    // An offset read is a walk down an archive we know exists; an empty page is
+    // its bottom, not a feed nobody has ever crawled.
+    const wantsPullThrough = offset === 0 && (archiveEmpty || forceRefresh);
     if (wantsPullThrough && (await callerSubscribes(env, session.did, feedUrl))) {
       try {
         const client = new FeedProxyClient(env);

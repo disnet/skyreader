@@ -5,6 +5,8 @@
   import SavedReader from '$lib/components/feed/SavedReader.svelte';
   import InfiniteScrollSentinel from '$lib/components/common/InfiniteScrollSentinel.svelte';
   import { feedViewStore, type FeedDisplayItem } from '$lib/stores/feedView.svelte';
+  import { feedArchiveStore } from '$lib/stores/feedArchive.svelte';
+  import { MAX_ARTICLES_PER_FEED } from '$lib/services/articleMerge';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { linkblogStore } from '$lib/stores/linkblog.svelte';
@@ -221,6 +223,36 @@
     return articleElements;
   }
 
+  // --- Archive ("Show older") ----------------------------------------------
+  //
+  // Only offered in a single-RSS-feed view: the archive read is per-feed, and in
+  // a combined view "older" has no single meaning. The items render below the
+  // list and outside the indexed `#each`, so keyboard navigation and
+  // scroll-to-mark-read still operate on the reading list only — this is a
+  // deliberate look into the archive, not more of the feed.
+  let archiveSub = $derived.by(() => {
+    const filter = feedViewStore.feedFilter;
+    if (!filter || feedViewStore.isSavedView) return undefined;
+    const sub = subscriptionsStore.subscriptions.find((s) => s.id === Number(filter));
+    if (!sub?.feedUrl) return undefined;
+    if (sub.sourceType && sub.sourceType !== 'rss') return undefined;
+    return sub;
+  });
+
+  // Switching feeds (or leaving the single-feed view) drops whatever was loaded.
+  $effect(() => {
+    const id = archiveSub?.id ?? null;
+    if (feedArchiveStore.subscriptionId !== id) feedArchiveStore.reset(id);
+  });
+
+  // The affordance only makes sense once the local window is actually full —
+  // below that there is nothing the cap has trimmed, so there is nothing older
+  // to show that the list isn't already showing.
+  let archiveOffered = $derived.by(() => {
+    if (!archiveSub || feedViewStore.hasMore) return false;
+    return feedViewStore.filteredArticles.length >= MAX_ARTICLES_PER_FEED;
+  });
+
   export { scrollToCenter };
 </script>
 
@@ -294,6 +326,46 @@
     onLoadMore={() => feedViewStore.loadMore()}
   />
 
+  {#if archiveOffered && archiveSub}
+    {#each feedArchiveStore.items as article (article.guid)}
+      <div class="article-item-anchor">
+        <ArticleCard
+          {article}
+          siteUrl={archiveSub.siteUrl || archiveSub.feedUrl}
+          feedTitle={archiveSub.customTitle || archiveSub.title}
+          feedId={archiveSub.id}
+          isRead={itemLabelsStore.isRead(article.guid)}
+          isSaved={itemLabelsStore.isSaved(article.guid)}
+          isShared={linkblogStore.isShared(article.url)}
+          shareNote={linkblogStore.getNote(article.url)}
+          onToggleSave={() => onToggleSave(article)}
+          onToggleRead={() => handleToggleRead(article)}
+          onUnshare={() => onUnshare(article.url)}
+          onOpenFullscreen={() => openReader({ type: 'article', item: article, key: article.guid })}
+        />
+      </div>
+    {/each}
+
+    <div class="archive-footer">
+      {#if feedArchiveStore.error}
+        <p class="archive-note">{feedArchiveStore.error}</p>
+      {:else}
+        <p class="archive-note">
+          Showing the newest {MAX_ARTICLES_PER_FEED} — older items stay in your archive.
+        </p>
+      {/if}
+      {#if !feedArchiveStore.exhausted}
+        <button
+          class="btn btn-secondary"
+          disabled={feedArchiveStore.loading}
+          onclick={() => feedArchiveStore.loadMore(archiveSub)}
+        >
+          {feedArchiveStore.loading ? 'Loading…' : 'Show older'}
+        </button>
+      {/if}
+    </div>
+  {/if}
+
   {#if preferences.scrollToMarkAsRead && !feedViewStore.hasMore && feedViewStore.currentItems.length > 0}
     <div class="scroll-mark-overscroll"></div>
   {/if}
@@ -327,5 +399,22 @@
   .scroll-mark-overscroll {
     height: 100vh;
     pointer-events: none;
+  }
+
+  /* Quiet by construction: one line of explanation and one button, at the end
+     of the list where someone has already run out of reading. No banner. */
+  .archive-footer {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 1.5rem 0;
+  }
+
+  .archive-note {
+    margin: 0;
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
+    text-align: center;
   }
 </style>

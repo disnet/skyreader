@@ -19,8 +19,14 @@ function createSyncStore() {
 
     window.addEventListener('online', async () => {
       isOnline = true;
-      // Process queue when coming back online
+      // Process queue when coming back online, THEN pull. Draining first means
+      // our own offline writes reach the server before we ask what changed, so
+      // the delta we get back already reflects them and can't briefly revert the
+      // UI to the pre-offline state. This event used to only drain — coming back
+      // online showed our own changes and none of anyone else's.
       await triggerSync();
+      const { itemLabelsStore } = await import('./itemLabels.svelte');
+      await itemLabelsStore.pullDelta();
     });
 
     window.addEventListener('offline', () => {
@@ -60,6 +66,18 @@ function createSyncStore() {
     pendingCount = await syncQueue.getPendingCount();
   }
 
+  /**
+   * Record that this device is up to date with the server.
+   *
+   * `lastSyncedAt` used to move only when the outbound queue drained, so a
+   * device that had nothing to push reported "not since this page opened"
+   * however much it had pulled — the one number a reader looks at to answer
+   * "did my other device's reading arrive?" said nothing.
+   */
+  function markSynced() {
+    lastSyncedAt = Date.now();
+  }
+
   return {
     get isOnline() {
       return isOnline;
@@ -72,6 +90,7 @@ function createSyncStore() {
     },
     triggerSync,
     updatePendingCount,
+    markSynced,
   };
 }
 

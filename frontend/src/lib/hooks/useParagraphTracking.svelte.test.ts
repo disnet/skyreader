@@ -1,13 +1,16 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { setReadProgress, getReadProgress } = vi.hoisted(() => ({
+const { setReadProgress, getReadProgress, getLabel } = vi.hoisted(() => ({
   setReadProgress: vi.fn(),
   getReadProgress: vi.fn(),
+  // The flush-time re-check: whatever is stored when the debounce fires, which
+  // a delta may have replaced with another device's newer position since.
+  getLabel: vi.fn(),
 }));
 
 vi.mock('$lib/stores/itemLabels.svelte', () => ({
-  itemLabelsStore: { setReadProgress, getReadProgress },
+  itemLabelsStore: { setReadProgress, getReadProgress, getLabel },
 }));
 
 vi.mock('svelte', () => ({ onDestroy: vi.fn() }));
@@ -56,6 +59,8 @@ describe('useParagraphTracking', () => {
     vi.useFakeTimers();
     setReadProgress.mockReset();
     getReadProgress.mockReset();
+    getLabel.mockReset();
+    getLabel.mockReturnValue(undefined);
     getReadProgress.mockReturnValue({ paragraphIndex: 8, totalParagraphs: 20 });
     vi.stubGlobal('$state', <T>(value: T) => value);
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
@@ -176,6 +181,25 @@ describe('useParagraphTracking', () => {
     tracking.nextParagraph();
     vi.advanceTimersByTime(600);
     expect(setReadProgress).toHaveBeenCalledWith('article-key', 'article', 13, 40);
+
+    tracking.cleanup();
+  });
+  // A delta can land during the 500 ms debounce and replace the stored position
+  // with another device's newer one. Publishing the queued position afterwards
+  // would rewind that device AND republish the older position as authoritative,
+  // so the flush re-checks what is actually stored before writing.
+  it('abandons a queued save when a newer position arrived while it waited', () => {
+    getReadProgress.mockReturnValue({ paragraphIndex: 12, totalParagraphs: 40 });
+    const content = renderBody(40);
+    const tracking = track(content);
+
+    tracking.setupObserver();
+    window.dispatchEvent(new Event('scroll'));
+    // Another device's progress, recorded after this save was queued.
+    getLabel.mockReturnValue({ props: { lastReadAt: Date.now() + 10_000 } });
+    vi.advanceTimersByTime(600);
+
+    expect(setReadProgress).not.toHaveBeenCalled();
 
     tracking.cleanup();
   });

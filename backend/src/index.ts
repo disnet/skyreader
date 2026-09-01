@@ -53,6 +53,7 @@ import {
   handleMarkAsRead,
   handleMarkAsUnread,
   handleBulkMarkAsRead,
+  handleMarkFeedRead,
 } from './routes/reading';
 import { handleLexicon, handleLexiconIndex } from './routes/lexicons';
 import {
@@ -522,6 +523,12 @@ async function route(
       break;
     case url.pathname === '/api/reading/mark-read-bulk':
       response = await handleBulkMarkAsRead(request, env);
+      break;
+    // Mark the canonical per-feed window read server-side, so every device
+    // converges — including on items the acting device never held locally.
+    case url.pathname === '/api/reading/mark-feed-read':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleMarkFeedRead(request, env, session);
       break;
 
     // Labels routes (unified item labels)

@@ -1,5 +1,13 @@
 import type { Article, FeedItem } from '$lib/types';
 
+/**
+ * K — the canonical per-feed window. Must equal `ARTICLE_WINDOW_PER_FEED` in
+ * `backend/src/config/window.ts`: the server cold-starts a device with exactly
+ * this many per feed and computes its unread counts over exactly this many, so
+ * a mismatch here is a device that counts over a different set than every other
+ * device — which is the whole cross-device divergence bug. Change both or
+ * neither.
+ */
 export const MAX_ARTICLES_PER_FEED = 100;
 
 /**
@@ -96,8 +104,17 @@ export function selectNewArticles(
 
 /**
  * Compute which articles to drop to keep each affected feed within
- * `maxPerFeed`. Starred articles (guid in `savedGuids`) are always kept; among
- * the rest the newest are kept.
+ * `maxPerFeed`. Articles the reader has invested something in — starred (guid
+ * in `savedGuids`), tagged, or highlighted (`isLabeled`) — are always kept;
+ * among the rest the newest are kept.
+ *
+ * Eviction from a cache is fine. Eviction that orphans a highlight or a tag is
+ * not: the annotation survives in the label store with nothing left to attach
+ * it to. Read/unread stays recency-governed on purpose — exempting unread items
+ * would let a device's local set grow without bound and diverge from every
+ * other device's, which is precisely what the canonical window exists to stop.
+ * Older items are not lost either way; D1 never prunes, and the feed view pages
+ * back into it on demand.
  *
  * `articles` must be sorted newest-first — each feed's slice inherits that
  * order, so keeping the head keeps the newest.
@@ -109,7 +126,8 @@ export function computeArticleLimitDeletions(
   articles: Article[],
   subscriptionIds: Set<number>,
   savedGuids: Set<string>,
-  maxPerFeed: number = MAX_ARTICLES_PER_FEED
+  maxPerFeed: number = MAX_ARTICLES_PER_FEED,
+  isLabeled: (guid: string) => boolean = () => false
 ): { ids: number[]; dropByFeed: Map<number, Set<string>> } {
   const byFeed = new Map<number, Article[]>();
   for (const a of articles) {
@@ -128,13 +146,14 @@ export function computeArticleLimitDeletions(
   for (const [subscriptionId, feedArticles] of byFeed) {
     if (feedArticles.length <= maxPerFeed) continue;
 
-    const starred = feedArticles.filter((a) => savedGuids.has(a.guid));
-    const nonStarred = feedArticles.filter((a) => !savedGuids.has(a.guid));
+    const isPinned = (a: Article) => savedGuids.has(a.guid) || isLabeled(a.guid);
+    const pinned = feedArticles.filter(isPinned);
+    const evictable = feedArticles.filter((a) => !isPinned(a));
 
-    const keepCount = Math.max(0, maxPerFeed - starred.length);
+    const keepCount = Math.max(0, maxPerFeed - pinned.length);
     const toKeep = new Set([
-      ...starred.map((a) => a.guid),
-      ...nonStarred.slice(0, keepCount).map((a) => a.guid),
+      ...pinned.map((a) => a.guid),
+      ...evictable.slice(0, keepCount).map((a) => a.guid),
     ]);
 
     const drop = feedArticles.filter((a) => !toKeep.has(a.guid));

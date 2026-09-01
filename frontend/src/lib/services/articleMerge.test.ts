@@ -175,6 +175,38 @@ describe('computeArticleLimitDeletions', () => {
     const { ids } = computeArticleLimitDeletions(articles, new Set([1]), new Set());
     expect(ids).toHaveLength(2);
   });
+
+  // Evicting an item that carries a tag or a highlight leaves the annotation in
+  // the label store with nothing to attach it to. Starred was already exempt;
+  // labelled is the same argument.
+  it('preserves labelled articles alongside starred ones', () => {
+    const articles = feedArticles(1, 5);
+    const labelled = new Set(['g3']);
+    const { dropByFeed } = computeArticleLimitDeletions(
+      articles,
+      new Set([1]),
+      new Set(['g4']),
+      3,
+      (guid) => labelled.has(guid)
+    );
+    // g4 starred + g3 labelled kept, plus the newest evictable (g0) => drop g1, g2
+    expect([...(dropByFeed.get(1) ?? [])].sort()).toEqual(['g1', 'g2']);
+  });
+
+  // Read/unread stays recency-governed on purpose: exempting unread items would
+  // let each device's set grow past K and diverge, which is exactly what the
+  // canonical window exists to prevent.
+  it('still evicts unread articles — only annotations are pinned', () => {
+    const articles = feedArticles(1, 5);
+    const { dropByFeed } = computeArticleLimitDeletions(
+      articles,
+      new Set([1]),
+      new Set(),
+      3,
+      () => false
+    );
+    expect([...(dropByFeed.get(1) ?? [])].sort()).toEqual(['g3', 'g4']);
+  });
 });
 
 describe('computeContentStats', () => {

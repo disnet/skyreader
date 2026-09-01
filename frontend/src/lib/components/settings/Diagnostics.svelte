@@ -59,6 +59,10 @@
       value: syncStore.pendingCount === 0 ? 'None' : String(syncStore.pendingCount),
     },
     {
+      // Now moves on a successful PULL as well as a queue drain, so a device
+      // with nothing of its own to push still reports when it last caught up
+      // with the others — which is the actual question behind "is my reading
+      // synced?".
       label: 'Last sync',
       value: syncStore.lastSyncedAt
         ? formatTime(syncStore.lastSyncedAt)

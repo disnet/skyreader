@@ -88,8 +88,11 @@ type PositionsResponse = {
     read_at: number;
     rkey: string;
     deleted: boolean;
+    client_updated_at?: number | null;
   }>;
   cursor: number;
+  nextSince?: string;
+  hasMore?: boolean;
 };
 
 async function getPositions(path: string): Promise<{ status: number; body: PositionsResponse }> {
@@ -164,25 +167,80 @@ describe('GET /api/reading/positions (forward read delta)', () => {
     expect(body.cursor).toBe(now - 5);
   });
 
-  it('returns positions ordered newest-first', async () => {
+  // Oldest-first, deliberately: the delta is DRAINED forward from a cursor, so
+  // pages have to be contiguous and the last row of a page has to be the next
+  // cursor. Newest-first only worked while the response was unbounded.
+  it('returns positions ordered oldest-first', async () => {
     const now = Math.floor(Date.now() / 1000);
     await insertReadLabel('oldest', { updatedAt: now - 300 });
     await insertReadLabel('middle', { updatedAt: now - 200 });
     await insertReadLabel('newest', { updatedAt: now - 100 });
 
     const { body } = await getPositions('/api/reading/positions?since=0');
-    expect(body.positions.map((p) => p.item_guid)).toEqual(['newest', 'middle', 'oldest']);
+    expect(body.positions.map((p) => p.item_guid)).toEqual(['oldest', 'middle', 'newest']);
   });
 
   describe('delta (?since=)', () => {
-    it('returns only rows changed strictly after the cursor', async () => {
+    // A legacy numeric cursor is read as `(seconds, 0)`, so a row written in the
+    // cursor's own second is still delivered — exactly once. Under the old
+    // `updated_at > since` predicate that row was dropped forever, which is the
+    // silent same-second loss this cursor exists to fix. The cost is that a
+    // numeric cursor re-delivers its own second once; application is an
+    // idempotent upsert, so that is harmless.
+    it('re-delivers the cursor second with a legacy numeric cursor, then moves past it', async () => {
       const now = Math.floor(Date.now() / 1000);
       await insertReadLabel('at-cursor', { updatedAt: now - 100 });
       await insertReadLabel('after-cursor', { updatedAt: now - 50 });
 
       const { body } = await getPositions(`/api/reading/positions?since=${now - 100}`);
-      expect(body.positions.map((p) => p.item_guid)).toEqual(['after-cursor']);
+      expect(body.positions.map((p) => p.item_guid)).toEqual(['at-cursor', 'after-cursor']);
       expect(body.cursor).toBe(now - 50);
+
+      // The compound cursor it hands back excludes everything already delivered.
+      const { body: second } = await getPositions(
+        `/api/reading/positions?since=${encodeURIComponent(body.nextSince!)}`
+      );
+      expect(second.positions).toHaveLength(0);
+    });
+
+    it('delivers same-second rows exactly once across pages', async () => {
+      const now = Math.floor(Date.now() / 1000);
+      // Three rows sharing one wall-clock second: the case a seconds-only
+      // cursor cannot express a position inside.
+      await insertReadLabel('same-1', { updatedAt: now - 10 });
+      await insertReadLabel('same-2', { updatedAt: now - 10 });
+      await insertReadLabel('same-3', { updatedAt: now - 10 });
+
+      const seen: string[] = [];
+      let since = '0';
+      for (let page = 0; page < 5; page++) {
+        const { body } = await getPositions(
+          `/api/reading/positions?since=${encodeURIComponent(since)}&limit=1`
+        );
+        seen.push(...body.positions.map((p) => p.item_guid));
+        since = body.nextSince!;
+        if (!body.hasMore) break;
+      }
+
+      expect(seen).toEqual(['same-1', 'same-2', 'same-3']);
+      expect(new Set(seen).size).toBe(3);
+    });
+
+    it('reports hasMore and never advances past an undelivered row', async () => {
+      const now = Math.floor(Date.now() / 1000);
+      await insertReadLabel('a', { updatedAt: now - 30 });
+      await insertReadLabel('b', { updatedAt: now - 20 });
+      await insertReadLabel('c', { updatedAt: now - 10 });
+
+      const { body } = await getPositions('/api/reading/positions?since=0&limit=2');
+      expect(body.positions.map((p) => p.item_guid)).toEqual(['a', 'b']);
+      expect(body.hasMore).toBe(true);
+
+      const { body: rest } = await getPositions(
+        `/api/reading/positions?since=${encodeURIComponent(body.nextSince!)}&limit=2`
+      );
+      expect(rest.positions.map((p) => p.item_guid)).toEqual(['c']);
+      expect(rest.hasMore).toBe(false);
     });
 
     it('has no retention window — even very old rows sync once changed past the cursor', async () => {
@@ -578,5 +636,98 @@ describe('inline read annotation (batch fetch handlers)', () => {
     expect(docs.find((d) => d.recordUri.endsWith('/read'))?.read).toBe(true);
     expect(docs.find((d) => d.recordUri.endsWith('/unread'))?.read).toBe(false);
     expect(typeof json.readCursor).toBe('number');
+  });
+});
+
+/**
+ * User-time last-write-wins on the read path.
+ *
+ * The scenario from the report: device B is offline and marks something unread;
+ * device A marks it read later; B comes back and drains its queue. Arrival order
+ * says B wins, which resurrects intent the user has already superseded. Ordering
+ * by when the user acted says A wins, which is what the user meant.
+ */
+describe('read writes ordered by user time', () => {
+  beforeEach(async () => {
+    await env.DB.prepare('DELETE FROM item_labels_cache').run();
+    await env.DB.prepare('DELETE FROM sessions').run();
+    await env.DB.prepare('DELETE FROM users').run();
+    await setupTestUser();
+  });
+
+  async function postJson(path: string, body: unknown) {
+    const ctx = createExecutionContext();
+    const request = new IncomingRequest(`http://localhost${path}`, {
+      method: 'POST',
+      headers: {
+        Cookie: `session_id=${TEST_SESSION_ID}`,
+        Origin: env.FRONTEND_URL,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+    const response = await worker.fetch(request, env, ctx);
+    await waitOnExecutionContext(ctx);
+    return response;
+  }
+
+  function readRow(itemKey: string) {
+    return env.DB.prepare(
+      "SELECT deleted_at, client_updated_at FROM item_labels_cache WHERE user_did = ? AND item_key = ? AND label = 'read'"
+    )
+      .bind(TEST_DID, itemKey)
+      .first<{ deleted_at: number | null; client_updated_at: number }>();
+  }
+
+  it('a late-draining un-read loses to a newer read from another device', async () => {
+    const now = Date.now();
+    // Device A read it a minute ago; the request lands first.
+    await postJson('/api/reading/mark-read', { itemGuid: 'contested', updatedAt: now - 60_000 });
+    // Device B un-read it an hour ago and only now drains its queue.
+    await postJson('/api/reading/mark-unread', {
+      itemGuid: 'contested',
+      updatedAt: now - 3600_000,
+    });
+
+    expect((await readRow('contested'))!.deleted_at).toBeNull();
+  });
+
+  it('a genuinely newer un-read still wins', async () => {
+    const now = Date.now();
+    await postJson('/api/reading/mark-read', { itemGuid: 'later-unread', updatedAt: now - 60_000 });
+    await postJson('/api/reading/mark-unread', { itemGuid: 'later-unread', updatedAt: now });
+
+    expect((await readRow('later-unread'))!.deleted_at).not.toBeNull();
+  });
+
+  it('a stale bulk read cannot resurrect an item un-read more recently', async () => {
+    const now = Date.now();
+    await postJson('/api/reading/mark-read', { itemGuid: 'bulk-stale', updatedAt: now - 7200_000 });
+    await postJson('/api/reading/mark-unread', { itemGuid: 'bulk-stale', updatedAt: now - 60_000 });
+    // The offline queue finally drains a read the user performed two hours ago.
+    await postJson('/api/reading/mark-read-bulk', {
+      items: [{ itemGuid: 'bulk-stale', updatedAt: now - 7200_000 }],
+    });
+
+    expect((await readRow('bulk-stale'))!.deleted_at).not.toBeNull();
+  });
+
+  it('records readAt as the user time, not the moment the queue drained', async () => {
+    const readAt = Date.now() - 3600_000;
+    await postJson('/api/reading/mark-read', { itemGuid: 'when', updatedAt: readAt });
+
+    const row = await env.DB.prepare(
+      "SELECT props FROM item_labels_cache WHERE user_did = ? AND item_key = 'when' AND label = 'read'"
+    )
+      .bind(TEST_DID)
+      .first<{ props: string }>();
+    expect(JSON.parse(row!.props).readAt).toBe(readAt);
+  });
+
+  it('an omitted timestamp falls back to server now (old clients keep working)', async () => {
+    const before = Date.now();
+    await postJson('/api/reading/mark-read', { itemGuid: 'no-stamp' });
+    const row = await readRow('no-stamp');
+    expect(row!.client_updated_at).toBeGreaterThanOrEqual(before);
   });
 });
