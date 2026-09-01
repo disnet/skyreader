@@ -104,13 +104,13 @@ function createAuthStore() {
       return;
     }
     console.log('Handling unauthorized - clearing session');
-    state.user = null;
-
-    if (browser) {
-      localStorage.removeItem('skyreader-auth');
-      // Redirect to login
-      window.location.href = '/auth/login';
-    }
+    // Do not leave the previous account's IndexedDB rows behind. If this only
+    // removed the auth marker, a later "Start Reading" would adopt those rows
+    // as guest-local data and expose saves (and other private account state) to
+    // whoever is using the logged-out browser.
+    void clearLocalSession().finally(() => {
+      if (browser) window.location.href = '/auth/login';
+    });
   }
 
   // Restore session from localStorage on init
@@ -150,8 +150,12 @@ function createAuthStore() {
     }
   }
 
-  function enterGuestMode() {
+  async function enterGuestMode() {
     if (!browser) return;
+    // Guest storage is intentionally local and unscoped. Establish a clean
+    // ownership boundary before enabling guest mode so stale data from an
+    // expired or otherwise logged-out account can never become guest data.
+    await clearLocalData();
     localStorage.setItem(GUEST_KEY, '1');
     isGuestMode = true;
   }
@@ -193,6 +197,26 @@ function createAuthStore() {
     }
   }
 
+  async function clearLocalData() {
+    if (!browser) return;
+    // Dynamically imported so the IndexedDB layer (Dexie) and background-sync
+    // service stay out of the always-loaded auth chunk.
+    const [{ clearAllData }, { unregisterPeriodicSync }] = await Promise.all([
+      import('$lib/services/db'),
+      import('$lib/services/backgroundRefresh'),
+    ]);
+    await clearAllData();
+    await unregisterPeriodicSync();
+  }
+
+  async function clearLocalSession() {
+    state.user = null;
+    if (browser) {
+      localStorage.removeItem('skyreader-auth');
+      await clearLocalData();
+    }
+  }
+
   async function logout() {
     try {
       await api.logout();
@@ -200,22 +224,7 @@ function createAuthStore() {
       // Ignore logout errors
     }
 
-    state.user = null;
-
-    if (browser) {
-      localStorage.removeItem('skyreader-auth');
-      // Dynamically imported so the IndexedDB layer (Dexie) and background-sync
-      // service stay out of the always-loaded auth chunk — they're only needed
-      // here, at logout. Keeping them lazy is what lets the logged-out landing
-      // page avoid downloading the app's data layer.
-      const [{ clearAllData }, { unregisterPeriodicSync }] = await Promise.all([
-        import('$lib/services/db'),
-        import('$lib/services/backgroundRefresh'),
-      ]);
-      await clearAllData();
-      // Unregister from periodic background sync
-      await unregisterPeriodicSync();
-    }
+    await clearLocalSession();
   }
 
   // Verify session is still valid by calling the backend
@@ -230,10 +239,11 @@ function createAuthStore() {
       }
 
       // Session invalid - clear local state
-      state.user = null;
-      if (browser) {
-        localStorage.removeItem('skyreader-auth');
-      }
+      // A real guest may encounter a stray session probe; its local library is
+      // the source of truth and must survive. Any non-guest session failure,
+      // however, must clear the account-owned cache before logged-out use.
+      if (isGuestMode && !state.user) return false;
+      await clearLocalSession();
       return false;
     }
   }

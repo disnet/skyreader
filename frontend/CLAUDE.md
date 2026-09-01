@@ -110,7 +110,8 @@ returning zero rows, and the product is calm.
 ### Guest reading mode
 
 "Start Reading" on the landing page drops a visitor into the real reader with no account:
-`auth.enterGuestMode()` sets a reactive signal (backed by the `skyreader-guest` localStorage key),
+`auth.enterGuestMode()` first clears any prior account's unscoped Dexie cache, then sets a reactive
+signal (backed by the `skyreader-guest` localStorage key),
 the curated starter channels are seeded into Dexie, and every write stays local — the subscription
 store skips its backend calls, and `itemLabels` and `savesStore` behave exactly as they do offline
 (write locally, queue), so the sync queue that accumulates IS the migration on sign-in: read state

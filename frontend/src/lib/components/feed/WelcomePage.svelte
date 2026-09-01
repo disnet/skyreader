@@ -27,7 +27,7 @@
       const { subscriptionsStore } = await import('$lib/stores/subscriptions.svelte');
 
       // Before addBulk: the store reads this to keep the writes local.
-      auth.enterGuestMode();
+      await auth.enterGuestMode();
       const result = await subscriptionsStore.addBulk(feeds);
       // addBulk never throws — it collects per-feed problems. Nothing landing at
       // all means the local database is unavailable (a locked-down private
