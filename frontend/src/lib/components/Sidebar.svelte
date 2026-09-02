@@ -261,6 +261,25 @@
   function handleBackdropClick() {
     sidebarStore.closeMobile();
   }
+
+  // Leaving takes the local library with it (see auth.leaveGuestMode), so say so
+  // plainly and point at the non-destructive exit first.
+  async function handleLeaveGuestMode() {
+    if (
+      !confirm(
+        'Leave guest mode?\n\nEverything saved on this device (feeds, saved articles, highlights) is deleted. Sign in first to keep it.'
+      )
+    ) {
+      return;
+    }
+    sidebarStore.closeMobile();
+    await auth.leaveGuestMode();
+    // A hard navigation, not goto: the local database this app shell is reading
+    // has just been wiped, so booting the landing page fresh is both what we
+    // want and the only way to avoid a frame of the reader rendering against
+    // torn-down stores in the logged-out chrome.
+    window.location.href = '/';
+  }
 </script>
 
 <!-- Mobile backdrop -->
@@ -538,6 +557,14 @@
         <span class="nav-icon"><Icon name="user" /></span>
         <span class="nav-label">Sign in to sync</span>
       </a>
+      <!-- The way out. Without it guest mode is a one-way door: every reading
+           surface is a guest surface and `/` bounces a guest back into the
+           reader, so there is no route back to the landing page. Sits below
+           sign-in because signing in is the exit that keeps the library. -->
+      <button class="nav-item nav-link" onclick={handleLeaveGuestMode}>
+        <span class="nav-icon"><Icon name="log-out" /></span>
+        <span class="nav-label">Leave guest mode</span>
+      </button>
     {:else}
       <a
         href="/settings"

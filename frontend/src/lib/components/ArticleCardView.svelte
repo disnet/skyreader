@@ -95,6 +95,7 @@
     onFollowSource,
     onSelectFilter,
     onOpenStream,
+    onNearViewport,
     onRetryStream,
     onCreateInLane,
     onComposeShare,
@@ -190,9 +191,40 @@
   // Are the Discussion lanes rendered? Gated on the toggle plus having lanes to
   // show.
   let panelOpen = $derived(atmosphereOpen && laneRow.length > 0);
+
+  // Tell the container when this card is on its way onto the screen, so the
+  // Discussion counts are fetched for the cards a reader actually reaches rather
+  // than every card the list renders. One shot: once seen, always counted.
+  function nearViewport(node: HTMLElement) {
+    if (typeof IntersectionObserver === 'undefined') {
+      onNearViewport?.();
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          onNearViewport?.();
+          observer.disconnect();
+        }
+      },
+      // Against the pane, not the window: above the shell breakpoint the list
+      // scrolls inside a framed card, and a card scrolled out of that card's
+      // overflow is clipped before a viewport-rooted rootMargin can widen
+      // anything — the margin would buy no lead time at all. Null (mobile) is
+      // the viewport, which is the scroller there.
+      { root: appScrollElement(), rootMargin: '600px 0px' }
+    );
+    observer.observe(node);
+    return {
+      destroy() {
+        observer.disconnect();
+      },
+    };
+  }
 </script>
 
 <article
+  use:nearViewport
   class="article-item"
   class:read={isRead}
   class:selected

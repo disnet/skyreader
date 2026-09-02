@@ -211,6 +211,12 @@ const LABEL_UPSERT_CONFLICT = `ON CONFLICT(user_did, item_key, label) DO UPDATE 
  *   - a tombstoned row contributes nothing (`deleted_at IS NULL`), so merging
  *     never resurrects highlights the reader deleted.
  *
+ * The anti-join is `NOT EXISTS` with `IS` rather than `NOT IN`, because `NOT IN`
+ * over a subquery containing a NULL is NULL for every row: one incoming
+ * highlight without an `id` would drop the reader's ENTIRE stored array. The
+ * handler also rejects id-less elements outright, so this is the second of two
+ * locks on the one path written to prevent silent data loss.
+ *
  * `updated_at` still advances, so the forward delta re-delivers the merged row
  * to every other device.
  */
@@ -219,11 +225,13 @@ const MERGE_HIGHLIGHTS_CONFLICT = `ON CONFLICT(user_did, item_key, label) DO UPD
            SELECT json_group_array(json(value)) FROM (
              SELECT value FROM json_each(json_extract(excluded.props, '$.highlights'))
              UNION ALL
-             SELECT value FROM json_each(json_extract(item_labels_cache.props, '$.highlights'))
+             SELECT value FROM json_each(json_extract(item_labels_cache.props, '$.highlights')) AS kept
               WHERE item_labels_cache.deleted_at IS NULL
-                AND json_extract(value, '$.id') NOT IN (
-                  SELECT json_extract(value, '$.id')
-                    FROM json_each(json_extract(excluded.props, '$.highlights')))
+                AND NOT EXISTS (
+                  SELECT 1
+                    FROM json_each(json_extract(excluded.props, '$.highlights')) AS incoming
+                   WHERE json_extract(incoming.value, '$.id') IS
+                         json_extract(kept.value, '$.id'))
            )
          )),
          updated_at = excluded.updated_at,
@@ -273,9 +281,28 @@ export async function handleAddLabel(request: Request, env: Env): Promise<Respon
       headers: { 'Content-Type': 'application/json' },
     });
   }
-  if (merge && !Array.isArray((props as { highlights?: unknown } | undefined)?.highlights)) {
+  const mergeHighlights = (props as { highlights?: unknown } | undefined)?.highlights;
+  if (merge && !Array.isArray(mergeHighlights)) {
     return new Response(
       JSON.stringify({ error: "mode 'merge' requires props.highlights to be an array" }),
+      { status: 400, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+  // The union is BY ID, so an element without one has no defined behaviour on
+  // either side of the merge — and an id-less element is exactly what would make
+  // the anti-join drop everything already stored. Refuse the write instead.
+  if (
+    merge &&
+    (mergeHighlights as unknown[]).some(
+      (highlight) =>
+        typeof highlight !== 'object' ||
+        highlight === null ||
+        typeof (highlight as { id?: unknown }).id !== 'string' ||
+        !(highlight as { id: string }).id
+    )
+  ) {
+    return new Response(
+      JSON.stringify({ error: "mode 'merge' requires every highlight to carry a string id" }),
       { status: 400, headers: { 'Content-Type': 'application/json' } }
     );
   }

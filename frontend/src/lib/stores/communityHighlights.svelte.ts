@@ -34,8 +34,12 @@ function createStore() {
     const old = cache.get(key);
     if (old?.loaded || inFlight.has(key) || (old?.failed && !options?.force)) return;
     set(key, { loading: true, loaded: false, failed: false, capped: false, groups: [] });
-    const promise = api
-      .fetchCommunityHighlights(url)
+    // Same public answer either way; a guest has no session for the /api/v2
+    // path, and calling it without one 401s and drags the client through a
+    // /api/auth/me probe that logs a logout which never happens.
+    const promise = (
+      auth.user ? api.fetchCommunityHighlights(url) : api.fetchGuestCommunityHighlights(url)
+    )
       .then((res) => {
         const ownDid = auth.user?.did;
         const merged = new Map<string, CommunityHighlightGroup>();

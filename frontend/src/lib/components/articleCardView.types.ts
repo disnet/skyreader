@@ -256,6 +256,12 @@ export interface ArticleCardViewProps {
   onSelectFilter?: (id: DiscussionFilterId) => void;
   /** Opening Discussion is what starts resolving the people in it. */
   onOpenStream?: () => void;
+  /**
+   * The card has come near the viewport. The Discussion badge's counts are
+   * fetched per URL, so a feed that fired on mount paid for every card it
+   * rendered rather than every card anyone saw.
+   */
+  onNearViewport?: () => void;
   onRetryStream?: () => void;
   onCreateInLane?: (id: LaneId) => void;
   /** Open the share composer (drafting; resumes an existing draft). */

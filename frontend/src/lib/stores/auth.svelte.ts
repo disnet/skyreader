@@ -1,5 +1,5 @@
 import { browser } from '$app/environment';
-import { api, OfflineError, SessionRefreshError } from '$lib/services/api';
+import { api, OfflineError, SessionExpiredError, SessionRefreshError } from '$lib/services/api';
 import type { User } from '$lib/types';
 
 interface AuthState {
@@ -108,7 +108,7 @@ function createAuthStore() {
     // removed the auth marker, a later "Start Reading" would adopt those rows
     // as guest-local data and expose saves (and other private account state) to
     // whoever is using the logged-out browser.
-    void clearLocalSession().finally(() => {
+    void clearLocalSession({ hold: true }).finally(() => {
       if (browser) window.location.href = '/auth/login';
     });
   }
@@ -140,6 +140,7 @@ function createAuthStore() {
   // Set user after successful authentication
   // Session is managed via HTTP-only cookies
   function setUser(user: User) {
+    const previousDid = state.user?.did;
     state.user = user;
     state.error = null;
 
@@ -147,6 +148,16 @@ function createAuthStore() {
       // Store only user info for display caching (session is in HTTP-only cookie)
       localStorage.setItem('skyreader-auth', JSON.stringify({ user }));
       rememberLastUser(user);
+      // Hand back the writes an expired session parked (see clearLocalSession),
+      // but only to the account that made them; anything held for a different
+      // DID is dropped here rather than lingering. Skipped on the no-op
+      // re-confirmation of an already-live session so a normal focus check
+      // doesn't re-queue anything.
+      if (previousDid !== user.did) {
+        void import('$lib/services/db').then(({ releaseHeldSyncQueue }) =>
+          releaseHeldSyncQueue(user.did)
+        );
+      }
     }
   }
 
@@ -165,6 +176,21 @@ function createAuthStore() {
     localStorage.removeItem(GUEST_KEY);
     localStorage.removeItem(GUEST_STARTER_KEY);
     isGuestMode = false;
+  }
+
+  // A guest's way out, and the counterpart of logout(): guest mode is otherwise
+  // a one-way door, since every reading surface is a guest surface and `/`
+  // bounces a guest back into the reader.
+  //
+  // It clears the local library on the way out for the same reason
+  // enterGuestMode clears it on the way in — guest rows belong to no account,
+  // and leaving them in IndexedDB would hand them to whoever signs in next
+  // (migrateGuestSubscriptions only runs while the guest marker is still set).
+  // Destructive, so callers confirm first.
+  async function leaveGuestMode() {
+    if (!browser) return;
+    await clearLocalData();
+    exitGuestMode();
   }
 
   // Record which local subscriptions came from the curated starter channels
@@ -197,7 +223,7 @@ function createAuthStore() {
     }
   }
 
-  async function clearLocalData() {
+  async function clearLocalData(options?: { holdSyncQueueFor?: string }) {
     if (!browser) return;
     // Dynamically imported so the IndexedDB layer (Dexie) and background-sync
     // service stay out of the always-loaded auth chunk.
@@ -205,15 +231,22 @@ function createAuthStore() {
       import('$lib/services/db'),
       import('$lib/services/backgroundRefresh'),
     ]);
-    await clearAllData();
+    await clearAllData(options);
     await unregisterPeriodicSync();
   }
 
-  async function clearLocalSession() {
+  // `hold`: an INVOLUNTARY teardown (the session expired under us). The reader
+  // never asked to log out, so their unsynced writes — an offline highlight, a
+  // save, a read position — must not be collateral. Held entries are parked
+  // against the departing DID: inert for everyone (guests included) until that
+  // same account signs back in. An explicit logout does NOT hold, because there
+  // the reader IS asking for their data to be off this browser.
+  async function clearLocalSession(options?: { hold?: boolean }) {
+    const owner = options?.hold ? state.user?.did : undefined;
     state.user = null;
     if (browser) {
       localStorage.removeItem('skyreader-auth');
-      await clearLocalData();
+      await clearLocalData(owner ? { holdSyncQueueFor: owner } : undefined);
     }
   }
 
@@ -234,16 +267,22 @@ function createAuthStore() {
       setUser(user);
       return true;
     } catch (error) {
-      if (error instanceof OfflineError || error instanceof SessionRefreshError) {
+      // Only a CONFIRMED 401 (the backend agreed the session is gone) may tear
+      // down local state. Everything else — offline, a mid-refresh 503, an
+      // unconfirmed 401, a raw `TypeError: Failed to fetch` from a backend blip
+      // or captive portal, a 500 — is transient. verifySession runs on every
+      // window focus and polls during supporter checkout, so treating those as
+      // a logout would wipe a reader's whole cached library over a few seconds
+      // of bad network.
+      if (!(error instanceof SessionExpiredError)) {
         return !!state.user;
       }
 
-      // Session invalid - clear local state
       // A real guest may encounter a stray session probe; its local library is
       // the source of truth and must survive. Any non-guest session failure,
       // however, must clear the account-owned cache before logged-out use.
       if (isGuestMode && !state.user) return false;
-      await clearLocalSession();
+      await clearLocalSession({ hold: true });
       return false;
     }
   }
@@ -293,6 +332,7 @@ function createAuthStore() {
     cacheUser,
     enterGuestMode,
     exitGuestMode,
+    leaveGuestMode,
     rememberStarterRkeys,
     starterRkeys,
     verifySession,

@@ -20,6 +20,9 @@ import {
 import { handleIngest, handleCrawlSet, handleFeedHealth } from './routes/ingest';
 import { handleTimeline } from './routes/timeline';
 import {
+  handleGuestMarginHighlights,
+  handleGuestMentionLane,
+  handleGuestMentions,
   handleGuestStarterFeeds,
   handleGuestTimeline,
 } from './routes/guest';
@@ -318,6 +321,17 @@ async function route(
       break;
     case url.pathname === '/api/guest/timeline':
       response = await handleGuestTimeline(request, env);
+      break;
+    // The discussion's read path, session-free (routes/guest.ts). Same handlers
+    // as the /api/v2 twins below, answering from public Atmosphere data.
+    case url.pathname === '/api/guest/mentions':
+      response = await handleGuestMentions(request, env);
+      break;
+    case url.pathname === '/api/guest/mention-lane':
+      response = await handleGuestMentionLane(request, env);
+      break;
+    case url.pathname === '/api/guest/margin-highlights':
+      response = await handleGuestMarginHighlights(request, env);
       break;
     // Test-only D1 exec endpoint (e2e seed/cleanup). Mounted only when
     // E2E_TEST_MODE is set, so it's unreachable in production.

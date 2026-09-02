@@ -536,4 +536,66 @@ describe("POST /api/labels mode: 'merge' (highlights)", () => {
     });
     expect(status).toBe(400);
   });
+
+  // The union is by id, so an element without one has no defined behaviour —
+  // and it used to be catastrophic: `NOT IN (… NULL)` is NULL for every row, so
+  // one id-less incoming highlight silently dropped the reader's ENTIRE stored
+  // array, on the one path written to prevent silent data loss.
+  it.each([
+    ['no id at all', { selector: { exact: 'x' } }],
+    ['a non-string id', { id: 7, selector: { exact: 'x' } }],
+    ['an empty id', { id: '', selector: { exact: 'x' } }],
+    ['not an object', 'just a string'],
+  ])('refuses a merge carrying a highlight with %s', async (_label, bad) => {
+    const now = Date.now();
+    await write('idless', [hl('account-1'), hl('account-2')], now);
+
+    expect(await write('idless', [hl('guest-1'), bad], now, 'merge')).toBe(400);
+    expect((await readHighlights('idless')).ids).toEqual(['account-1', 'account-2']);
+  });
+
+  // Belt and braces: even if such a write ever reached the SQL, the anti-join
+  // is NULL-safe and keeps everything already stored.
+  it('keeps the stored array when an id-less highlight reaches the merge SQL', async () => {
+    const now = Date.now();
+    await write('idless-sql', [hl('account-1'), hl('same')], now);
+
+    await env.DB.prepare(
+      `INSERT INTO item_labels_cache (user_did, item_key, item_type, label, props, rkey, created_at, updated_at, client_updated_at)
+       VALUES (?, 'idless-sql', 'article', 'highlights', ?, 'rkeyxxxxxxxxx', unixepoch(), unixepoch(), ?)
+       ON CONFLICT(user_did, item_key, label) DO UPDATE SET
+         props = json_object('highlights', (
+           SELECT json_group_array(json(value)) FROM (
+             SELECT value FROM json_each(json_extract(excluded.props, '$.highlights'))
+             UNION ALL
+             SELECT value FROM json_each(json_extract(item_labels_cache.props, '$.highlights')) AS kept
+              WHERE item_labels_cache.deleted_at IS NULL
+                AND NOT EXISTS (
+                  SELECT 1
+                    FROM json_each(json_extract(excluded.props, '$.highlights')) AS incoming
+                   WHERE json_extract(incoming.value, '$.id') IS
+                         json_extract(kept.value, '$.id'))
+           )
+         )),
+         updated_at = excluded.updated_at,
+         client_updated_at = MAX(excluded.client_updated_at, COALESCE(item_labels_cache.client_updated_at, 0)),
+         deleted_at = NULL`
+    )
+      .bind(
+        TEST_DID,
+        JSON.stringify({ highlights: [{ selector: { exact: 'no id' } }] }),
+        now - 1000
+      )
+      .run();
+
+    // Both stored highlights survive alongside the id-less incoming one; before
+    // the NULL-safe anti-join, the stored array was wiped out entirely.
+    const { raw } = await readHighlights('idless-sql');
+    expect(
+      raw
+        .map((h) => h.id)
+        .filter(Boolean)
+        .sort()
+    ).toEqual(['account-1', 'same']);
+  });
 });

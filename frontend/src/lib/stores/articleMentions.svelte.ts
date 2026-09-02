@@ -15,6 +15,7 @@
 // retried a couple times shortly after.
 
 import { api } from '$lib/services/api';
+import { auth } from '$lib/stores/auth.svelte';
 import type { ArticleMentions } from '$lib/types';
 
 const FLUSH_DELAY_MS = 80;
@@ -70,10 +71,16 @@ function createArticleMentionsStore() {
       const docUris = Object.fromEntries(
         batch.filter((entry): entry is [string, string] => Boolean(entry[1]))
       );
-      const res = await api.fetchArticleMentions(
-        urls,
-        Object.keys(docUris).length ? docUris : undefined
-      );
+      // Same answer either way (the breakdown is public Atmosphere data), but
+      // the /api/v2 path is session-gated: calling it without one 401s, and the
+      // api client answers a 401 by probing /api/auth/me, which 401s too and
+      // logs a logout that never happens. Cards mount only once auth has
+      // resolved (the layout holds them behind isLoading), so this reads a
+      // settled value.
+      const withDocUris = Object.keys(docUris).length ? docUris : undefined;
+      const res = auth.user
+        ? await api.fetchArticleMentions(urls, withDocUris)
+        : await api.fetchGuestArticleMentions(urls, withDocUris);
       const next = new Map(cache);
       for (const item of res.items ?? []) {
         // Re-insert at the tail so a just-seen URL counts as freshest for the

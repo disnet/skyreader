@@ -325,6 +325,44 @@ describe('guest reading mode (unauthenticated archive reads)', () => {
       expect(next.hasMore).toBe(false);
     });
 
+    // A D1 Time Travel restore rewinds feed_items.seq while items_generation
+    // comes back unchanged, so a stored cursor ends up above the head and
+    // `seq > ?` returns nothing forever. A guest has no other sync path to heal
+    // from, so the empty page has to fall back to a cold start.
+    it('cold-starts when the cursor is above a rewound archive head', async () => {
+      await seed(FEED_A, ['a1', 'a2']);
+      const head = await env.DB.prepare('SELECT MAX(seq) AS seq FROM feed_items').first<{
+        seq: number;
+      }>();
+
+      const page = await timeline({
+        feedUrls: [FEED_A],
+        since_seq: head!.seq + 5000,
+        generation: await generation(),
+      });
+
+      expect(page.coldStart).toBe(true);
+      expect(page.items.map((i) => i.guid).sort()).toEqual(['a1', 'a2']);
+      expect(page.cursor).toBe(head!.seq);
+    });
+
+    // The guard costs a MAX(seq) only on an empty page, and must never fire on
+    // the ordinary "nothing new since last poll" case.
+    it('stays incremental on an empty page below the head', async () => {
+      await seed(FEED_A, ['a1']);
+      const cold = await timeline({ feedUrls: [FEED_A] });
+
+      const page = await timeline({
+        feedUrls: [FEED_A],
+        since_seq: cold.cursor,
+        generation: cold.generation,
+      });
+
+      expect(page.coldStart).toBe(false);
+      expect(page.items).toEqual([]);
+      expect(page.cursor).toBe(cold.cursor);
+    });
+
     it('excludes items from feeds outside the supplied list', async () => {
       await seed(FEED_A, ['a1']);
       await seed(FEED_B, ['b1']);

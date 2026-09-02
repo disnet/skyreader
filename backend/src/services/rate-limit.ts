@@ -35,6 +35,16 @@ const RATE_LIMITS: Record<string, RateLimitConfig> = {
   // Nothing unauthenticated writes to the archive — adding a feed needs an
   // account (routes/guest.ts).
   '/api/guest/timeline': { limit: 60, windowMs: 60000 },
+  // The discussion's read path for a guest, also keyed by IP. Counts are batched
+  // (up to 50 URLs a call, debounced), so a scrolling session spends a handful a
+  // minute. Resolving the people is per (article, lane) and fires for every
+  // populated lane when a discussion comes on screen — roughly six a read — so
+  // it gets the higher of the two.
+  '/api/guest/mentions': { limit: 60, windowMs: 60000 },
+  '/api/guest/mention-lane': { limit: 120, windowMs: 60000 },
+  // Community highlights, one call per article opened (and a re-render or two),
+  // answered from the proxy's cache. Poll-sized like the counts above.
+  '/api/guest/margin-highlights': { limit: 60, windowMs: 60000 },
 
   // Expensive operations (external API calls, complex queries)
   '/api/social/feed': EXPENSIVE_LIMIT,

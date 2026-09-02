@@ -1,7 +1,8 @@
 import type { Env, FeedItem } from '../types';
 import { STARTER_CHANNELS } from '../config/starter-feeds';
 import { checkRateLimit } from '../services/rate-limit';
-import { readArchiveState } from './timeline';
+import { handleV2Mentions, handleV2MentionLane, handleV2MarginHighlights } from './feeds-v2';
+import { archiveHead, readArchiveState } from './timeline';
 import { timedAll, timedBatch } from '../utils/d1-timing';
 import { log } from '../utils/logger';
 
@@ -129,8 +130,8 @@ export async function handleGuestTimeline(request: Request, env: Env): Promise<R
     ? Math.min(Math.max(parsedLimit, 1), MAX_LIMIT)
     : MAX_LIMIT;
   const since = Number(body.since_seq);
-  const incremental = Number.isInteger(since) && since >= 0 && body.generation === generation;
-  let page: GuestRow[];
+  let incremental = Number.isInteger(since) && since >= 0 && body.generation === generation;
+  let page: GuestRow[] = [];
   let hasMore = false;
   let nextColdOffset: number | undefined;
 
@@ -144,7 +145,23 @@ export async function handleGuestTimeline(request: Request, env: Env): Promise<R
     );
     hasMore = result.results.length > pageLimit;
     page = result.results.slice(0, pageLimit);
-  } else {
+
+    // Rewound-archive guard, the guest twin of the authed one in timeline.ts. A
+    // Time Travel restore rewinds `feed_items.seq` while `items_generation`
+    // comes back unchanged, so every stored cursor sits above the head and
+    // `seq > ?` returns nothing on every poll from here on. A guest has no
+    // second sync path to self-heal from, so fall through to a cold start.
+    // Costs a MAX(seq) only on an otherwise empty page.
+    if (page.length === 0 && since > (await archiveHead(env))) {
+      log.warn('guest_timeline_rewound', { since });
+      incremental = false;
+      hasMore = false;
+    }
+  }
+
+  // Cold start: no usable cursor, a generation mismatch, a rewound archive — or
+  // no feeds at all, which the incremental query above skips.
+  if (!incremental || !feedUrls.length) {
     const offset = Number.isInteger(Number(body.cold_offset))
       ? Math.max(Number(body.cold_offset), 0)
       : 0;
@@ -181,4 +198,43 @@ export async function handleGuestTimeline(request: Request, env: Env): Promise<R
     coldStart: !incremental,
     healthRev,
   });
+}
+
+/**
+ * POST /api/guest/mentions and /api/guest/mention-lane
+ *
+ * The discussion section's read path, without a session. Who across the
+ * Atmosphere referenced this URL (counts per lane), and who they are (the
+ * records themselves). Both answer from public data — Constellation's index of
+ * public repos, through the proxy's cache — so there is nothing here an account
+ * unlocks, and an empty discussion under every article was the only thing
+ * gating it bought.
+ *
+ * The `/api/v2` twins are the same handlers behind a session check; these add
+ * the per-IP limit that the authenticated path gets for free from its per-DID
+ * one (index.ts rate-limits by `session.did`, which an anonymous caller has no
+ * equivalent of). Writing to a lane stays account-only, as it must: every one
+ * of those writes a record to the reader's own repo.
+ */
+export async function handleGuestMentions(request: Request, env: Env): Promise<Response> {
+  const limited = await guestRateLimit(request, env, '/api/guest/mentions');
+  return limited ?? handleV2Mentions(request, env);
+}
+
+export async function handleGuestMentionLane(request: Request, env: Env): Promise<Response> {
+  const limited = await guestRateLimit(request, env, '/api/guest/mention-lane');
+  return limited ?? handleV2MentionLane(request, env);
+}
+
+/**
+ * POST /api/guest/margin-highlights
+ *
+ * The community highlights an article carries: what other readers marked in it,
+ * from Margin's public records through the proxy's cache. Public data, same as
+ * the two above — the session check on the `/api/v2` twin bought nothing except
+ * an unhighlighted page for a guest, and a 401 on the way there.
+ */
+export async function handleGuestMarginHighlights(request: Request, env: Env): Promise<Response> {
+  const limited = await guestRateLimit(request, env, '/api/guest/margin-highlights');
+  return limited ?? handleV2MarginHighlights(request, env);
 }
