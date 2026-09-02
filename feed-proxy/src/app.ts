@@ -1262,7 +1262,13 @@ async function runDiscover(siteUrl: string): Promise<DiscoverResult> {
           const baseUrl = new URL(siteUrl);
           feedUrl = new URL(feedUrl, baseUrl).toString();
         }
-        feeds.push(feedUrl);
+        // Dedup after resolving: a site that serves one file under both the RSS
+        // and Atom link tags (brennan.day advertises feed.xml as both) would
+        // otherwise offer the reader the same URL twice with nothing to choose
+        // between. Relative and absolute spellings of one href collapse here too.
+        if (!feeds.includes(feedUrl)) {
+          feeds.push(feedUrl);
+        }
       }
     }
 

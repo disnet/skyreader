@@ -80,6 +80,11 @@ async function callerSubscribes(env: Env, userDid: string, feedUrl: string): Pro
 // a generic one.
 const FEED_FETCH_FALLBACK_ERROR = 'Failed to fetch feed';
 
+// How many of a page's advertised standard.site hints URL discovery will try
+// before giving up. The proxy already caps what it reports at 5; this bounds the
+// serial resolve work behind one /discover call.
+const MAX_STANDARD_SITE_ATTEMPTS = 3;
+
 /**
  * The queryable half of a `FeedProxyError`, for a log line. `serializeError`
  * covers name/message/stack; these are the fields that say WHICH failure it was
@@ -1092,13 +1097,21 @@ export async function handleV2FeedDiscover(request: Request, env: Env): Promise<
     const client = new FeedProxyClient(env);
     const { feeds, standardSites } = await client.discoverFeeds(siteUrl);
 
-    // Resolve + verify the first advertised standard.site into a subscribable
+    // Resolve + verify an advertised standard.site into a subscribable
     // publication (the HTML <link> is only a hint; resolveStandardSite confirms it
     // via the domain's .well-known endpoint). Preferred over RSS/Atom in the UI.
+    //
+    // Try the hints in the order the page listed them and keep the first that
+    // resolves, rather than giving up after one: an article page commonly
+    // advertises its document *and* its publication, and either alone may fail to
+    // resolve (an unpublished document record, a publication whose binding is
+    // broken). Bounded so a page full of at:// links can't fan out — each attempt
+    // is a DID resolve plus two fetches.
     let standardSite = null;
-    if (standardSites.length > 0) {
+    for (const uri of standardSites.slice(0, MAX_STANDARD_SITE_ATTEMPTS)) {
       try {
-        standardSite = await resolveStandardSite(standardSites[0], env);
+        standardSite = await resolveStandardSite(uri, env);
+        if (standardSite) break;
       } catch (error) {
         console.error('Standard.site resolution error:', error);
       }

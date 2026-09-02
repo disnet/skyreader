@@ -2179,6 +2179,37 @@ describe('Integration Tests', () => {
         expect(json.feeds).toContain('https://example.com/atom.xml');
       });
 
+      it('reports one feed when the RSS and Atom links point at the same file', async () => {
+        const { app } = createTestApp();
+        // brennan.day advertises feed.xml under both types, once relative and
+        // once absolute. Offering it twice asks the reader to pick between two
+        // identical rows.
+        const html = `
+					<!DOCTYPE html>
+					<html>
+					<head>
+						<link rel="alternate" type="application/rss+xml" href="https://example.com/feed.xml" title="RSS Feed">
+						<link rel="alternate" type="application/atom+xml" href="/feed.xml" title="Atom Feed">
+					</head>
+					<body>Hello</body>
+					</html>
+				`;
+        fetchMock = mockFetch(
+          () =>
+            new Response(html, {
+              headers: { 'Content-Type': 'text/html' },
+            })
+        );
+
+        const res = await app.request('/discover?url=https://example.com/', {
+          headers: { 'X-Proxy-Secret': 'test-secret' },
+        });
+        const json = await res.json();
+
+        expect(res.status).toBe(200);
+        expect(json.feeds).toEqual(['https://example.com/feed.xml']);
+      });
+
       it('detects standard.site advertisements in HTML', async () => {
         const { app } = createTestApp();
         const html = `
