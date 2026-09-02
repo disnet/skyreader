@@ -10,6 +10,7 @@
  */
 
 import type { Env } from '../types';
+import { resolveHandle } from '../services/oauth';
 import { resolvePdsUrl } from './did-resolver';
 
 interface ParsedAtUri {
@@ -44,10 +45,11 @@ function resolveBlobUrl(did: string, blob: BlobRef | undefined): string | null {
 }
 
 /**
- * Parse an AT URI into its components
- * Format: at://did/collection/rkey
+ * Split an AT URI into authority / collection / rkey without requiring the
+ * authority to be a DID. An at:// URI may be written with either a DID or a
+ * handle as its authority; both spell the same record.
  */
-export function parseAtUri(uri: string): ParsedAtUri | null {
+function splitAtUri(uri: string): { authority: string; collection: string; rkey: string } | null {
   if (!uri.startsWith('at://')) {
     return null;
   }
@@ -59,15 +61,85 @@ export function parseAtUri(uri: string): ParsedAtUri | null {
     return null;
   }
 
-  const did = parts[0];
+  const authority = parts[0];
   const collection = parts[1];
   const rkey = parts.slice(2).join('/'); // rkey might contain slashes
 
-  if (!did.startsWith('did:')) {
+  if (!authority || !collection || !rkey) {
     return null;
   }
 
-  return { did, collection, rkey };
+  return { authority, collection, rkey };
+}
+
+/**
+ * Parse an AT URI into its components
+ * Format: at://did/collection/rkey
+ */
+export function parseAtUri(uri: string): ParsedAtUri | null {
+  const parts = splitAtUri(uri);
+
+  if (!parts || !parts.authority.startsWith('did:')) {
+    return null;
+  }
+
+  return { did: parts.authority, collection: parts.collection, rkey: parts.rkey };
+}
+
+/**
+ * A handle authority we're willing to resolve, applying the same shape rules the
+ * did:web SSRF guard uses: a bare public domain, no port, no IP literal, no
+ * internal TLD. The authority arrives from a third-party page's <link> hint, so
+ * it must not be able to point a fetch at internal infrastructure.
+ */
+function isResolvableHandle(authority: string): boolean {
+  const host = authority.toLowerCase();
+  if (host.includes(':') || host.includes('@') || host.includes('%')) return false;
+  if (host === 'localhost' || host.endsWith('.localhost')) return false;
+  if (host.endsWith('.local') || host.endsWith('.internal') || host.endsWith('.lan')) return false;
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return false; // IPv4 literal
+  return /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(host);
+}
+
+/**
+ * Parse an AT URI, resolving a handle authority to its DID.
+ *
+ * standard.site publishers write these URIs both ways — brennan.day advertises
+ * `at://brennan.day/site.standard.publication/self` in its HTML and .well-known
+ * while its document records point at the did:plc spelling of the same record —
+ * so a discovery path that only accepted DIDs silently dropped half of them.
+ * Returns the DID form, which is what a record fetch and any later comparison
+ * need.
+ */
+async function resolveAtUri(uri: string): Promise<ParsedAtUri | null> {
+  const parts = splitAtUri(uri);
+  if (!parts) {
+    return null;
+  }
+
+  if (parts.authority.startsWith('did:')) {
+    return { did: parts.authority, collection: parts.collection, rkey: parts.rkey };
+  }
+
+  if (!isResolvableHandle(parts.authority)) {
+    return null;
+  }
+
+  try {
+    const did = await resolveHandle(parts.authority);
+    if (!did.startsWith('did:')) {
+      return null;
+    }
+    return { did, collection: parts.collection, rkey: parts.rkey };
+  } catch (error) {
+    console.warn('[canonical-url] Could not resolve at:// handle authority:', error);
+    return null;
+  }
+}
+
+/** Canonical DID-form spelling of a parsed AT URI. */
+function formatAtUri(parsed: ParsedAtUri): string {
+  return `at://${parsed.did}/${parsed.collection}/${parsed.rkey}`;
 }
 
 /**
@@ -128,11 +200,14 @@ export interface ResolvedStandardSite {
  * claim the same publication back via /.well-known/site.standard.publication.
  *
  * Returns true only when the well-known endpoint at `publicationUrl`'s origin
- * returns the `expectedUri` (the publication AT URI we resolved).
+ * names the same record as `expected` (the publication AT URI we resolved).
+ * The comparison is per-component after resolving the advertised URI's
+ * authority, not a string equality: the domain may advertise its publication
+ * with a handle authority while we hold the DID spelling of the same record.
  */
 async function verifyPublicationDomain(
   publicationUrl: string,
-  expectedUri: string
+  expected: ParsedAtUri
 ): Promise<boolean> {
   try {
     const origin = new URL(publicationUrl).origin;
@@ -146,7 +221,16 @@ async function verifyPublicationDomain(
     // The endpoint may return a bare AT URI or a JSON object containing one.
     const body = (await res.text()).trim();
     const advertisedUri = body.match(/at:\/\/[^\s"']+/)?.[0];
-    return advertisedUri === expectedUri;
+    if (!advertisedUri) {
+      return false;
+    }
+    const advertised = await resolveAtUri(advertisedUri);
+    return (
+      advertised !== null &&
+      advertised.did === expected.did &&
+      advertised.collection === expected.collection &&
+      advertised.rkey === expected.rkey
+    );
   } catch (error) {
     console.warn('[canonical-url] Publication domain verification failed:', error);
     return false;
@@ -164,7 +248,7 @@ async function verifyPublicationDomain(
 async function resolveVerifiedPublication(
   publicationUri: string
 ): Promise<ResolvedStandardSite | null> {
-  const pub = parseAtUri(publicationUri);
+  const pub = await resolveAtUri(publicationUri);
   if (!pub || pub.collection !== 'site.standard.publication') {
     return null;
   }
@@ -180,7 +264,7 @@ async function resolveVerifiedPublication(
   }
 
   // Confirm the bidirectional binding before trusting the hint.
-  const verified = await verifyPublicationDomain(record.url, publicationUri);
+  const verified = await verifyPublicationDomain(record.url, pub);
   if (!verified) {
     console.warn(`[canonical-url] Unverified standard.site, not offering: ${publicationUri}`);
     return null;
@@ -188,7 +272,10 @@ async function resolveVerifiedPublication(
 
   return {
     did: pub.did,
-    publicationUri,
+    // Always the DID spelling, whichever way the site wrote the hint — this
+    // becomes the subscription's feedUrl, so it has to be stable across a
+    // handle change and comparable to publication URIs from every other source.
+    publicationUri: formatAtUri(pub),
     name: record.name || record.url,
     url: record.url,
     description: record.description,
@@ -200,7 +287,8 @@ async function resolveVerifiedPublication(
  * Resolve a discovered standard.site URI into a *verified*, subscribable
  * publication.
  *
- * Accepts either of the at:// URIs advertised in a website's <link> hint:
+ * Accepts either of the at:// URIs advertised in a website's <link> hint, with
+ * either a DID or a handle as the authority:
  * - `at://did/site.standard.publication/rkey` (publication homepages) — used
  *   directly.
  * - `at://did/site.standard.document/rkey` (article pages) — the document record
@@ -218,7 +306,7 @@ export async function resolveStandardSite(
   uri: string,
   _env: Env
 ): Promise<ResolvedStandardSite | null> {
-  const parsed = parseAtUri(uri);
+  const parsed = await resolveAtUri(uri);
   if (!parsed) {
     return null;
   }
