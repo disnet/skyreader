@@ -5,15 +5,19 @@
   import { toastStore } from '$lib/stores/toast.svelte';
   import { UrlSaveLimitError } from '$lib/services/api';
   import { saveLimitLine } from '$lib/utils/limitCopy';
+  import { integrationSaveStore } from '$lib/stores/integrationSave.svelte';
 
   interface Props {
     url: string;
     linkText: string;
     anchorRect: DOMRect;
     onClose: () => void;
+    imageUrl?: string;
+    pageUrl?: string;
+    caption?: string;
   }
 
-  let { url, linkText, anchorRect, onClose }: Props = $props();
+  let { url, linkText, anchorRect, onClose, imageUrl, pageUrl, caption }: Props = $props();
 
   let menuEl = $state<HTMLDivElement | null>(null);
   let copyState = $state<'idle' | 'copied'>('idle');
@@ -44,9 +48,20 @@
       });
   }
 
+  function handleSaveImage() {
+    if (!imageUrl) return;
+    integrationSaveStore.openPicker('currents', {
+      url: pageUrl || imageUrl,
+      imageUrl,
+      pageUrl,
+      caption,
+    });
+    onClose();
+  }
+
   async function handleCopy() {
     try {
-      await navigator.clipboard.writeText(url);
+      await navigator.clipboard.writeText(imageUrl || url);
       copyState = 'copied';
       setTimeout(onClose, 600);
     } catch {
@@ -110,17 +125,25 @@
 >
   <div class="link-url">{linkText || url}</div>
   <div class="menu-divider"></div>
+  {#if imageUrl}
+    <button class="menu-item" onclick={handleSaveImage}>
+      <Icon name="bookmark" size={15} />
+      <span>Save image to Currents</span>
+    </button>
+  {/if}
   <button class="menu-item" onclick={handleOpenInNewTab}>
     <Icon name="external-link" size={15} />
     <span>Open in new tab</span>
   </button>
-  <button class="menu-item" onclick={handleSave}>
-    <Icon name="bookmark" size={15} />
-    <span>Add to saved</span>
-  </button>
+  {#if !imageUrl || url !== imageUrl}
+    <button class="menu-item" onclick={handleSave}>
+      <Icon name="bookmark" size={15} />
+      <span>Add to saved</span>
+    </button>
+  {/if}
   <button class="menu-item" onclick={handleCopy}>
     <Icon name="copy" size={15} />
-    <span>{copyState === 'copied' ? 'Copied!' : 'Copy URL'}</span>
+    <span>{copyState === 'copied' ? 'Copied!' : imageUrl ? 'Copy image address' : 'Copy URL'}</span>
   </button>
 </div>
 

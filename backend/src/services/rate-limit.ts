@@ -38,6 +38,7 @@ const RATE_LIMITS: Record<string, RateLimitConfig> = {
   '/api/feeds/discover': EXPENSIVE_LIMIT,
   '/api/leaflet/resolve': EXPENSIVE_LIMIT,
   '/api/extract': EXPENSIVE_LIMIT,
+  '/api/integrations/currents/saves': { limit: 10, windowMs: 60000 },
 
   // AT Intents service-auth pre-verification. Keyed by client IP (not did) and checked
   // BEFORE the signature, since verifying a service-auth JWT triggers an outbound DID

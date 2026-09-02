@@ -110,7 +110,10 @@
   let searching = $derived(searchQuery.trim().length > 0);
   let banded = $derived(!searching && recent.length > 0);
 
-  let integrationName = $derived(integration === 'semble' ? 'Semble' : 'Margin');
+  let integrationName = $derived(
+    { semble: 'Semble', margin: 'Margin', currents: 'Currents' }[integration]
+  );
+  let singleSelect = $derived(integration === 'currents');
 
   // Edit mode = this URL already has a card/note in the user's repo.
   let isEdit = $derived((memberships?.items.length ?? 0) > 0);
@@ -138,7 +141,8 @@
     if (membershipsLoading) return false;
     // Until this settles, the row whose membership IS the user's Saved entry is
     // unknown and must not be editable (or removable through "remove all").
-    if (!saveBackingStore.loaded) return false;
+    if (!singleSelect && !saveBackingStore.loaded) return false;
+    if (singleSelect) return noCollection || selectedUris.size === 1;
     if (isEdit) return changed;
     return noCollection || selectedUris.size > 0;
   });
@@ -172,7 +176,7 @@
    * without counting checkmarks. In edit mode it's the pending diff.
    */
   let summary = $derived.by(() => {
-    if (membershipsLoading || !saveBackingStore.loaded) return '';
+    if (membershipsLoading || (!singleSelect && !saveBackingStore.loaded)) return '';
     if (isEdit) {
       if (!changed) return 'No changes yet';
       const parts: string[] = [];
@@ -188,7 +192,7 @@
   $effect(() => {
     if (open) {
       collectionsStore.loadAndRefresh(integration);
-      saveBackingStore.load();
+      if (!singleSelect) saveBackingStore.load();
       loadMemberships(integration, url);
     } else {
       // Reset picker state when modal closes.
@@ -207,7 +211,7 @@
     memberships = null;
     membershipsFailed = false;
     // No URL, or offline: nothing readable, so stay in create mode.
-    if (!target || (typeof navigator !== 'undefined' && !navigator.onLine)) {
+    if (kind === 'currents' || !target || (typeof navigator !== 'undefined' && !navigator.onLine)) {
       membershipsLoading = false;
       return;
     }
@@ -234,6 +238,11 @@
 
   function toggleCollection(uri: string) {
     if (uri === lockedUri) return;
+    if (singleSelect) {
+      selectedUris = new Set([uri]);
+      noCollection = false;
+      return;
+    }
     const next = new Set(selectedUris);
     if (next.has(uri)) {
       next.delete(uri);
@@ -302,11 +311,11 @@
     class="collection-row"
     class:selected={checked}
     class:locked
-    role="checkbox"
+    role={singleSelect ? 'radio' : 'checkbox'}
     aria-checked={checked}
     aria-disabled={locked}
     onclick={() => toggleCollection(collection.uri)}
-    disabled={!saveBackingStore.loaded}
+    disabled={!singleSelect && !saveBackingStore.loaded}
     type="button"
   >
     <span class="tile" aria-hidden="true">
@@ -439,7 +448,7 @@
         role={isEdit ? undefined : 'checkbox'}
         aria-checked={isEdit ? undefined : noCollection}
         onclick={toggleNoCollection}
-        disabled={!saveBackingStore.loaded}
+        disabled={!singleSelect && !saveBackingStore.loaded}
         type="button"
       >
         <span class="tile tile-none" aria-hidden="true">

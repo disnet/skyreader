@@ -10,7 +10,9 @@ import {
   type IntegrationProvider,
 } from '../services/integration-membership';
 import { SEMBLE_SCOPES, MARGIN_SCOPES } from './auth';
-import { SEMBLE_CONNECTION_SCOPES } from '../config/scopes';
+import { CURRENTS_SCOPES, SEMBLE_CONNECTION_SCOPES } from '../config/scopes';
+import { fetchImageForCurrents, ImageFetchError } from '../services/image-fetch';
+import type { BlobRef } from '../services/pds-client';
 import { listAllRecordsPublic } from '../services/backing/read';
 import { resolvePdsUrl } from '../utils/did-resolver';
 
@@ -20,11 +22,12 @@ import { resolvePdsUrl } from '../utils/did-resolver';
  * every live session, so folding it into the Semble set would break card saves
  * for everyone until they re-authed (see config/scopes.ts).
  */
-export type ScopeGate = 'semble' | 'margin' | 'semble-connections';
+export type ScopeGate = 'semble' | 'margin' | 'currents' | 'semble-connections';
 
 const SCOPE_SETS: Record<ScopeGate, string[]> = {
   semble: SEMBLE_SCOPES,
   margin: MARGIN_SCOPES,
+  currents: CURRENTS_SCOPES,
   'semble-connections': SEMBLE_CONNECTION_SCOPES,
 };
 
@@ -54,6 +57,7 @@ export async function handleIntegrationStatus(request: Request, env: Env): Promi
       scopeStatus: {
         semble: hasIntegrationScopes(session, 'semble'),
         margin: hasIntegrationScopes(session, 'margin'),
+        currents: hasIntegrationScopes(session, 'currents'),
         // Reported separately so a surface can tell "offer the control" from
         // "the control will trip the re-login banner" and say so up front.
         sembleConnections: hasIntegrationScopes(session, 'semble-connections'),
@@ -61,6 +65,85 @@ export async function handleIntegrationStatus(request: Request, env: Env): Promi
     }),
     { headers: { 'Content-Type': 'application/json' } }
   );
+}
+
+export interface CurrentsSaveBody {
+  imageUrl: string;
+  pageUrl?: string;
+  caption?: string;
+  collection?: { uri: string; cid: string };
+}
+
+export function buildCurrentsSaveRecord(
+  body: Omit<CurrentsSaveBody, 'imageUrl'>,
+  content: BlobRef,
+  createdAt: string
+) {
+  const caption = body.caption?.trim();
+  return {
+    $type: 'is.currents.feed.save',
+    content,
+    createdAt,
+    ...(body.collection ? { collection: body.collection } : {}),
+    ...(body.pageUrl ? { originUrl: body.pageUrl } : {}),
+    ...(caption ? { text: caption } : {}),
+  };
+}
+
+export async function handleListCurrentsCollections(request: Request, env: Env): Promise<Response> {
+  const session = await getSessionFromRequest(request, env);
+  if (!session) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+  const gate = checkIntegrationScopes(session, 'currents');
+  if (gate) return gate;
+  const result = await createPDSClient(session).listAllRecords<{
+    name?: string;
+    description?: string;
+    createdAt?: string;
+  }>('is.currents.feed.collection', { maxPages: 5 });
+  if (!result.success) return Response.json({ error: result.error }, { status: 502 });
+  return Response.json({
+    collections: result.data.map(({ uri, cid, value }) => ({
+      uri,
+      cid,
+      name: value.name,
+      description: value.description,
+      createdAt: value.createdAt,
+    })),
+  });
+}
+
+export async function handleCreateCurrentsSave(request: Request, env: Env): Promise<Response> {
+  const session = await getSessionFromRequest(request, env);
+  if (!session) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+  const gate = checkIntegrationScopes(session, 'currents');
+  if (gate) return gate;
+  let body: CurrentsSaveBody;
+  try {
+    body = (await request.json()) as CurrentsSaveBody;
+  } catch {
+    return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
+  }
+  if (!body.imageUrl) return Response.json({ error: 'imageUrl is required' }, { status: 400 });
+  if (body.collection && (!body.collection.uri || !body.collection.cid)) {
+    return Response.json({ error: 'collection requires uri and cid' }, { status: 400 });
+  }
+  try {
+    const image = await fetchImageForCurrents(body.imageUrl);
+    const pds = createPDSClient(session);
+    const uploaded = await pds.uploadBlob(image.bytes, image.contentType);
+    if (!uploaded.success) return Response.json({ error: uploaded.error }, { status: 502 });
+    const rkey = generateTid();
+    const record = buildCurrentsSaveRecord(body, uploaded.data.blob, new Date().toISOString());
+    const saved = await pds.putRecord('is.currents.feed.save', rkey, record);
+    if (!saved.success) return Response.json({ error: saved.error }, { status: 502 });
+    return Response.json({ ...saved.data, rkey }, { status: 201 });
+  } catch (error) {
+    if (error instanceof ImageFetchError) {
+      const status = error.code === 'upstream_failed' ? 502 : 422;
+      return Response.json({ error: error.code, message: error.message }, { status });
+    }
+    throw error;
+  }
 }
 
 /**

@@ -27,6 +27,9 @@ export interface IntegrationSaveTarget {
   description?: string;
   author?: string;
   publishedAt?: string;
+  imageUrl?: string;
+  pageUrl?: string;
+  caption?: string;
 }
 
 export type CollectionChoice = CollectionSelection;
@@ -71,8 +74,40 @@ function createIntegrationSaveStore() {
     if (!data) return;
     target = null;
 
+    const label = { margin: 'Margin', semble: 'Semble', currents: 'Currents' }[integration];
+
+    if (integration === 'currents') {
+      if (!data.imageUrl) return;
+      if (!syncStore.isOnline) {
+        const id = toastStore.add('Currents needs a connection');
+        toastStore.update(id, 'error');
+        return;
+      }
+      const id = toastStore.add('Saving to Currents...');
+      try {
+        await api.createCurrentsSave({
+          imageUrl: data.imageUrl,
+          pageUrl: data.pageUrl ?? data.url,
+          caption: data.caption ?? data.title,
+          collection: collections[0],
+        });
+        toastStore.update(id, 'success', 'Saved to Currents');
+      } catch (err) {
+        if (err instanceof ScopeUpgradeError) {
+          toastStore.update(id, 'error', 'Log in again to grant Currents permissions');
+        } else {
+          console.error('Failed to save to Currents:', err);
+          toastStore.update(
+            id,
+            'error',
+            err instanceof Error ? err.message : "Couldn't save image"
+          );
+        }
+      }
+      return;
+    }
+
     const isMargin = integration === 'margin';
-    const label = isMargin ? 'Margin' : 'Semble';
 
     const payload: IntegrationPayload = {
       type: integration,
@@ -138,6 +173,7 @@ function createIntegrationSaveStore() {
     if (!data) return;
     target = null;
 
+    if (integration === 'currents') return;
     const label = integration === 'margin' ? 'Margin' : 'Semble';
     const id = toastStore.add(`Updating ${label} save...`);
     try {

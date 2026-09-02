@@ -27,6 +27,15 @@ export interface PutRecordResponse {
   cid: string;
 }
 
+export interface BlobRef {
+  $type: 'blob';
+  ref: { $link: string };
+  mimeType: string;
+  size: number;
+}
+
+type RequestBody = { json: unknown } | { bytes: ArrayBuffer; contentType: string };
+
 /**
  * Write operation for applyWrites
  */
@@ -137,7 +146,7 @@ export class PDSClient {
   private async request<T>(
     method: string,
     endpoint: string,
-    body?: unknown
+    body?: RequestBody
   ): Promise<PDSResult<T>> {
     const first = await this.attemptRequest<T>(method, endpoint, body);
     if (!first.staleEndpoint || !this.recovery || this.recoveryAttempted) {
@@ -210,7 +219,7 @@ export class PDSClient {
   private async attemptRequest<T>(
     method: string,
     endpoint: string,
-    body?: unknown
+    body?: RequestBody
   ): Promise<{ result: PDSResult<T>; staleEndpoint: boolean }> {
     // A session whose stored DPoP key isn't a usable private JWK can't sign
     // anything, so there is no request to attempt. Fail closed on one line
@@ -249,14 +258,17 @@ export class PDSClient {
         DPoP: dpopProof,
       };
 
-      if (body) {
-        headers['Content-Type'] = 'application/json';
-      }
+      if (body) headers['Content-Type'] = 'json' in body ? 'application/json' : body.contentType;
+      const requestBody = body
+        ? 'json' in body
+          ? JSON.stringify(body.json)
+          : body.bytes
+        : undefined;
 
       let response = await fetch(url, {
         method,
         headers,
-        body: body ? JSON.stringify(body) : undefined,
+        body: requestBody,
       });
 
       // Handle DPoP nonce requirement
@@ -296,7 +308,7 @@ export class PDSClient {
               ...headers,
               DPoP: dpopProof,
             },
-            body: body ? JSON.stringify(body) : undefined,
+            body: requestBody,
           });
         }
       }
@@ -454,10 +466,19 @@ export class PDSClient {
     record: unknown
   ): Promise<PDSResult<PutRecordResponse>> {
     return this.request<PutRecordResponse>('POST', 'com.atproto.repo.putRecord', {
-      repo: this.session.did,
-      collection,
-      rkey,
-      record,
+      json: {
+        repo: this.session.did,
+        collection,
+        rkey,
+        record,
+      },
+    });
+  }
+
+  async uploadBlob(bytes: ArrayBuffer, contentType: string): Promise<PDSResult<{ blob: BlobRef }>> {
+    return this.request<{ blob: BlobRef }>('POST', 'com.atproto.repo.uploadBlob', {
+      bytes,
+      contentType,
     });
   }
 
@@ -490,9 +511,11 @@ export class PDSClient {
       'POST',
       'com.atproto.repo.deleteRecord',
       {
-        repo: this.session.did,
-        collection,
-        rkey,
+        json: {
+          repo: this.session.did,
+          collection,
+          rkey,
+        },
       }
     );
 
@@ -515,8 +538,10 @@ export class PDSClient {
     }
 
     return this.request<ApplyWritesResponse>('POST', 'com.atproto.repo.applyWrites', {
-      repo: this.session.did,
-      writes,
+      json: {
+        repo: this.session.did,
+        writes,
+      },
     });
   }
 

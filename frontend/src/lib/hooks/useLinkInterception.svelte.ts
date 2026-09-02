@@ -5,6 +5,9 @@ export interface LinkMenuState {
   url: string;
   linkText: string;
   anchorRect: DOMRect;
+  imageUrl?: string;
+  pageUrl?: string;
+  caption?: string;
 }
 
 const INTERACTIVE_MEDIA_SELECTOR = 'video, audio, iframe, embed, object';
@@ -19,6 +22,15 @@ interface LinkInterceptionParams {
   // The paginator when this content is laid out in paged mode, so a footnote
   // jump turns the page instead of scrolling (which would desync the columns).
   pagedController?: () => FootnotePagedController | null | undefined;
+  pageUrl?: () => string | undefined;
+}
+
+function imageSource(image: HTMLImageElement): string {
+  const candidates = image.srcset
+    .split(',')
+    .map((part) => part.trim().split(/\s+/)[0])
+    .filter(Boolean);
+  return candidates.at(-1) || image.currentSrc || image.src;
 }
 
 export function useLinkInterception(params: LinkInterceptionParams) {
@@ -48,20 +60,31 @@ export function useLinkInterception(params: LinkInterceptionParams) {
     // browser behavior
     if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
 
+    const image = target.closest('img') as HTMLImageElement | null;
     const link = target.closest('a[href]') as HTMLAnchorElement | null;
-    if (!link) return;
+    if (!link && !image) return;
     if (!params.enabled()) return;
 
     e.preventDefault();
     e.stopPropagation();
 
-    const href = link.getAttribute('href');
+    const resolvedImageUrl = image
+      ? new URL(imageSource(image), params.pageUrl?.() || document.baseURI).href
+      : undefined;
+    const href = link?.getAttribute('href') || resolvedImageUrl;
     if (!href) return;
 
     menuState = {
       url: href,
-      linkText: link.textContent?.trim() || '',
-      anchorRect: link.getBoundingClientRect(),
+      linkText: link?.textContent?.trim() || image?.alt || '',
+      anchorRect: (link ?? image!).getBoundingClientRect(),
+      ...(image
+        ? {
+            imageUrl: resolvedImageUrl,
+            pageUrl: params.pageUrl?.(),
+            caption: image.alt || image.title || undefined,
+          }
+        : {}),
     };
   }
 

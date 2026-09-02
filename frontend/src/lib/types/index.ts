@@ -1149,6 +1149,7 @@ export interface IntegrationStatus {
   scopeStatus: {
     margin: boolean;
     semble: boolean;
+    currents?: boolean;
     /**
      * Writing a Semble *connection* needs a scope no pre-existing session holds,
      * and it's checked separately from the card/collection scopes so those keep
@@ -1252,6 +1253,14 @@ export interface SembleCard {
 }
 
 export interface MarginCollection {
+  uri: string;
+  cid: string;
+  name?: string;
+  description?: string;
+  createdAt?: string;
+}
+
+export interface CurrentsCollection {
   uri: string;
   cid: string;
   name?: string;
