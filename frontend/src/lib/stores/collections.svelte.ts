@@ -157,7 +157,11 @@ function createCollectionsStore() {
           : err instanceof Error
             ? err.message
             : 'Failed to load collections';
-      if (!hasCache) {
+      // Cached collection names remain useful for transient failures, but they
+      // cannot prove that the current session is authorized. A scope failure is
+      // authoritative (including after an account/session change), so surface it
+      // even when IndexedDB still holds rows from an earlier session.
+      if (!hasCache || err instanceof ScopeUpgradeError) {
         error[integration] = msg;
       } else {
         console.error(`Background refresh of ${integration} collections failed:`, err);
