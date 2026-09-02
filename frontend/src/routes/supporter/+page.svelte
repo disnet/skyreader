@@ -509,13 +509,6 @@ directly, no concept tournament.
         auth.isAuthenticated ? 'Become a Supporter' : 'Sign in to become a Supporter',
         true
       )}
-
-      {#if !auth.isAuthenticated}
-        <p class="fine-print">
-          Plans attach to your Skyreader account, so the button takes you through sign-in first.
-          Reading stays free either way.
-        </p>
-      {/if}
     {/if}
   </div>
 {/if}
