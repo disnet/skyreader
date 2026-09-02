@@ -108,23 +108,28 @@
   const believerProduct = $derived(products.find((p) => /believer/i.test(p.name)));
   const supporterProducts = $derived(products.filter((p) => p !== believerProduct));
 
-  // Polar may carry two live annual supporter products at once: the standard
-  // price and a discounted founding-supporter price. The card always offers
-  // the cheapest annual product; the dearest one becomes the struck-through
-  // "normally" reference. When the founding product is archived, both collapse
-  // to the one standard product and the founding framing disappears on its own.
-  const monthlyProduct = $derived(supporterProducts.find((p) => p.interval === 'month'));
+  // Polar may carry two live supporter products per cadence at once: the
+  // standard price and a discounted founding-supporter price. The card always
+  // offers the cheapest product of the selected cadence; the dearest one
+  // becomes the struck-through "normally" reference. When a founding product
+  // is archived, its cadence collapses to the one standard product and the
+  // founding framing disappears on its own.
+  function cheapest(list: BillingProduct[]): BillingProduct | undefined {
+    return list.length > 0
+      ? list.reduce((a, b) => (a.priceAmount <= b.priceAmount ? a : b))
+      : undefined;
+  }
+  function compareAt(list: BillingProduct[], offer: BillingProduct | undefined) {
+    if (!offer || list.length < 2) return null;
+    const dearest = list.reduce((a, b) => (a.priceAmount >= b.priceAmount ? a : b));
+    return dearest.priceAmount > offer.priceAmount ? dearest : null;
+  }
+  const monthProducts = $derived(supporterProducts.filter((p) => p.interval === 'month'));
   const yearProducts = $derived(supporterProducts.filter((p) => p.interval === 'year'));
-  const yearlyOffer = $derived(
-    yearProducts.length > 0
-      ? yearProducts.reduce((a, b) => (a.priceAmount <= b.priceAmount ? a : b))
-      : undefined
-  );
-  const yearlyCompareAt = $derived.by(() => {
-    if (!yearlyOffer || yearProducts.length < 2) return null;
-    const dearest = yearProducts.reduce((a, b) => (a.priceAmount >= b.priceAmount ? a : b));
-    return dearest.priceAmount > yearlyOffer.priceAmount ? dearest : null;
-  });
+  const monthlyProduct = $derived(cheapest(monthProducts));
+  const yearlyOffer = $derived(cheapest(yearProducts));
+  const monthlyCompareAt = $derived(compareAt(monthProducts, monthlyProduct));
+  const yearlyCompareAt = $derived(compareAt(yearProducts, yearlyOffer));
 
   // "Save $45 a year", computed against the annual price actually offered, so
   // the Polar dashboard stays the single source of truth.
@@ -140,6 +145,12 @@
   // billed-annually framing.
   let billingInterval = $state<'year' | 'month'>('year');
   const selectedProduct = $derived(billingInterval === 'year' ? yearlyOffer : monthlyProduct);
+  const selectedCompareAt = $derived(
+    billingInterval === 'year' ? yearlyCompareAt : monthlyCompareAt
+  );
+  // The lede's founding line and the card note both key off this, so the
+  // framing appears and disappears together with the founding products.
+  const foundingActive = $derived(Boolean(yearlyCompareAt || monthlyCompareAt));
 
   // Current usage makes the raised limits concrete. Only shown once the
   // backing store actually has data, so a not-yet-loaded store never reads
@@ -264,7 +275,10 @@ directly, no concept tournament.
   <section class="checkout">
     <div class="plan-card">
       <div class="plan-card-top">
-        <span class="plan-card-name">Supporter</span>
+        <!-- Matches the Polar product name, so checkout and the receipt say the
+             same thing the card did. Post-purchase surfaces still say plain
+             "Supporter": founding names the price, not the tier. -->
+        <span class="plan-card-name">{selectedCompareAt ? 'Founding Supporter' : 'Supporter'}</span>
         {#if productsState === 'loaded'}
           <div class="plan-toggle" role="group" aria-label="Billing cadence">
             <button
@@ -293,22 +307,24 @@ directly, no concept tournament.
             {monthlyPrice(selectedProduct)}<span class="plan-card-per">/month</span>
           </span>
           <span class="plan-card-billing">
-            {#if billingInterval === 'year' && yearlyCompareAt}
+            {#if selectedCompareAt}
               <!-- The spoken version of the strike lives in the note below,
-                       so screen readers hear "normally $120 a year" in words. -->
+                       so screen readers hear "normally $99 a year" in words. -->
               <s class="plan-card-compare" aria-hidden="true"
-                >{formatCents(yearlyCompareAt.priceAmount, yearlyCompareAt.priceCurrency)}</s
+                >{formatCents(selectedCompareAt.priceAmount, selectedCompareAt.priceCurrency)}</s
               >
             {/if}
             {billingLine(selectedProduct)}
           </span>
         </div>
-        {#if billingInterval === 'year' && yearlyCompareAt}
+        {#if selectedCompareAt}
           <p class="plan-card-savings">
-            Founding supporter price, normally {formatCents(
-              yearlyCompareAt.priceAmount,
-              yearlyCompareAt.priceCurrency
-            )} a year. Thank you for being early.
+            Founding price; the standard price is {formatCents(
+              selectedCompareAt.priceAmount,
+              selectedCompareAt.priceCurrency
+            )}
+            {billingInterval === 'year' ? 'a year' : 'a month'}. Keep the founding price for as long
+            as you're subscribed.
           </p>
         {:else if annualSavings}
           <p class="plan-card-savings">{annualSavings} with annual billing</p>
@@ -488,6 +504,12 @@ directly, no concept tournament.
             rel="noopener noreferrer">@disnetdev.com</a
           >). No ads, no growth team, just me.
         </p>
+        {#if foundingActive}
+          <p class="lede">
+            Plans are at founding prices while Skyreader is young. The price you join at is yours
+            for as long as you stay subscribed.
+          </p>
+        {/if}
       </header>
 
       {#if confirmSlow}
@@ -543,6 +565,10 @@ directly, no concept tournament.
 
   .lede a:hover {
     text-decoration: underline;
+  }
+
+  .lede + .lede {
+    margin-top: 0.75rem;
   }
 
   /* The benefits ledger: quiet hairline-ruled rows, not icon cards. The
