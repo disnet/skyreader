@@ -250,6 +250,42 @@ export const WARM_DUE_DOCUMENTS_SQL = `SELECT did FROM document_cache
 				ORDER BY fetched_at ASC
 				LIMIT ?`;
 
+/**
+ * The /stats document counts: covered by idx_document_cache_active.
+ *
+ * Exported so query-plans.test.ts pins the plans against the queries /stats
+ * actually runs. These filter past last_requested_at onto columns a narrower
+ * index doesn't carry, and document_cache rows hold documents_json blobs — off
+ * the covering index, a COUNT here reads hundreds of MB of row pages.
+ */
+export const STATS_DOCUMENTS_ACTIVE_SQL = `SELECT COUNT(*) as count FROM document_cache
+				  WHERE last_requested_at > ?`;
+
+export const STATS_DOCUMENTS_FROZEN_SQL = `SELECT COUNT(*) as count FROM document_cache
+				  WHERE last_requested_at > ? AND listed_at > 0 AND listed_at < ?`;
+
+export const STATS_DOCUMENTS_BACKOFF_SQL = `SELECT COUNT(*) as count FROM document_cache
+				  WHERE last_requested_at > ? AND error_count > 0 AND next_retry_at > ?`;
+
+/**
+ * The /stats outbox backlog. Same shape as ingest-push.ts's DIRTY_COUNT_SQL,
+ * inlined because importing it here would be circular (that module imports
+ * hashUrl/itemContentHash from this one) — pinned in query-plans.test.ts so the
+ * copy can't drift off its plan.
+ *
+ * This walks the whole item log, which is inherent: a row is dirty when it has
+ * no push_state or a stale hash, so "is anything pending" can't be answered
+ * without the scan. It stays cheap only while fi rides idx_feed_items_push and
+ * both joins resolve through covering indexes / the rowid. Don't add an index
+ * on push_state to "help" it — a covering (seq, pushed_hash) index flips the
+ * planner to lead with cache and costs 10x (measured: 31ms -> 320ms).
+ */
+export const STATS_PENDING_PUSH_SQL = `SELECT COUNT(*) AS count
+				   FROM feed_items fi
+				   JOIN cache c ON c.url_hash = fi.url_hash
+				   LEFT JOIN push_state ps ON ps.seq = fi.seq
+				  WHERE ps.seq IS NULL OR ps.pushed_hash <> COALESCE(fi.content_hash, '')`;
+
 export type ErrorType = 'transient' | 'permanent' | 'recoverable';
 
 export function classifyError(status: number): ErrorType {
@@ -1109,9 +1145,6 @@ export function initDatabase(db: Database): void {
   db.run(`CREATE INDEX IF NOT EXISTS idx_document_cache_warm ON document_cache(
 	    fetched_at, next_retry_at, last_requested_at, did)`);
   db.run(`DROP INDEX IF EXISTS idx_document_cache_fetched_at`);
-  db.run(
-    `CREATE INDEX IF NOT EXISTS idx_document_cache_last_requested_at ON document_cache(last_requested_at)`
-  );
   // Migration: `listed_at` is when we last re-listed the author from their PDS,
   // as distinct from `fetched_at`, which a firehose splice also bumps. Only a
   // real list discovers documents that were never spliced — records written
@@ -1128,6 +1161,18 @@ export function initDatabase(db: Database): void {
   // author to re-list at once. From here on listed_at is the sole list clock;
   // firehose splices may safely continue bumping fetched_at.
   db.run(`UPDATE document_cache SET listed_at = fetched_at WHERE listed_at IS NULL`);
+
+  // The /stats document counts, covering. All three filter on last_requested_at
+  // and then test listed_at / error_count / next_retry_at — columns the old
+  // single-column idx_document_cache_last_requested_at didn't carry, so every
+  // active author's row page got loaded to answer a COUNT, and those pages hold
+  // documents_json blobs. Same failure mode as the 2026-08-21 iowait incident,
+  // and the reason recordProxyStats was timing out on ~13% of its 5-minute
+  // samples. Created after the listed_at migration above, which the index needs.
+  // Subsumes the single-column index (same leading column), dropped below.
+  db.run(`CREATE INDEX IF NOT EXISTS idx_document_cache_active ON document_cache(
+	    last_requested_at, listed_at, error_count, next_retry_at)`);
+  db.run(`DROP INDEX IF EXISTS idx_document_cache_last_requested_at`);
 
   // Small key/value store for sync bookkeeping (e.g. the Jetstream document
   // firehose cursor), so the stream resumes across restarts without replaying
@@ -2204,21 +2249,13 @@ export function createApp(db: Database, config: AppConfig) {
 
     const activeDocumentCutoff = now - warmActiveWindowMs;
     const activeDocuments = db
-      .query<{ count: number }, [number]>(
-        'SELECT COUNT(*) as count FROM document_cache WHERE last_requested_at > ?'
-      )
+      .query<{ count: number }, [number]>(STATS_DOCUMENTS_ACTIVE_SQL)
       .get(activeDocumentCutoff);
     const frozenDocuments = db
-      .query<{ count: number }, [number, number]>(
-        `SELECT COUNT(*) as count FROM document_cache
-         WHERE last_requested_at > ? AND listed_at > 0 AND listed_at < ?`
-      )
+      .query<{ count: number }, [number, number]>(STATS_DOCUMENTS_FROZEN_SQL)
       .get(activeDocumentCutoff, now - 2 * firehoseRelistMs);
     const documentBackoff = db
-      .query<{ count: number }, [number, number]>(
-        `SELECT COUNT(*) as count FROM document_cache
-         WHERE last_requested_at > ? AND error_count > 0 AND next_retry_at > ?`
-      )
+      .query<{ count: number }, [number, number]>(STATS_DOCUMENTS_BACKOFF_SQL)
       .get(activeDocumentCutoff, now);
     const firehose = getFirehoseStatus();
 
@@ -2230,17 +2267,7 @@ export function createApp(db: Database, config: AppConfig) {
     const pushedCount = db
       .query<{ count: number }, []>('SELECT COUNT(*) as count FROM push_state')
       .get();
-    // Inlined rather than imported from ingest-push.ts, which imports this
-    // module (hashUrl/itemContentHash) — keep the dependency one-directional.
-    const pendingCount = db
-      .query<{ count: number }, []>(
-        `SELECT COUNT(*) AS count
-		       FROM feed_items fi
-		       JOIN cache c ON c.url_hash = fi.url_hash
-		       LEFT JOIN push_state ps ON ps.seq = fi.seq
-		      WHERE ps.seq IS NULL OR ps.pushed_hash <> COALESCE(fi.content_hash, '')`
-      )
-      .get();
+    const pendingCount = db.query<{ count: number }, []>(STATS_PENDING_PUSH_SQL).get();
 
     // Process memory, in MB. Not decoration: this box is a 1 GB singleton whose
     // realistic failure mode is the OOM killer, and `fly status` reports a
