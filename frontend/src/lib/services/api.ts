@@ -1308,7 +1308,8 @@ class ApiClient {
   async createCurrentsSave(data: {
     imageUrl: string;
     pageUrl?: string;
-    caption?: string;
+    /** Describes the image — stored as the Currents image content's alt text. */
+    alt?: string;
     collection?: { uri: string; cid: string };
   }): Promise<{ uri: string; cid: string; rkey: string }> {
     return this.fetch('/api/integrations/currents/saves', {

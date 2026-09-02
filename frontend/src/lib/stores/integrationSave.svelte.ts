@@ -29,7 +29,12 @@ export interface IntegrationSaveTarget {
   publishedAt?: string;
   imageUrl?: string;
   pageUrl?: string;
-  caption?: string;
+  /**
+   * The image's own description (its `alt`/`title`), not the article's title —
+   * it lands in the Currents image content's `alt` field, so anything that
+   * doesn't describe the image itself doesn't belong here.
+   */
+  imageAlt?: string;
 }
 
 export type CollectionChoice = CollectionSelection;
@@ -88,7 +93,7 @@ function createIntegrationSaveStore() {
         await api.createCurrentsSave({
           imageUrl: data.imageUrl,
           pageUrl: data.pageUrl ?? data.url,
-          caption: data.caption ?? data.title,
+          alt: data.imageAlt,
           collection: collections[0],
         });
         toastStore.update(id, 'success', 'Saved to Currents');

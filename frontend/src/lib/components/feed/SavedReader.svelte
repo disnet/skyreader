@@ -1159,7 +1159,7 @@
           anchorRect={linkInterception.menuState.anchorRect}
           imageUrl={linkInterception.menuState.imageUrl}
           pageUrl={linkInterception.menuState.pageUrl}
-          caption={linkInterception.menuState.caption}
+          imageAlt={linkInterception.menuState.imageAlt}
           onClose={linkInterception.closeMenu}
         />
       {/key}

@@ -7,7 +7,8 @@ export interface LinkMenuState {
   anchorRect: DOMRect;
   imageUrl?: string;
   pageUrl?: string;
-  caption?: string;
+  /** The image's own description, for a Currents save's alt text. */
+  imageAlt?: string;
 }
 
 const INTERACTIVE_MEDIA_SELECTOR = 'video, audio, iframe, embed, object';
@@ -82,7 +83,7 @@ export function useLinkInterception(params: LinkInterceptionParams) {
         ? {
             imageUrl: resolvedImageUrl,
             pageUrl: params.pageUrl?.(),
-            caption: image.alt || image.title || undefined,
+            imageAlt: image.alt || image.title || undefined,
           }
         : {}),
     };

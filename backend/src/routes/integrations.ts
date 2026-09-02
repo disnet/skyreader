@@ -70,23 +70,47 @@ export async function handleIntegrationStatus(request: Request, env: Env): Promi
 export interface CurrentsSaveBody {
   imageUrl: string;
   pageUrl?: string;
-  caption?: string;
+  /** Description of the image itself — rides the image content's `alt`. */
+  alt?: string;
+  /** A user-authored note about the save — rides the record's `text`. */
+  note?: string;
   collection?: { uri: string; cid: string };
 }
 
+// The lexicon's own caps (maxGraphemes on `is.currents.content.image#alt` and
+// `is.currents.feed.save#text`). Slicing by code point can only undercount
+// graphemes, so staying under the cap this way is always safe — and an alt
+// lifted from a page's markup can be arbitrarily long.
+const MAX_ALT_GRAPHEMES = 2000;
+const MAX_TEXT_GRAPHEMES = 1000;
+
+/**
+ * Build the `is.currents.feed.save` record.
+ *
+ * `content` is a **union**, not a bare blob: its only current variant is
+ * `is.currents.content.image`, and Currents' indexer skips any save whose
+ * `content.$type` it doesn't recognize (it reads the blob from `content.image`
+ * and the description from `content.alt`). See
+ * https://github.com/matteomarjanovic/currents lexicons/is/currents/{feed/save,content/image}.json.
+ */
 export function buildCurrentsSaveRecord(
   body: Omit<CurrentsSaveBody, 'imageUrl'>,
-  content: BlobRef,
+  image: BlobRef,
   createdAt: string
 ) {
-  const caption = body.caption?.trim();
+  const alt = body.alt?.trim().slice(0, MAX_ALT_GRAPHEMES);
+  const note = body.note?.trim().slice(0, MAX_TEXT_GRAPHEMES);
   return {
     $type: 'is.currents.feed.save',
-    content,
+    content: {
+      $type: 'is.currents.content.image',
+      image,
+      ...(alt ? { alt } : {}),
+    },
     createdAt,
     ...(body.collection ? { collection: body.collection } : {}),
     ...(body.pageUrl ? { originUrl: body.pageUrl } : {}),
-    ...(caption ? { text: caption } : {}),
+    ...(note ? { text: note } : {}),
   };
 }
 

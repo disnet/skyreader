@@ -11,12 +11,13 @@ const blob: BlobRef = {
 };
 
 describe('Currents save records', () => {
-  it('builds the third-party record shape and trims its caption', () => {
+  it('wraps the blob in the typed image content and trims its text', () => {
     expect(
       buildCurrentsSaveRecord(
         {
           pageUrl: 'https://example.com/article',
-          caption: '  A calm image  ',
+          alt: '  A calm image  ',
+          note: '  Worth revisiting  ',
           collection: { uri: 'at://did:plc:test/is.currents.feed.collection/one', cid: 'cid' },
         },
         blob,
@@ -24,10 +25,10 @@ describe('Currents save records', () => {
       )
     ).toEqual({
       $type: 'is.currents.feed.save',
-      content: blob,
+      content: { $type: 'is.currents.content.image', image: blob, alt: 'A calm image' },
       createdAt: '2026-09-02T00:00:00.000Z',
       originUrl: 'https://example.com/article',
-      text: 'A calm image',
+      text: 'Worth revisiting',
       collection: { uri: 'at://did:plc:test/is.currents.feed.collection/one', cid: 'cid' },
     });
   });
@@ -35,9 +36,19 @@ describe('Currents save records', () => {
   it('omits optional fields', () => {
     expect(buildCurrentsSaveRecord({}, blob, 'now')).toEqual({
       $type: 'is.currents.feed.save',
-      content: blob,
+      content: { $type: 'is.currents.content.image', image: blob },
       createdAt: 'now',
     });
+  });
+
+  it('caps alt and text at the lexicon graphemes limits', () => {
+    const record = buildCurrentsSaveRecord(
+      { alt: 'a'.repeat(2500), note: 'n'.repeat(1200) },
+      blob,
+      'now'
+    );
+    expect(record.content.alt).toHaveLength(2000);
+    expect(record.text).toHaveLength(1000);
   });
 });
 

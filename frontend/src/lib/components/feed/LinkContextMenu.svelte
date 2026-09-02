@@ -14,10 +14,10 @@
     onClose: () => void;
     imageUrl?: string;
     pageUrl?: string;
-    caption?: string;
+    imageAlt?: string;
   }
 
-  let { url, linkText, anchorRect, onClose, imageUrl, pageUrl, caption }: Props = $props();
+  let { url, linkText, anchorRect, onClose, imageUrl, pageUrl, imageAlt }: Props = $props();
 
   let menuEl = $state<HTMLDivElement | null>(null);
   let copyState = $state<'idle' | 'copied'>('idle');
@@ -54,7 +54,7 @@
       url: pageUrl || imageUrl,
       imageUrl,
       pageUrl,
-      caption,
+      imageAlt,
     });
     onClose();
   }
