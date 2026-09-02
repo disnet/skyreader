@@ -85,6 +85,7 @@
   const linkInterception = useLinkInterception({
     contentEl: () => bodyEl,
     enabled: () => true,
+    pageUrl: () => item.url,
     // Paged mode: turn to the footnote's page rather than scrolling the paged
     // viewport (which the transform-driven paginator never resets).
     pagedController: () => pagedController,
@@ -244,6 +245,9 @@
       url={linkInterception.menuState.url}
       linkText={linkInterception.menuState.linkText}
       anchorRect={linkInterception.menuState.anchorRect}
+      imageUrl={linkInterception.menuState.imageUrl}
+      pageUrl={linkInterception.menuState.pageUrl}
+      imageAlt={linkInterception.menuState.imageAlt}
       onClose={linkInterception.closeMenu}
     />
   {/key}

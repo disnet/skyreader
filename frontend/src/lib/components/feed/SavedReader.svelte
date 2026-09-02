@@ -748,6 +748,7 @@
   const linkInterception = useLinkInterception({
     contentEl: () => readerBodyEl,
     enabled: () => true,
+    pageUrl: () => itemUrl,
     // Paged mode: a footnote jump turns to the target's page (scrolling would
     // slide the paged viewport sideways and desync every later page turn).
     pagedController: () => pagedController,
@@ -1156,6 +1157,9 @@
           url={linkInterception.menuState.url}
           linkText={linkInterception.menuState.linkText}
           anchorRect={linkInterception.menuState.anchorRect}
+          imageUrl={linkInterception.menuState.imageUrl}
+          pageUrl={linkInterception.menuState.pageUrl}
+          imageAlt={linkInterception.menuState.imageAlt}
           onClose={linkInterception.closeMenu}
         />
       {/key}

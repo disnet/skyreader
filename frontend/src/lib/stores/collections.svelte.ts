@@ -1,8 +1,8 @@
 import { db, type IntegrationCollectionCacheEntry } from '$lib/services/db';
-import { api } from '$lib/services/api';
-import type { SembleCollection, MarginCollection } from '$lib/types';
+import { api, ScopeUpgradeError } from '$lib/services/api';
+import type { SembleCollection, MarginCollection, CurrentsCollection } from '$lib/types';
 
-export type IntegrationKind = 'semble' | 'margin';
+export type IntegrationKind = 'semble' | 'margin' | 'currents';
 
 /**
  * A collection as the picker needs it. `lastUsedAt` is local-only: neither
@@ -10,7 +10,7 @@ export type IntegrationKind = 'semble' | 'margin';
  * picker's "recently used" band is built from what this device remembers
  * (stamped by markUsed, merged forward across every cache refresh).
  */
-export type CollectionEntry = (SembleCollection | MarginCollection) & {
+export type CollectionEntry = (SembleCollection | MarginCollection | CurrentsCollection) & {
   lastUsedAt?: number;
 };
 
@@ -29,18 +29,22 @@ function createCollectionsStore() {
   const collections = $state<Record<IntegrationKind, CollectionEntry[]>>({
     semble: [],
     margin: [],
+    currents: [],
   });
   const loading = $state<Record<IntegrationKind, boolean>>({
     semble: false,
     margin: false,
+    currents: false,
   });
   const refreshing = $state<Record<IntegrationKind, boolean>>({
     semble: false,
     margin: false,
+    currents: false,
   });
   const error = $state<Record<IntegrationKind, string | null>>({
     semble: null,
     margin: null,
+    currents: null,
   });
 
   async function readCache(integration: IntegrationKind): Promise<CollectionEntry[]> {
@@ -89,10 +93,12 @@ function createCollectionsStore() {
     if (integration === 'semble') {
       const res = await api.listSembleCollections();
       return res.collections;
-    } else {
+    } else if (integration === 'margin') {
       const res = await api.listMarginCollections();
       return res.collections;
     }
+    const res = await api.listCurrentsCollections();
+    return res.collections;
   }
 
   /**
@@ -145,8 +151,17 @@ function createCollectionsStore() {
       collections[integration] = merged;
       await writeCache(integration, merged);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to load collections';
-      if (!hasCache) {
+      const msg =
+        err instanceof ScopeUpgradeError
+          ? 'scope_upgrade_required'
+          : err instanceof Error
+            ? err.message
+            : 'Failed to load collections';
+      // Cached collection names remain useful for transient failures, but they
+      // cannot prove that the current session is authorized. A scope failure is
+      // authoritative (including after an account/session change), so surface it
+      // even when IndexedDB still holds rows from an earlier session.
+      if (!hasCache || err instanceof ScopeUpgradeError) {
         error[integration] = msg;
       } else {
         console.error(`Background refresh of ${integration} collections failed:`, err);
@@ -158,7 +173,7 @@ function createCollectionsStore() {
   }
 
   async function invalidate(integration?: IntegrationKind): Promise<void> {
-    const kinds: IntegrationKind[] = integration ? [integration] : ['semble', 'margin'];
+    const kinds: IntegrationKind[] = integration ? [integration] : ['semble', 'margin', 'currents'];
     for (const k of kinds) {
       collections[k] = [];
       loading[k] = false;

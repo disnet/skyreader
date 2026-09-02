@@ -12,6 +12,7 @@ import type {
   MagazineParams,
   MagazinePosition,
   MarginCollection,
+  CurrentsCollection,
   MarginHighlightNote,
   ParsedFeed,
   SaveBacking,
@@ -1298,6 +1299,23 @@ class ApiClient {
 
   async listMarginCollections(): Promise<{ collections: MarginCollection[] }> {
     return this.fetch('/api/integrations/margin/collections');
+  }
+
+  async listCurrentsCollections(): Promise<{ collections: CurrentsCollection[] }> {
+    return this.fetch('/api/integrations/currents/collections');
+  }
+
+  async createCurrentsSave(data: {
+    imageUrl: string;
+    pageUrl?: string;
+    /** Describes the image — stored as the Currents image content's alt text. */
+    alt?: string;
+    collection?: { uri: string; cid: string };
+  }): Promise<{ uri: string; cid: string; rkey: string }> {
+    return this.fetch('/api/integrations/currents/saves', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
   }
 
   /** Which collections this URL is already saved to (read live from the PDS). */

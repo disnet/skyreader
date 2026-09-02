@@ -5,6 +5,10 @@ export interface LinkMenuState {
   url: string;
   linkText: string;
   anchorRect: DOMRect;
+  imageUrl?: string;
+  pageUrl?: string;
+  /** The image's own description, for a Currents save's alt text. */
+  imageAlt?: string;
 }
 
 const INTERACTIVE_MEDIA_SELECTOR = 'video, audio, iframe, embed, object';
@@ -19,6 +23,21 @@ interface LinkInterceptionParams {
   // The paginator when this content is laid out in paged mode, so a footnote
   // jump turns the page instead of scrolling (which would desync the columns).
   pagedController?: () => FootnotePagedController | null | undefined;
+  pageUrl?: () => string | undefined;
+  /** Bare images are part of a preview's primary tap target until it is expanded. */
+  interceptImages?: () => boolean;
+}
+
+/**
+ * Prefer the browser's actual responsive-image choice. The fallback parser is
+ * descriptor-aware because image transform URLs commonly contain commas.
+ */
+export function imageSource(
+  image: Pick<HTMLImageElement, 'currentSrc' | 'src' | 'srcset'>
+): string {
+  if (image.currentSrc) return image.currentSrc;
+  const candidates = [...image.srcset.matchAll(/\s*(.+?)\s+(\d+(?:\.\d+)?[wx])\s*(?:,|$)/gi)];
+  return candidates.at(-1)?.[1].trim() || image.src;
 }
 
 export function useLinkInterception(params: LinkInterceptionParams) {
@@ -48,20 +67,35 @@ export function useLinkInterception(params: LinkInterceptionParams) {
     // browser behavior
     if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
 
+    const image = target.closest('img') as HTMLImageElement | null;
     const link = target.closest('a[href]') as HTMLAnchorElement | null;
-    if (!link) return;
+    if (!link && !image) return;
     if (!params.enabled()) return;
+    // A bare image in a clamped river preview remains part of the card's tap
+    // target. A linked image is still intercepted because the link already has
+    // its own click affordance and the menu can offer both destinations.
+    if (image && !link && params.interceptImages && !params.interceptImages()) return;
 
     e.preventDefault();
     e.stopPropagation();
 
-    const href = link.getAttribute('href');
+    const resolvedImageUrl = image
+      ? new URL(imageSource(image), params.pageUrl?.() || document.baseURI).href
+      : undefined;
+    const href = link?.getAttribute('href') || resolvedImageUrl;
     if (!href) return;
 
     menuState = {
       url: href,
-      linkText: link.textContent?.trim() || '',
-      anchorRect: link.getBoundingClientRect(),
+      linkText: link?.textContent?.trim() || image?.alt || '',
+      anchorRect: (link ?? image!).getBoundingClientRect(),
+      ...(image
+        ? {
+            imageUrl: resolvedImageUrl,
+            pageUrl: params.pageUrl?.(),
+            imageAlt: image.alt || image.title || undefined,
+          }
+        : {}),
     };
   }
 

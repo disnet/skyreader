@@ -749,6 +749,8 @@
   const linkInterception = useLinkInterception({
     contentEl: () => bodyEl,
     enabled: () => true,
+    interceptImages: () => expanded,
+    pageUrl: () => itemUrl,
     // While the preview is clamped *and overflowing* (`isTruncated`), a footnote
     // number is visible but its list entry is below the clamp: let the tap expand
     // the card instead of jumping to something the reader can't see. A preview
@@ -1021,6 +1023,9 @@
         url={linkInterception.menuState.url}
         linkText={linkInterception.menuState.linkText}
         anchorRect={linkInterception.menuState.anchorRect}
+        imageUrl={linkInterception.menuState.imageUrl}
+        pageUrl={linkInterception.menuState.pageUrl}
+        imageAlt={linkInterception.menuState.imageAlt}
         onClose={linkInterception.closeMenu}
       />
     {/key}

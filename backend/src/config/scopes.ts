@@ -36,6 +36,11 @@ export const MARGIN_SCOPES = [
   'repo:at.margin.collection',
   'repo:at.margin.collectionItem',
 ];
+export const CURRENTS_SCOPES = [
+  'repo:is.currents.feed.save',
+  'repo:is.currents.feed.collection',
+  'blob:image/*',
+];
 
 // Linkblog scopes — sharing writes standard.site records to the user's PDS.
 export const LINKBLOG_SCOPES = ['repo:site.standard.publication', 'repo:site.standard.document'];
@@ -70,6 +75,7 @@ export const ALL_POSSIBLE_SCOPES = [
   ...SEMBLE_SCOPES,
   ...SEMBLE_CONNECTION_SCOPES,
   ...MARGIN_SCOPES,
+  ...CURRENTS_SCOPES,
   ...LINKBLOG_SCOPES,
   ...PCKT_SCOPES,
   ...OFFPRINT_SCOPES,

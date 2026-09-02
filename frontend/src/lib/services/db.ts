@@ -59,7 +59,7 @@ export interface FeedCursorEntry {
 // Cached Semble/Margin collection for the integration share picker.
 // Keyed by [integration+uri] so the same Dexie table can hold both integrations.
 export interface IntegrationCollectionCacheEntry {
-  integration: 'semble' | 'margin';
+  integration: 'semble' | 'margin' | 'currents';
   uri: string;
   cid: string;
   name?: string;

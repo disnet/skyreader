@@ -102,6 +102,8 @@ import {
   handleDeleteMarginNote,
   handleGetIntegrationMemberships,
   handleEditIntegrationMemberships,
+  handleCreateCurrentsSave,
+  handleListCurrentsCollections,
 } from './routes/integrations';
 import { handleFullSync, handleSyncSubscriptions, handleSyncStatus } from './routes/sync';
 import {
@@ -692,6 +694,26 @@ async function route(
       } else {
         response = await handleCreateMarginBookmark(request, env);
       }
+      break;
+    case url.pathname === '/api/integrations/currents/saves':
+      if (!session) return unauthorizedResponse(headers);
+      response =
+        request.method === 'POST'
+          ? await handleCreateCurrentsSave(request, env)
+          : new Response(JSON.stringify({ error: 'Method not allowed' }), {
+              status: 405,
+              headers: { 'Content-Type': 'application/json' },
+            });
+      break;
+    case url.pathname === '/api/integrations/currents/collections':
+      if (!session) return unauthorizedResponse(headers);
+      response =
+        request.method === 'GET'
+          ? await handleListCurrentsCollections(request, env)
+          : new Response(JSON.stringify({ error: 'Method not allowed' }), {
+              status: 405,
+              headers: { 'Content-Type': 'application/json' },
+            });
       break;
     case url.pathname === '/api/integrations/margin/collections':
       if (!session) return unauthorizedResponse(headers);
