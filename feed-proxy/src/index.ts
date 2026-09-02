@@ -84,6 +84,20 @@ function pushBackoff(failures: number): number {
   return Math.min(PUSH_BACKOFF_BASE_MS * 2 ** (failures - 1), PUSH_BACKOFF_MAX_MS);
 }
 
+// Retry a FAILED crawl-set pull well inside the steady-state interval. Nothing
+// else registers a feed for crawling, so a pull that fails costs the whole
+// interval: every feed the set has gained since the last success goes uncrawled
+// until the next tick. That is worst at startup, where the Worker may not be
+// listening yet (dev-local.sh starts the proxy first) and the FIRST pull fails,
+// leaving the crawl set empty and the reader with nothing new for five minutes.
+// Backs off to the interval, so a Worker that is down for a while is polled no
+// harder than the normal cadence.
+const CRAWL_SET_RETRY_BASE_MS = 5 * 1000;
+
+function crawlSetBackoff(failures: number): number {
+  return Math.min(CRAWL_SET_RETRY_BASE_MS * 2 ** (failures - 1), CRAWL_SET_INTERVAL_MS);
+}
+
 // /extract is the heaviest request (fetch + Defuddle DOM build). Cap concurrent
 // extractions so a burst of distinct heavy articles can't OOM the 512MB machine;
 // excess callers queue, then are shed with a 503 once the queue fills.
@@ -235,13 +249,26 @@ if (INGEST_ENABLED) {
   setInterval(runPush, INGEST_INTERVAL_MS);
 
   let crawlSetRunning = false;
+  let crawlSetFailures = 0;
   const refreshCrawlSet = () => {
     if (crawlSetRunning) return;
     crawlSetRunning = true;
+    // Scheduled in `finally`, once the guard is down — a retry queued while it is
+    // still up would be dropped on arrival.
+    let retryMs = 0;
     pullCrawlSet(db, ingestConfig)
       .then((result) => {
-        if (result.error) console.error(`[Proxy] Crawl-set pull failed: ${result.error}`);
-        else console.log(`[Proxy] Crawl set: ${result.registered} feed(s) registered`);
+        if (result.error) {
+          crawlSetFailures++;
+          retryMs = crawlSetBackoff(crawlSetFailures);
+          console.error(
+            `[Proxy] Crawl-set pull failed (${crawlSetFailures}): ${result.error} ` +
+              `- retrying in ${Math.round(retryMs / 1000)}s`
+          );
+        } else {
+          crawlSetFailures = 0;
+          console.log(`[Proxy] Crawl set: ${result.registered} feed(s) registered`);
+        }
         // Report health AFTER the pull, so a feed registered for the first time
         // this cycle is already in the crawl set and its errors are reportable.
         // Reads no longer pass through here, so this is the only way a broken
@@ -257,6 +284,7 @@ if (INGEST_ENABLED) {
       })
       .finally(() => {
         crawlSetRunning = false;
+        if (retryMs > 0) setTimeout(refreshCrawlSet, retryMs);
       });
   };
   refreshCrawlSet();

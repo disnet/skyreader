@@ -261,7 +261,7 @@ export interface FeedHealth {
 }
 
 /** The archive's current head; 0 when nothing has ever been ingested. */
-async function archiveHead(env: Env): Promise<number> {
+export async function archiveHead(env: Env): Promise<number> {
   const row = await timedFirst<{ max_seq: number | null }>(
     'archive_head',
     env.DB.prepare('SELECT MAX(seq) AS max_seq FROM feed_items')

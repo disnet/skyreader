@@ -25,6 +25,8 @@
   import SourcesDiscovery from '$lib/components/sources/SourcesDiscovery.svelte';
   import LimitNotice from '$lib/components/LimitNotice.svelte';
   import { feedLimitLine } from '$lib/utils/limitCopy';
+  import { auth } from '$lib/stores/auth.svelte';
+
   import type { Subscription, BlueskyProfile } from '$lib/types';
 
   interface DetectedPublication {
@@ -426,6 +428,9 @@
 
   // -- Parked feeds --
   async function loadParked() {
+    // Parking is an account concept (PDS records over the plan's active
+    // capacity). A guest's library is local and capped locally.
+    if (auth.isGuest) return;
     try {
       const res = await api.getParkedSubscriptions();
       parkedFeeds = res.records.map((r) => {
@@ -620,14 +625,21 @@
     <!-- First run: no sources yet -->
     <div class="onboarding">
       <h2>Build your library</h2>
-      <p>
-        Follow RSS feeds, standard.site blogs, and the linkblogs of people you know on Bluesky.
-        Everything you follow lives in your PDS — portable across the Atmosphere.
-      </p>
+      {#if auth.isGuest}
+        <p>Sign in to add feeds and keep them across your devices.</p>
+        <p><a href="/auth/login?returnUrl=/sources">Sign in</a></p>
+      {:else}
+        <p>
+          Follow RSS feeds, standard.site blogs, and the linkblogs of people you know on Bluesky.
+          Everything you follow lives in your PDS — portable across the Atmosphere.
+        </p>
+      {/if}
     </div>
-    <SourcesDiscovery />
+    {#if !auth.isGuest}
+      <SourcesDiscovery />
+    {/if}
   {:else}
-    {#if !searchQuery}
+    {#if !searchQuery && !auth.isGuest}
       <SourcesDiscovery />
     {/if}
 

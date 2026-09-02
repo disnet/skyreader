@@ -9,6 +9,7 @@
 // only: a failure degrades to an empty list.
 
 import { api } from '$lib/services/api';
+import { auth } from '$lib/stores/auth.svelte';
 import type { MentionLaneEntry, SembleContext } from '$lib/types';
 
 export type LaneItemsState = {
@@ -52,8 +53,13 @@ function createMentionLaneItemsStore() {
     if (existing?.failed && !options?.force) return;
 
     set(key, LOADING);
-    const p = api
-      .fetchMentionLaneItems(url, lane, options?.docUri)
+    // The guest twin is the same handler without the session check — the records
+    // are public repo data either way. See articleMentions for why calling the
+    // session-gated path without one costs more than a 401.
+    const request = auth.user
+      ? api.fetchMentionLaneItems(url, lane, options?.docUri)
+      : api.fetchGuestMentionLaneItems(url, lane, options?.docUri);
+    const p = request
       .then((res) => {
         set(key, {
           loading: false,

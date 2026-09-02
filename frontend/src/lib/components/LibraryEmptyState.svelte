@@ -25,7 +25,10 @@
   let error = $state<string | null>(null);
 
   onMount(async () => {
-    if (!syncStore.isOnline) {
+    // Atmospheric sync is an account setting, and a guest renders none of the
+    // panel that reads it — but this still ran on mount and 401'd, which the
+    // list view briefly triggers before subscriptions hydrate.
+    if (auth.isGuest || !syncStore.isOnline) {
       isLoading = false;
       return;
     }
@@ -119,84 +122,98 @@
 
 <div class="library-empty">
   <h2>Your library is empty</h2>
-  <p class="lede">Subscribe to a few feeds.</p>
 
-  <div class="add-actions">
-    <button type="button" class="add-action primary" onclick={onAddFeed}>
-      <Icon name="rss" size={18} />
-      <span class="label">Add an RSS feed</span>
-      <Icon name="chevron-right" size={18} />
-    </button>
-    <button type="button" class="add-action" onclick={onAddHandle}>
-      <Icon name="at-sign" size={18} />
-      <span class="label">Add an Atmosphere publication</span>
-      <Icon name="chevron-right" size={18} />
-    </button>
-    <button type="button" class="add-action" onclick={() => (showImportModal = true)}>
-      <Icon name="file-text" size={18} />
-      <span class="label">Import OPML</span>
-      <Icon name="chevron-right" size={18} />
-    </button>
-  </div>
+  {#if auth.isGuest}
+    <!-- A guest who removed the starter channels. Adding feeds, OPML import and
+         everything below it are account-only, so this is the whole state. -->
+    <p class="lede">Sign in to add feeds and keep them across your devices.</p>
+    <div class="add-actions">
+      <a class="add-action primary" href="/auth/login?returnUrl=/feeds">
+        <Icon name="user" size={18} />
+        <span class="label">Sign in</span>
+        <Icon name="chevron-right" size={18} />
+      </a>
+    </div>
+  {:else}
+    <p class="lede">Subscribe to a few feeds.</p>
 
-  <div class="portability">
-    <h3>Take your subscriptions with you</h3>
-    <p>
-      By default your feed list is stored privately on the Skyreader servers. Turn on Atmospheric
-      sync to also store your subscriptions on your atproto PDS, portable to other Atmospheric apps
-      and kept in step with your standard.site subscriptions. Your subscription list becomes
-      <strong>publicly visible</strong> when synced.
-    </p>
+    <div class="add-actions">
+      <button type="button" class="add-action primary" onclick={onAddFeed}>
+        <Icon name="rss" size={18} />
+        <span class="label">Add an RSS feed</span>
+        <Icon name="chevron-right" size={18} />
+      </button>
+      <button type="button" class="add-action" onclick={onAddHandle}>
+        <Icon name="at-sign" size={18} />
+        <span class="label">Add an Atmosphere publication</span>
+        <Icon name="chevron-right" size={18} />
+      </button>
+      <button type="button" class="add-action" onclick={() => (showImportModal = true)}>
+        <Icon name="file-text" size={18} />
+        <span class="label">Import OPML</span>
+        <Icon name="chevron-right" size={18} />
+      </button>
+    </div>
 
-    {#if isLoading}
-      <p class="status">Checking your sync setting…</p>
-    {:else}
-      <label class="toggle" class:disabled={isToggling}>
-        <input
-          type="checkbox"
-          checked={pdsSyncEnabled}
-          disabled={isToggling}
-          onchange={handleToggle}
-        />
-        <span>Turn on Atmospheric sync</span>
-      </label>
+    <div class="portability">
+      <h3>Take your subscriptions with you</h3>
+      <p>
+        By default your feed list is stored privately on the Skyreader servers. Turn on Atmospheric
+        sync to also store your subscriptions on your atproto PDS, portable to other Atmospheric
+        apps and kept in step with your standard.site subscriptions. Your subscription list becomes
+        <strong>publicly visible</strong> when synced.
+      </p>
 
-      {#if isToggling}
-        <p class="status">Saving…</p>
-      {:else if pdsSyncEnabled}
-        <p class="status confirm">
-          On. Feeds you add, rename, or remove go to your PDS as you change them.
-          {#if auth.user}
-            <a
-              href="https://pdsls.dev/at://{auth.user.did}"
-              target="_blank"
-              rel="noopener noreferrer">View your PDS data</a
-            >
-          {/if}
-        </p>
+      {#if isLoading}
+        <p class="status">Checking your sync setting…</p>
+      {:else}
+        <label class="toggle" class:disabled={isToggling}>
+          <input
+            type="checkbox"
+            checked={pdsSyncEnabled}
+            disabled={isToggling}
+            onchange={handleToggle}
+          />
+          <span>Turn on Atmospheric sync</span>
+        </label>
+
+        {#if isToggling}
+          <p class="status">Saving…</p>
+        {:else if pdsSyncEnabled}
+          <p class="status confirm">
+            On. Feeds you add, rename, or remove go to your PDS as you change them.
+            {#if auth.user}
+              <a
+                href="https://pdsls.dev/at://{auth.user.did}"
+                target="_blank"
+                rel="noopener noreferrer">View your PDS data</a
+              >
+            {/if}
+          </p>
+        {/if}
+
+        {#if error}
+          <p class="status error">{error}</p>
+        {/if}
+
+        <p class="footnote">You can change this anytime in Settings.</p>
       {/if}
+    </div>
 
-      {#if error}
-        <p class="status error">{error}</p>
-      {/if}
+    <div class="portability">
+      <h3>Where your saves live</h3>
+      <p>
+        Your saves stay private on Skyreader. To turn your whole Saved list into a collection you
+        can edit in another app, back it with Semble or Margin. That collection is public. You can
+        change this anytime.
+      </p>
+      <SaveBackingPicker allowExport={false} returnUrl="/" />
+    </div>
 
-      <p class="footnote">You can change this anytime in Settings.</p>
-    {/if}
-  </div>
-
-  <div class="portability">
-    <h3>Where your saves live</h3>
-    <p>
-      Your saves stay private on Skyreader. To turn your whole Saved list into a collection you can
-      edit in another app, back it with Semble or Margin. That collection is public. You can change
-      this anytime.
-    </p>
-    <SaveBackingPicker allowExport={false} returnUrl="/" />
-  </div>
-
-  <div class="discovery-wrap">
-    <SourcesDiscovery />
-  </div>
+    <div class="discovery-wrap">
+      <SourcesDiscovery />
+    </div>
+  {/if}
 </div>
 
 <ImportOPMLModal open={showImportModal} onclose={() => (showImportModal = false)} />
@@ -255,6 +272,11 @@
   .add-action .label {
     flex: 1;
     text-align: left;
+  }
+
+  /* The guest branch renders this as a link, not a button. */
+  a.add-action {
+    text-decoration: none;
   }
 
   /* leading icon picks up the One Blue accent; trailing chevron stays quiet */

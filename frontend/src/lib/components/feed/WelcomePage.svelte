@@ -1,6 +1,60 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import Icon from '$lib/components/Icon.svelte';
+  import { goto } from '$app/navigation';
+  import { auth } from '$lib/stores/auth.svelte';
+  import { api } from '$lib/services/api';
+
+  let starting = $state(false);
+  let startError = $state<string | null>(null);
+
+  // Start Reading: seed the curated starter channels into this browser and open
+  // the reader. No account, no network writes — the subscription rows live only
+  // in IndexedDB until the reader signs in.
+  async function startReading() {
+    if (starting) return;
+    starting = true;
+    startError = null;
+    try {
+      const { channels } = await api.getStarterFeeds();
+      const feeds = channels.flatMap((channel) =>
+        channel.feeds.map((feed) => ({ ...feed, category: channel.name }))
+      );
+
+      // Dynamic: the landing page must not ship the app's data layer (Dexie,
+      // the feed stores) to every logged-out visitor — the same contract that
+      // keeps AppShell out of this chunk (see +layout.svelte).
+      const { subscriptionsStore } = await import('$lib/stores/subscriptions.svelte');
+
+      // Before addBulk: the store reads this to keep the writes local.
+      await auth.enterGuestMode();
+      // The one bulk write a guest is allowed — adding anything else needs an
+      // account (see subscriptions.svelte.ts).
+      const result = await subscriptionsStore.addBulk(feeds, undefined, { starterSeed: true });
+      // addBulk never throws — it collects per-feed problems. Nothing landing at
+      // all means the local database is unavailable (a locked-down private
+      // window), and there is no reading room to walk into.
+      if (result.added.length === 0) {
+        auth.exitGuestMode();
+        throw new Error(result.failed[0]?.error ?? 'No feeds could be saved locally');
+      }
+
+      // Remember which rows were seeded rather than chosen, so signing in to an
+      // existing library doesn't bulk-add the samples to it.
+      const starterUrls = new Set(feeds.map((feed) => feed.feedUrl));
+      auth.rememberStarterRkeys(
+        subscriptionsStore.subscriptions
+          .filter((sub) => sub.feedUrl && starterUrls.has(sub.feedUrl))
+          .map((sub) => sub.rkey)
+      );
+
+      await goto('/feeds');
+    } catch (error) {
+      console.error('Could not start guest reading:', error);
+      startError = 'Could not open the reader here. Try signing in instead.';
+      starting = false;
+    }
+  }
 
   // ── Reveal-on-scroll action ──────────────────────────────────
   // Default (no JS / reduced motion): content is fully visible. The
@@ -149,13 +203,20 @@
       sense of it all.
     </p>
     <div class="hero-actions" use:reveal={{ delay: 260 }}>
-      <a href="/auth/login" class="cta-primary"> Sign in </a>
+      <button class="cta-primary" onclick={startReading} disabled={starting}>
+        {starting ? 'Preparing your reading room…' : 'Start Reading'}
+      </button>
       <a href="#read" class="cta-ghost">
         See how it reads
         <Icon name="arrow-down" size={16} />
       </a>
     </div>
-    <p class="hero-note" use:reveal={{ delay: 320 }}>Free, in beta.</p>
+    {#if startError}
+      <p class="start-error" role="alert">{startError}</p>
+    {/if}
+    <p class="hero-note" use:reveal={{ delay: 320 }}>
+      Free, in beta. No account needed — <a href="/auth/login">sign in</a> when you want it synced.
+    </p>
   </header>
 
   <!-- ── One place ─────────────────────────────────────────── -->
@@ -363,7 +424,12 @@
   <!-- ── Final CTA ─────────────────────────────────────────── -->
   <section class="section section--cta" aria-label="Get started">
     <div class="cta-inner" use:reveal>
-      <a href="/auth/login" class="cta-primary cta-primary--lg"> Start Reading </a>
+      <button class="cta-primary cta-primary--lg" onclick={startReading} disabled={starting}>
+        {starting ? 'Preparing your reading room…' : 'Start Reading'}
+      </button>
+      {#if startError}
+        <p class="start-error" role="alert">{startError}</p>
+      {/if}
     </div>
   </section>
 </div>
@@ -443,6 +509,23 @@
     margin-top: 1.25rem;
     font-size: var(--text-sm);
     color: var(--muted);
+  }
+
+  .hero-note a {
+    color: inherit;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  .hero-note a:hover {
+    color: var(--color-primary);
+  }
+
+  /* Only ever shown when Start Reading couldn't seed the local library. */
+  .start-error {
+    margin-top: 0.75rem;
+    font-size: var(--text-sm);
+    color: var(--color-error);
   }
 
   /* The highlight: a gold marker stroke behind the phrase. Default state

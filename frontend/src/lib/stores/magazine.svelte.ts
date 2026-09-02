@@ -2,6 +2,7 @@ import type { Magazine, MagazineItemSnapshot, MagazineParams, MagazinePosition }
 import { db, getMetadata, setMetadata } from '$lib/services/db';
 import { api } from '$lib/services/api';
 import { syncStore } from './sync.svelte';
+import { auth } from './auth.svelte';
 import { syncQueue, type MagazinePayload } from '$lib/services/sync-queue';
 import { savesStore } from './saves.svelte';
 import { itemLabelsStore } from './itemLabels.svelte';
@@ -28,6 +29,16 @@ import {
 // the whole history. A brand-new client (no saved cursor) does one full snapshot.
 const MAGAZINES_CURSOR_KEY = 'magazinesCursor';
 const POSITION_DEBOUNCE_MS = 500;
+
+/**
+ * Whether magazine writes/reads can reach the backend at all. A guest has no
+ * account to sync to, so every branch behaves exactly as it does offline: the
+ * magazine is written to IndexedDB and the server-bound half is queued. The
+ * held queue is also the sign-in migration (see syncStore.triggerSync).
+ */
+function canReachBackend(): boolean {
+  return syncStore.isOnline && !auth.isGuest;
+}
 
 function createMagazineStore() {
   // Keyed by rkey. Holds live (non-deleted) magazines only; tombstones are
@@ -120,7 +131,7 @@ function createMagazineStore() {
     loading = true;
     try {
       await hydrateFromCache();
-      if (syncStore.isOnline) {
+      if (canReachBackend()) {
         try {
           await loadFromBackend();
         } catch (e) {
@@ -200,7 +211,7 @@ function createMagazineStore() {
       await db.magazines.put(toPlain(mag));
 
       const payload: MagazinePayload = { rkey, params, items, position: null, title: null };
-      if (syncStore.isOnline) {
+      if (canReachBackend()) {
         try {
           await api.upsertMagazine(payload);
         } catch (e) {
@@ -260,7 +271,7 @@ function createMagazineStore() {
       await syncQueue.enqueue('update', 'magazine', rkey, payload);
     };
 
-    if (!syncStore.isOnline) {
+    if (!canReachBackend()) {
       await enqueueFull();
       return;
     }
@@ -285,7 +296,7 @@ function createMagazineStore() {
       params: { order: 'shuffle', targetMinutes: 0, totalMinutes: 0 },
       items: [],
     };
-    if (syncStore.isOnline) {
+    if (canReachBackend()) {
       try {
         await api.deleteMagazine(rkey);
       } catch {

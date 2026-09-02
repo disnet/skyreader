@@ -5,6 +5,7 @@
   import Icon from '$lib/components/Icon.svelte';
   import FilterToolbar from './FilterToolbar.svelte';
   import AppearanceToolbar from './AppearanceToolbar.svelte';
+  import { auth } from '$lib/stores/auth.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { syncStore } from '$lib/stores/sync.svelte';
   import { formatRelativeTime } from '$lib/utils/date';
@@ -214,15 +215,19 @@
               <Icon name="search" size={16} />
               <span class="btn-label">Search</span>
             </button>
-            <span class="toggle-divider"></span>
-            <button
-              onclick={() => sidebarStore.openSaveArticleModal()}
-              aria-label="Save article by URL"
-              title="Save article by URL"
-            >
-              <Icon name="plus" size={16} />
-              <span class="btn-label">Add</span>
-            </button>
+            {#if !auth.isGuest}
+              <!-- URL saves need a session (extraction runs server-side); a
+                   guest's saves come from the feed and home views instead. -->
+              <span class="toggle-divider"></span>
+              <button
+                onclick={() => sidebarStore.openSaveArticleModal()}
+                aria-label="Save article by URL"
+                title="Save article by URL"
+              >
+                <Icon name="plus" size={16} />
+                <span class="btn-label">Add</span>
+              </button>
+            {/if}
             {#if feedViewStore.isSavedChannel && onEditChannel}
               <span class="toggle-divider"></span>
               <button

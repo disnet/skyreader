@@ -39,17 +39,27 @@
     const view = sp.get('view');
     if (view && [...sp].length === 1) return channelPath(view);
     if ([...sp].length > 0) return `/feeds${url.search}`;
-    // No params: land on the reader's chosen default surface.
+    // No params: land on the reader's chosen default surface. A guest who has
+    // never picked one goes to the feeds instead of Home — guest mode exists to
+    // put the starter library in front of someone, and Home leads with a
+    // greeting and lanes that are thin until there's reading history behind
+    // them. An explicit pick (Home's "Opens to" control) still wins.
+    if (auth.isGuest && !preferences.defaultViewConfigured) return '/feeds';
     return DEFAULT_VIEW_PATH[preferences.defaultView];
   }
 
   $effect(() => {
-    if (browser && auth.isAuthenticated) {
+    if (!browser) return;
+    // Guests land wherever targetFor says, same as an account: /home, /feeds
+    // and /saved are all guest surfaces now (saves are local-only for a guest).
+    // A target outside those (nothing targetFor returns today) would hit the
+    // layout's route guard and turn into the sign-in screen, not a 401 page.
+    if (auth.isGuest || auth.isAuthenticated) {
       goto(targetFor(new URL(window.location.href)), { replaceState: true });
     }
   });
 </script>
 
-{#if !auth.isAuthenticated}
+{#if !auth.isAuthenticated && !auth.isGuest}
   <WelcomePage />
 {/if}

@@ -12,6 +12,23 @@ import type { Subscription, SubscriptionSourceType } from '$lib/types';
  * Uses liveDb for storage. Feed fetching is handled separately by feedFetcher.
  * Article queries are handled by articlesStore.
  */
+
+/**
+ * A guest tried to add a source. Adding is account-only, so surfaces that can
+ * be reached without one catch this to offer sign-in instead of an error.
+ */
+export class GuestAddBlockedError extends Error {
+  constructor() {
+    super('Sign in to add feeds.');
+    this.name = 'GuestAddBlockedError';
+  }
+}
+// Matches the guest timeline endpoint's feedUrls cap (backend/src/routes/guest.ts).
+// A guest can no longer add feeds, so the only library that reaches this is the
+// curated starter set; the constant stays as the invariant the timeline request
+// depends on rather than as a ceiling anyone can climb to.
+const GUEST_MAX_SUBSCRIPTIONS = 50;
+
 function createSubscriptionsStore() {
   let isLoading = $state(false);
   let error = $state<string | null>(null);
@@ -33,8 +50,13 @@ function createSubscriptionsStore() {
   // Derived: subscription count
   let count = $derived(subscriptions.length);
 
-  // Derived: max subscriptions from user tier (fallback to 100 for free)
-  let maxSubscriptions = $derived(auth.user?.limits?.maxSubscriptions ?? 100);
+  // Derived: max subscriptions from user tier (fallback to 100 for free).
+  // A guest's ceiling is the guest timeline's per-request feed cap: the whole
+  // library travels in every refresh, and going over it would 400 the request —
+  // costing them the timeline rather than just the overflow.
+  let maxSubscriptions = $derived(
+    auth.isGuest ? GUEST_MAX_SUBSCRIPTIONS : (auth.user?.limits?.maxSubscriptions ?? 100)
+  );
 
   // Derived: can add more subscriptions
   let canAddMore = $derived(count < maxSubscriptions);
@@ -63,6 +85,13 @@ function createSubscriptionsStore() {
     title: string,
     options?: Partial<Subscription>
   ): Promise<number> {
+    // Adding a source is account-only. A guest reads the curated starter set
+    // seeded by "Start Reading" (addBulk's `starterSeed` path); anything beyond
+    // it is a feed nobody subscribes to, which nothing keeps current in the
+    // archive. The UI routes a guest to sign-in before reaching this; the throw
+    // is the backstop for any surface that doesn't.
+    if (auth.isGuest) throw new GuestAddBlockedError();
+
     if (count >= maxSubscriptions) {
       // Same error type the backend's 403 produces, so callers can render one
       // limit notice without caring which side caught it first.
@@ -109,7 +138,6 @@ function createSubscriptionsStore() {
       const rkey = generateTid();
       const now = new Date().toISOString();
 
-      // Sync to backend first
       const created = await api.createSubscription({
         rkey,
         feedUrl: feedUrl || undefined,
@@ -164,7 +192,7 @@ function createSubscriptionsStore() {
       category?: string;
     }>,
     onProgress?: (current: number, total: number) => void,
-    options?: { source?: 'manual' | 'opml' }
+    options?: { source?: 'manual' | 'opml'; starterSeed?: boolean }
   ): Promise<{
     added: number[];
     skipped: string[];
@@ -178,6 +206,21 @@ function createSubscriptionsStore() {
     let parked = 0;
     let dropped = 0;
     const source = options?.source || 'manual';
+
+    // The curated starter channels are the one bulk write a guest makes: they
+    // ride the crawl set, so the archive keeps them current without an account.
+    // Every other bulk path (OPML import) is account-only, for the same reason
+    // add() is. addBulk never throws, so refuse in its own vocabulary.
+    const starterSeed = options?.starterSeed === true;
+    if (auth.isGuest && !starterSeed) {
+      return {
+        added,
+        skipped,
+        failed: feeds.map((feed) => ({ url: feed.feedUrl, error: 'Sign in to add feeds.' })),
+        parked,
+        dropped,
+      };
+    }
 
     // Get existing feed URLs for duplicate detection
     const existingUrls = new Set(
@@ -213,7 +256,7 @@ function createSubscriptionsStore() {
 
     onProgress?.(Math.floor(feedsToAdd.length / 4), feedsToAdd.length);
 
-    // Bulk sync to backend
+    // Bulk sync to backend (or accept every row locally for a guest).
     try {
       const subscriptionsToCreate = localRecords.map(({ rkey, feed }) => ({
         rkey,
@@ -224,7 +267,13 @@ function createSubscriptionsStore() {
         source,
       }));
 
-      const res = await api.bulkCreateSubscriptions(subscriptionsToCreate);
+      // The starter seed writes locally and only locally — there is no account
+      // to sync to yet. It is a fixed curated set well under the guest cap, so
+      // nothing is parked, skipped or dropped; returning the backend's shape
+      // keeps the bookkeeping below identical on both paths.
+      const res = starterSeed
+        ? { parked: [] as string[], skipped: [] as string[], dropped: [] as string[] }
+        : await api.bulkCreateSubscriptions(subscriptionsToCreate);
       const parkedRkeys = new Set(res.parked ?? []);
       const skippedRkeys = new Set(res.skipped ?? []);
       const droppedRkeys = new Set(res.dropped ?? []);
@@ -291,6 +340,15 @@ function createSubscriptionsStore() {
 
     const now = new Date().toISOString();
 
+    if (auth.isGuest) {
+      await liveDb.updateSubscription(id, {
+        ...updates,
+        updatedAt: now,
+        localUpdatedAt: Date.now(),
+      });
+      return;
+    }
+
     // Delete old and recreate (API limitation)
     await api.deleteSubscription(sub.rkey);
 
@@ -339,9 +397,10 @@ function createSubscriptionsStore() {
       if (updates.customIconUrl !== undefined) patch.customIconUrl = updates.customIconUrl ?? null;
       if (updates.category !== undefined) patch.category = updates.category ?? null;
 
-      api.updateSubscription(sub.rkey, patch).catch((err) => {
-        console.error('[Subscriptions] Failed to sync custom fields to backend:', err);
-      });
+      if (!auth.isGuest)
+        api.updateSubscription(sub.rkey, patch).catch((err) => {
+          console.error('[Subscriptions] Failed to sync custom fields to backend:', err);
+        });
     }
   }
 
@@ -364,7 +423,7 @@ function createSubscriptionsStore() {
       .map((id) => liveDb.getSubscriptionById(id)?.rkey)
       .filter((rkey): rkey is string => !!rkey);
 
-    if (rkeys.length > 0) {
+    if (rkeys.length > 0 && !auth.isGuest) {
       const patch: {
         customTitle?: string | null;
         customIconUrl?: string | null;
@@ -388,7 +447,7 @@ function createSubscriptionsStore() {
     if (!sub) return;
 
     // Sync delete to backend
-    await api.deleteSubscription(sub.rkey);
+    if (!auth.isGuest) await api.deleteSubscription(sub.rkey);
 
     // Delete locally (includes articles)
     await liveDb.deleteSubscription(id);
@@ -406,7 +465,7 @@ function createSubscriptionsStore() {
     const rkeys = allSubs.map((sub) => sub.rkey);
 
     // Single bulk request to backend
-    await api.bulkDeleteSubscriptions(rkeys);
+    if (!auth.isGuest) await api.bulkDeleteSubscriptions(rkeys);
 
     // Clear all local data
     await liveDb.clearAllSubscriptions();

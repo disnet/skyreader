@@ -387,7 +387,10 @@
         // saving again is how the article joins another collection.
         return Boolean(auth.user);
       case 'bluesky':
-        return true; // compose intent — always available
+        // The intent link needs no Skyreader session, but posting is still
+        // adding to the discussion, and everything that adds is account-only.
+        // Reading the lane is not: a guest sees who posted, just not the button.
+        return Boolean(auth.user);
     }
   }
 
@@ -680,7 +683,12 @@
   const SHORT_ARTICLE_WORDS = 200;
   let fetchingOriginal = $derived(Boolean(article) && linkPostContentStore.isFetching(itemUrl));
   let hasFetchedOriginal = $derived(Boolean(article) && Boolean(linkPostContentStore.get(itemUrl)));
-  let canFetchOriginal = $derived(Boolean(article) && Boolean(itemUrl) && !hasFetchedOriginal);
+  // Account-only, like the store it drives (extraction needs a session). Hidden
+  // rather than offered and refused: a guest's feed is full of truncated RSS
+  // bodies, so a dead "Fetch full article" would sit under most of them.
+  let canFetchOriginal = $derived(
+    Boolean(auth.user) && Boolean(article) && Boolean(itemUrl) && !hasFetchedOriginal
+  );
   let showFetchOriginal = $derived(
     canFetchOriginal && bodyWordCount > 0 && bodyWordCount < SHORT_ARTICLE_WORDS
   );
@@ -988,6 +996,7 @@
   onFollowSource={handleFollowSource}
   onSelectFilter={atmosphere.setFilter}
   onOpenStream={atmosphere.openStream}
+  onNearViewport={atmosphere.enterViewport}
   onRetryStream={atmosphere.retry}
   onCreateInLane={createInLane}
   onComposeShare={composeShare}

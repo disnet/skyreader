@@ -30,6 +30,9 @@ export interface LabelPayload {
   itemType: string;
   label: string;
   props?: Record<string, unknown>;
+  // Set on highlight writes made in guest mode, so draining them into an
+  // existing account unions rather than replacing. See syncHighlightsToBackend.
+  mode?: 'replace' | 'merge';
 }
 
 export interface SavedPayload {
@@ -106,6 +109,21 @@ class SyncQueue {
   }
 
   /**
+   * The queued entry for this collection+key that belongs to the CURRENT
+   * library — i.e. not one held for a signed-out account (see clearAllData).
+   */
+  private async liveEntry(
+    collection: SyncCollection,
+    key: string
+  ): Promise<SyncQueueEntry | undefined> {
+    const entries = await db.syncQueue
+      .where('[collection+key]')
+      .equals([collection, key])
+      .toArray();
+    return entries.find((entry) => entry.status !== 'held');
+  }
+
+  /**
    * Add an operation to the sync queue
    * Handles deduplication and conflict resolution
    */
@@ -115,8 +133,12 @@ class SyncQueue {
     key: string,
     payload: SyncPayload
   ): Promise<void> {
-    // Check for existing entry with same collection+key
-    const existing = await db.syncQueue.where('[collection+key]').equals([collection, key]).first();
+    // Check for existing entry with same collection+key. A HELD entry (parked by
+    // an expired session, owned by a DID that may never come back) is not a
+    // conflict partner: merging into one would leak the previous account's write
+    // into this library, and updating it would strand the new write behind a
+    // hold. Skip it and queue alongside.
+    const existing = await this.liveEntry(collection, key);
 
     if (existing) {
       // Conflict resolution
@@ -154,7 +176,7 @@ class SyncQueue {
    * when the user undoes the action before it syncs.
    */
   async cancelPending(collection: SyncCollection, key: string): Promise<void> {
-    const existing = await db.syncQueue.where('[collection+key]').equals([collection, key]).first();
+    const existing = await this.liveEntry(collection, key);
     if (existing) {
       await db.syncQueue.delete(existing.id!);
       await this.notifyPendingCount();
@@ -532,6 +554,7 @@ class SyncQueue {
           label: payload.label,
           props: payload.props,
           updatedAt: queuedAt,
+          mode: payload.mode,
         });
         break;
       case 'delete':
@@ -677,6 +700,32 @@ class SyncQueue {
   /**
    * Get count of pending items
    */
+  /**
+   * The rkeys of saves whose create has not reached the backend yet (queued, in
+   * flight, or failed and still retryable).
+   *
+   * An external-backed snapshot is authoritative about collection MEMBERSHIP,
+   * but it cannot know about a save that was never sent — so a wholesale
+   * replace has to be told which rows to leave alone. See savesStore.load().
+   */
+  async pendingSavedRkeys(): Promise<Set<string>> {
+    const rkeys = new Set<string>();
+    const entries = await db.syncQueue.where('collection').equals('saved').toArray();
+    for (const entry of entries) {
+      if (entry.operation !== 'create') continue;
+      // Held entries belong to a signed-out account; their saves are not in
+      // this library, so they must not shield rows from a snapshot replace.
+      if (entry.status === 'held') continue;
+      try {
+        const payload = JSON.parse(entry.payload) as { rkey?: unknown };
+        if (typeof payload.rkey === 'string') rkeys.add(payload.rkey);
+      } catch {
+        // A payload we can't read can't identify a row to protect.
+      }
+    }
+    return rkeys;
+  }
+
   async getPendingCount(): Promise<number> {
     return db.syncQueue.where('status').equals('pending').count();
   }

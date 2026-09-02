@@ -15,6 +15,7 @@ import { api } from '$lib/services/api';
 import { dedupeRemoteSubscriptionRecords } from '$lib/services/subscriptionDedup';
 import { getMetadata, setMetadata, checkDbHealth } from '$lib/services/db';
 import type { Subscription } from '$lib/types';
+import { auth } from './auth.svelte';
 
 const LAST_REFRESH_KEY = 'lastRefreshAt';
 
@@ -66,17 +67,20 @@ function createAppManager() {
         lastRefreshAt = persistedRefreshAt;
       }
 
-      // Phase 1: Hydrate from cache (parallel)
-      await Promise.all([
+      // Phase 1: Hydrate from cache (parallel). savesStore, filteredViewsStore
+      // and magazineStore are guest surfaces too — local-only saves, channels
+      // and magazine issues; each load() stops at the Dexie cache for guests.
+      const guestLoads = [
         liveDb.loadSubscriptions(),
         liveDb.loadArticles(),
         itemLabelsStore.load(),
-        linkblogStore.load(),
-        shareDraftsStore.load(),
-        filteredViewsStore.load(),
         savesStore.load(),
+        filteredViewsStore.load(),
         magazineStore.load(),
-      ]);
+      ];
+      await Promise.all(
+        auth.isGuest ? guestLoads : [...guestLoads, linkblogStore.load(), shareDraftsStore.load()]
+      );
 
       // Feed statuses are NOT seeded here. A feed is healthy until the crawler's
       // health report says otherwise, and that report is the only thing that can
@@ -84,8 +88,8 @@ function createAppManager() {
       // feedStatus.svelte.ts.
 
       // Initialize pending count and process queue if online
-      await syncStore.updatePendingCount();
-      if (syncStore.isOnline && syncStore.pendingCount > 0) {
+      if (!auth.isGuest) await syncStore.updatePendingCount();
+      if (!auth.isGuest && syncStore.isOnline && syncStore.pendingCount > 0) {
         // Process queue in background - don't block initialization
         syncStore.triggerSync();
       }
@@ -127,6 +131,15 @@ function createAppManager() {
     let newArticles = 0;
 
     try {
+      if (auth.isGuest) {
+        if (liveDb.subscriptions.length > 0) {
+          newArticles = (await fetchAllFeeds(liveDb.subscriptions, articlesStore.savedGuids))
+            .newArticles;
+        }
+        return newArticles;
+      }
+
+      await migrateGuestSubscriptions();
       // Sync subscriptions and reload every server-backed user collection in parallel.
       // Saves must participate here (not only during initialize): another device can
       // add one while this tab stays open, and an explicit refresh is the user's way
@@ -171,6 +184,43 @@ function createAppManager() {
     }
 
     return newArticles;
+  }
+
+  // Runs before reconciliation: otherwise syncSubscriptions would interpret the
+  // guest-only rkeys as remote deletions. The bulk endpoint is idempotent, so a
+  // failed boot safely retries while the marker remains set.
+  async function migrateGuestSubscriptions(): Promise<void> {
+    if (!auth.isAuthenticated || !auth.hasGuestData) return;
+
+    let rows = liveDb.subscriptions.filter((subscription) => subscription.feedUrl);
+
+    // The nine curated starter feeds are a sample, not a choice. Pushing them
+    // into an account that already HAS a library (someone who tried the reader
+    // out and then signed in) would silently add feeds the reader never picked —
+    // and mirror them to their PDS with Atmospheric sync on. So they only travel
+    // when the account is empty; otherwise they stay local and syncSubscriptions
+    // clears them below, leaving the reader's real library untouched.
+    const starterRkeys = new Set(auth.starterRkeys());
+    if (starterRkeys.size > 0 && rows.some((row) => starterRkeys.has(row.rkey))) {
+      const remote = await api.listRecords('app.skyreader.feed.subscription');
+      if (remote.records.length > 0) {
+        rows = rows.filter((row) => !starterRkeys.has(row.rkey));
+      }
+    }
+
+    for (let index = 0; index < rows.length; index += 50) {
+      await api.bulkCreateSubscriptions(
+        rows.slice(index, index + 50).map((subscription) => ({
+          rkey: subscription.rkey,
+          feedUrl: subscription.feedUrl!,
+          title: subscription.title,
+          siteUrl: subscription.siteUrl,
+          category: subscription.category,
+          source: subscription.source,
+        }))
+      );
+    }
+    auth.exitGuestMode();
   }
 
   /**

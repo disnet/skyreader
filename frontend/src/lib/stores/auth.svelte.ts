@@ -1,5 +1,5 @@
 import { browser } from '$app/environment';
-import { api, OfflineError, SessionRefreshError } from '$lib/services/api';
+import { api, OfflineError, SessionExpiredError, SessionRefreshError } from '$lib/services/api';
 import type { User } from '$lib/types';
 
 interface AuthState {
@@ -22,6 +22,12 @@ export interface LastUser {
 // device so the login screen can offer any of them, not just the latest.
 const RECENT_USERS_KEY = 'skyreader-recent-users';
 const MAX_RECENT_USERS = 5;
+// Guest reading mode: no account, subscriptions live only in this browser.
+const GUEST_KEY = 'skyreader-guest';
+// The rkeys of the curated starter feeds seeded by "Start Reading". Kept apart
+// from the feeds the guest actually chose so signing in to an EXISTING library
+// doesn't silently bulk-add nine sample feeds to it (see app.svelte.ts).
+const GUEST_STARTER_KEY = 'skyreader-guest-starter';
 
 function parseRecentUsers(raw: string | null): LastUser[] {
   if (!raw) return [];
@@ -81,16 +87,30 @@ function createAuthStore() {
     scopeUpgradeRequired: false,
   });
 
+  // Guest mode is a SIGNAL, not a localStorage read: every consumer gates
+  // rendering on it (the AppShell import, the route guard, the sidebar), and a
+  // plain `localStorage.getItem` in a getter tracks nothing — clicking "Start
+  // Reading" would set the key and re-run no effect, leaving the reader rendered
+  // bare inside the marketing chrome until a manual reload. localStorage stays
+  // the durable copy; this is the reactive one.
+  let isGuestMode = $state(browser && localStorage.getItem(GUEST_KEY) === '1');
+
   // Handle 401 - session expired/invalid on the backend
   function handleUnauthorized() {
-    console.log('Handling unauthorized - clearing session');
-    state.user = null;
-
-    if (browser) {
-      localStorage.removeItem('skyreader-auth');
-      // Redirect to login
-      window.location.href = '/auth/login';
+    // A guest has no session to expire. Bouncing them to /auth/login because a
+    // stray authenticated call leaked would eject them mid-read.
+    if (isGuestMode && !state.user) {
+      console.log('Ignoring unauthorized in guest mode');
+      return;
     }
+    console.log('Handling unauthorized - clearing session');
+    // Do not leave the previous account's IndexedDB rows behind. If this only
+    // removed the auth marker, a later "Start Reading" would adopt those rows
+    // as guest-local data and expose saves (and other private account state) to
+    // whoever is using the logged-out browser.
+    void clearLocalSession({ hold: true }).finally(() => {
+      if (browser) window.location.href = '/auth/login';
+    });
   }
 
   // Restore session from localStorage on init
@@ -120,6 +140,7 @@ function createAuthStore() {
   // Set user after successful authentication
   // Session is managed via HTTP-only cookies
   function setUser(user: User) {
+    const previousDid = state.user?.did;
     state.user = user;
     state.error = null;
 
@@ -127,6 +148,65 @@ function createAuthStore() {
       // Store only user info for display caching (session is in HTTP-only cookie)
       localStorage.setItem('skyreader-auth', JSON.stringify({ user }));
       rememberLastUser(user);
+      // Hand back the writes an expired session parked (see clearLocalSession),
+      // but only to the account that made them; anything held for a different
+      // DID is dropped here rather than lingering. Skipped on the no-op
+      // re-confirmation of an already-live session so a normal focus check
+      // doesn't re-queue anything.
+      if (previousDid !== user.did) {
+        void import('$lib/services/db').then(({ releaseHeldSyncQueue }) =>
+          releaseHeldSyncQueue(user.did)
+        );
+      }
+    }
+  }
+
+  async function enterGuestMode() {
+    if (!browser) return;
+    // Guest storage is intentionally local and unscoped. Establish a clean
+    // ownership boundary before enabling guest mode so stale data from an
+    // expired or otherwise logged-out account can never become guest data.
+    await clearLocalData();
+    localStorage.setItem(GUEST_KEY, '1');
+    isGuestMode = true;
+  }
+
+  function exitGuestMode() {
+    if (!browser) return;
+    localStorage.removeItem(GUEST_KEY);
+    localStorage.removeItem(GUEST_STARTER_KEY);
+    isGuestMode = false;
+  }
+
+  // A guest's way out, and the counterpart of logout(): guest mode is otherwise
+  // a one-way door, since every reading surface is a guest surface and `/`
+  // bounces a guest back into the reader.
+  //
+  // It clears the local library on the way out for the same reason
+  // enterGuestMode clears it on the way in — guest rows belong to no account,
+  // and leaving them in IndexedDB would hand them to whoever signs in next
+  // (migrateGuestSubscriptions only runs while the guest marker is still set).
+  // Destructive, so callers confirm first.
+  async function leaveGuestMode() {
+    if (!browser) return;
+    await clearLocalData();
+    exitGuestMode();
+  }
+
+  // Record which local subscriptions came from the curated starter channels
+  // rather than from the reader's own choices.
+  function rememberStarterRkeys(rkeys: string[]) {
+    if (!browser) return;
+    localStorage.setItem(GUEST_STARTER_KEY, JSON.stringify(rkeys));
+  }
+
+  function starterRkeys(): string[] {
+    if (!browser) return [];
+    try {
+      const parsed = JSON.parse(localStorage.getItem(GUEST_STARTER_KEY) || '[]');
+      return Array.isArray(parsed) ? parsed.filter((r): r is string => typeof r === 'string') : [];
+    } catch {
+      return [];
     }
   }
 
@@ -143,6 +223,33 @@ function createAuthStore() {
     }
   }
 
+  async function clearLocalData(options?: { holdSyncQueueFor?: string }) {
+    if (!browser) return;
+    // Dynamically imported so the IndexedDB layer (Dexie) and background-sync
+    // service stay out of the always-loaded auth chunk.
+    const [{ clearAllData }, { unregisterPeriodicSync }] = await Promise.all([
+      import('$lib/services/db'),
+      import('$lib/services/backgroundRefresh'),
+    ]);
+    await clearAllData(options);
+    await unregisterPeriodicSync();
+  }
+
+  // `hold`: an INVOLUNTARY teardown (the session expired under us). The reader
+  // never asked to log out, so their unsynced writes — an offline highlight, a
+  // save, a read position — must not be collateral. Held entries are parked
+  // against the departing DID: inert for everyone (guests included) until that
+  // same account signs back in. An explicit logout does NOT hold, because there
+  // the reader IS asking for their data to be off this browser.
+  async function clearLocalSession(options?: { hold?: boolean }) {
+    const owner = options?.hold ? state.user?.did : undefined;
+    state.user = null;
+    if (browser) {
+      localStorage.removeItem('skyreader-auth');
+      await clearLocalData(owner ? { holdSyncQueueFor: owner } : undefined);
+    }
+  }
+
   async function logout() {
     try {
       await api.logout();
@@ -150,22 +257,7 @@ function createAuthStore() {
       // Ignore logout errors
     }
 
-    state.user = null;
-
-    if (browser) {
-      localStorage.removeItem('skyreader-auth');
-      // Dynamically imported so the IndexedDB layer (Dexie) and background-sync
-      // service stay out of the always-loaded auth chunk — they're only needed
-      // here, at logout. Keeping them lazy is what lets the logged-out landing
-      // page avoid downloading the app's data layer.
-      const [{ clearAllData }, { unregisterPeriodicSync }] = await Promise.all([
-        import('$lib/services/db'),
-        import('$lib/services/backgroundRefresh'),
-      ]);
-      await clearAllData();
-      // Unregister from periodic background sync
-      await unregisterPeriodicSync();
-    }
+    await clearLocalSession();
   }
 
   // Verify session is still valid by calling the backend
@@ -175,15 +267,22 @@ function createAuthStore() {
       setUser(user);
       return true;
     } catch (error) {
-      if (error instanceof OfflineError || error instanceof SessionRefreshError) {
+      // Only a CONFIRMED 401 (the backend agreed the session is gone) may tear
+      // down local state. Everything else — offline, a mid-refresh 503, an
+      // unconfirmed 401, a raw `TypeError: Failed to fetch` from a backend blip
+      // or captive portal, a 500 — is transient. verifySession runs on every
+      // window focus and polls during supporter checkout, so treating those as
+      // a logout would wipe a reader's whole cached library over a few seconds
+      // of bad network.
+      if (!(error instanceof SessionExpiredError)) {
         return !!state.user;
       }
 
-      // Session invalid - clear local state
-      state.user = null;
-      if (browser) {
-        localStorage.removeItem('skyreader-auth');
-      }
+      // A real guest may encounter a stray session probe; its local library is
+      // the source of truth and must survive. Any non-guest session failure,
+      // however, must clear the account-owned cache before logged-out use.
+      if (isGuestMode && !state.user) return false;
+      await clearLocalSession({ hold: true });
       return false;
     }
   }
@@ -206,6 +305,20 @@ function createAuthStore() {
     get isAuthenticated() {
       return !!state.user;
     },
+    get isGuest() {
+      return isGuestMode && !state.user;
+    },
+    // Guest data is waiting to be migrated: the marker is still set even though
+    // an account is now signed in.
+    get hasGuestData() {
+      return isGuestMode;
+    },
+    // "Is the reader inside the app at all" — true for an account and a guest.
+    // The reading surfaces gate on this; account actions keep gating on
+    // isAuthenticated.
+    get isInApp() {
+      return !!state.user || isGuestMode;
+    },
     get error() {
       return state.error;
     },
@@ -217,6 +330,11 @@ function createAuthStore() {
     },
     setUser,
     cacheUser,
+    enterGuestMode,
+    exitGuestMode,
+    leaveGuestMode,
+    rememberStarterRkeys,
+    starterRkeys,
     verifySession,
     logout,
     setError,

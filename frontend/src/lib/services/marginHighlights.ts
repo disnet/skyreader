@@ -3,6 +3,7 @@ import { syncQueue, type MarginNotePayload } from '$lib/services/sync-queue';
 import { syncStore } from '$lib/stores/sync.svelte';
 import { toastStore } from '$lib/stores/toast.svelte';
 import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
+import { auth } from '$lib/stores/auth.svelte';
 import type { Highlight } from '$lib/types';
 
 // Shared Margin (at.margin.note) sync for highlights. Used both by the in-reader
@@ -49,6 +50,21 @@ export async function saveHighlightToMargin(
   title?: string
 ): Promise<boolean> {
   if (highlight.marginUri) return true; // already saved
+
+  // A Margin note is a record in the reader's own atproto repo, so it needs an
+  // account — and unlike a local highlight, queueing it would be a false
+  // promise: the entry could never drain without both a session and a granted
+  // Margin scope. The surfaces hide this action for a guest; this is the
+  // backstop, and it says what to do instead of silently dropping the write.
+  if (auth.isGuest) {
+    const id = toastStore.add('Sign in to save highlights to Margin');
+    toastStore.update(id, 'error', undefined, {
+      label: 'Sign in',
+      href: '/auth/login?returnUrl=/highlights',
+    });
+    return false;
+  }
+
   if (!source) {
     const id = toastStore.add('No article URL to save to Margin');
     toastStore.update(id, 'error');

@@ -17,6 +17,7 @@ import {
 } from './timelineSync';
 import { loadDigests, saveDigests, scopeKey } from './documentDigests';
 import type { Subscription } from '$lib/types';
+import { auth } from '$lib/stores/auth.svelte';
 
 // Max authors per /documents request (matches the proxy/backend cap).
 const DOCUMENT_BATCH_SIZE = 50;
@@ -70,6 +71,12 @@ const MAX_COLD_START_ROUNDS = 25;
 // from another device. The rest continue on the next sync.
 const MAX_BACKFILLS_PER_SYNC = 10;
 
+// Feeds per guest timeline request, matching the server's cap. The store keeps a
+// guest's library under this (subscriptions.svelte.ts), so this is a belt-and-
+// braces clamp: sending more would 400, and a 400 must never cost a guest their
+// whole timeline.
+const GUEST_MAX_FEEDS = 50;
+
 interface TimelineCursor {
   cursor: number;
   generation: string;
@@ -113,6 +120,10 @@ async function fetchTimeline(
   // races with an unsubscribe are benign.
   const subIdByUrl = buildSubscriptionIndex(rssSubs);
 
+  // A guest has no server-side subscription list, so the request carries the
+  // feed URLs themselves.
+  const guestFeedUrls = auth.isGuest ? guestUrlsFor(rssSubs) : [];
+
   const stored = await getMetadata<TimelineCursor>(TIMELINE_CURSOR_KEY);
   let cursor = stored?.cursor;
   let generation = stored?.generation;
@@ -153,7 +164,7 @@ async function fetchTimeline(
 
     let page;
     try {
-      page = await api.fetchTimeline(
+      const params =
         coldOffset === undefined
           ? {
               since_seq: cursor,
@@ -167,8 +178,10 @@ async function fetchTimeline(
               limit: TIMELINE_PAGE_LIMIT,
               health_rev: feedHealthRev,
               include_counts: includeCounts,
-            }
-      );
+            };
+      page = auth.isGuest
+        ? await api.fetchGuestTimeline(guestFeedUrls, params)
+        : await api.fetchTimeline(params);
     } catch (e) {
       if (e instanceof ApiError && e.status === 404) {
         // Backend predates the timeline (or was rolled back): stay on /batch.
@@ -180,9 +193,19 @@ async function fetchTimeline(
 
     // The server says whether this environment's crawler is actually filling the
     // archive. Until it is, use the legacy batch path and commit no cursor.
-    if (shouldFallBackToBatch(page, rssSubs.length)) return null;
+    if (shouldFallBackToBatch(page, rssSubs.length)) {
+      // ...except for a guest, who has no batch path: /api/v2/feeds/batch needs a
+      // session. Stop here with an empty (not failed) result and no committed
+      // cursor — the reading surface shows what it already holds and the next
+      // poll tries again — rather than fanning out to endpoints that all 401.
+      if (auth.isGuest) {
+        console.warn('[feedFetcher] Guest timeline reports ingest paused; retrying next sync.');
+        return result;
+      }
+      return null;
+    }
 
-    if (page.readCursor) await itemLabelsStore.seedReadCursor(page.readCursor);
+    if (!auth.isGuest && page.readCursor) await itemLabelsStore.seedReadCursor(page.readCursor);
 
     if (page.unreadCounts) {
       serverCounts = page.unreadCounts;
@@ -197,7 +220,7 @@ async function fetchTimeline(
     if (toMerge.length > 0) {
       result.newArticles += await liveDb.mergeArticlesBatch(toMerge, savedGuids);
     }
-    if (readGuids.length > 0) {
+    if (!auth.isGuest && readGuids.length > 0) {
       await itemLabelsStore.applyAnnotatedReads(readGuids, 'article');
     }
 
@@ -330,6 +353,52 @@ async function backfillMissingSubscriptions(
   return newArticles;
 }
 
+/** The feed URLs a guest timeline request carries, clamped to the server's cap. */
+function guestUrlsFor(rssSubs: Subscription[]): string[] {
+  const urls = rssSubs.map((sub) => sub.feedUrl).filter((url): url is string => !!url);
+  if (urls.length <= GUEST_MAX_FEEDS) return urls;
+  console.warn(
+    `[feedFetcher] Guest library is over the ${GUEST_MAX_FEEDS}-feed request cap; ` +
+      `${urls.length - GUEST_MAX_FEEDS} feed(s) are not in this refresh.`
+  );
+  return urls.slice(0, GUEST_MAX_FEEDS);
+}
+
+/**
+ * `fetchSingleFeed` for a guest: a cold read of the guest timeline scoped to one
+ * feed. `GET /api/v2/feeds/fetch` needs a session, and its pull-through is
+ * subscription-gated anyway.
+ *
+ * There is no warm step: a guest can only hold the curated starter channels,
+ * and those ride the crawl set, so the archive is already as fresh as the
+ * crawler can make it. `force` therefore only bypasses the local cooldown.
+ *
+ * Returns the same shape as `fetchSingleFeed`, so callers never branch.
+ */
+async function fetchGuestFeed(
+  subscription: Subscription,
+  force: boolean,
+  savedGuids: Set<string>
+): Promise<FetchSingleFeedResult> {
+  const { id, feedUrl } = subscription;
+  if (!id || !feedUrl) return { success: false, newArticles: 0 };
+  if (!force && !feedStatusStore.canFetch(feedUrl)) return { success: false, newArticles: 0 };
+
+  try {
+    const page = await api.fetchGuestTimeline([feedUrl], { limit: TIMELINE_PAGE_LIMIT });
+    if (page.ingestActive === false) return { success: false, newArticles: 0 };
+    const items = page.items.filter((item) => item.feedUrl === feedUrl);
+
+    const newArticles = items.length > 0 ? await liveDb.mergeArticles(id, items, savedGuids) : 0;
+    feedStatusStore.markReady(feedUrl);
+    return { success: true, newArticles };
+  } catch (e) {
+    const message = e instanceof Error ? e.message : 'Failed to fetch feed';
+    feedStatusStore.markError(feedUrl, message);
+    return { success: false, newArticles: 0 };
+  }
+}
+
 /**
  * Fetch all subscribed feeds.
  *
@@ -356,8 +425,21 @@ export async function fetchAllFeeds(
       const timelineResult = await fetchTimeline(subscriptions, savedGuids);
       if (timelineResult) return timelineResult;
     } catch (e) {
-      console.error('[feedFetcher] Timeline sync failed, falling back to batch fetch:', e);
+      console.error('[feedFetcher] Timeline sync failed:', e);
     }
+  }
+
+  // The batch path is session-gated end to end, so for a guest it is not a
+  // fallback — every chunk would 401. Report the sync as unsuccessful and keep
+  // serving what's cached.
+  if (auth.isGuest) {
+    console.warn('[feedFetcher] Guest timeline unavailable; the batch path needs an account.');
+    return {
+      totalFeeds: subscriptions.length,
+      successfulFeeds: 0,
+      failedFeeds: 0,
+      newArticles: 0,
+    };
   }
 
   // The legacy path has no server-side counts, so anything we're still holding
@@ -365,6 +447,7 @@ export async function fetchAllFeeds(
   // frozen number sit in the sidebar looking authoritative.
   const { unreadCounts } = await import('$lib/stores/unreadCounts.svelte');
   unreadCounts.clearServerCounts();
+
   return fetchAllFeedsViaBatch(subscriptions, savedGuids);
 }
 
@@ -724,6 +807,11 @@ export async function fetchSingleFeed(
   if (!subscription.id || !subscription.feedUrl) {
     return { success: false, newArticles: 0 };
   }
+
+  // A guest reads the same archive through the unauthenticated timeline: every
+  // caller of this function (add-feed, retry, refresh, backfill) is reachable in
+  // guest mode, and this endpoint is not.
+  if (auth.isGuest) return fetchGuestFeed(subscription, force, savedGuids);
 
   // Skip if in circuit-breaker cooldown (unless forcing)
   if (!force && !feedStatusStore.canFetch(subscription.feedUrl)) {

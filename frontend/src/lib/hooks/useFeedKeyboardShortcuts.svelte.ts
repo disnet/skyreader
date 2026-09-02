@@ -209,11 +209,11 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
   }
 
   function hasItems() {
-    return auth.isAuthenticated && feedViewStore.currentItems.length > 0;
+    return auth.isInApp && feedViewStore.currentItems.length > 0;
   }
 
   function hasSelected() {
-    return auth.isAuthenticated && feedViewStore.selectedKey !== null;
+    return auth.isInApp && feedViewStore.selectedKey !== null;
   }
 
   // Toggle expand action (or open bookmark reader in bookmarks view)
@@ -318,7 +318,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
       description: 'Toggle unread filter',
       category: 'Other',
       action: () => feedViewStore.toggleUnreadFilter(),
-      condition: () => auth.isAuthenticated && !feedViewStore.savedFilter,
+      condition: () => auth.isInApp && !feedViewStore.savedFilter,
     });
 
     keyboardStore.register({
@@ -327,7 +327,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
       description: 'Mark all as read',
       category: 'Article',
       action: params.markAllAsReadInCurrentFeed,
-      condition: () => auth.isAuthenticated && !!feedViewStore.feedFilter,
+      condition: () => auth.isInApp && !!feedViewStore.feedFilter,
     });
 
     // Bookmarks-specific: archive item (works for all item types)

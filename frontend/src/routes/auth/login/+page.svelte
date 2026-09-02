@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
   import { api } from '$lib/services/api';
-  import { getRecentUsers, forgetRecentUser, type LastUser } from '$lib/stores/auth.svelte';
+  import { auth, getRecentUsers, forgetRecentUser, type LastUser } from '$lib/stores/auth.svelte';
   import { searchBlueskyActors, type BlueskySearchResult } from '$lib/services/blueskySearch';
   import Icon from '$lib/components/Icon.svelte';
   import Logo from '$lib/assets/logo.svg';
@@ -20,6 +20,11 @@
   // Handles whose cached avatar URL failed to load (rotated/deleted since we
   // remembered it). We fall back to the placeholder swatch for these.
   let brokenAvatars = $state<Set<string>>(new Set());
+
+  // Someone arriving from guest mode: their local library migrates on the first
+  // authenticated boot (appManager.migrateGuestSubscriptions for feeds; the
+  // sync queue carries reads and local saves up), so say so.
+  let hasGuestFeeds = $derived(auth.hasGuestData);
 
   function markAvatarBroken(handle: string) {
     brokenAvatars = new Set(brokenAvatars).add(handle);
@@ -239,6 +244,10 @@
 
     <p class="tagline">Log in with your Atmosphere account</p>
 
+    {#if hasGuestFeeds}
+      <p class="guest-note">Your feeds and saves come with you.</p>
+    {/if}
+
     <button
       type="button"
       class="explainer-toggle"
@@ -446,6 +455,12 @@
 
   .tagline {
     color: var(--color-text-secondary);
+    margin-bottom: 0.5rem;
+  }
+
+  .guest-note {
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
     margin-bottom: 0.5rem;
   }
 

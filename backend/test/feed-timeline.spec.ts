@@ -14,6 +14,7 @@ import {
 } from '../src/routes/ingest';
 import { handleTimeline, readFeedSlice } from '../src/routes/timeline';
 import type { Env, FeedItem, Session } from '../src/types';
+import { STARTER_FEED_URLS } from '../src/config/starter-feeds';
 
 const TEST_DID = 'did:plc:timeline123';
 const OTHER_DID = 'did:plc:timelineother';
@@ -421,6 +422,8 @@ describe('feed timeline (D1 ingest + serve)', () => {
   });
 
   describe('crawl set', () => {
+    const withoutStarters = (feeds: Array<{ feedUrl: string; subscribers: number }>) =>
+      feeds.filter((feed) => !STARTER_FEED_URLS.includes(feed.feedUrl));
     it('requires the shared secret', async () => {
       const res = await handleCrawlSet(
         new Request('https://api.example/api/internal/crawl-set'),
@@ -445,7 +448,10 @@ describe('feed timeline (D1 ingest + serve)', () => {
       const body = (await res.json()) as {
         feeds: Array<{ feedUrl: string; subscribers: number }>;
       };
-      expect(body.feeds).toEqual([{ feedUrl: FEED_A, subscribers: 2 }]);
+      expect(withoutStarters(body.feeds)).toEqual([{ feedUrl: FEED_A, subscribers: 2 }]);
+      expect(body.feeds.filter((feed) => STARTER_FEED_URLS.includes(feed.feedUrl))).toHaveLength(
+        STARTER_FEED_URLS.length
+      );
     });
 
     describe('activity scoping', () => {
@@ -473,7 +479,7 @@ describe('feed timeline (D1 ingest + serve)', () => {
         const body = (await res.json()) as {
           feeds: Array<{ feedUrl: string; subscribers: number }>;
         };
-        return body.feeds;
+        return withoutStarters(body.feeds);
       }
 
       afterEach(async () => {

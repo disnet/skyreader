@@ -1,5 +1,6 @@
 import type { Env, FeedItem } from '../types';
 import { timedAll, timedBatch } from '../utils/d1-timing';
+import { STARTER_FEED_URLS } from '../config/starter-feeds';
 
 /**
  * Internal (proxy → Worker) endpoints for the D1-served feed timeline.
@@ -664,6 +665,10 @@ export async function handleCrawlSet(request: Request, env: Env): Promise<Respon
     feedUrl: row.feed_url,
     subscribers: row.subscribers,
   }));
+  const existing = new Set(feeds.map((feed) => feed.feedUrl));
+  for (const feedUrl of STARTER_FEED_URLS) {
+    if (!existing.has(feedUrl)) feeds.push({ feedUrl, subscribers: 1 });
+  }
 
   return new Response(JSON.stringify({ feeds, count: feeds.length }), {
     headers: { 'Content-Type': 'application/json' },

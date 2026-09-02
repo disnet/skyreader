@@ -23,7 +23,13 @@ export interface SyncQueueEntry {
   payload: string; // JSON-serialized data
   timestamp: number;
   retryCount: number;
-  status: 'pending' | 'processing' | 'failed';
+  // 'held' is a write that outlived its session: parked by clearAllData when a
+  // session expired involuntarily, and inert everywhere (processQueue drains
+  // 'pending' only) until releaseHeldSyncQueue hands it back to the same DID.
+  status: 'pending' | 'processing' | 'failed' | 'held';
+  // Set only on held entries: the DID that made the write, so it can never be
+  // replayed into a guest library or somebody else's account.
+  owner?: string;
 }
 
 // Metadata key-value store for app state persistence
@@ -450,13 +456,24 @@ class SkyreaderDatabase extends Dexie {
 export const db = new SkyreaderDatabase();
 
 // Clear all data (for logout)
-export async function clearAllData(): Promise<void> {
+/**
+ * Drop every locally cached row.
+ *
+ * `holdSyncQueueFor` parks the pending sync queue against that DID instead of
+ * clearing it — see clearLocalSession in the auth store. Held entries stay
+ * invisible to the app (nothing drains or counts a non-'pending' row, and
+ * enqueue skips them) until that same account signs back in, so an expired
+ * session no longer silently destroys unsynced highlights, saves and read
+ * positions while still keeping account data out of the next reader's hands.
+ */
+export async function clearAllData(options?: { holdSyncQueueFor?: string }): Promise<void> {
+  const owner = options?.holdSyncQueueFor;
   await Promise.all([
     db.subscriptions.clear(),
     db.articles.clear(),
     db.socialDocuments.clear(),
     db.linkblogShares.clear(),
-    db.syncQueue.clear(),
+    owner ? db.syncQueue.toCollection().modify({ status: 'held', owner }) : db.syncQueue.clear(),
     db.metadata.clear(),
     db.filteredViews.clear(),
     db.itemTags.clear(),
@@ -469,6 +486,37 @@ export async function clearAllData(): Promise<void> {
     db.magazines.clear(),
     db.shareDrafts.clear(),
   ]);
+}
+
+/**
+ * Hand back the writes an expired session parked, to the account that made them.
+ *
+ * Entries held for any OTHER did are deleted rather than kept: only one account
+ * can own the local library at a time, and a stale hold has no way back.
+ */
+export async function releaseHeldSyncQueue(did: string): Promise<number> {
+  const held = await db.syncQueue.where('status').equals('held').toArray();
+  if (held.length === 0) return 0;
+
+  const mine = held.filter((entry) => entry.owner === did);
+  const theirs = held.filter((entry) => entry.owner !== did);
+
+  if (theirs.length > 0) {
+    await db.syncQueue.bulkDelete(theirs.map((entry) => entry.id!));
+  }
+  if (mine.length > 0) {
+    // retryCount resets: the failures that stalled these were a dead session,
+    // which the new one just fixed. bulkPut (not modify) so `owner` is actually
+    // dropped from the record rather than left as an undefined property.
+    await db.syncQueue.bulkPut(
+      mine.map(({ owner: _owner, ...entry }) => ({
+        ...entry,
+        status: 'pending' as const,
+        retryCount: 0,
+      }))
+    );
+  }
+  return mine.length;
 }
 
 /**

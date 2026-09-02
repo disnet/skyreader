@@ -261,6 +261,25 @@
   function handleBackdropClick() {
     sidebarStore.closeMobile();
   }
+
+  // Leaving takes the local library with it (see auth.leaveGuestMode), so say so
+  // plainly and point at the non-destructive exit first.
+  async function handleLeaveGuestMode() {
+    if (
+      !confirm(
+        'Leave guest mode?\n\nEverything saved on this device (feeds, saved articles, highlights) is deleted. Sign in first to keep it.'
+      )
+    ) {
+      return;
+    }
+    sidebarStore.closeMobile();
+    await auth.leaveGuestMode();
+    // A hard navigation, not goto: the local database this app shell is reading
+    // has just been wiped, so booting the landing page fresh is both what we
+    // want and the only way to avoid a frame of the reader rendering against
+    // torn-down stores in the logged-out chrome.
+    window.location.href = '/';
+  }
 </script>
 
 <!-- Mobile backdrop -->
@@ -272,27 +291,41 @@
 <aside class="sidebar" class:open={sidebarStore.isOpen}>
   <!-- Header row -->
   <div class="sidebar-header">
-    <a href="/settings" class="user-info" onclick={() => sidebarStore.closeMobile()}>
-      {#if auth.user?.avatarUrl}
-        <img src={auth.user.avatarUrl} alt="" class="avatar" />
-      {:else}
-        <div class="avatar-placeholder"></div>
-      {/if}
-      <span class="username">@{auth.user?.handle}</span>
-      {#if auth.user?.tier && auth.user.tier !== 'free'}
-        <span class="tier-badge">{auth.user.tier}</span>
-      {/if}
-    </a>
+    {#if auth.isGuest}
+      <!-- No account, so no profile row. The sign-in invitation lives once, at
+           the foot of the nav, where the features it buys are listed. -->
+      <div class="user-info">
+        <span class="username">Reading as guest</span>
+      </div>
+    {:else}
+      <a href="/settings" class="user-info" onclick={() => sidebarStore.closeMobile()}>
+        {#if auth.user?.avatarUrl}
+          <img src={auth.user.avatarUrl} alt="" class="avatar" />
+        {:else}
+          <div class="avatar-placeholder"></div>
+        {/if}
+        <span class="username">@{auth.user?.handle}</span>
+        {#if auth.user?.tier && auth.user.tier !== 'free'}
+          <span class="tier-badge">{auth.user.tier}</span>
+        {/if}
+      </a>
+    {/if}
     <!-- Grouped, so `space-between` puts the handle at one end and this pair at
          the other. Left as three children it spaced all three evenly and the
          bell floated into the middle of the row. -->
     <div class="header-actions">
-      <NotificationBell />
+      {#if !auth.isGuest}<NotificationBell />{/if}
       <AddSourceInput />
     </div>
   </div>
 
-  <!-- Navigation items -->
+  <!-- Navigation items. A guest sees everything that works without an
+       account — which is every reading surface: feeds, home, saved,
+       highlights + review, channels and sources (all local-only for a
+       guest). Only the destinations that cannot exist without an account
+       (linkblog, Discover, settings) are held back; those are the reason to
+       sign in, and offering them here as dead ends would be the opposite of
+       calm. -->
   <nav class="sidebar-nav">
     <!-- Home: the default landing surface (a route, not a feed filter) -->
     <a
@@ -378,7 +411,8 @@
       {/if}
     </div>
 
-    <!-- Saved: top-level filter + nested saved channels -->
+    <!-- Saved: top-level filter + nested saved channels (both local-only for
+         a guest; channels migrate to the account at sign-in). -->
     <div class="nav-group" class:expanded={sidebarStore.expandedSections.saved}>
       <div class="nav-row" class:active={currentFilter().type === 'saved'}>
         <button class="nav-row-main" onclick={() => selectFilter('saved')}>
@@ -453,7 +487,7 @@
 
     <!-- Bottom nav. The linkblog entry hides once the user deletes their
          linkblog; the rest of the nav is unrelated to it and always shows. -->
-    {#if !preferences.linkblogDisabled}
+    {#if !auth.isGuest && !preferences.linkblogDisabled}
       <a
         href="/linkblog"
         class="nav-item nav-link"
@@ -493,15 +527,17 @@
       </a>
     {/if}
 
-    <a
-      href="/discover"
-      class="nav-item nav-link"
-      class:active={$page.url.pathname === '/discover'}
-      onclick={() => sidebarStore.closeMobile()}
-    >
-      <span class="nav-icon"><Icon name="users" /></span>
-      <span class="nav-label">Discover</span>
-    </a>
+    {#if !auth.isGuest}
+      <a
+        href="/discover"
+        class="nav-item nav-link"
+        class:active={$page.url.pathname === '/discover'}
+        onclick={() => sidebarStore.closeMobile()}
+      >
+        <span class="nav-icon"><Icon name="users" /></span>
+        <span class="nav-label">Discover</span>
+      </a>
+    {/if}
 
     <a
       href="/sources"
@@ -513,15 +549,33 @@
       <span class="nav-label">Manage Sources</span>
     </a>
 
-    <a
-      href="/settings"
-      class="nav-item nav-link"
-      class:active={$page.url.pathname === '/settings'}
-      onclick={() => sidebarStore.closeMobile()}
-    >
-      <span class="nav-icon"><Icon name="settings" /></span>
-      <span class="nav-label">Settings</span>
-    </a>
+    {#if auth.isGuest}
+      <!-- The one account affordance a guest sees in the nav. Sync across
+           devices and the linkblog are what it buys; the feeds, saves,
+           highlights and channels already here come along. -->
+      <a href="/auth/login" class="nav-item nav-link" onclick={() => sidebarStore.closeMobile()}>
+        <span class="nav-icon"><Icon name="user" /></span>
+        <span class="nav-label">Sign in to sync</span>
+      </a>
+      <!-- The way out. Without it guest mode is a one-way door: every reading
+           surface is a guest surface and `/` bounces a guest back into the
+           reader, so there is no route back to the landing page. Sits below
+           sign-in because signing in is the exit that keeps the library. -->
+      <button class="nav-item nav-link" onclick={handleLeaveGuestMode}>
+        <span class="nav-icon"><Icon name="log-out" /></span>
+        <span class="nav-label">Leave guest mode</span>
+      </button>
+    {:else}
+      <a
+        href="/settings"
+        class="nav-item nav-link"
+        class:active={$page.url.pathname === '/settings'}
+        onclick={() => sidebarStore.closeMobile()}
+      >
+        <span class="nav-icon"><Icon name="settings" /></span>
+        <span class="nav-label">Settings</span>
+      </a>
+    {/if}
 
     <!-- Quiet upsell: a plain nav row, gone entirely once the user is a
          Supporter. The sell itself lives on /supporter. -->

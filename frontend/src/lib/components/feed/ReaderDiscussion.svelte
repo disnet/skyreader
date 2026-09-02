@@ -105,8 +105,10 @@
   function laneCanCreate(id: LaneId): boolean {
     if (id === 'linkblog') return false;
     if (id === 'leaflet') return false;
-    if (id === 'semble' || id === 'margin') return Boolean(auth.user);
-    return true;
+    // Bluesky's compose intent needs no Skyreader session, but adding to the
+    // discussion is an account action across the board — a guest reads every
+    // lane and writes to none.
+    return Boolean(auth.user);
   }
 
   const atmosphere = useAtmosphere({
@@ -136,6 +138,10 @@
           observer.disconnect();
         }
       },
+      // Viewport-rooted, unlike the feed card's twin: the reader is a fixed,
+      // full-viewport overlay that scrolls itself, so the viewport IS its
+      // scroller's box. Rooting this on the app pane instead reports no
+      // intersection at all and the stream never opens.
       { rootMargin: '600px 0px' }
     );
     observer.observe(node);

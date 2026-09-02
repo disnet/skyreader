@@ -536,6 +536,42 @@ batch path re-drains from wherever those cursors were left. The proxy's K=200
 window bounds that, and the merge dedupes by GUID, so the cost is one heavier
 sync, not duplicates.
 
+**Guests have no batch path.** `/api/v2/feeds/batch` needs a session, so shutting
+the gate doesn't move guest readers to a fallback — it empties their refresh
+(they keep whatever is cached, and the client retries on the next poll rather
+than fanning out to endpoints that would 401). Guest reading mode is therefore
+only meaningful with the gate open; check it before announcing the feature.
+
+---
+
+## 4e. Guest reading mode (unauthenticated surface)
+
+Two public endpoints, both under `/api/guest/` (`backend/src/routes/guest.ts`),
+both keyed by `CF-Connecting-IP` because there is no DID, and **both read-only**:
+
+| Endpoint                       | Limit  | What it does                                                               |
+| ------------------------------ | ------ | -------------------------------------------------------------------------- |
+| `GET /api/guest/starter-feeds` | —      | Static curated channels, `Cache-Control: public, max-age=3600`.            |
+| `POST /api/guest/timeline`     | 60/min | Read-only archive query over ≤50 caller-supplied feed URLs. Never fetches. |
+
+There is no unauthenticated write into the archive. Adding a source needs an
+account, so the only feeds a guest can name are the curated starter ones, which
+ride `GET /api/internal/crawl-set` and are already as fresh as the crawler makes
+them. Nothing here relaxes the `callerSubscribes` invariant that protects
+`feeds`/`feed_items`, and nothing here can be pointed at a caller-chosen URL.
+
+**If guest adds are ever reopened**, the write path they need is what this
+section used to document, and it came with four bounds that all have to come
+back with it: a per-IP rate on the warm endpoint, a durable per-feed freshness
+window claimed with a single conditional `UPDATE … RETURNING` _before_ the fetch
+(read-then-stamp let a concurrent burst straight through), a global daily
+ceiling on new guest feeds held as an atomic counter, and a reaper for the
+orphan feed rows that result. Both bounds being single-statement claims is the
+part that is easy to get wrong.
+
+What to watch: `guest_timeline` log volume and its `d1Ms` / `d1RowsRead`, its
+429 rate, and the crawl-set size delta (~+9 for the starter channels).
+
 ---
 
 ## 5. Post-deploy smoke checks

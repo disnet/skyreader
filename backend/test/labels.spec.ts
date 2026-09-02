@@ -403,3 +403,199 @@ describe('/api/labels user-time last-write-wins', () => {
     expect(JSON.parse((await readRow('skew'))!.props)).toEqual({ tags: ['now'] });
   });
 });
+
+/**
+ * Merging a guest's highlights into an account that already has some.
+ *
+ * Under plain replace semantics an article highlighted in BOTH contexts loses
+ * one side wholesale: whichever `client_updated_at` is later wins the entire
+ * array, and the other side's highlights are gone with no error anywhere. These
+ * pin the union that makes signing in additive.
+ */
+describe("POST /api/labels mode: 'merge' (highlights)", () => {
+  beforeEach(async () => {
+    await env.DB.prepare('DELETE FROM item_labels_cache').run();
+    await env.DB.prepare('DELETE FROM sessions').run();
+    await env.DB.prepare('DELETE FROM users').run();
+    await setupTestUser();
+  });
+
+  async function readHighlights(itemKey: string) {
+    const row = await env.DB.prepare(
+      `SELECT props, deleted_at, client_updated_at FROM item_labels_cache
+        WHERE user_did = ? AND item_key = ? AND label = 'highlights'`
+    )
+      .bind(TEST_DID, itemKey)
+      .first<{ props: string; deleted_at: number | null; client_updated_at: number }>();
+    return {
+      ids: (JSON.parse(row!.props).highlights as Array<{ id: string }>).map((h) => h.id).sort(),
+      raw: JSON.parse(row!.props).highlights as Array<{ id: string; note?: string }>,
+      deletedAt: row!.deleted_at,
+      clientUpdatedAt: row!.client_updated_at,
+    };
+  }
+
+  function hl(id: string, note?: string) {
+    return { id, selector: { exact: id }, createdAt: 1, ...(note ? { note } : {}) };
+  }
+
+  async function write(
+    itemKey: string,
+    highlights: unknown[],
+    updatedAt: number,
+    mode?: 'merge'
+  ): Promise<number> {
+    return mutateLabels('POST', {
+      itemKey,
+      itemType: 'article',
+      label: 'highlights',
+      props: { highlights },
+      updatedAt,
+      ...(mode ? { mode } : {}),
+    });
+  }
+
+  it('keeps both sides when the account row is NEWER than the guest write', async () => {
+    const now = Date.now();
+    // The account highlighted this article on another device, recently.
+    await write('shared', [hl('account-1')], now);
+    // The guest highlighted it days ago; the queue drains now.
+    expect(await write('shared', [hl('guest-1')], now - 3 * 86400_000, 'merge')).toBe(200);
+
+    // A replace would have been refused by the staleness guard, losing guest-1.
+    expect((await readHighlights('shared')).ids).toEqual(['account-1', 'guest-1']);
+  });
+
+  it('keeps both sides when the guest write is NEWER than the account row', async () => {
+    const now = Date.now();
+    await write('shared2', [hl('account-1')], now - 3 * 86400_000);
+    expect(await write('shared2', [hl('guest-1')], now, 'merge')).toBe(200);
+
+    // A replace would have won wholesale here, losing account-1.
+    expect((await readHighlights('shared2')).ids).toEqual(['account-1', 'guest-1']);
+  });
+
+  it('lets the incoming version win an id present on both sides', async () => {
+    const now = Date.now();
+    await write('dup', [hl('same', 'account note')], now);
+    await write('dup', [hl('same', 'guest note')], now - 1000, 'merge');
+
+    const { raw } = await readHighlights('dup');
+    expect(raw).toHaveLength(1);
+    expect(raw[0].note).toBe('guest note');
+  });
+
+  it('never lowers client_updated_at, so a later replace still wins normally', async () => {
+    const now = Date.now();
+    await write('cua', [hl('account-1')], now);
+    await write('cua', [hl('guest-1')], now - 3 * 86400_000, 'merge');
+    expect((await readHighlights('cua')).clientUpdatedAt).toBe(now);
+
+    // A genuinely stale replace is still refused after the merge.
+    await write('cua', [hl('stale-only')], now - 86400_000);
+    expect((await readHighlights('cua')).ids).toEqual(['account-1', 'guest-1']);
+  });
+
+  it('does not resurrect highlights the reader deleted', async () => {
+    const now = Date.now();
+    await write('tomb', [hl('deleted-1')], now - 86400_000);
+    await mutateLabels('DELETE', { itemKey: 'tomb', label: 'highlights', updatedAt: now });
+
+    await write('tomb', [hl('guest-1')], now - 3 * 86400_000, 'merge');
+
+    const merged = await readHighlights('tomb');
+    expect(merged.ids).toEqual(['guest-1']);
+    expect(merged.deletedAt).toBeNull();
+  });
+
+  it('creates the row when the account has no highlights on that article', async () => {
+    expect(await write('fresh', [hl('guest-1')], Date.now(), 'merge')).toBe(200);
+    expect((await readHighlights('fresh')).ids).toEqual(['guest-1']);
+  });
+
+  it('refuses merge for any label but highlights, rather than replacing quietly', async () => {
+    const status = await mutateLabels('POST', {
+      itemKey: 'wrong',
+      itemType: 'article',
+      label: 'tagged',
+      props: { tags: ['x'] },
+      updatedAt: Date.now(),
+      mode: 'merge',
+    });
+    expect(status).toBe(400);
+  });
+
+  it('refuses merge when props.highlights is not an array', async () => {
+    const status = await mutateLabels('POST', {
+      itemKey: 'bad',
+      itemType: 'article',
+      label: 'highlights',
+      props: { highlights: 'nope' },
+      updatedAt: Date.now(),
+      mode: 'merge',
+    });
+    expect(status).toBe(400);
+  });
+
+  // The union is by id, so an element without one has no defined behaviour —
+  // and it used to be catastrophic: `NOT IN (… NULL)` is NULL for every row, so
+  // one id-less incoming highlight silently dropped the reader's ENTIRE stored
+  // array, on the one path written to prevent silent data loss.
+  it.each([
+    ['no id at all', { selector: { exact: 'x' } }],
+    ['a non-string id', { id: 7, selector: { exact: 'x' } }],
+    ['an empty id', { id: '', selector: { exact: 'x' } }],
+    ['not an object', 'just a string'],
+  ])('refuses a merge carrying a highlight with %s', async (_label, bad) => {
+    const now = Date.now();
+    await write('idless', [hl('account-1'), hl('account-2')], now);
+
+    expect(await write('idless', [hl('guest-1'), bad], now, 'merge')).toBe(400);
+    expect((await readHighlights('idless')).ids).toEqual(['account-1', 'account-2']);
+  });
+
+  // Belt and braces: even if such a write ever reached the SQL, the anti-join
+  // is NULL-safe and keeps everything already stored.
+  it('keeps the stored array when an id-less highlight reaches the merge SQL', async () => {
+    const now = Date.now();
+    await write('idless-sql', [hl('account-1'), hl('same')], now);
+
+    await env.DB.prepare(
+      `INSERT INTO item_labels_cache (user_did, item_key, item_type, label, props, rkey, created_at, updated_at, client_updated_at)
+       VALUES (?, 'idless-sql', 'article', 'highlights', ?, 'rkeyxxxxxxxxx', unixepoch(), unixepoch(), ?)
+       ON CONFLICT(user_did, item_key, label) DO UPDATE SET
+         props = json_object('highlights', (
+           SELECT json_group_array(json(value)) FROM (
+             SELECT value FROM json_each(json_extract(excluded.props, '$.highlights'))
+             UNION ALL
+             SELECT value FROM json_each(json_extract(item_labels_cache.props, '$.highlights')) AS kept
+              WHERE item_labels_cache.deleted_at IS NULL
+                AND NOT EXISTS (
+                  SELECT 1
+                    FROM json_each(json_extract(excluded.props, '$.highlights')) AS incoming
+                   WHERE json_extract(incoming.value, '$.id') IS
+                         json_extract(kept.value, '$.id'))
+           )
+         )),
+         updated_at = excluded.updated_at,
+         client_updated_at = MAX(excluded.client_updated_at, COALESCE(item_labels_cache.client_updated_at, 0)),
+         deleted_at = NULL`
+    )
+      .bind(
+        TEST_DID,
+        JSON.stringify({ highlights: [{ selector: { exact: 'no id' } }] }),
+        now - 1000
+      )
+      .run();
+
+    // Both stored highlights survive alongside the id-less incoming one; before
+    // the NULL-safe anti-join, the stored array was wiped out entirely.
+    const { raw } = await readHighlights('idless-sql');
+    expect(
+      raw
+        .map((h) => h.id)
+        .filter(Boolean)
+        .sort()
+    ).toEqual(['account-1', 'same']);
+  });
+});

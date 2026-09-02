@@ -3,6 +3,7 @@
   import { page } from '$app/stores';
   import { tick, onMount, onDestroy } from 'svelte';
   import { getFaviconUrl } from '$lib/utils/favicon';
+  import { auth } from '$lib/stores/auth.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
@@ -232,9 +233,20 @@
       count: savedCount,
       icon: 'bookmark',
     };
+    // Only the account-only destinations (linkblog, Discover, settings) stay
+    // out of a guest's dropdown (mirroring the sidebar): a guest picking one
+    // would just land on the sign-in screen. Highlights, review and channels
+    // are local for a guest and show like any other view.
     const otherViews: NavItem[] = [
-      ...(!preferences.linkblogDisabled
-        ? [{ type: 'utility' as const, id: 'linkblog', label: 'Linkblog', icon: 'share' as const }]
+      ...(!auth.isGuest && !preferences.linkblogDisabled
+        ? [
+            {
+              type: 'utility' as const,
+              id: 'linkblog',
+              label: 'Linkblog',
+              icon: 'share' as const,
+            },
+          ]
         : []),
       { type: 'utility', id: 'highlights', label: 'Highlights', icon: 'highlighter' },
       // Review is its own destination; the count is today's deck, and it goes
@@ -250,9 +262,22 @@
             },
           ]
         : []),
-      { type: 'utility', id: 'discover', label: 'Discover', icon: 'users' },
+      ...(auth.isGuest
+        ? []
+        : [
+            { type: 'utility' as const, id: 'discover', label: 'Discover', icon: 'users' as const },
+          ]),
       { type: 'utility', id: 'sources', label: 'Manage Sources', icon: 'rss' },
-      { type: 'utility', id: 'settings', label: 'Settings', icon: 'settings' },
+      ...(auth.isGuest
+        ? []
+        : [
+            {
+              type: 'utility' as const,
+              id: 'settings',
+              label: 'Settings',
+              icon: 'settings' as const,
+            },
+          ]),
     ];
 
     const sourceChannelItems: NavItem[] = filteredViewsStore.views
@@ -342,7 +367,7 @@
       sections.push({ section: '', items: savedGroup });
     }
 
-    // Other views + add action
+    // Other views + add action (channels are local-first, so guests get it too)
     const otherGroup = [...otherViews, addViewAction].filter(filterItem);
     if (otherGroup.length > 0) {
       sections.push({ section: '', items: otherGroup });

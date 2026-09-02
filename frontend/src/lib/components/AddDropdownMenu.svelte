@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
   import Icon from '$lib/components/Icon.svelte';
+  import { auth } from '$lib/stores/auth.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
 
   let isOpen = $state(false);
@@ -117,38 +118,51 @@
         role="menu"
         style="top: {menuPosition.top}px; left: {menuPosition.left}px;"
       >
-        <button
-          class="add-menu-item"
-          onclick={(e) => handleItemClick(() => sidebarStore.openAddFeedModal(), e)}
-          role="menuitem"
-        >
-          <span class="item-icon"><Icon name="rss" size={16} /></span>
-          Add RSS Feed
-        </button>
-        <button
-          class="add-menu-item"
-          onclick={(e) => handleItemClick(() => sidebarStore.openAddHandleModal(), e)}
-          role="menuitem"
-        >
-          <span class="item-icon"><Icon name="users" size={16} /></span>
-          Add @handle
-        </button>
-        <button
-          class="add-menu-item"
-          onclick={(e) => handleItemClick(() => sidebarStore.openSaveArticleModal(), e)}
-          role="menuitem"
-        >
-          <span class="item-icon"><Icon name="bookmark" size={16} /></span>
-          Save URL
-        </button>
-        <button
-          class="add-menu-item"
-          onclick={(e) => handleItemClick(() => goto('/settings#save-anywhere'), e)}
-          role="menuitem"
-        >
-          <span class="item-icon"><Icon name="share" size={16} /></span>
-          Save from anywhere
-        </button>
+        {#if auth.isGuest}
+          <!-- Everything this menu adds is account-only: a guest reads the
+               curated starter channels, which the crawler keeps current. -->
+          <button
+            class="add-menu-item"
+            onclick={(e) => handleItemClick(() => goto('/auth/login?returnUrl=/feeds'), e)}
+            role="menuitem"
+          >
+            <span class="item-icon"><Icon name="user" size={16} /></span>
+            Sign in to add feeds
+          </button>
+        {:else}
+          <button
+            class="add-menu-item"
+            onclick={(e) => handleItemClick(() => sidebarStore.openAddFeedModal(), e)}
+            role="menuitem"
+          >
+            <span class="item-icon"><Icon name="rss" size={16} /></span>
+            Add RSS Feed
+          </button>
+          <button
+            class="add-menu-item"
+            onclick={(e) => handleItemClick(() => sidebarStore.openAddHandleModal(), e)}
+            role="menuitem"
+          >
+            <span class="item-icon"><Icon name="users" size={16} /></span>
+            Add @handle
+          </button>
+          <button
+            class="add-menu-item"
+            onclick={(e) => handleItemClick(() => sidebarStore.openSaveArticleModal(), e)}
+            role="menuitem"
+          >
+            <span class="item-icon"><Icon name="bookmark" size={16} /></span>
+            Save URL
+          </button>
+          <button
+            class="add-menu-item"
+            onclick={(e) => handleItemClick(() => goto('/settings#save-anywhere'), e)}
+            role="menuitem"
+          >
+            <span class="item-icon"><Icon name="share" size={16} /></span>
+            Save from anywhere
+          </button>
+        {/if}
       </div>
     </div>
   {/if}

@@ -77,6 +77,12 @@ interface PreferencesState {
   linkblogDisabledDids: string[];
   // Which surface a cold app load lands on (consumed by the `/` redirector).
   defaultView: DefaultView;
+  // Whether the reader actually picked that surface. save() serializes the
+  // whole blob, so `defaultView` is written on every preference change and
+  // can't itself distinguish a choice from the default — same reason
+  // communityHighlightsConfigured exists. A guest with no pick lands on the
+  // feeds rather than Home.
+  defaultViewConfigured: boolean;
   // How tightly the Home lane tiles are packed.
   cardDensity: CardDensity;
   dailyMagazineMinutes: DailyMagazineMinutes;
@@ -111,6 +117,7 @@ function createPreferencesStore() {
     linkblogShareConfirmedDids: [],
     linkblogDisabledDids: [],
     defaultView: 'home',
+    defaultViewConfigured: false,
     cardDensity: 'cozy',
     dailyMagazineMinutes: 20,
     dailyMagazineOrder: 'shuffle',
@@ -158,6 +165,11 @@ function createPreferencesStore() {
           parsed.defaultView === 'saved'
         ) {
           state.defaultView = parsed.defaultView;
+        }
+        // Restored separately from the value above so a reader who picked a
+        // surface before this flag existed keeps landing there.
+        if (parsed.defaultViewConfigured === true) {
+          state.defaultViewConfigured = true;
         }
         if (
           parsed.cardDensity === 'compact' ||
@@ -276,6 +288,7 @@ function createPreferencesStore() {
 
   function setDefaultView(view: DefaultView) {
     state.defaultView = view;
+    state.defaultViewConfigured = true;
     save();
   }
 
@@ -343,6 +356,9 @@ function createPreferencesStore() {
     },
     get defaultView() {
       return state.defaultView;
+    },
+    get defaultViewConfigured() {
+      return state.defaultViewConfigured;
     },
     get cardDensity() {
       return state.cardDensity;

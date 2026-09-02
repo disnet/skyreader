@@ -65,9 +65,13 @@ export async function unregisterPeriodicSync(): Promise<void> {
   if (!('serviceWorker' in navigator)) return;
 
   try {
-    const registration = await navigator.serviceWorker.ready;
+    // Not `.ready` — that promise only settles once a service worker is
+    // active, so it pends forever when none registers (dev, or a first visit
+    // before activation) and would hang callers like enterGuestMode. No
+    // registration means nothing to unregister.
+    const registration = await navigator.serviceWorker.getRegistration();
 
-    if (!('periodicSync' in registration)) return;
+    if (!registration || !('periodicSync' in registration)) return;
 
     await (
       registration as ServiceWorkerRegistration & {

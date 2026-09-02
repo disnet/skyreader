@@ -189,8 +189,11 @@
       count: savedCount,
       icon: 'bookmark',
     };
-    const otherItems: NavItem[] = [
-      ...(!preferences.linkblogDisabled
+    // Only the account-only destinations (linkblog, Discover) stay out of a
+    // guest's switcher (mirroring the sidebar): a guest tapping one would just
+    // land on the sign-in screen. Highlights and review are local for a guest.
+    const accountItems: NavItem[] = [
+      ...(!auth.isGuest && !preferences.linkblogDisabled
         ? [
             {
               type: 'utility',
@@ -219,24 +222,35 @@
             } as NavItem,
           ]
         : []),
-      {
-        type: 'utility',
-        id: 'discover',
-        label: 'Discover',
-        icon: 'users' as IconName,
-      },
+      ...(auth.isGuest
+        ? []
+        : [
+            {
+              type: 'utility',
+              id: 'discover',
+              label: 'Discover',
+              icon: 'users' as IconName,
+            } as NavItem,
+          ]),
+    ];
+    const otherItems: NavItem[] = [
+      ...accountItems,
       {
         type: 'utility',
         id: 'sources',
         label: 'Manage Sources',
         icon: 'rss' as IconName,
       },
-      {
-        type: 'utility',
-        id: 'settings',
-        label: 'Settings',
-        icon: 'settings' as IconName,
-      },
+      ...(auth.isGuest
+        ? []
+        : [
+            {
+              type: 'utility',
+              id: 'settings',
+              label: 'Settings',
+              icon: 'settings' as IconName,
+            } as NavItem,
+          ]),
       // Quiet upsell, mirroring the sidebar: gone once the user is a Supporter.
       ...(auth.user && auth.user.tier !== 'supporter'
         ? [

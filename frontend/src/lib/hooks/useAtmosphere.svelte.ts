@@ -128,6 +128,13 @@ export interface AtmosphereApi {
   readonly mine: boolean;
   /** Start resolving people. Idempotent; call when the discussion becomes visible. */
   openStream: () => void;
+  /**
+   * The item is near the viewport, so the lane counts are worth fetching.
+   * Idempotent. A surface that renders the Discussion badge before anyone opens
+   * anything (the feed card) must call this; one that only reveals the counts
+   * inside the section itself (the reader) can rely on `openStream`.
+   */
+  enterViewport: () => void;
   /** Re-resolve the lanes whose lookup failed. */
   retry: () => void;
   /** Narrow the stream to one lane, or back to `all`. */
@@ -135,13 +142,6 @@ export interface AtmosphereApi {
 }
 
 export function useAtmosphere(opts: UseAtmosphereOptions): AtmosphereApi {
-  // Always-on per-card call: fetch the lane counts whenever the URL changes.
-  // Batched + deduped + memoized inside the store, so this is cheap to fire.
-  $effect(() => {
-    const url = opts.itemUrl();
-    if (url) articleMentionsStore.fetch(url, opts.itemAtUri?.());
-  });
-
   const mentionLaneMap = $derived.by(() => {
     const url = opts.itemUrl();
     const lanes = (url ? articleMentionsStore.get(url) : undefined)?.lanes ?? [];
@@ -193,10 +193,34 @@ export function useAtmosphere(opts: UseAtmosphereOptions): AtmosphereApi {
   // has people resolves in parallel. Semble also resolves at zero because its
   // article recommendations are useful without a human reference count.
   let streamOpen = $state(false);
+  let nearViewport = $state(false);
 
   function openStream() {
     streamOpen = true;
   }
+
+  // The host says the item is on its way onto the screen. Starts the counts,
+  // which are what the Discussion badge renders.
+  function enterViewport() {
+    nearViewport = true;
+  }
+
+  // The counts used to fire for every card that mounted, which meant a feed page
+  // enriched all ~50 URLs to render the handful of badges anyone could see. They
+  // are batched and memoized here and cached per URL in the proxy, so the client
+  // cost was never the problem: the proxy's decay gate re-polls a hot article on
+  // any read arriving an hour after the last one, so mount-time fetching kept
+  // re-querying Constellation for articles nobody scrolled to.
+  //
+  // Opening the stream counts as wanting them too, so a host that wires only
+  // openStream still gets its counts (later, rather than never) — the reader is
+  // exactly that case, since its section is below a whole article and the
+  // observer that opens the stream is already the right moment.
+  $effect(() => {
+    if (!nearViewport && !streamOpen) return;
+    const url = opts.itemUrl();
+    if (url) articleMentionsStore.fetch(url, opts.itemAtUri?.());
+  });
 
   $effect(() => {
     if (!streamOpen) return;
@@ -395,6 +419,7 @@ export function useAtmosphere(opts: UseAtmosphereOptions): AtmosphereApi {
       return mine;
     },
     openStream,
+    enterViewport,
     setFilter,
     retry,
   };

@@ -142,6 +142,17 @@ export class SessionRefreshError extends Error {
   }
 }
 
+// A CONFIRMED logout: the backend answered 401 and /api/auth/me agreed the session
+// is gone. Distinguished from every other failure because it is the only one that
+// justifies tearing down the local, account-owned cache — a network TypeError, a
+// 500, or an unconfirmed 401 must leave IndexedDB alone (see auth.verifySession).
+export class SessionExpiredError extends Error {
+  constructor() {
+    super('Session expired');
+    this.name = 'SessionExpiredError';
+  }
+}
+
 // One page of GET /api/v2/timeline. Items carry their archive `seq` and the feed
 // they belong to; `cursor`/`generation` are stored and echoed on the next poll.
 /** A purchasable plan, mirrored from the Polar dashboard by the backend. */
@@ -211,6 +222,13 @@ export interface TimelineFeedHealth {
   lastErrorAt?: number;
   nextRetryAt?: number;
   lastFetchedAt?: number;
+}
+
+export interface StarterChannel {
+  key: string;
+  name: string;
+  description: string;
+  feeds: Array<{ feedUrl: string; title: string; siteUrl: string }>;
 }
 
 export interface ExtractedArticle {
@@ -348,7 +366,7 @@ class ApiClient {
 
         console.warn('Session expired or invalid, logging out...');
         if (this.onUnauthorized) this.onUnauthorized();
-        throw new Error('Session expired');
+        throw new SessionExpiredError();
       }
 
       // Handle 403 - scope upgrade required or limit reached
@@ -478,6 +496,20 @@ class ApiClient {
     if (params.include_counts) search.set('include_counts', '1');
     const query = search.toString();
     return this.fetch(`/api/v2/timeline${query ? `?${query}` : ''}`);
+  }
+
+  async fetchGuestTimeline(
+    feedUrls: string[],
+    params: { since_seq?: number; generation?: string; limit?: number; cold_offset?: number }
+  ): Promise<TimelineResponse> {
+    return this.fetch('/api/guest/timeline', {
+      method: 'POST',
+      body: JSON.stringify({ feedUrls, ...params }),
+    });
+  }
+
+  async getStarterFeeds(): Promise<{ channels: StarterChannel[] }> {
+    return this.fetch('/api/guest/starter-feeds');
   }
 
   async fetchFeedsBatchV2(
@@ -769,12 +801,24 @@ class ApiClient {
 
   // Network-wide article mentions (Phase 5) — per-lane breakdown of who across
   // the Atmosphere referenced these URLs. Best-effort adornment; degrades to
-  // empty per URL.
+  // empty per URL. The guest twin answers from the same handler without a
+  // session (the data is public either way); callers pick by whether they have
+  // one, since the /api/v2 path 401s without.
   async fetchArticleMentions(
     urls: string[],
     docUris?: Record<string, string>
   ): Promise<{ items: ArticleMentions[] }> {
     return this.fetch('/api/v2/mentions', {
+      method: 'POST',
+      body: JSON.stringify({ urls, ...(docUris ? { docUris } : {}) }),
+    });
+  }
+
+  async fetchGuestArticleMentions(
+    urls: string[],
+    docUris?: Record<string, string>
+  ): Promise<{ items: ArticleMentions[] }> {
+    return this.fetch('/api/guest/mentions', {
       method: 'POST',
       body: JSON.stringify({ urls, ...(docUris ? { docUris } : {}) }),
     });
@@ -794,10 +838,33 @@ class ApiClient {
     });
   }
 
+  async fetchGuestMentionLaneItems(
+    url: string,
+    lane: string,
+    docUri?: string
+  ): Promise<{ entries: MentionLaneEntry[]; sembleContext?: SembleContext }> {
+    return this.fetch('/api/guest/mention-lane', {
+      method: 'POST',
+      body: JSON.stringify({ url, lane, ...(docUri ? { docUri } : {}) }),
+    });
+  }
+
+  // What other readers highlighted in this article, from Margin's public records
+  // through the proxy's cache. Public either way; the guest twin exists because
+  // the /api/v2 path is session-gated (see fetchArticleMentions).
   async fetchCommunityHighlights(
     url: string
   ): Promise<{ notes: CommunityHighlightNote[]; capped: boolean }> {
     return this.fetch('/api/v2/margin-highlights', {
+      method: 'POST',
+      body: JSON.stringify({ url }),
+    });
+  }
+
+  async fetchGuestCommunityHighlights(
+    url: string
+  ): Promise<{ notes: CommunityHighlightNote[]; capped: boolean }> {
+    return this.fetch('/api/guest/margin-highlights', {
       method: 'POST',
       body: JSON.stringify({ url }),
     });
@@ -1050,6 +1117,10 @@ class ApiClient {
     label: string;
     props?: Record<string, unknown>;
     updatedAt?: number;
+    // 'merge' unions highlights into what the account already holds instead of
+    // replacing the array. Only for writes made in guest mode — see
+    // syncHighlightsToBackend.
+    mode?: 'replace' | 'merge';
   }): Promise<{ success: boolean }> {
     return this.fetch('/api/labels', {
       method: 'POST',

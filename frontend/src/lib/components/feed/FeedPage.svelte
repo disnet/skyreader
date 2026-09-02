@@ -454,7 +454,7 @@
   }
 
   async function handleVisibilityChange() {
-    if (document.visibilityState === 'visible' && auth.isAuthenticated) {
+    if (document.visibilityState === 'visible' && auth.isInApp) {
       // Check if data is actually stale using persisted lastRefreshAt
       if (appManager.isStale(STALE_THRESHOLD_MS)) {
         console.log('Data is stale, refreshing...');
@@ -489,8 +489,9 @@
       myLinkblogStore.load();
     }
 
-    if (auth.isAuthenticated) {
-      // Use the new centralized app initialization
+    if (auth.isInApp) {
+      // Use the new centralized app initialization (guests included: the guest
+      // branch hydrates and refreshes only the reading stores).
       await appManager.initialize();
     }
 
@@ -564,7 +565,7 @@
 
 <EditFeedModal open={editModalOpen} subscription={editingSubscription} onclose={closeEditModal} />
 
-{#if !auth.isAuthenticated}
+{#if !auth.isAuthenticated && !auth.isGuest}
   <WelcomePage />
 {:else}
   <!-- Lift any floating action bar above the fixed mobile nav while it's visible;
