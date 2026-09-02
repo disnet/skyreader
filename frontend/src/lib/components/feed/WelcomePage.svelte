@@ -28,7 +28,9 @@
 
       // Before addBulk: the store reads this to keep the writes local.
       await auth.enterGuestMode();
-      const result = await subscriptionsStore.addBulk(feeds);
+      // The one bulk write a guest is allowed — adding anything else needs an
+      // account (see subscriptions.svelte.ts).
+      const result = await subscriptionsStore.addBulk(feeds, undefined, { starterSeed: true });
       // addBulk never throws — it collects per-feed problems. Nothing landing at
       // all means the local database is unavailable (a locked-down private
       // window), and there is no reading room to walk into.

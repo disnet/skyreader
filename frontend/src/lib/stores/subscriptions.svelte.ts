@@ -12,7 +12,21 @@ import type { Subscription, SubscriptionSourceType } from '$lib/types';
  * Uses liveDb for storage. Feed fetching is handled separately by feedFetcher.
  * Article queries are handled by articlesStore.
  */
+
+/**
+ * A guest tried to add a source. Adding is account-only, so surfaces that can
+ * be reached without one catch this to offer sign-in instead of an error.
+ */
+export class GuestAddBlockedError extends Error {
+  constructor() {
+    super('Sign in to add feeds.');
+    this.name = 'GuestAddBlockedError';
+  }
+}
 // Matches the guest timeline endpoint's feedUrls cap (backend/src/routes/guest.ts).
+// A guest can no longer add feeds, so the only library that reaches this is the
+// curated starter set; the constant stays as the invariant the timeline request
+// depends on rather than as a ceiling anyone can climb to.
 const GUEST_MAX_SUBSCRIPTIONS = 50;
 
 function createSubscriptionsStore() {
@@ -71,6 +85,13 @@ function createSubscriptionsStore() {
     title: string,
     options?: Partial<Subscription>
   ): Promise<number> {
+    // Adding a source is account-only. A guest reads the curated starter set
+    // seeded by "Start Reading" (addBulk's `starterSeed` path); anything beyond
+    // it is a feed nobody subscribes to, which nothing keeps current in the
+    // archive. The UI routes a guest to sign-in before reaching this; the throw
+    // is the backstop for any surface that doesn't.
+    if (auth.isGuest) throw new GuestAddBlockedError();
+
     if (count >= maxSubscriptions) {
       // Same error type the backend's 403 produces, so callers can render one
       // limit notice without caring which side caught it first.
@@ -117,20 +138,17 @@ function createSubscriptionsStore() {
       const rkey = generateTid();
       const now = new Date().toISOString();
 
-      // Guest libraries stay entirely on this device until sign-in migration.
-      const created = auth.isGuest
-        ? undefined
-        : await api.createSubscription({
-            rkey,
-            feedUrl: feedUrl || undefined,
-            title,
-            siteUrl: options?.siteUrl,
-            category: options?.category,
-            tags: options?.tags,
-            sourceType: options?.sourceType,
-            subjectDid: options?.subjectDid,
-            collectionNsid: options?.collectionNsid,
-          });
+      const created = await api.createSubscription({
+        rkey,
+        feedUrl: feedUrl || undefined,
+        title,
+        siteUrl: options?.siteUrl,
+        category: options?.category,
+        tags: options?.tags,
+        sourceType: options?.sourceType,
+        subjectDid: options?.subjectDid,
+        collectionNsid: options?.collectionNsid,
+      });
 
       // The server may answer with a record that already exists instead of the
       // one we proposed: re-subscribing to a feed that was PARKED, which this
@@ -174,7 +192,7 @@ function createSubscriptionsStore() {
       category?: string;
     }>,
     onProgress?: (current: number, total: number) => void,
-    options?: { source?: 'manual' | 'opml' }
+    options?: { source?: 'manual' | 'opml'; starterSeed?: boolean }
   ): Promise<{
     added: number[];
     skipped: string[];
@@ -188,6 +206,21 @@ function createSubscriptionsStore() {
     let parked = 0;
     let dropped = 0;
     const source = options?.source || 'manual';
+
+    // The curated starter channels are the one bulk write a guest makes: they
+    // ride the crawl set, so the archive keeps them current without an account.
+    // Every other bulk path (OPML import) is account-only, for the same reason
+    // add() is. addBulk never throws, so refuse in its own vocabulary.
+    const starterSeed = options?.starterSeed === true;
+    if (auth.isGuest && !starterSeed) {
+      return {
+        added,
+        skipped,
+        failed: feeds.map((feed) => ({ url: feed.feedUrl, error: 'Sign in to add feeds.' })),
+        parked,
+        dropped,
+      };
+    }
 
     // Get existing feed URLs for duplicate detection
     const existingUrls = new Set(
@@ -234,16 +267,12 @@ function createSubscriptionsStore() {
         source,
       }));
 
-      // A guest has no server to park overflow, so the cap is enforced here:
-      // everything that fits is kept and the rest is reported dropped — the same
-      // shape the backend returns, so the bookkeeping below is unchanged.
-      const guestRoom = Math.max(0, maxSubscriptions - count);
-      const res = auth.isGuest
-        ? {
-            parked: [] as string[],
-            skipped: [] as string[],
-            dropped: localRecords.slice(guestRoom).map(({ rkey }) => rkey),
-          }
+      // The starter seed writes locally and only locally — there is no account
+      // to sync to yet. It is a fixed curated set well under the guest cap, so
+      // nothing is parked, skipped or dropped; returning the backend's shape
+      // keeps the bookkeeping below identical on both paths.
+      const res = starterSeed
+        ? { parked: [] as string[], skipped: [] as string[], dropped: [] as string[] }
         : await api.bulkCreateSubscriptions(subscriptionsToCreate);
       const parkedRkeys = new Set(res.parked ?? []);
       const skippedRkeys = new Set(res.skipped ?? []);

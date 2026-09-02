@@ -21,6 +21,7 @@
   } from '$lib/stores/preferences.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
   import { integrationSaveStore } from '$lib/stores/integrationSave.svelte';
+  import { auth } from '$lib/stores/auth.svelte';
   import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
   import { decodeEntities } from '$lib/utils/entities';
   import { sanitizeHtml } from '$lib/utils/sanitize';
@@ -181,6 +182,11 @@
       publishedAt: activeItem.publishedAt ?? undefined,
     };
   }
+
+  // A Semble card / Margin bookmark is a record in the reader's own atproto
+  // repo. Every other reader host gates these the same way; this one handed
+  // them to guests, whose save could only ever queue and never drain.
+  let canSaveToIntegration = $derived(Boolean(auth.user));
 
   function saveActiveTo(kind: 'semble' | 'margin') {
     const target = integrationTarget();
@@ -454,8 +460,8 @@
     onClose={closeMagazine}
     onArchive={magazine ? archiveMagazine : undefined}
     onOpenUrl={() => activeItem && window.open(activeItem.url, '_blank', 'noopener')}
-    onSaveToSemble={() => saveActiveTo('semble')}
-    onSaveToMargin={() => saveActiveTo('margin')}
+    onSaveToSemble={canSaveToIntegration ? () => saveActiveTo('semble') : undefined}
+    onSaveToMargin={canSaveToIntegration ? () => saveActiveTo('margin') : undefined}
     onContents={() =>
       paged
         ? pagedController?.goToPage(0)

@@ -1,6 +1,5 @@
 <script lang="ts">
   import { api } from '$lib/services/api';
-  import { auth } from '$lib/stores/auth.svelte';
 
   interface Props {
     onFeedSelected: (feedUrl: string) => Promise<void>;
@@ -29,9 +28,7 @@
     discoveredFeeds = [];
 
     try {
-      const result = auth.isGuest
-        ? await api.discoverFeedsGuest(feedUrl.trim())
-        : await api.discoverFeedsV2(feedUrl.trim());
+      const result = await api.discoverFeedsV2(feedUrl.trim());
       if (result.feeds.length === 0) {
         error = 'No feeds found at this URL';
       } else if (result.feeds.length === 1) {

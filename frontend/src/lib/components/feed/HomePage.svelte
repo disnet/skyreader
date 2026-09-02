@@ -18,6 +18,7 @@
   import HomeLane from '$lib/components/feed/HomeLane.svelte';
   import MagazineRail from '$lib/components/feed/MagazineRail.svelte';
   import HighlightReviewCard from '$lib/components/feed/HighlightReviewCard.svelte';
+  import GuestModeBanner from '$lib/components/feed/GuestModeBanner.svelte';
   import { goto } from '$app/navigation';
   import type { LaneCardVM } from '$lib/components/feed/homeLane';
   import { savesStore } from '$lib/stores/saves.svelte';
@@ -35,7 +36,6 @@
   import { decodeEntities } from '$lib/utils/entities';
   import { savedItemLabelKeys } from '$lib/utils/dailyMagazine';
   import { preferences, type CardDensity, type DefaultView } from '$lib/stores/preferences.svelte';
-  import { auth } from '$lib/stores/auth.svelte';
   import {
     datePresetToMs,
     matchesReadingLength,
@@ -397,9 +397,12 @@
       <div class="home-controls masthead-controls">{@render homeControls()}</div>
     </div>
 
-    {#if !isLoading && !auth.isGuest}
-      <!-- Highlights and the daily magazine are account features (both are
-           server-backed); a guest's Home is just the lanes over local saves. -->
+    <!-- Renders itself only for a guest, and only until dismissed. -->
+    <GuestModeBanner />
+
+    {#if !isLoading}
+      <!-- Highlights and the daily magazine work from local data for a guest
+           (the server half queues until sign-in), so both surfaces show. -->
       <HighlightReviewCard />
       <MagazineRail
         issues={magazineStore.magazines}

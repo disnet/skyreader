@@ -501,13 +501,6 @@ class ApiClient {
     return this.fetch('/api/guest/starter-feeds');
   }
 
-  async warmGuestFeed(feedUrl: string): Promise<void> {
-    await this.fetch('/api/guest/feeds/warm', {
-      method: 'POST',
-      body: JSON.stringify({ feedUrl }),
-    });
-  }
-
   async fetchFeedsBatchV2(
     feeds: Array<{
       url: string;
@@ -595,10 +588,6 @@ class ApiClient {
     } | null;
   }> {
     return this.fetch(`/api/v2/feeds/discover?url=${encodeURIComponent(url)}`);
-  }
-
-  async discoverFeedsGuest(url: string): ReturnType<ApiClient['discoverFeedsV2']> {
-    return this.fetch(`/api/guest/feeds/discover?url=${encodeURIComponent(url)}`);
   }
 
   // Content detection
@@ -1082,6 +1071,10 @@ class ApiClient {
     label: string;
     props?: Record<string, unknown>;
     updatedAt?: number;
+    // 'merge' unions highlights into what the account already holds instead of
+    // replacing the array. Only for writes made in guest mode — see
+    // syncHighlightsToBackend.
+    mode?: 'replace' | 'merge';
   }): Promise<{ success: boolean }> {
     return this.fetch('/api/labels', {
       method: 'POST',

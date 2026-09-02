@@ -546,47 +546,31 @@ only meaningful with the gate open; check it before announcing the feature.
 
 ## 4e. Guest reading mode (unauthenticated surface)
 
-Four public endpoints, all under `/api/guest/` (`backend/src/routes/guest.ts`),
-all keyed by `CF-Connecting-IP` because there is no DID:
+Two public endpoints, both under `/api/guest/` (`backend/src/routes/guest.ts`),
+both keyed by `CF-Connecting-IP` because there is no DID, and **both read-only**:
 
-| Endpoint                         | Limit  | What it does                                                               |
-| -------------------------------- | ------ | -------------------------------------------------------------------------- |
-| `GET /api/guest/starter-feeds`   | —      | Static curated channels, `Cache-Control: public, max-age=3600`.            |
-| `POST /api/guest/timeline`       | 60/min | Read-only archive query over ≤50 caller-supplied feed URLs. Never fetches. |
-| `POST /api/guest/feeds/discover` | 10/min | Delegates to the existing discover logic (reaches the proxy).              |
-| `POST /api/guest/feeds/warm`     | 10/min | The one unauthenticated WRITE into the shared archive.                     |
+| Endpoint                       | Limit  | What it does                                                               |
+| ------------------------------ | ------ | -------------------------------------------------------------------------- |
+| `GET /api/guest/starter-feeds` | —      | Static curated channels, `Cache-Control: public, max-age=3600`.            |
+| `POST /api/guest/timeline`     | 60/min | Read-only archive query over ≤50 caller-supplied feed URLs. Never fetches. |
 
-The warm endpoint deliberately relaxes the `callerSubscribes` invariant that
-protects `feeds`/`feed_items` from arbitrary writes, because a guest has no
-subscription rows anywhere. What bounds it, in the order it applies:
+There is no unauthenticated write into the archive. Adding a source needs an
+account, so the only feeds a guest can name are the curated starter ones, which
+ride `GET /api/internal/crawl-set` and are already as fresh as the crawler makes
+them. Nothing here relaxes the `callerSubscribes` invariant that protects
+`feeds`/`feed_items`, and nothing here can be pointed at a caller-chosen URL.
 
-1. **10/min per IP** (rate)
-2. **Starter feeds short-circuit** — they ride the crawl set, so a warm is a no-op.
-3. **15-minute per-feed freshness**, stamped in `feeds.guest_warmed_at` _before_
-   the fetch, so a hot or broken URL is fetched at most once per window. Durable,
-   unlike a `rate_limits` row. The stamp is a **claim**, not a check: one
-   conditional `UPDATE … WHERE guest_warmed_at <= now - 15min … RETURNING`, so of
-   N simultaneous warms of the same feed exactly one fetches. (Read-then-stamp
-   let a whole burst through, which is the concurrency the bound exists to stop.)
-4. **200 new guest feeds per UTC day, globally** — an atomic counter in
-   `guest_feed_quota` (one row per `unixepoch() / 86400`), taken by a conditional
-   upsert that only increments while it is under the cap. Reserved before the
-   feed row is created and released if the create was a no-op, so it errs toward
-   spent rather than toward letting extra feeds through. Over the cap, a NEW feed
-   gets a 429 (`guest_warm_capped` in the logs) while feeds already in the
-   archive still refresh. The hourly reaper drops quota rows older than 7 days.
-5. **The hourly reaper** — `reapOrphanGuestFeeds` deletes ≤100 guest-warmed feeds
-   per run that have no subscriber and no guest touch in 30 days, items and all
-   (`cron_guest_feed_reap`).
+**If guest adds are ever reopened**, the write path they need is what this
+section used to document, and it came with four bounds that all have to come
+back with it: a per-IP rate on the warm endpoint, a durable per-feed freshness
+window claimed with a single conditional `UPDATE … RETURNING` _before_ the fetch
+(read-then-stamp let a concurrent burst straight through), a global daily
+ceiling on new guest feeds held as an atomic counter, and a reaper for the
+orphan feed rows that result. Both bounds being single-statement claims is the
+part that is easy to get wrong.
 
-The read path additionally re-warms at most **2** guest-added feeds per request,
-in `ctx.waitUntil`, and only ones already in the archive — serving a guest
-timeline can never create a feed row.
-
-What to watch after enabling it: `guest_timeline` log volume and its `d1Ms` /
-`d1RowsRead`, `guest_warm_capped` (the daily ceiling being hit means either real
-growth or a URL-cycling client), 429 rates on the two write endpoints, and the
-crawl-set size delta (~+9 for the starter channels).
+What to watch: `guest_timeline` log volume and its `d1Ms` / `d1RowsRead`, its
+429 rate, and the crawl-set size delta (~+9 for the starter channels).
 
 ---
 

@@ -121,12 +121,54 @@ permanently failed. Guest saves keep the RSS body from `db.articles` (extraction
 session-gated); `savesStore.load()` stops at the Dexie cache for a guest, and the body-fetch
 fallbacks never fire.
 
+**Saving out to Semble or Margin is account-only** — both the article picker and the highlight push.
+Each writes a record to the reader's own atproto repo, so a queued one could never drain without a
+session and a granted scope; queueing it would be a false promise, unlike a local highlight or save
+where the queue IS the migration. `integrationSaveStore.openPicker` refuses for a guest with a
+sign-in toast, and every reader host gates the affordance on `Boolean(auth.user)` — `/daily` was the
+one that didn't.
+
+**Pushing a highlight to Margin is account-only.** Highlighting itself stays local for a guest (the
+queue IS the migration), but an `at.margin.note` is a record in the reader's own atproto repo, and a
+queued one could never drain without both a session and a granted Margin scope — so queueing it
+would be a false promise. `saveHighlightToMargin` refuses for a guest with a sign-in toast, and the
+three surfaces that offer it (the reader popover via `useHighlights`, `HighlightsPage`,
+`HighlightReview`) hide the action rather than let a guest meet the backstop. The Margin _import_ is
+already account-gated by its opt-in preference, which lives in account-only Settings.
+
+**Adding a source is account-only.** A guest's library is exactly the curated starter channels, and
+those ride the crawl set, so everything a guest can read is already crawler-maintained — there is no
+unauthenticated path that puts a feed into the archive. `subscriptionsStore.add()` throws
+`GuestAddBlockedError` for a guest and `addBulk()` refuses unless called with `{ starterSeed: true }`
+(only "Start Reading" does); each add surface — the sidebar and mobile add menus, `AddFeedModal`
+(the backstop every entry point funnels through), `LibraryEmptyState`, `/subscribe` — offers sign-in
+instead. Renaming, recategorizing and removing a feed stay local and allowed.
+
 Reads go through `POST /api/guest/timeline` with the local feed-URL list (`feedFetcher`'s guest
 branch), capped at 50 feeds — the same number the store caps a guest's library at. **The batch path
 is not a fallback for a guest** (it needs a session), so an `ingestActive: false` response or a
 failed timeline ends the sync with what's cached rather than fanning out to endpoints that 401.
-Single-feed reads (add-feed, retry, backfill) route through the same endpoint, warming the feed
-first — a guest's feeds are not in the crawl set.
+Single-feed reads (retry, backfill) route through the same endpoint; there is no warm step.
+
+**Highlights made in guest mode merge, they do not replace.** A guest's highlights array holds only
+what was highlighted here (guest mode starts from a cleared cache), so it is not the authority on an
+existing account's set. Draining it under the ordinary last-write-wins replace loses one side of any
+article highlighted in BOTH contexts, silently and in either direction: a newer account row refuses
+the guest write, an older one gets overwritten wholesale. So a highlight write made while
+`auth.isGuest` carries `mode: 'merge'`, which the backend applies as a union by highlight id that
+always lands (see `MERGE_HIGHLIGHTS_CONFLICT` in `backend/src/routes/labels.ts`). Clearing an item's
+highlights as a guest cancels the pending write rather than queueing a delete, which would otherwise
+tombstone the account's own highlights for that article on sign-in. Signed-in writes are unchanged
+and stay authoritative, so removing a single highlight still propagates.
+
+Saves need none of this: the queue entry carries the whole payload and the backend dedups on
+`(user_did, url)`, so a guest save of a URL the account already has keeps the account's row. The one
+place saves needed care is the **external-backed snapshot** (`first.full` in `savesStore.load()`),
+which replaces the cache wholesale so a removal in Semble or Margin lands here. That snapshot is
+authoritative about collection membership but not about saves that were never sent, so the replace
+now keeps any row still holding a pending create (`syncQueue.pendingSavedRkeys()`). Without it a
+guest's saves vanished on the first authenticated boot, since Phase 1 runs `load()` before the queue
+drains. Keying it on the queue rather than on load order also covers the plain offline-account case.
 
 `auth.isInApp` (account **or** guest) gates the reading surfaces; `auth.isAuthenticated` still gates
 every account action. The route guard in `+layout.svelte` allows a guest `/feeds`, `/home`, `/saved`

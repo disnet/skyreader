@@ -166,6 +166,10 @@ interface AddLabelRequest {
   // When the USER made this change, unix ms. Optional: an older client omits it
   // and gets server-now, i.e. today's arrival-ordered behaviour.
   updatedAt?: number;
+  // 'replace' (default) writes props as the authoritative set for this item.
+  // 'merge' unions the incoming highlights into whatever is already stored.
+  // See MERGE_HIGHLIGHTS_CONFLICT for when a client should ask for it.
+  mode?: 'replace' | 'merge';
 }
 
 /**
@@ -185,6 +189,49 @@ const LABEL_UPSERT_CONFLICT = `ON CONFLICT(user_did, item_key, label) DO UPDATE 
          client_updated_at = excluded.client_updated_at,
          deleted_at = NULL
        WHERE excluded.client_updated_at >= COALESCE(item_labels_cache.client_updated_at, 0)`;
+
+/**
+ * Union-by-id upsert for the `highlights` label.
+ *
+ * `LABEL_UPSERT_CONFLICT` treats props as one authoritative value, which is
+ * right for a single reader's own timeline: a stale queue must not undo newer
+ * work, and rewriting the array without a highlight is how removing one
+ * propagates. It is wrong for merging two DISJOINT bodies of work, which is
+ * what signing in from guest mode does. Under replace semantics, an article
+ * highlighted both as a guest and in the account loses one side's highlights
+ * wholesale: the later `client_updated_at` wins the entire array.
+ *
+ * A merge write is additive, so it carries neither hazard and needs neither
+ * guard:
+ *   - it always lands (refusing it on staleness IS the bug, and it can destroy
+ *     nothing), while `client_updated_at` keeps the greater of the two so a
+ *     later replace still wins normally;
+ *   - on an id present in both sides the incoming one wins, matching the
+ *     client's own inbound union;
+ *   - a tombstoned row contributes nothing (`deleted_at IS NULL`), so merging
+ *     never resurrects highlights the reader deleted.
+ *
+ * `updated_at` still advances, so the forward delta re-delivers the merged row
+ * to every other device.
+ */
+const MERGE_HIGHLIGHTS_CONFLICT = `ON CONFLICT(user_did, item_key, label) DO UPDATE SET
+         props = json_object('highlights', (
+           SELECT json_group_array(json(value)) FROM (
+             SELECT value FROM json_each(json_extract(excluded.props, '$.highlights'))
+             UNION ALL
+             SELECT value FROM json_each(json_extract(item_labels_cache.props, '$.highlights'))
+              WHERE item_labels_cache.deleted_at IS NULL
+                AND json_extract(value, '$.id') NOT IN (
+                  SELECT json_extract(value, '$.id')
+                    FROM json_each(json_extract(excluded.props, '$.highlights')))
+           )
+         )),
+         updated_at = excluded.updated_at,
+         client_updated_at = MAX(
+           excluded.client_updated_at,
+           COALESCE(item_labels_cache.client_updated_at, 0)
+         ),
+         deleted_at = NULL`;
 
 // POST /api/labels - Add or update a label
 export async function handleAddLabel(request: Request, env: Env): Promise<Response> {
@@ -215,6 +262,24 @@ export async function handleAddLabel(request: Request, env: Env): Promise<Respon
     });
   }
 
+  // Merge is defined only for `highlights`, whose props are an array of
+  // id-bearing objects. Refuse rather than quietly replacing: a client asking
+  // to merge something else has a bug, and silently doing the destructive
+  // thing instead is how it would stay hidden.
+  const merge = body.mode === 'merge';
+  if (merge && label !== 'highlights') {
+    return new Response(JSON.stringify({ error: "mode 'merge' is only valid for 'highlights'" }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  if (merge && !Array.isArray((props as { highlights?: unknown } | undefined)?.highlights)) {
+    return new Response(
+      JSON.stringify({ error: "mode 'merge' requires props.highlights to be an array" }),
+      { status: 400, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+
   const rkey = generateTid();
   const nowMs = Date.now();
   const now = Math.floor(nowMs / 1000);
@@ -224,7 +289,7 @@ export async function handleAddLabel(request: Request, env: Env): Promise<Respon
     await env.DB.prepare(
       `INSERT INTO item_labels_cache (user_did, item_key, item_type, label, props, rkey, created_at, updated_at, client_updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ${LABEL_UPSERT_CONFLICT}`
+       ${merge ? MERGE_HIGHLIGHTS_CONFLICT : LABEL_UPSERT_CONFLICT}`
     )
       .bind(
         session.did,

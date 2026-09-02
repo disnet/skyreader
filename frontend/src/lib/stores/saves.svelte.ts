@@ -173,15 +173,34 @@ function createSavesStore() {
 
       if (first.full) {
         const snapshot = first.articles as SavedItem[];
+
+        // The snapshot is authoritative about collection MEMBERSHIP, which is
+        // why it replaces rather than merges — an item removed in Semble or
+        // Margin has to disappear here too. It is NOT authoritative about saves
+        // that have never been sent: anything still in the queue is invisible
+        // to the collection by definition. Dropping those rows made a guest's
+        // saves vanish on the first authenticated boot (load() runs before the
+        // queue drains) until a later poll brought them back.
+        //
+        // Keyed on the queue rather than on load order, so it holds whatever
+        // order the boot happens to take, and covers the plain offline-account
+        // case as well as sign-in from guest mode.
+        const snapshotKeys = new Set(snapshot.map((a) => a.rkey));
+        const pendingRkeys = await syncQueue.pendingSavedRkeys();
+        const unsent = cached.filter((c) => pendingRkeys.has(c.rkey) && !snapshotKeys.has(c.rkey));
+
         // Bodies aren't in the response — reuse cached ones, fetch the rest —
         // before the clear()+replace below drops the old cache (and its bodies).
         await hydrateBodies(snapshot, cachedByRkey);
         const backfilled = backfillWordCounts(snapshot);
-        articles = snapshot.map(toLightSaved);
+        const kept = [...unsent, ...snapshot].sort((a, b) =>
+          a.savedAt < b.savedAt ? 1 : a.savedAt > b.savedAt ? -1 : 0
+        );
+        articles = kept.map(toLightSaved);
         rebuildMaps();
         await db.saved.clear();
-        if (snapshot.length > 0) {
-          await safeBulkPut(db.saved, snapshot);
+        if (kept.length > 0) {
+          await safeBulkPut(db.saved, kept);
         }
         // A batch landed: rebuild the search corpus on the next search rather
         // than patching it row by row.

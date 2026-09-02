@@ -7,6 +7,7 @@ import {
   findTextInDOM,
 } from '$lib/utils/textSelector';
 import { toastStore } from '$lib/stores/toast.svelte';
+import { auth } from '$lib/stores/auth.svelte';
 import {
   saveHighlightToMargin as saveToMargin,
   removeHighlightFromMargin,
@@ -927,7 +928,12 @@ export function useHighlights(params: HighlightParams) {
     applyHighlights,
     popoverAnchorRect,
     createHighlightFromPopover,
-    createHighlightFromPopoverToMargin,
+    // Highlighting itself stays local for a guest (the queue IS the migration),
+    // but pushing one to Margin writes to an atproto repo they don't have.
+    // Handing the popover `undefined` is what takes both buttons off it.
+    get createHighlightFromPopoverToMargin() {
+      return auth.isGuest ? undefined : createHighlightFromPopoverToMargin;
+    },
     saveNoteFromPopover,
     removeHighlightFromPopover,
     adjustHighlightRange,
@@ -938,7 +944,9 @@ export function useHighlights(params: HighlightParams) {
     },
     closePopover,
     toggleParagraphHighlight,
-    savePopoverHighlightToMargin,
+    get savePopoverHighlightToMargin() {
+      return auth.isGuest ? undefined : savePopoverHighlightToMargin;
+    },
     get popoverHighlightSavedToMargin() {
       return isPopoverHighlightSavedToMargin();
     },

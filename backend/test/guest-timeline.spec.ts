@@ -1,25 +1,18 @@
-import { env, createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
+import { env } from 'cloudflare:test';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import {
-  handleGuestStarterFeeds,
-  handleGuestTimeline,
-  handleGuestFeedWarm,
-  reapOrphanGuestFeeds,
-} from '../src/routes/guest';
+import { handleGuestStarterFeeds, handleGuestTimeline } from '../src/routes/guest';
 import { CRAWLER_HEARTBEAT_KEY, TIMELINE_ENABLED_KEY } from '../src/routes/ingest';
 import { STARTER_CHANNELS, STARTER_FEED_URLS } from '../src/config/starter-feeds';
-import type { Env } from '../src/types';
 
 /**
- * The unauthenticated half of guest reading mode: a timeline over a
- * caller-supplied feed list (read-only, never fetches) and the warm endpoint
- * that is the one way a guest's own feed reaches the shared archive.
+ * The unauthenticated half of guest reading mode: the starter channels and a
+ * timeline over a caller-supplied feed list. Both are read-only — nothing here
+ * ever fetches, and no unauthenticated path writes to the archive.
  */
 
 const FEED_A = 'https://example.com/guest-a.xml';
 const FEED_B = 'https://example.com/guest-b.xml';
 const FEED_C = 'https://example.com/guest-c.xml';
-const STARTER = STARTER_FEED_URLS[0];
 
 interface GuestPage {
   items: Array<{ guid: string; seq: number; feedUrl: string; read: boolean }>;
@@ -41,16 +34,8 @@ function timelineRequest(body: unknown, ip = '203.0.113.1'): Request {
   });
 }
 
-function warmRequest(body: unknown, ip = '203.0.113.2'): Request {
-  return new Request('https://api.example/api/guest/feeds/warm', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'CF-Connecting-IP': ip },
-    body: typeof body === 'string' ? body : JSON.stringify(body),
-  });
-}
-
-async function timeline(body: unknown, ctx?: ExecutionContext): Promise<GuestPage> {
-  const res = await handleGuestTimeline(timelineRequest(body), env, ctx);
+async function timeline(body: unknown): Promise<GuestPage> {
+  const res = await handleGuestTimeline(timelineRequest(body), env);
   expect(res.status).toBe(200);
   return (await res.json()) as GuestPage;
 }
@@ -101,74 +86,16 @@ async function stampHeartbeat(secondsAgo = 0): Promise<void> {
     .run();
 }
 
-/**
- * Put a guest-warmed feed `secondsAgo` in the past. Both timestamps move: the
- * warm claim treats a crawler ingest as freshness too, so a feed is only stale
- * when nothing has touched it.
- */
-async function ageGuestFeed(feedUrl: string, secondsAgo: number): Promise<void> {
-  await env.DB.prepare(
-    `INSERT INTO feeds (feed_url, guest_warmed_at) VALUES (?1, unixepoch() - ?2)
-     ON CONFLICT(feed_url) DO UPDATE SET
-       guest_warmed_at = unixepoch() - ?2,
-       last_ingest_at = CASE WHEN last_ingest_at IS NULL THEN NULL ELSE unixepoch() - ?2 END`
-  )
-    .bind(feedUrl, secondsAgo)
-    .run();
-}
-
-/** Today's row of the global new-guest-feed ceiling. */
-async function quotaUsed(): Promise<number> {
-  const row = await env.DB.prepare(
-    'SELECT used FROM guest_feed_quota WHERE day = unixepoch() / 86400'
-  ).first<{ used: number }>();
-  return row?.used ?? 0;
-}
-
-async function setQuotaUsed(used: number): Promise<void> {
-  await env.DB.prepare(
-    `INSERT INTO guest_feed_quota (day, used) VALUES (unixepoch() / 86400, ?)
-     ON CONFLICT(day) DO UPDATE SET used = excluded.used`
-  )
-    .bind(used)
-    .run();
-}
-
-async function warmedAt(feedUrl: string): Promise<number | null> {
-  const row = await env.DB.prepare('SELECT guest_warmed_at FROM feeds WHERE feed_url = ?')
-    .bind(feedUrl)
-    .first<{ guest_warmed_at: number | null }>();
-  return row?.guest_warmed_at ?? null;
-}
-
 describe('guest reading mode (unauthenticated archive reads)', () => {
   let originalFetch: typeof fetch;
-  let proxyCalls: string[];
 
   beforeEach(async () => {
     originalFetch = globalThis.fetch;
-    proxyCalls = [];
-    (env as Env).FEED_PROXY_URL = 'https://proxy.example';
-    (env as Env).FEED_PROXY_SECRET = 'test-secret';
+    // The guest surface is read-only over the archive. Anything that reaches
+    // the network from here would be an unauthenticated caller steering a
+    // fetch, so make that impossible to do quietly.
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
-      proxyCalls.push(typeof input === 'string' ? input : input.toString());
-      return new Response(
-        JSON.stringify({
-          feed: {
-            title: 'Warmed Feed',
-            siteUrl: 'https://example.com',
-            items: [
-              {
-                guid: 'warmed-1',
-                url: 'https://example.com/warmed-1',
-                title: 'Warmed',
-                publishedAt: '2026-01-02T00:00:00.000Z',
-              },
-            ],
-          },
-        }),
-        { status: 200, headers: { 'Content-Type': 'application/json' } }
-      );
+      throw new Error(`guest surface must not fetch: ${input.toString()}`);
     }) as unknown as typeof fetch;
     await stampHeartbeat();
   });
@@ -179,7 +106,6 @@ describe('guest reading mode (unauthenticated archive reads)', () => {
     await env.DB.prepare('DELETE FROM feed_items').run();
     await env.DB.prepare('DELETE FROM feeds').run();
     await env.DB.prepare('DELETE FROM subscriptions_cache').run();
-    await env.DB.prepare('DELETE FROM guest_feed_quota').run();
     await env.DB.prepare('DELETE FROM rate_limits').run();
     await env.DB.prepare('DELETE FROM sync_state WHERE key = ?').bind(CRAWLER_HEARTBEAT_KEY).run();
     await env.DB.prepare('DELETE FROM sync_state WHERE key = ?').bind(TIMELINE_ENABLED_KEY).run();
@@ -408,304 +334,6 @@ describe('guest reading mode (unauthenticated archive reads)', () => {
         generation: await generation(),
       });
       expect(page.items.map((i) => i.guid)).toEqual(['b1']);
-    });
-  });
-
-  describe('lazy re-warm', () => {
-    it('re-warms a stale guest-added feed after the response', async () => {
-      await seed(FEED_A, ['a1']);
-      await ageGuestFeed(FEED_A, 60 * 60);
-      const before = await warmedAt(FEED_A);
-
-      const ctx = createExecutionContext();
-      await timeline({ feedUrls: [FEED_A] }, ctx);
-      await waitOnExecutionContext(ctx);
-
-      expect(proxyCalls).toHaveLength(1);
-      expect(await warmedAt(FEED_A)).toBeGreaterThan(before!);
-    });
-
-    it('leaves a freshly warmed feed alone', async () => {
-      await seed(FEED_A, ['a1']);
-      await ageGuestFeed(FEED_A, 60);
-
-      const ctx = createExecutionContext();
-      await timeline({ feedUrls: [FEED_A] }, ctx);
-      await waitOnExecutionContext(ctx);
-
-      expect(proxyCalls).toEqual([]);
-    });
-
-    it('never touches crawler-owned or starter feeds', async () => {
-      await seed(FEED_A, ['a1']);
-      await seed(STARTER, ['s1']);
-      await ageGuestFeed(STARTER, 60 * 60);
-
-      const ctx = createExecutionContext();
-      await timeline({ feedUrls: [FEED_A, STARTER] }, ctx);
-      await waitOnExecutionContext(ctx);
-
-      expect(proxyCalls).toEqual([]);
-    });
-
-    it('re-warms at most two feeds per request', async () => {
-      for (const url of [FEED_A, FEED_B, FEED_C]) {
-        await seed(url, ['x']);
-        await ageGuestFeed(url, 60 * 60);
-      }
-
-      const ctx = createExecutionContext();
-      await timeline({ feedUrls: [FEED_A, FEED_B, FEED_C] }, ctx);
-      await waitOnExecutionContext(ctx);
-
-      expect(proxyCalls).toHaveLength(2);
-    });
-
-    it('never creates a feed row from the read path', async () => {
-      const ctx = createExecutionContext();
-      await timeline({ feedUrls: ['https://example.com/unknown.xml'] }, ctx);
-      await waitOnExecutionContext(ctx);
-
-      expect(proxyCalls).toEqual([]);
-      const count = await env.DB.prepare('SELECT COUNT(*) AS c FROM feeds').first<{ c: number }>();
-      expect(count?.c).toBe(0);
-    });
-  });
-
-  describe('warm', () => {
-    it('rejects a non-POST, a malformed body and a non-http(s) URL', async () => {
-      expect(
-        (await handleGuestFeedWarm(new Request('https://api.example/api/guest/feeds/warm'), env))
-          .status
-      ).toBe(405);
-      expect((await handleGuestFeedWarm(warmRequest('{nope'), env)).status).toBe(400);
-      expect(
-        (await handleGuestFeedWarm(warmRequest({ feedUrl: 'ftp://example.com/a.xml' }), env)).status
-      ).toBe(400);
-      expect((await handleGuestFeedWarm(warmRequest({}), env)).status).toBe(400);
-    });
-
-    it('warms an unknown feed into the archive and claims its slot', async () => {
-      const res = await handleGuestFeedWarm(warmRequest({ feedUrl: FEED_A }), env);
-      expect(res.status).toBe(200);
-      expect((await res.json()) as { ok: boolean }).toMatchObject({ ok: true, itemCount: 1 });
-      expect(proxyCalls).toHaveLength(1);
-      expect(await warmedAt(FEED_A)).toBeGreaterThan(0);
-
-      const rows = await env.DB.prepare('SELECT guid FROM feed_items WHERE feed_url = ?')
-        .bind(FEED_A)
-        .all<{ guid: string }>();
-      expect(rows.results.map((r) => r.guid)).toEqual(['warmed-1']);
-    });
-
-    it('is a no-op for a feed warmed inside the freshness window', async () => {
-      await ageGuestFeed(FEED_A, 60);
-      const res = await handleGuestFeedWarm(warmRequest({ feedUrl: FEED_A }), env);
-      expect((await res.json()) as { fresh: boolean }).toMatchObject({ ok: true, fresh: true });
-      expect(proxyCalls).toEqual([]);
-    });
-
-    it('is a no-op for a feed the crawler just ingested', async () => {
-      await seed(FEED_A, ['a1']);
-      const res = await handleGuestFeedWarm(warmRequest({ feedUrl: FEED_A }), env);
-      expect((await res.json()) as { fresh: boolean }).toMatchObject({ fresh: true });
-      expect(proxyCalls).toEqual([]);
-    });
-
-    it('is a no-op for a starter feed, which the crawl set already covers', async () => {
-      const res = await handleGuestFeedWarm(warmRequest({ feedUrl: STARTER }), env);
-      expect((await res.json()) as { fresh: boolean }).toMatchObject({ ok: true, fresh: true });
-      expect(proxyCalls).toEqual([]);
-      const row = await env.DB.prepare('SELECT feed_url FROM feeds WHERE feed_url = ?')
-        .bind(STARTER)
-        .first();
-      expect(row).toBeNull();
-    });
-
-    it('burns the slot even when the crawl fails, so a broken URL is not retried', async () => {
-      globalThis.fetch = vi.fn(async () => {
-        proxyCalls.push('fail');
-        return new Response('nope', { status: 500 });
-      }) as unknown as typeof fetch;
-
-      const first = await handleGuestFeedWarm(warmRequest({ feedUrl: FEED_A }), env);
-      expect((await first.json()) as { ok: boolean }).toMatchObject({ ok: false });
-      expect(await warmedAt(FEED_A)).toBeGreaterThan(0);
-
-      const second = await handleGuestFeedWarm(warmRequest({ feedUrl: FEED_A }), env);
-      expect((await second.json()) as { fresh: boolean }).toMatchObject({ fresh: true });
-      expect(proxyCalls).toHaveLength(1);
-    });
-
-    it('refuses a NEW feed once the global daily ceiling is reached', async () => {
-      await setQuotaUsed(200);
-      await ageGuestFeed('https://example.com/cap0.xml', 60 * 60);
-
-      const res = await handleGuestFeedWarm(warmRequest({ feedUrl: FEED_A }), env);
-      expect(res.status).toBe(429);
-      expect(res.headers.get('Retry-After')).toBeTruthy();
-      expect(proxyCalls).toEqual([]);
-
-      // A feed the archive already holds is not new capacity, so it still warms.
-      const existing = await handleGuestFeedWarm(
-        warmRequest({ feedUrl: 'https://example.com/cap0.xml' }),
-        env
-      );
-      expect(existing.status).toBe(200);
-      expect(proxyCalls).toHaveLength(1);
-      expect(await quotaUsed()).toBe(200);
-    });
-
-    it('spends one unit of daily capacity per new feed, and none per refresh', async () => {
-      await handleGuestFeedWarm(warmRequest({ feedUrl: FEED_A }, '198.51.100.20'), env);
-      await handleGuestFeedWarm(warmRequest({ feedUrl: FEED_B }, '198.51.100.21'), env);
-      expect(await quotaUsed()).toBe(2);
-
-      // A stale feed the archive already holds re-warms without new capacity.
-      await ageGuestFeed(FEED_A, 60 * 60);
-      const refresh = await handleGuestFeedWarm(
-        warmRequest({ feedUrl: FEED_A }, '198.51.100.22'),
-        env
-      );
-      expect(refresh.status).toBe(200);
-      expect(proxyCalls).toHaveLength(3);
-      expect(await quotaUsed()).toBe(2);
-    });
-
-    it('lets exactly one of two concurrent warms of the same new feed fetch', async () => {
-      const [a, b] = await Promise.all([
-        handleGuestFeedWarm(warmRequest({ feedUrl: FEED_A }, '198.51.100.30'), env),
-        handleGuestFeedWarm(warmRequest({ feedUrl: FEED_A }, '198.51.100.31'), env),
-      ]);
-      const bodies = [
-        (await a.json()) as { fresh?: boolean },
-        (await b.json()) as { fresh?: boolean },
-      ];
-
-      expect(proxyCalls).toHaveLength(1);
-      expect(bodies.filter((body) => body.fresh === true)).toHaveLength(1);
-      // The loser of the create refunds the slot it reserved.
-      expect(await quotaUsed()).toBe(1);
-      const feeds = await env.DB.prepare('SELECT COUNT(*) AS c FROM feeds').first<{ c: number }>();
-      expect(feeds?.c).toBe(1);
-    });
-
-    it('lets exactly one of two concurrent warms of the same stale feed fetch', async () => {
-      await ageGuestFeed(FEED_A, 60 * 60);
-
-      const [a, b] = await Promise.all([
-        handleGuestFeedWarm(warmRequest({ feedUrl: FEED_A }, '198.51.100.40'), env),
-        handleGuestFeedWarm(warmRequest({ feedUrl: FEED_A }, '198.51.100.41'), env),
-      ]);
-      const bodies = [
-        (await a.json()) as { fresh?: boolean },
-        (await b.json()) as { fresh?: boolean },
-      ];
-
-      expect(proxyCalls).toHaveLength(1);
-      expect(bodies.filter((body) => body.fresh === true)).toHaveLength(1);
-    });
-
-    it('holds the daily ceiling under a concurrent burst of distinct new feeds', async () => {
-      await setQuotaUsed(199);
-
-      const results = await Promise.all(
-        [0, 1, 2, 3].map((i) =>
-          handleGuestFeedWarm(
-            warmRequest({ feedUrl: `https://example.com/burst${i}.xml` }, `198.51.100.5${i}`),
-            env
-          )
-        )
-      );
-
-      expect(results.filter((res) => res.status === 200)).toHaveLength(1);
-      expect(results.filter((res) => res.status === 429)).toHaveLength(3);
-      expect(proxyCalls).toHaveLength(1);
-      expect(await quotaUsed()).toBe(200);
-      const feeds = await env.DB.prepare('SELECT COUNT(*) AS c FROM feeds').first<{ c: number }>();
-      expect(feeds?.c).toBe(1);
-    });
-
-    it('rate limits a single caller', async () => {
-      // The starter short-circuit answers before any D1 or proxy work, so this
-      // exercises the limiter itself.
-      for (let i = 0; i < 10; i++) {
-        const res = await handleGuestFeedWarm(
-          warmRequest({ feedUrl: STARTER }, '198.51.100.7'),
-          env
-        );
-        expect(res.status).toBe(200);
-      }
-      const limited = await handleGuestFeedWarm(
-        warmRequest({ feedUrl: STARTER }, '198.51.100.7'),
-        env
-      );
-      expect(limited.status).toBe(429);
-      expect(limited.headers.get('Retry-After')).toBeTruthy();
-
-      // Another caller is unaffected.
-      const other = await handleGuestFeedWarm(
-        warmRequest({ feedUrl: STARTER }, '198.51.100.8'),
-        env
-      );
-      expect(other.status).toBe(200);
-    });
-  });
-
-  describe('orphan reaper', () => {
-    it('deletes a stale guest-warmed feed nobody subscribes to, items and all', async () => {
-      await seed(FEED_A, ['a1', 'a2']);
-      await ageGuestFeed(FEED_A, 31 * 24 * 60 * 60);
-
-      expect(await reapOrphanGuestFeeds(env)).toBe(1);
-      const feeds = await env.DB.prepare('SELECT COUNT(*) AS c FROM feeds').first<{ c: number }>();
-      const items = await env.DB.prepare('SELECT COUNT(*) AS c FROM feed_items').first<{
-        c: number;
-      }>();
-      expect(feeds?.c).toBe(0);
-      expect(items?.c).toBe(0);
-    });
-
-    it('keeps a guest-warmed feed that has since gained a subscriber', async () => {
-      await seed(FEED_A, ['a1']);
-      await ageGuestFeed(FEED_A, 31 * 24 * 60 * 60);
-      await env.DB.prepare(
-        `INSERT OR IGNORE INTO users (did, handle, pds_url, tier, created_at)
-         VALUES ('did:plc:guestreaper', 'reaper.test', 'https://test.pds.example', 'free', unixepoch())`
-      ).run();
-      await env.DB.prepare(
-        `INSERT INTO subscriptions_cache (user_did, record_uri, feed_url, title, active)
-         VALUES ('did:plc:guestreaper', 'at://did:plc:guestreaper/x/1', ?, 'Feed', 1)`
-      )
-        .bind(FEED_A)
-        .run();
-
-      expect(await reapOrphanGuestFeeds(env)).toBe(0);
-    });
-
-    it('keeps recently touched guest feeds and crawler-owned feeds', async () => {
-      await seed(FEED_A, ['a1']);
-      await ageGuestFeed(FEED_A, 24 * 60 * 60);
-      await seed(FEED_B, ['b1']);
-
-      expect(await reapOrphanGuestFeeds(env)).toBe(0);
-      const feeds = await env.DB.prepare('SELECT COUNT(*) AS c FROM feeds').first<{ c: number }>();
-      expect(feeds?.c).toBe(2);
-    });
-
-    it('prunes spent quota rows and leaves the live one', async () => {
-      await setQuotaUsed(7);
-      await env.DB.prepare(
-        'INSERT INTO guest_feed_quota (day, used) VALUES (unixepoch() / 86400 - 30, 200)'
-      ).run();
-
-      await reapOrphanGuestFeeds(env);
-
-      const days = await env.DB.prepare('SELECT COUNT(*) AS c FROM guest_feed_quota').first<{
-        c: number;
-      }>();
-      expect(days?.c).toBe(1);
-      expect(await quotaUsed()).toBe(7);
     });
   });
 });

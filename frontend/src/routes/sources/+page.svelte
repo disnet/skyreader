@@ -625,14 +625,21 @@
     <!-- First run: no sources yet -->
     <div class="onboarding">
       <h2>Build your library</h2>
-      <p>
-        Follow RSS feeds, standard.site blogs, and the linkblogs of people you know on Bluesky.
-        Everything you follow lives in your PDS — portable across the Atmosphere.
-      </p>
+      {#if auth.isGuest}
+        <p>Sign in to add feeds and keep them across your devices.</p>
+        <p><a href="/auth/login?returnUrl=/sources">Sign in</a></p>
+      {:else}
+        <p>
+          Follow RSS feeds, standard.site blogs, and the linkblogs of people you know on Bluesky.
+          Everything you follow lives in your PDS — portable across the Atmosphere.
+        </p>
+      {/if}
     </div>
-    <SourcesDiscovery />
+    {#if !auth.isGuest}
+      <SourcesDiscovery />
+    {/if}
   {:else}
-    {#if !searchQuery}
+    {#if !searchQuery && !auth.isGuest}
       <SourcesDiscovery />
     {/if}
 

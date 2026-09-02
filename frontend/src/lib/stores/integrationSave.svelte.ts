@@ -18,6 +18,7 @@ import { api, ScopeUpgradeError } from '$lib/services/api';
 import { syncQueue, type IntegrationPayload } from '$lib/services/sync-queue';
 import { syncStore } from '$lib/stores/sync.svelte';
 import { toastStore } from '$lib/stores/toast.svelte';
+import { auth } from '$lib/stores/auth.svelte';
 import { collectionsStore, type IntegrationKind } from '$lib/stores/collections.svelte';
 import type { CollectionPickerResult, CollectionSelection } from '$lib/types';
 
@@ -37,6 +38,19 @@ function createIntegrationSaveStore() {
   let target = $state<IntegrationSaveTarget | null>(null);
 
   function openPicker(kind: IntegrationKind, data: IntegrationSaveTarget) {
+    // Both integrations write to the reader's own atproto repo, and the picker
+    // lists collections read from it — for a guest it would open empty and the
+    // save behind it could only queue an entry that never drains (no session,
+    // no granted scope). Every calling surface hides the action; this is the
+    // backstop, and it says what to do instead.
+    if (auth.isGuest) {
+      const id = toastStore.add(`Sign in to save to ${kind === 'margin' ? 'Margin' : 'Semble'}`);
+      toastStore.update(id, 'error', undefined, {
+        label: 'Sign in',
+        href: '/auth/login?returnUrl=/saved',
+      });
+      return;
+    }
     integration = kind;
     target = data;
     open = true;

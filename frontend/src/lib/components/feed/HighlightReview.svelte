@@ -23,6 +23,7 @@
   import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
   import { notificationsStore } from '$lib/stores/notifications.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
+  import { auth } from '$lib/stores/auth.svelte';
   import { mobileStore } from '$lib/stores/mediaQuery.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
@@ -1006,7 +1007,9 @@
       >
         <Icon name="message-circle" size={16} />
       </button>
-      {#if !shown.marginUri}
+      <!-- A Margin note is a record in the reader's own atproto repo, so it
+           needs an account. -->
+      {#if !shown.marginUri && !auth.isGuest}
         <button
           class="action-btn"
           onclick={handleSaveToMargin}

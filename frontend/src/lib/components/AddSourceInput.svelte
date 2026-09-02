@@ -80,9 +80,9 @@
 
     close();
 
-    // Following an Atmosphere account writes a subscription record to the
-    // reader's own repo, so it needs one. A guest gets the sign-in screen.
-    if (auth.isGuest && inputType === 'handle') {
+    // Adding any source needs an account, and the input row is not rendered
+    // without one — this is the backstop for a stray keyboard submit.
+    if (auth.isGuest) {
       goto('/auth/login?returnUrl=/feeds');
       return;
     }
@@ -173,47 +173,49 @@
         class="add-menu"
         style="top: {menuPosition.top}px; left: {menuPosition.left}px;"
       >
-        <div class="menu-input-row">
-          <span class="input-icon">
-            {#if inputType === 'handle'}
-              <Icon name="at-sign" size={14} />
-            {:else if inputType === 'url'}
-              <Icon name="link" size={14} />
-            {:else}
-              <Icon name="search" size={14} />
+        {#if !auth.isGuest}
+          <div class="menu-input-row">
+            <span class="input-icon">
+              {#if inputType === 'handle'}
+                <Icon name="at-sign" size={14} />
+              {:else if inputType === 'url'}
+                <Icon name="link" size={14} />
+              {:else}
+                <Icon name="search" size={14} />
+              {/if}
+            </span>
+            <input
+              bind:this={inputRef}
+              bind:value={inputValue}
+              placeholder="Paste URL or @handle..."
+              class="menu-input"
+            />
+            {#if inputValue.trim()}
+              <button class="go-btn" onclick={handleSubmit}>
+                <Icon name="arrow-right" size={14} />
+              </button>
             {/if}
-          </span>
-          <input
-            bind:this={inputRef}
-            bind:value={inputValue}
-            placeholder={auth.isGuest ? 'Paste a feed URL...' : 'Paste URL or @handle...'}
-            class="menu-input"
-          />
-          {#if inputValue.trim()}
-            <button class="go-btn" onclick={handleSubmit}>
-              <Icon name="arrow-right" size={14} />
-            </button>
-          {/if}
-        </div>
-        <div class="menu-divider"></div>
-        <button
-          class="menu-item"
-          onclick={(e) => handleAction(() => sidebarStore.openAddFeedModal(), e)}
-        >
-          <span class="item-icon"><Icon name="rss" size={16} /></span>
-          Add RSS Feed
-        </button>
+          </div>
+          <div class="menu-divider"></div>
+        {/if}
         {#if auth.isGuest}
-          <!-- Feed saves are local for a guest; following an @handle and saving
-               arbitrary URLs (extraction is session-gated) still need an account. -->
+          <!-- Everything this menu adds is account-only: a guest reads the
+               curated starter channels, which the crawler keeps current. -->
           <button
             class="menu-item"
             onclick={(e) => handleAction(() => goto('/auth/login?returnUrl=/feeds'), e)}
           >
             <span class="item-icon"><Icon name="user" size={16} /></span>
-            Sign in to sync & follow accounts
+            Sign in to add feeds
           </button>
         {:else}
+          <button
+            class="menu-item"
+            onclick={(e) => handleAction(() => sidebarStore.openAddFeedModal(), e)}
+          >
+            <span class="item-icon"><Icon name="rss" size={16} /></span>
+            Add RSS Feed
+          </button>
           <button
             class="menu-item"
             onclick={(e) => handleAction(() => sidebarStore.openAddHandleModal(), e)}

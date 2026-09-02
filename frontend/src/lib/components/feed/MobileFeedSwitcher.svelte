@@ -189,47 +189,50 @@
       count: savedCount,
       icon: 'bookmark',
     };
-    // Account-only destinations stay out of a guest's switcher (mirroring the
-    // sidebar): a guest tapping one would just land on the sign-in screen.
-    const accountItems: NavItem[] = auth.isGuest
-      ? []
-      : [
-          ...(!preferences.linkblogDisabled
-            ? [
-                {
-                  type: 'utility',
-                  id: 'linkblog',
-                  label: 'Linkblog',
-                  icon: 'share' as IconName,
-                } as NavItem,
-              ]
-            : []),
-          {
-            type: 'utility',
-            id: 'highlights',
-            label: 'Highlights',
-            icon: 'highlighter' as IconName,
-          },
-          // Review is its own destination; the count is today's deck, and it goes
-          // quiet once the deck is done. Hidden until there's a corpus to review.
-          ...(highlightReviewStore.hasHighlights
-            ? [
-                {
-                  type: 'utility',
-                  id: 'highlights/review',
-                  label: 'Review',
-                  count: highlightReviewStore.dueCount,
-                  icon: 'quote' as IconName,
-                } as NavItem,
-              ]
-            : []),
-          {
-            type: 'utility',
-            id: 'discover',
-            label: 'Discover',
-            icon: 'users' as IconName,
-          },
-        ];
+    // Only the account-only destinations (linkblog, Discover) stay out of a
+    // guest's switcher (mirroring the sidebar): a guest tapping one would just
+    // land on the sign-in screen. Highlights and review are local for a guest.
+    const accountItems: NavItem[] = [
+      ...(!auth.isGuest && !preferences.linkblogDisabled
+        ? [
+            {
+              type: 'utility',
+              id: 'linkblog',
+              label: 'Linkblog',
+              icon: 'share' as IconName,
+            } as NavItem,
+          ]
+        : []),
+      {
+        type: 'utility',
+        id: 'highlights',
+        label: 'Highlights',
+        icon: 'highlighter' as IconName,
+      },
+      // Review is its own destination; the count is today's deck, and it goes
+      // quiet once the deck is done. Hidden until there's a corpus to review.
+      ...(highlightReviewStore.hasHighlights
+        ? [
+            {
+              type: 'utility',
+              id: 'highlights/review',
+              label: 'Review',
+              count: highlightReviewStore.dueCount,
+              icon: 'quote' as IconName,
+            } as NavItem,
+          ]
+        : []),
+      ...(auth.isGuest
+        ? []
+        : [
+            {
+              type: 'utility',
+              id: 'discover',
+              label: 'Discover',
+              icon: 'users' as IconName,
+            } as NavItem,
+          ]),
+    ];
     const otherItems: NavItem[] = [
       ...accountItems,
       {
@@ -459,7 +462,7 @@
           </div>
         {/if}
         {#each items as item}
-          {#if item.type === 'view' && (item.id === 'all' || item.id === 'saved') && onCreateChannel && !auth.isGuest}
+          {#if item.type === 'view' && (item.id === 'all' || item.id === 'saved') && onCreateChannel}
             <div class="nav-item-row" class:active={isItemActive(item)}>
               <button class="nav-item-main" onclick={() => selectItem(item)}>
                 <span class="item-icon"><Icon name={item.icon} size={18} /></span>
@@ -532,7 +535,7 @@
             </button>
           {/if}
         {/each}
-        {#if groupId === 'everything' && !searchQuery && !auth.isGuest}
+        {#if groupId === 'everything' && !searchQuery}
           <a
             href="/channels/discover"
             class="nav-item more-suggestions-link"
@@ -542,7 +545,7 @@
             <span class="item-label">More channel ideas</span>
           </a>
         {/if}
-        {#if groupId === 'saved' && !searchQuery && !auth.isGuest}
+        {#if groupId === 'saved' && !searchQuery}
           <a
             href="/channels/discover"
             class="nav-item more-suggestions-link"

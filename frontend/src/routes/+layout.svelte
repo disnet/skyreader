@@ -32,24 +32,18 @@
   // bare inside the marketing chrome, with no sidebar and no data layer; bounce them
   // to the marketing landing instead. Public routes (/, /auth/*, /terms, the /save
   // and /subscribe share targets) are left to render.
-  const APP_ROUTES = ['/home', '/feeds', '/saved', '/daily'];
+  const APP_ROUTES = ['/home', '/feeds', '/saved', '/daily', '/highlights'];
 
-  // Guest mode is the READING surface: the feeds, the home lanes, and the
-  // saved pile all work from local data (saves are local-only for a guest —
-  // see savesStore). Everything below still needs an account — highlights,
-  // the linkblog, channels, settings — and those are exactly the features
-  // that make signing in worth it, so a guest who reaches one gets the
-  // sign-in screen (returning here afterwards), not a page whose every load
-  // 401s.
-  const GUEST_ROUTES = ['/feeds', '/sources', '/home', '/saved'];
-  const ACCOUNT_ROUTES = [
-    '/daily',
-    '/linkblog',
-    '/highlights',
-    '/discover',
-    '/settings',
-    '/channels',
-  ];
+  // Guest mode is the READING surface, and that now includes everything that
+  // works from local data: the feeds, home, the saved pile, highlights (+
+  // review), channels and the daily magazine — all Dexie-first, with their
+  // server halves queued until sign-in. What still needs an account is what
+  // cannot exist without one — the linkblog (posts to the user's PDS), the
+  // social Discover surface, and account settings. Those are the reason to
+  // sign in, so a guest who reaches one gets the sign-in screen (returning
+  // here afterwards), not a page whose every load 401s.
+  const GUEST_ROUTES = ['/feeds', '/sources', '/home', '/saved', '/daily', '/highlights'];
+  const ACCOUNT_ROUTES = ['/linkblog', '/discover', '/settings'];
   function isAccountOnly(pathname: string): boolean {
     if (GUEST_ROUTES.includes(pathname)) return false;
     return ACCOUNT_ROUTES.some((route) => pathname === route || pathname.startsWith(`${route}/`));

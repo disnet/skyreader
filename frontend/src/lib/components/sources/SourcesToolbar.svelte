@@ -1,5 +1,6 @@
 <script lang="ts">
   import Icon from '$lib/components/Icon.svelte';
+  import { auth } from '$lib/stores/auth.svelte';
 
   interface Props {
     searchQuery: string;
@@ -60,20 +61,32 @@
     </button>
     {#if menuOpen}
       <div class="add-menu" role="menu">
-        <button class="add-item" role="menuitem" onclick={() => pick(onAddRss)}>
-          <Icon name="rss" size={16} />
-          <span class="item-text">
-            <span class="item-label">RSS feed</span>
-            <span class="item-hint">A blog or site URL</span>
-          </span>
-        </button>
-        <button class="add-item" role="menuitem" onclick={() => pick(onAddHandle)}>
-          <Icon name="at-sign" size={16} />
-          <span class="item-text">
-            <span class="item-label">Atmosphere account</span>
-            <span class="item-hint">A @handle's blogs &amp; links</span>
-          </span>
-        </button>
+        {#if auth.isGuest}
+          <!-- Adding a source is account-only; a guest reads the curated
+               starter channels. -->
+          <a class="add-item" role="menuitem" href="/auth/login?returnUrl=/sources">
+            <Icon name="user" size={16} />
+            <span class="item-text">
+              <span class="item-label">Sign in to add feeds</span>
+              <span class="item-hint">Your reading comes with you</span>
+            </span>
+          </a>
+        {:else}
+          <button class="add-item" role="menuitem" onclick={() => pick(onAddRss)}>
+            <Icon name="rss" size={16} />
+            <span class="item-text">
+              <span class="item-label">RSS feed</span>
+              <span class="item-hint">A blog or site URL</span>
+            </span>
+          </button>
+          <button class="add-item" role="menuitem" onclick={() => pick(onAddHandle)}>
+            <Icon name="at-sign" size={16} />
+            <span class="item-text">
+              <span class="item-label">Atmosphere account</span>
+              <span class="item-hint">A @handle's blogs &amp; links</span>
+            </span>
+          </button>
+        {/if}
       </div>
     {/if}
   </div>
@@ -163,6 +176,11 @@
     cursor: pointer;
     text-align: left;
     color: var(--color-text);
+  }
+
+  /* The guest branch renders this as a link, not a button. */
+  a.add-item {
+    text-decoration: none;
   }
 
   .add-item:hover {

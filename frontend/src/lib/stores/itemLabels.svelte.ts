@@ -1656,13 +1656,29 @@ function createItemLabelsStore() {
     itemType: ItemLabelType,
     highlights: Highlight[]
   ) {
+    // A guest's array is not the authority on the account's set: guest mode
+    // starts from a cleared cache, so it holds only what was highlighted here.
+    // Draining it as a replace would overwrite whatever the account already had
+    // on this article (or be refused, losing these). Both are silent. A merge
+    // write unions by id instead, so signing in adds to an existing library
+    // rather than competing with it.
+    const guestWrite = auth.isGuest;
     const payload: LabelPayload = {
       itemKey,
       itemType,
       label: 'highlights',
       props: { highlights },
+      ...(guestWrite ? { mode: 'merge' as const } : {}),
     };
     if (highlights.length === 0) {
+      // A guest clearing an item's highlights has nothing to delete on a server
+      // it has no account on, and the queued delete would tombstone the
+      // account's own highlights for this article on sign-in. Drop the pending
+      // write instead: what was added and removed here never needs to travel.
+      if (guestWrite) {
+        await syncQueue.cancelPending('label', `${itemKey}\0highlights`);
+        return;
+      }
       if (canReachBackend()) {
         try {
           await api.deleteLabel(itemKey, 'highlights');

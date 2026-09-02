@@ -1,6 +1,7 @@
 import { db, getMetadata, setMetadata } from '$lib/services/db';
 import { safeAdd, safeUpdate } from '$lib/services/safeDb.svelte';
 import { api } from '$lib/services/api';
+import { auth } from './auth.svelte';
 import type { FilteredView, Channel } from '$lib/types';
 import {
   migrateLegacyView,
@@ -195,6 +196,10 @@ function createFilteredViewsStore() {
 
   /** Sync with backend: merge remote channels with local, bidirectionally. */
   async function syncWithBackend() {
+    // A guest's channels live only in this browser. There is no remote to merge
+    // with — and the first authed sync after sign-in pushes them to the new
+    // account via ops.pushToRemote, which is the whole migration.
+    if (auth.isGuest) return;
     try {
       const { channels: remoteChannels, deletedUuids } = await api.getChannels();
       const pendingDeletes = await loadPendingDeletes();
@@ -265,6 +270,8 @@ function createFilteredViewsStore() {
 
   /** Push a single channel to the backend (fire-and-forget). */
   function pushToBackend(view: FilteredView) {
+    // Guest channels stay local; syncWithBackend pushes them after sign-in.
+    if (auth.isGuest) return;
     api
       .upsertChannel(view.uuid, {
         name: view.name,
@@ -311,7 +318,10 @@ function createFilteredViewsStore() {
     const view = views.find((v) => v.id === id);
     await db.filteredViews.delete(id);
     views = views.filter((v) => v.id !== id);
-    if (view?.uuid) {
+    // A guest channel never reached the backend, so there is nothing to delete
+    // remotely — and recording a pending delete would fire a stray DELETE at
+    // whatever account signs in later.
+    if (view?.uuid && !auth.isGuest) {
       // Persist the delete intent BEFORE the fire-and-forget API call.
       // This prevents syncWithBackend from re-adding the channel if the DELETE fails.
       const pendingDeletes = await loadPendingDeletes();

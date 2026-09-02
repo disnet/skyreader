@@ -300,12 +300,13 @@
     </div>
   </div>
 
-  <!-- Navigation items. A guest sees only what works without an account: the
-       feeds list, home, the saved pile (local-only saves) and source
-       management. The account-only destinations are the reason to sign in
-       (the route guard in +layout.svelte turns a deep link to one into the
-       sign-in screen), so offering them here as dead ends would be the
-       opposite of calm. -->
+  <!-- Navigation items. A guest sees everything that works without an
+       account — which is every reading surface: feeds, home, saved,
+       highlights + review, channels and sources (all local-only for a
+       guest). Only the destinations that cannot exist without an account
+       (linkblog, Discover, settings) are held back; those are the reason to
+       sign in, and offering them here as dead ends would be the opposite of
+       calm. -->
   <nav class="sidebar-nav">
     <!-- Home: the default landing surface (a route, not a feed filter) -->
     <a
@@ -325,18 +326,16 @@
           <span class="nav-icon"><Icon name="inbox" /></span>
           <span class="nav-label">Feeds</span>
         </button>
-        {#if !auth.isGuest}
-          <button
-            class="row-add-btn"
-            onclick={(e) => {
-              e.stopPropagation();
-              openChannelModal(null, 'feed');
-            }}
-            title="New channel"
-          >
-            <Icon name="plus" size={14} strokeWidth={2} />
-          </button>
-        {/if}
+        <button
+          class="row-add-btn"
+          onclick={(e) => {
+            e.stopPropagation();
+            openChannelModal(null, 'feed');
+          }}
+          title="New channel"
+        >
+          <Icon name="plus" size={14} strokeWidth={2} />
+        </button>
         {#if totalUnread > 0}
           <span class="nav-count">{totalUnread}</span>
         {/if}
@@ -381,40 +380,36 @@
           {#if sourceChannels.length === 0}
             <div class="empty-section">No channels yet</div>
           {/if}
-          {#if !auth.isGuest}
-            <a
-              href="/channels/discover"
-              class="more-suggestions-link"
-              onclick={() => sidebarStore.closeMobile()}
-            >
-              More channel ideas
-              <Icon name="arrow-right" size={12} />
-            </a>
-          {/if}
+          <a
+            href="/channels/discover"
+            class="more-suggestions-link"
+            onclick={() => sidebarStore.closeMobile()}
+          >
+            More channel ideas
+            <Icon name="arrow-right" size={12} />
+          </a>
         </div>
       {/if}
     </div>
 
-    <!-- Saved: top-level filter + nested saved channels. Guests get the pile
-         (saves are local-only for them) but not channels — those sync. -->
+    <!-- Saved: top-level filter + nested saved channels (both local-only for
+         a guest; channels migrate to the account at sign-in). -->
     <div class="nav-group" class:expanded={sidebarStore.expandedSections.saved}>
       <div class="nav-row" class:active={currentFilter().type === 'saved'}>
         <button class="nav-row-main" onclick={() => selectFilter('saved')}>
           <span class="nav-icon"><Icon name="bookmark" /></span>
           <span class="nav-label">Saved</span>
         </button>
-        {#if !auth.isGuest}
-          <button
-            class="row-add-btn"
-            onclick={(e) => {
-              e.stopPropagation();
-              openChannelModal(null, 'saved');
-            }}
-            title="New saved channel"
-          >
-            <Icon name="plus" size={14} strokeWidth={2} />
-          </button>
-        {/if}
+        <button
+          class="row-add-btn"
+          onclick={(e) => {
+            e.stopPropagation();
+            openChannelModal(null, 'saved');
+          }}
+          title="New saved channel"
+        >
+          <Icon name="plus" size={14} strokeWidth={2} />
+        </button>
         {#if itemLabelsStore.inboxCount > 0}
           <span class="nav-count">{itemLabelsStore.inboxCount}</span>
         {/if}
@@ -459,63 +454,61 @@
           {#if savedChannels.length === 0}
             <div class="empty-section">No saved channels yet</div>
           {/if}
-          {#if !auth.isGuest}
-            <a
-              href="/channels/discover"
-              class="more-suggestions-link"
-              onclick={() => sidebarStore.closeMobile()}
-            >
-              More channel ideas
-              <Icon name="arrow-right" size={12} />
-            </a>
-          {/if}
+          <a
+            href="/channels/discover"
+            class="more-suggestions-link"
+            onclick={() => sidebarStore.closeMobile()}
+          >
+            More channel ideas
+            <Icon name="arrow-right" size={12} />
+          </a>
         </div>
       {/if}
     </div>
 
     <!-- Bottom nav. The linkblog entry hides once the user deletes their
          linkblog; the rest of the nav is unrelated to it and always shows. -->
-    {#if !auth.isGuest}
-      {#if !preferences.linkblogDisabled}
-        <a
-          href="/linkblog"
-          class="nav-item nav-link"
-          class:active={$page.url.pathname === '/linkblog'}
-          onclick={() => sidebarStore.closeMobile()}
-        >
-          <span class="nav-icon"><Icon name="share" /></span>
-          <span class="nav-label">Linkblog</span>
-        </a>
-      {/if}
-
+    {#if !auth.isGuest && !preferences.linkblogDisabled}
       <a
-        href="/highlights"
+        href="/linkblog"
         class="nav-item nav-link"
-        class:active={$page.url.pathname === '/highlights'}
+        class:active={$page.url.pathname === '/linkblog'}
         onclick={() => sidebarStore.closeMobile()}
       >
-        <span class="nav-icon"><Icon name="highlighter" /></span>
-        <span class="nav-label">Highlights</span>
+        <span class="nav-icon"><Icon name="share" /></span>
+        <span class="nav-label">Linkblog</span>
       </a>
+    {/if}
 
-      <!-- Review: its own destination, not a mode of /highlights. The count is
-           today's deck and disappears when the deck is done — a badge you clear by
-           reading, never a streak. Hidden entirely until there's a corpus. -->
-      {#if highlightReviewStore.hasHighlights}
-        <a
-          href="/highlights/review"
-          class="nav-item nav-link"
-          class:active={$page.url.pathname === '/highlights/review'}
-          onclick={() => sidebarStore.closeMobile()}
-        >
-          <span class="nav-icon"><Icon name="quote" /></span>
-          <span class="nav-label">Review</span>
-          {#if highlightReviewStore.dueCount > 0}
-            <span class="nav-count">{highlightReviewStore.dueCount}</span>
-          {/if}
-        </a>
-      {/if}
+    <a
+      href="/highlights"
+      class="nav-item nav-link"
+      class:active={$page.url.pathname === '/highlights'}
+      onclick={() => sidebarStore.closeMobile()}
+    >
+      <span class="nav-icon"><Icon name="highlighter" /></span>
+      <span class="nav-label">Highlights</span>
+    </a>
 
+    <!-- Review: its own destination, not a mode of /highlights. The count is
+         today's deck and disappears when the deck is done — a badge you clear by
+         reading, never a streak. Hidden entirely until there's a corpus. -->
+    {#if highlightReviewStore.hasHighlights}
+      <a
+        href="/highlights/review"
+        class="nav-item nav-link"
+        class:active={$page.url.pathname === '/highlights/review'}
+        onclick={() => sidebarStore.closeMobile()}
+      >
+        <span class="nav-icon"><Icon name="quote" /></span>
+        <span class="nav-label">Review</span>
+        {#if highlightReviewStore.dueCount > 0}
+          <span class="nav-count">{highlightReviewStore.dueCount}</span>
+        {/if}
+      </a>
+    {/if}
+
+    {#if !auth.isGuest}
       <a
         href="/discover"
         class="nav-item nav-link"
@@ -539,8 +532,8 @@
 
     {#if auth.isGuest}
       <!-- The one account affordance a guest sees in the nav. Sync across
-           devices, highlights and the linkblog are what it buys; the feeds and
-           saves already here come along. -->
+           devices and the linkblog are what it buys; the feeds, saves,
+           highlights and channels already here come along. -->
       <a href="/auth/login" class="nav-item nav-link" onclick={() => sidebarStore.closeMobile()}>
         <span class="nav-icon"><Icon name="user" /></span>
         <span class="nav-label">Sign in to sync</span>

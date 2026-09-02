@@ -67,24 +67,19 @@ function createAppManager() {
         lastRefreshAt = persistedRefreshAt;
       }
 
-      // Phase 1: Hydrate from cache (parallel). savesStore is a guest surface
-      // too — local-only saves; its load() stops at the Dexie cache for guests.
+      // Phase 1: Hydrate from cache (parallel). savesStore, filteredViewsStore
+      // and magazineStore are guest surfaces too — local-only saves, channels
+      // and magazine issues; each load() stops at the Dexie cache for guests.
       const guestLoads = [
         liveDb.loadSubscriptions(),
         liveDb.loadArticles(),
         itemLabelsStore.load(),
         savesStore.load(),
+        filteredViewsStore.load(),
+        magazineStore.load(),
       ];
       await Promise.all(
-        auth.isGuest
-          ? guestLoads
-          : [
-              ...guestLoads,
-              linkblogStore.load(),
-              shareDraftsStore.load(),
-              filteredViewsStore.load(),
-              magazineStore.load(),
-            ]
+        auth.isGuest ? guestLoads : [...guestLoads, linkblogStore.load(), shareDraftsStore.load()]
       );
 
       // Feed statuses are NOT seeded here. A feed is healthy until the crawler's

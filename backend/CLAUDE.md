@@ -82,19 +82,20 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed documentation.
 | `src/routes/telemetry.ts`     | `/api/telemetry/error` — sampled client error reports  |
 | `src/routes/guest.ts`         | `/api/guest/*` — the unauthenticated reading surface   |
 
-Guest reading mode is the only unauthenticated surface that touches the archive.
-`POST /api/guest/timeline` is a read over caller-supplied feed URLs (≤50) that
-never fetches; the starter channels in `src/config/starter-feeds.ts` are unioned
-into `GET /api/internal/crawl-set`, so the curated feeds stay crawler-fresh with
-no subscriber behind them. A feed a _guest_ adds has no subscriber either, so
-`POST /api/guest/feeds/warm` is a deliberate, bounded exception to the
-`callerSubscribes` invariant in `feeds-v2.ts` — bounded per IP, per feed
-(`feeds.guest_warmed_at`, claimed with one conditional `UPDATE … RETURNING`
-before the fetch), by a global daily ceiling on new guest feeds (the atomic
-counter in `guest_feed_quota`), and by an hourly reaper for orphans. Both bounds
-are single-statement claims on purpose: a check followed by a write let a
-concurrent burst past them. See §4e of
-[`docs/RUNBOOK.md`](../docs/RUNBOOK.md) before changing any of those numbers.
+Guest reading mode is the only unauthenticated surface that reads the archive,
+and it is **read-only**. `POST /api/guest/timeline` is a query over
+caller-supplied feed URLs (≤50) that never fetches; the starter channels in
+`src/config/starter-feeds.ts` are unioned into `GET /api/internal/crawl-set`, so
+the curated feeds stay crawler-fresh with no subscriber behind them.
+
+Adding a source needs an account, which is what keeps that invariant simple: the
+only feeds a guest can name are ones the crawler already owns, so no
+unauthenticated path can steer a fetch at a caller-chosen URL and nothing
+relaxes the `callerSubscribes` rule in `feeds-v2.ts`. Preserve that if you ever
+reopen guest adds — an earlier version had a bounded warm endpoint, and its
+bounds (per-IP rate, a per-feed freshness claim, a global daily ceiling, and an
+orphan reaper) all existed to contain exactly that one write path. See §4e of
+[`docs/RUNBOOK.md`](../docs/RUNBOOK.md).
 
 Integration writes are gated per-capability, not per-app: `POST /api/integrations/semble/connections`
 (a `network.cosmik.connection` edge between two URLs) checks `SEMBLE_CONNECTION_SCOPES`, which is

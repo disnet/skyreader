@@ -367,8 +367,11 @@ function guestUrlsFor(rssSubs: Subscription[]): string[] {
 /**
  * `fetchSingleFeed` for a guest: a cold read of the guest timeline scoped to one
  * feed. `GET /api/v2/feeds/fetch` needs a session, and its pull-through is
- * subscription-gated anyway, so `force` becomes the guest warm request — the one
- * sanctioned way a feed nobody subscribes to gets refreshed in the archive.
+ * subscription-gated anyway.
+ *
+ * There is no warm step: a guest can only hold the curated starter channels,
+ * and those ride the crawl set, so the archive is already as fresh as the
+ * crawler can make it. `force` therefore only bypasses the local cooldown.
  *
  * Returns the same shape as `fetchSingleFeed`, so callers never branch.
  */
@@ -382,22 +385,9 @@ async function fetchGuestFeed(
   if (!force && !feedStatusStore.canFetch(feedUrl)) return { success: false, newArticles: 0 };
 
   try {
-    // Best effort: a warm that fails (or is refused by a rate limit) still
-    // leaves whatever the archive already holds worth reading.
-    if (force) await api.warmGuestFeed(feedUrl).catch(() => undefined);
-
-    let page = await api.fetchGuestTimeline([feedUrl], { limit: TIMELINE_PAGE_LIMIT });
+    const page = await api.fetchGuestTimeline([feedUrl], { limit: TIMELINE_PAGE_LIMIT });
     if (page.ingestActive === false) return { success: false, newArticles: 0 };
-    let items = page.items.filter((item) => item.feedUrl === feedUrl);
-
-    // Nothing archived for this feed. A guest's feeds aren't in the crawl set,
-    // so an empty archive stays empty until somebody warms it; do that once and
-    // re-read. (The backfill records the attempt, so this isn't per-sync.)
-    if (items.length === 0 && !force) {
-      await api.warmGuestFeed(feedUrl).catch(() => undefined);
-      page = await api.fetchGuestTimeline([feedUrl], { limit: TIMELINE_PAGE_LIMIT });
-      items = page.items.filter((item) => item.feedUrl === feedUrl);
-    }
+    const items = page.items.filter((item) => item.feedUrl === feedUrl);
 
     const newArticles = items.length > 0 ? await liveDb.mergeArticles(id, items, savedGuids) : 0;
     feedStatusStore.markReady(feedUrl);

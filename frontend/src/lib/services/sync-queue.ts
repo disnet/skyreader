@@ -30,6 +30,9 @@ export interface LabelPayload {
   itemType: string;
   label: string;
   props?: Record<string, unknown>;
+  // Set on highlight writes made in guest mode, so draining them into an
+  // existing account unions rather than replacing. See syncHighlightsToBackend.
+  mode?: 'replace' | 'merge';
 }
 
 export interface SavedPayload {
@@ -532,6 +535,7 @@ class SyncQueue {
           label: payload.label,
           props: payload.props,
           updatedAt: queuedAt,
+          mode: payload.mode,
         });
         break;
       case 'delete':
@@ -677,6 +681,29 @@ class SyncQueue {
   /**
    * Get count of pending items
    */
+  /**
+   * The rkeys of saves whose create has not reached the backend yet (queued, in
+   * flight, or failed and still retryable).
+   *
+   * An external-backed snapshot is authoritative about collection MEMBERSHIP,
+   * but it cannot know about a save that was never sent — so a wholesale
+   * replace has to be told which rows to leave alone. See savesStore.load().
+   */
+  async pendingSavedRkeys(): Promise<Set<string>> {
+    const rkeys = new Set<string>();
+    const entries = await db.syncQueue.where('collection').equals('saved').toArray();
+    for (const entry of entries) {
+      if (entry.operation !== 'create') continue;
+      try {
+        const payload = JSON.parse(entry.payload) as { rkey?: unknown };
+        if (typeof payload.rkey === 'string') rkeys.add(payload.rkey);
+      } catch {
+        // A payload we can't read can't identify a row to protect.
+      }
+    }
+    return rkeys;
+  }
+
   async getPendingCount(): Promise<number> {
     return db.syncQueue.where('status').equals('pending').count();
   }

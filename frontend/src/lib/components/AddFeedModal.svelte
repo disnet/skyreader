@@ -100,9 +100,7 @@
         url = 'https://' + url;
       }
 
-      const result = auth.isGuest
-        ? await api.discoverFeedsGuest(url)
-        : await api.discoverFeedsV2(url);
+      const result = await api.discoverFeedsV2(url);
       const site = result.standardSite ?? null;
       const feeds = result.feeds;
       // standard.site is the preferred option, so it counts ahead of RSS/Atom feeds.
@@ -270,6 +268,14 @@
         />
       {/each}
     </div>
+  {:else if auth.isGuest}
+    <div class="modal-content">
+      <p class="modal-desc">
+        Adding a feed needs an account. The starter channels stay where they are, and everything you
+        have read or saved here comes with you.
+      </p>
+      <a class="signin-btn" href="/auth/login?returnUrl=/feeds" onclick={handleClose}>Sign in</a>
+    </div>
   {:else if isAtLimit}
     <div class="limit-wrap">
       <LimitNotice kind="feeds">
@@ -402,6 +408,24 @@
   .add-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  /* One Blue (DESIGN.md): --color-primary, not the undefined --color-accent
+     the buttons above fall back from. */
+  .signin-btn {
+    align-self: flex-start;
+    padding: 0.625rem 1rem;
+    border-radius: 8px;
+    background: var(--color-primary, #0066cc);
+    color: white;
+    font-size: var(--text-md);
+    font-weight: var(--weight-medium);
+    text-decoration: none;
+    transition: opacity 0.15s;
+  }
+
+  .signin-btn:hover {
+    opacity: 0.9;
   }
 
   .search-results {

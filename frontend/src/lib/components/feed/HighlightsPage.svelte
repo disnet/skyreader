@@ -19,6 +19,7 @@
   import { savesStore } from '$lib/stores/saves.svelte';
   import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
+  import { auth } from '$lib/stores/auth.svelte';
   import { notificationsStore } from '$lib/stores/notifications.svelte';
   import { mobileStore } from '$lib/stores/mediaQuery.svelte';
   import { useScrollDirection } from '$lib/hooks/useScrollDirection.svelte';
@@ -339,7 +340,9 @@
                       >
                         <Icon name="message-circle" size={15} />
                       </button>
-                      {#if !row.isMargin}
+                      <!-- A Margin note is a record in the reader's own atproto
+                           repo, so it needs an account. -->
+                      {#if !row.isMargin && !auth.isGuest}
                         <button
                           class="action-btn"
                           onclick={() => handleSaveToMargin(group, row)}

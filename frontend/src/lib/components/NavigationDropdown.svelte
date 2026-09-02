@@ -233,39 +233,52 @@
       count: savedCount,
       icon: 'bookmark',
     };
-    // Account-only destinations stay out of a guest's dropdown (mirroring the
-    // sidebar): a guest picking one would just land on the sign-in screen.
-    const otherViews: NavItem[] = auth.isGuest
-      ? [{ type: 'utility', id: 'sources', label: 'Manage Sources', icon: 'rss' }]
-      : [
-          ...(!preferences.linkblogDisabled
-            ? [
-                {
-                  type: 'utility' as const,
-                  id: 'linkblog',
-                  label: 'Linkblog',
-                  icon: 'share' as const,
-                },
-              ]
-            : []),
-          { type: 'utility', id: 'highlights', label: 'Highlights', icon: 'highlighter' },
-          // Review is its own destination; the count is today's deck, and it goes
-          // quiet once the deck is done. Hidden until there's a corpus to review.
-          ...(highlightReviewStore.hasHighlights
-            ? [
-                {
-                  type: 'utility' as const,
-                  id: 'highlights/review',
-                  label: 'Review',
-                  count: highlightReviewStore.dueCount,
-                  icon: 'quote' as const,
-                },
-              ]
-            : []),
-          { type: 'utility', id: 'discover', label: 'Discover', icon: 'users' },
-          { type: 'utility', id: 'sources', label: 'Manage Sources', icon: 'rss' },
-          { type: 'utility', id: 'settings', label: 'Settings', icon: 'settings' },
-        ];
+    // Only the account-only destinations (linkblog, Discover, settings) stay
+    // out of a guest's dropdown (mirroring the sidebar): a guest picking one
+    // would just land on the sign-in screen. Highlights, review and channels
+    // are local for a guest and show like any other view.
+    const otherViews: NavItem[] = [
+      ...(!auth.isGuest && !preferences.linkblogDisabled
+        ? [
+            {
+              type: 'utility' as const,
+              id: 'linkblog',
+              label: 'Linkblog',
+              icon: 'share' as const,
+            },
+          ]
+        : []),
+      { type: 'utility', id: 'highlights', label: 'Highlights', icon: 'highlighter' },
+      // Review is its own destination; the count is today's deck, and it goes
+      // quiet once the deck is done. Hidden until there's a corpus to review.
+      ...(highlightReviewStore.hasHighlights
+        ? [
+            {
+              type: 'utility' as const,
+              id: 'highlights/review',
+              label: 'Review',
+              count: highlightReviewStore.dueCount,
+              icon: 'quote' as const,
+            },
+          ]
+        : []),
+      ...(auth.isGuest
+        ? []
+        : [
+            { type: 'utility' as const, id: 'discover', label: 'Discover', icon: 'users' as const },
+          ]),
+      { type: 'utility', id: 'sources', label: 'Manage Sources', icon: 'rss' },
+      ...(auth.isGuest
+        ? []
+        : [
+            {
+              type: 'utility' as const,
+              id: 'settings',
+              label: 'Settings',
+              icon: 'settings' as const,
+            },
+          ]),
+    ];
 
     const sourceChannelItems: NavItem[] = filteredViewsStore.views
       .filter((v) => v.mode !== 'saved')
@@ -354,8 +367,8 @@
       sections.push({ section: '', items: savedGroup });
     }
 
-    // Other views + add action (channels sync, so creating one needs an account)
-    const otherGroup = [...otherViews, ...(auth.isGuest ? [] : [addViewAction])].filter(filterItem);
+    // Other views + add action (channels are local-first, so guests get it too)
+    const otherGroup = [...otherViews, addViewAction].filter(filterItem);
     if (otherGroup.length > 0) {
       sections.push({ section: '', items: otherGroup });
     }

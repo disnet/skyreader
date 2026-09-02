@@ -126,20 +126,9 @@
         </button>
         {#if addMenuOpen}
           <div class="add-menu">
-            <button
-              class="add-menu-item"
-              onclick={() => {
-                addMenuOpen = false;
-                sidebarStore.openAddFeedModal();
-              }}
-            >
-              <Icon name="rss" size={16} />
-              <span>Add RSS Feed</span>
-            </button>
             {#if auth.isGuest}
-              <!-- Feed saves are local for a guest; following an @handle and
-                   saving arbitrary URLs (extraction is session-gated) still
-                   need an account. -->
+              <!-- Everything this menu adds is account-only: a guest reads the
+                   curated starter channels, which the crawler keeps current. -->
               <button
                 class="add-menu-item"
                 onclick={() => {
@@ -148,9 +137,19 @@
                 }}
               >
                 <Icon name="user" size={16} />
-                <span>Sign in to sync</span>
+                <span>Sign in to add feeds</span>
               </button>
             {:else}
+              <button
+                class="add-menu-item"
+                onclick={() => {
+                  addMenuOpen = false;
+                  sidebarStore.openAddFeedModal();
+                }}
+              >
+                <Icon name="rss" size={16} />
+                <span>Add RSS Feed</span>
+              </button>
               <button
                 class="add-menu-item"
                 onclick={() => {

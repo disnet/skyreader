@@ -403,3 +403,137 @@ describe('/api/labels user-time last-write-wins', () => {
     expect(JSON.parse((await readRow('skew'))!.props)).toEqual({ tags: ['now'] });
   });
 });
+
+/**
+ * Merging a guest's highlights into an account that already has some.
+ *
+ * Under plain replace semantics an article highlighted in BOTH contexts loses
+ * one side wholesale: whichever `client_updated_at` is later wins the entire
+ * array, and the other side's highlights are gone with no error anywhere. These
+ * pin the union that makes signing in additive.
+ */
+describe("POST /api/labels mode: 'merge' (highlights)", () => {
+  beforeEach(async () => {
+    await env.DB.prepare('DELETE FROM item_labels_cache').run();
+    await env.DB.prepare('DELETE FROM sessions').run();
+    await env.DB.prepare('DELETE FROM users').run();
+    await setupTestUser();
+  });
+
+  async function readHighlights(itemKey: string) {
+    const row = await env.DB.prepare(
+      `SELECT props, deleted_at, client_updated_at FROM item_labels_cache
+        WHERE user_did = ? AND item_key = ? AND label = 'highlights'`
+    )
+      .bind(TEST_DID, itemKey)
+      .first<{ props: string; deleted_at: number | null; client_updated_at: number }>();
+    return {
+      ids: (JSON.parse(row!.props).highlights as Array<{ id: string }>).map((h) => h.id).sort(),
+      raw: JSON.parse(row!.props).highlights as Array<{ id: string; note?: string }>,
+      deletedAt: row!.deleted_at,
+      clientUpdatedAt: row!.client_updated_at,
+    };
+  }
+
+  function hl(id: string, note?: string) {
+    return { id, selector: { exact: id }, createdAt: 1, ...(note ? { note } : {}) };
+  }
+
+  async function write(
+    itemKey: string,
+    highlights: unknown[],
+    updatedAt: number,
+    mode?: 'merge'
+  ): Promise<number> {
+    return mutateLabels('POST', {
+      itemKey,
+      itemType: 'article',
+      label: 'highlights',
+      props: { highlights },
+      updatedAt,
+      ...(mode ? { mode } : {}),
+    });
+  }
+
+  it('keeps both sides when the account row is NEWER than the guest write', async () => {
+    const now = Date.now();
+    // The account highlighted this article on another device, recently.
+    await write('shared', [hl('account-1')], now);
+    // The guest highlighted it days ago; the queue drains now.
+    expect(await write('shared', [hl('guest-1')], now - 3 * 86400_000, 'merge')).toBe(200);
+
+    // A replace would have been refused by the staleness guard, losing guest-1.
+    expect((await readHighlights('shared')).ids).toEqual(['account-1', 'guest-1']);
+  });
+
+  it('keeps both sides when the guest write is NEWER than the account row', async () => {
+    const now = Date.now();
+    await write('shared2', [hl('account-1')], now - 3 * 86400_000);
+    expect(await write('shared2', [hl('guest-1')], now, 'merge')).toBe(200);
+
+    // A replace would have won wholesale here, losing account-1.
+    expect((await readHighlights('shared2')).ids).toEqual(['account-1', 'guest-1']);
+  });
+
+  it('lets the incoming version win an id present on both sides', async () => {
+    const now = Date.now();
+    await write('dup', [hl('same', 'account note')], now);
+    await write('dup', [hl('same', 'guest note')], now - 1000, 'merge');
+
+    const { raw } = await readHighlights('dup');
+    expect(raw).toHaveLength(1);
+    expect(raw[0].note).toBe('guest note');
+  });
+
+  it('never lowers client_updated_at, so a later replace still wins normally', async () => {
+    const now = Date.now();
+    await write('cua', [hl('account-1')], now);
+    await write('cua', [hl('guest-1')], now - 3 * 86400_000, 'merge');
+    expect((await readHighlights('cua')).clientUpdatedAt).toBe(now);
+
+    // A genuinely stale replace is still refused after the merge.
+    await write('cua', [hl('stale-only')], now - 86400_000);
+    expect((await readHighlights('cua')).ids).toEqual(['account-1', 'guest-1']);
+  });
+
+  it('does not resurrect highlights the reader deleted', async () => {
+    const now = Date.now();
+    await write('tomb', [hl('deleted-1')], now - 86400_000);
+    await mutateLabels('DELETE', { itemKey: 'tomb', label: 'highlights', updatedAt: now });
+
+    await write('tomb', [hl('guest-1')], now - 3 * 86400_000, 'merge');
+
+    const merged = await readHighlights('tomb');
+    expect(merged.ids).toEqual(['guest-1']);
+    expect(merged.deletedAt).toBeNull();
+  });
+
+  it('creates the row when the account has no highlights on that article', async () => {
+    expect(await write('fresh', [hl('guest-1')], Date.now(), 'merge')).toBe(200);
+    expect((await readHighlights('fresh')).ids).toEqual(['guest-1']);
+  });
+
+  it('refuses merge for any label but highlights, rather than replacing quietly', async () => {
+    const status = await mutateLabels('POST', {
+      itemKey: 'wrong',
+      itemType: 'article',
+      label: 'tagged',
+      props: { tags: ['x'] },
+      updatedAt: Date.now(),
+      mode: 'merge',
+    });
+    expect(status).toBe(400);
+  });
+
+  it('refuses merge when props.highlights is not an array', async () => {
+    const status = await mutateLabels('POST', {
+      itemKey: 'bad',
+      itemType: 'article',
+      label: 'highlights',
+      props: { highlights: 'nope' },
+      updatedAt: Date.now(),
+      mode: 'merge',
+    });
+    expect(status).toBe(400);
+  });
+});
