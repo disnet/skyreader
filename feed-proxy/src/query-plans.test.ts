@@ -1,6 +1,15 @@
 import { describe, expect, it, beforeAll } from 'bun:test';
 import { Database } from 'bun:sqlite';
-import { initDatabase, WARM_DUE_FEEDS_SQL, CRAWL_CYCLE_SQL, WARM_DUE_DOCUMENTS_SQL } from './app';
+import {
+  initDatabase,
+  WARM_DUE_FEEDS_SQL,
+  CRAWL_CYCLE_SQL,
+  WARM_DUE_DOCUMENTS_SQL,
+  STATS_DOCUMENTS_ACTIVE_SQL,
+  STATS_DOCUMENTS_FROZEN_SQL,
+  STATS_DOCUMENTS_BACKOFF_SQL,
+  STATS_PENDING_PUSH_SQL,
+} from './app';
 import { DIRTY_ROWS_SQL, DIRTY_COUNT_SQL } from './ingest-push';
 
 /**
@@ -80,6 +89,33 @@ describe('query plans: periodic scans stay on covering indexes', () => {
     expect(
       plan('SELECT COUNT(*) as count FROM cache WHERE next_retry_at > ? AND error_count >= 5')
     ).toContain('COVERING INDEX idx_cache_backoff');
+  });
+
+  it('/stats document counts are covering, not blob row reads', () => {
+    // Regression: these three shipped on a single-column
+    // idx_document_cache_last_requested_at, so each one loaded the row page —
+    // and documents_json blob — of every active author to answer a COUNT. That
+    // is what pushed /stats past recordProxyStats's 3s timeout on ~13% of its
+    // samples (SKYREADER-BACKEND-4). Measured 72ms -> 0ms once covered.
+    for (const sql of [
+      STATS_DOCUMENTS_ACTIVE_SQL,
+      STATS_DOCUMENTS_FROZEN_SQL,
+      STATS_DOCUMENTS_BACKOFF_SQL,
+    ]) {
+      expect(plan(sql)).toContain('COVERING INDEX idx_document_cache_active');
+    }
+  });
+
+  it('/stats pending-push count keeps the pusher plan', () => {
+    // Same shape as DIRTY_COUNT_SQL, pinned separately because /stats holds its
+    // own copy. The whole-log walk is inherent; what must not change is that fi
+    // leads on its covering index and both joins resolve without row reads.
+    // Leading with cache instead costs 10x (measured 31ms -> 320ms), which is
+    // what an index on push_state(seq, pushed_hash) talks the planner into.
+    const p = plan(STATS_PENDING_PUSH_SQL);
+    expect(p).toContain('SCAN fi USING COVERING INDEX idx_feed_items_push');
+    expect(p).toContain('SEARCH c USING COVERING INDEX');
+    expect(p).toContain('SEARCH ps USING INTEGER PRIMARY KEY');
   });
 
   it('feed-health report resolves via multi-index OR, not a table scan', () => {
