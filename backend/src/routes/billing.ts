@@ -10,7 +10,7 @@ import { log, serializeError } from '../utils/logger';
 import { reportError } from '../observability/sentry';
 
 // Polar billing (merchant of record). Three surfaces:
-//   GET  /api/billing/products  - authed; the purchasable plans for the upgrade UI
+//   GET  /api/billing/products  - public; the purchasable plans for the upgrade UI
 //   POST /api/billing/checkout  - authed; creates a hosted checkout, returns { url }
 //   POST /api/webhook/polar     - server-to-server; standard-webhooks HMAC, no session
 //
@@ -26,22 +26,40 @@ function json(body: unknown, status = 200): Response {
 }
 
 // GET /api/billing/products - the purchasable plans, straight from Polar.
-// Settings renders one option per product (monthly/annual), so prices live in
-// exactly one place: the Polar dashboard. No cache — this is a settings-page
-// visit, not a hot path.
+// The upgrade surfaces render one option per product (monthly/annual), so
+// prices live in exactly one place: the Polar dashboard.
+//
+// Public by design: the logged-out landing page and the signed-out /supporter
+// pitch show real prices before there is a session, and the payload is only
+// the plan names and prices Polar's own checkout page shows anyone. Because
+// anonymous requests skip the per-DID rate limiter, a short edge cache stands
+// between the open internet and Polar's API.
 export async function handleListBillingProducts(
   request: Request,
   env: Env,
-  session: Session | null
+  _session: Session | null
 ): Promise<Response> {
   if (request.method !== 'GET') {
     return json({ error: 'Method not allowed' }, 405);
   }
-  if (!session) {
-    return json({ error: 'Unauthorized' }, 401);
-  }
   if (!env.POLAR_ACCESS_TOKEN) {
     return json({ error: 'Billing is not configured' }, 503);
+  }
+
+  // Normalized cache key (bare path, no query) so every variant of the URL
+  // shares one cached entry. A hit is rewrapped on the way out because a cached
+  // Response has immutable headers, and this one leaves the handler like any
+  // other — anything downstream that stamps a header on it would throw.
+  //
+  // The cache is an optimization, never a dependency: both halves swallow their
+  // own failures, so a Cache API that misbehaves costs a Polar round-trip and
+  // nothing else. In particular the put must not fall into the catch below and
+  // turn plans we successfully fetched into a 502.
+  const cache = caches.default;
+  const cacheKey = new Request(new URL('/api/billing/products', request.url).toString());
+  const cached = await cache.match(cacheKey).catch(() => undefined);
+  if (cached) {
+    return new Response(cached.body, cached);
   }
 
   try {
@@ -64,7 +82,16 @@ export async function handleListBillingProducts(
         ];
       })
       .sort((a, b) => (a.interval === b.interval ? 0 : a.interval === 'month' ? -1 : 1));
-    return json({ products });
+    // 5 minutes is fresh enough for a price change to propagate and long
+    // enough to absorb anonymous traffic. Only the success path is cached.
+    const response = json({ products });
+    response.headers.set('Cache-Control', 'public, max-age=300');
+    try {
+      await cache.put(cacheKey, response.clone());
+    } catch (error) {
+      log.error('polar_products_cache_put_failed', serializeError(error));
+    }
+    return response;
   } catch (error) {
     log.error('polar_products_failed', serializeError(error));
     reportError(error, { tags: { route: 'billing/products' } });

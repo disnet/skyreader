@@ -3,7 +3,17 @@
   import Icon from '$lib/components/Icon.svelte';
   import { goto } from '$app/navigation';
   import { auth } from '$lib/stores/auth.svelte';
-  import { api } from '$lib/services/api';
+  import { api, type BillingProduct } from '$lib/services/api';
+  import {
+    billingLine,
+    cheapest,
+    compareAt,
+    formatCents,
+    intervalNoun,
+    monthlyPrice,
+    supporterPlans,
+  } from '$lib/utils/pricing';
+  import { freeLimits, supporterLimits } from '$lib/constants/tierLimits';
 
   let starting = $state(false);
   let startError = $state<string | null>(null);
@@ -114,6 +124,41 @@
     };
   }
 
+  // ── Pricing (live from Polar via the backend) ────────────────
+  // Prices are authored in one place, the Polar dashboard, and served by the
+  // public /api/billing/products endpoint. The section reads fine without
+  // figures: a failed fetch just leaves the price line off, and /supporter
+  // carries the full detail.
+  let plans = $state<BillingProduct[]>([]);
+
+  // The Believer patronage tier stays off the landing page; /supporter tells
+  // that story. Of what remains, offer the cheapest yearly product (the
+  // founding price when one is live), falling back to monthly. The plan-reading
+  // rules are shared with /supporter (utils/pricing.ts) so the two surfaces
+  // can't drift apart on which product they call the standard price.
+  const offered = $derived(supporterPlans(plans));
+  const offer = $derived(
+    cheapest(offered.filter((p) => p.interval === 'year')) ??
+      cheapest(offered.filter((p) => p.interval === 'month'))
+  );
+
+  // Monthly-priced framing, same as /supporter: a yearly plan's headline is
+  // its per-month equivalent, with the true amount charged named right beneath
+  // it — so the only two figures here are always comparable.
+  const offerPerMonth = $derived(offer ? monthlyPrice(offer) : null);
+
+  // A dearer live product of the same cadence marks the offer as a founding
+  // price; when the founding product is archived in Polar, the framing
+  // disappears here on its own.
+  const standardPlan = $derived(
+    offer
+      ? compareAt(
+          offered.filter((p) => p.interval === offer.interval),
+          offer
+        )
+      : null
+  );
+
   // ── Hero highlight draw ──────────────────────────────────────
   let motion = $state(false); // becomes true on mount when motion allowed
   let heroDrawn = $state(false);
@@ -171,6 +216,13 @@
   ];
 
   onMount(() => {
+    // Before the reduced-motion early return: prices load regardless of
+    // motion preference. Failure is silent by design; see the pricing note.
+    api
+      .getBillingProducts()
+      .then(({ products }) => (plans = products))
+      .catch(() => {});
+
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     motion = true;
     requestAnimationFrame(() => requestAnimationFrame(() => (heroDrawn = true)));
@@ -418,6 +470,63 @@
         saved articles, and shares live in your own portable Atmosphere account, so they outlast any
         app, including this one.
       </p>
+    </div>
+  </section>
+
+  <!-- ── Pricing (a quiet ledger, deliberately not a tier grid) ── -->
+  <section class="section section--pricing" aria-labelledby="pricing-h">
+    <div class="section-head" use:reveal>
+      <h2 id="pricing-h">Free to read. Backed by readers.</h2>
+      <p>
+        Skyreader is independent software with no ads. Reading is free, and readers who want to can
+        help keep it that way.
+      </p>
+    </div>
+
+    <div class="plans" use:reveal={{ delay: 80 }}>
+      <div class="plan">
+        <div class="plan-top">
+          <span class="plan-name">Free</span>
+          <span class="plan-price">$0</span>
+        </div>
+        <p class="plan-desc">
+          The whole reading room: your feeds, saves, highlights, linkblog, offline reading, and sync
+          across devices. Room for {freeLimits.feeds} feeds and {freeLimits.saves} saves a month.
+        </p>
+      </div>
+
+      <div class="plan">
+        <div class="plan-top">
+          <span class="plan-name">Supporter</span>
+          {#if offerPerMonth && offer}
+            <span class="plan-price">
+              {offerPerMonth}<span class="plan-per">/month</span>
+            </span>
+          {/if}
+        </div>
+        <p class="plan-desc">
+          Raises the limits to {supporterLimits.feeds} feeds and {supporterLimits.saves} saves a month,
+          and helps keep Skyreader calm, fast, and independent.
+        </p>
+        {#if offer}
+          <!-- The billing line names the amount actually charged, in the same
+               unit as the founding comparison below it: a per-month headline
+               next to a per-year "standard price" would read as a gulf that
+               isn't there. -->
+          <p class="plan-meta">
+            {billingLine(offer)}{standardPlan
+              ? `. Founding price, yours for as long as you stay subscribed; the standard price is ${formatCents(
+                  standardPlan.priceAmount,
+                  standardPlan.priceCurrency
+                )} ${intervalNoun(offer)}.`
+              : '.'}
+          </p>
+        {/if}
+        <a class="plan-link" href="/supporter">
+          More about supporting
+          <Icon name="arrow-right" size={14} />
+        </a>
+      </div>
     </div>
   </section>
 
@@ -1107,6 +1216,68 @@
     line-height: var(--leading-relaxed);
     color: var(--muted);
     text-wrap: pretty;
+  }
+
+  /* ── Pricing: hairline-ruled ledger rows, matching /supporter's
+     "benefits ledger" voice. Deliberately not a tier-card grid. ── */
+  .plans {
+    max-width: 34rem;
+    margin: 0 auto;
+    border-top: 1px solid var(--color-border);
+  }
+  .plan {
+    padding: 1.5rem 0;
+    border-bottom: 1px solid var(--color-border);
+  }
+  .plan-top {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+  .plan-name,
+  .plan-price {
+    font-size: var(--text-xl);
+    font-weight: var(--weight-semibold);
+    letter-spacing: var(--tracking-tight);
+  }
+  .plan-price {
+    font-variant-numeric: tabular-nums;
+  }
+  .plan-per {
+    font-size: var(--text-sm);
+    font-weight: var(--weight-regular);
+    color: var(--muted);
+  }
+  .plan-desc {
+    margin-top: 0.5rem;
+    color: var(--muted);
+    line-height: var(--leading-relaxed);
+    max-width: 52ch;
+    text-wrap: pretty;
+  }
+  .plan-meta {
+    margin-top: 0.4rem;
+    font-size: var(--text-sm);
+    color: var(--muted);
+  }
+  .plan-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    margin-top: 0.85rem;
+    color: var(--color-primary);
+    font-weight: var(--weight-medium);
+    font-size: var(--text-md);
+    text-decoration: none;
+  }
+  .plan-link:hover {
+    text-decoration: underline;
+  }
+  .plan-link:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+    border-radius: 4px;
   }
 
   /* ── Final CTA ───────────────────────────────────────────── */

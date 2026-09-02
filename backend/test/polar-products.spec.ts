@@ -1,4 +1,4 @@
-import { env, SELF } from 'cloudflare:test';
+import { env } from 'cloudflare:test';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { handleListBillingProducts } from '../src/routes/billing';
 import type { Env, Session } from '../src/types';
@@ -6,7 +6,9 @@ import type { Env, Session } from '../src/types';
 // /api/billing/products feeds the upgrade UI. What matters: only unarchived
 // recurring products come through, mapped to the small shape the frontend
 // renders, monthly sorted before annual — and prices stay authored in exactly
-// one place (the Polar dashboard), never in this repo.
+// one place (the Polar dashboard), never in this repo. The route is public
+// (the logged-out landing and /supporter pitch show prices), with a short
+// edge cache standing between anonymous traffic and Polar's API.
 
 const session: Session = {
   did: 'did:plc:productstest',
@@ -76,7 +78,10 @@ describe('GET /api/billing/products', () => {
   let originalFetch: typeof globalThis.fetch;
   let fetchMock: ReturnType<typeof vi.fn>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    // The handler edge-caches its success response; the cache outlives a test,
+    // so clear the (normalized) key or later tests read a stale 200.
+    await caches.default.delete('http://localhost/api/billing/products');
     originalFetch = globalThis.fetch;
     fetchMock = vi.fn().mockResolvedValue(
       new Response(
@@ -98,9 +103,35 @@ describe('GET /api/billing/products', () => {
     globalThis.fetch = originalFetch;
   });
 
-  it('requires a session (401 via the router, before any Polar call)', async () => {
-    const response = await SELF.fetch('http://localhost/api/billing/products');
-    expect(response.status).toBe(401);
+  it('is public: serves plans without a session', async () => {
+    const response = await handleListBillingProducts(get(), env as Env, null);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Cache-Control')).toBe('public, max-age=300');
+  });
+
+  it('serves repeat requests from the edge cache (one Polar call)', async () => {
+    await handleListBillingProducts(get(), env as Env, null);
+    const again = await handleListBillingProducts(get(), env as Env, null);
+    expect(again.status).toBe(200);
+    expect((await again.json()) as { products: unknown[] }).toMatchObject({
+      products: expect.any(Array),
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('still serves the plans when the cache write fails', async () => {
+    // The cache is an optimization: a broken Cache API costs the next caller a
+    // Polar round-trip, it must not turn a good fetch into a 502.
+    const put = vi.spyOn(caches.default, 'put').mockRejectedValue(new Error('cache exploded'));
+    try {
+      const response = await handleListBillingProducts(get(), env as Env, null);
+      expect(response.status).toBe(200);
+      expect((await response.json()) as { products: unknown[] }).toMatchObject({
+        products: expect.any(Array),
+      });
+    } finally {
+      put.mockRestore();
+    }
   });
 
   it('rejects non-GET methods', async () => {
