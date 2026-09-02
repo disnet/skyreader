@@ -1136,6 +1136,9 @@
                           rel="noopener"
                           onclick={(e) => e.stopPropagation()}>{similarLabel(item)}</a
                         >
+                        {#if item.description}
+                          <p class="similar-desc">{item.description}</p>
+                        {/if}
                         {#if (item.title && item.siteName) || item.saveCount > 1}
                           <span class="similar-meta">
                             {#if item.title && item.siteName}{item.siteName}{/if}
@@ -1526,6 +1529,20 @@
   .similar-body {
     flex: 1;
     min-width: 0;
+  }
+
+  /* Same register as .connection-note: muted prose under a link, clamped hard so
+     four of these stay a list you can scan rather than a wall of blurbs. */
+  .similar-desc {
+    margin: 0.125rem 0 0;
+    font-size: var(--text-sm);
+    line-height: var(--leading-snug);
+    color: var(--color-text-secondary);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
 
   .similar-meta {

@@ -318,6 +318,9 @@ export interface SembleContextResult {
   similar?: Array<{
     url: string;
     title: string | null;
+    /** Optional: proxy deploys separately and caches bundles ~5 min, so older
+     *  payloads arrive without it. */
+    description?: string | null;
     siteName: string | null;
     saveCount: number;
   }>;

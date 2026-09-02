@@ -308,12 +308,23 @@ describe('AtmospherePanel Semble similar articles', () => {
     document.body.innerHTML = '';
   });
 
+  // Entry 0 carries a description, entry 1 has an explicit null, and 2 onwards
+  // omit the field entirely — the shape older proxy builds and bundles cached
+  // before the field existed still send.
+  const description = (i: number) =>
+    i === 0
+      ? { description: 'A calm account of the same idea' }
+      : i === 1
+        ? { description: null }
+        : {};
+
   const similar = (n: number) =>
     Array.from({ length: n }, (_, i) => ({
       url: `https://similar${i}.example/story`,
       title: i === 1 ? null : `Similar article ${i}`,
       siteName: i === 1 ? null : 'Example Review',
       saveCount: i + 1,
+      ...description(i),
     }));
 
   it('renders links, metadata, hostname fallback, and a Semble foot link', () => {
@@ -324,6 +335,16 @@ describe('AtmospherePanel Semble similar articles', () => {
     expect(links[1].textContent).toBe('similar1.example');
     expect(target.querySelector('.similar-meta')?.textContent).toContain('Example Review');
     expect(target.querySelector('.semble-foot')?.textContent).toContain('See all on Semble');
+  });
+
+  it('carries the description under the title, and nothing at all without one', () => {
+    const target = render({ sembleContext: { ...emptyContext, similar: similar(3) } }, 'related');
+    const items = target.querySelectorAll('.similar-list li');
+    expect(items[0].querySelector('.similar-desc')?.textContent).toBe(
+      'A calm account of the same idea'
+    );
+    expect(items[1].querySelector('.similar-desc')).toBeNull();
+    expect(items[2].querySelector('.similar-desc')).toBeNull();
   });
 
   it('uses the connection save affordance and saved state', () => {

@@ -870,6 +870,9 @@ export interface SembleContext {
   similar?: Array<{
     url: string;
     title: string | null;
+    /** Optional: the proxy deploys separately and caches bundles ~5 min, so
+     *  payloads predating the field still arrive. */
+    description?: string | null;
     siteName: string | null;
     saveCount: number;
   }>;
