@@ -229,6 +229,8 @@
         {@render children()}
       </main>
       <footer class="app-footer">
+        <a href="/pricing">Pricing</a>
+        <span class="separator">·</span>
         <a href="/terms">Terms</a>
         <span class="separator">·</span>
         <a href="/privacy">Privacy</a>

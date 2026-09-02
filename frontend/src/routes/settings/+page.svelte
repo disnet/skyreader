@@ -7,6 +7,7 @@
   import { savesStore } from '$lib/stores/saves.svelte';
   import { countUrlSavesThisMonth } from '$lib/utils/usage';
   import { isGrantedSupporter } from '$lib/utils/tier';
+  import { supporterLimits } from '$lib/constants/tierLimits';
   import {
     preferences,
     type ArticleFont,
@@ -672,7 +673,8 @@
 
       {#if auth.user.tier !== 'supporter'}
         <p class="plan-upgrade">
-          Supporters get 1,000 feeds, 1,000 saves a month, and keep Skyreader independent.
+          Supporters get {supporterLimits.feeds} feeds, {supporterLimits.saves} saves a month, and keep
+          Skyreader independent.
         </p>
         <a href="/supporter" class="btn btn-primary plan-upgrade-cta">Become a Supporter</a>
       {:else if grantedSupporter}

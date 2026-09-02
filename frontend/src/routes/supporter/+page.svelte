@@ -6,6 +6,16 @@
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
   import { api, type BillingProduct } from '$lib/services/api';
+  import {
+    believerPlan,
+    billingLine,
+    cheapest,
+    compareAt,
+    formatCents,
+    monthlyPrice,
+    supporterPlans,
+  } from '$lib/utils/pricing';
+  import { freeLimits, supporterLimits } from '$lib/constants/tierLimits';
   import StaticPageChrome from '$lib/components/feed/StaticPageChrome.svelte';
   import { countUrlSavesThisMonth } from '$lib/utils/usage';
   import { isPaidTier, isGrantedSupporter, hasGrantFallback } from '$lib/utils/tier';
@@ -44,6 +54,13 @@
   // Ask the backend for a Polar hosted-checkout URL, then navigate to it
   // top-level (same shape as the OAuth login redirect).
   async function handleUpgrade(productId?: string) {
+    // Checkout needs an account (the DID is Polar's customer key), but the
+    // pitch itself doesn't: a signed-out reader or a guest goes through
+    // sign-in and lands back here to finish.
+    if (!auth.isAuthenticated) {
+      goto('/auth/login?returnUrl=/supporter');
+      return;
+    }
     upgradeError = null;
     upgradeLoading = true;
     checkoutStarted = true;
@@ -78,52 +95,13 @@
     }
   }
 
-  function formatCents(cents: number, currency: string): string {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency,
-      maximumFractionDigits: cents % 100 === 0 ? 0 : 2,
-    }).format(cents / 100);
-  }
+  // Believer is patronage, not a competing plan: every Believer product is
+  // pulled out before any supporter-plan logic runs, so a patronage price can
+  // never leak into the founding compare-at or savings math below. The landing
+  // page reads the same list through the same helpers (utils/pricing.ts).
+  const believerProduct = $derived(believerPlan(products));
+  const supporterProducts = $derived(supporterPlans(products));
 
-  // Both options are framed as a monthly price; the annual plan's headline is
-  // its per-month equivalent, with the real charge named on the billing line.
-  function monthlyPrice(product: BillingProduct): string {
-    const cents =
-      product.interval === 'year' ? Math.round(product.priceAmount / 12) : product.priceAmount;
-    return formatCents(cents, product.priceCurrency);
-  }
-
-  // The actual charge cadence, always stating the true billed amount so the
-  // per-month framing never hides what the card is charged.
-  function billingLine(product: BillingProduct): string {
-    return product.interval === 'year'
-      ? `${formatCents(product.priceAmount, product.priceCurrency)} billed annually`
-      : 'Billed monthly';
-  }
-
-  // The Believer product is patronage, not a competing plan: it's pulled out
-  // by name before any supporter-plan logic runs, so its price never leaks
-  // into the founding compare-at or savings math below.
-  const believerProduct = $derived(products.find((p) => /believer/i.test(p.name)));
-  const supporterProducts = $derived(products.filter((p) => p !== believerProduct));
-
-  // Polar may carry two live supporter products per cadence at once: the
-  // standard price and a discounted founding-supporter price. The card always
-  // offers the cheapest product of the selected cadence; the dearest one
-  // becomes the struck-through "normally" reference. When a founding product
-  // is archived, its cadence collapses to the one standard product and the
-  // founding framing disappears on its own.
-  function cheapest(list: BillingProduct[]): BillingProduct | undefined {
-    return list.length > 0
-      ? list.reduce((a, b) => (a.priceAmount <= b.priceAmount ? a : b))
-      : undefined;
-  }
-  function compareAt(list: BillingProduct[], offer: BillingProduct | undefined) {
-    if (!offer || list.length < 2) return null;
-    const dearest = list.reduce((a, b) => (a.priceAmount >= b.priceAmount ? a : b));
-    return dearest.priceAmount > offer.priceAmount ? dearest : null;
-  }
   const monthProducts = $derived(supporterProducts.filter((p) => p.interval === 'month'));
   const yearProducts = $derived(supporterProducts.filter((p) => p.interval === 'year'));
   const monthlyProduct = $derived(cheapest(monthProducts));
@@ -187,10 +165,10 @@
   let checkoutStarted = $state(false);
 
   onMount(async () => {
-    if (!auth.isAuthenticated) {
-      goto('/auth/login?returnUrl=/supporter');
-      return;
-    }
+    // Signed-out visitors and guests see the pitch too (the landing page links
+    // here; prices are public). Only the account-bound work below needs a
+    // session.
+    if (!auth.isAuthenticated) return;
     if (new URL(window.location.href).searchParams.get('checkout') === 'success') {
       // Strip the param so a reload or bookmark doesn't re-enter confirming.
       window.history.replaceState(window.history.state, '', '/supporter');
@@ -252,20 +230,24 @@ directly, no concept tournament.
   }}
 />
 
-<StaticPageChrome title="Supporter" />
+<!-- App navigation chrome belongs to the app: a signed-out visitor gets the
+     marketing layout's own header and footer instead. -->
+{#if auth.isInApp}
+  <StaticPageChrome title="Supporter" />
+{/if}
 
 {#snippet benefitsLedger()}
   <ul class="benefits">
     <li class="benefit">
-      <span class="benefit-figure">1,000 active feeds</span>
+      <span class="benefit-figure">{supporterLimits.feeds} active feeds</span>
       <span class="benefit-desc">Follow widely without rationing slots.</span>
     </li>
     <li class="benefit">
-      <span class="benefit-figure">1,000 saves a month</span>
+      <span class="benefit-figure">{supporterLimits.saves} saves a month</span>
       <span class="benefit-desc">Save from the web, your phone, or the extension.</span>
     </li>
     <li class="benefit">
-      <span class="benefit-figure">5,000 mirrored subscriptions</span>
+      <span class="benefit-figure">{supporterLimits.mirrored} mirrored subscriptions</span>
       <span class="benefit-desc">Headroom for everything Atmospheric sync brings along.</span>
     </li>
   </ul>
@@ -338,25 +320,29 @@ directly, no concept tournament.
           <li>
             <span class="feature-check"><Icon name="check" size={16} strokeWidth={2.5} /></span>
             <span class="feature-text">
-              1,000 active feeds
+              {supporterLimits.feeds} active feeds
               <span class="feature-sub"
-                >up from 100{feedsInUse > 0 ? `, ${feedsInUse} in use today` : ''}</span
+                >up from {freeLimits.feeds}{feedsInUse > 0
+                  ? `, ${feedsInUse} in use today`
+                  : ''}</span
               >
             </span>
           </li>
           <li>
             <span class="feature-check"><Icon name="check" size={16} strokeWidth={2.5} /></span>
             <span class="feature-text">
-              1,000 saves a month
+              {supporterLimits.saves} saves a month
               <span class="feature-sub"
-                >up from 100{hasSavesData ? `, ${savesThisMonth} saved this month` : ''}</span
+                >up from {freeLimits.saves}{hasSavesData
+                  ? `, ${savesThisMonth} saved this month`
+                  : ''}</span
               >
             </span>
           </li>
           <li>
             <span class="feature-check"><Icon name="check" size={16} strokeWidth={2.5} /></span>
             <span class="feature-text">
-              5,000 mirrored subscriptions
+              {supporterLimits.mirrored} mirrored subscriptions
               <span class="feature-sub">headroom for everything Atmospheric sync brings</span>
             </span>
           </li>
@@ -418,8 +404,8 @@ directly, no concept tournament.
   </section>
 {/snippet}
 
-{#if auth.user}
-  <div class="supporter-page">
+{#if !auth.isLoading}
+  <div class="supporter-page" class:standalone={!auth.isInApp}>
     {#if isPaidSupporter}
       <header class="page-header">
         <h1>You're a Supporter</h1>
@@ -519,7 +505,17 @@ directly, no concept tournament.
         </p>
       {/if}
 
-      {@render planOptions('Become a Supporter', true)}
+      {@render planOptions(
+        auth.isAuthenticated ? 'Become a Supporter' : 'Sign in to become a Supporter',
+        true
+      )}
+
+      {#if !auth.isAuthenticated}
+        <p class="fine-print">
+          Plans attach to your Skyreader account, so the button takes you through sign-in first.
+          Reading stays free either way.
+        </p>
+      {/if}
     {/if}
   </div>
 {/if}
@@ -537,6 +533,13 @@ directly, no concept tournament.
       padding-top: 0.5rem;
       padding-bottom: calc(var(--bottom-bar-height) + var(--safe-area-bottom) + 4rem);
     }
+  }
+
+  /* Signed-out visitors get the marketing layout: no floating header pill to
+     clear on desktop, no bottom bar to clear on mobile. */
+  .supporter-page.standalone {
+    padding-top: 2rem;
+    padding-bottom: 4rem;
   }
 
   .page-header {
