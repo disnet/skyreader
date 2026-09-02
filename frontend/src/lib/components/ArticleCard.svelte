@@ -749,6 +749,7 @@
   const linkInterception = useLinkInterception({
     contentEl: () => bodyEl,
     enabled: () => true,
+    interceptImages: () => expanded,
     pageUrl: () => itemUrl,
     // While the preview is clamped *and overflowing* (`isTruncated`), a footnote
     // number is visible but its list entry is below the clamp: let the tap expand

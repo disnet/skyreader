@@ -50,6 +50,16 @@ describe('Currents save records', () => {
     expect(record.content.alt).toHaveLength(2000);
     expect(record.text).toHaveLength(1000);
   });
+
+  it('does not split a surrogate pair at a text limit', () => {
+    const record = buildCurrentsSaveRecord(
+      { alt: `${'a'.repeat(1999)}😀more`, note: `${'n'.repeat(999)}😀more` },
+      blob,
+      'now'
+    );
+    expect(record.content.alt).toBe(`${'a'.repeat(1999)}😀`);
+    expect(record.text).toBe(`${'n'.repeat(999)}😀`);
+  });
 });
 
 describe('Currents image fetching', () => {

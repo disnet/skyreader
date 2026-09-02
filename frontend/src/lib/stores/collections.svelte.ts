@@ -1,5 +1,5 @@
 import { db, type IntegrationCollectionCacheEntry } from '$lib/services/db';
-import { api } from '$lib/services/api';
+import { api, ScopeUpgradeError } from '$lib/services/api';
 import type { SembleCollection, MarginCollection, CurrentsCollection } from '$lib/types';
 
 export type IntegrationKind = 'semble' | 'margin' | 'currents';
@@ -151,7 +151,12 @@ function createCollectionsStore() {
       collections[integration] = merged;
       await writeCache(integration, merged);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Failed to load collections';
+      const msg =
+        err instanceof ScopeUpgradeError
+          ? 'scope_upgrade_required'
+          : err instanceof Error
+            ? err.message
+            : 'Failed to load collections';
       if (!hasCache) {
         error[integration] = msg;
       } else {

@@ -24,14 +24,20 @@ interface LinkInterceptionParams {
   // jump turns the page instead of scrolling (which would desync the columns).
   pagedController?: () => FootnotePagedController | null | undefined;
   pageUrl?: () => string | undefined;
+  /** Bare images are part of a preview's primary tap target until it is expanded. */
+  interceptImages?: () => boolean;
 }
 
-function imageSource(image: HTMLImageElement): string {
-  const candidates = image.srcset
-    .split(',')
-    .map((part) => part.trim().split(/\s+/)[0])
-    .filter(Boolean);
-  return candidates.at(-1) || image.currentSrc || image.src;
+/**
+ * Prefer the browser's actual responsive-image choice. The fallback parser is
+ * descriptor-aware because image transform URLs commonly contain commas.
+ */
+export function imageSource(
+  image: Pick<HTMLImageElement, 'currentSrc' | 'src' | 'srcset'>
+): string {
+  if (image.currentSrc) return image.currentSrc;
+  const candidates = [...image.srcset.matchAll(/\s*(.+?)\s+(\d+(?:\.\d+)?[wx])\s*(?:,|$)/gi)];
+  return candidates.at(-1)?.[1].trim() || image.src;
 }
 
 export function useLinkInterception(params: LinkInterceptionParams) {
@@ -65,6 +71,10 @@ export function useLinkInterception(params: LinkInterceptionParams) {
     const link = target.closest('a[href]') as HTMLAnchorElement | null;
     if (!link && !image) return;
     if (!params.enabled()) return;
+    // A bare image in a clamped river preview remains part of the card's tap
+    // target. A linked image is still intercepted because the link already has
+    // its own click affordance and the menu can offer both destinations.
+    if (image && !link && params.interceptImages && !params.interceptImages()) return;
 
     e.preventDefault();
     e.stopPropagation();

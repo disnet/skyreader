@@ -63,6 +63,7 @@
   let isRefreshing = $derived(collectionsStore.refreshing[integration]);
   let loadError = $derived(collectionsStore.error[integration]);
   let isOffline = $derived(loadError === 'offline');
+  let needsScopeUpgrade = $derived(loadError === 'scope_upgrade_required');
   // Nothing to list and no way to get one. The picker still opens: saving
   // without a collection is exactly the escape hatch this state needs, so the
   // notice replaces the list, not the whole body.
@@ -138,6 +139,7 @@
   let changed = $derived(addedUris.length > 0 || removedUris.length > 0);
 
   let canSave = $derived.by(() => {
+    if (needsScopeUpgrade) return false;
     if (membershipsLoading) return false;
     // Until this settles, the row whose membership IS the user's Saved entry is
     // unknown and must not be editable (or removable through "remove all").
@@ -382,7 +384,9 @@
       {:else if noListing}
         <p class="notice notice-error">
           <span class="notice-icon" aria-hidden="true"><Icon name="alert-circle" size={15} /></span>
-          <span>{loadError}</span>
+          <span>
+            {needsScopeUpgrade ? 'Log in again to grant Currents permissions.' : loadError}
+          </span>
         </p>
       {:else if isOffline}
         <p class="notice notice-warn">

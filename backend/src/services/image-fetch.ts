@@ -13,6 +13,9 @@ export class ImageFetchError extends Error {
 }
 
 function isBlockedHostname(hostname: string): boolean {
+  // This is a defense-in-depth literal-host check, not DNS rebinding protection:
+  // Workers egress supplies the network boundary and exposes no DNS resolution
+  // API with which to validate every resolved address before fetching.
   const host = hostname.toLowerCase().replace(/^\[|\]$/g, '');
   if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.internal'))
     return true;

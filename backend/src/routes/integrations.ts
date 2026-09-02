@@ -98,8 +98,12 @@ export function buildCurrentsSaveRecord(
   image: BlobRef,
   createdAt: string
 ) {
-  const alt = body.alt?.trim().slice(0, MAX_ALT_GRAPHEMES);
-  const note = body.note?.trim().slice(0, MAX_TEXT_GRAPHEMES);
+  const alt = body.alt
+    ? Array.from(body.alt.trim()).slice(0, MAX_ALT_GRAPHEMES).join('')
+    : undefined;
+  const note = body.note
+    ? Array.from(body.note.trim()).slice(0, MAX_TEXT_GRAPHEMES).join('')
+    : undefined;
   return {
     $type: 'is.currents.feed.save',
     content: {
