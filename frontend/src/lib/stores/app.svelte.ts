@@ -127,10 +127,14 @@ function createAppManager() {
     let newArticles = 0;
 
     try {
-      // Sync subscriptions and load read state, social data, and channels in parallel
+      // Sync subscriptions and reload every server-backed user collection in parallel.
+      // Saves must participate here (not only during initialize): another device can
+      // add one while this tab stays open, and an explicit refresh is the user's way
+      // to pull that new server row into this device's IndexedDB cache.
       const [syncResult] = await Promise.all([
         syncSubscriptions(),
         itemLabelsStore.load(),
+        savesStore.load(),
         magazineStore.load(),
         socialStore.loadFeed(true),
         filteredViewsStore.syncWithBackend(),
