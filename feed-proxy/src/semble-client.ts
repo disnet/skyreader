@@ -49,7 +49,13 @@ export interface SembleContext {
       imageUrl: string | null;
     };
   }>;
-  similar: Array<{ url: string; title: string | null; siteName: string | null; saveCount: number }>;
+  similar: Array<{
+    url: string;
+    title: string | null;
+    description: string | null;
+    siteName: string | null;
+    saveCount: number;
+  }>;
   truncated: { savers: boolean; notes: boolean; collections: boolean; connections: boolean };
   incomplete: boolean;
   source: 'semble-api' | 'constellation-fallback';
@@ -330,6 +336,7 @@ export async function fetchSembleContext(rawUrl: string): Promise<SembleContext 
         {
           url: candidateUrl,
           title: text(entry.metadata?.title, 500),
+          description: text(entry.metadata?.description),
           siteName: text(entry.metadata?.siteName, 256),
           saveCount: count(entry.urlLibraryCount),
         },

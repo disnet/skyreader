@@ -104,7 +104,13 @@ describe('fetchSembleContext similar URLs', () => {
       { url: 'https://connected.example/story', metadata: { title: 'Already connected' } },
       ...Array.from({ length: 10 }, (_, i) => ({
         url: `https://similar.example/${i}${i === 1 ? '/' : ''}`,
-        metadata: { title: `Similar ${i}`, siteName: 'Similar Site' },
+        // Every other entry omits `description` — Semble's metadata is not
+        // guaranteed to carry one, and the reader has to cope either way.
+        metadata: {
+          title: `Similar ${i}`,
+          siteName: 'Similar Site',
+          ...(i % 2 === 0 ? { description: `About similar ${i}` } : {}),
+        },
         urlLibraryCount: i + 1,
       })),
       { url: 'https://similar.example/1', metadata: { title: 'Duplicate' } },
@@ -122,9 +128,11 @@ describe('fetchSembleContext similar URLs', () => {
     expect(context?.similar[0]).toEqual({
       url: 'https://similar.example/0',
       title: 'Similar 0',
+      description: 'About similar 0',
       siteName: 'Similar Site',
       saveCount: 1,
     });
+    expect(context?.similar[1]?.description).toBeNull();
     expect(context?.similar.some((item) => item.url.includes('connected.example'))).toBe(false);
     expect(new Set(context?.similar.map((item) => item.url)).size).toBe(8);
   });
