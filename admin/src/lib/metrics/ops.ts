@@ -1,5 +1,11 @@
 import type { MetricValue } from '$lib/types';
-import { getOpsStatus, getSnapshots, type OpsStatus, type SnapshotRow } from '$lib/queries/ops';
+import {
+  getOpsStatus,
+  getSnapshots,
+  type OpsStatus,
+  type ProxyStatsValue,
+  type SnapshotRow,
+} from '$lib/queries/ops';
 
 // The "is Skyreader healthy right now" tiles. Everything here comes from rows the
 // every-minute cron writes, so a value that stops moving is itself the signal:
@@ -31,6 +37,16 @@ const PROXY_STALE_MS = 15 * 60 * 1000;
 /** The plan's starter SLO: ≥95% of cached feeds within TTL. */
 const FRESH_WARN_PCT = 95;
 const FRESH_ERROR_PCT = 80;
+
+/**
+ * Frozen document authors worth calling an error rather than a straggler. Keep
+ * in step with `DOCUMENT_FROZEN_MIN_AUTHORS` / `DOCUMENT_FROZEN_RATIO` in the
+ * backend's ops-metrics, which own the alerting side of the same threshold: a
+ * tile that reads red on a count the alert deliberately ignores just teaches
+ * people the red means nothing.
+ */
+const FROZEN_ERROR_AUTHORS = 3;
+const FROZEN_ERROR_RATIO = 0.25;
 
 export function formatAge(ms: number): string {
   const seconds = Math.round(ms / 1000);
@@ -111,6 +127,29 @@ function pollerMetrics(status: OpsStatus, now: number): MetricValue[] {
   ];
 }
 
+/**
+ * Frozen authors, graded the way the alert grades them. A straggler or two is a
+ * warning — real, visible, and self-healing on the next poll — and only a count
+ * that says re-listing itself has stopped is an error.
+ */
+function documentSyncMetric(proxy: ProxyStatsValue): MetricValue {
+  const frozen = proxy.documentAuthorsFrozen ?? 0;
+  const active = proxy.documentAuthorsActive ?? 0;
+  const systemic =
+    frozen >= FROZEN_ERROR_AUTHORS || (active > 0 && frozen / active >= FROZEN_ERROR_RATIO);
+
+  return {
+    label: 'Document Sync',
+    value: frozen,
+    unit: `${active} active · ${proxy.documentAuthorsInBackoff ?? 0} retrying`,
+    status: systemic
+      ? 'error'
+      : frozen > 0 || proxy.documentFirehoseHealthy === false
+        ? 'warning'
+        : 'healthy',
+  };
+}
+
 function proxyMetrics(status: OpsStatus, now: number): MetricValue[] {
   const proxy = status.proxy;
   if (!proxy)
@@ -151,17 +190,7 @@ function proxyMetrics(status: OpsStatus, now: number): MetricValue[] {
       unit: feedsPermanentlyFailed > 0 ? `${feedsPermanentlyFailed} permanent` : undefined,
       status: feedsPermanentlyFailed > 0 ? 'error' : feedsInError > 0 ? 'warning' : 'healthy',
     },
-    {
-      label: 'Document Sync',
-      value: proxy.value.documentAuthorsFrozen ?? 0,
-      unit: `${proxy.value.documentAuthorsActive ?? 0} active · ${proxy.value.documentAuthorsInBackoff ?? 0} retrying`,
-      status:
-        (proxy.value.documentAuthorsFrozen ?? 0) > 0
-          ? 'error'
-          : proxy.value.documentFirehoseHealthy === false
-            ? 'warning'
-            : 'healthy',
-    },
+    documentSyncMetric(proxy.value),
   ];
 }
 
