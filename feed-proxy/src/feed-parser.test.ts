@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { parseFeed } from './feed-parser';
+import { excerptFromContent, parseFeed } from './feed-parser';
 
 describe('parseFeed', () => {
   describe('RSS 2.0', () => {
@@ -533,5 +533,121 @@ describe('parseFeed', () => {
       expect(result.items[0].title).toBe('Post 1');
       expect(result.items[99].title).toBe('Post 100');
     });
+  });
+
+  // The archive drops bodies over 8 KB and keeps "summary/title/url/image", so a
+  // feed that ships a full body and no summary of its own used to reach the
+  // reader with no text at all. See CONTENT_EXCERPT_THRESHOLD_BYTES.
+  describe('summary fallback for over-cap bodies', () => {
+    const longBody = (lead: string) => `<p>${lead}</p><p>${'padding words here. '.repeat(600)}</p>`;
+
+    function atomWith(entry: string): string {
+      return `<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Full Text Blog</title>
+  ${entry}
+</feed>`;
+    }
+
+    it('derives one for an Atom entry with a big content and no summary', () => {
+      const feed = atomWith(`<entry>
+        <title>Long Post</title>
+        <link href="https://example.com/long"/>
+        <id>https://example.com/long</id>
+        <content type="html"><![CDATA[${longBody('The opening line of the post.')}]]></content>
+      </entry>`);
+
+      const [parsed] = parseFeed(feed, 'https://example.com/feed.xml').items;
+
+      expect(parsed.content).toContain('padding words here.');
+      expect(parsed.summary).toContain('The opening line of the post.');
+      expect(parsed.summary).not.toContain('<p>');
+      expect(parsed.summary!.endsWith('…')).toBe(true);
+    });
+
+    it('leaves a feed-supplied summary alone', () => {
+      const feed = atomWith(`<entry>
+        <title>Long Post</title>
+        <link href="https://example.com/long"/>
+        <id>https://example.com/long</id>
+        <summary>The author's own blurb.</summary>
+        <content type="html"><![CDATA[${longBody('The opening line.')}]]></content>
+      </entry>`);
+
+      const [parsed] = parseFeed(feed, 'https://example.com/feed.xml').items;
+
+      expect(parsed.summary).toBe("The author's own blurb.");
+    });
+
+    it('derives nothing for a body the archive keeps in full', () => {
+      const feed = atomWith(`<entry>
+        <title>Short Post</title>
+        <link href="https://example.com/short"/>
+        <id>https://example.com/short</id>
+        <content type="html"><![CDATA[<p>Just a couple of sentences.</p>]]></content>
+      </entry>`);
+
+      const [parsed] = parseFeed(feed, 'https://example.com/feed.xml').items;
+
+      // Duplicating a body the reader already has would grow the archive and
+      // re-hash (so re-push) an item that was never broken.
+      expect(parsed.summary).toBeUndefined();
+      expect(parsed.content).toContain('Just a couple of sentences.');
+    });
+
+    it('derives one for an RSS item carrying only content:encoded', () => {
+      const rss = `<?xml version="1.0"?>
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>Full Text Blog</title>
+    <link>https://example.com</link>
+    <item>
+      <title>Long Post</title>
+      <link>https://example.com/long</link>
+      <guid>long</guid>
+      <content:encoded><![CDATA[${longBody('First sentence of the body.')}]]></content:encoded>
+    </item>
+  </channel>
+</rss>`;
+
+      const [parsed] = parseFeed(rss, 'https://example.com/feed.xml').items;
+
+      expect(parsed.summary).toContain('First sentence of the body.');
+    });
+  });
+});
+
+describe('excerptFromContent', () => {
+  it('strips tags without fusing the words either side', () => {
+    expect(excerptFromContent('<p>one</p><p>two</p>')).toBe('one two');
+  });
+
+  it('drops script, style and comment bodies', () => {
+    const html =
+      '<p>Real text.</p><script>alert(1)</script><style>p{color:red}</style><!-- note -->';
+    expect(excerptFromContent(html)).toBe('Real text.');
+  });
+
+  it('leaves entities encoded, since the excerpt is rendered as HTML', () => {
+    expect(excerptFromContent('<p>Tom &amp; Jerry</p>')).toBe('Tom &amp; Jerry');
+  });
+
+  it('cuts on a word boundary', () => {
+    expect(excerptFromContent(`alpha beta gamma ${'delta '.repeat(50)}`, 20)).toBe(
+      'alpha beta gamma…'
+    );
+  });
+
+  it('cuts mid-word only when the window holds no usable boundary', () => {
+    expect(excerptFromContent('a'.repeat(50), 10)).toBe('aaaaaaaaaa…');
+  });
+
+  it('drops an entity the cut left half-written', () => {
+    // Without the trim this reads `abcdefghij&am…` — a visible `&am` in the UI.
+    expect(excerptFromContent('abcdefghij&amp;klmnopqrst', 13)).toBe('abcdefghij…');
+  });
+
+  it('returns empty for markup with no text', () => {
+    expect(excerptFromContent('<img src="x.png"><br/>')).toBe('');
   });
 });
