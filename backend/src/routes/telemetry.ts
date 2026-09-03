@@ -86,6 +86,31 @@ function safePath(value: unknown): string | undefined {
   }
 }
 
+/**
+ * Collapse the run-to-run varying parts of a message, so one bug is one issue.
+ *
+ * The fingerprint has to carry the message: grouping on `kind` + `name` alone
+ * folds "Not found: /supporter" together with "Not found: /pricing", which are
+ * different bugs. But the raw message also carries counts, elapsed seconds and
+ * build-hashed chunk names, and every distinct value mints a fresh Sentry issue
+ * — one unread-drift bug arrived as ten issues in a day, and a chunk-load
+ * failure mints another on every deploy. Normalise what varies, keep what names
+ * the bug.
+ *
+ * Only `/_app/immutable/` basenames are collapsed, because that is the one
+ * namespace whose filenames are build hashes by construction; an unhashed URL
+ * like /service-worker.js is part of the bug's identity and stays.
+ */
+export function fingerprintMessage(message: string): string {
+  return (
+    message
+      // .../immutable/nodes/1.B8BqeoYs.js → .../immutable/nodes/*
+      .replace(/(\/_app\/immutable\/[^\s/]+\/)[^\s/]+/g, '$1*')
+      // Counts, ratios, elapsed times: "5/27 feeds" and "0s after" are one bug.
+      .replace(/\d+/g, 'N')
+  );
+}
+
 function parseReport(body: unknown): ClientErrorReport | null {
   if (!body || typeof body !== 'object') return null;
   const input = body as Record<string, unknown>;
@@ -167,10 +192,12 @@ export async function handleTelemetryError(request: Request, env: Env): Promise<
 
   reportMessage(`[client] ${report.name}: ${report.message}`, {
     level: 'error',
-    // Group by kind + name + message rather than by the stack: the stack belongs
-    // to a client bundle this Sentry project has no source maps for, so letting
-    // the SDK group on it would scatter one bug across many issues.
-    fingerprint: ['client', report.kind, report.name, report.message],
+    // Group by kind + name + normalised message rather than by the stack: the
+    // stack belongs to a client bundle this Sentry project has no source maps
+    // for, so letting the SDK group on it would scatter one bug across many
+    // issues. The title above keeps the real message; only grouping is
+    // normalised (see fingerprintMessage).
+    fingerprint: ['client', report.kind, report.name, fingerprintMessage(report.message)],
     tags: {
       source: 'client',
       kind: report.kind,

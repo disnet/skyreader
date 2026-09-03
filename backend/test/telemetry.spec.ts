@@ -1,5 +1,6 @@
 import { SELF } from 'cloudflare:test';
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { fingerprintMessage } from '../src/routes/telemetry';
 
 // Phase 3: the client can finally say "I broke". Everything it says is untrusted,
 // so these pin the boundary — what is accepted, what is capped, and what never
@@ -122,5 +123,63 @@ describe('POST /api/telemetry/error', () => {
     // No Retry-After: a broken page should drop the report, not schedule it.
     const limited = await post(report(), headers);
     expect(limited.headers.get('Retry-After')).toBeNull();
+  });
+});
+
+// The Sentry fingerprint carries the message, so anything varying inside the
+// message splits one bug across many issues. These are the real messages that
+// did it: ten `unread_count_drift` issues in a day, a fresh chunk-load issue per
+// deploy, and "0s"/"1s" filed apart.
+describe('fingerprintMessage', () => {
+  const groupsTogether = (...messages: string[]) =>
+    new Set(messages.map(fingerprintMessage)).size === 1;
+
+  it('folds counts and ratios into one group', () => {
+    expect(
+      groupsTogether(
+        'unread counts diverged on 5/9 feeds',
+        'unread counts diverged on 29/260 feeds',
+        'unread counts diverged on 14/100 feeds'
+      )
+    ).toBe(true);
+  });
+
+  it('folds elapsed times into one group', () => {
+    expect(
+      groupsTogether(
+        'Preload failed again 0s after reload guard tripped',
+        'Preload failed again 1s after reload guard tripped'
+      )
+    ).toBe(true);
+  });
+
+  it('folds build-hashed chunk names into one group', () => {
+    // Otherwise every deploy renames the chunk and files the same bug again.
+    expect(
+      groupsTogether(
+        'Failed to fetch dynamically imported module: https://skyreader.app/_app/immutable/nodes/1.B8BqeoYs.js',
+        'Failed to fetch dynamically imported module: https://skyreader.app/_app/immutable/nodes/7.CqRt0xZm.js'
+      )
+    ).toBe(true);
+  });
+
+  it('keeps different routes apart', () => {
+    // Same kind, same name, genuinely different bugs.
+    expect(groupsTogether('Not found: /supporter', 'Not found: /pricing')).toBe(false);
+  });
+
+  it('keeps unhashed asset names, which are part of the bug', () => {
+    expect(fingerprintMessage('Script https://skyreader.app/service-worker.js load failed')).toBe(
+      'Script https://skyreader.app/service-worker.js load failed'
+    );
+  });
+
+  it('keeps two distinct chunk directories apart', () => {
+    expect(
+      groupsTogether(
+        'Failed to fetch dynamically imported module: https://skyreader.app/_app/immutable/nodes/1.B8BqeoYs.js',
+        'Failed to fetch dynamically imported module: https://skyreader.app/_app/immutable/chunks/Cafy0CzX.js'
+      )
+    ).toBe(false);
   });
 });
