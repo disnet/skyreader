@@ -173,7 +173,8 @@ Steps 1–3 involve no backend changes at all; step 4 is one table, one route.
 ## Deferred (explicitly)
 
 - Comments, annotations, highlights surfaced to the room, shared progress positions, spoiler
-  gating — the conversation layer (D1-shaped in the full design).
+  gating — the conversation layer (D1-shaped in the full design; for room discussion
+  specifically, Roomy is now the leading candidate — see the Roomy section below).
 - `/rooms` directory / discovery (forces Jetstream→D1 indexing of the join NSID).
 - Private rooms (D1 membership; the full design's recommendation is private-membership rooms with
   a public reading list and an optional published digest).
@@ -208,6 +209,73 @@ Constellation `/links/distinct-dids` on `.subject`. The lexicon is published at
 `/.well-known/lexicons/app/skyreader/reading/readAlong.json`. The Semble pitch (render "n reading
 along in Skyreader" from the NSID) is still unraised — raise it before this ships beyond a spike.
 
+## Roomy as the conversation layer (assessed 2026-09-03)
+
+If the spike proves presence, the deferred conversation layer's leading candidate is **Roomy**
+(muni.town's atproto group-messaging app; local checkout at `~/dev/roomy`), displacing the
+appendix's "per-article threads in D1" sketch: one Roomy space per reading room. On-brand
+(the "cozy community software" lineage matches the Reading Room framing), real chat UX for free,
+and the integration is small. Assessment from a deep read of the checkout — note Roomy's
+`README.md`/`ARCHITECTURE.md` are stale; `AGENTS.md` + `packages/appserver/docs/plans/` are
+accurate.
+
+**Do not bolt this onto the spike itself.** The spike tests presence without conversation
+(see the interpretation guard); adding chat day one confounds the two. This is phase 2, gated on
+the spike showing pull.
+
+### Shape of the integration
+
+- **Creation is trivial.** A Skyreader bot atproto account (app password suffices) calls the
+  appserver procedure `space.roomy.space.createSpace` → space DID. The whole headless client is
+  ~15 lines (`roomy/packages/cli/src/auth.ts`): `AtpAgent.login()` → `ServiceAuthClient` →
+  `DirectXrpcClient(appserverUrl, "did:web:api.roomy.space")`. SDK is `@roomy-space/sdk` on npm
+  (0.4.0), explicitly intended for third-party apps; appserver URL/DID are constructor args.
+- **Lazy creation.** On first "discuss" interaction for a room, backend creates the space and
+  persists `collection_uri → space_did` (+ channel ULID) in D1 next to `room_reads`. Create the
+  channel with a **client-minted ULID** and stamp the collection at-uri into the event's open
+  `extensions` map — copy the discord-bridge pattern exactly
+  (`roomy/packages/discord-bridge/src/services/room-sync.ts`), it's the reference headless
+  integrator.
+- **Deep link:** `https://roomy.space/<spaceDid>` or `/join?space=<spaceDid>`. URLs carry raw
+  DIDs (no handle routing); ugly but stable.
+
+### Constraints (the two real ones)
+
+1. **The bot cannot enroll users.** Each user must call `joinSpace` with their own auth — so
+   joining the room (readAlong record) and joining its chat are separate acts. Cheap version:
+   link out to Roomy's `/join` page, user logs in with Bluesky there. Integrated version:
+   Roomy auth is just `com.atproto.server.getServiceAuth` JWTs, and our backend already holds
+   the user's OAuth session — one added scope
+   (`rpc:com.atproto.server.getServiceAuth?aud=<appserverDid>`, same scope-upgrade dance as
+   `readAlong`) lets the backend mint service-auth tokens so users join/post from inside
+   Skyreader.
+2. **No embeddable chat exists** (no widget, no iframe build; "app-lite" means thin client, not
+   embed). Inline chat means building our own UI against `getMessages` + the sync WebSocket.
+   The pleasant surprise: **anonymous read of a public space works** (CORS is `*`), so the room
+   page can render the discussion read-only for everyone, with "join to reply" linking out.
+   Gotcha: non-members get an empty sidebar from `getMetadata`, so we must carry the channel
+   ULID in D1 ourselves.
+
+### Tensions to price in
+
+- **Portability.** Roomy messages are not atproto records — unsigned CBOR blobs in one
+  appserver's SQLite (`signature x''`), invisible to the firehose/Constellation, no export
+  story. The appserver is documented as transitional (Rust rewrite planned); the XRPC lexicon
+  surface is the stable contract, the storage is not. Roomy membership is also not a record, so
+  it can't feed our Constellation avatar display. Arguably fine for ephemeral chat, but it sits
+  awkwardly next to the ownership foundation — the durable record (readAlong) stays in the
+  member's repo, the chat does not.
+- **Coordination.** Like the Semble NSID pitch: talk to muni.town before shipping.
+  Programmatic space creation on their production appserver, IP-based rate limits (100 req/60s),
+  and a "make a Roomy space for any collection" story they may actively want.
+
+### Sequencing
+
+1. Deep-link-out (~a day): lazy space creation, D1 mapping, one "Discussion" link on the room
+   page.
+2. If the link gets used: read-only inline render + join-to-reply.
+3. Only then consider full in-app posting via the service-auth scope.
+
 ## Appendix: how we got here (full-feature decomposition)
 
 "Read a collection together" bundles four layers that want different representations:
@@ -223,7 +291,8 @@ along in Skyreader" from the NSID) is still unraised — raise it before this sh
 4. **Annotations/discussion** — the real social payload; deferred. Full-design sketch: member
    highlights stay records in each member's own repo (on-thesis: your sensemaking work is yours),
    surfaced to the room via D1 association; per-article threads in D1 reusing the merged
-   discussion-stream UI; optional published room digest via linkblog/standard.site machinery
+   discussion-stream UI (superseded as the room-discussion candidate by Roomy — see the section
+   above); optional published room digest via linkblog/standard.site machinery
    ("private process, public product").
 
 Bigger Semble asks, sequenced *after* the NSID/reader-count pitch: collaborators/ACLs on
