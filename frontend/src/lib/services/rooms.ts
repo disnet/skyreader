@@ -83,29 +83,40 @@ export async function fetchMyRooms(did: string, pdsUrl: string): Promise<MyRoom[
   }
 }
 
-/** Title of a collection, fetched publicly from its owner's PDS (for the
- *  your-rooms list, where hitting /api/rooms per room would be heavy). */
-export async function fetchCollectionName(collectionUri: string): Promise<string | null> {
+export interface CollectionMeta {
+  name: string | null;
+  /** the curator's own blurb — Semble's optional `description` field */
+  description: string | null;
+}
+
+const EMPTY_META: CollectionMeta = { name: null, description: null };
+
+/** Display metadata for a collection, fetched publicly from its owner's PDS (for
+ *  the your-rooms list, where hitting /api/rooms per room would be heavy).
+ *  Both providers carry `name`; `description` is Semble-only and optional. */
+export async function fetchCollectionMeta(collectionUri: string): Promise<CollectionMeta> {
   const ref = parseAtUri(collectionUri);
-  if (!ref) return null;
+  if (!ref) return EMPTY_META;
   try {
     const pds = await resolvePdsUrl(ref.did);
-    if (!pds) return null;
+    if (!pds) return EMPTY_META;
     const params = new URLSearchParams({
       repo: ref.did,
       collection: ref.collection,
       rkey: ref.rkey,
     });
     const res = await fetch(`${pds}/xrpc/com.atproto.repo.getRecord?${params}`);
-    if (!res.ok) return null;
-    const data = (await res.json()) as { value?: { name?: string } };
-    return typeof data.value?.name === 'string' ? data.value.name : null;
+    if (!res.ok) return EMPTY_META;
+    const data = (await res.json()) as { value?: { name?: unknown; description?: unknown } };
+    const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+    return { name: str(data.value?.name), description: str(data.value?.description) };
   } catch {
-    return null;
+    return EMPTY_META;
   }
 }
 
 const SEMBLE_COLLECTION_NSID = 'network.cosmik.collection';
+const SEMBLE_HOST = 'semble.so';
 
 async function resolveHandleToDid(handle: string): Promise<string | null> {
   if (handle.startsWith('did:')) return handle;
@@ -124,7 +135,7 @@ async function resolveHandleToDid(handle: string): Promise<string | null> {
 /** A semble.so collection page (https://semble.so/profile/<handle>/collections/<rkey>)
  *  → the collection's at-uri, resolving the profile handle to a DID. */
 async function sembleCollectionPageToUri(url: URL): Promise<string | null> {
-  if (url.hostname !== 'semble.so') return null;
+  if (url.hostname !== SEMBLE_HOST) return null;
   const parts = url.pathname.split('/').filter(Boolean);
   if (parts.length !== 4 || parts[0] !== 'profile' || parts[2] !== 'collections') return null;
   const did = await resolveHandleToDid(decodeURIComponent(parts[1]));
@@ -146,4 +157,47 @@ export async function resolveRoomInput(input: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+/** The public page a collection lives on, where its provider has one. */
+export interface CollectionPageLink {
+  url: string;
+  /** The provider's name, so the link can say where it goes. */
+  provider: string;
+}
+
+/** The DID whose repo holds a collection record — its owner. */
+export function collectionOwnerDid(collectionUri: string): string | null {
+  return parseAtUri(collectionUri)?.did ?? null;
+}
+
+/**
+ * The inverse of `sembleCollectionPageToUri`: a room's collection back to the
+ * page a reader can open it on, so a room can be followed out to where its list
+ * actually lives.
+ *
+ * Semble keys that page by the owner's *handle*, not their DID (the same
+ * construction the feed proxy uses for filed-in-a-collection cards — see
+ * `feed-proxy/src/mention-lane.ts`), so an owner whose handle we could not
+ * resolve gets no link rather than a guessed one. `handle.invalid` is what the
+ * appview returns when resolution fails, and it is a real hostname shape, so it
+ * would build a URL that 404s quietly.
+ *
+ * `at.margin.collection` has no collection page we can construct, so a Margin
+ * room links nowhere — the same stance as its missing access field: what the
+ * provider doesn't give us, we don't invent.
+ */
+export function collectionPageLink(
+  collectionUri: string,
+  ownerHandle: string | null | undefined
+): CollectionPageLink | null {
+  const ref = parseAtUri(collectionUri);
+  if (!ref || ref.collection !== SEMBLE_COLLECTION_NSID) return null;
+  if (!ownerHandle || ownerHandle.startsWith('did:') || ownerHandle === 'handle.invalid') {
+    return null;
+  }
+  return {
+    url: `https://${SEMBLE_HOST}/profile/${encodeURIComponent(ownerHandle)}/collections/${ref.rkey}`,
+    provider: 'Semble',
+  };
 }

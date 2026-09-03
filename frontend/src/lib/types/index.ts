@@ -1163,6 +1163,9 @@ export interface RoomInfo {
   ownerDid: string;
   name?: string;
   description?: string;
+  /** whether this reader may add articles: the collection is theirs, open, or
+   *  lists them as a collaborator (the backend enforces it too) */
+  canAdd: boolean;
   /** false = the snapshot was truncated or a member failed transiently */
   complete: boolean;
   items: RoomItem[];

@@ -124,21 +124,32 @@ export async function createMember(
   did: string,
   provider: BackingProviderName,
   collectionUri: string,
-  input: CreateMemberInput
+  input: CreateMemberInput,
+  options: CreateMemberOptions = {}
 ): Promise<MemberHandles> {
   return provider === 'semble'
-    ? createSembleMember(pds, did, collectionUri, input)
+    ? createSembleMember(pds, did, collectionUri, input, options)
     : createMarginMember(pds, did, collectionUri, input);
+}
+
+export interface CreateMemberOptions {
+  /** The collection's current cid, when the caller already resolved it publicly.
+   *  Required for a collection in SOMEONE ELSE'S repo (an open reading room): the
+   *  membership record still goes in our own repo, but its strongRef points at a
+   *  record `pds.getRecord` — which only ever reads the session's own repo —
+   *  cannot see. */
+  collectionCid?: string;
 }
 
 async function createSembleMember(
   pds: PDSClient,
   did: string,
   collectionUri: string,
-  input: CreateMemberInput
+  input: CreateMemberInput,
+  options: CreateMemberOptions
 ): Promise<MemberHandles> {
   // collectionLink.collection is a strongRef — resolve the collection's current cid.
-  const collectionCid = await resolveCid(pds, did, collectionUri);
+  const collectionCid = options.collectionCid ?? (await resolveCid(pds, did, collectionUri));
   if (!collectionCid) throw new BackingWriteError('could not resolve backing collection cid');
 
   const metadata: Record<string, string> = {};

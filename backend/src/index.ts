@@ -93,7 +93,7 @@ import {
   handleSetBacking,
 } from './routes/saved';
 import { handleExtract } from './routes/extract';
-import { handleGetRoom, handleRoomJoin, handleRoomRead } from './routes/rooms';
+import { handleGetRoom, handleRoomAddItem, handleRoomJoin, handleRoomRead } from './routes/rooms';
 import { handleGetSettings, handleUpdateSettings } from './routes/settings';
 import {
   handleCreateBillingPortal,
@@ -635,6 +635,10 @@ async function route(
     case url.pathname === '/api/rooms/read':
       if (!session) return unauthorizedResponse(headers);
       response = await handleRoomRead(request, env);
+      break;
+    case url.pathname === '/api/rooms/items':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleRoomAddItem(request, env);
       break;
 
     // Saved routes

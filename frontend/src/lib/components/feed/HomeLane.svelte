@@ -123,6 +123,7 @@
             faviconUrl={vm.faviconUrl}
             metaLabel={vm.metaLabel}
             progress={vm.progress}
+            read={vm.read ?? false}
             onOpen={() => onOpen(vm)}
             onHover={() => onHover?.(vm)}
           />

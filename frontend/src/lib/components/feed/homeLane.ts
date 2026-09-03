@@ -4,7 +4,8 @@ import type { FeedDisplayItem } from '$lib/stores/feedView.svelte';
 // read state so HomeLane / HomeLaneCard stay purely presentational.
 export interface LaneCardVM {
   key: string;
-  displayItem: FeedDisplayItem;
+  /** Absent for tiles that navigate instead of opening the reader (rooms). */
+  displayItem?: FeedDisplayItem;
   title: string;
   domain: string | null;
   image: string | null;
@@ -13,4 +14,6 @@ export interface LaneCardVM {
   metaLabel: string | null;
   /** 0–1 reading progress; drives the spine bar on the Continue reading lane. */
   progress: number | null;
+  /** Read marker (room lanes): dims the title and shows a check by the meta line. */
+  read?: boolean;
 }

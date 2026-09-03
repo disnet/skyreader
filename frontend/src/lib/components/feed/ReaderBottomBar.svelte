@@ -38,8 +38,11 @@
     tagCount = 0,
     tagActive = false,
     tagButtonEl = $bindable(null),
+    onMarkRead,
+    markedRead = false,
     onMore,
     moreActive = false,
+    moreButtonEl = $bindable(null),
   }: {
     /** 0–1. Scroll fraction while scrolling, page position while paged. */
     progress?: number;
@@ -60,8 +63,12 @@
     tagCount?: number;
     tagActive?: boolean;
     tagButtonEl?: HTMLButtonElement | null;
+    /** One-way "I'm done" signal (reading rooms); markedRead flips it to a lit check. */
+    onMarkRead?: () => void;
+    markedRead?: boolean;
     onMore: () => void;
     moreActive?: boolean;
+    moreButtonEl?: HTMLButtonElement | null;
   } = $props();
 
   // Nothing else should double up on the refresh indicator while an article is
@@ -149,9 +156,24 @@
       </button>
     {/if}
 
+    {#if onMarkRead || markedRead}
+      <button
+        class="bar-btn"
+        class:active={markedRead}
+        disabled={markedRead}
+        onclick={onMarkRead}
+        aria-pressed={markedRead}
+        aria-label={markedRead ? 'You read this' : 'Mark as read'}
+        title={markedRead ? 'You read this' : 'Mark as read'}
+      >
+        <Icon name="check" size={20} />
+      </button>
+    {/if}
+
     <button
       class="bar-btn"
       class:active={moreActive}
+      bind:this={moreButtonEl}
       onclick={onMore}
       aria-expanded={moreActive}
       aria-label="Style and actions"
@@ -246,6 +268,11 @@
 
   .bar-btn.active {
     color: var(--reader-chrome-accent, var(--color-primary, #0066cc));
+  }
+
+  /* The marked-read check is a done state, not a control. */
+  .bar-btn:disabled {
+    cursor: default;
   }
 
   .bar-btn:active {

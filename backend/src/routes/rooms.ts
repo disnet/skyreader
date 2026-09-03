@@ -7,6 +7,7 @@
  *  - GET  /api/rooms?uri=…   — resolve the collection into its article list
  *    (reuses the auth-free backing read path) plus per-article read counts.
  *  - POST /api/rooms/read    — count a read made through the room surface.
+ *  - POST /api/rooms/items   — add an article to the room's collection.
  *
  * Reads are counted ONLY through the room surface, never joined against existing
  * read state (joining must not retroactively disclose reading history). Counts
@@ -17,12 +18,14 @@ import type { Env } from '../types';
 import { getSessionFromRequest } from '../services/oauth';
 import {
   snapshotBackedCollection,
-  getRecordPublic,
+  getRecordPublicWithCid,
   type BackingProviderName,
 } from '../services/backing/read';
+import { createMember } from '../services/backing/write';
 import { createPDSClient } from '../services/pds-client';
+import { FeedProxyClient } from '../services/feed-proxy-client';
 import { hasRequiredScopes, insufficientScopesResponse } from './auth';
-import { READING_ROOM_SCOPES } from '../config/scopes';
+import { MARGIN_SCOPES, READING_ROOM_SCOPES, SEMBLE_SCOPES } from '../config/scopes';
 import { parseAtUri } from '../utils/canonical-url';
 import { resolvePdsUrl } from '../utils/did-resolver';
 import { normalizeArticleUrl } from '../utils/url-normalize';
@@ -37,6 +40,11 @@ interface ReadAlongRecord {
   subject: string;
   createdAt: string;
 }
+
+/** A trimmed non-empty string, or undefined — blank and absent are the same thing
+ *  everywhere in this file. */
+const str = (v: unknown): string | undefined =>
+  typeof v === 'string' && v.trim() ? v.trim() : undefined;
 
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), {
@@ -63,6 +71,45 @@ export interface RoomItem {
   readByMe: boolean;
 }
 
+interface ResolvedCollection {
+  ref: { did: string; collection: string; rkey: string };
+  provider: BackingProviderName;
+  record: Record<string, unknown>;
+  cid: string;
+}
+
+/** Fetch the room's collection record from its owner's PDS (auth-free), or a
+ *  Response describing why it can't be a room. */
+async function resolveCollection(uri: string): Promise<ResolvedCollection | Response> {
+  const ref = parseAtUri(uri);
+  if (!ref) return json({ error: 'Invalid at-uri' }, 400);
+  const provider = providerForCollection(ref.collection);
+  if (!provider) return json({ error: `Unsupported collection type: ${ref.collection}` }, 400);
+  const pds = await resolvePdsUrl(ref.did);
+  if (!pds) return json({ error: 'Could not resolve collection owner' }, 502);
+  const record = await getRecordPublicWithCid(pds, ref.did, ref.collection, ref.rkey);
+  if (!record) return json({ error: 'Collection not found' }, 404);
+  return { ref, provider, record: record.value, cid: record.cid };
+}
+
+/**
+ * May this user add articles to the room?
+ *
+ * The rule is the collection's own, not ours: Semble's `accessType` is documented
+ * as OPEN (anyone) / CLOSED (owner plus listed `collaborators`), so an open
+ * collection is a room anyone can co-curate and a closed one is curator-led.
+ * `at.margin.collection` carries no access field at all, so a Margin room is
+ * owner-only — a stricter default is the right way to read a missing permission.
+ */
+function canAddTo(c: ResolvedCollection, did: string): boolean {
+  if (c.ref.did === did) return true;
+  if (c.provider !== 'semble') return false;
+  const access = typeof c.record.accessType === 'string' ? c.record.accessType.toUpperCase() : '';
+  if (access === 'OPEN') return true;
+  const collaborators = Array.isArray(c.record.collaborators) ? c.record.collaborators : [];
+  return collaborators.includes(did);
+}
+
 /**
  * GET /api/rooms?uri=<collection at-uri>
  * Resolves the collection record (title/description) and its article members,
@@ -82,30 +129,24 @@ export async function handleGetRoom(request: Request, env: Env): Promise<Respons
   const uri = new URL(request.url).searchParams.get('uri');
   if (!uri) return json({ error: 'Missing uri parameter' }, 400);
 
-  const ref = parseAtUri(uri);
-  if (!ref) return json({ error: 'Invalid at-uri' }, 400);
-
-  const provider = providerForCollection(ref.collection);
-  if (!provider) {
-    return json({ error: `Unsupported collection type: ${ref.collection}` }, 400);
-  }
-
   try {
-    const pds = await resolvePdsUrl(ref.did);
-    if (!pds) return json({ error: 'Could not resolve collection owner' }, 502);
+    const collection = await resolveCollection(uri);
+    if (collection instanceof Response) return collection;
+    const { ref, provider, record: collectionRecord } = collection;
 
-    const [collectionRecord, snapshot] = await Promise.all([
-      getRecordPublic(pds, ref.did, ref.collection, ref.rkey),
-      snapshotBackedCollection(provider, ref.did, uri),
-    ]);
-    if (!collectionRecord) {
-      return json({ error: 'Collection not found' }, 404);
-    }
+    // includeForeign: a room's list is what everyone has added, and a contributor
+    // can only write membership into their OWN repo — so the owner's repo alone
+    // would hide (from everyone, the contributor included) every article added by
+    // someone else. Backed saves deliberately don't ask for this.
+    const snapshot = await snapshotBackedCollection(provider, ref.did, uri, {
+      includeForeign: true,
+    });
 
-    // Both providers carry the display name as `name`; Semble also has `description`.
-    const name = typeof collectionRecord.name === 'string' ? collectionRecord.name : undefined;
-    const description =
-      typeof collectionRecord.description === 'string' ? collectionRecord.description : undefined;
+    // Both providers carry the display name as `name` and an optional
+    // `description`. Blank is the same as absent here — a whitespace-only field
+    // would otherwise render an empty line.
+    const name = str(collectionRecord.name);
+    const description = str(collectionRecord.description);
 
     const countRows = await env.DB.prepare(
       `SELECT url_normalized, COUNT(DISTINCT did) AS n,
@@ -143,6 +184,7 @@ export async function handleGetRoom(request: Request, env: Env): Promise<Respons
       ownerDid: ref.did,
       name,
       description,
+      canAdd: canAddTo(collection, session.did),
       complete: snapshot.complete,
       items,
     });
@@ -294,5 +336,129 @@ export async function handleRoomRead(request: Request, env: Env): Promise<Respon
   } catch (error) {
     console.error('[rooms] failed to record read:', error);
     return json({ error: 'Failed to record read' }, 500);
+  }
+}
+
+/**
+ * POST /api/rooms/items — body { collectionUri, url, title?, description?,
+ * author?, publishedAt? }. Adds an article to the room's collection.
+ *
+ * The membership record goes in the CALLER's repo (the only repo we can write),
+ * which is exactly how an open collection is co-curated. Whether that is allowed
+ * is the collection's own rule — see canAddTo — and it is enforced here rather
+ * than left to the UI, since the endpoint is reachable without it.
+ *
+ * Metadata is optional because the two ways to add differ: an article picked out
+ * of the reader's own library arrives with a title already, a pasted URL doesn't
+ * and is extracted here (best effort — a title is worth one proxy round trip,
+ * but a blocked page is still worth adding).
+ */
+export async function handleRoomAddItem(request: Request, env: Env): Promise<Response> {
+  if (request.method !== 'POST') {
+    return json({ error: 'Method not allowed' }, 405);
+  }
+  const session = await getSessionFromRequest(request, env);
+  if (!session) {
+    return json({ error: 'Unauthorized' }, 401);
+  }
+
+  let body: {
+    collectionUri?: string;
+    url?: string;
+    title?: string;
+    description?: string;
+    author?: string;
+    publishedAt?: string;
+  };
+  try {
+    body = (await request.json()) as typeof body;
+  } catch {
+    return json({ error: 'Invalid JSON body' }, 400);
+  }
+  if (!body.collectionUri || typeof body.collectionUri !== 'string') {
+    return json({ error: 'Missing collectionUri field' }, 400);
+  }
+  const rawUrl = str(body.url);
+  if (!rawUrl) return json({ error: 'Missing url field' }, 400);
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(rawUrl);
+  } catch {
+    return json({ error: 'Invalid url' }, 400);
+  }
+  if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+    return json({ error: 'Only http(s) links can be added' }, 400);
+  }
+  const urlNormalized = normalizeArticleUrl(rawUrl);
+  if (!urlNormalized) return json({ error: 'Invalid url' }, 400);
+
+  try {
+    const collection = await resolveCollection(body.collectionUri);
+    if (collection instanceof Response) return collection;
+    if (!canAddTo(collection, session.did)) {
+      return json({ error: 'This room is not open for additions' }, 403);
+    }
+
+    const scopes = collection.provider === 'semble' ? SEMBLE_SCOPES : MARGIN_SCOPES;
+    if (!hasRequiredScopes(session.grantedScopes, scopes)) {
+      return insufficientScopesResponse();
+    }
+
+    let title = str(body.title);
+    let description = str(body.description);
+    let author = str(body.author);
+    let publishedAt = str(body.publishedAt);
+    let image: string | undefined;
+    if (!title) {
+      try {
+        const extracted = await new FeedProxyClient(env).extract(rawUrl);
+        title = str(extracted.title);
+        description ??= str(extracted.description);
+        author ??= str(extracted.author);
+        publishedAt ??= str(extracted.published);
+        image = str(extracted.image);
+      } catch (error) {
+        // A paywall, a 403, a page that isn't an article: the link is still worth
+        // adding, it just shows as its URL until someone gives it a title.
+        console.warn('[rooms] could not extract metadata for added url:', error);
+      }
+    }
+
+    const handles = await createMember(
+      createPDSClient(session),
+      session.did,
+      collection.provider,
+      body.collectionUri,
+      { url: rawUrl, title, description, author, publishedAt },
+      { collectionCid: collection.cid }
+    );
+
+    // The room's own read counts are per-URL, so an article someone already read
+    // here keeps its count when it's (re-)added.
+    const row = await env.DB.prepare(
+      `SELECT COUNT(DISTINCT did) AS n,
+              MAX(CASE WHEN did = ? THEN 1 ELSE 0 END) AS mine
+         FROM room_reads WHERE collection_uri = ? AND url_normalized = ?`
+    )
+      .bind(session.did, body.collectionUri, urlNormalized)
+      .first<{ n: number; mine: number }>();
+
+    const item: RoomItem = {
+      url: rawUrl,
+      urlNormalized,
+      itemType: collection.provider === 'semble' ? 'network.cosmik.card' : 'at.margin.note',
+      title,
+      author,
+      description,
+      image,
+      readCount: row?.n ?? 0,
+      readByMe: row?.mine === 1,
+    };
+    return json({ item, itemUri: handles.itemUri, linkUri: handles.linkUri });
+  } catch (error) {
+    console.error('[rooms] failed to add item:', error);
+    const message = error instanceof Error ? error.message : 'Failed to add the article';
+    if (/scope/i.test(message)) return insufficientScopesResponse();
+    return json({ error: 'Failed to add the article' }, 502);
   }
 }

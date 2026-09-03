@@ -38,9 +38,11 @@ directory are all deferred.
   Constellation answers "who joined *this* room" but cannot enumerate "what rooms exist" — a
   `/rooms` discover page is exactly the thing that would force a Jetstream→D1 index of the join
   NSID. Defer the directory, not just comments.
-- **"Read" means read-through-the-room.** A read is counted when a user opens an article *from the
-  room surface*, into a D1 `room_reads` table keyed by `(collection_uri, url_normalized, did)`.
-  We do **not** join room items against existing read state. See below for why.
+- **"Read" means read-through-the-room, and it's explicit.** A read is counted when a user presses
+  **"Mark as read"** at the end of an article opened *from the room surface* (not merely on open —
+  opening is curiosity, marking is the done signal), into a D1 `room_reads` table keyed by
+  `(collection_uri, url_normalized, did)`. We do **not** join room items against existing read
+  state. See below for why.
 - **Read status is served, not written.** Counts are aggregate and anonymous ("3 read this"),
   computed in D1, never written to public records. Consistent with the existing stance that read
   state lives server-side, not on the PDS.
@@ -178,8 +180,9 @@ Steps 1–3 involve no backend changes at all; step 4 is one table, one route.
 - `/rooms` directory / discovery (forces Jetstream→D1 indexing of the join NSID).
 - Private rooms (D1 membership; the full design's recommendation is private-membership rooms with
   a public reading list and an optional published digest).
-- Room-level curation UX (adding articles to the collection from Skyreader — already possible via
-  the existing Semble write path, but not a spike goal).
+- ~~Room-level curation UX~~ — built, see "Adding articles to a room" above. Still deferred:
+  removing an article (only the record's author can delete their own membership), and any notion
+  of who added what.
 - Communities-proposal alignment (room as community DID). Watch, don't build: the OpenSocial
   proposal is pre-implementation (community DID + own PDS + OAuth delegation; proxy permissions,
   invite spam, multi-host spaces unresolved as of the Aug 2026 working group). The spike's
@@ -201,9 +204,73 @@ Landed as specced, with two deviations forced by what the codebase actually does
   `repo:app.skyreader.reading.readAlong` (`READING_ROOM_SCOPES`), added to `ALL_POSSIBLE_SCOPES`
   only — existing sessions hit the standard scope-upgrade re-auth on first join.
 
+### Adding articles to a room (built 2026-09-03)
+
+A room whose collection accepts additions gets an add box above its list: one input that takes a
+pasted link **or** searches the reader's own saved library as they type (`RoomAddBox.svelte`;
+library matches are metadata-only, over the already-hydrated `savesStore`). A library pick carries
+its title/author/description straight into the foreign record; a bare URL gets extracted
+server-side for a title, best effort.
+
+Two things this forced, both load-bearing:
+
+- **Who may add is the collection's own rule, read off its record.** Semble's `accessType` is
+  `OPEN` (anyone) / `CLOSED` (owner plus listed `collaborators`) — confirmed against the published
+  lexicon at
+  `at://did:plc:b2p6rujcgpenbtcjposmjuc3/com.atproto.lexicon.schema/network.cosmik.collection`.
+  So an open collection is a room anyone can co-curate, and a closed one stays curator-led.
+  `at.margin.collection` carries no access field at all, so a Margin room is **owner-only**: a
+  missing permission reads as the stricter answer. `GET /api/rooms` reports this as `canAdd`;
+  `POST /api/rooms/items` enforces it (plus the provider's own repo scopes) rather than trusting
+  the UI.
+- **The room read path now unions in membership from OTHER repos.** A contributor can only ever
+  write into their own repo, so the owner-repo-only snapshot would have hidden every foreign add
+  from everyone, the contributor included. The collection's backlinks in Constellation are the only
+  way to find those, so `snapshotBackedCollection` grew an opt-in `includeForeign` — rooms ask for
+  it, backed **saves deliberately do not**, since a stranger adding to a user's public collection
+  must not inject rows into that user's Saved list. Constellation is an index, not the authority:
+  every record it names is fetched and re-checked against the collection uri, and an outage yields
+  `complete: false` (the room says the list may be short) rather than a silently truncated list. A
+  fresh add is shown optimistically for the same reason the join button shows your own avatar
+  early: the index lags the write by seconds.
+
+A room also links back out to where its list actually lives: the header carries "View collection on
+Semble," and each row of the `/rooms` index carries the same link as a quiet icon. This is the exact
+inverse of the paste-a-link parser (`collectionPageLink` sits next to `sembleCollectionPageToUri`),
+and it inherits that parser's constraint: Semble keys a collection page by the owner's **handle**,
+not their DID, so the link needs a DID → handle resolution and is simply **absent** when that fails
+(`handle.invalid` included) rather than built from a guess. Same for a provider with no such page:
+`at.margin.collection` has no constructible collection view, so a Margin room links nowhere. The
+feed proxy's filed-in-a-collection cards already took this stance
+(`feed-proxy/src/mention-lane.ts`); the reader now matches it.
+
+One consequence worth knowing: writing a Semble `collectionLink` at someone else's collection needs
+that collection's **cid** for the strongRef, and `PDSClient.getRecord` only ever reads the session's
+own repo — hence `getRecordPublicWithCid`, threaded into `createMember` as `collectionCid`.
+
+A post-build revision (same day): reads were originally counted on open-from-room; that conflated
+opening with finishing, so the count is now driven by an explicit **"Mark as read"** button at the
+end of the article (`SavedReader`'s host-provided `onMarkRead`/`markedRead` props, wired only by
+`RoomPage`). The same action sits in the reader toolbar (desktop header + mobile bottom bar); the
+dedicated Tag toolbar button moved into the ⋯ / Style & Actions menus to make room (the `t`
+shortcut still works). One-way: the backend has no unmark, and the button becomes a quiet
+"You read this" once pressed.
+
+Home also grew one lane per joined room (same day): the room's articles as tiles, opening in the
+reader via the shared extract path (`utils/roomArticle.ts`) with the same Mark-as-read wiring
+(archive/remove suppressed — the reader item is synthetic, not a save). Room data is cached per
+session in `stores/rooms.svelte.ts` (readAlong list + `GET /api/rooms` per room, loaded once per
+account; the room page still fetches fresh, pushes its read marks into the cache via
+`noteReadElsewhere`, and triggers a full cache refresh whenever a room view is left — that page is
+where joins/leaves/new articles happen). Lane tiles sort unread-first and read ones get a quiet
+check + dimmed title (`LaneCardVM.read` → `HomeLaneCard`).
+
 Also: `/rooms` with no `?uri=` lists the rooms you've joined (your own readAlong records, read
 publicly from your own PDS) plus a paste-a-link box — join is still link-only; this is not the
-deferred directory. Room surface: `GET /api/rooms?uri=` (backing read path + `room_reads` counts),
+deferred directory. Each listed room carries the collection's own name **and description**
+(`fetchCollectionMeta`, one public `getRecord` per room), matching what the room page shows; a
+room view links back to that index with an "All rooms" link rendered outside the load/error branch,
+since a room reached by a shared link is often the first page a visitor sees. Room surface: `GET /api/rooms?uri=` (backing read path + `room_reads` counts),
 `POST /api/rooms/read`, migration `0077_room_reads.sql`, `RoomPage.svelte`, membership via
 Constellation `/links/distinct-dids` on `.subject`. The lexicon is published at
 `/.well-known/lexicons/app/skyreader/reading/readAlong.json`. The Semble pitch (render "n reading

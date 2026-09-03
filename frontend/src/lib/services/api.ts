@@ -25,6 +25,7 @@ import type {
   SembleContext,
   SocialDocument,
   RoomInfo,
+  RoomItem,
   User,
 } from '$lib/types';
 import { getLinkPostTitle, isLinkPost } from '$lib/utils/linkPost';
@@ -1656,6 +1657,31 @@ class ApiClient {
     return this.fetch('/api/rooms/join', {
       method: 'DELETE',
       body: JSON.stringify({ collectionUri }),
+    });
+  }
+
+  /** Add an article to a room's collection. Metadata is optional: pass what the
+   *  library already knows, and the backend extracts a title for a bare URL. */
+  async addRoomItem(
+    collectionUri: string,
+    article: {
+      url: string;
+      title?: string | null;
+      description?: string | null;
+      author?: string | null;
+      publishedAt?: string | null;
+    }
+  ): Promise<{ item: RoomItem }> {
+    return this.fetch('/api/rooms/items', {
+      method: 'POST',
+      body: JSON.stringify({
+        collectionUri,
+        url: article.url,
+        title: article.title ?? undefined,
+        description: article.description ?? undefined,
+        author: article.author ?? undefined,
+        publishedAt: article.publishedAt ?? undefined,
+      }),
     });
   }
 

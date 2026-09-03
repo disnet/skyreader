@@ -22,6 +22,8 @@
   import { goto } from '$app/navigation';
   import type { LaneCardVM } from '$lib/components/feed/homeLane';
   import { savesStore } from '$lib/stores/saves.svelte';
+  import { roomsStore } from '$lib/stores/rooms.svelte';
+  import { extractRoomArticle } from '$lib/utils/roomArticle';
   import { magazineStore } from '$lib/stores/magazine.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
@@ -48,7 +50,7 @@
     setSavedRowArchived,
     type FeedDisplayItem,
   } from '$lib/stores/feedView.svelte';
-  import type { FilteredView, SavedItem, SortOrder } from '$lib/types';
+  import type { FilteredView, RoomItem, SavedItem, SortOrder } from '$lib/types';
 
   // Quiet Home preferences strip (under the greeting). "Opens to" reuses the
   // global default-view preference (consumed by the `/` redirector); "Cards"
@@ -310,12 +312,84 @@
       .filter((lane) => lane.items.length > 0)
   );
 
+  // Reading rooms you've joined: one lane per room, its articles as tiles,
+  // served from roomsStore's session cache so a repeat Home mount refetches
+  // nothing. Account-only — the store no-ops for a guest.
+  onMount(() => void roomsStore.load());
+
+  function roomReadLabel(item: RoomItem): string | null {
+    // The tile's check marker already says "you read this"; the label carries
+    // the others.
+    if (item.readByMe) {
+      return item.readCount > 1 ? `${item.readCount - 1} more read this here` : null;
+    }
+    if (item.readCount === 1) return '1 read this here';
+    if (item.readCount > 1) return `${item.readCount} read this here`;
+    return null;
+  }
+
+  let roomLanes = $derived.by(() =>
+    roomsStore.rooms
+      .map((room) => ({
+        subject: room.subject,
+        title: room.name ?? 'Untitled room',
+        byKey: new Map(room.items.map((i) => [i.urlNormalized, i])),
+        // Unread first (stable, so the collection's order holds within each
+        // group) — mirrors the room page's own sort.
+        items: [...room.items]
+          .sort((a, b) => Number(a.readByMe) - Number(b.readByMe))
+          .slice(0, CHANNEL_CAP)
+          .map((item): LaneCardVM => ({
+            key: item.urlNormalized,
+            title: decodeEntities(item.title || '') || item.url,
+            domain: hostnameOf(item.url),
+            image: item.image ?? null,
+            faviconUrl: getFaviconUrl(item.url),
+            metaLabel: roomReadLabel(item),
+            progress: null,
+            read: item.readByMe,
+          })),
+      }))
+      .filter((lane) => lane.items.length > 0)
+  );
+
+  // Open a room article in the reader without saving it (shared extract path
+  // with RoomPage — see utils/roomArticle.ts).
+  let openingRoomUrl = $state<string | null>(null);
+  async function openRoomArticle(subject: string, item: RoomItem) {
+    if (openingRoomUrl) return;
+    openingRoomUrl = item.url;
+    try {
+      const saved = await extractRoomArticle(item);
+      if (!saved) {
+        window.open(item.url, '_blank', 'noopener');
+        return;
+      }
+      reader.openReader({ type: 'saved', item: saved, key: item.url });
+    } finally {
+      openingRoomUrl = null;
+    }
+  }
+
+  // The room item behind the open reader, when it was opened from a room lane
+  // (those readers key on the article URL). Drives the reader's Mark as read.
+  const openRoomRef = $derived.by(() => {
+    const key = reader.readerItem?.key;
+    if (!key) return null;
+    for (const room of roomsStore.rooms) {
+      const item = room.items.find((i) => i.url === key);
+      if (item) return { subject: room.subject, item };
+    }
+    return null;
+  });
+
   let isLoading = $derived(savesStore.loading && savesStore.articles.length === 0);
   let hasAnyLane = $derived(
     continueItems.length > 0 ||
       randomItems.length > 0 ||
       recentItems.length > 0 ||
-      channelLanes.length > 0
+      channelLanes.length > 0 ||
+      roomLanes.length > 0
   );
 
   // --- Reader stack (shared with the saved list) ---
@@ -332,10 +406,14 @@
     if (readerItem?.key === item.key) reader.closeReader();
   }
 
+  function openLaneItem(vm: LaneCardVM) {
+    if (vm.displayItem) reader.openReader(vm.displayItem);
+  }
+
   // Warm the saved item's body on hover so the click→reader open is instant
   // (every Home tile is a saved item; the body lives in IndexedDB, see savesStore).
   function handlePrefetch(vm: LaneCardVM) {
-    if (vm.displayItem.type === 'saved') void savesStore.prefetchContent(vm.displayItem.item.rkey);
+    if (vm.displayItem?.type === 'saved') void savesStore.prefetchContent(vm.displayItem.item.rkey);
   }
 
   // --- Mobile chrome (mirrors the feed / highlights pages) ---
@@ -445,7 +523,7 @@
           title="Continue reading"
           icon="clock"
           items={continueItems}
-          onOpen={(vm) => reader.openReader(vm.displayItem)}
+          onOpen={openLaneItem}
           onHover={handlePrefetch}
         />
       {/if}
@@ -456,7 +534,7 @@
           icon="layers"
           items={randomItems}
           action={{ kind: 'button', label: 'Shuffle', icon: 'refresh-cw', onClick: reshuffle }}
-          onOpen={(vm) => reader.openReader(vm.displayItem)}
+          onOpen={openLaneItem}
           onHover={handlePrefetch}
         />
       {/if}
@@ -467,10 +545,27 @@
           icon="bookmark"
           items={recentItems}
           action={{ kind: 'link', label: 'View all', href: '/saved' }}
-          onOpen={(vm) => reader.openReader(vm.displayItem)}
+          onOpen={openLaneItem}
           onHover={handlePrefetch}
         />
       {/if}
+
+      {#each roomLanes as lane (lane.subject)}
+        <HomeLane
+          title={lane.title}
+          icon="book-open"
+          items={lane.items}
+          action={{
+            kind: 'link',
+            label: 'Open room',
+            href: `/rooms?uri=${encodeURIComponent(lane.subject)}`,
+          }}
+          onOpen={(vm) => {
+            const item = lane.byKey.get(vm.key);
+            if (item) void openRoomArticle(lane.subject, item);
+          }}
+        />
+      {/each}
 
       {#each channelLanes as lane (lane.view.uuid)}
         <HomeLane
@@ -478,7 +573,7 @@
           icon="filter"
           items={lane.items}
           action={{ kind: 'link', label: 'View all', href: `/saved?view=${lane.view.uuid}` }}
-          onOpen={(vm) => reader.openReader(vm.displayItem)}
+          onOpen={openLaneItem}
           onHover={handlePrefetch}
         />
       {/each}
@@ -527,11 +622,18 @@
 </div>
 
 {#if readerItem}
+  <!-- A reader opened from a room lane holds a synthetic, unsaved item: archive
+       and remove would act on a save that doesn't exist, so the room read gets
+       Mark as read instead (same wiring as RoomPage). -->
   <SavedReader
     {readerItem}
     onClose={reader.closeReader}
-    onArchive={() => handleArchive(readerItem!)}
-    onRemove={() => handleRemove(readerItem!)}
+    onArchive={openRoomRef ? undefined : () => handleArchive(readerItem!)}
+    onRemove={openRoomRef ? undefined : () => handleRemove(readerItem!)}
+    onMarkRead={openRoomRef
+      ? () => roomsStore.markRead(openRoomRef.subject, openRoomRef.item)
+      : undefined}
+    markedRead={openRoomRef?.item.readByMe ?? false}
   />
 {/if}
 
