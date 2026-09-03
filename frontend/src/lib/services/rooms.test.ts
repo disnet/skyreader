@@ -1,12 +1,34 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
+  aggregateFollowedRooms,
   collectionOwnerDid,
   collectionPageLink,
   fetchRoomMemberCount,
   resolveRoomInput,
+  scanReadAlongs,
 } from './rooms';
+import { forgetFollowPds, pdsForFollow } from './followGraph';
+
+vi.mock('./followGraph', () => ({
+  pdsForFollow: vi.fn(async () => 'https://pds.example'),
+  forgetFollowPds: vi.fn(async () => {}),
+}));
 
 const COLLECTION_URI = 'at://did:plc:abc123/network.cosmik.collection/3muahss6xki2b';
+const OTHER_URI = 'at://did:plc:abc123/network.cosmik.collection/3zzzzzzzzzzzz';
+const FOLLOW = { did: 'did:plc:reader1', handle: 'reader1.bsky.social', avatar: 'a.jpg' };
+
+function recordsResponse(values: unknown[]): Response {
+  return new Response(
+    JSON.stringify({
+      records: values.map((value, i) => ({
+        uri: `at://did:plc:reader1/app.skyreader.reading.readAlong/rk${i}`,
+        value,
+      })),
+    }),
+    { status: 200 }
+  );
+}
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -135,5 +157,108 @@ describe('collectionPageLink', () => {
     const margin = 'at://did:plc:abc123/at.margin.collection/3muahss6xki2b';
     expect(collectionPageLink(margin, 'disnetdev.com')).toBeNull();
     expect(collectionPageLink('not a uri', 'disnetdev.com')).toBeNull();
+  });
+});
+
+describe('scanReadAlongs', () => {
+  it('lists a followed account’s rooms off their PDS', async () => {
+    const fetchMock = vi.fn(async (_input: string) =>
+      recordsResponse([
+        { subject: COLLECTION_URI, createdAt: '2026-09-01T00:00:00Z' },
+        { subject: OTHER_URI },
+      ])
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    expect(await scanReadAlongs(FOLLOW)).toEqual([
+      {
+        did: FOLLOW.did,
+        subject: COLLECTION_URI,
+        handle: FOLLOW.handle,
+        displayName: undefined,
+        avatar: FOLLOW.avatar,
+        createdAt: '2026-09-01T00:00:00Z',
+      },
+      {
+        did: FOLLOW.did,
+        subject: OTHER_URI,
+        handle: FOLLOW.handle,
+        displayName: undefined,
+        avatar: FOLLOW.avatar,
+        createdAt: undefined,
+      },
+    ]);
+    const url = new URL(fetchMock.mock.calls[0]![0]);
+    expect(url.pathname).toBe('/xrpc/com.atproto.repo.listRecords');
+    expect(url.searchParams.get('repo')).toBe(FOLLOW.did);
+    expect(url.searchParams.get('collection')).toBe('app.skyreader.reading.readAlong');
+  });
+
+  it('skips malformed subjects and keeps the first of a repeated room', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        recordsResponse([
+          { subject: COLLECTION_URI, createdAt: 'first' },
+          { subject: COLLECTION_URI, createdAt: 'rejoined' },
+          { subject: 'not a uri' },
+          { createdAt: '2026-09-01T00:00:00Z' },
+        ])
+      )
+    );
+    const rows = await scanReadAlongs(FOLLOW);
+    expect(rows.map((r) => r.subject)).toEqual([COLLECTION_URI]);
+    expect(rows[0]!.createdAt).toBe('first');
+  });
+
+  it('forgets a cached PDS that will not answer, so the next pass re-resolves', async () => {
+    vi.mocked(forgetFollowPds).mockClear();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('nope', { status: 400 }))
+    );
+    expect(await scanReadAlongs(FOLLOW)).toEqual([]);
+    expect(forgetFollowPds).toHaveBeenCalledWith(FOLLOW.did);
+
+    vi.mocked(forgetFollowPds).mockClear();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('offline');
+      })
+    );
+    expect(await scanReadAlongs(FOLLOW)).toEqual([]);
+    expect(forgetFollowPds).toHaveBeenCalledWith(FOLLOW.did);
+  });
+
+  it('gives up quietly on an account whose PDS will not resolve', async () => {
+    vi.mocked(pdsForFollow).mockResolvedValueOnce(null);
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await scanReadAlongs(FOLLOW)).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('aggregateFollowedRooms', () => {
+  const row = (did: string, subject: string) => ({ did, subject, handle: `${did}.test` });
+
+  it('groups readers by room, busiest first', () => {
+    const rooms = aggregateFollowedRooms([
+      row('did:plc:a', OTHER_URI),
+      row('did:plc:b', COLLECTION_URI),
+      row('did:plc:c', COLLECTION_URI),
+    ]);
+    expect(rooms.map((r) => r.subject)).toEqual([COLLECTION_URI, OTHER_URI]);
+    expect(rooms[0]!.readers.map((r) => r.did)).toEqual(['did:plc:b', 'did:plc:c']);
+  });
+
+  it('counts a reader once per room', () => {
+    const rooms = aggregateFollowedRooms([
+      row('did:plc:a', COLLECTION_URI),
+      row('did:plc:a', COLLECTION_URI),
+    ]);
+    expect(rooms).toHaveLength(1);
+    expect(rooms[0]!.readers).toHaveLength(1);
   });
 });

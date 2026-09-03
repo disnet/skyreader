@@ -1,5 +1,10 @@
-import { db, getMetadata, setMetadata } from '$lib/services/db';
-import { fetchFollowsPage, scanPublications, type FollowLite } from '$lib/services/socialGraph';
+import { db } from '$lib/services/db';
+import {
+  ensureFollowGraph,
+  isFollowGraphComplete,
+  resetFollowGraph,
+} from '$lib/services/followGraph';
+import { scanPublications, type FollowLite } from '$lib/services/socialGraph';
 import { fetchAllDocuments } from '$lib/services/feedFetcher';
 import { auth } from './auth.svelte';
 import { subscriptionsStore } from './subscriptions.svelte';
@@ -9,9 +14,9 @@ import type { FollowingPublication } from '$lib/types';
  * Discover standard.site publications from the people you follow on Bluesky —
  * entirely client-side, cached in IndexedDB.
  *
- *  - The follow graph (app.bsky.graph.getFollows) is cached and refetched only
- *    after GRAPH_TTL. On a cold cache the first page is fetched up front so the
- *    section paints fast, then the rest of the graph backfills in the background.
+ *  - The follow graph itself is maintained by services/followGraph.ts (shared
+ *    with the reading-rooms scan): cached, refetched on its own TTL, with the
+ *    first page fetched up front so the section paints fast.
  *  - Each follow's PDS is scanned for publications PAGE_SIZE accounts at a time
  *    ("Show more"), and the results are cached per account. A scanned account
  *    isn't re-scanned until SCAN_TTL passes, so repeat visits are instant.
@@ -22,13 +27,8 @@ import type { FollowingPublication } from '$lib/types';
 
 // Scan this many follows per "Show more" — bounds work for huge follow graphs.
 const PAGE_SIZE = 20;
-// Cap the follow graph at 30 pages (~3000 follows) so it can't run unbounded.
-const MAX_FOLLOW_PAGES = 30;
-// Refetch the follow graph at most once a day.
-const GRAPH_TTL = 24 * 60 * 60 * 1000;
 // Re-scan an account's PDS for publications at most once a week.
 const SCAN_TTL = 7 * 24 * 60 * 60 * 1000;
-const GRAPH_FETCHED_KEY = 'followsGraphFetchedAt';
 
 function createFollowingPublicationsStore() {
   let publications = $state<FollowingPublication[]>([]);
@@ -40,9 +40,6 @@ function createFollowingPublicationsStore() {
   let scanning = $state(false);
   let error = $state<string | null>(null);
 
-  // True once the whole follow graph has been fetched (no more follows will
-  // appear). The background scan waits on this before declaring itself done.
-  let graphComplete = false;
   // Bumped on every load() so an in-flight background scan from a prior load
   // (or before a force-refresh) bows out instead of writing stale results.
   let scanToken = 0;
@@ -58,99 +55,19 @@ function createFollowingPublicationsStore() {
     }));
   }
 
-  // Upsert a batch of follows, preserving the last-scanned timestamp and the
-  // "hidden" flag of any we already cached (a fresh row defaults to scannedAt=0,
-  // not hidden). Excludes self.
-  async function upsertFollows(follows: FollowLite[], selfDid: string): Promise<void> {
-    const incoming = follows.filter((f) => f.did !== selfDid);
-    if (incoming.length === 0) return;
-    const existing = await db.follows.bulkGet(incoming.map((f) => f.did));
-    const prior = new Map(existing.filter(Boolean).map((f) => [f!.did, f!]));
-    await db.follows.bulkPut(
-      incoming.map((f) => ({
-        ...f,
-        scannedAt: prior.get(f.did)?.scannedAt ?? 0,
-        hidden: prior.get(f.did)?.hidden,
-      }))
-    );
-  }
-
-  // Once the whole graph has been walked, prune accounts the user no longer
-  // follows (and their cached publications), then stamp the graph as fresh.
-  async function finalizeGraph(seen: Set<string>): Promise<void> {
-    const cached = (await db.follows.toCollection().primaryKeys()) as string[];
-    const removed = cached.filter((d) => !seen.has(d));
-    if (removed.length) {
-      await db.transaction('rw', db.follows, db.followingPublications, async () => {
-        await db.follows.bulkDelete(removed);
-        await db.followingPublications.where('did').anyOf(removed).delete();
-      });
-      const removedSet = new Set(removed);
-      publications = publications.filter((p) => !removedSet.has(p.did));
-    }
-    await setMetadata(GRAPH_FETCHED_KEY, Date.now());
-    graphComplete = true;
-  }
-
-  // Walk the remaining follow pages in the background, caching each as it
-  // arrives so newly-available accounts become scannable without blocking the
-  // first paint. Best-effort: a failed page just ends the backfill early.
-  async function backfillGraph(selfDid: string, cursor: string, seen: Set<string>): Promise<void> {
-    try {
-      let next: string | undefined = cursor;
-      // Page 1 was already fetched up front, so backfill the remaining budget.
-      for (let page = 1; page < MAX_FOLLOW_PAGES && next; page++) {
-        const res = await fetchFollowsPage(selfDid, next);
-        if (res.follows.length === 0) break;
-        res.follows.forEach((f) => seen.add(f.did));
-        await upsertFollows(res.follows, selfDid);
-        next = res.cursor;
-      }
-      await finalizeGraph(seen); // sets graphComplete
-    } catch (e) {
-      console.error('[followingPublications] graph backfill failed:', e);
-      // Don't strand the background scan waiting on a graph that errored out;
-      // let it finish with whatever follows we managed to cache.
-      graphComplete = true;
-    }
-  }
-
-  // Refresh the cached follow graph when it's missing or stale: fetch page 1
-  // synchronously (so the caller can scan + paint immediately) and kick off the
-  // background backfill of the rest. A no-op while the cache is still fresh.
+  // Refresh the cached follow graph (shared with the reading-rooms scan), and
+  // drop any publication we're showing for an account the walk found the user
+  // no longer follows. Their cached rows are already gone by then.
   async function ensureGraph(force: boolean): Promise<void> {
     const did = auth.user?.did;
     if (!did) throw new Error('Not signed in');
-
-    const fetchedAt = (await getMetadata<number>(GRAPH_FETCHED_KEY)) ?? 0;
-    const count = await db.follows.count();
-    // Cache still fresh: the graph is whatever we already have — complete.
-    if (!force && count > 0 && Date.now() - fetchedAt < GRAPH_TTL) {
-      graphComplete = true;
-      return;
-    }
-
-    // A new refetch may still grow the follow list, so the graph isn't complete
-    // until page 1 lands (no cursor) or the background backfill finishes.
-    graphComplete = false;
-
-    const first = await fetchFollowsPage(did);
-    // A failed fetch yields []; keep whatever we already cached rather than
-    // wiping the graph on a transient network blip.
-    if (first.follows.length === 0) {
-      graphComplete = true;
-      return;
-    }
-
-    await upsertFollows(first.follows, did);
-    const seen = new Set(first.follows.map((f) => f.did));
-
-    if (first.cursor) {
-      // Don't await — let the rest of the graph fill in behind the first paint.
-      void backfillGraph(did, first.cursor, seen);
-    } else {
-      await finalizeGraph(seen);
-    }
+    await ensureFollowGraph(did, {
+      force,
+      onFollowsRemoved: (dids) => {
+        const removed = new Set(dids);
+        publications = publications.filter((p) => !removed.has(p.did));
+      },
+    });
   }
 
   // Are there follows we haven't scanned (or whose scan has gone stale)?
@@ -206,8 +123,7 @@ function createFollowingPublicationsStore() {
     try {
       if (force) {
         await db.followingPublications.clear();
-        await db.follows.clear();
-        await setMetadata(GRAPH_FETCHED_KEY, 0);
+        await resetFollowGraph();
         publications = [];
         loaded = false;
       }
@@ -245,7 +161,7 @@ function createFollowingPublicationsStore() {
             continue;
           }
           // Nothing left to scan and the graph is fully fetched — done.
-          if (graphComplete) break;
+          if (isFollowGraphComplete()) break;
           // Graph still backfilling more follows; wait, then re-check.
           await new Promise((r) => setTimeout(r, 400));
         }

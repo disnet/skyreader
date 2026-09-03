@@ -236,7 +236,9 @@ Steps 1–3 involve no backend changes at all; step 4 is one table, one route.
 - Comments, annotations, highlights surfaced to the room, shared progress positions, spoiler
   gating — the conversation layer (D1-shaped in the full design; for room discussion
   specifically, Roomy is now the leading candidate — see the Roomy section below).
-- `/rooms` directory / discovery (forces Jetstream→D1 indexing of the join NSID).
+- `/rooms` **global** directory (forces Jetstream→D1 indexing of the join NSID). The follow-graph
+  slice of discovery is built — see "Rooms your follows are in" below — but "what rooms exist at
+  all" still isn't answerable client-side.
 - Private rooms (D1 membership; the full design's recommendation is private-membership rooms with
   a public reading list and an optional published digest).
 - ~~Room-level curation UX~~ — built, see "Adding articles to a room" above. Still deferred:
@@ -359,6 +361,41 @@ Constellation `/links/distinct-dids` on `.subject`. The lexicon is published at
 along in Skyreader" from the NSID) is still unraised — raise it before this ships beyond a spike;
 the calls and the join-link shape to hand them are written out under "The whole integration,
 concretely" above.
+
+### Rooms your follows are in (built 2026-09-03)
+
+The `/rooms` index now carries a third section, "Where people you follow are reading": rooms found
+by scanning the reader's own Bluesky follow graph for `readAlong` records. Join stays link-only for
+strangers; this is the one discovery path that needs no directory, because the answer is already
+sitting in repos we can name.
+
+**Why the scan runs the opposite way from everything else here.** Constellation is indexed by
+target: it answers "who joined THIS room" and cannot enumerate rooms, which is exactly why the
+directory was deferred. Asking per repo instead ("what has this account joined") is a plain
+`listRecords` on their PDS, so walking the follow graph answers a useful slice of the directory
+question with no index at all. Still no Jetstream, still no D1, still nothing global.
+
+That walk already existed. `/discover` scans the same graph for `site.standard.publication`
+records, so the graph maintenance moved out of `stores/followingPublications.svelte.ts` into
+`services/followGraph.ts` (one owner of `db.follows`, one TTL, one background walk, deduped when
+both surfaces ask at once) and rooms became a second scanner over it:
+`scanReadAlongs` + `stores/followingRooms.svelte.ts`, cached in Dexie v39 `followingRooms`, keyed
+`[did+subject]`. Three details that are load-bearing:
+
+- **The PDS endpoint is cached on the follow row** (`pdsForFollow`). Two scanners resolving the
+  same few thousand DIDs through plc.directory is the dominant cost of adding the second one.
+  A moved account leaves a stale endpoint that would read as "no rooms" forever, so a scan that
+  fails against the cached PDS forgets it and the next pass re-resolves.
+- **A re-scan replaces an account's rows rather than merging** — it is also how a room someone left
+  stops being listed. Re-scan TTL is 3 days, shorter than the publications week: joining a room is
+  a much more frequent act than starting a publication.
+- **No Constellation count on these rows.** The people you follow *are* the presence signal here,
+  and a count per row would be one request each. The row shows their avatars and names; the total
+  stays on the room page.
+
+Rows are dropped, not shown as husks, when the collection record can't be fetched (same stance as
+the featured list), rooms you've already joined stay under "Your rooms", and a room your follows
+are in is filtered out of Featured, which says the same thing with weaker evidence.
 
 ## Roomy as the conversation layer (assessed 2026-09-03)
 

@@ -8,7 +8,9 @@
 // joined" and "which rooms have I joined".
 // See docs/plans/READING_ROOMS_SPIKE.md.
 
-import { resolvePdsUrl } from '$lib/services/socialGraph';
+import { resolvePdsUrl, type FollowLite } from '$lib/services/socialGraph';
+import { pdsForFollow, forgetFollowPds } from '$lib/services/followGraph';
+import type { FollowedRoomEntry } from '$lib/services/db';
 
 const CONSTELLATION_BASE = 'https://constellation.microcosm.blue';
 export const READ_ALONG_NSID = 'app.skyreader.reading.readAlong';
@@ -103,6 +105,94 @@ export async function fetchMyRooms(did: string, pdsUrl: string): Promise<MyRoom[
   } catch {
     return [];
   }
+}
+
+/**
+ * The rooms one followed account has joined: their own readAlong records, read
+ * publicly from their PDS.
+ *
+ * This is the discovery direction Constellation cannot answer. Constellation
+ * indexes by target ("who joined THIS room"), so it can tell you about a room
+ * you already have the uri for, but it cannot enumerate rooms. Walking the
+ * follow graph asks the question the other way round, per repo, and stays
+ * client-side: still no Jetstream index of the join NSID, still not the
+ * deferred global directory, just the corner of it your own follows can see.
+ *
+ * Returns [] on any failure (unresolved PDS, CORS block, network error) and
+ * never throws — discovery is an adornment, never load-bearing.
+ */
+export async function scanReadAlongs(follow: FollowLite): Promise<FollowedRoomEntry[]> {
+  const pdsUrl = await pdsForFollow(follow.did);
+  if (!pdsUrl) return [];
+
+  const params = new URLSearchParams({
+    repo: follow.did,
+    collection: READ_ALONG_NSID,
+    limit: '100',
+  });
+  interface ReadAlongRecords {
+    records?: Array<{ uri: string; value?: { subject?: unknown; createdAt?: unknown } }>;
+  }
+  let data: ReadAlongRecords | null = null;
+  try {
+    const res = await fetch(`${pdsUrl}/xrpc/com.atproto.repo.listRecords?${params}`);
+    if (res.ok) {
+      data = (await res.json()) as ReadAlongRecords;
+    } else {
+      // A moved account leaves a stale endpoint behind, and every scan against
+      // it would quietly report "no rooms". Drop it and re-resolve next pass.
+      await forgetFollowPds(follow.did);
+    }
+  } catch {
+    await forgetFollowPds(follow.did);
+  }
+  if (!data?.records) return [];
+
+  const seen = new Set<string>();
+  const out: FollowedRoomEntry[] = [];
+  for (const record of data.records) {
+    const subject = record.value?.subject;
+    // A repo can hold two readAlong records for the same room (join, leave,
+    // rejoin), and the row is keyed by [did+subject], so keep the first.
+    if (typeof subject !== 'string' || !parseAtUri(subject) || seen.has(subject)) continue;
+    seen.add(subject);
+    out.push({
+      did: follow.did,
+      subject,
+      handle: follow.handle,
+      displayName: follow.displayName,
+      avatar: follow.avatar,
+      createdAt: typeof record.value?.createdAt === 'string' ? record.value.createdAt : undefined,
+    });
+  }
+  return out;
+}
+
+/** A room with the people you follow who are reading along in it. */
+export interface FollowedRoom {
+  /** the collection at-uri — the room's identity */
+  subject: string;
+  readers: FollowLite[];
+}
+
+/** Group per-person readAlong rows into one row per room, busiest first.
+ *  Ties break on the room uri so the list doesn't reshuffle between scans. */
+export function aggregateFollowedRooms(rows: FollowedRoomEntry[]): FollowedRoom[] {
+  const byRoom = new Map<string, FollowLite[]>();
+  for (const row of rows) {
+    const readers = byRoom.get(row.subject) ?? [];
+    if (readers.some((r) => r.did === row.did)) continue;
+    readers.push({
+      did: row.did,
+      handle: row.handle,
+      displayName: row.displayName,
+      avatar: row.avatar,
+    });
+    byRoom.set(row.subject, readers);
+  }
+  return [...byRoom.entries()]
+    .map(([subject, readers]) => ({ subject, readers }))
+    .sort((a, b) => b.readers.length - a.readers.length || a.subject.localeCompare(b.subject));
 }
 
 /** Curated rooms surfaced on the /rooms index for readers with nowhere to

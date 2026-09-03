@@ -28,7 +28,9 @@
     type CollectionPageLink,
     type MyRoom,
   } from '$lib/services/rooms';
+  import type { FollowLite } from '$lib/services/socialGraph';
   import { auth } from '$lib/stores/auth.svelte';
+  import { followingRoomsStore } from '$lib/stores/followingRooms.svelte';
   import { roomsStore } from '$lib/stores/rooms.svelte';
   import { toastStore } from '$lib/stores/toast.svelte';
   import { generateTid } from '$lib/utils/tid';
@@ -57,6 +59,9 @@
   let myRooms = $state<Array<MyRoom & RoomListing>>([]);
   let myRoomsLoading = $state(false);
   let featuredRooms = $state<RoomListing[]>([]);
+  // Rooms found on the people you follow, described one by one as the scan
+  // turns them up (subject -> listing; the store owns the subjects).
+  let followRoomMeta = $state<Record<string, RoomListing>>({});
   // subject -> how many are reading along; null when the lookup failed. Filled
   // after the rows render, so a slow Constellation never holds up the list.
   let memberCounts = $state<Record<string, number | null>>({});
@@ -87,8 +92,39 @@
     } else {
       void loadMyRooms();
       void loadFeatured();
+      void followingRoomsStore.load();
     }
   });
+
+  // Describe each room the follow scan turns up. The scan streams results in
+  // over its lifetime, so this runs per batch rather than once; a subject is
+  // always written back (even as an empty listing) so a room whose collection
+  // record won't load is asked about once, not forever.
+  const describing = new Set<string>();
+  $effect(() => {
+    if (uri) return;
+    const missing = followingRoomsStore.rooms
+      .map((r) => r.subject)
+      .filter((s) => !(s in followRoomMeta) && !describing.has(s));
+    if (missing.length === 0) return;
+    missing.forEach((s) => describing.add(s));
+    void describeFollowRooms(missing);
+  });
+
+  async function describeFollowRooms(subjects: string[]) {
+    try {
+      const listings = await describeRooms(subjects);
+      if (uri) return;
+      followRoomMeta = {
+        ...followRoomMeta,
+        ...Object.fromEntries(listings.map((l) => [l.subject, l])),
+      };
+      // No Constellation count for these rows: the people you follow ARE the
+      // presence signal here, and a count per row would be one request each.
+    } finally {
+      subjects.forEach((s) => describing.delete(s));
+    }
+  }
 
   onDestroy(() => {
     if (uri) void roomsStore.refresh();
@@ -285,11 +321,45 @@
     );
   }
 
+  // Rooms the people you follow are in: the store's subjects, joined to the
+  // descriptions as they land. A room you're already in belongs under "Your
+  // rooms", and one whose collection record won't load has no name to show, so
+  // neither is listed here. Gated on the my-rooms load to avoid a
+  // flash-then-vanish.
+  const followRooms = $derived.by<Array<RoomListing & { readers: FollowLite[] }>>(() => {
+    if (myRoomsLoading) return [];
+    return followingRoomsStore.rooms.flatMap((r) => {
+      if (myRooms.some((m) => m.subject === r.subject)) return [];
+      const listing = followRoomMeta[r.subject];
+      if (!listing?.name) return [];
+      return [{ ...listing, readers: r.readers }];
+    });
+  });
+
   // Featured is a suggestion list, so rooms you're already in don't repeat
-  // here. Gated on the my-rooms load finishing to avoid a flash-then-vanish.
+  // here, and neither do rooms your own follows are already in: that section
+  // says the same thing with better evidence. Gated on the my-rooms load
+  // finishing to avoid a flash-then-vanish.
   const suggestedRooms = $derived(
-    myRoomsLoading ? [] : featuredRooms.filter((f) => !myRooms.some((r) => r.subject === f.subject))
+    myRoomsLoading
+      ? []
+      : featuredRooms.filter(
+          (f) =>
+            !myRooms.some((r) => r.subject === f.subject) &&
+            !followRooms.some((r) => r.subject === f.subject)
+        )
   );
+
+  /** Who you follow is in this room, as a name list: at most two, then a count.
+   *  The avatars carry the rest. */
+  function readersLabel(readers: FollowLite[]): string {
+    const name = (r: FollowLite) => r.displayName?.trim() || r.handle || 'Someone';
+    if (readers.length === 1) return `${name(readers[0])} is reading along`;
+    if (readers.length === 2) {
+      return `${name(readers[0])} and ${name(readers[1])} are reading along`;
+    }
+    return `${name(readers[0])} and ${readers.length - 1} others are reading along`;
+  }
 
   async function openPasted() {
     if (pasteBusy) return;
@@ -542,6 +612,59 @@
           </li>
         {/each}
       </ul>
+    {/if}
+
+    {#if followRooms.length > 0}
+      <h2 class="room-section-title">Where people you follow are reading</h2>
+      <ul class="room-list">
+        {#each followRooms as r (r.subject)}
+          <li class="room-row">
+            <a
+              class="room-item room-item-link"
+              href={`/rooms?uri=${encodeURIComponent(r.subject)}`}
+            >
+              <span class="room-item-main">
+                <span class="room-item-title">{r.name}</span>
+                {#if r.description}
+                  <span class="room-item-description">{r.description}</span>
+                {/if}
+                <span class="room-row-readers">
+                  <span class="room-avatars">
+                    {#each r.readers.slice(0, 5) as reader (reader.did)}
+                      <span class="room-avatar room-avatar-sm" title={reader.handle ?? reader.did}>
+                        {#if reader.avatar}
+                          <img src={reader.avatar} alt="" />
+                        {:else}
+                          <span class="room-avatar-fallback">
+                            {(reader.displayName || reader.handle || '?').slice(0, 1).toUpperCase()}
+                          </span>
+                        {/if}
+                      </span>
+                    {/each}
+                  </span>
+                  {readersLabel(r.readers)}
+                </span>
+              </span>
+              <Icon name="chevron-right" size={16} />
+            </a>
+            {#if r.link}
+              <a
+                class="room-row-source"
+                href={r.link.url}
+                target="_blank"
+                rel="noopener"
+                title={`View collection on ${r.link.provider}`}
+                aria-label={`View collection on ${r.link.provider}`}
+              >
+                <Icon name="external-link" size={14} />
+              </a>
+            {/if}
+          </li>
+        {/each}
+      </ul>
+    {:else if followingRoomsStore.scanning && auth.user}
+      <h2 class="room-section-title">Where people you follow are reading</h2>
+      <p class="room-quiet">Looking through the people you follow.</p>
     {/if}
 
     {#if suggestedRooms.length > 0}
@@ -813,6 +936,23 @@
     font-size: var(--text-xs);
     color: var(--color-text-secondary);
     white-space: nowrap;
+  }
+
+  /* Who you follow is in this room: small stacked avatars, then the names. */
+  .room-row-readers {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.125rem;
+    font-size: var(--text-xs);
+    color: var(--color-text-secondary);
+  }
+
+  .room-avatar-sm {
+    width: 20px;
+    height: 20px;
+    border-width: 1.5px;
+    margin-left: -6px;
   }
 
   .room-item-main {
