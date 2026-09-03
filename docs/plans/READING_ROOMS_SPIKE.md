@@ -185,6 +185,29 @@ Steps 1–3 involve no backend changes at all; step 4 is one table, one route.
   concepts (identity, membership-in-own-repo, roles-later) are shaped to upgrade into it if it
   lands.
 
+## Implementation notes (built 2026-09-03)
+
+Landed as specced, with two deviations forced by what the codebase actually does:
+
+- **Reader path is the stateless `/api/extract`, not the enrichment store.** Writing a bare
+  `saved_articles` row (enrichment without membership) is not actually membership-free for a user
+  with external backing on: `listBackedSaved`'s native-only branch would surface it in their Saved
+  list. The feed proxy caches extraction per URL, so opening from the room extracts on demand and
+  writes nothing to D1. Revisit only if room opens need offline bodies.
+- **Join/leave go through the backend.** The frontend has no PDS write path (no agent/DPoP in the
+  browser; every repo write rides the backend's `PDSClient`), so `POST/DELETE /api/rooms/join`
+  write/delete the readAlong record server-side. That also meant a new OAuth scope,
+  `repo:app.skyreader.reading.readAlong` (`READING_ROOM_SCOPES`), added to `ALL_POSSIBLE_SCOPES`
+  only — existing sessions hit the standard scope-upgrade re-auth on first join.
+
+Also: `/rooms` with no `?uri=` lists the rooms you've joined (your own readAlong records, read
+publicly from your own PDS) plus a paste-a-link box — join is still link-only; this is not the
+deferred directory. Room surface: `GET /api/rooms?uri=` (backing read path + `room_reads` counts),
+`POST /api/rooms/read`, migration `0077_room_reads.sql`, `RoomPage.svelte`, membership via
+Constellation `/links/distinct-dids` on `.subject`. The lexicon is published at
+`/.well-known/lexicons/app/skyreader/reading/readAlong.json`. The Semble pitch (render "n reading
+along in Skyreader" from the NSID) is still unraised — raise it before this ships beyond a spike.
+
 ## Appendix: how we got here (full-feature decomposition)
 
 "Read a collection together" bundles four layers that want different representations:

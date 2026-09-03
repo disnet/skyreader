@@ -55,6 +55,14 @@ export const OFFPRINT_SCOPES = ['repo:app.offprint.document.article'];
 // check for sharing) so adding it doesn't retroactively over-restrict shares.
 export const ATMOSPHERE_SCOPES = ['repo:site.standard.graph.subscription'];
 
+// Reading Rooms — joining a room writes a public app.skyreader.reading.readAlong
+// record ("I'm reading along with this collection") to the user's own repo. Kept
+// OUT of GRANULAR_SCOPES so requesting it doesn't push existing sessions through
+// a re-auth; it only joins ALL_POSSIBLE_SCOPES (what login actually requests) and
+// is checked solely on the join endpoint, which 403s a stale session into the
+// standard scope-upgrade re-auth flow.
+export const READING_ROOM_SCOPES = ['repo:app.skyreader.reading.readAlong'];
+
 // AT Intents discovery footprint — lets Skyreader write a dev.at-intent.usage record
 // into the user's OWN repo so other Atmosphere apps/agents can discover that the user
 // uses Skyreader and resolve the capabilities it publishes. Deliberately kept OUT of
@@ -93,6 +101,7 @@ export const ALL_POSSIBLE_SCOPES = [
   ...PCKT_SCOPES,
   ...OFFPRINT_SCOPES,
   ...ATMOSPHERE_SCOPES,
+  ...READING_ROOM_SCOPES,
   ...AT_INTENT_SCOPES,
   ...USERINPUT_SCOPES,
   ...USERINPUT_VOTE_SCOPES,

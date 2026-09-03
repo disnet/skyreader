@@ -24,6 +24,7 @@ import type {
   CommunityHighlightNote,
   SembleContext,
   SocialDocument,
+  RoomInfo,
   User,
 } from '$lib/types';
 import { getLinkPostTitle, isLinkPost } from '$lib/utils/linkPost';
@@ -1632,6 +1633,36 @@ class ApiClient {
     return this.fetch<ExtractedArticle>('/api/extract', {
       method: 'POST',
       body: JSON.stringify({ url }),
+    });
+  }
+
+  // Reading Rooms (spike) — see docs/plans/READING_ROOMS_SPIKE.md
+  async getRoom(uri: string): Promise<RoomInfo> {
+    return this.fetch(`/api/rooms?uri=${encodeURIComponent(uri)}`);
+  }
+
+  async getRoomJoined(uri: string): Promise<{ joined: boolean }> {
+    return this.fetch(`/api/rooms/join?uri=${encodeURIComponent(uri)}`);
+  }
+
+  async joinRoom(collectionUri: string, rkey: string): Promise<{ joined: boolean; uri: string }> {
+    return this.fetch('/api/rooms/join', {
+      method: 'POST',
+      body: JSON.stringify({ collectionUri, rkey }),
+    });
+  }
+
+  async leaveRoom(collectionUri: string): Promise<{ joined: boolean }> {
+    return this.fetch('/api/rooms/join', {
+      method: 'DELETE',
+      body: JSON.stringify({ collectionUri }),
+    });
+  }
+
+  async recordRoomRead(collectionUri: string, url: string): Promise<{ ok: boolean }> {
+    return this.fetch('/api/rooms/read', {
+      method: 'POST',
+      body: JSON.stringify({ collectionUri, url }),
     });
   }
 

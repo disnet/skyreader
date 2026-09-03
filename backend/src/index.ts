@@ -93,6 +93,7 @@ import {
   handleSetBacking,
 } from './routes/saved';
 import { handleExtract } from './routes/extract';
+import { handleGetRoom, handleRoomJoin, handleRoomRead } from './routes/rooms';
 import { handleGetSettings, handleUpdateSettings } from './routes/settings';
 import {
   handleCreateBillingPortal,
@@ -620,6 +621,20 @@ async function route(
     case url.pathname === '/api/extract':
       if (!session) return unauthorizedResponse(headers);
       response = await handleExtract(request, env);
+      break;
+
+    // Reading Rooms (spike) — see docs/plans/READING_ROOMS_SPIKE.md
+    case url.pathname === '/api/rooms':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleGetRoom(request, env);
+      break;
+    case url.pathname === '/api/rooms/join':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleRoomJoin(request, env);
+      break;
+    case url.pathname === '/api/rooms/read':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleRoomRead(request, env);
       break;
 
     // Saved routes

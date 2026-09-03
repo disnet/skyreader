@@ -1142,6 +1142,32 @@ export interface SavedItem {
   itemGuid?: string;
 }
 
+// Reading Rooms (spike): a room IS a Semble/Margin collection, resolved by the
+// backend's backing read path. See docs/plans/READING_ROOMS_SPIKE.md.
+export interface RoomItem {
+  url: string;
+  urlNormalized: string;
+  itemType: string;
+  title?: string;
+  author?: string;
+  description?: string;
+  image?: string;
+  /** COUNT(DISTINCT reader) of reads made through this room's surface */
+  readCount: number;
+  readByMe: boolean;
+}
+
+export interface RoomInfo {
+  uri: string;
+  provider: 'semble' | 'margin';
+  ownerDid: string;
+  name?: string;
+  description?: string;
+  /** false = the snapshot was truncated or a member failed transiently */
+  complete: boolean;
+  items: RoomItem[];
+}
+
 export interface ItemLabel {
   itemKey: string;
   itemType: ItemLabelType;

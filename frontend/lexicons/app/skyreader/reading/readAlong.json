@@ -1,0 +1,26 @@
+{
+  "lexicon": 1,
+  "id": "app.skyreader.reading.readAlong",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "Declares that the author is reading along with a collection.",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["subject", "createdAt"],
+        "properties": {
+          "subject": {
+            "type": "string",
+            "format": "at-uri",
+            "description": "The collection being read along with (e.g. a network.cosmik.collection)."
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "datetime"
+          }
+        }
+      }
+    }
+  }
+}

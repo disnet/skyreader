@@ -123,7 +123,7 @@ export async function listAllRecordsPublic<T = Record<string, unknown>>(
 // twice, and so a cross-repo item only resolves its foreign PDS once.
 type ItemValue = Record<string, unknown> & { $type?: string };
 
-async function getRecordPublic(
+export async function getRecordPublic(
   pds: string,
   repo: string,
   collection: string,
