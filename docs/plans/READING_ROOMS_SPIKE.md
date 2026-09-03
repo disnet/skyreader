@@ -110,6 +110,65 @@ an afternoon on their side, no ACLs, no webhooks — and it makes the join recor
 from day one. Raise it before building; if they'd rather the NSID live somewhere shared, better to
 know now.
 
+### The whole integration, concretely (what to hand Semble)
+
+Two constants and three URL shapes. Nothing to authenticate, nothing to coordinate, no webhook.
+
+**1. The count** — one unauthenticated GET per collection, which is all a collection page needs:
+
+```
+GET https://constellation.microcosm.blue/links/count/distinct-dids
+      ?target=<collection at-uri, url-encoded>
+      &collection=app.skyreader.reading.readAlong
+      &path=.subject
+
+→ { "total": 4 }        // "4 people are reading along in Skyreader"
+```
+
+**2. The people**, if they want avatars rather than a number:
+
+```
+GET https://constellation.microcosm.blue/links/distinct-dids
+      ?target=<collection at-uri>
+      &collection=app.skyreader.reading.readAlong
+      &path=.subject
+      &limit=100[&cursor=…]
+
+→ { "linking_dids": ["did:plc:…", …], "cursor": "…" }
+```
+
+Page while `cursor` is present and the page is non-empty, dedupe, then resolve DIDs to profiles
+however they already do. These are the exact two calls Skyreader makes of itself
+(`fetchRoomMemberCount` / `fetchRoomMembers` in `frontend/src/lib/services/rooms.ts`), so anything
+they render agrees with our room page by construction.
+
+**3. The join link** — the other half of the trade, and the part that sends readers back:
+
+```
+https://skyreader.app/rooms?uri=<encodeURIComponent(collection at-uri)>
+```
+
+e.g. `https://skyreader.app/rooms?uri=at%3A%2F%2Fdid%3Aplc%3Aabc123%2Fnetwork.cosmik.collection%2F3muahss6xki2b`
+— a "Read this along with others" button next to the count. A visitor who follows it lands on the
+room whether or not they have an account; Join is where sign-in is asked for. Nothing else is
+needed: the room's title, description, and article list are read off the collection record itself,
+so Semble passes only the at-uri it already has. (The paste box on `/rooms` also accepts a bare
+`semble.so/profile/<handle>/collections/<rkey>` page URL, via `resolveRoomInput` — so a plain
+Semble link a person copies by hand still finds its room. The `?uri=` form is the one to build.)
+
+Four caveats worth stating in the same breath, because each is a way a naive integration reads as
+broken:
+
+- **Constellation is an index, not the authority.** It lags a write by seconds, so someone who just
+  joined from Skyreader will not appear on their next page load.
+- **A failed lookup is not zero.** We render no marker at all on error rather than a confident
+  "nobody is here" (`fetchRoomMemberCount` returns `null`, not `0`); an empty room shows nothing
+  either, since "0 reading along" is worse than silence.
+- **`path=.subject` is load-bearing.** Without it the query returns every record type pointing at
+  the collection, `collectionLink` membership included.
+- **No batched-targets form exists**, so a page listing many collections means one request each.
+  Our own `/rooms` index fires them after the rows render and lets slow ones land late.
+
 ## Data model (D1)
 
 One new table:
@@ -234,6 +293,20 @@ Two things this forced, both load-bearing:
   fresh add is shown optimistically for the same reason the join button shows your own avatar
   early: the index lags the write by seconds.
 
+**Reading order: unread first, then oldest addition first.** The second key is the membership
+record's own timestamp (Semble's `collectionLink.addedAt`, Margin's `collectionItem.createdAt`),
+threaded through the snapshot as `BackedMember.addedAt` — not the item record's `createdAt`, which
+is when the card was made and can long predate its filing. Nothing else can serve as the order: the
+owner's links arrive in `listRecords` order, a contributor's arrive from Constellation, and
+`resolveMembers` finishes them out of order anyway (bounded concurrency), so an unsorted list would
+put every foreign add at the end and shuffle within a poll. `snapshotBackedCollection` sorts
+(undated last, `linkUri` as the tiebreak, so the same collection always resolves the same way), the
+dedupe of cross-repo duplicates therefore keeps the *earliest* add, and both surfaces re-apply the
+rule client-side through the shared `sortRoomItems` (`frontend/src/lib/utils/roomArticle.ts`) since
+marking something read must move it down live. One consequence for the add box: a fresh add now
+sorts to the end of the unread pile, which can be below the fold, so it confirms with a toast rather
+than by appearing at the top.
+
 A room also links back out to where its list actually lives: the header carries "View collection on
 Semble," and each row of the `/rooms` index carries the same link as a quiet icon. This is the exact
 inverse of the paste-a-link parser (`collectionPageLink` sits next to `sembleCollectionPageToUri`),
@@ -270,11 +343,22 @@ publicly from your own PDS) plus a paste-a-link box — join is still link-only;
 deferred directory. Each listed room carries the collection's own name **and description**
 (`fetchCollectionMeta`, one public `getRecord` per room), matching what the room page shows; a
 room view links back to that index with an "All rooms" link rendered outside the load/error branch,
-since a room reached by a shared link is often the first page a visitor sees. Room surface: `GET /api/rooms?uri=` (backing read path + `room_reads` counts),
+since a room reached by a shared link is often the first page a visitor sees. Each index row also
+carries the room's presence marker ("3 reading along"), so a room reads as busy or quiet **before**
+you open it — the whole point of the spike is whether presence creates pull, and burying it one
+click deep tests something weaker. That's `fetchRoomMemberCount`, one
+`/links/count/distinct-dids` per room rather than paging the DID list, since no avatars are drawn
+here; counts land after the rows render, so a slow Constellation never holds up the list. Three
+absences are deliberate: no marker while the count is in flight, none on a failed lookup (null, not
+a confident zero), and none for an empty room. A room you've joined floors at 1, since Constellation
+lags your own join record by seconds — the same reason the join button shows your avatar early.
+Room surface: `GET /api/rooms?uri=` (backing read path + `room_reads` counts),
 `POST /api/rooms/read`, migration `0077_room_reads.sql`, `RoomPage.svelte`, membership via
 Constellation `/links/distinct-dids` on `.subject`. The lexicon is published at
 `/.well-known/lexicons/app/skyreader/reading/readAlong.json`. The Semble pitch (render "n reading
-along in Skyreader" from the NSID) is still unraised — raise it before this ships beyond a spike.
+along in Skyreader" from the NSID) is still unraised — raise it before this ships beyond a spike;
+the calls and the join-link shape to hand them are written out under "The whole integration,
+concretely" above.
 
 ## Roomy as the conversation layer (assessed 2026-09-03)
 

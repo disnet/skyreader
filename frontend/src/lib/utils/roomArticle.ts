@@ -7,6 +7,22 @@ import type { RoomItem, SavedItem } from '$lib/types';
 // room lanes so both surfaces open articles identically.
 // See docs/plans/READING_ROOMS_SPIKE.md.
 
+/**
+ * Reading order for a room's list: what you haven't read yet, oldest addition
+ * first — the order the room was built in, so a list read top to bottom follows
+ * its curator. Marking something read drops it below the unread pile rather than
+ * hiding it. A member whose membership record carries no timestamp sorts last
+ * within its group rather than claiming to be the oldest.
+ *
+ * The backend already returns items in this order, but both surfaces (room page,
+ * Home lane) re-sort live as `readByMe` flips, so the rule lives here where they
+ * share it.
+ */
+export function sortRoomItems<T extends Pick<RoomItem, 'readByMe' | 'addedAt'>>(items: T[]): T[] {
+  const at = (i: T) => (i.addedAt ? Date.parse(i.addedAt) : Number.POSITIVE_INFINITY);
+  return [...items].sort((a, b) => Number(a.readByMe) - Number(b.readByMe) || at(a) - at(b));
+}
+
 export function roomItemDomain(url: string): string | null {
   try {
     return new URL(url).hostname;

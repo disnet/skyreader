@@ -46,6 +46,11 @@ export interface BackedMember {
   author?: string;
   description?: string;
   image?: string;
+  /** When this article joined the collection, off the MEMBERSHIP record — not the
+   *  item's own createdAt, which is when the card was made (the same article can be
+   *  filed into a collection long after it was first saved). ISO string; absent when
+   *  the record carries no timestamp. */
+  addedAt?: string;
 }
 
 /** A member that resolved but carried no usable article URL (skipped, not an error). */
@@ -250,7 +255,7 @@ function extractCanonicalAtUri(value: ItemValue | null): string | undefined {
  * how the membership record names its item + collection (handled by the callers).
  */
 async function resolveMembers(
-  pairs: Array<{ itemUri: string; linkUri: string }>
+  pairs: MembershipPair[]
 ): Promise<{ members: BackedMember[]; skipped: SkippedMember[]; typeMix: Record<string, number> }> {
   // Caches hold the in-flight PROMISE (not the resolved value) so concurrent workers
   // resolving the same DID/item share one fetch instead of racing into duplicates.
@@ -284,7 +289,7 @@ async function resolveMembers(
     return p;
   };
 
-  const handle = async ({ itemUri, linkUri }: { itemUri: string; linkUri: string }) => {
+  const handle = async ({ itemUri, linkUri, addedAt }: MembershipPair) => {
     const item = await resolveItem(itemUri);
     if (!item) {
       skipped.push({ reason: 'item-not-resolvable', itemUri, linkUri });
@@ -308,6 +313,7 @@ async function resolveMembers(
       itemUri,
       linkUri,
       itemType,
+      addedAt,
       canonicalAtUri: extractCanonicalAtUri(item),
       ...extractRecordMetadata(item),
     });
@@ -342,7 +348,19 @@ interface MembershipShape {
   backlinkPath: string;
   collectionUriOf(value: Record<string, unknown>): string | undefined;
   itemUriOf(value: Record<string, unknown>): string | undefined;
+  /** when the article joined the collection (see BackedMember.addedAt) */
+  addedAtOf(value: Record<string, unknown>): string | undefined;
 }
+
+/** One membership record, reduced to what a snapshot needs from it. */
+interface MembershipPair {
+  itemUri: string;
+  linkUri: string;
+  addedAt?: string;
+}
+
+const isoStr = (v: unknown): string | undefined =>
+  typeof v === 'string' && !Number.isNaN(Date.parse(v)) ? v : undefined;
 
 const MEMBERSHIP: Record<BackingProviderName, MembershipShape> = {
   // network.cosmik.collectionLink: nested strong refs { card:{uri}, collection:{uri} }
@@ -351,6 +369,8 @@ const MEMBERSHIP: Record<BackingProviderName, MembershipShape> = {
     backlinkPath: '.collection.uri',
     collectionUriOf: (v) => (v.collection as { uri?: string } | undefined)?.uri,
     itemUriOf: (v) => (v.card as { uri?: string } | undefined)?.uri,
+    // Semble writes both, identically; addedAt is the one that names the act.
+    addedAtOf: (v) => isoStr(v.addedAt) ?? isoStr(v.createdAt),
   },
   // at.margin.collectionItem: FLAT at-uri strings { annotation, collection }
   margin: {
@@ -358,6 +378,7 @@ const MEMBERSHIP: Record<BackingProviderName, MembershipShape> = {
     backlinkPath: '.collection',
     collectionUriOf: (v) => (typeof v.collection === 'string' ? v.collection : undefined),
     itemUriOf: (v) => (typeof v.annotation === 'string' ? v.annotation : undefined),
+    addedAtOf: (v) => isoStr(v.createdAt),
   },
 };
 
@@ -384,7 +405,7 @@ async function listForeignMembership(
   shape: MembershipShape,
   collectionUri: string,
   ownerDid: string
-): Promise<{ pairs: Array<{ itemUri: string; linkUri: string }>; complete: boolean }> {
+): Promise<{ pairs: MembershipPair[]; complete: boolean }> {
   const refs: Array<{ did: string; rkey: string }> = [];
   let cursor: string | undefined;
   let complete = true;
@@ -419,7 +440,7 @@ async function listForeignMembership(
   if (refs.length === 0) return { pairs: [], complete };
 
   const pdsCache = new Map<string, Promise<string | null>>();
-  const pairs: Array<{ itemUri: string; linkUri: string }> = [];
+  const pairs: MembershipPair[] = [];
   await mapPool(refs, RESOLVE_CONCURRENCY, async (ref) => {
     try {
       let pdsPromise = pdsCache.get(ref.did);
@@ -437,7 +458,11 @@ async function listForeignMembership(
       if (shape.collectionUriOf(value) !== collectionUri) return; // stale index entry
       const itemUri = shape.itemUriOf(value);
       if (itemUri)
-        pairs.push({ itemUri, linkUri: `at://${ref.did}/${shape.collection}/${ref.rkey}` });
+        pairs.push({
+          itemUri,
+          linkUri: `at://${ref.did}/${shape.collection}/${ref.rkey}`,
+          addedAt: shape.addedAtOf(value),
+        });
     } catch (err) {
       // Transient — same stance as the owner-side snapshot: report incompleteness
       // rather than presenting a short list as the whole collection.
@@ -447,6 +472,19 @@ async function listForeignMembership(
   });
 
   return { pairs, complete };
+}
+
+/**
+ * Oldest addition first — the order a collection was actually built in, which is
+ * the only order both repos agree on: owner membership arrives in listRecords
+ * order, foreign membership arrives from Constellation, and `resolveMembers`
+ * finishes them out of order anyway (bounded concurrency). A member whose record
+ * carries no timestamp sorts last rather than pretending to be the oldest, and
+ * `linkUri` breaks ties so the same collection always resolves to the same order.
+ */
+function sortByAddedAt(members: BackedMember[]): BackedMember[] {
+  const at = (m: BackedMember) => (m.addedAt ? Date.parse(m.addedAt) : Number.POSITIVE_INFINITY);
+  return members.sort((a, b) => at(a) - at(b) || a.linkUri.localeCompare(b.linkUri));
 }
 
 export interface SnapshotOptions {
@@ -480,10 +518,10 @@ export async function snapshotBackedCollection(
       ownerDid,
       shape.collection
     );
-    const pairs = owned.records.flatMap((l) => {
+    const pairs: MembershipPair[] = owned.records.flatMap((l) => {
       if (shape.collectionUriOf(l.value) !== collectionUri) return [];
       const itemUri = shape.itemUriOf(l.value);
-      return itemUri ? [{ itemUri, linkUri: l.uri }] : [];
+      return itemUri ? [{ itemUri, linkUri: l.uri, addedAt: shape.addedAtOf(l.value) }] : [];
     });
     let complete = !owned.truncated;
 
@@ -497,7 +535,7 @@ export async function snapshotBackedCollection(
     }
 
     const { members, skipped, typeMix } = await resolveMembers(pairs);
-    return { complete, members, skipped, typeMix };
+    return { complete, members: sortByAddedAt(members), skipped, typeMix };
   } catch (err) {
     console.error('[backing] snapshot failed:', err);
     return { complete: false, members: [], skipped: [], typeMix: {} };

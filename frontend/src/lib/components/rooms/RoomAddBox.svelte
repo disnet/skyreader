@@ -115,6 +115,9 @@
               publishedAt: row.item.publishedAt,
             });
       onAdded(item);
+      // The row lands at the end of the room's unread pile, which can be below
+      // the fold, so the toast is the confirmation.
+      toastStore.update(toastStore.add('Added to the room'), 'success');
       query = '';
       activeIndex = 0;
       inputEl?.focus();

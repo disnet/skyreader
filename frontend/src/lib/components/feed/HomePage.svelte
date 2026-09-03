@@ -23,7 +23,7 @@
   import type { LaneCardVM } from '$lib/components/feed/homeLane';
   import { savesStore } from '$lib/stores/saves.svelte';
   import { roomsStore } from '$lib/stores/rooms.svelte';
-  import { extractRoomArticle } from '$lib/utils/roomArticle';
+  import { extractRoomArticle, sortRoomItems } from '$lib/utils/roomArticle';
   import { magazineStore } from '$lib/stores/magazine.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
@@ -321,10 +321,10 @@
     // The tile's check marker already says "you read this"; the label carries
     // the others.
     if (item.readByMe) {
-      return item.readCount > 1 ? `${item.readCount - 1} more read this here` : null;
+      return item.readCount > 1 ? `${item.readCount - 1} more read this` : null;
     }
-    if (item.readCount === 1) return '1 read this here';
-    if (item.readCount > 1) return `${item.readCount} read this here`;
+    if (item.readCount === 1) return '1 read this';
+    if (item.readCount > 1) return `${item.readCount} read this`;
     return null;
   }
 
@@ -334,10 +334,8 @@
         subject: room.subject,
         title: room.name ?? 'Untitled room',
         byKey: new Map(room.items.map((i) => [i.urlNormalized, i])),
-        // Unread first (stable, so the collection's order holds within each
-        // group) — mirrors the room page's own sort.
-        items: [...room.items]
-          .sort((a, b) => Number(a.readByMe) - Number(b.readByMe))
+        // The room page's own order: unread first, oldest addition first.
+        items: sortRoomItems(room.items)
           .slice(0, CHANNEL_CAP)
           .map((item): LaneCardVM => ({
             key: item.urlNormalized,

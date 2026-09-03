@@ -584,3 +584,106 @@ describe('snapshotBackedCollection — includeForeign (co-curated collections)',
     expect(snap.members.map((m) => m.url)).toEqual(['https://margin.test/post']);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Order: oldest addition first, off the MEMBERSHIP record's timestamp. A room
+// reads top to bottom in the order it was built, and neither where a membership
+// record lives (owner repo vs Constellation) nor the concurrency of the resolve
+// pool may decide that. See routes/rooms.ts.
+// ---------------------------------------------------------------------------
+
+describe('snapshotBackedCollection — addedAt ordering', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  /** Owner links l1/l2/l3 in the order given; each card's url is its rkey. */
+  function installDated(owner: Array<{ rkey: string; addedAt?: string }>, foreignAddedAt?: string) {
+    installFetch({
+      listRecords: () =>
+        jsonRes({
+          records: owner.map((l) => ({
+            uri: `at://${OWNER}/network.cosmik.collectionLink/${l.rkey}`,
+            cid: 'x',
+            value: {
+              collection: { uri: SEMBLE_COL },
+              card: { uri: `at://${OWNER}/network.cosmik.card/${l.rkey}` },
+              ...(l.addedAt ? { addedAt: l.addedAt } : {}),
+            },
+          })),
+        }),
+      links: () =>
+        foreignAddedAt
+          ? jsonRes({
+              linking_records: [
+                { did: OTHER, collection: 'network.cosmik.collectionLink', rkey: 'foreign1' },
+              ],
+              cursor: null,
+            })
+          : jsonRes({ linking_records: [], cursor: null }),
+      getRecord: (p) => {
+        const rkey = p.get('rkey')!;
+        if (rkey === 'foreign1') {
+          return jsonRes({
+            value: {
+              collection: { uri: SEMBLE_COL },
+              card: { uri: `at://${OTHER}/network.cosmik.card/theirs` },
+              addedAt: foreignAddedAt,
+            },
+          });
+        }
+        return jsonRes({
+          value: {
+            $type: 'network.cosmik.card',
+            type: 'URL',
+            content: { url: `https://a.test/${rkey}` },
+          },
+        });
+      },
+    });
+  }
+
+  it('returns members oldest-addition first, whatever order the repo lists them in', async () => {
+    mockPds();
+    installDated([
+      { rkey: 'newest', addedAt: '2026-08-14T17:35:29.962Z' },
+      { rkey: 'oldest', addedAt: '2026-06-01T09:00:00.000Z' },
+      { rkey: 'middle', addedAt: '2026-07-04T12:00:00.000Z' },
+    ]);
+    const snap = await snapshotBackedCollection('semble', OWNER, SEMBLE_COL);
+    expect(snap.members.map((m) => m.url)).toEqual([
+      'https://a.test/oldest',
+      'https://a.test/middle',
+      'https://a.test/newest',
+    ]);
+    expect(snap.members[0].addedAt).toBe('2026-06-01T09:00:00.000Z');
+  });
+
+  it('interleaves a contributor’s add by date, not after the owner’s', async () => {
+    mockPds();
+    installDated(
+      [
+        { rkey: 'first', addedAt: '2026-06-01T09:00:00.000Z' },
+        { rkey: 'last', addedAt: '2026-09-01T09:00:00.000Z' },
+      ],
+      '2026-07-01T09:00:00.000Z'
+    );
+    const snap = await snapshotBackedCollection('semble', OWNER, SEMBLE_COL, {
+      includeForeign: true,
+    });
+    expect(snap.members.map((m) => m.url)).toEqual([
+      'https://a.test/first',
+      'https://a.test/theirs',
+      'https://a.test/last',
+    ]);
+  });
+
+  it('sorts an undated membership record last rather than treating it as oldest', async () => {
+    mockPds();
+    installDated([{ rkey: 'undated' }, { rkey: 'dated', addedAt: '2026-06-01T09:00:00.000Z' }]);
+    const snap = await snapshotBackedCollection('semble', OWNER, SEMBLE_COL);
+    expect(snap.members.map((m) => m.url)).toEqual([
+      'https://a.test/dated',
+      'https://a.test/undated',
+    ]);
+    expect(snap.members[1].addedAt).toBeUndefined();
+  });
+});

@@ -49,6 +49,28 @@ export async function fetchRoomMembers(collectionUri: string): Promise<string[]>
   return [...new Set(dids)];
 }
 
+/** How many DIDs are reading along with this collection.
+ *
+ *  The count, not the people: the /rooms index shows a presence marker per row
+ *  and has no avatars to fill, so this is one request per room instead of paging
+ *  the DID list. Null (not 0) when the lookup fails, so a Constellation outage
+ *  shows no marker rather than a confident "nobody is here". */
+export async function fetchRoomMemberCount(collectionUri: string): Promise<number | null> {
+  const params = new URLSearchParams({
+    target: collectionUri,
+    collection: READ_ALONG_NSID,
+    path: SUBJECT_PATH,
+  });
+  try {
+    const res = await fetch(`${CONSTELLATION_BASE}/links/count/distinct-dids?${params}`);
+    if (!res.ok) return null;
+    const data = (await res.json()) as { total?: unknown };
+    return typeof data.total === 'number' ? data.total : null;
+  } catch {
+    return null;
+  }
+}
+
 export interface MyRoom {
   /** the readAlong record's at-uri (delete target) */
   recordUri: string;
@@ -82,6 +104,17 @@ export async function fetchMyRooms(did: string, pdsUrl: string): Promise<MyRoom[
     return [];
   }
 }
+
+/** Curated rooms surfaced on the /rooms index for readers with nowhere to
+ *  start. Just collection at-uris: names and descriptions come from the
+ *  collection records themselves (fetchCollectionMeta), so edits on Semble show
+ *  up here without a deploy. Order is the display order. */
+export const FEATURED_ROOM_URIS = [
+  'at://did:plc:4vjd3fe2cgzq5d24j4f3zvar/network.cosmik.collection/3munguoqf5x25', // How We Read Now
+  'at://did:plc:4vjd3fe2cgzq5d24j4f3zvar/network.cosmik.collection/3mungyyxm2w2p', // Tools for Thought
+  'at://did:plc:4vjd3fe2cgzq5d24j4f3zvar/network.cosmik.collection/3munh3tsvbf2l', // The Open Web
+  'at://did:plc:4vjd3fe2cgzq5d24j4f3zvar/network.cosmik.collection/3munh5zxdih2t', // The Craft
+];
 
 export interface CollectionMeta {
   name: string | null;

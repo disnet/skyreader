@@ -17,11 +17,13 @@
   import { profileService } from '$lib/services/profiles';
   import {
     fetchRoomMembers,
+    fetchRoomMemberCount,
     fetchMyRooms,
     fetchCollectionMeta,
     resolveRoomInput,
     collectionOwnerDid,
     collectionPageLink,
+    FEATURED_ROOM_URIS,
     type CollectionMeta,
     type CollectionPageLink,
     type MyRoom,
@@ -30,7 +32,7 @@
   import { roomsStore } from '$lib/stores/rooms.svelte';
   import { toastStore } from '$lib/stores/toast.svelte';
   import { generateTid } from '$lib/utils/tid';
-  import { extractRoomArticle } from '$lib/utils/roomArticle';
+  import { extractRoomArticle, sortRoomItems } from '$lib/utils/roomArticle';
   import type { BlueskyProfile, RoomInfo, RoomItem } from '$lib/types';
 
   const reader = useReaderStack();
@@ -48,8 +50,16 @@
   let collectionLink = $state<CollectionPageLink | null>(null);
 
   // --- index (no uri) state ---
-  let myRooms = $state<Array<MyRoom & CollectionMeta & { link: CollectionPageLink | null }>>([]);
+  interface RoomListing extends CollectionMeta {
+    subject: string;
+    link: CollectionPageLink | null;
+  }
+  let myRooms = $state<Array<MyRoom & RoomListing>>([]);
   let myRoomsLoading = $state(false);
+  let featuredRooms = $state<RoomListing[]>([]);
+  // subject -> how many are reading along; null when the lookup failed. Filled
+  // after the rows render, so a slow Constellation never holds up the list.
+  let memberCounts = $state<Record<string, number | null>>({});
   let pasteInput = $state('');
   let pasteError = $state<string | null>(null);
   let pasteBusy = $state(false);
@@ -76,6 +86,7 @@
       void loadRoom(uri);
     } else {
       void loadMyRooms();
+      void loadFeatured();
     }
   });
 
@@ -225,28 +236,60 @@
     }
   }
 
+  // Display rows for a list of collection uris: name/description from each
+  // collection's own record, plus the provider page link. One batched profile
+  // lookup for every owner, rather than one per row: the provider page is keyed
+  // by their handle.
+  async function describeRooms(subjects: string[]): Promise<RoomListing[]> {
+    const owners = await profileService.getProfiles([
+      ...new Set(subjects.map(collectionOwnerDid).filter((d) => d !== null)),
+    ]);
+    return Promise.all(
+      subjects.map(async (subject) => ({
+        subject,
+        ...(await fetchCollectionMeta(subject)),
+        link: collectionPageLink(subject, owners.get(collectionOwnerDid(subject) ?? '')?.handle),
+      }))
+    );
+  }
+
   async function loadMyRooms() {
     if (!auth.user) return;
     myRoomsLoading = true;
     const rooms = await fetchMyRooms(auth.user.did, auth.user.pdsUrl);
-    // One batched profile lookup for every owner, rather than one per row: the
-    // provider page is keyed by their handle.
-    const owners = await profileService.getProfiles([
-      ...new Set(rooms.map((r) => collectionOwnerDid(r.subject)).filter((d) => d !== null)),
-    ]);
-    const named = await Promise.all(
-      rooms.map(async (r) => ({
-        ...r,
-        ...(await fetchCollectionMeta(r.subject)),
-        link: collectionPageLink(
-          r.subject,
-          owners.get(collectionOwnerDid(r.subject) ?? '')?.handle
-        ),
-      }))
-    );
-    if (!uri) myRooms = named;
+    const listings = await describeRooms(rooms.map((r) => r.subject));
+    if (!uri) myRooms = rooms.map((r, i) => ({ ...r, ...listings[i] }));
     myRoomsLoading = false;
+    void loadMemberCounts(rooms.map((r) => r.subject));
   }
+
+  async function loadFeatured() {
+    const listings = await describeRooms(FEATURED_ROOM_URIS);
+    // A featured collection whose record can't be fetched has no name to show
+    // and nothing behind its link; drop the row rather than render a husk.
+    const shown = listings.filter((l) => l.name !== null);
+    if (!uri) featuredRooms = shown;
+    void loadMemberCounts(shown.map((l) => l.subject));
+  }
+
+  // One count per room, in parallel — the same presence signal the room page
+  // shows, brought up to the index so a room reads as busy or quiet before you
+  // open it. Deliberately not the DID list: nothing here draws avatars.
+  async function loadMemberCounts(subjects: string[]) {
+    await Promise.all(
+      subjects.map(async (subject) => {
+        if (subject in memberCounts) return;
+        const count = await fetchRoomMemberCount(subject);
+        if (!uri) memberCounts[subject] = count;
+      })
+    );
+  }
+
+  // Featured is a suggestion list, so rooms you're already in don't repeat
+  // here. Gated on the my-rooms load finishing to avoid a flash-then-vanish.
+  const suggestedRooms = $derived(
+    myRoomsLoading ? [] : featuredRooms.filter((f) => !myRooms.some((r) => r.subject === f.subject))
+  );
 
   async function openPasted() {
     if (pasteBusy) return;
@@ -273,31 +316,46 @@
 
   function readLabel(item: RoomItem): string | null {
     if (item.readByMe && item.readCount === 1) return 'You read this';
-    if (item.readByMe) return `You and ${item.readCount - 1} more read this here`;
-    if (item.readCount === 1) return '1 read this here';
-    if (item.readCount > 1) return `${item.readCount} read this here`;
+    if (item.readByMe) return `You and ${item.readCount - 1} more read this`;
+    if (item.readCount === 1) return '1 read this';
+    if (item.readCount > 1) return `${item.readCount} read this`;
     return null;
   }
 
-  const readingAlongLabel = $derived(
-    memberCount === 1 ? '1 reading along' : `${memberCount} reading along`
-  );
+  function presenceLabel(count: number): string {
+    return count === 1 ? '1 reading along' : `${count} reading along`;
+  }
 
-  // Unread first; within each group, the collection's own order (stable sort).
+  const readingAlongLabel = $derived(presenceLabel(memberCount));
+
+  // The index row's presence marker. Absent until the count lands, absent on a
+  // failed lookup, and absent for an empty room — a row that says nothing reads
+  // better than one that says "0". A room you've joined counts at least you,
+  // even while Constellation still lags your own join record.
+  function rowPresence(subject: string, mine: boolean): string | null {
+    const count = memberCounts[subject];
+    if (count === undefined || count === null) return null;
+    const shown = mine ? Math.max(count, 1) : count;
+    return shown > 0 ? presenceLabel(shown) : null;
+  }
+
+  // Unread first, oldest addition first within each group (see sortRoomItems).
   // This re-sorts live when markRead flips an item, so what's left to read
   // stays at the top.
-  const sortedItems = $derived(
-    room ? [...room.items].sort((a, b) => Number(a.readByMe) - Number(b.readByMe)) : []
-  );
+  const sortedItems = $derived(room ? sortRoomItems(room.items) : []);
 
   const roomKeys = $derived(new Set((room?.items ?? []).map((i) => i.urlNormalized)));
 
   // A fresh add is shown right away rather than waiting for a refetch: the
   // membership record lands in the adder's own repo, and the room list finds
   // other people's records through Constellation, which lags a write by seconds.
+  // It goes to the END of the unread pile, where its addedAt puts it — the list
+  // is the order the room was built in, and the newest addition is the newest
+  // addition even when it's yours. RoomAddBox says so with a toast, since the
+  // row itself may land below the fold.
   function noteAdded(item: RoomItem) {
     if (!room || room.items.some((i) => i.urlNormalized === item.urlNormalized)) return;
-    room = { ...room, items: [item, ...room.items] };
+    room = { ...room, items: [...room.items, item] };
   }
 </script>
 
@@ -421,8 +479,8 @@
     <header class="room-header">
       <h1 class="room-title">Reading rooms</h1>
       <p class="room-description">
-        A room is a set of articles people read together. Rooms live on shared collections. Open one
-        from a link, or paste the link here.
+        A room is a set of articles people read together. Rooms live on shared collections. Paste a
+        link to open one, or start with a featured room.
       </p>
     </header>
 
@@ -464,6 +522,46 @@
                   <span class="room-item-description">{r.description}</span>
                 {/if}
               </span>
+              {#if rowPresence(r.subject, true)}
+                <span class="room-row-presence">{rowPresence(r.subject, true)}</span>
+              {/if}
+              <Icon name="chevron-right" size={16} />
+            </a>
+            {#if r.link}
+              <a
+                class="room-row-source"
+                href={r.link.url}
+                target="_blank"
+                rel="noopener"
+                title={`View collection on ${r.link.provider}`}
+                aria-label={`View collection on ${r.link.provider}`}
+              >
+                <Icon name="external-link" size={14} />
+              </a>
+            {/if}
+          </li>
+        {/each}
+      </ul>
+    {/if}
+
+    {#if suggestedRooms.length > 0}
+      <h2 class="room-section-title">Featured rooms</h2>
+      <ul class="room-list">
+        {#each suggestedRooms as r (r.subject)}
+          <li class="room-row">
+            <a
+              class="room-item room-item-link"
+              href={`/rooms?uri=${encodeURIComponent(r.subject)}`}
+            >
+              <span class="room-item-main">
+                <span class="room-item-title">{r.name}</span>
+                {#if r.description}
+                  <span class="room-item-description">{r.description}</span>
+                {/if}
+              </span>
+              {#if rowPresence(r.subject, false)}
+                <span class="room-row-presence">{rowPresence(r.subject, false)}</span>
+              {/if}
               <Icon name="chevron-right" size={16} />
             </a>
             {#if r.link}
@@ -705,6 +803,16 @@
 
   .room-row-source:hover {
     color: var(--color-primary);
+  }
+
+  /* Pulled to the right so it sits with the chevron rather than floating in the
+     middle of the row (the row is space-between). */
+  .room-row-presence {
+    flex-shrink: 0;
+    margin-left: auto;
+    font-size: var(--text-xs);
+    color: var(--color-text-secondary);
+    white-space: nowrap;
   }
 
   .room-item-main {

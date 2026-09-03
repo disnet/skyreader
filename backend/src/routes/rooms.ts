@@ -67,6 +67,8 @@ export interface RoomItem {
   author?: string;
   description?: string;
   image?: string;
+  /** when this article joined the collection (ISO), off its membership record */
+  addedAt?: string;
   readCount: number;
   readByMe: boolean;
 }
@@ -158,7 +160,9 @@ export async function handleGetRoom(request: Request, env: Env): Promise<Respons
     const counts = new Map(countRows.results.map((r) => [r.url_normalized, r]));
 
     // A collection can name the same article twice (cross-repo duplicates); the
-    // room shows each URL once.
+    // room shows each URL once. The snapshot comes back oldest-addition-first, so
+    // first-seen is the earliest add — the room's order is the order it was built
+    // in, and a re-add doesn't move an article to the end of the list.
     const seen = new Set<string>();
     const items: RoomItem[] = [];
     for (const m of snapshot.members) {
@@ -173,6 +177,7 @@ export async function handleGetRoom(request: Request, env: Env): Promise<Respons
         author: m.author,
         description: m.description,
         image: m.image,
+        addedAt: m.addedAt,
         readCount: row?.n ?? 0,
         readByMe: row?.mine === 1,
       });
@@ -451,6 +456,9 @@ export async function handleRoomAddItem(request: Request, env: Env): Promise<Res
       author,
       description,
       image,
+      // The membership record was stamped a moment ago; saying so here keeps the
+      // optimistically-rendered row sorting where a reload will put it.
+      addedAt: new Date().toISOString(),
       readCount: row?.n ?? 0,
       readByMe: row?.mine === 1,
     };

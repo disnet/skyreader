@@ -1152,6 +1152,9 @@ export interface RoomItem {
   author?: string;
   description?: string;
   image?: string;
+  /** when this article joined the collection (ISO), off its membership record;
+   *  absent on a record that carries no timestamp */
+  addedAt?: string;
   /** COUNT(DISTINCT reader) of reads made through this room's surface */
   readCount: number;
   readByMe: boolean;

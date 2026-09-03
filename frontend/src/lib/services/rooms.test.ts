@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { collectionOwnerDid, collectionPageLink, resolveRoomInput } from './rooms';
+import {
+  collectionOwnerDid,
+  collectionPageLink,
+  fetchRoomMemberCount,
+  resolveRoomInput,
+} from './rooms';
 
 const COLLECTION_URI = 'at://did:plc:abc123/network.cosmik.collection/3muahss6xki2b';
 
@@ -52,6 +57,44 @@ describe('resolveRoomInput', () => {
     expect(await resolveRoomInput('at://did:plc:abc123/only-two')).toBeNull();
     expect(await resolveRoomInput('https://semble.so/url/whatever')).toBeNull();
     expect(await resolveRoomInput('https://example.com/profile/x/collections/y')).toBeNull();
+  });
+});
+
+describe('fetchRoomMemberCount', () => {
+  it('asks Constellation for distinct joiners of this collection', async () => {
+    const fetchMock = vi.fn(
+      async (_input: string) => new Response(JSON.stringify({ total: 4 }), { status: 200 })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await fetchRoomMemberCount(COLLECTION_URI)).toBe(4);
+    const url = new URL(fetchMock.mock.calls[0]![0]);
+    expect(url.pathname).toBe('/links/count/distinct-dids');
+    expect(url.searchParams.get('target')).toBe(COLLECTION_URI);
+    expect(url.searchParams.get('collection')).toBe('app.skyreader.reading.readAlong');
+    expect(url.searchParams.get('path')).toBe('.subject');
+  });
+
+  it('reports null, not zero, when the lookup fails', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('nope', { status: 500 }))
+    );
+    expect(await fetchRoomMemberCount(COLLECTION_URI)).toBeNull();
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('offline');
+      })
+    );
+    expect(await fetchRoomMemberCount(COLLECTION_URI)).toBeNull();
+
+    // A well-formed response with no usable total is the same non-answer.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({}), { status: 200 }))
+    );
+    expect(await fetchRoomMemberCount(COLLECTION_URI)).toBeNull();
   });
 });
 
