@@ -3009,6 +3009,17 @@ export function createApp(db: Database, config: AppConfig) {
 
           if (!isErrorPlaceholder) {
             const firehose = getFirehoseStatus();
+            // The list floor belongs to the row, not to a branch. Coverage is
+            // evaluated per request and a spliced author can lose it (a
+            // half-open stream, or falling out of the active set between
+            // reconciles) while `fetched_at` stays fresh from the splices that
+            // already landed. Deciding the floor inside the covered branch left
+            // exactly that row with no re-list trigger at all — every other
+            // clock here and in the warm loop reads `fetched_at`, which is the
+            // one splices bump — so it sat past the floor indefinitely, with no
+            // error to show for it. That is what the frozen-author alert fires
+            // on.
+            const listStale = listedAge > firehoseRelistMs;
             if (firehose.healthy && firehose.isSubscribed(did)) {
               // The firehose is keeping this author current, so age no longer
               // implies staleness — serve the cache and skip the re-list. But the
@@ -3018,11 +3029,14 @@ export function createApp(db: Database, config: AppConfig) {
               // splices keep bumping `fetched_at` so the age check below never
               // gets a turn. Re-list on a slow floor to close those holes.
               documents = stale;
-              if (listedAge > firehoseRelistMs) {
+              if (listStale) {
                 triggerBackgroundDocumentRefresh(did, cached);
               }
             } else if (age < cacheTtlMs) {
               documents = stale;
+              if (listStale) {
+                triggerBackgroundDocumentRefresh(did, cached);
+              }
             } else if (age < staleTtlMs) {
               documents = stale;
               triggerBackgroundDocumentRefresh(did, cached);

@@ -868,6 +868,47 @@ describe('POST /documents firehose-covered re-list floor', () => {
     expect(inFlightDocs.size).toBe(0);
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  // The floor above lives inside the firehose-covered branch, so it only fires
+  // for an author the stream is watching *at the moment of the request*. An
+  // author can be spliced and then stop being covered — the stream goes
+  // half-open, or they fall out of the active set between reconciles — while
+  // `fetched_at` stays fresh from those earlier splices. Every remaining clock
+  // is `fetched_at`-based (the TTL branches here, and the warm loop's due-scan),
+  // so nothing re-lists them and nothing errors: the row sits past the floor
+  // forever. This is the "frozen document author" the ops alert fires on.
+  it('re-lists a spliced author the firehose is no longer covering', async () => {
+    const { db, app, inFlightDocs } = createTestApp({
+      firehoseRelistMs: 60_000,
+      getFirehoseStatus: () => ({ healthy: false, isSubscribed: () => false }),
+    });
+    const now = Date.now();
+    insertDocCache(db, {
+      documents: [proxyDoc({ recordUri: 'spliced', title: 'Spliced' })],
+      // Splices kept the content clock current; the list clock is way past the
+      // floor. Inside cacheTtlMs, so the age branches serve cache and stop.
+      fetchedAt: now - 1_000,
+      listedAt: now - 10 * 60_000,
+      lastRequestedAt: now,
+    });
+    fetchMock = mockAtprotoFetch({
+      docs: [docRecord('missed', { site: PUB_URI, title: 'Missed' })],
+    });
+
+    const json = (await (await postDocuments(app, [{ did: AUTHOR }])).json()) as {
+      authors: Array<{ status: string; documents: ProxyDocument[] }>;
+    };
+    // Served from cache, as before — the re-list is background either way.
+    expect(json.authors[0].status).toBe('ready');
+    expect(json.authors[0].documents.map((d) => d.title)).toEqual(['Spliced']);
+
+    expect(inFlightDocs.size).toBeGreaterThan(0);
+    await Promise.all(inFlightDocs.values());
+    const row = db
+      .query<{ listed_at: number }, [string]>('SELECT listed_at FROM document_cache WHERE did = ?')
+      .get(AUTHOR);
+    expect(row!.listed_at).toBeGreaterThanOrEqual(now);
+  });
 });
 
 describe('document cache repair guards', () => {
