@@ -477,8 +477,21 @@ a heartbeat that never arrives is configuration, not a restart.
 The admin's **Document Sync** tile and proxy `/stats` → `documents` cover the
 Jetstream lane used by standard.site/Leaflet publications. `frozen > 0` means an
 actively read author has not had a full PDS re-list for more than twice the
-24-hour floor; `inBackoff > 0` explains why a repair is waiting. A persistent
-frozen count emits the `proxy-document-cache-frozen` alert.
+24-hour floor; `inBackoff > 0` explains why a repair is waiting.
+
+The `proxy-document-cache-frozen` alert fires when **3 or more** authors are
+frozen, or when frozen authors are **25% or more** of the active ones (whichever
+trips first), on two consecutive five-minute samples, and then reminds once a
+day while it holds. A count of one or two is a warning on the tile and nothing on
+the wire: each is a bounded gap in a single publication's list, and every
+serve-from-cache path in the proxy now re-lists a row past the floor, so a
+straggler heals on that author's next poll. What the threshold is actually asking
+is whether re-listing has stopped working at all.
+
+That is a change from `frozen > 0` re-alerting every 30 minutes, which is what a
+single stuck author did for two days in September 2026 — 93 events for a
+condition nobody could act on. If you find yourself tuning this again, the
+question to ask is step 2 of the pruning pass: did it require action?
 
 On the production proxy, inspect the affected author before changing it:
 
@@ -774,4 +787,5 @@ regression. The steady state to protect is a quiet phone that you still trust.
 
 | Date        | Change                                                       | Why |
 | ----------- | ------------------------------------------------------------ | --- |
+| 2026-09-03  | `proxy-document-cache-frozen`: threshold `frozen > 0` → 3 authors or 25% of active; re-alert 30m → 24h. | One stuck author fired 93 events over two days with no action available. Root cause fixed in the proxy the same day (the re-list floor was only checked on the firehose-covered path). |
 | _(pending)_ | First pass due 2–4 weeks after the §2 checks are configured. | —   |

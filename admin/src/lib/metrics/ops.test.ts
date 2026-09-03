@@ -126,6 +126,22 @@ describe('ops tiles', () => {
     expect(fresh(null)).toBe('warning');
   });
 
+  it('grades frozen document authors by whether re-listing looks broken', () => {
+    // The tile is graded the way the backend's alert is graded: a straggler is
+    // visible without being an emergency, so the red keeps meaning something.
+    const sync = (frozen: number, active: number) => {
+      const s = status();
+      s.proxy!.value.documentAuthorsFrozen = frozen;
+      s.proxy!.value.documentAuthorsActive = active;
+      return tile(opsMetricsFrom(s, NOW), 'Document Sync').status;
+    };
+    expect(sync(0, 296)).toBe('healthy');
+    expect(sync(1, 296)).toBe('warning');
+    expect(sync(3, 296)).toBe('error');
+    // Small population: two of four is systemic even at a low absolute count.
+    expect(sync(2, 4)).toBe('error');
+  });
+
   it('renders a full set of tiles before the cron has ever run', () => {
     const metrics = opsMetricsFrom({ cron: null, poller: null, proxy: null }, NOW);
     expect(metrics).toHaveLength(7);

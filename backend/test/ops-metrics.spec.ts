@@ -9,8 +9,11 @@ import {
   recordCronRun,
   writeMetricsSnapshot,
   runRecordingStep,
+  decideFrozenAlert,
   FIREHOSE_LAG_ALERT_MS,
   FIREHOSE_LAG_REALERT_MS,
+  DOCUMENT_FROZEN_MIN_AUTHORS,
+  DOCUMENT_FROZEN_REALERT_MS,
   SNAPSHOT_RETENTION_MS,
   type PollerStatusValue,
   type ProxyStatsValue,
@@ -113,6 +116,122 @@ describe('firehose lag alerting', () => {
   });
 });
 
+// The threshold this replaced was `frozen > 0`, which made one stuck author out
+// of ~300 re-announce itself every half hour for two days. An alert nobody can
+// act on is an alert people learn to scroll past, which is the failure mode the
+// pruning ritual in the runbook exists to prevent.
+describe('document cache frozen alerting', () => {
+  const now = 10_000_000;
+  /** Frozen twice running, which is the precondition for any alert at all. */
+  const settled = (frozen: number, active: number, at: number | null = null) =>
+    decideFrozenAlert({ frozen, active }, { frozen, active }, at, now);
+
+  it('stays quiet for a straggler or two in a healthy population', () => {
+    // Each of these is a real, bounded gap in one author's list, and the
+    // per-request floor re-list heals it on the next poll.
+    expect(settled(1, 296).alert).toBe(false);
+    expect(settled(2, 296).alert).toBe(false);
+  });
+
+  it('alerts once re-listing looks broken rather than unlucky', () => {
+    expect(settled(DOCUMENT_FROZEN_MIN_AUTHORS, 296).alert).toBe(true);
+  });
+
+  it('alerts below the floor when the frozen share is large', () => {
+    // A quiet environment: two of four authors frozen is systemic even though
+    // an absolute count of two says nothing on its own.
+    expect(settled(2, 4).alert).toBe(true);
+    expect(settled(1, 100).alert).toBe(false);
+  });
+
+  it('needs two samples to agree before it fires', () => {
+    // A sample taken while a legitimate re-list is in flight can read high.
+    expect(
+      decideFrozenAlert({ frozen: 50, active: 296 }, { frozen: 0, active: 296 }, null, now).alert
+    ).toBe(false);
+    expect(
+      decideFrozenAlert({ frozen: 50, active: 296 }, { frozen: 50, active: 296 }, null, now).alert
+    ).toBe(true);
+  });
+
+  it('measures the previous sample against the threshold, not against zero', () => {
+    // The steady state this floor tolerates is a straggler or two, so a
+    // previous sample of 1 is the normal case, not evidence of agreement.
+    expect(
+      decideFrozenAlert({ frozen: 50, active: 296 }, { frozen: 1, active: 296 }, null, now).alert
+    ).toBe(false);
+    // Two consecutive samples over the ratio agree even in a tiny population,
+    // where the previous count is far below the absolute floor.
+    expect(
+      decideFrozenAlert({ frozen: 2, active: 4 }, { frozen: 2, active: 4 }, null, now).alert
+    ).toBe(true);
+  });
+
+  it('reminds daily, not every five minutes, while the condition holds', () => {
+    const first = settled(10, 296);
+    expect(first.alert).toBe(true);
+    expect(first.frozenAlertAt).toBe(now);
+
+    const held = { frozen: 10, active: 296 };
+    const fiveMinutes = decideFrozenAlert(held, held, first.frozenAlertAt, now + 5 * 60_000);
+    expect(fiveMinutes.alert).toBe(false);
+    expect(fiveMinutes.frozenAlertAt).toBe(now);
+
+    // What the old 30-minute cadence would have done, and no longer does.
+    const halfHour = decideFrozenAlert(held, held, first.frozenAlertAt, now + 30 * 60_000);
+    expect(halfHour.alert).toBe(false);
+
+    const nextDay = decideFrozenAlert(
+      held,
+      held,
+      first.frozenAlertAt,
+      now + DOCUMENT_FROZEN_REALERT_MS
+    );
+    expect(nextDay.alert).toBe(true);
+  });
+
+  it('clears the stamp on recovery so a fresh outbreak alerts immediately', () => {
+    const recovered = decideFrozenAlert(
+      { frozen: 0, active: 296 },
+      { frozen: 10, active: 296 },
+      now,
+      now + 60_000
+    );
+    expect(recovered).toEqual({ alert: false, frozenAlertAt: null });
+
+    expect(
+      decideFrozenAlert(
+        { frozen: 10, active: 296 },
+        { frozen: 10, active: 296 },
+        recovered.frozenAlertAt,
+        now + 120_000
+      ).alert
+    ).toBe(true);
+  });
+
+  it('keeps the stamp while the count dips under the threshold', () => {
+    // Otherwise a condition oscillating around the line re-announces itself
+    // every time it crosses back over.
+    const dipped = decideFrozenAlert(
+      { frozen: 1, active: 296 },
+      { frozen: 1, active: 296 },
+      now,
+      now + 60_000
+    );
+    expect(dipped.alert).toBe(false);
+    expect(dipped.frozenAlertAt).toBe(now);
+
+    expect(
+      decideFrozenAlert(
+        { frozen: 10, active: 296 },
+        { frozen: 10, active: 296 },
+        dipped.frozenAlertAt,
+        now + 120_000
+      ).alert
+    ).toBe(false);
+  });
+});
+
 describe('recordPollerStatus', () => {
   it('stores lag, last-cycle counts and alarm state', async () => {
     const value = await recordPollerStatus(envWithPollerStatus(pollerStatusBody(30_000)), 5000);
@@ -188,6 +307,28 @@ describe('recordProxyStats', () => {
 
     const row = await readSystemStatus<ProxyStatsValue>(env as Env, 'proxy_stats');
     expect(row?.value.total).toBe(200);
+  });
+
+  it('keeps a single frozen author off the wire', async () => {
+    // The shape that produced 93 events: one stuck author out of ~300, sampled
+    // every five minutes. It is recorded, and the admin tile shows it; it is
+    // not an alert.
+    const proxyEnv = { ...env, FEED_PROXY_URL: 'https://proxy.example' } as Env;
+    const body = () =>
+      new Response(JSON.stringify({ total: 1, fresh: 1, documents: { active: 296, frozen: 1 } }));
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => body());
+    const reported = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await recordProxyStats(proxyEnv, 1_000);
+    const value = await recordProxyStats(proxyEnv, 1_000 + 5 * 60_000);
+
+    expect(value.documentAuthorsFrozen).toBe(1);
+    expect(value.documentFrozenAlertAt).toBeNull();
+    expect(
+      reported.mock.calls.some(
+        ([entry]) => (entry as { event?: string })?.event === 'document_cache_frozen'
+      )
+    ).toBe(false);
   });
 
   it('reports an unknown fresh percentage for an empty cache rather than 0%', async () => {

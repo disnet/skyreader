@@ -34,6 +34,36 @@ export const FIREHOSE_LAG_REALERT_MS = 30 * 60 * 1000;
 /** The proxy is a different host on a different cloud; fail fast, don't hang. */
 const PROXY_STATS_TIMEOUT_MS = 3000;
 
+/**
+ * How many actively-read authors must be past the re-list floor before that is
+ * worth an alert.
+ *
+ * `> 0` was a single-row tripwire: one stuck author out of ~300 re-announced
+ * itself every half hour for days, which is how a real signal becomes furniture.
+ * One frozen author is a bounded gap in one publication's list, and the
+ * per-request floor re-list now heals it on the next poll (feed-proxy's
+ * `listStale` check) — the admin's Document Sync tile still shows the count for
+ * anyone looking. What no single row can tell you is whether *re-listing itself*
+ * has stopped working, and that is what this alert is for.
+ */
+export const DOCUMENT_FROZEN_MIN_AUTHORS = 3;
+
+/**
+ * …unless the frozen authors are a large share of the active ones. The floor
+ * above assumes a population big enough for three rows to mean something; in a
+ * small environment (staging, a quiet week) two frozen out of four is already
+ * systemic. Whichever condition trips first wins.
+ */
+export const DOCUMENT_FROZEN_RATIO = 0.25;
+
+/**
+ * Frozen authors are a slow condition measured against a 24-hour floor, not an
+ * outage. Borrowing the firehose's 30-minute reminder cadence is what turned a
+ * persistent one into 93 events; a stuck re-list is still stuck tomorrow, and
+ * saying so once a day is enough to keep it from being forgotten.
+ */
+export const DOCUMENT_FROZEN_REALERT_MS = 24 * 60 * 60 * 1000;
+
 const HOUR_MS = 60 * 60 * 1000;
 export const SNAPSHOT_RETENTION_MS = 90 * 24 * HOUR_MS;
 
@@ -161,6 +191,62 @@ export function decideLagAlert(
   return { alert: false, recovered: false, lagAlertAt: previousAlertAt };
 }
 
+export interface FrozenAlertDecision {
+  /** Send an event now. */
+  alert: boolean;
+  /** The dedupe stamp to persist. */
+  frozenAlertAt: number | null;
+}
+
+/** One five-minute reading of the proxy's document-author counts. */
+export interface FrozenSample {
+  frozen: number;
+  active: number;
+}
+
+/** Does this one sample look like re-listing has stopped working? */
+function overFrozenThreshold({ frozen, active }: FrozenSample): boolean {
+  return (
+    frozen >= DOCUMENT_FROZEN_MIN_AUTHORS ||
+    (active > 0 && frozen / active >= DOCUMENT_FROZEN_RATIO)
+  );
+}
+
+/**
+ * Is the document cache's frozen count worth saying out loud?
+ *
+ * Pure, for the same reason `decideLagAlert` is: the interesting behaviour is
+ * "trips at the threshold, reminds daily, resets on recovery", and none of that
+ * needs a clock or a database to test.
+ *
+ * Two samples still have to agree before anything fires. A frozen row is only
+ * frozen relative to a floor, so a single sample taken while a legitimate
+ * re-list is in flight can read high; requiring the previous sample to agree
+ * costs five minutes of delay and drops that whole class of false positive.
+ * Both samples are judged against the same threshold — asking only whether the
+ * previous count was non-zero would concede the guard entirely, since the
+ * steady state this floor was raised to tolerate is one or two frozen rows.
+ */
+export function decideFrozenAlert(
+  sample: FrozenSample,
+  previous: FrozenSample,
+  previousAlertAt: number | null,
+  now: number
+): FrozenAlertDecision {
+  if (sample.frozen === 0) return { alert: false, frozenAlertAt: null };
+
+  // Below the threshold the count is still real and still displayed; it just
+  // isn't news. Keep any existing stamp so a condition that dips under the line
+  // and back over it doesn't re-announce itself early.
+  if (!overFrozenThreshold(sample) || !overFrozenThreshold(previous)) {
+    return { alert: false, frozenAlertAt: previousAlertAt };
+  }
+  if (previousAlertAt === null || now - previousAlertAt >= DOCUMENT_FROZEN_REALERT_MS) {
+    return { alert: true, frozenAlertAt: now };
+  }
+  return { alert: false, frozenAlertAt: previousAlertAt };
+}
+
 /**
  * Read the poller's own status, store it, and push an alert when the firehose has
  * fallen far enough behind that waiting for someone to open the admin isn't good
@@ -266,16 +352,25 @@ export async function recordProxyStats(env: Env, now = Date.now()): Promise<Prox
     documentFrozenAlertAt: previous?.value.documentFrozenAlertAt ?? null,
   };
 
-  const frozenStayedHigh =
-    value.documentAuthorsFrozen > 0 && (previous?.value.documentAuthorsFrozen ?? 0) > 0;
-  const shouldAlert =
-    frozenStayedHigh &&
-    (!value.documentFrozenAlertAt || now - value.documentFrozenAlertAt >= FIREHOSE_LAG_REALERT_MS);
-  if (value.documentAuthorsFrozen === 0) value.documentFrozenAlertAt = null;
-  else if (shouldAlert) value.documentFrozenAlertAt = now;
+  const decision = decideFrozenAlert(
+    { frozen: value.documentAuthorsFrozen, active: value.documentAuthorsActive },
+    {
+      frozen: previous?.value.documentAuthorsFrozen ?? 0,
+      active: previous?.value.documentAuthorsActive ?? 0,
+    },
+    value.documentFrozenAlertAt,
+    now
+  );
+  value.documentFrozenAlertAt = decision.frozenAlertAt;
 
   await writeSystemStatus(env, 'proxy_stats', value, now);
-  if (shouldAlert) {
+  if (decision.alert) {
+    log.warn('document_cache_frozen', {
+      frozen: value.documentAuthorsFrozen,
+      active: value.documentAuthorsActive,
+      inBackoff: value.documentAuthorsInBackoff,
+      minAuthors: DOCUMENT_FROZEN_MIN_AUTHORS,
+    });
     reportMessage('Actively read document authors are past the re-list floor', {
       level: 'warning',
       fingerprint: ['proxy-document-cache-frozen'],
