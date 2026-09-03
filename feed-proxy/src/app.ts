@@ -364,7 +364,10 @@ const EXTRACT_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 // past those items in the monotonic feed cursor.
 //   0: cache rows created before parser output was versioned
 //   1: TeX feed delimiters converted to native MathML
-export const FEED_PARSER_VERSION = 1;
+//   2: summary derived from an over-cap body when the feed supplies none —
+//      without the re-parse, items already in the archive keep the empty body
+//      they were stored with, since an unchanged hash is never re-pushed
+export const FEED_PARSER_VERSION = 2;
 
 // Version tag for extractArticle's output. A cached extraction is only reused
 // when its stored version matches this constant, so bumping it here retires

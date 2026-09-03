@@ -354,6 +354,27 @@ describe('feed timeline (D1 ingest + serve)', () => {
       expect(parsedSmall.content).toBe('tiny');
       expect(parsedSmall.contentTruncated).toBeUndefined();
     });
+
+    it('derives a summary from a dropped body when the item has none', async () => {
+      // An Atom feed shipping a full <content> and no <summary> used to leave the
+      // archive with no text at all for the item — a blank card in the reader.
+      const body =
+        '<p>Opening sentence of the article body.</p>' +
+        '<script>ignore()</script>' +
+        `<p>${'and more prose '.repeat(700)}</p>`;
+      await ingest(FEED_A, [{ item: item('no-summary', { content: body }), contentHash: 'hns' }]);
+
+      const row = await env.DB.prepare('SELECT item_json FROM feed_items WHERE guid = ?')
+        .bind('no-summary')
+        .first<{ item_json: string }>();
+      const parsed = JSON.parse(row!.item_json);
+      expect(parsed.content).toBeUndefined();
+      expect(parsed.contentTruncated).toBe(true);
+      expect(parsed.summary).toContain('Opening sentence of the article body.');
+      expect(parsed.summary).not.toContain('ignore()');
+      expect(parsed.summary).not.toContain('<');
+      expect(parsed.summary.length).toBeLessThanOrEqual(401);
+    });
   });
 
   describe('pull-through ingest (proxy feed → archive)', () => {

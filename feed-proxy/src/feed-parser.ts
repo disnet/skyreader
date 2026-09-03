@@ -24,6 +24,31 @@ const HEX_ENTITY_PATTERN = /&#x([0-9a-f]+);/gi;
 // source publishes <= MAX_ITEMS_TO_PARSE items per warm-refresh interval.
 const MAX_ITEMS_TO_PARSE = 100;
 
+// Bodies above this are stored in the archive WITHOUT their content — the
+// Worker's `MAX_ITEM_CONTENT_BYTES` (backend/src/routes/ingest.ts) drops them and
+// keeps "summary/title/url/image". A feed that ships a full body and no
+// <summary>/<description> (anildash.com, and every Atom generator that omits it)
+// therefore left NOTHING behind: no preview in the list, no body offline, no word
+// count — a blank card, recoverable only by an on-open extraction. So derive a
+// summary from the body that is about to be dropped.
+//
+// The threshold mirrors that cap deliberately rather than excerpting everything:
+// an item whose body the archive keeps in full is not broken, and giving it a
+// summary would duplicate its opening paragraph in every stored copy and change
+// its content hash — re-pushing millions of healthy rows to fix nothing.
+const CONTENT_EXCERPT_THRESHOLD_BYTES = 8 * 1024;
+
+// Long enough to read as a real preview (a feed-supplied <description> is
+// typically one or two sentences), short enough that it costs nothing next to the
+// body it stands in for.
+const EXCERPT_MAX_CHARS = 400;
+
+const HTML_COMMENT_PATTERN = /<!--[\s\S]*?-->/g;
+const SCRIPT_STYLE_PATTERN = /<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi;
+const TAG_PATTERN = /<[^>]*>/g;
+// A `&`-run left dangling by the cut: rendering it would show `&amp` or `&#82`.
+const PARTIAL_ENTITY_PATTERN = /&[#a-z0-9]*$/i;
+
 const parser = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: '@_',
@@ -74,6 +99,58 @@ export function parseFeed(content: string, feedUrl: string): ParsedFeed {
   throw new Error(`Unknown feed format. Root elements: ${keys || 'none'}`);
 }
 
+/**
+ * A plain-text preview of an item's body. Tags become spaces so words either
+ * side of one don't fuse, script/style bodies and comments are dropped outright,
+ * and the cut lands on a word boundary.
+ *
+ * Entity sequences are left encoded on purpose: this becomes `summary`, which is
+ * rendered as HTML downstream exactly like a feed-supplied one, so `&amp;` must
+ * stay `&amp;`. Only a partial entity stranded by the cut is trimmed.
+ */
+export function excerptFromContent(content: string, maxChars = EXCERPT_MAX_CHARS): string {
+  const text = content
+    .replace(HTML_COMMENT_PATTERN, ' ')
+    .replace(SCRIPT_STYLE_PATTERN, ' ')
+    .replace(TAG_PATTERN, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (text.length <= maxChars) return text;
+
+  const cut = text.slice(0, maxChars);
+  const lastSpace = cut.lastIndexOf(' ');
+  // Only honour the word boundary if one exists reasonably near the end; a body
+  // with no spaces in its first `maxChars` (CJK, a long URL) is cut where it is.
+  const head = (lastSpace > maxChars / 2 ? cut.slice(0, lastSpace) : cut)
+    .replace(PARTIAL_ENTITY_PATTERN, '')
+    .trimEnd();
+  return head ? `${head}…` : '';
+}
+
+/** Byte length without encoding the whole string when the answer is obvious. */
+function exceedsExcerptThreshold(content: string): boolean {
+  // UTF-8 never uses fewer bytes than the string has UTF-16 code units, and never
+  // more than three per unit, so only the ambiguous band needs the encoder.
+  if (content.length > CONTENT_EXCERPT_THRESHOLD_BYTES) return true;
+  if (content.length * 3 <= CONTENT_EXCERPT_THRESHOLD_BYTES) return false;
+  return new TextEncoder().encode(content).length > CONTENT_EXCERPT_THRESHOLD_BYTES;
+}
+
+/**
+ * The item's own summary when the feed supplies one, otherwise an excerpt of a
+ * body large enough that the archive will drop it (see
+ * CONTENT_EXCERPT_THRESHOLD_BYTES). Never fabricates a summary for a body that
+ * survives storage intact.
+ */
+function resolveSummary(
+  summary: string | undefined,
+  content: string | undefined
+): string | undefined {
+  if (summary) return summary;
+  if (!content || !exceedsExcerptThreshold(content)) return undefined;
+  return excerptFromContent(content) || undefined;
+}
+
 function parseJsonFeed(json: any, feedUrl: string): ParsedFeed {
   const items: FeedItem[] = [];
   const jsonItems = json.items || [];
@@ -85,7 +162,7 @@ function parseJsonFeed(json: any, feedUrl: string): ParsedFeed {
     const guid = item.id || url || generateGuid(title);
     const author = item.author?.name || item.authors?.[0]?.name;
     const content = convertLatexToMathML(item.content_html || item.content_text);
-    const summary = convertLatexToMathML(item.summary);
+    const summary = resolveSummary(convertLatexToMathML(item.summary), content);
     const imageUrl = item.image || item.banner_image;
     const pubDate = item.date_published || item.date_modified;
 
@@ -124,7 +201,7 @@ function parseRssFeed(channel: any, feedUrl: string): ParsedFeed {
     const content = convertLatexToMathML(
       getText(item['content:encoded']) || getText(item.description)
     );
-    const summary = convertLatexToMathML(getText(item.description));
+    const summary = resolveSummary(convertLatexToMathML(getText(item.description)), content);
     const pubDate = getText(item.pubDate) || getText(item['dc:date']);
     const imageUrl = extractRssItemImage(item);
 
@@ -162,7 +239,7 @@ function parseAtomFeed(feed: any, feedUrl: string): ParsedFeed {
     const guid = getText(entry.id) || url || generateGuid(title);
     const author = entry.author?.name ? getText(entry.author.name) : undefined;
     const content = convertLatexToMathML(getText(entry.content) || getText(entry.summary));
-    const summary = convertLatexToMathML(getText(entry.summary));
+    const summary = resolveSummary(convertLatexToMathML(getText(entry.summary)), content);
     const updated = getText(entry.updated) || getText(entry.published);
 
     items.push({
@@ -201,7 +278,7 @@ function parseRdfFeed(rdf: any, feedUrl: string): ParsedFeed {
     const content = convertLatexToMathML(
       getText(item['content:encoded']) || getText(item.description)
     );
-    const summary = convertLatexToMathML(getText(item.description));
+    const summary = resolveSummary(convertLatexToMathML(getText(item.description)), content);
     const pubDate = getText(item['dc:date']);
 
     items.push({

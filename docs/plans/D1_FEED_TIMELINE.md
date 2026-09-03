@@ -46,7 +46,11 @@ read state (`getReadKeys`). Now:
   authenticated by a constant-time compare against `FEED_PROXY_SECRET` and **fail-closed** when
   it is unset. Idempotent upsert (edit-in-place keeps the seq), per-item content cap
   (`MAX_ITEM_CONTENT_BYTES = 8 KB`, drops `content` and sets `contentTruncated`), and the per-feed
-  `SANITY_CAP = 5000` trim — the only pruning that ever runs. Both endpoints stamp a **crawler
+  `SANITY_CAP = 5000` trim — the only pruning that ever runs. A dropped body always leaves a
+  `summary` behind: the proxy's parser derives one for any over-cap body whose feed supplies none
+  (`CONTENT_EXCERPT_THRESHOLD_BYTES` in `feed-proxy/src/feed-parser.ts`), and `capItemContent`
+  derives one itself if the item still arrives without. Storing an item with neither content nor
+  summary is what made full-text Atom feeds render as blank cards. Both endpoints stamp a **crawler
   heartbeat** (`sync_state.crawler_heartbeat_at`); the crawl-set pull runs every 5 minutes, so the
   stamp is fresh even when no feed produced an item.
 - `routes/timeline.ts`: `GET /api/v2/timeline?since_seq=&generation=&limit=&cold_offset=` —

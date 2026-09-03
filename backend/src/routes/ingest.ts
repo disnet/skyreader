@@ -121,11 +121,47 @@ function badRequest(message: string, status = 400): Response {
   });
 }
 
+// Length of the summary derived below. Matches EXCERPT_MAX_CHARS in the proxy's
+// feed-parser.ts, which normally gets there first.
+const DERIVED_SUMMARY_MAX_CHARS = 400;
+
+/**
+ * Last-resort preview for a body about to be dropped. The proxy's parser already
+ * derives one at parse time; this covers the item that arrives without it (an
+ * older proxy build, a body that grew past the cap after its summary was
+ * resolved) so "summary/title/url/image kept" is never vacuously true.
+ *
+ * Entities stay encoded — `summary` is rendered as HTML downstream, exactly like
+ * a feed-supplied one.
+ */
+function deriveSummary(content: string): string {
+  const text = content
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, ' ')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (text.length <= DERIVED_SUMMARY_MAX_CHARS) return text;
+  const cut = text.slice(0, DERIVED_SUMMARY_MAX_CHARS);
+  const lastSpace = cut.lastIndexOf(' ');
+  const head = (lastSpace > DERIVED_SUMMARY_MAX_CHARS / 2 ? cut.slice(0, lastSpace) : cut)
+    // Drop an `&`-run stranded by the cut, which would render as `&amp`.
+    .replace(/&[#a-z0-9]*$/i, '')
+    .trimEnd();
+  return head ? `${head}…` : '';
+}
+
 /**
  * Apply the stored-content cap. Returns the item to persist: unchanged when it
  * fits, otherwise the same item with `content` dropped and `contentTruncated`
  * set. `content_hash` is computed by the proxy over the FULL item, so truncation
  * never confuses edit detection.
+ *
+ * An item with no summary of its own gets one derived from the body being
+ * dropped. Without it such an item is stored with no text at all — the reader
+ * has nothing to preview in the list, nothing to show offline, and no word count
+ * (Atom feeds that ship a full <content> and no <summary> are the common case),
+ * and only an on-open extraction can recover the article.
  */
 export function capItemContent(item: FeedItem): FeedItem {
   const content = item.content;
@@ -134,7 +170,8 @@ export function capItemContent(item: FeedItem): FeedItem {
   const bytes = new TextEncoder().encode(content).length;
   if (bytes <= MAX_ITEM_CONTENT_BYTES) return item;
   const { content: _dropped, ...rest } = item;
-  return { ...rest, contentTruncated: true };
+  const summary = rest.summary || deriveSummary(content) || undefined;
+  return { ...rest, summary, contentTruncated: true };
 }
 
 /**
