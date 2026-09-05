@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:test';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { syncSubscriptions } from '../src/services/subscription-sync';
+import { MAX_SYNC_BACKFILLS } from '../src/services/document-store';
 import { upsertSubscriptionFromFirehose } from '../src/services/firehose-subscription';
 import type { Session } from '../src/types';
 
@@ -144,6 +145,65 @@ describe('Subscription Sync', () => {
         .all();
 
       expect(localRecords.results).toHaveLength(1);
+    });
+
+    // The restore-from-the-Atmosphere case: the PDS records survived, the local
+    // rows didn't. Documents are served from D1 now, so a restored linkblog whose
+    // author nobody has listed polls `status:'error'` until something lists them —
+    // and this path can restore far more of them at once than a subscribe does,
+    // which is why only the first few are warmed here.
+    it('warms a bounded number of restored linkblogs and leaves the rest to the reconcile', async () => {
+      const session = createTestSession();
+      const authors = ['did:plc:author1', 'did:plc:author2', 'did:plc:author3'];
+      const pdsRecords = authors.map((did, i) => ({
+        uri: `at://${TEST_DID}/${COLLECTION}/doc${i}`,
+        cid: `bafyreidoc${i}`,
+        value: {
+          $type: COLLECTION,
+          feedUrl: `at://${did}/site.standard.publication/pub`,
+          title: `Linkblog ${i}`,
+          sourceType: 'atproto.documents',
+          subjectDid: did,
+          createdAt: new Date().toISOString(),
+        },
+      }));
+
+      globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+        if (String(url).includes('plc.directory')) {
+          return {
+            ok: true,
+            headers: new Headers(),
+            json: async () => ({
+              service: [
+                {
+                  id: '#atproto_pds',
+                  type: 'AtprotoPersonalDataServer',
+                  serviceEndpoint: 'https://pds.example',
+                },
+              ],
+            }),
+          };
+        }
+        if (String(url).includes('site.standard.document')) {
+          return { ok: true, headers: new Headers(), json: async () => ({ records: [] }) };
+        }
+        return { ok: true, headers: new Headers(), json: async () => ({ records: pdsRecords }) };
+      });
+
+      const scheduled: Promise<unknown>[] = [];
+      const result = await syncSubscriptions(session, env, undefined, (p) => scheduled.push(p));
+      await Promise.all(scheduled);
+
+      expect(result.pulledFromPds).toBe(3);
+      // Two walks ran now; the third author has no bookkeeping row at all, which
+      // is what puts them at the front of the reconcile queue.
+      const listed = await env.DB.prepare(
+        'SELECT author_did FROM document_authors WHERE last_listed_at IS NOT NULL'
+      ).all<{ author_did: string }>();
+      expect(listed.results?.length).toBe(MAX_SYNC_BACKFILLS);
+      expect(scheduled.length).toBe(MAX_SYNC_BACKFILLS);
+
+      await env.DB.prepare('DELETE FROM document_authors').run();
     });
   });
 

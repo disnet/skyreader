@@ -1,6 +1,18 @@
 import * as Sentry from '@sentry/cloudflare';
 import type { Env } from '../types';
 import { upsertSubscriptionFromFirehose } from '../services/firehose-subscription';
+import {
+  createDocumentApplyContext,
+  createDocumentDrain,
+  createQueryLedger,
+  ensureAuthorDocuments,
+  subscribedDocumentAuthors,
+  CYCLE_BACKFILL_QUERY_BUDGET,
+  MAX_CYCLE_BACKFILLS,
+  type DocumentCommitEvent,
+} from '../services/document-store';
+import { readDocumentFlags, type DocumentFlags } from '../services/document-flags';
+import { DOCUMENT_COLLECTION, READER_COLLECTION } from '../services/standard-site';
 import { sentryOptions, reportError } from '../observability/sentry';
 import { log, serializeError } from '../utils/logger';
 import { runWithRequestContext } from '../utils/request-context';
@@ -15,7 +27,9 @@ interface JetstreamEvent {
     operation: 'create' | 'update' | 'delete';
     collection: string;
     rkey: string;
-    // Only `app.skyreader.feed.subscription` records reach this DO now.
+    // Subscription records are read field-by-field here; document and
+    // reader-collection records are handed to the document store whole, which owns
+    // their shapes (`DocumentRecord` / `CollectionRecord`).
     record?: {
       $type: string;
       feedUrl?: string;
@@ -29,8 +43,22 @@ interface JetstreamEvent {
   };
 }
 
+interface DocumentPollStats {
+  processed: number;
+  errors: number;
+  /** The cycle stopped on the apply cap rather than on an empty stream. */
+  capped: boolean;
+  /** Consecutive capped cycles — a burst is 1–2, a flood keeps climbing. */
+  capStreak: number;
+  /** Authors in the connect-time `wantedDids` filter. */
+  authors: number;
+  /** The `documents_ingest_enabled` kill switch is off. */
+  skipped: boolean;
+}
+
 interface PollStats {
   subscriptions: { processed: number; errors: number };
+  documents: DocumentPollStats;
   duration: number;
   lastPollAt: number;
 }
@@ -40,6 +68,39 @@ const POLL_TIMEOUT_MS = 8000; // 8 seconds per stream
 const IDLE_TIMEOUT_MS = 2000; // 2 seconds without events = caught up
 const ALARM_INTERVAL_MS = 60000; // 60 seconds between polls
 
+/**
+ * Above this many subscribed authors the DID filter is sent as an `options_update`
+ * frame after `open` instead of as `wantedDids` URL params. A few hundred DIDs is
+ * already several kilobytes of query string, and an over-long upgrade request is
+ * rejected by the server (the proxy's own comment recorded the same hazard) — which
+ * would take the whole cycle's drain down. Well under any conservative URL ceiling.
+ */
+export const DID_URL_PARAM_LIMIT = 150;
+
+/** Consecutive capped cycles that mean a sustained flood rather than a burst. */
+export const CAP_SATURATION_ALERT_STREAK = 10;
+
+/**
+ * Jetstream's hard cap on `wantedDids`. Reaching it means the subscribed-author
+ * set has outgrown a single subscription and wants sharding across alternating
+ * cycles (or collection-only operation, justified by then-current volume).
+ */
+export const JETSTREAM_MAX_WANTED_DIDS = 10_000;
+
+const CAP_STREAK_KEY = 'documents_cap_streak';
+
+// `MAX_CYCLE_BACKFILLS` — how many back catalogues a cycle pulls for subscriptions
+// mirrored in from a PDS — lives in `document-store` next to the budget it is sized
+// against: each walk is up to `BACKFILL_QUERY_COST` subrequests, and
+// `DOCUMENT_CYCLE_QUERY_RESERVE` is what the drain leaves the rest of the cycle.
+//
+// Ceiling on the queue those walks come from. A device syncing a very long
+// subscription list can enqueue
+// faster than a couple a cycle drains, and this is in-memory state on a long-lived
+// object; past the ceiling the surplus authors are left to the cron's reconcile,
+// which is where they would have been before any of this existed.
+const MAX_PENDING_BACKFILLS = 200;
+
 // How long after an alarm *started* we still consider the poller alive without a
 // scheduled alarm. `getAlarm()` returns null while the handler runs, so both
 // `/start` (don't double-start) and `/status` consumers (don't cry wedged) need
@@ -47,16 +108,21 @@ const ALARM_INTERVAL_MS = 60000; // 60 seconds between polls
 // enough that a genuinely dead poller is caught within a couple of minutes.
 export const ALARM_ACTIVE_WINDOW_MS = 2 * ALARM_INTERVAL_MS;
 
-// One stream today (`app.skyreader.feed.subscription`). The plumbing stays keyed
-// by name because the `site.standard.document` stream lived here until documents
-// moved to on-demand proxy fetch, and a second stream is a plausible future.
-type StreamName = 'subscriptions';
+// Two streams: `app.skyreader.feed.subscription`, and the standard.site document
+// pair (`site.standard.document` + its `app.standard-reader.collection` sidecar),
+// which lived here before it moved to the proxy and has now come back. Everything
+// stayed keyed by stream name for exactly this return.
+type StreamName = 'subscriptions' | 'documents';
 
-/** Why a poll cycle stopped reading. Only `idle` means "Jetstream had nothing left". */
-type PollExit = 'idle' | 'poll-timeout' | 'closed' | 'socket-error';
+/**
+ * Why a poll cycle stopped reading. Only `idle` means "Jetstream had nothing left";
+ * `apply-cap` means we deliberately stopped early and carried the cursor.
+ */
+type PollExit = 'idle' | 'poll-timeout' | 'closed' | 'socket-error' | 'apply-cap';
 
 const CURSOR_KEY = {
   subscriptions: 'cursor_subscriptions',
+  documents: 'cursor_documents',
 } as const;
 
 // When each stream was last *confirmed current* — a cycle that opened the socket
@@ -64,6 +130,7 @@ const CURSOR_KEY = {
 // nothing more for us.
 const CAUGHT_UP_KEY = {
   subscriptions: 'caughtup_subscriptions',
+  documents: 'caughtup_documents',
 } as const;
 
 /**
@@ -115,9 +182,51 @@ export function streamLagMs(
   return Math.min(sinceDrain, sinceEvent);
 }
 
+const JETSTREAM_ENDPOINT = 'wss://jetstream2.us-east.bsky.network/subscribe';
+
+/**
+ * The document stream's connect-time subscription: both document collections, the
+ * cursor, and the subscribed-author DID filter when it is small enough to ride the
+ * URL.
+ *
+ * The filter is nearly free here, and that is the whole reason documents belong in
+ * this DO rather than in a persistent socket. A long-lived connection has to *mutate*
+ * its filter in place as subscriptions come and go — the machinery that cost the
+ * proxy hundreds of lines of `options_update` reconciliation. This socket is torn
+ * down and rebuilt every cycle, so the filter is just connect-time state read from
+ * D1: at most one alarm interval stale, by construction, with no reconcile loop.
+ *
+ * Returns `viaFrame: true` when the set is too large for the URL, in which case the
+ * caller sends one `options_update` frame on `open` instead (see `pollDocumentsStream`).
+ */
+export function buildDocumentSubscribeUrl(
+  dids: string[],
+  cursor?: string
+): { url: string; viaFrame: boolean } {
+  const wsUrl = new URL(JETSTREAM_ENDPOINT);
+  wsUrl.searchParams.append('wantedCollections', DOCUMENT_COLLECTION);
+  wsUrl.searchParams.append('wantedCollections', READER_COLLECTION);
+  if (cursor) wsUrl.searchParams.set('cursor', cursor);
+
+  const viaFrame = dids.length > DID_URL_PARAM_LIMIT;
+  if (!viaFrame) {
+    for (const did of dids) wsUrl.searchParams.append('wantedDids', did);
+  }
+  return { url: wsUrl.toString(), viaFrame };
+}
+
 class JetstreamPollerBase implements DurableObject {
   private state: DurableObjectState;
   private env: Env;
+
+  /**
+   * Authors whose documents this cycle's subscription events asked for. A
+   * subscription created on another device arrives here rather than through the
+   * API, so this is the fourth path that has to pull a back catalogue — but a
+   * `listRecords` walk must not happen inside the drain, where it would stall the
+   * socket, so the DIDs are collected and worked after both streams are closed.
+   */
+  private pendingDocumentBackfills = new Set<string>();
 
   constructor(state: DurableObjectState, env: Env) {
     this.state = state;
@@ -159,25 +268,36 @@ class JetstreamPollerBase implements DurableObject {
     }
 
     if (url.pathname === '/status') {
-      const [subscriptionsCursor, lastStats, alarmTime, lastAlarmStart, subscriptionsLagMs] =
-        await Promise.all([
-          this.state.storage.get<string>('cursor_subscriptions'),
-          this.state.storage.get<PollStats>('last_stats'),
-          this.state.storage.getAlarm(),
-          this.state.storage.get<number>('last_alarm_start'),
-          this.streamLag('subscriptions'),
-        ]);
+      const [
+        subscriptionsCursor,
+        documentsCursor,
+        lastStats,
+        alarmTime,
+        lastAlarmStart,
+        subscriptionsLagMs,
+        documentsLagMs,
+      ] = await Promise.all([
+        this.state.storage.get<string>('cursor_subscriptions'),
+        this.state.storage.get<string>('cursor_documents'),
+        this.state.storage.get<PollStats>('last_stats'),
+        this.state.storage.getAlarm(),
+        this.state.storage.get<number>('last_alarm_start'),
+        this.streamLag('subscriptions'),
+        this.streamLag('documents'),
+      ]);
 
       return new Response(
         JSON.stringify({
           cursors: {
             subscriptions: subscriptionsCursor,
+            documents: documentsCursor,
           },
           // Lag is derived here rather than by each caller: knowing what "behind"
           // means for a filtered Jetstream stream (see `streamLagMs`) should live
           // in exactly one place. Null means "unknown", not "zero lag".
           lag: {
             subscriptionsMs: subscriptionsLagMs,
+            documentsMs: documentsLagMs,
           },
           lastStats,
           nextPoll: alarmTime,
@@ -220,9 +340,22 @@ class JetstreamPollerBase implements DurableObject {
 
       const stats: PollStats = {
         subscriptions: { processed: 0, errors: 0 },
+        documents: {
+          processed: 0,
+          errors: 0,
+          capped: false,
+          capStreak: 0,
+          authors: 0,
+          skipped: false,
+        },
         duration: 0,
         lastPollAt: startTime,
       };
+
+      // One read for the whole cycle: the document stream and the back-catalogue
+      // walks below are both "the poller writing documents", and the kill switch
+      // has to mean the same thing to both of them.
+      const flags = await readDocumentFlags(this.env);
 
       try {
         // Subscriptions (app.skyreader.feed.subscription) - global watch, filter by sync-enabled
@@ -231,6 +364,26 @@ class JetstreamPollerBase implements DurableObject {
       } catch (error) {
         log.error('jetstream_poll_failed', { ...serializeError(error) });
         reportError(error, { tags: { source: 'jetstream-poller', phase: 'poll-cycle' } });
+      }
+
+      // Documents (site.standard.document + its reader-collection sidecar). Its own
+      // try/catch: a failing document drain must not cost the subscriptions stream
+      // its cycle, which is the same isolation the ingest kill switch gives an
+      // operator during a flood.
+      try {
+        stats.documents = await this.pollDocumentsStream(flags);
+      } catch (error) {
+        log.error('jetstream_documents_poll_failed', { ...serializeError(error) });
+        reportError(error, { tags: { source: 'jetstream-poller', phase: 'documents' } });
+      }
+
+      // Back catalogues for subscriptions this cycle mirrored in from a PDS. Both
+      // sockets are closed by now, and the count is bounded, so a slow PDS costs
+      // this cycle's tail rather than the drain window.
+      try {
+        await this.backfillPendingAuthors(flags);
+      } catch (error) {
+        log.error('jetstream_documents_backfill_failed', { ...serializeError(error) });
       }
 
       stats.duration = Date.now() - startTime;
@@ -245,12 +398,21 @@ class JetstreamPollerBase implements DurableObject {
       // Time since the stream last showed evidence of being current. Logging it
       // every cycle turns "the firehose is stalled" from something you notice when
       // subscriptions stop syncing into a number with a history.
-      const subscriptionsLagMs = await this.streamLag('subscriptions');
+      const [subscriptionsLagMs, documentsLagMs] = await Promise.all([
+        this.streamLag('subscriptions'),
+        this.streamLag('documents'),
+      ]);
 
       log.info('jetstream_poll', {
         subscriptionsProcessed: stats.subscriptions.processed,
         subscriptionsErrors: stats.subscriptions.errors,
         subscriptionsLagMs,
+        documentsProcessed: stats.documents.processed,
+        documentsErrors: stats.documents.errors,
+        documentsCapped: stats.documents.capped,
+        documentsCapStreak: stats.documents.capStreak,
+        documentsAuthors: stats.documents.authors,
+        documentsLagMs,
         durationMs: stats.duration,
       });
     } catch (error) {
@@ -266,6 +428,41 @@ class JetstreamPollerBase implements DurableObject {
         // this one is worth a page rather than a log line.
         console.error('[JetstreamPoller] CRITICAL: Error scheduling next alarm:', error);
         reportError(error, { tags: { source: 'jetstream-poller', phase: 'alarm-scheduling' } });
+      }
+    }
+  }
+
+  /**
+   * Pull back catalogues for the authors this cycle's mirrored subscriptions
+   * introduced. `ensureAuthorDocuments` skips an author we listed recently or one
+   * inside their retry backoff, so a burst of subscription mirrors for a popular
+   * linkblog is still one walk; the per-cycle bound keeps the tail short when a
+   * device syncs a long subscription list at once — the rest are picked up by the
+   * next cycle's queue or, failing that, by the hourly reconcile.
+   */
+  private async backfillPendingAuthors(flags: DocumentFlags): Promise<void> {
+    if (this.pendingDocumentBackfills.size === 0) return;
+    // A backfill writes documents, so the ingest kill switch stops it too —
+    // otherwise "pause writes" would still let the poller write up to
+    // MAX_CYCLE_BACKFILLS × the per-author cap every minute, because the
+    // subscriptions stream keeps enqueuing DIDs while the switch is off. The queue
+    // is kept, not dropped: flipping the switch back resumes it.
+    if (!flags.ingestEnabled) return;
+    const dids = [...this.pendingDocumentBackfills].slice(0, MAX_CYCLE_BACKFILLS);
+    // Only the ones being worked leave the queue; the remainder wait for the next
+    // cycle rather than being dropped.
+    for (const did of dids) this.pendingDocumentBackfills.delete(did);
+    // These share the alarm's invocation with the drain that just ran, so they draw
+    // on the reserve that drain left rather than on a budget of their own.
+    const ctx = createDocumentApplyContext(createQueryLedger(CYCLE_BACKFILL_QUERY_BUDGET));
+    for (const did of dids) {
+      try {
+        await ensureAuthorDocuments(this.env, did, Date.now(), ctx);
+      } catch (error) {
+        log.warn('documents_backfill_failed', {
+          authorDid: did,
+          ...serializeError(error),
+        });
       }
     }
   }
@@ -408,6 +605,191 @@ class JetstreamPollerBase implements DurableObject {
     });
   }
 
+  // --- Documents Stream ---
+  // `site.standard.document` + `app.standard-reader.collection`, filtered
+  // server-side to the DIDs someone actually subscribes to, then re-checked
+  // per event before any write. See §3a of the plan for why the filter is the
+  // first of five layers and what each of the others bounds.
+  private async pollDocumentsStream(flags: DocumentFlags): Promise<DocumentPollStats> {
+    const empty: DocumentPollStats = {
+      processed: 0,
+      errors: 0,
+      capped: false,
+      capStreak: 0,
+      authors: 0,
+      skipped: false,
+    };
+
+    if (!flags.ingestEnabled) {
+      // The flood switch. Reads keep serving whatever D1 holds, the subscriptions
+      // stream is untouched, and the cursor stays exactly where it was — so
+      // flipping the flag back resumes the drain rather than skipping the backlog.
+      log.info('documents_ingest_disabled');
+      return { ...empty, skipped: true };
+    }
+
+    // The true active-author set, straight from the subscription table. No
+    // read-traffic inference, and one alarm interval is the most it can be stale.
+    const allAuthors = await subscribedDocumentAuthors(this.env);
+    // Jetstream's hard cap on `wantedDids`. Past it the filter would be rejected
+    // outright, so watch the first 10k rather than nothing; the per-event re-check
+    // still keeps writes correct, and this line is the alert that the set needs
+    // sharding across cycles.
+    const dids = allAuthors.slice(0, JETSTREAM_MAX_WANTED_DIDS);
+    if (allAuthors.length > dids.length) {
+      log.warn('documents_did_filter_truncated', {
+        authors: allAuthors.length,
+        watching: dids.length,
+      });
+    }
+    const allowed = new Set(dids);
+    if (dids.length === 0) {
+      // Nobody subscribes to any author's documents, so there is no stream to be
+      // behind on. Mark caught up rather than letting the lag metric climb toward
+      // an alert about an empty subscription set.
+      await this.markCaughtUp('documents');
+      return empty;
+    }
+
+    const cursor = await this.state.storage.get<string>(CURSOR_KEY.documents);
+    const { url, viaFrame } = buildDocumentSubscribeUrl(dids, cursor);
+    const priorStreak = (await this.state.storage.get<number>(CAP_STREAK_KEY)) ?? 0;
+
+    return new Promise<DocumentPollStats>((resolve) => {
+      let cleanedUp = false;
+      let opened = false;
+      let lastEventTime = Date.now();
+      // Owns the cap, the error count and the cursor — which it only ever advances
+      // past an event it finished, so a capped cycle resumes at the first event it
+      // skipped rather than stepping over the rest of the burst.
+      const drain = createDocumentDrain(this.env, { allowed, cap: flags.applyCap, cursor });
+      // Jetstream delivers faster than D1 accepts writes, so handling has to be
+      // serialized: concurrent handlers would both race the cap and reorder two
+      // edits of the same rkey.
+      let queue: Promise<void> = Promise.resolve();
+
+      const cleanupWithCatch = (exit: PollExit) =>
+        cleanup(exit).catch((e) => console.error('[JetstreamPoller] documents cleanup error:', e));
+
+      const pollTimeout = setTimeout(() => cleanupWithCatch('poll-timeout'), POLL_TIMEOUT_MS);
+      const idleCheck = setInterval(() => {
+        if (Date.now() - lastEventTime > IDLE_TIMEOUT_MS) cleanupWithCatch('idle');
+      }, 500);
+
+      let ws: WebSocket | null = null;
+
+      const cleanup = async (exit: PollExit) => {
+        if (cleanedUp) return;
+        cleanedUp = true;
+
+        clearTimeout(pollTimeout);
+        clearInterval(idleCheck);
+
+        if (ws) {
+          try {
+            ws.close();
+          } catch {
+            /* ignore */
+          }
+          ws = null;
+        }
+
+        // Let in-flight writes finish before the cursor is persisted, or a cycle
+        // could record progress past an event it never applied.
+        await queue.catch(() => {});
+        // Then settle what the drain deferred: one cap eviction and one bookkeeping
+        // row per author written this cycle, rather than a pair per event.
+        await drain.flush().catch((e) => console.error('[JetstreamPoller] documents flush:', e));
+
+        await this.state.storage.put(CURSOR_KEY.documents, drain.cursor);
+
+        const capStreak = drain.capped ? priorStreak + 1 : 0;
+        await this.state.storage.put(CAP_STREAK_KEY, capStreak);
+
+        // A drain is the only evidence the stream is current (see `streamLagMs`);
+        // a capped cycle is the opposite of caught up, so it must not mark one.
+        if (opened && exit === 'idle') await this.markCaughtUp('documents');
+
+        if (drain.capped) {
+          log.warn('documents_apply_cap_hit', {
+            applied: drain.applied,
+            cap: flags.applyCap,
+            // Which bound stopped the cycle. `query-budget` means the events were
+            // costlier than the common one-query case (many distinct authors or
+            // cold publications), not that the cap is set too low.
+            cappedBy: drain.cappedBy,
+            queries: drain.queries,
+            capStreak,
+          });
+        }
+
+        resolve({
+          processed: drain.applied,
+          errors: drain.errors,
+          capped: drain.capped,
+          capStreak,
+          authors: dids.length,
+          skipped: false,
+        });
+      };
+
+      const handle = async (data: JetstreamEvent) => {
+        if (cleanedUp) return;
+        if (data.kind !== 'commit' || !data.commit) return;
+        const outcome = await drain.handle(data as DocumentCommitEvent & { time_us?: number });
+        // Cap reached: stop reading now, with the cursor parked at the last event
+        // this cycle finished. The rest of the burst is the next cycle's work.
+        if (outcome === 'capped') cleanupWithCatch('apply-cap');
+      };
+
+      try {
+        ws = new WebSocket(url);
+
+        ws.addEventListener('open', () => {
+          opened = true;
+          lastEventTime = Date.now();
+          if (viaFrame && ws) {
+            // Too many DIDs for the URL. One frame, sent before anything can be
+            // delivered; every DID in it was validated by `subscribedDocumentAuthors`,
+            // because Jetstream rejects the whole frame on one malformed entry and
+            // closes the socket.
+            try {
+              ws.send(
+                JSON.stringify({
+                  type: 'options_update',
+                  payload: {
+                    wantedCollections: [DOCUMENT_COLLECTION, READER_COLLECTION],
+                    wantedDids: dids,
+                  },
+                })
+              );
+            } catch (error) {
+              console.error('[JetstreamPoller] documents options_update failed:', error);
+            }
+          }
+        });
+
+        ws.addEventListener('message', (event) => {
+          let data: JetstreamEvent;
+          try {
+            data = JSON.parse(event.data as string) as JetstreamEvent;
+          } catch {
+            // Unparseable frame: nothing to apply and nothing to advance past.
+            console.error('[JetstreamPoller] documents: unparseable frame');
+            return;
+          }
+          if (data.kind === 'commit') lastEventTime = Date.now();
+          queue = queue.then(() => handle(data)).catch(() => {});
+        });
+
+        ws.addEventListener('close', () => cleanupWithCatch('closed'));
+        ws.addEventListener('error', () => cleanupWithCatch('socket-error'));
+      } catch {
+        cleanupWithCatch('socket-error');
+      }
+    });
+  }
+
   private async processSubscriptionEvent(
     event: JetstreamEvent,
     syncEnabledDids: Set<string>
@@ -435,6 +817,16 @@ class JetstreamPollerBase implements DurableObject {
       }
 
       const recAny = record as Record<string, unknown>;
+      // A mirrored `atproto.*` subscription needs the same back-catalogue pull the
+      // API path does; queued, not run, so the drain stays a D1-only loop.
+      if (
+        typeof recAny.sourceType === 'string' &&
+        recAny.sourceType.startsWith('atproto.') &&
+        typeof recAny.subjectDid === 'string' &&
+        this.pendingDocumentBackfills.size < MAX_PENDING_BACKFILLS
+      ) {
+        this.pendingDocumentBackfills.add(recAny.subjectDid);
+      }
       console.log(
         `[JetstreamPoller] ${did} ${operation}d subscription: ${
           record.feedUrl || `${recAny.sourceType}:${recAny.subjectDid}`

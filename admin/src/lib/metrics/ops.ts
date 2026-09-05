@@ -83,7 +83,22 @@ function cronMetric(status: OpsStatus, now: number): MetricValue {
   };
 }
 
-const POLLER_LABELS = ['Firehose Lag', 'Last Poll', 'Poll Errors (last cycle)'] as const;
+const POLLER_LABELS = [
+  'Firehose Lag',
+  'Last Poll',
+  'Poll Errors (last cycle)',
+  'Document Stream Lag',
+  'Document Ingest',
+] as const;
+
+/**
+ * Consecutive capped document cycles before the tile goes red. Mirrors the
+ * backend's `DOCUMENT_CAP_SATURATION_ALERT_STREAK`: one or two capped cycles is a
+ * burst draining exactly as designed, ten in a row is a flood that wants the
+ * `documents_ingest_enabled` switch.
+ */
+const CAP_STREAK_ERROR = 10;
+const CAP_STREAK_WARN = 3;
 
 function pollerMetrics(status: OpsStatus, now: number): MetricValue[] {
   const poller = status.poller;
@@ -116,6 +131,50 @@ function pollerMetrics(status: OpsStatus, now: number): MetricValue[] {
           status: pollAge > POLL_STALE_MS ? 'error' : 'healthy',
         };
 
+  const {
+    documentsLagMs,
+    documentsCapStreak = 0,
+    documentsAuthors = 0,
+    documentsIngestPaused = false,
+  } = poller.value;
+
+  // The two streams fail independently — one stuck while the other is healthy is
+  // exactly what a single "firehose lag" number hides — so documents get their own
+  // tile, graded on the same thresholds.
+  const documentsLag: MetricValue =
+    documentsLagMs === undefined
+      ? unknown(POLLER_LABELS[3])
+      : documentsIngestPaused
+        ? { label: POLLER_LABELS[3], value: 'Paused', status: 'warning' }
+        : documentsLagMs === null
+          ? { label: POLLER_LABELS[3], value: '—', status: 'warning' }
+          : {
+              label: POLLER_LABELS[3],
+              value: formatAge(documentsLagMs),
+              status:
+                documentsLagMs >= LAG_ERROR_MS
+                  ? 'error'
+                  : documentsLagMs >= LAG_WARN_MS
+                    ? 'warning'
+                    : 'healthy',
+            };
+
+  // Cap saturation: how many cycles in a row the drain stopped early. This is the
+  // number an operator reads before deciding a burst has become a flood.
+  const documentIngest: MetricValue = documentsIngestPaused
+    ? { label: POLLER_LABELS[4], value: 'Disabled', status: 'error' }
+    : {
+        label: POLLER_LABELS[4],
+        value: documentsCapStreak === 0 ? 'Draining' : `${documentsCapStreak} capped cycles`,
+        unit: `${documentsAuthors} authors`,
+        status:
+          documentsCapStreak >= CAP_STREAK_ERROR
+            ? 'error'
+            : documentsCapStreak >= CAP_STREAK_WARN
+              ? 'warning'
+              : 'healthy',
+      };
+
   return [
     lag,
     lastPoll,
@@ -124,6 +183,8 @@ function pollerMetrics(status: OpsStatus, now: number): MetricValue[] {
       value: errors,
       status: errors > 0 ? 'warning' : 'healthy',
     },
+    documentsLag,
+    documentIngest,
   ];
 }
 

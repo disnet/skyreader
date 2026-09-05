@@ -28,6 +28,12 @@ const status = (overrides: Partial<OpsStatus> = {}): OpsStatus => ({
       processed: 12,
       errors: 0,
       alarmScheduled: true,
+      documentsLagMs: 30_000,
+      documentsProcessed: 3,
+      documentsErrors: 0,
+      documentsCapStreak: 0,
+      documentsAuthors: 42,
+      documentsIngestPaused: false,
     },
   },
   proxy: {
@@ -126,6 +132,42 @@ describe('ops tiles', () => {
     expect(fresh(null)).toBe('warning');
   });
 
+  it('grades the document stream separately from subscriptions', () => {
+    const s = status();
+    s.poller!.value.documentsLagMs = 20 * MINUTE;
+    const metrics = opsMetricsFrom(s, NOW);
+    expect(tile(metrics, 'Document Stream Lag').status).toBe('error');
+    // One stream stuck while the other is fine is exactly what a shared number
+    // would hide.
+    expect(tile(metrics, 'Firehose Lag').status).toBe('healthy');
+  });
+
+  it('escalates as capped cycles pile up, and says so when ingest is paused', () => {
+    const streak = (n: number) => {
+      const s = status();
+      s.poller!.value.documentsCapStreak = n;
+      return tile(opsMetricsFrom(s, NOW), 'Document Ingest');
+    };
+    // A burst draining across a couple of cycles is the design working.
+    expect(streak(0).value).toBe('Draining');
+    expect(streak(1).status).toBe('healthy');
+    expect(streak(4).status).toBe('warning');
+    expect(streak(12).status).toBe('error');
+
+    const paused = status();
+    paused.poller!.value.documentsIngestPaused = true;
+    const metrics = opsMetricsFrom(paused, NOW);
+    expect(tile(metrics, 'Document Ingest').value).toBe('Disabled');
+    // A paused stream's lag climbs by construction; don't render it as a stall.
+    expect(tile(metrics, 'Document Stream Lag').value).toBe('Paused');
+  });
+
+  it('says "no data" for a backend that predates the document stream', () => {
+    const s = status();
+    delete s.poller!.value.documentsLagMs;
+    expect(tile(opsMetricsFrom(s, NOW), 'Document Stream Lag').value).toBe('No data');
+  });
+
   it('grades frozen document authors by whether re-listing looks broken', () => {
     // The tile is graded the way the backend's alert is graded: a straggler is
     // visible without being an emergency, so the red keeps meaning something.
@@ -144,7 +186,7 @@ describe('ops tiles', () => {
 
   it('renders a full set of tiles before the cron has ever run', () => {
     const metrics = opsMetricsFrom({ cron: null, poller: null, proxy: null }, NOW);
-    expect(metrics).toHaveLength(7);
+    expect(metrics).toHaveLength(9);
     expect(metrics.every((m) => m.status === 'error')).toBe(true);
   });
 });

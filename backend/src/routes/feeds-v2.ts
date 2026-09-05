@@ -7,6 +7,12 @@ import type {
   ArticleMentionsResult,
 } from '../services/feed-proxy-client';
 import { resolveStandardSite } from '../utils/canonical-url';
+import { readDocumentFlags } from '../services/document-flags';
+import {
+  MAX_COLLECTION_RESOLVES_PER_REQUEST,
+  serveDocumentScope,
+  serveSingleDocument,
+} from '../services/document-store';
 import { log, serializeError } from '../utils/logger';
 import { chunkArray, getReadKeys } from './reading';
 import { clearFeedHealth, ingestProxyFeed } from './ingest';
@@ -546,9 +552,11 @@ async function correctLinkblogScopes(
 /**
  * POST /api/v2/documents/batch
  *
- * Batch fetch standard.site documents for multiple authors via the Fly.io proxy.
- * Thin pass-through — no D1 reads/writes. Documents come back already resolved
- * (canonical URL + site icon) in the frontend's SocialDocument shape.
+ * Batch fetch standard.site documents for multiple authors. Served from D1 once
+ * `documents_v2_enabled` is on, from the Fly.io proxy until then; the response is
+ * byte-compatible either way (same statuses, same digest algorithm, same
+ * `complete` semantics), so the frontend is unaware of the cutover. Documents come
+ * back already resolved (canonical URL + site icon) in the SocialDocument shape.
  *
  * Request body:
  * {
@@ -643,13 +651,18 @@ export async function handleV2BatchDocumentFetch(
       console.error('Linkblog scope correction failed; forwarding scopes as-is:', e);
     }
 
-    const client = new FeedProxyClient(env);
-    const proxyEntries = await client.fetchDocumentsBatch(requests);
-    for (const entry of proxyEntries) {
+    // The rollout gate. Both paths produce the same wire shape (status, digest,
+    // `complete`), so this is a per-request choice of *source*, not of contract —
+    // and flipping `documents_v2_enabled` back is a full rollback with no deploy.
+    const { serveFromD1 } = await readDocumentFlags(env);
+    const sourceEntries = serveFromD1
+      ? await serveDocumentsFromD1(env, requests)
+      : await new FeedProxyClient(env).fetchDocumentsBatch(requests);
+    for (const entry of sourceEntries) {
       const requestedScope = entry.siteUri && restore.get(`${entry.did}\n${entry.siteUri}`);
       if (requestedScope) entry.siteUri = requestedScope;
     }
-    authors.push(...proxyEntries);
+    authors.push(...sourceEntries);
 
     // Inline read annotation, identical to the feed path but keyed by recordUri
     // and item_type='document' (decision 3: documents share the unified read
@@ -687,12 +700,46 @@ export async function handleV2BatchDocumentFetch(
 }
 
 /**
+ * Serve every requested scope from D1. One curated-edition resolve budget is shared
+ * across the whole batch: each edition costs up to 50 cross-PDS getRecords, and a
+ * batch is up to 50 scopes, so a per-scope budget would multiply into the
+ * subrequest ceiling. Editions past the budget serve their last resolved preview
+ * (or none) and resolve on a later read.
+ */
+async function serveDocumentsFromD1(
+  env: Env,
+  requests: Array<{ did: string; siteUri?: string; since_digest?: string }>
+): Promise<ProxyDocumentEntry[]> {
+  const collectionBudget = { remaining: MAX_COLLECTION_RESOLVES_PER_REQUEST };
+  return Promise.all(
+    requests.map(async (entry): Promise<ProxyDocumentEntry> => {
+      try {
+        return await serveDocumentScope(env, entry, collectionBudget);
+      } catch (error) {
+        // One author's bad row must not fail the batch: the client keeps what it
+        // holds for this scope and retries next poll.
+        console.error(`D1 document serve failed for ${entry.did}:`, error);
+        return {
+          did: entry.did,
+          siteUri: entry.siteUri,
+          documents: [],
+          status: 'error',
+          error: error instanceof Error ? error.message : 'Document read failed',
+        };
+      }
+    })
+  );
+}
+
+/**
  * GET /api/v2/documents/get?uri=at://...
  *
  * On-demand fetch of a single standard.site document — the in-app reader path
  * for a curated Collection piece whose author the user doesn't subscribe to (so
- * it's in no batch response). Thin pass-through to the proxy, then the same
- * per-user read annotation the batch path applies (item_type 'document').
+ * it's in no batch response). D1 first (falling back to a live getRecord for an
+ * author nobody subscribes to) once `documents_v2_enabled` is on, the proxy until
+ * then, followed by the same per-user read annotation the batch path applies
+ * (item_type 'document').
  */
 export async function handleV2GetDocument(
   request: Request,
@@ -715,8 +762,10 @@ export async function handleV2GetDocument(
   }
 
   try {
-    const client = new FeedProxyClient(env);
-    const document = await client.fetchDocument(uri);
+    const { serveFromD1 } = await readDocumentFlags(env);
+    const document = serveFromD1
+      ? await serveSingleDocument(env, uri)
+      : await new FeedProxyClient(env).fetchDocument(uri);
     if (!document) {
       return new Response(JSON.stringify({ error: 'Document not found' }), {
         status: 404,

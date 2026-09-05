@@ -1,8 +1,19 @@
 import type { Env, Session } from '../types';
 import { createPDSClient, type PDSResult, type WriteOp } from './pds-client';
 import { getUserTierLimits } from './user-tier';
+import { chargeQueries, createBackfillScheduler, type QueryLedger } from './document-store';
+import { log } from '../utils/logger';
 
 const COLLECTION = 'app.skyreader.feed.subscription';
+
+/**
+ * A pull this size is worth a line in the logs: the insert batch is one query per
+ * row against a 1,000-per-invocation ceiling, so a restore of this order is the
+ * shape of request that can exhaust it on its own. Nothing here caps it — the mirror
+ * cap does, at 1000/5000 rows — but an operator reading a 500 from `/api/sync`
+ * should be able to find the reason.
+ */
+const LARGE_PULL_BATCH = 400;
 
 /**
  * PDS subscription record schema
@@ -191,7 +202,15 @@ export async function countDirtySubscriptions(env: Env, did: string): Promise<nu
 export async function syncSubscriptions(
   session: Session,
   env: Env,
-  sessionId?: string
+  sessionId?: string,
+  // Lets the pull step warm the linkblogs it restores. Absent (a background or
+  // test caller), those authors are left to the reconcile.
+  waitUntil?: (promise: Promise<unknown>) => void,
+  // This request's subrequest ledger, shared with anything else the invocation runs
+  // (`/api/sync` also runs the Atmosphere reconcile). The pull charges its inserts
+  // to it so the back-catalogue walks it schedules are admitted against what the
+  // request has actually spent, not against a count alone.
+  ledger?: QueryLedger
 ): Promise<SyncResult> {
   const result: SyncResult = {
     success: true,
@@ -427,8 +446,37 @@ export async function syncSubscriptions(
       });
 
       await env.DB.batch(statements);
+      // Each statement in the batch is its own query against the invocation's
+      // ceiling. This is the term that dwarfs everything else in a restore, and it
+      // is still unbounded here (the mirror cap, 1000/5000 rows, is the only limit):
+      // charging it is what stops the walks below from being scheduled on top of an
+      // invocation that has already spent its budget. See `backend/CLAUDE.md`.
+      if (ledger) chargeQueries(ledger, statements.length);
+      if (statements.length > LARGE_PULL_BATCH) {
+        log.warn('subscription_pull_batch_large', {
+          inserted: statements.length,
+          userDid: session.did,
+        });
+      }
       result.pulledFromPds = toAddLocally.length;
       console.log(`[SubscriptionSync] Successfully inserted ${toAddLocally.length} subscriptions`);
+
+      // A restored `atproto.documents` row needs the author's back catalogue like
+      // any other new subscription: documents are served from D1, so an author
+      // nobody has listed serves `status:'error'` on every poll. This is the
+      // restore-from-the-Atmosphere case — the PDS records survive, the local rows
+      // don't — and it can pull in far more rows at once than a subscribe does,
+      // hence the bound. The rest are left to the reconcile, which takes
+      // never-listed authors first.
+      if (waitUntil) {
+        const scheduleBackfill = createBackfillScheduler(env, waitUntil, { ledger });
+        let deferred = 0;
+        for (const sub of toAddLocally) {
+          if (!sub.sourceType?.startsWith('atproto.') || !sub.subjectDid) continue;
+          if (!scheduleBackfill(sub.subjectDid)) deferred++;
+        }
+        if (deferred > 0) log.info('subscription_sync_backfills_deferred', { deferred });
+      }
     }
 
     // Step 3b: Auto-fill freed active slots from capacity-parked rows. Rows the
@@ -459,6 +507,7 @@ export async function syncSubscriptions(
             ).bind(session.did, row.record_uri)
           )
         );
+        if (ledger) chargeQueries(ledger, toPromote.length);
         result.reactivated = toPromote.length;
         console.log(`[SubscriptionSync] Reactivated ${toPromote.length} parked subscription(s)`);
       }

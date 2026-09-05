@@ -10,6 +10,17 @@ import {
   reconcileAtmosphereSubscriptions,
   type AtmosphereSyncResult,
 } from '../services/atmosphere-subscription-sync';
+import { createQueryLedger, D1_QUERIES_PER_INVOCATION } from '../services/document-store';
+
+/**
+ * What a sync request keeps back from the ledger for the D1 work it does outside the
+ * terms it charges: the tier and count reads, the PDS-push bookkeeping, the settings
+ * and session rows. The terms big enough to matter are charged for real — the pull's
+ * insert batch, and the Atmosphere reconcile's graph listing plus its `MAX_OPS`
+ * cross-PDS operations, which on their own could account for the whole of this
+ * reserve if they were left inside it.
+ */
+const SYNC_QUERY_RESERVE = 100;
 
 export interface FullSyncResult {
   success: boolean;
@@ -79,7 +90,19 @@ export async function handleFullSync(
     // Sync subscriptions. Pass the session id so the PDS client can self-heal a
     // stale host after a PDS migration (re-resolve + persist + retry).
     const sessionId = getSessionIdFromRequest(request) ?? undefined;
-    const subResult = await syncSubscriptions(session, env, sessionId);
+    // One ledger for the whole request. Both halves of this route write
+    // subscriptions and both schedule back-catalogue walks into the same
+    // invocation, so they have to be admitted against one another's spend —
+    // sized apart, a large restore plus a graph import would go over D1's
+    // per-invocation ceiling and take the walks down with it.
+    const ledger = createQueryLedger(D1_QUERIES_PER_INVOCATION - SYNC_QUERY_RESERVE);
+    const subResult = await syncSubscriptions(
+      session,
+      env,
+      sessionId,
+      (p) => ctx.waitUntil(p),
+      ledger
+    );
     result.subscriptions = subResult;
 
     if (subResult.success) {
@@ -99,7 +122,7 @@ export async function handleFullSync(
     // Reconcile standard.site follows ↔ Skyreader. This rides the same
     // Atmospheric-sync switch (the graph edges are the public mirror), so it
     // always runs while PDS sync is on — no separate opt-in.
-    const atmoResult = await reconcileAtmosphereSubscriptions(session, env, ctx);
+    const atmoResult = await reconcileAtmosphereSubscriptions(session, env, ctx, ledger);
     result.atmosphere = atmoResult;
     if (atmoResult.hasMore) {
       result.hasMore = true;
@@ -127,7 +150,11 @@ export async function handleFullSync(
 }
 
 // POST /api/sync/subscriptions - Sync subscriptions only
-export async function handleSyncSubscriptions(request: Request, env: Env): Promise<Response> {
+export async function handleSyncSubscriptions(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext
+): Promise<Response> {
   if (request.method !== 'POST') {
     return new Response(JSON.stringify({ error: 'Method not allowed' }), {
       status: 405,
@@ -160,7 +187,13 @@ export async function handleSyncSubscriptions(request: Request, env: Env): Promi
 
   try {
     const sessionId = getSessionIdFromRequest(request) ?? undefined;
-    const result = await syncSubscriptions(session, env, sessionId);
+    const result = await syncSubscriptions(
+      session,
+      env,
+      sessionId,
+      (p) => ctx.waitUntil(p),
+      createQueryLedger(D1_QUERIES_PER_INVOCATION - SYNC_QUERY_RESERVE)
+    );
 
     if (result.success) {
       await updateSyncTimestamp(env, session.did, 'subscriptions');

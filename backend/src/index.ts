@@ -18,6 +18,16 @@ import {
   handleV2MarginHighlights,
 } from './routes/feeds-v2';
 import { handleIngest, handleCrawlSet, handleFeedHealth } from './routes/ingest';
+import { handleDocumentBackfill, handleDocumentShadowCompare } from './routes/documents';
+import {
+  createDocumentApplyContext,
+  createQueryLedger,
+  reconcileStaleAuthors,
+  CRON_DOCUMENT_QUERY_BUDGET,
+  CRON_HOURLY_RECONCILE_AUTHORS,
+  CRON_MINUTE_RECONCILE_AUTHORS,
+} from './services/document-store';
+import { readDocumentFlags } from './services/document-flags';
 import { handleTimeline } from './routes/timeline';
 import {
   handleGuestMarginHighlights,
@@ -376,6 +386,14 @@ async function route(
       break;
     case url.pathname === '/api/internal/feed-health':
       response = await handleFeedHealth(request, env);
+      break;
+    // Document store operator endpoints: the one-time (and ongoing) backfill, and
+    // the proxy-vs-D1 shadow compare that gates the read cutover.
+    case url.pathname === '/api/internal/documents/backfill':
+      response = await handleDocumentBackfill(request, env);
+      break;
+    case url.pathname === '/api/internal/documents/shadow-compare':
+      response = await handleDocumentShadowCompare(request, env);
       break;
 
     // The reader's whole refresh, served from the D1 archive in one query.
@@ -809,7 +827,7 @@ async function route(
       break;
     case url.pathname === '/api/sync/subscriptions':
       if (!session) return unauthorizedResponse(headers);
-      response = await handleSyncSubscriptions(request, env);
+      response = await handleSyncSubscriptions(request, env, ctx);
       break;
     case url.pathname === '/api/sync/status':
       if (!session) return unauthorizedResponse(headers);
@@ -948,6 +966,32 @@ async function runScheduled(
       await runRecordingStep('proxy-stats', () => recordProxyStats(env));
     }
 
+    // Phase 1c: one document author per minute, which is what makes "the rest is
+    // the reconcile's job" an honest thing for the bounded sync paths to say. The
+    // queue takes never-listed authors first, so a restore that brought back more
+    // linkblogs than one request may warm is served in minutes rather than across
+    // the hourly tick's afternoon. This writes documents, so the ingest kill switch
+    // stops it like every other background write.
+    const documentFlags = await readDocumentFlags(env);
+    // One ledger for both reconcile passes: on the hour they run in the same
+    // invocation, so a budget held per pass would let the pair add up past D1's
+    // per-invocation ceiling and fail the later walks mid-write.
+    const documentCtx = createDocumentApplyContext(createQueryLedger(CRON_DOCUMENT_QUERY_BUDGET));
+    try {
+      const reconciled = documentFlags.ingestEnabled
+        ? await reconcileStaleAuthors(env, CRON_MINUTE_RECONCILE_AUTHORS, documentCtx)
+        : [];
+      if (reconciled.length > 0) {
+        log.info('cron_documents_cold_start', {
+          authors: reconciled.length,
+          failed: reconciled.filter((r) => !r.ok).length,
+        });
+      }
+    } catch (error) {
+      log.error('cron_phase_failed', { phase: 'documents-cold-start', ...serializeError(error) });
+      reportError(error, { tags: { source: 'cron', phase: 'documents-cold-start' } });
+    }
+
     // Phase 2: Clean up rate limit records
     let rateLimitDuration = 0;
     let rateLimitDeleted = 0;
@@ -1061,6 +1105,30 @@ async function runScheduled(
       // a multiple of 5), so the snapshot reads fresh values rather than
       // five-minute-old ones. Prunes its own tail at 90 days.
       await runRecordingStep('metrics-snapshot', () => writeMetricsSnapshot(env));
+
+      // Document self-heal. The firehose only carries writes made while we were
+      // watching, so a gap (reconnect, cursor reset, a paused ingest) leaves a hole
+      // nothing else fills — the proxy closed those by full-replacing its blob on
+      // every refresh. A few of the stalest authors per hour re-lists everyone
+      // inside the reconcile interval without ever making the cron the bottleneck.
+      // Paused with ingest, like every other background write of documents: the
+      // kill switch is a flood response, and this writes up to a hundred rows an
+      // author. The operator backfill endpoint stays available regardless — that
+      // one is a deliberate repair, not a background loop.
+      try {
+        const reconciled = documentFlags.ingestEnabled
+          ? await reconcileStaleAuthors(env, CRON_HOURLY_RECONCILE_AUTHORS, documentCtx)
+          : [];
+        if (reconciled.length > 0) {
+          log.info('cron_documents_reconcile', {
+            authors: reconciled.length,
+            failed: reconciled.filter((r) => !r.ok).length,
+          });
+        }
+      } catch (error) {
+        log.error('cron_phase_failed', { phase: 'documents-reconcile', ...serializeError(error) });
+        reportError(error, { tags: { source: 'cron', phase: 'documents-reconcile' } });
+      }
     }
 
     // The run summary. `durationMs` is the number to watch as the cron takes on
