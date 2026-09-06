@@ -475,10 +475,30 @@ function resolveAuthorPds(authorDid: string, memo?: PdsMemo): Promise<string | n
   return pending;
 }
 
+/** One author's document listing, and whether it reached the end of the repo. */
+export interface AuthorDocumentListing {
+  records: Array<ListedRecord<DocumentRecord>>;
+  /**
+   * True only when the listing ran out of records, rather than stopping on
+   * `MAX_LIST_PAGES`. A caller that prunes stored rows against this set has to be
+   * able to tell those apart — the same reason `AuthorCollectionListing` carries
+   * the flag. A partial listing that looks authoritative deletes real documents.
+   */
+  exhaustive: boolean;
+}
+
 /**
- * List an author's recent `site.standard.document` records, newest-repo-order,
- * capped at `MAX_DOCUMENTS_PER_AUTHOR`. Throws on PDS resolution / fetch failure so
+ * Scan an author's `site.standard.document` records, up to `MAX_LIST_PAGES` pages,
+ * in whatever order their PDS serves. Throws on PDS resolution / fetch failure so
  * the caller records the error + backoff.
+ *
+ * Deliberately *not* capped at `MAX_DOCUMENTS_PER_AUTHOR`, and deliberately not
+ * assumed to be newest-first. `listRecords` order is per implementation: a
+ * Bluesky-hosted PDS serves newest rkey first, Bridgy Fed serves oldest first and
+ * rejects `reverse` outright — and rkey order is write order, which for a
+ * publication that imported an archive has nothing to do with publication date.
+ * So this returns what it saw and the caller ranks it by `publishedAt`, which is
+ * the order every read path already uses.
  *
  * Pass the same {@link PdsMemo} here and to {@link listAuthorCollections} to resolve
  * the author's DID once for the pair.
@@ -486,14 +506,20 @@ function resolveAuthorPds(authorDid: string, memo?: PdsMemo): Promise<string | n
 export async function listAuthorDocuments(
   authorDid: string,
   pds?: PdsMemo
-): Promise<Array<ListedRecord<DocumentRecord>>> {
+): Promise<AuthorDocumentListing> {
   const pdsUrl = await resolveAuthorPds(authorDid, pds);
   if (!pdsUrl) throw new Error(`Could not resolve PDS for ${authorDid}`);
 
   const raw: Array<ListedRecord<DocumentRecord>> = [];
   let cursor: string | undefined;
+  let exhaustive = false;
 
-  for (let page = 0; page < MAX_LIST_PAGES && raw.length < MAX_DOCUMENTS_PER_AUTHOR; page++) {
+  // Pages to `MAX_LIST_PAGES` rather than stopping at `MAX_DOCUMENTS_PER_AUTHOR`.
+  // The old early exit made the cap and the page bound the same thing, so one full
+  // page ended the walk — and *which* 100 that was depended entirely on the order
+  // the PDS chose to serve. Selecting the cap is the caller's job, and it can only
+  // do it over a set wider than the cap.
+  for (let page = 0; page < MAX_LIST_PAGES; page++) {
     const params = new URLSearchParams({
       repo: authorDid,
       collection: DOCUMENT_COLLECTION,
@@ -511,11 +537,14 @@ export async function listAuthorDocuments(
     };
     const records = data.records ?? [];
     raw.push(...records);
-    if (!data.cursor || records.length === 0) break;
+    if (!data.cursor || records.length === 0) {
+      exhaustive = true;
+      break;
+    }
     cursor = data.cursor;
   }
 
-  return raw;
+  return { records: raw, exhaustive };
 }
 
 /** One page of collection sidecars, plus whether absence from it proves deletion. */
