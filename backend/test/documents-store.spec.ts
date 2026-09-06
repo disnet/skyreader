@@ -570,6 +570,147 @@ describe('backfill and reconcile', () => {
     expect((await loadAuthorDocuments(env, AUTHOR)).map((d) => d.title)).toEqual(['One']);
   });
 
+  /**
+   * A PDS that pages a repo in a caller-chosen order, with a `publishedAt` per
+   * record. Both are the variables the walk used to be wrong about: `listRecords`
+   * order is per implementation, and rkey order is write order, which is not
+   * publication order for a repo that imported an archive.
+   */
+  function mockOrderedPds(
+    docs: Array<{ rkey: string; publishedAt: string }>,
+    { pageSize = 100 }: { pageSize?: number } = {}
+  ): { documentPages: number } {
+    const counts = { documentPages: 0 };
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = new URL(String(input));
+      if (url.hostname === 'plc.directory') {
+        return new Response(
+          JSON.stringify({
+            id: AUTHOR,
+            service: [
+              {
+                id: '#atproto_pds',
+                type: 'AtprotoPersonalDataServer',
+                serviceEndpoint: 'https://pds.example',
+              },
+            ],
+          })
+        );
+      }
+      const collection = url.searchParams.get('collection');
+      if (collection === 'site.standard.document') {
+        counts.documentPages++;
+        const page = Number(url.searchParams.get('cursor') ?? '0');
+        const start = page * pageSize;
+        const slice = docs.slice(start, start + pageSize);
+        const more = start + slice.length < docs.length;
+        return new Response(
+          JSON.stringify({
+            records: slice.map((d) => ({
+              uri: `at://${AUTHOR}/site.standard.document/${d.rkey}`,
+              cid: `cid-${d.rkey}`,
+              value: {
+                site: PUBLICATION,
+                title: d.rkey,
+                path: `/${d.rkey}`,
+                publishedAt: d.publishedAt,
+              },
+            })),
+            ...(more ? { cursor: String(page + 1) } : {}),
+          })
+        );
+      }
+      if (url.pathname.endsWith('listRecords'))
+        return new Response(JSON.stringify({ records: [] }));
+      return new Response('{}', { status: 404 });
+    });
+    return counts;
+  }
+
+  async function storedRkeys(): Promise<string[]> {
+    const rows = await env.DB.prepare(
+      'SELECT rkey FROM documents_v2 WHERE author_did = ? ORDER BY published_at DESC'
+    )
+      .bind(AUTHOR)
+      .all<{ rkey: string }>();
+    return (rows.results ?? []).map((r) => r.rkey);
+  }
+
+  /** A row the firehose delivered, stamped before the walk so a prune would take it. */
+  async function seedFirehoseDocument(rkey: string, publishedAt: string): Promise<void> {
+    const stamp = Date.now() - 60_000;
+    await env.DB.prepare(
+      `INSERT INTO documents_v2
+         (record_uri, author_did, rkey, record_cid, site_uri, published_at, canonical_url, record_json, indexed_at, updated_at)
+       VALUES (?, ?, ?, 'cid-live', ?, ?, NULL, '{"site":"","title":"Live"}', ?, ?)`
+    )
+      .bind(
+        `at://${AUTHOR}/site.standard.document/${rkey}`,
+        AUTHOR,
+        rkey,
+        PUBLICATION,
+        new Date(publishedAt).getTime(),
+        stamp,
+        stamp
+      )
+      .run();
+  }
+
+  // The Bridgy Fed shape: `listRecords` serves *oldest* first (and rejects
+  // `reverse`), so a repo past the page bound never shows the walk its newest
+  // records. Pruning against that listing deleted exactly the documents the
+  // firehose had gotten right — the reader-visible half of the bug.
+  it('keeps what a partial listing never saw instead of pruning it', async () => {
+    const total = MAX_LIST_PAGES * 100 + 100;
+    const docs = Array.from({ length: total }, (_, i) => ({
+      rkey: `asc${String(i).padStart(4, '0')}`,
+      // Ascending: the oldest publication is served first, the newest is past the
+      // page bound and unreachable.
+      publishedAt: new Date(Date.UTC(2020, 0, 1) + i * 86_400_000).toISOString(),
+    }));
+    await seedFirehoseDocument('live001', '2026-09-06T00:00:00.000Z');
+    mockOrderedPds(docs);
+
+    const result = await backfillAuthorDocuments(env, AUTHOR);
+
+    expect(result.ok).toBe(true);
+    // The walk could not prove it saw the whole repo, so it must not claim to have.
+    expect(result.complete).toBe(false);
+    const stored = await storedRkeys();
+    expect(stored).toContain('live001');
+    // The cap still holds — a walk that declines to prune falls back to eviction.
+    expect(stored.length).toBe(MAX_DOCUMENTS_PER_AUTHOR);
+  });
+
+  // The archive-import shape: one write batch, so rkey order is meaningless, and
+  // `publishedAt` spans two decades. Taking the first 100 listed kept the 2007
+  // imports and dropped everything recent.
+  it('keeps the newest by publication date, not the first page the PDS served', async () => {
+    const archive = Array.from({ length: 120 }, (_, i) => ({
+      rkey: `old${String(i).padStart(3, '0')}`,
+      publishedAt: new Date(Date.UTC(2007, 0, 1) + i * 86_400_000).toISOString(),
+    }));
+    const recent = Array.from({ length: 30 }, (_, i) => ({
+      rkey: `new${String(i).padStart(3, '0')}`,
+      publishedAt: new Date(Date.UTC(2026, 0, 1) + i * 86_400_000).toISOString(),
+    }));
+    // Served archive-first: every recent document is past the per-author cap in
+    // listing order, and inside it in publication order.
+    mockOrderedPds([...archive, ...recent]);
+
+    const result = await backfillAuthorDocuments(env, AUTHOR);
+
+    expect(result.ok).toBe(true);
+    const stored = await storedRkeys();
+    expect(stored.length).toBe(MAX_DOCUMENTS_PER_AUTHOR);
+    // Every recent post is held, and the oldest imports are the ones evicted.
+    for (const doc of recent) expect(stored).toContain(doc.rkey);
+    expect(stored).not.toContain('old000');
+    // The listing was exhaustive, so this walk is still allowed to prune and the
+    // author is genuinely past the cap.
+    expect(result.complete).toBe(false);
+  });
+
   it('records the error and leaves the stored set alone when the PDS fails', async () => {
     mockPds([{ rkey: 'one', cid: 'cid1', title: 'One' }]);
     await backfillAuthorDocuments(env, AUTHOR);
@@ -1071,23 +1212,27 @@ describe('the backfill query budget', () => {
 
   // The allowance is per author but the context is shared by a fan-out. A
   // publication starved during one author's walk must not stay starved for the next.
+  //
+  // Which document gets starved follows the walk's order, and that is publication
+  // date descending — these fixtures carry no `publishedAt`, so they all tie at the
+  // walk's `now` and the `record_uri DESC` tie-break decides, exactly as the cap
+  // eviction would. So the walk spends its resolves on doc5..doc1 and doc0 is the
+  // one left holding a bare path.
   it('gives each author in a fan-out a fresh allowance for the same publication', async () => {
     const pubs = Array.from(
       { length: MAX_SITE_RESOLVES_PER_BACKFILL + 1 },
       (_, i) => `at://${AUTHOR}/site.standard.publication/pub${i}`
     );
-    const starved = pubs[pubs.length - 1];
+    const starved = pubs[0];
     mockPdsWithPublications({ [AUTHOR]: pubs, [OTHER]: [starved] });
 
     const ctx = createDocumentApplyContext(createQueryLedger());
     await backfillAuthorDocuments(env, AUTHOR, ctx);
-    // The last publication is past the first author's allowance: path only.
-    expect(await canonicalUrlOf(AUTHOR, `doc${pubs.length - 1}`)).toBe(`/doc${pubs.length - 1}`);
+    // The lowest-ranked publication is past the first author's allowance: path only.
+    expect(await canonicalUrlOf(AUTHOR, 'doc0')).toBe('/doc0');
 
     await backfillAuthorDocuments(env, OTHER, ctx);
-    expect(await canonicalUrlOf(OTHER, 'doc0')).toBe(
-      `https://pub${MAX_SITE_RESOLVES_PER_BACKFILL}.example/doc0`
-    );
+    expect(await canonicalUrlOf(OTHER, 'doc0')).toBe('https://pub0.example/doc0');
   });
 
   // The listing term, counted against the network rather than against itself. A

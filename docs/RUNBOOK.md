@@ -692,6 +692,46 @@ npx wrangler d1 execute skyreader --remote --command \
    (`No proxy entry returned`) — coverage of the walk has to be a fact, not an
    assumption. Pass `{"dids":[…]}` to re-check specific authors after a fix.
 
+   **`clean` is not proof for an author at the per-author cap.** The compare diffs
+   D1 against the proxy, and both sides pick which 100 documents to keep. When they
+   pick by the same rule they agree whether or not the rule is right — so an author
+   both sides got wrong reads `clean`, and only an author one side has since
+   corrected shows up as drift at all. Only authors at the cap can disagree, which
+   makes the exposure enumerable:
+
+   ```bash
+   npx wrangler d1 execute skyreader --remote --command \
+     "SELECT author_did, COUNT(*) AS docs FROM documents_v2
+       GROUP BY author_did HAVING COUNT(*) >= 100 ORDER BY 2 DESC"
+   ```
+
+   Force those through the backfill (`{"dids":[…]}`, five at a time) before reading
+   the compare as a verdict. A repo the walk can list exhaustively — anything inside
+   `MAX_LIST_PAGES` — re-ranks itself to the true newest 100 in one pass. A larger
+   one can't be repaired by a walk and depends on the firehose rows already in D1,
+   which is what the `exhaustive` prune gate exists to protect.
+
+   **Drift that does not block the flip.** Two shapes are expected and mean D1 is
+   the better side, not the broken one:
+   - **D1 holds the newer `publishedAt`.** The proxy ranks an author's cap by the
+     order their PDS served `listRecords`; D1 ranks by publication date, which is
+     what every read path orders by. Those disagree whenever listing order isn't
+     publication order — a Bridgy Fed repo (served oldest-first, `reverse`
+     rejected), or a publication that imported a back catalogue in one write batch,
+     where rkey order is write order and says nothing about when anything was
+     published. Same counts on both sides with a symmetric difference and no
+     `cidMismatches` is the signature. Drift the other way — the **proxy** holding
+     newer content — is not this, and does stop the flip.
+   - **An author whose PDS is down.** `last_listed_at` null with a listing error
+     (§4d) means neither side has content and the flip changes nothing for their
+     subscribers. Their scopes serve `status:'error'`, which is what keeps a
+     reader's existing copy on screen.
+
+   So the gate is _every page clean, or its drift explained and D1 the better
+   side_ — recorded here rather than left to be re-derived, because a literal
+   reading of "every page clean" is unreachable while the proxy is still ranking by
+   a different key.
+
 3. **Flip reads**, after a clean compare and a soak:
 
    ```bash

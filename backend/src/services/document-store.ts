@@ -941,11 +941,11 @@ export async function backfillAuthorDocuments(
   const pds = createPdsMemo();
 
   const now = Date.now();
-  let listed: Awaited<ReturnType<typeof listAuthorDocuments>>;
+  let listing: Awaited<ReturnType<typeof listAuthorDocuments>>;
   // The listing's pages are subrequests too, spent whether or not it succeeds.
   chargeQueries(ctx.ledger, BACKFILL_LIST_SUBREQUESTS);
   try {
-    listed = await listAuthorDocuments(authorDid, pds);
+    listing = await listAuthorDocuments(authorDid, pds);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'listRecords failed';
     chargeQueries(ctx.ledger, 1);
@@ -954,8 +954,24 @@ export async function backfillAuthorDocuments(
     return refused(message);
   }
 
-  const complete = listed.length < MAX_DOCUMENTS_PER_AUTHOR;
-  const kept = listed.slice(0, MAX_DOCUMENTS_PER_AUTHOR);
+  const listed = listing.records;
+  // Only a listing that reached the end of the repo can claim the author fits under
+  // the cap; one stopped by the page bound says nothing about what lay past it.
+  const complete = listing.exhaustive && listed.length < MAX_DOCUMENTS_PER_AUTHOR;
+
+  // Rank by publication date, not by the order the PDS happened to serve. This is
+  // the same key the cap eviction and every read path order by
+  // (`ORDER BY published_at DESC, record_uri DESC`), and matching them is the whole
+  // point: when the walk kept a different 100 than the trim would, the two fought
+  // each other — a reader saw a publication's 2007 archive imports while its 2026
+  // posts sat one reconcile away from being deleted.
+  const kept = [...listed]
+    .sort((a, b) => {
+      const byPublished = publishedAtMs(b.value, now) - publishedAtMs(a.value, now);
+      if (byPublished !== 0) return byPublished;
+      return a.uri < b.uri ? 1 : a.uri > b.uri ? -1 : 0;
+    })
+    .slice(0, MAX_DOCUMENTS_PER_AUTHOR);
 
   for (const record of kept) {
     const parsed = parseAtUri(record.uri);
@@ -971,13 +987,27 @@ export async function backfillAuthorDocuments(
   // per-author constant fiction. It is also safer against a concurrent write — a
   // row the drain adds while we list carries a later stamp and survives, where a
   // set difference against the listing would have deleted it.
-  const pruned = await env.DB.prepare(
-    'DELETE FROM documents_v2 WHERE author_did = ? AND (updated_at IS NULL OR updated_at < ?)'
-  )
-    .bind(authorDid, now)
-    .run();
+  //
+  // Only against an exhaustive listing, though. A walk stopped by the page bound
+  // has no idea what it didn't see, and "absent from a partial listing" is not
+  // evidence of deletion — on a PDS that serves oldest-first, it is evidence of
+  // nothing but a large repo. Such a walk falls back to the cap eviction, which
+  // ranks by the same key over everything we hold rather than over what one listing
+  // reached, so rows the firehose delivered survive a walk that couldn't see them.
+  // One statement either way: the budget is unchanged.
+  let removed = 0;
+  if (listing.exhaustive) {
+    const pruned = await env.DB.prepare(
+      'DELETE FROM documents_v2 WHERE author_did = ? AND (updated_at IS NULL OR updated_at < ?)'
+    )
+      .bind(authorDid, now)
+      .run();
+    removed = pruned.meta?.changes ?? 0;
+  } else {
+    const trimmed = await trimAuthorDocumentsStatement(env, authorDid).run();
+    removed = trimmed.meta?.changes ?? 0;
+  }
   chargeQueries(ctx.ledger, 1);
-  const removed = pruned.meta?.changes ?? 0;
 
   const collections = await listAuthorCollections(authorDid, pds);
 
@@ -1067,6 +1097,9 @@ export async function backfillAuthorDocuments(
     deferredCollections,
     collectionAllowance,
     complete,
+    // Which of the two settle paths ran: a false here means stale rows were kept
+    // rather than pruned, which is the deliberate trade and worth being able to see.
+    exhaustive: listing.exhaustive,
     queries: ctx.ledger.spent,
   });
 
