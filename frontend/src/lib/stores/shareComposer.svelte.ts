@@ -8,6 +8,7 @@
 // the live record on Update and are not drafted.
 
 import { linkblogStore } from '$lib/stores/linkblog.svelte';
+import { preferences } from '$lib/stores/preferences.svelte';
 import { shareDraftsStore } from '$lib/stores/shareDrafts.svelte';
 import { blocksToNote, noteToBlocks, draftHasContent, draftWordCount } from '$lib/utils/shareNote';
 import type { Article, ShareDraft, ShareDraftBlock } from '$lib/types';
@@ -51,6 +52,12 @@ function createShareComposerStore() {
   let blocks = $state<ShareDraftBlock[]>([]);
   let minimized = $state(false);
   let posting = $state(false);
+  // "Posted from skyreader.app" on this post. Seeded from the sticky per-account
+  // preference each time the drawer opens, so the choice carries between drafts
+  // without following the article. Create mode only — v1 offers no way to add or
+  // remove the line on an edit (delete and reshare covers it), and the backend
+  // preserves whatever the record already has.
+  let attribution = $state(false);
   let draftCreatedAt = 0;
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -124,6 +131,7 @@ function createShareComposerStore() {
     };
     minimized = false;
     posting = false;
+    attribution = mode === 'create' && preferences.linkblogAttributionOn;
 
     if (mode === 'edit') {
       blocks = noteToBlocks(options.initialNote);
@@ -229,7 +237,15 @@ function createShareComposerStore() {
         // through `isShared`, which deleted the draft without the note ever
         // being written. So act on what it reports: a failure keeps the draft, a
         // duplicate attaches these words to the entry that already exists.
-        const result = await linkblogStore.shareLink(article, noteText || undefined, repostUri);
+        const result = await linkblogStore.shareLink(
+          article,
+          noteText || undefined,
+          repostUri,
+          // Re-check the kill-switch at post time: Settings may have disabled
+          // the offer while this draft sat open, hiding the checkbox — a value
+          // the user can no longer see must not be published.
+          attribution && preferences.linkblogAttributionOffered
+        );
         if (result === 'failed') return false;
         if (result === 'duplicate') await linkblogStore.setNote(article.url, noteText);
       }
@@ -285,6 +301,14 @@ function createShareComposerStore() {
     isOpenFor,
     setMinimized(value: boolean) {
       minimized = value;
+    },
+    /** Tick or untick "Posted from Skyreader"; the choice sticks per account. */
+    setAttribution(value: boolean) {
+      attribution = value;
+      preferences.setLinkblogAttributionOn(value);
+    },
+    get attribution() {
+      return attribution;
     },
     get session() {
       return session;

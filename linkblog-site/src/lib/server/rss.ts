@@ -11,6 +11,7 @@ import {
   hostnameOf,
   linkPostMentions,
   linkPostNote,
+  linkPostTitle,
   renderBodyHtml,
   rkeyFromUri,
   safeHttpUrl,
@@ -90,7 +91,9 @@ function renderItem(origin: string, did: string, doc: ProxyDocument): string {
   const pubDate = toRfc822(doc.createdAt || doc.publishedAt);
 
   const tags = [
-    `<title>${escapeXml(doc.title || 'Untitled')}</title>`,
+    // The article's own title, undecorated — the 🔗 / “…” decoration a record
+    // can carry is for foreign sites, and a subscriber's reader shows the article.
+    `<title>${escapeXml(linkPostTitle(doc) || 'Untitled')}</title>`,
     `<link>${escapeXml(itemLink)}</link>`,
     `<guid isPermaLink="false">${escapeXml(doc.recordUri)}</guid>`,
     pubDate ? `<pubDate>${escapeXml(pubDate)}</pubDate>` : '',

@@ -26,8 +26,48 @@ import type {
   SocialDocument,
   User,
 } from '$lib/types';
+import { getLinkPostTitle, isLinkPost } from '$lib/utils/linkPost';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
+
+export interface DocumentsBatchV2Response {
+  authors: Array<{
+    did: string;
+    siteUri?: string;
+    // Present only on `ready`; absent on `unchanged` (bodyless) and `error`.
+    documents?: SocialDocument[];
+    status: 'ready' | 'unchanged' | 'error';
+    error?: string;
+    errorCount?: number;
+    nextRetryAt?: number;
+    // Per-scope content hash to store and echo as `since_digest` next poll.
+    digest?: string;
+    // True when `documents` is the author's complete set (fit under the proxy's
+    // per-author cap) — lets a client treat an absent record as deleted.
+    complete?: boolean;
+  }>;
+  // See fetchFeedsBatchV2 — documents ride the identical read delta.
+  readCursor?: number;
+}
+
+/**
+ * Give a link post back the article's own title.
+ *
+ * A share's record title carries the author's chosen decoration (🔗 …, “…”), and
+ * that decoration is FOR foreign sites — on leaflet.pub or pckt an undecorated
+ * title made the post indistinguishable from a repost of the article. Inside
+ * Skyreader the headline is the article, so the decoration is stripped once here,
+ * at the one boundary every document read crosses, rather than at each of the
+ * dozen surfaces that render `doc.title` (feed card, saves, reader, linkblog).
+ *
+ * Non-link-post documents — someone's essay — are untouched: their title is their
+ * own, decorations and all.
+ */
+function undecorateLinkPostTitle(doc: SocialDocument): SocialDocument {
+  if (!isLinkPost(doc)) return doc;
+  const title = getLinkPostTitle(doc);
+  return title && title !== doc.title ? { ...doc, title } : doc;
+}
 
 /** One `item_labels_cache` row as `GET /api/labels` serves it. */
 export interface LabelRowDTO {
@@ -552,29 +592,15 @@ class ApiClient {
 
   async fetchDocumentsBatchV2(
     documents: Array<{ did: string; siteUri?: string; since_digest?: string }>
-  ): Promise<{
-    authors: Array<{
-      did: string;
-      siteUri?: string;
-      // Present only on `ready`; absent on `unchanged` (bodyless) and `error`.
-      documents?: SocialDocument[];
-      status: 'ready' | 'unchanged' | 'error';
-      error?: string;
-      errorCount?: number;
-      nextRetryAt?: number;
-      // Per-scope content hash to store and echo as `since_digest` next poll.
-      digest?: string;
-      // True when `documents` is the author's complete set (fit under the proxy's
-      // per-author cap) — lets a client treat an absent record as deleted.
-      complete?: boolean;
-    }>;
-    // See fetchFeedsBatchV2 — documents ride the identical read delta.
-    readCursor?: number;
-  }> {
-    return this.fetch('/api/v2/documents/batch', {
+  ): Promise<DocumentsBatchV2Response> {
+    const res = await this.fetch<DocumentsBatchV2Response>('/api/v2/documents/batch', {
       method: 'POST',
       body: JSON.stringify({ documents }),
     });
+    for (const author of res.authors ?? []) {
+      author.documents = author.documents?.map(undecorateLinkPostTitle);
+    }
+    return res;
   }
 
   // On-demand fetch of a single standard.site document by at:// URI — the in-app
@@ -584,7 +610,7 @@ class ApiClient {
     const res = await this.fetch<{ document?: SocialDocument }>(
       `/api/v2/documents/get?uri=${encodeURIComponent(uri)}`
     );
-    return res.document ?? null;
+    return res.document ? undecorateLinkPostTitle(res.document) : null;
   }
 
   async discoverFeedsV2(url: string): Promise<{
@@ -764,6 +790,8 @@ class ApiClient {
     tags?: string[];
     // Quote-reshare: the AT URI of the original link post being quoted.
     repostUri?: string;
+    // Append the "Posted from skyreader.app" line to the post.
+    attribution?: boolean;
   }): Promise<{ uri: string; cid: string; rkey: string; publication: string }> {
     return this.fetch('/api/linkblog/share', {
       method: 'POST',
@@ -919,6 +947,18 @@ class ApiClient {
     return this.fetch('/api/linkblog/publication/visibility', {
       method: 'PUT',
       body: JSON.stringify({ pageHidden }),
+    });
+  }
+
+  // How this user's link posts are written on other people's sites: the title
+  // decoration and where the article's link card sits. Partial updates are fine;
+  // the response is the refreshed publication meta.
+  async setLinkblogFormatting(
+    formatting: Partial<LinkblogPublication['formatting']>
+  ): Promise<LinkblogPublication> {
+    return this.fetch('/api/linkblog/formatting', {
+      method: 'PUT',
+      body: JSON.stringify(formatting),
     });
   }
 

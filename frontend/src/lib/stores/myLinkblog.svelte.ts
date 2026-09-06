@@ -16,7 +16,7 @@
 import { api } from '$lib/services/api';
 import { auth } from '$lib/stores/auth.svelte';
 import { buildOptimisticLinkPost, getExternalArticleLink } from '$lib/utils/linkPost';
-import { noteToLeafletBlocks } from '$lib/utils/linkPostNote';
+import { isAttributionText, noteToLeafletBlocks } from '$lib/utils/linkPostNote';
 import { loadDigests, saveDigests, scopeKey } from '$lib/services/documentDigests';
 import type { LinkblogPublication, SocialDocument } from '$lib/types';
 import { preferences } from '$lib/stores/preferences.svelte';
@@ -223,30 +223,79 @@ function createMyLinkblogStore() {
     documents = [doc, ...documents.filter((d) => getExternalArticleLink(d) !== input.articleUrl)];
   }
 
-  // Rebuild a document's pub.leaflet body with new leading text/blockquote
-  // blocks, preserving the website card and everything after it.
-  function rebuildContentWithNote(existing: unknown, note: string): unknown {
+  // Rebuild a document's pub.leaflet body with new note blocks, keeping the
+  // website card (and anything else that isn't ours) exactly where it sits.
+  //
+  // Mirrors the backend's replaceLeafletNoteRegion, which this is the optimistic
+  // preview of: the card no longer closes the post, so "everything from the first
+  // non-note block onward" is no longer the tail — it's whatever isn't the note,
+  // re-inserted at the same layout position it was found in. An attribution line
+  // WE added — the record's `skyreaderAttribution` flag is the only thing that
+  // says so — is carried through as-is (the edit path never adds or removes one);
+  // on any other record that same sentence is the author's, and belongs to the
+  // note like any other line.
+  function rebuildContentWithNote(
+    existing: unknown,
+    note: string,
+    hasAttribution: boolean
+  ): unknown {
     const pages =
-      (existing as { pages?: Array<{ blocks?: Array<{ block?: { $type?: string } }> }> })?.pages ??
-      [];
-    const blocks: Array<{ block: unknown }> = [];
-    blocks.push(...noteToLeafletBlocks(note));
+      (
+        existing as {
+          pages?: Array<{ blocks?: Array<{ block?: { $type?: string; plaintext?: string } }> }>;
+        }
+      )?.pages ?? [];
     const oldBlocks = pages[0]?.blocks ?? [];
-    const firstPreserved = oldBlocks.findIndex(
-      (wrapper) =>
-        wrapper.block?.$type !== 'pub.leaflet.blocks.text' &&
-        wrapper.block?.$type !== 'pub.leaflet.blocks.blockquote'
-    );
-    if (firstPreserved >= 0) {
-      for (const wrapper of oldBlocks.slice(firstPreserved)) {
-        if (wrapper.block) blocks.push({ block: wrapper.block });
+
+    const extras: Array<{ block: unknown }> = [];
+    let attribution: { block: unknown } | null = null;
+    let oldNotes = 0;
+    let notesBeforeExtras = -1;
+    for (const wrapper of oldBlocks) {
+      if (!wrapper.block) continue;
+      const type = wrapper.block.$type;
+      const isNoteType =
+        type === 'pub.leaflet.blocks.text' || type === 'pub.leaflet.blocks.blockquote';
+      if (isNoteType && isAttributionText(wrapper.block.plaintext ?? '', hasAttribution)) {
+        attribution = { block: wrapper.block };
+        continue;
       }
+      if (isNoteType) {
+        oldNotes++;
+        continue;
+      }
+      if (notesBeforeExtras < 0) notesBeforeExtras = oldNotes;
+      extras.push({ block: wrapper.block });
     }
+    if (notesBeforeExtras < 0) notesBeforeExtras = oldNotes;
+
+    const noteBlocks = noteToLeafletBlocks(note);
+    // Same rule as the backend: no note on the old record means no evidence, and
+    // 'bottom' is what such a record was written as.
+    const at =
+      oldNotes === 0 || notesBeforeExtras >= oldNotes
+        ? noteBlocks.length
+        : notesBeforeExtras <= 0
+          ? 0
+          : Math.min(leadingQuoteRuns(noteBlocks), noteBlocks.length);
+    const blocks: Array<{ block: unknown }> = [
+      ...noteBlocks.slice(0, at),
+      ...extras,
+      ...noteBlocks.slice(at),
+      ...(attribution ? [attribution] : []),
+    ];
     if (blocks.length === 0) return undefined;
     return {
       $type: 'pub.leaflet.content',
       pages: [{ $type: 'pub.leaflet.pages.linearDocument', blocks }],
     };
+  }
+
+  // How many blocks the note opens with that are quotes — the 'context' split.
+  function leadingQuoteRuns(blocks: Array<{ block: { $type?: string } }>): number {
+    let n = 0;
+    while (n < blocks.length && blocks[n].block.$type === 'pub.leaflet.blocks.blockquote') n++;
+    return n;
   }
 
   // Update the note on an already-listed document (keyed by record URI), so the
@@ -259,7 +308,7 @@ function createMyLinkblogStore() {
     const doc = documents[idx];
     const next: SocialDocument = {
       ...doc,
-      content: rebuildContentWithNote(doc.content, note.trim()),
+      content: rebuildContentWithNote(doc.content, note.trim(), doc.skyreaderAttribution === true),
     };
     documents = [...documents.slice(0, idx), next, ...documents.slice(idx + 1)];
   }

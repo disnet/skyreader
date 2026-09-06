@@ -54,6 +54,22 @@ const QUOTE_BLOCK_TYPES = new Set([
 // text) without chasing pathologically deep trees.
 const MAX_DEPTH = 4;
 
+// Skyreader's opt-in "posted from" line (backend ATTRIBUTION_TEXT). It's a plain
+// text block in every format, so without this the snippet for a bare share —
+// no commentary, just a quote and the line — would read as the linker's prose.
+// Keep in sync with the backend constant.
+//
+// The string alone is the tell here, unlike the note parsers, which require the
+// record's `skyreaderAttribution` flag before treating that sentence as ours.
+// This is a snippet, not a note: nothing is rewritten from it, so an author whose
+// lead line happens to be that sentence loses one snippet candidate to the next
+// block rather than losing the line itself.
+const ATTRIBUTION_TEXT = 'Posted from skyreader.app';
+
+function isAttributionText(text: string): boolean {
+  return text === ATTRIBUTION_TEXT;
+}
+
 function firstTextInBlocks(blocks: unknown, depth: number, quotes: 'skip' | 'take'): string | null {
   if (depth > MAX_DEPTH || !Array.isArray(blocks)) return null;
   for (const entry of blocks) {
@@ -67,7 +83,7 @@ function firstTextInBlocks(blocks: unknown, depth: number, quotes: 'skip' | 'tak
     if (isQuote && quotes === 'skip') continue;
     if (isQuote || (typeof block.$type === 'string' && TEXT_BLOCK_TYPES.has(block.$type))) {
       const text = block.plaintext?.trim();
-      if (text) return text;
+      if (text && !isAttributionText(text)) return text;
     }
     // Descend into container blocks (blockquote / list item / table cell).
     const nested = firstTextInBlocks(block.content, depth + 1, quotes);
@@ -81,13 +97,19 @@ function firstSnippetInBlocks(blocks: unknown): string | null {
   return firstTextInBlocks(blocks, 0, 'skip') ?? firstTextInBlocks(blocks, 0, 'take');
 }
 
+// A line that is nothing but a markdown link — the shared article's own link
+// line in a markpub link post, which can now lead the body rather than close it
+// (see the card-position preference). It's the link, not the linker's words, and
+// as a snippet it would read as an empty label.
+const BARE_LINK_LINE = /^\[[^\]]*\]\([^)]*\)$/;
+
 // The first non-empty markdown line, stripped of leading heading/quote/list
 // markers. Shared by the markdown-bodied formats (greengale, markpub).
 function firstMarkdownLine(markdown: unknown): string | null {
   if (typeof markdown !== 'string') return null;
   for (const line of markdown.split('\n')) {
     const cleaned = line.replace(/^\s*(#{1,6}\s+|>\s?|[-*+]\s+)/, '').trim();
-    if (cleaned) return cleaned;
+    if (cleaned && !isAttributionText(cleaned) && !BARE_LINK_LINE.test(cleaned)) return cleaned;
   }
   return null;
 }

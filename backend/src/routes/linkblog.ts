@@ -19,6 +19,7 @@ import {
   DOCUMENT_COLLECTION,
   FOREIGN_RECORD_ERROR,
   getPublicationMeta,
+  getLinkblogFormatting,
   getLinkblogTarget,
   getLinkblogVisibility,
   isLinkblogDisabled,
@@ -31,8 +32,13 @@ import {
   updateLinkblogShareNote,
   updatePublication,
   writeLinkblogShare,
+  setLinkblogFormatting,
+  TITLE_STYLES,
+  CARD_POSITIONS,
   type LinkblogShareInput,
   type ContentFormat,
+  type LinkblogTitleStyle,
+  type LinkblogCardPosition,
 } from '../services/linkblog-sync';
 import { appForContentType, appForUrl, type PublicationApp } from '../services/publication-app';
 import { createPDSClient } from '../services/pds-client';
@@ -134,6 +140,9 @@ export async function handleCreateLinkblogShare(request: Request, env: Env): Pro
   if (body.repostUri !== undefined && !isAtUri(body.repostUri)) {
     return json({ error: 'repostUri must be an at:// URI' }, 400);
   }
+  if (body.attribution !== undefined && typeof body.attribution !== 'boolean') {
+    return json({ error: 'attribution must be a boolean' }, 400);
+  }
 
   const target = await getLinkblogTarget(env, session.did);
   if (missingCompanionScopes(session, target.format)) return insufficientScopesResponse();
@@ -148,6 +157,7 @@ export async function handleCreateLinkblogShare(request: Request, env: Env): Pro
     note: body.note,
     tags: body.tags,
     repostUri: body.repostUri,
+    attribution: body.attribution,
   };
 
   const result = await writeLinkblogShare(session, env, rkey, input);
@@ -236,6 +246,47 @@ export async function handleDeleteLinkblogShare(request: Request, env: Env): Pro
     return json({ error: result.error }, result.retryable ? 503 : 502);
   }
   return json({ success: true });
+}
+
+// PUT /api/linkblog/formatting — { titleStyle?, cardPosition? }
+//
+// How this user's link posts are written. A D1-only pair of settings, but gated
+// like every other linkblog mutation (see handleSetPageVisibility): a session
+// that can't write is one whose next share fails, so send it to re-auth here
+// rather than let it configure a linkblog it can't publish to.
+//
+// Partial updates are allowed; an omitted field keeps its stored value. Returns
+// the publication meta so the settings page refreshes from one response.
+export async function handleSetLinkblogFormatting(request: Request, env: Env): Promise<Response> {
+  const session = await getSessionFromRequest(request, env);
+  if (!session) return json({ error: 'Unauthorized' }, 401);
+  if (request.method !== 'PUT') return json({ error: 'Method not allowed' }, 405);
+  if (!hasRequiredScopes(session.grantedScopes, LINKBLOG_SCOPES)) {
+    return insufficientScopesResponse();
+  }
+
+  let body: { titleStyle?: unknown; cardPosition?: unknown };
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: 'Invalid JSON body' }, 400);
+  }
+  if (body.titleStyle !== undefined && !TITLE_STYLES.has(body.titleStyle as LinkblogTitleStyle)) {
+    return json({ error: 'titleStyle must be one of: link, quoted, plain' }, 400);
+  }
+  if (
+    body.cardPosition !== undefined &&
+    !CARD_POSITIONS.has(body.cardPosition as LinkblogCardPosition)
+  ) {
+    return json({ error: 'cardPosition must be one of: context, top, bottom' }, 400);
+  }
+
+  const current = await getLinkblogFormatting(env, session.did);
+  await setLinkblogFormatting(env, session.did, {
+    titleStyle: (body.titleStyle as LinkblogTitleStyle) ?? current.titleStyle,
+    cardPosition: (body.cardPosition as LinkblogCardPosition) ?? current.cardPosition,
+  });
+  return json(await getPublicationMeta(session, env));
 }
 
 // GET /api/linkblog/discover/friends — people the user follows on Bluesky who

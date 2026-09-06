@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { SocialDocument } from '$lib/types';
-import { buildOptimisticLinkPost, getLinkPostNote, isSkyreaderShare } from './linkPost';
+import {
+  buildOptimisticLinkPost,
+  getLinkPostNote,
+  getLinkPostTitle,
+  isSkyreaderShare,
+  stripTitleDecoration,
+} from './linkPost';
+import { ATTRIBUTION_TEXT } from './linkPostNote';
 
 const ARTICLE = 'https://example.com/post';
 
@@ -37,6 +44,104 @@ describe('getLinkPostNote across connected publication formats', () => {
       })
     );
     expect(note).toBe('Worth reading.\n\n> A quote');
+  });
+
+  // The card can sit between the quote and the commentary now, so every format's
+  // reader has to skip it rather than treat it as the end of the note.
+  it('reads a Leaflet note around a mid-post card', () => {
+    const note = getLinkPostNote(
+      doc({
+        $type: 'pub.leaflet.content',
+        pages: [
+          {
+            blocks: [
+              { block: { $type: 'pub.leaflet.blocks.blockquote', plaintext: 'A quote' } },
+              { block: { $type: 'pub.leaflet.blocks.website', src: ARTICLE } },
+              { block: { $type: 'pub.leaflet.blocks.text', plaintext: 'Worth reading.' } },
+            ],
+          },
+        ],
+      })
+    );
+    expect(note).toBe('> A quote\n\nWorth reading.');
+  });
+
+  it('reads a pckt note around a mid-post card', () => {
+    const note = getLinkPostNote(
+      doc({
+        $type: 'blog.pckt.content',
+        items: [
+          {
+            $type: 'blog.pckt.block.blockquote',
+            content: [{ $type: 'blog.pckt.block.text', plaintext: 'A quote' }],
+          },
+          { $type: 'blog.pckt.block.website', src: ARTICLE },
+          { $type: 'blog.pckt.block.text', plaintext: 'Worth reading.' },
+        ],
+      })
+    );
+    expect(note).toBe('> A quote\n\nWorth reading.');
+  });
+
+  it('reads a Markdown note around a mid-post link line, closing the gap', () => {
+    const note = getLinkPostNote(
+      doc({
+        $type: 'at.markpub.markdown',
+        text: { markdown: `> A quote\n\n[Post](${ARTICLE})\n\nWorth reading.` },
+      })
+    );
+    expect(note).toBe('> A quote\n\nWorth reading.');
+  });
+
+  it('excludes the attribution line from every format', () => {
+    expect(
+      getLinkPostNote({
+        ...doc({
+          $type: 'app.offprint.content',
+          items: [
+            { $type: 'app.offprint.block.text', plaintext: 'Worth reading.' },
+            { $type: 'app.offprint.block.webBookmark', href: ARTICLE, title: 'Post' },
+            { $type: 'app.offprint.block.text', plaintext: ATTRIBUTION_TEXT },
+          ],
+        }),
+        skyreaderAttribution: true,
+      })
+    ).toBe('Worth reading.');
+    expect(
+      getLinkPostNote({
+        ...doc({
+          $type: 'at.markpub.markdown',
+          text: { markdown: `Worth reading.\n\n[Post](${ARTICLE})\n\n${ATTRIBUTION_TEXT}` },
+        }),
+        skyreaderAttribution: true,
+      })
+    ).toBe('Worth reading.');
+  });
+
+  // The flag is what makes that line ours. Without it the author wrote it, and
+  // dropping it would both hide their words and delete them on the next edit —
+  // this note is what the composer reloads.
+  it("keeps an author's own attribution-shaped line when the record isn't flagged", () => {
+    expect(
+      getLinkPostNote(
+        doc({
+          $type: 'app.offprint.content',
+          items: [
+            { $type: 'app.offprint.block.text', plaintext: 'Worth reading.' },
+            { $type: 'app.offprint.block.webBookmark', href: ARTICLE, title: 'Post' },
+            { $type: 'app.offprint.block.text', plaintext: ATTRIBUTION_TEXT },
+          ],
+        })
+      )
+    ).toBe(`Worth reading.\n\n${ATTRIBUTION_TEXT}`);
+    expect(
+      getLinkPostNote(
+        doc({
+          $type: 'at.markpub.markdown',
+          text: { markdown: `Worth reading.\n\n[Post](${ARTICLE})\n\n${ATTRIBUTION_TEXT}` },
+        })
+      )
+    ).toBe(`Worth reading.\n\n${ATTRIBUTION_TEXT}`);
   });
 
   it('reads a pckt note and stops at the website card', () => {
@@ -97,6 +202,54 @@ describe('getLinkPostNote across connected publication formats', () => {
 
   it('ignores a content shape it does not know', () => {
     expect(getLinkPostNote(doc({ $type: 'com.example.content', items: [] }))).toBeUndefined();
+  });
+});
+
+// The record title carries the author's decoration (🔗 …, “…”) so a link post
+// isn't mistaken for a repost of the article on someone else's site. Skyreader's
+// own surfaces want the article's plain name, which lives on the website card.
+describe('getLinkPostTitle', () => {
+  it('prefers the plain card title over the decorated record title', () => {
+    expect(
+      getLinkPostTitle({
+        ...doc({
+          $type: 'pub.leaflet.content',
+          pages: [
+            {
+              blocks: [
+                {
+                  block: {
+                    $type: 'pub.leaflet.blocks.website',
+                    src: ARTICLE,
+                    title: 'The Article',
+                  },
+                },
+              ],
+            },
+          ],
+        }),
+        title: '🔗 The Article',
+      })
+    ).toBe('The Article');
+  });
+
+  it('falls back to stripping the record title when the card has none', () => {
+    expect(
+      getLinkPostTitle({
+        ...doc({
+          $type: 'blog.pckt.content',
+          items: [{ $type: 'blog.pckt.block.website', src: ARTICLE }],
+        }),
+        title: '“The Article”',
+      })
+    ).toBe('The Article');
+  });
+
+  it('only strips the decorations we write', () => {
+    expect(stripTitleDecoration('🔗 A')).toBe('A');
+    expect(stripTitleDecoration('“A”')).toBe('A');
+    expect(stripTitleDecoration('"Straight" quotes')).toBe('"Straight" quotes');
+    expect(stripTitleDecoration('A')).toBe('A');
   });
 });
 

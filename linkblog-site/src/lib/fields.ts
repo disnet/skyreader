@@ -147,11 +147,30 @@ function blockMentions(block: LeafletTextBlock, base: number, isQuote: boolean):
   return out;
 }
 
-// Rebuild the note from the leading text and blockquote blocks — the same
-// restricted Markdown the user typed, with `> ` markers restored — and rebase the
-// mention facets onto it. Skyreader writes the note before the website card, so
-// the walk stops at the first block that is neither.
-function reconstructLeafletNote(blocks: Array<{ block?: LeafletTextBlock }>): {
+// Skyreader's opt-in "posted from" line (the backend's ATTRIBUTION_TEXT). It's
+// ours, not the author's words, so every note parser here skips it — but only on
+// a record whose own `skyreaderAttribution` flag says we added it. The string
+// alone can't tell our line from an author who wrote that exact sentence, and
+// skipping theirs would drop their words from their own post.
+export const ATTRIBUTION_TEXT = 'Posted from skyreader.app';
+
+function isAttributionLine(text: string, hasAttribution?: boolean): boolean {
+  return hasAttribution === true && text.trim() === ATTRIBUTION_TEXT;
+}
+
+// Rebuild the note from the text and blockquote blocks — the same restricted
+// Markdown the user typed, with `> ` markers restored — and rebase the mention
+// facets onto it.
+//
+// The website card no longer closes the post: it can sit between the quote and
+// the commentary, or lead (see the card-position preference), so a non-note block
+// is SKIPPED rather than ending the walk. Breaking at the first one truncated
+// every note written in the new layout at the card. The card contributes no note
+// bytes, so mention offsets are unaffected by where it sits.
+function reconstructLeafletNote(
+  blocks: Array<{ block?: LeafletTextBlock }>,
+  hasAttribution?: boolean
+): {
   note: string;
   mentions: MentionFacet[];
 } {
@@ -162,9 +181,10 @@ function reconstructLeafletNote(blocks: Array<{ block?: LeafletTextBlock }>): {
   for (const wrapper of blocks) {
     const block = wrapper.block;
     const isQuote = block?.$type === 'pub.leaflet.blocks.blockquote';
-    if (!isQuote && block?.$type !== 'pub.leaflet.blocks.text') break;
+    if (!isQuote && block?.$type !== 'pub.leaflet.blocks.text') continue;
     const plaintext = block?.plaintext;
     if (!plaintext?.trim()) continue;
+    if (!isQuote && isAttributionLine(plaintext, hasAttribution)) continue;
     const rendered = isQuote
       ? plaintext
           .split('\n')
@@ -184,10 +204,12 @@ function reconstructLeafletNote(blocks: Array<{ block?: LeafletTextBlock }>): {
 // A linkblog can be an existing standard.site publication (Leaflet, pckt,
 // Offprint, Markdown), in which case its link posts carry the note in that app's
 // content shape. pckt and Offprint use an ordered `items` array of text and
-// blockquote blocks; Markdown stores one string. In each the note leads and the
-// shared article closes the post — as a native link card (pckt, Offprint) or a
-// trailing Markdown link. Older Offprint shares closed with a text line carrying
-// the URL instead, which is why a URL-bearing text block also ends the note.
+// blockquote blocks; Markdown stores one string. In each, the shared article
+// rides along as a native link card (pckt, Offprint) or a Markdown link line, and
+// since the card-position preference it can lead, close, or sit between the
+// note's runs — so it's skipped wherever it appears rather than ending the note.
+// Older Offprint shares carried the article as a text line holding the URL, which
+// is why such a text block counts as the card too.
 
 interface ForeignBlock {
   $type?: string;
@@ -200,14 +222,20 @@ function foreignBlockText(block: ForeignBlock): string {
   return (block.content ?? []).map(foreignBlockText).filter(Boolean).join('\n');
 }
 
-function foreignItemsNote(items: ForeignBlock[], prefix: string, articleUrl?: string): string {
+function foreignItemsNote(
+  items: ForeignBlock[],
+  prefix: string,
+  articleUrl?: string,
+  hasAttribution?: boolean
+): string {
   const parts: string[] = [];
   for (const item of items) {
     const isQuote = item?.$type === `${prefix}blockquote`;
-    if (!isQuote && item?.$type !== `${prefix}text`) break;
+    if (!isQuote && item?.$type !== `${prefix}text`) continue;
     const text = foreignBlockText(item).trim();
     if (!text) continue;
-    if (!isQuote && articleUrl && text.includes(articleUrl)) break;
+    if (!isQuote && articleUrl && text.includes(articleUrl)) continue;
+    if (!isQuote && isAttributionLine(text, hasAttribution)) continue;
     parts.push(
       isQuote
         ? text
@@ -220,8 +248,12 @@ function foreignItemsNote(items: ForeignBlock[], prefix: string, articleUrl?: st
   return parts.join('\n\n').trim();
 }
 
-function foreignMarkdownNote(markdown: string, articleUrl?: string): string {
-  const lines = markdown.split('\n');
+function foreignMarkdownNote(
+  markdown: string,
+  articleUrl?: string,
+  hasAttribution?: boolean
+): string {
+  let lines = markdown.split('\n');
   if (articleUrl) {
     for (let i = lines.length - 1; i >= 0; i--) {
       if (lines[i].includes(`](${articleUrl})`)) {
@@ -230,7 +262,13 @@ function foreignMarkdownNote(markdown: string, articleUrl?: string): string {
       }
     }
   }
-  return lines.join('\n').trim();
+  lines = lines.filter((line) => !isAttributionLine(line, hasAttribution));
+  // Removing a line from the middle leaves the blank lines that flanked it back
+  // to back; collapse so a mid-post link doesn't open a hole in the note.
+  return lines
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 // The user's commentary on a link post, with any @mention facets rebased onto it.
@@ -241,27 +279,28 @@ function noteOf(doc: ProxyDocument): { note: string; mentions: MentionFacet[] } 
   const content = doc.content as
     (LeafletContent & { items?: ForeignBlock[]; text?: { markdown?: string } }) | undefined;
   const articleUrl = externalArticleUrl(doc);
+  const attributed = doc.skyreaderAttribution;
   switch (content?.$type) {
     case 'pub.leaflet.content': {
       for (const page of content.pages ?? []) {
-        const result = reconstructLeafletNote(page.blocks ?? []);
+        const result = reconstructLeafletNote(page.blocks ?? [], attributed);
         if (result.note) return result;
       }
       return { note: '', mentions: [] };
     }
     case 'blog.pckt.content':
       return {
-        note: foreignItemsNote(content.items ?? [], 'blog.pckt.block.', articleUrl),
+        note: foreignItemsNote(content.items ?? [], 'blog.pckt.block.', articleUrl, attributed),
         mentions: [],
       };
     case 'app.offprint.content':
       return {
-        note: foreignItemsNote(content.items ?? [], 'app.offprint.block.', articleUrl),
+        note: foreignItemsNote(content.items ?? [], 'app.offprint.block.', articleUrl, attributed),
         mentions: [],
       };
     case 'at.markpub.markdown':
       return {
-        note: foreignMarkdownNote(content.text?.markdown ?? '', articleUrl),
+        note: foreignMarkdownNote(content.text?.markdown ?? '', articleUrl, attributed),
         mentions: [],
       };
     default:
@@ -276,6 +315,55 @@ export function linkPostNote(doc: ProxyDocument): string {
 // The resolved @mention facets on the note, byte-indexed into linkPostNote(doc).
 export function linkPostMentions(doc: ProxyDocument): MentionFacet[] {
   return noteOf(doc).mentions;
+}
+
+// The article's own title for a link post, undecorated.
+//
+// A share's record title may carry the author's chosen decoration (🔗 …, “…”),
+// which exists to distinguish a link post from a repost of the article on
+// FOREIGN sites. This page IS the linkblog, and its own headline, RSS <title> and
+// og:title want the article's plain name — so read it off the website card, which
+// always carries it. Stripping the record title is the fallback for records
+// written before the card had one.
+export function linkPostTitle(doc: ProxyDocument): string {
+  return websiteCardTitle(doc.content) ?? stripTitleDecoration(doc.title || '');
+}
+
+// The decorations Skyreader writes, and only those: the link emoji and
+// typographic quotes. A title the author really did wrap in "straight quotes"
+// survives. MUST match the backend's stripTitleDecoration.
+export function stripTitleDecoration(title: string): string {
+  let out = title.trim();
+  if (out.startsWith('\u{1f517} ')) out = out.slice('\u{1f517} '.length).trim();
+  else if (out.startsWith('\u{1f517}')) out = out.slice('\u{1f517}'.length).trim();
+  const quoted = /^“([\s\S]*)”$/.exec(out);
+  if (quoted) out = quoted[1].trim();
+  return out;
+}
+
+function websiteCardTitle(content: unknown): string | undefined {
+  const shape = content as
+    | {
+        pages?: Array<{ blocks?: Array<{ block?: { $type?: string; title?: unknown } }> }>;
+        items?: Array<{ $type?: string; title?: unknown }>;
+      }
+    | undefined;
+  const usable = (value: unknown) =>
+    typeof value === 'string' && value.trim() ? value : undefined;
+  for (const page of shape?.pages ?? []) {
+    for (const wrapper of page.blocks ?? []) {
+      if (wrapper.block?.$type === 'pub.leaflet.blocks.website') return usable(wrapper.block.title);
+    }
+  }
+  for (const item of shape?.items ?? []) {
+    if (
+      item?.$type === 'blog.pckt.block.website' ||
+      item?.$type === 'app.offprint.block.webBookmark'
+    ) {
+      return usable(item.title);
+    }
+  }
+  return undefined;
 }
 
 // A snippet of the shared article itself (its first paragraph or so). LEGACY

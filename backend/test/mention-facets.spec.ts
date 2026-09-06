@@ -56,8 +56,11 @@ describe('buildLinkblogDocument with mention facets', () => {
     const content = doc.content as {
       pages: Array<{ blocks: Array<{ block: Record<string, unknown> }> }>;
     };
-    const textBlock = content.pages[0].blocks[0].block;
-    expect(textBlock.$type).toBe('pub.leaflet.blocks.text');
+    // Nothing is quoted here, so the default 'context' layout leads with the
+    // card and the note follows it.
+    const textBlock = content.pages[0].blocks
+      .map((b) => b.block)
+      .find((b) => b.$type === 'pub.leaflet.blocks.text')!;
     expect(textBlock.facets).toEqual([facet]);
   });
 
@@ -71,6 +74,9 @@ describe('buildLinkblogDocument with mention facets', () => {
     const content = doc.content as {
       pages: Array<{ blocks: Array<{ block: Record<string, unknown> }> }>;
     };
-    expect(content.pages[0].blocks[0].block.facets).toBeUndefined();
+    const textBlock = content.pages[0].blocks
+      .map((b) => b.block)
+      .find((b) => b.$type === 'pub.leaflet.blocks.text')!;
+    expect(textBlock.facets).toBeUndefined();
   });
 });

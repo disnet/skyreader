@@ -120,6 +120,49 @@ describe('extractContentText', () => {
     expect(extractContentText(content)).toBe('Title');
   });
 
+  // Skyreader's opt-in "Posted from skyreader.app" line is a plain text block in
+  // every format, so a bare share — a quote and that line — would otherwise
+  // yield the attribution as if it were the linker's own prose.
+  it('never takes the Skyreader attribution line as the snippet', () => {
+    expect(
+      extractContentText({
+        $type: 'pub.leaflet.content',
+        pages: [
+          {
+            blocks: [
+              { block: { $type: 'pub.leaflet.blocks.blockquote', plaintext: 'quoted lead' } },
+              { block: { $type: 'pub.leaflet.blocks.website', src: 'https://example.com/a' } },
+              {
+                block: {
+                  $type: 'pub.leaflet.blocks.text',
+                  plaintext: 'Posted from skyreader.app',
+                },
+              },
+            ],
+          },
+        ],
+      })
+    ).toBe('quoted lead');
+    expect(
+      extractContentText({
+        $type: 'at.markpub.markdown',
+        text: { markdown: 'Posted from skyreader.app\n' },
+      })
+    ).toBeNull();
+  });
+
+  // The card can lead the post now (see the card-position preference), so a
+  // markpub link post can open with its own link line. That's the link, not the
+  // linker's words, and as a snippet it reads as an empty label.
+  it('skips a bare markdown link line and takes the prose after it', () => {
+    expect(
+      extractContentText({
+        $type: 'at.markpub.markdown',
+        text: { markdown: '[The Article](https://example.com/a)\n\nWorth reading.\n' },
+      })
+    ).toBe('Worth reading.');
+  });
+
   it('returns null for a markpub record with no inline markdown', () => {
     const content = {
       $type: 'at.markpub.markdown',

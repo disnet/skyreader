@@ -11,6 +11,7 @@
     hostnameOf,
     linkPostMentions,
     linkPostNote,
+    linkPostTitle,
     plainBody,
     renderBodyHtml,
     rkeyFromUri,
@@ -25,7 +26,10 @@
 
   const doc = $derived(data.doc);
   const blogName = $derived(blogTitle(data.profile, data.pub));
-  const title = $derived(doc.title || 'Untitled');
+  // The article's own title, undecorated: the 🔗 / “…” decoration a record can
+  // carry exists for foreign sites, and this page IS the linkblog. Keeps the
+  // decoration out of <title>, og:title and the RSS feed (see linkPostTitle).
+  const title = $derived(linkPostTitle(doc) || 'Untitled');
   const note = $derived(linkPostNote(doc).trim());
   const mentions = $derived(linkPostMentions(doc));
   const excerpt = $derived(articleExcerpt(doc));
