@@ -13,6 +13,7 @@ import {
   serveDocumentScope,
   serveSingleDocument,
 } from '../services/document-store';
+import { digestScope, isValidDid } from '../services/standard-site';
 import { log, serializeError } from '../utils/logger';
 import { chunkArray, getReadKeys } from './reading';
 import { clearFeedHealth, ingestProxyFeed } from './ingest';
@@ -699,6 +700,72 @@ export async function handleV2BatchDocumentFetch(
   }
 }
 
+// D1 caps bound parameters per statement; a batch is ≤50 scopes so one chunk
+// normally covers it, but dedup keeps the IN list minimal either way.
+const DIGEST_PRECHECK_DID_CHUNK = 50;
+
+/**
+ * Answer every scope whose `since_digest` still matches without loading anything
+ * per-scope. The digest is a hash over the scope's sorted `(recordUri, recordCid)`
+ * pairs — both raw columns on `documents_v2` — so one batch-wide query of those
+ * two columns reproduces it exactly as `serveDocumentScope` would compute it from
+ * the fully-built documents. On a steady-state poll nearly every scope is
+ * unchanged, and the per-scope path spends ~4 D1 queries (author row, documents
+ * with `record_json`, site metas, count) discovering that.
+ *
+ * Returns the scope keys (`did\nsiteUri`) that are unchanged. Deliberately
+ * conservative: a scope with zero stored rows is left to the slow path (its
+ * answer depends on `document_authors.last_listed_at` — never-ingested must serve
+ * `error`, not `unchanged`), and a scope whose rows fail record parsing at serve
+ * time simply never matches (the served digest was computed over the parsed
+ * subset), so it also falls through. A false "unchanged" would require a SHA-256
+ * collision.
+ */
+async function findUnchangedScopes(
+  env: Env,
+  requests: Array<{ did: string; siteUri?: string; since_digest?: string }>
+): Promise<Set<string>> {
+  const candidates = requests.filter((r) => r.since_digest && isValidDid(r.did));
+  if (candidates.length === 0) return new Set();
+
+  const dids = [...new Set(candidates.map((r) => r.did))];
+  const pairsByAuthor = new Map<string, Array<{ recordUri: string; recordCid: string }>>();
+  for (let i = 0; i < dids.length; i += DIGEST_PRECHECK_DID_CHUNK) {
+    const chunk = dids.slice(i, i + DIGEST_PRECHECK_DID_CHUNK);
+    const rows = await env.DB.prepare(
+      `SELECT author_did, site_uri, record_uri, record_cid FROM documents_v2
+        WHERE author_did IN (${chunk.map(() => '?').join(',')})`
+    )
+      .bind(...chunk)
+      .all<{ author_did: string; site_uri: string; record_uri: string; record_cid: string }>();
+    for (const row of rows.results ?? []) {
+      let list = pairsByAuthor.get(`${row.author_did}\n${row.site_uri}`);
+      if (!list) {
+        list = [];
+        pairsByAuthor.set(`${row.author_did}\n${row.site_uri}`, list);
+      }
+      list.push({ recordUri: row.record_uri, recordCid: row.record_cid });
+    }
+  }
+
+  const unchanged = new Set<string>();
+  await Promise.all(
+    candidates.map(async (entry) => {
+      // An unscoped request covers every publication of the author's.
+      const pairs = entry.siteUri
+        ? (pairsByAuthor.get(`${entry.did}\n${entry.siteUri}`) ?? [])
+        : [...pairsByAuthor.entries()]
+            .filter(([key]) => key.startsWith(`${entry.did}\n`))
+            .flatMap(([, list]) => list);
+      if (pairs.length === 0) return;
+      if ((await digestScope(pairs)) === entry.since_digest) {
+        unchanged.add(`${entry.did}\n${entry.siteUri ?? ''}`);
+      }
+    })
+  );
+  return unchanged;
+}
+
 /**
  * Serve every requested scope from D1. One curated-edition resolve budget is shared
  * across the whole batch: each edition costs up to 50 cross-PDS getRecords, and a
@@ -711,8 +778,21 @@ async function serveDocumentsFromD1(
   requests: Array<{ did: string; siteUri?: string; since_digest?: string }>
 ): Promise<ProxyDocumentEntry[]> {
   const collectionBudget = { remaining: MAX_COLLECTION_RESOLVES_PER_REQUEST };
+
+  // Best-effort: a failed precheck just means every scope takes the per-scope
+  // path, exactly as before the fast path existed.
+  let unchanged = new Set<string>();
+  try {
+    unchanged = await findUnchangedScopes(env, requests);
+  } catch (error) {
+    console.error('Document digest precheck failed; serving per-scope:', error);
+  }
+
   return Promise.all(
     requests.map(async (entry): Promise<ProxyDocumentEntry> => {
+      if (unchanged.has(`${entry.did}\n${entry.siteUri ?? ''}`)) {
+        return { did: entry.did, siteUri: entry.siteUri, status: 'unchanged' };
+      }
       try {
         return await serveDocumentScope(env, entry, collectionBudget);
       } catch (error) {

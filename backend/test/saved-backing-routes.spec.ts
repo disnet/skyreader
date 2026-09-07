@@ -423,6 +423,104 @@ describe('GET /api/saved — backed list path', () => {
     expect(landed.body.full).toBe(true);
     expect(landed.body.articles).toHaveLength(1);
   });
+
+  // The snapshot can't page (membership can shrink), so it re-ships whole on
+  // every refresh — for a large collection >1MB of almost-always-identical
+  // bytes. The digest short-circuit answers a matching echo with `unchanged`
+  // instead; membership changes land on the open AFTER the background poll that
+  // observed them, exactly as the snapshot itself always has.
+  it('short-circuits an unchanged verified snapshot on the digest', async () => {
+    await setBackingRow(`semble:${COLLECTION}`);
+    await env.DB.prepare(
+      `UPDATE user_settings SET last_backing_poll = ?, last_successful_backing_poll = ? WHERE user_did = ?`
+    )
+      .bind(Date.now(), Date.now(), DID)
+      .run();
+    const memberA = {
+      url: 'https://a.test/x',
+      urlNormalized: 'https://a.test/x',
+      itemUri: 'at://card/1',
+      linkUri: 'at://link/1',
+      itemType: 'network.cosmik.card',
+      title: 'A',
+    };
+    const snapshot = vi.spyOn(read, 'snapshotBackedCollection').mockResolvedValue({
+      complete: true,
+      members: [memberA],
+      skipped: [],
+      typeMix: {},
+    });
+    const extractMissing = vi.spyOn(sync, 'extractMissingBackedContent').mockResolvedValue(0);
+    await env.DB.prepare(
+      `INSERT INTO saved_articles (user_did, rkey, url, url_normalized, title, source, saved_at, created_at)
+       VALUES (?, '3klist0000001', 'https://a.test/x', 'https://a.test/x', 'A', 'url', 200, 200)`
+    )
+      .bind(DID)
+      .run();
+    await env.DB.prepare(
+      `INSERT INTO backed_collection_members
+         (user_did, external_collection, url_normalized, url, external_provider, external_item_uri, external_link_uri)
+       VALUES (?, ?, 'https://a.test/x', 'https://a.test/x', 'semble', 'at://card/1', 'at://link/1')`
+    )
+      .bind(DID, COLLECTION)
+      .run();
+
+    const get = (qs = '') =>
+      new IncomingRequest(`http://localhost/api/saved${qs}`, {
+        method: 'GET',
+        headers: { Cookie: `session_id=${SESSION}`, Origin: env.FRONTEND_URL },
+      });
+
+    const first = await call(get());
+    expect(first.body.full).toBe(true);
+    expect(first.body.articles).toHaveLength(1);
+    expect(first.body.digest).toBeTruthy();
+
+    const repeat = await call(get(`?since_digest=${first.body.digest}`));
+    expect(repeat.body).toMatchObject({
+      unchanged: true,
+      full: true,
+      articles: [],
+      digest: first.body.digest,
+    });
+    // A matching metadata digest must not suppress retries for enrichment rows
+    // whose earlier extraction failed and therefore left the digest unchanged.
+    expect(extractMissing).toHaveBeenCalledTimes(2);
+
+    // Membership grows externally. The serve still answers from the last-good
+    // snapshot (the poll that sees the growth runs in the background), so this
+    // open is still `unchanged` — and the next one re-ships the grown list.
+    snapshot.mockResolvedValue({
+      complete: true,
+      members: [
+        memberA,
+        {
+          url: 'https://b.test/y',
+          urlNormalized: 'https://b.test/y',
+          itemUri: 'at://card/2',
+          linkUri: 'at://link/2',
+          itemType: 'network.cosmik.card',
+          title: 'B',
+        },
+      ],
+      skipped: [],
+      typeMix: {},
+    });
+    // Expire the poll gate so this open's background poll actually runs (the
+    // earlier opens' polls no-op'd inside the gate window, which is fine — the
+    // serve never depended on them).
+    await env.DB.prepare(`UPDATE user_settings SET last_backing_poll = 0 WHERE user_did = ?`)
+      .bind(DID)
+      .run();
+    const stillOld = await call(get(`?since_digest=${first.body.digest}`));
+    expect(stillOld.body.unchanged).toBe(true);
+
+    const grown = await call(get(`?since_digest=${first.body.digest}`));
+    expect(grown.body.unchanged).toBeUndefined();
+    expect(grown.body.full).toBe(true);
+    expect(grown.body.articles).toHaveLength(2);
+    expect(grown.body.digest).not.toBe(first.body.digest);
+  });
 });
 
 describe('PUT /api/settings — backing change tears down the old snapshot', () => {

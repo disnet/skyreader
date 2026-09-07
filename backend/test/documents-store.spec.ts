@@ -1605,6 +1605,72 @@ describe('the read rollout gate', () => {
     expect(body.authors[0].documents?.[0].read).toBe(false);
   });
 
+  // The batch precheck answers unchanged scopes from one query of raw
+  // (record_uri, record_cid) pairs instead of ~4 per-scope loads. It must
+  // reproduce serveDocumentScope's digest exactly: a served digest echoed back
+  // is unchanged, an edit misses again, and a scoped request hashes only its
+  // publication's rows.
+  it('round-trips the digest through the batch fast path', async () => {
+    const allowed = new Set([AUTHOR]);
+    await seedPublication(OTHER_PUBLICATION, 'https://other.example');
+    await applyDocumentEvent(env, docEvent('a'), allowed);
+    await applyDocumentEvent(env, docEvent('b', { site: OTHER_PUBLICATION }), allowed);
+    await env.DB.prepare(
+      `INSERT INTO document_authors (author_did, last_listed_at, complete) VALUES (?, ?, 1)
+       ON CONFLICT(author_did) DO UPDATE SET last_listed_at = excluded.last_listed_at, complete = 1`
+    )
+      .bind(AUTHOR, Date.now())
+      .run();
+    await setDocumentFlag(env, DOCUMENTS_V2_ENABLED_KEY, '1');
+
+    type Entry = { status: string; digest?: string; siteUri?: string };
+    const serve = async (documents: unknown[]): Promise<Entry[]> => {
+      const res = await handleV2BatchDocumentFetch(
+        batchRequest({ documents }),
+        env as Env,
+        SESSION
+      );
+      return ((await res.json()) as { authors: Entry[] }).authors;
+    };
+
+    const [unscoped, scoped] = await serve([
+      { did: AUTHOR },
+      { did: AUTHOR, siteUri: PUBLICATION },
+    ]);
+    expect(unscoped.status).toBe('ready');
+    expect(scoped.status).toBe('ready');
+    expect(scoped.digest).not.toBe(unscoped.digest);
+
+    const repeat = await serve([
+      { did: AUTHOR, since_digest: unscoped.digest },
+      { did: AUTHOR, siteUri: PUBLICATION, since_digest: scoped.digest },
+    ]);
+    expect(repeat.map((e) => e.status)).toEqual(['unchanged', 'unchanged']);
+
+    // An edit moves the digest: the edited scope re-serves, the other stays put.
+    await applyDocumentEvent(env, docEvent('a', { operation: 'update', cid: 'cid-a2' }), allowed);
+    const afterEdit = await serve([
+      { did: AUTHOR, since_digest: unscoped.digest },
+      { did: AUTHOR, siteUri: OTHER_PUBLICATION, since_digest: scoped.digest },
+    ]);
+    expect(afterEdit[0].status).toBe('ready');
+    expect(afterEdit[1].status).toBe('ready'); // different scope than its digest → miss
+  });
+
+  // A never-ingested author must keep serving `error` even when the client sends
+  // a digest — the precheck skips zero-row scopes precisely so it can't claim
+  // `unchanged` over an answer that depends on document_authors bookkeeping.
+  it('leaves a zero-row scope to the slow path, digest or not', async () => {
+    await setDocumentFlag(env, DOCUMENTS_V2_ENABLED_KEY, '1');
+    const res = await handleV2BatchDocumentFetch(
+      batchRequest({ documents: [{ did: OTHER, since_digest: 'stale' }] }),
+      env as Env,
+      SESSION
+    );
+    const { authors } = (await res.json()) as { authors: Array<{ status: string }> };
+    expect(authors[0].status).toBe('error');
+  });
+
   it('serves a single document from D1 when the gate is on', async () => {
     await applyDocumentEvent(env, docEvent('single'), new Set([AUTHOR]));
     await setDocumentFlag(env, DOCUMENTS_V2_ENABLED_KEY, '1');

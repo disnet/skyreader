@@ -1,4 +1,4 @@
-import { db } from '$lib/services/db';
+import { db, getMetadata, setMetadata } from '$lib/services/db';
 import { safePut, safeBulkPut } from '$lib/services/safeDb.svelte';
 import { api } from '$lib/services/api';
 import { generateTid } from '$lib/utils/tid';
@@ -114,13 +114,20 @@ function createSavesStore() {
 
   const PAGE_SIZE = 50;
   const BODY_BATCH = 200;
+  // Digest of the last external-backed snapshot applied to the cache (Dexie
+  // metadata key); echoed to /api/saved so an unchanged snapshot isn't re-shipped.
+  const SNAPSHOT_DIGEST_KEY = 'savedSnapshotDigest';
 
   // The list endpoint returns metadata only (the body is the bulk of a row and
   // we already cache it). Fill each item's `content` in place: reuse the cached
   // body when we still have it, otherwise fetch bodies for the unseen rkeys.
   // Offline, items keep whatever body the cache had (null for genuinely new ones).
-  async function hydrateBodies(items: SavedItem[], cachedByRkey: Map<string, SavedItem>) {
+  async function hydrateBodies(
+    items: SavedItem[],
+    cachedByRkey: Map<string, SavedItem>
+  ): Promise<SavedItem[]> {
     const needFetch: string[] = [];
+    const hydrated: SavedItem[] = [];
     for (const it of items) {
       if (it.content != null) continue;
       const cachedBody = cachedByRkey.get(it.rkey)?.content;
@@ -130,7 +137,7 @@ function createSavesStore() {
         needFetch.push(it.rkey);
       }
     }
-    if (needFetch.length === 0 || !syncStore.isOnline) return;
+    if (needFetch.length === 0 || !syncStore.isOnline) return hydrated;
 
     const byRkey = new Map(items.map((it) => [it.rkey, it]));
     for (let i = 0; i < needFetch.length; i += BODY_BATCH) {
@@ -139,12 +146,16 @@ function createSavesStore() {
         const { bodies } = await api.getSavedBodies(chunk);
         for (const [rkey, body] of Object.entries(bodies)) {
           const it = byRkey.get(rkey);
-          if (it && body != null) it.content = body;
+          if (it && body != null) {
+            it.content = body;
+            hydrated.push(it);
+          }
         }
       } catch (err) {
         console.warn('Failed to hydrate saved bodies:', err);
       }
     }
+    return hydrated;
   }
 
   async function load() {
@@ -169,7 +180,26 @@ function createSavesStore() {
       // cursor; `full` means an external-backed snapshot that must replace the
       // cache wholesale (membership can be *removed* elsewhere, so it can't be
       // merged incrementally).
-      const first = await api.getSaved({ limit: PAGE_SIZE });
+      //
+      // Echo the digest of the last snapshot we applied so an unchanged one
+      // costs bytes, not the whole list — but only while a cache exists to keep:
+      // with an empty cache an `unchanged` answer would leave the list empty.
+      const sinceDigest = firstLoad
+        ? undefined
+        : ((await getMetadata<string>(SNAPSHOT_DIGEST_KEY)) ?? undefined);
+      const first = await api.getSaved({ limit: PAGE_SIZE, sinceDigest });
+
+      // Membership and metadata are unchanged, but a previous body request may
+      // have failed after the snapshot digest was stored. Retry only those
+      // missing cached bodies before keeping the snapshot.
+      if (first.unchanged) {
+        const hydrated = await hydrateBodies(cached, cachedByRkey);
+        if (hydrated.length > 0) {
+          await safeBulkPut(db.saved, hydrated);
+          savedSearchStore.invalidate();
+        }
+        return;
+      }
 
       if (first.full) {
         const snapshot = first.articles as SavedItem[];
@@ -206,6 +236,9 @@ function createSavesStore() {
         // than patching it row by row.
         savedSearchStore.invalidate();
         pushWordCountBackfills(backfilled);
+        // Only after the snapshot is fully applied: a digest stored before the
+        // cache write would claim "unchanged" over a cache we never built.
+        if (first.digest) await setMetadata(SNAPSHOT_DIGEST_KEY, first.digest);
         return;
       }
 

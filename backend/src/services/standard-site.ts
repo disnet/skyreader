@@ -413,7 +413,9 @@ export function filterByPublication(documents: ProxyDocument[], siteUri?: string
  * Byte-for-byte the proxy's algorithm, so the digests a client already holds keep
  * matching across the cutover. The client treats it as opaque either way.
  */
-export async function digestScope(documents: ProxyDocument[]): Promise<string> {
+export async function digestScope(
+  documents: Array<Pick<ProxyDocument, 'recordUri' | 'recordCid'>>
+): Promise<string> {
   const pairs = documents.map((d) => `${d.recordUri}\t${d.recordCid}`).sort();
   const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(pairs.join('\n')));
   return [...new Uint8Array(bytes)].map((b) => b.toString(16).padStart(2, '0')).join('');

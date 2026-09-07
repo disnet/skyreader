@@ -740,13 +740,42 @@ export async function handleGetSaved(
       const articles = (await listBackedSaved(env, session.did, settings.backing)).map(
         ({ content: _content, ...rest }) => rest
       );
-      // Fill in bodies for imported stubs after responding (bounded, self-healing
-      // across opens). Titles are already seeded from the foreign record metadata.
+
+      // The snapshot is served whole on every refresh (membership can shrink, so
+      // it can't page), which for a large collection is >1MB per poll — almost
+      // always byte-identical to what the client already holds. The digest is
+      // over the serialized articles themselves (not membership keys), so an
+      // enrichment update (a title or description landing after extraction)
+      // moves it too; the client echoes the digest of the last snapshot it kept
+      // and an unchanged one costs a couple hundred bytes. Only a verified
+      // snapshot may short-circuit: `unchanged` tells the client to keep its
+      // cache, which is exactly the wholesale trust an unverified one hasn't earned.
+      const serialized = JSON.stringify(articles);
+      const digestBytes = await crypto.subtle.digest(
+        'SHA-256',
+        new TextEncoder().encode(serialized)
+      );
+      const digest = [...new Uint8Array(digestBytes)]
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join('');
+
+      // Keep enrichment self-healing even when the metadata snapshot is
+      // unchanged. In particular, a failed extraction leaves `content` NULL
+      // without changing this digest; scheduling the retry after the early
+      // return would strand that stub forever.
       ctx.waitUntil(
         extractMissingBackedContent(env, session.did).catch((err) => {
           console.error('Backed content extraction failed:', err);
         })
       );
+
+      const sinceDigest = new URL(request.url).searchParams.get('since_digest');
+      if (verified && sinceDigest && sinceDigest === digest) {
+        return new Response(
+          JSON.stringify({ articles: [], cursor: null, full: true, unchanged: true, digest }),
+          { headers: { 'Content-Type': 'application/json' } }
+        );
+      }
       // Backing is a snapshot of foreign membership (items can be *removed*
       // elsewhere), so it can't be merged incrementally — `full: true` tells the
       // client to replace its cache wholesale. `cursor: null` → single page.
@@ -754,7 +783,7 @@ export async function handleGetSaved(
       // replace from an unverified (possibly empty) membership table wipes the
       // user's Saved list. Unverified degrades to the merge path, which keeps
       // the client's cache and is a no-op when we have no rows to offer.
-      return new Response(JSON.stringify({ articles, cursor: null, full: verified }), {
+      return new Response(JSON.stringify({ articles, cursor: null, full: verified, digest }), {
         headers: { 'Content-Type': 'application/json' },
       });
     }

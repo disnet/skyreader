@@ -101,8 +101,11 @@ export function buildDocumentRequests(
 
 /**
  * Run `requests` through `fetchBatch` in chunks of `batchSize`, accumulating every
- * batch's author entries. A failing batch is logged via `onError` and skipped —
- * it must not abort the others or the overall refresh.
+ * batch's author entries. Batches are independent scope sets, so they run
+ * concurrently (awaited one at a time, the overflow batch of a >50-scope library
+ * waited out the full batch ahead of it); results keep request order. A failing
+ * batch is logged via `onError` and skipped — it must not abort the others or
+ * the overall refresh.
  */
 export async function collectDocumentBatches<A>(
   requests: DocumentRequest[],
@@ -110,15 +113,19 @@ export async function collectDocumentBatches<A>(
   fetchBatch: (batch: DocumentRequest[]) => Promise<{ authors: A[] }>,
   onError: (e: unknown) => void = (e) => console.error('Document batch fetch failed:', e)
 ): Promise<A[]> {
-  const all: A[] = [];
+  const batches: DocumentRequest[][] = [];
   for (let offset = 0; offset < requests.length; offset += batchSize) {
-    const batch = requests.slice(offset, offset + batchSize);
-    try {
-      const { authors } = await fetchBatch(batch);
-      all.push(...authors);
-    } catch (e) {
-      onError(e);
-    }
+    batches.push(requests.slice(offset, offset + batchSize));
   }
-  return all;
+  const settled = await Promise.all(
+    batches.map(async (batch): Promise<A[]> => {
+      try {
+        return (await fetchBatch(batch)).authors;
+      } catch (e) {
+        onError(e);
+        return [];
+      }
+    })
+  );
+  return settled.flat();
 }

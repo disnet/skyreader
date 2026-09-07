@@ -356,12 +356,21 @@ async function subscribedUnreadCounts(
     );
   }
 
-  const counts: Record<string, number> = {};
+  // The chunks are independent read batches, so they run concurrently: awaited
+  // one at a time, a ~100-feed library serialized 4-5 D1 round trips and the
+  // counts dominated the whole timeline response (~1.2s of it).
+  const chunks: string[][] = [];
   for (let i = 0; i < feedUrls.length; i += COUNTS_CHUNK) {
-    const chunk = feedUrls.slice(i, i + COUNTS_CHUNK);
-    const statements = chunk.map((feedUrl) =>
-      env.DB.prepare(
-        `SELECT ?2 AS feed_url, COUNT(*) AS unread FROM (
+    chunks.push(feedUrls.slice(i, i + COUNTS_CHUNK));
+  }
+  const chunkResults = await Promise.all(
+    chunks.map((chunk) =>
+      timedBatch<{ feed_url: string; unread: number }>(
+        'unread_counts',
+        env.DB,
+        chunk.map((feedUrl) =>
+          env.DB.prepare(
+            `SELECT ?2 AS feed_url, COUNT(*) AS unread FROM (
                 SELECT fi.guid FROM feed_items fi
                  WHERE fi.feed_url = ?2
                  ORDER BY fi.published_at DESC, fi.seq DESC
@@ -371,13 +380,13 @@ async function subscribedUnreadCounts(
                    WHERE il.user_did = ?1 AND il.item_key = w.guid
                      AND il.item_type = 'article' AND il.label = 'read'
                      AND il.deleted_at IS NULL)`
-      ).bind(userDid, feedUrl, ARTICLE_WINDOW_PER_FEED)
-    );
-    const results = await timedBatch<{ feed_url: string; unread: number }>(
-      'unread_counts',
-      env.DB,
-      statements
-    );
+          ).bind(userDid, feedUrl, ARTICLE_WINDOW_PER_FEED)
+        )
+      )
+    )
+  );
+  const counts: Record<string, number> = {};
+  for (const results of chunkResults) {
     for (const result of results) {
       for (const row of result.results ?? []) counts[row.feed_url] = row.unread;
     }

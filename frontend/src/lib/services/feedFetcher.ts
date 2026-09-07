@@ -744,7 +744,12 @@ export async function fetchAllDocuments(subscriptions: Subscription[]): Promise<
   let readCursor: number | undefined;
   const allAuthors = await collectDocumentBatches(requests, DOCUMENT_BATCH_SIZE, async (batch) => {
     const res = await api.fetchDocumentsBatchV2(batch);
-    if (readCursor === undefined && res.readCursor) readCursor = res.readCursor;
+    // Batches run concurrently: keep the EARLIEST server timestamp, so the
+    // seeded read-delta cursor can never skip past a read recorded between one
+    // batch's serve and another's.
+    if (res.readCursor && (readCursor === undefined || res.readCursor < readCursor)) {
+      readCursor = res.readCursor;
+    }
     return res;
   });
 

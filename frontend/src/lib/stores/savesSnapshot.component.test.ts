@@ -11,8 +11,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SavedItem } from '$lib/types';
 
 const savedRows = new Map<string, SavedItem>();
+const metadataRows = new Map<string, unknown>();
 
 vi.mock('$lib/services/db', () => ({
+  getMetadata: async (key: string) => metadataRows.get(key) ?? null,
+  setMetadata: async (key: string, value: unknown) => void metadataRows.set(key, value),
   db: {
     saved: {
       orderBy: () => ({ reverse: () => ({ toArray: async () => [...savedRows.values()] }) }),
@@ -40,6 +43,7 @@ vi.mock('$lib/services/safeDb.svelte', () => ({
 const api = {
   getSaved: vi.fn(),
   getSavedBodies: vi.fn(async () => ({ bodies: {} })),
+  updateSaved: vi.fn(async () => ({ success: true })),
 };
 vi.mock('$lib/services/api', () => ({ api }));
 
@@ -74,7 +78,9 @@ describe('external-backed snapshot replace', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     savedRows.clear();
+    metadataRows.clear();
     pendingSavedRkeys.mockResolvedValue(new Set<string>());
+    api.getSavedBodies.mockResolvedValue({ bodies: {} });
   });
 
   it('keeps a save whose create has not been sent yet', async () => {
@@ -91,6 +97,61 @@ describe('external-backed snapshot replace', () => {
     expect(savesStore.articles.map((a) => a.rkey).sort()).toEqual(['remote', 'unsent']);
     // And it survives in Dexie, not just in the list.
     expect([...savedRows.keys()].sort()).toEqual(['remote', 'unsent']);
+  });
+
+  it('echoes the stored digest and keeps the cache on an unchanged answer', async () => {
+    savedRows.set('remote', save('remote', '2026-01-01T00:00:00Z'));
+    metadataRows.set('savedSnapshotDigest', 'digest-1');
+    api.getSaved.mockResolvedValue({
+      full: true,
+      unchanged: true,
+      digest: 'digest-1',
+      articles: [],
+      cursor: null,
+    });
+
+    await savesStore.load();
+
+    expect(api.getSaved).toHaveBeenCalledWith({ limit: 50, sinceDigest: 'digest-1' });
+    // `unchanged` means the server snapshot is what this cache was built from:
+    // nothing is replaced, nothing hydrated.
+    expect(savesStore.articles.map((a) => a.rkey)).toEqual(['remote']);
+    expect([...savedRows.keys()]).toEqual(['remote']);
+    expect(api.getSavedBodies).not.toHaveBeenCalled();
+  });
+
+  it('retries a missing cached body when the snapshot is unchanged', async () => {
+    savedRows.set('remote', { ...save('remote', '2026-01-01T00:00:00Z'), content: null });
+    metadataRows.set('savedSnapshotDigest', 'digest-1');
+    api.getSaved.mockResolvedValue({
+      full: true,
+      unchanged: true,
+      digest: 'digest-1',
+      articles: [],
+      cursor: null,
+    });
+    api.getSavedBodies.mockResolvedValue({ bodies: { remote: 'recovered body' } });
+
+    await savesStore.load();
+
+    expect(api.getSavedBodies).toHaveBeenCalledWith(['remote']);
+    expect(savedRows.get('remote')?.content).toBe('recovered body');
+  });
+
+  it('stores the snapshot digest only after the replace lands', async () => {
+    api.getSaved.mockResolvedValue({
+      full: true,
+      digest: 'digest-2',
+      articles: [save('remote', '2026-01-01T00:00:00Z')],
+      cursor: null,
+    });
+
+    await savesStore.load();
+
+    expect(metadataRows.get('savedSnapshotDigest')).toBe('digest-2');
+    // An empty cache must never claim a digest: an `unchanged` answer over one
+    // would leave the list empty.
+    expect(api.getSaved).toHaveBeenCalledWith({ limit: 50, sinceDigest: undefined });
   });
 
   it('still drops a synced row the collection no longer holds', async () => {
