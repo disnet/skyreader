@@ -140,22 +140,38 @@ function createAppManager() {
       }
 
       await migrateGuestSubscriptions();
-      // Sync subscriptions and reload every server-backed user collection in parallel.
-      // Saves must participate here (not only during initialize): another device can
-      // add one while this tab stays open, and an explicit refresh is the user's way
-      // to pull that new server row into this device's IndexedDB cache.
-      const [syncResult] = await Promise.all([
-        syncSubscriptions(),
-        itemLabelsStore.load(),
-        savesStore.load(),
-        magazineStore.load(),
-        socialStore.loadFeed(true),
-        filteredViewsStore.syncWithBackend(),
+      // Reload every server-backed user collection in the background. Saves must
+      // participate here (not only during initialize): another device can add one
+      // while this tab stays open, and an explicit refresh is the user's way to
+      // pull that new server row into this device's IndexedDB cache. The timeline
+      // fetch below must NOT wait on these — its only real dependency is the
+      // subscription list, and the saves load in particular can take seconds
+      // (external backing serves a full snapshot), which used to hold every new
+      // article hostage.
+      //
+      // `allSettled`, not `all`: these are independent collections, so one of
+      // them failing is not a failed refresh. A rejection used to abort the try
+      // block before the last-refresh marker below, leaving "last updated" (and
+      // the service worker's copy of it) stale even though the timeline had
+      // already merged — and it settled the refresh at the FIRST failure while
+      // its siblings were still in flight.
+      const loads: Array<[string, Promise<unknown>]> = [
+        ['saves', savesStore.load()],
+        ['magazine', magazineStore.load()],
+        ['social', socialStore.loadFeed(true)],
+        ['filteredViews', filteredViewsStore.syncWithBackend()],
         // Pull the user's own linkblog so share-state reconciles across devices.
         // Forced each refresh so a share made elsewhere lights up the button here;
         // then reconcile prunes any local share the (complete) pull says is gone.
-        myLinkblogStore.load(true).then(() => linkblogStore.reconcile()),
-      ]);
+        ['linkblog', myLinkblogStore.load(true).then(() => linkblogStore.reconcile())],
+      ];
+      const storeLoads = Promise.allSettled(loads.map(([, p]) => p));
+
+      // Labels stay on the critical path (they're one fast delta): the fetch
+      // below reads articlesStore.savedGuids — derived from itemLabelsStore —
+      // to keep starred articles out of merge cleanup, so it must see a label
+      // starred on another device since this tab's last pull.
+      await Promise.all([syncSubscriptions(), itemLabelsStore.load()]);
 
       // One-time migration: push existing local custom fields to backend
       await migrateCustomFieldsToBackend();
@@ -169,6 +185,15 @@ function createAppManager() {
         ]);
         newArticles = result.newArticles;
       }
+
+      // The refresh isn't done (and phase doesn't reach 'ready') until the
+      // store loads settle too. Failures are reported, not thrown: the timeline
+      // has already merged by here, so the refresh did happen.
+      (await storeLoads).forEach((r, i) => {
+        if (r.status === 'rejected') {
+          console.error(`Background refresh: ${loads[i][0]} store failed to load:`, r.reason);
+        }
+      });
 
       lastRefreshAt = Date.now();
       // Persist to IndexedDB for service worker and cross-session access

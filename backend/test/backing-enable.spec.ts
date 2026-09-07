@@ -74,6 +74,12 @@ describe('enableBacking', () => {
     expect(createCol).not.toHaveBeenCalled(); // reused, not created
     expect(result.backing).toEqual({ provider: 'semble', collectionUri: COLLECTION });
     expect(await backingOf()).toBe(`semble:${COLLECTION}`);
+    const state = await env.DB.prepare(
+      'SELECT last_successful_backing_poll FROM user_settings WHERE user_did = ?'
+    )
+      .bind(DID)
+      .first<{ last_successful_backing_poll: number | null }>();
+    expect(state?.last_successful_backing_poll).toBeTypeOf('number');
   });
 
   it('creates a default "Skyreader Saves" collection when none is given', async () => {
@@ -305,7 +311,11 @@ describe('disableBacking', () => {
   beforeEach(reset);
 
   it('reverts to skyreader and clears the local snapshot, leaving enrichment rows', async () => {
-    await env.DB.prepare(`INSERT INTO user_settings (user_did, backing) VALUES (?, ?)`)
+    await env.DB.prepare(
+      `INSERT INTO user_settings
+         (user_did, backing, last_backing_poll, last_successful_backing_poll)
+       VALUES (?, ?, 123, 123)`
+    )
       .bind(DID, `semble:${COLLECTION}`)
       .run();
     await env.DB.prepare(
@@ -325,6 +335,19 @@ describe('disableBacking', () => {
     await disableBacking(env, fakeSession);
 
     expect(await backingOf()).toBe('skyreader');
+    const state = await env.DB.prepare(
+      `SELECT last_backing_poll, last_successful_backing_poll
+       FROM user_settings WHERE user_did = ?`
+    )
+      .bind(DID)
+      .first<{
+        last_backing_poll: number | null;
+        last_successful_backing_poll: number | null;
+      }>();
+    expect(state).toMatchObject({
+      last_backing_poll: null,
+      last_successful_backing_poll: null,
+    });
     const mem = await env.DB.prepare(
       'SELECT COUNT(*) AS n FROM backed_collection_members WHERE user_did = ?'
     )

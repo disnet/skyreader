@@ -47,6 +47,12 @@ export interface UserSettings {
   lastPdsSyncSubscriptions: number | null;
   /** External-backed saves: which engine backs the Saved list (one per account). */
   backing: SaveBacking;
+  /**
+   * When the last backing poll last *completed* (ms), or null if none ever has.
+   * Null means the local membership snapshot has never been verified against the
+   * foreign collection — `GET /api/saved` won't serve it as authoritative.
+   */
+  lastSuccessfulBackingPoll: number | null;
   linkblogDisabled: boolean;
   createdAt: number;
   updatedAt: number;
@@ -57,6 +63,7 @@ interface UserSettingsRow {
   pds_sync_enabled: number;
   last_pds_sync_subscriptions: number | null;
   backing: string | null;
+  last_successful_backing_poll: number | null;
   linkblog_disabled: number;
   created_at: number;
   updated_at: number;
@@ -68,6 +75,7 @@ function rowToSettings(row: UserSettingsRow | null): UserSettings {
       pdsSyncEnabled: false,
       lastPdsSyncSubscriptions: null,
       backing: { provider: 'skyreader' },
+      lastSuccessfulBackingPoll: null,
       linkblogDisabled: false,
       createdAt: Math.floor(Date.now() / 1000),
       updatedAt: Math.floor(Date.now() / 1000),
@@ -77,6 +85,7 @@ function rowToSettings(row: UserSettingsRow | null): UserSettings {
     pdsSyncEnabled: row.pds_sync_enabled === 1,
     lastPdsSyncSubscriptions: row.last_pds_sync_subscriptions,
     backing: parseBacking(row.backing),
+    lastSuccessfulBackingPoll: row.last_successful_backing_poll,
     linkblogDisabled: row.linkblog_disabled === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -163,22 +172,61 @@ export async function handleUpdateSettings(request: Request, env: Env): Promise<
   }
 
   try {
+    // A backing change invalidates the local snapshot of the OLD collection: its
+    // membership rows and unsave tombstones describe a collection that no longer
+    // backs this account, and nothing else ever prunes them. Left in place, they
+    // are what `GET /api/saved` serves the moment the next poll marks the new
+    // backing verified. `disableBacking` — the other way out of a backing — does
+    // the same teardown; this is the direct-API path to the same state change.
+    // Compared through parse+serialize so a NULL or junk column reads as
+    // 'skyreader', exactly as the rest of the code sees it.
+    const before =
+      backingValue !== null
+        ? await env.DB.prepare(`SELECT backing FROM user_settings WHERE user_did = ?`)
+            .bind(session.did)
+            .first<{ backing: string | null }>()
+        : null;
+    const backingChanged =
+      backingValue !== null && backingValue !== serializeBacking(parseBacking(before?.backing));
+
     // Upsert the settings. Each column is only written when present in the body
     // (COALESCE keeps the existing value for an omitted/null bind).
-    await env.DB.prepare(
+    const upsert = env.DB.prepare(
       `INSERT INTO user_settings (user_did, pds_sync_enabled, backing, updated_at)
 			 VALUES (?, ?, ?, unixepoch())
 			 ON CONFLICT(user_did) DO UPDATE SET
 			   pds_sync_enabled = COALESCE(excluded.pds_sync_enabled, pds_sync_enabled),
+			   last_backing_poll = CASE
+			     WHEN excluded.backing IS NOT NULL AND excluded.backing IS NOT user_settings.backing
+			       THEN NULL
+			     ELSE user_settings.last_backing_poll
+			   END,
+			   last_successful_backing_poll = CASE
+			     WHEN excluded.backing IS NOT NULL AND excluded.backing IS NOT user_settings.backing
+			       THEN NULL
+			     ELSE user_settings.last_successful_backing_poll
+			   END,
 			   backing = COALESCE(excluded.backing, backing),
 			   updated_at = unixepoch()`
-    )
-      .bind(
-        session.did,
-        body.pdsSyncEnabled !== undefined ? (body.pdsSyncEnabled ? 1 : 0) : null,
-        backingValue
-      )
-      .run();
+    ).bind(
+      session.did,
+      body.pdsSyncEnabled !== undefined ? (body.pdsSyncEnabled ? 1 : 0) : null,
+      backingValue
+    );
+
+    await env.DB.batch(
+      backingChanged
+        ? [
+            upsert,
+            env.DB.prepare(`DELETE FROM backed_collection_members WHERE user_did = ?`).bind(
+              session.did
+            ),
+            env.DB.prepare(`DELETE FROM backed_unsave_tombstones WHERE user_did = ?`).bind(
+              session.did
+            ),
+          ]
+        : [upsert]
+    );
 
     // Fetch the updated settings
     const row = await env.DB.prepare(`SELECT * FROM user_settings WHERE user_did = ?`)

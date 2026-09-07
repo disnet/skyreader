@@ -367,5 +367,142 @@ describe('GET /api/saved — backed list path', () => {
     // /api/saved/bodies, so it must NOT ride along in the snapshot.
     expect(body.articles[0]).toMatchObject({ title: 'A' });
     expect('content' in body.articles[0]).toBe(false);
+    // Nothing has ever snapshotted successfully, so this membership is unverified:
+    // `full` would tell the client to replace its cache with it.
+    expect(body.full).toBe(false);
+  });
+
+  it('forces past the poll gate — and withholds `full` — until a snapshot lands', async () => {
+    await setBackingRow(`semble:${COLLECTION}`);
+    // An enable-time poll just failed: the gate timestamp is fresh, but no
+    // snapshot has ever completed. An unforced poll here would no-op.
+    await env.DB.prepare(
+      `UPDATE user_settings SET last_backing_poll = ?, last_successful_backing_poll = NULL WHERE user_did = ?`
+    )
+      .bind(Date.now(), DID)
+      .run();
+    const snapshot = vi.spyOn(read, 'snapshotBackedCollection').mockResolvedValue({
+      complete: false,
+      members: [],
+      skipped: [],
+      typeMix: {},
+    });
+    vi.spyOn(sync, 'extractMissingBackedContent').mockResolvedValue(0);
+
+    const get = () =>
+      new IncomingRequest('http://localhost/api/saved', {
+        method: 'GET',
+        headers: { Cookie: `session_id=${SESSION}`, Origin: env.FRONTEND_URL },
+      });
+
+    const failed = await call(get());
+    expect(failed.status).toBe(200);
+    // Forced: the gate did not swallow the poll.
+    expect(snapshot).toHaveBeenCalledTimes(1);
+    // Still unverified, so the empty list must not be applied as a replace.
+    expect(failed.body).toMatchObject({ articles: [], full: false });
+
+    // Next open, the provider answers: the snapshot lands and `full` is honest.
+    snapshot.mockResolvedValue({
+      complete: true,
+      members: [
+        {
+          url: 'https://a.test/x',
+          urlNormalized: 'https://a.test/x',
+          itemUri: 'at://card/1',
+          linkUri: 'at://link/1',
+          itemType: 'network.cosmik.card',
+          title: 'A',
+        },
+      ],
+      skipped: [],
+      typeMix: {},
+    });
+    const landed = await call(get());
+    expect(landed.status).toBe(200);
+    expect(landed.body.full).toBe(true);
+    expect(landed.body.articles).toHaveLength(1);
+  });
+});
+
+describe('PUT /api/settings — backing change tears down the old snapshot', () => {
+  beforeEach(() => reset());
+  afterEach(() => vi.restoreAllMocks());
+
+  async function seedSnapshot(collection: string) {
+    await env.DB.prepare(
+      `INSERT INTO backed_collection_members
+         (user_did, external_collection, url_normalized, url, external_provider, external_item_uri, external_link_uri)
+       VALUES (?, ?, 'https://a.test/x', 'https://a.test/x', 'semble', 'at://card/1', 'at://link/1')`
+    )
+      .bind(DID, collection)
+      .run();
+    await env.DB.prepare(
+      `INSERT INTO backed_unsave_tombstones (user_did, external_collection, url_normalized, created_at)
+       VALUES (?, ?, 'https://a.test/y', ?)`
+    )
+      .bind(DID, collection, Date.now())
+      .run();
+    await env.DB.prepare(
+      `UPDATE user_settings SET last_successful_backing_poll = ?, last_backing_poll = ? WHERE user_did = ?`
+    )
+      .bind(Date.now(), Date.now(), DID)
+      .run();
+  }
+
+  const counts = async () => ({
+    members: (
+      await env.DB.prepare(`SELECT COUNT(*) AS n FROM backed_collection_members WHERE user_did = ?`)
+        .bind(DID)
+        .first<{ n: number }>()
+    )?.n,
+    tombstones: (
+      await env.DB.prepare(`SELECT COUNT(*) AS n FROM backed_unsave_tombstones WHERE user_did = ?`)
+        .bind(DID)
+        .first<{ n: number }>()
+    )?.n,
+  });
+
+  it('clears membership + tombstones (and the poll markers) when backing changes', async () => {
+    await setBackingRow(`semble:${COLLECTION}`);
+    await seedSnapshot(COLLECTION);
+
+    const { status } = await call(
+      post('/api/settings', { backing: { provider: 'skyreader' } }, 'PUT')
+    );
+    expect(status).toBe(200);
+    // Otherwise the old collection's rows would be served as the Saved list as
+    // soon as a poll under the NEW backing marked the snapshot verified.
+    expect(await counts()).toEqual({ members: 0, tombstones: 0 });
+    const row = await env.DB.prepare(
+      `SELECT last_backing_poll, last_successful_backing_poll FROM user_settings WHERE user_did = ?`
+    )
+      .bind(DID)
+      .first<{ last_backing_poll: number | null; last_successful_backing_poll: number | null }>();
+    expect(row?.last_backing_poll).toBeNull();
+    expect(row?.last_successful_backing_poll).toBeNull();
+  });
+
+  it('leaves a verified snapshot alone when the write does not change backing', async () => {
+    await setBackingRow(`semble:${COLLECTION}`);
+    await seedSnapshot(COLLECTION);
+
+    // Same backing re-sent, and an unrelated field changed: neither may drop the
+    // snapshot, which is still the user's Saved list.
+    expect(
+      (
+        await call(
+          post(
+            '/api/settings',
+            { backing: { provider: 'semble', collectionUri: COLLECTION } },
+            'PUT'
+          )
+        )
+      ).status
+    ).toBe(200);
+    expect(await counts()).toEqual({ members: 1, tombstones: 1 });
+
+    expect((await call(post('/api/settings', { pdsSyncEnabled: true }, 'PUT'))).status).toBe(200);
+    expect(await counts()).toEqual({ members: 1, tombstones: 1 });
   });
 });

@@ -25,7 +25,7 @@ async function reset() {
   await env.DB.prepare('DELETE FROM backed_unsave_tombstones WHERE user_did = ?').bind(DID).run();
   await env.DB.prepare('DELETE FROM user_settings WHERE user_did = ?').bind(DID).run();
   // A backed user always has a user_settings row (backing is stored there) — the
-  // poll's last_backing_poll stamp updates it. user_settings FKs to users.
+  // poll's attempt/success stamps update it. user_settings FKs to users.
   await env.DB.prepare(
     `INSERT INTO users (did, handle, pds_url, last_synced_at) VALUES (?, 'backing.test', 'https://pds.test', 0)
      ON CONFLICT(did) DO NOTHING`
@@ -79,6 +79,44 @@ describe('pollBackedMembership — wholesale replace + safety', () => {
       .bind(DID)
       .first<{ n: number }>();
     expect(enr?.n).toBe(2);
+  });
+
+  it('marks a complete empty snapshot as successful', async () => {
+    mockSnapshot([]);
+
+    const res = await pollBackedMembership(env, DID, BACKING, { force: true });
+
+    expect(res).toMatchObject({ polled: true, complete: true, memberCount: 0 });
+    const settings = await env.DB.prepare(
+      `SELECT last_backing_poll, last_successful_backing_poll
+       FROM user_settings WHERE user_did = ?`
+    )
+      .bind(DID)
+      .first<{
+        last_backing_poll: number | null;
+        last_successful_backing_poll: number | null;
+      }>();
+    expect(settings?.last_backing_poll).toBeTypeOf('number');
+    expect(settings?.last_successful_backing_poll).toBe(settings?.last_backing_poll);
+  });
+
+  it('does not mark an incomplete snapshot as successful', async () => {
+    mockSnapshot([], false);
+
+    const res = await pollBackedMembership(env, DID, BACKING, { force: true });
+
+    expect(res).toMatchObject({ polled: true, complete: false, memberCount: 0 });
+    const settings = await env.DB.prepare(
+      `SELECT last_backing_poll, last_successful_backing_poll
+       FROM user_settings WHERE user_did = ?`
+    )
+      .bind(DID)
+      .first<{
+        last_backing_poll: number | null;
+        last_successful_backing_poll: number | null;
+      }>();
+    expect(settings?.last_backing_poll).toBeTypeOf('number');
+    expect(settings?.last_successful_backing_poll).toBeNull();
   });
 
   it('a removed-upstream member drops on the next complete poll', async () => {
@@ -461,10 +499,12 @@ describe('listBackedSaved — membership ⋈ enrichment ∪ native-only', () => 
     const byUrl = Object.fromEntries(list.map((v) => [v.url, v]));
 
     expect(list).toHaveLength(3);
-    // enriched member keeps its extracted body + real title
+    // enriched member keeps its real title/word count — but never the body:
+    // the list deliberately skips reading content blobs (clients hydrate via
+    // /api/saved/bodies, and GET /api/saved strips the field anyway)
     expect(byUrl['https://a.test/x']).toMatchObject({
       title: 'Article A',
-      content: 'BODY',
+      content: null,
       wordCount: 1200,
     });
     // member without enrichment falls back to membership metadata title + foreign uri
