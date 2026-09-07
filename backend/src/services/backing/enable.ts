@@ -71,9 +71,14 @@ export async function enableBacking(
   // Persist the setting first so the poll/export paths see backing as on. Reset the
   // poll gate so the immediate backfill isn't skipped.
   await env.DB.prepare(
-    `INSERT INTO user_settings (user_did, backing, last_backing_poll, updated_at)
-     VALUES (?, ?, NULL, unixepoch())
-     ON CONFLICT(user_did) DO UPDATE SET backing = excluded.backing, last_backing_poll = NULL, updated_at = unixepoch()`
+    `INSERT INTO user_settings
+       (user_did, backing, last_backing_poll, last_successful_backing_poll, updated_at)
+     VALUES (?, ?, NULL, NULL, unixepoch())
+     ON CONFLICT(user_did) DO UPDATE SET
+       backing = excluded.backing,
+       last_backing_poll = NULL,
+       last_successful_backing_poll = NULL,
+       updated_at = unixepoch()`
   )
     .bind(session.did, serializeBacking(backing))
     .run();
@@ -117,7 +122,9 @@ export async function enableBacking(
 export async function disableBacking(env: Env, session: Session): Promise<void> {
   await env.DB.batch([
     env.DB.prepare(
-      `UPDATE user_settings SET backing = 'skyreader', last_backing_poll = NULL, updated_at = unixepoch()
+      `UPDATE user_settings
+       SET backing = 'skyreader', last_backing_poll = NULL,
+           last_successful_backing_poll = NULL, updated_at = unixepoch()
        WHERE user_did = ?`
     ).bind(session.did),
     env.DB.prepare(`DELETE FROM backed_collection_members WHERE user_did = ?`).bind(session.did),

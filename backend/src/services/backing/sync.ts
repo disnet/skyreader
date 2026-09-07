@@ -179,12 +179,15 @@ export async function pollBackedMembership(
     }
   }
 
-  // (4) Stamp the poll time.
+  // (4) Stamp both the attempt time (the retry gate) and the successful-snapshot
+  // marker. The latter lets the read route distinguish a valid empty snapshot
+  // from an account whose first complete snapshot has never landed.
   batch.push(
-    env.DB.prepare(`UPDATE user_settings SET last_backing_poll = ? WHERE user_did = ?`).bind(
-      now,
-      userDid
-    )
+    env.DB.prepare(
+      `UPDATE user_settings
+       SET last_backing_poll = ?, last_successful_backing_poll = ?
+       WHERE user_did = ?`
+    ).bind(now, now, userDid)
   );
 
   await env.DB.batch(batch);
@@ -384,10 +387,13 @@ export async function listBackedSaved(
 ): Promise<SavedArticleView[]> {
   const collectionUri = backing.collectionUri;
 
-  // (A) Every current member, joined to its enrichment row (body/word count/labels).
+  // (A) Every current member, joined to its enrichment row. Deliberately NOT
+  // s.content: the only caller (GET /api/saved) strips the body before
+  // responding — clients hydrate bodies via /api/saved/bodies — and selecting
+  // it made D1 read every row's article-body blob just to discard it.
   const membersQ = env.DB.prepare(
     `SELECT m.url AS m_url, m.metadata AS m_metadata, m.external_item_uri,
-            s.rkey, s.record_uri, s.url, s.title, s.author, s.description, s.content,
+            s.rkey, s.record_uri, s.url, s.title, s.author, s.description, NULL AS content,
             s.content_type, s.domain, s.image, s.word_count, s.published_at, s.saved_at,
             s.source, s.item_guid
      FROM backed_collection_members m
@@ -400,7 +406,7 @@ export async function listBackedSaved(
   //     (uploads, legacy saves yet to be exported). url_normalized NULL = legacy.
   const nativeQ = env.DB.prepare(
     `SELECT NULL AS m_url, NULL AS m_metadata, NULL AS external_item_uri,
-            s.rkey, s.record_uri, s.url, s.title, s.author, s.description, s.content,
+            s.rkey, s.record_uri, s.url, s.title, s.author, s.description, NULL AS content,
             s.content_type, s.domain, s.image, s.word_count, s.published_at, s.saved_at,
             s.source, s.item_guid
      FROM saved_articles s

@@ -161,6 +161,9 @@ function corsHeaders(origin: string | null, env: Env): HeadersInit {
     'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     'Access-Control-Allow-Credentials': 'true',
+    // Let browsers cache preflights instead of paying one per API call.
+    // (Chrome caps this at 2h, Firefox at 24h.)
+    'Access-Control-Max-Age': '86400',
     // So a browser client can read the correlation id off a failed response and
     // quote it in a bug report.
     'Access-Control-Expose-Headers': 'X-Request-Id',

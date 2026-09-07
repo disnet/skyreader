@@ -703,15 +703,37 @@ export async function handleGetSaved(
   }
 
   try {
-    // When backing is on, the Saved list IS the foreign collection: refresh the
-    // membership snapshot (open-driven, gated) then read membership ⋈ enrichment.
-    // A failed/incomplete poll is non-fatal — we still read the last good membership.
+    // When backing is on, the Saved list IS the foreign collection: serve the
+    // last good membership ⋈ enrichment immediately and refresh the membership
+    // snapshot in the background (the poll is auth-free and session-less, so it
+    // is waitUntil-safe — the next open reads what it wrote). The poll used to
+    // run inline and a large collection held the response for many seconds,
+    // which also serialized the client's whole refresh behind it. Only an
+    // account with no successful snapshot yet (enable-time poll failed or
+    // hasn't landed) still pays for an inline poll — otherwise the list would
+    // render an unverified empty snapshot.
     const settings = await getUserSettings(env, session.did);
     if (settings.backing.provider !== 'skyreader') {
-      try {
-        await pollBackedMembership(env, session.did, settings.backing);
-      } catch (pollErr) {
-        console.error('Backed membership poll failed (serving last good snapshot):', pollErr);
+      let verified = settings.lastSuccessfulBackingPoll != null;
+      if (verified) {
+        ctx.waitUntil(
+          pollBackedMembership(env, session.did, settings.backing).catch((pollErr) => {
+            console.error('Backed membership poll failed (serving last good snapshot):', pollErr);
+          })
+        );
+      } else {
+        try {
+          // Forced past POLL_GATE_MS on purpose: the gate keys off
+          // `last_backing_poll`, which a *failed* poll stamps too, so an ordinary
+          // poll here would no-op for a minute after enable-time failed — and we'd
+          // answer `full: true` with a snapshot that was never verified.
+          const poll = await pollBackedMembership(env, session.did, settings.backing, {
+            force: true,
+          });
+          verified = poll.complete;
+        } catch (pollErr) {
+          console.error('Backed membership poll failed (serving last good snapshot):', pollErr);
+        }
       }
       // Metadata only — the body is the bulk of a saved item and the client
       // already caches it; it hydrates bodies for unseen rkeys via /api/saved/bodies.
@@ -728,7 +750,11 @@ export async function handleGetSaved(
       // Backing is a snapshot of foreign membership (items can be *removed*
       // elsewhere), so it can't be merged incrementally — `full: true` tells the
       // client to replace its cache wholesale. `cursor: null` → single page.
-      return new Response(JSON.stringify({ articles, cursor: null, full: true }), {
+      // Only claim `full` once a snapshot has actually landed: a wholesale
+      // replace from an unverified (possibly empty) membership table wipes the
+      // user's Saved list. Unverified degrades to the merge path, which keeps
+      // the client's cache and is a no-op when we have no rows to offer.
+      return new Response(JSON.stringify({ articles, cursor: null, full: verified }), {
         headers: { 'Content-Type': 'application/json' },
       });
     }
