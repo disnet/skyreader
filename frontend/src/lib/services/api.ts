@@ -1498,7 +1498,7 @@ class ApiClient {
     });
   }
 
-  async getSaved(opts?: { limit?: number; cursor?: string | null }): Promise<{
+  async getSaved(opts?: { limit?: number; cursor?: string | null; sinceDigest?: string }): Promise<{
     // Metadata only — `content` (the article body) is omitted; hydrate it for
     // unseen rkeys via getSavedBodies. The body is ~20-50× the rest of a row and
     // the client already caches it, so re-sending it every refresh is the bulk
@@ -1524,10 +1524,16 @@ class ApiClient {
     // True when the response is a full snapshot that must replace the cache
     // wholesale (external-backed saves) rather than being merged incrementally.
     full: boolean;
+    // External-backed only: digest of the snapshot's serialized articles. Echo
+    // it back as `sinceDigest`; a matching snapshot answers `unchanged: true`
+    // with no articles instead of re-shipping the whole (large) list.
+    digest?: string;
+    unchanged?: boolean;
   }> {
     const params = new URLSearchParams();
     if (opts?.limit != null) params.set('limit', String(opts.limit));
     if (opts?.cursor) params.set('cursor', opts.cursor);
+    if (opts?.sinceDigest) params.set('since_digest', opts.sinceDigest);
     const qs = params.toString();
     return this.fetch(`/api/saved${qs ? `?${qs}` : ''}`);
   }
