@@ -1,0 +1,8 @@
+name = "skyreader-docs-site"
+compatibility_date = "2025-11-12"
+pages_build_output_dir = "dist"
+
+# Static docs site (docs.skyreader.app). No bindings, no server code: Astro
+# builds plain HTML into dist/ and Cloudflare Pages serves it. Staging deploys
+# to the skyreader-docs-staging project, production to skyreader-docs — see
+# .github/workflows/docs-deploy.yml.

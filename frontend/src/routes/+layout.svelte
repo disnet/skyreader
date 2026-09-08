@@ -9,6 +9,7 @@
   import { auth } from '$lib/stores/auth.svelte';
   import Toast from '$lib/components/Toast.svelte';
   import Logo from '$lib/assets/logo.svg';
+  import { docsUrl } from '$lib/constants/docs';
   import '../app.css';
 
   let { children } = $props();
@@ -215,6 +216,9 @@
             <img src={Logo} alt="" class="logo-icon" />
             <span>Skyreader</span>
           </a>
+          <a href={docsUrl()} class="feedback-link" target="_blank" rel="noopener noreferrer"
+            >Docs</a
+          >
           <a href="/feedback" class="feedback-link">Feedback</a>
           <a href="/auth/login" class="login-btn">Login</a>
         </div>
@@ -224,6 +228,8 @@
         {@render children()}
       </main>
       <footer class="app-footer">
+        <a href={docsUrl()} target="_blank" rel="noopener noreferrer">Docs</a>
+        <span class="separator">·</span>
         <a href="/pricing">Pricing</a>
         <span class="separator">·</span>
         <a href="/terms">Terms</a>

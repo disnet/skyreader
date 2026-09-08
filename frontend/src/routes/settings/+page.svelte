@@ -8,6 +8,7 @@
   import { countUrlSavesThisMonth } from '$lib/utils/usage';
   import { isGrantedSupporter } from '$lib/utils/tier';
   import { supporterLimits } from '$lib/constants/tierLimits';
+  import { docsUrl } from '$lib/constants/docs';
   import {
     preferences,
     type ArticleFont,
@@ -756,6 +757,9 @@
     <p class="setting-description" style="margin-top: 0;">
       Your reading is private to you on Skyreader by default. A few things are public, or can be
       made public, so they're portable across the Atmosphere. Here's where each one stands.
+      <a href={docsUrl('yourData')} target="_blank" rel="noopener noreferrer" class="docs-link"
+        >The full picture</a
+      >
     </p>
     {#if isSyncLoading}
       <p class="loading">Loading…</p>
@@ -787,6 +791,12 @@
       your PDS, where it's backed up, portable to any Atmospheric app, and publicly visible. Your
       standard.site follows stay in step either way: follow or unfollow in either place and the
       other follows along.
+      <a
+        href={docsUrl('atmosphericSync')}
+        target="_blank"
+        rel="noopener noreferrer"
+        class="docs-link">Learn more</a
+      >
     </p>
 
     {#if isSyncLoading}
@@ -883,6 +893,9 @@
       Your saves stay private on Skyreader. To turn your whole Saved list into a collection you can
       edit in another app, back it with Semble or Margin. That collection is public. You can change
       this anytime.
+      <a href={docsUrl('saveBacking')} target="_blank" rel="noopener noreferrer" class="docs-link"
+        >Learn more</a
+      >
     </p>
 
     <SaveBackingPicker bind:backing allowExport returnUrl="/settings" />
@@ -897,6 +910,12 @@
     <p class="setting-description" style="margin-top: 0;">
       Sharing an article publishes it to your <strong>linkblog</strong>, a public publication in
       your PDS that's readable across the Atmosphere. Anyone with the link can read it.
+      <a
+        href={docsUrl('sharingAndLinkblog')}
+        target="_blank"
+        rel="noopener noreferrer"
+        class="docs-link">Learn more</a
+      >
     </p>
     {#if isLinkblogLoading}
       <p class="loading">Loading linkblog…</p>
@@ -1156,6 +1175,9 @@
     <p class="setting-description" style="margin-top: 0;">
       Your highlights are private to Skyreader. Saving one to Margin publishes that note to your
       public PDS.
+      <a href={docsUrl('highlights')} target="_blank" rel="noopener noreferrer" class="docs-link"
+        >Learn more</a
+      >
     </p>
     <HighlightSettings showDeckSize={false} />
   </section>
@@ -1261,6 +1283,8 @@
       <strong>Privacy &amp; sharing</strong> above for what's public.
     </p>
     <div class="about-links">
+      <a href={docsUrl('home')} target="_blank" rel="noopener noreferrer">Docs</a>
+      <span class="separator">·</span>
       <a href="/terms">Terms of Service</a>
       <span class="separator">·</span>
       <a href="/privacy">Privacy Policy</a>
@@ -1613,6 +1637,17 @@
   }
 
   .pds-link:hover {
+    text-decoration: underline;
+  }
+
+  /* Quiet "Learn more" into docs.skyreader.app, inline at the end of a card's
+     description so it reads as part of the sentence, not extra chrome. */
+  .docs-link {
+    color: var(--color-primary);
+    text-decoration: none;
+  }
+
+  .docs-link:hover {
     text-decoration: underline;
   }
 

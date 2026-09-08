@@ -1,0 +1,98 @@
+/*
+ * Skyreader theme for Starlight, mapped from the root DESIGN.md tokens.
+ *
+ * Starlight themes by flipping one ramp: in dark mode --sl-color-black is the
+ * page background and --sl-color-white the strongest text; light mode inverts
+ * them. Both blocks below express the same Skyreader neutrals (Surface, Sunken,
+ * Ink, Muted Ink, Divider) in that convention.
+ *
+ * The One Blue Rule: #0066cc is the only interaction blue, lifted to #4da6ff on
+ * dark surfaces (the Lifted-Primary Rule) because #0066cc on #1a1a1a fails AA.
+ */
+
+/* Dark mode (Starlight default scope) */
+:root {
+  --sl-color-accent-low: #0d2a47;
+  --sl-color-accent: #3399ff;
+  --sl-color-accent-high: #4da6ff;
+  --sl-color-white: #ffffff;
+  --sl-color-gray-1: #e0e0e0; /* Ink (night) */
+  --sl-color-gray-2: #c2c2c2;
+  --sl-color-gray-3: #999999; /* Muted Ink (night) */
+  --sl-color-gray-4: #666666;
+  --sl-color-gray-5: #404040; /* Divider (night) */
+  --sl-color-gray-6: #2a2a2a; /* Sunken (night) */
+  --sl-color-black: #1a1a1a; /* Surface (night) */
+
+  /* One UI typeface: the native system sans stack (The One Voice Rule). */
+  --sl-font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+
+  --sl-line-height: 1.6;
+}
+
+/* Light mode */
+:root[data-theme='light'] {
+  --sl-color-accent-low: #e6f0fa;
+  --sl-color-accent: #0066cc;
+  --sl-color-accent-high: #0052a3;
+  --sl-color-white: #1a1a1a;
+  --sl-color-gray-1: #333333; /* Ink */
+  --sl-color-gray-2: #4d4d4d;
+  --sl-color-gray-3: #666666; /* Muted Ink */
+  --sl-color-gray-4: #8c8c8c;
+  --sl-color-gray-5: #e0e0e0; /* Divider */
+  --sl-color-gray-6: #f5f5f5; /* Sunken */
+  --sl-color-gray-7: #fafafa;
+  --sl-color-black: #ffffff; /* Surface: true white, never warm paper */
+}
+
+/* Flat-By-Default: in-flow surfaces separate by hairline and tone, not shadow. */
+:root {
+  --sl-shadow-sm: none;
+  --sl-shadow-md: none;
+
+  /* Wash Blue: the primary at low intensity, per theme. */
+  --sky-wash: rgba(77, 166, 255, 0.15);
+}
+
+:root[data-theme='light'] {
+  --sky-wash: rgba(0, 102, 204, 0.1);
+}
+
+/* Sidebar selection reads as a tint, never a heavy fill (DESIGN.md nav-item-active:
+ * Wash Blue background, primary text, 12px radius). Starlight's default is a solid
+ * accent fill with inverted text. */
+.sidebar-content a[aria-current='page'],
+.sidebar-content a[aria-current='page']:hover,
+.sidebar-content a[aria-current='page']:focus {
+  background-color: var(--sky-wash);
+  color: var(--sl-color-text-accent);
+  font-weight: 500;
+  border-radius: 12px;
+}
+
+.sidebar-content a {
+  border-radius: 12px;
+}
+
+/* Chrome headings stay quiet (the No-Shout Rule allows large type on roomy
+ * public pages, but these docs read better one step down from Starlight's
+ * defaults). */
+.sl-markdown-content h1,
+h1[data-page-title] {
+  font-size: var(--sl-text-3xl);
+  letter-spacing: -0.01em;
+}
+
+.sl-markdown-content h2 {
+  letter-spacing: -0.01em;
+}
+
+/* Links inside prose: the one blue, underlined on hover only. */
+.sl-markdown-content a {
+  text-decoration: none;
+}
+
+.sl-markdown-content a:hover {
+  text-decoration: underline;
+}
