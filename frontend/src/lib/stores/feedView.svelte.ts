@@ -21,7 +21,7 @@ import type {
 } from '$lib/types';
 import { htmlToText, normalize, searchRank } from '$lib/services/savedSearch';
 import { sameUrlFilters, type UrlFilters } from '$lib/utils/urlFilters';
-import { isSavedItemArchived, savedAtMs } from '$lib/utils/savedPile';
+import { isSavedItemArchived, savedAtMs, setSavedItemArchived } from '$lib/utils/savedPile';
 import { urlKey } from '$lib/utils/urlKey';
 import {
   isRssSource,
@@ -134,6 +134,21 @@ export function isSavedRowArchived(item: FeedDisplayItem): boolean {
   if (itemLabelsStore.isArchived(item.key)) return true;
   const save = saveBehind(item);
   return save ? isSavedItemArchived(save, itemLabelsStore.isArchived) : false;
+}
+
+/** Set one saved-pile row's complete alias set to the requested archive state. */
+export async function setSavedRowArchived(item: FeedDisplayItem, archived: boolean): Promise<void> {
+  const save = saveBehind(item);
+  if (!save) {
+    const mutate = archived ? itemLabelsStore.archiveItem : itemLabelsStore.unarchiveItem;
+    await mutate(item.key, item.type);
+    return;
+  }
+
+  await setSavedItemArchived(save, archived, (key, desired) => {
+    const mutate = desired ? itemLabelsStore.archiveItem : itemLabelsStore.unarchiveItem;
+    return mutate(key, 'saved');
+  });
 }
 
 /** Same test for an article row, without building the wrapper first. */

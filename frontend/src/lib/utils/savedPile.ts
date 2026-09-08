@@ -43,6 +43,25 @@ export function isSavedItemArchived(
   return savedItemLabelKeys(item).some((key) => isArchived(key));
 }
 
+/**
+ * Put every identity for a save into one archive state.
+ *
+ * Archive membership is true when any alias is archived, so toggling just the
+ * key a row happens to display cannot reliably undo it. In particular, an old
+ * URL- or rkey-backed label would keep the item in Archive after the row's
+ * guid/uri was unarchived. Callers provide the store mutation so this rule
+ * stays independently testable and every UI path uses the same alias set.
+ */
+export async function setSavedItemArchived(
+  item: SavedItem,
+  archived: boolean,
+  setArchived: (key: string, archived: boolean) => void | Promise<void>
+): Promise<void> {
+  for (const key of new Set(savedItemLabelKeys(item))) {
+    await setArchived(key, archived);
+  }
+}
+
 /** `savedAt` in epoch ms; 0 when missing or unparseable, so it sorts last. */
 export function savedAtMs(item: Pick<SavedItem, 'savedAt'>): number {
   const ms = item.savedAt ? Date.parse(item.savedAt) : NaN;

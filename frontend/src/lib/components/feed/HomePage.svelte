@@ -43,7 +43,9 @@
   import { preferences, type CardDensity, type DefaultView } from '$lib/stores/preferences.svelte';
   import {
     datePresetToMs,
+    isSavedRowArchived,
     matchesReadingLength,
+    setSavedRowArchived,
     type FeedDisplayItem,
   } from '$lib/stores/feedView.svelte';
   import type { FilteredView, SavedItem, SortOrder } from '$lib/types';
@@ -321,10 +323,7 @@
   let readerItem = $derived(reader.readerItem);
 
   function handleArchive(item: FeedDisplayItem) {
-    itemLabelsStore.toggleArchive(item.key, item.type);
-    if (item.type === 'saved' && item.item.itemGuid && item.item.itemGuid !== item.key) {
-      itemLabelsStore.toggleArchive(item.item.itemGuid, 'saved');
-    }
+    void setSavedRowArchived(item, !isSavedRowArchived(item));
     if (readerItem?.key === item.key) reader.closeReader();
   }
 

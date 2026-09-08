@@ -4,13 +4,17 @@
   import SavedReader from './SavedReader.svelte';
   import InfiniteScrollSentinel from '$lib/components/common/InfiniteScrollSentinel.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
-  import { feedViewStore, type FeedDisplayItem } from '$lib/stores/feedView.svelte';
+  import {
+    feedViewStore,
+    isSavedRowArchived,
+    setSavedRowArchived,
+    type FeedDisplayItem,
+  } from '$lib/stores/feedView.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
   import { savedSearchStore } from '$lib/stores/savedSearch.svelte';
   import { useReaderStack } from '$lib/hooks/useReaderStack.svelte';
-  import type { ItemLabelType } from '$lib/types';
 
   interface Props {
     onReaderChange?: (open: boolean) => void;
@@ -58,17 +62,8 @@
   let otherViewCount = $derived(feedViewStore.savedSearchOtherViewCount);
   let otherViewLabel = $derived(feedViewStore.savedView === 'inbox' ? 'Archive' : 'Inbox');
 
-  function getItemType(item: FeedDisplayItem): ItemLabelType {
-    return item.type;
-  }
-
   function handleArchive(item: FeedDisplayItem) {
-    itemLabelsStore.toggleArchive(item.key, getItemType(item));
-    // For saved items where itemGuid differs from key, also toggle archive by itemGuid
-    // to ensure consistent archive state regardless of which key is used for lookup
-    if (item.type === 'saved' && item.item.itemGuid && item.item.itemGuid !== item.key) {
-      itemLabelsStore.toggleArchive(item.item.itemGuid, 'saved');
-    }
+    void setSavedRowArchived(item, !isSavedRowArchived(item));
     if (readerItem?.key === item.key) {
       closeReader();
     }

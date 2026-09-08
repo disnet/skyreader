@@ -2,7 +2,12 @@ import { onDestroy } from 'svelte';
 import { tick } from 'svelte';
 import { keyboardStore } from '$lib/stores/keyboard.svelte';
 import { auth } from '$lib/stores/auth.svelte';
-import { feedViewStore, type FeedDisplayItem } from '$lib/stores/feedView.svelte';
+import {
+  feedViewStore,
+  isSavedRowArchived,
+  setSavedRowArchived,
+  type FeedDisplayItem,
+} from '$lib/stores/feedView.svelte';
 import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
 import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
 import { linkblogStore } from '$lib/stores/linkblog.svelte';
@@ -338,14 +343,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
       action: () => {
         const item = getSelectedItem();
         if (!item) return;
-        itemLabelsStore.toggleArchive(item.key, item.type);
-        // Mirror the row's own archive button: a save whose display key is its
-        // record uri also carries the label under its itemGuid. Toggling one of
-        // the pair would leave them out of step, and the next toggle would set
-        // the other one instead of clearing it.
-        if (item.type === 'saved' && item.item.itemGuid && item.item.itemGuid !== item.key) {
-          itemLabelsStore.toggleArchive(item.item.itemGuid, 'saved');
-        }
+        void setSavedRowArchived(item, !isSavedRowArchived(item));
       },
       condition: () => hasSelected() && !!feedViewStore.savedFilter,
     });

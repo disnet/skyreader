@@ -9,6 +9,7 @@ import {
   isSavedItemArchived,
   savedAtMs,
   savedItemLabelKeys,
+  setSavedItemArchived,
 } from './savedPile';
 
 function save(overrides: Partial<SavedItem> = {}): SavedItem {
@@ -72,6 +73,39 @@ describe('isSavedItemArchived', () => {
     const item = save({ itemGuid: 'guid-1' });
     const archived = new Set([item.uri]);
     expect(isSavedItemArchived(item, (k) => archived.has(k))).toBe(true);
+  });
+});
+
+describe('setSavedItemArchived', () => {
+  it.each([
+    ['URL', (item: SavedItem) => item.url],
+    ['rkey', (item: SavedItem) => item.rkey],
+  ])('clears a sole %s archive label when moving the save to Inbox', async (_name, alias) => {
+    const item = save({ itemGuid: 'guid-1' });
+    const archived = new Set([alias(item)]);
+
+    await setSavedItemArchived(item, false, (key, desired) => {
+      if (desired) archived.add(key);
+      else archived.delete(key);
+    });
+
+    expect(archived).toEqual(new Set());
+    expect(isSavedItemArchived(item, (key) => archived.has(key))).toBe(false);
+  });
+
+  it('sets every unique alias to the desired state', async () => {
+    const item = save({ itemGuid: 'https://example.com/a' });
+    const writes: Array<[string, boolean]> = [];
+
+    await setSavedItemArchived(item, true, (key, archived) => {
+      writes.push([key, archived]);
+    });
+
+    expect(writes).toEqual([
+      ['https://example.com/a', true],
+      ['at://did:plc:test/app.skyreader.feed.saved/3kabcdefghijk', true],
+      ['3kabcdefghijk', true],
+    ]);
   });
 });
 
