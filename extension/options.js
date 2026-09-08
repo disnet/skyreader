@@ -1,4 +1,4 @@
-// Options: point the extension at a different server (staging / local dev).
+// Options: point the extension at a local development server.
 // A non-default API base needs a matching optional host permission, requested
 // here so the background fetches aren't blocked.
 

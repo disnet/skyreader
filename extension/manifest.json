@@ -26,5 +26,5 @@
   },
   "permissions": ["activeTab", "contextMenus", "storage", "scripting"],
   "host_permissions": ["https://api.skyreader.app/*"],
-  "optional_host_permissions": ["http://127.0.0.1/*", "https://*.skyreader.app/*"]
+  "optional_host_permissions": ["http://127.0.0.1/*"]
 }

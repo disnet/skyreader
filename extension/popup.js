@@ -14,15 +14,43 @@ const els = {
   saveStatus: document.getElementById('saveStatus'),
   feeds: document.getElementById('feeds'),
   feedsMsg: document.getElementById('feedsMsg'),
+  accountName: document.getElementById('accountName'),
+  accountStatus: document.getElementById('accountStatus'),
+  retryAccountBtn: document.getElementById('retryAccountBtn'),
 };
 
 let tab = null;
+
+async function refreshAccount() {
+  els.retryAccountBtn.hidden = true;
+  els.accountStatus.hidden = true;
+  try {
+    const cfg = await getConfig();
+    els.accountName.href = cfg.frontendBase;
+    const result = await send({ type: 'account' });
+    if (!result?.ok) throw new Error(result?.message || "Couldn't check your account. Try again.");
+    const user = result.user;
+    els.accountName.textContent = user
+      ? user.handle
+        ? `@${user.handle}`
+        : user.did
+      : 'Log in to Skyreader';
+    els.accountName.href = user ? cfg.frontendBase : `${cfg.frontendBase}/auth/login`;
+  } catch (err) {
+    els.accountName.textContent = 'Open Skyreader';
+    els.retryAccountBtn.hidden = false;
+    els.accountStatus.hidden = false;
+    setStatus(els.accountStatus, err.message, 'error');
+  }
+}
 
 function send(msg) {
   return chrome.runtime.sendMessage(msg);
 }
 
 async function getConfig() {
+  // Store builds use production URLs; only unpacked development has settings.
+  if (!chrome.runtime.getManifest().permissions.includes('storage')) return { ...DEFAULTS };
   const stored = await chrome.storage.sync.get(DEFAULTS);
   return { ...DEFAULTS, ...stored };
 }
@@ -207,7 +235,7 @@ function feedRow(feed) {
 /** Open a Skyreader page and close the popup behind it. */
 async function openTab(path) {
   const cfg = await getConfig();
-  chrome.tabs.create({ url: `${cfg.frontendBase}${path}` });
+  await chrome.tabs.create({ url: `${cfg.frontendBase}${path}` });
   window.close();
 }
 
@@ -308,6 +336,8 @@ async function discover() {
 // --- Init -------------------------------------------------------------------
 
 async function init() {
+  els.retryAccountBtn.addEventListener('click', refreshAccount);
+  refreshAccount();
   const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
   tab = active;
 

@@ -24,6 +24,30 @@
         padding: 16px;
       }
 
+      .account-name {
+        overflow-wrap: anywhere;
+        color: var(--blue);
+        text-decoration: none;
+      }
+      .account-name:hover {
+        text-decoration: underline;
+      }
+      .account-retry {
+        margin-left: 12px;
+        padding: 4px 0;
+        font: inherit;
+        color: var(--blue);
+        background: transparent;
+        border: 0;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      button:focus-visible,
+      .account-name:focus-visible {
+        outline: 2px solid var(--blue);
+        outline-offset: 2px;
+      }
+
       /* Page header */
       .page-title {
         font-weight: 600;
@@ -252,6 +276,14 @@
       <div id="feeds">
         <div class="muted" id="feedsMsg">Looking for feeds…</div>
       </div>
+    </div>
+
+    <div class="section">
+      <a class="account-name" id="accountName" target="_blank" rel="noopener noreferrer"
+        >Checking account…</a
+      >
+      <button class="account-retry" id="retryAccountBtn" hidden>Try again</button>
+      <div class="status" id="accountStatus" role="status" hidden></div>
     </div>
 
     <script src="popup.js"></script>
