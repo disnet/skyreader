@@ -8,7 +8,7 @@
 
 <div class="privacy-page">
   <h1>Privacy Policy</h1>
-  <p class="last-updated">Last updated: August 2026</p>
+  <p class="last-updated">Last updated: September 2026</p>
 
   <section>
     <p class="lede">
@@ -65,6 +65,12 @@
         box offering occasional product updates by email. If you tick it, we store the email address you
         gave Polar and the time you opted in. If you leave it unticked, we store no email address at all.
       </li>
+      <li>
+        <strong>Sampled error reports.</strong> If Skyreader hits an error in your browser, it may send
+        us a short report: the error's name and message, a truncated stack trace, the app version, and
+        the page path with the query string stripped. Reports are sampled and carry no account identifiers.
+        They exist to tell us when a release is broken, not to watch what you read.
+      </li>
     </ul>
     <p>
       We do not use analytics, advertising, tracking pixels, or third-party trackers. We do not
@@ -86,9 +92,9 @@
       </li>
       <li>
         <strong>Subscriptions can be made portable.</strong> By default your subscriptions are stored
-        privately on our servers. If you turn on Atmospheric sync, we also write them to your PDS. That
-        makes them backed up and portable to any Atmospheric app, and it also makes them publicly visible.
-        This is off unless you enable it.
+        privately on our servers. If you turn on Atmospheric sync, we also write your subscriptions and
+        the publications you follow to your PDS. That makes them backed up and portable to any Atmospheric
+        app, and it also makes them publicly visible. This is off unless you enable it.
       </li>
       <li>
         <strong>External backing is your choice.</strong> If you connect a Semble or Margin backup, your
@@ -109,15 +115,21 @@
       and local storage. This stays on your device and is cleared when you sign out or clear your
       browser data.
     </p>
+    <p>
+      You can also read without an account. In that mode your library lives entirely in your
+      browser, and our servers store nothing about you. If you later sign in, what you read and
+      saved moves to your account.
+    </p>
   </section>
 
   <section>
     <h2>5. The Chrome Extension</h2>
     <p>
-      The Skyreader extension saves an article when you click its button. To do that, it reads the
-      content of the page you are on at that moment so it can extract the article text. It only
-      reads a page when you ask it to save, and it sends the result to your Skyreader account. It
-      does not run in the background or track your browsing.
+      The Skyreader extension acts when you ask, from its toolbar button or right-click menu. To
+      save an article or subscribe to a site, it reads the content of the page you are on at that
+      moment, extracting the article text or finding the site's feed. It only reads a page when you
+      ask, and it sends the result to your Skyreader account. It does not run in the background or
+      track your browsing.
     </p>
   </section>
 
@@ -130,6 +142,12 @@
     <ul>
       <li><strong>Cloudflare</strong> hosts the app, API, and database.</li>
       <li><strong>Fly.io</strong> runs the proxy that fetches and caches feeds.</li>
+      <li>
+        <strong>Sentry</strong> receives error reports from our servers, including the sampled browser
+        reports described above, so we can fix what breaks. Reports are scrubbed of tokens, cookies, and
+        session data before they are sent. They can include your account identifier (your DID, which is
+        public) so we can tell whether an error affects one person or everyone.
+      </li>
       <li>
         <strong>Polar</strong> processes payments as our merchant of record. When you start a
         checkout, we send Polar your account identifier so the purchase can be linked back to your
@@ -151,6 +169,13 @@
       </li>
     </ul>
     <p>
+      Some lookups happen straight from your browser rather than through our servers. To show
+      mentions, profiles, and posts, your browser queries public Atmosphere services directly:
+      Constellation (a public index of links between records), the PLC directory, Bluesky's public
+      API, and authors' PDSes. These requests include your public account identifier, and like any
+      site you visit, those services see your IP address.
+    </p>
+    <p>
       We may disclose content if required by law, or to remove illegal or abusive material as
       described in our <a href="/terms">Terms of Service</a>.
     </p>
@@ -160,11 +185,11 @@
     <h2>7. Keeping Your Data</h2>
     <p>
       We keep your account data for as long as your account is active. Cached feed content and
-      sessions are cleared on a rolling basis. When you delete your account, we remove your data
-      from our servers, including your product-updates email if you gave one. Data you synced to
-      your own PDS stays there under your control, and anything held by an external integration you
-      connected is governed by that service. Polar keeps its own billing records for as long as tax
-      law requires.
+      sessions are cleared on a rolling basis. When you ask us to delete your account, we remove
+      your data from our servers, including your product-updates email if you gave one. Data you
+      synced to your own PDS stays there under your control, and anything held by an external
+      integration you connected is governed by that service. Polar keeps its own billing records for
+      as long as tax law requires.
     </p>
   </section>
 
