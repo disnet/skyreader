@@ -34,7 +34,12 @@
   import { useScrollDirection } from '$lib/hooks/useScrollDirection.svelte';
   import { getFaviconUrl } from '$lib/utils/favicon';
   import { decodeEntities } from '$lib/utils/entities';
-  import { savedItemLabelKeys } from '$lib/utils/dailyMagazine';
+  import {
+    compareSavedNewestFirst,
+    isSavedItemArchived,
+    savedAtMs,
+    savedItemLabelKeys,
+  } from '$lib/utils/savedPile';
   import { preferences, type CardDensity, type DefaultView } from '$lib/stores/preferences.svelte';
   import {
     datePresetToMs,
@@ -154,9 +159,8 @@
   let enriched = $derived.by((): Enriched[] => {
     const out: Enriched[] = [];
     for (const s of savesStore.articles) {
-      const keys = keysFor(s);
-      if (keys.some((k) => itemLabelsStore.isArchived(k))) continue;
-      out.push({ s, activity: itemLabelsStore.getReadActivity(keys) });
+      if (isSavedItemArchived(s, itemLabelsStore.isArchived)) continue;
+      out.push({ s, activity: itemLabelsStore.getReadActivity(keysFor(s)) });
     }
     return out;
   });
@@ -184,8 +188,17 @@
   let continueSet = $derived(new Set(continueEnriched.map((e) => e.s.rkey)));
   let continueItems = $derived(continueEnriched.map((e) => toVM(e.s, e.activity)));
 
-  // Recently saved: savesStore is newest-first already.
-  let recentItems = $derived(enriched.slice(0, RECENT_CAP).map((e) => toVM(e.s, null)));
+  // Recently saved: the same rule the Saved list's default sort applies —
+  // newest by savedAt, not whatever order the store's last load left behind
+  // (the cache path reads an rkey index, and rkeys minted on another device or
+  // by a backed collection don't line up with save time). Sorted here as well
+  // as in the store so "View all" lands on a list that opens with these tiles.
+  let recentItems = $derived(
+    [...enriched]
+      .sort((a, b) => compareSavedNewestFirst(a.s, b.s))
+      .slice(0, RECENT_CAP)
+      .map((e) => toVM(e.s, null))
+  );
 
   // From your saved: a rotating random sample. Held in state so it only re-rolls on
   // demand (shuffle) or when first seeded — not on every reactive tick. Prefers
@@ -249,9 +262,6 @@
     return true;
   }
 
-  function savedAtMs(s: SavedItem): number {
-    return new Date(s.savedAt).getTime();
-  }
   function publishedMs(s: SavedItem): number {
     return s.publishedAt ? new Date(s.publishedAt).getTime() : 0;
   }
@@ -277,7 +287,7 @@
       case 'domain-desc':
         return arr.sort((a, b) => domainOf(b.s).localeCompare(domainOf(a.s)));
       default:
-        return arr.sort((a, b) => savedAtMs(b.s) - savedAtMs(a.s));
+        return arr.sort((a, b) => compareSavedNewestFirst(a.s, b.s));
     }
   }
 

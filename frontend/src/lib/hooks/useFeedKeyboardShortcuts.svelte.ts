@@ -339,6 +339,13 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
         const item = getSelectedItem();
         if (!item) return;
         itemLabelsStore.toggleArchive(item.key, item.type);
+        // Mirror the row's own archive button: a save whose display key is its
+        // record uri also carries the label under its itemGuid. Toggling one of
+        // the pair would leave them out of step, and the next toggle would set
+        // the other one instead of clearing it.
+        if (item.type === 'saved' && item.item.itemGuid && item.item.itemGuid !== item.key) {
+          itemLabelsStore.toggleArchive(item.item.itemGuid, 'saved');
+        }
       },
       condition: () => hasSelected() && !!feedViewStore.savedFilter,
     });
