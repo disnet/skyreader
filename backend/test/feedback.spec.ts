@@ -320,6 +320,7 @@ describe('POST /api/v2/feedback', () => {
       cid: 'bafypostcid',
       url: `https://userinput.test/d/${encodeURIComponent(DID)}/${rkey}`,
       createdAt: record.createdAt,
+      upvoted: true,
     });
     // userinput.app's own composer votes for the post it just made, keyed by the
     // discussion's rkey, so a post starts at one vote rather than zero.
@@ -355,8 +356,11 @@ describe('POST /api/v2/feedback', () => {
 
   it('posts without the vote scope, and refuses without the write scope', async () => {
     await seedSession(POST_ONLY_SCOPES);
-    expect((await call(post({ title: 'No self-vote' }))).status).toBe(201);
+    const unvoted = await call(post({ title: 'No self-vote' }));
+    expect(unvoted.status).toBe(201);
     expect(putRecord).toHaveBeenCalledTimes(1);
+    // The post landed with zero votes; the page renders that, not an assumed one.
+    expect(unvoted.body).toMatchObject({ upvoted: false });
 
     await seedSession(READ_ONLY_SCOPES);
     const refused = await call(post({ title: 'Refused' }));
@@ -380,6 +384,10 @@ describe('POST /api/v2/feedback', () => {
 
   it.each([
     [{}, 'title is required'],
+    // Valid JSON, but not a post: reading a field off any of these used to throw.
+    [null, 'title is required'],
+    ['a post, honest', 'title is required'],
+    [['bug'], 'title is required'],
     [{ title: 'x'.repeat(301) }, 'title is over 300 characters'],
     [{ title: 'ok', body: 'x'.repeat(10001) }, 'body is over 10000 characters'],
     [{ title: 'ok', tags: ['bug', 'feature', 'question'] }, 'at most 2 tags'],
@@ -388,6 +396,22 @@ describe('POST /api/v2/feedback', () => {
     const result = await call(post(body));
     expect(result.status).toBe(400);
     expect(result.body).toEqual({ error });
+    expect(putRecord).not.toHaveBeenCalled();
+  });
+
+  it('rejects a body that is not JSON at all', async () => {
+    const request = new IncomingRequest('http://localhost/api/v2/feedback', {
+      method: 'POST',
+      headers: {
+        Cookie: `session_id=${SESSION}`,
+        Origin: env.FRONTEND_URL,
+        'Content-Type': 'application/json',
+      },
+      body: '{',
+    });
+    const result = await call(request);
+    expect(result.status).toBe(400);
+    expect(result.body).toEqual({ error: 'Invalid JSON body' });
     expect(putRecord).not.toHaveBeenCalled();
   });
 
@@ -410,6 +434,17 @@ describe('POST /api/v2/feedback', () => {
     );
     expect((await call(post({ title: 'Unreachable' }))).status).toBe(502);
     expect(putRecord).not.toHaveBeenCalled();
+  });
+
+  it('reports a refused self-upvote without failing the post', async () => {
+    putRecord.mockImplementationOnce(async (collection: string) => ({
+      success: true,
+      data: { uri: `at://${DID}/${collection}/3newpost`, cid: 'bafypostcid' },
+    }));
+    putRecord.mockResolvedValueOnce({ success: false, error: 'InvalidRequest' });
+    const result = await call(post({ title: 'Vote refused' }));
+    expect(result.status).toBe(201);
+    expect(result.body).toMatchObject({ upvoted: false });
   });
 
   it('surfaces a refused PDS write as a 502', async () => {

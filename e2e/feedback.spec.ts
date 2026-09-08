@@ -58,6 +58,8 @@ async function stubBoard(page: Page, options: { canPost?: boolean } = {}) {
           cid: 'bafyfresh',
           url: 'https://userinput.app/d/did:plc:test/fresh',
           createdAt: '2026-09-08T12:00:00Z',
+          // The backend's self-upvote landed, so the optimistic row starts at one.
+          upvoted: true,
         }),
       });
     }
@@ -108,10 +110,13 @@ test.describe('Feedback', () => {
     await authedPage.goto('/feedback');
 
     await authedPage.getByRole('button', { name: 'Post feedback' }).click();
-    await authedPage.getByLabel('Title').fill('Sync highlights faster');
-    await authedPage.getByLabel('Details').fill('They take a while to show up.');
-    await authedPage.getByLabel('Type').selectOption('feature');
-    await authedPage.getByRole('button', { name: 'Post', exact: true }).click();
+    // Scoped to the composer: the type filter above the list is labelled
+    // "Filter by type", which `getByLabel('Type')` also matches.
+    const composer = authedPage.locator('form.composer');
+    await composer.getByLabel('Title').fill('Sync highlights faster');
+    await composer.getByLabel('Details').fill('They take a while to show up.');
+    await composer.getByLabel('Type').selectOption('feature');
+    await composer.getByRole('button', { name: 'Post', exact: true }).click();
 
     await expect(authedPage.getByText(/Posted\./)).toBeVisible();
     // Shown straight away: upstream indexes by backlink, so a reload wouldn't

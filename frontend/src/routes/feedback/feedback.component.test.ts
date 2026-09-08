@@ -57,11 +57,15 @@ const board = {
 
 let scopeStatus: Record<string, boolean> = { semble: false, margin: false, userinput: true };
 const getFeedbackBoard = vi.fn(async () => structuredClone(board));
+// Whether the backend's best-effort self-upvote landed. It doesn't when the
+// session lacks the vote scope, or when the PDS refuses that second write.
+let selfUpvoted = true;
 const createFeedbackPost = vi.fn(async (_input: { title: string; body?: string }) => ({
   uri: 'at://did:plc:reader/app.userinput.discussion/fresh',
   cid: 'bafyfresh',
   url: 'https://userinput.app/d/did:plc:reader/fresh',
   createdAt: '2026-09-08T12:00:00Z',
+  upvoted: selfUpvoted,
 }));
 
 vi.mock('$lib/services/api', () => ({
@@ -125,8 +129,34 @@ async function click(element: HTMLElement) {
   flushSync();
 }
 
+/** The net-vote count rendered on a post row, by title. */
+function votes(title: string): string {
+  const post = [...document.body.querySelectorAll('.post')].find(
+    (candidate) => candidate.querySelector('h3')?.textContent?.trim() === title
+  );
+  if (!post) throw new Error(`no post titled "${title}"`);
+  return post.querySelector('.meta span')?.getAttribute('aria-label') ?? '';
+}
+
+async function submitPost(title: string) {
+  await click(document.body.querySelector('.post-link') as HTMLElement);
+  const field = document.body.querySelector<HTMLInputElement>('.composer input')!;
+  field.value = title;
+  field.dispatchEvent(new Event('input', { bubbles: true }));
+  const type = document.body.querySelector<HTMLSelectElement>('.composer select')!;
+  type.value = 'bug';
+  type.dispatchEvent(new Event('change', { bubbles: true }));
+  flushSync();
+
+  document.body.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true }));
+  await tick();
+  await tick();
+  flushSync();
+}
+
 beforeEach(() => {
   scopeStatus = { semble: false, margin: false, userinput: true };
+  selfUpvoted = true;
   getFeedbackBoard.mockClear();
   createFeedbackPost.mockClear();
 });
@@ -164,20 +194,7 @@ describe('the feedback board', () => {
 
   it('posts from the page and shows the new post before upstream indexes it', async () => {
     await render();
-    await click(document.body.querySelector('.post-link') as HTMLElement);
-
-    const title = document.body.querySelector<HTMLInputElement>('.composer input')!;
-    title.value = 'Sync highlights faster';
-    title.dispatchEvent(new Event('input', { bubbles: true }));
-    const type = document.body.querySelector<HTMLSelectElement>('.composer select')!;
-    type.value = 'bug';
-    type.dispatchEvent(new Event('change', { bubbles: true }));
-    flushSync();
-
-    document.body.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true }));
-    await tick();
-    await tick();
-    flushSync();
+    await submitPost('Sync highlights faster');
 
     expect(createFeedbackPost).toHaveBeenCalledWith({
       title: 'Sync highlights faster',
@@ -187,7 +204,18 @@ describe('the feedback board', () => {
     // No reload: upstream aggregates by backlink and wouldn't return it yet.
     expect(getFeedbackBoard).toHaveBeenCalledTimes(1);
     expect(texts('.post h3')).toContain('Sync highlights faster');
+    expect(votes('Sync highlights faster')).toBe('1 net votes');
     expect(document.body.textContent).toContain('Posted.');
+  });
+
+  it('shows no vote on the new post when the self-upvote did not land', async () => {
+    selfUpvoted = false;
+    await render();
+    await submitPost('Quieter notifications');
+
+    // The board will show zero until someone votes; showing one here would be a
+    // number that never arrives.
+    expect(votes('Quieter notifications')).toBe('0 net votes');
   });
 
   it('offers a re-login instead of a composer when the session lacks the scope', async () => {

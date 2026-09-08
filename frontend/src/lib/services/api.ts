@@ -1252,12 +1252,17 @@ class ApiClient {
   // Posting writes an app.userinput.discussion record to the reader's own repo,
   // so it needs a session with the userinput scope — a session that predates it
   // throws ScopeUpgradeError, which the page turns into a "log in again" line
-  // rather than losing what they wrote.
-  async createFeedbackPost(input: {
-    title: string;
-    body?: string;
-    tags?: string[];
-  }): Promise<{ uri: string; cid: string; url: string; createdAt: string }> {
+  // rather than losing what they wrote. The response's `upvoted` says whether the
+  // self-upvote that follows the post landed — it doesn't when the session lacks
+  // the separate vote scope, or when the PDS refuses that second write — so the
+  // caller can show the count the board will actually have.
+  async createFeedbackPost(input: { title: string; body?: string; tags?: string[] }): Promise<{
+    uri: string;
+    cid: string;
+    url: string;
+    createdAt: string;
+    upvoted?: boolean;
+  }> {
     return this.fetch('/api/v2/feedback', { method: 'POST', body: JSON.stringify(input) });
   }
 

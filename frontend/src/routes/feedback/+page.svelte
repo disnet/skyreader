@@ -103,7 +103,9 @@
       });
       // Upstream indexes posts by backlink, so the board won't return this one
       // for a moment. Show it now, from what we already know, and let the next
-      // load replace it.
+      // load replace it. The self-upvote is a second, best-effort write, so the
+      // row shows one vote only when the backend says that write landed.
+      const selfVote = created.upvoted ? 1 : 0;
       if (board) {
         board = {
           ...board,
@@ -122,7 +124,7 @@
               body: draftBody.trim(),
               tags: draftType ? [draftType] : [],
               createdAt: created.createdAt,
-              votes: { up: 1, down: 0, net: 1 },
+              votes: { up: selfVote, down: 0, net: selfVote },
               replyCount: 0,
               status: null,
             },

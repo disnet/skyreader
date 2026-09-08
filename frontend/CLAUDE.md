@@ -185,19 +185,19 @@ See [`docs/RUNBOOK.md`](../docs/RUNBOOK.md) for sampling and recovery details.
 
 ### Key Routes
 
-| Route                | Purpose                                        |
-| -------------------- | ---------------------------------------------- |
-| `/`                  | Main feed (all articles from subscribed feeds) |
-| `/social`            | Shares from followed users                     |
-| `/starred`           | Starred articles                               |
-| `/feeds`             | Manage feed subscriptions                      |
-| `/discover`          | Discover new feeds                             |
-| `/highlights`        | Every highlight, grouped by source article     |
-| `/highlights/review` | Review deck — a few highlights, one at a time  |
-| `/settings`          | Account and sync status                        |
+| Route                | Purpose                                         |
+| -------------------- | ----------------------------------------------- |
+| `/`                  | Main feed (all articles from subscribed feeds)  |
+| `/social`            | Shares from followed users                      |
+| `/starred`           | Starred articles                                |
+| `/feeds`             | Manage feed subscriptions                       |
+| `/discover`          | Discover new feeds                              |
+| `/highlights`        | Every highlight, grouped by source article      |
+| `/highlights/review` | Review deck — a few highlights, one at a time   |
+| `/settings`          | Account and sync status                         |
 | `/feedback`          | The userinput.app board, read and posted in-app |
-| `/auth/login`        | Bluesky handle input                           |
-| `/auth/callback`     | OAuth callback handler                         |
+| `/auth/login`        | Bluesky handle input                            |
+| `/auth/callback`     | OAuth callback handler                          |
 
 ### Highlights
 

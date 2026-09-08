@@ -300,9 +300,12 @@ export async function handleCreateFeedback(
     );
   }
 
-  let body: { title?: unknown; body?: unknown; tags?: unknown };
+  // `request.json()` happily returns `null`, a string or an array — all valid
+  // JSON, none of them a post. Normalize through `record()` so a malformed body
+  // reads as an empty one and falls out as a 400 rather than a thrown field read.
+  let body: UnknownRecord;
   try {
-    body = (await request.json()) as typeof body;
+    body = record(await request.json());
   } catch {
     return json({ error: 'Invalid JSON body' }, 400);
   }
@@ -362,12 +365,14 @@ export async function handleCreateFeedback(
   // Match userinput.app's composer: it upvotes the post it just created, keyed by
   // the discussion's own rkey. Best effort — a missing vote scope, or a PDS that
   // refuses the second write, must not turn a landed post into a failure.
+  let upvoted = false;
   if (hasIntegrationScopes(session, 'userinput-votes')) {
     const vote = await pdsClient.putRecord(UPVOTE_COLLECTION, rkey, {
       $type: UPVOTE_COLLECTION,
       subject: { uri: result.data.uri, cid: result.data.cid },
       createdAt,
     });
+    upvoted = vote.success;
     if (!vote.success) log.warn('feedback_self_upvote_failed', { error: vote.error });
   }
 
@@ -387,6 +392,9 @@ export async function handleCreateFeedback(
       cid: result.data.cid,
       url: `${apiBase}/d/${encodeURIComponent(session.did)}/${encodeURIComponent(rkey)}`,
       createdAt,
+      // Whether the self-upvote actually landed, so the page's optimistic row
+      // shows the vote count the board will have rather than assuming one.
+      upvoted,
     },
     201
   );
