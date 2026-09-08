@@ -120,6 +120,18 @@ async function apiFetchWithRetry(cfg, path, body) {
   return res;
 }
 
+// --- Account ----------------------------------------------------------------
+
+// Account identity comes from the web app's shared session cookie.
+async function getAccount() {
+  const cfg = await getConfig();
+  const res = await apiGet(cfg, '/api/auth/me');
+  if (res.status === 401) return { ok: true, user: null };
+  if (!res.ok) return { ok: false, message: "Couldn't check your account. Try again." };
+  const user = await res.json();
+  return { ok: true, user: { did: user.did, handle: user.handle } };
+}
+
 // --- Extraction -------------------------------------------------------------
 
 // Run Defuddle inside the tab's live DOM. Two-step injection: the bundle
@@ -491,6 +503,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   (async () => {
     try {
       switch (msg?.type) {
+        case 'account':
+          sendResponse(await getAccount());
+          break;
         case 'discover':
           try {
             const { feeds, standardSite } = await discoverFeeds(msg.tabId, msg.url);

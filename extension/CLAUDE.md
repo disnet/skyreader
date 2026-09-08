@@ -52,6 +52,15 @@ SameSite and CORS). There is no token storage in the extension. Injection
 relies on `activeTab` + `scripting`, granted by opening the popup (a user
 gesture on the action) — no broad page host permissions.
 
+The popup's account section checks `GET /api/auth/me` on every open, including
+on pages that cannot be saved. It shows the current handle as a link to the
+configured Skyreader web app, opening in a new tab. A confirmed 401 shows a
+**Log in to Skyreader** link to `/auth/login`; other errors offer a retry.
+Account management happens in the web app. The extension only reads the shared
+session and does not store accounts or tokens.
+
+Run `npm test` for account-message regression tests (Node's built-in test runner).
+
 ## How subscribing works
 
 The popup mirrors the frontend's `AddFeedModal`:
