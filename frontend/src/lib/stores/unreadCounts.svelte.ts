@@ -11,6 +11,7 @@ import {
   getSavedDate,
   datePresetToMs,
   matchesReadingLength,
+  isSavedRowArchived,
 } from './feedView.svelte';
 import { liveDb } from '$lib/services/liveDb.svelte';
 import { reportClientError } from '$lib/services/telemetry';
@@ -201,15 +202,15 @@ function createUnreadCountsStore() {
         if (!sourceFilter || sourceFilter.has('feed')) {
           for (const article of articlesStore.allArticles) {
             if (seen.has(article.guid)) continue;
-            if (
-              itemLabelsStore.isSaved(article.guid) &&
-              !itemLabelsStore.isArchived(article.guid)
-            ) {
+            if (itemLabelsStore.isSaved(article.guid)) {
               const displayItem: FeedDisplayItem = {
                 type: 'article',
                 item: article,
                 key: article.guid,
               };
+              // Same archived test the Saved list and Home apply, so a channel's
+              // badge can't promise items the lane below it has already dropped.
+              if (isSavedRowArchived(displayItem)) continue;
               if (!matchesChannelFilters(displayItem)) continue;
               seen.add(article.guid);
             }
@@ -220,15 +221,13 @@ function createUnreadCountsStore() {
         if (!sourceFilter || sourceFilter.has('document')) {
           for (const doc of socialStore.documents) {
             if (seen.has(doc.recordUri)) continue;
-            if (
-              itemLabelsStore.isSaved(doc.recordUri) &&
-              !itemLabelsStore.isArchived(doc.recordUri)
-            ) {
+            if (itemLabelsStore.isSaved(doc.recordUri)) {
               const displayItem: FeedDisplayItem = {
                 type: 'document',
                 item: doc,
                 key: doc.recordUri,
               };
+              if (isSavedRowArchived(displayItem)) continue;
               if (!matchesChannelFilters(displayItem)) continue;
               seen.add(doc.recordUri);
             }
@@ -242,13 +241,12 @@ function createUnreadCountsStore() {
           if (sourceFilter && !sourceFilter.has(src)) continue;
           const key = bm.itemGuid || bm.uri || bm.rkey;
           if (seen.has(key)) continue;
-          const archiveKey = bm.itemGuid || bm.uri || '';
-          if (itemLabelsStore.isArchived(archiveKey)) continue;
           const displayItem: FeedDisplayItem = {
             type: 'saved',
             item: bm,
             key: bm.uri || bm.itemGuid || bm.rkey,
           };
+          if (isSavedRowArchived(displayItem)) continue;
           if (!matchesChannelFilters(displayItem)) continue;
           seen.add(key);
         }
