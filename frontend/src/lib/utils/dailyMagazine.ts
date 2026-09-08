@@ -61,12 +61,14 @@ export function savedItemDisplayKey(item: SavedItem): string {
   return item.uri || item.itemGuid || item.rkey || item.url;
 }
 
-/** The label keys under which a save can be read or archived. */
-export function savedItemLabelKeys(item: SavedItem): string[] {
-  return [item.itemGuid, item.uri, item.url].filter(
-    (key): key is string => typeof key === 'string' && key.length > 0
-  );
-}
+/**
+ * The label keys under which a save can be read or archived.
+ *
+ * Re-exported from `savedPile` — the magazine, the Saved list and Home's lanes
+ * all have to agree on a save's aliases or the same item is archived on one
+ * surface and live on another.
+ */
+export { savedItemLabelKeys } from './savedPile';
 
 // FNV-1a gives each stable key a repeatable daily sort score. It is not used
 // for security or randomness; it simply rotates the pile without persisting an

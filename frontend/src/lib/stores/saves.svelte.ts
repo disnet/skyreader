@@ -9,6 +9,7 @@ import { auth } from './auth.svelte';
 import { extractArticle } from '$lib/services/extract';
 import { computeContentStats } from '$lib/services/articleMerge';
 import { savedSearchStore } from './savedSearch.svelte';
+import { compareSavedNewestFirst } from '$lib/utils/savedPile';
 import type { SavedItem } from '$lib/types';
 
 /**
@@ -164,7 +165,17 @@ function createSavesStore() {
     try {
       // Load from local cache first. The in-memory list is kept "light" (no
       // body); IndexedDB retains the full rows.
-      const cached = await db.saved.orderBy('rkey').reverse().toArray();
+      //
+      // Sorted by savedAt, not by the rkey the index reads in: rkey order is
+      // only a proxy for save time (rkeys minted on another device, by the
+      // extension, or by a backed collection don't line up), and this is the
+      // order Home's "Recently saved" lane shows. The two paths below already
+      // sort this way; the cache path returns early for a guest and for an
+      // unchanged backed snapshot, so it has to as well or those two cases
+      // render a "recent" lane that isn't.
+      const cached = (await db.saved.orderBy('rkey').reverse().toArray()).sort(
+        compareSavedNewestFirst
+      );
       const cachedByRkey = new Map(cached.map((c) => [c.rkey, c]));
       const firstLoad = cached.length === 0;
       if (!firstLoad) {
@@ -223,9 +234,7 @@ function createSavesStore() {
         // before the clear()+replace below drops the old cache (and its bodies).
         await hydrateBodies(snapshot, cachedByRkey);
         const backfilled = backfillWordCounts(snapshot);
-        const kept = [...unsent, ...snapshot].sort((a, b) =>
-          a.savedAt < b.savedAt ? 1 : a.savedAt > b.savedAt ? -1 : 0
-        );
+        const kept = [...unsent, ...snapshot].sort(compareSavedNewestFirst);
         articles = kept.map(toLightSaved);
         rebuildMaps();
         await db.saved.clear();
@@ -271,7 +280,7 @@ function createSavesStore() {
       const merged = [
         ...fresh.map(toLightSaved),
         ...cached.filter((c) => !freshKeys.has(c.rkey)).map(toLightSaved),
-      ].sort((a, b) => (a.savedAt < b.savedAt ? 1 : a.savedAt > b.savedAt ? -1 : 0));
+      ].sort(compareSavedNewestFirst);
       articles = merged;
       rebuildMaps();
 
@@ -681,10 +690,24 @@ function createSavesStore() {
     }
   }
 
-  function isSaved(guidOrUrl: string): boolean {
-    if (savedByGuid.has(guidOrUrl) || savedByUrl.has(guidOrUrl)) return true;
+  // The save behind an arbitrary item key — a feed guid, a document record uri,
+  // or a url — resolved down the same guid → url → canonical-url ladder that
+  // isSaved() answers yes on. Callers that only ask "is this saved?" and
+  // callers that need the row itself have to agree, or the Saved list can list
+  // an article as saved (url match) and then find no save to read its savedAt
+  // and archive state from.
+  function find(guidOrUrl: string): SavedItem | undefined {
+    if (!guidOrUrl) return undefined;
+    const byGuid = savedByGuid.get(guidOrUrl);
+    if (byGuid) return byGuid;
+    const byUrl = savedByUrl.get(guidOrUrl);
+    if (byUrl) return byUrl;
     const key = urlKey(guidOrUrl);
-    return key !== null && savedByUrlKey.has(key);
+    return key ? savedByUrlKey.get(key) : undefined;
+  }
+
+  function isSaved(guidOrUrl: string): boolean {
+    return find(guidOrUrl) !== undefined;
   }
 
   function getByUri(uri: string): SavedItem | undefined {
@@ -780,6 +803,7 @@ function createSavesStore() {
     unsaveByGuid,
     remove,
     isSaved,
+    find,
     getByUri,
     getByUrl,
     getByGuid,

@@ -145,6 +145,42 @@ describe('savesStore in guest mode', () => {
     expect(api.getSavedBodies).not.toHaveBeenCalled();
   });
 
+  it('load() leaves the cache in savedAt order, not the rkey order it reads in', async () => {
+    // The list is Home's "Recently saved" lane and the Saved list's default
+    // sort, and this path returns early (a guest, or an unchanged backed
+    // snapshot) — so it has to sort like the other two. rkey order only
+    // proxies save time: the extension, another device and a backed collection
+    // all mint rkeys that don't line up.
+    const row = (rkey: string, savedAt: string): SavedItem =>
+      ({
+        rkey,
+        uri: '',
+        url: `https://example.com/${rkey}`,
+        title: rkey,
+        author: null,
+        description: null,
+        content: null,
+        contentType: 'article',
+        domain: null,
+        image: null,
+        wordCount: 1,
+        publishedAt: null,
+        savedAt,
+      }) as SavedItem;
+
+    savedRows.set('3kzzzzzzzzzzz', row('3kzzzzzzzzzzz', '2026-08-01T00:00:00.000Z'));
+    savedRows.set('3kaaaaaaaaaaa', row('3kaaaaaaaaaaa', '2026-08-09T00:00:00.000Z'));
+    savedRows.set('3kmmmmmmmmmmm', row('3kmmmmmmmmmmm', '2026-08-05T00:00:00.000Z'));
+
+    await savesStore.load();
+
+    expect(savesStore.articles.map((a) => a.rkey)).toEqual([
+      '3kaaaaaaaaaaa',
+      '3kmmmmmmmmmmm',
+      '3kzzzzzzzzzzz',
+    ]);
+  });
+
   it('saveArticle writes locally with the RSS body and queues the create for sign-in', async () => {
     articleRows.push({ guid: 'guid-1', subscriptionId: 7, content: '<p>the rss body text</p>' });
 

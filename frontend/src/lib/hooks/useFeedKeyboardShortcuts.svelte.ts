@@ -2,7 +2,12 @@ import { onDestroy } from 'svelte';
 import { tick } from 'svelte';
 import { keyboardStore } from '$lib/stores/keyboard.svelte';
 import { auth } from '$lib/stores/auth.svelte';
-import { feedViewStore, type FeedDisplayItem } from '$lib/stores/feedView.svelte';
+import {
+  feedViewStore,
+  isSavedRowArchived,
+  setSavedRowArchived,
+  type FeedDisplayItem,
+} from '$lib/stores/feedView.svelte';
 import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
 import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
 import { linkblogStore } from '$lib/stores/linkblog.svelte';
@@ -338,7 +343,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
       action: () => {
         const item = getSelectedItem();
         if (!item) return;
-        itemLabelsStore.toggleArchive(item.key, item.type);
+        void setSavedRowArchived(item, !isSavedRowArchived(item));
       },
       condition: () => hasSelected() && !!feedViewStore.savedFilter,
     });

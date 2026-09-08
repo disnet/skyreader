@@ -21,6 +21,8 @@ import type {
 } from '$lib/types';
 import { htmlToText, normalize, searchRank } from '$lib/services/savedSearch';
 import { sameUrlFilters, type UrlFilters } from '$lib/utils/urlFilters';
+import { isSavedItemArchived, savedAtMs, setSavedItemArchived } from '$lib/utils/savedPile';
+import { urlKey } from '$lib/utils/urlKey';
 import {
   isRssSource,
   isDocumentsSource,
@@ -90,15 +92,73 @@ function getItemDate(item: FeedDisplayItem): number {
   }
 }
 
+/** The item's own link, for the url-keyed lookups a save can be found under. */
+function itemUrl(item: FeedDisplayItem): string | null {
+  if (item.type === 'saved') return item.item.url || null;
+  if (item.type === 'article') return item.item.url || null;
+  return item.item.canonicalUrl || item.item.path || null;
+}
+
+/**
+ * The save behind a row of the saved pile, or undefined for a row that isn't in
+ * it. An article or document lands in the Saved list because `isSaved()` said
+ * so — and that answers yes on a url match too, which is how a save made from a
+ * bare link claims the feed article for the same page. Resolving only by guid
+ * left those rows with no save to read from, so they fell back to the publish
+ * date and sorted into the middle of a list that claims to be newest-saved.
+ */
+function saveBehind(item: FeedDisplayItem): SavedItem | undefined {
+  if (item.type === 'saved') return item.item;
+  const byKey = savesStore.find(item.key);
+  if (byKey) return byKey;
+  const url = itemUrl(item);
+  return url ? savesStore.find(url) : undefined;
+}
+
 export function getSavedDate(item: FeedDisplayItem): number {
-  if (item.type === 'saved') {
-    return new Date(item.item.savedAt).getTime();
-  }
-  const savedItem = savesStore.getByGuid(item.key);
-  if (savedItem) {
-    return new Date(savedItem.savedAt).getTime();
-  }
+  const savedItem = saveBehind(item);
+  if (savedItem) return savedAtMs(savedItem);
   return getItemDate(item);
+}
+
+/**
+ * The archived test for a row of the saved pile, keyed on the save rather than
+ * on the row. An `archived` label lands under whichever alias the surface that
+ * wrote it held (see `savedItemLabelKeys`), so testing the row's own key alone
+ * made the Saved list and Home's lanes disagree about the same item. Rows with
+ * no save behind them fall back to their own key.
+ */
+export function isSavedRowArchived(item: FeedDisplayItem): boolean {
+  // The row's own key first: it's a map hit, and it's the alias most archives
+  // land under, so the common case never pays for resolving the save.
+  if (itemLabelsStore.isArchived(item.key)) return true;
+  const save = saveBehind(item);
+  return save ? isSavedItemArchived(save, itemLabelsStore.isArchived) : false;
+}
+
+/** Set one saved-pile row's complete alias set to the requested archive state. */
+export async function setSavedRowArchived(item: FeedDisplayItem, archived: boolean): Promise<void> {
+  const save = saveBehind(item);
+  if (!save) {
+    const mutate = archived ? itemLabelsStore.archiveItem : itemLabelsStore.unarchiveItem;
+    await mutate(item.key, item.type);
+    return;
+  }
+
+  await setSavedItemArchived(
+    save,
+    archived,
+    (key, desired) => {
+      const mutate = desired ? itemLabelsStore.archiveItem : itemLabelsStore.unarchiveItem;
+      return mutate(key, 'saved');
+    },
+    [item.key]
+  );
+}
+
+/** Same test for an article row, without building the wrapper first. */
+function isSavedArticleArchived(article: Article): boolean {
+  return isSavedRowArchived({ type: 'article', item: article, key: article.guid });
 }
 
 function getItemPublishedDate(item: FeedDisplayItem): number {
@@ -494,11 +554,11 @@ function createFeedViewStore() {
       // Saved view with inbox/archive sub-filter
       if (savedView === 'inbox') {
         articles = allArticles.filter((a) => {
-          return itemLabelsStore.isSaved(a.guid) && !itemLabelsStore.isArchived(a.guid);
+          return itemLabelsStore.isSaved(a.guid) && !isSavedArticleArchived(a);
         });
       } else {
         articles = allArticles.filter((a) => {
-          return itemLabelsStore.isSaved(a.guid) && itemLabelsStore.isArchived(a.guid);
+          return itemLabelsStore.isSaved(a.guid) && isSavedArticleArchived(a);
         });
       }
     } else {
@@ -730,7 +790,7 @@ function createFeedViewStore() {
       const seen = new Set<string>();
       return articlesStore.allArticles.filter((a) => {
         if (!itemLabelsStore.isSaved(a.guid)) return false;
-        if (itemLabelsStore.isArchived(a.guid) !== isArchiveView) return false;
+        if (isSavedArticleArchived(a) !== isArchiveView) return false;
         if (seen.has(a.guid)) return false;
         seen.add(a.guid);
         return true;
@@ -753,8 +813,12 @@ function createFeedViewStore() {
         : socialStore.documents
             .filter((d) => {
               if (!itemLabelsStore.isSaved(d.recordUri)) return false;
-              if (isArchiveView) return itemLabelsStore.isArchived(d.recordUri);
-              return !itemLabelsStore.isArchived(d.recordUri);
+              const archived = isSavedRowArchived({
+                type: 'document',
+                item: d,
+                key: d.recordUri,
+              });
+              return archived === isArchiveView;
             })
             .map((d) => ({
               type: 'document' as const,
@@ -767,23 +831,36 @@ function createFeedViewStore() {
     // otherwise an article that's filtered out (e.g. by reading length) would
     // silently kill its matching bookmark, and the sidebar count would not
     // agree with the displayed list.
-    const allSavedArticleGuids = new Set(
-      articlesStore.allArticles
-        .filter(
-          (a) =>
-            itemLabelsStore.isSaved(a.guid) &&
-            matchesSavedChannelFilters({
-              type: 'article',
-              item: a,
-              key: a.guid,
-            })
-        )
-        .map((a) => a.guid)
-    );
+    // Gated on the source filter as well, because a channel showing only url
+    // saves renders no article rows at all — deduping against rows that aren't
+    // there would drop the bookmark and leave the channel short an item.
+    const dedupableArticles =
+      sourceFilter && !sourceFilter.has('feed')
+        ? []
+        : articlesStore.allArticles.filter(
+            (a) =>
+              itemLabelsStore.isSaved(a.guid) &&
+              matchesSavedChannelFilters({
+                type: 'article',
+                item: a,
+                key: a.guid,
+              })
+          );
+    const allSavedArticleGuids = new Set(dedupableArticles.map((a) => a.guid));
     // Only dedup bookmarks against documents that will actually pass
     // the channel filters — same reasoning as allSavedArticleGuids above.
-    const documentRecordUris = new Set(
-      starredDocumentItems.filter((d) => matchesSavedChannelFilters(d)).map((d) => d.key)
+    const dedupableDocuments = starredDocumentItems.filter((d) => matchesSavedChannelFilters(d));
+    const documentRecordUris = new Set(dedupableDocuments.map((d) => d.key));
+    // A save made from a bare url carries no itemGuid, so the guid check below
+    // can't see that the very same page is already in this list as a feed
+    // article — `isSaved()` matched that article by url, which is exactly how
+    // it got here. The page then rendered twice in the Saved list while Home,
+    // which draws the save alone, showed it once. Canonical url keys, so a
+    // trailing slash or a utm param doesn't reopen the gap.
+    const displayedUrlKeys = new Set(
+      [...dedupableArticles.map((a) => a.url), ...dedupableDocuments.map((d) => itemUrl(d))]
+        .map((url) => (url ? urlKey(url) : null))
+        .filter((key): key is string => key !== null)
     );
     const bookmarkItems: FeedDisplayItem[] = savesStore.articles
       .filter((bm) => {
@@ -799,11 +876,12 @@ function createFeedViewStore() {
           if (allSavedArticleGuids.has(bm.itemGuid)) return false;
           if (documentRecordUris.has(bm.itemGuid)) return false;
         }
-        // Use itemGuid (article guid) for archive checks when available, since archive
-        // labels are stored against the article guid, not the AT Protocol URI
-        const archiveKey = bm.itemGuid || bm.uri || '';
-        if (isArchiveView) return itemLabelsStore.isArchived(archiveKey);
-        return !itemLabelsStore.isArchived(archiveKey);
+        const bmUrlKey = bm.url ? urlKey(bm.url) : null;
+        if (bmUrlKey && displayedUrlKeys.has(bmUrlKey)) return false;
+        // Archive state belongs to the save, not to one of its keys: the label
+        // may sit under the guid, the record uri, the url or the rkey depending
+        // on which surface wrote it (see savedItemLabelKeys).
+        return isSavedItemArchived(bm, itemLabelsStore.isArchived) === isArchiveView;
       })
       .map((bm) => ({
         type: 'saved' as const,
@@ -815,6 +893,18 @@ function createFeedViewStore() {
 
     // Sort saved items
     const sort = isSavedChannel ? (toolbarSortOrder ?? 'newest') : sortOrder;
+    // Memoized per row: resolving the save behind an article or document row
+    // can cost a url canonicalization, and a comparator is called O(n log n)
+    // times. Lazy, so the other sort orders pay nothing for it.
+    const savedDates = new Map<FeedDisplayItem, number>();
+    const savedDateOf = (item: FeedDisplayItem): number => {
+      let value = savedDates.get(item);
+      if (value === undefined) {
+        value = getSavedDate(item);
+        savedDates.set(item, value);
+      }
+      return value;
+    };
     items.sort((a, b) => {
       switch (sort) {
         case 'published-newest':
@@ -838,8 +928,8 @@ function createFeedViewStore() {
         }
         default: {
           // newest / oldest — sort by savedAt
-          const dateA = getSavedDate(a);
-          const dateB = getSavedDate(b);
+          const dateA = savedDateOf(a);
+          const dateB = savedDateOf(b);
           return sort === 'oldest' ? dateA - dateB : dateB - dateA;
         }
       }
@@ -854,7 +944,7 @@ function createFeedViewStore() {
     // Apply date added filter
     if (toolbarDateFilter) {
       const cutoff = datePresetToMs(toolbarDateFilter);
-      items = items.filter((item) => getSavedDate(item) >= cutoff);
+      items = items.filter((item) => savedDateOf(item) >= cutoff);
     }
 
     // Apply reading length filter. Items with unknown word count are
