@@ -49,6 +49,8 @@ function send(msg) {
 }
 
 async function getConfig() {
+  // Store builds use production URLs; only unpacked development has settings.
+  if (!chrome.runtime.getManifest().permissions.includes('storage')) return { ...DEFAULTS };
   const stored = await chrome.storage.sync.get(DEFAULTS);
   return { ...DEFAULTS, ...stored };
 }

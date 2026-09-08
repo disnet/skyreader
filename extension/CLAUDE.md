@@ -7,7 +7,8 @@ JS; the only build step bundles the Defuddle content script (`npm run build`).
 
 - `manifest.json` — MV3 manifest. The toolbar action opens `popup.html`
   (`action.default_popup`). Required host permission for `api.skyreader.app`;
-  optional host permissions cover local dev and staging.
+  optional host permissions, storage permission, and the options page cover
+  local development only and are omitted from the store ZIP.
 - `background.js` — service worker. All logic lives here: the save flow,
   the subscribe flow, feed discovery, context menus (save link / save page),
   badge feedback, and a `chrome.runtime.onMessage` router the popup drives.
@@ -17,8 +18,9 @@ JS; the only build step bundles the Defuddle content script (`npm run build`).
   one place owns the session cookie and auth handling.
 - `src/extract-entry.js` — content-script entry bundling Defuddle; built to
   `content/extract.js` (gitignored) by `npm run build` (esbuild).
-- `options.html` / `options.js` — server override (staging / local dev),
-  requesting the matching optional host permission on save.
+- `options.html` / `options.js` — local development server override,
+  requesting the matching optional host permission on save. Unpacked only;
+  store builds use fixed production URLs and never read stored overrides.
 - `icons/` — resized from `frontend/static/icons/icon-512.png` via
   `sips -z <size> <size>` (macOS built-in).
 
@@ -141,6 +143,9 @@ Error handling:
 
 No pipeline yet. To package: run `npm run package` from this directory — it
 rebuilds `content/extract.js` (`npm run build`) and produces
-`skyreader-extension.zip` (excludes `node_modules/`, `src/`, dev files, and
-dotfiles). Upload the zip to the Chrome Web Store dashboard. Bump `version` in
+`skyreader-extension.zip` using `scripts/package.mjs` (includes only runtime
+files and omits localhost permissions, the storage permission, and the server
+settings page). The source manifest keeps settings and localhost access for
+unpacked development. Upload the zip to the Chrome Web
+Store dashboard. Bump `version` in
 `manifest.json` first.

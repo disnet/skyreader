@@ -5,16 +5,25 @@ const { join } = require('node:path');
 const vm = require('node:vm');
 
 const source = readFileSync(join(__dirname, '../background.js'), 'utf8');
+const manifest = JSON.parse(readFileSync(join(__dirname, '../manifest.json'), 'utf8'));
 
-function worker(fetch, config = {}) {
+function worker(fetch, config = {}, permissions = manifest.permissions) {
   let listener;
   const context = vm.createContext({
     fetch,
     URL,
     setTimeout,
     chrome: {
-      storage: { sync: { get: async (defaults) => ({ ...defaults, ...config }) } },
+      storage: {
+        sync: {
+          get: async (defaults) => {
+            assert.ok(permissions.includes('storage'), 'store builds must not access storage');
+            return { ...defaults, ...config };
+          },
+        },
+      },
       runtime: {
+        getManifest: () => ({ permissions }),
         onMessage: { addListener: (fn) => (listener = fn) },
         onInstalled: { addListener() {} },
       },
@@ -40,6 +49,21 @@ test('account uses the configured server and shared cookie, returning only ident
   assert.equal(result.user.handle, 'alice.test');
   assert.equal(result.user.did, 'did:plc:alice');
   assert.equal(result.user.tier, undefined);
+});
+
+test('store account uses production and ignores previously synced development settings', async () => {
+  const send = worker(
+    async (url, options) => {
+      assert.equal(url, 'https://api.skyreader.app/api/auth/me');
+      assert.equal(options.credentials, 'include');
+      return Response.json({ did: 'did:plc:alice', handle: 'alice.test' });
+    },
+    { apiBase: 'http://127.0.0.1:8787', frontendBase: 'http://127.0.0.1:5173' },
+    manifest.permissions.filter((permission) => permission !== 'storage')
+  );
+  const result = await send('account');
+  assert.equal(result.ok, true);
+  assert.equal(result.user.handle, 'alice.test');
 });
 
 test('only a confirmed 401 is shown as logged out', async () => {
