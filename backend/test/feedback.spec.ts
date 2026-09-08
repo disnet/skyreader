@@ -1,6 +1,14 @@
-import { env } from 'cloudflare:test';
+import { env, createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import worker from '../src/index';
 import { handleGetFeedback } from '../src/routes/feedback';
+import * as pdsClient from '../src/services/pds-client';
+import {
+  ALL_POSSIBLE_SCOPES,
+  GRANULAR_SCOPES,
+  USERINPUT_SCOPES,
+  USERINPUT_VOTE_SCOPES,
+} from '../src/config/scopes';
 import type { Env } from '../src/types';
 
 const get = () => new Request('http://localhost/api/v2/feedback');
@@ -91,6 +99,13 @@ describe('GET /api/v2/feedback', () => {
       spaceUrl: 'https://userinput.test/s/did%3Aplc%3Askyreaderfeedback/3mobgsd6d5n27',
       total: 2,
       complete: true,
+      // No space tags configured upstream in this fixture, so the board falls
+      // back to the default vocabulary the composer files posts under.
+      types: [
+        { value: 'bug', label: 'Bug' },
+        { value: 'feature', label: 'Feature request' },
+        { value: 'question', label: 'Question' },
+      ],
       posts: [
         {
           uri: 'at://did:plc:alice/app.userinput.discussion/3abc123',
@@ -182,5 +197,225 @@ describe('GET /api/v2/feedback', () => {
     expect(
       (await handleGetFeedback(get(), { ...(env as Env), USERINPUT_SPACE_DID: '' }, null)).status
     ).toBe(503);
+  });
+});
+
+// Posting is a write to the reader's OWN repo — userinput.app has no backend, a
+// post is an app.userinput.discussion record. So this covers the record shape
+// (a foreign, unversioned lexicon, pinned verbatim), the scope split that keeps
+// the board readable for sessions that predate the write scope, and the space
+// strong ref, which is the one field a post can't be assembled without.
+describe('POST /api/v2/feedback', () => {
+  const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
+  const DID = 'did:plc:feedbackposter';
+  const SESSION = 'sess-feedback-post';
+  const SPACE_URI = 'at://did:plc:skyreaderfeedback/app.userinput.space/3mobgsd6d5n27';
+  const SPACE_CID = 'bafyspacecid';
+  const READ_ONLY_SCOPES = GRANULAR_SCOPES;
+  const POST_ONLY_SCOPES = `${GRANULAR_SCOPES} ${USERINPUT_SCOPES.join(' ')}`;
+
+  let originalFetch: typeof globalThis.fetch;
+  let fetchMock: ReturnType<typeof vi.fn>;
+  let putRecord: ReturnType<typeof vi.fn>;
+  let spaceValue: Record<string, unknown>;
+
+  async function seedSession(grantedScopes = ALL_POSSIBLE_SCOPES) {
+    await env.DB.prepare('DELETE FROM sessions WHERE did = ?').bind(DID).run();
+    await env.DB.prepare('DELETE FROM users WHERE did = ?').bind(DID).run();
+    await env.DB.prepare(
+      `INSERT INTO users (did, handle, pds_url, tier, created_at)
+       VALUES (?, 'poster.bsky.social', 'https://pds.test', 'free', unixepoch())`
+    )
+      .bind(DID)
+      .run();
+    await env.DB.prepare(
+      `INSERT INTO sessions (session_id, did, handle, pds_url, access_token, refresh_token, dpop_private_key, expires_at, granted_scopes)
+       VALUES (?, ?, 'poster.bsky.social', 'https://pds.test', 'tok', 'rtok', ?, ?, ?)`
+    )
+      .bind(SESSION, DID, JSON.stringify({ kty: 'EC' }), Date.now() + 3_600_000, grantedScopes)
+      .run();
+  }
+
+  function post(body: unknown, withSession = true) {
+    return new IncomingRequest('http://localhost/api/v2/feedback', {
+      method: 'POST',
+      headers: {
+        ...(withSession ? { Cookie: `session_id=${SESSION}` } : {}),
+        Origin: env.FRONTEND_URL,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+  }
+
+  async function call(request: Request): Promise<{ status: number; body: any }> {
+    const ctx = createExecutionContext();
+    const response = await worker.fetch(request, env, ctx);
+    await waitOnExecutionContext(ctx);
+    const text = await response.text();
+    return { status: response.status, body: text ? JSON.parse(text) : null };
+  }
+
+  beforeEach(async () => {
+    await caches.default.delete('http://localhost/api/v2/feedback');
+    await caches.default.delete('http://localhost/api/v2/feedback/space');
+    await seedSession();
+    spaceValue = { $type: 'app.userinput.space', name: 'Skyreader feedback' };
+    originalFetch = globalThis.fetch;
+    fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.startsWith('https://plc.directory/')) {
+        return new Response(
+          JSON.stringify({
+            id: 'did:plc:skyreaderfeedback',
+            service: [
+              {
+                id: '#atproto_pds',
+                type: 'AtprotoPersonalDataServer',
+                serviceEndpoint: 'https://space-pds.test',
+              },
+            ],
+          })
+        );
+      }
+      if (url.includes('com.atproto.repo.getRecord')) {
+        return new Response(JSON.stringify({ uri: SPACE_URI, cid: SPACE_CID, value: spaceValue }));
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    globalThis.fetch = fetchMock as typeof globalThis.fetch;
+    putRecord = vi.fn(async (collection: string) => ({
+      success: true,
+      data: {
+        uri: `at://${DID}/${collection}/3newpost`,
+        cid: collection === 'app.userinput.discussion' ? 'bafypostcid' : 'bafyvotecid',
+      },
+    }));
+    vi.spyOn(pdsClient, 'createPDSClient').mockReturnValue({ putRecord } as never);
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  it('writes the discussion to the reader’s repo and self-upvotes it', async () => {
+    const result = await call(
+      post({ title: '  Quieter reading mode  ', body: ' Please ', tags: ['Feature'] })
+    );
+
+    expect(result.status).toBe(201);
+    const [collection, rkey, record] = putRecord.mock.calls[0];
+    expect(collection).toBe('app.userinput.discussion');
+    expect(record).toEqual({
+      $type: 'app.userinput.discussion',
+      space: { uri: SPACE_URI, cid: SPACE_CID },
+      title: 'Quieter reading mode',
+      body: 'Please',
+      tags: ['feature'],
+      createdAt: expect.any(String),
+    });
+    expect(result.body).toEqual({
+      uri: `at://${DID}/app.userinput.discussion/3newpost`,
+      cid: 'bafypostcid',
+      url: `https://userinput.test/d/${encodeURIComponent(DID)}/${rkey}`,
+      createdAt: record.createdAt,
+    });
+    // userinput.app's own composer votes for the post it just made, keyed by the
+    // discussion's rkey, so a post starts at one vote rather than zero.
+    expect(putRecord.mock.calls[1]).toEqual([
+      'app.userinput.upvote',
+      rkey,
+      {
+        $type: 'app.userinput.upvote',
+        subject: { uri: `at://${DID}/app.userinput.discussion/3newpost`, cid: 'bafypostcid' },
+        createdAt: record.createdAt,
+      },
+    ]);
+  });
+
+  it('drops the cached board so the next read can contain the new post', async () => {
+    await caches.default.put(
+      'http://localhost/api/v2/feedback',
+      new Response(JSON.stringify({ posts: [] }), {
+        headers: { 'Cache-Control': 'public, max-age=300', 'Content-Type': 'application/json' },
+      })
+    );
+    await call(post({ title: 'Something' }));
+    expect(await caches.default.match('http://localhost/api/v2/feedback')).toBeUndefined();
+  });
+
+  it('files posts under the board’s own tags when it configures them', async () => {
+    spaceValue = { tags: [{ value: 'defect', label: 'Defect' }] };
+    expect((await call(post({ title: 'Typed', tags: ['defect'] }))).status).toBe(201);
+    expect((await call(post({ title: 'Untyped', tags: ['feature'] }))).body).toEqual({
+      error: 'unknown tag: feature',
+    });
+  });
+
+  it('posts without the vote scope, and refuses without the write scope', async () => {
+    await seedSession(POST_ONLY_SCOPES);
+    expect((await call(post({ title: 'No self-vote' }))).status).toBe(201);
+    expect(putRecord).toHaveBeenCalledTimes(1);
+
+    await seedSession(READ_ONLY_SCOPES);
+    const refused = await call(post({ title: 'Refused' }));
+    expect(refused.status).toBe(403);
+    expect(refused.body).toMatchObject({
+      error: 'scope_upgrade_required',
+      integration: 'userinput',
+    });
+  });
+
+  it('is requested at login', () => {
+    for (const scope of [...USERINPUT_SCOPES, ...USERINPUT_VOTE_SCOPES]) {
+      expect(ALL_POSSIBLE_SCOPES).toContain(scope);
+    }
+  });
+
+  it('needs a session', async () => {
+    expect((await call(post({ title: 'Anonymous' }, false))).status).toBe(401);
+    expect(putRecord).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [{}, 'title is required'],
+    [{ title: 'x'.repeat(301) }, 'title is over 300 characters'],
+    [{ title: 'ok', body: 'x'.repeat(10001) }, 'body is over 10000 characters'],
+    [{ title: 'ok', tags: ['bug', 'feature', 'question'] }, 'at most 2 tags'],
+    [{ title: 'ok', tags: ['nonsense'] }, 'unknown tag: nonsense'],
+  ])('rejects %j', async (body, error) => {
+    const result = await call(post(body));
+    expect(result.status).toBe(400);
+    expect(result.body).toEqual({ error });
+    expect(putRecord).not.toHaveBeenCalled();
+  });
+
+  it('does not write when the space record cannot be read', async () => {
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) =>
+      String(input).includes('getRecord')
+        ? new Response('nope', { status: 500 })
+        : new Response(
+            JSON.stringify({
+              id: 'did:plc:skyreaderfeedback',
+              service: [
+                {
+                  id: '#atproto_pds',
+                  type: 'AtprotoPersonalDataServer',
+                  serviceEndpoint: 'https://space-pds.test',
+                },
+              ],
+            })
+          )
+    );
+    expect((await call(post({ title: 'Unreachable' }))).status).toBe(502);
+    expect(putRecord).not.toHaveBeenCalled();
+  });
+
+  it('surfaces a refused PDS write as a 502', async () => {
+    putRecord.mockResolvedValueOnce({ success: false, error: 'InvalidRequest' });
+    const result = await call(post({ title: 'Refused by the PDS' }));
+    expect(result.status).toBe(502);
+    expect(result.body).toMatchObject({ error: 'Failed to post feedback' });
   });
 });

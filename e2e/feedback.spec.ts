@@ -1,9 +1,14 @@
+import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures';
 
 const board = {
   spaceUrl: 'https://userinput.app/s/did:plc:space/space-rkey',
   total: 2,
   complete: true,
+  types: [
+    { value: 'bug', label: 'Bug' },
+    { value: 'feature', label: 'Feature request' },
+  ],
   posts: [
     {
       uri: 'at://did:plc:alice/app.userinput.discussion/first',
@@ -32,21 +37,97 @@ const board = {
   ],
 };
 
+/** Serve the board, and answer POSTs with what the backend returns on a write. */
+async function stubBoard(page: Page, options: { canPost?: boolean } = {}) {
+  await page.route('**/api/integrations/status', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        scopeStatus: { semble: false, margin: false, userinput: options.canPost === true },
+      }),
+    })
+  );
+  await page.route('**/api/v2/feedback', (route) => {
+    if (route.request().method() === 'POST') {
+      return route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          uri: 'at://did:plc:test/app.userinput.discussion/fresh',
+          cid: 'bafyfresh',
+          url: 'https://userinput.app/d/did:plc:test/fresh',
+          createdAt: '2026-09-08T12:00:00Z',
+        }),
+      });
+    }
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(board),
+    });
+  });
+}
+
 test.describe('Feedback', () => {
-  test('opens from Settings and filters the native board', async ({ authedPage }) => {
-    await authedPage.route('**/api/v2/feedback', (route) =>
-      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(board) })
-    );
+  test('opens from Settings, groups by type and filters by type and status', async ({
+    authedPage,
+  }) => {
+    await stubBoard(authedPage);
     await authedPage.goto('/settings');
     await authedPage.getByRole('main').getByRole('link', { name: 'Feedback' }).click();
 
     await expect(authedPage).toHaveURL(/\/feedback$/);
     await expect(authedPage.getByRole('heading', { name: 'Add focus mode' })).toBeVisible();
     await expect(authedPage.getByLabel('10 net votes')).toBeVisible();
+    // Grouped by type while nothing is filtered.
+    await expect(authedPage.getByRole('heading', { name: 'Bug 1' })).toBeVisible();
+    await expect(authedPage.getByRole('heading', { name: 'Feature request 1' })).toBeVisible();
 
-    await authedPage.getByRole('button', { name: 'Bugs' }).click();
+    await authedPage
+      .getByRole('group', { name: 'Filter by type' })
+      .getByRole('button', { name: 'Bug' })
+      .click();
     await expect(authedPage.getByRole('heading', { name: 'Fix feed refresh' })).toBeVisible();
     await expect(authedPage.getByRole('heading', { name: 'Add focus mode' })).toBeHidden();
+
+    await authedPage
+      .getByRole('group', { name: 'Filter by type' })
+      .getByRole('button', { name: 'All' })
+      .click();
+    await authedPage
+      .getByRole('group', { name: 'Filter by status' })
+      .getByRole('button', { name: 'Planned' })
+      .click();
+    await expect(authedPage.getByRole('heading', { name: 'Add focus mode' })).toBeVisible();
+    await expect(authedPage.getByRole('heading', { name: 'Fix feed refresh' })).toBeHidden();
+  });
+
+  test('posts feedback without leaving Skyreader', async ({ authedPage }) => {
+    await stubBoard(authedPage, { canPost: true });
+    await authedPage.goto('/feedback');
+
+    await authedPage.getByRole('button', { name: 'Post feedback' }).click();
+    await authedPage.getByLabel('Title').fill('Sync highlights faster');
+    await authedPage.getByLabel('Details').fill('They take a while to show up.');
+    await authedPage.getByLabel('Type').selectOption('feature');
+    await authedPage.getByRole('button', { name: 'Post', exact: true }).click();
+
+    await expect(authedPage.getByText(/Posted\./)).toBeVisible();
+    // Shown straight away: upstream indexes by backlink, so a reload wouldn't
+    // have it yet.
+    await expect(authedPage.getByRole('heading', { name: 'Sync highlights faster' })).toBeVisible();
+  });
+
+  test('offers a re-login when the session predates the posting permission', async ({
+    authedPage,
+  }) => {
+    await stubBoard(authedPage, { canPost: false });
+    await authedPage.goto('/feedback');
+
+    await expect(authedPage.getByRole('button', { name: 'Log in again' })).toBeVisible();
+    await expect(authedPage.getByRole('button', { name: 'Post feedback' })).toBeHidden();
+    await expect(authedPage.getByRole('link', { name: 'post on userinput.app →' })).toBeVisible();
   });
 
   test('keeps a path to userinput.app when loading fails', async ({ authedPage }) => {

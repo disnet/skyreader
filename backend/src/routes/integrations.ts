@@ -10,7 +10,11 @@ import {
   type IntegrationProvider,
 } from '../services/integration-membership';
 import { SEMBLE_SCOPES, MARGIN_SCOPES } from './auth';
-import { SEMBLE_CONNECTION_SCOPES } from '../config/scopes';
+import {
+  SEMBLE_CONNECTION_SCOPES,
+  USERINPUT_SCOPES,
+  USERINPUT_VOTE_SCOPES,
+} from '../config/scopes';
 import { listAllRecordsPublic } from '../services/backing/read';
 import { resolvePdsUrl } from '../utils/did-resolver';
 
@@ -20,12 +24,17 @@ import { resolvePdsUrl } from '../utils/did-resolver';
  * every live session, so folding it into the Semble set would break card saves
  * for everyone until they re-authed (see config/scopes.ts).
  */
-export type ScopeGate = 'semble' | 'margin' | 'semble-connections';
+export type ScopeGate =
+  'semble' | 'margin' | 'semble-connections' | 'userinput' | 'userinput-votes';
 
 const SCOPE_SETS: Record<ScopeGate, string[]> = {
   semble: SEMBLE_SCOPES,
   margin: MARGIN_SCOPES,
   'semble-connections': SEMBLE_CONNECTION_SCOPES,
+  // Posting to the feedback board writes a record to the reader's own repo, the
+  // same "external app lexicon on the user's PDS" shape as the two above.
+  userinput: USERINPUT_SCOPES,
+  'userinput-votes': USERINPUT_VOTE_SCOPES,
 };
 
 /**
@@ -57,6 +66,9 @@ export async function handleIntegrationStatus(request: Request, env: Env): Promi
         // Reported separately so a surface can tell "offer the control" from
         // "the control will trip the re-login banner" and say so up front.
         sembleConnections: hasIntegrationScopes(session, 'semble-connections'),
+        // Same reason: /feedback asks before it renders a composer, so nobody
+        // writes a post only to be told their session can't send it.
+        userinput: hasIntegrationScopes(session, 'userinput'),
       },
     }),
     { headers: { 'Content-Type': 'application/json' } }

@@ -195,6 +195,7 @@ See [`docs/RUNBOOK.md`](../docs/RUNBOOK.md) for sampling and recovery details.
 | `/highlights`        | Every highlight, grouped by source article     |
 | `/highlights/review` | Review deck — a few highlights, one at a time  |
 | `/settings`          | Account and sync status                        |
+| `/feedback`          | The userinput.app board, read and posted in-app |
 | `/auth/login`        | Bluesky handle input                           |
 | `/auth/callback`     | OAuth callback handler                         |
 

@@ -1158,6 +1158,12 @@ export interface IntegrationStatus {
      * working. Optional: a backend older than the connection endpoint omits it.
      */
     sembleConnections?: boolean;
+    /**
+     * Posting to the feedback board writes to the reader's own repo and needs a
+     * scope no pre-existing session holds. Optional: a backend older than in-app
+     * posting omits it, and the board stays readable either way.
+     */
+    userinput?: boolean;
   };
 }
 

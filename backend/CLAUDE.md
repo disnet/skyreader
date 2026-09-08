@@ -121,6 +121,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed documentation.
 | `src/routes/health.ts`        | `/api/health` (shallow) + `/api/health/deep` (gated)      |
 | `src/routes/telemetry.ts`     | `/api/telemetry/error` — sampled client error reports     |
 | `src/routes/guest.ts`         | `/api/guest/*` — the unauthenticated reading surface      |
+| `src/routes/feedback.ts`      | `/api/v2/feedback` — userinput.app board read + post      |
 
 Guest reading mode is the only unauthenticated surface that reads the archive,
 and it is **read-only**. `POST /api/guest/timeline` is a query over

@@ -178,10 +178,18 @@ export interface FeedbackPost {
   status: string | null;
 }
 
+/** A type a post can be filed under — the board's own vocabulary. */
+export interface FeedbackType {
+  value: string;
+  label: string;
+}
+
 export interface FeedbackBoard {
   spaceUrl: string;
   total: number;
   complete: boolean;
+  /** Optional: a backend older than in-app posting doesn't send it. */
+  types?: FeedbackType[];
   posts: FeedbackPost[];
 }
 
@@ -1239,6 +1247,18 @@ class ApiClient {
 
   async getFeedbackBoard(): Promise<FeedbackBoard> {
     return this.fetch('/api/v2/feedback');
+  }
+
+  // Posting writes an app.userinput.discussion record to the reader's own repo,
+  // so it needs a session with the userinput scope — a session that predates it
+  // throws ScopeUpgradeError, which the page turns into a "log in again" line
+  // rather than losing what they wrote.
+  async createFeedbackPost(input: {
+    title: string;
+    body?: string;
+    tags?: string[];
+  }): Promise<{ uri: string; cid: string; url: string; createdAt: string }> {
+    return this.fetch('/api/v2/feedback', { method: 'POST', body: JSON.stringify(input) });
   }
 
   async createCheckout(productId?: string): Promise<{ url: string }> {

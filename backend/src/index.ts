@@ -99,7 +99,7 @@ import {
   handleListBillingProducts,
   handlePolarWebhook,
 } from './routes/billing';
-import { handleGetFeedback } from './routes/feedback';
+import { handleCreateFeedback, handleGetFeedback } from './routes/feedback';
 import {
   handleGetMagazines,
   handleUpsertMagazine,
@@ -669,8 +669,15 @@ async function route(
       break;
 
     // Public feedback board; edge-cached before it reaches userinput.app.
+    // Posting is not public: it writes a discussion record to the reader's own
+    // repo, so it needs their session (and the userinput scope).
     case url.pathname === '/api/v2/feedback':
-      response = await handleGetFeedback(request, env, session);
+      if (request.method === 'POST') {
+        if (!session) return unauthorizedResponse(headers);
+        response = await handleCreateFeedback(request, env, session);
+      } else {
+        response = await handleGetFeedback(request, env, session);
+      }
       break;
 
     // Magazine routes (durable, cross-device reading issues)
