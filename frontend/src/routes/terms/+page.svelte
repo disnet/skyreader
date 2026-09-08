@@ -8,7 +8,7 @@
 
 <div class="terms-page">
   <h1>Terms of Service</h1>
-  <p class="last-updated">Last updated: July 2026</p>
+  <p class="last-updated">Last updated: September 2026</p>
 
   <section>
     <h2>1. What Skyreader Is</h2>
@@ -86,9 +86,10 @@
     <p>
       Your reading library is stored on our servers, and a copy is cached locally in your browser
       for offline reading. Your saved articles are private to Skyreader and are not published to
-      your PDS. If you turn on Atmospheric sync, we also write your subscriptions to your PDS, which
-      makes them portable to other Atmospheric apps and publicly visible. Anything you publish
-      deliberately, such as a linkblog post, is public by design.
+      your PDS; if you back your Saved list with an external collection such as Semble or Margin,
+      that collection is public. If you turn on Atmospheric sync, we also write your subscriptions
+      to your PDS, which makes them portable to other Atmospheric apps and publicly visible.
+      Anything you publish deliberately, such as a linkblog post, is public by design.
     </p>
     <p>
       We may remove content from our servers at any time, particularly if it violates these terms.
@@ -97,7 +98,21 @@
   </section>
 
   <section>
-    <h2>7. Service Availability</h2>
+    <h2>7. Paid Plans</h2>
+    <p>
+      Skyreader offers an optional paid Supporter plan, billed monthly or yearly. Payments are
+      processed by Polar, our merchant of record, so your purchase and receipt come from Polar under
+      its own terms. Plans renew automatically until you cancel. You can change plans or cancel at
+      any time from the billing portal linked in the app; cancelling stops future renewals, and your
+      plan runs to the end of the period you have already paid for. We may change plan prices or
+      what a plan includes, with notice before a change affects a renewal. For billing questions or
+      refund requests, email
+      <a href="mailto:support@skyreader.app">support@skyreader.app</a>.
+    </p>
+  </section>
+
+  <section>
+    <h2>8. Service Availability</h2>
     <p>
       Skyreader is provided "as is" without warranty. We may modify, suspend, or discontinue the
       service at any time. Records you have synced to your PDS remain accessible there and can be
@@ -106,7 +121,7 @@
   </section>
 
   <section>
-    <h2>8. Changes to Terms</h2>
+    <h2>9. Changes to Terms</h2>
     <p>
       We may update these terms from time to time. Continued use of Skyreader after changes
       constitutes acceptance of the new terms.
@@ -117,6 +132,9 @@
     <h2>Contact</h2>
     <p>
       For abuse reports: <a href="mailto:abuse@skyreader.app">abuse@skyreader.app</a>
+    </p>
+    <p>
+      For billing: <a href="mailto:support@skyreader.app">support@skyreader.app</a>
     </p>
     <p>
       For general feedback:
