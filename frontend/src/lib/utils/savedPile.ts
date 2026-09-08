@@ -55,11 +55,11 @@ export function isSavedItemArchived(
 export async function setSavedItemArchived(
   item: SavedItem,
   archived: boolean,
-  setArchived: (key: string, archived: boolean) => void | Promise<void>
+  setArchived: (key: string, archived: boolean) => void | Promise<void>,
+  additionalKeys: Iterable<string> = []
 ): Promise<void> {
-  for (const key of new Set(savedItemLabelKeys(item))) {
-    await setArchived(key, archived);
-  }
+  const keys = new Set([...savedItemLabelKeys(item), ...additionalKeys]);
+  await Promise.all([...keys].map((key) => setArchived(key, archived)));
 }
 
 /** `savedAt` in epoch ms; 0 when missing or unparseable, so it sorts last. */

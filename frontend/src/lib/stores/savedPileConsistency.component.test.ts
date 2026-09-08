@@ -44,6 +44,12 @@ vi.mock('./itemLabels.svelte', () => ({
     // a feed article whose page was saved from a bare link gets into the list.
     isSaved: (key: string) => findSave(key) !== undefined,
     isArchived: (key: string) => isArchivedKey(key),
+    archiveItem: async (key: string) => {
+      if (!fixtures.archived.includes(key)) fixtures.archived = [...fixtures.archived, key];
+    },
+    unarchiveItem: async (key: string) => {
+      fixtures.archived = fixtures.archived.filter((archivedKey) => archivedKey !== key);
+    },
     isRead: () => false,
     isSocialRead: () => false,
     itemHasAnyTag: () => true,
@@ -102,7 +108,8 @@ vi.mock('$lib/services/liveDb.svelte', () => ({
   liveDb: { articlesVersion: 0, getArticleBodies: async () => new Map() },
 }));
 
-const { feedViewStore } = await import('./feedView.svelte');
+const { feedViewStore, isSavedRowArchived, setSavedRowArchived } =
+  await import('./feedView.svelte');
 
 function save(overrides: Partial<SavedItem> = {}): SavedItem {
   return {
@@ -183,6 +190,27 @@ describe('the Saved list and Home draw the same pile', () => {
     fixtures.articles = [article()];
 
     expect(feedViewStore.currentItems).toHaveLength(1);
+  });
+
+  it('moves a canonically matched article from Archive to Inbox in one operation', async () => {
+    const item = save({ itemGuid: undefined, url: 'https://example.com/piece' });
+    const row = article({
+      guid: 'https://example.com/piece?utm_source=rss',
+      url: 'https://example.com/piece?utm_source=rss',
+    });
+    fixtures.saves = [item];
+    fixtures.articles = [row];
+    // This is the key the old row action wrote, but it is not one of the
+    // resolved save record's own aliases.
+    fixtures.archived = [row.guid];
+
+    const displayRow = { type: 'article' as const, item: row, key: row.guid };
+    expect(isSavedRowArchived(displayRow)).toBe(true);
+
+    await setSavedRowArchived(displayRow, false);
+
+    expect(fixtures.archived).toEqual([]);
+    expect(isSavedRowArchived(displayRow)).toBe(false);
   });
 
   it('keeps the bookmark in a url-only channel, which renders no article rows', () => {

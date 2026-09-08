@@ -145,10 +145,15 @@ export async function setSavedRowArchived(item: FeedDisplayItem, archived: boole
     return;
   }
 
-  await setSavedItemArchived(save, archived, (key, desired) => {
-    const mutate = desired ? itemLabelsStore.archiveItem : itemLabelsStore.unarchiveItem;
-    return mutate(key, 'saved');
-  });
+  await setSavedItemArchived(
+    save,
+    archived,
+    (key, desired) => {
+      const mutate = desired ? itemLabelsStore.archiveItem : itemLabelsStore.unarchiveItem;
+      return mutate(key, 'saved');
+    },
+    [item.key]
+  );
 }
 
 /** Same test for an article row, without building the wrapper first. */
