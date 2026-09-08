@@ -83,6 +83,9 @@ describe('GET /api/v2/feedback', () => {
     });
     const response = await handleGetFeedback(get(), env as Env, null);
     expect(response.status).toBe(200);
+    expect(fetchMock.mock.calls[0][0].toString()).toBe(
+      'https://userinput.test/api/board/did:plc:skyreaderfeedback/3mobgsd6d5n27'
+    );
     expect(response.headers.get('Cache-Control')).toBe('public, max-age=300');
     expect(await response.json()).toEqual({
       spaceUrl: 'https://userinput.test/s/did%3Aplc%3Askyreaderfeedback/3mobgsd6d5n27',
@@ -154,7 +157,16 @@ describe('GET /api/v2/feedback', () => {
     new Response(JSON.stringify({ posts: {} })),
   ])('maps an invalid upstream response to 502', async (upstream) => {
     fetchMock.mockResolvedValueOnce(upstream);
-    expect((await handleGetFeedback(get(), env as Env, null)).status).toBe(502);
+    const response = await handleGetFeedback(get(), env as Env, null);
+    expect(response.status).toBe(502);
+    expect(response.headers.get('Cache-Control')).toBe('public, max-age=30');
+  });
+
+  it('briefly caches upstream failures', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('upstream broke', { status: 500 }));
+    await handleGetFeedback(get(), env as Env, null);
+    await handleGetFeedback(get(), env as Env, null);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('serves repeat requests from the edge cache', async () => {

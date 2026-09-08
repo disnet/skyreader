@@ -1,5 +1,5 @@
 import type { Env, Session } from '../types';
-import { reportError } from '../observability/sentry';
+import { reportMessage } from '../observability/sentry';
 import { log, serializeError } from '../utils/logger';
 
 const PROFILE_BATCH_SIZE = 25;
@@ -65,12 +65,20 @@ export async function handleGetFeedback(
   const cache = caches.default;
   const cacheKey = new Request(new URL('/api/v2/feedback', request.url).toString());
   const cached = await cache.match(cacheKey).catch(() => undefined);
-  if (cached) return new Response(cached.body, cached);
+  if (cached) {
+    const cachedStatus = cached.headers.get('X-Skyreader-Cached-Status');
+    if (cachedStatus === '502') {
+      const response = json({ error: 'Failed to load feedback' }, 502);
+      response.headers.set('Cache-Control', 'public, max-age=30');
+      return response;
+    }
+    return new Response(cached.body, cached);
+  }
 
   const apiBase = env.USERINPUT_API_URL || 'https://userinput.app';
   try {
     const boardUrl = new URL(
-      `/api/board/${encodeURIComponent(env.USERINPUT_SPACE_DID)}/${encodeURIComponent(env.USERINPUT_SPACE_RKEY)}`,
+      `/api/board/${env.USERINPUT_SPACE_DID}/${env.USERINPUT_SPACE_RKEY}`,
       apiBase
     );
     const upstream = await fetch(boardUrl, {
@@ -133,7 +141,24 @@ export async function handleGetFeedback(
     return response;
   } catch (error) {
     log.error('feedback_board_failed', serializeError(error));
-    reportError(error, { tags: { route: 'feedback' } });
-    return json({ error: 'Failed to load feedback' }, 502);
+    reportMessage('userinput.app feedback board unavailable', {
+      level: 'error',
+      fingerprint: ['feedback-board-unavailable'],
+      tags: { route: 'feedback' },
+      extra: serializeError(error),
+    });
+    const response = json({ error: 'Failed to load feedback' }, 502);
+    response.headers.set('Cache-Control', 'public, max-age=30');
+    try {
+      // Workers Cache does not retain non-2xx responses. Store a private
+      // success envelope and reconstruct the public 502 on a cache hit.
+      const cachedFailure = json({ error: 'Failed to load feedback' });
+      cachedFailure.headers.set('Cache-Control', 'public, max-age=30');
+      cachedFailure.headers.set('X-Skyreader-Cached-Status', '502');
+      await cache.put(cacheKey, cachedFailure);
+    } catch (cacheError) {
+      log.error('feedback_board_cache_put_failed', serializeError(cacheError));
+    }
+    return response;
   }
 }

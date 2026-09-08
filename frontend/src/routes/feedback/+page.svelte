@@ -2,21 +2,17 @@
   import { onMount } from 'svelte';
   import StaticPageChrome from '$lib/components/feed/StaticPageChrome.svelte';
   import { api, type FeedbackBoard, type FeedbackPost } from '$lib/services/api';
-  import { syncStore } from '$lib/stores/sync.svelte';
+  import { auth } from '$lib/stores/auth.svelte';
   import { formatRelativeDate } from '$lib/utils/date';
 
   const fallbackUrl = 'https://userinput.app/s/did:plc:ra4jsemddo2ii4pn5jaf6x4v/3mobgsd6d5n27';
-  const filters = [
-    { label: 'All', tag: null },
-    { label: 'Features', tag: 'feature' },
-    { label: 'Bugs', tag: 'bug' },
-    { label: 'Questions', tag: 'question' },
-  ] as const;
-
   let loadState = $state<'loading' | 'loaded' | 'failed'>('loading');
   let board = $state<FeedbackBoard | null>(null);
   let activeTag = $state<string | null>(null);
   let sort = $state<'top' | 'new'>('top');
+  let tags = $derived(
+    [...new Set(board?.posts.flatMap((post) => post.tags) ?? [])].sort((a, b) => a.localeCompare(b))
+  );
   let visiblePosts = $derived.by(() => {
     const posts = board?.posts.filter((post) => !activeTag || post.tags.includes(activeTag)) ?? [];
     return [...posts].sort((a, b) =>
@@ -30,8 +26,13 @@
     return post.author.handle.startsWith('did:') ? post.author.handle : `@${post.author.handle}`;
   }
 
+  function filterLabel(tag: string): string {
+    const label = tag.replaceAll('-', ' ');
+    return `${label.charAt(0).toUpperCase()}${label.slice(1)}${label.endsWith('s') ? '' : 's'}`;
+  }
+
   async function loadBoard() {
-    if (!syncStore.isOnline) {
+    if (!navigator.onLine) {
       loadState = 'failed';
       return;
     }
@@ -44,14 +45,21 @@
     }
   }
 
-  onMount(() => void loadBoard());
+  onMount(() => {
+    const retry = () => void loadBoard();
+    window.addEventListener('online', retry);
+    void loadBoard();
+    return () => window.removeEventListener('online', retry);
+  });
 </script>
 
 <svelte:head><title>Feedback - Skyreader</title></svelte:head>
 
-<StaticPageChrome title="Feedback" />
+{#if auth.isInApp}
+  <StaticPageChrome title="Feedback" />
+{/if}
 
-<main class="feedback-page">
+<div class="feedback-page">
   <section class="intro">
     <p>
       Ideas, bugs, questions. Feedback lives on userinput.app — an Atmospheric app; post and vote
@@ -65,6 +73,15 @@
     >
       Post feedback <span aria-hidden="true">↗</span>
     </a>
+    {#if board && !board.complete}
+      <p class="incomplete">
+        Showing part of the board. <a
+          href={board.spaceUrl}
+          target="_blank"
+          rel="noopener noreferrer">See all feedback →</a
+        >
+      </p>
+    {/if}
   </section>
 
   {#if loadState === 'loading'}
@@ -77,13 +94,16 @@
     </p>
   {:else}
     <div class="controls" aria-label="Feedback filters">
-      <div class="filters">
-        {#each filters as filter}
-          <button class:active={activeTag === filter.tag} onclick={() => (activeTag = filter.tag)}
-            >{filter.label}</button
-          >
-        {/each}
-      </div>
+      {#if tags.length > 0}
+        <div class="filters">
+          <button class:active={activeTag === null} onclick={() => (activeTag = null)}>All</button>
+          {#each tags as tag}
+            <button class:active={activeTag === tag} onclick={() => (activeTag = tag)}
+              >{filterLabel(tag)}</button
+            >
+          {/each}
+        </div>
+      {/if}
       <div class="sort" aria-label="Sort feedback">
         <button class:active={sort === 'top'} onclick={() => (sort = 'top')}>Top</button>
         <span aria-hidden="true">·</span>
@@ -99,6 +119,7 @@
           <a class="post" href={post.url} target="_blank" rel="noopener noreferrer">
             <div class="post-heading">
               <h2>{post.title}</h2>
+              {#each post.tags as tag}<span class="tag">{tag.replaceAll('-', ' ')}</span>{/each}
               {#if post.status}<span class="status">{post.status.replaceAll('-', ' ')}</span>{/if}
             </div>
             {#if post.body}<p class="body">{post.body}</p>{/if}
@@ -116,7 +137,7 @@
       </div>
     {/if}
   {/if}
-</main>
+</div>
 
 <style>
   .feedback-page {
@@ -132,6 +153,13 @@
     margin: 0 0 1rem;
     color: var(--color-text-secondary);
     line-height: var(--leading-relaxed);
+  }
+  .intro .incomplete {
+    margin-top: 0.75rem;
+    font-size: var(--text-sm);
+  }
+  .incomplete a {
+    color: var(--color-primary);
   }
   .post-link {
     display: inline-block;
@@ -206,13 +234,18 @@
     font-size: var(--text-base);
     line-height: var(--leading-snug);
   }
-  .status {
+  .status,
+  .tag {
     flex: none;
     padding: 0.1rem 0.4rem;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-sm);
     color: var(--color-text-secondary);
     font-size: var(--text-xs);
+    text-transform: capitalize;
+  }
+  .tag {
+    color: var(--color-primary);
     text-transform: capitalize;
   }
   .body {
