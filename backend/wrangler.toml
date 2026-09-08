@@ -74,6 +74,10 @@ SENTRY_ENVIRONMENT = "production"
 # product for /api/billing/checkout, filled in after provisioning.
 POLAR_SERVER = "production"
 POLAR_PRODUCT_ID = "b1be3773-3cd5-4fa3-b3c4-2471e492e7d9"
+# Public userinput.app space rendered by Skyreader's native feedback page.
+USERINPUT_API_URL = "https://userinput.app"
+USERINPUT_SPACE_DID = "did:plc:ra4jsemddo2ii4pn5jaf6x4v"
+USERINPUT_SPACE_RKEY = "3mobgsd6d5n27"
 
 # Production routes
 routes = [{ pattern = "api.skyreader.app", custom_domain = true }]
@@ -103,7 +107,7 @@ name = "skyreader-api-staging"
 # under the sandbox token exists nowhere and surfaces only as a 502 from
 # /api/billing/checkout. The sandbox token + webhook secret are set with
 # `wrangler secret put <NAME> --env staging`; see POLAR_SETUP.md.
-vars = { FRONTEND_URL = "https://staging.skyreader.app", ALLOWED_ORIGINS = "https://staging.skyreader.app,https://staging-linkblogs.skyreader.app", FEED_PROXY_URL = "https://skyreader-feed-proxy-staging.fly.dev", LINKBLOG_PUBLIC_URL = "https://staging-linkblogs.skyreader.app", SENTRY_ENVIRONMENT = "staging", POLAR_SERVER = "sandbox", POLAR_PRODUCT_ID = "4f3e636c-8dd5-4af1-af3d-b88e85b104e4" }
+vars = { FRONTEND_URL = "https://staging.skyreader.app", ALLOWED_ORIGINS = "https://staging.skyreader.app,https://staging-linkblogs.skyreader.app", FEED_PROXY_URL = "https://skyreader-feed-proxy-staging.fly.dev", LINKBLOG_PUBLIC_URL = "https://staging-linkblogs.skyreader.app", SENTRY_ENVIRONMENT = "staging", POLAR_SERVER = "sandbox", POLAR_PRODUCT_ID = "4f3e636c-8dd5-4af1-af3d-b88e85b104e4", USERINPUT_API_URL = "https://userinput.app", USERINPUT_SPACE_DID = "did:plc:ra4jsemddo2ii4pn5jaf6x4v", USERINPUT_SPACE_RKEY = "3mobgsd6d5n27" }
 routes = [{ pattern = "api-staging.skyreader.app", custom_domain = true }]
 
 # Smart Placement — STAGING ONLY, deliberately, until it is measured.

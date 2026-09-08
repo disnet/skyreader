@@ -165,6 +165,26 @@ export interface BillingProduct {
   priceCurrency: string;
 }
 
+export interface FeedbackPost {
+  uri: string;
+  url: string;
+  author: { did: string; handle: string; displayName: string | null; avatar: string | null };
+  title: string;
+  body: string;
+  tags: string[];
+  createdAt: string;
+  votes: { up: number; down: number; net: number };
+  replyCount: number;
+  status: string | null;
+}
+
+export interface FeedbackBoard {
+  spaceUrl: string;
+  total: number;
+  complete: boolean;
+  posts: FeedbackPost[];
+}
+
 /** The user's active Polar subscription, summarized for the Settings plan card. */
 export interface BillingSubscription {
   productName: string | null;
@@ -1215,6 +1235,10 @@ class ApiClient {
   // login redirect.
   async getBillingProducts(): Promise<{ products: BillingProduct[] }> {
     return this.fetch('/api/billing/products');
+  }
+
+  async getFeedbackBoard(): Promise<FeedbackBoard> {
+    return this.fetch('/api/v2/feedback');
   }
 
   async createCheckout(productId?: string): Promise<{ url: string }> {
