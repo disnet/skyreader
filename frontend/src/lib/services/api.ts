@@ -165,6 +165,86 @@ export interface BillingProduct {
   priceCurrency: string;
 }
 
+export interface FeedbackPost {
+  uri: string;
+  url: string;
+  author: { did: string; handle: string; displayName: string | null; avatar: string | null };
+  title: string;
+  body: string;
+  tags: string[];
+  createdAt: string;
+  votes: { up: number; down: number; net: number };
+  replyCount: number;
+  status: string | null;
+}
+
+/**
+ * One reply on a post. `parentUri` is null for a reply to the post itself and
+ * set for a reply to another reply; `mod` marks the board's own moderators,
+ * which on this board means the maintainer answering.
+ */
+export interface FeedbackReply {
+  uri: string;
+  parentUri: string | null;
+  author: {
+    did: string;
+    handle: string;
+    displayName: string | null;
+    avatar: string | null;
+    mod: boolean;
+  };
+  body: string;
+  createdAt: string;
+  editedAt: string | null;
+  votes: { up: number; down: number; net: number };
+}
+
+/**
+ * One of the caller's own posts, reduced to the fields a change shows up in.
+ * What the notification inbox polls; see `services/feedbackNotifications.ts`.
+ */
+export interface MyFeedbackPost {
+  uri: string;
+  url: string;
+  title: string;
+  status: string | null;
+  replyCount: number;
+}
+
+/** A type a post can be filed under — the board's own vocabulary. */
+export interface FeedbackType {
+  value: string;
+  label: string;
+}
+
+/** A lex-JSON blob reference, as the upload endpoint returns it. */
+export interface FeedbackBlobRef {
+  $type: 'blob';
+  ref: { $link: string };
+  mimeType: string;
+  size: number;
+}
+
+/** One attachment on a post: the uploaded blob plus its description. */
+export interface FeedbackImage {
+  alt?: string;
+  image: FeedbackBlobRef;
+}
+
+/** What the discussion lexicon accepts as an attachment. */
+export const FEEDBACK_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
+export const FEEDBACK_IMAGE_MAX_BYTES = 1_000_000;
+export const FEEDBACK_IMAGE_MAX = 4;
+
+export interface FeedbackBoard {
+  spaceUrl: string;
+  total: number;
+  complete: boolean;
+  /** Optional: a backend older than in-app posting doesn't send it. */
+  types?: FeedbackType[];
+  posts: FeedbackPost[];
+}
+
 /** The user's active Polar subscription, summarized for the Settings plan card. */
 export interface BillingSubscription {
   productName: string | null;
@@ -1215,6 +1295,64 @@ class ApiClient {
   // login redirect.
   async getBillingProducts(): Promise<{ products: BillingProduct[] }> {
     return this.fetch('/api/billing/products');
+  }
+
+  async getFeedbackBoard(): Promise<FeedbackBoard> {
+    return this.fetch('/api/v2/feedback');
+  }
+
+  // The caller's own posts, for the notification inbox's poll. Session-only and
+  // never cached in the browser: the whole point is to see a change land.
+  async getMyFeedback(): Promise<{ posts: MyFeedbackPost[] }> {
+    return this.fetch('/api/v2/feedback/mine');
+  }
+
+  // The replies on one post, addressed by its author's DID and record key (both
+  // read off the post's `at://` uri). Fetched when a reader expands a post
+  // rather than with the board: the board is one request for every post, and a
+  // thread is one request each.
+  async getFeedbackThread(
+    did: string,
+    rkey: string
+  ): Promise<{ total: number; complete: boolean; replies: FeedbackReply[] }> {
+    const qs = `did=${encodeURIComponent(did)}&rkey=${encodeURIComponent(rkey)}`;
+    return this.fetch(`/api/v2/feedback/thread?${qs}`);
+  }
+
+  // Posting writes an app.userinput.discussion record to the reader's own repo,
+  // so it needs a session with the userinput scope — a session that predates it
+  // throws ScopeUpgradeError, which the page turns into a "log in again" line
+  // rather than losing what they wrote. The response's `upvoted` says whether the
+  // self-upvote that follows the post landed — it doesn't when the session lacks
+  // the separate vote scope, or when the PDS refuses that second write — so the
+  // caller can show the count the board will actually have.
+  async createFeedbackPost(input: {
+    title: string;
+    body?: string;
+    tags?: string[];
+    images?: FeedbackImage[];
+  }): Promise<{
+    uri: string;
+    cid: string;
+    url: string;
+    createdAt: string;
+    upvoted?: boolean;
+  }> {
+    return this.fetch('/api/v2/feedback', { method: 'POST', body: JSON.stringify(input) });
+  }
+
+  // One attachment's bytes, sent raw under the file's own content type (this is
+  // com.atproto.repo.uploadBlob's shape, not a multipart form). The blob lands in
+  // the reader's own repo and is unreferenced — and so collectable — until the
+  // post that embeds it is written, which is why an abandoned draft costs
+  // nothing. Needs the blob scope, so it can throw ScopeUpgradeError on a session
+  // that can post but not attach.
+  async uploadFeedbackImage(file: File): Promise<{ blob: FeedbackBlobRef }> {
+    return this.fetch('/api/v2/feedback/image', {
+      method: 'POST',
+      body: file,
+      headers: { 'Content-Type': file.type },
+    });
   }
 
   async createCheckout(productId?: string): Promise<{ url: string }> {

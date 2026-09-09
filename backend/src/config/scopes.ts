@@ -64,6 +64,25 @@ export const ATMOSPHERE_SCOPES = ['repo:site.standard.graph.subscription'];
 // logins pick it up and the usage write is skipped for sessions that lack it.
 export const AT_INTENT_SCOPES = ['repo:dev.at-intent.usage'];
 
+// Feedback board posting. userinput.app is backend-less: a post IS an
+// app.userinput.discussion record in the author's own repo, so posting from
+// Skyreader means writing that record on their behalf. Kept OUT of
+// GRANULAR_SCOPES for the usual reason — every live session predates it, and
+// folding it in would re-auth people who never open /feedback. The post route
+// answers scope_upgrade_required without it and the board keeps its link-out.
+export const USERINPUT_SCOPES = ['repo:app.userinput.discussion'];
+// userinput.app's own composer upvotes the post it just made, so a post starts
+// at one vote instead of zero. Split out because it is best-effort: a session
+// that holds the discussion scope but not this one still posts, it just doesn't
+// get the self-vote.
+export const USERINPUT_VOTE_SCOPES = ['repo:app.userinput.upvote'];
+// A screenshot on a post is a blob in the reader's own repo, and uploading one
+// needs a blob scope on top of the record scope. Split out for the same reason
+// as the vote: folding it into USERINPUT_SCOPES would tell every existing
+// session it can't post at all, when all it actually can't do is attach a file.
+// The composer offers the attach control only when this one is granted.
+export const USERINPUT_IMAGE_SCOPES = ['blob:image/*'];
+
 // All possible scopes (base + all integrations) — used in client metadata
 export const ALL_POSSIBLE_SCOPES = [
   GRANULAR_SCOPES,
@@ -75,4 +94,7 @@ export const ALL_POSSIBLE_SCOPES = [
   ...OFFPRINT_SCOPES,
   ...ATMOSPHERE_SCOPES,
   ...AT_INTENT_SCOPES,
+  ...USERINPUT_SCOPES,
+  ...USERINPUT_VOTE_SCOPES,
+  ...USERINPUT_IMAGE_SCOPES,
 ].join(' ');

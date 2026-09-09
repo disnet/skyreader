@@ -34,3 +34,26 @@ export function generateTid(): string {
   }
   return tid;
 }
+
+/**
+ * The creation time a TID encodes, in milliseconds, or null for an rkey that
+ * isn't one.
+ *
+ * A record key is free-form in general — only lexicons that declare
+ * `"key": "tid"` promise this — so every caller has to handle null rather than
+ * assume a date. Reading it costs nothing, which is the point: it dates a
+ * record without fetching it.
+ */
+export function tidToTimestamp(rkey: string): number | null {
+  if (rkey.length !== 13) return null;
+  let value = 0n;
+  for (const char of rkey) {
+    const digit = S32.indexOf(char);
+    if (digit === -1) return null;
+    value = value * 32n + BigInt(digit);
+  }
+  // The top bit is 0 in a valid TID; the low 10 bits are the clock id.
+  if (value >> 63n !== 0n) return null;
+  const millis = Number(value >> 10n) / 1000;
+  return millis > 0 ? Math.floor(millis) : null;
+}

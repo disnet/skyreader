@@ -577,6 +577,19 @@
       </a>
     {/if}
 
+    <!-- Feedback is a reader affordance, not an account one: a guest trying the
+         app out is exactly who has something to say, and /feedback reads for
+         everyone (signed out, it points at the board on userinput.app). -->
+    <a
+      href="/feedback"
+      class="nav-item nav-link"
+      class:active={$page.url.pathname === '/feedback'}
+      onclick={() => sidebarStore.closeMobile()}
+    >
+      <span class="nav-icon"><Icon name="message-circle" /></span>
+      <span class="nav-label">Feedback</span>
+    </a>
+
     <!-- Quiet upsell: a plain nav row, gone entirely once the user is a
          Supporter. The sell itself lives on /supporter. -->
     {#if auth.user && auth.user.tier !== 'supporter'}

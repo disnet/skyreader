@@ -53,6 +53,14 @@ const RATE_LIMITS: Record<string, RateLimitConfig> = {
   '/api/feeds/discover': EXPENSIVE_LIMIT,
   '/api/leaflet/resolve': EXPENSIVE_LIMIT,
   '/api/extract': EXPENSIVE_LIMIT,
+  // The feedback board. Reads are edge-cached and only cost this bucket for a
+  // signed-in reader; a POST writes a discussion record to their own repo, which
+  // is the reason for the tighter-than-default ceiling. Nobody posts thirty
+  // times a minute, and a board load is a handful of requests at most.
+  '/api/v2/feedback': EXPENSIVE_LIMIT,
+  // Each attachment is its own upload of up to a megabyte, and a post can carry
+  // four, so this one sits a little above the post ceiling it feeds.
+  '/api/v2/feedback/image': { limit: 20, windowMs: 60000 },
 
   // AT Intents service-auth pre-verification. Keyed by client IP (not did) and checked
   // BEFORE the signature, since verifying a service-auth JWT triggers an outbound DID

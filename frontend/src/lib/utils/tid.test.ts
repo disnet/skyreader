@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { generateTid } from './tid';
+import { generateTid, tidToTimestamp } from './tid';
 
 // The AT Protocol TID syntax: exactly 13 base32-sortable chars, the first
 // restricted to the 16 values that keep the top bit of the 64-bit integer 0.
@@ -46,5 +46,42 @@ describe('generateTid', () => {
     const decoded = tidToMillis(generateTid());
     expect(decoded).toBeGreaterThanOrEqual(before - 1000);
     expect(decoded).toBeLessThanOrEqual(Date.now() + 1000);
+  });
+});
+
+describe('tidToTimestamp', () => {
+  // Real pairs from the live userinput.app board: the rkey a record was written
+  // under, and the createdAt the record itself carries.
+  it.each([
+    ['3mv2dyl5llsfi', '2026-09-09T01:08:26.643Z'],
+    ['3mufwllspa42m', '2026-08-31T22:15:17.132Z'],
+  ])('decodes %s to the time the record says it was written', (rkey, createdAt) => {
+    const decoded = tidToTimestamp(rkey)!;
+    // Within a second: the record's own createdAt is stamped by the client a
+    // moment before or after it mints the key.
+    expect(Math.abs(decoded - Date.parse(createdAt))).toBeLessThan(1000);
+  });
+
+  it('round-trips a freshly generated one', () => {
+    // Not exact: generateTid keeps its own monotonic microsecond counter, so a
+    // key minted after many others in the same millisecond can read a hair
+    // ahead of the clock.
+    const decoded = tidToTimestamp(generateTid())!;
+    expect(Math.abs(decoded - Date.now())).toBeLessThan(1000);
+  });
+
+  it('returns null for a key that is not a TID', () => {
+    // Record keys are free-form unless the lexicon says otherwise, so callers
+    // get null rather than a date invented from nonsense.
+    for (const rkey of [
+      'self',
+      '',
+      '3mv2dyl5llsf',
+      '3mv2dyl5llsfi1',
+      'ZZZZZZZZZZZZZ',
+      '11111111111111',
+    ]) {
+      expect(tidToTimestamp(rkey)).toBeNull();
+    }
   });
 });
