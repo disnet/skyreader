@@ -1500,4 +1500,15 @@
       gap: 0.5rem 1.25rem;
     }
   }
+  /* iOS Safari zooms the viewport when a focused field is smaller than 16px, and
+     it never zooms back out. Every field the reader types into gets the 16px
+     floor on touch; the file input keeps its own size (it takes no keyboard). */
+  @media (hover: none) and (pointer: coarse) {
+    .field input,
+    .field textarea,
+    .attachments .alt,
+    .control-group select {
+      font-size: var(--text-base);
+    }
+  }
 </style>
