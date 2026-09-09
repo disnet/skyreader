@@ -3,6 +3,8 @@ import {
   ATTRIBUTION_TEXT,
   buildLinkblogDocument,
   contentFormatOf,
+  DOCUMENT_LINKS_TYPE,
+  readDocumentLinks,
   formattingFromRow,
   noteToLeafletBlocks,
   replaceItemsNoteRegion,
@@ -40,8 +42,26 @@ describe('buildLinkblogDocument', () => {
     expect(doc.path).toBe(`/${RKEY}`);
   });
 
+  // `links` is a bare open union upstream now, so the refs ride inside one
+  // $type-bearing object rather than a top-level array — see DOCUMENT_LINKS_TYPE.
+  // A PDS rejects the array outright, so this is the difference between a share
+  // that publishes and a 400.
   it('carries the external URL in the machine-readable links field', () => {
-    expect(doc.links).toEqual([{ uri: 'https://example.com/the-article', rel: 'related' }]);
+    expect(doc.links).toEqual({
+      $type: DOCUMENT_LINKS_TYPE,
+      refs: [{ uri: 'https://example.com/the-article', rel: 'related' }],
+    });
+  });
+
+  it('carries a quote-reshare ref alongside the article ref', () => {
+    const quote = buildLinkblogDocument(DID, RKEY, {
+      articleUrl: 'https://example.com/the-article',
+      repostUri: 'at://did:plc:someone/site.standard.document/3kxyz',
+    });
+    expect(readDocumentLinks(quote.links)).toEqual([
+      { uri: 'https://example.com/the-article', rel: 'related' },
+      { uri: 'at://did:plc:someone/site.standard.document/3kxyz', rel: 'repost' },
+    ]);
   });
 
   it('reserves the top-level description (the legacy-quote marker) and keeps the excerpt durable', () => {
@@ -100,7 +120,7 @@ describe('connected publication formats', () => {
     const doc = buildLinkblogDocument(DID, RKEY, input, undefined, target, format);
     expect(doc.site).toBe(target);
     expect(doc.content).toMatchObject({ $type: type });
-    expect(doc.links).toEqual([{ uri: input.articleUrl, rel: 'related' }]);
+    expect(readDocumentLinks(doc.links)).toEqual([{ uri: input.articleUrl, rel: 'related' }]);
   });
 
   it('gives a pckt post its flat website card', () => {
@@ -747,5 +767,25 @@ describe('replaceMarkpubNote', () => {
       ARTICLE
     ) as { text: { markdown: string } };
     expect(content.text.markdown).toBe(`new note\n\n[Post](${ARTICLE.url})`);
+  });
+});
+
+// Both shapes stay readable for good: every record written before the lexicon
+// changed holds the array, and only an edit rewrites one.
+describe('readDocumentLinks', () => {
+  const refs = [{ uri: 'https://example.com/a', rel: 'related' }];
+
+  it('reads the legacy array form', () => {
+    expect(readDocumentLinks(refs)).toEqual(refs);
+  });
+
+  it('reads the union form', () => {
+    expect(readDocumentLinks({ $type: DOCUMENT_LINKS_TYPE, refs })).toEqual(refs);
+  });
+
+  it('drops entries without a usable uri, and tolerates absence', () => {
+    expect(readDocumentLinks(undefined)).toEqual([]);
+    expect(readDocumentLinks({ $type: DOCUMENT_LINKS_TYPE })).toEqual([]);
+    expect(readDocumentLinks([{ rel: 'related' }, { uri: '' }, ...refs])).toEqual(refs);
   });
 });

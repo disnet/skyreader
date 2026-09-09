@@ -81,7 +81,8 @@ export interface DocumentRecord {
   createdAt?: string;
   updatedAt?: string;
   content?: unknown;
-  links?: Array<{ uri?: string; rel?: string }>;
+  // Either the legacy array or the union object — see readRecordLinks.
+  links?: unknown;
   // Skyreader's provenance marker on a link post it wrote.
   skyreaderLinkblog?: string;
 }
@@ -326,6 +327,24 @@ export function publishedAtMs(doc: DocumentRecord, fallbackMs: number): number {
   return Number.isFinite(ms) ? ms : fallbackMs;
 }
 
+// `site.standard.document.links` comes in two shapes. It was an array of
+// `{uri, rel}` until standard.site redeclared it as a bare open union (a single
+// `$type`-bearing object); Skyreader now writes `{$type, refs: [...]}` so PDS
+// validation accepts the write (see backend linkblog-sync DOCUMENT_LINKS_TYPE,
+// and standard.site/lexicons#17). Every record written before that still holds
+// the array, so both are read here and flattened to one array — which is what
+// `ProxyDocument.links` has always been, so nothing downstream changes.
+function readRecordLinks(raw: unknown): Array<{ uri: string; rel?: string }> {
+  const entries = Array.isArray(raw)
+    ? raw
+    : Array.isArray((raw as { refs?: unknown } | undefined)?.refs)
+      ? (raw as { refs: Array<{ uri?: string; rel?: string }> }).refs
+      : [];
+  return entries
+    .filter((l): l is { uri: string; rel?: string } => typeof l?.uri === 'string' && !!l.uri)
+    .map((l) => ({ uri: l.uri, ...(l.rel ? { rel: l.rel } : {}) }));
+}
+
 /**
  * Map a raw `site.standard.document` record into the wire shape the frontend
  * consumes, given already-resolved publication metadata. Pure: every network- or
@@ -362,11 +381,7 @@ export function recordToDocument(
 
   // Surface external resource refs (the shared article URL for link posts),
   // keeping only entries with a real uri.
-  const links = Array.isArray(doc.links)
-    ? doc.links
-        .filter((l): l is { uri: string; rel?: string } => typeof l?.uri === 'string' && !!l.uri)
-        .map((l) => ({ uri: l.uri, ...(l.rel ? { rel: l.rel } : {}) }))
-    : [];
+  const links = readRecordLinks(doc.links);
 
   return {
     authorDid,

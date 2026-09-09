@@ -279,6 +279,36 @@ describe('POST /documents', () => {
     expect(doc.links).toEqual([{ uri: 'https://example.com/the-article', rel: 'related' }]);
   });
 
+  // Same field, the shape standard.site's lexicon now demands: one $type-bearing
+  // object wrapping the refs (see backend linkblog-sync DOCUMENT_LINKS_TYPE).
+  // Both flatten to the same `ProxyDocument.links` array, so the frontend, the
+  // reader and linkblogs.skyreader.app never learn the difference.
+  it('reads the union-shaped links field a new record carries', async () => {
+    const { app } = createTestApp();
+    fetchMock = mockAtprotoFetch({
+      docs: [
+        docRecord('hello', {
+          site: PUB_URI,
+          title: 'Hello',
+          publishedAt: '2024-01-02T00:00:00Z',
+          createdAt: '2024-01-02T00:00:00Z',
+          links: {
+            $type: 'app.skyreader.linkblog.links',
+            refs: [{ uri: 'https://example.com/the-article', rel: 'related' }, { rel: 'nouri' }],
+          },
+        }),
+      ],
+    });
+
+    const res = await postDocuments(app, [{ did: AUTHOR, siteUri: PUB_URI }]);
+    const json = (await res.json()) as {
+      authors: Array<{ status: string; documents: ProxyDocument[] }>;
+    };
+    expect(json.authors[0].documents[0].links).toEqual([
+      { uri: 'https://example.com/the-article', rel: 'related' },
+    ]);
+  });
+
   it('applies the publication filter and returns newest first', async () => {
     const { app } = createTestApp();
     fetchMock = mockAtprotoFetch({

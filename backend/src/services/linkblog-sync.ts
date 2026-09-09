@@ -111,6 +111,72 @@ export const LINKBLOG_RKEY = 'skyreader-links';
 // See LINKBLOG_PLAN.md Phase 6.
 export const LINKBLOG_MARKER_URL = 'https://skyreader.app/linkblog';
 
+// ── The `links` field, and why it is not an array ────────────────────────────
+//
+// `site.standard.document.links` is where a link post carries the article it
+// points at. Until recently the lexicon declared an ARRAY of `{uri, rel}`, which
+// is what every record in the wild holds and what Constellation indexes at
+// `.links[].uri`.
+//
+// standard.site now declares it as a BARE OPEN UNION — a single object that must
+// carry a `$type` — while the description still reads "Array of values" and no
+// member type is published (`refs` is empty). Writers only noticed when Bluesky
+// PDS lexicon resolution began enforcing it: array-form writes that succeeded on
+// 2026-08-24 now fail validation with
+//
+//   Expected an object which includes the "$type" property ... at $.record.links
+//
+// Reported upstream as standard.site/lexicons#17 (filed by snarfed.org, no
+// maintainer reply as of 2026-09-09).
+//
+// So we wrap the refs in one object of our own type. An open union accepts any
+// `$type` it does not know, which is the mechanism `skyreaderLinkblog` already
+// proves in production. This is a WORKAROUND, not a shape anyone else reads:
+// when upstream restores the array, new records should go back to it and this
+// constant retires. Readers stay tolerant of both either way, because records
+// written under each shape are immutable until edited.
+export const DOCUMENT_LINKS_TYPE = 'app.skyreader.linkblog.links';
+
+export interface DocumentLinkRef {
+  uri: string;
+  rel?: string;
+}
+
+/** The union-object form we write. */
+export interface DocumentLinksUnion {
+  $type: string;
+  refs: DocumentLinkRef[];
+}
+
+/** Either shape, as a record read back off the PDS may hold. */
+export type DocumentLinksField = DocumentLinksUnion | DocumentLinkRef[];
+
+/**
+ * Flatten whichever shape a record holds into plain refs.
+ *
+ * Tolerating both is permanent, not transitional: every record written before
+ * the lexicon changed still holds the array, and an old record only takes the
+ * new shape if the author happens to edit it.
+ */
+export function readDocumentLinks(links: unknown): DocumentLinkRef[] {
+  const raw = Array.isArray(links)
+    ? links
+    : Array.isArray((links as DocumentLinksUnion | undefined)?.refs)
+      ? (links as DocumentLinksUnion).refs
+      : [];
+  return raw
+    .filter((l): l is DocumentLinkRef => typeof (l as DocumentLinkRef)?.uri === 'string')
+    .filter((l) => !!l.uri)
+    .map((l) => ({ uri: l.uri, ...(l.rel ? { rel: l.rel } : {}) }));
+}
+
+/** Wrap refs for writing. Undefined when there is nothing to link, so we never
+ *  put an empty object where the lexicon expects a value. */
+export function buildDocumentLinks(refs: DocumentLinkRef[]): DocumentLinksUnion | undefined {
+  if (refs.length === 0) return undefined;
+  return { $type: DOCUMENT_LINKS_TYPE, refs };
+}
+
 export type ContentFormat = 'leaflet' | 'pckt' | 'offprint' | 'markpub';
 export interface LinkblogTarget {
   siteUri: string;
@@ -644,7 +710,9 @@ interface DocumentRecord {
   description?: string;
   textContent?: string;
   tags?: string[];
-  links?: Array<{ uri: string; rel: string }>;
+  // Either shape — see DOCUMENT_LINKS_TYPE. We write the union; records
+  // predating the lexicon change hold the array.
+  links?: DocumentLinksField;
   content?: unknown;
   // Provenance marker: "Skyreader wrote this link post" (same constant the
   // publication carries — see LINKBLOG_MARKER_URL). Load-bearing once a linkblog
@@ -1072,8 +1140,8 @@ export function buildLinkblogDocument(
   const note = input.note?.trim();
   const textContent = [note, excerpt].filter(Boolean).join('\n\n') || undefined;
 
-  const links: Array<{ uri: string; rel: string }> = [{ uri: input.articleUrl, rel: 'related' }];
-  if (input.repostUri) links.push({ uri: input.repostUri, rel: 'repost' });
+  const linkRefs: DocumentLinkRef[] = [{ uri: input.articleUrl, rel: 'related' }];
+  if (input.repostUri) linkRefs.push({ uri: input.repostUri, rel: 'repost' });
 
   return {
     $type: DOCUMENT_COLLECTION,
@@ -1095,7 +1163,7 @@ export function buildLinkblogDocument(
     description: undefined,
     textContent,
     tags: input.tags && input.tags.length > 0 ? input.tags : undefined,
-    links,
+    links: buildDocumentLinks(linkRefs),
     content: buildContent(format, input, excerpt, resolvedHandles, formatting),
     // See DocumentRecord.skyreaderLinkblog — the tell that separates a Skyreader
     // share from a post the connected publication's home app wrote.
@@ -1862,7 +1930,7 @@ export async function updateLinkblogShareNote(
   const excerpt = card.excerpt || rec.description || '';
   const trimmedNote = note.trim();
   const article = {
-    url: rec.links?.find((l) => /^https?:\/\//i.test(l.uri))?.uri,
+    url: readDocumentLinks(rec.links).find((l) => /^https?:\/\//i.test(l.uri))?.uri,
     // The card's own title first: `rec.title` may carry a decoration (🔗 …, “…”)
     // that must never become a card title if the card has to be rebuilt. Stripping
     // is the fallback for a record whose card is genuinely missing.
@@ -1881,6 +1949,10 @@ export async function updateLinkblogShareNote(
   const updated: DocumentRecord = {
     ...rec,
     $type: DOCUMENT_COLLECTION,
+    // Re-wrap the refs on the way out. `...rec` would otherwise put back the
+    // array an older record holds, which the lexicon now rejects — so editing
+    // any pre-existing post would fail. Same refs, current shape.
+    links: buildDocumentLinks(readDocumentLinks(rec.links)),
     // Backfill the marker onto pre-marker shares while we're rewriting anyway.
     skyreaderLinkblog: LINKBLOG_MARKER_URL,
     textContent: [trimmedNote, excerpt].filter(Boolean).join('\n\n') || undefined,
