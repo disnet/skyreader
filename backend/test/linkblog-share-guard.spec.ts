@@ -235,8 +235,9 @@ describe('linkblog share guards', () => {
 
     expect(result.success).toBe(true);
     const put = calls.find((c) => c.endpoint === 'com.atproto.repo.putRecord');
-    const record = (put?.body as { record: { links: unknown; content: { text: { markdown: string } } } })
-      .record;
+    const record = (
+      put?.body as { record: { links: unknown; content: { text: { markdown: string } } } }
+    ).record;
     expect(record.content.text.markdown).toContain('https://example.com/an-article');
     expect(record.links).toEqual({
       $type: DOCUMENT_LINKS_TYPE,

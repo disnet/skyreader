@@ -2,3 +2,5 @@ dist/
 node_modules/
 .wrangler/
 worker-configuration.d.ts
+.impeccable/
+test-results/

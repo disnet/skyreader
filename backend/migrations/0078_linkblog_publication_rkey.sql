@@ -1,0 +1,12 @@
+-- The record key of the user's own Skyreader linkblog publication.
+--
+-- `site.standard.publication` declares `"key": "tid"`, and Bluesky PDS lexicon
+-- resolution now enforces it: a putRecord at our old fixed rkey `skyreader-links`
+-- fails with `Invalid TID string`. New publications are therefore minted at a
+-- real TID, and the one we minted has to be remembered — a fixed constant was
+-- previously the only thing that made the URI computable from a DID.
+--
+-- NULL means "the legacy `skyreader-links` rkey", which is where every
+-- publication created before this lives and where it stays: the documents that
+-- point at it are immutable until edited, so moving it would strand them.
+ALTER TABLE user_settings ADD COLUMN linkblog_rkey TEXT;

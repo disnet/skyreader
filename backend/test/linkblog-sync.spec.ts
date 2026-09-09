@@ -13,7 +13,7 @@ import {
   publicationUri,
   stripTitleDecoration,
   websiteCardMeta,
-  LINKBLOG_RKEY,
+  LEGACY_LINKBLOG_RKEY,
 } from '../src/services/linkblog-sync';
 
 const DID = 'did:plc:linkblogtest123';
@@ -35,7 +35,7 @@ describe('buildLinkblogDocument', () => {
   it('is a site.standard.document scoped to the skyreader-links publication', () => {
     expect(doc.$type).toBe('site.standard.document');
     expect(doc.site).toBe(publicationUri(DID));
-    expect(doc.site).toBe(`at://${DID}/site.standard.publication/${LINKBLOG_RKEY}`);
+    expect(doc.site).toBe(`at://${DID}/site.standard.publication/${LEGACY_LINKBLOG_RKEY}`);
   });
 
   it('uses the rkey as its path for canonical-URL building', () => {

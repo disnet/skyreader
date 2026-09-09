@@ -17,6 +17,7 @@ import {
 import { resolveHandle } from './oauth';
 import { OFFPRINT_SCOPES, PCKT_SCOPES } from '../config/scopes';
 import { parseHandleTokens, buildMentionFacet, type MentionFacet } from '../utils/mention-facets';
+import { generateTid } from '../utils/tid';
 
 // Cap on the number of distinct handles we resolve per note. Each unique handle
 // costs up to a few sequential network round-trips (resolveHandle), all on the
@@ -93,8 +94,35 @@ export const COMPANION_COLLECTIONS: Partial<Record<ContentFormat, string>> = {
   offprint: OFFPRINT_ARTICLE_COLLECTION,
 };
 
-// One dedicated linkblog publication per user, at a fixed rkey.
-export const LINKBLOG_RKEY = 'skyreader-links';
+// The rkey every Skyreader linkblog publication used to live at, and where every
+// one created before 2026-09 still lives.
+//
+// `site.standard.publication` declares `"key": "tid"`. Bluesky PDS lexicon
+// resolution now enforces that — a write here fails with `Invalid TID string
+// (got "skyreader-links")` — so new publications are minted at a real TID
+// instead (see `ensureLinkblogPublication`). This constant is not dead: it is
+// what a user with no stored rkey resolves to, which is every user who had a
+// linkblog before the change. Their publication stays put, because the documents
+// pointing at it are immutable until edited and moving it would strand them.
+export const LEGACY_LINKBLOG_RKEY = 'skyreader-links';
+
+const TID_RE = /^[234567abcdefghij][234567abcdefghijklmnopqrstuvwxyz]{12}$/;
+
+/**
+ * Can we still write a publication record at this rkey?
+ *
+ * Only a spec TID passes the lexicon now. A legacy publication is therefore
+ * READ-ONLY on the PDS: it renders, it keeps receiving documents (a document's
+ * `site` is a plain string the lexicon doesn't police), but its own record can
+ * never be rewritten again.
+ */
+export function isWritablePublicationRkey(rkey: string): boolean {
+  return TID_RE.test(rkey);
+}
+
+export function rkeyFromPublicationUri(uri: string): string {
+  return uri.split('/').pop() || LEGACY_LINKBLOG_RKEY;
+}
 
 // Discovery marker. Every linkblog publication carries this single constant URL
 // so Constellation indexes them all under one target — turning the backlink
@@ -182,6 +210,17 @@ export interface LinkblogTarget {
   siteUri: string;
   format: ContentFormat;
   external: boolean;
+  // The user's OWN Skyreader publication, whether or not they publish there
+  // right now. Carried on the target because it is no longer computable from a
+  // DID: publications minted since the TID change each have their own rkey (see
+  // LEGACY_LINKBLOG_RKEY). Equals `siteUri` unless a foreign one is connected.
+  defaultSiteUri: string;
+  // The `skyreader-links` publication, when this user's own publication is
+  // somewhere else. Readers scope to it as well so that a move interrupted
+  // partway (see migrateLegacyPublication) still shows every post, wherever it
+  // currently lives. Empty for a user who never had a legacy publication, at the
+  // cost of one scope that always comes back empty.
+  legacySiteUri?: string;
 }
 
 // ── Per-user post formatting ─────────────────────────────────────────────────
@@ -268,8 +307,18 @@ function isGeneratedAttribution(value: unknown, hasAttribution: boolean): boolea
 
 const CONTENT_FORMATS = new Set<ContentFormat>(['leaflet', 'pckt', 'offprint', 'markpub']);
 
-export function defaultLinkblogTarget(did: string): LinkblogTarget {
-  return { siteUri: publicationUri(did), format: 'leaflet', external: false };
+export function defaultLinkblogTarget(did: string, rkey?: string | null): LinkblogTarget {
+  const resolved = rkey || LEGACY_LINKBLOG_RKEY;
+  const siteUri = publicationUriFor(did, resolved);
+  return {
+    siteUri,
+    format: 'leaflet',
+    external: false,
+    defaultSiteUri: siteUri,
+    ...(resolved === LEGACY_LINKBLOG_RKEY
+      ? {}
+      : { legacySiteUri: publicationUriFor(did, LEGACY_LINKBLOG_RKEY) }),
+  };
 }
 
 // Turn a stored `linkblog_publication` setting into a target, ignoring anything
@@ -277,9 +326,10 @@ export function defaultLinkblogTarget(did: string): LinkblogTarget {
 function targetFromRow(
   did: string,
   publication: string | null | undefined,
-  contentFormat: string | null | undefined
+  contentFormat: string | null | undefined,
+  rkey?: string | null
 ): LinkblogTarget {
-  const fallback = defaultLinkblogTarget(did);
+  const fallback = defaultLinkblogTarget(did, rkey);
   if (!publication) return fallback;
   const match = publication.match(/^at:\/\/([^/]+)\/site\.standard\.publication\/([^/]+)$/);
   if (!match || match[1] !== did) return fallback;
@@ -290,17 +340,28 @@ function targetFromRow(
     siteUri: publication,
     format,
     external: publication !== fallback.siteUri,
+    defaultSiteUri: fallback.defaultSiteUri,
+    ...(fallback.legacySiteUri ? { legacySiteUri: fallback.legacySiteUri } : {}),
   };
 }
 
 export async function getLinkblogTarget(env: Env, did: string): Promise<LinkblogTarget> {
   try {
     const row = await env.DB.prepare(
-      'SELECT linkblog_publication, linkblog_content_format FROM user_settings WHERE user_did = ?'
+      'SELECT linkblog_publication, linkblog_content_format, linkblog_rkey FROM user_settings WHERE user_did = ?'
     )
       .bind(did)
-      .first<{ linkblog_publication: string | null; linkblog_content_format: string | null }>();
-    return targetFromRow(did, row?.linkblog_publication, row?.linkblog_content_format);
+      .first<{
+        linkblog_publication: string | null;
+        linkblog_content_format: string | null;
+        linkblog_rkey: string | null;
+      }>();
+    return targetFromRow(
+      did,
+      row?.linkblog_publication,
+      row?.linkblog_content_format,
+      row?.linkblog_rkey
+    );
   } catch {
     // Deploys remain usable while a migration is rolling out.
     return defaultLinkblogTarget(did);
@@ -379,7 +440,7 @@ export async function getLinkblogTargets(
       const chunk = unique.slice(i, i + TARGET_LOOKUP_CHUNK);
       const placeholders = chunk.map(() => '?').join(',');
       const rows = await env.DB.prepare(
-        `SELECT user_did, linkblog_publication, linkblog_content_format
+        `SELECT user_did, linkblog_publication, linkblog_content_format, linkblog_rkey
          FROM user_settings WHERE user_did IN (${placeholders})`
       )
         .bind(...chunk)
@@ -387,11 +448,17 @@ export async function getLinkblogTargets(
           user_did: string;
           linkblog_publication: string | null;
           linkblog_content_format: string | null;
+          linkblog_rkey: string | null;
         }>();
       for (const row of rows.results ?? []) {
         out.set(
           row.user_did,
-          targetFromRow(row.user_did, row.linkblog_publication, row.linkblog_content_format)
+          targetFromRow(
+            row.user_did,
+            row.linkblog_publication,
+            row.linkblog_content_format,
+            row.linkblog_rkey
+          )
         );
       }
     }
@@ -457,8 +524,20 @@ interface PublicationRecord {
   skyreaderLinkblog?: string;
 }
 
+export function publicationUriFor(did: string, rkey: string): string {
+  return `at://${did}/${PUBLICATION_COLLECTION}/${rkey}`;
+}
+
+/**
+ * The Skyreader publication URI for a user we know nothing else about.
+ *
+ * Only correct for a user whose rkey is the legacy one — which is every user who
+ * predates the TID change, but not one whose publication was minted after it.
+ * Prefer `LinkblogTarget.defaultSiteUri`, which carries the user's actual rkey;
+ * this is the fallback the target itself is built from.
+ */
 export function publicationUri(did: string): string {
-  return `at://${did}/${PUBLICATION_COLLECTION}/${LINKBLOG_RKEY}`;
+  return publicationUriFor(did, LEGACY_LINKBLOG_RKEY);
 }
 
 // The canonical public base for a user's linkblog. DID-based so it survives
@@ -544,7 +623,7 @@ export async function getPublicationMeta(session: Session, env: Env): Promise<Pu
   // with no visible control to turn it back on.
   const pageHidden = visibility.pageHidden && target.external;
   const pdsClient = createPDSClient(session);
-  const rkey = target.siteUri.split('/').pop() || LINKBLOG_RKEY;
+  const rkey = rkeyFromPublicationUri(target.siteUri);
   const result = await pdsClient.getRecord<PublicationRecord>(PUBLICATION_COLLECTION, rkey);
 
   const url = linkblogBaseUrl(env, session.did);
@@ -584,6 +663,43 @@ export async function getPublicationMeta(session: Session, env: Env): Promise<Pu
   };
 }
 
+/**
+ * The rkey of the user's OWN publication, and whether we actually read it.
+ *
+ * `getLinkblogTarget` folds a failed settings read into the legacy default,
+ * which is the right answer for a reader — fail open, show something — and the
+ * wrong one for a writer. A writer that mints at the legacy fallback because the
+ * real rkey merely couldn't be READ orphans the publication that rkey names, so
+ * the write paths take the rkey from here and refuse to mint on `trusted: false`.
+ *
+ * The one failure that is still trustworthy is a pre-0078 deploy window, where
+ * the column doesn't exist yet: nobody has a stored rkey then, so legacy is the
+ * true answer rather than a guess.
+ */
+async function readPublicationRkey(
+  env: Env,
+  did: string
+): Promise<{ rkey: string; trusted: boolean }> {
+  try {
+    const row = await env.DB.prepare('SELECT linkblog_rkey FROM user_settings WHERE user_did = ?')
+      .bind(did)
+      .first<{ linkblog_rkey: string | null }>();
+    return { rkey: row?.linkblog_rkey || LEGACY_LINKBLOG_RKEY, trusted: true };
+  } catch (error) {
+    const missingColumn = /no such column/i.test(String(error));
+    if (!missingColumn) {
+      console.warn(`[linkblog] could not read publication rkey for ${did}: ${error}`);
+    }
+    return { rkey: LEGACY_LINKBLOG_RKEY, trusted: missingColumn };
+  }
+}
+
+const UNTRUSTED_RKEY_ERROR = {
+  success: false,
+  error: 'Could not read linkblog settings',
+  retryable: true,
+} as const;
+
 // Create the linkblog publication if it doesn't already exist. Idempotent and
 // non-destructive: if a record is already there (possibly user-customized), it's
 // left untouched. Returns the publication AT URI.
@@ -592,10 +708,8 @@ export async function ensureLinkblogPublication(
   env: Env
 ): Promise<PDSResult<{ uri: string; created: boolean }>> {
   const pdsClient = createPDSClient(session);
-  const existing = await pdsClient.getRecord<PublicationRecord>(
-    PUBLICATION_COLLECTION,
-    LINKBLOG_RKEY
-  );
+  const { rkey, trusted } = await readPublicationRkey(env, session.did);
+  const existing = await pdsClient.getRecord<PublicationRecord>(PUBLICATION_COLLECTION, rkey);
 
   if (existing.success) {
     // Lazy backfill on each share — non-destructive (preserves user-customized
@@ -612,21 +726,38 @@ export async function ensureLinkblogPublication(
     const expectedUrl = linkblogBaseUrl(env, session.did);
     const needsMarker = value.skyreaderLinkblog !== LINKBLOG_MARKER_URL;
     const needsUrl = value.url !== expectedUrl;
-    if (needsMarker || needsUrl) {
+    // A legacy publication can never be rewritten again (see
+    // isWritablePublicationRkey), and this heal is cosmetic by design. Skipping
+    // it keeps the share going; failing it would take every share down with a
+    // 502 for the sake of a `url` field nobody's read path depends on.
+    if ((needsMarker || needsUrl) && isWritablePublicationRkey(rkey)) {
       const updated: PublicationRecord = {
         ...value,
         $type: PUBLICATION_COLLECTION,
         url: expectedUrl,
         skyreaderLinkblog: LINKBLOG_MARKER_URL,
       };
-      const put = await pdsClient.putRecord(PUBLICATION_COLLECTION, LINKBLOG_RKEY, updated);
+      const put = await pdsClient.putRecord(PUBLICATION_COLLECTION, rkey, updated);
       if (!put.success) return put;
     }
     return {
       success: true,
-      data: { uri: publicationUri(session.did), created: false },
+      data: { uri: publicationUriFor(session.did, rkey), created: false },
     };
   }
+
+  // Only "no such record" means there is nothing here. Any other read failure is
+  // an answer we don't have: treating it as absent would mint a SECOND
+  // publication and repoint the stored rkey, orphaning the real one and every
+  // document in it. Better to fail the share and let the client retry.
+  if (!isNotFoundError(existing.error)) return existing;
+  if (!trusted) return UNTRUSTED_RKEY_ERROR;
+
+  // Nothing there yet. If the rkey we resolved is the legacy one, this user has
+  // no publication at all — mint a real TID and remember it, because a fixed
+  // constant is exactly what the lexicon now rejects. A stored TID whose record
+  // has gone missing is recreated where it was.
+  const writeRkey = isWritablePublicationRkey(rkey) ? rkey : generateTid();
 
   const record: PublicationRecord = {
     $type: PUBLICATION_COLLECTION,
@@ -635,12 +766,37 @@ export async function ensureLinkblogPublication(
     skyreaderLinkblog: LINKBLOG_MARKER_URL,
   };
 
-  const put = await pdsClient.putRecord(PUBLICATION_COLLECTION, LINKBLOG_RKEY, record);
+  const put = await pdsClient.putRecord(PUBLICATION_COLLECTION, writeRkey, record);
   if (!put.success) return put;
+  if (writeRkey !== rkey) await persistPublicationRkey(env, session.did, writeRkey);
   return {
     success: true,
-    data: { uri: publicationUri(session.did), created: true },
+    data: { uri: publicationUriFor(session.did, writeRkey), created: true },
   };
+}
+
+/**
+ * Remember the rkey of a freshly minted publication.
+ *
+ * Best-effort on purpose: the record is already written, and losing this row
+ * would only make the next resolve fall back to the legacy rkey and mint a
+ * second publication. Worth a warning, not worth failing the share that just
+ * succeeded.
+ */
+async function persistPublicationRkey(env: Env, did: string, rkey: string): Promise<void> {
+  const now = Math.floor(Date.now() / 1000);
+  try {
+    await env.DB.prepare(
+      `INSERT INTO user_settings (user_did, linkblog_rkey, created_at, updated_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(user_did) DO UPDATE SET linkblog_rkey = excluded.linkblog_rkey,
+       updated_at = excluded.updated_at`
+    )
+      .bind(did, rkey, now, now)
+      .run();
+  } catch (error) {
+    console.warn(`[linkblog] could not persist publication rkey for ${did}: ${error}`);
+  }
 }
 
 // Update the publication's name/description, preserving url + icon. Creates the
@@ -649,12 +805,23 @@ export async function updatePublication(
   session: Session,
   env: Env,
   updates: { name?: string; description?: string }
-): Promise<PDSResult<PutRecordResponse>> {
+): Promise<PDSResult<PutRecordResponse & { move?: PublicationMove }>> {
   const pdsClient = createPDSClient(session);
-  const existing = await pdsClient.getRecord<PublicationRecord>(
-    PUBLICATION_COLLECTION,
-    LINKBLOG_RKEY
-  );
+  const { rkey, trusted } = await readPublicationRkey(env, session.did);
+  const existing = await pdsClient.getRecord<PublicationRecord>(PUBLICATION_COLLECTION, rkey);
+  // As in ensureLinkblogPublication: only a genuine absence may be written over.
+  if (!existing.success && !isNotFoundError(existing.error)) return existing;
+  if (!trusted) return UNTRUSTED_RKEY_ERROR;
+
+  // A move is owed whenever a record still sits at the LEGACY rkey — not merely
+  // when the rkey we resolved is the legacy one. A move interrupted after the new
+  // rkey was stored resolves to a TID, and gating on that would strand its
+  // documents (and its followers) at the old URI with no way back in.
+  const owesMove = isWritablePublicationRkey(rkey)
+    ? (await pdsClient.getRecord<PublicationRecord>(PUBLICATION_COLLECTION, LEGACY_LINKBLOG_RKEY))
+        .success
+    : existing.success;
+  const writeRkey = isWritablePublicationRkey(rkey) ? rkey : generateTid();
 
   const base: PublicationRecord = existing.success
     ? existing.data.value
@@ -677,7 +844,169 @@ export async function updatePublication(
     else delete record.description;
   }
 
-  return pdsClient.putRecord(PUBLICATION_COLLECTION, LINKBLOG_RKEY, record);
+  // A legacy publication can't be rewritten where it stands, so the edit becomes
+  // a move: the same record, written at a TID, with every document repointed.
+  // `writeRkey` is the destination either way — a fresh TID on the first attempt,
+  // the one already stored when this run is finishing an interrupted move.
+  if (owesMove) {
+    const moved = await migrateLegacyPublication(session, env, record, writeRkey);
+    if (!moved.success) return moved;
+    return { success: true, data: { uri: moved.data.to, cid: '', move: moved.data } };
+  }
+
+  const put = await pdsClient.putRecord(PUBLICATION_COLLECTION, writeRkey, record);
+  if (!put.success) return put;
+  if (writeRkey !== rkey) await persistPublicationRkey(env, session.did, writeRkey);
+  return { success: true, data: put.data };
+}
+
+// ── Moving a legacy publication onto a TID rkey ──────────────────────────────
+//
+// A publication at `skyreader-links` can never be rewritten again, which means
+// its owner can't rename their linkblog. The fix is to move it: mint the record
+// at a real TID and repoint every document that named the old one.
+//
+// The documents are the reason this is a move and not a fresh start — `site` is
+// what binds a post to a publication, so leaving them behind would split the
+// linkblog in two, with foreign readers of either publication seeing half the
+// posts. Skyreader-owned publications are always `leaflet` format, which has no
+// companion record (see COMPANION_COLLECTIONS), so the documents are the whole
+// job.
+//
+// Ordering is chosen so an interrupted run is never visibly broken: the new rkey
+// is stored BEFORE the walk, and readers scope to the legacy publication as well
+// as the current one (see LinkblogTarget.legacySiteUri), so posts on either side
+// of a half-finished move still render.
+//
+// The legacy publication RECORD is what says a move is still owed, so it is
+// deleted last and only on a walk that reached the end — including the walk
+// running out of pages, which is a partial move wearing a success. `owesMove` in
+// updatePublication looks for that record rather than at the resolved rkey, so
+// the next rename picks the move back up and the walk only touches documents
+// that still name the old URI.
+const MOVE_BATCH_SIZE = 200;
+const MAX_MOVE_PAGES = 100;
+
+async function movePublicationDocuments(
+  client: PDSClient,
+  did: string,
+  fromUri: string,
+  toUri: string
+): Promise<PDSResult<{ moved: number; complete: boolean }>> {
+  let cursor: string | undefined;
+  let moved = 0;
+  let complete = false;
+
+  for (let page = 0; page < MAX_MOVE_PAGES; page++) {
+    const listed = await client.listRecords<DocumentRecord>(DOCUMENT_COLLECTION, cursor);
+    if (!listed.success) {
+      return { success: false, error: listed.error, retryable: !!listed.retryable };
+    }
+    const ours = listed.data.records
+      .filter(
+        (record) => record.value?.site === fromUri && isSkyreaderShareRecord(did, record.value)
+      )
+      .map((record) => ({ rkey: record.uri.split('/').pop() ?? '', value: record.value }))
+      .filter((record) => record.rkey);
+
+    for (let i = 0; i < ours.length; i += MOVE_BATCH_SIZE) {
+      const chunk = ours.slice(i, i + MOVE_BATCH_SIZE);
+      const batch = await client.applyWrites(
+        chunk.map(({ rkey, value }) => ({
+          $type: 'com.atproto.repo.applyWrites#update' as const,
+          collection: DOCUMENT_COLLECTION,
+          rkey,
+          value: {
+            ...value,
+            $type: DOCUMENT_COLLECTION,
+            site: toUri,
+            // The whole record goes back to the PDS, so a legacy array `links`
+            // would fail validation on the way — re-wrap it (see
+            // DOCUMENT_LINKS_TYPE). Same refs, current shape.
+            links: buildDocumentLinks(readDocumentLinks(value.links)),
+          },
+        }))
+      );
+      if (!batch.success) {
+        return { success: false, error: batch.error, retryable: !!batch.retryable };
+      }
+      moved += chunk.length;
+    }
+
+    cursor = listed.data.cursor || undefined;
+    if (!cursor || listed.data.records.length === 0) {
+      complete = true;
+      break;
+    }
+  }
+
+  return { success: true, data: { moved, complete } };
+}
+
+export interface PublicationMove {
+  from: string;
+  to: string;
+  movedPosts: number;
+  /**
+   * Every document that named the old publication now names the new one. False
+   * when the walk ran out of pages with records still to visit — the linkblog is
+   * whole to a Skyreader reader either way (legacySiteUri covers both), and the
+   * next rename resumes from where this one stopped.
+   */
+  complete: boolean;
+}
+
+/**
+ * Move the user's legacy publication onto `toRkey`, carrying its fields (and any
+ * pending edits) across.
+ *
+ * `toRkey` is a fresh TID on the first attempt and the rkey already stored when
+ * this run is finishing an interrupted move — re-minting there would leave a
+ * third publication behind and lose the documents the first attempt did move.
+ *
+ * The old publication record is deleted only once every document has been
+ * repointed — while it exists, it is the marker that a move is unfinished.
+ */
+export async function migrateLegacyPublication(
+  session: Session,
+  env: Env,
+  record: PublicationRecord,
+  toRkey: string
+): Promise<PDSResult<PublicationMove>> {
+  const pdsClient = createPDSClient(session);
+  const fromUri = publicationUriFor(session.did, LEGACY_LINKBLOG_RKEY);
+  const toUri = publicationUriFor(session.did, toRkey);
+
+  const put = await pdsClient.putRecord(PUBLICATION_COLLECTION, toRkey, record);
+  if (!put.success) return put;
+
+  // Before the walk: a crash from here on leaves new shares landing in the new
+  // publication and the reader still seeing both (legacySiteUri).
+  await persistPublicationRkey(env, session.did, toRkey);
+
+  const moved = await movePublicationDocuments(pdsClient, session.did, fromUri, toUri);
+  if (!moved.success) return moved;
+
+  if (moved.data.complete) {
+    // Best-effort: an orphaned empty publication is untidy, not broken, and the
+    // rename that triggered this has already succeeded.
+    const removed = await pdsClient.deleteRecord(PUBLICATION_COLLECTION, LEGACY_LINKBLOG_RKEY);
+    if (!removed.success && !isNotFoundError(removed.error)) {
+      console.warn(
+        `[linkblog] legacy publication left in place for ${session.did}: ${removed.error}`
+      );
+    }
+  } else {
+    // Keep it: it's the marker the next rename resumes from.
+    console.warn(
+      `[linkblog] move for ${session.did} hit the page cap with documents still at ${fromUri}`
+    );
+  }
+
+  return {
+    success: true,
+    data: { from: fromUri, to: toUri, movedPosts: moved.data.moved, complete: moved.data.complete },
+  };
 }
 
 // ── Document (a share) ───────────────────────────────────────────────────────
@@ -1551,9 +1880,14 @@ export async function writeLinkblogShare(
     getLinkblogTarget(env, session.did),
     getLinkblogFormatting(env, session.did),
   ]);
+  // The ensured URI, not `target.siteUri`: a first-ever share mints the
+  // publication at a fresh TID, and the target was read before that happened. A
+  // document pointing at the rkey we no longer use would be orphaned.
+  let siteUri = target.siteUri;
   if (!target.external) {
     const ensured = await ensureLinkblogPublication(session, env);
     if (!ensured.success) return ensured;
+    siteUri = ensured.data.uri;
   }
 
   const resolvedHandles = await resolveNoteMentionHandles(input.note);
@@ -1562,21 +1896,14 @@ export async function writeLinkblogShare(
     rkey,
     input,
     resolvedHandles,
-    target.siteUri,
+    siteUri,
     target.format,
     formatting
   );
   const client = createPDSClient(session);
   const written = await client.putRecord(DOCUMENT_COLLECTION, rkey, record);
   if (written.success) {
-    await syncCompanionRecord(
-      client,
-      session.did,
-      target.format,
-      target.siteUri,
-      rkey,
-      written.data
-    );
+    await syncCompanionRecord(client, session.did, target.format, siteUri, rkey, written.data);
   }
   return written;
 }
@@ -1709,7 +2036,10 @@ type PurgeResult =
   | { success: true; deletedPosts: number }
   | { success: false; error: string; retryable: boolean; deletedPosts: number };
 
-async function purgeLinkblogRecords(session: Session): Promise<PurgeResult> {
+async function purgeLinkblogRecords(
+  session: Session,
+  publicationRkey: string
+): Promise<PurgeResult> {
   const client = createPDSClient(session);
   let cursor: string | undefined;
   let deletedPosts = 0;
@@ -1747,7 +2077,7 @@ async function purgeLinkblogRecords(session: Session): Promise<PurgeResult> {
 
     const nextCursor = listed.data.cursor || undefined;
     if (!nextCursor || listed.data.records.length === 0) {
-      const publication = await client.deleteRecord(PUBLICATION_COLLECTION, LINKBLOG_RKEY);
+      const publication = await client.deleteRecord(PUBLICATION_COLLECTION, publicationRkey);
       if (!publication.success && !isNotFoundError(publication.error)) {
         return {
           success: false,
@@ -1783,6 +2113,9 @@ export async function deleteLinkblog(
     getLinkblogTarget(env, session.did),
     isLinkblogDisabled(env, session.did),
   ]);
+  // Delete the publication we actually own, legacy rkey or minted TID.
+  // deleteRecord doesn't validate the key, so this works on both.
+  const publicationRkey = rkeyFromPublicationUri(previous.defaultSiteUri);
 
   // Disable first: every write path checks the flag, so this is what stops a
   // share racing the walk and landing a document behind it. The connected
@@ -1799,7 +2132,7 @@ export async function deleteLinkblog(
 
   let purged: PurgeResult;
   try {
-    purged = await purgeLinkblogRecords(session);
+    purged = await purgeLinkblogRecords(session, publicationRkey);
   } catch (e) {
     // purgeLinkblogRecords reports PDS failures as values, but an unexpected
     // throw (a D1 error, a client it couldn't build) would escape past the

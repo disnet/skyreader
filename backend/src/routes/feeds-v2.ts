@@ -18,10 +18,7 @@ import { log, serializeError } from '../utils/logger';
 import { chunkArray, getReadKeys } from './reading';
 import { clearFeedHealth, ingestProxyFeed } from './ingest';
 import { readFeedMetadata, readFeedSlice, type FeedHealth } from './timeline';
-import {
-  getLinkblogTargets,
-  publicationUri as linkblogPublicationUri,
-} from '../services/linkblog-sync';
+import { getLinkblogTargets } from '../services/linkblog-sync';
 
 interface V2FeedResponse {
   title: string;
@@ -540,7 +537,7 @@ async function correctLinkblogScopes(
     if (!target || target.siteUri === entry.siteUri) return entry;
     const rows = subscribed.get(entry.did);
     const stale =
-      entry.siteUri === linkblogPublicationUri(entry.did) ||
+      entry.siteUri === target.defaultSiteUri ||
       (!!rows && !rows.has(entry.siteUri) && rows.has(target.siteUri));
     // Don't collapse two requested scopes onto one — the client asked for both.
     if (!stale || requested.has(`${entry.did}\n${target.siteUri}`)) return entry;

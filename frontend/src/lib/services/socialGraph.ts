@@ -12,13 +12,20 @@
 // CORS is silently skipped — discovery is an adornment, never load-bearing.
 
 import type { FollowingPublication } from '$lib/types';
+import { LINKBLOG_MARKER_URL } from '$lib/utils/linkPost';
 
 const APPVIEW_BASE = 'https://public.api.bsky.app';
 const PLC_DIRECTORY = 'https://plc.directory';
 const PUBLICATION_COLLECTION = 'site.standard.publication';
-// The Skyreader linkblog publication — surfaced in the Linkblogs section, so we
-// exclude it here to avoid listing the same account twice on /discover.
-const LINKBLOG_RKEY = 'skyreader-links';
+// A Skyreader linkblog is surfaced in the Linkblogs section, so it's excluded
+// here to avoid listing the same account twice on /discover. The marker is the
+// durable tell: publications minted since the TID change each sit at their own
+// rkey, so the fixed one only identifies the ones created before it.
+const LEGACY_LINKBLOG_RKEY = 'skyreader-links';
+
+function isSkyreaderLinkblog(uri: string, value: PublicationRecord): boolean {
+  return value.skyreaderLinkblog === LINKBLOG_MARKER_URL || rkeyOf(uri) === LEGACY_LINKBLOG_RKEY;
+}
 
 export interface FollowLite {
   did: string;
@@ -105,6 +112,8 @@ interface PublicationRecord {
   url?: string;
   description?: string;
   icon?: { ref?: { $link?: string } };
+  // Skyreader's provenance marker on the publications it creates.
+  skyreaderLinkblog?: string;
 }
 interface ListRecordsResponse {
   records?: Array<{ uri: string; value: PublicationRecord }>;
@@ -116,7 +125,7 @@ function rkeyOf(uri: string): string {
 
 /**
  * List one followed account's standard.site publications straight from their
- * PDS. Skips the Skyreader linkblog (skyreader-links). Returns [] on any
+ * PDS. Skips the account's Skyreader linkblog. Returns [] on any
  * failure (unresolved PDS, CORS block, network error) — never throws.
  */
 export async function scanPublications(follow: FollowLite): Promise<FollowingPublication[]> {
@@ -139,8 +148,8 @@ export async function scanPublications(follow: FollowLite): Promise<FollowingPub
 
   const out: FollowingPublication[] = [];
   for (const record of data.records) {
-    if (rkeyOf(record.uri) === LINKBLOG_RKEY) continue;
     const value = record.value || {};
+    if (isSkyreaderLinkblog(record.uri, value)) continue;
 
     let iconUrl: string | undefined;
     if (value.icon?.ref?.$link) {

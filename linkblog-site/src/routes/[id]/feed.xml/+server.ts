@@ -8,7 +8,12 @@ import { redirect } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
 import { apiBaseFor, feedUrlFor, isDid } from '$lib/fields';
 import { fetchPublicationMeta, getProfile, resolveHandleToDid } from '$lib/server/identity';
-import { fetchLinkblogDocuments, resolveLinkblogTarget, type ProxyConfig } from '$lib/server/proxy';
+import {
+  fetchLinkblogDocuments,
+  linkblogScopes,
+  resolveLinkblogTarget,
+  type ProxyConfig,
+} from '$lib/server/proxy';
 import { emptyFeed, renderFeed } from '$lib/server/rss';
 import type { RequestHandler } from './$types';
 
@@ -47,7 +52,7 @@ export const GET: RequestHandler = async ({ params, url }) => {
   const [profile, pub, docs] = await Promise.all([
     getProfile(did),
     fetchPublicationMeta(did, target.siteUri),
-    fetchLinkblogDocuments(cfg, did, [target.siteUri, target.defaultSiteUri]),
+    fetchLinkblogDocuments(cfg, did, linkblogScopes(target)),
   ]);
 
   // Cap the feed length — readers only need the recent window.
