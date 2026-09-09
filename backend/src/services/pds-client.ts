@@ -28,6 +28,31 @@ export interface PutRecordResponse {
 }
 
 /**
+ * A lex-JSON blob reference, as `com.atproto.repo.uploadBlob` returns it and as
+ * a record embeds it.
+ */
+export interface BlobRef {
+  $type: 'blob';
+  ref: { $link: string };
+  mimeType: string;
+  size: number;
+}
+
+/**
+ * A request body that is NOT JSON. `uploadBlob` is the one XRPC call that wants
+ * the file's own bytes under the file's own content type, so it rides the same
+ * DPoP/nonce/migration path as everything else rather than growing a second one.
+ */
+interface RawBody {
+  rawBytes: ArrayBuffer;
+  contentType: string;
+}
+
+function isRawBody(body: unknown): body is RawBody {
+  return typeof body === 'object' && body !== null && 'rawBytes' in body && 'contentType' in body;
+}
+
+/**
  * Write operation for applyWrites
  */
 export type WriteOp =
@@ -249,14 +274,16 @@ export class PDSClient {
         DPoP: dpopProof,
       };
 
+      const raw = isRawBody(body) ? body : null;
       if (body) {
-        headers['Content-Type'] = 'application/json';
+        headers['Content-Type'] = raw ? raw.contentType : 'application/json';
       }
+      const payload = body ? (raw ? raw.rawBytes : JSON.stringify(body)) : undefined;
 
       let response = await fetch(url, {
         method,
         headers,
-        body: body ? JSON.stringify(body) : undefined,
+        body: payload,
       });
 
       // Handle DPoP nonce requirement
@@ -296,7 +323,7 @@ export class PDSClient {
               ...headers,
               DPoP: dpopProof,
             },
-            body: body ? JSON.stringify(body) : undefined,
+            body: payload,
           });
         }
       }
@@ -458,6 +485,18 @@ export class PDSClient {
       collection,
       rkey,
       record,
+    });
+  }
+
+  /**
+   * Upload a file to the session's own blob store, returning the reference a
+   * record embeds. The blob is unreferenced until some record points at it, and
+   * a PDS garbage-collects those, so an abandoned upload costs the user nothing.
+   */
+  async uploadBlob(bytes: ArrayBuffer, contentType: string): Promise<PDSResult<{ blob: BlobRef }>> {
+    return this.request<{ blob: BlobRef }>('POST', 'com.atproto.repo.uploadBlob', {
+      rawBytes: bytes,
+      contentType,
     });
   }
 

@@ -2,11 +2,10 @@ import { describe, expect, it } from 'vitest';
 import type { FeedbackPost } from '$lib/services/api';
 import {
   DEFAULT_FEEDBACK_TYPES,
-  UNTYPED,
-  feedbackStatuses,
   feedbackTypes,
-  filterFeedbackPosts,
-  groupFeedbackPosts,
+  filterByStatusScope,
+  hasClosedPosts,
+  isPostClosed,
   postStatus,
   sortFeedbackPosts,
   statusLabel,
@@ -41,8 +40,8 @@ describe('feedbackTypes', () => {
   });
 
   it('keeps a type a post carries but the board no longer lists', () => {
-    // Upstream data outlives a board's tag config; dropping the type would hide
-    // those posts behind a filter with no chip to select it.
+    // Upstream data outlives a board's tag config; dropping the type would
+    // leave that post's pill labelled with a raw slug.
     const types = feedbackTypes(
       [{ value: 'defect', label: 'Defect' }],
       [post({ uri: 'a', tags: ['retired-tag'] })]
@@ -57,45 +56,41 @@ describe('feedbackTypes', () => {
 describe('statuses', () => {
   it('reports an untriaged post as open', () => {
     expect(postStatus(post({ uri: 'a' }))).toBe('open');
+    expect(statusLabel('under-review')).toBe('Under review');
   });
 
-  it('lists only the statuses actually present, in triage order', () => {
-    const posts = [
-      post({ uri: 'a', status: 'implemented' }),
-      post({ uri: 'b', status: null }),
-      post({ uri: 'c', status: 'planned' }),
-      post({ uri: 'd', status: 'something-new' }),
-    ];
-    expect(feedbackStatuses(posts)).toEqual(['open', 'planned', 'implemented', 'something-new']);
-    expect(statusLabel('under-review')).toBe('Under review');
+  it('counts only a settled status as closed', () => {
+    // A status nobody here has heard of is open: it is a state the board is
+    // passing a post through, and hiding it by default would lose it.
+    expect(isPostClosed(post({ uri: 'a', status: 'implemented' }))).toBe(true);
+    expect(isPostClosed(post({ uri: 'b', status: 'declined' }))).toBe(true);
+    expect(isPostClosed(post({ uri: 'c', status: 'planned' }))).toBe(false);
+    expect(isPostClosed(post({ uri: 'd', status: null }))).toBe(false);
+    expect(isPostClosed(post({ uri: 'e', status: 'something-new' }))).toBe(false);
+  });
+
+  it('knows whether the board has closed anything at all', () => {
+    expect(hasClosedPosts([post({ uri: 'a' }), post({ uri: 'b', status: 'planned' })])).toBe(false);
+    expect(hasClosedPosts([post({ uri: 'a' }), post({ uri: 'b', status: 'duplicate' })])).toBe(
+      true
+    );
   });
 });
 
-describe('filterFeedbackPosts', () => {
+describe('filterByStatusScope', () => {
   const posts = [
-    post({ uri: 'bug-open', tags: ['bug'] }),
-    post({ uri: 'bug-done', tags: ['bug'], status: 'implemented' }),
-    post({ uri: 'untyped', status: 'implemented' }),
+    post({ uri: 'live' }),
+    post({ uri: 'shipped', status: 'implemented' }),
+    post({ uri: 'planned', status: 'planned' }),
   ];
 
-  it('filters by type and status independently and together', () => {
-    expect(filterFeedbackPosts(posts, { type: null, status: null })).toHaveLength(3);
-    expect(filterFeedbackPosts(posts, { type: 'bug', status: null }).map((p) => p.uri)).toEqual([
-      'bug-open',
-      'bug-done',
+  it('splits the board in two, and hands back all of it on request', () => {
+    expect(filterByStatusScope(posts, 'open').map((entry) => entry.uri)).toEqual([
+      'live',
+      'planned',
     ]);
-    expect(
-      filterFeedbackPosts(posts, { type: null, status: 'implemented' }).map((p) => p.uri)
-    ).toEqual(['bug-done', 'untyped']);
-    expect(
-      filterFeedbackPosts(posts, { type: 'bug', status: 'implemented' }).map((p) => p.uri)
-    ).toEqual(['bug-done']);
-  });
-
-  it('matches untyped posts only under the untyped bucket', () => {
-    expect(filterFeedbackPosts(posts, { type: UNTYPED, status: null }).map((p) => p.uri)).toEqual([
-      'untyped',
-    ]);
+    expect(filterByStatusScope(posts, 'closed').map((entry) => entry.uri)).toEqual(['shipped']);
+    expect(filterByStatusScope(posts, 'all')).toEqual(posts);
   });
 });
 
@@ -120,34 +115,5 @@ describe('sortFeedbackPosts', () => {
     const input = [newer, older];
     sortFeedbackPosts(input, 'top');
     expect(input.map((p) => p.uri)).toEqual(['newer', 'older']);
-  });
-});
-
-describe('groupFeedbackPosts', () => {
-  it('groups in vocabulary order, drops empty groups and puts untyped last', () => {
-    const posts = [
-      post({ uri: 'q', tags: ['question'] }),
-      post({ uri: 'plain' }),
-      post({ uri: 'b', tags: ['bug'] }),
-    ];
-    expect(
-      groupFeedbackPosts(posts, DEFAULT_FEEDBACK_TYPES).map((g) => [
-        g.label,
-        g.posts.map((p) => p.uri),
-      ])
-    ).toEqual([
-      ['Bug', ['b']],
-      ['Question', ['q']],
-      ['Other', ['plain']],
-    ]);
-  });
-
-  it('keeps a post in exactly one group when it carries several tags', () => {
-    const groups = groupFeedbackPosts(
-      [post({ uri: 'multi', tags: ['bug', 'question'] })],
-      DEFAULT_FEEDBACK_TYPES
-    );
-    expect(groups).toHaveLength(1);
-    expect(groups[0].type).toBe('bug');
   });
 });

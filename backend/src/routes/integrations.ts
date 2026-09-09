@@ -12,6 +12,7 @@ import {
 import { SEMBLE_SCOPES, MARGIN_SCOPES } from './auth';
 import {
   SEMBLE_CONNECTION_SCOPES,
+  USERINPUT_IMAGE_SCOPES,
   USERINPUT_SCOPES,
   USERINPUT_VOTE_SCOPES,
 } from '../config/scopes';
@@ -25,7 +26,7 @@ import { resolvePdsUrl } from '../utils/did-resolver';
  * for everyone until they re-authed (see config/scopes.ts).
  */
 export type ScopeGate =
-  'semble' | 'margin' | 'semble-connections' | 'userinput' | 'userinput-votes';
+  'semble' | 'margin' | 'semble-connections' | 'userinput' | 'userinput-votes' | 'userinput-images';
 
 const SCOPE_SETS: Record<ScopeGate, string[]> = {
   semble: SEMBLE_SCOPES,
@@ -35,6 +36,7 @@ const SCOPE_SETS: Record<ScopeGate, string[]> = {
   // same "external app lexicon on the user's PDS" shape as the two above.
   userinput: USERINPUT_SCOPES,
   'userinput-votes': USERINPUT_VOTE_SCOPES,
+  'userinput-images': USERINPUT_IMAGE_SCOPES,
 };
 
 /**
@@ -69,6 +71,9 @@ export async function handleIntegrationStatus(request: Request, env: Env): Promi
         // Same reason: /feedback asks before it renders a composer, so nobody
         // writes a post only to be told their session can't send it.
         userinput: hasIntegrationScopes(session, 'userinput'),
+        // Attaching a screenshot needs a blob scope the post itself doesn't, so
+        // the composer can offer the attach control only when it will work.
+        userinputImages: hasIntegrationScopes(session, 'userinput-images'),
       },
     }),
     { headers: { 'Content-Type': 'application/json' } }

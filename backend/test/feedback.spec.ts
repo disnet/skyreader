@@ -1,15 +1,20 @@
 import { env, createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import worker from '../src/index';
-import { handleGetFeedback } from '../src/routes/feedback';
+import {
+  handleGetFeedback,
+  handleGetFeedbackThread,
+  handleGetMyFeedback,
+} from '../src/routes/feedback';
 import * as pdsClient from '../src/services/pds-client';
 import {
   ALL_POSSIBLE_SCOPES,
   GRANULAR_SCOPES,
+  USERINPUT_IMAGE_SCOPES,
   USERINPUT_SCOPES,
   USERINPUT_VOTE_SCOPES,
 } from '../src/config/scopes';
-import type { Env } from '../src/types';
+import type { Env, Session } from '../src/types';
 
 const get = () => new Request('http://localhost/api/v2/feedback');
 const discussion = (overrides: Record<string, unknown> = {}) => ({
@@ -31,11 +36,74 @@ describe('GET /api/v2/feedback', () => {
   let originalFetch: typeof globalThis.fetch;
   let fetchMock: ReturnType<typeof vi.fn>;
 
+  /**
+   * The owner's PDS, and the space record on it. The board response's
+   * vocabulary comes from here rather than from the copy the board fetch
+   * carries inline, so every test in here has to answer these two.
+   */
+  function spaceLookup(input: RequestInfo | URL, tags: { value: string; label: string }[]) {
+    const url = String(input);
+    if (url.startsWith('https://plc.directory/')) {
+      return new Response(
+        JSON.stringify({
+          id: 'did:plc:skyreaderfeedback',
+          service: [
+            {
+              id: '#atproto_pds',
+              type: 'AtprotoPersonalDataServer',
+              serviceEndpoint: 'https://space-pds.test',
+            },
+          ],
+        })
+      );
+    }
+    if (url.includes('com.atproto.repo.getRecord')) {
+      return new Response(
+        JSON.stringify({
+          uri: 'at://did:plc:skyreaderfeedback/app.userinput.space/3mobgsd6d5n27',
+          cid: 'bafyspacecid',
+          value: { $type: 'app.userinput.space', ...(tags.length > 0 ? { tags } : {}) },
+        })
+      );
+    }
+    return null;
+  }
+
+  /**
+   * The whole world for a vocabulary test: the space record configures `tags`,
+   * and the board fetch carries a deliberately different copy inline — which is
+   * the only way to tell which of the two the response used.
+   */
+  function spaceAware(
+    input: RequestInfo | URL,
+    tags: { value: string; label: string }[]
+  ): Response {
+    const url = String(input);
+    const space = spaceLookup(input, tags);
+    if (space) return space;
+    if (url.includes('getProfiles')) return new Response(JSON.stringify({ profiles: [] }));
+    return new Response(
+      JSON.stringify({
+        complete: true,
+        posts: [discussion()],
+        board: { value: { tags: [{ value: 'inline', label: 'Inline' }] } },
+      })
+    );
+  }
+
   beforeEach(async () => {
     await caches.default.delete('http://localhost/api/v2/feedback');
+    // The board response publishes the same space entry a post is validated
+    // against, so this path warms that cache too.
+    await caches.default.delete('http://localhost/api/v2/feedback/space');
     originalFetch = globalThis.fetch;
     fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
+      // This fixture's space configures no tags, so the board falls back to the
+      // default vocabulary — the same one it published before the response read
+      // the space record at all.
+      const space = spaceLookup(input, []);
+      if (space) return space;
       if (url.includes('getProfiles')) {
         return new Response(
           JSON.stringify({
@@ -94,7 +162,9 @@ describe('GET /api/v2/feedback', () => {
     expect(fetchMock.mock.calls[0][0].toString()).toBe(
       'https://userinput.test/api/board/did:plc:skyreaderfeedback/3mobgsd6d5n27'
     );
-    expect(response.headers.get('Cache-Control')).toBe('public, max-age=300');
+    // The browser gets no copy of its own: a reader who posts and reloads inside
+    // the edge cache's five minutes would otherwise never reach the Worker.
+    expect(response.headers.get('Cache-Control')).toBe('no-store');
     expect(await response.json()).toEqual({
       spaceUrl: 'https://userinput.test/s/did%3Aplc%3Askyreaderfeedback/3mobgsd6d5n27',
       total: 2,
@@ -174,7 +244,13 @@ describe('GET /api/v2/feedback', () => {
     fetchMock.mockResolvedValueOnce(upstream);
     const response = await handleGetFeedback(get(), env as Env, null);
     expect(response.status).toBe(502);
-    expect(response.headers.get('Cache-Control')).toBe('public, max-age=30');
+    expect(response.headers.get('Cache-Control')).toBe('no-store');
+  });
+
+  it('keeps the five-minute cache at the edge, where posting can bust it', async () => {
+    await handleGetFeedback(get(), env as Env, null);
+    const stored = await caches.default.match('http://localhost/api/v2/feedback');
+    expect(stored?.headers.get('Cache-Control')).toBe('public, max-age=300');
   });
 
   it('briefly caches upstream failures', async () => {
@@ -187,7 +263,36 @@ describe('GET /api/v2/feedback', () => {
   it('serves repeat requests from the edge cache', async () => {
     await handleGetFeedback(get(), env as Env, null);
     await handleGetFeedback(get(), env as Env, null);
-    expect(fetchMock).toHaveBeenCalledTimes(2); // board + one profile batch
+    // board + one profile batch + the space lookup's two, all on the first pass.
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it('publishes the vocabulary a post is validated against', async () => {
+    // The board fetch carries its own copy of the space record, but the write
+    // path reads the record straight off the owner's PDS and caches it for an
+    // hour. Two views of one vocabulary on two clocks is a composer offering a
+    // type the write then rejects, so the response serves the write path's copy.
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) =>
+      spaceAware(input, [{ value: 'defect', label: 'Defect' }])
+    );
+    const response = await handleGetFeedback(get(), env as Env, null);
+    expect(((await response.json()) as { types: unknown }).types).toEqual([
+      { value: 'defect', label: 'Defect' },
+    ]);
+  });
+
+  it('falls back to the board’s own copy when the space record can’t be read', async () => {
+    // Reading a board needs no space record; only posting to one does. A PDS
+    // nobody can reach shouldn't take a healthy board's types with it.
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.startsWith('https://plc.directory/')) return new Response('nope', { status: 502 });
+      return spaceAware(input, [{ value: 'defect', label: 'Defect' }]);
+    });
+    const response = await handleGetFeedback(get(), env as Env, null);
+    expect(((await response.json()) as { types: unknown }).types).toEqual([
+      { value: 'inline', label: 'Inline' },
+    ]);
   });
 
   it('rejects non-GET methods and missing configuration', async () => {
@@ -197,6 +302,244 @@ describe('GET /api/v2/feedback', () => {
     expect(
       (await handleGetFeedback(get(), { ...(env as Env), USERINPUT_SPACE_DID: '' }, null)).status
     ).toBe(503);
+  });
+});
+
+// Replies live in their authors' repos and reach us through a second upstream
+// endpoint, so this covers the shape it returns (moderation flags, a parentUri
+// for nesting, no profiles), the DID/rkey validation that keeps a caller from
+// steering the upstream path, and the cache.
+describe('GET /api/v2/feedback/thread', () => {
+  const DID = 'did:plc:alice';
+  const RKEY = '3abc123';
+  const get = (did = DID, rkey = RKEY) =>
+    new Request(
+      `http://localhost/api/v2/feedback/thread?did=${encodeURIComponent(did)}&rkey=${encodeURIComponent(rkey)}`
+    );
+  const reply = (overrides: Record<string, unknown> = {}) => ({
+    uri: 'at://did:plc:maintainer/app.userinput.reply/3rep1',
+    authorDid: 'did:plc:maintainer',
+    value: { body: 'Fixed in the next release.', createdAt: '2026-09-02T12:00:00Z' },
+    parentUri: null,
+    editedAt: null,
+    votes: { up: 1, down: 0, net: 1 },
+    hidden: false,
+    banned: false,
+    ...overrides,
+  });
+
+  let originalFetch: typeof globalThis.fetch;
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(async () => {
+    await caches.default.delete(
+      `http://localhost/api/v2/feedback/thread?did=${encodeURIComponent(DID)}&rkey=${RKEY}`
+    );
+    originalFetch = globalThis.fetch;
+    fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes('getProfiles')) {
+        return new Response(
+          JSON.stringify({
+            profiles: [
+              { did: 'did:plc:maintainer', handle: 'skyreader.app', displayName: 'Skyreader' },
+            ],
+          })
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          complete: true,
+          modDids: ['did:plc:maintainer'],
+          replies: [reply()],
+        })
+      );
+    });
+    globalThis.fetch = fetchMock as typeof globalThis.fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it('returns the replies, hydrated, oldest first', async () => {
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      if (String(input).includes('getProfiles')) {
+        return new Response(JSON.stringify({ profiles: [] }));
+      }
+      return new Response(
+        JSON.stringify({
+          complete: true,
+          modDids: ['did:plc:maintainer'],
+          replies: [
+            reply({
+              uri: 'at://did:plc:bob/app.userinput.reply/3rep2',
+              authorDid: 'did:plc:bob',
+              value: { body: 'Seeing this too.', createdAt: '2026-09-03T12:00:00Z' },
+              parentUri: 'at://did:plc:maintainer/app.userinput.reply/3rep1',
+            }),
+            reply(),
+          ],
+        })
+      );
+    });
+    const response = await handleGetFeedbackThread(get(), env as Env, null);
+    expect(response.status).toBe(200);
+    expect(fetchMock.mock.calls[0][0].toString()).toBe(
+      'https://userinput.test/api/thread/did:plc:alice/3abc123'
+    );
+    // The browser gets no copy of its own, for the same reason the board doesn't.
+    expect(response.headers.get('Cache-Control')).toBe('no-store');
+    expect(await response.json()).toEqual({
+      total: 2,
+      complete: true,
+      replies: [
+        expect.objectContaining({
+          uri: 'at://did:plc:maintainer/app.userinput.reply/3rep1',
+          parentUri: null,
+          body: 'Fixed in the next release.',
+          // No profile came back, so the DID stands in for the handle.
+          author: expect.objectContaining({ handle: 'did:plc:maintainer', mod: true }),
+        }),
+        expect.objectContaining({
+          uri: 'at://did:plc:bob/app.userinput.reply/3rep2',
+          parentUri: 'at://did:plc:maintainer/app.userinput.reply/3rep1',
+          author: expect.objectContaining({ did: 'did:plc:bob', mod: false }),
+        }),
+      ],
+    });
+  });
+
+  it('hydrates profiles and marks the board’s moderators', async () => {
+    const body = (await (await handleGetFeedbackThread(get(), env as Env, null)).json()) as {
+      replies: Array<{ author: { handle: string; displayName: string | null; mod: boolean } }>;
+    };
+    expect(body.replies[0].author).toMatchObject({
+      handle: 'skyreader.app',
+      displayName: 'Skyreader',
+      mod: true,
+    });
+  });
+
+  it('excludes moderated replies', async () => {
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      if (String(input).includes('getProfiles')) {
+        return new Response(JSON.stringify({ profiles: [] }));
+      }
+      return new Response(
+        JSON.stringify({
+          complete: true,
+          replies: [reply({ hidden: true }), reply({ banned: true }), reply()],
+        })
+      );
+    });
+    const body = (await (await handleGetFeedbackThread(get(), env as Env, null)).json()) as {
+      total: number;
+    };
+    expect(body.total).toBe(1);
+  });
+
+  it('refuses a did or rkey outside atproto’s own grammar', async () => {
+    // These land in an upstream URL path, so nothing but a real record address
+    // gets that far.
+    for (const [did, rkey] of [
+      ['../../etc', RKEY],
+      ['not-a-did', RKEY],
+      [DID, 'has/slash'],
+      [DID, '..'],
+      [DID, ''],
+    ] as const) {
+      expect((await handleGetFeedbackThread(get(did, rkey), env as Env, null)).status).toBe(400);
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('caches at the edge and maps an upstream failure to 502', async () => {
+    await handleGetFeedbackThread(get(), env as Env, null);
+    await handleGetFeedbackThread(get(), env as Env, null);
+    expect(fetchMock).toHaveBeenCalledTimes(2); // thread + one profile batch
+
+    fetchMock.mockImplementation(async () => new Response('nope', { status: 500 }));
+    const response = await handleGetFeedbackThread(get(DID, '3zzz999'), env as Env, null);
+    expect(response.status).toBe(502);
+    expect(response.headers.get('Cache-Control')).toBe('no-store');
+  });
+});
+
+// The notification inbox's poll: the board's own read, filtered to one author
+// and reduced to the fields a change shows up in.
+describe('GET /api/v2/feedback/mine', () => {
+  const session = { did: 'did:plc:alice' } as Session;
+  const get = () => new Request('http://localhost/api/v2/feedback/mine');
+
+  let originalFetch: typeof globalThis.fetch;
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(async () => {
+    await caches.default.delete('http://localhost/api/v2/feedback');
+    originalFetch = globalThis.fetch;
+    fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes('getProfiles')) {
+        return new Response(JSON.stringify({ profiles: [] }));
+      }
+      return new Response(
+        JSON.stringify({
+          complete: true,
+          posts: [
+            discussion(),
+            discussion({
+              uri: 'at://did:plc:bob/app.userinput.discussion/theirs',
+              authorDid: 'did:plc:bob',
+              value: { title: 'Someone else', createdAt: '2026-09-01T12:00:00Z' },
+            }),
+          ],
+        })
+      );
+    });
+    globalThis.fetch = fetchMock as typeof globalThis.fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it('returns only the caller’s posts, reduced to what a diff needs', async () => {
+    const response = await handleGetMyFeedback(get(), env as Env, session);
+    expect(response.status).toBe(200);
+    // Per-caller, so it must never be handed to the next reader from a cache.
+    expect(response.headers.get('Cache-Control')).toBe('no-store');
+    expect(await response.json()).toEqual({
+      posts: [
+        {
+          uri: 'at://did:plc:alice/app.userinput.discussion/3abc123',
+          url: 'https://userinput.test/d/did%3Aplc%3Aalice/3abc123',
+          title: 'A quieter reading mode',
+          status: 'planned',
+          replyCount: 3,
+        },
+      ],
+    });
+  });
+
+  it('rides the board’s edge cache rather than its own upstream fetch', async () => {
+    await handleGetFeedback(new Request('http://localhost/api/v2/feedback'), env as Env, null);
+    fetchMock.mockClear();
+    await handleGetMyFeedback(get(), env as Env, session);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('reports an unreachable board rather than an empty one', async () => {
+    // An empty list would read as "your posts are gone" and, worse, as a
+    // baseline: the client would diff the next real board against nothing.
+    fetchMock.mockImplementation(async () => new Response('nope', { status: 500 }));
+    const response = await handleGetMyFeedback(get(), env as Env, session);
+    expect(response.status).toBe(502);
+  });
+
+  it('rejects a non-GET', async () => {
+    expect(
+      (await handleGetMyFeedback(new Request(get(), { method: 'POST' }), env as Env, session))
+        .status
+    ).toBe(405);
   });
 });
 
@@ -354,6 +697,16 @@ describe('POST /api/v2/feedback', () => {
     });
   });
 
+  it('matches those tags whatever their casing, and writes the board’s own', async () => {
+    // Nothing says a space tag is lower case, and the composer offers its value
+    // verbatim — while the request is folded to lower case on the way in, to
+    // dedupe. Compared directly, a board that capitalises its tags would have
+    // every post to it rejected, including one filed under the type it offered.
+    spaceValue = { tags: [{ value: 'Bug', label: 'Bug' }] };
+    expect((await call(post({ title: 'Typed', tags: ['Bug'] }))).status).toBe(201);
+    expect(putRecord.mock.calls[0][2]).toMatchObject({ tags: ['Bug'] });
+  });
+
   it('posts without the vote scope, and refuses without the write scope', async () => {
     await seedSession(POST_ONLY_SCOPES);
     const unvoted = await call(post({ title: 'No self-vote' }));
@@ -372,7 +725,11 @@ describe('POST /api/v2/feedback', () => {
   });
 
   it('is requested at login', () => {
-    for (const scope of [...USERINPUT_SCOPES, ...USERINPUT_VOTE_SCOPES]) {
+    for (const scope of [
+      ...USERINPUT_SCOPES,
+      ...USERINPUT_VOTE_SCOPES,
+      ...USERINPUT_IMAGE_SCOPES,
+    ]) {
       expect(ALL_POSSIBLE_SCOPES).toContain(scope);
     }
   });
@@ -452,5 +809,177 @@ describe('POST /api/v2/feedback', () => {
     const result = await call(post({ title: 'Refused by the PDS' }));
     expect(result.status).toBe(502);
     expect(result.body).toMatchObject({ error: 'Failed to post feedback' });
+  });
+
+  const blob = (overrides: Record<string, unknown> = {}) => ({
+    $type: 'blob',
+    ref: { $link: 'bafkreiscreenshot' },
+    mimeType: 'image/png',
+    size: 4096,
+    ...overrides,
+  });
+
+  it('embeds uploaded images in the record it writes', async () => {
+    const result = await call(
+      post({
+        title: 'Reader crops the last line',
+        tags: ['bug'],
+        images: [
+          { alt: 'The clipped paragraph', image: blob() },
+          // No alt is legal — the lexicon only requires the blob.
+          { image: blob({ mimeType: 'image/jpeg' }) },
+        ],
+      })
+    );
+
+    expect(result.status).toBe(201);
+    const [, , record] = putRecord.mock.calls[0] as [string, string, Record<string, unknown>];
+    expect(record.images).toEqual([
+      { alt: 'The clipped paragraph', image: blob() },
+      { image: blob({ mimeType: 'image/jpeg' }) },
+    ]);
+  });
+
+  it.each([
+    ['a fifth image', Array.from({ length: 5 }, () => ({ image: blob() })), 'at most 4 images'],
+    ['a bare string', ['not-a-blob'], 'malformed image attachment'],
+    ['a non-blob value', [{ image: { ref: { $link: 'x' } } }], 'malformed image attachment'],
+    [
+      'an unsupported type',
+      [{ image: blob({ mimeType: 'image/avif' }) }],
+      'malformed image attachment',
+    ],
+    ['an over-size blob', [{ image: blob({ size: 1_000_001 }) }], 'malformed image attachment'],
+  ])('refuses %s', async (_name, images, error) => {
+    const result = await call(post({ title: 'Attachments', tags: ['bug'], images }));
+    expect(result.status).toBe(400);
+    expect(result.body).toEqual({ error });
+    expect(putRecord).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /api/v2/feedback/image', () => {
+  const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
+  const DID = 'did:plc:feedbackuploader';
+  const SESSION = 'sess-feedback-image';
+  const IMAGE_SCOPES = `${GRANULAR_SCOPES} ${USERINPUT_SCOPES.join(' ')} ${USERINPUT_IMAGE_SCOPES.join(' ')}`;
+
+  let uploadBlob: ReturnType<typeof vi.fn>;
+
+  async function seedSession(grantedScopes = IMAGE_SCOPES) {
+    await env.DB.prepare('DELETE FROM sessions WHERE did = ?').bind(DID).run();
+    await env.DB.prepare('DELETE FROM users WHERE did = ?').bind(DID).run();
+    await env.DB.prepare(
+      `INSERT INTO users (did, handle, pds_url, tier, created_at)
+       VALUES (?, 'uploader.bsky.social', 'https://pds.test', 'free', unixepoch())`
+    )
+      .bind(DID)
+      .run();
+    await env.DB.prepare(
+      `INSERT INTO sessions (session_id, did, handle, pds_url, access_token, refresh_token, dpop_private_key, expires_at, granted_scopes)
+       VALUES (?, ?, 'uploader.bsky.social', 'https://pds.test', 'tok', 'rtok', ?, ?, ?)`
+    )
+      .bind(SESSION, DID, JSON.stringify({ kty: 'EC' }), Date.now() + 3_600_000, grantedScopes)
+      .run();
+  }
+
+  function upload(bytes: ArrayBuffer, contentType: string | null, withSession = true) {
+    return new IncomingRequest('http://localhost/api/v2/feedback/image', {
+      method: 'POST',
+      headers: {
+        ...(withSession ? { Cookie: `session_id=${SESSION}` } : {}),
+        Origin: env.FRONTEND_URL,
+        ...(contentType ? { 'Content-Type': contentType } : {}),
+      },
+      body: bytes,
+    });
+  }
+
+  async function call(request: Request): Promise<{ status: number; body: any }> {
+    const ctx = createExecutionContext();
+    const response = await worker.fetch(request, env, ctx);
+    await waitOnExecutionContext(ctx);
+    const text = await response.text();
+    return { status: response.status, body: text ? JSON.parse(text) : null };
+  }
+
+  beforeEach(async () => {
+    await seedSession();
+    uploadBlob = vi.fn(async () => ({
+      success: true,
+      data: {
+        blob: { $type: 'blob', ref: { $link: 'bafkreiuploaded' }, mimeType: 'image/png', size: 12 },
+      },
+    }));
+    vi.spyOn(pdsClient, 'createPDSClient').mockReturnValue({ uploadBlob } as never);
+  });
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it('uploads the bytes to the reader’s own blob store', async () => {
+    const bytes = new Uint8Array([1, 2, 3, 4]).buffer;
+    const result = await call(upload(bytes, 'image/png'));
+
+    expect(result.status).toBe(201);
+    expect(result.body.blob).toMatchObject({ $type: 'blob', mimeType: 'image/png' });
+    // Raw bytes under the file's own type — uploadBlob is not a JSON call.
+    const [sent, contentType] = uploadBlob.mock.calls[0] as [ArrayBuffer, string];
+    expect(new Uint8Array(sent)).toEqual(new Uint8Array([1, 2, 3, 4]));
+    expect(contentType).toBe('image/png');
+  });
+
+  it('refuses a type the lexicon does not accept', async () => {
+    const result = await call(upload(new Uint8Array([1]).buffer, 'image/avif'));
+    expect(result.status).toBe(415);
+    expect(uploadBlob).not.toHaveBeenCalled();
+  });
+
+  it('refuses an empty or over-size file before it reaches the PDS', async () => {
+    expect((await call(upload(new ArrayBuffer(0), 'image/png'))).status).toBe(400);
+    expect((await call(upload(new ArrayBuffer(1_000_001), 'image/png'))).status).toBe(413);
+    expect(uploadBlob).not.toHaveBeenCalled();
+  });
+
+  it('stops reading an over-size body rather than holding it', async () => {
+    // A chunked body declares no length, so the size rule has to be the read
+    // itself: `arrayBuffer()` materializes everything sent before anything can
+    // measure it, and this route is twenty a minute per reader.
+    const CHUNK = 256 * 1024;
+    let pulled = 0;
+    const body = new ReadableStream({
+      pull(controller) {
+        // 10 MB on offer; nothing past the megabyte should ever be asked for.
+        if (pulled >= 40) return controller.close();
+        pulled++;
+        controller.enqueue(new Uint8Array(CHUNK));
+      },
+    });
+    const request = new IncomingRequest('http://localhost/api/v2/feedback/image', {
+      method: 'POST',
+      headers: {
+        Cookie: `session_id=${SESSION}`,
+        Origin: env.FRONTEND_URL,
+        'Content-Type': 'image/png',
+      },
+      body,
+      duplex: 'half',
+    } as RequestInit & { duplex: 'half' });
+
+    expect((await call(request)).status).toBe(413);
+    expect(uploadBlob).not.toHaveBeenCalled();
+    // The fifth chunk is what crosses a megabyte, and the read ends there.
+    expect(pulled).toBeLessThanOrEqual(6);
+  });
+
+  it('needs a session, and the blob scope on top of the post scope', async () => {
+    expect((await call(upload(new Uint8Array([1]).buffer, 'image/png', false))).status).toBe(401);
+
+    // A session that can post but not attach: the composer asks up front so it
+    // can hide the control, and this is the backstop behind that.
+    await seedSession(`${GRANULAR_SCOPES} ${USERINPUT_SCOPES.join(' ')}`);
+    const refused = await call(upload(new Uint8Array([1]).buffer, 'image/png'));
+    expect(refused.status).toBe(403);
+    expect(refused.body).toMatchObject({ error: 'scope_upgrade_required' });
+    expect(uploadBlob).not.toHaveBeenCalled();
   });
 });

@@ -99,7 +99,13 @@ import {
   handleListBillingProducts,
   handlePolarWebhook,
 } from './routes/billing';
-import { handleCreateFeedback, handleGetFeedback } from './routes/feedback';
+import {
+  handleCreateFeedback,
+  handleGetFeedback,
+  handleGetFeedbackThread,
+  handleGetMyFeedback,
+  handleUploadFeedbackImage,
+} from './routes/feedback';
 import {
   handleGetMagazines,
   handleUpsertMagazine,
@@ -678,6 +684,26 @@ async function route(
       } else {
         response = await handleGetFeedback(request, env, session);
       }
+      break;
+
+    // The replies on one post, fetched when a reader expands it. Public for the
+    // same reason the board is: a reply is a public record in its own repo.
+    case url.pathname === '/api/v2/feedback/thread':
+      response = await handleGetFeedbackThread(request, env, session);
+      break;
+
+    // What the caller filed, reduced to the fields a change shows up in. Polled
+    // by the notification inbox, so it is session-only and never edge-cached.
+    case url.pathname === '/api/v2/feedback/mine':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleGetMyFeedback(request, env, session);
+      break;
+
+    // One attachment's bytes, uploaded to the reader's own blob store before the
+    // post that references them is written. Session-only, like the POST above.
+    case url.pathname === '/api/v2/feedback/image':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleUploadFeedbackImage(request, env, session);
       break;
 
     // Magazine routes (durable, cross-device reading issues)

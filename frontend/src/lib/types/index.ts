@@ -891,7 +891,11 @@ export interface SembleContext {
 // stable source URI.
 export interface SkyNotification {
   id: string;
-  type: 'mention' | string;
+  /**
+   * 'mention' comes from Constellation; the two 'feedback-*' kinds are diffed
+   * from the reader's own posts on the userinput.app board.
+   */
+  type: 'mention' | 'feedback-status' | 'feedback-reply' | string;
   actorDid: string;
   actorHandle: string | null;
   actorDisplayName: string | null;
@@ -899,6 +903,12 @@ export interface SkyNotification {
   sourceUri: string;
   canonicalUrl: string | null;
   title: string | null;
+  /**
+   * What happened, for a notification whose subject is a thing rather than a
+   * person: "Now planned", "2 new replies". Absent on a mention, where the
+   * actor is the headline.
+   */
+  detail?: string;
   createdAt: number;
   seen: boolean;
 }
@@ -1164,6 +1174,12 @@ export interface IntegrationStatus {
      * posting omits it, and the board stays readable either way.
      */
     userinput?: boolean;
+    /**
+     * Attaching a screenshot uploads a blob to that repo, which needs one more
+     * scope than the post itself — so a session can be able to post and not to
+     * attach. Optional for the same reason as `userinput`.
+     */
+    userinputImages?: boolean;
   };
 }
 

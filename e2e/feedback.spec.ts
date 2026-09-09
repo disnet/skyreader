@@ -3,11 +3,12 @@ import { expect, test } from './fixtures';
 
 const board = {
   spaceUrl: 'https://userinput.app/s/did:plc:space/space-rkey',
-  total: 2,
+  total: 3,
   complete: true,
   types: [
     { value: 'bug', label: 'Bug' },
     { value: 'feature', label: 'Feature request' },
+    { value: 'question', label: 'Question' },
   ],
   posts: [
     {
@@ -33,6 +34,19 @@ const board = {
       votes: { up: 5, down: 1, net: 4 },
       replyCount: 1,
       status: 'in-progress',
+    },
+    {
+      uri: 'at://did:plc:carol/app.userinput.discussion/third',
+      url: 'https://userinput.app/d/did:plc:carol/third',
+      author: { did: 'did:plc:carol', handle: 'carol.test', displayName: null, avatar: null },
+      title: 'Ship dark mode',
+      body: 'Nights are bright.',
+      tags: ['feature'],
+      createdAt: '2026-09-03T12:00:00Z',
+      votes: { up: 2, down: 1, net: 1 },
+      replyCount: 0,
+      // The one settled post: what gives the board its open/closed switch.
+      status: 'implemented',
     },
   ],
 };
@@ -72,9 +86,7 @@ async function stubBoard(page: Page, options: { canPost?: boolean } = {}) {
 }
 
 test.describe('Feedback', () => {
-  test('opens from Settings, groups by type and filters by type and status', async ({
-    authedPage,
-  }) => {
+  test('opens from Settings, filters by status and reorders the list', async ({ authedPage }) => {
     await stubBoard(authedPage);
     await authedPage.goto('/settings');
     await authedPage.getByRole('main').getByRole('link', { name: 'Feedback' }).click();
@@ -82,27 +94,27 @@ test.describe('Feedback', () => {
     await expect(authedPage).toHaveURL(/\/feedback$/);
     await expect(authedPage.getByRole('heading', { name: 'Add focus mode' })).toBeVisible();
     await expect(authedPage.getByLabel('10 net votes')).toBeVisible();
-    // Grouped by type while nothing is filtered.
-    await expect(authedPage.getByRole('heading', { name: 'Bug 1' })).toBeVisible();
-    await expect(authedPage.getByRole('heading', { name: 'Feature request 1' })).toBeVisible();
+    // Open by default: the settled post is out of the list until asked for.
+    await expect(authedPage.getByRole('heading', { name: 'Ship dark mode' })).toBeHidden();
 
-    await authedPage
-      .getByRole('group', { name: 'Filter by type' })
-      .getByRole('button', { name: 'Bug' })
-      .click();
-    await expect(authedPage.getByRole('heading', { name: 'Fix feed refresh' })).toBeVisible();
+    // At this viewport the reading column has room for the chips; the
+    // equivalent dropdowns below 560px are covered in the component test.
+    const chips = authedPage.locator('.chip-controls');
+    const status = chips.getByRole('group', { name: 'Filter by status' });
+    await status.getByRole('button', { name: 'Closed' }).click();
+    await expect(authedPage.getByRole('heading', { name: 'Ship dark mode' })).toBeVisible();
     await expect(authedPage.getByRole('heading', { name: 'Add focus mode' })).toBeHidden();
 
-    await authedPage
-      .getByRole('group', { name: 'Filter by type' })
-      .getByRole('button', { name: 'All' })
+    await status.getByRole('button', { name: 'All' }).click();
+    const titles = authedPage.locator('.posts .post h3');
+    // Top by default: the most-wanted post leads, whatever its date.
+    await expect(titles).toHaveText(['Add focus mode', 'Fix feed refresh', 'Ship dark mode']);
+
+    await chips
+      .getByRole('group', { name: 'Sort feedback' })
+      .getByRole('button', { name: 'New' })
       .click();
-    await authedPage
-      .getByRole('group', { name: 'Filter by status' })
-      .getByRole('button', { name: 'Planned' })
-      .click();
-    await expect(authedPage.getByRole('heading', { name: 'Add focus mode' })).toBeVisible();
-    await expect(authedPage.getByRole('heading', { name: 'Fix feed refresh' })).toBeHidden();
+    await expect(titles).toHaveText(['Ship dark mode', 'Fix feed refresh', 'Add focus mode']);
   });
 
   test('posts feedback without leaving Skyreader', async ({ authedPage }) => {
@@ -110,12 +122,14 @@ test.describe('Feedback', () => {
     await authedPage.goto('/feedback');
 
     await authedPage.getByRole('button', { name: 'Post feedback' }).click();
-    // Scoped to the composer: the type filter above the list is labelled
-    // "Filter by type", which `getByLabel('Type')` also matches.
+    // Scoped to the composer: the type filter above the list is labelled "Type"
+    // too, so an unscoped `getByLabel('Type')` would be ambiguous.
     const composer = authedPage.locator('form.composer');
     await composer.getByLabel('Title').fill('Sync highlights faster');
     await composer.getByLabel('Details').fill('They take a while to show up.');
-    await composer.getByLabel('Type').selectOption('feature');
+    // The type track starts on Question; this post is a feature request.
+    await expect(composer.getByRole('radio', { name: 'Question' })).toBeChecked();
+    await composer.getByRole('radio', { name: 'Feature request' }).check();
     await composer.getByRole('button', { name: 'Post', exact: true }).click();
 
     await expect(authedPage.getByText(/Posted\./)).toBeVisible();

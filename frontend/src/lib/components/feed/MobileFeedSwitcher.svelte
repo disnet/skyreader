@@ -251,6 +251,14 @@
               icon: 'settings' as IconName,
             } as NavItem,
           ]),
+      // Mirrors the sidebar, and shows for a guest too: /feedback reads for
+      // everyone, and a reader trying the app out is who has the most to say.
+      {
+        type: 'utility',
+        id: 'feedback',
+        label: 'Feedback',
+        icon: 'message-circle' as IconName,
+      },
       // Quiet upsell, mirroring the sidebar: gone once the user is a Supporter.
       ...(auth.user && auth.user.tier !== 'supporter'
         ? [
