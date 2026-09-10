@@ -41,7 +41,7 @@ with one upgrade — extraction is **live-DOM first**:
    `toValidISODate` published-date validation. Keep `defuddle` at the same
    version as `feed-proxy/package.json` so both extractors behave alike.
 3. `POST /api/saved` with `{ url, rkey, source: 'url', updateContent: true,
-   ...extracted fields }`. `updateContent: true` means a re-save of an
+...extracted fields }`. `updateContent: true` means a re-save of an
    already-saved URL **upgrades the stored content in place** (200 with
    `updated: true`) instead of 409 — the paywall fix for items saved earlier
    from a truncated feed or server stub. Backend: `handleContentUpdate` in
@@ -77,29 +77,29 @@ The popup mirrors the frontend's `AddFeedModal`:
      for RSS feeds **and** resolves+verifies a `standard.site` publication via
      its `.well-known` endpoint (that verification is backend-only). Returns
      `{ feeds: string[], standardSite: { did, publicationUri, name, url, iconUrl } | null }`.
-   DOM feeds win on de-dupe (`normalizeFeedUrl`) and keep their `format`;
-   backend-only feeds get a URL-guessed `format` (`inferFormatFromUrl`).
-   `discoverFeeds` also fetches `GET /api/subscriptions` (`fetchSubscriptions`)
-   and marks each feed/publication `subscribed` (RSS by normalized feedUrl,
-   standard.site by DID or publicationUri).
-   **Presentation** (popup.js): standard.site is listed first (preferred) as a
-   tinted card with the `standard-site` logo avatar + a filled "standard.site"
-   badge (the `<symbol>` in popup.html); RSS/Atom rows get a muted outlined
-   `RSS`/`Atom` tag so the two near-identical feeds a page often advertises are
-   tellable apart. Brand color is One Blue `#0066cc`, not the web app's `#0085ff`
-   (DESIGN.md drift). Already-subscribed rows render a disabled green
-   "Subscribed ✓" instead of a Subscribe button (re-subscribing would silently
-   un-park a parked feed).
+     DOM feeds win on de-dupe (`normalizeFeedUrl`) and keep their `format`;
+     backend-only feeds get a URL-guessed `format` (`inferFormatFromUrl`).
+     `discoverFeeds` also fetches `GET /api/subscriptions` (`fetchSubscriptions`)
+     and marks each feed/publication `subscribed` (RSS by normalized feedUrl,
+     standard.site by DID or publicationUri).
+     **Presentation** (popup.js): standard.site is listed first (preferred) as a
+     tinted card with the `standard-site` logo avatar + a filled "standard.site"
+     badge (the `<symbol>` in popup.html); RSS/Atom rows get a muted outlined
+     `RSS`/`Atom` tag so the two near-identical feeds a page often advertises are
+     tellable apart. Brand color is One Blue `#0066cc`, not the web app's `#0085ff`
+     (DESIGN.md drift). Already-subscribed rows render a disabled green
+     "Subscribed ✓" instead of a Subscribe button (re-subscribing would silently
+     un-park a parked feed).
 2. **Subscribe** (`performSubscribe`) `POST /api/subscriptions` with a fresh TID
    `rkey`:
    - RSS: `{ rkey, feedUrl, title, siteUrl }`.
    - standard.site: `{ rkey, feedUrl: publicationUri, sourceType: 'atproto.documents',
-     subjectDid: did, siteUrl, customIconUrl }` — matching `addStandardSite`.
-   The backend uses `INSERT OR REPLACE`, so re-subscribing is idempotent (no 409).
-   `403 subscription_limit_reached` → the row becomes a "Feed limit" button that
-   opens `/supporter` (the row's single click listener dispatches on
-   `btn.dataset.action`, so the button can change jobs without stacking a second
-   listener on top of the first); `401` → open the web app to log in.
+subjectDid: did, siteUrl, customIconUrl }` — matching `addStandardSite`.
+     The backend uses `INSERT OR REPLACE`, so re-subscribing is idempotent (no 409).
+     `403 subscription_limit_reached` → the row becomes a "Feed limit" button that
+     opens `/supporter` (the row's single click listener dispatches on
+     `btn.dataset.action`, so the button can change jobs without stacking a second
+     listener on top of the first); `401` → open the web app to log in.
 
 ## Already-saved / already-subscribed state
 
@@ -112,7 +112,7 @@ GETs (added for it, but generally useful):
   "Saved ✓" — **still enabled**, since a re-save upgrades the stored content in
   place (the `updateContent` paywall fix).
 - `GET /api/subscriptions` → `{ subscriptions: [{ feedUrl, subjectDid, sourceType,
-  active }] }` (all rows incl. parked). Used by `discoverFeeds` for the
+active }] }` (all rows incl. parked). Used by `discoverFeeds` for the
   `subscribed` flags above.
 
 Error handling:

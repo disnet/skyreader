@@ -14,7 +14,7 @@
 > — crucially — **no change to how the client applies a result**: on a digest miss it keeps today's
 > proven full-replace reconcile.
 
-## The problem (and what it is *not*)
+## The problem (and what it is _not_)
 
 The pain is payload, not correctness: documents are **re-downloaded in full every poll**. The
 frontend's `reconcileDocuments` (`documentSync.ts:52`) full-replaces each scope every poll, and the
@@ -66,7 +66,7 @@ are **mutable** (a seq cursor must bump seq on edit, the delete-and-reinsert pro
 **real and must propagate**. A seq log handles edits only by decoupling delivery-seq from
 display-`published_at`, handles deletes only via a periodic full reconcile (hours-late), and needs a
 second store kept transactionally consistent with the blob across two write paths (fetch + firehose).
-The digest gets edits *and* deletes for free from the blob the proxy already maintains, with none of
+The digest gets edits _and_ deletes for free from the blob the proxy already maintains, with none of
 that machinery. See `RETENTION_SYNC_PLAN.md §Documents` for the original contract-only framing this
 replaces.
 
@@ -74,18 +74,18 @@ replaces.
 
 A richer design was considered: the client uploads a `(recordUri, recordCid)` **manifest**, the proxy
 diffs it against the blob, and the response carries only the new/edited docs plus a `deletes` list,
-which the client applies **in place** (apply-delta). This is more *elegant* — on a changed poll it
+which the client applies **in place** (apply-delta). This is more _elegant_ — on a changed poll it
 ships only the one doc that changed rather than the whole ≤100 set — but it is the wrong **first**
 move here:
 
-- **It only wins in a narrow case.** It beats the digest only when an author holds *near 100 docs*
+- **It only wins in a narrow case.** It beats the digest only when an author holds _near 100 docs_
   **and** changes them often enough that re-shipping the bounded set to deliver one change is the
   bottleneck. For a calm, rarely-changing reading product, that case is rare.
 - **It adds real failure surface.** Apply-delta replaces the proven full-replace reconcile with
-  insert/merge/remove logic; deletes are *derived* (present in manifest, absent from blob), so a
-  **mis-scoped manifest mass-deletes** (see the scoping footgun under *Phase 2*). The digest reuses
+  insert/merge/remove logic; deletes are _derived_ (present in manifest, absent from blob), so a
+  **mis-scoped manifest mass-deletes** (see the scoping footgun under _Phase 2_). The digest reuses
   today's full-replace path untouched, so a digest miss can never corrupt state.
-- **It needs the client to persist `recordCid`** (it currently does not — see *Schema reality*),
+- **It needs the client to persist `recordCid`** (it currently does not — see _Schema reality_),
   whereas the digest keeps the cid entirely server-side.
 
 So: **ship the digest first** (most of the payload win, near-zero risk), and treat the manifest diff
@@ -101,11 +101,11 @@ exactly as today.** Concretely, per poll per scope:
   — a bodyless result: no `documents`, no `digest` (the client already holds the digest it sent). The
   client keeps everything it holds for that scope, touches nothing. `unchanged` is a **distinct
   status**, not a flag on `ready`, so the client's existing `status === 'ready'` apply filter excludes
-  it for free — an empty-bodied `ready` can never reach the reconcile and clear a scope (see *Why a
-  distinct status*).
+  it for free — an empty-bodied `ready` can never reach the reconcile and clear a scope (see _Why a
+  distinct status_).
 - **changed** (digest differs, or client sent no digest) → the full scoped blob in `documents`, plus
   the new digest to store. The client runs today's `reconcileDocuments` full-replace for that scope:
-  new docs inserted, edited docs merged in place (read state survives — see *Edit semantics*),
+  new docs inserted, edited docs merged in place (read state survives — see _Edit semantics_),
   vanished docs dropped. **No new client apply logic.**
 
 Cold start (no stored digest) is just the "changed" branch: send no `since_digest`, get the full set,
@@ -118,7 +118,7 @@ keyed by `recordUri` in `item_labels_cache` and survive a full-replace reconcile
 (reconcile re-keys by `recordUri`); the client sorts by `publishedAt`, which an edit recomputes to the
 same value, so the doc keeps its slot. This is the quiet, reading-first behavior (PRODUCT.md) — edits
 don't nag. (Reversible later: "resurface edited docs as unread" or an "edited" badge is purely how the
-client *applies* a changed row — the wire contract is unaffected.)
+client _applies_ a changed row — the wire contract is unaffected.)
 
 ### Non-goals / deliberate limits
 
@@ -166,18 +166,18 @@ real holdings. Guard it:
   retries. Never let an empty blob masquerade as "this scope is now empty." (Authoritativeness is now
   carried entirely by `error` vs. `ready`/`unchanged`; there is no separate `complete` flag.)
 
-A *stale-but-successful* blob (last fetch errored but a real prior blob exists) is still authoritative:
+A _stale-but-successful_ blob (last fetch errored but a real prior blob exists) is still authoritative:
 it was the real set at `fetched_at`; its digest is correct for that set, and any change since is caught
 on the next successful refresh. This matches today's behavior — the endpoint already serves the prior
 blob in that case (`app.ts:2030-2041`).
 
-This gate is *always on* (every authoritative poll either confirms-unchanged or refreshes), so the
+This gate is _always on_ (every authoritative poll either confirms-unchanged or refreshes), so the
 client converges to the true set continuously — no periodic full reconcile needed.
 
 ### Why there is no cold-start race
 
 There is **no cursor and no high-water mark**. The client stores only an opaque digest per scope. Each
-poll the proxy recomputes the digest from the *current* blob (one `SELECT`) and compares. A firehose
+poll the proxy recomputes the digest from the _current_ blob (one `SELECT`) and compares. A firehose
 write that lands after a given digest computation simply changes the next computation, producing a
 miss on the next poll. There is no token a client can advance past unseen content. Correctness needs
 only that the blob read is a consistent snapshot, which a single `SELECT` is.
@@ -247,7 +247,7 @@ Each document scope result becomes (replacing the inert phase-1 `cursor:0`/`gene
 - **`status:'error'`** (non-authoritative blob): the existing branch, unchanged. The client keeps what
   it holds and retries.
 
-There is **no `unchanged` boolean** (it is a `status`, not a flag — see *Why a distinct status*), and
+There is **no `unchanged` boolean** (it is a `status`, not a flag — see _Why a distinct status_), and
 **no `complete` field** for documents: authoritativeness is now expressed entirely by `error` vs.
 `ready`/`unchanged`, so a separate `complete` carries no information and is dropped. There is also **no
 `op` field, no per-item seq, and no `deletes` list** — deletes are absorbed by the full-replace on a
@@ -271,7 +271,7 @@ sees no URIs to stamp, and there is no flag to forget. Same wire savings, zero a
 client never stores it. **The digest design needs neither** — the cid lives entirely server-side
 inside `digestScope`; the client only stores an opaque per-scope digest string. So **no
 `SocialDocument` change and no Dexie version bump** are required for Phase 1. (This is a concrete
-advantage over the manifest diff, which *would* need the client to persist `recordCid`.)
+advantage over the manifest diff, which _would_ need the client to persist `recordCid`.)
 
 The client just needs somewhere to keep `{ scopeKey → digest }`. Options, cheapest first:
 
@@ -304,7 +304,7 @@ path and the un-upgraded-client compat path) until every client sends a digest.
   `cursor:0`/`generation`/`hasMore:false`/`complete` fields. Keep the existing `status:'error'` branch
   (`:2049-2062`) for a non-authoritative blob — never short-circuit or serve an empty set from one.
 - **`recordCid` stable across refetch (the one correctness dependency).** The load-bearing property is
-  not merely that the cid is *non-empty* — it is that the cid is **identical for byte-identical content
+  not merely that the cid is _non-empty_ — it is that the cid is **identical for byte-identical content
   across a refetch**, so a no-op refresh produces the same digest. CIDs are content-addressed over
   deterministic DAG-CBOR, so this holds as long as the cid that lands in the blob comes straight from
   the record's own cid on **both** paths — `listRecords` (`recordToProxyDocument`) and firehose
@@ -312,11 +312,11 @@ path and the un-upgraded-client compat path) until every client sends a digest.
   If the cid ever varies across refetch for unchanged content, the digest flips every poll: **no
   correctness bug, but the entire payload win silently evaporates** (every poll becomes a miss). Two
   failure shapes to rule out: an empty/constant cid (edits become invisible — the hash doesn't move)
-  *and* an unstable cid (everything becomes a perpetual miss).
+  _and_ an unstable cid (everything becomes a perpetual miss).
 - **Firehose / cleanup.** **No changes.** The blob they maintain is what the digest reads.
 - **Tests** (`integration.test.ts`):
   - **Unchanged:** second request with the prior `digest` → `status:'unchanged'`, no `documents` field.
-  - **Stable across refetch (guards the value prop):** force a *refetch* of the blob with **no upstream
+  - **Stable across refetch (guards the value prop):** force a _refetch_ of the blob with **no upstream
     change** (bypass the freshness window so `fetchAndCacheDocuments` re-pulls and rewrites the blob) →
     the recomputed digest is **identical** → still `status:'unchanged'`. This is distinct from the
     plain Unchanged test, which exercises only the no-refetch cache hit; this one catches a `recordCid`
@@ -351,7 +351,7 @@ path and the un-upgraded-client compat path) until every client sends a digest.
 
 ### 3. frontend (`frontend/src/lib/`) — send a digest, skip on unchanged
 
-- **No Dexie change** (digests in localStorage; see *Schema reality*).
+- **No Dexie change** (digests in localStorage; see _Schema reality_).
 - **`documentSync.ts`:**
   - `buildDocumentRequests` (`:78`): attach `since_digest` per scope from the stored
     `{ scopeKey → digest }` map (absent on first-ever sync → cold start).
@@ -382,9 +382,9 @@ path and the un-upgraded-client compat path) until every client sends a digest.
 
 - **`recordCid` stable across refetch.** The one correctness dependency: the cid must be non-empty
   **and identical for unchanged content across a refetch** on both the `listRecords` and firehose
-  paths (`jetstream.ts:226`). A constant/empty cid makes edits invisible to the digest; an *unstable*
+  paths (`jetstream.ts:226`). A constant/empty cid makes edits invisible to the digest; an _unstable_
   cid turns every poll into a miss and silently voids the payload win. Covered by the
-  *Stable across refetch* integration test.
+  _Stable across refetch_ integration test.
 - **Digest storage.** Decided: localStorage `{ scopeKey → digest }`, `scopeKey = did|siteUri`. Losing
   it is self-healing (one cold fetch). Use a Dexie table only if co-locating with the rest of the DB
   is preferred (then bump 35 → 36, update `clearAllData()`).
@@ -400,7 +400,7 @@ path and the un-upgraded-client compat path) until every client sends a digest.
 - **Edit application.** Decided: update in place, keep read state, no reorder (`publishedAt` stable).
   Reversible to "resurface as unread" or an "edited" badge — client-side only, wire contract
   unchanged.
-- **When to escalate to Phase 2 (manifest diff).** Instrument: on a digest *miss*, how many documents
+- **When to escalate to Phase 2 (manifest diff).** Instrument: on a digest _miss_, how many documents
   actually changed vs. how many were re-shipped? If misses routinely re-ship a near-cap blob to
   deliver one change, build Phase 2. Until that shows up, the digest is the better cost/risk trade.
 
@@ -442,9 +442,9 @@ set.
 
 ### The scoping footgun (why this is riskier than the digest)
 
-`deletes` is *derived* as "in manifest, absent from blob." The scoped blob is
+`deletes` is _derived_ as "in manifest, absent from blob." The scoped blob is
 `filterByPublication(blob, siteUri)` — only that publication's docs. Therefore **the manifest must be
-scoped to the same `siteUri`.** If a client builds one *global* manifest of all held docs and sends it
+scoped to the same `siteUri`.** If a client builds one _global_ manifest of all held docs and sends it
 on a publication-scoped request, every other publication's doc is "in manifest, absent from this
 blob" → reported as a delete → **mass eviction.** This is the failure mode the digest cannot have
 (its miss path is the proven full-replace, which corrupts nothing). If Phase 2 is built, the per-scope
@@ -464,5 +464,5 @@ drops undefined, so those URIs vanish from the manifest and the proxy reports ev
 Relative to Phase 1 (digest), Phase 2 adds: a `diffScope` helper, a `deletes` wire field, an
 apply-delta path on the client (replacing the reuse of full-replace), client-side `recordCid`
 persistence (Dexie 35 → 36), the per-scope-manifest invariant + test, and the one-time migration
-resend. It buys: a smaller *changed-poll* response. Worth it only when changed polls are both frequent
+resend. It buys: a smaller _changed-poll_ response. Worth it only when changed polls are both frequent
 and near-cap — measure before building.

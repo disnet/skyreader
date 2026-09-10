@@ -1,0 +1,85 @@
+name: Admin CI
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    branches: [main]
+    # The workflow file is in the filter on purpose: a PR that only edits this
+    # file still has to run it.
+    paths: ['admin/**', '.github/workflows/admin-ci.yml']
+
+concurrency:
+  group: admin-ci-${{ github.head_ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: admin
+
+jobs:
+  typecheck:
+    name: Typecheck & Format
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: admin/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # svelte-check + `prettier --check .`. Before this job the only thing
+      # running it was admin-deploy.yml on push to main, so a formatting miss
+      # got discovered by a failed production deploy rather than a red PR.
+      - name: Run type check
+        run: npm run check
+
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: admin/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: admin/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # admin-deploy.yml substitutes the real D1 id before building; the
+      # placeholder is fine here because nothing is deployed.
+      - name: Build
+        run: npm run build

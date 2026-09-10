@@ -63,13 +63,13 @@ service (a tiny mock module + Vite alias, or accept the no-op/failed fetch in
 dev). Good first promotions into a Tier-1 route (e.g. a `/dev/users` or
 `/dev/discovery` group).
 
-| Component | Service | Note |
-| --- | --- | --- |
-| `ProfileHandle` | `profiles` | Fires `getProfile(did)` in an `$effect`; renders the DID until it resolves. Stub `profileService` to render the handle. |
-| `UserCard` (root) | `profiles` | Same `$effect` fetch as above; the `common/UserCard` it parallels is already harnessed. |
-| `UserSearch` | `blueskySearch` | Search only fires on input; renders the empty input fine. |
-| `feed/MentionAutocomplete` | `blueskySearch` | Lazy `@`-triggered lookup; static otherwise. |
-| `FeedDiscoveryForm` | `api` | Calls `api` on submit only; the form renders standalone. |
+| Component                  | Service         | Note                                                                                                                    |
+| -------------------------- | --------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `ProfileHandle`            | `profiles`      | Fires `getProfile(did)` in an `$effect`; renders the DID until it resolves. Stub `profileService` to render the handle. |
+| `UserCard` (root)          | `profiles`      | Same `$effect` fetch as above; the `common/UserCard` it parallels is already harnessed.                                 |
+| `UserSearch`               | `blueskySearch` | Search only fires on input; renders the empty input fine.                                                               |
+| `feed/MentionAutocomplete` | `blueskySearch` | Lazy `@`-triggered lookup; static otherwise.                                                                            |
+| `FeedDiscoveryForm`        | `api`           | Calls `api` on submit only; the form renders standalone.                                                                |
 
 ## Bucket B — Single-store, thin slice — 16 components
 
@@ -77,24 +77,24 @@ Import exactly one store and read a small slice of it. Easiest path: seed that o
 store in the harness route, or lift the slice to a prop. Several are good
 candidates for a tiny inner-view extraction.
 
-| Component | Store | Note |
-| --- | --- | --- |
-| `AddDropdownMenu` | `sidebar` | Reads sidebar UI flags. |
-| `AddSourceInput` | `sidebar` | UI-state only. |
-| `CollectionPicker` | `collections` | Render once `collectionsStore` has items. |
-| `EditFeedModal` | `subscriptions` | Edits one subscription record. |
-| `KeyboardShortcutsModal` | `keyboard` | Reads the shortcut registry; mostly static. |
-| `NotificationBell` | `notifications` | Renders an unread badge from the store. |
-| `NotificationList` | `notifications` | Seed `notificationsStore.items`. |
-| `RefreshProgressBar` | `app` | Reads a global refresh-progress value. |
-| `Toast` | `toast` | Seed `toastStore` with a message to show the toast. |
-| `common/PageHeader` | `sidebar` | Reads sidebar collapse state for layout. |
-| `feed/AppearanceToolbar` | `preferences` | Bound to `preferencesStore`; seed defaults. |
-| `feed/LinkblogIntro` | `myLinkblog` | Gated on `myLinkblogStore` state. |
-| `feed/TagMenu` | `itemLabels` | Reads the tag/label set. |
-| `sidebar/FeedErrorPopover` | `feedStatus` | Reads a feed's error from `feedStatusStore`. |
-| `sidebar/FeedItem` | `feedStatus` | Row that reflects per-feed status. |
-| `feed/ShareNoteComposer` | `mediaQuery` | Only needs `mediaQueryStore` for responsive layout — trivial to seed. |
+| Component                  | Store           | Note                                                                  |
+| -------------------------- | --------------- | --------------------------------------------------------------------- |
+| `AddDropdownMenu`          | `sidebar`       | Reads sidebar UI flags.                                               |
+| `AddSourceInput`           | `sidebar`       | UI-state only.                                                        |
+| `CollectionPicker`         | `collections`   | Render once `collectionsStore` has items.                             |
+| `EditFeedModal`            | `subscriptions` | Edits one subscription record.                                        |
+| `KeyboardShortcutsModal`   | `keyboard`      | Reads the shortcut registry; mostly static.                           |
+| `NotificationBell`         | `notifications` | Renders an unread badge from the store.                               |
+| `NotificationList`         | `notifications` | Seed `notificationsStore.items`.                                      |
+| `RefreshProgressBar`       | `app`           | Reads a global refresh-progress value.                                |
+| `Toast`                    | `toast`         | Seed `toastStore` with a message to show the toast.                   |
+| `common/PageHeader`        | `sidebar`       | Reads sidebar collapse state for layout.                              |
+| `feed/AppearanceToolbar`   | `preferences`   | Bound to `preferencesStore`; seed defaults.                           |
+| `feed/LinkblogIntro`       | `myLinkblog`    | Gated on `myLinkblogStore` state.                                     |
+| `feed/TagMenu`             | `itemLabels`    | Reads the tag/label set.                                              |
+| `sidebar/FeedErrorPopover` | `feedStatus`    | Reads a feed's error from `feedStatusStore`.                          |
+| `sidebar/FeedItem`         | `feedStatus`    | Row that reflects per-feed status.                                    |
+| `feed/ShareNoteComposer`   | `mediaQuery`    | Only needs `mediaQueryStore` for responsive layout — trivial to seed. |
 
 ## Bucket C — Multi-store views — 13 components
 
@@ -102,21 +102,21 @@ Read several stores together (subscriptions + views + labels + counts, etc.) but
 without heavy side effects. Need multiple stores seeded coherently; a mock-store
 provider (option 3 above) would pay off most here.
 
-| Component | Stores |
-| --- | --- |
-| `FilteredViewModal` | `filteredViews`, `subscriptions`, `articles`, `feedView`, `itemLabels` |
-| `FollowingPublications` | `followingPublications`, `subscriptions` |
-| `LibraryEmptyState` | `auth`, `sync`, `subscriptions` (+ `api`) |
-| `LinkblogDiscovery` | `linkblogDiscovery`, `subscriptions` |
-| `NavigationDropdown` | `sidebar`, `subscriptions`, `itemLabels`, `unreadCounts`, `filteredViews`, `feedView` |
-| `feed/FilterToolbar` | `feedView`, `filteredViews`, `subscriptions`, `itemLabels` |
-| `feed/MobileBottomBar` | `sidebar`, `notifications` |
+| Component                 | Stores                                                                                                                      |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `FilteredViewModal`       | `filteredViews`, `subscriptions`, `articles`, `feedView`, `itemLabels`                                                      |
+| `FollowingPublications`   | `followingPublications`, `subscriptions`                                                                                    |
+| `LibraryEmptyState`       | `auth`, `sync`, `subscriptions` (+ `api`)                                                                                   |
+| `LinkblogDiscovery`       | `linkblogDiscovery`, `subscriptions`                                                                                        |
+| `NavigationDropdown`      | `sidebar`, `subscriptions`, `itemLabels`, `unreadCounts`, `filteredViews`, `feedView`                                       |
+| `feed/FilterToolbar`      | `feedView`, `filteredViews`, `subscriptions`, `itemLabels`                                                                  |
+| `feed/MobileBottomBar`    | `sidebar`, `notifications`                                                                                                  |
 | `feed/MobileFeedSwitcher` | `subscriptions`, `itemLabels`, `unreadCounts`, `filteredViews`, `feedView`, `channelSuggestions`, `savedChannelSuggestions` |
-| `feed/MobileFilterSheet` | `feedView`, `subscriptions`, `articles`, `filteredViews`, `itemLabels` |
-| `feed/SavedCard` | `feedView`, `subscriptions`, `itemLabels`, `saves` (+ `db`) |
-| `feed/SavedListView` | `feedView`, `subscriptions`, `itemLabels`, `saves` |
-| `feed/StaticPageChrome` | `notifications`, `mediaQuery` |
-| `feed/FeedListView` | `feedView`, `subscriptions`, `itemLabels`, `linkblog`, `preferences` |
+| `feed/MobileFilterSheet`  | `feedView`, `subscriptions`, `articles`, `filteredViews`, `itemLabels`                                                      |
+| `feed/SavedCard`          | `feedView`, `subscriptions`, `itemLabels`, `saves` (+ `db`)                                                                 |
+| `feed/SavedListView`      | `feedView`, `subscriptions`, `itemLabels`, `saves`                                                                          |
+| `feed/StaticPageChrome`   | `notifications`, `mediaQuery`                                                                                               |
+| `feed/FeedListView`       | `feedView`, `subscriptions`, `itemLabels`, `linkblog`, `preferences`                                                        |
 
 ## Bucket D — Orchestrators & network-heavy — 13 components
 
@@ -125,21 +125,21 @@ IndexedDB access. Don't harness these directly — extract the presentational in
 view (the `ArticleCard` → `ArticleCardView` pattern) and harness that, or stand up
 a full mock environment. Highest effort, do last.
 
-| Component | Coupling |
-| --- | --- |
-| `ArticleCard` | ~14 stores + `api`, `db`, `profiles` — the feed-item orchestrator. Its view (`ArticleCardView`) is already extracted and harnessed in `/dev/cards`; treat as the template. |
-| `Sidebar` | ~13 stores + `feedFetcher` — the whole left rail. |
-| `feed/FeedPage` | ~20 stores + `api`, `profiles`, `sync-queue` — the main view shell. |
-| `feed/FeedPageHeader` | `sidebar`, `sync`, `feedView`. |
-| `feed/SavedReader` | 8 stores + `db`, `profiles` — the saved-article reader. |
-| `feed/LinkContextMenu` | `saves`, `toast` — fires save mutations. |
-| `AddFeedModal` | `subscriptions`, `articles`, `social`, `sidebar` + `feedFetcher`, `api`, `sync`. |
-| `AddHandleModal` | 4 stores + `blueskySearch`, `api`, `feedFetcher`, `profiles`, `sync`. |
-| `ImportOPMLModal` | `subscriptions`, `articles`, `auth` + `liveDb`, `feedFetcher`. |
-| `SaveArticleModal` | `saves` + `api`. |
-| `sidebar/FeedAddCompact` | `subscriptions`, `articles`, `auth` + `api`, `feedFetcher`. |
-| `sidebar/SidebarAddFeed` | 5 stores + `feedFetcher`, `blueskySearch`, `api`. |
-| `sources/SourcesDiscovery` | `standardSubs`, `subscriptions` + `api`. |
+| Component                  | Coupling                                                                                                                                                                   |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ArticleCard`              | ~14 stores + `api`, `db`, `profiles` — the feed-item orchestrator. Its view (`ArticleCardView`) is already extracted and harnessed in `/dev/cards`; treat as the template. |
+| `Sidebar`                  | ~13 stores + `feedFetcher` — the whole left rail.                                                                                                                          |
+| `feed/FeedPage`            | ~20 stores + `api`, `profiles`, `sync-queue` — the main view shell.                                                                                                        |
+| `feed/FeedPageHeader`      | `sidebar`, `sync`, `feedView`.                                                                                                                                             |
+| `feed/SavedReader`         | 8 stores + `db`, `profiles` — the saved-article reader.                                                                                                                    |
+| `feed/LinkContextMenu`     | `saves`, `toast` — fires save mutations.                                                                                                                                   |
+| `AddFeedModal`             | `subscriptions`, `articles`, `social`, `sidebar` + `feedFetcher`, `api`, `sync`.                                                                                           |
+| `AddHandleModal`           | 4 stores + `blueskySearch`, `api`, `feedFetcher`, `profiles`, `sync`.                                                                                                      |
+| `ImportOPMLModal`          | `subscriptions`, `articles`, `auth` + `liveDb`, `feedFetcher`.                                                                                                             |
+| `SaveArticleModal`         | `saves` + `api`.                                                                                                                                                           |
+| `sidebar/FeedAddCompact`   | `subscriptions`, `articles`, `auth` + `api`, `feedFetcher`.                                                                                                                |
+| `sidebar/SidebarAddFeed`   | 5 stores + `feedFetcher`, `blueskySearch`, `api`.                                                                                                                          |
+| `sources/SourcesDiscovery` | `standardSubs`, `subscriptions` + `api`.                                                                                                                                   |
 
 ---
 

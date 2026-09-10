@@ -1,4 +1,4 @@
-# External-Backed Saves: make the Saved list *be* a Semble/Margin collection
+# External-Backed Saves: make the Saved list _be_ a Semble/Margin collection
 
 > Today Skyreader **writes** to Semble (`network.cosmik.card`) and Margin (`at.margin.note`) as
 > one-way exports, and can **list** a user's collections — but it never reads items back. This plan
@@ -10,11 +10,11 @@
 
 - **Both tools from the start.** Design one generic backing abstraction, not two bespoke paths.
 - **Adopt, don't mirror.** When a list is backed, the foreign collection is the source of truth
-  *for membership*. Skyreader stops writing the `app.skyreader.feed.saved` PDS export for that list;
+  _for membership_. Skyreader stops writing the `app.skyreader.feed.saved` PDS export for that list;
   there is no dual-write of a native save record. "Adopt" does **not** mean "stop using D1": D1 stays
   the **authoritative local store for reading work** (extracted body, word count, highlights, labels),
   fed alongside the collection's membership, not a second source of truth.
-- **Separate membership from enrichment** (see below). Backed membership is a *replaceable snapshot*,
+- **Separate membership from enrichment** (see below). Backed membership is a _replaceable snapshot_,
   kept in its own table and rebuilt wholesale from each provably-complete poll. Reading work lives in
   `saved_articles`, keyed by `url_normalized`, and is **never deleted by a poll**. The Saved list is
   the membership snapshot joined to the enrichment store at read time. This makes the read path
@@ -29,29 +29,29 @@
 
 ### D1 is the canonical save store
 
-Per `backend/src/routes/saved.ts`, the `app.skyreader.feed.saved` PDS record is an opt-in *export*,
+Per `backend/src/routes/saved.ts`, the `app.skyreader.feed.saved` PDS record is an opt-in _export_,
 not the source of truth:
 
 - `handleMetadataSave` (`saved.ts:214`) writes the PDS record only when `pdsSyncEnabled && source === 'feed' && body.url`.
 - `handleUrlSave` (`saved.ts:316`) writes only when `pdsSyncEnabled`.
 - `document` and `share` saves **never** write a PDS save record (the write branch is scoped to
-  `source === 'feed'`); when sync is off, `record_uri` is a *synthesized* `at://…` string pointing at
+  `source === 'feed'`); when sync is off, `record_uri` is a _synthesized_ `at://…` string pointing at
   a record that was never written (`saved.ts:212`, `:315`).
 
 So no atproto record is reliably canonical for a save today — the **D1 row is**. "Backing" therefore
-means letting a *foreign collection* feed the canonical D1 store, not displacing one PDS record with
+means letting a _foreign collection_ feed the canonical D1 store, not displacing one PDS record with
 another. Keeping D1 authoritative and treating the collection as an upstream source is the natural
 shape, not a compromise.
 
 **Two stores, not one (the read-path shape).** The original instinct was to reconcile the collection
-snapshot *into* `saved_articles` as a set-diff. That forces three fragile invariants at once
+snapshot _into_ `saved_articles` as a set-diff. That forces three fragile invariants at once
 (never-delete-on-partial-snapshot, merge-not-replace, scope-by-collection), and any one of them wrong
 silently destroys reading work or wipes the list. Instead, split the responsibilities:
 
 - **Enrichment store** — `saved_articles`, keyed by `url_normalized`. Holds the extracted body, word
   count, content type, and links to highlights/labels. Append/upsert only from the reader's side;
   **a poll never deletes from it.** Reading work is structurally safe.
-- **Membership snapshot** — `backed_collection_members`, the latest *provably-complete* `listRecords`
+- **Membership snapshot** — `backed_collection_members`, the latest _provably-complete_ `listRecords`
   snapshot of a backed collection, **replaced wholesale** on each good poll (never row-diffed). Holds
   the `external_*` handles and the join key.
 
@@ -80,10 +80,10 @@ so the other app sees the link, not your reading work.
 Both tools model a collection as **two record types**: the item, and a separate membership/link
 record. This indirection is the crux of the feature.
 
-| | Item record | Membership record | Collection record |
-|---|---|---|---|
-| **Semble** | `network.cosmik.card` (`type:URL\|NOTE`; `content.url` + `content.metadata`) | `network.cosmik.collectionLink` (card ↔ collection, **nested strong refs** `{card:{uri,cid}}`/`{collection:{uri,cid}}`) | `network.cosmik.collection` |
-| **Margin** | **`community.lexicon.bookmarks.bookmark`** (URL in **`subject`**) for *saves*; `at.margin.note` for *annotations* | `at.margin.collectionItem` (`annotation` ↔ `collection`, **flat at-uri strings**) | `at.margin.collection` |
+|            | Item record                                                                                                       | Membership record                                                                                                       | Collection record           |
+| ---------- | ----------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | --------------------------- |
+| **Semble** | `network.cosmik.card` (`type:URL\|NOTE`; `content.url` + `content.metadata`)                                      | `network.cosmik.collectionLink` (card ↔ collection, **nested strong refs** `{card:{uri,cid}}`/`{collection:{uri,cid}}`) | `network.cosmik.collection` |
+| **Margin** | **`community.lexicon.bookmarks.bookmark`** (URL in **`subject`**) for _saves_; `at.margin.note` for _annotations_ | `at.margin.collectionItem` (`annotation` ↔ `collection`, **flat at-uri strings**)                                       | `at.margin.collection`      |
 
 > ⚠️ **CORRECTED BY PHASE 0 LIVE DATA (2026-06-18).** The Margin row above was rewritten after running
 > the Phase 0 read-path spike (since removed; its logic now lives in
@@ -97,19 +97,19 @@ real Margin collection, the `at.margin.collectionItem.annotation` resolved to a
 `community.lexicon.bookmarks.bookmark` record — the **shared community bookmark lexicon** — not an
 `at.margin.note`. The bookmark shape is minimal: `{ $type, subject: <web URL>, createdAt }`. Every
 `at.margin.note` in the same repo was `motivation:"highlighting"` — i.e. Margin now uses
-`at.margin.note` for *annotations/highlights* and the community bookmark lexicon for *saves*. This is
+`at.margin.note` for _annotations/highlights_ and the community bookmark lexicon for _saves_. This is
 actually a **better** portability story (saves ride a cross-app standard), but it rewrites our Margin
 read/write spec. Consequences threaded through this doc:
 
 - **Collections are heterogeneous; the read path must be multi-type aware.** A single collection's
-  membership records can point at *different* item types (a `community.lexicon.bookmarks.bookmark`
-  here, an `at.margin.note` there, a Semble card elsewhere). The read path resolves *whatever* the
+  membership records can point at _different_ item types (a `community.lexicon.bookmarks.bookmark`
+  here, an `at.margin.note` there, a Semble card elsewhere). The read path resolves _whatever_ the
   membership points at and extracts a URL from whichever shape it is — `bookmark.subject`,
   `note.target.source`, `card.content.url`. **Writing stays single-type per provider** (back Semble →
   always write Semble records; back Margin → always write the Margin-native save type), so we only ever
-  *author* one shape, but must *read* many.
+  _author_ one shape, but must _read_ many.
 - **Membership targets can be cross-repo.** Live, the `collectionItem.annotation` pointed at a bookmark
-  in a *different* DID's repo than the collection owner. The join must resolve each item by the DID in
+  in a _different_ DID's repo than the collection owner. The join must resolve each item by the DID in
   its own `at-uri` (`getRecord` per item, resolving that DID's PDS) — **never** assume the collection
   owner's repo. (The spike `listAllRecords`-the-owner-repo shortcut silently dropped the cross-repo
   bookmark as `note-not-in-repo`; fixed to per-uri `getRecord`.)
@@ -128,7 +128,7 @@ read/write spec. Consequences threaded through this doc:
 
 **What's proven.** Write shapes exist in `backend/src/routes/integrations.ts`: Semble card lines
 ~133–142, collectionLink fan-out ~150–184; Margin `collectionItem` write (~298–308) **already uses
-the new `annotation`/`collection` fields**. Collection *listing* is proven for both
+the new `annotation`/`collection` fields**. Collection _listing_ is proven for both
 (`GET /api/integrations/{semble,margin}/collections`). The Semble membership join is proven live:
 feed-proxy reads real `network.cosmik.collectionLink` records authored by other apps, resolving
 `.card.uri` and `.collection.uri` (`feed-proxy/src/mention-lane.ts:181–214`, verified 2026-06-01).
@@ -149,12 +149,12 @@ matches the lexicon.
 
 ## Identity model: which URI plays which role
 
-| Role | Answers | URI used |
-|---|---|---|
-| **Join key** | "is this the same save?" (dedup, cross-app identity) | normalized **web URL** |
-| **Foreign handles** | "which records do I delete on unsave?" | `at://` of the card/note (`external_item_uri`) **and** the collectionLink/collectionItem (`external_link_uri`) |
-| **Canonical atproto ref** | "what's the native record behind this, if any?" | `at://` stored *inside the card* (Semble only) |
-| **Legacy guid** | Skyreader-internal source ref | `itemGuid` (RSS guid / doc recordUri) — orthogonal, unchanged |
+| Role                      | Answers                                              | URI used                                                                                                       |
+| ------------------------- | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| **Join key**              | "is this the same save?" (dedup, cross-app identity) | normalized **web URL**                                                                                         |
+| **Foreign handles**       | "which records do I delete on unsave?"               | `at://` of the card/note (`external_item_uri`) **and** the collectionLink/collectionItem (`external_link_uri`) |
+| **Canonical atproto ref** | "what's the native record behind this, if any?"      | `at://` stored _inside the card_ (Semble only)                                                                 |
+| **Legacy guid**           | Skyreader-internal source ref                        | `itemGuid` (RSS guid / doc recordUri) — orthogonal, unchanged                                                  |
 
 **Why the web URL is the join key, not `at://`.** The entire Atmosphere layer in this repo already
 keys on normalized web URLs: Constellation backlinks resolve against a URL target
@@ -166,7 +166,7 @@ messy (trailing slash, tracking params, www, http/https), which is why `normaliz
 reuse it as the dedup key.
 
 **Where the `at://` goes — Semble only.** The Semble card's `content.metadata` (`#urlMetadata`) is
-already an *identifier bag* (`doi`, `isbn` next to `title`/`author`/`siteName`/`imageUrl`). A canonical
+already an _identifier bag_ (`doi`, `isbn` next to `title`/`author`/`siteName`/`imageUrl`). A canonical
 `at://` is a peer identifier there: `content.url` holds the web URL (so Semble renders it and the
 mention graph sees it); `content.metadata.<ext>` holds the `at://` so atproto-aware apps can round-trip
 to the native record. `card.type` is `knownValues:["URL","NOTE"]` (open, not a closed enum) and the
@@ -177,7 +177,7 @@ not "this card points at an atproto resource."
 **Margin has no peer slot.** Confirmed against the real `at.margin.note` lexicon: a note has
 `motivation`, `body` (`{value, format, uri}`), `target` (`{source, sourceHash, title, selector,
 state}`), `tags`, `facets`, `rights`, `labels`, `generator`, `color` — but **no generic
-metadata/identifier bag**. `target.source` is a single required `uri` and must hold the *web* URL (so
+metadata/identifier bag**. `target.source` is a single required `uri` and must hold the _web_ URL (so
 the mention graph and Margin's `sourceHash` indexing see it); there's no clean peer field for a
 canonical `at://`. So **Margin-backed documents fall back to web-URL-only** (the blogs/viewer URL in
 `target.source`) — no native `at://` round-trip — and the canonical `at://` lives only in our D1
@@ -193,11 +193,11 @@ So every save type has a web URL:
 - `source:'url'` / `source:'feed'` — the article URL.
 - `source:'document'` — the resolved blogs URL in `content.url` (Semble) / `target.source` (Margin),
   **plus**, on Semble only, the doc's `at://` recordUri stashed in `content.metadata`. Documents are
-  first-class backable items, and on **Semble** arguably the *best* fit — they're already
+  first-class backable items, and on **Semble** arguably the _best_ fit — they're already
   atproto-native, so the `at://` round-trips perfectly.
 
-*Caveat on "adopt — drop native" for documents:* a document is inherently **dual-record**. The
-`site.standard.document` record *is* the content and cannot be dropped — backing it adds a *second*
+_Caveat on "adopt — drop native" for documents:_ a document is inherently **dual-record**. The
+`site.standard.document` record _is_ the content and cannot be dropped — backing it adds a _second_
 record (the card/note pointing at the blogs URL) alongside it. So for documents the "drop native" half
 of adopt never applies; the native doc always persists and the card/note is a pure pointer.
 (Membership truth still comes from the collection; the D1 row stays canonical.)
@@ -205,7 +205,7 @@ of adopt never applies; the native doc always persists and the card/note is a pu
 A backed Saved list is therefore mostly **not a forced union** — most of the list can live in the
 collection. Two exceptions: (1) legacy native saves predating the backing, transient until the Phase 5
 migration; and (2) **uploads**, native-only by default and never in the collection (see below) — so
-any list containing an upload is *permanently* `collection-members ∪ native-uploads`.
+any list containing an upload is _permanently_ `collection-members ∪ native-uploads`.
 
 Read-path note: a backing collection may contain non-save members authored elsewhere — Semble
 `type:NOTE` cards (free text, no URL), or Margin notes whose `motivation` isn't `bookmarking` / that
@@ -219,7 +219,7 @@ on or render. This is the one item type that legitimately breaks "adopt — drop
 atproto facts:
 
 1. **The card lexicon has no file type.** `network.cosmik.card.type` is `knownValues:["URL","NOTE"]`
-   and `urlContent.url` is a *required URI* — no blob field. A Semble card structurally cannot *hold*
+   and `urlContent.url` is a _required URI_ — no blob field. A Semble card structurally cannot _hold_
    a file, only point at a URL.
 2. **Blobs must be pinned by a record.** `com.atproto.repo.uploadBlob` stores the file on the user's
    PDS addressed by CID, but an **unreferenced blob is garbage-collected**. A plain `content.url`
@@ -231,14 +231,14 @@ axes:
 - **Ownership** — file on Skyreader servers (lock-in) vs. on the user's PDS (portable). Always the PDS.
 - **Visibility** — projected into a public collection or not. A separate, per-upload choice.
 
-What we avoid is *lock-in*, not *non-projection*. An upload owned on the user's PDS but not in a Semble
+What we avoid is _lock-in_, not _non-projection_. An upload owned on the user's PDS but not in a Semble
 collection is portable and owned, just unpublished.
 
 ### Architecture (mirrors documents → blogs URL)
 
 1. **Upload → blob on the user's PDS** (`uploadBlob`). Owned, portable, not Skyreader-hosted.
 2. **Pin with a native record** `app.skyreader.feed.upload` holding `{ blob: BlobRef, title, author,
-   mimeType, size, cover? }` — the canonical file object in the *user's* repo. Design it clean enough
+mimeType, size, cover? }` — the canonical file object in the _user's_ repo. Design it clean enough
    to propose as a shared standard later (the line between "owned" and "locked in").
 3. **Serve a viewer URL** `skyreader.app/file/<did>/<rkey>` that resolves the blob from the user's PDS
    and renders the reader — the same pattern as `skyreader.app/blogs/<did>/<rkey>` for documents.
@@ -254,11 +254,11 @@ annotation graph like anything else.
 ### Three decisions baked in
 
 - **Projection is off by default for uploads.** A PDS blob is publicly fetchable by CID, and uploads
-  are frequently copyrighted; projecting one into a *public* Semble collection advertises the CID.
+  are frequently copyrighted; projecting one into a _public_ Semble collection advertises the CID.
   Default to **native-only (owned on PDS, not projected)**, with explicit per-upload opt-in to add it
-  to the backing collection. *(Forward path: once atproto permissioned data lands — see below — an
+  to the backing collection. _(Forward path: once atproto permissioned data lands — see below — an
   upload can be both owned **and** private, and this default can revisit. It's a "for now," not a
-  ceiling.)*
+  ceiling.)_
 - **EPUB ≫ PDF for the product spine.** EPUB is XHTML → converts to calm-reading HTML and supports
   TextQuoteSelector highlights → Margin notes cleanly. PDF is positional: needs a text layer (pdf.js)
   to extract quotes, and coordinate-based highlight anchoring doesn't map to TextQuoteSelector. **Ship
@@ -268,9 +268,10 @@ annotation graph like anything else.
   Skyreader-hosted storage, which reintroduces the lock-in we're avoiding.
 
 <a id="forward-permissioned-data"></a>
+
 > **Forward path — permissioned data.** atproto private/permissioned data is on the near horizon.
 > Once a PDS can store non-public records and blobs, uploads (and any copyrighted save) can be **owned
-> on the user's PDS *and* genuinely private** — collapsing the ownership-vs-visibility tension. At that
+> on the user's PDS _and_ genuinely private** — collapsing the ownership-vs-visibility tension. At that
 > point: revisit the projection default, and consider whether sensitive saves should live in
 > permissioned records rather than relying on CID-obscurity. Treat today's "native-only, public-blob"
 > handling as the pre-permissioned interim.
@@ -279,7 +280,7 @@ annotation graph like anything else.
 
 ### Backing configuration (one per user)
 
-Backing is a **single account-level setting** — it backs *all* of the user's saves, not a per-list or
+Backing is a **single account-level setting** — it backs _all_ of the user's saves, not a per-list or
 per-channel choice. The user picks one engine and one collection; every save they make (in any channel,
 from any source) lands in that collection. The setting is one of:
 
@@ -289,10 +290,10 @@ backing = 'skyreader'            // default, app.skyreader.feed.saved (today's b
         | 'margin:<collectionUri>'
 ```
 
-**This is a choice of *which engine backs the public backup*, not a downgrade.** Present it as picking
+**This is a choice of _which engine backs the public backup_, not a downgrade.** Present it as picking
 the **backup engine** for your saves: Skyreader (`app.skyreader.feed.saved`), Semble
 (`network.cosmik.card`), or Margin (`at.margin.note`). All three put your saves on the user's PDS; they
-differ only in *which schema* it speaks and therefore *which apps can edit it natively*. Choosing
+differ only in _which schema_ it speaks and therefore _which apps can edit it natively_. Choosing
 Semble/Margin isn't losing portability — it's choosing schema compatibility with that ecosystem. It's
 a lateral choice between equally-portable engines, surfaced in the UI as an engine picker.
 
@@ -307,11 +308,11 @@ engine, they choose the target collection — either:
   Semble/Margin). Picked via the existing `CollectionPicker.svelte` against the existing
   list-collections endpoints (`GET /api/integrations/{semble,margin}/collections`). Backing then adopts
   that collection as-is; its current members are read in on the first poll (Phase 2 backfill), and
-  Skyreader's existing native saves are offered for one-time export *into* it (Phase 5).
+  Skyreader's existing native saves are offered for one-time export _into_ it (Phase 5).
 - **Create a new collection** (the default if they don't pick one). Skyreader creates a
   `network.cosmik.collection` / `at.margin.collection` record named **"Skyreader Saves"** in the user's
   repo and backs that. The new-collection path needs a `createCollection` step on the provider
-  abstraction (a single `putRecord`/`applyWrites` of the collection record); collection *creation* is
+  abstraction (a single `putRecord`/`applyWrites` of the collection record); collection _creation_ is
   new (today only listing + item/membership writes are proven), so Phase 0 should confirm the collection
   record shape for each provider.
 
@@ -360,7 +361,7 @@ CREATE TABLE backed_unsave_tombstones (
 The **join key is `url_normalized`** (reuse `normalizeArticleUrl`), so the same article saved natively
 and via the collection — or via two apps — collapses to one row. The `external_*` fields live on the
 membership snapshot, not on `saved_articles`: `external_item_uri` is the card/note we may read or
-delete; `external_link_uri` is the membership we delete on unsave (remove the *membership*, not
+delete; `external_link_uri` is the membership we delete on unsave (remove the _membership_, not
 necessarily the card — a card can live in several collections). For `source:'document'`, the card's
 canonical `at://` lives in `content.metadata` on the foreign side, in the snapshot's `metadata` JSON,
 and in the existing `item_guid` column on the enrichment row — no new `saved_articles` column.
@@ -382,14 +383,14 @@ which is atomic. A blob would force the join into app code for no benefit.
 The spike proves a **snapshot poll + in-memory join converges and stays correct**, for **both**
 providers' real records. Why a snapshot poll, not the firehose:
 
-- **The firehose is global, not per-user.** `JetstreamPoller` opens a connection scoped *by collection
-  NSID server-side* and filters DIDs *locally* (`jetstream-poller.ts:212` subscriptions, `:394`
+- **The firehose is global, not per-user.** `JetstreamPoller` opens a connection scoped _by collection
+  NSID server-side_ and filters DIDs _locally_ (`jetstream-poller.ts:212` subscriptions, `:394`
   documents, `:604` saved). Adding `network.cosmik.card` means ingesting **every Semble user's cards
   across the whole network** and discarding all but a handful of registered DIDs — bad
-  signal-to-noise, *and* it's the source of the out-of-order problem (link and card arrive as
+  signal-to-noise, _and_ it's the source of the out-of-order problem (link and card arrive as
   separate, unordered events).
 - **The data lives in the user's own PDS.** A `listRecords` snapshot of the user's collection returns
-  a *consistent set*, so the link↔card join is a pure in-memory operation with **no ordering problem
+  a _consistent set_, so the link↔card join is a pure in-memory operation with **no ordering problem
   at all**. The primitive exists and is in production: `pdsClient.listAllRecords`
   (`pds-client.ts:372`), used by `subscription-sync.ts:114`. The every-minute cron (`index.ts:542`)
   and the DO alarm loop both have natural slots for a per-user poll.
@@ -403,7 +404,7 @@ Spike steps:
 1. Snapshot (Semble): `listAllRecords('network.cosmik.collectionLink')`, filter to links whose
    `.collection.uri` is the chosen collection, resolve each `.card.uri` to its card, read `content.url`
    (skip `type:NOTE` cards — no URL). The feed-proxy join (`mention-lane.ts:181–214`) already proves
-   the parse; this proves it over a *whole-collection* snapshot.
+   the parse; this proves it over a _whole-collection_ snapshot.
    Snapshot (Margin): `listAllRecords('at.margin.collectionItem')`, filter to items whose `collection`
    (`at-uri` string) is the chosen collection, resolve each `annotation` (`at-uri` string) to its
    `at.margin.note`, read `target.source` (skip notes with `motivation !== 'bookmarking'` or no usable
@@ -422,7 +423,7 @@ Spike steps:
    provider's own UI, derived purely from snapshots.
 
 If snapshots converge cleanly (expected — it's a consistent read), the rest is wiring. A firehose
-fast-path can be added later *as an optimization on top of* a poll that remains the backstop. If even
+fast-path can be added later _as an optimization on top of_ a poll that remains the backstop. If even
 the snapshot join is ambiguous, reconsider scope.
 
 ### Phase 1 — Data model + settings
@@ -445,7 +446,7 @@ interface BackingProvider {
 fast-path is later layered on.)
 
 > **Discover the abstraction, don't design it up front.** Take **one** provider all the way through
-> Phase 4 (write + delete + re-poll convergence) *first*, then extract this interface from working code
+> Phase 4 (write + delete + re-poll convergence) _first_, then extract this interface from working code
 > and add the second. The shapes differ in real ways — Semble's nested `collectionLink`
 > (`{card:{uri}}` / `{collection:{uri}}`) fan-out vs Margin's flat-string `collectionItem`
 > (`annotation` / `collection`), and Semble has a metadata slot for the canonical `at://` while Margin
@@ -465,7 +466,7 @@ The read path is two stores (see "Two stores, not one" above): a **membership sn
 wholesale, joined at read time to the **enrichment store** a poll never touches.
 
 - **Backfill on enable:** call `listMembers` (a `listAllRecords` snapshot). For each member, upsert an
-  *enrichment* row into `saved_articles` keyed by `url_normalized` (merge-only — see invariant 2), and
+  _enrichment_ row into `saved_articles` keyed by `url_normalized` (merge-only — see invariant 2), and
   write the membership rows into `backed_collection_members`. Bodies extracted lazily on first open via
   the existing extract pipeline (same path `source:'url'` saves use — this part is free). Members whose
   resolved URL is a `skyreader.app/blogs/...` doc URL resolve back to the native document reader rather
@@ -484,7 +485,7 @@ wholesale, joined at read time to the **enrichment store** a poll never touches.
   same membership-joined-enrichment result. Enrichment rows not present in the current snapshot are
   dormant cache (kept for cheap re-add; GC lazily if ever needed).
 - **Firehose (optional, later):** if poll latency proves too coarse, a Jetstream fast-path can push
-  near-real-time deltas *on top of* the poll, which stays the backstop. Not needed to ship.
+  near-real-time deltas _on top of_ the poll, which stays the backstop. Not needed to ship.
 
 **Invariants for the read path** (the two-store split already neutralizes the destructive-diff failure
 mode; what remains):
@@ -493,9 +494,9 @@ mode; what remains):
    back `truncated` (`listAllRecords` exposes a `truncated` flag — `pds-client.ts:401`) is "no
    information," not "the collection is empty." Replace `backed_collection_members` **only when the
    snapshot is provably complete** (full pagination, no error, not truncated); otherwise leave the last
-   good snapshot in place. This is now the *single* guard: a failed poll can only stale the displayed
+   good snapshot in place. This is now the _single_ guard: a failed poll can only stale the displayed
    membership, never delete reading work.
-2. **Enrichment upsert must *merge*, not *replace*.** The `url_normalized` unique index collapses a
+2. **Enrichment upsert must _merge_, not _replace_.** The `url_normalized` unique index collapses a
    native save and the same URL from the collection onto one enrichment row. The `ON CONFLICT` path
    must **preserve local enrichment** (extracted body, word count, highlights, labels, read-state) and
    never overwrite `content`/`word_count` with the (often sparse) card metadata. (The `external_*`
@@ -517,7 +518,7 @@ When backing is on, `handleCreateSaved`/`handleMetadataSave`/`handleUrlSave`
 (`backend/src/routes/saved.ts`) branch for **every** save: **in place of the optional
 `app.skyreader.feed.saved` PDS export**, call `provider.createMember`, then write the enrichment row to `saved_articles` and the
 membership row to `backed_collection_members` (`external_item_uri`/`external_link_uri`/
-`url_normalized`). (For sync-off users, and for `document`/`share` saves, there is *no* PDS write
+`url_normalized`). (For sync-off users, and for `document`/`share` saves, there is _no_ PDS write
 happening today, so for those this branch adds the foreign membership rather than replacing an existing
 write.) For a `source:'document'` save, `createMember` sets the member's URL (Semble `content.url` /
 Margin `target.source`) to the resolved blogs URL; on Semble it also stashes the doc's `at://`
@@ -526,8 +527,8 @@ D1-side. The enrichment row stays canonical and still holds extracted content + 
 today. The frontend `savesStore` (`saves.svelte.ts`) is largely unchanged — it still POSTs
 `/api/saved`; the backend decides where the foreign membership lands.
 
-**Create both foreign records atomically.** `createMember` is a *two-record* write — Semble's card +
-`collectionLink`, Margin's note + `collectionItem` — and both records live in the *user's own repo*. A
+**Create both foreign records atomically.** `createMember` is a _two-record_ write — Semble's card +
+`collectionLink`, Margin's note + `collectionItem` — and both records live in the _user's own repo_. A
 sequential two-`putRecord` create fails halfway under network error and orphans the item (no
 membership) or dangles a membership (no item). Use **`com.atproto.repo.applyWrites`** to create both in
 one transactional batch instead. The primitive is already proven in this codebase:
@@ -539,28 +540,28 @@ provider ever needs paired deletes, batch them too).
 
 - **Unsave in Skyreader:** delete `external_link_uri` (the membership) **only — never the card/note
   itself**. The item is a shared object that may belong to other collections or carry annotations made
-  in Semble/Margin; removing it from *our* collection must not destroy the user's record elsewhere.
+  in Semble/Margin; removing it from _our_ collection must not destroy the user's record elsewhere.
   Unsave = leave the collection, not delete the item. (This makes the orphan case a non-issue: we never
   delete the item, so we never reason about whether it's orphaned.)
-- **Unsave durability — write a tombstone.** Today's native delete is *fire-and-forget* to the PDS
+- **Unsave durability — write a tombstone.** Today's native delete is _fire-and-forget_ to the PDS
   (`saved.ts:542`), and the membership snapshot is rebuilt from the collection. So an unsave whose
   `external_link_uri` delete hasn't propagated (or failed) would be **resurrected** by the next poll:
   the collection still lists it, the wholesale replace re-adds it. The self-healing read path heals away
   your unsaves. Fix:
   - On unsave, in one D1 step: remove the row from `backed_collection_members` (immediate UI removal)
     **and** insert a row into `backed_unsave_tombstones` for that `(user_did, external_collection,
-    url_normalized)`. Then fire the membership delete.
+url_normalized)`. Then fire the membership delete.
   - The Phase 2 wholesale replace **excludes any URL with a live tombstone**, so a snapshot taken before
     the delete propagates can't re-add it.
   - **Clear the tombstone when the snapshot confirms the delete:** a complete poll whose snapshot no
     longer contains the URL deletes the tombstone (the unsave is now reflected upstream). A complete
-    poll that *still* contains it means the delete didn't land — keep the tombstone and re-fire the
+    poll that _still_ contains it means the delete didn't land — keep the tombstone and re-fire the
     membership delete. Tombstones are therefore "short-lived" by construction: they exist only across
     the propagation gap, plus a TTL backstop so a permanently-stuck delete eventually surfaces rather
     than silently suppressing forever.
 - **Removed elsewhere:** the next complete snapshot poll simply doesn't include the membership, and the
   wholesale replace drops it from `backed_collection_members` — no firehose delete event to catch, no
-  diff. This closes the loop that makes it feel like *one* list.
+  diff. This closes the loop that makes it feel like _one_ list.
 
 ### Phase 5 — Enable/disable UX + migration of existing native saves
 
@@ -568,13 +569,13 @@ provider ever needs paired deletes, batch them too).
   collection. The picker offers the user's existing collections (reuse, e.g. a "To Read" list) **and** a
   "Create new collection" option defaulting to **"Skyreader Saves"** (`createCollection`), pre-selected
   so the zero-config path just works. The resulting `at://` is written to the `backing` setting.
-- On enable, offer (don't force) a one-time export of existing native saves — URL, feed, *and*
+- On enable, offer (don't force) a one-time export of existing native saves — URL, feed, _and_
   documents (each via `createMember`, documents through their resolved blogs URL + `at://` metadata).
   Each `createMember` writes the membership row, so exported saves show up via the membership snapshot
   like any backed save — no separate "backed" flag to set. After migration the only residual
   non-collection items are uploads (native by
   default — see Phase 7); everything URL-resolvable now lives in the collection.
-  - **Export must be idempotent.** Before `createMember`, dedup against the collection's *existing*
+  - **Export must be idempotent.** Before `createMember`, dedup against the collection's _existing_
     members by `url_normalized` (a save already in the collection from another app, or a re-run, must
     not create a duplicate card/note). Reuse the Phase 2 snapshot to know what's already there.
 - On disable, saves revert to native and the **foreign records stay in place** — they're the user's
@@ -591,10 +592,10 @@ choice, not a downgrade — and "your saves live in your Semble/Margin collectio
 lexicon."
 
 > **Backing publishes all your saves — say this loudly.** Backing is account-wide and we deliberately
-> do *not* offer a per-save exclude, so turning on a Semble/Margin backing makes **every save in your
+> do _not_ offer a per-save exclude, so turning on a Semble/Margin backing makes **every save in your
 > account public** (their collections are public). That is a one-switch, all-saves consent moment, not a
 > quiet sync setting. The enable flow must state, unmissably and before the user commits, that backing
-> publishes *all* of your saves publicly — no fine print, no per-item escape hatch implied. If a user
+> publishes _all_ of your saves publicly — no fine print, no per-item escape hatch implied. If a user
 > has saves they don't want public, the answer is "don't turn on backing," and the copy must make that
 > the obvious read. (Until atproto permissioned data lands, there is no private backing.)
 
@@ -615,20 +616,20 @@ is a valid native save on its own; backing just adds the optional projected card
 
 1. **Conflict / edit races** — same URL added in both apps near-simultaneously: the `url_normalized`
    unique index on the enrichment store collapses them; with snapshot polling each poll is a consistent
-   set so there's no ordering race, but still use `ON CONFLICT(user_did, url_normalized)` *merge*
+   set so there's no ordering race, but still use `ON CONFLICT(user_did, url_normalized)` _merge_
    upserts (not blind inserts) so a save made in Skyreader between two polls doesn't collide with the
    same URL arriving in the next snapshot. (Membership itself is a wholesale replace, so it has no
    per-row race at all.)
-2. **Multiple collections per card (Semble)** — a card in the backing collection *and* others: we only
+2. **Multiple collections per card (Semble)** — a card in the backing collection _and_ others: we only
    care about membership in the backing collection; the `.collection.uri` filter scopes the snapshot
    (proven in feed-proxy), and the wholesale replace is already scoped by `external_collection`, so a
-   card removed from *our* collection while still in another correctly drops from the membership table
+   card removed from _our_ collection while still in another correctly drops from the membership table
    without touching the enrichment row or other collections.
 3. **`at://`-in-metadata durability** — confirm the extension field survives Semble's validation and a
    PDS round-trip (Phase 0 step 4); if Semble strips unknown metadata fields, documents degrade to
    web-URL-only (still functional, just no native round-trip).
 4. **Scope coverage** — existing OAuth scopes (`scopes.ts`) already cover read+write for both providers'
-   card/collection/link records; confirm no new scope is needed for *reading the user's own* item
+   card/collection/link records; confirm no new scope is needed for _reading the user's own_ item
    records (should be covered by `repo:` grants). Uploads add `uploadBlob` + a new
    `app.skyreader.feed.upload` write scope.
 5. **Blob GC / pinning lifecycle** — confirm the upload record reliably pins the blob and that deleting
@@ -653,7 +654,7 @@ product spine (reading → sensemaking) and the Atmosphere framing exactly.
 
 **Risks, eyes open:**
 
-1. **Read-path correctness** — a consistent-snapshot poll that *replaces a membership table wholesale*
+1. **Read-path correctness** — a consistent-snapshot poll that _replaces a membership table wholesale_
    and joins it to a never-deleted enrichment store; self-healing, uses an existing production
    primitive (`listAllRecords`, which exposes `truncated`). Splitting membership from enrichment means
    a bad poll can only stale the displayed list, never destroy reading work. The residual cost is poll
@@ -664,7 +665,7 @@ product spine (reading → sensemaking) and the Atmosphere framing exactly.
    local store, so a lexicon bump or provider outage degrades to "sync paused," not "saves vanished."
 3. **Not a literal forced union** — the list is mostly the collection once legacy saves migrate, but
    uploads keep it permanently `collection ∪ native-uploads`, and documents are inherently dual-record.
-   "It just *is* the collection" is the headline, not the literal invariant.
+   "It just _is_ the collection" is the headline, not the literal invariant.
 4. **Enrichment is Skyreader-side only** — so "portable" is partial; say so in the copy.
 5. **Uploads** are the principled exception (no foreign lexicon can hold a blob), so they keep a native
    pinning record and project only optionally — and copyrighted blobs on a public PDS are a real

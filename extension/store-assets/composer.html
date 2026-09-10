@@ -135,20 +135,21 @@
       <h1>Skyreader — Chrome Web Store screenshot composer</h1>
       <p>
         Each frame is a 1280&times;800 canvas (the store's required size, exported opaque PNG — no
-        alpha). Capture your popup with DevTools <em>right-click&nbsp;&rarr;&nbsp;Inspect</em> (keeps
-        it open) then <em>right-click the <code>&lt;body&gt;</code>&nbsp;&rarr;&nbsp;Capture node
-        screenshot</em>. Drop that PNG onto a frame, or drop the files named
-        <code>save.png</code> / <code>discover.png</code> / <code>standard.png</code> /
-        <code>saved.png</code> into a <code>shots/</code> folder next to this file and reload to
-        auto-fill. Edit the <code>FRAMES</code> array in this file to change headlines.
+        alpha). Capture your popup with DevTools
+        <em>right-click&nbsp;&rarr;&nbsp;Inspect</em> (keeps it open) then
+        <em>right-click the <code>&lt;body&gt;</code>&nbsp;&rarr;&nbsp;Capture node screenshot</em>.
+        Drop that PNG onto a frame, or drop the files named <code>save.png</code> /
+        <code>discover.png</code> / <code>standard.png</code> / <code>saved.png</code> into a
+        <code>shots/</code> folder next to this file and reload to auto-fill. Edit the
+        <code>FRAMES</code> array in this file to change headlines.
       </p>
     </header>
 
     <div class="toolbar">
       <button class="primary" id="downloadAll">Download all PNGs</button>
       <span class="dims" style="color: var(--muted); font-size: 12px"
-        >Popups render sharpest when the screenshot is at least 640px wide (a 2&times; retina capture
-        of the 320px popup).</span
+        >Popups render sharpest when the screenshot is at least 640px wide (a 2&times; retina
+        capture of the 320px popup).</span
       >
     </div>
 
