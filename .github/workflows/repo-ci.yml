@@ -1,0 +1,37 @@
+name: Repo CI
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: repo-ci-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  format:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Everything the per-package checks don't reach: docs/, extension/,
+      # e2e/, e2e-pwa/, scripts/, .github/ and the root markdown. Each package
+      # that runs its own `prettier --check .` is listed in .prettierignore, so
+      # this never double-formats them with the wrong config.
+      - name: Check formatting
+        run: npm run format:check

@@ -1,0 +1,63 @@
+name: Linkblog CI
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    branches: [main]
+    # The workflow file is in the filter on purpose: a PR that only edits this
+    # file still has to run it.
+    paths: ['linkblog-site/**', '.github/workflows/linkblog-ci.yml']
+
+concurrency:
+  group: linkblog-ci-${{ github.head_ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: linkblog-site
+
+jobs:
+  typecheck:
+    name: Typecheck & Format
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: linkblog-site/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # svelte-check + `prettier --check .`. Until this job existed the only
+      # thing running it was the deploy workflow, so a formatting miss got
+      # discovered on main by a failed production deploy.
+      - name: Run type check
+        run: npm run check
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: linkblog-site/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build

@@ -1,0 +1,48 @@
+name: Extension CI
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    branches: [main]
+    # The workflow file is in the filter on purpose: a PR that only edits this
+    # file still has to run it.
+    paths: ['extension/**', '.github/workflows/extension-ci.yml']
+
+concurrency:
+  group: extension-ci-${{ github.head_ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: extension
+
+jobs:
+  test:
+    name: Tests & Bundle
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: extension/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      # Proves src/extract-entry.js still bundles. It deliberately does NOT
+      # assert the rebuilt output matches the committed content/extract.js:
+      # esbuild's minified identifiers shift between patch releases, so a
+      # byte-comparison would go red on an unrelated esbuild bump. Rebuilding
+      # the committed bundle before a store upload stays a manual step.
+      - name: Build content bundle
+        run: npm run build
