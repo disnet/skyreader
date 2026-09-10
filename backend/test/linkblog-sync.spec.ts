@@ -42,6 +42,14 @@ describe('buildLinkblogDocument', () => {
     expect(doc.path).toBe(`/${RKEY}`);
   });
 
+  // The linkblog entry is dated when it's posted. Sharing a piece from years ago
+  // used to stamp the article's own date here, filing the post back in the
+  // linkblog's history (and in anything that sorts by publishedAt).
+  it('is published now, not when the linked article was', () => {
+    expect(doc.publishedAt).toBe(doc.createdAt);
+    expect(Date.parse(doc.publishedAt)).toBeGreaterThan(Date.now() - 60_000);
+  });
+
   // `links` is a bare open union upstream now, so the refs ride inside one
   // $type-bearing object rather than a top-level array — see DOCUMENT_LINKS_TYPE.
   // A PDS rejects the array outright, so this is the difference between a share

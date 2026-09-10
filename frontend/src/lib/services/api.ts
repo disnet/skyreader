@@ -865,7 +865,6 @@ class ApiClient {
     articleAuthor?: string;
     excerpt?: string;
     articleImage?: string;
-    articlePublishedAt?: string;
     note?: string;
     tags?: string[];
     // Quote-reshare: the AT URI of the original link post being quoted.
