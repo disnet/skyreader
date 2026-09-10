@@ -8,6 +8,7 @@
     hostnameOf,
     linkPostMentions,
     linkPostNote,
+    linkPostTitle,
     renderBodyHtml,
     rkeyFromUri,
     safeHttpUrl,
@@ -41,6 +42,9 @@
   const host = $derived(hostnameOf(articleUrl ?? undefined));
   const date = $derived(formatDate(doc.createdAt || doc.publishedAt));
   const social = $derived(socialCountsText(ctx));
+  // The article's own title, undecorated — the 🔗 / “…” decoration on the record
+  // is for foreign sites, and this page IS the linkblog (see linkPostTitle).
+  const title = $derived(linkPostTitle(doc) || 'Untitled');
 </script>
 
 <li class="entry">
@@ -49,9 +53,9 @@
        date in the meta row is raised above it as the permalink to the commentary. -->
   <h2 class="entry-title">
     {#if headlineHref}
-      <a href={headlineHref}>{doc.title || 'Untitled'}</a>
+      <a href={headlineHref}>{title}</a>
     {:else}
-      {doc.title || 'Untitled'}
+      {title}
     {/if}
   </h2>
   {#if note}

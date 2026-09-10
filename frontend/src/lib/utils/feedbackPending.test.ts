@@ -79,8 +79,11 @@ describe('mergePendingPosts', () => {
 
 describe('storage', () => {
   it('round-trips, and clears the key when nothing is pending', () => {
-    writePendingPosts([pending('a')]);
-    expect(readPendingPosts()).toEqual([pending('a')]);
+    // One entry, not two calls to `pending`: its default `postedAt` is `Date.now()`,
+    // so a millisecond tick between the write and the expectation fails the compare.
+    const entry = pending('a');
+    writePendingPosts([entry]);
+    expect(readPendingPosts()).toEqual([entry]);
     writePendingPosts([]);
     expect(readPendingPosts()).toEqual([]);
     expect(localStorage.getItem('skyreader-feedback-pending')).toBeNull();

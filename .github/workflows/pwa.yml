@@ -46,8 +46,17 @@ jobs:
 
       # webkit is the closest iOS Safari engine proxy; --with-deps pulls the OS
       # libraries it needs on Ubuntu. The config builds the frontend + serves preview.
+      #
+      # The runner image ships Google's Chrome apt source, and --with-deps runs
+      # `apt-get update` over every source it finds. When that repo serves a
+      # Packages.gz whose hash disagrees with its InRelease, apt exits 100 and
+      # takes the browser install down with it. Nothing here needs Chrome, so the
+      # source goes before apt runs.
       - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium webkit
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome*.list \
+                     /etc/apt/sources.list.d/google-chrome*.sources
+          npx playwright install --with-deps chromium webkit
 
       - name: Run PWA tests
         run: npm run test:pwa

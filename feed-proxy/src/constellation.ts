@@ -21,8 +21,15 @@ import { Database } from 'bun:sqlite';
 import { constellationGet } from './constellation-client';
 
 const DOCUMENT_COLLECTION = 'site.standard.document';
-// JSON path of the external/at-uri ref in a link-post document's `links` array.
-const LINKS_PATH = '.links[].uri';
+// JSON paths of the external/at-uri ref in a link-post document's `links`.
+//
+// Two of them, permanently. `links` was an array of `{uri, rel}` until
+// standard.site redeclared it as a bare open union; Skyreader now writes
+// `{$type, refs: [...]}` (see backend linkblog-sync DOCUMENT_LINKS_TYPE and
+// standard.site/lexicons#17), which Constellation indexes one level deeper.
+// Records written under each shape are immutable until edited, so a count that
+// asked only the new path would silently drop every reshare of an older post.
+const LINKS_PATHS = ['.links[].uri', '.links.refs[].uri'];
 
 // Firehose-fresh index → keep the assembled bundle only briefly.
 const CONTEXT_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -48,14 +55,20 @@ interface CacheRow {
 
 const EMPTY: SocialContext = { quoteCount: 0 };
 
-// Count of documents whose `links` ref points at this doc (quote-reshares of it).
+// Count of documents whose `links` ref points at this doc (quote-reshares of it),
+// summed over both link shapes. A reshare lives at exactly one of the two paths,
+// so the sum double-counts nothing.
 async function fetchQuoteCount(docUri: string): Promise<number> {
-  const data = await constellationGet<ConstellationCountResponse>('/links/count', {
-    target: docUri,
-    collection: DOCUMENT_COLLECTION,
-    path: LINKS_PATH,
-  });
-  return data?.total ?? 0;
+  const counts = await Promise.all(
+    LINKS_PATHS.map((path) =>
+      constellationGet<ConstellationCountResponse>('/links/count', {
+        target: docUri,
+        collection: DOCUMENT_COLLECTION,
+        path,
+      })
+    )
+  );
+  return counts.reduce((sum, data) => sum + (data?.total ?? 0), 0);
 }
 
 // Namespaced like the table's other tenants (`lane-items:`, `profile:`), which

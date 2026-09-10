@@ -14,6 +14,12 @@ export interface LinkblogTarget {
   siteUri: string;
   defaultSiteUri: string;
   /**
+   * The author's old `skyreader-links` publication, when their own publication
+   * has since moved to a TID rkey. Scoped alongside the others so a move that
+   * was interrupted partway still renders every post, wherever it sits.
+   */
+  legacySiteUri?: string;
+  /**
    * Don't render this linkblog: the user deleted it, or connected an existing
    * publication and turned this page off. The backend collapses both into one
    * flag — which it is isn't the reader's business.
@@ -68,6 +74,7 @@ export async function resolveLinkblogTarget(apiBase: string, did: string): Promi
     const data = (await res.json()) as {
       siteUri?: string;
       defaultSiteUri?: string;
+      legacySiteUri?: string;
       hidden?: boolean;
     };
     const siteUri = data.siteUri || fallback;
@@ -75,12 +82,23 @@ export async function resolveLinkblogTarget(apiBase: string, did: string): Promi
     return {
       siteUri,
       defaultSiteUri,
+      legacySiteUri: data.legacySiteUri,
       hidden: data.hidden === true,
       external: siteUri !== defaultSiteUri,
     };
   } catch {
     return unresolved;
   }
+}
+
+// Every publication a reader's view of this linkblog should cover: where the
+// author publishes now, their own Skyreader publication, and — while a move off
+// the legacy rkey is unfinished — the publication they moved from.
+// `fetchLinkblogDocuments` dedupes, so the usual one-or-two case costs nothing.
+export function linkblogScopes(target: LinkblogTarget): string[] {
+  return [target.siteUri, target.defaultSiteUri, target.legacySiteUri].filter(
+    (uri): uri is string => !!uri
+  );
 }
 
 function proxyHeaders(cfg: ProxyConfig): Record<string, string> {

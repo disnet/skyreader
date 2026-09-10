@@ -23,7 +23,6 @@ import {
   getLinkblogTarget,
   getPageHiddenAuthors,
   linkblogBaseUrl,
-  publicationUri as defaultLinkblogPublicationUri,
 } from '../services/linkblog-sync';
 
 /**
@@ -580,9 +579,7 @@ export async function ensureLocalDocumentSubscription(
     getLinkblogTarget(env, subjectDid),
     getPageHiddenAuthors(env, [subjectDid]).then((h) => h.length > 0),
   ]);
-  const isLinkblog =
-    publicationUri === target.siteUri ||
-    publicationUri === defaultLinkblogPublicationUri(subjectDid);
+  const isLinkblog = publicationUri === target.siteUri || publicationUri === target.defaultSiteUri;
   const siteUrl = isLinkblog && !pageHidden ? linkblogBaseUrl(env, subjectDid) : null;
 
   const rkey = generateTid();

@@ -49,6 +49,7 @@
     getExternalArticleLink,
     getLinkPostNote,
     getLinkPostNoteMentions,
+    getLinkPostTitle,
     isSkyreaderShare,
     linkifyNoteMentions,
   } from '$lib/utils/linkPost';
@@ -74,8 +75,11 @@
   let articleUrl = $derived(
     draft ? draft.articleUrl : doc ? (getExternalArticleLink(doc) ?? doc.canonicalUrl ?? '') : ''
   );
+  // The article's own title, undecorated. The record's `title` may carry the 🔗 /
+  // “…” decoration that exists for foreign sites; on your own linkblog the
+  // headline is the article, so read it off the card (see getLinkPostTitle).
   let articleTitle = $derived(
-    draft ? (draft.articleTitle ?? draft.articleUrl) : (doc?.title ?? '')
+    draft ? (draft.articleTitle ?? draft.articleUrl) : doc ? getLinkPostTitle(doc) : ''
   );
   let faviconUrl = $derived(articleUrl ? getFaviconUrl(articleUrl) : '');
   let domain = $derived.by(() => {

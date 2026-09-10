@@ -19,20 +19,25 @@ import {
   DOCUMENT_COLLECTION,
   FOREIGN_RECORD_ERROR,
   getPublicationMeta,
+  getLinkblogFormatting,
   getLinkblogTarget,
   getLinkblogVisibility,
   isLinkblogDisabled,
   httpUrlOrUndefined,
   linkblogBaseUrl,
   PUBLICATION_COLLECTION,
-  publicationUri,
   restoreLinkblog,
   setLinkblogPageHidden,
   updateLinkblogShareNote,
   updatePublication,
   writeLinkblogShare,
+  setLinkblogFormatting,
+  TITLE_STYLES,
+  CARD_POSITIONS,
   type LinkblogShareInput,
   type ContentFormat,
+  type LinkblogTitleStyle,
+  type LinkblogCardPosition,
 } from '../services/linkblog-sync';
 import { appForContentType, appForUrl, type PublicationApp } from '../services/publication-app';
 import { createPDSClient } from '../services/pds-client';
@@ -134,6 +139,9 @@ export async function handleCreateLinkblogShare(request: Request, env: Env): Pro
   if (body.repostUri !== undefined && !isAtUri(body.repostUri)) {
     return json({ error: 'repostUri must be an at:// URI' }, 400);
   }
+  if (body.attribution !== undefined && typeof body.attribution !== 'boolean') {
+    return json({ error: 'attribution must be a boolean' }, 400);
+  }
 
   const target = await getLinkblogTarget(env, session.did);
   if (missingCompanionScopes(session, target.format)) return insufficientScopesResponse();
@@ -148,6 +156,7 @@ export async function handleCreateLinkblogShare(request: Request, env: Env): Pro
     note: body.note,
     tags: body.tags,
     repostUri: body.repostUri,
+    attribution: body.attribution,
   };
 
   const result = await writeLinkblogShare(session, env, rkey, input);
@@ -238,6 +247,47 @@ export async function handleDeleteLinkblogShare(request: Request, env: Env): Pro
   return json({ success: true });
 }
 
+// PUT /api/linkblog/formatting — { titleStyle?, cardPosition? }
+//
+// How this user's link posts are written. A D1-only pair of settings, but gated
+// like every other linkblog mutation (see handleSetPageVisibility): a session
+// that can't write is one whose next share fails, so send it to re-auth here
+// rather than let it configure a linkblog it can't publish to.
+//
+// Partial updates are allowed; an omitted field keeps its stored value. Returns
+// the publication meta so the settings page refreshes from one response.
+export async function handleSetLinkblogFormatting(request: Request, env: Env): Promise<Response> {
+  const session = await getSessionFromRequest(request, env);
+  if (!session) return json({ error: 'Unauthorized' }, 401);
+  if (request.method !== 'PUT') return json({ error: 'Method not allowed' }, 405);
+  if (!hasRequiredScopes(session.grantedScopes, LINKBLOG_SCOPES)) {
+    return insufficientScopesResponse();
+  }
+
+  let body: { titleStyle?: unknown; cardPosition?: unknown };
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: 'Invalid JSON body' }, 400);
+  }
+  if (body.titleStyle !== undefined && !TITLE_STYLES.has(body.titleStyle as LinkblogTitleStyle)) {
+    return json({ error: 'titleStyle must be one of: link, quoted, plain' }, 400);
+  }
+  if (
+    body.cardPosition !== undefined &&
+    !CARD_POSITIONS.has(body.cardPosition as LinkblogCardPosition)
+  ) {
+    return json({ error: 'cardPosition must be one of: context, top, bottom' }, 400);
+  }
+
+  const current = await getLinkblogFormatting(env, session.did);
+  await setLinkblogFormatting(env, session.did, {
+    titleStyle: (body.titleStyle as LinkblogTitleStyle) ?? current.titleStyle,
+    cardPosition: (body.cardPosition as LinkblogCardPosition) ?? current.cardPosition,
+  });
+  return json(await getPublicationMeta(session, env));
+}
+
 // GET /api/linkblog/discover/friends — people the user follows on Bluesky who
 // have a linkblog (Phase 6 onboarding). Read-only; no linkblog scopes needed.
 export async function handleDiscoverFriends(request: Request, env: Env): Promise<Response> {
@@ -310,6 +360,12 @@ export async function handleUpdatePublication(request: Request, env: Env): Promi
     return json({ error: result.error }, result.retryable ? 503 : 502);
   }
 
+  // A rename on a legacy publication moves it (see migrateLegacyPublication), so
+  // followers pointing at the old URI have to come along.
+  if (result.data.move) {
+    await migrateLinkblogFollowers(env, session.did, result.data.move.from, result.data.move.to);
+  }
+
   const meta = await getPublicationMeta(session, env);
   return json(meta);
 }
@@ -339,8 +395,11 @@ export async function migrateLinkblogFollowers(
   // links land *after* this migration: coming back to the default publication
   // makes the page live again even if the flag is still set. A null binding
   // makes every COALESCE below a no-op, so the graph moves and the URL doesn't.
-  const { pageHidden } = await getLinkblogVisibility(env, subjectDid);
-  const pageServed = !(pageHidden && nextSiteUri !== publicationUri(subjectDid));
+  const [{ pageHidden }, subjectTarget] = await Promise.all([
+    getLinkblogVisibility(env, subjectDid),
+    getLinkblogTarget(env, subjectDid),
+  ]);
+  const pageServed = !(pageHidden && nextSiteUri !== subjectTarget.defaultSiteUri);
   const linkblogPage = pageServed ? linkblogBaseUrl(env, subjectDid) : null;
 
   // A follower may already subscribe to the destination publication. Keep that
@@ -537,7 +596,7 @@ export async function handleListPublications(request: Request, env: Env): Promis
     documents.success ? documents.data.map((record) => record.value) : []
   );
 
-  const defaultUri = publicationUri(session.did);
+  const defaultUri = (await getLinkblogTarget(env, session.did)).defaultSiteUri;
   const publications = result.data.map((record) => {
     const evidence = evidenceBySite.get(record.uri);
     const url = httpUrlOrUndefined(record.value.url);
@@ -598,7 +657,7 @@ export async function handleConnectPublication(request: Request, env: Env): Prom
   const now = Math.floor(Date.now() / 1000);
   if (request.method === 'DELETE') {
     const previousTarget = await getLinkblogTarget(env, session.did);
-    const nextSiteUri = publicationUri(session.did);
+    const nextSiteUri = previousTarget.defaultSiteUri;
     // Coming back to the Skyreader linkblog also clears "don't serve my page":
     // that page is now the only public address these links have, and a linkblog
     // silently published nowhere is worse than one the user has to hide again.
@@ -661,7 +720,7 @@ export async function handleConnectPublication(request: Request, env: Env): Prom
   // Selecting the default publication here is a disconnect by another name (the
   // UI routes it to DELETE, but the API is open), so clear the page-hidden choice
   // the same way that path does — see the note there.
-  const backToDefault = selectedPublicationUri === publicationUri(session.did) ? 1 : 0;
+  const backToDefault = selectedPublicationUri === previousTarget.defaultSiteUri ? 1 : 0;
   await env.DB.prepare(
     `INSERT INTO user_settings (user_did, linkblog_publication, linkblog_content_format, linkblog_page_hidden, created_at, updated_at)
     VALUES (?, ?, ?, 0, ?, ?) ON CONFLICT(user_did) DO UPDATE SET linkblog_publication=excluded.linkblog_publication,
@@ -691,7 +750,7 @@ export async function handleDeletePublication(request: Request, env: Env): Promi
     env,
     session.did,
     result.data.previousSiteUri,
-    publicationUri(session.did)
+    (await getLinkblogTarget(env, session.did)).defaultSiteUri
   );
   return json({ success: true, deletedPosts: result.data.deletedPosts });
 }
@@ -720,7 +779,11 @@ export async function handleResolvePublication(request: Request, env: Env): Prom
   return new Response(
     JSON.stringify({
       siteUri: target.siteUri,
-      defaultSiteUri: publicationUri(did),
+      defaultSiteUri: target.defaultSiteUri,
+      // Present only for an author whose own publication has moved off the
+      // legacy rkey — the public page scopes to it too, so a move interrupted
+      // partway still shows every post (see migrateLegacyPublication).
+      legacySiteUri: target.legacySiteUri,
       // One flag for the public site: it renders the page or it doesn't, and the
       // reason (deleted vs. page turned off) isn't the reader's business. Deleted
       // linkblogs have no posts left to show anyway, but saying so here means the

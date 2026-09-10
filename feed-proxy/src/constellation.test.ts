@@ -20,11 +20,17 @@ function createTestApp(config: Partial<AppConfig> = {}) {
 }
 
 // Mock the one Constellation endpoint the context still reads.
-function mockConstellationFetch(opts: { quoteCount?: number } = {}) {
+//
+// It's asked once per `links` shape: the legacy array (`.links[].uri`) and the
+// union object Skyreader writes now (`.links.refs[].uri`). A given reshare is
+// indexed at exactly one of them, so the mock answers them separately and the
+// context sums.
+function mockConstellationFetch(opts: { legacy?: number; union?: number } = {}) {
   return spyOn(globalThis, 'fetch').mockImplementation((async (input: unknown) => {
     const url = String(input);
     if (url.includes('/links/count')) {
-      return new Response(JSON.stringify({ total: opts.quoteCount ?? 0 }));
+      const isUnion = decodeURIComponent(url).includes('.links.refs[].uri');
+      return new Response(JSON.stringify({ total: (isUnion ? opts.union : opts.legacy) ?? 0 }));
     }
     throw new Error(`Unexpected fetch: ${url}`);
   }) as unknown as typeof fetch);
@@ -43,24 +49,37 @@ describe('getSocialContext', () => {
 
   it('counts the posts quoting this one', async () => {
     const { db } = createTestApp();
-    mockConstellationFetch({ quoteCount: 1 });
+    mockConstellationFetch({ legacy: 1 });
 
     const ctx = await getSocialContext(db, { docUri: DOC_URI });
     expect(ctx).toEqual({ quoteCount: 1 });
   });
 
+  // Reshares written before the lexicon change are indexed under the array path
+  // and newer ones under the union path. Asking only one would undercount a post
+  // quoted on both sides of the change.
+  it('sums quotes across both `links` shapes', async () => {
+    const { db } = createTestApp();
+    mockConstellationFetch({ legacy: 2, union: 3 });
+
+    const ctx = await getSocialContext(db, { docUri: DOC_URI });
+    expect(ctx).toEqual({ quoteCount: 5 });
+  });
+
   // The context used to fan out to every linker's PDS for their note. Nothing
-  // renders that now, so nothing should fetch it: one call, to /links/count.
+  // renders that now, so nothing should fetch it: the only calls are the
+  // /links/count pair, one per `links` shape.
   it('reads only the quote count — no per-linker PDS fan-out', async () => {
     const { db } = createTestApp();
-    const spy = mockConstellationFetch({ quoteCount: 2 });
+    const spy = mockConstellationFetch({ legacy: 2 });
     await getSocialContext(db, { docUri: DOC_URI });
-    expect(spy.mock.calls.length).toBe(1);
+    expect(spy.mock.calls.length).toBe(2);
+    expect(spy.mock.calls.every(([input]) => String(input).includes('/links/count'))).toBe(true);
   });
 
   it('serves a cached bundle on the second call (no extra fetches)', async () => {
     const { db } = createTestApp();
-    const spy = mockConstellationFetch({ quoteCount: 5 });
+    const spy = mockConstellationFetch({ legacy: 5 });
     await getSocialContext(db, { docUri: DOC_URI });
     const callsAfterFirst = spy.mock.calls.length;
     await getSocialContext(db, { docUri: DOC_URI });
@@ -92,7 +111,7 @@ describe('POST /social-context', () => {
 
   it('returns a per-item context keyed back to the request', async () => {
     const { app } = createTestApp();
-    mockConstellationFetch({ quoteCount: 2 });
+    mockConstellationFetch({ legacy: 2 });
     const res = await post(app, { items: [{ key: 'a', docUri: DOC_URI }] });
     expect(res.status).toBe(200);
     const json = (await res.json()) as {

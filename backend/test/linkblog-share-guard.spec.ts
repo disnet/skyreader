@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
+  ATTRIBUTION_TEXT,
   deleteLinkblog,
   deleteLinkblogShare,
   updateLinkblogShareNote,
+  DOCUMENT_LINKS_TYPE,
   LINKBLOG_MARKER_URL,
   publicationUri,
 } from '../src/services/linkblog-sync';
@@ -199,6 +201,135 @@ describe('linkblog share guards', () => {
     expect((put?.body as { record: { skyreaderLinkblog?: string } }).record.skyreaderLinkblog).toBe(
       LINKBLOG_MARKER_URL
     );
+  });
+
+  // `...rec` would put back whatever shape the record holds, and the array form
+  // every pre-existing share carries is what the lexicon now rejects. Without the
+  // re-wrap, editing any post written before the change 400s.
+  it('rewrites a legacy array `links` into the union shape on edit', async () => {
+    const calls = stubPds(documentRecord({ site: publicationUri(DID) }));
+    const result = await updateLinkblogShareNote(SESSION, '3kabc', 'my commentary');
+
+    expect(result.success).toBe(true);
+    const put = calls.find((c) => c.endpoint === 'com.atproto.repo.putRecord');
+    expect((put?.body as { record: { links: unknown } }).record.links).toEqual({
+      $type: DOCUMENT_LINKS_TYPE,
+      refs: [{ uri: 'https://example.com/an-article', rel: 'related' }],
+    });
+  });
+
+  // The article URL the rebuilt link card needs comes out of `links`, so a reader
+  // that only understood one shape would drop the card on edit.
+  it('finds the article URL in a union-shaped `links` when rebuilding the card', async () => {
+    const calls = stubPds(
+      documentRecord({
+        site: publicationUri(DID),
+        links: {
+          $type: DOCUMENT_LINKS_TYPE,
+          refs: [{ uri: 'https://example.com/an-article', rel: 'related' }],
+        },
+        content: { $type: 'at.markpub.markdown', text: { markdown: 'Old note.' } },
+      })
+    );
+    const result = await updateLinkblogShareNote(SESSION, '3kabc', 'New note.');
+
+    expect(result.success).toBe(true);
+    const put = calls.find((c) => c.endpoint === 'com.atproto.repo.putRecord');
+    const record = (
+      put?.body as { record: { links: unknown; content: { text: { markdown: string } } } }
+    ).record;
+    expect(record.content.text.markdown).toContain('https://example.com/an-article');
+    expect(record.links).toEqual({
+      $type: DOCUMENT_LINKS_TYPE,
+      refs: [{ uri: 'https://example.com/an-article', rel: 'related' }],
+    });
+  });
+
+  // Whether that trailing sentence is ours or the author's is a property of the
+  // RECORD (`skyreaderAttribution`), not of the string. Read it off the record, or
+  // an author who wrote it themselves gets it duplicated on every edit and can
+  // never delete it.
+  it('does not duplicate an author’s own attribution-shaped line on edit', async () => {
+    const calls = stubPds(
+      documentRecord({
+        site: publicationUri(DID),
+        content: {
+          $type: 'pub.leaflet.content',
+          pages: [
+            {
+              $type: 'pub.leaflet.pages.linearDocument',
+              blocks: [
+                { block: { $type: 'pub.leaflet.blocks.text', plaintext: 'Worth reading.' } },
+                { block: { $type: 'pub.leaflet.blocks.text', plaintext: ATTRIBUTION_TEXT } },
+                {
+                  block: {
+                    $type: 'pub.leaflet.blocks.website',
+                    src: 'https://example.com/an-article',
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      })
+    );
+
+    const result = await updateLinkblogShareNote(
+      SESSION,
+      '3kabc',
+      `Worth reading, still.\n\n${ATTRIBUTION_TEXT}`
+    );
+
+    expect(result.success).toBe(true);
+    const put = calls.find((c) => c.endpoint === 'com.atproto.repo.putRecord');
+    const blocks = (
+      put?.body as {
+        record: {
+          content: { pages: Array<{ blocks: Array<{ block: { plaintext?: string } }> }> };
+        };
+      }
+    ).record.content.pages[0].blocks;
+    expect(blocks.filter((b) => b.block.plaintext === ATTRIBUTION_TEXT)).toHaveLength(1);
+  });
+
+  it('carries the attribution line it added, once, when the record flag says so', async () => {
+    const calls = stubPds(
+      documentRecord({
+        site: publicationUri(DID),
+        skyreaderAttribution: true,
+        content: {
+          $type: 'pub.leaflet.content',
+          pages: [
+            {
+              $type: 'pub.leaflet.pages.linearDocument',
+              blocks: [
+                { block: { $type: 'pub.leaflet.blocks.text', plaintext: 'Worth reading.' } },
+                {
+                  block: {
+                    $type: 'pub.leaflet.blocks.website',
+                    src: 'https://example.com/an-article',
+                  },
+                },
+                { block: { $type: 'pub.leaflet.blocks.text', plaintext: ATTRIBUTION_TEXT } },
+              ],
+            },
+          ],
+        },
+      })
+    );
+
+    const result = await updateLinkblogShareNote(SESSION, '3kabc', 'Revised.');
+
+    expect(result.success).toBe(true);
+    const put = calls.find((c) => c.endpoint === 'com.atproto.repo.putRecord');
+    const blocks = (
+      put?.body as {
+        record: {
+          content: { pages: Array<{ blocks: Array<{ block: { plaintext?: string } }> }> };
+        };
+      }
+    ).record.content.pages[0].blocks;
+    expect(blocks.map((b) => b.block.plaintext)).toEqual(['Revised.', undefined, ATTRIBUTION_TEXT]);
   });
 
   it('walks the collection once, deleting as it pages', async () => {

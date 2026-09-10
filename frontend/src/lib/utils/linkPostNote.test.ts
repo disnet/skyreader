@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { LeafletBlockWrapper } from '$lib/types';
-import { noteToLeafletBlocks, reconstructLinkPostNote } from './linkPostNote';
+import { ATTRIBUTION_TEXT, noteToLeafletBlocks, reconstructLinkPostNote } from './linkPostNote';
 
 describe('link post note conversion', () => {
   it('round-trips mixed commentary and native blockquotes', () => {
@@ -22,18 +22,69 @@ describe('link post note conversion', () => {
     expect(reconstructLinkPostNote(blocks).note).toBe('> legacy quote');
   });
 
-  it('stops the note at the website card and handles website-only shares', () => {
+  // The card no longer closes the post — it can sit between the quote and the
+  // commentary, or lead — so it's skipped, not treated as the end of the note.
+  // Breaking at it truncated every note written in the new layout.
+  it('skips the website card wherever it sits and handles website-only shares', () => {
     const website = {
       block: { $type: 'pub.leaflet.blocks.website', src: 'https://example.com' },
     } as LeafletBlockWrapper;
     expect(reconstructLinkPostNote([website])).toEqual({ note: undefined, mentions: [] });
     expect(
       reconstructLinkPostNote([
-        { block: { $type: 'pub.leaflet.blocks.text', plaintext: 'note' } },
+        { block: { $type: 'pub.leaflet.blocks.blockquote', plaintext: 'quoted' } },
         website,
-        { block: { $type: 'pub.leaflet.blocks.text', plaintext: 'not note' } },
+        { block: { $type: 'pub.leaflet.blocks.text', plaintext: 'commentary' } },
       ]).note
-    ).toBe('note');
+    ).toBe('> quoted\n\ncommentary');
+    // …and card-first.
+    expect(
+      reconstructLinkPostNote([
+        website,
+        { block: { $type: 'pub.leaflet.blocks.text', plaintext: 'commentary' } },
+      ]).note
+    ).toBe('commentary');
+  });
+
+  // A card between two note blocks contributes no note bytes, so the mention
+  // offsets of the block after it must be unaffected by its presence.
+  it('keeps mention offsets correct across a mid-post card', () => {
+    const feature = { $type: 'pub.leaflet.richtext.facet#didMention', did: 'did:plc:bob' };
+    const result = reconstructLinkPostNote([
+      { block: { $type: 'pub.leaflet.blocks.blockquote', plaintext: 'quoted' } },
+      {
+        block: { $type: 'pub.leaflet.blocks.website', src: 'https://example.com' },
+      } as LeafletBlockWrapper,
+      {
+        block: {
+          $type: 'pub.leaflet.blocks.text',
+          plaintext: 'hi @a.test',
+          facets: [{ index: { byteStart: 3, byteEnd: 10 }, features: [feature] }],
+        },
+      },
+    ]);
+    expect(result.note).toBe('> quoted\n\nhi @a.test');
+    const note = result.note!;
+    const [m] = result.mentions;
+    expect(
+      new TextDecoder().decode(new TextEncoder().encode(note).slice(m.byteStart, m.byteEnd))
+    ).toBe('@a.test');
+  });
+
+  // The attribution line is ours, not the author's words.
+  it('excludes the attribution line from the note', () => {
+    const blocks: LeafletBlockWrapper[] = [
+      { block: { $type: 'pub.leaflet.blocks.text', plaintext: 'commentary' } },
+      { block: { $type: 'pub.leaflet.blocks.text', plaintext: ATTRIBUTION_TEXT } },
+    ];
+    expect(reconstructLinkPostNote(blocks, { hasAttribution: true }).note).toBe('commentary');
+    // …but only the record's flag says the line is ours. Without it, an author who
+    // wrote that exact sentence keeps their words — on the page and, because this
+    // is what the composer reloads, through a note edit.
+    expect(reconstructLinkPostNote(blocks).note).toBe(`commentary\n\n${ATTRIBUTION_TEXT}`);
+    expect(reconstructLinkPostNote(blocks, { hasAttribution: false }).note).toBe(
+      `commentary\n\n${ATTRIBUTION_TEXT}`
+    );
   });
 
   it('rebases block-local Unicode mention offsets into reconstructed Markdown', () => {

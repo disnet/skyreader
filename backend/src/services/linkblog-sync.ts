@@ -17,6 +17,7 @@ import {
 import { resolveHandle } from './oauth';
 import { OFFPRINT_SCOPES, PCKT_SCOPES } from '../config/scopes';
 import { parseHandleTokens, buildMentionFacet, type MentionFacet } from '../utils/mention-facets';
+import { generateTid } from '../utils/tid';
 
 // Cap on the number of distinct handles we resolve per note. Each unique handle
 // costs up to a few sequential network round-trips (resolveHandle), all on the
@@ -93,8 +94,35 @@ export const COMPANION_COLLECTIONS: Partial<Record<ContentFormat, string>> = {
   offprint: OFFPRINT_ARTICLE_COLLECTION,
 };
 
-// One dedicated linkblog publication per user, at a fixed rkey.
-export const LINKBLOG_RKEY = 'skyreader-links';
+// The rkey every Skyreader linkblog publication used to live at, and where every
+// one created before 2026-09 still lives.
+//
+// `site.standard.publication` declares `"key": "tid"`. Bluesky PDS lexicon
+// resolution now enforces that — a write here fails with `Invalid TID string
+// (got "skyreader-links")` — so new publications are minted at a real TID
+// instead (see `ensureLinkblogPublication`). This constant is not dead: it is
+// what a user with no stored rkey resolves to, which is every user who had a
+// linkblog before the change. Their publication stays put, because the documents
+// pointing at it are immutable until edited and moving it would strand them.
+export const LEGACY_LINKBLOG_RKEY = 'skyreader-links';
+
+const TID_RE = /^[234567abcdefghij][234567abcdefghijklmnopqrstuvwxyz]{12}$/;
+
+/**
+ * Can we still write a publication record at this rkey?
+ *
+ * Only a spec TID passes the lexicon now. A legacy publication is therefore
+ * READ-ONLY on the PDS: it renders, it keeps receiving documents (a document's
+ * `site` is a plain string the lexicon doesn't police), but its own record can
+ * never be rewritten again.
+ */
+export function isWritablePublicationRkey(rkey: string): boolean {
+  return TID_RE.test(rkey);
+}
+
+export function rkeyFromPublicationUri(uri: string): string {
+  return uri.split('/').pop() || LEGACY_LINKBLOG_RKEY;
+}
 
 // Discovery marker. Every linkblog publication carries this single constant URL
 // so Constellation indexes them all under one target — turning the backlink
@@ -111,17 +139,186 @@ export const LINKBLOG_RKEY = 'skyreader-links';
 // See LINKBLOG_PLAN.md Phase 6.
 export const LINKBLOG_MARKER_URL = 'https://skyreader.app/linkblog';
 
+// ── The `links` field, and why it is not an array ────────────────────────────
+//
+// `site.standard.document.links` is where a link post carries the article it
+// points at. Until recently the lexicon declared an ARRAY of `{uri, rel}`, which
+// is what every record in the wild holds and what Constellation indexes at
+// `.links[].uri`.
+//
+// standard.site now declares it as a BARE OPEN UNION — a single object that must
+// carry a `$type` — while the description still reads "Array of values" and no
+// member type is published (`refs` is empty). Writers only noticed when Bluesky
+// PDS lexicon resolution began enforcing it: array-form writes that succeeded on
+// 2026-08-24 now fail validation with
+//
+//   Expected an object which includes the "$type" property ... at $.record.links
+//
+// Reported upstream as standard.site/lexicons#17 (filed by snarfed.org, no
+// maintainer reply as of 2026-09-09).
+//
+// So we wrap the refs in one object of our own type. An open union accepts any
+// `$type` it does not know, which is the mechanism `skyreaderLinkblog` already
+// proves in production. This is a WORKAROUND, not a shape anyone else reads:
+// when upstream restores the array, new records should go back to it and this
+// constant retires. Readers stay tolerant of both either way, because records
+// written under each shape are immutable until edited.
+export const DOCUMENT_LINKS_TYPE = 'app.skyreader.linkblog.links';
+
+export interface DocumentLinkRef {
+  uri: string;
+  rel?: string;
+}
+
+/** The union-object form we write. */
+export interface DocumentLinksUnion {
+  $type: string;
+  refs: DocumentLinkRef[];
+}
+
+/** Either shape, as a record read back off the PDS may hold. */
+export type DocumentLinksField = DocumentLinksUnion | DocumentLinkRef[];
+
+/**
+ * Flatten whichever shape a record holds into plain refs.
+ *
+ * Tolerating both is permanent, not transitional: every record written before
+ * the lexicon changed still holds the array, and an old record only takes the
+ * new shape if the author happens to edit it.
+ */
+export function readDocumentLinks(links: unknown): DocumentLinkRef[] {
+  const raw = Array.isArray(links)
+    ? links
+    : Array.isArray((links as DocumentLinksUnion | undefined)?.refs)
+      ? (links as DocumentLinksUnion).refs
+      : [];
+  return raw
+    .filter((l): l is DocumentLinkRef => typeof (l as DocumentLinkRef)?.uri === 'string')
+    .filter((l) => !!l.uri)
+    .map((l) => ({ uri: l.uri, ...(l.rel ? { rel: l.rel } : {}) }));
+}
+
+/** Wrap refs for writing. Undefined when there is nothing to link, so we never
+ *  put an empty object where the lexicon expects a value. */
+export function buildDocumentLinks(refs: DocumentLinkRef[]): DocumentLinksUnion | undefined {
+  if (refs.length === 0) return undefined;
+  return { $type: DOCUMENT_LINKS_TYPE, refs };
+}
+
 export type ContentFormat = 'leaflet' | 'pckt' | 'offprint' | 'markpub';
 export interface LinkblogTarget {
   siteUri: string;
   format: ContentFormat;
   external: boolean;
+  // The user's OWN Skyreader publication, whether or not they publish there
+  // right now. Carried on the target because it is no longer computable from a
+  // DID: publications minted since the TID change each have their own rkey (see
+  // LEGACY_LINKBLOG_RKEY). Equals `siteUri` unless a foreign one is connected.
+  defaultSiteUri: string;
+  // The `skyreader-links` publication, when this user's own publication is
+  // somewhere else. Readers scope to it as well so that a move interrupted
+  // partway (see migrateLegacyPublication) still shows every post, wherever it
+  // currently lives. Empty for a user who never had a legacy publication, at the
+  // cost of one scope that always comes back empty.
+  legacySiteUri?: string;
+}
+
+// ── Per-user post formatting ─────────────────────────────────────────────────
+//
+// How a link post reads on someone ELSE's site (leaflet.pub, pckt, Offprint) is
+// a matter of taste, so it's a preference rather than a constant: the maintainer's
+// note on the feedback was "probably need a general way for users to customize how
+// external linkblogs are formatted". The defaults are the answers to the feedback;
+// the other values keep the old behavior available.
+
+/** How the document's top-level `title` is written. */
+export type LinkblogTitleStyle = 'link' | 'quoted' | 'plain';
+/** Where the article's link card sits among the note blocks. */
+export type LinkblogCardPosition = 'context' | 'top' | 'bottom';
+
+export interface LinkblogFormatting {
+  titleStyle: LinkblogTitleStyle;
+  cardPosition: LinkblogCardPosition;
+}
+
+export const TITLE_STYLES = new Set<LinkblogTitleStyle>(['link', 'quoted', 'plain']);
+export const CARD_POSITIONS = new Set<LinkblogCardPosition>(['context', 'top', 'bottom']);
+
+export const DEFAULT_FORMATTING: LinkblogFormatting = {
+  titleStyle: 'link',
+  cardPosition: 'context',
+};
+
+// The decoration that separates "I linked this" from "I wrote this" on a foreign
+// site, where a byte-identical title made a share indistinguishable from a repost
+// of the article itself. Exported so every reader can strip it back off — the
+// card keeps the plain title, but pre-card records only have this one.
+export const TITLE_LINK_PREFIX = '🔗 ';
+
+export function decorateTitle(title: string, style: LinkblogTitleStyle): string {
+  const trimmed = title.trim();
+  if (!trimmed) return trimmed;
+  if (style === 'link') return `${TITLE_LINK_PREFIX}${trimmed}`;
+  if (style === 'quoted') return `“${trimmed}”`;
+  return trimmed;
+}
+
+// The inverse, for surfaces that want the article's own title back out of a
+// decorated one. Only the decorations we write are stripped — typographic quotes
+// and the link emoji — so a title the author really did wrap in "straight quotes"
+// survives untouched.
+export function stripTitleDecoration(title: string): string {
+  let out = title.trim();
+  if (out.startsWith(TITLE_LINK_PREFIX)) out = out.slice(TITLE_LINK_PREFIX.length).trim();
+  else if (out.startsWith('\u{1f517}')) out = out.slice('\u{1f517}'.length).trim();
+  const quoted = /^“([\s\S]*)”$/.exec(out);
+  if (quoted) out = quoted[1].trim();
+  return out;
+}
+
+// The optional "this came from Skyreader" line, opt-in per share.
+//
+// Deliberately PLAIN text rather than a hyperlink: a link inside a
+// pub.leaflet/pckt/Offprint text block needs a richtext facet whose shape we have
+// not verified against those published lexicons, and Leaflet's appview silently
+// drops a post that fails validation. Spelling the domain keeps the pointer
+// without betting a whole post on an unverified field. Every note parser excludes
+// this exact string, so keep it stable.
+export const ATTRIBUTION_TEXT = 'Posted from skyreader.app';
+
+function isAttributionText(value: unknown): boolean {
+  return typeof value === 'string' && value.trim() === ATTRIBUTION_TEXT;
+}
+
+/**
+ * Is this block the attribution line WE added, as opposed to an author who wrote
+ * that same sentence themselves?
+ *
+ * Only the record's own `skyreaderAttribution` flag can tell those apart, so an
+ * edit must consult it rather than string-match alone. Without the flag the
+ * sentence is the author's words like any other line: it belongs to the note,
+ * gets rebuilt from the submitted note, and can be edited away. Lifting it out on
+ * the string match alone re-appended it beside the rebuilt copy — duplicating the
+ * author's sentence and making it impossible to remove.
+ */
+function isGeneratedAttribution(value: unknown, hasAttribution: boolean): boolean {
+  return hasAttribution && isAttributionText(value);
 }
 
 const CONTENT_FORMATS = new Set<ContentFormat>(['leaflet', 'pckt', 'offprint', 'markpub']);
 
-export function defaultLinkblogTarget(did: string): LinkblogTarget {
-  return { siteUri: publicationUri(did), format: 'leaflet', external: false };
+export function defaultLinkblogTarget(did: string, rkey?: string | null): LinkblogTarget {
+  const resolved = rkey || LEGACY_LINKBLOG_RKEY;
+  const siteUri = publicationUriFor(did, resolved);
+  return {
+    siteUri,
+    format: 'leaflet',
+    external: false,
+    defaultSiteUri: siteUri,
+    ...(resolved === LEGACY_LINKBLOG_RKEY
+      ? {}
+      : { legacySiteUri: publicationUriFor(did, LEGACY_LINKBLOG_RKEY) }),
+  };
 }
 
 // Turn a stored `linkblog_publication` setting into a target, ignoring anything
@@ -129,9 +326,10 @@ export function defaultLinkblogTarget(did: string): LinkblogTarget {
 function targetFromRow(
   did: string,
   publication: string | null | undefined,
-  contentFormat: string | null | undefined
+  contentFormat: string | null | undefined,
+  rkey?: string | null
 ): LinkblogTarget {
-  const fallback = defaultLinkblogTarget(did);
+  const fallback = defaultLinkblogTarget(did, rkey);
   if (!publication) return fallback;
   const match = publication.match(/^at:\/\/([^/]+)\/site\.standard\.publication\/([^/]+)$/);
   if (!match || match[1] !== did) return fallback;
@@ -142,21 +340,84 @@ function targetFromRow(
     siteUri: publication,
     format,
     external: publication !== fallback.siteUri,
+    defaultSiteUri: fallback.defaultSiteUri,
+    ...(fallback.legacySiteUri ? { legacySiteUri: fallback.legacySiteUri } : {}),
   };
 }
 
 export async function getLinkblogTarget(env: Env, did: string): Promise<LinkblogTarget> {
   try {
     const row = await env.DB.prepare(
-      'SELECT linkblog_publication, linkblog_content_format FROM user_settings WHERE user_did = ?'
+      'SELECT linkblog_publication, linkblog_content_format, linkblog_rkey FROM user_settings WHERE user_did = ?'
     )
       .bind(did)
-      .first<{ linkblog_publication: string | null; linkblog_content_format: string | null }>();
-    return targetFromRow(did, row?.linkblog_publication, row?.linkblog_content_format);
+      .first<{
+        linkblog_publication: string | null;
+        linkblog_content_format: string | null;
+        linkblog_rkey: string | null;
+      }>();
+    return targetFromRow(
+      did,
+      row?.linkblog_publication,
+      row?.linkblog_content_format,
+      row?.linkblog_rkey
+    );
   } catch {
     // Deploys remain usable while a migration is rolling out.
     return defaultLinkblogTarget(did);
   }
+}
+
+// The user's post-formatting choices, or the defaults.
+//
+// Kept OUT of getLinkblogTarget's SELECT on purpose (same reasoning as
+// getPageHiddenAuthors): that query is what every share write depends on, and its
+// catch exists so a deploy landing ahead of a migration still resolves a target.
+// A separate statement keeps migration 0076's columns out of that blast radius —
+// pre-migration this throws on its own and degrades to the defaults.
+export async function getLinkblogFormatting(env: Env, did: string): Promise<LinkblogFormatting> {
+  try {
+    const row = await env.DB.prepare(
+      'SELECT linkblog_title_style, linkblog_card_position FROM user_settings WHERE user_did = ?'
+    )
+      .bind(did)
+      .first<{ linkblog_title_style: string | null; linkblog_card_position: string | null }>();
+    return formattingFromRow(row?.linkblog_title_style, row?.linkblog_card_position);
+  } catch {
+    return { ...DEFAULT_FORMATTING };
+  }
+}
+
+// NULL (never set) and anything unrecognized both mean "the default" — a stored
+// value from a future version must not produce an undecorated title by accident.
+export function formattingFromRow(
+  titleStyle: string | null | undefined,
+  cardPosition: string | null | undefined
+): LinkblogFormatting {
+  return {
+    titleStyle: TITLE_STYLES.has(titleStyle as LinkblogTitleStyle)
+      ? (titleStyle as LinkblogTitleStyle)
+      : DEFAULT_FORMATTING.titleStyle,
+    cardPosition: CARD_POSITIONS.has(cardPosition as LinkblogCardPosition)
+      ? (cardPosition as LinkblogCardPosition)
+      : DEFAULT_FORMATTING.cardPosition,
+  };
+}
+
+export async function setLinkblogFormatting(
+  env: Env,
+  did: string,
+  formatting: LinkblogFormatting
+): Promise<void> {
+  const now = Math.floor(Date.now() / 1000);
+  await env.DB.prepare(
+    `INSERT INTO user_settings (user_did, linkblog_title_style, linkblog_card_position, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(user_did) DO UPDATE SET linkblog_title_style=excluded.linkblog_title_style,
+     linkblog_card_position=excluded.linkblog_card_position, updated_at=excluded.updated_at`
+  )
+    .bind(did, formatting.titleStyle, formatting.cardPosition, now, now)
+    .run();
 }
 
 // D1 caps bound parameters per statement; chunk the IN (...) list well under it.
@@ -179,7 +440,7 @@ export async function getLinkblogTargets(
       const chunk = unique.slice(i, i + TARGET_LOOKUP_CHUNK);
       const placeholders = chunk.map(() => '?').join(',');
       const rows = await env.DB.prepare(
-        `SELECT user_did, linkblog_publication, linkblog_content_format
+        `SELECT user_did, linkblog_publication, linkblog_content_format, linkblog_rkey
          FROM user_settings WHERE user_did IN (${placeholders})`
       )
         .bind(...chunk)
@@ -187,11 +448,17 @@ export async function getLinkblogTargets(
           user_did: string;
           linkblog_publication: string | null;
           linkblog_content_format: string | null;
+          linkblog_rkey: string | null;
         }>();
       for (const row of rows.results ?? []) {
         out.set(
           row.user_did,
-          targetFromRow(row.user_did, row.linkblog_publication, row.linkblog_content_format)
+          targetFromRow(
+            row.user_did,
+            row.linkblog_publication,
+            row.linkblog_content_format,
+            row.linkblog_rkey
+          )
         );
       }
     }
@@ -257,8 +524,20 @@ interface PublicationRecord {
   skyreaderLinkblog?: string;
 }
 
+export function publicationUriFor(did: string, rkey: string): string {
+  return `at://${did}/${PUBLICATION_COLLECTION}/${rkey}`;
+}
+
+/**
+ * The Skyreader publication URI for a user we know nothing else about.
+ *
+ * Only correct for a user whose rkey is the legacy one — which is every user who
+ * predates the TID change, but not one whose publication was minted after it.
+ * Prefer `LinkblogTarget.defaultSiteUri`, which carries the user's actual rkey;
+ * this is the fallback the target itself is built from.
+ */
 export function publicationUri(did: string): string {
-  return `at://${did}/${PUBLICATION_COLLECTION}/${LINKBLOG_RKEY}`;
+  return publicationUriFor(did, LEGACY_LINKBLOG_RKEY);
 }
 
 // The canonical public base for a user's linkblog. DID-based so it survives
@@ -306,6 +585,10 @@ export interface PublicationMeta {
   // connected publication; `url` still describes where the page WOULD be, so the
   // setting can be undone.
   pageHidden: boolean;
+  // How this user's posts are written: title decoration and where the link card
+  // sits. Rides along here because the settings page and the composer already
+  // load publication meta, so both get the state without a second request.
+  formatting: LinkblogFormatting;
 }
 
 // PDS records are user-controlled, so a `url` can be any string. Only surface it
@@ -328,9 +611,10 @@ function iconUrlFromBlob(did: string, icon: BlobRef | undefined): string | undef
 // Read the current linkblog publication, or synthesize sensible defaults when it
 // doesn't exist yet (so the settings UI can render before the first share).
 export async function getPublicationMeta(session: Session, env: Env): Promise<PublicationMeta> {
-  const [target, visibility] = await Promise.all([
+  const [target, visibility, formatting] = await Promise.all([
     getLinkblogTarget(env, session.did),
     getLinkblogVisibility(env, session.did),
+    getLinkblogFormatting(env, session.did),
   ]);
   const disabled = visibility.disabled;
   // Hiding the page is only offered alongside a connected publication, so a stored
@@ -339,7 +623,7 @@ export async function getPublicationMeta(session: Session, env: Env): Promise<Pu
   // with no visible control to turn it back on.
   const pageHidden = visibility.pageHidden && target.external;
   const pdsClient = createPDSClient(session);
-  const rkey = target.siteUri.split('/').pop() || LINKBLOG_RKEY;
+  const rkey = rkeyFromPublicationUri(target.siteUri);
   const result = await pdsClient.getRecord<PublicationRecord>(PUBLICATION_COLLECTION, rkey);
 
   const url = linkblogBaseUrl(env, session.did);
@@ -353,6 +637,7 @@ export async function getPublicationMeta(session: Session, env: Env): Promise<Pu
       format: target.format,
       disabled,
       pageHidden,
+      formatting,
     };
   }
 
@@ -374,8 +659,46 @@ export async function getPublicationMeta(session: Session, env: Env): Promise<Pu
     format: target.format,
     disabled,
     pageHidden,
+    formatting,
   };
 }
+
+/**
+ * The rkey of the user's OWN publication, and whether we actually read it.
+ *
+ * `getLinkblogTarget` folds a failed settings read into the legacy default,
+ * which is the right answer for a reader — fail open, show something — and the
+ * wrong one for a writer. A writer that mints at the legacy fallback because the
+ * real rkey merely couldn't be READ orphans the publication that rkey names, so
+ * the write paths take the rkey from here and refuse to mint on `trusted: false`.
+ *
+ * The one failure that is still trustworthy is a pre-0078 deploy window, where
+ * the column doesn't exist yet: nobody has a stored rkey then, so legacy is the
+ * true answer rather than a guess.
+ */
+async function readPublicationRkey(
+  env: Env,
+  did: string
+): Promise<{ rkey: string; trusted: boolean }> {
+  try {
+    const row = await env.DB.prepare('SELECT linkblog_rkey FROM user_settings WHERE user_did = ?')
+      .bind(did)
+      .first<{ linkblog_rkey: string | null }>();
+    return { rkey: row?.linkblog_rkey || LEGACY_LINKBLOG_RKEY, trusted: true };
+  } catch (error) {
+    const missingColumn = /no such column/i.test(String(error));
+    if (!missingColumn) {
+      console.warn(`[linkblog] could not read publication rkey for ${did}: ${error}`);
+    }
+    return { rkey: LEGACY_LINKBLOG_RKEY, trusted: missingColumn };
+  }
+}
+
+const UNTRUSTED_RKEY_ERROR = {
+  success: false,
+  error: 'Could not read linkblog settings',
+  retryable: true,
+} as const;
 
 // Create the linkblog publication if it doesn't already exist. Idempotent and
 // non-destructive: if a record is already there (possibly user-customized), it's
@@ -385,10 +708,8 @@ export async function ensureLinkblogPublication(
   env: Env
 ): Promise<PDSResult<{ uri: string; created: boolean }>> {
   const pdsClient = createPDSClient(session);
-  const existing = await pdsClient.getRecord<PublicationRecord>(
-    PUBLICATION_COLLECTION,
-    LINKBLOG_RKEY
-  );
+  const { rkey, trusted } = await readPublicationRkey(env, session.did);
+  const existing = await pdsClient.getRecord<PublicationRecord>(PUBLICATION_COLLECTION, rkey);
 
   if (existing.success) {
     // Lazy backfill on each share — non-destructive (preserves user-customized
@@ -405,21 +726,38 @@ export async function ensureLinkblogPublication(
     const expectedUrl = linkblogBaseUrl(env, session.did);
     const needsMarker = value.skyreaderLinkblog !== LINKBLOG_MARKER_URL;
     const needsUrl = value.url !== expectedUrl;
-    if (needsMarker || needsUrl) {
+    // A legacy publication can never be rewritten again (see
+    // isWritablePublicationRkey), and this heal is cosmetic by design. Skipping
+    // it keeps the share going; failing it would take every share down with a
+    // 502 for the sake of a `url` field nobody's read path depends on.
+    if ((needsMarker || needsUrl) && isWritablePublicationRkey(rkey)) {
       const updated: PublicationRecord = {
         ...value,
         $type: PUBLICATION_COLLECTION,
         url: expectedUrl,
         skyreaderLinkblog: LINKBLOG_MARKER_URL,
       };
-      const put = await pdsClient.putRecord(PUBLICATION_COLLECTION, LINKBLOG_RKEY, updated);
+      const put = await pdsClient.putRecord(PUBLICATION_COLLECTION, rkey, updated);
       if (!put.success) return put;
     }
     return {
       success: true,
-      data: { uri: publicationUri(session.did), created: false },
+      data: { uri: publicationUriFor(session.did, rkey), created: false },
     };
   }
+
+  // Only "no such record" means there is nothing here. Any other read failure is
+  // an answer we don't have: treating it as absent would mint a SECOND
+  // publication and repoint the stored rkey, orphaning the real one and every
+  // document in it. Better to fail the share and let the client retry.
+  if (!isNotFoundError(existing.error)) return existing;
+  if (!trusted) return UNTRUSTED_RKEY_ERROR;
+
+  // Nothing there yet. If the rkey we resolved is the legacy one, this user has
+  // no publication at all — mint a real TID and remember it, because a fixed
+  // constant is exactly what the lexicon now rejects. A stored TID whose record
+  // has gone missing is recreated where it was.
+  const writeRkey = isWritablePublicationRkey(rkey) ? rkey : generateTid();
 
   const record: PublicationRecord = {
     $type: PUBLICATION_COLLECTION,
@@ -428,12 +766,37 @@ export async function ensureLinkblogPublication(
     skyreaderLinkblog: LINKBLOG_MARKER_URL,
   };
 
-  const put = await pdsClient.putRecord(PUBLICATION_COLLECTION, LINKBLOG_RKEY, record);
+  const put = await pdsClient.putRecord(PUBLICATION_COLLECTION, writeRkey, record);
   if (!put.success) return put;
+  if (writeRkey !== rkey) await persistPublicationRkey(env, session.did, writeRkey);
   return {
     success: true,
-    data: { uri: publicationUri(session.did), created: true },
+    data: { uri: publicationUriFor(session.did, writeRkey), created: true },
   };
+}
+
+/**
+ * Remember the rkey of a freshly minted publication.
+ *
+ * Best-effort on purpose: the record is already written, and losing this row
+ * would only make the next resolve fall back to the legacy rkey and mint a
+ * second publication. Worth a warning, not worth failing the share that just
+ * succeeded.
+ */
+async function persistPublicationRkey(env: Env, did: string, rkey: string): Promise<void> {
+  const now = Math.floor(Date.now() / 1000);
+  try {
+    await env.DB.prepare(
+      `INSERT INTO user_settings (user_did, linkblog_rkey, created_at, updated_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(user_did) DO UPDATE SET linkblog_rkey = excluded.linkblog_rkey,
+       updated_at = excluded.updated_at`
+    )
+      .bind(did, rkey, now, now)
+      .run();
+  } catch (error) {
+    console.warn(`[linkblog] could not persist publication rkey for ${did}: ${error}`);
+  }
 }
 
 // Update the publication's name/description, preserving url + icon. Creates the
@@ -442,12 +805,23 @@ export async function updatePublication(
   session: Session,
   env: Env,
   updates: { name?: string; description?: string }
-): Promise<PDSResult<PutRecordResponse>> {
+): Promise<PDSResult<PutRecordResponse & { move?: PublicationMove }>> {
   const pdsClient = createPDSClient(session);
-  const existing = await pdsClient.getRecord<PublicationRecord>(
-    PUBLICATION_COLLECTION,
-    LINKBLOG_RKEY
-  );
+  const { rkey, trusted } = await readPublicationRkey(env, session.did);
+  const existing = await pdsClient.getRecord<PublicationRecord>(PUBLICATION_COLLECTION, rkey);
+  // As in ensureLinkblogPublication: only a genuine absence may be written over.
+  if (!existing.success && !isNotFoundError(existing.error)) return existing;
+  if (!trusted) return UNTRUSTED_RKEY_ERROR;
+
+  // A move is owed whenever a record still sits at the LEGACY rkey — not merely
+  // when the rkey we resolved is the legacy one. A move interrupted after the new
+  // rkey was stored resolves to a TID, and gating on that would strand its
+  // documents (and its followers) at the old URI with no way back in.
+  const owesMove = isWritablePublicationRkey(rkey)
+    ? (await pdsClient.getRecord<PublicationRecord>(PUBLICATION_COLLECTION, LEGACY_LINKBLOG_RKEY))
+        .success
+    : existing.success;
+  const writeRkey = isWritablePublicationRkey(rkey) ? rkey : generateTid();
 
   const base: PublicationRecord = existing.success
     ? existing.data.value
@@ -470,7 +844,169 @@ export async function updatePublication(
     else delete record.description;
   }
 
-  return pdsClient.putRecord(PUBLICATION_COLLECTION, LINKBLOG_RKEY, record);
+  // A legacy publication can't be rewritten where it stands, so the edit becomes
+  // a move: the same record, written at a TID, with every document repointed.
+  // `writeRkey` is the destination either way — a fresh TID on the first attempt,
+  // the one already stored when this run is finishing an interrupted move.
+  if (owesMove) {
+    const moved = await migrateLegacyPublication(session, env, record, writeRkey);
+    if (!moved.success) return moved;
+    return { success: true, data: { uri: moved.data.to, cid: '', move: moved.data } };
+  }
+
+  const put = await pdsClient.putRecord(PUBLICATION_COLLECTION, writeRkey, record);
+  if (!put.success) return put;
+  if (writeRkey !== rkey) await persistPublicationRkey(env, session.did, writeRkey);
+  return { success: true, data: put.data };
+}
+
+// ── Moving a legacy publication onto a TID rkey ──────────────────────────────
+//
+// A publication at `skyreader-links` can never be rewritten again, which means
+// its owner can't rename their linkblog. The fix is to move it: mint the record
+// at a real TID and repoint every document that named the old one.
+//
+// The documents are the reason this is a move and not a fresh start — `site` is
+// what binds a post to a publication, so leaving them behind would split the
+// linkblog in two, with foreign readers of either publication seeing half the
+// posts. Skyreader-owned publications are always `leaflet` format, which has no
+// companion record (see COMPANION_COLLECTIONS), so the documents are the whole
+// job.
+//
+// Ordering is chosen so an interrupted run is never visibly broken: the new rkey
+// is stored BEFORE the walk, and readers scope to the legacy publication as well
+// as the current one (see LinkblogTarget.legacySiteUri), so posts on either side
+// of a half-finished move still render.
+//
+// The legacy publication RECORD is what says a move is still owed, so it is
+// deleted last and only on a walk that reached the end — including the walk
+// running out of pages, which is a partial move wearing a success. `owesMove` in
+// updatePublication looks for that record rather than at the resolved rkey, so
+// the next rename picks the move back up and the walk only touches documents
+// that still name the old URI.
+const MOVE_BATCH_SIZE = 200;
+const MAX_MOVE_PAGES = 100;
+
+async function movePublicationDocuments(
+  client: PDSClient,
+  did: string,
+  fromUri: string,
+  toUri: string
+): Promise<PDSResult<{ moved: number; complete: boolean }>> {
+  let cursor: string | undefined;
+  let moved = 0;
+  let complete = false;
+
+  for (let page = 0; page < MAX_MOVE_PAGES; page++) {
+    const listed = await client.listRecords<DocumentRecord>(DOCUMENT_COLLECTION, cursor);
+    if (!listed.success) {
+      return { success: false, error: listed.error, retryable: !!listed.retryable };
+    }
+    const ours = listed.data.records
+      .filter(
+        (record) => record.value?.site === fromUri && isSkyreaderShareRecord(did, record.value)
+      )
+      .map((record) => ({ rkey: record.uri.split('/').pop() ?? '', value: record.value }))
+      .filter((record) => record.rkey);
+
+    for (let i = 0; i < ours.length; i += MOVE_BATCH_SIZE) {
+      const chunk = ours.slice(i, i + MOVE_BATCH_SIZE);
+      const batch = await client.applyWrites(
+        chunk.map(({ rkey, value }) => ({
+          $type: 'com.atproto.repo.applyWrites#update' as const,
+          collection: DOCUMENT_COLLECTION,
+          rkey,
+          value: {
+            ...value,
+            $type: DOCUMENT_COLLECTION,
+            site: toUri,
+            // The whole record goes back to the PDS, so a legacy array `links`
+            // would fail validation on the way — re-wrap it (see
+            // DOCUMENT_LINKS_TYPE). Same refs, current shape.
+            links: buildDocumentLinks(readDocumentLinks(value.links)),
+          },
+        }))
+      );
+      if (!batch.success) {
+        return { success: false, error: batch.error, retryable: !!batch.retryable };
+      }
+      moved += chunk.length;
+    }
+
+    cursor = listed.data.cursor || undefined;
+    if (!cursor || listed.data.records.length === 0) {
+      complete = true;
+      break;
+    }
+  }
+
+  return { success: true, data: { moved, complete } };
+}
+
+export interface PublicationMove {
+  from: string;
+  to: string;
+  movedPosts: number;
+  /**
+   * Every document that named the old publication now names the new one. False
+   * when the walk ran out of pages with records still to visit — the linkblog is
+   * whole to a Skyreader reader either way (legacySiteUri covers both), and the
+   * next rename resumes from where this one stopped.
+   */
+  complete: boolean;
+}
+
+/**
+ * Move the user's legacy publication onto `toRkey`, carrying its fields (and any
+ * pending edits) across.
+ *
+ * `toRkey` is a fresh TID on the first attempt and the rkey already stored when
+ * this run is finishing an interrupted move — re-minting there would leave a
+ * third publication behind and lose the documents the first attempt did move.
+ *
+ * The old publication record is deleted only once every document has been
+ * repointed — while it exists, it is the marker that a move is unfinished.
+ */
+export async function migrateLegacyPublication(
+  session: Session,
+  env: Env,
+  record: PublicationRecord,
+  toRkey: string
+): Promise<PDSResult<PublicationMove>> {
+  const pdsClient = createPDSClient(session);
+  const fromUri = publicationUriFor(session.did, LEGACY_LINKBLOG_RKEY);
+  const toUri = publicationUriFor(session.did, toRkey);
+
+  const put = await pdsClient.putRecord(PUBLICATION_COLLECTION, toRkey, record);
+  if (!put.success) return put;
+
+  // Before the walk: a crash from here on leaves new shares landing in the new
+  // publication and the reader still seeing both (legacySiteUri).
+  await persistPublicationRkey(env, session.did, toRkey);
+
+  const moved = await movePublicationDocuments(pdsClient, session.did, fromUri, toUri);
+  if (!moved.success) return moved;
+
+  if (moved.data.complete) {
+    // Best-effort: an orphaned empty publication is untidy, not broken, and the
+    // rename that triggered this has already succeeded.
+    const removed = await pdsClient.deleteRecord(PUBLICATION_COLLECTION, LEGACY_LINKBLOG_RKEY);
+    if (!removed.success && !isNotFoundError(removed.error)) {
+      console.warn(
+        `[linkblog] legacy publication left in place for ${session.did}: ${removed.error}`
+      );
+    }
+  } else {
+    // Keep it: it's the marker the next rename resumes from.
+    console.warn(
+      `[linkblog] move for ${session.did} hit the page cap with documents still at ${fromUri}`
+    );
+  }
+
+  return {
+    success: true,
+    data: { from: fromUri, to: toUri, movedPosts: moved.data.moved, complete: moved.data.complete },
+  };
 }
 
 // ── Document (a share) ───────────────────────────────────────────────────────
@@ -488,6 +1024,9 @@ export interface LinkblogShareInput {
   // `links` as a `rel: "repost"` ref for provenance, alongside the article ref,
   // so the quote is its own linkblog entry that still credits the source.
   repostUri?: string;
+  // Opt-in, per share: append the ATTRIBUTION_TEXT line after the card. The
+  // composer offers it as a checkbox; nothing is added unless it's ticked.
+  attribution?: boolean;
 }
 
 interface DocumentRecord {
@@ -500,7 +1039,9 @@ interface DocumentRecord {
   description?: string;
   textContent?: string;
   tags?: string[];
-  links?: Array<{ uri: string; rel: string }>;
+  // Either shape — see DOCUMENT_LINKS_TYPE. We write the union; records
+  // predating the lexicon change hold the array.
+  links?: DocumentLinksField;
   content?: unknown;
   // Provenance marker: "Skyreader wrote this link post" (same constant the
   // publication carries — see LINKBLOG_MARKER_URL). Load-bearing once a linkblog
@@ -512,6 +1053,12 @@ interface DocumentRecord {
   // Absent on documents in the default publication written before the marker
   // existed; those are covered by the publication check instead.
   skyreaderLinkblog?: string;
+  // The author ticked "Posted from Skyreader" on this share. Top-level (the
+  // extension mechanism standard.site sanctions, and the one `skyreaderLinkblog`
+  // already proves safe) so readers can exclude the attribution block without
+  // relying on a string match — a user whose last line happens to BE that string
+  // keeps their words.
+  skyreaderAttribution?: boolean;
 }
 
 // Whether a `site.standard.document` is one of OUR link posts: it carries the
@@ -636,20 +1183,26 @@ export async function getDisabledLinkblogAuthors(env: Env, dids: string[]): Prom
   }
 }
 
-// The article excerpt stored on a record's website link-card block. The card is
-// the durable home of the excerpt now that the top-level `description` is reserved
-// as the legacy-quote marker, so the note-update path reads it back from here to
-// rebuild the card without dropping it.
-function websiteCardExcerpt(content: unknown): string {
+// The article title and excerpt stored on a record's website link-card block. The
+// card is the durable home of both: the excerpt because the top-level
+// `description` is reserved as the legacy-quote marker, and the title because the
+// document's own `title` may carry a user-chosen decoration (🔗 …, “…”) that must
+// never be baked into a card. The note-update path reads them back from here to
+// rebuild a missing card without dropping or corrupting either.
+export function websiteCardMeta(content: unknown): { title?: string; excerpt: string } {
   const c = content as {
     pages?: Array<{ blocks?: Array<{ block?: Record<string, unknown> }> }>;
-    items?: Array<{ $type?: string; description?: unknown }>;
+    items?: Array<{ $type?: string; title?: unknown; description?: unknown }>;
   };
   for (const page of c?.pages ?? []) {
     for (const wrapper of page.blocks ?? []) {
       if (wrapper.block?.$type === 'pub.leaflet.blocks.website') {
+        const title = wrapper.block.title;
         const desc = wrapper.block.description;
-        if (typeof desc === 'string') return desc;
+        return {
+          title: typeof title === 'string' && title.trim() ? title : undefined,
+          excerpt: typeof desc === 'string' ? desc : '',
+        };
       }
     }
   }
@@ -658,9 +1211,14 @@ function websiteCardExcerpt(content: unknown): string {
   for (const item of c?.items ?? []) {
     const isCard =
       item?.$type === 'blog.pckt.block.website' || item?.$type === 'app.offprint.block.webBookmark';
-    if (isCard && typeof item.description === 'string') return item.description;
+    if (isCard) {
+      return {
+        title: typeof item.title === 'string' && item.title.trim() ? item.title : undefined,
+        excerpt: typeof item.description === 'string' ? item.description : '',
+      };
+    }
   }
-  return '';
+  return { excerpt: '' };
 }
 
 // Build the rich, interoperable body: the user's note as native text/blockquote
@@ -715,6 +1273,56 @@ function noteRuns(note: string | undefined): NoteRun[] {
   return runs;
 }
 
+// Where the article's link card goes among the note blocks, as an index into the
+// per-run block list. `noteToLeafletBlocks` / `noteToBlockItems` map one block per
+// run, so a run index is a block index.
+//
+// 'context' is the answer to the feedback: the card sits where the quote does —
+// after the quoted passage, before the commentary — so a reader meets "this is a
+// link post, responding to X" before the response. With nothing quoted there is
+// no passage to sit under, and the card leads instead, which lands the same
+// context in the same place.
+export function cardIndexFor(runs: NoteRun[], position: LinkblogCardPosition): number {
+  if (position === 'top') return 0;
+  if (position === 'bottom') return runs.length;
+  let leadingQuotes = 0;
+  while (leadingQuotes < runs.length && runs[leadingQuotes].quote) leadingQuotes++;
+  return leadingQuotes;
+}
+
+// The layout an EXISTING record was written in, read back from where its card
+// actually sits. An edit rebuilds in the layout it found rather than the author's
+// current setting: changing a preference must not silently reformat old posts.
+//
+// A record with no note carries no evidence, and 'bottom' is what every such
+// record was written as before this existed — so an edit that adds the first note
+// keeps behaving exactly as it used to.
+function layoutFromCardSplit(notesBefore: number, noteCount: number): LinkblogCardPosition {
+  if (noteCount === 0) return 'bottom';
+  if (notesBefore <= 0) return 'top';
+  if (notesBefore >= noteCount) return 'bottom';
+  return 'context';
+}
+
+// Splice a card (and, when present, the attribution line) into a rebuilt block
+// list. `extras` are the non-note blocks found on an existing record — the card
+// plus anything the home app added alongside it — re-emitted as one contiguous
+// run so a connected publication's own content is never dropped.
+function withCardAndAttribution<T>(
+  notes: T[],
+  extras: T[],
+  index: number,
+  attribution: T | null
+): T[] {
+  const at = Math.max(0, Math.min(index, notes.length));
+  return [
+    ...notes.slice(0, at),
+    ...extras,
+    ...notes.slice(at),
+    ...(attribution ? [attribution] : []),
+  ];
+}
+
 // Parse the note into native Leaflet text/blockquote blocks, one per run.
 export function noteToLeafletBlocks(
   note: string | undefined,
@@ -734,28 +1342,79 @@ export function noteToLeafletBlocks(
   });
 }
 
+function leafletAttributionBlock(): NoteBlock {
+  return { block: { $type: 'pub.leaflet.blocks.text', plaintext: ATTRIBUTION_TEXT } };
+}
+
+// Is this wrapper part of the note (as opposed to the card, a home-app block, or
+// an attribution line we added)?
+function isLeafletNoteBlock(
+  wrapper: { block?: Record<string, unknown> },
+  hasAttribution: boolean
+): boolean {
+  const type = wrapper.block?.$type;
+  if (type === 'pub.leaflet.blocks.blockquote') return true;
+  if (type !== 'pub.leaflet.blocks.text') return false;
+  return !isGeneratedAttribution(wrapper.block?.plaintext, hasAttribution);
+}
+
+/**
+ * Swap the note region of a Leaflet body, keeping the card exactly where it was
+ * found and preserving every block that isn't ours.
+ *
+ * The card is no longer guaranteed to close the post, so "the note is the leading
+ * run and everything past it is preserved" no longer holds. Instead the blocks are
+ * sorted into note / not-note, the not-note run is re-inserted at the same
+ * layout position it occupied, and an attribution line found on the record is
+ * carried through (v1 offers no way to remove one on edit — delete and reshare).
+ *
+ * `hasAttribution` is the record's own `skyreaderAttribution` flag: only a record
+ * that says so has a generated attribution line to carry. On any other record the
+ * same sentence is the author's, and stays part of the note.
+ */
 export function replaceLeafletNoteRegion(
   existing: unknown,
   note: string,
-  resolvedHandles: Map<string, string> = new Map()
+  resolvedHandles: Map<string, string> = new Map(),
+  hasAttribution = false
 ): unknown {
   const oldContent = existing as {
     $type?: string;
     pages?: Array<{ $type?: string; blocks?: Array<{ block?: Record<string, unknown> }> }>;
   };
   const oldBlocks = oldContent?.pages?.[0]?.blocks ?? [];
-  const firstPreserved = oldBlocks.findIndex(
-    (wrapper) =>
-      wrapper.block?.$type !== 'pub.leaflet.blocks.text' &&
-      wrapper.block?.$type !== 'pub.leaflet.blocks.blockquote'
-  );
-  const preserved = firstPreserved < 0 ? [] : oldBlocks.slice(firstPreserved);
+
+  const extras: Array<{ block?: Record<string, unknown> }> = [];
+  let hadAttribution = false;
+  let oldNotes = 0;
+  let notesBeforeExtras = -1;
+  for (const wrapper of oldBlocks) {
+    if (isGeneratedAttribution(wrapper.block?.plaintext, hasAttribution)) {
+      hadAttribution = true;
+      continue;
+    }
+    if (isLeafletNoteBlock(wrapper, hasAttribution)) {
+      oldNotes++;
+      continue;
+    }
+    if (notesBeforeExtras < 0) notesBeforeExtras = oldNotes;
+    extras.push(wrapper);
+  }
+  if (notesBeforeExtras < 0) notesBeforeExtras = oldNotes;
+
+  const runs = noteRuns(note);
+  const index = cardIndexFor(runs, layoutFromCardSplit(notesBeforeExtras, oldNotes));
   return {
     $type: oldContent?.$type || 'pub.leaflet.content',
     pages: [
       {
         $type: oldContent?.pages?.[0]?.$type || 'pub.leaflet.pages.linearDocument',
-        blocks: [...noteToLeafletBlocks(note, resolvedHandles), ...preserved],
+        blocks: withCardAndAttribution(
+          noteToLeafletBlocks(note, resolvedHandles),
+          extras,
+          index,
+          hadAttribution ? leafletAttributionBlock() : null
+        ),
       },
       ...(oldContent?.pages?.slice(1) ?? []),
     ],
@@ -765,9 +1424,10 @@ export function replaceLeafletNoteRegion(
 function buildLeafletContent(
   input: LinkblogShareInput,
   excerpt: string,
-  resolvedHandles?: Map<string, string>
+  resolvedHandles: Map<string, string> | undefined,
+  formatting: LinkblogFormatting
 ): unknown {
-  const blocks: Array<{ block: unknown }> = noteToLeafletBlocks(input.note, resolvedHandles);
+  const noteBlocks: NoteBlock[] = noteToLeafletBlocks(input.note, resolvedHandles);
 
   // `src` is the field name pub.leaflet.blocks.website requires. Getting it
   // wrong is silent and total: Leaflet's appview runs every site.standard.document
@@ -777,9 +1437,17 @@ function buildLeafletContent(
     $type: 'pub.leaflet.blocks.website',
     src: input.articleUrl,
   };
+  // The card keeps the article's OWN title, undecorated, whatever the document
+  // title style is — it's the source of truth Skyreader's own surfaces read back.
   if (input.articleTitle) website.title = input.articleTitle;
   if (excerpt) website.description = excerpt;
-  blocks.push({ block: website });
+
+  const blocks = withCardAndAttribution(
+    noteBlocks,
+    [{ block: website }],
+    cardIndexFor(noteRuns(input.note), formatting.cardPosition),
+    input.attribution ? leafletAttributionBlock() : null
+  );
 
   return {
     $type: 'pub.leaflet.content',
@@ -793,20 +1461,25 @@ export function buildLinkblogDocument(
   input: LinkblogShareInput,
   resolvedHandles?: Map<string, string>,
   siteUri = publicationUri(did),
-  format: ContentFormat = 'leaflet'
+  format: ContentFormat = 'leaflet',
+  formatting: LinkblogFormatting = DEFAULT_FORMATTING
 ): DocumentRecord {
   const now = new Date().toISOString();
   const excerpt = input.excerpt ? truncate(input.excerpt, MAX_EXCERPT_CHARS) : '';
   const note = input.note?.trim();
   const textContent = [note, excerpt].filter(Boolean).join('\n\n') || undefined;
 
-  const links: Array<{ uri: string; rel: string }> = [{ uri: input.articleUrl, rel: 'related' }];
-  if (input.repostUri) links.push({ uri: input.repostUri, rel: 'repost' });
+  const linkRefs: DocumentLinkRef[] = [{ uri: input.articleUrl, rel: 'related' }];
+  if (input.repostUri) linkRefs.push({ uri: input.repostUri, rel: 'repost' });
 
   return {
     $type: DOCUMENT_COLLECTION,
     site: siteUri,
-    title: input.articleTitle?.trim() || input.articleUrl,
+    // Decorated per the author's title style, so a link post on someone else's
+    // site doesn't read as a repost of the article. The article's own title stays
+    // plain on the website card, which is what Skyreader's surfaces and the RSS
+    // feed prefer — see stripTitleDecoration for the legacy fallback.
+    title: decorateTitle(input.articleTitle?.trim() || input.articleUrl, formatting.titleStyle),
     path: `/${rkey}`,
     publishedAt: input.articlePublishedAt || now,
     createdAt: now,
@@ -819,11 +1492,14 @@ export function buildLinkblogDocument(
     description: undefined,
     textContent,
     tags: input.tags && input.tags.length > 0 ? input.tags : undefined,
-    links,
-    content: buildContent(format, input, excerpt, resolvedHandles),
+    links: buildDocumentLinks(linkRefs),
+    content: buildContent(format, input, excerpt, resolvedHandles, formatting),
     // See DocumentRecord.skyreaderLinkblog — the tell that separates a Skyreader
     // share from a post the connected publication's home app wrote.
     skyreaderLinkblog: LINKBLOG_MARKER_URL,
+    // Only stamped when asked for, so its mere presence means "this record opted
+    // into the attribution line" (see DocumentRecord.skyreaderAttribution).
+    skyreaderAttribution: input.attribution ? true : undefined,
   };
 }
 
@@ -882,17 +1558,58 @@ function articleItem(
   };
 }
 
+function itemsAttributionBlock(prefix: string): Record<string, unknown> {
+  return { $type: `${prefix}text`, plaintext: ATTRIBUTION_TEXT };
+}
+
 function markpubLinkLine(url: string, title?: string): string {
   return `[${(title || url).replace(/([\\[\]()])/g, '\\$1')}](${url})`;
+}
+
+// The note as Markdown, split around the link line. Only the mid-note case
+// reflows the note text: with the link at either end the note is emitted exactly
+// as the user typed it, so the default-layout output of every pre-existing record
+// is byte-identical to what it was.
+function assembleMarkpub(
+  note: string | undefined,
+  linkLine: string,
+  position: LinkblogCardPosition,
+  attribution: boolean
+): string {
+  const runs = noteRuns(note);
+  const index = cardIndexFor(runs, position);
+  const render = (from: number, to: number) =>
+    runs
+      .slice(from, to)
+      .map((run) =>
+        run.quote
+          ? run.plaintext
+              .split('\n')
+              .map((line) => `> ${line}`)
+              .join('\n')
+          : run.plaintext
+      )
+      .join('\n\n');
+
+  const trimmed = note?.trim();
+  const parts =
+    index <= 0
+      ? [linkLine, trimmed]
+      : index >= runs.length
+        ? [trimmed, linkLine]
+        : [render(0, index), linkLine, render(index, runs.length)];
+  if (attribution) parts.push(ATTRIBUTION_TEXT);
+  return parts.filter(Boolean).join('\n\n');
 }
 
 function buildContent(
   format: ContentFormat,
   input: LinkblogShareInput,
   excerpt: string,
-  handles?: Map<string, string>
+  handles: Map<string, string> | undefined,
+  formatting: LinkblogFormatting
 ): unknown {
-  if (format === 'leaflet') return buildLeafletContent(input, excerpt, handles);
+  if (format === 'leaflet') return buildLeafletContent(input, excerpt, handles, formatting);
   if (format === 'markpub') {
     // No companion record here, and none needed: at.markpub.* is a content
     // lexicon designed to sit inside someone else's record (its own docs say so),
@@ -904,16 +1621,22 @@ function buildContent(
       flavor: 'commonmark',
       text: {
         $type: 'at.markpub.text',
-        markdown: [input.note?.trim(), markpubLinkLine(input.articleUrl, input.articleTitle)]
-          .filter(Boolean)
-          .join('\n\n'),
+        markdown: assembleMarkpub(
+          input.note,
+          markpubLinkLine(input.articleUrl, input.articleTitle),
+          formatting.cardPosition,
+          Boolean(input.attribution)
+        ),
       },
     };
   }
-  const items = [
-    ...noteToBlockItems(ITEM_PREFIX[format], input.note),
-    articleItem(format, { url: input.articleUrl, title: input.articleTitle, excerpt }),
-  ];
+  const prefix = ITEM_PREFIX[format];
+  const items = withCardAndAttribution(
+    noteToBlockItems(prefix, input.note),
+    [articleItem(format, { url: input.articleUrl, title: input.articleTitle, excerpt })],
+    cardIndexFor(noteRuns(input.note), formatting.cardPosition),
+    input.attribution ? itemsAttributionBlock(prefix) : null
+  );
   return { $type: ITEM_CONTENT_TYPE[format], items };
 }
 
@@ -933,72 +1656,136 @@ export function contentFormatOf(content: unknown): ContentFormat | null {
   }
 }
 
-// Is this item part of the leading note region (as opposed to the article that
-// closes the post)? A link card ends the region by not being a text block. Older
-// Offprint shares closed with an ordinary text line instead, so a text block
-// carrying the article URL ends it too.
-function isNoteItem(item: unknown, prefix: string, articleUrl: string | undefined): boolean {
+// Is this item part of the note (as opposed to the article card, a home-app
+// block, or an attribution line we added)? Older Offprint shares carried the
+// article as an ordinary text line rather than a card, so a text block holding
+// the article URL is the card too.
+function isNoteItem(
+  item: unknown,
+  prefix: string,
+  articleUrl: string | undefined,
+  hasAttribution: boolean
+): boolean {
   const block = item as { $type?: string; plaintext?: unknown } | undefined;
   if (block?.$type === `${prefix}blockquote`) return true;
   if (block?.$type !== `${prefix}text`) return false;
   const plaintext = typeof block.plaintext === 'string' ? block.plaintext : '';
+  if (isGeneratedAttribution(plaintext, hasAttribution)) return false;
   return !(articleUrl && plaintext.includes(articleUrl));
 }
 
-// Swap the note region of a pckt/Offprint body, preserving the article block and
-// anything the home app appended after it.
+// Swap the note region of a pckt/Offprint body, keeping the article block where
+// it was found and preserving anything the home app added alongside it.
+// `hasAttribution` is the record's `skyreaderAttribution` flag — see
+// replaceLeafletNoteRegion.
 export function replaceItemsNoteRegion(
   existing: unknown,
   format: 'pckt' | 'offprint',
   note: string,
-  article: { url?: string; title?: string }
+  article: { url?: string; title?: string },
+  hasAttribution = false
 ): unknown {
   const content = existing as { $type?: string; items?: unknown[] } | undefined;
   const prefix = ITEM_PREFIX[format];
   const items = Array.isArray(content?.items) ? content.items : [];
-  const firstPreserved = items.findIndex((item) => !isNoteItem(item, prefix, article.url));
-  const preserved = firstPreserved < 0 ? [] : items.slice(firstPreserved);
+
+  const extras: unknown[] = [];
+  let hadAttribution = false;
+  let oldNotes = 0;
+  let notesBeforeExtras = -1;
+  for (const item of items) {
+    const plaintext = (item as { plaintext?: unknown } | undefined)?.plaintext;
+    if (isGeneratedAttribution(plaintext, hasAttribution)) {
+      hadAttribution = true;
+      continue;
+    }
+    if (isNoteItem(item, prefix, article.url, hasAttribution)) {
+      oldNotes++;
+      continue;
+    }
+    if (notesBeforeExtras < 0) notesBeforeExtras = oldNotes;
+    extras.push(item);
+  }
+  if (notesBeforeExtras < 0) notesBeforeExtras = oldNotes;
+
+  // The article block should always be there; rebuild it if the record somehow
+  // arrived without one, so an edit can't drop the link itself.
+  const card =
+    extras.length > 0
+      ? extras
+      : article.url
+        ? [articleItem(format, { url: article.url, title: article.title })]
+        : [];
+
+  const runs = noteRuns(note);
   return {
     ...content,
     $type: content?.$type || ITEM_CONTENT_TYPE[format],
-    items: [
-      ...noteToBlockItems(prefix, note),
-      // The article block should always be there; rebuild it if the record somehow
-      // arrived without one, so an edit can't drop the link itself.
-      ...(preserved.length > 0
-        ? preserved
-        : article.url
-          ? [articleItem(format, { url: article.url, title: article.title })]
-          : []),
-    ],
+    items: withCardAndAttribution(
+      noteToBlockItems(prefix, note),
+      card,
+      cardIndexFor(runs, layoutFromCardSplit(notesBeforeExtras, oldNotes)),
+      hadAttribution ? itemsAttributionBlock(prefix) : null
+    ),
   };
 }
 
-// Swap the note in a Markdown body: everything before the trailing article link,
-// which is kept verbatim when present.
+// Swap the note in a Markdown body, keeping the article link line verbatim and in
+// the same place, and preserving an attribution line we added. (The old
+// implementation rebuilt the body as `[note, linkLine]` and so dropped anything
+// after the link.) `hasAttribution` is the record's `skyreaderAttribution` flag —
+// see replaceLeafletNoteRegion.
 export function replaceMarkpubNote(
   existing: unknown,
   note: string,
-  article: { url?: string; title?: string }
+  article: { url?: string; title?: string },
+  hasAttribution = false
 ): unknown {
   const content = existing as { text?: { markdown?: string } } | undefined;
   const markdown = content?.text?.markdown ?? '';
-  let tail = article.url ? markpubLinkLine(article.url, article.title) : '';
+  const lines = markdown.split('\n');
+
+  let linkIndex = -1;
   if (article.url) {
-    const lines = markdown.split('\n');
     for (let i = lines.length - 1; i >= 0; i--) {
       if (lines[i].includes(`](${article.url})`)) {
-        tail = lines[i].trim();
+        linkIndex = i;
         break;
       }
     }
   }
+  const linkLine =
+    linkIndex >= 0
+      ? lines[linkIndex].trim()
+      : article.url
+        ? markpubLinkLine(article.url, article.title)
+        : '';
+  const hadAttribution = lines.some((line) => isGeneratedAttribution(line, hasAttribution));
+
+  // Where the link sat relative to the note text is the layout to preserve. With
+  // no link line found there's no evidence, and 'bottom' is what such a record was
+  // written as.
+  const noteText = (from: number, to: number) =>
+    lines
+      .slice(from, to)
+      .filter((line) => !isGeneratedAttribution(line, hasAttribution))
+      .join('\n')
+      .trim();
+  const position: LinkblogCardPosition =
+    linkIndex < 0
+      ? 'bottom'
+      : !noteText(0, linkIndex)
+        ? 'top'
+        : !noteText(linkIndex + 1, lines.length)
+          ? 'bottom'
+          : 'context';
+
   return {
     ...content,
     $type: 'at.markpub.markdown',
     text: {
       ...(content?.text ?? {}),
-      markdown: [note.trim(), tail].filter(Boolean).join('\n\n'),
+      markdown: assembleMarkpub(note, linkLine, position, hadAttribution),
     },
   };
 }
@@ -1089,10 +1876,18 @@ export async function writeLinkblogShare(
   rkey: string,
   input: LinkblogShareInput
 ): Promise<PDSResult<PutRecordResponse>> {
-  const target = await getLinkblogTarget(env, session.did);
+  const [target, formatting] = await Promise.all([
+    getLinkblogTarget(env, session.did),
+    getLinkblogFormatting(env, session.did),
+  ]);
+  // The ensured URI, not `target.siteUri`: a first-ever share mints the
+  // publication at a fresh TID, and the target was read before that happened. A
+  // document pointing at the rkey we no longer use would be orphaned.
+  let siteUri = target.siteUri;
   if (!target.external) {
     const ensured = await ensureLinkblogPublication(session, env);
     if (!ensured.success) return ensured;
+    siteUri = ensured.data.uri;
   }
 
   const resolvedHandles = await resolveNoteMentionHandles(input.note);
@@ -1101,20 +1896,14 @@ export async function writeLinkblogShare(
     rkey,
     input,
     resolvedHandles,
-    target.siteUri,
-    target.format
+    siteUri,
+    target.format,
+    formatting
   );
   const client = createPDSClient(session);
   const written = await client.putRecord(DOCUMENT_COLLECTION, rkey, record);
   if (written.success) {
-    await syncCompanionRecord(
-      client,
-      session.did,
-      target.format,
-      target.siteUri,
-      rkey,
-      written.data
-    );
+    await syncCompanionRecord(client, session.did, target.format, siteUri, rkey, written.data);
   }
   return written;
 }
@@ -1247,7 +2036,10 @@ type PurgeResult =
   | { success: true; deletedPosts: number }
   | { success: false; error: string; retryable: boolean; deletedPosts: number };
 
-async function purgeLinkblogRecords(session: Session): Promise<PurgeResult> {
+async function purgeLinkblogRecords(
+  session: Session,
+  publicationRkey: string
+): Promise<PurgeResult> {
   const client = createPDSClient(session);
   let cursor: string | undefined;
   let deletedPosts = 0;
@@ -1285,7 +2077,7 @@ async function purgeLinkblogRecords(session: Session): Promise<PurgeResult> {
 
     const nextCursor = listed.data.cursor || undefined;
     if (!nextCursor || listed.data.records.length === 0) {
-      const publication = await client.deleteRecord(PUBLICATION_COLLECTION, LINKBLOG_RKEY);
+      const publication = await client.deleteRecord(PUBLICATION_COLLECTION, publicationRkey);
       if (!publication.success && !isNotFoundError(publication.error)) {
         return {
           success: false,
@@ -1321,6 +2113,9 @@ export async function deleteLinkblog(
     getLinkblogTarget(env, session.did),
     isLinkblogDisabled(env, session.did),
   ]);
+  // Delete the publication we actually own, legacy rkey or minted TID.
+  // deleteRecord doesn't validate the key, so this works on both.
+  const publicationRkey = rkeyFromPublicationUri(previous.defaultSiteUri);
 
   // Disable first: every write path checks the flag, so this is what stops a
   // share racing the walk and landing a document behind it. The connected
@@ -1337,7 +2132,7 @@ export async function deleteLinkblog(
 
   let purged: PurgeResult;
   try {
-    purged = await purgeLinkblogRecords(session);
+    purged = await purgeLinkblogRecords(session, publicationRkey);
   } catch (e) {
     // purgeLinkblogRecords reports PDS failures as values, but an unexpected
     // throw (a D1 error, a client it couldn't build) would escape past the
@@ -1464,30 +2259,42 @@ export async function updateLinkblogShareNote(
   // comes from the website card (its durable home); `rec.description` is the
   // fallback for legacy records that still carry it at the top level. `...rec`
   // preserves that legacy `description` as-is — we never add one to a new record.
-  const excerpt = websiteCardExcerpt(rec.content) || rec.description || '';
+  const card = websiteCardMeta(rec.content);
+  const excerpt = card.excerpt || rec.description || '';
   const trimmedNote = note.trim();
   const article = {
-    url: rec.links?.find((l) => /^https?:\/\//i.test(l.uri))?.uri,
-    title: rec.title,
+    url: readDocumentLinks(rec.links).find((l) => /^https?:\/\//i.test(l.uri))?.uri,
+    // The card's own title first: `rec.title` may carry a decoration (🔗 …, “…”)
+    // that must never become a card title if the card has to be rebuilt. Stripping
+    // is the fallback for a record whose card is genuinely missing.
+    title: card.title ?? stripTitleDecoration(rec.title),
   };
   // Re-resolve mentions on edit so added/removed @handles re-encode; recipients
   // pick up the change on their next Constellation poll. (Facets are a Leaflet
   // richtext feature; the other formats store the note as plain text.)
   const resolvedHandles =
     format === 'leaflet' ? await resolveNoteMentionHandles(trimmedNote) : new Map<string, string>();
+  // Only a record that opted into attribution has a generated line to carry
+  // through. On every other record that sentence is the author's own — rebuilt
+  // from the submitted note like any other line, and removable.
+  const hasAttribution = rec.skyreaderAttribution === true;
 
   const updated: DocumentRecord = {
     ...rec,
     $type: DOCUMENT_COLLECTION,
+    // Re-wrap the refs on the way out. `...rec` would otherwise put back the
+    // array an older record holds, which the lexicon now rejects — so editing
+    // any pre-existing post would fail. Same refs, current shape.
+    links: buildDocumentLinks(readDocumentLinks(rec.links)),
     // Backfill the marker onto pre-marker shares while we're rewriting anyway.
     skyreaderLinkblog: LINKBLOG_MARKER_URL,
     textContent: [trimmedNote, excerpt].filter(Boolean).join('\n\n') || undefined,
     content:
       format === 'leaflet'
-        ? replaceLeafletNoteRegion(rec.content, trimmedNote, resolvedHandles)
+        ? replaceLeafletNoteRegion(rec.content, trimmedNote, resolvedHandles, hasAttribution)
         : format === 'markpub'
-          ? replaceMarkpubNote(rec.content, trimmedNote, article)
-          : replaceItemsNoteRegion(rec.content, format, trimmedNote, article),
+          ? replaceMarkpubNote(rec.content, trimmedNote, article, hasAttribution)
+          : replaceItemsNoteRegion(rec.content, format, trimmedNote, article, hasAttribution),
   };
 
   const written = await pdsClient.putRecord(DOCUMENT_COLLECTION, rkey, updated);

@@ -17,6 +17,7 @@ import { fetchPublicationMeta, getProfile, resolveHandleToDid } from '$lib/serve
 import {
   fetchLinkblogDocuments,
   fetchSocialContext,
+  linkblogScopes,
   resolveLinkblogTarget,
   type ProxyConfig,
 } from '$lib/server/proxy';
@@ -46,7 +47,7 @@ export const load: PageServerLoad = async ({ params, url }) => {
   const [profile, pub, docs] = await Promise.all([
     getProfile(did),
     fetchPublicationMeta(did, target.siteUri),
-    fetchLinkblogDocuments(cfg, did, [target.siteUri, target.defaultSiteUri]),
+    fetchLinkblogDocuments(cfg, did, linkblogScopes(target)),
   ]);
 
   const doc = docs.find((d) => rkeyFromUri(d.recordUri) === rkey);

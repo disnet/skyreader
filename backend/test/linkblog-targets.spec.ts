@@ -52,6 +52,9 @@ describe('getLinkblogTargets', () => {
       siteUri: `at://${CONNECTED}/site.standard.publication/my-leaflet`,
       format: 'pckt',
       external: true,
+      // Their own Skyreader publication rides along even while they publish
+      // elsewhere — it's what a disconnect comes back to.
+      defaultSiteUri: publicationUri(CONNECTED),
     });
   });
 
@@ -62,6 +65,7 @@ describe('getLinkblogTargets', () => {
         siteUri: publicationUri(did),
         format: 'leaflet',
         external: false,
+        defaultSiteUri: publicationUri(did),
       });
     }
   });
