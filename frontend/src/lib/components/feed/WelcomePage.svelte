@@ -14,6 +14,7 @@
     supporterPlans,
   } from '$lib/utils/pricing';
   import { freeLimits, supporterLimits } from '$lib/constants/tierLimits';
+  import { docsUrl } from '$lib/constants/docs';
 
   let starting = $state(false);
   let startError = $state<string | null>(null);
@@ -539,6 +540,11 @@
       {#if startError}
         <p class="start-error" role="alert">{startError}</p>
       {/if}
+      <p class="hero-note">
+        Want the full tour first? <a href={docsUrl()} target="_blank" rel="noopener noreferrer"
+          >Read the docs</a
+        >.
+      </p>
     </div>
   </section>
 </div>

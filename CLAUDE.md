@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository Structure
 
-This is a monorepo with 6 packages:
+This is a monorepo with 7 packages:
 
 - `backend/` - Cloudflare Workers API
 - `frontend/` - SvelteKit PWA
@@ -12,6 +12,7 @@ This is a monorepo with 6 packages:
 - `feed-proxy/` - Feed crawler + article extraction (Fly.io; one app per environment)
 - `linkblog-site/` - Standalone SvelteKit app rendering public linkblogs at `linkblogs.skyreader.app` (Cloudflare Pages)
 - `extension/` - Chrome extension for one-click saves with live-DOM article extraction (Manifest V3)
+- `docs-site/` - User-facing docs at `docs.skyreader.app` (Astro Starlight; Cloudflare Pages)
 
 Each package has its own CLAUDE.md with detailed guidance.
 
@@ -132,6 +133,19 @@ npm run preview          # Preview build locally with wrangler
 npm run check            # Type checking (svelte-check)
 npm run deploy           # Build and deploy to Cloudflare Pages
 ```
+
+### Docs (`docs-site/`)
+
+```bash
+npm run dev              # Astro dev server (port 5176)
+npm run build            # Static build → dist/
+npm run check            # astro check + prettier
+```
+
+User-facing docs (docs.skyreader.app), Astro Starlight on Cloudflare Pages. Pages are Markdown in
+`src/content/docs/`; the sidebar lives in `astro.config.mjs` (add both when adding a page). Copy
+must follow the Copy & Voice rules above — see `docs-site/CLAUDE.md`. Docs ride feature PRs: a
+user-visible behavior change updates its docs page in the same PR.
 
 ### E2E Tests (root)
 

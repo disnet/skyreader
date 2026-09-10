@@ -1,0 +1,124 @@
+name: Deploy Docs Site
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+
+  # The workflow file is in its own paths filter on purpose: a commit that only
+  # changes this file still has to run it. Without that, a fix to the deploy
+  # logic merges to main and never executes — the fix looks shipped while every
+  # deploy keeps using the old logic. See feed-proxy-deploy.yml for the incident.
+  push:
+    branches: [main]
+    paths: ['docs-site/**', '.github/workflows/docs-deploy.yml']
+  release:
+    types: [published]
+
+concurrency:
+  group: docs-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: docs-site
+
+jobs:
+  typecheck:
+    name: Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: docs-site/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run type check
+        run: npm run check
+
+  deploy-staging:
+    name: Deploy to Staging
+    needs: typecheck
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: docs-site/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Fully static: the build embeds GITHUB_SHA into /version.json so the
+      # smoke check can verify Pages is serving this commit.
+      - name: Build
+        run: npm run build
+
+      - name: Deploy to Cloudflare Pages (staging)
+        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name=skyreader-docs-staging --commit-dirty=true
+          workingDirectory: docs-site
+
+      - name: Smoke check staging
+        env:
+          SMOKE_URL: https://staging-docs.skyreader.app
+        run: |
+          node ../scripts/smoke-check.mjs "$SMOKE_URL/version.json" --version "$GITHUB_SHA"
+          node ../scripts/smoke-check.mjs "$SMOKE_URL" --contains 'Skyreader'
+
+  deploy-production:
+    name: Deploy to Production
+    needs: typecheck
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: docs-site/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Deploy to Cloudflare Pages (production)
+        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name=skyreader-docs --branch=main --commit-dirty=true
+          workingDirectory: docs-site
+
+      - name: Smoke check production
+        env:
+          SMOKE_URL: https://docs.skyreader.app
+        run: |
+          node ../scripts/smoke-check.mjs "$SMOKE_URL/version.json" --version "$GITHUB_SHA"
+          node ../scripts/smoke-check.mjs "$SMOKE_URL" --contains 'Skyreader'

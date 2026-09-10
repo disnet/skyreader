@@ -1,0 +1,32 @@
+{
+  "name": "skyreader-docs-site",
+  "license": "AGPL-3.0-only",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev --port 5176",
+    "build": "node scripts/write-version.mjs && astro build",
+    "preview": "astro preview",
+    "check": "astro check && prettier --check .",
+    "format": "prettier --write .",
+    "deploy": "npm run build && wrangler pages deploy dist"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "^0.36.0",
+    "astro": "^5.16.0"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.4",
+    "prettier": "^3.9.6",
+    "prettier-plugin-astro": "^0.14.1",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.125.0"
+  },
+  "allowScripts": {
+    "esbuild@0.27.7": true,
+    "esbuild@0.25.12": true,
+    "esbuild@0.28.1": true,
+    "workerd@1.20260908.1": true
+  }
+}
