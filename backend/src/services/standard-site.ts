@@ -85,6 +85,10 @@ export interface DocumentRecord {
   links?: unknown;
   // Skyreader's provenance marker on a link post it wrote.
   skyreaderLinkblog?: string;
+  // Set when Skyreader appended its own attribution sentence to the note. Only
+  // the record's own flag can tell an attribution line we wrote from one the
+  // author typed, so every reader that strips or rebuilds the note needs it.
+  skyreaderAttribution?: boolean;
 }
 
 /**
@@ -406,7 +410,8 @@ export function recordToDocument(
     readerCollection: options.readerCollection || undefined,
     skyreaderLinkblog:
       typeof doc.skyreaderLinkblog === 'string' ? doc.skyreaderLinkblog : undefined,
-  } as ProxyDocument;
+    skyreaderAttribution: doc.skyreaderAttribution === true ? true : undefined,
+  };
 }
 
 /**

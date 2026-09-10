@@ -2,7 +2,7 @@
 // formatting, and URL safety. No network or framework deps, so they're shared by
 // the server load functions and the Svelte components alike.
 
-import type { ProxyDocument, Profile, PublicationMeta, SocialContext } from './types';
+import type { ProxyDocument, Profile, PublicationMeta } from './types';
 
 export const PUBLICATION_COLLECTION = 'site.standard.publication';
 export const DOCUMENT_COLLECTION = 'site.standard.document';
@@ -535,20 +535,6 @@ export function formatDate(iso: string): string {
     month: 'short',
     day: 'numeric',
   });
-}
-
-// A quiet "3 recommends · 1 quote" fragment for the entry meta row. Returns '' when
-// there's nothing to show.
-export function socialCountsText(ctx: SocialContext | undefined): string {
-  if (!ctx) return '';
-  const parts: string[] = [];
-  if (ctx.recommendCount > 0) {
-    parts.push(`${ctx.recommendCount} ${ctx.recommendCount === 1 ? 'recommend' : 'recommends'}`);
-  }
-  if (ctx.quoteCount > 0) {
-    parts.push(`${ctx.quoteCount} ${ctx.quoteCount === 1 ? 'quote' : 'quotes'}`);
-  }
-  return parts.join(' · ');
 }
 
 export function hostnameOf(url: string | undefined): string | null {

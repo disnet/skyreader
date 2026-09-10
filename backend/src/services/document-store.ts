@@ -1482,7 +1482,18 @@ async function attachReaderCollection(
 export async function loadAuthorDocuments(
   env: Env,
   authorDid: string,
-  options: { siteUri?: string; collectionBudget?: { remaining: number } } = {}
+  options: {
+    siteUri?: string;
+    collectionBudget?: { remaining: number };
+    /**
+     * Attach curated editions (`readerCollection`), on by default. Off for a
+     * caller that doesn't render them: attachment costs a `collections_v2` read
+     * per call and, on a cold or stale preview, a cross-PDS `getRecord` fan-out
+     * and a write-back per edition — all of it for a field that would be
+     * serialized and thrown away.
+     */
+    readerCollections?: boolean;
+  } = {}
 ): Promise<ProxyDocument[]> {
   const scoped = options.siteUri
     ? await env.DB.prepare(
@@ -1509,12 +1520,15 @@ export async function loadAuthorDocuments(
   );
 
   // Curated editions are rare; one query per author covers every document here.
-  const collectionRows = await env.DB.prepare(
-    'SELECT author_did, rkey, record_json, preview_json, preview_at FROM collections_v2 WHERE author_did = ?'
-  )
-    .bind(authorDid)
-    .all<CollectionRow>();
-  const byRkey = new Map((collectionRows.results ?? []).map((r) => [r.rkey, r]));
+  const collectionRows =
+    options.readerCollections === false
+      ? null
+      : await env.DB.prepare(
+          'SELECT author_did, rkey, record_json, preview_json, preview_at FROM collections_v2 WHERE author_did = ?'
+        )
+          .bind(authorDid)
+          .all<CollectionRow>();
+  const byRkey = new Map((collectionRows?.results ?? []).map((r) => [r.rkey, r]));
   const budget = options.collectionBudget ?? { remaining: MAX_COLLECTION_RESOLVES_PER_REQUEST };
 
   const documents: ProxyDocument[] = [];

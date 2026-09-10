@@ -347,9 +347,6 @@ img {
 .meta .sep {
   color: var(--line);
 }
-.meta .social {
-  color: var(--muted);
-}
 /* The date doubles as the (subtle) permalink to the commentary. It must sit above
    the headline's stretched ::after overlay to stay clickable, and stays quiet until
    hovered so the headline keeps the visual weight. */
@@ -418,37 +415,6 @@ img {
 }
 .readmore:hover .arrow {
   transform: translateX(3px);
-}
-
-/* Also-linked-by */
-.alsolinked {
-  margin-top: 2rem;
-  padding-top: 1.5rem;
-  border-top: 1px solid var(--line);
-  font-size: 0.9375rem;
-}
-.alsolabel {
-  display: block;
-  color: var(--muted);
-  font-size: 0.75rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  margin-bottom: 0.75rem;
-}
-.alsolinked ul {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-.alsolinked li {
-  color: var(--ink);
-}
-.alsonote {
-  color: var(--muted);
 }
 
 /* Empty + footer */

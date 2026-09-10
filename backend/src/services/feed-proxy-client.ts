@@ -136,6 +136,14 @@ export interface ProxyDocument {
   indexedAt?: string;
   createdAt: string;
   siteIcon?: string;
+  // External resource refs — for a link post, the article it points at. Flattened
+  // from either shape `site.standard.document.links` has taken (see
+  // readRecordLinks in services/standard-site.ts).
+  links?: Array<{ uri: string; rel?: string }>;
+  // Skyreader's provenance marker on a link post it wrote, and whether Skyreader
+  // appended the attribution sentence to that post's note.
+  skyreaderLinkblog?: string;
+  skyreaderAttribution?: boolean;
   // Present when the document is a Standard Reader "Collection" (curated edition).
   // The proxy resolves each curated item to a preview; we forward it untouched.
   readerCollection?: ProxyReaderCollection;

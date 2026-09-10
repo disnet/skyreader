@@ -39,6 +39,7 @@ import {
   type LinkblogTitleStyle,
   type LinkblogCardPosition,
 } from '../services/linkblog-sync';
+import { loadLinkblogDocuments } from '../services/linkblog-documents';
 import { appForContentType, appForUrl, type PublicationApp } from '../services/publication-app';
 import { createPDSClient } from '../services/pds-client';
 import { getLinkblogDiscover, getLinkblogFriends } from '../services/linkblog-discovery';
@@ -798,6 +799,40 @@ export async function handleResolvePublication(request: Request, env: Env): Prom
       headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=60' },
     }
   );
+}
+
+// GET /api/linkblog/documents/<did>
+//
+// The public linkblog's posts, for `linkblogs.skyreader.app`. Unauthenticated and
+// unauthorised on purpose: this is the same content the page already renders to
+// anyone, and the public site calls it server-side per request.
+//
+// It returns the list already scoped to the author's publications, filtered to
+// link posts, and ordered newest-shared-first, so the public site holds no copy of
+// those rules — the previous split (proxy returned documents, the site scoped and
+// filtered them) is what let a lexicon change blank out a linkblog with no error
+// anywhere. `Cache-Control` matches the resolve endpoint next door, which the same
+// page fetches on the same request.
+export async function handleLinkblogDocuments(request: Request, env: Env): Promise<Response> {
+  if (request.method !== 'GET') return json({ error: 'Method not allowed' }, 405);
+  const did = decodeURIComponent(new URL(request.url).pathname.split('/').pop() || '');
+  if (!did.startsWith('did:')) return json({ error: 'Invalid DID' }, 400);
+
+  const [target, visibility] = await Promise.all([
+    getLinkblogTarget(env, did),
+    getLinkblogVisibility(env, did),
+  ]);
+
+  // Same gate as the resolve endpoint, applied again rather than trusted from it:
+  // a deleted or hidden linkblog should not serve its posts from a second address.
+  if (visibility.disabled || (visibility.pageHidden && target.external)) {
+    return json({ error: 'Linkblog not found' }, 404);
+  }
+
+  const documents = await loadLinkblogDocuments(env, did, target);
+  return new Response(JSON.stringify({ documents }), {
+    headers: { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=60' },
+  });
 }
 
 // PUT /api/linkblog/publication/visibility — { pageHidden: boolean }

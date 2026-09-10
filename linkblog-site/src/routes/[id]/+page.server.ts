@@ -7,13 +7,7 @@ import { error, redirect } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
 import { apiBaseFor, appUrlFor, blogUrlFor, isDid } from '$lib/fields';
 import { fetchPublicationMeta, getProfile, resolveHandleToDid } from '$lib/server/identity';
-import {
-  fetchLinkblogDocuments,
-  fetchSocialContext,
-  linkblogScopes,
-  resolveLinkblogTarget,
-  type ProxyConfig,
-} from '$lib/server/proxy';
+import { fetchLinkblogDocuments, resolveLinkblogTarget } from '$lib/server/api';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ params, url }) => {
@@ -28,26 +22,19 @@ export const load: PageServerLoad = async ({ params, url }) => {
   }
 
   const did = id;
-  const cfg: ProxyConfig = {
-    feedProxyUrl: env.FEED_PROXY_URL || 'http://127.0.0.1:3000',
-    feedProxySecret: env.FEED_PROXY_SECRET,
-  };
-
   const apiBase = apiBaseFor(origin, env.API_URL);
   const target = await resolveLinkblogTarget(apiBase, did);
   if (target.hidden) throw error(404, 'Linkblog not found');
-  const [profile, pub, docs] = await Promise.all([
+  const [profile, pub, fetched] = await Promise.all([
     getProfile(did),
     fetchPublicationMeta(did, target.siteUri),
-    fetchLinkblogDocuments(cfg, did, linkblogScopes(target)),
+    fetchLinkblogDocuments(apiBase, did),
   ]);
-
-  // Counts-only social context for the most recent entries (one proxy batch, no
-  // per-linker fetches) — keeps the index fast. Best-effort; empty on failure.
-  const social = await fetchSocialContext(
-    cfg,
-    docs.slice(0, 25).map((d) => ({ key: d.recordUri, docUri: d.recordUri }))
-  );
+  // Fail open like the resolve above: an API blip renders an empty page at a URL
+  // people have bookmarked rather than an error. `fetched` stays around because
+  // `null` (couldn't ask) and `[]` (nothing shared) are not the same answer to the
+  // canonical question below.
+  const docs = fetched ?? [];
 
   return {
     origin,
@@ -55,7 +42,6 @@ export const load: PageServerLoad = async ({ params, url }) => {
     profile,
     pub,
     docs,
-    social,
     apiBase,
     publication: target.siteUri,
     // With a connected publication, these posts have a home of their own and this
@@ -67,9 +53,11 @@ export const load: PageServerLoad = async ({ params, url }) => {
     // publications, so anything shared before the connection still lives in
     // `skyreader-links` and is listed here but not there. Canonicalizing then
     // would hand search engines a page missing exactly those posts, so this page
-    // stays its own canonical instead.
+    // stays its own canonical instead. A failed fetch is not evidence of a
+    // superset either — canonicalizing off an outage would point crawlers away
+    // from this page on the strength of a list we never received.
     canonicalUrl:
-      target.external && !docs.some((d) => d.siteUri === target.defaultSiteUri)
+      fetched && target.external && !fetched.some((d) => d.siteUri === target.defaultSiteUri)
         ? (pub?.url ?? null)
         : null,
     appUrl: appUrlFor(origin, env.APP_URL),

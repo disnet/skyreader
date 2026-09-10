@@ -16,9 +16,7 @@
     renderBodyHtml,
     rkeyFromUri,
     safeHttpUrl,
-    socialCountsText,
   } from '$lib/fields';
-  import AlsoLinkedBy from '$lib/components/AlsoLinkedBy.svelte';
   import Meta from '$lib/components/Meta.svelte';
   import type { PageData } from './$types';
 
@@ -36,7 +34,6 @@
   const articleUrl = $derived(safeHttpUrl(externalArticleUrl(doc) || doc.canonicalUrl));
   const host = $derived(hostnameOf(articleUrl ?? undefined));
   const date = $derived(formatDate(doc.createdAt || doc.publishedAt));
-  const social = $derived(socialCountsText(data.ctx));
 
   const rkey = $derived(rkeyFromUri(doc.recordUri) ?? '');
   const backHref = $derived(blogUrlFor(data.origin, data.did));
@@ -81,7 +78,7 @@
   <h1 class="entry-title-lg">
     {#if articleUrl}<a href={articleUrl}>{title}</a>{:else}{title}{/if}
   </h1>
-  <Meta {host} {date} {social} />
+  <Meta {host} {date} />
   {#if note}
     <!-- The user-controlled body: restricted Markdown (blockquotes only) + @mention
          links, rendered to escaped, self-generated HTML (see renderBodyHtml). -->
@@ -104,7 +101,6 @@
       Published on <a href={sourceUrl} rel="noopener noreferrer">{sourceHost}</a>
     </p>
   {/if}
-  <AlsoLinkedBy ctx={data.ctx} />
 </article>
 <footer class="foot">
   A linkblog on <a href={data.appUrl}>Skyreader</a>, stored in the Atmosphere.
