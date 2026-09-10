@@ -3,7 +3,7 @@ title: Sharing and your linkblog
 description: Post links with commentary to a public linkblog that's portable across the Atmosphere.
 ---
 
-Sharing in Skyreader means posting a link, with your commentary, to your **linkblog**: a public publication that anyone can read, follow, or subscribe to by RSS. It's calm sharing. There are no like counts to chase and no timeline to feed; a linkblog is just the links you thought were worth writing about.
+Sharing in Skyreader means posting a link, with your commentary, to your **linkblog**: a public publication that anyone can read, follow, or subscribe to by RSS. 
 
 ## The composer
 
@@ -21,11 +21,11 @@ Your linkblog is a publication stored in your PDS, which means it's yours in a c
 
 Every linkblog gets a public page at `linkblogs.skyreader.app/your-handle`, with its own RSS feed, so anyone can follow it, in Skyreader or in any feed reader.
 
-If you already publish on the Atmosphere, you can point sharing at a standard.site publication you own (in Leaflet or similar) instead of the Skyreader-made one (**Settings → Shared links**). An optional toggle keeps a page of just your links on linkblogs.skyreader.app even then.
+If you already publish on the Atmosphere, you can point sharing at a standard.site publication you own (in Leaflet or similar) instead of the Skyreader-made one (**Settings → Shared links**). An optional toggle keeps a page of just your links on linkblogs.skyreader.app.
 
 ## How your posts read
 
-Your link posts are Atmosphere records, so other apps can render them too. On a connected publication they sit beside that site's own writing, which is where these settings matter most. **Settings → Shared links** shapes how a post reads:
+Your link posts are Atmosphere records, so other apps can render them too. On a connected publication they sit beside that site's own writing. **Settings → Shared links** shapes how a post reads:
 
 ![The "How your posts read" settings: a post title select, a link card position select, and the "Posted from Skyreader" offer toggle](../../../assets/screenshots/linkblog-post-settings.png)
 
@@ -34,7 +34,7 @@ Your link posts are Atmosphere records, so other apps can render them too. On a 
 
 Changing either applies to new posts; posts you already published keep the shape they were written in.
 
-If you'd like your posts to say where they came from, turn on **Offer a "Posted from Skyreader" line when sharing**. That adds a checkbox to the composer. Nothing is added to a post unless you tick it on that share, and the switch applies to the device you set it on.
+If you'd like your posts to say where they came from, turn on **Offer a "Posted from Skyreader" line when sharing**. That adds a checkbox to the composer. 
 
 ## What's public
 

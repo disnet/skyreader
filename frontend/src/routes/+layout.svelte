@@ -281,6 +281,8 @@
     font-size: var(--text-2xl);
     color: var(--color-primary, #0066cc);
     text-decoration: none;
+    /* Pushes the whole link group right; the links themselves stay grouped. */
+    margin-right: auto;
   }
 
   .logo-icon {
@@ -292,7 +294,6 @@
     color: var(--color-text-secondary, #666);
     text-decoration: none;
     font-size: var(--text-md);
-    margin-left: auto;
   }
 
   .feedback-link:hover {

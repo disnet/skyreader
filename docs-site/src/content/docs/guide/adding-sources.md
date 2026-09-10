@@ -6,9 +6,9 @@ description: Follow RSS feeds and Atmosphere publications, import OPML, and save
 Skyreader reads two kinds of sources today:
 
 - **RSS and Atom feeds**: any blog, news site, or site that publishes a feed.
-- **standard.site publications**: writing published on the Atmosphere, from apps like Leaflet and standard.site itself.
+- **standard.site publications**: writing published on the Atmosphere, from apps like Leaflet.
 
-Newsletters (a private address for your inbox) and Bluesky posts are on the way, but not here yet.
+More sources (like email newsletters) are on the roadmap.
 
 ## Add a feed
 
@@ -28,14 +28,14 @@ Use the **+** button and choose **Add RSS Feed**. Paste any page URL, or just a 
 
 You don't have to be in Skyreader to add to it:
 
-- **Chrome extension:** a toolbar button that saves the page you're reading and lists the feeds it publishes, each with a subscribe button. Because it reads the page in your own browser, it captures articles the server can't reach, including many paywalled ones. Re-saving a page updates the stored copy.
+- **[Chrome extension](https://chromewebstore.google.com/detail/skyreader/kdefpnnpmajcclfepekgdkcdiklfooed):** a toolbar button that saves the page you're reading and lists the feeds it publishes, each with a subscribe button.
 - **Bookmarklets** (desktop): drag **Save to Skyreader** and **Subscribe in Skyreader** from **Settings → Save from anywhere** to your bookmarks bar.
 - **iPhone / iPad:** add the Save and Subscribe shortcuts from the same settings section; they appear in the share sheet.
 - **Android:** install Skyreader to your home screen and it appears in the system share sheet.
 
 ## Discover
 
-The **Discover** page suggests linkblogs from people you follow and around Skyreader, and standard.site publications owned by the accounts you follow on Bluesky.
+The **Discover** page suggests linkblogs and standard.site publications owned by the accounts you follow on Bluesky.
 
 ## Channels
 

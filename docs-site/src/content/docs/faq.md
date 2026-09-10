@@ -19,9 +19,11 @@ Some features, like backing your saves with Semble or Margin, need a permission 
 
 Usually the feed just hasn't published. Skyreader crawls feeds continuously and surfaces new items within minutes of them appearing. If a site moved or removed its feed, the feed's row in **Manage sources** is the place to check and update it.
 
-## An article came in truncated, or hit a paywall. Can I get the full text?
+If you notice a live feed that isn't working in Skyreader, please open a [feedback](https://skyreader.app/feedback).
 
-Often, yes. The Chrome extension reads the page in your own browser, where you may have access the server doesn't. Open the article on its site, then use the extension's **Save this page**; if you'd saved it before, re-saving upgrades the stored copy with the full text.
+## An article came in truncated. Can I get the full text?
+
+Often, yes. The [Chrome extension](https://chromewebstore.google.com/detail/skyreader/kdefpnnpmajcclfepekgdkcdiklfooed) reads the page in your own browser, where you may have access the server doesn't. Open the article on its site, then use the extension's **Save this page**; if you'd saved it before, re-saving upgrades the stored copy with the full text.
 
 ## What works offline?
 
@@ -37,4 +39,6 @@ Reading your feeds and saved articles, marking read, highlighting, notes, and th
 
 ## How do I report a problem or send feedback?
 
-The feedback link is in **Settings → About**. For abuse reports: [abuse@skyreader.app](mailto:abuse@skyreader.app). For billing: [support@skyreader.app](mailto:support@skyreader.app).
+You can leave public feedback (questions, feature ideas, bugs) on Skyreader's [userinput board](https://skyreader.app/feedback).
+
+For other questions you can email: [support@skyreader.app](mailto:support@skyreader.app).

@@ -5,29 +5,29 @@ description: The library, channels, the reader, paged mode, the daily magazine, 
 
 ## The library
 
-**Feeds** shows everything you follow in one chronological stream. No algorithm, no ranking: newest first, articles and Atmosphere documents together. The sidebar lists your sources and channels; **channels** are saved views over the library, filtered by source, content type, or read state, so "Newsletters" or "Slow reads" is one click away.
+**Feeds** shows everything you follow in one chronological stream. The sidebar lists your sources and channels; **channels** are saved views over the library, filtered by source, content type, or read state, so "Newsletters" or "Slow reads" is one click away.
 
 ![The Feeds view: sources and channels in the sidebar, newest articles first in the stream](../../../assets/screenshots/library.png)
 
-Skyreader tracks read state quietly. Items you scroll past can be marked read automatically (a toggle in **Settings → Reading**), and read items fade rather than vanish, so the page doesn't shift under you mid-session.
+Items you scroll past can be marked read automatically (a toggle in **Settings → Reading**).
 
 **Home** is the calmer front page: pick up where you left off, recent saves, your daily magazine.
 
 ## The reader
 
-Opening an article gives you a clean, full-screen reading surface. The text is the product; the chrome stays out of the way.
+Opening an article gives you a clean, full-screen reading surface. 
 
 ![The reader: a full-screen article with quiet chrome and a Discussion section at the end](../../../assets/screenshots/reader.png)
 
-- **Typeface and size** are yours: sans serif, serif, monospace, or Literata, at the size you choose (**Settings → Appearance**).
-- **Paged mode**: a toggle in the reader switches from scrolling to page turns, one page at a time, or two columns side by side on a wide screen. Kindle-style, for when scrolling feels like work.
+- **Style customization** : change the font style and size.
+- **Paged mode**: a toggle in the reader switches from scrolling to page turns, one page at a time, or two columns side by side on a wide screen. 
 - **Highlighting**: double-click a paragraph or select text. See [Saving and highlights](/guide/saving-and-highlights/).
 
 ![Paged mode: the same article flowed into two side-by-side columns, turned a page at a time](../../../assets/screenshots/paged-reader.png)
 
 ## Discussion
 
-Articles carry a quiet **Discussion** section that gathers what people across the Atmosphere have written about that link: linkblog notes, Leaflet comments, Bluesky posts, Margin annotations, Semble connections, merged into one stream. It loads only when you open it, and there's a compose row if you want to add your own.
+Articles carry a **Discussion** section at the end that gathers what people across the Atmosphere have written about that link: linkblog notes, Leaflet comments, Bluesky posts, Margin annotations, Semble connections, merged into one stream. 
 
 ## The daily magazine
 

@@ -5,7 +5,7 @@ description: Save articles from anywhere, highlight passages, and review what yo
 
 ## Saving
 
-Save an article from its card or from the reader, or from outside Skyreader entirely: the Chrome extension, the bookmarklet, the iOS shortcut, or the Android share sheet (see [Adding sources](/guide/adding-sources/#save-and-subscribe-from-anywhere)). Saves keep the full article text, so they read fine offline.
+Save an article from its card or from the reader, or from outside Skyreader entirely: the [Chrome extension](https://chromewebstore.google.com/detail/skyreader/kdefpnnpmajcclfepekgdkcdiklfooed), the bookmarklet, the iOS shortcut, or the Android share sheet (see [Adding sources](/guide/adding-sources/#save-and-subscribe-from-anywhere)). Saves keep the full article text, so they read fine offline.
 
 ![The Saved list: articles kept with their full text, newest first](../../../assets/screenshots/saved.png)
 
@@ -15,11 +15,11 @@ Saves are **private to Skyreader** by default. Nothing is published.
 
 If you use [Semble](https://semble.so) or [Margin](https://margin.at), you can back your Saved list with one of them (**Settings → Saved articles**). Your Saved list becomes a collection there: edit it in either app, or in any Atmospheric app, and the two stay in sync.
 
-One thing to know before turning it on: **backing publishes all of your saves publicly**, because Semble and Margin collections are public. Skyreader says this at the switch, and you can turn backing off at any time.
+One thing to know before turning it on: **backing publishes all of your saves publicly**, because Semble and Margin collections are public.
 
 ## Highlights
 
-While reading, double-click a paragraph or select text to highlight it. Drag the handles at either end to adjust what a highlight covers, even across page turns in paged mode. Add a note to any highlight.
+While reading, double-click a paragraph or select text to highlight it. Drag the handles at either end to adjust what a highlight covers. Add a note to any highlight.
 
 ![A highlighted passage in the reader, marked in yellow](../../../assets/screenshots/highlight.png)
 
