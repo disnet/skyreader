@@ -39,17 +39,3 @@ export interface PublicationMeta {
   // this page is a view of it. Only ever an http(s) URL — see fetchPublicationMeta.
   url?: string;
 }
-
-export interface AlsoLinkedEntry {
-  did: string;
-  handle: string | null;
-  note: string | null;
-  recordUri: string;
-}
-
-export interface SocialContext {
-  key: string;
-  recommendCount: number;
-  quoteCount: number;
-  alsoLinkedBy: AlsoLinkedEntry[];
-}

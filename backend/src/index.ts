@@ -52,6 +52,7 @@ import {
   handleSetLinkblogFormatting,
   handleDeletePublication,
   handleRestorePublication,
+  handleLinkblogDocuments,
 } from './routes/linkblog';
 import { handleAtmosphereSubscription } from './routes/atmosphere';
 import {
@@ -508,6 +509,11 @@ async function route(
       break;
     case url.pathname.startsWith('/api/linkblog/resolve/'):
       response = await handleResolvePublication(request, env);
+      break;
+    // Public linkblog posts, for linkblogs.skyreader.app. Unauthenticated like
+    // the resolve above it — same content, same readers.
+    case url.pathname.startsWith('/api/linkblog/documents/'):
+      response = await handleLinkblogDocuments(request, env);
       break;
 
     // Subscribe via the Atmosphere — writes the portable

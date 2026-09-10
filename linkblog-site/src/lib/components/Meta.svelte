@@ -1,20 +1,18 @@
 <script lang="ts">
-  // The quiet meta row beneath an entry: source host · share date · social counts.
-  // Each part is optional; separators only appear between present parts. When a
-  // `permalink` is given, the date doubles as the (subtle) permalink to the entry.
+  // The quiet meta row beneath an entry: source host · share date. Each part is
+  // optional; separators only appear between present parts. When a `permalink` is
+  // given, the date doubles as the (subtle) permalink to the entry.
   interface Props {
     host?: string | null;
     date?: string;
     permalink?: string | null;
-    social?: string;
   }
-  let { host = null, date = '', permalink = null, social = '' }: Props = $props();
+  let { host = null, date = '', permalink = null }: Props = $props();
 
   const parts = $derived(
     [
       host ? { cls: 'src', text: host, href: null } : null,
       date ? { cls: '', text: date, href: permalink } : null,
-      social ? { cls: 'social', text: social, href: null } : null,
     ].filter((p): p is { cls: string; text: string; href: string | null } => p !== null)
   );
 </script>

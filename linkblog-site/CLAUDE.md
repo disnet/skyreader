@@ -27,9 +27,20 @@ Functions at `frontend/functions/blogs/`.)
 ## Data flow
 
 - Server-side: profile + handle resolution via the Bluesky public AppView
-  (`src/lib/server/identity.ts`); publication metadata from the user's PDS;
-  linkblog documents + social context from the Fly.io feed proxy
-  (`src/lib/server/proxy.ts`). All best-effort — pages degrade to profile defaults.
+  (`src/lib/server/identity.ts`); publication metadata from the user's PDS; the
+  linkblog's target publication and its posts from the Skyreader API
+  (`src/lib/server/api.ts`). Best-effort, but "couldn't ask" is not "nothing here":
+  `fetchLinkblogDocuments` returns `null` on a failure, the HTML pages fail open to
+  an empty shell, and **`feed.xml` answers 503 + `no-store`** rather than a cached
+  empty channel that readers record as every entry having been deleted.
+- **No feed-proxy dependency.** `GET /api/linkblog/documents/<did>` returns the
+  posts already scoped to the author's publications, filtered to link posts and
+  ordered newest-shared-first, so this app holds no copy of those rules. It used
+  to: the proxy returned documents and this app scoped and filtered them, which put
+  two copies of the record mapper on two deploy cadences — and a `links` union the
+  older one didn't understand blanked a linkblog with no error anywhere.
+  Constellation social context (recommend/quote counts, "also linked by") was
+  dropped rather than ported; it was the last thing here reaching past the API.
 - Browser-side: only the **subscribe button** (`SubscribeActions.svelte`) is
   interactive. It calls the backend API (`api.skyreader.app`) cross-origin but
   same-site, so the session cookie rides the credentialed fetch; the linkblog
@@ -38,15 +49,19 @@ Functions at `frontend/functions/blogs/`.)
 
 ## Environment
 
-Read via `$env/dynamic/private` (so do **not** use the `PUBLIC_` prefix):
+Read via `$env/dynamic/private` (so do **not** use the `PUBLIC_` prefix). There are
+**no secrets** — every backing service this app reads is public.
 
-- `FEED_PROXY_URL` — Fly.io feed proxy (set in `wrangler.toml` [vars]).
-- `FEED_PROXY_SECRET` — optional `X-Proxy-Secret` (set as a Pages secret).
 - `API_URL` / `APP_URL` — optional overrides; otherwise derived from the request
-  host (`apiBaseFor`/`appUrlFor`).
+  host (`apiBaseFor` / `appUrlFor`).
 
-Local dev defaults `FEED_PROXY_URL` to `http://127.0.0.1:3000`; copy `.env.example`
-to `.env` to override.
+**Nothing goes in `wrangler.toml` `[vars]`.** Both Pages projects deploy from the
+same file, so a var set there lands on both — that is how staging came to read from
+the _production_ feed proxy back when documents came from there. Derive from the
+host instead.
+
+Local dev needs no `.env` at all: `127.0.0.1` derives the local backend on 8787.
+Copy `.env.example` to `.env` only to override.
 
 ## Commands
 

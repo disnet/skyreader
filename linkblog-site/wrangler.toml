@@ -3,18 +3,19 @@ compatibility_date = "2025-11-12"
 compatibility_flags = ["nodejs_compat"]
 pages_build_output_dir = ".svelte-kit/cloudflare"
 
-[vars]
-FEED_PROXY_URL = "https://skyreader-feed-proxy.fly.dev"
-# API_URL / APP_URL are derived from the request host at runtime (see
-# apiBaseFor/appUrlFor); set them only to override for a non-standard host.
+# No [vars] here on purpose. Both Pages projects (staging + production) deploy
+# from this one file, so anything set here is applied to BOTH. That is how
+# staging-linkblogs once ended up reading from the PRODUCTION feed proxy — pinned
+# there in [vars] — and quietly rendering main-branch records against a proxy that
+# only redeploys on release. Origins are derived from the request host at runtime
+# instead (apiBaseFor / appUrlFor in src/lib/fields.ts).
 
 # Public read-only linkblog renderer (linkblogs.skyreader.app).
-# Server-side it talks to the Fly.io feed proxy; the browser-side subscribe
-# button talks to the backend API (api.skyreader.app), wired via CSP connect-src
-# in svelte.config.js and apiBaseFor() at request time.
+# Server-side it reads the linkblog's target publication and its posts from the
+# Skyreader API; the browser-side subscribe button calls the same API, wired via
+# CSP connect-src in svelte.config.js. Both origins come from apiBaseFor() at
+# request time. No feed-proxy dependency, and no shared secret to keep in step.
 #
-# Set these per-environment in the Cloudflare Pages dashboard (or via
-# `wrangler pages secret put` for the secret):
-#   FEED_PROXY_URL     e.g. https://skyreader-feed-proxy.fly.dev
-#   FEED_PROXY_SECRET  (secret) optional X-Proxy-Secret for the proxy
-#   PUBLIC_API_URL     optional override for the subscribe button's API origin
+# Optional per-project overrides, set in the Cloudflare Pages dashboard:
+#   API_URL         override for the server-side API origin
+#   PUBLIC_API_URL  override for the subscribe button's API origin

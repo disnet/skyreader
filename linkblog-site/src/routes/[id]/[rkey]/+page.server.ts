@@ -4,23 +4,9 @@
 
 import { error, redirect } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
-import {
-  apiBaseFor,
-  appUrlFor,
-  entryUrlFor,
-  externalArticleUrl,
-  isDid,
-  rkeyFromUri,
-  safeHttpUrl,
-} from '$lib/fields';
+import { apiBaseFor, appUrlFor, entryUrlFor, isDid, rkeyFromUri, safeHttpUrl } from '$lib/fields';
 import { fetchPublicationMeta, getProfile, resolveHandleToDid } from '$lib/server/identity';
-import {
-  fetchLinkblogDocuments,
-  fetchSocialContext,
-  linkblogScopes,
-  resolveLinkblogTarget,
-  type ProxyConfig,
-} from '$lib/server/proxy';
+import { fetchLinkblogDocuments, resolveLinkblogTarget } from '$lib/server/api';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ params, url }) => {
@@ -36,33 +22,22 @@ export const load: PageServerLoad = async ({ params, url }) => {
   }
 
   const did = id;
-  const cfg: ProxyConfig = {
-    feedProxyUrl: env.FEED_PROXY_URL || 'http://127.0.0.1:3000',
-    feedProxySecret: env.FEED_PROXY_SECRET,
-  };
-
   const apiBase = apiBaseFor(origin, env.API_URL);
   const target = await resolveLinkblogTarget(apiBase, did);
   if (target.hidden) throw error(404, 'Linkblog not found');
   const [profile, pub, docs] = await Promise.all([
     getProfile(did),
     fetchPublicationMeta(did, target.siteUri),
-    fetchLinkblogDocuments(cfg, did, linkblogScopes(target)),
+    fetchLinkblogDocuments(apiBase, did),
   ]);
+
+  // 404 means "this entry does not exist", which we can only say from a list we
+  // actually received. An unreachable API is a 503 — a permalink is the URL most
+  // likely to be linked from elsewhere, and a 404 invites crawlers to drop it.
+  if (!docs) throw error(503, 'Linkblog temporarily unavailable');
 
   const doc = docs.find((d) => rkeyFromUri(d.recordUri) === rkey);
   if (!doc) throw error(404, 'Link not found');
-
-  // Full social context for this single entry: recommend/quote counts + who else
-  // across the Atmosphere linked the same article (with their notes). Best-effort.
-  const social = await fetchSocialContext(cfg, [
-    {
-      key: doc.recordUri,
-      docUri: doc.recordUri,
-      articleUrl: externalArticleUrl(doc),
-      excludeDid: did,
-    },
-  ]);
 
   return {
     origin,
@@ -70,7 +45,6 @@ export const load: PageServerLoad = async ({ params, url }) => {
     profile,
     pub,
     doc,
-    ctx: social.get(doc.recordUri),
     apiBase,
     // Where this entry lives on the connected publication's own site, when we can
     // name that page exactly. `canonicalUrl` is the publication's base URL joined

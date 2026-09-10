@@ -8,12 +8,7 @@ import { redirect } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
 import { apiBaseFor, feedUrlFor, isDid } from '$lib/fields';
 import { fetchPublicationMeta, getProfile, resolveHandleToDid } from '$lib/server/identity';
-import {
-  fetchLinkblogDocuments,
-  linkblogScopes,
-  resolveLinkblogTarget,
-  type ProxyConfig,
-} from '$lib/server/proxy';
+import { fetchLinkblogDocuments, resolveLinkblogTarget } from '$lib/server/api';
 import { emptyFeed, renderFeed } from '$lib/server/rss';
 import type { RequestHandler } from './$types';
 
@@ -40,20 +35,23 @@ export const GET: RequestHandler = async ({ params, url }) => {
   }
 
   const did = id;
-  const cfg: ProxyConfig = {
-    feedProxyUrl: env.FEED_PROXY_URL || 'http://127.0.0.1:3000',
-    feedProxySecret: env.FEED_PROXY_SECRET,
-  };
+  const apiBase = apiBaseFor(origin, env.API_URL);
 
-  const target = await resolveLinkblogTarget(apiBaseFor(origin, env.API_URL), did);
+  const target = await resolveLinkblogTarget(apiBase, did);
   // A hidden linkblog has no feed either — a subscriber polling an old URL should
   // see it stop, not keep receiving posts from a page that's been taken down.
   if (target.hidden) return rss(emptyFeed(origin), 404);
   const [profile, pub, docs] = await Promise.all([
     getProfile(did),
     fetchPublicationMeta(did, target.siteUri),
-    fetchLinkblogDocuments(cfg, did, linkblogScopes(target)),
+    fetchLinkblogDocuments(apiBase, did),
   ]);
+
+  // The API couldn't answer. Refuse rather than render: an empty channel is not a
+  // neutral placeholder in a reader, it reads as every entry having been deleted,
+  // and a 200 carrying it is edge-cached for five minutes, so a blip that lasted a
+  // minute keeps being served long after it's over. 503 + no-store says retry.
+  if (!docs) return rss(emptyFeed(origin), 503);
 
   // Cap the feed length — readers only need the recent window.
   const xml = renderFeed(origin, did, profile, pub, docs.slice(0, 50));

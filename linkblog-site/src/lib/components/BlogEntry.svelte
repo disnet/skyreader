@@ -12,18 +12,16 @@
     renderBodyHtml,
     rkeyFromUri,
     safeHttpUrl,
-    socialCountsText,
   } from '$lib/fields';
-  import type { ProxyDocument, SocialContext } from '$lib/types';
+  import type { ProxyDocument } from '$lib/types';
   import Meta from './Meta.svelte';
 
   interface Props {
     origin: string;
     did: string;
     doc: ProxyDocument;
-    ctx?: SocialContext;
   }
-  let { origin, did, doc, ctx = undefined }: Props = $props();
+  let { origin, did, doc }: Props = $props();
 
   const rkey = $derived(rkeyFromUri(doc.recordUri));
   const permalink = $derived(rkey ? entryUrlFor(origin, did, rkey) : null);
@@ -41,7 +39,6 @@
   const headlineHref = $derived(articleUrl ?? permalink);
   const host = $derived(hostnameOf(articleUrl ?? undefined));
   const date = $derived(formatDate(doc.createdAt || doc.publishedAt));
-  const social = $derived(socialCountsText(ctx));
   // The article's own title, undecorated — the 🔗 / “…” decoration on the record
   // is for foreign sites, and this page IS the linkblog (see linkPostTitle).
   const title = $derived(linkPostTitle(doc) || 'Untitled');
@@ -68,5 +65,5 @@
     <!-- Legacy standalone quote (records predating the in-note quote). -->
     <blockquote class="entry-quote"><p>{clampText(excerpt, 200)}</p></blockquote>
   {/if}
-  <Meta {host} {date} {permalink} {social} />
+  <Meta {host} {date} {permalink} />
 </li>

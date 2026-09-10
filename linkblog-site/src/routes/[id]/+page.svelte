@@ -85,7 +85,7 @@
 {#if data.docs.length}
   <ol class="entries">
     {#each data.docs as doc (doc.recordUri)}
-      <BlogEntry origin={data.origin} did={data.did} {doc} ctx={data.social.get(doc.recordUri)} />
+      <BlogEntry origin={data.origin} did={data.did} {doc} />
     {/each}
   </ol>
 {:else}
