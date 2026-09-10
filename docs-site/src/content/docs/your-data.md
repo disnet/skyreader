@@ -3,7 +3,7 @@ title: Your data
 description: What Skyreader stores, where it lives, and exactly what is public.
 ---
 
-The short version: **your reading is private to you by default.** A few things are public, or can be made public, so they're portable across the Atmosphere. 
+The short version: **your reading is private to you by default.** A few things are public, or can be made public, so they're portable across the Atmosphere.
 
 ## At a glance
 
@@ -30,11 +30,11 @@ Either way, you can walk away with your list at any time: **Settings → Import 
 
 Saves live on Skyreader, private to you. They are **not** stored on your PDS.
 
-The one way a save becomes public is choosing it: backing your Saved list with **Semble or Margin** (**Settings → Saved articles**) turns the list into a public collection in that app. 
+The one way a save becomes public is choosing it: backing your Saved list with **Semble or Margin** (**Settings → Saved articles**) turns the list into a public collection in that app.
 
 ## Highlights and notes
 
-Highlights are private to Skyreader and sync across your devices through Skyreader, not through your PDS. 
+Highlights are private to Skyreader and sync across your devices through Skyreader, not through your PDS.
 
 If you'd like to share a highlight publicly, you can share an individual highlight to **Margin**, which publishes that one highlight to your public PDS.
 

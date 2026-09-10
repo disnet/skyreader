@@ -3,7 +3,7 @@ title: Sharing and your linkblog
 description: Post links with commentary to a public linkblog that's portable across the Atmosphere.
 ---
 
-Sharing in Skyreader means posting a link, with your commentary, to your **linkblog**: a public publication that anyone can read, follow, or subscribe to by RSS. 
+Sharing in Skyreader means posting a link, with your commentary, to your **linkblog**: a public publication that anyone can read, follow, or subscribe to by RSS.
 
 ## The composer
 
@@ -34,7 +34,7 @@ Your link posts are Atmosphere records, so other apps can render them too. On a 
 
 Changing either applies to new posts; posts you already published keep the shape they were written in.
 
-If you'd like your posts to say where they came from, turn on **Offer a "Posted from Skyreader" line when sharing**. That adds a checkbox to the composer. 
+If you'd like your posts to say where they came from, turn on **Offer a "Posted from Skyreader" line when sharing**. That adds a checkbox to the composer.
 
 ## What's public
 
