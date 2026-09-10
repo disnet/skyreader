@@ -15,19 +15,19 @@ Items you scroll past can be marked read automatically (a toggle in **Settings â
 
 ## The reader
 
-Opening an article gives you a clean, full-screen reading surface. 
+Opening an article gives you a clean, full-screen reading surface.
 
 ![The reader: a full-screen article with quiet chrome and a Discussion section at the end](../../../assets/screenshots/reader.png)
 
 - **Style customization** : change the font style and size.
-- **Paged mode**: a toggle in the reader switches from scrolling to page turns, one page at a time, or two columns side by side on a wide screen. 
+- **Paged mode**: a toggle in the reader switches from scrolling to page turns, one page at a time, or two columns side by side on a wide screen.
 - **Highlighting**: double-click a paragraph or select text. See [Saving and highlights](/guide/saving-and-highlights/).
 
 ![Paged mode: the same article flowed into two side-by-side columns, turned a page at a time](../../../assets/screenshots/paged-reader.png)
 
 ## Discussion
 
-Articles carry a **Discussion** section at the end that gathers what people across the Atmosphere have written about that link: linkblog notes, Leaflet comments, Bluesky posts, Margin annotations, Semble connections, merged into one stream. 
+Articles carry a **Discussion** section at the end that gathers what people across the Atmosphere have written about that link: linkblog notes, Leaflet comments, Bluesky posts, Margin annotations, Semble connections, merged into one stream.
 
 ## The daily magazine
 

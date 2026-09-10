@@ -3,7 +3,7 @@ title: What is Skyreader?
 description: A reading app that helps you make sense of what you read.
 ---
 
-Skyreader is a reading app. It gathers everything you want to read – blogs and news sites via RSS,  Atmospheric publications via standard.site, articles you find on the web – into one calm place.
+Skyreader is a reading app. It gathers everything you want to read – blogs and news sites via RSS, Atmospheric publications via standard.site, articles you find on the web – into one calm place.
 
 It runs on the AT Protocol, the open network behind Bluesky. That matters for one reason: your reading life is yours. You sign in with an account you own, and the parts of your data you choose to make portable work in any Atmospheric app, not just this one. See [Your data](/your-data/) for exactly what lives where.
 

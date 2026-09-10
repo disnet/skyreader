@@ -9,7 +9,7 @@ On [skyreader.app](https://skyreader.app), **Start Reading** opens a guest libra
 
 ![The Skyreader start page, with a Start Reading button that opens a guest library, no account needed](../../assets/screenshots/welcome.png)
 
-Logging in with an account allows you to add your own feeds, sync across devices, share to your linkblog, and save articles to Semble or Margin. 
+Logging in with an account allows you to add your own feeds, sync across devices, share to your linkblog, and save articles to Semble or Margin.
 
 ## Signing in
 
