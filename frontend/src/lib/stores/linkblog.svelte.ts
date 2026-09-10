@@ -171,7 +171,6 @@ function createLinkblogStore() {
         articleAuthor: article.author,
         excerpt: article.summary,
         articleImage: article.imageUrl,
-        articlePublishedAt: article.publishedAt,
         note,
         repostUri,
         attribution,
@@ -190,7 +189,6 @@ function createLinkblogStore() {
         siteUri: result.publication,
         articleUrl: article.url,
         articleTitle: article.title,
-        publishedAt: article.publishedAt,
         note,
         createdAt: now,
       });

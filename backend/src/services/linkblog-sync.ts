@@ -1017,7 +1017,6 @@ export interface LinkblogShareInput {
   articleAuthor?: string;
   excerpt?: string; // generous first-paragraph excerpt (durable fallback copy)
   articleImage?: string;
-  articlePublishedAt?: string;
   note?: string; // the user's commentary
   tags?: string[];
   // Quote-reshare: the AT URI of the original link post being quoted. Added to
@@ -1481,7 +1480,10 @@ export function buildLinkblogDocument(
     // feed prefer — see stripTitleDecoration for the legacy fallback.
     title: decorateTitle(input.articleTitle?.trim() || input.articleUrl, formatting.titleStyle),
     path: `/${rkey}`,
-    publishedAt: input.articlePublishedAt || now,
+    // The post's own publication time, not the linked article's. This record is
+    // the linkblog entry — dating it by the article would file a share of an
+    // old piece years back in the linkblog (and in anything that sorts by it).
+    publishedAt: now,
     createdAt: now,
     // The quote now lives inside the editable note (as a native blockquote), so
     // new shares no longer write a top-level `description`. Its presence is the

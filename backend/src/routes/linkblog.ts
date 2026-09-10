@@ -153,7 +153,6 @@ export async function handleCreateLinkblogShare(request: Request, env: Env): Pro
     articleAuthor: body.articleAuthor,
     excerpt: body.excerpt,
     articleImage: body.articleImage,
-    articlePublishedAt: body.articlePublishedAt,
     note: body.note,
     tags: body.tags,
     repostUri: body.repostUri,

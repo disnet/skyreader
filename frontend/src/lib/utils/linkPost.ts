@@ -74,7 +74,6 @@ export function buildOptimisticLinkPost(
     siteUri: string;
     articleUrl: string;
     articleTitle?: string;
-    publishedAt?: string;
     note?: string;
     createdAt: string;
   }
@@ -86,7 +85,9 @@ export function buildOptimisticLinkPost(
     siteUri: input.siteUri,
     skyreaderLinkblog: LINKBLOG_MARKER_URL,
     title: input.articleTitle || input.articleUrl,
-    publishedAt: input.publishedAt || input.createdAt,
+    // The share's own time — a link post is dated when it's posted, matching
+    // what the backend writes (never the linked article's publishedAt).
+    publishedAt: input.createdAt,
     createdAt: input.createdAt,
     // New shares carry the quote inside the note (the body), not a top-level
     // `description` — leaving it unset so this optimistic doc renders exactly

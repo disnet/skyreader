@@ -212,7 +212,6 @@ function createMyLinkblogStore() {
     siteUri: string;
     articleUrl: string;
     articleTitle?: string;
-    publishedAt?: string;
     note?: string;
     createdAt: string;
   }) {
