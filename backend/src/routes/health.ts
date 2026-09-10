@@ -9,12 +9,14 @@ import { ALARM_ACTIVE_WINDOW_MS } from '../durable-objects/jetstream-poller';
 //   costing anything or becoming an amplification vector. It answers exactly one
 //   question: is this Worker serving, and which build is it serving?
 // - `/api/health/deep` does the real dependency checks and is therefore gated by
-//   a shared secret and rate-limited.
+//   a shared secret and rate-limited. It reports on all three dependencies but
+//   only 503s on the two a reader is served through.
 
 const DEEP_HEALTH_PATH = '/api/health/deep';
 
 // The poller's alarm re-arms every 60s. Anything past 5 minutes without a
-// completed poll means it's wedged, not merely between cycles.
+// completed poll means it's wedged, not merely between cycles. This grades
+// `checks.poller.ok` in the body; it is not a 503 condition (see `healthy` below).
 const POLLER_STALE_MS = 5 * 60 * 1000;
 
 // Dependency checks are for a monitor with a timeout of its own; fail fast rather
@@ -111,6 +113,7 @@ async function checkPoller(env: Env): Promise<CheckResult> {
       nextPoll?: number | null;
       isRunning?: boolean;
       lastAlarmStart?: number | null;
+      lastAlarmEnd?: number | null;
     };
 
     const lastPollAt = status.lastStats?.lastPollAt;
@@ -128,11 +131,26 @@ async function checkPoller(env: Env): Promise<CheckResult> {
     const recentlyActive = alarmStart !== null && Date.now() - alarmStart < ALARM_ACTIVE_WINDOW_MS;
     const running = Boolean(status.isRunning) || recentlyActive;
 
+    // A cycle that started and never wrote its end marker was terminated before
+    // its `finally` — the poller is wedged rather than merely mid-poll. Reported
+    // so the body says which of the two a stale `lastPollAgeMs` is.
+    //
+    // The `recentlyActive` gate is what makes that distinction true: a missing end
+    // marker is the *normal* state for the 5–16s a cycle is in flight, and a probe
+    // lands in that window often enough that reporting it as unfinished would be a
+    // false positive on a healthy poller several times an hour. Only once the
+    // start marker is older than a plausible cycle does an absent end mean killed.
+    const alarmEnd = typeof status.lastAlarmEnd === 'number' ? status.lastAlarmEnd : null;
+    const cycleUnfinished =
+      alarmStart !== null && !recentlyActive && (alarmEnd === null || alarmEnd < alarmStart);
+
     return {
       ok: running && fresh,
       isRunning: running,
       alarmScheduled: Boolean(status.isRunning),
       lastAlarmAgeMs: alarmStart === null ? null : Date.now() - alarmStart,
+      lastAlarmEndAgeMs: alarmEnd === null ? null : Date.now() - alarmEnd,
+      cycleUnfinished,
       lastPollAgeMs,
       nextPoll: status.nextPoll ?? null,
     };
@@ -167,8 +185,10 @@ async function checkFeedProxy(env: Env): Promise<CheckResult> {
 }
 
 /**
- * Deep health: one URL that answers "is everything up". Returns 503 when any
- * dependency is unhealthy so an uptime monitor alerts on it directly.
+ * Deep health: one URL that answers "is everything up". Returns 503 when a
+ * dependency users are reading through is unhealthy, so an uptime monitor alerts
+ * on it directly. `checks.poller` is reported but does not affect the status code
+ * — see the note at the `healthy` line below.
  */
 export async function handleDeepHealth(request: Request, env: Env): Promise<Response> {
   const expected = env.HEALTH_CHECK_SECRET;
@@ -200,15 +220,30 @@ export async function handleDeepHealth(request: Request, env: Env): Promise<Resp
     checkFeedProxy(env),
   ]);
 
-  const healthy = database.ok && poller.ok && feedProxy.ok;
+  // Two verdicts on purpose, because they answer different questions.
+  //
+  // `status` stays honest about every dependency, so a human reading the body
+  // during triage sees "degraded" whenever anything is off.
+  //
+  // The status **code** is the paging decision, and the poller deliberately isn't
+  // part of it. A wedged firehose delays PDS-mirrored subscriptions and new
+  // standard.site documents; feeds, the timeline and every read path come from D1
+  // and the Fly crawler, so nobody's reading breaks and there is nothing to do at
+  // 3am. Per RUNBOOK §8 that makes it warning-class, which is what
+  // `firehose_lag_high` already is — folding it into the 503 paged the whole team
+  // for it anyway, and at a tighter threshold (5 min) than the Sentry alert it was
+  // kept quieter than (15 min). So a stale poller reads `200 degraded`: reported,
+  // visible on the admin ops tiles, not a phone call.
+  const allOk = database.ok && poller.ok && feedProxy.ok;
+  const serving = database.ok && feedProxy.ok;
 
   return json(
     {
-      status: healthy ? 'ok' : 'degraded',
+      status: allOk ? 'ok' : 'degraded',
       version: getVersion(env),
       timestamp: Date.now(),
       checks: { database, poller, feedProxy },
     },
-    healthy ? 200 : 503
+    serving ? 200 : 503
   );
 }

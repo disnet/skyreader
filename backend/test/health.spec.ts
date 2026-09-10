@@ -1,5 +1,5 @@
 import { env, SELF } from 'cloudflare:test';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { handleDeepHealth } from '../src/routes/health';
 
 const SECRET = 'correct-horse-battery-staple';
@@ -112,9 +112,12 @@ describe('health endpoints', () => {
       expect(body.checks!.database.ok).toBe(true);
       expect(body.checks!.poller).toBeDefined();
       expect(body.checks!.feedProxy).toBeDefined();
+      // `status` grades every dependency; the status code grades only the two a
+      // reader is served through — see the paging tests below.
       const allOk = body.checks!.database.ok && body.checks!.poller.ok && body.checks!.feedProxy.ok;
+      const serving = body.checks!.database.ok && body.checks!.feedProxy.ok;
       expect(body.status).toBe(allOk ? 'ok' : 'degraded');
-      expect(response.status).toBe(allOk ? 200 : 503);
+      expect(response.status).toBe(serving ? 200 : 503);
     });
 
     // The DO reports `isRunning: !!getAlarm()`, and getAlarm() is null for the
@@ -167,6 +170,116 @@ describe('health endpoints', () => {
 
         expect(poller.ok).toBe(true);
         expect(poller.lastPollAgeMs).toBeNull();
+      });
+
+      // A cycle that started and never wrote its end marker was killed before its
+      // `finally` — the wedge shape. Both halves are surfaced so the body says
+      // which kind of staleness this is instead of leaving it to be guessed.
+      it('flags a cycle that started and never finished', async () => {
+        const start = Date.now() - 9 * 60_000;
+        const poller = await pollerCheck({
+          isRunning: true,
+          nextPoll: start,
+          lastAlarmStart: start,
+          lastAlarmEnd: start - 60_000,
+          lastStats: { lastPollAt: start - 68_000 },
+        });
+
+        expect(poller.cycleUnfinished).toBe(true);
+        expect(poller.ok).toBe(false);
+      });
+
+      it('does not flag a cycle that completed', async () => {
+        const poller = await pollerCheck({
+          isRunning: true,
+          nextPoll: Date.now() + 30_000,
+          lastAlarmStart: Date.now() - 30_000,
+          lastAlarmEnd: Date.now() - 25_000,
+          lastStats: { lastPollAt: Date.now() - 30_000 },
+        });
+
+        expect(poller.cycleUnfinished).toBe(false);
+        expect(poller.ok).toBe(true);
+      });
+
+      // The end marker is absent for the whole time a cycle is in flight, which is
+      // several seconds of every minute. Flagging that would make `cycleUnfinished`
+      // fire on a healthy poller far more often than on a wedged one.
+      it('does not flag a cycle that is still in flight', async () => {
+        const poller = await pollerCheck({
+          isRunning: false,
+          nextPoll: null,
+          lastAlarmStart: Date.now() - 3000,
+          lastAlarmEnd: Date.now() - 63_000,
+          lastStats: { lastPollAt: Date.now() - 60_000 },
+        });
+
+        expect(poller.cycleUnfinished).toBe(false);
+        expect(poller.ok).toBe(true);
+      });
+
+      // A brand-new storage key: on the first probe after the deploy that added
+      // `last_alarm_end`, a perfectly healthy poller has a start and no end.
+      it('does not flag a healthy poller that has never written an end marker', async () => {
+        const poller = await pollerCheck({
+          isRunning: true,
+          nextPoll: Date.now() + 30_000,
+          lastAlarmStart: Date.now() - 30_000,
+          lastStats: { lastPollAt: Date.now() - 30_000 },
+        });
+
+        expect(poller.cycleUnfinished).toBe(false);
+        expect(poller.ok).toBe(true);
+      });
+    });
+
+    // Per RUNBOOK §8 a wedged firehose is warning-class: reads are served from D1
+    // and the Fly crawler, so nothing a user is doing breaks and there is nothing
+    // to do at 3am. It stays in the body; it must not page.
+    describe('poller staleness does not page', () => {
+      it('keeps a 200 when the poller is stale but D1 and the proxy are fine', async () => {
+        const stale = Date.now() - 10 * 60_000;
+        const wedgedEnv = envWithPollerStatus({
+          isRunning: true,
+          nextPoll: Date.now() - 9 * 60_000,
+          lastAlarmStart: Date.now() - 9 * 60_000,
+          lastStats: { lastPollAt: stale },
+        });
+
+        // The proxy isn't reachable from the test worker, so stub its /health.
+        // Without a green proxy the 503 could come from either dependency and the
+        // assertion would prove nothing.
+        const realFetch = globalThis.fetch;
+        const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+          const href = typeof input === 'string' ? input : (input as Request).url;
+          if (href.endsWith('/health')) {
+            return new Response(JSON.stringify({ cachedFeeds: 1, version: 'test' }), {
+              headers: { 'Content-Type': 'application/json' },
+            });
+          }
+          return realFetch(input as RequestInfo, init);
+        });
+
+        try {
+          const response = await handleDeepHealth(
+            new Request('http://localhost/api/health/deep', {
+              headers: { 'X-Health-Secret': SECRET },
+            }),
+            wedgedEnv
+          );
+          const body = (await response.json()) as HealthBody;
+
+          expect(body.checks!.poller.ok).toBe(false);
+          expect(body.checks!.poller.lastPollAgeMs).toBeGreaterThan(5 * 60_000);
+          expect(body.checks!.database.ok).toBe(true);
+          expect(body.checks!.feedProxy.ok).toBe(true);
+          // The whole point: a wedged firehose is reported, not paged. The body
+          // stays honest for whoever reads it; only the status code goes quiet.
+          expect(response.status).toBe(200);
+          expect(body.status).toBe('degraded');
+        } finally {
+          spy.mockRestore();
+        }
       });
     });
   });
