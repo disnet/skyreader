@@ -108,6 +108,46 @@ const MAX_PENDING_BACKFILLS = 200;
 // enough that a genuinely dead poller is caught within a couple of minutes.
 export const ALARM_ACTIVE_WINDOW_MS = 2 * ALARM_INTERVAL_MS;
 
+// How far past its scheduled time an alarm has to sit before `/start` stops
+// believing it and re-arms. A pending alarm whose time is in the past means
+// Cloudflare hasn't delivered it — either the invocation was terminated out from
+// under us (an object reset skips the `finally` that would have rescheduled) or
+// delivery stalled. Either way the poller is wedged and nothing else will notice:
+// `getAlarm()` is non-null, so the every-minute `/start` ping used to read it as
+// healthy and leave the firehose stopped until Cloudflare got around to it (a
+// 16-minute stall on 2026-09-10). Two intervals of slack keeps normal scheduling
+// jitter from re-arming a healthy alarm.
+export const STUCK_ALARM_GRACE_MS = 2 * ALARM_INTERVAL_MS;
+
+/** What the every-minute `/start` ping should do with the alarm state it found. */
+export type StartAction = 'started' | 'rearmed' | 'scheduled' | 'recently_active';
+
+/**
+ * The `/start` verdict, kept pure so the cases that matter can be tested without
+ * a Durable Object. Three of the four states were already here; `rearmed` is the
+ * one that was missing, and its absence is what let a stalled alarm sit for 16
+ * minutes on 2026-09-10 while the cron pinged past it every minute reading
+ * `scheduled`.
+ */
+export function decideStartAction(
+  alarmTime: number | null,
+  lastAlarmStart: number | null | undefined,
+  now: number
+): StartAction {
+  const recentlyActive =
+    typeof lastAlarmStart === 'number' && now - lastAlarmStart < ALARM_ACTIVE_WINDOW_MS;
+
+  // Nothing scheduled and nothing running: the original cold-start case.
+  if (alarmTime === null) return recentlyActive ? 'recently_active' : 'started';
+
+  // A scheduled alarm is evidence of life only while its time is still ahead of
+  // us, or a handler is plausibly mid-flight holding it. Past that, Cloudflare has
+  // not delivered it and nothing but this ping will.
+  if (now - alarmTime > STUCK_ALARM_GRACE_MS && !recentlyActive) return 'rearmed';
+
+  return 'scheduled';
+}
+
 // Two streams: `app.skyreader.feed.subscription`, and the standard.site document
 // pair (`site.standard.document` + its `app.standard-reader.collection` sidecar),
 // which lived here before it moved to the proxy and has now come back. Everything
@@ -245,21 +285,41 @@ class JetstreamPollerBase implements DurableObject {
         this.state.storage.get<number>('last_alarm_start'),
       ]);
 
-      const recentlyActive = lastAlarmStart && Date.now() - lastAlarmStart < ALARM_ACTIVE_WINDOW_MS;
+      const now = Date.now();
+      const action = decideStartAction(alarmTime, lastAlarmStart, now);
 
-      if (!alarmTime && !recentlyActive) {
-        // No alarm scheduled and none ran recently - start fresh
-        await this.state.storage.setAlarm(Date.now() + 100);
-        return new Response(JSON.stringify({ status: 'started' }), {
+      if (action === 'started' || action === 'rearmed') {
+        // setAlarm overwrites any pending alarm, so the same call both cold-starts
+        // a fresh object and replaces one Cloudflare never delivered.
+        await this.state.storage.setAlarm(now + 100);
+      }
+
+      if (action === 'rearmed') {
+        // The cycle that stalled left no trace of its own: it died before the
+        // `finally` in runPollCycle, and an object reset raises nothing our
+        // try/catch can see. This is the only place that knows it happened, so
+        // say so — a silent wedge is what made the 2026-09-10 stall an uptime
+        // page with no matching Sentry event to explain it.
+        const overdueMs = now - (alarmTime ?? now);
+        log.error('jetstream_alarm_stuck', {
+          overdueMs,
+          alarmTime,
+          lastAlarmStart: lastAlarmStart ?? null,
+        });
+        reportError(
+          new Error(`JetstreamPoller alarm overdue by ${Math.round(overdueMs / 1000)}s; re-armed`),
+          { tags: { source: 'jetstream-poller', phase: 'alarm-stuck' } }
+        );
+        return new Response(JSON.stringify({ status: action, overdueMs, alarmTime }), {
           headers: { 'Content-Type': 'application/json' },
         });
       }
 
       return new Response(
         JSON.stringify({
-          status: alarmTime ? 'scheduled' : 'recently_active',
+          status: action,
           nextPoll: alarmTime,
-          lastAlarmStart,
+          lastAlarmStart: lastAlarmStart ?? null,
         }),
         {
           headers: { 'Content-Type': 'application/json' },
@@ -274,6 +334,7 @@ class JetstreamPollerBase implements DurableObject {
         lastStats,
         alarmTime,
         lastAlarmStart,
+        lastAlarmEnd,
         subscriptionsLagMs,
         documentsLagMs,
       ] = await Promise.all([
@@ -282,6 +343,7 @@ class JetstreamPollerBase implements DurableObject {
         this.state.storage.get<PollStats>('last_stats'),
         this.state.storage.getAlarm(),
         this.state.storage.get<number>('last_alarm_start'),
+        this.state.storage.get<number>('last_alarm_end'),
         this.streamLag('subscriptions'),
         this.streamLag('documents'),
       ]);
@@ -309,6 +371,11 @@ class JetstreamPollerBase implements DurableObject {
           // routes/health.ts.
           isRunning: !!alarmTime,
           lastAlarmStart: lastAlarmStart ?? null,
+          // Paired with `lastAlarmStart`, this is what separates "mid-cycle" from
+          // "the cycle that started here never finished". An end older than the
+          // start means the alarm handler was terminated before its `finally` —
+          // the shape of the 2026-09-10 wedge.
+          lastAlarmEnd: lastAlarmEnd ?? null,
         }),
         {
           headers: { 'Content-Type': 'application/json' },
@@ -428,6 +495,17 @@ class JetstreamPollerBase implements DurableObject {
         // this one is worth a page rather than a log line.
         console.error('[JetstreamPoller] CRITICAL: Error scheduling next alarm:', error);
         reportError(error, { tags: { source: 'jetstream-poller', phase: 'alarm-scheduling' } });
+      }
+
+      // `last_alarm_end` is the completion half of `last_alarm_start`: with only
+      // the start, "a cycle is running right now" and "a cycle started and was
+      // killed before it could reschedule" are the same two numbers. Purely
+      // diagnostic, and in its own try after the reschedule so it can never be
+      // what costs the firehose its next cycle.
+      try {
+        await this.state.storage.put('last_alarm_end', Date.now());
+      } catch (error) {
+        log.error('jetstream_alarm_end_write_failed', { ...serializeError(error) });
       }
     }
   }

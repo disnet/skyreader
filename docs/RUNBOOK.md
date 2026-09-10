@@ -15,23 +15,23 @@ it rather than learning to ignore it.
 
 ## 1. What's instrumented
 
-| Surface                     | Signal                                | Where it lives                                    |
-| --------------------------- | ------------------------------------- | ------------------------------------------------- |
-| Backend Worker              | `GET /api/health`                     | Shallow: status, version, timestamp. No deps.     |
-| Backend Worker              | `GET /api/health/deep`                | D1 + poller lag + feed proxy. Secret-gated.       |
-| Backend Worker              | Sentry (`@sentry/cloudflare`)         | Exceptions from `fetch`, `scheduled`, DO alarm.   |
-| Backend Worker              | Structured logs (Workers Logs)        | One JSON object per event, keyed by `requestId`.  |
-| Backend cron (every minute) | Heartbeat ping (`HEARTBEAT_URL`)      | Dead-man's switch; also guards the firehose.      |
-| Feed proxy                  | `GET /health`                         | Status, version, cached feed count. No auth.      |
-| Feed proxy                  | `GET /stats`                          | Cache freshness, per-feed errors, ingest backlog. |
-| Feed proxy                  | Sentry (`@sentry/bun`)                | Route escapes, warmer failures.                   |
-| Feed proxy warmer           | Heartbeat ping (`WARM_HEARTBEAT_URL`) | Dead-man's switch for the warm loop.              |
-| Backend cron (every minute) | `system_status` rows (D1)             | Cron liveness, poller lag, proxy cache stats.     |
-| Backend cron (hourly)       | `metrics_snapshots` rows (D1)         | One trend point per hour, pruned at 90 days.      |
-| Admin dashboard             | Ops tiles + 30-day sparklines         | The same rows, rendered. No token, works locally. |
-| Frontend PWA                | `POST /api/telemetry/error`           | Sampled client errors, forwarded to Sentry.       |
-| Frontend PWA                | Settings → Diagnostics                | On-device state. Sent nowhere; read by a human.   |
-| All deploys                 | `scripts/smoke-check.mjs`             | Post-deploy assertion against production.         |
+| Surface                     | Signal                                | Where it lives                                      |
+| --------------------------- | ------------------------------------- | --------------------------------------------------- |
+| Backend Worker              | `GET /api/health`                     | Shallow: status, version, timestamp. No deps.       |
+| Backend Worker              | `GET /api/health/deep`                | D1 + feed proxy 503; poller reported. Secret-gated. |
+| Backend Worker              | Sentry (`@sentry/cloudflare`)         | Exceptions from `fetch`, `scheduled`, DO alarm.     |
+| Backend Worker              | Structured logs (Workers Logs)        | One JSON object per event, keyed by `requestId`.    |
+| Backend cron (every minute) | Heartbeat ping (`HEARTBEAT_URL`)      | Dead-man's switch; also guards the firehose.        |
+| Feed proxy                  | `GET /health`                         | Status, version, cached feed count. No auth.        |
+| Feed proxy                  | `GET /stats`                          | Cache freshness, per-feed errors, ingest backlog.   |
+| Feed proxy                  | Sentry (`@sentry/bun`)                | Route escapes, warmer failures.                     |
+| Feed proxy warmer           | Heartbeat ping (`WARM_HEARTBEAT_URL`) | Dead-man's switch for the warm loop.                |
+| Backend cron (every minute) | `system_status` rows (D1)             | Cron liveness, poller lag, proxy cache stats.       |
+| Backend cron (hourly)       | `metrics_snapshots` rows (D1)         | One trend point per hour, pruned at 90 days.        |
+| Admin dashboard             | Ops tiles + 30-day sparklines         | The same rows, rendered. No token, works locally.   |
+| Frontend PWA                | `POST /api/telemetry/error`           | Sampled client errors, forwarded to Sentry.         |
+| Frontend PWA                | Settings → Diagnostics                | On-device state. Sent nowhere; read by a human.     |
+| All deploys                 | `scripts/smoke-check.mjs`             | Post-deploy assertion against production.           |
 
 Deliberately absent: per-user client telemetry (no page views, no session replay,
 no third-party SDK in the browser bundle), distributed tracing, and log shipping.
@@ -67,8 +67,24 @@ app itself is broken. It catches Cloudflare being down and nothing else. Give th
 prober an Access service token if you want it to mean more.
 
 The deep check needs the header `X-Health-Secret: <HEALTH_CHECK_SECRET>`. It
-returns **503 with a per-dependency breakdown** when anything is down, so it
-alerts on its own status code — no response-body assertion needed.
+returns **503 with a per-dependency breakdown** when a dependency users read
+through is down, so it alerts on its own status code — no response-body assertion
+needed.
+
+`checks.poller` is reported in that breakdown but **deliberately does not affect
+the status code**. A wedged firehose delays PDS-mirrored subscriptions and new
+standard.site documents; feeds, the timeline and every read path are served from
+D1 and the Fly crawler, so no reader is affected and there is nothing to do about
+it at 3am. Per §8 that makes it warning-class, which is what `firehose_lag_high`
+already is — folding it into the 503 paged the whole team for it anyway, and at a
+tighter threshold (5 min) than the Sentry alert it was deliberately kept quieter
+than (15 min).
+
+So the body and the status code answer different questions, and a stale poller
+reads **`200` with `"status": "degraded"`**: `status` still grades all three
+dependencies for whoever is reading the body, while only D1 and the feed proxy
+decide the code. Keep the uptime check asserting on the **code**; a body assertion
+on `status` would put the page straight back.
 
 "2 consecutive failures" everywhere: a single failed probe is usually the prober,
 not us.
@@ -177,11 +193,11 @@ Sentry for a spike.
 ```
 
 - `database.ok = false` → D1 is unavailable or slow (>3s). Check Cloudflare status.
-- `poller.ok = false` → the JetstreamPoller DO is stopped, or its last completed
-  poll is >5 min old. The every-minute cron re-pings `/start` automatically, so
-  first confirm the cron heartbeat is alive; if the cron is healthy and the poller
-  still isn't, redeploy the backend to recycle the DO.
 - `feedProxy.ok = false` → see below.
+
+Only those two decide the status code, so `poller.ok = false` is never why this
+is 503ing — a stale poller alone returns `200 degraded`. For that one see
+`jetstream_alarm_stuck` below.
 
 ### `backend-cron` heartbeat missed
 
@@ -214,6 +230,38 @@ restart fast, not to prevent the outage.
 **Check:** the Pages dashboard for the project's latest deployment.
 **Fix:** roll back to the previous deployment in the dashboard, or re-run the
 deploy workflow.
+
+### `jetstream_alarm_stuck` (Sentry exception, `phase: alarm-stuck`)
+
+**Means:** the every-minute `/start` ping found the poller's alarm scheduled for a
+time more than **2 minutes in the past** and re-armed it. The poller had stopped;
+it is running again by the time you read this.
+
+**Why it happens:** the alarm handler writes `last_alarm_start`, runs the cycle,
+and reschedules in a `finally`. If the invocation is terminated out from under us
+— an object reset, an eviction — that `finally` never runs and nothing our
+try/catch can see is raised. The alarm stays pending in Cloudflare's scheduler
+with a time in the past, and until this check existed `/start` read any non-null
+`getAlarm()` as healthy and pinged past it every minute. Recovery then waited on
+Cloudflare's own delivery: on 2026-09-10 that took **16 minutes**.
+
+**Check:** the event's `overdueMs` says how long the stall ran. In `/status` (and
+in the deep-health body) `cycleUnfinished: true` is the fingerprint of a cycle
+killed mid-flight: a start marker older than two alarm intervals with no matching
+end. A cycle simply running right now does not set it. Note it only holds while
+the poller is still wedged — once the re-arm lands, the next completed cycle
+writes an end marker and the flag clears, so an absent flag after recovery says
+nothing. Read it live during a stall, not after the fact; `overdueMs` on the event
+is the durable record.
+
+**Fix:** none needed for a single event; the re-arm _is_ the fix and it caps a
+stall at one cron tick. What warrants action is **frequency**: several a day means
+cycles are dying rather than Cloudflare being slow. Look for what the cycle was
+doing — `event = jetstream_poll` durations trending up, D1 `object to be reset`
+errors, or a subrequest budget being exhausted — rather than at the alarm.
+
+**Does not page.** It is a Sentry issue, not a phone call: by the time it fires
+the poller is already running again.
 
 ### `firehose_lag_high` (Sentry message, not an exception)
 
@@ -1043,7 +1091,8 @@ regression. The steady state to protect is a quiet phone that you still trust.
 
 ### Pruning log
 
-| Date        | Change                                                                                                  | Why                                                                                                                                                                                    |
-| ----------- | ------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2026-09-03  | `proxy-document-cache-frozen`: threshold `frozen > 0` → 3 authors or 25% of active; re-alert 30m → 24h. | One stuck author fired 93 events over two days with no action available. Root cause fixed in the proxy the same day (the re-list floor was only checked on the firehose-covered path). |
-| _(pending)_ | First pass due 2–4 weeks after the §2 checks are configured.                                            | —                                                                                                                                                                                      |
+| Date        | Change                                                                                                                                               | Why                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-09-03  | `proxy-document-cache-frozen`: threshold `frozen > 0` → 3 authors or 25% of active; re-alert 30m → 24h.                                              | One stuck author fired 93 events over two days with no action available. Root cause fixed in the proxy the same day (the re-list floor was only checked on the firehose-covered path).                                                                                                                                                                                                                                     |
+| 2026-09-10  | `API (deep)`: `checks.poller` no longer affects the status code. Firehose staleness is reported in the body and alerted by `firehose_lag_high` only. | Recurring 10–15 min pages that resolved themselves, all from a wedged poller while D1, the proxy and every read path were fine. Nothing was broken for a reader and there was nothing to do at 3am, so by §8 it never qualified to page — and it was paging at 5 min against a Sentry alert deliberately set at 15. Root cause fixed the same day: `/start` now re-arms an overdue alarm instead of reading it as healthy. |
+| _(pending)_ | First pass due 2–4 weeks after the §2 checks are configured.                                                                                         | —                                                                                                                                                                                                                                                                                                                                                                                                                          |
