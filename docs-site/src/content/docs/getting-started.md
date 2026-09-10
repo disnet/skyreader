@@ -7,6 +7,8 @@ description: Read as a guest, sign in with your Atmosphere account, and install 
 
 On [skyreader.app](https://skyreader.app), **Start Reading** opens a guest library: a curated set of feeds you can read right away, no account needed. As a guest you can read, mark things read, save articles, highlight, and build a daily magazine. Everything stays on your device.
 
+![The Skyreader start page, with a Start Reading button that opens a guest library, no account needed](../../assets/screenshots/welcome.png)
+
 An account adds your own feeds, sync across devices, your linkblog, and saving out to Semble or Margin. When you sign in, what you saved and highlighted as a guest comes with you.
 
 ## Signing in

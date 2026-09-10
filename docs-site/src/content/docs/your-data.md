@@ -20,6 +20,8 @@ The short version: **your reading is private to you by default.** A few things a
 
 Your feed list is private, stored on Skyreader. Turning on **Atmospheric sync** (**Settings → Subscriptions**) also stores it on your PDS, where it's backed up, portable to any Atmospheric app, and **publicly visible**. That last part is the tradeoff to weigh: sync makes your subscription list something anyone can look up.
 
+![The Subscriptions settings card: marked Private, with the Atmospheric sync switch and its public-visibility note](../../assets/screenshots/atmospheric-sync.png)
+
 Sync covers subscriptions. It does not touch your saves, highlights, or read state.
 
 Either way, you can walk away with your list at any time: **Settings → Import / Export → Export OPML**.

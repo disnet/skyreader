@@ -7,6 +7,8 @@ Skyreader is a reading app. It brings the things you follow, blogs and news site
 
 It runs on the AT Protocol, the open network behind Bluesky. That matters for one reason: your reading life is yours. You sign in with an account you own, and the parts of your data you choose to make portable work in any Atmospheric app, not just this one. See [Your data](/your-data/) for exactly what lives where.
 
+![The Skyreader library: a sidebar of sources and channels beside one chronological stream of articles](../../assets/screenshots/library.png)
+
 ## The shape of it
 
 - **Follow.** Add RSS feeds and standard.site publications. Group them into channels. [Adding sources](/guide/adding-sources/)

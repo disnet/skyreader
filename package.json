@@ -8,6 +8,7 @@
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:headed": "playwright test --headed",
     "test:pwa": "playwright test --config playwright.pwa.config.ts",
+    "shots:docs": "playwright test --config playwright.docs-shots.config.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },

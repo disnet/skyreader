@@ -22,6 +22,21 @@ npm run preview   # Preview the built site
   color change starts from DESIGN.md, not from here.
 - `public/favicon.svg` — copy of `frontend/static/icons/icon-512.svg`.
 
+## Screenshots
+
+Screenshots on guide pages live in `src/assets/screenshots/` and are **generated, not
+hand-captured**. From the repo root:
+
+```bash
+npm run shots:docs   # regenerates every screenshot (Playwright, e2e stack)
+```
+
+The specs live in `e2e-docs/` (config: `playwright.docs-shots.config.ts`) and reuse the e2e
+fixtures — same prerequisites as `npm run test:e2e` (`backend/.dev.vars` with `E2E_TEST_MODE=true`,
+or already-running dev servers). Rerun after a design change and commit the regenerated PNGs with
+it. A new screenshot means a new test in `e2e-docs/docs-screenshots.spec.ts` that writes into
+`src/assets/screenshots/`, plus the markdown embed.
+
 ## Writing rules (these are load-bearing)
 
 The docs are user-facing copy. Everything in the root CLAUDE.md "Copy & Voice" section applies,

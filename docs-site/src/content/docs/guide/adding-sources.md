@@ -14,6 +14,8 @@ Newsletters (a private address for your inbox) and Bluesky posts are on the way,
 
 Use the **+** button and choose **Add RSS Feed**. Paste any page URL, or just a domain; Skyreader finds the feeds on that page. One match subscribes you directly, several gives you a picker. When a site publishes both a standard.site publication and an RSS feed, the publication is listed first, since it usually carries the full text.
 
+![The Add RSS Feed dialog after discovery: a standard.site publication listed first, RSS feeds below it](../../../assets/screenshots/add-feed.png)
+
 ## Follow a person
 
 **Add @handle** follows an Atmosphere account (Bluesky, Blacksky, and others). Search by handle or name, pick the account, and Skyreader finds their standard.site publications for you to subscribe to.
