@@ -1,6 +1,10 @@
 // Popup: pick between saving the current page and subscribing to a feed it
-// advertises. All the real work happens in the service worker (background.js) —
-// this file is UI plus chrome.runtime messages. See the onMessage router there.
+// advertises. All the real work happens in background.js — this file is UI plus
+// runtime messages. See the onMessage router there.
+
+// Chrome exposes `chrome`; Firefox exposes both but only `browser` is
+// promise-based. Chrome 148+ ships `browser` too, so prefer it and fall back.
+const api = globalThis.browser ?? globalThis.chrome;
 
 const DEFAULTS = {
   apiBase: 'https://api.skyreader.app',
@@ -10,16 +14,25 @@ const DEFAULTS = {
 const els = {
   title: document.getElementById('pageTitle'),
   url: document.getElementById('pageUrl'),
+  mainUi: document.getElementById('mainUi'),
   saveBtn: document.getElementById('saveBtn'),
   saveStatus: document.getElementById('saveStatus'),
   feeds: document.getElementById('feeds'),
   feedsMsg: document.getElementById('feedsMsg'),
+  permissionPrompt: document.getElementById('permissionPrompt'),
+  permissionHost: document.getElementById('permissionHost'),
+  permissionStatus: document.getElementById('permissionStatus'),
+  grantBtn: document.getElementById('grantBtn'),
+  accountSection: document.getElementById('accountSection'),
   accountName: document.getElementById('accountName'),
   accountStatus: document.getElementById('accountStatus'),
   retryAccountBtn: document.getElementById('retryAccountBtn'),
 };
 
 let tab = null;
+// Match pattern for the API host, captured at init so the Grant button can call
+// permissions.request() with no await ahead of it (see onGrant).
+let apiOrigin = null;
 
 async function refreshAccount() {
   els.retryAccountBtn.hidden = true;
@@ -45,13 +58,13 @@ async function refreshAccount() {
 }
 
 function send(msg) {
-  return chrome.runtime.sendMessage(msg);
+  return api.runtime.sendMessage(msg);
 }
 
 async function getConfig() {
   // Store builds use production URLs; only unpacked development has settings.
-  if (!chrome.runtime.getManifest().permissions.includes('storage')) return { ...DEFAULTS };
-  const stored = await chrome.storage.sync.get(DEFAULTS);
+  if (!api.runtime.getManifest().permissions.includes('storage')) return { ...DEFAULTS };
+  const stored = await api.storage.sync.get(DEFAULTS);
   return { ...DEFAULTS, ...stored };
 }
 
@@ -76,6 +89,67 @@ function shortUrl(raw) {
   } catch {
     return raw;
   }
+}
+
+// --- Host access ------------------------------------------------------------
+
+// Firefox MV3 treats host_permissions as revocable from about:addons, and a dev
+// build pointed at 127.0.0.1 holds only an optional permission until granted.
+// Without access every API call fails as an opaque network error, so the popup
+// asks for it up front rather than showing three broken sections.
+function originPattern(cfg) {
+  try {
+    return `${new URL(cfg.apiBase).origin}/*`;
+  } catch {
+    return null;
+  }
+}
+
+async function hasApiAccess(origin) {
+  if (!origin) return true;
+  try {
+    return await api.permissions.contains({ origins: [origin] });
+  } catch {
+    // A browser that doesn't gate host access at all.
+    return true;
+  }
+}
+
+function showPermissionPrompt(cfg) {
+  els.permissionHost.textContent = (() => {
+    try {
+      return new URL(cfg.apiBase).host;
+    } catch {
+      return cfg.apiBase;
+    }
+  })();
+  els.mainUi.hidden = true;
+  els.accountSection.hidden = true;
+  els.permissionPrompt.hidden = false;
+}
+
+// permissions.request() must be the first await in a user-input handler:
+// Firefox drops the user gesture across an await and rejects the request. That
+// is why apiOrigin is captured at init instead of read from config here.
+async function onGrant() {
+  let granted = false;
+  try {
+    granted = await api.permissions.request({ origins: [apiOrigin] });
+  } catch {
+    granted = false;
+  }
+  if (!granted) {
+    setStatus(
+      els.permissionStatus,
+      'Access declined. Skyreader can still be used on the web.',
+      'error'
+    );
+    return;
+  }
+  els.permissionPrompt.hidden = true;
+  els.mainUi.hidden = false;
+  els.accountSection.hidden = false;
+  startPageWork();
 }
 
 // --- Save -------------------------------------------------------------------
@@ -114,11 +188,16 @@ async function onSave() {
       markSaved();
       setStatus(els.saveStatus, 'Already in your Saved list ✓', 'success');
       break;
+    case 'permission':
+      // Access was revoked between opening the popup and clicking Save.
+      setStatus(els.saveStatus, 'Access to the Skyreader API was withdrawn.', 'error');
+      showPermissionPrompt(await getConfig());
+      break;
     case 'auth': {
       // Logged out, over the monthly limit, or a scope upgrade — the /save page
       // handles all three with proper UI.
       const cfg = await getConfig();
-      chrome.tabs.create({ url: `${cfg.frontendBase}/save?url=${encodeURIComponent(tab.url)}` });
+      api.tabs.create({ url: `${cfg.frontendBase}/save?url=${encodeURIComponent(tab.url)}` });
       window.close();
       return;
     }
@@ -235,7 +314,7 @@ function feedRow(feed) {
 /** Open a Skyreader page and close the popup behind it. */
 async function openTab(path) {
   const cfg = await getConfig();
-  await chrome.tabs.create({ url: `${cfg.frontendBase}${path}` });
+  await api.tabs.create({ url: `${cfg.frontendBase}${path}` });
   window.close();
 }
 
@@ -255,6 +334,9 @@ async function subscribe(feed, btn) {
       btn.textContent = 'Subscribed ✓';
       btn.className = 'subscribe done';
       break;
+    case 'permission':
+      showPermissionPrompt(await getConfig());
+      return;
     case 'auth': {
       await openTab('');
       return;
@@ -335,26 +417,43 @@ async function discover() {
 
 // --- Init -------------------------------------------------------------------
 
-async function init() {
-  els.retryAccountBtn.addEventListener('click', refreshAccount);
+// Everything that needs the API: run once at init, and again after the user
+// grants host access from the prompt.
+function startPageWork() {
   refreshAccount();
-  const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
-  tab = active;
-
-  els.title.textContent = tab?.title || 'This page';
-  els.url.textContent = tab?.url ? shortUrl(tab.url) : '';
 
   if (!tab?.url || !isHttpUrl(tab.url)) {
-    // chrome://, extension pages, the Web Store, etc. — nothing to save or scan.
+    // Browser-internal pages, extension pages, the Web Store, etc. — nothing to
+    // save or scan.
     els.saveBtn.disabled = true;
     setStatus(els.saveStatus, "This page can't be saved.", 'error');
     renderNoFeeds('No feeds on this page.');
     return;
   }
 
-  els.saveBtn.addEventListener('click', onSave);
   refreshSavedState();
   discover();
+}
+
+async function init() {
+  els.retryAccountBtn.addEventListener('click', refreshAccount);
+  els.saveBtn.addEventListener('click', onSave);
+  els.grantBtn.addEventListener('click', onGrant);
+
+  const [active] = await api.tabs.query({ active: true, currentWindow: true });
+  tab = active;
+
+  els.title.textContent = tab?.title || 'This page';
+  els.url.textContent = tab?.url ? shortUrl(tab.url) : '';
+
+  const cfg = await getConfig();
+  apiOrigin = originPattern(cfg);
+  if (!(await hasApiAccess(apiOrigin))) {
+    showPermissionPrompt(cfg);
+    return;
+  }
+
+  startPageWork();
 }
 
 init();

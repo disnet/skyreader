@@ -11,7 +11,7 @@ This is a monorepo with 7 packages:
 - `admin/` - SvelteKit admin dashboard (Cloudflare Pages)
 - `feed-proxy/` - Feed crawler + article extraction (Fly.io; one app per environment)
 - `linkblog-site/` - Standalone SvelteKit app rendering public linkblogs at `linkblogs.skyreader.app` (Cloudflare Pages)
-- `extension/` - Chrome extension for one-click saves with live-DOM article extraction (Manifest V3)
+- `extension/` - Chrome + Firefox extension for one-click saves with live-DOM article extraction (Manifest V3)
 - `docs-site/` - User-facing docs at `docs.skyreader.app` (Astro Starlight; Cloudflare Pages)
 
 Each package has its own CLAUDE.md with detailed guidance.

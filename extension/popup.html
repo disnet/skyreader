@@ -127,6 +127,18 @@
         color: var(--muted);
       }
 
+      /* Host-access prompt. Firefox MV3 lets the user revoke the API host at any
+         time, and dev builds point at an origin held only as optional; either
+         way nothing else in the popup can work until access is granted. */
+      .perm-text {
+        margin-bottom: 10px;
+        line-height: 1.4;
+      }
+      .perm-host {
+        font-weight: 600;
+        overflow-wrap: anywhere;
+      }
+
       .feed {
         display: flex;
         align-items: center;
@@ -268,17 +280,29 @@
     <div class="page-title" id="pageTitle">This page</div>
     <div class="page-url" id="pageUrl"></div>
 
-    <button class="primary" id="saveBtn">Save this page</button>
-    <div class="status" id="saveStatus"></div>
+    <div class="section" id="permissionPrompt" hidden>
+      <div class="section-label">Access needed</div>
+      <div class="muted perm-text">
+        Skyreader needs access to <span class="perm-host" id="permissionHost"></span> before it can
+        save pages or find feeds.
+      </div>
+      <button class="primary" id="grantBtn">Grant access</button>
+      <div class="status" id="permissionStatus" role="status"></div>
+    </div>
 
-    <div class="section">
-      <div class="section-label">Feeds on this page</div>
-      <div id="feeds">
-        <div class="muted" id="feedsMsg">Looking for feeds…</div>
+    <div id="mainUi">
+      <button class="primary" id="saveBtn">Save this page</button>
+      <div class="status" id="saveStatus"></div>
+
+      <div class="section">
+        <div class="section-label">Feeds on this page</div>
+        <div id="feeds">
+          <div class="muted" id="feedsMsg">Looking for feeds…</div>
+        </div>
       </div>
     </div>
 
-    <div class="section">
+    <div class="section" id="accountSection">
       <a class="account-name" id="accountName" target="_blank" rel="noopener noreferrer"
         >Checking account…</a
       >
