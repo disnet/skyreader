@@ -7,31 +7,45 @@ const vm = require('node:vm');
 const source = readFileSync(join(__dirname, '../background.js'), 'utf8');
 const manifest = JSON.parse(readFileSync(join(__dirname, '../manifest.json'), 'utf8'));
 
-function worker(fetch, config = {}, permissions = manifest.permissions) {
+// `namespace` picks which global the background script should bind to: Chrome
+// only defines `chrome`, Firefox defines both (and only `browser` is
+// promise-based), so the script prefers `browser` and falls back.
+function worker(
+  fetch,
+  config = {},
+  permissions = manifest.permissions,
+  { hostAccess = true, namespace = 'chrome' } = {}
+) {
   let listener;
-  const context = vm.createContext({
-    fetch,
-    URL,
-    setTimeout,
-    chrome: {
-      storage: {
-        sync: {
-          get: async (defaults) => {
-            assert.ok(permissions.includes('storage'), 'store builds must not access storage');
-            return { ...defaults, ...config };
-          },
+  const stub = {
+    storage: {
+      sync: {
+        get: async (defaults) => {
+          assert.ok(permissions.includes('storage'), 'store builds must not access storage');
+          return { ...defaults, ...config };
         },
       },
-      runtime: {
-        getManifest: () => ({ permissions }),
-        onMessage: { addListener: (fn) => (listener = fn) },
-        onInstalled: { addListener() {} },
-      },
-      contextMenus: { onClicked: { addListener() {} } },
     },
-  });
+    runtime: {
+      getManifest: () => ({ permissions }),
+      onMessage: { addListener: (fn) => (listener = fn) },
+      onInstalled: { addListener() {} },
+    },
+    permissions: { contains: async () => hostAccess },
+    contextMenus: { onClicked: { addListener() {} } },
+    tabs: { create() {} },
+    action: {
+      setBadgeText: async () => {},
+      setBadgeBackgroundColor: async () => {},
+      setBadgeTextColor: async () => {},
+      setTitle: async () => {},
+    },
+    scripting: { executeScript: async () => [{ result: null }] },
+  };
+  const context = vm.createContext({ fetch, URL, setTimeout, [namespace]: stub });
   vm.runInContext(source, context);
-  return (type) => new Promise((resolve) => listener({ type }, {}, resolve));
+  return (msg) =>
+    new Promise((resolve) => listener(typeof msg === 'string' ? { type: msg } : msg, {}, resolve));
 }
 
 test('account uses the configured server and shared cookie, returning only identity', async () => {
@@ -82,4 +96,46 @@ test('network failures are returned through the message router', async () => {
   const result = await send('account');
   assert.equal(result.ok, false);
   assert.match(result.error, /Offline/);
+});
+
+test('the background binds to browser when it exists, and to chrome otherwise', async () => {
+  for (const namespace of ['chrome', 'browser']) {
+    const send = worker(
+      async () => Response.json({ did: 'did:plc:alice', handle: 'alice.test' }),
+      {},
+      manifest.permissions,
+      { namespace }
+    );
+    const result = await send('account');
+    assert.equal(result.ok, true, `background should work on the ${namespace} namespace`);
+    assert.equal(result.user.handle, 'alice.test');
+  }
+});
+
+test('without host access a save never reaches the network', async () => {
+  const send = worker(
+    async () => assert.fail('no request should be made without host access'),
+    {},
+    manifest.permissions,
+    { hostAccess: false }
+  );
+  const result = await send({ type: 'save', url: 'https://example.com/post' });
+  // The popup renders a grant prompt from this; the context menu hands off to
+  // the web app's /save page, which does not need the extension's host access.
+  assert.equal(result.status, 'permission');
+  assert.equal(result.url, 'https://example.com/post');
+});
+
+test('without host access a subscribe never reaches the network', async () => {
+  const send = worker(
+    async () => assert.fail('no request should be made without host access'),
+    {},
+    manifest.permissions,
+    { hostAccess: false }
+  );
+  const result = await send({
+    type: 'subscribe',
+    feed: { kind: 'rss', feedUrl: 'https://example.com/feed.xml' },
+  });
+  assert.equal(result.status, 'permission');
 });

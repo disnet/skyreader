@@ -3,16 +3,22 @@
   "version": "0.2.0",
   "private": true,
   "license": "AGPL-3.0-only",
-  "description": "Skyreader Chrome extension",
+  "description": "Skyreader browser extension (Chrome and Firefox)",
   "scripts": {
     "test": "node --test test/*.test.cjs",
-    "build": "esbuild src/extract-entry.js --bundle --format=iife --minify --outfile=content/extract.js",
-    "package": "npm run build && node scripts/package.mjs"
+    "build": "esbuild src/extract-entry.js --bundle --format=iife --minify --tsconfig-raw={} --outfile=content/extract.js",
+    "package": "node scripts/package.mjs chrome",
+    "package:firefox": "node scripts/package.mjs firefox",
+    "package:firefox:source": "node scripts/source-package.mjs",
+    "package:all": "npm run package && npm run package:firefox",
+    "lint:firefox": "npm run package:firefox && web-ext lint --source-dir dist/firefox",
+    "start:firefox": "npm run build && web-ext run --source-dir ."
   },
   "dependencies": {
     "defuddle": "^0.19.3"
   },
   "devDependencies": {
-    "esbuild": "^0.28.2"
+    "esbuild": "^0.28.2",
+    "web-ext": "^10.6.0"
   }
 }

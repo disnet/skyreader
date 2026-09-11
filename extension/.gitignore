@@ -1,2 +1,4 @@
 node_modules/
 content/
+dist/
+skyreader-extension*.zip

@@ -2,6 +2,10 @@
 // A non-default API base needs a matching optional host permission, requested
 // here so the background fetches aren't blocked.
 
+// Chrome exposes `chrome`; Firefox exposes both but only `browser` is
+// promise-based. Chrome 148+ ships `browser` too, so prefer it and fall back.
+const api = globalThis.browser ?? globalThis.chrome;
+
 const DEFAULTS = {
   apiBase: 'https://api.skyreader.app',
   frontendBase: 'https://skyreader.app',
@@ -11,7 +15,7 @@ const apiBaseInput = document.getElementById('apiBase');
 const frontendBaseInput = document.getElementById('frontendBase');
 const statusEl = document.getElementById('status');
 
-chrome.storage.sync.get(DEFAULTS).then((cfg) => {
+api.storage.sync.get(DEFAULTS).then((cfg) => {
   apiBaseInput.value = cfg.apiBase;
   frontendBaseInput.value = cfg.frontendBase;
 });
@@ -44,19 +48,18 @@ document.getElementById('save').addEventListener('click', async () => {
     return;
   }
 
-  // The background fetch needs host access to the API origin. The default is
-  // a required permission; anything else must be granted here.
+  // The background fetch needs host access to the API origin. request() resolves
+  // true without prompting when the origin is already granted, so there is no
+  // permissions.contains() check ahead of it: Firefox drops the user gesture
+  // across an await and would reject the request that followed it.
   const origin = `${new URL(apiBase).origin}/*`;
-  const granted = await chrome.permissions.contains({ origins: [origin] });
+  const granted = await api.permissions.request({ origins: [origin] }).catch(() => false);
   if (!granted) {
-    const ok = await chrome.permissions.request({ origins: [origin] }).catch(() => false);
-    if (!ok) {
-      showStatus('Permission for that server was declined', true);
-      return;
-    }
+    showStatus('Permission for that server was declined', true);
+    return;
   }
 
-  await chrome.storage.sync.set({ apiBase, frontendBase });
+  await api.storage.sync.set({ apiBase, frontendBase });
   apiBaseInput.value = apiBase;
   frontendBaseInput.value = frontendBase;
   showStatus('Saved');

@@ -5,10 +5,13 @@
 // advertises (RSS/Atom or a standard.site publication). The context menu still
 // offers one-click saves for a link or the page.
 //
-// This service worker holds all the logic — auth, extraction, the save/subscribe
-// API calls, and feed discovery — and the popup drives it over chrome.runtime
-// messages (see the onMessage router at the bottom). Keeping fetches here means
-// one place owns the session cookie and the retry/auth handling.
+// This background script holds all the logic — auth, extraction, the
+// save/subscribe API calls, and feed discovery — and the popup drives it over
+// runtime messages (see the onMessage router at the bottom). Keeping fetches
+// here means one place owns the session cookie and the retry/auth handling.
+// It runs as a service worker in Chrome and as a non-persistent event page in
+// Firefox (which has no extension service workers), so every listener below is
+// registered at the top level and no state is expected to survive a restart.
 //
 // The save flow mirrors the frontend's saveFromUrl
 // (frontend/src/lib/stores/saves.svelte.ts): generate a TID rkey, extract
@@ -29,9 +32,15 @@
 //
 // Auth rides on the browser's existing skyreader.app session cookie
 // (Domain=.skyreader.app covers api.skyreader.app; the host_permission exempts
-// extension-initiated fetches from SameSite and CORS). When the user isn't
-// logged in, we fall back to opening the frontend's /save?url= page, which
-// handles login and resumes the save.
+// extension-initiated fetches from SameSite and CORS — both Chrome and Firefox
+// treat an extension request as first-party for a host it holds permission
+// for). When the user isn't logged in, we fall back to opening the frontend's
+// /save?url= page, which handles login and resumes the save.
+
+// Chrome exposes `chrome`; Firefox exposes both but only `browser` is
+// promise-based (its `chrome` alias is callback-style, and this file awaits
+// everything). Chrome 148+ ships `browser` too, so prefer it and fall back.
+const api = globalThis.browser ?? globalThis.chrome;
 
 const DEFAULTS = {
   apiBase: 'https://api.skyreader.app',
@@ -40,9 +49,23 @@ const DEFAULTS = {
 
 async function getConfig() {
   // Store builds use production URLs; only unpacked development has settings.
-  if (!chrome.runtime.getManifest().permissions.includes('storage')) return { ...DEFAULTS };
-  const stored = await chrome.storage.sync.get(DEFAULTS);
+  if (!api.runtime.getManifest().permissions.includes('storage')) return { ...DEFAULTS };
+  const stored = await api.storage.sync.get(DEFAULTS);
   return { ...DEFAULTS, ...stored };
+}
+
+// Firefox MV3 treats host_permissions as revocable: the user can withdraw
+// api.skyreader.app from about:addons at any time, and a dev build pointed at a
+// local server holds only an optional permission until it's granted. Without it
+// every fetch below fails with an opaque network error, so callers check first
+// and route the user somewhere that can actually help.
+async function hasApiAccess(cfg) {
+  try {
+    return await api.permissions.contains({ origins: [`${new URL(cfg.apiBase).origin}/*`] });
+  } catch {
+    // Unparseable apiBase, or a browser that doesn't gate host access at all.
+    return true;
+  }
 }
 
 // --- TID generation (mirrors frontend/src/lib/utils/tid.ts) ---------------
@@ -77,18 +100,18 @@ const BADGE_RED = '#f44336'; // Error (DESIGN.md)
 function setBadge(tabId, text, color, title) {
   if (tabId == null) return;
   // Tab may have closed mid-save; badge calls on a dead tab throw.
-  chrome.action.setBadgeText({ tabId, text }).catch(() => {});
-  chrome.action.setBadgeBackgroundColor({ tabId, color }).catch(() => {});
-  chrome.action.setBadgeTextColor({ tabId, color: '#ffffff' }).catch(() => {});
-  if (title) chrome.action.setTitle({ tabId, title }).catch(() => {});
+  api.action.setBadgeText({ tabId, text }).catch(() => {});
+  api.action.setBadgeBackgroundColor({ tabId, color }).catch(() => {});
+  api.action.setBadgeTextColor({ tabId, color: '#ffffff' }).catch(() => {});
+  if (title) api.action.setTitle({ tabId, title }).catch(() => {});
 }
 
 function flashBadge(tabId, text, color, title) {
   setBadge(tabId, text, color, title);
   setTimeout(() => {
     if (tabId == null) return;
-    chrome.action.setBadgeText({ tabId, text: '' }).catch(() => {});
-    chrome.action.setTitle({ tabId, title: 'Skyreader' }).catch(() => {});
+    api.action.setBadgeText({ tabId, text: '' }).catch(() => {});
+    api.action.setTitle({ tabId, title: 'Skyreader' }).catch(() => {});
   }, 4000);
 }
 
@@ -139,14 +162,15 @@ async function getAccount() {
 // Run Defuddle inside the tab's live DOM. Two-step injection: the bundle
 // defines globalThis.__skyreaderExtract in the isolated world, then a func
 // call reads its result back. Returns null when the page can't be scripted
-// (chrome://, PDF viewer, Web Store) or extraction yields no body.
+// (browser-internal pages, the PDF viewer, extension galleries) or extraction
+// yields no body.
 async function extractFromTab(tabId) {
   try {
-    await chrome.scripting.executeScript({
+    await api.scripting.executeScript({
       target: { tabId },
       files: ['content/extract.js'],
     });
-    const [{ result }] = await chrome.scripting.executeScript({
+    const [{ result }] = await api.scripting.executeScript({
       target: { tabId },
       func: () => globalThis.__skyreaderExtract?.(),
     });
@@ -189,7 +213,7 @@ function wordCountFrom(html) {
 // Open the frontend's /save page, which handles login-then-resume and shows
 // proper UI for limit/scope errors.
 function openSavePage(cfg, url) {
-  chrome.tabs.create({
+  api.tabs.create({
     url: `${cfg.frontendBase}/save?url=${encodeURIComponent(url)}`,
   });
 }
@@ -200,14 +224,15 @@ function openSavePage(cfg, url) {
 // extraction runs in-page with the backend extractor as fallback. Link saves
 // have no open page, so they go straight to the backend extractor.
 //
-// Result: { status: 'saved' | 'updated' | 'duplicate' | 'auth' | 'error',
-//           url?, message? }
+// Result: { status: 'saved' | 'updated' | 'duplicate' | 'auth' | 'permission' |
+//           'error', url?, message? }
 async function performSave(url, { fallbackTitle, extractTabId } = {}) {
   if (!isHttpUrl(url)) {
     return { status: 'error', message: 'Not a saveable page' };
   }
 
   const cfg = await getConfig();
+  if (!(await hasApiAccess(cfg))) return { status: 'permission', url };
 
   // Extraction is best-effort: a failed extraction still saves the bare URL
   // with the tab title.
@@ -281,6 +306,10 @@ async function saveWithBadge(url, tabId, opts) {
     case 'duplicate':
       flashBadge(tabId, '✓', BADGE_BLUE, 'Already in your Saved list');
       break;
+    // 'permission' = no host access to the API (revoked in Firefox, or an
+    // ungranted dev origin), so the extension can't call it at all. Both cases
+    // hand off to the web app's /save page, which can.
+    case 'permission':
     case 'auth': {
       setBadge(tabId, '', BADGE_BLUE, 'Skyreader');
       const cfg = await getConfig();
@@ -300,9 +329,11 @@ async function saveWithBadge(url, tabId, opts) {
 // Mirrors AddFeedModal's addFeed / addStandardSite (frontend). The backend uses
 // INSERT OR REPLACE, so re-subscribing is idempotent (no duplicate error).
 //
-// Result: { status: 'subscribed' | 'auth' | 'limit' | 'error', message? }
+// Result: { status: 'subscribed' | 'auth' | 'limit' | 'permission' | 'error',
+//           message? }
 async function performSubscribe(feed) {
   const cfg = await getConfig();
+  if (!(await hasApiAccess(cfg))) return { status: 'permission' };
   const rkey = generateTid();
 
   let body;
@@ -388,7 +419,7 @@ function inferFormatFromUrl(u) {
 async function discoverFeedLinksInTab(tabId) {
   if (tabId == null) return [];
   try {
-    const [{ result }] = await chrome.scripting.executeScript({
+    const [{ result }] = await api.scripting.executeScript({
       target: { tabId },
       func: () => {
         const out = [];
@@ -499,9 +530,9 @@ async function discoverFeeds(tabId, url) {
   return { feeds, standardSite };
 }
 
-// --- Message router (popup ↔ service worker) --------------------------------
+// --- Message router (popup ↔ background) ------------------------------------
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+api.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   (async () => {
     try {
       switch (msg?.type) {
@@ -546,20 +577,20 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
 // --- Context menus ----------------------------------------------------------
 
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.contextMenus.create({
+api.runtime.onInstalled.addListener(() => {
+  api.contextMenus.create({
     id: 'save-link',
     title: 'Save link to Skyreader',
     contexts: ['link'],
   });
-  chrome.contextMenus.create({
+  api.contextMenus.create({
     id: 'save-page',
     title: 'Save page to Skyreader',
     contexts: ['page'],
   });
 });
 
-chrome.contextMenus.onClicked.addListener((info, tab) => {
+api.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId === 'save-link') {
     saveWithBadge(info.linkUrl, tab?.id);
   } else if (info.menuItemId === 'save-page') {
