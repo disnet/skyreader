@@ -46,7 +46,7 @@
     error = null;
     limitInfo = null;
     try {
-      const saved = await savesStore.saveFromUrl(url);
+      const saved = await savesStore.saveFromUrl(url, { savedVia: 'web' });
       urlValue = '';
       onclose();
       // Take the user to the saved article. Navigate first, THEN signal which

@@ -9,13 +9,17 @@ import { savesStore } from '$lib/stores/saves.svelte';
 import { toastStore } from '$lib/stores/toast.svelte';
 import { UrlSaveLimitError } from '$lib/services/api';
 import { saveLimitLine } from '$lib/utils/limitCopy';
+import { readerProvenance } from '$lib/utils/saveProvenance';
 
 /** Toggle `url` in and out of Saved. Resolves once the list reflects the change. */
-export async function toggleSavedLink(url: string): Promise<void> {
+export async function toggleSavedLink(
+  url: string,
+  from?: { title?: string | null; url?: string | null }
+): Promise<void> {
   const existing = savesStore.getByUrl(url);
   try {
     if (existing) await savesStore.remove(existing.rkey);
-    else await savesStore.saveFromUrl(url);
+    else await savesStore.saveFromUrl(url, readerProvenance(from));
   } catch (err) {
     // The monthly save cap is a different kind of failure from "that didn't
     // work": it has a reason, a reset date, and something the reader can do

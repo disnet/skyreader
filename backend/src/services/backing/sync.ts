@@ -146,8 +146,8 @@ export async function pollBackedMembership(
       env.DB.prepare(
         `INSERT INTO saved_articles
            (user_did, rkey, record_uri, url, url_normalized, title, author, description, image,
-            content_type, source, item_guid, saved_at, created_at)
-         VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, 'webpage', 'url', ?, ?, ?)
+            content_type, source, item_guid, saved_at, created_at, saved_via)
+         VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, 'webpage', 'url', ?, ?, ?, ?)
          ON CONFLICT(user_did, url_normalized) DO NOTHING`
       ).bind(
         userDid,
@@ -160,7 +160,8 @@ export async function pollBackedMembership(
         m.image ?? null,
         m.canonicalAtUri ?? null,
         now,
-        now
+        now,
+        backing.provider
       )
     );
   }
@@ -321,6 +322,9 @@ export interface SavedArticleView {
   savedAt: string;
   source: string;
   itemGuid: string | null;
+  savedVia: string | null;
+  savedFromTitle: string | null;
+  savedFromUrl: string | null;
 }
 
 interface JoinedRow {
@@ -342,6 +346,9 @@ interface JoinedRow {
   saved_at: number | null;
   source: string | null;
   item_guid: string | null;
+  saved_via: string | null;
+  saved_from_title: string | null;
+  saved_from_url: string | null;
 }
 
 function rowToView(row: JoinedRow): SavedArticleView {
@@ -372,6 +379,9 @@ function rowToView(row: JoinedRow): SavedArticleView {
     savedAt: new Date(row.saved_at ?? Date.now()).toISOString(),
     source: row.source || 'url',
     itemGuid: row.item_guid ?? meta.canonicalAtUri ?? null,
+    savedVia: row.saved_via,
+    savedFromTitle: row.saved_from_title,
+    savedFromUrl: row.saved_from_url,
   };
 }
 
@@ -395,7 +405,7 @@ export async function listBackedSaved(
     `SELECT m.url AS m_url, m.metadata AS m_metadata, m.external_item_uri,
             s.rkey, s.record_uri, s.url, s.title, s.author, s.description, NULL AS content,
             s.content_type, s.domain, s.image, s.word_count, s.published_at, s.saved_at,
-            s.source, s.item_guid
+            s.source, s.item_guid, s.saved_via, s.saved_from_title, s.saved_from_url
      FROM backed_collection_members m
      LEFT JOIN saved_articles s
        ON s.user_did = m.user_did AND s.url_normalized = m.url_normalized
@@ -408,7 +418,7 @@ export async function listBackedSaved(
     `SELECT NULL AS m_url, NULL AS m_metadata, NULL AS external_item_uri,
             s.rkey, s.record_uri, s.url, s.title, s.author, s.description, NULL AS content,
             s.content_type, s.domain, s.image, s.word_count, s.published_at, s.saved_at,
-            s.source, s.item_guid
+            s.source, s.item_guid, s.saved_via, s.saved_from_title, s.saved_from_url
      FROM saved_articles s
      WHERE s.user_did = ?
        AND (s.url_normalized IS NULL OR NOT EXISTS (

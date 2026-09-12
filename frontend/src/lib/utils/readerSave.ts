@@ -13,7 +13,12 @@
 // lookup maps don't index — asking `savesStore.isSaved` about it answers "not
 // saved" for an item that plainly is.
 import { savesStore } from '$lib/stores/saves.svelte';
-import type { SavedItem } from '$lib/types';
+import {
+  CLIENT_SAVED_VIA,
+  type ClientSavedVia,
+  type SaveProvenance,
+  type SavedItem,
+} from '$lib/types';
 
 /**
  * The live row for `save`, or undefined once it's been unsaved. Reactive: it
@@ -34,6 +39,24 @@ export function isSavedItemSaved(save: SavedItem): boolean {
 // Unsave would otherwise bring the item back empty. One slot: only the undo of
 // the thing you just did needs it.
 let lastUnsavedBody: { guid: string; content: string | null } | null = null;
+
+/**
+ * The provenance of a re-save is the provenance it already had: undoing a
+ * mis-tapped Unsave brings the same save back, so it keeps saying where it came
+ * from rather than being relabeled by the way it came back. `semble`/`margin`
+ * are server-written channels a client may not claim, so those rows carry only
+ * their referrer across — the backing poll re-stamps the channel itself.
+ */
+function carriedProvenance(save: SavedItem): SaveProvenance {
+  const via = CLIENT_SAVED_VIA.includes(save.savedVia as ClientSavedVia)
+    ? (save.savedVia as ClientSavedVia)
+    : undefined;
+  return {
+    savedVia: via,
+    savedFromTitle: save.savedFromTitle ?? undefined,
+    savedFromUrl: save.savedFromUrl ?? undefined,
+  };
+}
 
 /**
  * Toggle the save behind a `'saved'` reader item. Unsaves the *live* row rather
@@ -64,6 +87,7 @@ export async function toggleSavedItemSave(save: SavedItem): Promise<void> {
       content:
         save.content ??
         (lastUnsavedBody?.guid === guid ? (lastUnsavedBody.content ?? undefined) : undefined),
+      provenance: carriedProvenance(save),
     });
     return;
   }
@@ -78,5 +102,6 @@ export async function toggleSavedItemSave(save: SavedItem): Promise<void> {
     summary: save.description ?? undefined,
     imageUrl: save.image ?? undefined,
     publishedAt: save.publishedAt ?? undefined,
+    provenance: carriedProvenance(save),
   });
 }

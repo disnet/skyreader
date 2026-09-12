@@ -243,6 +243,8 @@
     <LinkContextMenu
       url={linkInterception.menuState.url}
       linkText={linkInterception.menuState.linkText}
+      fromTitle={title}
+      fromUrl={item.url}
       anchorRect={linkInterception.menuState.anchorRect}
       onClose={linkInterception.closeMenu}
     />

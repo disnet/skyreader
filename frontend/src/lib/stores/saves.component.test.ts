@@ -88,6 +88,14 @@ vi.mock('./savedSearch.svelte', () => ({
   savedSearchStore: { invalidate: vi.fn(), upsert: vi.fn(), remove: vi.fn() },
 }));
 
+// The provenance of a feed save is the feed's own name, looked up by the
+// subscription id the caller already passes.
+vi.mock('./subscriptions.svelte', () => ({
+  subscriptionsStore: {
+    getById: (id: number) => (id === 7 ? { id: 7, title: 'Feed Y', customTitle: null } : undefined),
+  },
+}));
+
 const authState = { isGuest: true };
 vi.mock('./auth.svelte', () => ({
   auth: {
@@ -221,6 +229,66 @@ describe('savesStore in guest mode', () => {
       'saved',
       'guid-1',
       expect.objectContaining({ itemGuid: 'guid-1' })
+    );
+  });
+
+  it('stamps a feed save with the feed it came from — row, Dexie and queue alike', async () => {
+    articleRows.push({ guid: 'guid-1', subscriptionId: 7, content: '<p>the rss body text</p>' });
+
+    const saved = await savesStore.saveArticle({
+      url: 'https://example.com/piece',
+      guid: 'guid-1',
+      subscriptionId: 7,
+      title: 'A Piece',
+    });
+
+    expect(saved.savedFromTitle).toBe('Feed Y');
+    expect(savedRows.get(saved.rkey)?.savedFromTitle).toBe('Feed Y');
+    // The queue IS the migration on sign-in, so the label has to ride along.
+    expect(enqueue).toHaveBeenCalledWith(
+      'create',
+      'saved',
+      'guid-1',
+      expect.objectContaining({ savedFromTitle: 'Feed Y' })
+    );
+  });
+
+  it('saves an article whose subscription is gone, just without a label', async () => {
+    const saved = await savesStore.saveArticle({
+      url: 'https://example.com/orphan',
+      guid: 'guid-9',
+      subscriptionId: 404,
+      title: 'An Orphan',
+    });
+
+    expect(saved.savedFromTitle).toBeNull();
+    expect(savesStore.isSaved('guid-9')).toBe(true);
+  });
+
+  it('keeps provenance through a re-save of the same item', async () => {
+    // Undoing an Unsave brings the same save back: it keeps saying where it came
+    // from rather than being relabeled by the way it came back.
+    const first = await savesStore.saveArticle({
+      url: 'https://example.com/piece',
+      guid: 'guid-1',
+      subscriptionId: 7,
+    });
+    await savesStore.unsaveByGuid('guid-1');
+    enqueue.mockClear();
+
+    const again = await savesStore.saveArticle({
+      url: first.url,
+      guid: 'guid-1',
+      provenance: { savedVia: 'reader', savedFromTitle: 'Feed Y' },
+    });
+
+    expect(again.savedVia).toBe('reader');
+    expect(again.savedFromTitle).toBe('Feed Y');
+    expect(enqueue).toHaveBeenCalledWith(
+      'create',
+      'saved',
+      'guid-1',
+      expect.objectContaining({ savedVia: 'reader', savedFromTitle: 'Feed Y' })
     );
   });
 

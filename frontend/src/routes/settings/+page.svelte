@@ -70,7 +70,10 @@
 
   // Build links against the current origin so they also work on staging/local.
   const appOrigin = browser ? window.location.origin : 'https://skyreader.app';
-  const saveBookmarklet = `javascript:void(window.open('${appOrigin}/save?url='+encodeURIComponent(location.href)))`;
+  // `via=bookmarklet` names the entry point for the save's provenance label —
+  // /save also serves the share sheet and the Apple Shortcut, which can't
+  // identify themselves (see readVia in routes/save/+page.svelte).
+  const saveBookmarklet = `javascript:void(window.open('${appOrigin}/save?via=bookmarklet&url='+encodeURIComponent(location.href)))`;
   const subscribeBookmarklet = `javascript:void(window.open('${appOrigin}/subscribe?url='+encodeURIComponent(location.href)))`;
 
   let copiedKey = $state<string | null>(null);
