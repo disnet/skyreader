@@ -253,6 +253,7 @@ async function performSave(url, { fallbackTitle, extractTabId } = {}) {
     // If this URL is already saved, upgrade the stored content with this
     // (likely richer) extraction instead of getting a 409 back.
     updateContent: true,
+    savedVia: 'extension',
     title: extracted?.title || fallbackTitle || undefined,
     author: extracted?.author || undefined,
     description: extracted?.description || undefined,

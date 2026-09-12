@@ -24,6 +24,7 @@ import type {
   CommunityHighlightNote,
   SembleContext,
   SocialDocument,
+  SavedItem,
   User,
 } from '$lib/types';
 import { getLinkPostTitle, isLinkPost } from '$lib/utils/linkPost';
@@ -1651,6 +1652,9 @@ class ApiClient {
       publishedAt?: string;
       domain?: string;
       wordCount?: number;
+      savedVia?: 'web' | 'extension' | 'share-target' | 'reader';
+      savedFromTitle?: string;
+      savedFromUrl?: string;
     }
   ): Promise<{
     rkey: string;
@@ -1668,6 +1672,9 @@ class ApiClient {
     savedAt: string;
     source?: 'url' | 'feed' | 'document';
     itemGuid?: string;
+    savedVia?: SavedItem['savedVia'];
+    savedFromTitle?: string | null;
+    savedFromUrl?: string | null;
   }> {
     return this.fetch('/api/saved', {
       method: 'POST',
@@ -1695,6 +1702,9 @@ class ApiClient {
       savedAt: string;
       source?: 'url' | 'feed' | 'document';
       itemGuid?: string;
+      savedVia?: SavedItem['savedVia'];
+      savedFromTitle?: string | null;
+      savedFromUrl?: string | null;
     }>;
     // Keyset cursor for the next (older) page; null at the end of the list.
     cursor: string | null;

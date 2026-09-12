@@ -118,6 +118,55 @@ describe('POST /api/saved — updateContent upgrade of an existing save', () => 
     expect(count!.cnt).toBe(1);
   });
 
+  it('records validated provenance and keeps it through content upgrades', async () => {
+    const first = await call(
+      post({
+        url: URL,
+        rkey: 'aaaaaaaaaaaaa',
+        content: '<p>Stub</p>',
+        savedVia: 'reader',
+        savedFromTitle: 'Source article',
+        savedFromUrl: 'https://source.example/post',
+      })
+    );
+    expect(first.status).toBe(200);
+
+    const upgrade = await call(
+      post({
+        url: URL,
+        rkey: 'bbbbbbbbbbbbb',
+        updateContent: true,
+        content: '<p>Full text</p>',
+        savedVia: 'extension',
+      })
+    );
+    expect(upgrade.status).toBe(200);
+
+    const row = await getRow();
+    expect(row.saved_via).toBe('reader');
+    expect(row.saved_from_title).toBe('Source article');
+    expect(row.saved_from_url).toBe('https://source.example/post');
+  });
+
+  it('drops unknown channels and rejects invalid referrer URLs', async () => {
+    const unknown = await call(
+      post({ url: URL, rkey: 'aaaaaaaaaaaaa', savedVia: 'modified-client' })
+    );
+    expect(unknown.status).toBe(200);
+    expect((await getRow()).saved_via).toBeNull();
+
+    await env.DB.prepare('DELETE FROM saved_articles WHERE user_did = ?').bind(DID).run();
+    const invalid = await call(
+      post({
+        url: URL,
+        rkey: 'bbbbbbbbbbbbb',
+        savedVia: 'reader',
+        savedFromUrl: 'javascript:alert(1)',
+      })
+    );
+    expect(invalid.status).toBe(400);
+  });
+
   it('never blanks existing metadata with missing fields (COALESCE new-wins)', async () => {
     await call(
       post({

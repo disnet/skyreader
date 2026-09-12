@@ -11,11 +11,19 @@ import { UrlSaveLimitError } from '$lib/services/api';
 import { saveLimitLine } from '$lib/utils/limitCopy';
 
 /** Toggle `url` in and out of Saved. Resolves once the list reflects the change. */
-export async function toggleSavedLink(url: string): Promise<void> {
+export async function toggleSavedLink(
+  url: string,
+  from?: { title?: string; url?: string }
+): Promise<void> {
   const existing = savesStore.getByUrl(url);
   try {
     if (existing) await savesStore.remove(existing.rkey);
-    else await savesStore.saveFromUrl(url);
+    else
+      await savesStore.saveFromUrl(url, {
+        savedVia: 'reader',
+        savedFromTitle: from?.title,
+        savedFromUrl: from?.url,
+      });
   } catch (err) {
     // The monthly save cap is a different kind of failure from "that didn't
     // work": it has a reason, a reset date, and something the reader can do

@@ -9,6 +9,7 @@ import { auth } from './auth.svelte';
 import { extractArticle } from '$lib/services/extract';
 import { computeContentStats } from '$lib/services/articleMerge';
 import { savedSearchStore } from './savedSearch.svelte';
+import { subscriptionsStore } from './subscriptions.svelte';
 import { compareSavedNewestFirst } from '$lib/utils/savedPile';
 import type { SavedItem } from '$lib/types';
 
@@ -300,7 +301,14 @@ function createSavesStore() {
     }
   }
 
-  async function saveFromUrl(url: string): Promise<SavedItem> {
+  async function saveFromUrl(
+    url: string,
+    provenance: {
+      savedVia?: 'web' | 'extension' | 'share-target' | 'reader';
+      savedFromTitle?: string;
+      savedFromUrl?: string;
+    } = {}
+  ): Promise<SavedItem> {
     saving = true;
     error = null;
     try {
@@ -323,6 +331,7 @@ function createSavesStore() {
         image: extracted.image || undefined,
         publishedAt: extracted.published || undefined,
         wordCount: wordCount || undefined,
+        ...provenance,
       });
 
       const savedItem: SavedItem = {
@@ -340,6 +349,7 @@ function createSavesStore() {
         publishedAt: extracted.published,
         savedAt: result.savedAt,
         source: 'url',
+        ...provenance,
       };
 
       // Insert a light copy into memory immediately, then persist the full row
@@ -374,6 +384,13 @@ function createSavesStore() {
     try {
       const rkey = generateTid();
       const now = new Date().toISOString();
+      const savedFromTitle =
+        article.subscriptionId == null
+          ? undefined
+          : (() => {
+              const sub = subscriptionsStore.getById(article.subscriptionId);
+              return sub?.customTitle || sub?.title;
+            })();
 
       // Instant/offline fallback body: pull the RSS body back from IndexedDB.
       // The in-memory feed list is kept "light" (content stripped — see
@@ -417,6 +434,7 @@ function createSavesStore() {
         savedAt: now,
         source: 'feed',
         itemGuid: article.guid,
+        savedFromTitle: savedFromTitle ?? null,
       };
 
       articles = [toLightSaved(savedItem), ...articles];
@@ -459,6 +477,7 @@ function createSavesStore() {
             publishedAt: article.publishedAt,
             domain: domain ?? undefined,
             wordCount: wordCount ?? undefined,
+            savedFromTitle,
           });
 
           // Update with extracted content + server response
@@ -494,6 +513,7 @@ function createSavesStore() {
             wordCount: wordCountFrom(rssBody) ?? undefined,
             image: article.imageUrl,
             publishedAt: article.publishedAt,
+            savedFromTitle,
           } as SavedPayload);
           return savedItem;
         }
@@ -514,6 +534,7 @@ function createSavesStore() {
           wordCount: wordCountFrom(rssBody) ?? undefined,
           image: article.imageUrl,
           publishedAt: article.publishedAt,
+          savedFromTitle,
         } as SavedPayload);
         return savedItem;
       }

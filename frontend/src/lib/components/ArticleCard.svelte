@@ -1002,7 +1002,9 @@
   onComposeShare={composeShare}
   onEditShare={editShare}
   onOpenAuthor={(did) => sidebarStore.openAddFeedModalForDid(did)}
-  onSaveConnection={auth.user ? toggleSavedLink : undefined}
+  onSaveConnection={auth.user
+    ? (url) => toggleSavedLink(url, { title: itemTitle, url: itemUrl })
+    : undefined}
   onCreateConnection={auth.user && itemUrl ? createConnection : undefined}
   isConnectionSaved={(url) => savesStore.isSaved(url)}
   onMentionClick={(did) => sidebarStore.openAddFeedModalForDid(did)}
@@ -1029,6 +1031,8 @@
       <LinkContextMenu
         url={linkInterception.menuState.url}
         linkText={linkInterception.menuState.linkText}
+        fromTitle={itemTitle}
+        fromUrl={itemUrl}
         anchorRect={linkInterception.menuState.anchorRect}
         onClose={linkInterception.closeMenu}
       />

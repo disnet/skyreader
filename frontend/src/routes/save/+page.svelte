@@ -78,7 +78,7 @@
     }
 
     try {
-      saved = await savesStore.saveFromUrl(url);
+      saved = await savesStore.saveFromUrl(url, { savedVia: 'share-target' });
       status = 'success';
     } catch (err) {
       if (err instanceof ScopeUpgradeError) {

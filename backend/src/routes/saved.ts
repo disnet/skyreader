@@ -26,6 +26,8 @@ const COLLECTION = 'app.skyreader.feed.saved';
 
 // Conservative cap on bound parameters per D1 statement (see reading.ts).
 const BODIES_SQL_PARAMS = 90;
+type SavedVia = 'web' | 'extension' | 'share-target' | 'reader';
+const CLIENT_SAVED_VIA = new Set<SavedVia>(['web', 'extension', 'share-target', 'reader']);
 
 interface SavedRow {
   id: number;
@@ -46,6 +48,9 @@ interface SavedRow {
   created_at: number;
   source: string;
   item_guid: string | null;
+  saved_via: string | null;
+  saved_from_title: string | null;
+  saved_from_url: string | null;
 }
 
 interface CreateSavedBody {
@@ -67,6 +72,9 @@ interface CreateSavedBody {
   // extension, whose live-DOM extraction can see paywalled/JS-rendered content
   // the server-side extractor can't.
   updateContent?: boolean;
+  savedVia?: SavedVia;
+  savedFromTitle?: string;
+  savedFromUrl?: string;
 }
 
 // POST /api/saved — save an item from a URL or feed article
@@ -121,6 +129,32 @@ export async function handleCreateSaved(
 
   if (!body.rkey || !isValidRkey(body.rkey)) {
     return invalidRkeyResponse();
+  }
+
+  // Provenance is optional and intentionally tolerant of older/modified clients:
+  // unknown channels are discarded, while malformed supplied referrers are rejected.
+  if (!CLIENT_SAVED_VIA.has(body.savedVia as SavedVia)) body.savedVia = undefined;
+  if (typeof body.savedFromTitle === 'string') {
+    body.savedFromTitle = body.savedFromTitle.trim().slice(0, 300) || undefined;
+  } else {
+    body.savedFromTitle = undefined;
+  }
+  if (body.savedFromUrl !== undefined) {
+    if (typeof body.savedFromUrl !== 'string' || body.savedFromUrl.length > 2048) {
+      return new Response(JSON.stringify({ error: 'Invalid savedFromUrl' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    try {
+      const referrer = new URL(body.savedFromUrl);
+      if (!['http:', 'https:', 'at:'].includes(referrer.protocol)) throw new Error();
+    } catch {
+      return new Response(JSON.stringify({ error: 'Invalid savedFromUrl' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
   }
 
   // Validate URL only for url/feed sources
@@ -257,8 +291,8 @@ async function handleMetadataSave(
   // save) is stored here, not in the PDS record — same split as URL saves — so
   // the saved item stays readable after the source article ages out of the feed.
   await env.DB.prepare(
-    `INSERT INTO saved_articles (user_did, rkey, record_uri, url, title, author, description, content, content_type, domain, image, word_count, published_at, saved_at, created_at, source, item_guid)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO saved_articles (user_did, rkey, record_uri, url, title, author, description, content, content_type, domain, image, word_count, published_at, saved_at, created_at, source, item_guid, saved_via, saved_from_title, saved_from_url)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       session.did,
@@ -277,7 +311,10 @@ async function handleMetadataSave(
       now,
       now,
       source,
-      body.itemGuid || null
+      body.itemGuid || null,
+      body.savedVia || null,
+      body.savedFromTitle || null,
+      body.savedFromUrl || null
     )
     .run();
 
@@ -298,6 +335,9 @@ async function handleMetadataSave(
       savedAt,
       source,
       itemGuid: body.itemGuid || null,
+      savedVia: body.savedVia || null,
+      savedFromTitle: body.savedFromTitle || null,
+      savedFromUrl: body.savedFromUrl || null,
     }),
     { headers: { 'Content-Type': 'application/json' } }
   );
@@ -370,8 +410,8 @@ async function handleUrlSave(
 
   // Cache in D1 (content is stored here, not in PDS)
   await env.DB.prepare(
-    `INSERT INTO saved_articles (user_did, rkey, record_uri, url, title, author, description, content, content_type, domain, image, word_count, published_at, saved_at, created_at, source)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO saved_articles (user_did, rkey, record_uri, url, title, author, description, content, content_type, domain, image, word_count, published_at, saved_at, created_at, source, saved_via, saved_from_title, saved_from_url)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       session.did,
@@ -389,7 +429,10 @@ async function handleUrlSave(
       publishedAt ? new Date(publishedAt).getTime() : null,
       now,
       now,
-      'url'
+      'url',
+      body.savedVia || null,
+      body.savedFromTitle || null,
+      body.savedFromUrl || null
     )
     .run();
 
@@ -397,6 +440,9 @@ async function handleUrlSave(
     JSON.stringify({
       uri: recordUri,
       savedAt,
+      savedVia: body.savedVia || null,
+      savedFromTitle: body.savedFromTitle || null,
+      savedFromUrl: body.savedFromUrl || null,
     }),
     { headers: { 'Content-Type': 'application/json' } }
   );
@@ -467,8 +513,9 @@ async function handleBackedSave(
     env.DB.prepare(
       `INSERT INTO saved_articles
          (user_did, rkey, record_uri, url, url_normalized, title, author, description, content,
-          content_type, domain, image, word_count, published_at, saved_at, created_at, source, item_guid)
-       VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          content_type, domain, image, word_count, published_at, saved_at, created_at, source, item_guid,
+          saved_via, saved_from_title, saved_from_url)
+       VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(user_did, url_normalized) DO UPDATE SET
          rkey = excluded.rkey,
          title = COALESCE(excluded.title, title),
@@ -482,6 +529,9 @@ async function handleBackedSave(
          published_at = COALESCE(excluded.published_at, published_at),
          source = excluded.source,
          item_guid = COALESCE(excluded.item_guid, item_guid),
+         saved_via = COALESCE(saved_via, excluded.saved_via),
+         saved_from_title = COALESCE(saved_from_title, excluded.saved_from_title),
+         saved_from_url = COALESCE(saved_from_url, excluded.saved_from_url),
          saved_at = excluded.saved_at`
     ).bind(
       session.did,
@@ -500,7 +550,10 @@ async function handleBackedSave(
       now,
       now,
       source,
-      body.itemGuid || canonicalAtUri || null
+      body.itemGuid || canonicalAtUri || null,
+      body.savedVia || null,
+      body.savedFromTitle || null,
+      body.savedFromUrl || null
     ),
     env.DB.prepare(
       `INSERT INTO backed_collection_members
@@ -538,6 +591,9 @@ async function handleBackedSave(
       content: body.content || null,
       contentType,
       domain: body.domain || null,
+      savedVia: body.savedVia || null,
+      savedFromTitle: body.savedFromTitle || null,
+      savedFromUrl: body.savedFromUrl || null,
       image: body.image || null,
       wordCount: body.wordCount || null,
       publishedAt,
@@ -833,7 +889,8 @@ export async function handleGetSaved(
     // already has bodies cached. Fresh rkeys are hydrated via /api/saved/bodies.
     const result = await env.DB.prepare(
       `SELECT id, rkey, record_uri, url, title, author, description, content_type, domain, image,
-              word_count, published_at, saved_at, created_at, source, item_guid
+              word_count, published_at, saved_at, created_at, source, item_guid,
+              saved_via, saved_from_title, saved_from_url
        FROM saved_articles WHERE ${where} ORDER BY saved_at DESC, id DESC LIMIT ?`
     )
       .bind(...bindings)
@@ -854,6 +911,9 @@ export async function handleGetSaved(
       savedAt: new Date(row.saved_at).toISOString(),
       source: row.source || 'url',
       itemGuid: row.item_guid,
+      savedVia: row.saved_via,
+      savedFromTitle: row.saved_from_title,
+      savedFromUrl: row.saved_from_url,
     }));
 
     // A full page means there may be more — hand back a cursor pointing past the

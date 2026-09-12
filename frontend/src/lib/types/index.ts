@@ -1116,6 +1116,9 @@ export interface SavedItem {
   savedAt: string;
   source?: 'url' | 'feed' | 'document';
   itemGuid?: string;
+  savedVia?: 'web' | 'extension' | 'share-target' | 'reader' | 'semble' | 'margin' | null;
+  savedFromTitle?: string | null;
+  savedFromUrl?: string | null;
 }
 
 export interface ItemLabel {

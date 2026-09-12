@@ -49,6 +49,9 @@ export interface SavedPayload {
   image?: string;
   publishedAt?: string;
   domain?: string;
+  savedVia?: 'web' | 'extension' | 'share-target' | 'reader';
+  savedFromTitle?: string;
+  savedFromUrl?: string;
 }
 
 export interface IntegrationPayload {
@@ -581,6 +584,9 @@ class SyncQueue {
           image: payload.image,
           publishedAt: payload.publishedAt,
           domain: payload.domain,
+          savedVia: payload.savedVia,
+          savedFromTitle: payload.savedFromTitle,
+          savedFromUrl: payload.savedFromUrl,
         });
         break;
       case 'delete':
