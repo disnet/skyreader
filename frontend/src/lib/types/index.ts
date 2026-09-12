@@ -1100,6 +1100,32 @@ export interface ItemTags {
 
 export type ItemLabelType = 'article' | 'document' | 'saved';
 
+/**
+ * Where a save came from — the channel axis, orthogonal to `source` (its shape).
+ * `share-target` is the `/save` route, which is the Android share sheet *and* an
+ * Apple Shortcut, so its copy stays generic; only the bookmarklet, which
+ * Settings builds itself, can name its own entry point.
+ */
+export type SavedVia = ClientSavedVia | 'semble' | 'margin';
+
+/** The channels a client may claim; `semble`/`margin` are server-written only. */
+export const CLIENT_SAVED_VIA = [
+  'web',
+  'extension',
+  'share-target',
+  'bookmarklet',
+  'reader',
+] as const;
+
+export type ClientSavedVia = (typeof CLIENT_SAVED_VIA)[number];
+
+/** Provenance a client supplies when a save is born. */
+export interface SaveProvenance {
+  savedVia?: ClientSavedVia;
+  savedFromTitle?: string;
+  savedFromUrl?: string;
+}
+
 export interface SavedItem {
   rkey: string;
   uri: string;
@@ -1116,7 +1142,7 @@ export interface SavedItem {
   savedAt: string;
   source?: 'url' | 'feed' | 'document';
   itemGuid?: string;
-  savedVia?: 'web' | 'extension' | 'share-target' | 'reader' | 'semble' | 'margin' | null;
+  savedVia?: SavedVia | null;
   savedFromTitle?: string | null;
   savedFromUrl?: string | null;
 }

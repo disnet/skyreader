@@ -26,8 +26,51 @@ const COLLECTION = 'app.skyreader.feed.saved';
 
 // Conservative cap on bound parameters per D1 statement (see reading.ts).
 const BODIES_SQL_PARAMS = 90;
-type SavedVia = 'web' | 'extension' | 'share-target' | 'reader';
-const CLIENT_SAVED_VIA = new Set<SavedVia>(['web', 'extension', 'share-target', 'reader']);
+// The provenance channels a client may claim. 'semble'/'margin' also live in the
+// column but are written by the backing poll, never accepted from a request.
+type SavedVia = 'web' | 'extension' | 'share-target' | 'bookmarklet' | 'reader';
+const CLIENT_SAVED_VIA = new Set<SavedVia>([
+  'web',
+  'extension',
+  'share-target',
+  'bookmarklet',
+  'reader',
+]);
+const MAX_SAVED_FROM_TITLE = 300;
+const MAX_SAVED_FROM_URL = 2048;
+
+// Provenance is a label, not the save. Every field is dropped when it's unusable
+// rather than failing the request: the reader hosts pass the article they're
+// rendering unconditionally, and an item with no web URL of its own (a saved
+// standard.site document, a relative `doc.path`) sends a blank or relative
+// referrer — which must still save, exactly as it did before provenance existed.
+function sanitizeProvenance(body: CreateSavedBody): void {
+  if (!CLIENT_SAVED_VIA.has(body.savedVia as SavedVia)) body.savedVia = undefined;
+  body.savedFromTitle =
+    typeof body.savedFromTitle === 'string'
+      ? body.savedFromTitle.trim().slice(0, MAX_SAVED_FROM_TITLE) || undefined
+      : undefined;
+  body.savedFromUrl = sanitizeReferrerUrl(body.savedFromUrl);
+}
+
+// `at://did:plc:…/…` does not survive `new URL()`: the DID authority's colons
+// read as an invalid port, so the parse throws. Match the shape instead.
+const AT_URI_RE = /^at:\/\/[a-zA-Z0-9._:%-]+(\/[^\s]*)?$/;
+
+// An absolute http(s)/at:// referrer, or nothing at all.
+function sanitizeReferrerUrl(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > MAX_SAVED_FROM_URL) return undefined;
+  if (trimmed.startsWith('at://')) return AT_URI_RE.test(trimmed) ? trimmed : undefined;
+  try {
+    const { protocol } = new URL(trimmed);
+    if (protocol !== 'http:' && protocol !== 'https:') return undefined;
+  } catch {
+    return undefined;
+  }
+  return trimmed;
+}
 
 interface SavedRow {
   id: number;
@@ -131,31 +174,9 @@ export async function handleCreateSaved(
     return invalidRkeyResponse();
   }
 
-  // Provenance is optional and intentionally tolerant of older/modified clients:
-  // unknown channels are discarded, while malformed supplied referrers are rejected.
-  if (!CLIENT_SAVED_VIA.has(body.savedVia as SavedVia)) body.savedVia = undefined;
-  if (typeof body.savedFromTitle === 'string') {
-    body.savedFromTitle = body.savedFromTitle.trim().slice(0, 300) || undefined;
-  } else {
-    body.savedFromTitle = undefined;
-  }
-  if (body.savedFromUrl !== undefined) {
-    if (typeof body.savedFromUrl !== 'string' || body.savedFromUrl.length > 2048) {
-      return new Response(JSON.stringify({ error: 'Invalid savedFromUrl' }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
-    try {
-      const referrer = new URL(body.savedFromUrl);
-      if (!['http:', 'https:', 'at:'].includes(referrer.protocol)) throw new Error();
-    } catch {
-      return new Response(JSON.stringify({ error: 'Invalid savedFromUrl' }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
-  }
+  // Optional, tolerant of older/modified clients, and never fatal — see
+  // sanitizeProvenance.
+  sanitizeProvenance(body);
 
   // Validate URL only for url/feed sources
   if (source !== 'share' && source !== 'document') {

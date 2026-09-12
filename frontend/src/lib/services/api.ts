@@ -24,6 +24,7 @@ import type {
   CommunityHighlightNote,
   SembleContext,
   SocialDocument,
+  SaveProvenance,
   SavedItem,
   User,
 } from '$lib/types';
@@ -1652,10 +1653,7 @@ class ApiClient {
       publishedAt?: string;
       domain?: string;
       wordCount?: number;
-      savedVia?: 'web' | 'extension' | 'share-target' | 'reader';
-      savedFromTitle?: string;
-      savedFromUrl?: string;
-    }
+    } & SaveProvenance
   ): Promise<{
     rkey: string;
     uri: string;

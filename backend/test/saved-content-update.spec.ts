@@ -148,23 +148,55 @@ describe('POST /api/saved — updateContent upgrade of an existing save', () => 
     expect(row.saved_from_url).toBe('https://source.example/post');
   });
 
-  it('drops unknown channels and rejects invalid referrer URLs', async () => {
+  it('drops unusable provenance without ever failing the save', async () => {
     const unknown = await call(
       post({ url: URL, rkey: 'aaaaaaaaaaaaa', savedVia: 'modified-client' })
     );
     expect(unknown.status).toBe(200);
     expect((await getRow()).saved_via).toBeNull();
 
-    await env.DB.prepare('DELETE FROM saved_articles WHERE user_did = ?').bind(DID).run();
-    const invalid = await call(
+    // A reader host passes the article it is rendering unconditionally, and an
+    // item with no web URL of its own sends a blank or relative referrer. The
+    // save must still land — the label is what's optional, not the save.
+    for (const savedFromUrl of [
+      '',
+      '   ',
+      '/relative/path',
+      'javascript:alert(1)',
+      'x'.repeat(3000),
+    ]) {
+      await env.DB.prepare('DELETE FROM saved_articles WHERE user_did = ?').bind(DID).run();
+      const res = await call(
+        post({
+          url: URL,
+          rkey: 'bbbbbbbbbbbbb',
+          savedVia: 'reader',
+          savedFromTitle: 'Source article',
+          savedFromUrl,
+        })
+      );
+      expect(res.status, `savedFromUrl=${JSON.stringify(savedFromUrl)}`).toBe(200);
+      const row = await getRow();
+      expect(row.saved_from_url).toBeNull();
+      // The rest of the provenance still lands.
+      expect(row.saved_via).toBe('reader');
+      expect(row.saved_from_title).toBe('Source article');
+    }
+  });
+
+  it('accepts the bookmarklet channel and an at:// referrer', async () => {
+    const res = await call(
       post({
         url: URL,
-        rkey: 'bbbbbbbbbbbbb',
-        savedVia: 'reader',
-        savedFromUrl: 'javascript:alert(1)',
+        rkey: 'aaaaaaaaaaaaa',
+        savedVia: 'bookmarklet',
+        savedFromUrl: 'at://did:plc:abc/site.standard.document/xyz',
       })
     );
-    expect(invalid.status).toBe(400);
+    expect(res.status).toBe(200);
+    const row = await getRow();
+    expect(row.saved_via).toBe('bookmarklet');
+    expect(row.saved_from_url).toBe('at://did:plc:abc/site.standard.document/xyz');
   });
 
   it('never blanks existing metadata with missing fields (COALESCE new-wins)', async () => {

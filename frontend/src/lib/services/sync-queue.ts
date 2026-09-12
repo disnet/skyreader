@@ -1,7 +1,12 @@
 import { db, type SyncQueueEntry } from './db';
 import { api } from './api';
 import { toUnifiedReadItem } from './readSync';
-import type { MagazineItemSnapshot, MagazineParams, MagazinePosition } from '$lib/types';
+import type {
+  MagazineItemSnapshot,
+  MagazineParams,
+  MagazinePosition,
+  SaveProvenance,
+} from '$lib/types';
 
 const MAX_RETRIES = 5;
 
@@ -35,7 +40,7 @@ export interface LabelPayload {
   mode?: 'replace' | 'merge';
 }
 
-export interface SavedPayload {
+export interface SavedPayload extends SaveProvenance {
   rkey: string;
   url: string;
   fromFeed?: boolean;
@@ -49,9 +54,6 @@ export interface SavedPayload {
   image?: string;
   publishedAt?: string;
   domain?: string;
-  savedVia?: 'web' | 'extension' | 'share-target' | 'reader';
-  savedFromTitle?: string;
-  savedFromUrl?: string;
 }
 
 export interface IntegrationPayload {

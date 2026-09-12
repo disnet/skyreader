@@ -6,6 +6,7 @@
   import { toastStore } from '$lib/stores/toast.svelte';
   import { UrlSaveLimitError } from '$lib/services/api';
   import { saveLimitLine } from '$lib/utils/limitCopy';
+  import { readerProvenance } from '$lib/utils/saveProvenance';
 
   interface Props {
     url: string;
@@ -31,11 +32,7 @@
     const toastId = toastStore.add('Saving article...');
     onClose();
     savesStore
-      .saveFromUrl(saveUrl, {
-        savedVia: 'reader',
-        savedFromTitle: fromTitle,
-        savedFromUrl: fromUrl,
-      })
+      .saveFromUrl(saveUrl, readerProvenance({ title: fromTitle, url: fromUrl }))
       .then(() => toastStore.update(toastId, 'success', 'Article saved'))
       .catch((err) => {
         // The monthly save cap has a reason and a way out, so it says so

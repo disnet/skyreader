@@ -7,7 +7,7 @@
   import { feedViewStore, searchHaystack } from '$lib/stores/feedView.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
   import { savedSearchStore } from '$lib/stores/savedSearch.svelte';
-  import { savedFromLabel } from '$lib/utils/savedFromLabel';
+  import { savedFromDetail, savedFromLabel } from '$lib/utils/savedFromLabel';
   import {
     makeSnippet,
     matchesTerms,
@@ -74,6 +74,12 @@
   });
   let provenanceLabel = $derived(
     displayItem.type === 'saved' ? savedFromLabel(displayItem.item) : null
+  );
+  // The label is truncated and deliberately not a link (it's information, not an
+  // interaction), so the untruncated referrer and its URL ride along as the
+  // native tooltip.
+  let provenanceDetail = $derived(
+    displayItem.type === 'saved' ? savedFromDetail(displayItem.item) : null
   );
 
   // Feed info (for articles only)
@@ -622,7 +628,9 @@
             </span>
           {/if}
           <span class="meta-date">{formatRelativeDate(publishedAt)}</span>
-          {#if provenanceLabel}<span class="meta-provenance">{provenanceLabel}</span>{/if}
+          {#if provenanceLabel}<span class="meta-provenance" title={provenanceDetail ?? undefined}
+              >{provenanceLabel}</span
+            >{/if}
           {#each tags as tag, i}
             {#if i === 0}<span class="meta-dot" aria-hidden="true">·</span>{/if}
             <span class="tag-chip">{tag}</span>

@@ -11,7 +11,7 @@ import { computeContentStats } from '$lib/services/articleMerge';
 import { savedSearchStore } from './savedSearch.svelte';
 import { subscriptionsStore } from './subscriptions.svelte';
 import { compareSavedNewestFirst } from '$lib/utils/savedPile';
-import type { SavedItem } from '$lib/types';
+import type { SaveProvenance, SavedItem } from '$lib/types';
 
 /**
  * Whether save writes/reads can reach the backend at all.
@@ -45,6 +45,15 @@ function toLightSaved(item: SavedItem): SavedItem {
   if (item.content == null) return item;
   const { content: _content, ...rest } = item;
   return { ...rest, content: null };
+}
+
+// The provenance of a feed save is the feed it came from. A subscription that was
+// just deleted (or a save with no subscription behind it) resolves to nothing —
+// a save is never blocked or delayed on its label.
+function feedTitleFor(subscriptionId: number | undefined): string | undefined {
+  if (subscriptionId == null) return undefined;
+  const sub = subscriptionsStore.getById(subscriptionId);
+  return sub?.customTitle || sub?.title || undefined;
 }
 
 function createSavesStore() {
@@ -301,14 +310,7 @@ function createSavesStore() {
     }
   }
 
-  async function saveFromUrl(
-    url: string,
-    provenance: {
-      savedVia?: 'web' | 'extension' | 'share-target' | 'reader';
-      savedFromTitle?: string;
-      savedFromUrl?: string;
-    } = {}
-  ): Promise<SavedItem> {
+  async function saveFromUrl(url: string, provenance: SaveProvenance = {}): Promise<SavedItem> {
     saving = true;
     error = null;
     try {
@@ -378,19 +380,19 @@ function createSavesStore() {
     summary?: string;
     imageUrl?: string;
     publishedAt?: string;
+    // Provenance carried over from a save that already existed (undoing an
+    // Unsave is the same save coming back, so it keeps where it came from).
+    // Absent for a first save, where the feed's own name is the provenance.
+    provenance?: SaveProvenance;
   }): Promise<SavedItem> {
     saving = true;
     error = null;
     try {
       const rkey = generateTid();
       const now = new Date().toISOString();
-      const savedFromTitle =
-        article.subscriptionId == null
-          ? undefined
-          : (() => {
-              const sub = subscriptionsStore.getById(article.subscriptionId);
-              return sub?.customTitle || sub?.title;
-            })();
+      const provenance: SaveProvenance = article.provenance ?? {
+        savedFromTitle: feedTitleFor(article.subscriptionId),
+      };
 
       // Instant/offline fallback body: pull the RSS body back from IndexedDB.
       // The in-memory feed list is kept "light" (content stripped — see
@@ -434,7 +436,9 @@ function createSavesStore() {
         savedAt: now,
         source: 'feed',
         itemGuid: article.guid,
-        savedFromTitle: savedFromTitle ?? null,
+        savedVia: provenance.savedVia ?? null,
+        savedFromTitle: provenance.savedFromTitle ?? null,
+        savedFromUrl: provenance.savedFromUrl ?? null,
       };
 
       articles = [toLightSaved(savedItem), ...articles];
@@ -477,7 +481,7 @@ function createSavesStore() {
             publishedAt: article.publishedAt,
             domain: domain ?? undefined,
             wordCount: wordCount ?? undefined,
-            savedFromTitle,
+            ...provenance,
           });
 
           // Update with extracted content + server response
@@ -513,7 +517,7 @@ function createSavesStore() {
             wordCount: wordCountFrom(rssBody) ?? undefined,
             image: article.imageUrl,
             publishedAt: article.publishedAt,
-            savedFromTitle,
+            ...provenance,
           } as SavedPayload);
           return savedItem;
         }
@@ -534,7 +538,7 @@ function createSavesStore() {
           wordCount: wordCountFrom(rssBody) ?? undefined,
           image: article.imageUrl,
           publishedAt: article.publishedAt,
-          savedFromTitle,
+          ...provenance,
         } as SavedPayload);
         return savedItem;
       }
@@ -558,12 +562,18 @@ function createSavesStore() {
     // and we persist it as the saved copy's content (otherwise the saved reader
     // has nothing to show — see the collection-piece save path).
     content?: string;
+    // Provenance carried over from a save that already existed — undoing an
+    // Unsave brings the same save back, label and all. A first document save
+    // has no referrer the call sites can name, so it stays unlabeled (a
+    // `source: 'document'` row on its own renders no label).
+    provenance?: SaveProvenance;
   }): Promise<SavedItem> {
     saving = true;
     error = null;
     try {
       const rkey = generateTid();
       const now = new Date().toISOString();
+      const provenance: SaveProvenance = doc.provenance ?? {};
 
       const savedItem: SavedItem = {
         rkey,
@@ -581,6 +591,9 @@ function createSavesStore() {
         savedAt: now,
         source: 'document',
         itemGuid: doc.recordUri,
+        savedVia: provenance.savedVia ?? null,
+        savedFromTitle: provenance.savedFromTitle ?? null,
+        savedFromUrl: provenance.savedFromUrl ?? null,
       };
 
       articles = [savedItem, ...articles];
@@ -602,6 +615,7 @@ function createSavesStore() {
             // extracting from the URL).
             content: doc.content,
             wordCount: savedItem.wordCount ?? undefined,
+            ...provenance,
           });
 
           const updated: SavedItem = {
@@ -627,6 +641,7 @@ function createSavesStore() {
             publishedAt: doc.publishedAt,
             content: doc.content,
             wordCount: savedItem.wordCount ?? undefined,
+            ...provenance,
           } as SavedPayload);
           return savedItem;
         }
@@ -641,6 +656,7 @@ function createSavesStore() {
           publishedAt: doc.publishedAt,
           content: doc.content,
           wordCount: savedItem.wordCount ?? undefined,
+          ...provenance,
         } as SavedPayload);
         return savedItem;
       }
