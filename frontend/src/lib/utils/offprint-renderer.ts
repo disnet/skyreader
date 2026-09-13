@@ -314,7 +314,7 @@ function renderHorizontalRuleBlock(): string {
  * Render an image block
  */
 function renderImageBlock(block: OffprintImageBlock, authorDid: string): string {
-  const blobCid = block.blob?.ref?.$link;
+  const blobCid = block.image?.ref?.$link;
   if (!blobCid) {
     return '';
   }
@@ -353,7 +353,7 @@ function renderImageBlock(block: OffprintImageBlock, authorDid: string): string 
  * Render a single grid/carousel image
  */
 function renderGridImage(image: OffprintImageGridImage, authorDid: string): string {
-  const blobCid = image.blob?.ref?.$link;
+  const blobCid = image.image?.ref?.$link;
   if (!blobCid) {
     return '';
   }
@@ -404,7 +404,7 @@ function renderImageCarouselBlock(block: OffprintImageCarouselBlock, authorDid: 
     '<div style="display: flex; gap: 4px; overflow-x: auto; margin: 1em 0; scroll-snap-type: x mandatory">';
 
   for (const image of block.images) {
-    const blobCid = image.blob?.ref?.$link;
+    const blobCid = image.image?.ref?.$link;
     if (!blobCid) continue;
     const url = getBlobUrl(authorDid, blobCid);
     const alt = image.alt ? escapeHtml(image.alt) : '';
@@ -442,7 +442,7 @@ function renderImageDiffBlock(block: OffprintImageDiffBlock, authorDid: string):
 
   for (let i = 0; i < 2; i++) {
     const image = block.images[i];
-    const blobCid = image.blob?.ref?.$link;
+    const blobCid = image.image?.ref?.$link;
     if (!blobCid) continue;
     const url = getBlobUrl(authorDid, blobCid);
     const alt = image.alt ? escapeHtml(image.alt) : '';
