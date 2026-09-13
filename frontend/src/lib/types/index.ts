@@ -457,7 +457,8 @@ export interface OffprintHorizontalRuleBlock {
 
 export interface OffprintImageBlock {
   $type: 'app.offprint.block.image';
-  blob: { ref: { $link: string }; mimeType: string; size?: number };
+  // Offprint names the blob `image`, not `blob` — matching Leaflet's shape.
+  image: { ref: { $link: string }; mimeType: string; size?: number };
   alt?: string;
   width?: number;
   caption?: string;
@@ -467,8 +468,9 @@ export interface OffprintImageBlock {
 }
 
 export interface OffprintImageGridImage {
-  blob: { ref: { $link: string }; mimeType: string; size?: number };
+  image: { ref: { $link: string }; mimeType: string; size?: number };
   alt?: string;
+  aspectRatio?: { width: number; height: number };
 }
 
 export interface OffprintImageGridBlock {
