@@ -553,3 +553,291 @@ section.footnotes {
     transform: none;
   }
 }
+
+/* Offprint blocks — the markup app.offprint.content renders to (see
+   lib/utils/offprint-renderer.ts). Rendered into five surfaces (article cards,
+   the saved reader, paged view, the daily magazine, and curated editions), so
+   the rules live here rather than being copied into each component's scoped
+   styles — the same reasoning as the footnote rules above.
+
+   These are classes, not inline styles, because sanitizeHtml forbids the style
+   attribute: anything the renderer writes there is stripped before it reaches
+   the reader.
+
+   On specificity: each surface carries its own `.article-body :global(img)`
+   rule, which compiles to `.article-body.svelte-hash img` — (0,2,1) — and sets
+   `height: auto` plus a margin. That is the right default for an image in a
+   column of prose, and it is left to win everywhere it should. Where a layout
+   genuinely needs to override it (a grid cell, a carousel strip, a card), the
+   selector reaches three classes through the markup's own nesting plus the
+   `op-media` class on the image. Nothing here needs !important.
+
+   Sized in `em` so they track the reader's chosen article size, and muted off
+   `currentColor` rather than the app's text tokens so they stay legible on a
+   curated edition's own themed background. */
+
+.op-align-center {
+  text-align: center;
+}
+
+.op-align-right {
+  text-align: right;
+}
+
+/* Figures. The reader's measure is narrow, so an image fills it by default;
+   `op-figure--w*` carries a width the author deliberately reduced, bucketed to
+   10% (see widthClass). Centered rather than left-hung: a narrowed image reads
+   as a deliberate object in the column, not as a float the text should wrap. */
+.op-figure {
+  margin: 1em auto;
+}
+
+/* The image fills its figure, so the figure's own `op-figure--w*` is the only
+   thing that sizes it. Without this, the width/height attributes sizeAttrs()
+   writes would size the image themselves: those are presentational attributes,
+   not just a ratio hint, so a record storing a reduced ratio (4 x 3 rather than
+   626 x 848 - the lexicon permits either) would render a four-pixel photo. */
+.op-figure img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/* Alignment has to move the box, not the text inside it: the image fills the
+   figure, so `text-align` alone has nothing left to push around once a width
+   class applies. Centered stays the default (see above). */
+.op-figure.op-align-right {
+  margin-right: 0;
+}
+
+.op-figure--w30 {
+  max-width: 30%;
+}
+.op-figure--w40 {
+  max-width: 40%;
+}
+.op-figure--w50 {
+  max-width: 50%;
+}
+.op-figure--w60 {
+  max-width: 60%;
+}
+.op-figure--w70 {
+  max-width: 70%;
+}
+.op-figure--w80 {
+  max-width: 80%;
+}
+.op-figure--w90 {
+  max-width: 90%;
+}
+
+/* Captions — a figure's own, and the plain paragraphs that caption a grid,
+   carousel or diff. */
+.op-caption {
+  margin-top: 0.4em;
+  font-size: 0.875em;
+  line-height: 1.5;
+  color: color-mix(in srgb, currentColor 68%, transparent);
+}
+
+/* Image grids. Below the reader's width a 2-3 column grid of photos is
+   unreadable, so they stack to one column at full measure. */
+.op-grid {
+  display: grid;
+  gap: 4px;
+  margin: 1.5em 0;
+}
+
+.op-grid__cell {
+  overflow: hidden;
+  border-radius: 4px;
+}
+
+/* Three classes, so the cropping beats the surface's `height: auto`: the cells
+   in a row share a height and each photo fills its own. */
+.op-grid .op-grid__cell img.op-media {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  max-height: none;
+  margin: 0;
+  border-radius: 0;
+}
+
+.op-grid--cols-2 {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.op-grid--cols-3 {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+@media (max-width: 640px) {
+  .op-grid--cols-2,
+  .op-grid--cols-3 {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Carousel — a strip that scrolls sideways and snaps. */
+.op-carousel {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  margin: 1.5em 0;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: thin;
+}
+
+.op-carousel__item {
+  flex: 0 0 auto;
+  scroll-snap-align: start;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+/* The fixed height is what makes it a strip rather than a stack, so it has to
+   beat the surface's `height: auto` too. */
+.op-carousel .op-carousel__item img.op-media {
+  display: block;
+  height: 300px;
+  width: auto;
+  max-width: none;
+  max-height: none;
+  object-fit: cover;
+  margin: 0;
+  border-radius: 0;
+}
+
+/* Before/after pair. */
+.op-diff {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 1.5em auto;
+}
+
+/* Same as a figure: a narrowed pair hangs right when the author asked it to. */
+.op-diff.op-align-right {
+  margin-right: 0;
+}
+
+.op-diff .op-diff__side img.op-media {
+  display: block;
+  width: 100%;
+  margin: 0;
+}
+
+.op-diff__label {
+  margin-top: 0.25em;
+  font-size: 0.75em;
+  text-align: center;
+  color: color-mix(in srgb, currentColor 68%, transparent);
+}
+
+/* Callouts. A hairline rule and an indent rather than a filled box: the point
+   is to set the passage apart, not to put a colored panel in the reading
+   column. The author's own background color is deliberately not honored. */
+.op-callout {
+  display: flex;
+  gap: 0.6em;
+  margin: 1.5em 0;
+  padding: 0.1em 0 0.1em 1em;
+  border-left: 2px solid color-mix(in srgb, currentColor 22%, transparent);
+}
+
+.op-callout__emoji {
+  flex: 0 0 auto;
+  line-height: 1.6;
+}
+
+/* A callout's plaintext is the one block type that carries its own newlines
+   (a route and a distance on two lines, say). Text blocks never do. */
+.op-callout__body {
+  white-space: pre-line;
+}
+
+.op-callout__body > :first-child {
+  margin-top: 0;
+}
+
+.op-callout__body > :last-child {
+  margin-bottom: 0;
+}
+
+/* Video embeds. The sanitizer drops an iframe's own dimensions so this wrapper
+   governs the box; 16/9 covers YouTube and Vimeo, the only providers it keeps. */
+.op-embed {
+  margin: 1.5em 0;
+}
+
+.op-embed iframe {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border: 0;
+  border-radius: 4px;
+}
+
+.op-tasklist {
+  padding-left: 0;
+}
+
+/* The reset is for the outer list only - a nested list still needs its indent,
+   or a sub-task sits flush with its parent and the nesting disappears. */
+.op-tasklist .op-tasklist {
+  padding-left: 1.5em;
+}
+
+.op-tasklist__item {
+  list-style: none;
+}
+
+.op-linenum {
+  user-select: none;
+  opacity: 0.5;
+  padding-right: 1em;
+}
+
+/* Link cards. `website-preview` is the class the Leaflet and pckt.blog
+   renderers already emit for the same shape, so these rules dress all three;
+   only Offprint's markup has the `__media` wrapper, so only it gets the
+   flush-to-the-edge preview image. */
+.website-preview {
+  margin: 1.5em 0;
+  border: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.website-preview .website-preview__media img.op-media {
+  display: block;
+  width: 100%;
+  max-height: 200px;
+  object-fit: cover;
+  margin: 0;
+  border-radius: 0;
+}
+
+/* The body block; not the __media wrapper, which is flush to the edge. */
+.website-preview > div:not(.website-preview__media) {
+  padding: 0.75rem;
+}
+
+.website-preview a {
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.website-preview p {
+  margin: 0.25em 0 0;
+  font-size: 0.875em;
+  line-height: 1.5;
+  color: color-mix(in srgb, currentColor 68%, transparent);
+}
+
+.website-preview p.website-preview__site {
+  font-size: 0.75em;
+}

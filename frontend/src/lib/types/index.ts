@@ -460,7 +460,8 @@ export interface OffprintImageBlock {
   // Offprint names the blob `image`, not `blob` — matching Leaflet's shape.
   image: { ref: { $link: string }; mimeType: string; size?: number };
   alt?: string;
-  width?: number;
+  // A percentage of Offprint's own content column, e.g. '52%'.
+  width?: string;
   caption?: string;
   captionFacets?: OffprintFacet[];
   alignment?: 'left' | 'center' | 'right';
@@ -494,7 +495,7 @@ export interface OffprintImageDiffBlock {
   images: [OffprintImageGridImage, OffprintImageGridImage];
   labels?: [string, string];
   caption?: string;
-  width?: number;
+  width?: string;
   alignment?: 'left' | 'center' | 'right';
 }
 
@@ -508,6 +509,25 @@ export interface OffprintWebBookmarkBlock {
   siteName?: string;
   // Open Graph image, stored as a blob on the author's PDS.
   preview?: { ref: { $link: string }; mimeType: string; size?: number };
+}
+
+// An oEmbed-style embed (YouTube, Vimeo, and anything else with an embed URL).
+// `embedUrl` is the iframe source; `href` is the canonical page, used for the
+// link-card fallback when the provider is not one we frame.
+export interface OffprintWebEmbedBlock {
+  $type: 'app.offprint.block.webEmbed';
+  href: string;
+  embedUrl?: string;
+  title?: string;
+  description?: string;
+  siteName?: string;
+  alignment?: 'left' | 'center' | 'right';
+  preview?: { ref: { $link: string }; mimeType: string; size?: number };
+}
+
+export interface OffprintBlueskyPostBlock {
+  $type: 'app.offprint.block.blueskyPost';
+  post: { uri: string; cid?: string };
 }
 
 // Union of all supported Offprint block types
@@ -525,7 +545,9 @@ export type OffprintBlock =
   | OffprintImageGridBlock
   | OffprintImageCarouselBlock
   | OffprintImageDiffBlock
-  | OffprintWebBookmarkBlock;
+  | OffprintWebBookmarkBlock
+  | OffprintWebEmbedBlock
+  | OffprintBlueskyPostBlock;
 
 export interface OffprintContent {
   $type: 'app.offprint.content';
