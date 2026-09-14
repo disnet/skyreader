@@ -1,9 +1,10 @@
-// Build a store ZIP for one browser: `node scripts/package.mjs [chrome|firefox]`.
+// Build a store ZIP for one browser: `node scripts/package.mjs [chrome|firefox|safari]`.
 //
-// Both targets ship the same code; the manifest differs (see
+// Every target ships the same code; the manifest differs (see
 // scripts/manifest.mjs) and so does the content-script build. The staging tree
-// is left behind at dist/<target>/ so it can be loaded unpacked or linted
-// (`npx web-ext lint --source-dir dist/firefox`) without unzipping.
+// is left behind at dist/<target>/ so it can be loaded unpacked, linted
+// (`npx web-ext lint --source-dir dist/firefox`), or handed to Xcode
+// (dist/safari is what the Safari wrapper app builds from) without unzipping.
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -29,10 +30,11 @@ for (const file of ['background.js', 'popup.html', 'popup.js', 'icons', 'LICENSE
 }
 
 // The Defuddle content script is bundled straight into the staging tree rather
-// than copied from the checked-in `npm run build` output, because the two
-// targets want different bundles: AMO requires a source-code submission for
-// minified code, so the Firefox build stays readable. It's a content script, so
-// the size difference doesn't matter.
+// than copied from the checked-in `npm run build` output, because the targets
+// want different bundles: AMO requires a source-code submission for minified
+// code, so the Firefox build stays readable. It's a content script, so the size
+// difference doesn't matter. Chrome and Safari (App Review has no such
+// requirement) ship the minified bundle.
 execFileSync(
   join(root, 'node_modules/.bin/esbuild'),
   [
@@ -45,7 +47,7 @@ execFileSync(
     // parent, so the bundle has to depend on nothing above this directory or
     // their rebuild won't match the upload.
     '--tsconfig-raw={}',
-    ...(target === 'chrome' ? ['--minify'] : []),
+    ...(target === 'firefox' ? [] : ['--minify']),
     `--outfile=${join(staging, 'content/extract.js')}`,
   ],
   { stdio: 'inherit' }
