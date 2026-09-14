@@ -22,6 +22,7 @@
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { profileService } from '$lib/services/profiles';
   import { bskyEmbed } from '$lib/actions/bsky-embed';
+  import { mathRender } from '$lib/actions/math-render';
   import Icon from '$lib/components/Icon.svelte';
   import PopoverMenu from '$lib/components/PopoverMenu.svelte';
   import TagMenu from '$lib/components/feed/TagMenu.svelte';
@@ -1206,7 +1207,7 @@
             />
           </div>
         {:else}
-          <div class="reader-body" bind:this={readerBodyEl} use:bskyEmbed>
+          <div class="reader-body" bind:this={readerBodyEl} use:bskyEmbed use:mathRender>
             {@html sanitizedContent}
           </div>
         {/if}

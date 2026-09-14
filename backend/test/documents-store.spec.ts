@@ -31,6 +31,7 @@ import {
   D1_QUERIES_PER_INVOCATION,
   DOCUMENT_CYCLE_QUERY_RESERVE,
   DOCUMENT_DRAIN_QUERY_BUDGET,
+  MAX_BLOB_INFLATIONS_PER_BACKFILL,
   MAX_COLLECTION_WRITES_PER_BACKFILL,
   MAX_CYCLE_BACKFILLS,
   MAX_SITE_RESOLVES_PER_BACKFILL,
@@ -1044,6 +1045,87 @@ describe('the backfill query budget', () => {
     expect((await loadAuthorDocuments(env, AUTHOR)).length).toBe(MAX_DOCUMENTS_PER_AUTHOR);
   });
 
+  /**
+   * A PDS whose whole back catalogue is Leaflet `blobPages` stubs — the shape that
+   * turns one walk into a hundred unbudgeted blob fetches if nothing caps it.
+   */
+  function mockBlobPagesPds(documents: number): { blobFetches: number } {
+    const counts = { blobFetches: 0 };
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = new URL(String(input));
+      if (url.hostname === 'plc.directory') return new Response(DID_DOCUMENT);
+      if (url.pathname.includes('getBlob')) {
+        counts.blobFetches++;
+        return new Response(
+          JSON.stringify([
+            {
+              $type: 'pub.leaflet.pages.linearDocument',
+              blocks: [{ block: { $type: 'pub.leaflet.blocks.text', plaintext: 'Full body' } }],
+            },
+          ])
+        );
+      }
+      const collection = url.searchParams.get('collection');
+      if (collection === 'site.standard.document') {
+        return new Response(
+          JSON.stringify({
+            records: Array.from({ length: documents }, (_, i) => {
+              const listed = listedDocument(i);
+              return {
+                ...listed,
+                value: {
+                  ...listed.value,
+                  content: {
+                    $type: 'pub.leaflet.content',
+                    pages: [],
+                    blobPages: { ref: { $link: `bafkreipages${i}` } },
+                  },
+                },
+              };
+            }),
+          })
+        );
+      }
+      return new Response(JSON.stringify({ records: [] }));
+    });
+    return counts;
+  }
+
+  /** Rows whose stored body was inflated — no `blobPages` left in the record. */
+  async function inflatedRowCount(): Promise<number> {
+    const row = await env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM documents_v2
+        WHERE author_did = ? AND record_json NOT LIKE '%"blobPages"%'`
+    )
+      .bind(AUTHOR)
+      .first<{ n: number }>();
+    return row?.n ?? 0;
+  }
+
+  // The per-row term the reservation didn't have: a blob fetch per document, on a walk
+  // budgeted for none. Capped, the walk stays inside its reservation — and because it
+  // stamps rather than re-writes a row it already inflated, the next pass spends its
+  // allowance on the documents still stubbed instead of re-fetching the same ten.
+  it('inflates a bounded number of offloaded bodies per walk, and converges', async () => {
+    const offloaded = MAX_BLOB_INFLATIONS_PER_BACKFILL * 2;
+    const counts = mockBlobPagesPds(offloaded);
+
+    const first = createDocumentApplyContext(createQueryLedger());
+    expect((await backfillAuthorDocuments(env, AUTHOR, first)).ok).toBe(true);
+    expect(counts.blobFetches).toBe(MAX_BLOB_INFLATIONS_PER_BACKFILL);
+    expect(first.ledger.spent).toBeLessThanOrEqual(BACKFILL_QUERY_COST);
+    expect(await inflatedRowCount()).toBe(MAX_BLOB_INFLATIONS_PER_BACKFILL);
+
+    const second = createDocumentApplyContext(createQueryLedger());
+    expect((await backfillAuthorDocuments(env, AUTHOR, second)).ok).toBe(true);
+    expect(counts.blobFetches).toBe(offloaded);
+    expect(second.ledger.spent).toBeLessThanOrEqual(BACKFILL_QUERY_COST);
+    // Nothing regressed: the rows inflated by the first walk are still inflated, and
+    // the prune didn't take them for untouched.
+    expect(await inflatedRowCount()).toBe(offloaded);
+    expect((await loadAuthorDocuments(env, AUTHOR)).length).toBe(offloaded);
+  });
+
   /** Sidecars stored for the author. */
   async function storedCollections(): Promise<number> {
     const row = await env.DB.prepare(
@@ -1278,15 +1360,17 @@ describe('the backfill query budget', () => {
 
     // The sidecar allowance is derived from what a walk has left, so the flat
     // constant has to be exactly what that arithmetic leaves at every other cap at
-    // once — the listing, a full repo of documents, every resolve, the prune, the
-    // sidecar read and the bookkeeping. Raise a term without this and the "floor"
-    // silently becomes a walk that overspends its own reservation.
+    // once — the listing, a full repo of documents, every resolve, every blob
+    // inflation, the prune, the inflated-rows read, the sidecar read and the
+    // bookkeeping. Raise a term without this and the "floor" silently becomes a walk
+    // that overspends its own reservation.
     const worstCaseBeforeSidecars =
       BACKFILL_LIST_SUBREQUESTS +
       MAX_DOCUMENTS_PER_AUTHOR +
       MAX_SITE_RESOLVES_PER_BACKFILL * SUBREQUESTS_PER_SITE_RESOLVE +
-      // the prune, the sidecar read
-      2;
+      MAX_BLOB_INFLATIONS_PER_BACKFILL +
+      // the prune, the inflated-rows read, the sidecar read
+      3;
     expect(BACKFILL_QUERY_COST - worstCaseBeforeSidecars - 1).toBe(
       MAX_COLLECTION_WRITES_PER_BACKFILL
     );

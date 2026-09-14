@@ -8,6 +8,7 @@
   import { magazineThemeVars, magazineFontHref } from '$lib/utils/magazineTheme';
   import { footnoteNav, type FootnotePagedController } from '$lib/utils/footnoteNav';
   import { bskyEmbed } from '$lib/actions/bsky-embed';
+  import { mathRender } from '$lib/actions/math-render';
   import Icon from '$lib/components/Icon.svelte';
   import type { ReaderCollection, ReaderCollectionItem, SocialDocument } from '$lib/types';
 
@@ -187,7 +188,7 @@
 
   <!-- Every piece inlined: a heading, the curator's commentary as a blockquote,
        then the full article body. Bsky embeds in any body hydrate via the action. -->
-  <div class="pieces" use:bskyEmbed>
+  <div class="pieces" use:bskyEmbed use:mathRender>
     {#each collection.items as item, i (item.document + '#' + i)}
       {@const source = sourceLabel(item)}
       {@const favicon = itemFavicon(item)}

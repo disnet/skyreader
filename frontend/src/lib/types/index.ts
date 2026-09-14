@@ -160,9 +160,20 @@ export interface LeafletListItemBlock {
   $type: 'pub.leaflet.blocks.unorderedList#listItem' | 'pub.leaflet.blocks.orderedList#listItem';
   content: LeafletListItemContent;
   children?: LeafletListItemBlock[];
-  orderedListChildren?: LeafletListItemBlock[];
-  unorderedListChildren?: LeafletListItemBlock[];
+  // The cross-type nested lists are whole *list* refs in the lexicon
+  // (`pub.leaflet.blocks.orderedList` / `…unorderedList`), not item arrays — so the
+  // nested list's own `startIndex` rides along. Read defensively as either shape:
+  // an earlier reading of these as arrays silently dropped every mixed-type nest.
+  orderedListChildren?: LeafletNestedList | LeafletListItemBlock[];
+  unorderedListChildren?: LeafletNestedList | LeafletListItemBlock[];
   checked?: boolean;
+}
+
+/** A list nested under an item of the other kind: the list object, not its items. */
+export interface LeafletNestedList {
+  $type?: 'pub.leaflet.blocks.orderedList' | 'pub.leaflet.blocks.unorderedList';
+  children?: LeafletListItemBlock[];
+  startIndex?: number;
 }
 
 export interface LeafletUnorderedListBlock {
@@ -182,7 +193,8 @@ export interface LeafletImageBlock {
   aspectRatio?: { width: number; height: number };
   alt?: string;
   fullBleed?: boolean;
-  width?: string;
+  /** Display width in *pixels*, capped at the page width (lexicon: integer). */
+  width?: number;
 }
 
 // Field names here are the lexicon's, not ours: `src` for the URL and
@@ -234,6 +246,8 @@ export interface LeafletGenericBlock {
   uri?: string;
   images?: unknown[];
   format?: string;
+  /** `membersOnlyDelimiter`: who the rest of the document is for. */
+  audience?: 'subscribers' | 'paid' | 'tiers';
 }
 
 // Union of all supported block types
