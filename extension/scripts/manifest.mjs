@@ -38,6 +38,7 @@ export function manifestFor(target, source) {
     // one it ignores, so ship exactly one. The event page is the lifecycle this
     // code has already been running under in Firefox.
     delete manifest.background.service_worker;
+    manifest.background.persistent = false;
     // The Gecko block is AMO-only (`data_collection_permissions` means nothing
     // to Safari); the version floor is the one key Safari reads here.
     manifest.browser_specific_settings = { safari: { strict_min_version: SAFARI_MIN_VERSION } };
