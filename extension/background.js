@@ -102,7 +102,9 @@ function setBadge(tabId, text, color, title) {
   // Tab may have closed mid-save; badge calls on a dead tab throw.
   api.action.setBadgeText({ tabId, text }).catch(() => {});
   api.action.setBadgeBackgroundColor({ tabId, color }).catch(() => {});
-  api.action.setBadgeTextColor({ tabId, color: '#ffffff' }).catch(() => {});
+  // Not universally implemented (Safari has no badge text color); the badge
+  // still reads fine in the browser's own default color.
+  api.action.setBadgeTextColor?.({ tabId, color: '#ffffff' })?.catch(() => {});
   if (title) api.action.setTitle({ tabId, title }).catch(() => {});
 }
 
@@ -577,7 +579,10 @@ api.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
 // --- Context menus ----------------------------------------------------------
 
+// Guarded because not every Safari platform has context menus at all (iOS/iPadOS
+// has none); on macOS these register exactly as they do elsewhere.
 api.runtime.onInstalled.addListener(() => {
+  if (!api.contextMenus) return;
   api.contextMenus.create({
     id: 'save-link',
     title: 'Save link to Skyreader',
@@ -590,7 +595,7 @@ api.runtime.onInstalled.addListener(() => {
   });
 });
 
-api.contextMenus.onClicked.addListener((info, tab) => {
+api.contextMenus?.onClicked.addListener((info, tab) => {
   if (info.menuItemId === 'save-link') {
     saveWithBadge(info.linkUrl, tab?.id);
   } else if (info.menuItemId === 'save-page') {

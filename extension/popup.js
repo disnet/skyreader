@@ -21,6 +21,7 @@ const els = {
   feedsMsg: document.getElementById('feedsMsg'),
   permissionPrompt: document.getElementById('permissionPrompt'),
   permissionHost: document.getElementById('permissionHost'),
+  permissionHint: document.getElementById('permissionHint'),
   permissionStatus: document.getElementById('permissionStatus'),
   grantBtn: document.getElementById('grantBtn'),
   accountSection: document.getElementById('accountSection'),
@@ -33,6 +34,8 @@ let tab = null;
 // Match pattern for the API host, captured at init so the Grant button can call
 // permissions.request() with no await ahead of it (see onGrant).
 let apiOrigin = null;
+// The API host on its own, for the permission prompt's copy.
+let apiHost = '';
 
 async function refreshAccount() {
   els.retryAccountBtn.hidden = true;
@@ -115,14 +118,26 @@ async function hasApiAccess(origin) {
   }
 }
 
+// Safari also lets the user set host access from Safari's own settings, and
+// declining there is not the same dead end it is in Firefox — so the prompt
+// carries an extra line pointing at it. A web extension has no cleaner runtime
+// signal for the engine than the user agent.
+const IS_SAFARI =
+  /\bSafari\//.test(navigator.userAgent) && !/\bChrom(e|ium)\//.test(navigator.userAgent);
+
+const SAFARI_GRANT_HINT = 'Open Safari → Settings → Extensions → Skyreader and allow';
+
 function showPermissionPrompt(cfg) {
-  els.permissionHost.textContent = (() => {
+  const host = (() => {
     try {
       return new URL(cfg.apiBase).host;
     } catch {
       return cfg.apiBase;
     }
   })();
+  apiHost = host;
+  els.permissionHost.textContent = host;
+  els.permissionHint.hidden = !IS_SAFARI;
   els.mainUi.hidden = true;
   els.accountSection.hidden = true;
   els.permissionPrompt.hidden = false;
@@ -141,7 +156,9 @@ async function onGrant() {
   if (!granted) {
     setStatus(
       els.permissionStatus,
-      'Access declined. Skyreader can still be used on the web.',
+      IS_SAFARI
+        ? `${SAFARI_GRANT_HINT} ${apiHost}.`
+        : 'Access declined. Skyreader can still be used on the web.',
       'error'
     );
     return;
