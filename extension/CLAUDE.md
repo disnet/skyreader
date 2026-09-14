@@ -245,10 +245,11 @@ storage — no real syncing, which the localhost override doesn't need).
 
 ## Release
 
-No pipeline yet. `npm run package` (Chrome), `npm run package:firefox`, and
-`npm run package:safari` build one ZIP each; `npm run package:all` does all
-three. Each run stages into `dist/<target>/` (left in place for loading unpacked,
-linting, or — for Safari — building the wrapper app) and writes
+No pipeline yet. `npm run package` (Chrome) and `npm run package:firefox` build
+store ZIPs; `npm run package:safari` stages resources for the committed Xcode
+wrapper, and `npm run package:all` does all three. Each run stages into
+`dist/<target>/` (left in place for loading unpacked, linting, or — for Safari —
+building the wrapper app). The Chrome and Firefox commands also write
 `skyreader-extension-<target>.zip`. All include only runtime files and omit
 localhost permissions, the storage permission, and the server settings page; the
 source manifest keeps settings and localhost access for unpacked development.
@@ -262,8 +263,8 @@ Target differences, all in `scripts/manifest.mjs` and `scripts/package.mjs`:
   service worker even though the browser would ignore it.
 - Safari gets `background.scripts` plus a `browser_specific_settings.safari`
   version floor (`SAFARI_MIN_VERSION`, 16.4 — the first release with full MV3),
-  with the Gecko block dropped. Ship exactly one background key: the converter
-  warns about whichever it ignores.
+  with `background.persistent: false` and the Gecko block dropped. Ship exactly
+  one background script key: the converter warns about whichever it ignores.
 - The Firefox content-script bundle is **not** minified, because AMO requires a
   source-code submission for minified code. It's a content script, so the size
   difference doesn't matter. Chrome and Safari (App Review asks for no such
@@ -306,29 +307,21 @@ Safari has no ZIP upload — the extension ships inside a macOS app. `dist/safar
 is the input; everything below needs macOS with Xcode, and distribution needs an
 Apple Developer Program membership.
 
-The Xcode project does not exist in the repo yet. Generate it once, from
-`extension/`, and commit it under `extension/safari/` (build products gitignored,
-project checked in so builds are reproducible):
+The Xcode project is committed at `safari/Skyreader.xcodeproj`. Open it in Xcode,
+select the Skyreader scheme, choose signing teams for both targets, and build.
+The extension target's final build phase runs `npm run package:safari` and copies
+the staged files into the extension bundle, so web resources cannot silently go
+stale. Node and the extension's npm dependencies must be installed before the
+first build.
 
 ```
-npm run package:safari
-xcrun safari-web-extension-converter dist/safari \
-  --macos-only --app-name Skyreader \
-  --bundle-identifier app.skyreader.extension \
-  --project-location safari --no-open
+npm install
+open safari/Skyreader.xcodeproj
 ```
 
-Then, before committing it, make the resources refreshable — the converter's
-default is a **one-time copy** that silently goes stale, which is the failure mode
-to design against:
-
-- Reference `dist/safari/` as a **folder reference** in the extension target's
-  resources (or add a Run Script build phase that runs `npm run package:safari`
-  and copies the output), so `npm run package:safari` + build in Xcode is the
-  whole loop and the converter never has to run again.
-- Keep `CFBundleShortVersionString` (app and extension targets) in step with
-  `manifest.json`'s `version` — read it in the build phase, or check it by hand
-  as part of the version bump above.
+- The refresh build phase also reads `manifest.json` and fails when its version
+  differs from `MARKETING_VERSION`. Update both targets' Marketing Version when
+  bumping the manifest version.
 - Keep the container app thin: the converter's stock "open Safari settings to
   enable" window, restyled with the Skyreader icon and One Blue `#0066cc`
   (DESIGN.md). Apple accepts thin container apps for extensions; don't invent

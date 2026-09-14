@@ -42,6 +42,7 @@ test('the Safari build declares one background key and a Safari version floor', 
   // exactly one ships — the event page, the lifecycle Firefox already exercises.
   assert.equal(manifest.background.service_worker, undefined);
   assert.deepEqual(manifest.background.scripts, ['background.js']);
+  assert.equal(manifest.background.persistent, false);
   // The Gecko block is AMO-only and means nothing to Safari.
   assert.equal(manifest.browser_specific_settings.gecko, undefined);
   assert.equal(manifest.browser_specific_settings.safari.strict_min_version, SAFARI_MIN_VERSION);

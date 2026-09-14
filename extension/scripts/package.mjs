@@ -1,11 +1,20 @@
-// Build a store ZIP for one browser: `node scripts/package.mjs [chrome|firefox|safari]`.
+// Stage one browser build (and ZIP the Chrome/Firefox store builds):
+// `node scripts/package.mjs [chrome|firefox|safari]`.
 //
 // Every target ships the same code; the manifest differs (see
 // scripts/manifest.mjs) and so does the content-script build. The staging tree
 // is left behind at dist/<target>/ so it can be loaded unpacked, linted
 // (`npx web-ext lint --source-dir dist/firefox`), or handed to Xcode
 // (dist/safari is what the Safari wrapper app builds from) without unzipping.
-import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  cpSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
@@ -24,9 +33,22 @@ const archive = join(root, `skyreader-extension-${target}.zip`);
 rmSync(staging, { recursive: true, force: true });
 mkdirSync(staging, { recursive: true });
 
+// Node's recursive cpSync is unreliable on some mounted CI workspaces. Keep
+// the runtime copy deterministic and use only the well-supported file form.
+function copyRuntime(source, destination) {
+  if (!statSync(source).isDirectory()) {
+    cpSync(source, destination);
+    return;
+  }
+  mkdirSync(destination, { recursive: true });
+  for (const entry of readdirSync(source)) {
+    copyRuntime(join(source, entry), join(destination, entry));
+  }
+}
+
 // Explicit runtime files only: development tools never enter the store ZIP.
 for (const file of ['background.js', 'popup.html', 'popup.js', 'icons', 'LICENSE']) {
-  cpSync(join(root, file), join(staging, file), { recursive: true });
+  copyRuntime(join(root, file), join(staging, file));
 }
 
 // The Defuddle content script is bundled straight into the staging tree rather
@@ -57,8 +79,12 @@ const source = JSON.parse(readFileSync(join(root, 'manifest.json'), 'utf8'));
 const manifest = manifestFor(target, source);
 writeFileSync(join(staging, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
 
-rmSync(archive, { force: true });
-execFileSync('zip', ['-r', archive, '.', '-x', '*.DS_Store'], {
-  cwd: staging,
-  stdio: 'inherit',
-});
+// Safari's containing Xcode app is the distributable; the staged directory is
+// copied into its extension bundle and there is no ZIP to upload.
+if (target !== 'safari') {
+  rmSync(archive, { force: true });
+  execFileSync('zip', ['-r', archive, '.', '-x', '*.DS_Store'], {
+    cwd: staging,
+    stdio: 'inherit',
+  });
+}
