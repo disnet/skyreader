@@ -222,6 +222,7 @@ export async function seedItemLabel(user: TestUser, opts: SeedItemLabelOpts): Pr
 
 export async function cleanupTestData(user: TestUser) {
   await execD1([
+    `DELETE FROM channels WHERE user_did = '${user.did}'`,
     `DELETE FROM item_labels_cache WHERE user_did = '${user.did}'`,
     `DELETE FROM saved_articles WHERE user_did = '${user.did}'`,
     `DELETE FROM subscriptions_cache WHERE user_did = '${user.did}'`,
