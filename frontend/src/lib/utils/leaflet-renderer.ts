@@ -775,7 +775,13 @@ export function renderLeafletContent(content: LeafletContent, authorDid: string)
 
   // A page nothing referenced is content this render never reached. Rare — the
   // publisher always writes the reference — but silent if we don't say it.
-  if (pages.slice(1).some((page) => !page.id || !ctx.reached.has(page.id))) {
+  //
+  // Not once the gate is up, though: the render stopped at the delimiter, so a page
+  // whose reference sits past it is unreached *by design* and indistinguishable here
+  // from a genuine orphan. Claiming "some content can't be shown" under a notice that
+  // already says exactly why the rest is missing is the less honest of the two. Any
+  // degradation earned before the gate still stands — this only declines to add one.
+  if (!ctx.gate && pages.slice(1).some((page) => !page.id || !ctx.reached.has(page.id))) {
     ctx.degraded = true;
   }
 
