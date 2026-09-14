@@ -300,3 +300,39 @@ describe('styling survives sanitizing', () => {
     expect(html).not.toContain('156 163 175');
   });
 });
+
+describe('current Offprint lexicon support', () => {
+  it('renders buttons and math blocks', () => {
+    const clean = sanitizeHtml(
+      renderOffprintContent(
+        doc(
+          { $type: 'app.offprint.block.button', text: 'Visit', href: 'https://example.com' },
+          { $type: 'app.offprint.block.mathBlock', tex: 'a^2+b^2=c^2' }
+        ),
+        AUTHOR_DID
+      )
+    );
+    expect(clean).toContain('op-button');
+    expect(clean).toContain('<math');
+  });
+
+  it('accepts the lexicon blob key and honours requested grid rows', () => {
+    const html = renderOffprintContent(
+      doc({
+        $type: 'app.offprint.block.imageGrid',
+        gridRows: 2,
+        aspectRatio: 'square',
+        images: [
+          { blob: blob('one') },
+          { blob: blob('two') },
+          { blob: blob('three') },
+          { blob: blob('four') },
+        ],
+      }),
+      AUTHOR_DID
+    );
+    expect(html).toContain('op-grid--cols-2');
+    expect(html).toContain('op-grid--square');
+    expect(html).toContain('one@jpeg');
+  });
+});

@@ -10,6 +10,7 @@
  * markup and none of them should have to carry a copy.
  */
 
+import temml from 'temml';
 import { allowedIframeSrc } from '$lib/utils/sanitize';
 import type {
   OffprintContent,
@@ -373,7 +374,7 @@ function renderImageBlock(block: OffprintImageBlock, authorDid: string): string 
  * Render a single grid/carousel image
  */
 function renderGridImage(image: OffprintImageGridImage, authorDid: string): string {
-  const blobCid = image.image?.ref?.$link;
+  const blobCid = (image.blob ?? image.image)?.ref?.$link;
   if (!blobCid) {
     return '';
   }
@@ -390,9 +391,11 @@ function renderImageGridBlock(block: OffprintImageGridBlock, authorDid: string):
     return '';
   }
 
-  const cols = Math.min(block.images.length, 3);
+  const rows = block.gridRows && block.gridRows > 0 ? Math.min(2, block.gridRows) : undefined;
+  const cols = Math.min(rows ? Math.ceil(block.images.length / rows) : block.images.length, 3);
+  const ratio = typeof block.aspectRatio === 'string' ? block.aspectRatio : '';
 
-  let html = `<div class="op-grid op-grid--cols-${cols}">`;
+  let html = `<div class="op-grid op-grid--cols-${cols}${ratio ? ` op-grid--${escapeHtml(ratio)}` : ''}">`;
 
   for (const image of block.images) {
     html += `<div class="op-grid__cell">${renderGridImage(image, authorDid)}</div>`;
@@ -418,7 +421,7 @@ function renderImageCarouselBlock(block: OffprintImageCarouselBlock, authorDid: 
   let html = '<div class="op-carousel">';
 
   for (const image of block.images) {
-    const blobCid = image.image?.ref?.$link;
+    const blobCid = (image.blob ?? image.image)?.ref?.$link;
     if (!blobCid) continue;
     const url = getBlobUrl(authorDid, blobCid);
     const alt = image.alt ? escapeHtml(image.alt) : '';
@@ -446,7 +449,7 @@ function renderImageDiffBlock(block: OffprintImageDiffBlock, authorDid: string):
 
   for (let i = 0; i < 2; i++) {
     const image = block.images[i];
-    const blobCid = image.image?.ref?.$link;
+    const blobCid = (image.blob ?? image.image)?.ref?.$link;
     if (!blobCid) continue;
     const url = getBlobUrl(authorDid, blobCid);
     const alt = image.alt ? escapeHtml(image.alt) : '';
@@ -565,6 +568,15 @@ function renderBlueskyPostBlock(block: OffprintBlueskyPostBlock): string {
   return `<div class="bsky-post-embed" data-uri="${escapeHtml(postUri)}"></div>`;
 }
 
+function renderMath(tex: string): string {
+  if (!tex) return '';
+  try {
+    return `<div class="op-math">${temml.renderToString(tex, { displayMode: true, throwOnError: true })}</div>`;
+  } catch {
+    return `<pre class="op-math-fallback"><code>${escapeHtml(tex)}</code></pre>`;
+  }
+}
+
 /**
  * Render a single block based on its type
  */
@@ -602,6 +614,21 @@ function renderBlock(block: OffprintBlock, authorDid: string): string {
       return renderWebEmbedBlock(block as OffprintWebEmbedBlock, authorDid);
     case 'app.offprint.block.blueskyPost':
       return renderBlueskyPostBlock(block as OffprintBlueskyPostBlock);
+    case 'app.offprint.block.button': {
+      const button = block as unknown as {
+        text?: string;
+        href?: string;
+        caption?: string;
+        alignment?: string;
+      };
+      if (!button.href) return '';
+      const caption = button.caption
+        ? `<p class="op-caption">${escapeHtml(button.caption)}</p>`
+        : '';
+      return `${caption}<p${alignClass(button.alignment) ? ` class="${alignClass(button.alignment).trim()}"` : ''}><a class="op-button" href="${escapeHtml(button.href)}">${escapeHtml(button.text || button.href)}</a></p>`;
+    }
+    case 'app.offprint.block.mathBlock':
+      return renderMath(String((block as unknown as { tex?: string }).tex || ''));
     default: {
       // Unsupported block type - try to extract plaintext if available
       const unknownBlock = block as unknown as { plaintext?: string };
@@ -622,13 +649,16 @@ export function renderOffprintContent(content: OffprintContent, authorDid: strin
   }
 
   const htmlParts: string[] = [];
+  let degraded = false;
 
   for (const block of content.items) {
     const blockHtml = renderBlock(block, authorDid);
-    if (blockHtml) {
-      htmlParts.push(blockHtml);
-    }
+    if (blockHtml) htmlParts.push(blockHtml);
+    else degraded = true;
   }
+
+  if (degraded)
+    htmlParts.push('<p class="op-degraded">Some content can’t be shown · View original</p>');
 
   return htmlParts.join('\n');
 }

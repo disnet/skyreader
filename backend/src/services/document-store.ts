@@ -35,6 +35,7 @@ import {
   publishedAtMs,
   recordToDocument,
   resolveReaderCollection,
+  resolveAuthorPds,
   resolveSiteMeta,
 } from './standard-site';
 import { parseAtUri } from '../utils/canonical-url';
@@ -42,6 +43,81 @@ import { log } from '../utils/logger';
 
 /** How long a resolved curated-edition preview is reused before re-resolving. */
 const COLLECTION_PREVIEW_TTL_MS = 24 * 60 * 60 * 1000;
+
+/** Leave room below D1's 2 MB row ceiling for columns and SQLite overhead. */
+export const MAX_INFLATED_DOCUMENT_BYTES = 1_500_000;
+
+type LeafletBlobContent = {
+  $type?: string;
+  pages?: unknown[];
+  blobPages?: { ref?: { $link?: string } };
+  blobs?: unknown;
+  truncated?: boolean;
+};
+
+/** Inflate Leaflet's offloaded page array before the record reaches D1. */
+export async function inflateLeafletBlobPages(
+  record: DocumentRecord,
+  authorDid: string,
+  ledger?: QueryLedger
+): Promise<DocumentRecord> {
+  const content = record.content as LeafletBlobContent | undefined;
+  const cid = content?.blobPages?.ref?.$link;
+  if (content?.$type !== 'pub.leaflet.content' || !cid) return record;
+
+  try {
+    if (ledger) chargeQueries(ledger, 2);
+    const pds = await resolveAuthorPds(authorDid);
+    if (!pds) return record;
+    const params = new URLSearchParams({ did: authorDid, cid });
+    const response = await fetch(`${pds}/xrpc/com.atproto.sync.getBlob?${params}`, {
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) return record;
+    const pages = (await response.json()) as unknown;
+    if (!Array.isArray(pages)) return record;
+
+    const { blobPages: _blobPages, blobs: _blobs, ...inlineContent } = content;
+    const inflated: DocumentRecord = {
+      ...record,
+      content: { ...inlineContent, pages },
+    };
+    if (new TextEncoder().encode(JSON.stringify(inflated)).length <= MAX_INFLATED_DOCUMENT_BYTES) {
+      return inflated;
+    }
+
+    const prefix: unknown[] = [];
+    for (const page of pages as Array<Record<string, unknown>>) {
+      const blocks = Array.isArray(page.blocks) ? page.blocks : [];
+      const kept: unknown[] = [];
+      for (const block of blocks) {
+        const candidate = {
+          ...inflated,
+          content: {
+            ...(inflated.content as object),
+            pages: [...prefix, { ...page, blocks: [...kept, block] }],
+            truncated: true,
+          },
+        };
+        if (
+          new TextEncoder().encode(JSON.stringify(candidate)).length > MAX_INFLATED_DOCUMENT_BYTES
+        )
+          break;
+        kept.push(block);
+      }
+      if (kept.length) prefix.push({ ...page, blocks: kept });
+      if (kept.length < blocks.length) break;
+    }
+    return {
+      ...inflated,
+      content: { ...(inflated.content as object), pages: prefix, truncated: true },
+    };
+  } catch {
+    // Keep the original stub. A replay/backfill retries; the frontend falls back
+    // to textContent in the meantime instead of presenting an empty article.
+    return record;
+  }
+}
 
 /**
  * How many curated editions one request may resolve from scratch. Each edition
@@ -451,6 +527,7 @@ async function documentUpsertStatement(
   const parsed = parseAtUri(recordUri);
   if (!parsed) return null;
 
+  record = await inflateLeafletBlobPages(record, authorDid, ctx.ledger);
   const siteUri = record.site || '';
   const meta = await siteMetaForWrite(env, siteUri, ctx);
   const canonicalUrl = meta.baseUrl
