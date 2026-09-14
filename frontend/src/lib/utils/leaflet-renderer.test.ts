@@ -394,6 +394,46 @@ describe('current Leaflet lexicon support', () => {
     expect(html).toContain('Some content');
   });
 
+  it('does not claim content is missing when the gate already said why', () => {
+    // The same fixture as above without `truncated`: every block before the delimiter
+    // rendered, and the page past it is absent because the gate stopped the walk. One
+    // notice, not two.
+    const content: LeafletContent = {
+      $type: 'pub.leaflet.content',
+      pages: [
+        {
+          $type: 'pub.leaflet.pages.linearDocument',
+          id: 'main',
+          blocks: [
+            text('Free'),
+            { block: { $type: 'pub.leaflet.blocks.membersOnlyDelimiter', audience: 'paid' } },
+            { block: { $type: 'pub.leaflet.blocks.page', id: 'more' } },
+          ],
+        },
+        {
+          $type: 'pub.leaflet.pages.linearDocument',
+          id: 'more',
+          blocks: [text('Also gated')],
+        },
+      ],
+    };
+    const html = renderLeafletContent(content, AUTHOR_DID);
+    expect(html).toContain('The rest is for members');
+    expect(html).not.toContain('Some content');
+  });
+
+  it('keeps a degradation earned before the gate', () => {
+    // A block this reader can't render, then the delimiter: the reader loses content
+    // for two different reasons and hears both.
+    const content = doc(
+      { block: { $type: 'pub.leaflet.blocks.poll' } },
+      { block: { $type: 'pub.leaflet.blocks.membersOnlyDelimiter', audience: 'paid' } }
+    );
+    const html = renderLeafletContent(content, AUTHOR_DID);
+    expect(html).toContain('The rest is for members');
+    expect(html).toContain('Some content');
+  });
+
   it('says members for a paid audience', () => {
     const content = doc(text('Free'), {
       block: { $type: 'pub.leaflet.blocks.membersOnlyDelimiter', audience: 'paid' },
