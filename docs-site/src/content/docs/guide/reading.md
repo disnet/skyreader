@@ -17,6 +17,11 @@ Items you scroll past can be marked read automatically (a toggle in **Settings â
 
 Opening an article gives you a clean, full-screen reading surface.
 
+Skyreader preserves the structure of Leaflet and Offprint publications, including galleries,
+equations, buttons, task lists, and aligned text. If a publication uses an interactive widget the
+reader cannot safely show, the article says so and links you to the original instead of silently
+leaving content out. Members-only sections stay on their publication.
+
 ![The reader: a full-screen article with quiet chrome and a Discussion section at the end](../../../assets/screenshots/reader.png)
 
 - **Style customization** : change the font style and size.

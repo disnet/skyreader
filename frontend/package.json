@@ -41,6 +41,7 @@
     "@sveltejs/adapter-static": "^3.0.10",
     "dexie": "^4.4.5",
     "dompurify": "^3.4.14",
-    "marked": "^18.0.11"
+    "marked": "^18.0.11",
+    "temml": "^0.13.5"
   }
 }

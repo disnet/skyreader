@@ -160,6 +160,9 @@ export interface LeafletListItemBlock {
   $type: 'pub.leaflet.blocks.unorderedList#listItem' | 'pub.leaflet.blocks.orderedList#listItem';
   content: LeafletListItemContent;
   children?: LeafletListItemBlock[];
+  orderedListChildren?: LeafletListItemBlock[];
+  unorderedListChildren?: LeafletListItemBlock[];
+  checked?: boolean;
 }
 
 export interface LeafletUnorderedListBlock {
@@ -170,6 +173,7 @@ export interface LeafletUnorderedListBlock {
 export interface LeafletOrderedListBlock {
   $type: 'pub.leaflet.blocks.orderedList';
   children: LeafletListItemBlock[];
+  startIndex?: number;
 }
 
 export interface LeafletImageBlock {
@@ -177,6 +181,8 @@ export interface LeafletImageBlock {
   image: { ref: { $link: string }; mimeType: string };
   aspectRatio?: { width: number; height: number };
   alt?: string;
+  fullBleed?: boolean;
+  width?: string;
 }
 
 // Field names here are the lexicon's, not ours: `src` for the URL and
@@ -204,7 +210,30 @@ export interface LeafletBskyPostBlock {
 
 export interface LeafletPageBlock {
   $type: 'pub.leaflet.blocks.page';
-  pageId: string;
+  id: string;
+  display?: 'full' | 'compact';
+}
+
+export interface LeafletGenericBlock {
+  $type:
+    | 'pub.leaflet.blocks.math'
+    | 'pub.leaflet.blocks.button'
+    | 'pub.leaflet.blocks.imageGallery'
+    | 'pub.leaflet.blocks.iframe'
+    | 'pub.leaflet.blocks.html'
+    | 'pub.leaflet.blocks.standardSitePost'
+    | 'pub.leaflet.blocks.standardSitePublication'
+    | 'pub.leaflet.blocks.membersOnlyDelimiter'
+    | 'pub.leaflet.blocks.poll'
+    | 'pub.leaflet.blocks.postsList'
+    | 'pub.leaflet.blocks.signup';
+  tex?: string;
+  text?: string;
+  url?: string;
+  html?: string;
+  uri?: string;
+  images?: unknown[];
+  format?: string;
 }
 
 // Union of all supported block types
@@ -219,21 +248,25 @@ export type LeafletBlock =
   | LeafletImageBlock
   | LeafletWebsiteBlock
   | LeafletBskyPostBlock
-  | LeafletPageBlock;
+  | LeafletPageBlock
+  | LeafletGenericBlock;
 
 export interface LeafletBlockWrapper {
   block: LeafletBlock;
-  alignment?: 'left' | 'center' | 'right';
+  alignment?: string;
 }
 
 export interface LeafletLinearDocument {
   $type: 'pub.leaflet.pages.linearDocument';
+  id?: string;
   blocks: LeafletBlockWrapper[];
 }
 
 export interface LeafletContent {
   $type: 'pub.leaflet.content';
   pages: LeafletLinearDocument[];
+  blobPages?: unknown;
+  truncated?: boolean;
 }
 
 // pckt.blog content types for blog.pckt.content format
@@ -469,7 +502,8 @@ export interface OffprintImageBlock {
 }
 
 export interface OffprintImageGridImage {
-  image: { ref: { $link: string }; mimeType: string; size?: number };
+  image?: { ref: { $link: string }; mimeType: string; size?: number };
+  blob?: { ref: { $link: string }; mimeType: string; size?: number };
   alt?: string;
   aspectRatio?: { width: number; height: number };
 }
@@ -479,7 +513,7 @@ export interface OffprintImageGridBlock {
   images: OffprintImageGridImage[];
   caption?: string;
   gridRows?: number;
-  aspectRatio?: { width: number; height: number };
+  aspectRatio?: 'landscape' | 'portrait' | 'square' | 'mosaic';
 }
 
 export interface OffprintImageCarouselBlock {
@@ -530,6 +564,19 @@ export interface OffprintBlueskyPostBlock {
   post: { uri: string; cid?: string };
 }
 
+export interface OffprintButtonBlock {
+  $type: 'app.offprint.block.button';
+  text: string;
+  href: string;
+  caption?: string;
+  alignment?: 'left' | 'center' | 'right';
+}
+
+export interface OffprintMathBlock {
+  $type: 'app.offprint.block.mathBlock';
+  tex: string;
+}
+
 // Union of all supported Offprint block types
 export type OffprintBlock =
   | OffprintTextBlock
@@ -547,7 +594,9 @@ export type OffprintBlock =
   | OffprintImageDiffBlock
   | OffprintWebBookmarkBlock
   | OffprintWebEmbedBlock
-  | OffprintBlueskyPostBlock;
+  | OffprintBlueskyPostBlock
+  | OffprintButtonBlock
+  | OffprintMathBlock;
 
 export interface OffprintContent {
   $type: 'app.offprint.content';

@@ -584,6 +584,59 @@ section.footnotes {
   text-align: right;
 }
 
+.lf-align-justify {
+  text-align: justify;
+}
+
+.lf-text-small {
+  font-size: 0.875em;
+}
+
+.lf-text-large {
+  font-size: 1.25em;
+}
+
+.lf-full-bleed {
+  max-width: none;
+  width: min(100vw, 70rem);
+  margin-left: 50%;
+  transform: translateX(-50%);
+}
+
+.lf-page-reference {
+  margin: 1em 0;
+  padding: 0.75em 1em;
+  border: 1px solid color-mix(in srgb, currentColor 16%, transparent);
+  border-radius: 6px;
+}
+
+.op-button {
+  display: inline-block;
+  padding: 0.5em 1em;
+  border-radius: 6px;
+  background: #0066cc;
+  color: #fff;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.op-button:hover {
+  background: #0052a3;
+}
+
+.op-math {
+  margin: 1.25em 0;
+  overflow-x: auto;
+}
+
+.op-degraded {
+  margin: 1.5em 0;
+  padding-top: 0.75em;
+  border-top: 1px solid color-mix(in srgb, currentColor 16%, transparent);
+  color: color-mix(in srgb, currentColor 68%, transparent);
+  font-size: 0.875em;
+}
+
 /* Figures. The reader's measure is narrow, so an image fills it by default;
    `op-figure--w*` carries a width the author deliberately reduced, bucketed to
    10% (see widthClass). Centered rather than left-hung: a narrowed image reads

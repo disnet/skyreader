@@ -1,7 +1,11 @@
 /**
  * Renderer for pub.leaflet.content block-based documents
- * Converts Leaflet blocks to HTML for display in ArticleCard
+ * Converts Leaflet blocks to HTML for display in ArticleCard.
+ * Styling must use classes: sanitizeHtml deliberately strips inline styles.
  */
+
+import temml from 'temml';
+import { allowedIframeSrc, sanitizeHtml } from '$lib/utils/sanitize';
 
 import type {
   LeafletContent,
@@ -18,6 +22,7 @@ import type {
   LeafletWebsiteBlock,
   LeafletBskyPostBlock,
   LeafletPageBlock,
+  LeafletBlockWrapper,
 } from '$lib/types';
 
 /**
@@ -50,6 +55,32 @@ function escapeHtml(text: string): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
+}
+
+function sizeAttrs(aspectRatio?: { width: number; height: number }): string {
+  if (!aspectRatio) return '';
+  const { width, height } = aspectRatio;
+  if (![width, height].every((n) => Number.isFinite(n) && n > 0)) return '';
+  return ` width="${Math.round(width)}" height="${Math.round(height)}"`;
+}
+
+function widthClass(width?: string): string {
+  if (!width) return '';
+  const pct = Number.parseFloat(width);
+  if (!Number.isFinite(pct) || pct <= 0 || pct >= 97) return '';
+  return ` op-figure--w${Math.max(30, Math.min(90, Math.round(pct / 10) * 10))}`;
+}
+
+function alignmentClass(value?: string): string {
+  const token = value
+    ?.split('#')
+    .pop()
+    ?.replace(/^textAlign/, '')
+    .toLowerCase();
+  if (token === 'center') return 'op-align-center';
+  if (token === 'right') return 'op-align-right';
+  if (token === 'justify') return 'lf-align-justify';
+  return '';
 }
 
 const FOOTNOTE_FEATURE = 'pub.leaflet.richtext.facet#footnote';
@@ -253,6 +284,18 @@ function applyFacets(
             wrappedText = `<a class="mention" data-mention-did="${escapeHtml(feature.did)}" href="https://bsky.app/profile/${escapeHtml(feature.did)}" target="_blank" rel="noopener">${wrappedText}</a>`;
           }
           break;
+        case 'pub.leaflet.richtext.facet#atMention': {
+          const at = feature as typeof feature & { atURI?: string; href?: string };
+          const href = at.href || at.atURI;
+          if (href) wrappedText = `<a href="${escapeHtml(href)}">${wrappedText}</a>`;
+          break;
+        }
+        case 'pub.leaflet.richtext.facet#id': {
+          const anchor = feature as typeof feature & { id?: string };
+          if (anchor.id)
+            wrappedText = `<span id="lf-anchor-${escapeHtml(anchor.id)}">${wrappedText}</span>`;
+          break;
+        }
       }
     }
 
@@ -281,12 +324,11 @@ function renderTextBlock(block: LeafletTextBlock, footnotes?: FootnoteIndex): st
   }
   const content = applyFacets(block.plaintext, block.facets, footnotes);
 
-  // Apply text size styling
   let sizeClass = '';
   if (block.textSize === 'small') {
-    sizeClass = ' style="font-size: 0.875em"';
+    sizeClass = ' class="lf-text-small"';
   } else if (block.textSize === 'large') {
-    sizeClass = ' style="font-size: 1.25em"';
+    sizeClass = ' class="lf-text-large"';
   }
 
   return `<p${sizeClass}>${content}</p>`;
@@ -357,10 +399,16 @@ function renderListItems(
       const content = applyFacets(plaintext, facets, footnotes);
       let html = `<li>${content}`;
 
-      // Handle nested lists (inherit parent list type)
-      if (item.children && item.children.length > 0) {
-        html += `<${listTag}>${renderListItems(item.children, listTag, footnotes)}</${listTag}>`;
-      }
+      const checked = item.checked;
+      if (checked !== undefined)
+        html = `<li class="op-tasklist__item"><input type="checkbox"${checked ? ' checked' : ''} disabled /> ${content}`;
+      const same = item.children;
+      const ordered = item.orderedListChildren;
+      const unordered = item.unorderedListChildren;
+      if (same?.length)
+        html += `<${listTag}>${renderListItems(same, listTag, footnotes)}</${listTag}>`;
+      if (ordered?.length) html += `<ol>${renderListItems(ordered, 'ol', footnotes)}</ol>`;
+      if (unordered?.length) html += `<ul>${renderListItems(unordered, 'ul', footnotes)}</ul>`;
 
       html += '</li>';
       return html;
@@ -379,7 +427,7 @@ function renderUnorderedListBlock(
   if (!itemsHtml) {
     return '';
   }
-  return `<ul>${itemsHtml}</ul>`;
+  return `<ul${block.children.some((item) => item.checked !== undefined) ? ' class="op-tasklist"' : ''}>${itemsHtml}</ul>`;
 }
 
 /**
@@ -390,7 +438,8 @@ function renderOrderedListBlock(block: LeafletOrderedListBlock, footnotes?: Foot
   if (!itemsHtml) {
     return '';
   }
-  return `<ol>${itemsHtml}</ol>`;
+  const start = block.startIndex && block.startIndex !== 1 ? ` start="${block.startIndex}"` : '';
+  return `<ol${start}>${itemsHtml}</ol>`;
 }
 
 /**
@@ -405,14 +454,8 @@ function renderImageBlock(block: LeafletImageBlock, authorDid: string): string {
   const url = getBlobUrl(authorDid, blobCid);
   const alt = block.alt ? escapeHtml(block.alt) : '';
 
-  // Apply aspect ratio if available
-  let style = '';
-  if (block.aspectRatio) {
-    const { width, height } = block.aspectRatio;
-    style = ` style="aspect-ratio: ${width} / ${height}; width: 100%; height: auto; object-fit: cover"`;
-  }
-
-  return `<img src="${url}" alt="${alt}"${style} loading="lazy" />`;
+  const cls = `op-figure${widthClass(block.width)}${block.fullBleed ? ' lf-full-bleed' : ''}`;
+  return `<figure class="${cls}"><img src="${url}" alt="${alt}"${sizeAttrs(block.aspectRatio)} loading="lazy" /></figure>`;
 }
 
 /**
@@ -428,19 +471,18 @@ function renderWebsiteBlock(block: LeafletWebsiteBlock, authorDid: string): stri
   const description = block.description || '';
   const thumbCid = block.previewImage?.ref?.$link;
 
-  let html =
-    '<div class="website-preview" style="border: 1px solid var(--border, #e5e5e5); border-radius: 8px; overflow: hidden; margin: 1em 0">';
+  let html = '<div class="website-preview">';
 
   if (thumbCid) {
     const thumbUrl = getBlobUrl(authorDid, thumbCid);
-    html += `<img src="${thumbUrl}" alt="" style="width: 100%; max-height: 200px; object-fit: cover" loading="lazy" />`;
+    html += `<div class="website-preview__media"><img class="op-media" src="${thumbUrl}" alt="" loading="lazy" /></div>`;
   }
 
-  html += '<div style="padding: 12px">';
-  html += `<a href="${escapeHtml(url)}" target="_blank" rel="noopener" style="font-weight: 600; text-decoration: none">${escapeHtml(title)}</a>`;
+  html += '<div>';
+  html += `<a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(title)}</a>`;
 
   if (description) {
-    html += `<p style="margin: 4px 0 0; font-size: 0.875em; color: var(--text-secondary, #666)">${escapeHtml(description)}</p>`;
+    html += `<p>${escapeHtml(description)}</p>`;
   }
 
   html += '</div></div>';
@@ -465,23 +507,105 @@ function renderBskyPostBlock(block: LeafletBskyPostBlock): string {
 /**
  * Render a page reference block (sub-page)
  */
-function renderPageBlock(block: LeafletPageBlock): string {
-  const pageId = block.pageId;
+function renderPageBlock(
+  block: LeafletPageBlock,
+  authorDid: string,
+  footnotes: FootnoteIndex | undefined,
+  content: LeafletContent,
+  visited: Set<string>,
+  depth: number
+): string {
+  const pageId = block.id;
   if (!pageId) {
     return '';
   }
+  const page = content.pages.find((candidate) => candidate.id === pageId);
+  if (!page || visited.has(pageId) || depth >= 5) {
+    return `<div class="lf-page-reference"><em>Sub-page: ${escapeHtml(pageId)}</em></div>`;
+  }
+  const nextVisited = new Set(visited).add(pageId);
+  const inner = page.blocks
+    .map((wrapper) =>
+      renderWrappedBlock(wrapper, authorDid, footnotes, content, nextVisited, depth + 1)
+    )
+    .join('\n');
+  if (block.display === 'compact') {
+    return `<details class="lf-page-reference"><summary>Sub-page</summary>${inner}</details>`;
+  }
+  return `<section class="lf-page-reference">${inner}</section>`;
+}
 
-  // Page blocks reference other pages in the same document
-  // For now, render as a placeholder since we'd need the full document context
-  return `<div class="page-reference" style="border: 1px solid var(--border, #e5e5e5); border-radius: 8px; padding: 12px; margin: 1em 0; background: var(--bg-secondary, #f5f5f5)">
-		<em>[Sub-page: ${escapeHtml(pageId)}]</em>
-	</div>`;
+function renderMath(tex: string): string {
+  if (!tex) return '';
+  try {
+    return `<div class="op-math">${temml.renderToString(tex, { displayMode: true, throwOnError: true })}</div>`;
+  } catch {
+    return `<pre class="op-math-fallback"><code>${escapeHtml(tex)}</code></pre>`;
+  }
+}
+
+function renderGenericBlock(block: Record<string, unknown>, authorDid: string): string {
+  const type = String(block.$type || '');
+  if (type === 'pub.leaflet.blocks.math') return renderMath(String(block.tex || ''));
+  if (type === 'pub.leaflet.blocks.button') {
+    const url = typeof block.url === 'string' ? block.url : '';
+    return url
+      ? `<p><a class="op-button" href="${escapeHtml(url)}">${escapeHtml(String(block.text || url))}</a></p>`
+      : '';
+  }
+  if (type === 'pub.leaflet.blocks.imageGallery' && Array.isArray(block.images)) {
+    const images = block.images as Array<Record<string, unknown>>;
+    const carousel = String(block.format || '')
+      .toLowerCase()
+      .includes('carousel');
+    const cls = carousel ? 'op-carousel' : `op-grid op-grid--cols-${Math.min(images.length, 3)}`;
+    const itemCls = carousel ? 'op-carousel__item' : 'op-grid__cell';
+    const body = images
+      .map((entry) => {
+        const image = entry.image as { ref?: { $link?: string } } | undefined;
+        const cid = image?.ref?.$link;
+        return cid
+          ? `<div class="${itemCls}"><img class="op-media" src="${getBlobUrl(authorDid, cid)}" alt="${escapeHtml(String(entry.alt || ''))}"${sizeAttrs(entry.aspectRatio as { width: number; height: number } | undefined)} loading="lazy" /></div>`
+          : '';
+      })
+      .join('');
+    return body ? `<div class="${cls}">${body}</div>` : '';
+  }
+  if (type === 'pub.leaflet.blocks.iframe') {
+    const url = typeof block.url === 'string' ? block.url : '';
+    const src = allowedIframeSrc(url, null);
+    return src
+      ? `<div class="op-embed"><iframe src="${escapeHtml(src)}" loading="lazy"></iframe></div>`
+      : url
+        ? `<div class="website-preview"><div><a href="${escapeHtml(url)}">${escapeHtml(url)}</a></div></div>`
+        : '';
+  }
+  if (type === 'pub.leaflet.blocks.html' && typeof block.html === 'string') {
+    return `<div class="lf-html">${sanitizeHtml(block.html)}</div>`;
+  }
+  if (
+    type === 'pub.leaflet.blocks.standardSitePost' ||
+    type === 'pub.leaflet.blocks.standardSitePublication'
+  ) {
+    const uri = typeof block.uri === 'string' ? block.uri : '';
+    return uri
+      ? `<div class="website-preview"><div><a href="${escapeHtml(uri)}">View in the Atmosphere</a></div></div>`
+      : '';
+  }
+  return '';
 }
 
 /**
  * Render a single block based on its type
  */
-function renderBlock(block: LeafletBlock, authorDid: string, footnotes?: FootnoteIndex): string {
+function renderBlock(
+  block: LeafletBlock,
+  authorDid: string,
+  footnotes: FootnoteIndex | undefined,
+  content: LeafletContent,
+  visited: Set<string>,
+  depth: number
+): string {
   switch (block.$type) {
     case 'pub.leaflet.blocks.text':
       return renderTextBlock(block as LeafletTextBlock, footnotes);
@@ -504,16 +628,36 @@ function renderBlock(block: LeafletBlock, authorDid: string, footnotes?: Footnot
     case 'pub.leaflet.blocks.bskyPost':
       return renderBskyPostBlock(block as LeafletBskyPostBlock);
     case 'pub.leaflet.blocks.page':
-      return renderPageBlock(block as LeafletPageBlock);
+      return renderPageBlock(
+        block as LeafletPageBlock,
+        authorDid,
+        footnotes,
+        content,
+        visited,
+        depth
+      );
     default: {
       // Unsupported block type - try to extract plaintext if available
       const unknownBlock = block as unknown as { plaintext?: string };
       if (unknownBlock.plaintext && typeof unknownBlock.plaintext === 'string') {
         return `<p>${escapeHtml(unknownBlock.plaintext)}</p>`;
       }
-      return '';
+      return renderGenericBlock(block as unknown as Record<string, unknown>, authorDid);
     }
   }
+}
+
+function renderWrappedBlock(
+  wrapper: LeafletBlockWrapper,
+  authorDid: string,
+  footnotes: FootnoteIndex | undefined,
+  content: LeafletContent,
+  visited: Set<string>,
+  depth: number
+): string {
+  const blockHtml = renderBlock(wrapper.block, authorDid, footnotes, content, visited, depth);
+  const alignment = alignmentClass(wrapper.alignment);
+  return blockHtml && alignment ? `<div class="${alignment}">${blockHtml}</div>` : blockHtml;
 }
 
 /**
@@ -529,22 +673,31 @@ export function renderLeafletContent(content: LeafletContent, authorDid: string)
   // Numbered up front, in reading order, so markers and the list at the end agree.
   const footnotes = buildFootnoteIndex(content);
 
+  let degraded = Boolean(content.truncated || content.blobPages);
   for (const page of content.pages) {
     if (page.$type !== 'pub.leaflet.pages.linearDocument' || !page.blocks) {
+      degraded = true;
       continue;
     }
 
     for (const wrapper of page.blocks) {
-      const blockHtml = renderBlock(wrapper.block, authorDid, footnotes);
+      if (wrapper.block.$type === 'pub.leaflet.blocks.membersOnlyDelimiter') {
+        htmlParts.push('<p class="op-degraded">Members-only · Read on the publication</p>');
+        degraded = false;
+        break;
+      }
+      const blockHtml = renderWrappedBlock(
+        wrapper,
+        authorDid,
+        footnotes,
+        content,
+        new Set(page.id ? [page.id] : []),
+        0
+      );
       if (blockHtml) {
-        // Apply alignment if specified
-        if (wrapper.alignment && wrapper.alignment !== 'left') {
-          const alignStyle =
-            wrapper.alignment === 'center' ? 'text-align: center' : 'text-align: right';
-          htmlParts.push(`<div style="${alignStyle}">${blockHtml}</div>`);
-        } else {
-          htmlParts.push(blockHtml);
-        }
+        htmlParts.push(blockHtml);
+      } else {
+        degraded = true;
       }
     }
   }
@@ -553,6 +706,8 @@ export function renderLeafletContent(content: LeafletContent, authorDid: string)
   if (footnotesHtml) {
     htmlParts.push(footnotesHtml);
   }
+  if (degraded)
+    htmlParts.push('<p class="op-degraded">Some content can’t be shown · View original</p>');
 
   return htmlParts.join('\n');
 }

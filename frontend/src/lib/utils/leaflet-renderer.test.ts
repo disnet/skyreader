@@ -236,3 +236,49 @@ describe('footnote markup survives sanitizeHtml', () => {
     expect(el.querySelector('a.footnote-backref[data-footnote-backref="1"]')).not.toBeNull();
   });
 });
+
+describe('current Leaflet lexicon support', () => {
+  it('keeps token alignment and text sizing after sanitizing', () => {
+    const content = doc(text('Centered'));
+    content.pages[0].blocks[0].alignment = 'lex:pub.leaflet.pages.linearDocument#textAlignCenter';
+    (content.pages[0].blocks[0].block as { textSize?: string }).textSize = 'large';
+    const clean = sanitizeHtml(renderLeafletContent(content, AUTHOR_DID));
+    expect(clean).toContain('op-align-center');
+    expect(clean).toContain('lf-text-large');
+    expect(clean).not.toContain('style=');
+  });
+
+  it('renders button and math blocks instead of dropping them', () => {
+    const content = doc(
+      {
+        block: { $type: 'pub.leaflet.blocks.button', text: 'Continue', url: 'https://example.com' },
+      },
+      { block: { $type: 'pub.leaflet.blocks.math', tex: 'x^2' } }
+    );
+    const clean = sanitizeHtml(renderLeafletContent(content, AUTHOR_DID));
+    expect(clean).toContain('op-button');
+    expect(clean).toContain('<math');
+    expect(clean).not.toContain('Some content');
+  });
+
+  it('renders a referenced page and guards a cycle', () => {
+    const content: LeafletContent = {
+      $type: 'pub.leaflet.content',
+      pages: [
+        {
+          $type: 'pub.leaflet.pages.linearDocument',
+          id: 'main',
+          blocks: [{ block: { $type: 'pub.leaflet.blocks.page', id: 'notes' } }],
+        },
+        {
+          $type: 'pub.leaflet.pages.linearDocument',
+          id: 'notes',
+          blocks: [text('Nested'), { block: { $type: 'pub.leaflet.blocks.page', id: 'main' } }],
+        },
+      ],
+    };
+    const html = renderLeafletContent(content, AUTHOR_DID);
+    expect(html).toContain('Nested');
+    expect(html.length).toBeLessThan(5000);
+  });
+});

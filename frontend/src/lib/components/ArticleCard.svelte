@@ -275,7 +275,13 @@
 
     // For documents with structured Leaflet content, render it
     if (document?.content && isLeafletContent(document.content)) {
-      return renderLeafletContent(document.content as LeafletContent, document.authorDid);
+      return (
+        renderLeafletContent(document.content as LeafletContent, document.authorDid) ||
+        lazyDocText ||
+        document.textContent ||
+        document.description ||
+        ''
+      );
     }
 
     // For documents with structured pckt.blog content, render it
