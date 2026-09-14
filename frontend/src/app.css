@@ -629,6 +629,14 @@ section.footnotes {
   overflow-x: auto;
 }
 
+/* What a math block looks like before (and without) the TeX parser: its own source,
+   set as code. The parser is loaded on demand by the `mathRender` action, so this is
+   what a reader sees for the moment before it arrives — and permanently if it never
+   does. Legible either way, which is why the equation is never dropped. */
+.op-math-fallback {
+  margin: 0;
+}
+
 .op-degraded {
   margin: 1.5em 0;
   padding-top: 0.75em;
@@ -727,10 +735,41 @@ section.footnotes {
   grid-template-columns: repeat(3, 1fr);
 }
 
+/* The grid's `aspectRatio` mode: the shape every cell is cropped to. Without a rule
+   per value the class is inert and the grid renders exactly as it would unset, which
+   is a gap that reads as support. The cell carries the ratio, not the image, so the
+   `object-fit: cover` above does the cropping. */
+.op-grid--landscape .op-grid__cell {
+  aspect-ratio: 3 / 2;
+}
+
+.op-grid--portrait .op-grid__cell {
+  aspect-ratio: 2 / 3;
+}
+
+.op-grid--square .op-grid__cell {
+  aspect-ratio: 1 / 1;
+}
+
+/* Mosaic: one photo leads at twice the width, the rest fill in square beside it. */
+.op-grid--mosaic .op-grid__cell {
+  aspect-ratio: 1 / 1;
+}
+
+.op-grid--mosaic .op-grid__cell:first-child {
+  grid-column: span 2;
+  aspect-ratio: 2 / 1;
+}
+
 @media (max-width: 640px) {
   .op-grid--cols-2,
   .op-grid--cols-3 {
     grid-template-columns: 1fr;
+  }
+
+  /* One column: a mosaic's lead photo has no second column to span into. */
+  .op-grid--mosaic .op-grid__cell:first-child {
+    grid-column: auto;
   }
 }
 

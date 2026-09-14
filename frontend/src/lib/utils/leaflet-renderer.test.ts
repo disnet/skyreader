@@ -257,11 +257,38 @@ describe('current Leaflet lexicon support', () => {
     );
     const clean = sanitizeHtml(renderLeafletContent(content, AUTHOR_DID));
     expect(clean).toContain('op-button');
-    expect(clean).toContain('<math');
+    // Math renders as its own source until the on-demand parser hydrates it; the TeX
+    // has to survive sanitizing for the action to have anything to render.
+    expect(clean).toContain('data-tex="x^2"');
+    expect(clean).toContain('x^2</code>');
     expect(clean).not.toContain('Some content');
   });
 
-  it('renders a referenced page and guards a cycle', () => {
+  it('renders a referenced page once, at the reference, and guards a cycle', () => {
+    const content: LeafletContent = {
+      $type: 'pub.leaflet.content',
+      pages: [
+        {
+          $type: 'pub.leaflet.pages.linearDocument',
+          id: 'main',
+          blocks: [text('Root'), { block: { $type: 'pub.leaflet.blocks.page', id: 'notes' } }],
+        },
+        {
+          $type: 'pub.leaflet.pages.linearDocument',
+          id: 'notes',
+          blocks: [text('Nested'), { block: { $type: 'pub.leaflet.blocks.page', id: 'main' } }],
+        },
+      ],
+    };
+    const html = renderLeafletContent(content, AUTHOR_DID);
+    // Leaflet writes a sub-page into `pages` *and* references it from its parent, so
+    // walking both is what used to emit it twice.
+    expect(html.match(/Nested/g)).toHaveLength(1);
+    expect(html.match(/Root/g)).toHaveLength(1);
+    expect(html.length).toBeLessThan(5000);
+  });
+
+  it('numbers a sub-page footnote once, where the page is referenced', () => {
     const content: LeafletContent = {
       $type: 'pub.leaflet.content',
       pages: [
@@ -273,12 +300,168 @@ describe('current Leaflet lexicon support', () => {
         {
           $type: 'pub.leaflet.pages.linearDocument',
           id: 'notes',
-          blocks: [text('Nested'), { block: { $type: 'pub.leaflet.blocks.page', id: 'main' } }],
+          blocks: [text('Cited*', [footnote(6, 'fn-a', 'The note')])],
         },
       ],
     };
     const html = renderLeafletContent(content, AUTHOR_DID);
-    expect(html).toContain('Nested');
-    expect(html.length).toBeLessThan(5000);
+    expect(html.match(/data-footnote-ref="1"/g)).toHaveLength(1);
+    expect(html.match(/The note/g)).toHaveLength(1);
+    expect(html).not.toContain('data-footnote-ref="2"');
+  });
+
+  it('renders a list nested under an item of the other kind', () => {
+    const content = doc({
+      block: {
+        $type: 'pub.leaflet.blocks.unorderedList',
+        children: [
+          {
+            ...listItem('Parent'),
+            // The lexicon's shape: a ref to the whole list, not an array of items.
+            orderedListChildren: {
+              $type: 'pub.leaflet.blocks.orderedList',
+              startIndex: 3,
+              children: [listItem('Numbered')],
+            },
+          },
+        ],
+      },
+    });
+    const html = renderLeafletContent(content, AUTHOR_DID);
+    expect(html).toContain('<ol start="3">');
+    expect(html).toContain('Numbered');
+    expect(html).not.toContain('Some content');
+  });
+
+  it('still reads a nested list written as a bare array of items', () => {
+    const content = doc({
+      block: {
+        $type: 'pub.leaflet.blocks.unorderedList',
+        children: [{ ...listItem('Parent'), unorderedListChildren: [listItem('Bulleted')] }],
+      },
+    });
+    expect(renderLeafletContent(content, AUTHOR_DID)).toContain('Bulleted');
+  });
+
+  it('keeps the degradation notice for what was actually dropped', () => {
+    // An empty text block is how Leaflet's editor spaces paragraphs. It renders to
+    // nothing, but nothing was lost, so the footer must stay off.
+    const spacing = doc(text('Body'), text(''));
+    expect(renderLeafletContent(spacing, AUTHOR_DID)).not.toContain('Some content');
+
+    // A site widget this reader deliberately doesn't render is a loss, and says so.
+    const widget = doc(text('Body'), { block: { $type: 'pub.leaflet.blocks.poll' } });
+    expect(renderLeafletContent(widget, AUTHOR_DID)).toContain('Some content');
+  });
+
+  it('marks a body truncated at ingest as degraded', () => {
+    const content = doc(text('Beginning'));
+    content.truncated = true;
+    expect(renderLeafletContent(content, AUTHOR_DID)).toContain('Some content');
+  });
+
+  it('stops the whole document at the members-only delimiter', () => {
+    const content: LeafletContent = {
+      $type: 'pub.leaflet.content',
+      truncated: true,
+      pages: [
+        {
+          $type: 'pub.leaflet.pages.linearDocument',
+          id: 'main',
+          blocks: [
+            text('Free'),
+            {
+              block: { $type: 'pub.leaflet.blocks.membersOnlyDelimiter', audience: 'subscribers' },
+            },
+            text('Gated'),
+            { block: { $type: 'pub.leaflet.blocks.page', id: 'more' } },
+          ],
+        },
+        {
+          $type: 'pub.leaflet.pages.linearDocument',
+          id: 'more',
+          blocks: [text('Also gated')],
+        },
+      ],
+    };
+    const html = renderLeafletContent(content, AUTHOR_DID);
+    expect(html).toContain('Free');
+    expect(html).not.toContain('Gated');
+    expect(html).not.toContain('Also gated');
+    // `subscribers` is a follow, not a paywall — the copy shouldn't say members.
+    expect(html).toContain('The rest is for subscribers');
+    // A document that was also truncated at ingest keeps saying so.
+    expect(html).toContain('Some content');
+  });
+
+  it('says members for a paid audience', () => {
+    const content = doc(text('Free'), {
+      block: { $type: 'pub.leaflet.blocks.membersOnlyDelimiter', audience: 'paid' },
+    });
+    expect(renderLeafletContent(content, AUTHOR_DID)).toContain('The rest is for members');
+  });
+
+  it('renders an image at full measure rather than mis-reading its pixel width', () => {
+    const content = doc({
+      block: {
+        $type: 'pub.leaflet.blocks.image',
+        image: { ref: { $link: 'bafyimage' }, mimeType: 'image/jpeg' },
+        // Pixels, capped at the page width — not a percentage of the reader's measure.
+        width: 400,
+        aspectRatio: { width: 800, height: 600 },
+      },
+    });
+    const html = renderLeafletContent(content, AUTHOR_DID);
+    expect(html).toContain('width="800" height="600"');
+    expect(html).not.toContain('op-figure--w');
+  });
+
+  it('lays an image gallery strip out as a scrolling row', () => {
+    const content = doc({
+      block: {
+        $type: 'pub.leaflet.blocks.imageGallery',
+        format: 'strip',
+        images: [
+          { image: { ref: { $link: 'bafyone' } } },
+          { image: { ref: { $link: 'bafytwo' } } },
+        ],
+      },
+    });
+    const html = renderLeafletContent(content, AUTHOR_DID);
+    expect(html).toContain('op-carousel');
+    expect(html).not.toContain('op-grid');
+  });
+
+  it('sanitizes an inline html block instead of dropping it', () => {
+    const content = doc({
+      block: {
+        $type: 'pub.leaflet.blocks.html',
+        html: '<p>Inline <em>markup</em></p><script>alert(1)</script><style>p{color:red}</style>',
+      },
+    });
+    const clean = sanitizeHtml(renderLeafletContent(content, AUTHOR_DID));
+    expect(clean).toContain('Inline <em>markup</em>');
+    expect(clean).not.toContain('<script');
+    expect(clean).not.toContain('<style');
+    expect(clean).not.toContain('Some content');
+  });
+});
+
+describe('documents with nothing renderable', () => {
+  it('returns nothing for an un-inflated blobPages stub, so the caller can fall back', () => {
+    const stub: LeafletContent = {
+      $type: 'pub.leaflet.content',
+      pages: [],
+      blobPages: { ref: { $link: 'bafkreipages' } },
+    };
+    expect(renderLeafletContent(stub, AUTHOR_DID)).toBe('');
+  });
+
+  it('returns nothing for a record whose only page is a freeform canvas', () => {
+    const canvas = {
+      $type: 'pub.leaflet.content',
+      pages: [{ $type: 'pub.leaflet.pages.canvas', id: 'board' }],
+    } as unknown as LeafletContent;
+    expect(renderLeafletContent(canvas, AUTHOR_DID)).toBe('');
   });
 });

@@ -4,6 +4,7 @@
   import type { PagedController } from './PagedView.svelte';
   import type { FeedDisplayItem } from '$lib/stores/feedView.svelte';
   import { bskyEmbed } from '$lib/actions/bsky-embed';
+  import { mathRender } from '$lib/actions/math-render';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { useHighlights } from '$lib/hooks/useHighlights.svelte';
   import { useLinkInterception } from '$lib/hooks/useLinkInterception.svelte';
@@ -219,7 +220,7 @@
   </header>
 
   <div class="body-wrapper">
-    <div class="article-body" bind:this={bodyEl} use:bskyEmbed>
+    <div class="article-body" bind:this={bodyEl} use:bskyEmbed use:mathRender>
       {#if bodyStatus === 'loading'}
         <p class="body-state" aria-live="polite">Loading saved copy…</p>
       {:else if bodyStatus === 'missing'}

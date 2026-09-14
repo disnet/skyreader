@@ -10,8 +10,8 @@
  * markup and none of them should have to carry a copy.
  */
 
-import temml from 'temml';
 import { allowedIframeSrc } from '$lib/utils/sanitize';
+import { renderMathPlaceholder } from '$lib/utils/math';
 import type {
   OffprintContent,
   OffprintBlock,
@@ -568,19 +568,10 @@ function renderBlueskyPostBlock(block: OffprintBlueskyPostBlock): string {
   return `<div class="bsky-post-embed" data-uri="${escapeHtml(postUri)}"></div>`;
 }
 
-function renderMath(tex: string): string {
-  if (!tex) return '';
-  try {
-    return `<div class="op-math">${temml.renderToString(tex, { displayMode: true, throwOnError: true })}</div>`;
-  } catch {
-    return `<pre class="op-math-fallback"><code>${escapeHtml(tex)}</code></pre>`;
-  }
-}
-
 /**
  * Render a single block based on its type
  */
-function renderBlock(block: OffprintBlock, authorDid: string): string {
+function renderBlock(block: OffprintBlock, authorDid: string): string | null {
   switch (block.$type) {
     case 'app.offprint.block.text':
       return renderTextBlock(block as OffprintTextBlock);
@@ -628,14 +619,16 @@ function renderBlock(block: OffprintBlock, authorDid: string): string {
       return `${caption}<p${alignClass(button.alignment) ? ` class="${alignClass(button.alignment).trim()}"` : ''}><a class="op-button" href="${escapeHtml(button.href)}">${escapeHtml(button.text || button.href)}</a></p>`;
     }
     case 'app.offprint.block.mathBlock':
-      return renderMath(String((block as unknown as { tex?: string }).tex || ''));
+      return renderMathPlaceholder(String((block as unknown as { tex?: string }).tex || ''));
     default: {
       // Unsupported block type - try to extract plaintext if available
       const unknownBlock = block as unknown as { plaintext?: string };
       if (unknownBlock.plaintext && typeof unknownBlock.plaintext === 'string') {
         return `<p>${escapeHtml(unknownBlock.plaintext)}</p>`;
       }
-      return '';
+      // `null`, not `''`: this is the renderer admitting it has nothing for a block
+      // type it doesn't know, which is what the degradation footer is about.
+      return null;
     }
   }
 }
@@ -653,8 +646,11 @@ export function renderOffprintContent(content: OffprintContent, authorDid: strin
 
   for (const block of content.items) {
     const blockHtml = renderBlock(block, authorDid);
-    if (blockHtml) htmlParts.push(blockHtml);
-    else degraded = true;
+    // An empty string is a supported block carrying nothing — an empty paragraph, a
+    // blob-less image — and is not a loss worth telling the reader about. Only the
+    // unsupported-type fallthrough earns the footer.
+    if (blockHtml === null) degraded = true;
+    else if (blockHtml) htmlParts.push(blockHtml);
   }
 
   if (degraded)
