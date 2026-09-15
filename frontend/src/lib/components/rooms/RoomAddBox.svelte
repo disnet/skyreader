@@ -7,10 +7,14 @@
   // its metadata straight through, so those add without a fetch; a pasted link
   // gets its title extracted server-side.
   //
+  // The field, panel and rows are RoomCombo's — shared with the room opener on
+  // the index, which is the same interaction. What lives here is what the rows
+  // mean.
+  //
   // The membership record is written to YOUR repo, not the collection owner's,
   // which is what makes co-curation possible at all — see the room read path's
   // `includeForeign`. See docs/plans/READING_ROOMS_SPIKE.md.
-  import Icon from '$lib/components/Icon.svelte';
+  import RoomCombo, { type ComboRow } from './RoomCombo.svelte';
   import { api } from '$lib/services/api';
   import { matchesTerms, normalize, parseQuery } from '$lib/services/savedSearch';
   import { savesStore } from '$lib/stores/saves.svelte';
@@ -30,15 +34,11 @@
 
   const MAX_RESULTS = 6;
   const MIN_QUERY = 2;
+  /** The one row that isn't a save: whatever was pasted. */
+  const URL_KEY = 'url';
 
   let query = $state('');
-  let activeIndex = $state(0);
   let busy = $state(false);
-  let inputEl = $state<HTMLInputElement | null>(null);
-
-  type Row =
-    | { kind: 'url'; url: string; label: string; duplicate: boolean }
-    | { kind: 'saved'; item: SavedItem; duplicate: boolean };
 
   const trimmed = $derived(query.trim());
 
@@ -56,6 +56,16 @@
       return parsed.hostname.includes('.') ? candidate : null;
     } catch {
       return null;
+    }
+  });
+
+  const typedUrlLabel = $derived.by(() => {
+    if (!typedUrl) return '';
+    try {
+      const parsed = new URL(typedUrl);
+      return `${parsed.hostname}${parsed.pathname === '/' ? '' : parsed.pathname}`;
+    } catch {
+      return typedUrl;
     }
   });
 
@@ -77,50 +87,67 @@
     return existingKeys.has(urlKey(url) ?? url);
   }
 
-  const rows = $derived.by((): Row[] => {
-    const list: Row[] = [];
+  const rows = $derived.by((): ComboRow[] => {
+    const list: ComboRow[] = [];
     if (typedUrl) {
-      let label = typedUrl;
-      try {
-        const parsed = new URL(typedUrl);
-        label = `${parsed.hostname}${parsed.pathname === '/' ? '' : parsed.pathname}`;
-      } catch {
-        // keep the raw string
-      }
-      list.push({ kind: 'url', url: typedUrl, label, duplicate: isDuplicate(typedUrl) });
+      const duplicate = isDuplicate(typedUrl);
+      list.push({
+        key: URL_KEY,
+        icon: 'link',
+        title: 'Add this link',
+        meta: typedUrlLabel,
+        note: duplicate ? 'Already here' : null,
+        disabled: duplicate,
+      });
     }
     for (const item of savedMatches) {
-      list.push({ kind: 'saved', item, duplicate: isDuplicate(item.url) });
+      const duplicate = isDuplicate(item.url);
+      list.push({
+        // Keyed by rkey, not url: the key has to be unique across the list, and
+        // the url is the one field a save could conceivably share with another.
+        key: item.rkey,
+        icon: 'bookmark',
+        title: item.title || item.url,
+        meta: item.domain ?? null,
+        note: duplicate ? 'Already here' : null,
+        disabled: duplicate,
+      });
     }
     return list;
   });
 
-  // Keep the highlighted row in range as the list changes under it.
-  $effect(() => {
-    if (activeIndex >= rows.length) activeIndex = 0;
-  });
+  const hint = $derived(
+    trimmed.length >= MIN_QUERY && rows.length === 0
+      ? 'Nothing in your library matches. Paste a link to add it.'
+      : null
+  );
 
-  async function add(row: Row) {
-    if (busy || row.duplicate) return;
+  async function add(key: string) {
+    if (busy) return;
+    // The URL row carries no save behind it; everything else is keyed by the
+    // save's own url.
+    const saved = key === URL_KEY ? null : savedMatches.find((item) => item.rkey === key);
+    const url = key === URL_KEY ? typedUrl : saved?.url;
+    if (!url) return;
     busy = true;
     try {
-      const { item } =
-        row.kind === 'url'
-          ? await api.addRoomItem(collectionUri, { url: row.url })
-          : await api.addRoomItem(collectionUri, {
-              url: row.item.url,
-              title: row.item.title,
-              description: row.item.description,
-              author: row.item.author,
-              publishedAt: row.item.publishedAt,
-            });
+      const { item } = await api.addRoomItem(
+        collectionUri,
+        saved
+          ? {
+              url: saved.url,
+              title: saved.title,
+              description: saved.description,
+              author: saved.author,
+              publishedAt: saved.publishedAt,
+            }
+          : { url }
+      );
       onAdded(item);
       // The row lands at the end of the room's unread pile, which can be below
       // the fold, so the toast is the confirmation.
       toastStore.update(toastStore.add('Added to the room'), 'success');
       query = '';
-      activeIndex = 0;
-      inputEl?.focus();
     } catch (error) {
       const message =
         error instanceof Error && /not open/i.test(error.message)
@@ -131,179 +158,16 @@
       busy = false;
     }
   }
-
-  function onKeydown(event: KeyboardEvent) {
-    if (rows.length === 0) return;
-    if (event.key === 'ArrowDown') {
-      event.preventDefault();
-      activeIndex = (activeIndex + 1) % rows.length;
-    } else if (event.key === 'ArrowUp') {
-      event.preventDefault();
-      activeIndex = (activeIndex - 1 + rows.length) % rows.length;
-    } else if (event.key === 'Enter') {
-      event.preventDefault();
-      const row = rows[activeIndex];
-      if (row) void add(row);
-    } else if (event.key === 'Escape') {
-      query = '';
-    }
-  }
 </script>
 
-<div class="add-box">
-  <div class="add-field">
-    <Icon name="plus" size={16} />
-    <input
-      bind:this={inputEl}
-      class="add-input"
-      type="text"
-      placeholder="Add an article: paste a link, or search your library"
-      bind:value={query}
-      onkeydown={onKeydown}
-      disabled={busy}
-      role="combobox"
-      aria-expanded={rows.length > 0}
-      aria-controls="room-add-results"
-      aria-autocomplete="list"
-    />
-    {#if busy}
-      <span class="add-status">Adding…</span>
-    {/if}
-  </div>
-
-  <ul class="add-results" id="room-add-results" role="listbox">
-    {#each rows as row, i (row.kind === 'url' ? `url:${row.url}` : row.item.rkey)}
-      <li role="presentation">
-        <button
-          class="add-result"
-          class:active={i === activeIndex}
-          role="option"
-          aria-selected={i === activeIndex}
-          disabled={busy || row.duplicate}
-          onmouseenter={() => (activeIndex = i)}
-          onclick={() => add(row)}
-        >
-          <Icon name={row.kind === 'url' ? 'link' : 'bookmark'} size={14} />
-          <span class="add-result-main">
-            {#if row.kind === 'url'}
-              <span class="add-result-title">Add this link</span>
-              <span class="add-result-meta">{row.label}</span>
-            {:else}
-              <span class="add-result-title">{row.item.title || row.item.url}</span>
-              <span class="add-result-meta">{row.item.domain ?? ''}</span>
-            {/if}
-          </span>
-          {#if row.duplicate}
-            <span class="add-result-note">Already here</span>
-          {/if}
-        </button>
-      </li>
-    {/each}
-    {#if trimmed.length >= MIN_QUERY && rows.length === 0}
-      <li class="add-empty">Nothing in your library matches. Paste a link to add it.</li>
-    {/if}
-  </ul>
-</div>
-
-<style>
-  .add-box {
-    margin-bottom: 1.5rem;
-  }
-
-  .add-field {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.5rem 0.75rem;
-    border: 1px solid var(--color-border);
-    border-radius: 6px;
-    color: var(--color-text-secondary);
-  }
-
-  .add-field:focus-within {
-    border-color: var(--color-primary);
-  }
-
-  .add-input {
-    flex: 1;
-    min-width: 0;
-    border: none;
-    background: none;
-    padding: 0;
-    font-size: var(--text-md);
-    color: var(--color-text);
-  }
-
-  .add-input:focus {
-    outline: none;
-  }
-
-  .add-status {
-    font-size: var(--text-sm);
-    white-space: nowrap;
-  }
-
-  .add-results {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-  }
-
-  .add-result {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    width: 100%;
-    text-align: left;
-    padding: 0.5rem 0.75rem;
-    background: none;
-    border: none;
-    border-radius: 6px;
-    color: var(--color-text-secondary);
-    font: inherit;
-    cursor: pointer;
-  }
-
-  .add-result.active:not(:disabled) {
-    background: var(--color-bg-secondary);
-  }
-
-  .add-result:disabled {
-    cursor: default;
-    opacity: 0.6;
-  }
-
-  .add-result-main {
-    display: flex;
-    flex-direction: column;
-    gap: 0.125rem;
-    min-width: 0;
-    flex: 1;
-  }
-
-  .add-result-title {
-    font-size: var(--text-sm);
-    color: var(--color-text);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .add-result-meta {
-    font-size: var(--text-xs);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .add-result-note {
-    font-size: var(--text-xs);
-    white-space: nowrap;
-  }
-
-  .add-empty {
-    padding: 0.5rem 0.75rem;
-    font-size: var(--text-sm);
-    color: var(--color-text-secondary);
-  }
-</style>
+<RoomCombo
+  bind:value={query}
+  placeholder="Add an article: paste a link, or search your library"
+  icon="plus"
+  idPrefix="room-add"
+  {rows}
+  {hint}
+  {busy}
+  busyLabel="Adding…"
+  onChoose={(key) => void add(key)}
+/>

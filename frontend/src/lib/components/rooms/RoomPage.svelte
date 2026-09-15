@@ -15,8 +15,11 @@
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import SavedReader from '$lib/components/feed/SavedReader.svelte';
+  import StaticPageChrome from '$lib/components/feed/StaticPageChrome.svelte';
   import Icon from '$lib/components/Icon.svelte';
   import RoomAddBox from './RoomAddBox.svelte';
+  import RoomCover from './RoomCover.svelte';
+  import RoomOpenBox from './RoomOpenBox.svelte';
   import { useReaderStack } from '$lib/hooks/useReaderStack.svelte';
   import { api } from '$lib/services/api';
   import { profileService } from '$lib/services/profiles';
@@ -25,7 +28,6 @@
     fetchRoomMemberCount,
     fetchMyRooms,
     fetchCollectionMeta,
-    resolveRoomInput,
     collectionOwnerDid,
     collectionPageLink,
     FEATURED_ROOM_URIS,
@@ -35,6 +37,7 @@
   import {
     roomCacheDid,
     readRoomSnapshot,
+    readRoomSnapshots,
     writeRoomSnapshot,
     readMyRoomsCache,
     writeMyRoomsCache,
@@ -53,6 +56,7 @@
   import { toastStore } from '$lib/stores/toast.svelte';
   import { generateTid } from '$lib/utils/tid';
   import { extractRoomArticle, sortRoomItems } from '$lib/utils/roomArticle';
+  import { getFaviconUrl } from '$lib/utils/favicon';
   import type { BlueskyProfile, RoomInfo, RoomItem } from '$lib/types';
 
   const reader = useReaderStack();
@@ -82,9 +86,6 @@
   // subject -> how many are reading along; null when the lookup failed. Filled
   // after the rows render, so a slow Constellation never holds up the list.
   let memberCounts = $state<Record<string, number | null>>({});
-  let pasteInput = $state('');
-  let pasteError = $state<string | null>(null);
-  let pasteBusy = $state(false);
 
   // Dispatch a load whenever the room (?uri=) or the session (did) changes.
   // Keyed by both, as a plain signature rather than a bare `next === uri` guard:
@@ -471,6 +472,10 @@
     });
   });
 
+  // The collections already listed above, so the open box can mark one it offers
+  // as a room you're in rather than pretending it's somewhere new.
+  const myRoomSubjects = $derived(new Set(myRooms.map((r) => r.subject)));
+
   // Featured is a suggestion list, so rooms you're already in don't repeat
   // here, and neither do rooms your own follows are already in: that section
   // says the same thing with better evidence. Gated on the my-rooms load
@@ -485,6 +490,52 @@
         )
   );
 
+  // Cover art for the index rows: the first few article images of each room,
+  // tiled into its thumbnail so a room row shows what's in it rather than only
+  // what it's called. Read straight off the local snapshots and nowhere else —
+  // the index deliberately describes rooms from their collection records
+  // (fetchCollectionMeta) instead of walking their contents, and decoration is
+  // not a reason to start. A room we hold no snapshot for shows its letter mark,
+  // and picks up covers the first time it's opened.
+  let roomCovers = $state<Record<string, string[]>>({});
+
+  const indexSubjects = $derived([
+    ...myRooms.map((r) => r.subject),
+    ...followRooms.map((r) => r.subject),
+    ...suggestedRooms.map((r) => r.subject),
+  ]);
+
+  // The follow scan streams its rooms in over its lifetime, so the subject list
+  // is rebuilt many times on the way to settling; only a list that actually
+  // gained a room is worth another pass over the snapshots.
+  let coveredFor: string | null = null;
+  $effect(() => {
+    if (uri) return;
+    const subjects = indexSubjects;
+    const sig = subjects.join('\n');
+    if (subjects.length === 0 || sig === coveredFor) return;
+    coveredFor = sig;
+    void loadRoomCovers(subjects, roomCacheDid(auth.user?.did));
+  });
+
+  async function loadRoomCovers(subjects: string[], did: string): Promise<void> {
+    const snapshots = await readRoomSnapshots(subjects, did);
+    if (uri) return;
+    const next: Record<string, string[]> = {};
+    for (const subject of subjects) {
+      const items = snapshots.get(subject)?.room.items;
+      if (!items) continue;
+      // The room page's own order, so a row's mosaic is the top of the list you
+      // land on rather than an unrelated four.
+      const covers = sortRoomItems(items)
+        .map((i) => i.image)
+        .filter((src): src is string => Boolean(src))
+        .slice(0, 4);
+      if (covers.length > 0) next[subject] = covers;
+    }
+    roomCovers = next;
+  }
+
   /** Who you follow is in this room, as a name list: at most two, then a count.
    *  The avatars carry the rest. */
   function readersLabel(readers: FollowLite[]): string {
@@ -496,19 +547,8 @@
     return `${name(readers[0])} and ${readers.length - 1} others are reading along`;
   }
 
-  async function openPasted() {
-    if (pasteBusy) return;
-    pasteBusy = true;
-    // A semble.so collection page needs a handle -> DID resolution, so this is async.
-    const parsed = await resolveRoomInput(pasteInput);
-    pasteBusy = false;
-    if (!parsed) {
-      pasteError = 'That does not look like a room link.';
-      return;
-    }
-    pasteError = null;
-    pasteInput = '';
-    void goto(`/rooms?uri=${encodeURIComponent(parsed)}`);
+  function openRoom(target: string) {
+    void goto(`/rooms?uri=${encodeURIComponent(target)}`);
   }
 
   function safeDomain(url: string): string | null {
@@ -563,6 +603,16 @@
     room = { ...room, items: [...room.items, item] };
   }
 </script>
+
+<!-- On mobile the bottom bar's switcher is the only in-app way off a page (an
+     installed PWA has no back button), and Rooms is one of its destinations, so
+     this page has to carry the chrome or it's a trap. A signed-out visitor
+     arriving on a shared room link gets no app chrome — same stance as
+     /supporter — and the room's own "All rooms" link is rendered outside the
+     load branches for exactly that reader. -->
+{#if auth.isInApp}
+  <StaticPageChrome title="Rooms" readerOpen={reader.readerItem !== null} />
+{/if}
 
 {#if uri}
   <div class="room">
@@ -672,6 +722,7 @@
                     {readLabel(item)}
                   </span>
                 {/if}
+                <RoomCover images={[item.image]} faviconUrl={getFaviconUrl(item.url)} />
               </button>
             </li>
           {/each}
@@ -684,31 +735,12 @@
     <header class="room-header">
       <h1 class="room-title">Reading rooms</h1>
       <p class="room-description">
-        A room is a set of articles people read together. Rooms live on shared collections. Paste a
-        link to open one, or start with a featured room.
+        A room is a set of articles people read together. Rooms live on shared collections. Open one
+        of your own collections, paste a link, or start with a featured room.
       </p>
     </header>
 
-    <form
-      class="room-paste"
-      onsubmit={(e) => {
-        e.preventDefault();
-        openPasted();
-      }}
-    >
-      <input
-        class="room-paste-input"
-        type="text"
-        placeholder="Paste a room or collection link"
-        bind:value={pasteInput}
-      />
-      <button class="btn btn-primary" type="submit" disabled={pasteBusy}>
-        {pasteBusy ? 'Opening…' : 'Open'}
-      </button>
-    </form>
-    {#if pasteError}
-      <p class="room-error" role="alert">{pasteError}</p>
-    {/if}
+    <RoomOpenBox joinedSubjects={myRoomSubjects} onOpen={openRoom} />
 
     {#if myRoomsLoading}
       <p class="room-quiet">Loading your rooms…</p>
@@ -721,6 +753,7 @@
               class="room-item room-item-link"
               href={`/rooms?uri=${encodeURIComponent(r.subject)}`}
             >
+              <RoomCover images={roomCovers[r.subject] ?? []} label={r.name} />
               <span class="room-item-main">
                 <span class="room-item-title">{r.name ?? 'Untitled room'}</span>
                 {#if r.description}
@@ -758,6 +791,7 @@
               class="room-item room-item-link"
               href={`/rooms?uri=${encodeURIComponent(r.subject)}`}
             >
+              <RoomCover images={roomCovers[r.subject] ?? []} label={r.name} />
               <span class="room-item-main">
                 <span class="room-item-title">{r.name}</span>
                 {#if r.description}
@@ -811,6 +845,7 @@
               class="room-item room-item-link"
               href={`/rooms?uri=${encodeURIComponent(r.subject)}`}
             >
+              <RoomCover images={roomCovers[r.subject] ?? []} label={r.name} />
               <span class="room-item-main">
                 <span class="room-item-title">{r.name}</span>
                 {#if r.description}
@@ -855,6 +890,21 @@
     max-width: 42rem;
     margin: 0 auto;
     padding: 2rem 1.25rem 4rem;
+  }
+
+  /* Clear the mobile bottom bar, which this page now carries. */
+  @media (max-width: 1000px) {
+    .room {
+      padding-top: 1rem;
+      padding-bottom: calc(var(--bottom-bar-height) + var(--safe-area-bottom) + 4rem);
+    }
+  }
+
+  @media (max-width: 640px) {
+    .room-item {
+      gap: 0.75rem;
+      --room-cover: 3.25rem;
+    }
   }
 
   .room-back {
@@ -962,37 +1012,9 @@
     color: var(--color-text-secondary);
   }
 
-  .room-paste {
-    display: flex;
-    gap: 0.5rem;
-    margin-bottom: 1.5rem;
-  }
-
-  .room-paste-input {
-    flex: 1;
-    min-width: 0;
-    padding: 0.5rem 0.75rem;
-    font-size: var(--text-md);
-    color: var(--color-text);
-    background: var(--color-bg);
-    border: 1px solid var(--color-border);
-    border-radius: 6px;
-  }
-
-  .room-paste-input:focus {
-    outline: none;
-    border-color: var(--color-primary);
-  }
-
   .room-quiet {
     color: var(--color-text-secondary);
     font-size: var(--text-md);
-  }
-
-  .room-error {
-    color: var(--color-error);
-    font-size: var(--text-sm);
-    margin-top: 0.5rem;
   }
 
   .room-section-title {
@@ -1009,9 +1031,12 @@
 
   .room-item {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
+    /* Article rows read top-down: the title, its marker and its cover all start
+       on the same line, so a row with a two-line description doesn't float its
+       thumbnail in the middle of nowhere. Index rows override this below. */
+    align-items: flex-start;
+    /* The text takes the slack; the marker and the cover ride the right edge. */
+    gap: 0.875rem;
     width: 100%;
     text-align: left;
     padding: 0.875rem 0;
@@ -1021,6 +1046,10 @@
     cursor: pointer;
     color: inherit;
     font: inherit;
+    /* Bigger than a Home lane tile's thumb: a lane tile is one of a scrolling
+       row of many, where these are the only picture on a full-width row — and a
+       room's mosaic needs the room to read four covers at once. */
+    --room-cover: 4rem;
   }
 
   .room-item:hover .room-item-title {
@@ -1032,8 +1061,12 @@
     opacity: 0.7;
   }
 
+  /* Index rows put the cover first and centre it: the room's mosaic is the row's
+     leading mark, not an illustration hung off the end of its title. Must stay
+     after the .room-item block — same specificity, source order decides. */
   .room-item-link {
     text-decoration: none;
+    align-items: center;
   }
 
   /* Index rows carry a second link out to the collection's own page, so the
@@ -1092,6 +1125,7 @@
 
   .room-item-main {
     display: flex;
+    flex: 1;
     flex-direction: column;
     gap: 0.25rem;
     min-width: 0;
@@ -1127,6 +1161,10 @@
 
   .room-item-reads {
     flex-shrink: 0;
+    margin-left: auto;
+    /* Nudged down to sit on the title's first line rather than flush with the
+       top of its box — the label is several points smaller than the title. */
+    padding: 0.2rem 0 0 0.5rem;
     font-size: var(--text-xs);
     color: var(--color-text-secondary);
     white-space: nowrap;

@@ -16,9 +16,14 @@
   // breakpoint guards, so only one is ever visible.
   interface Props {
     title: string;
+    /** True while a fullscreen reader is up. The reader carries its own bottom
+     *  bar, so the page's one stands down — the same gate every feed surface
+     *  applies (`FeedPage`, `HighlightsPage`). The desktop header stays, as it
+     *  does there. */
+    readerOpen?: boolean;
   }
 
-  let { title }: Props = $props();
+  let { title, readerOpen = false }: Props = $props();
 
   let feedSwitcherOpen = $state(false);
   let notifSheetOpen = $state(false);
@@ -26,7 +31,7 @@
 
 <FeedPageHeader {title} hideControls />
 
-{#if mobileStore.isMobile}
+{#if mobileStore.isMobile && !readerOpen}
   <MobileBottomBar
     controlsVisible={true}
     currentTitle={title}

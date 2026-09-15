@@ -96,6 +96,13 @@ export const harnesses: HarnessEntry[] = [
     components: ['AtmospherePanel'],
   },
   {
+    slug: 'rooms',
+    title: 'Rooms',
+    description:
+      'The search-and-pick field shared by the room opener and the article adder, plus the thumbnail fronting every row — a cover, a mosaic of what a room holds, and every rung of the fallback.',
+    components: ['RoomCombo', 'RoomCover'],
+  },
+  {
     slug: 'feed',
     title: 'Feed surfaces',
     description:

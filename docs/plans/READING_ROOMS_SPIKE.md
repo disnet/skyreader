@@ -342,8 +342,19 @@ paints its lanes before any request settles. Lane tiles sort unread-first and re
 check + dimmed title (`LaneCardVM.read` → `HomeLaneCard`).
 
 Also: `/rooms` with no `?uri=` lists the rooms you've joined (your own readAlong records, read
-publicly from your own PDS) plus a paste-a-link box — join is still link-only; this is not the
-deferred directory. Each listed room carries the collection's own name **and description**
+publicly from your own PDS) plus an open box — join is still link-only; this is not the
+deferred directory. That box (`RoomOpenBox.svelte`) is the same one-field-two-jobs shape as
+`RoomAddBox`: paste a room or collection link, **or** click in and pick one of your own
+Semble/Margin collections, narrowed as you type (`collectionsStore`, the cached list the save
+picker already keeps, so it opens with the click and costs nothing until someone opens it). A
+collection you keep IS a room, so the fastest way into one shouldn't be a round trip to semble.so
+to copy a URL back. Rows already under "Your rooms" are marked, not hidden — picking one is still
+the quickest way back in. Rooms is reachable on mobile from the bottom bar's switcher
+(`MobileFeedSwitcher`, account-only, beside Discover in the sidebar's order), which means the page
+itself has to carry `StaticPageChrome` — that switcher is the only in-app way off a page in an
+installed PWA. The chrome takes a `readerOpen` flag so the page's bottom bar stands down while a
+room article is open, the way every feed surface already gates its own, and the whole thing is
+gated on `auth.isInApp` so a signed-out visitor on a shared room link gets no app chrome. Each listed room carries the collection's own name **and description**
 (`fetchCollectionMeta`, one public `getRecord` per room), matching what the room page shows; a
 room view links back to that index with an "All rooms" link rendered outside the load/error branch,
 since a room reached by a shared link is often the first page a visitor sees. Each index row also
