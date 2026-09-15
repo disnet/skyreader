@@ -5,7 +5,7 @@ description: Save articles from anywhere, highlight passages, and review what yo
 
 ## Saving
 
-Save an article from its card or from the reader, or from outside Skyreader entirely: the [Chrome extension](https://chromewebstore.google.com/detail/skyreader/kdefpnnpmajcclfepekgdkcdiklfooed), the bookmarklet, the iOS shortcut, or the Android share sheet (see [Adding sources](/guide/adding-sources/#save-and-subscribe-from-anywhere)). Saves keep the full article text, so they read fine offline.
+Save an article from its card or from the reader, or from outside Skyreader entirely: the [Chrome extension](https://chromewebstore.google.com/detail/skyreader/kdefpnnpmajcclfepekgdkcdiklfooed), the bookmarklet, the iOS shortcut, or the Android share sheet (see [Adding sources](/guide/adding-sources/#save-and-subscribe-from-anywhere)). Saves keep the full article text, so they read fine offline. Each save quietly remembers where it came from — the extension, the bookmarklet, a shared link, or the article you were reading.
 
 ![The Saved list: articles kept with their full text, newest first](../../../assets/screenshots/saved.png)
 

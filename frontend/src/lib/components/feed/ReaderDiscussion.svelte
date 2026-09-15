@@ -196,7 +196,9 @@
     onRetry={atmosphere.retry}
     onCreateInLane={createInLane}
     onOpenAuthor={(did) => sidebarStore.openAddFeedModalForDid(did)}
-    onSaveConnection={auth.user ? toggleSavedLink : undefined}
+    onSaveConnection={auth.user
+      ? (url) => toggleSavedLink(url, { title, url: itemUrl })
+      : undefined}
     onCreateConnection={auth.user && itemUrl ? createConnection : undefined}
     isConnectionSaved={(url) => savesStore.isSaved(url)}
     composeLead={canShareLinkblog ? shareControl : undefined}

@@ -7,6 +7,7 @@
   import { feedViewStore, searchHaystack } from '$lib/stores/feedView.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
   import { savedSearchStore } from '$lib/stores/savedSearch.svelte';
+  import { savedFromDetail, savedFromLabel } from '$lib/utils/savedFromLabel';
   import {
     makeSnippet,
     matchesTerms,
@@ -71,6 +72,15 @@
     if (displayItem.type === 'saved') return displayItem.item.savedAt;
     return '';
   });
+  let provenanceLabel = $derived(
+    displayItem.type === 'saved' ? savedFromLabel(displayItem.item) : null
+  );
+  // The label is truncated and deliberately not a link (it's information, not an
+  // interaction), so the untruncated referrer and its URL ride along as the
+  // native tooltip.
+  let provenanceDetail = $derived(
+    displayItem.type === 'saved' ? savedFromDetail(displayItem.item) : null
+  );
 
   // Feed info (for articles only)
   let sub = $derived(
@@ -618,6 +628,9 @@
             </span>
           {/if}
           <span class="meta-date">{formatRelativeDate(publishedAt)}</span>
+          {#if provenanceLabel}<span class="meta-provenance" title={provenanceDetail ?? undefined}
+              >{provenanceLabel}</span
+            >{/if}
           {#each tags as tag, i}
             {#if i === 0}<span class="meta-dot" aria-hidden="true">·</span>{/if}
             <span class="tag-chip">{tag}</span>
@@ -790,6 +803,15 @@
 
   .meta-feed {
     font-weight: var(--weight-medium);
+  }
+
+  .meta-provenance {
+    min-width: 0;
+    max-width: 16rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-style: italic;
   }
 
   .meta-type-badge {

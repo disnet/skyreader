@@ -79,6 +79,12 @@ describe('pollBackedMembership — wholesale replace + safety', () => {
       .bind(DID)
       .first<{ n: number }>();
     expect(enr?.n).toBe(2);
+    const provenance = await env.DB.prepare(
+      'SELECT saved_via FROM saved_articles WHERE user_did = ? LIMIT 1'
+    )
+      .bind(DID)
+      .first<{ saved_via: string | null }>();
+    expect(provenance?.saved_via).toBe('semble');
   });
 
   it('marks a complete empty snapshot as successful', async () => {

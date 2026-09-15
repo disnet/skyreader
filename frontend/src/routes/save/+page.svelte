@@ -8,7 +8,7 @@
   import Logo from '$lib/assets/logo.svg';
   import LimitNotice from '$lib/components/LimitNotice.svelte';
   import { saveLimitLine } from '$lib/utils/limitCopy';
-  import type { SavedItem } from '$lib/types';
+  import type { ClientSavedVia, SavedItem } from '$lib/types';
 
   // Lightweight share-target / bookmarklet endpoint. An Apple Shortcut (or a
   // bookmarklet, or a future PWA share_target) opens
@@ -48,6 +48,16 @@
     return null;
   }
 
+  // Which entry point opened this page. The Shortcut and the Android share sheet
+  // are indistinguishable here (both just hand over a URL), so they share the
+  // generic `share-target` channel — whose label names neither. The bookmarklet
+  // is the one caller Skyreader builds itself (Settings), so it says so; a
+  // bookmarklet dragged to the bar before this shipped carries no marker and
+  // falls back to the generic channel.
+  function readVia(): ClientSavedVia {
+    return $page.url.searchParams.get('via') === 'bookmarklet' ? 'bookmarklet' : 'share-target';
+  }
+
   // The article URL from the query string. Accepts the `url` param (Shortcut /
   // bookmarklet) or the `text` param (PWA share_target / Android share sheet).
   function readUrl(): string | null {
@@ -60,25 +70,33 @@
     return null;
   }
 
+  // The path back here after a login, keeping the entry point so the finished
+  // save still records where it came from.
+  function saveReturnPath(url: string): string {
+    const via = readVia();
+    return `/save?url=${encodeURIComponent(url)}${via === 'share-target' ? '' : `&via=${via}`}`;
+  }
+
   async function run() {
     const url = readUrl();
     if (!url) {
       status = 'invalid';
       return;
     }
+    const savedVia = readVia();
 
     // Not logged in → send to login, then come back here and finish the save.
     // Re-encode the URL into the returnUrl so the path carries no literal "//"
     // (the backend's open-redirect guard rejects relative returnUrls with "//",
     // so an unencoded https:// would be silently dropped to "/").
     if (!auth.isAuthenticated) {
-      const returnUrl = `/save?url=${encodeURIComponent(url)}`;
+      const returnUrl = saveReturnPath(url);
       await goto(`/auth/login?returnUrl=${encodeURIComponent(returnUrl)}`);
       return;
     }
 
     try {
-      saved = await savesStore.saveFromUrl(url);
+      saved = await savesStore.saveFromUrl(url, { savedVia });
       status = 'success';
     } catch (err) {
       if (err instanceof ScopeUpgradeError) {
@@ -109,9 +127,7 @@
 
   const loginReturnUrl = $derived.by(() => {
     const url = readUrl();
-    return url
-      ? `/auth/login?returnUrl=${encodeURIComponent(`/save?url=${encodeURIComponent(url)}`)}`
-      : '/auth/login';
+    return url ? `/auth/login?returnUrl=${encodeURIComponent(saveReturnPath(url))}` : '/auth/login';
   });
 
   onMount(run);
