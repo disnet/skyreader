@@ -87,6 +87,33 @@
   // after the rows render, so a slow Constellation never holds up the list.
   let memberCounts = $state<Record<string, number | null>>({});
 
+  // What a room is, said once. The chrome already names the page, so the only
+  // thing the top of the index owes a first-time visitor is the explanation —
+  // and once it has been read it is pure chrome over the lists, so it goes
+  // away for good. Same idiom as GuestModeBanner; local by nature (a view
+  // preference, not something worth a server round trip), and reading it can
+  // throw outright in a locked-down private window.
+  const INTRO_DISMISS_KEY = 'skyreader-rooms-intro-dismissed';
+
+  function readIntroDismissed(): boolean {
+    try {
+      return localStorage.getItem(INTRO_DISMISS_KEY) === '1';
+    } catch {
+      return false;
+    }
+  }
+
+  let introDismissed = $state(readIntroDismissed());
+
+  function dismissIntro() {
+    introDismissed = true;
+    try {
+      localStorage.setItem(INTRO_DISMISS_KEY, '1');
+    } catch {
+      // Fine: it stays dismissed for this session and returns next time.
+    }
+  }
+
   // Dispatch a load whenever the room (?uri=) or the session (did) changes.
   // Keyed by both, as a plain signature rather than a bare `next === uri` guard:
   // that guard swallowed the initial mount of the index (both null, so a direct
@@ -732,13 +759,25 @@
   </div>
 {:else}
   <div class="room">
-    <header class="room-header">
-      <h1 class="room-title">Reading rooms</h1>
-      <p class="room-description">
-        A room is a set of articles people read together. Rooms live on shared collections. Open one
-        of your own collections, paste a link, or start with a featured room.
-      </p>
-    </header>
+    {#if !introDismissed}
+      <aside class="room-intro">
+        <button
+          class="room-intro-dismiss"
+          onclick={dismissIntro}
+          title="Dismiss"
+          aria-label="Dismiss"
+        >
+          <Icon name="x" size={14} />
+        </button>
+        <h2>Public Reading Rooms</h2>
+        <p>
+          A room is a set of articles people read together in public.
+          Rooms live on shared semble collections. Open
+          one of your own collections, paste a link, or start with a featured room.
+          The rooms you join and articles you read in a room is public.
+        </p>
+      </aside>
+    {/if}
 
     <RoomOpenBox joinedSubjects={myRoomSubjects} onOpen={openRoom} />
 
@@ -936,6 +975,57 @@
   .room-description {
     color: var(--color-text-secondary);
     margin: 0 0 1rem;
+  }
+
+  /* The index's explainer, in place of a page title the chrome already carries.
+     Flat by default (DESIGN.md): a bordered block in the flow, not floating,
+     so it earns no shadow. */
+  .room-intro {
+    position: relative;
+    margin-bottom: 1.25rem;
+    padding: 0.875rem 1rem;
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+  }
+
+  .room-intro h2 {
+    margin: 0 0 0.375rem;
+    font-size: var(--text-md);
+    font-weight: var(--weight-semibold);
+    line-height: var(--leading-snug);
+  }
+
+  .room-intro p {
+    /* Keep the last line clear of the dismiss control. */
+    padding-right: 1.5rem;
+    margin: 0;
+    font-size: var(--text-md);
+    line-height: 1.5;
+    color: var(--color-text-secondary);
+  }
+
+  .room-intro-dismiss {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.25rem;
+    border: none;
+    background: none;
+    border-radius: 4px;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+  }
+
+  /* The box already sits on Sunken, so the hover fill steps one further in
+     rather than washing the same tone again. */
+  .room-intro-dismiss:hover {
+    background: var(--color-border);
+    color: var(--color-text);
   }
 
   .room-presence {
