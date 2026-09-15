@@ -55,6 +55,17 @@ describe('extractUrlFromRecord — multi-type (heterogeneous collections)', () =
     ).toBeNull();
   });
 
+  it('at.margin.bookmark -> source (the record Margin still defines and older exports wrote)', () => {
+    expect(
+      extractUrlFromRecord({
+        $type: 'at.margin.bookmark',
+        source: 'https://example.com/post',
+        title: 'A post',
+      })
+    ).toBe('https://example.com/post');
+    expect(extractUrlFromRecord({ $type: 'at.margin.bookmark', title: 'no source' })).toBeNull();
+  });
+
   it('unknown type with a subject/url field -> generic fallback', () => {
     expect(extractUrlFromRecord({ $type: 'some.future.bookmark', url: 'https://x.test' })).toBe(
       'https://x.test'
@@ -139,10 +150,12 @@ function jsonRes(body: unknown, status = 200): Response {
   });
 }
 
-/** Route fetch by xrpc method; sub-handlers branch on query params. */
+/** Route fetch by xrpc method; sub-handlers branch on query params. `links` is
+ *  Constellation's backlink index, used only by the includeForeign path. */
 function installFetch(handlers: {
   listRecords?: (p: URLSearchParams) => Response;
   getRecord?: (p: URLSearchParams) => Response;
+  links?: (p: URLSearchParams) => Response;
 }) {
   return vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL) => {
     const href = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
@@ -152,6 +165,9 @@ function installFetch(handlers: {
     }
     if (url.pathname.endsWith('com.atproto.repo.getRecord') && handlers.getRecord) {
       return handlers.getRecord(url.searchParams);
+    }
+    if (url.pathname === '/links' && handlers.links) {
+      return handlers.links(url.searchParams);
     }
     throw new Error(`unexpected fetch: ${href}`);
   });
@@ -317,6 +333,54 @@ describe('snapshotBackedCollection — Margin (collectionItem → annotation)', 
   });
 });
 
+describe('snapshotBackedCollection — Margin (collectionItem → at.margin.bookmark)', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('resolves a Margin bookmark with its title and description, not as no-url', async () => {
+    // The live shape behind an empty room: a collection Skyreader's own Margin
+    // export filled before it moved to notes.
+    mockPds();
+    installFetch({
+      listRecords: () =>
+        jsonRes({
+          records: [
+            {
+              uri: `at://${OWNER}/at.margin.collectionItem/i1`,
+              cid: 'x',
+              value: {
+                collection: MARGIN_COL,
+                annotation: `at://${OWNER}/at.margin.bookmark/b1`,
+                createdAt: '2026-03-21T14:03:30.116Z',
+              },
+            },
+          ],
+        }),
+      getRecord: () =>
+        jsonRes({
+          value: {
+            $type: 'at.margin.bookmark',
+            source: 'https://www.techdirt.com/2026/03/20/some-post/',
+            title: 'Some post',
+            description: 'What the post is about.',
+            tags: [],
+          },
+        }),
+    });
+
+    const snap = await snapshotBackedCollection('margin', OWNER, MARGIN_COL);
+    expect(snap.complete).toBe(true);
+    expect(snap.skipped).toHaveLength(0);
+    expect(snap.members).toHaveLength(1);
+    expect(snap.members[0].url).toBe('https://www.techdirt.com/2026/03/20/some-post/');
+    expect(snap.members[0].itemType).toBe('at.margin.bookmark');
+    expect(snap.members[0]).toMatchObject({
+      title: 'Some post',
+      description: 'What the post is about.',
+      addedAt: '2026-03-21T14:03:30.116Z',
+    });
+  });
+});
+
 describe('snapshotBackedCollection — completeness invariant (the safety property)', () => {
   afterEach(() => vi.restoreAllMocks());
 
@@ -413,5 +477,272 @@ describe('snapshotBackedCollection — completeness invariant (the safety proper
     installFetch({ listRecords: () => jsonRes({ error: 'boom' }, 502) });
     const snap = await snapshotBackedCollection('semble', OWNER, SEMBLE_COL);
     expect(snap.complete).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// includeForeign — membership written by someone OTHER than the collection owner
+// (an open reading room being co-curated). Off by default: a stranger's link must
+// never inject a row into a backed SAVES list. See routes/rooms.ts.
+// ---------------------------------------------------------------------------
+
+describe('snapshotBackedCollection — includeForeign (co-curated collections)', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  /** One owner-written link, plus whatever Constellation reports. */
+  function installCoCurated(handlers: {
+    links?: (p: URLSearchParams) => Response;
+    getRecord?: (p: URLSearchParams) => Response;
+  }) {
+    installFetch({
+      listRecords: () =>
+        jsonRes({
+          records: [
+            {
+              uri: `at://${OWNER}/network.cosmik.collectionLink/l1`,
+              cid: 'x',
+              value: {
+                collection: { uri: SEMBLE_COL },
+                card: { uri: `at://${OWNER}/network.cosmik.card/ownerCard` },
+              },
+            },
+          ],
+        }),
+      ...handlers,
+    });
+  }
+
+  const cardFor = (url: string) =>
+    jsonRes({ value: { $type: 'network.cosmik.card', type: 'URL', content: { url } } });
+
+  it('is off by default: another repo’s link is not in the snapshot', async () => {
+    mockPds();
+    installCoCurated({
+      getRecord: (p) => cardFor(`https://owner.test/${p.get('rkey')}`),
+      // A links call at all would mean the default asked Constellation.
+    });
+    const snap = await snapshotBackedCollection('semble', OWNER, SEMBLE_COL);
+    expect(snap.members.map((m) => m.url)).toEqual(['https://owner.test/ownerCard']);
+  });
+
+  it('adds a link written in a contributor’s own repo', async () => {
+    mockPds();
+    installCoCurated({
+      links: () =>
+        jsonRes({
+          linking_records: [
+            { did: OTHER, collection: 'network.cosmik.collectionLink', rkey: 'foreign1' },
+            // The owner's own links come from listRecords; a duplicate here must
+            // not produce a second member.
+            { did: OWNER, collection: 'network.cosmik.collectionLink', rkey: 'l1' },
+          ],
+          cursor: null,
+        }),
+      getRecord: (p) => {
+        const rkey = p.get('rkey')!;
+        if (rkey === 'foreign1') {
+          return jsonRes({
+            value: {
+              collection: { uri: SEMBLE_COL },
+              card: { uri: `at://${OTHER}/network.cosmik.card/theirCard` },
+            },
+          });
+        }
+        return cardFor(`https://a.test/${rkey}`);
+      },
+    });
+
+    const snap = await snapshotBackedCollection('semble', OWNER, SEMBLE_COL, {
+      includeForeign: true,
+    });
+    expect(snap.complete).toBe(true);
+    expect(snap.members.map((m) => m.url).sort()).toEqual([
+      'https://a.test/ownerCard',
+      'https://a.test/theirCard',
+    ]);
+  });
+
+  it('re-checks each indexed record: a link that names another collection is dropped', async () => {
+    mockPds();
+    installCoCurated({
+      links: () =>
+        jsonRes({
+          linking_records: [
+            { did: OTHER, collection: 'network.cosmik.collectionLink', rkey: 'stale' },
+          ],
+          cursor: null,
+        }),
+      getRecord: (p) => {
+        const rkey = p.get('rkey')!;
+        if (rkey === 'stale') {
+          return jsonRes({
+            value: {
+              collection: { uri: `at://${OWNER}/network.cosmik.collection/SOMETHING_ELSE` },
+              card: { uri: `at://${OTHER}/network.cosmik.card/theirCard` },
+            },
+          });
+        }
+        return cardFor(`https://a.test/${rkey}`);
+      },
+    });
+
+    const snap = await snapshotBackedCollection('semble', OWNER, SEMBLE_COL, {
+      includeForeign: true,
+    });
+    expect(snap.members.map((m) => m.url)).toEqual(['https://a.test/ownerCard']);
+  });
+
+  it('a Constellation outage yields complete:false, not a silently short list', async () => {
+    mockPds();
+    installCoCurated({
+      links: () => jsonRes({ error: 'boom' }, 503),
+      getRecord: (p) => cardFor(`https://a.test/${p.get('rkey')}`),
+    });
+    const snap = await snapshotBackedCollection('semble', OWNER, SEMBLE_COL, {
+      includeForeign: true,
+    });
+    expect(snap.complete).toBe(false);
+    expect(snap.members).toHaveLength(1); // the owner's half still renders
+  });
+
+  it('queries the Margin membership shape by its own backlink path', async () => {
+    mockPds();
+    installFetch({
+      listRecords: () => jsonRes({ records: [] }),
+      links: (p) => {
+        expect(p.get('collection')).toBe('at.margin.collectionItem');
+        expect(p.get('path')).toBe('.collection');
+        expect(p.get('target')).toBe(MARGIN_COL);
+        return jsonRes({
+          linking_records: [
+            { did: OTHER, collection: 'at.margin.collectionItem', rkey: 'foreign1' },
+          ],
+          cursor: null,
+        });
+      },
+      getRecord: (p) => {
+        const rkey = p.get('rkey')!;
+        if (rkey === 'foreign1') {
+          return jsonRes({
+            value: { collection: MARGIN_COL, annotation: `at://${OTHER}/at.margin.note/n1` },
+          });
+        }
+        return jsonRes({
+          value: {
+            $type: 'at.margin.note',
+            motivation: 'bookmarking',
+            target: { source: 'https://margin.test/post' },
+          },
+        });
+      },
+    });
+
+    const snap = await snapshotBackedCollection('margin', OWNER, MARGIN_COL, {
+      includeForeign: true,
+    });
+    expect(snap.members.map((m) => m.url)).toEqual(['https://margin.test/post']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Order: oldest addition first, off the MEMBERSHIP record's timestamp. A room
+// reads top to bottom in the order it was built, and neither where a membership
+// record lives (owner repo vs Constellation) nor the concurrency of the resolve
+// pool may decide that. See routes/rooms.ts.
+// ---------------------------------------------------------------------------
+
+describe('snapshotBackedCollection — addedAt ordering', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  /** Owner links l1/l2/l3 in the order given; each card's url is its rkey. */
+  function installDated(owner: Array<{ rkey: string; addedAt?: string }>, foreignAddedAt?: string) {
+    installFetch({
+      listRecords: () =>
+        jsonRes({
+          records: owner.map((l) => ({
+            uri: `at://${OWNER}/network.cosmik.collectionLink/${l.rkey}`,
+            cid: 'x',
+            value: {
+              collection: { uri: SEMBLE_COL },
+              card: { uri: `at://${OWNER}/network.cosmik.card/${l.rkey}` },
+              ...(l.addedAt ? { addedAt: l.addedAt } : {}),
+            },
+          })),
+        }),
+      links: () =>
+        foreignAddedAt
+          ? jsonRes({
+              linking_records: [
+                { did: OTHER, collection: 'network.cosmik.collectionLink', rkey: 'foreign1' },
+              ],
+              cursor: null,
+            })
+          : jsonRes({ linking_records: [], cursor: null }),
+      getRecord: (p) => {
+        const rkey = p.get('rkey')!;
+        if (rkey === 'foreign1') {
+          return jsonRes({
+            value: {
+              collection: { uri: SEMBLE_COL },
+              card: { uri: `at://${OTHER}/network.cosmik.card/theirs` },
+              addedAt: foreignAddedAt,
+            },
+          });
+        }
+        return jsonRes({
+          value: {
+            $type: 'network.cosmik.card',
+            type: 'URL',
+            content: { url: `https://a.test/${rkey}` },
+          },
+        });
+      },
+    });
+  }
+
+  it('returns members oldest-addition first, whatever order the repo lists them in', async () => {
+    mockPds();
+    installDated([
+      { rkey: 'newest', addedAt: '2026-08-14T17:35:29.962Z' },
+      { rkey: 'oldest', addedAt: '2026-06-01T09:00:00.000Z' },
+      { rkey: 'middle', addedAt: '2026-07-04T12:00:00.000Z' },
+    ]);
+    const snap = await snapshotBackedCollection('semble', OWNER, SEMBLE_COL);
+    expect(snap.members.map((m) => m.url)).toEqual([
+      'https://a.test/oldest',
+      'https://a.test/middle',
+      'https://a.test/newest',
+    ]);
+    expect(snap.members[0].addedAt).toBe('2026-06-01T09:00:00.000Z');
+  });
+
+  it('interleaves a contributor’s add by date, not after the owner’s', async () => {
+    mockPds();
+    installDated(
+      [
+        { rkey: 'first', addedAt: '2026-06-01T09:00:00.000Z' },
+        { rkey: 'last', addedAt: '2026-09-01T09:00:00.000Z' },
+      ],
+      '2026-07-01T09:00:00.000Z'
+    );
+    const snap = await snapshotBackedCollection('semble', OWNER, SEMBLE_COL, {
+      includeForeign: true,
+    });
+    expect(snap.members.map((m) => m.url)).toEqual([
+      'https://a.test/first',
+      'https://a.test/theirs',
+      'https://a.test/last',
+    ]);
+  });
+
+  it('sorts an undated membership record last rather than treating it as oldest', async () => {
+    mockPds();
+    installDated([{ rkey: 'undated' }, { rkey: 'dated', addedAt: '2026-06-01T09:00:00.000Z' }]);
+    const snap = await snapshotBackedCollection('semble', OWNER, SEMBLE_COL);
+    expect(snap.members.map((m) => m.url)).toEqual([
+      'https://a.test/dated',
+      'https://a.test/undated',
+    ]);
+    expect(snap.members[1].addedAt).toBeUndefined();
   });
 });

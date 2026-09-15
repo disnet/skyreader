@@ -59,12 +59,19 @@
     onArchive,
     onRemove,
     onToggleSave,
+    onMarkRead,
+    markedRead = false,
   }: {
     readerItem: FeedDisplayItem;
     onClose: () => void;
     onArchive?: () => void;
     onRemove?: () => void;
     onToggleSave?: () => void;
+    // Host-provided "I'm done" signal (reading rooms): a one-way mark rendered
+    // at the end of the article. `markedRead` flips the button to a quiet
+    // confirmation; there is no unmark.
+    onMarkRead?: () => void;
+    markedRead?: boolean;
   } = $props();
 
   // Saving out to Semble / Margin. The picker is global (mounted in AppShell),
@@ -102,8 +109,7 @@
   let tagMenuOpen = $state(false);
   let overflowMenuOpen = $state(false);
   let overflowRef = $state<HTMLDivElement | null>(null);
-  let tagBtnRef = $state<HTMLButtonElement | null>(null);
-  let mobileTagBtnRef = $state<HTMLButtonElement | null>(null);
+  let mobileMoreBtnRef = $state<HTMLButtonElement | null>(null);
   let controlsVisible = $state(true);
   // Desktop header hides on scroll-down, but stays put while a header-anchored
   // menu (Style/Tag/overflow ⋯) is open so its popover doesn't slide off-screen.
@@ -964,16 +970,18 @@
           </button>
         {/if}
 
-        <button
-          class="action-btn"
-          class:active={tagMenuOpen}
-          bind:this={tagBtnRef}
-          onclick={() => (tagMenuOpen = !tagMenuOpen)}
-          title="Tag (t)"
-        >
-          <Icon name="tag" size={16} />
-          <span class="action-label">Tag{itemTags.length > 0 ? ` (${itemTags.length})` : ''}</span>
-        </button>
+        {#if onMarkRead || markedRead}
+          <button
+            class="action-btn"
+            class:active={markedRead}
+            disabled={markedRead}
+            onclick={onMarkRead}
+            title={markedRead ? 'You read this' : 'Mark as read'}
+          >
+            <Icon name="check" size={16} />
+            <span class="action-label">{markedRead ? 'Read' : 'Mark read'}</span>
+          </button>
+        {/if}
 
         <div class="overflow-menu-wrapper" bind:this={overflowRef}>
           <PopoverMenu items={overflowItems} bind:open={overflowMenuOpen} />
@@ -989,14 +997,15 @@
       </div>
     {/if}
 
-    <!-- Desktop only: the mobile menu below anchors to the bottom bar's tag
-         button instead. Mounting both would register two document-level keydown
-         handlers, and the number-key tag shortcuts would cancel each other out. -->
+    <!-- Desktop only: the mobile menu below anchors to the bottom bar instead.
+         Mounting both would register two document-level keydown handlers, and
+         the number-key tag shortcuts would cancel each other out. Tag lives in
+         the ⋯ menu now (plus the `t` shortcut), so the menu anchors there. -->
     {#if tagMenuOpen && !mobileStore.isMobile}
       <TagMenu
         {itemKey}
         itemType={labelItemType}
-        anchorEl={tagBtnRef}
+        anchorEl={overflowRef}
         onClose={() => (tagMenuOpen = false)}
       />
     {/if}
@@ -1024,12 +1033,11 @@
     {isSaved}
     onShare={canShareLinkblog ? openShareComposer : undefined}
     shareActive={sharedNow}
-    onTag={() => (tagMenuOpen = !tagMenuOpen)}
-    tagCount={itemTags.length}
-    tagActive={tagMenuOpen}
-    bind:tagButtonEl={mobileTagBtnRef}
+    {onMarkRead}
+    {markedRead}
     onMore={() => (styleSheetOpen = true)}
     moreActive={styleSheetOpen}
+    bind:moreButtonEl={mobileMoreBtnRef}
   />
 
   <div class="reader-container" class:paged>
@@ -1141,10 +1149,12 @@
       </BottomSheet>
 
       {#if tagMenuOpen}
+        <!-- Tag is reached through the Style & Actions sheet now, so the menu
+             anchors to the sheet's own button in the bar. -->
         <TagMenu
           {itemKey}
           itemType={labelItemType}
-          anchorEl={mobileTagBtnRef}
+          anchorEl={mobileMoreBtnRef}
           onClose={() => (tagMenuOpen = false)}
         />
       {/if}
@@ -1211,6 +1221,19 @@
           </div>
         {/if}
       </div>
+
+      {#if onMarkRead || markedRead}
+        <div class="reader-mark-read">
+          {#if markedRead}
+            <span class="reader-mark-read-done">
+              <Icon name="check" size={16} />
+              You read this
+            </span>
+          {:else}
+            <button class="btn btn-primary" onclick={onMarkRead}>Mark as read</button>
+          {/if}
+        </div>
+      {/if}
 
       <!-- Share-to-linkblog + discussion rails. Part of the shared content so they
            sit at the end in scroll mode and flow onto the final page(s) when
@@ -1586,6 +1609,17 @@
     color: var(--color-text);
   }
 
+  /* Marked-read is a done state, not a control: quiet check, no press affordance.
+     Matches the end-of-article "You read this" confirmation. */
+  .action-btn:disabled {
+    cursor: default;
+  }
+
+  .action-btn.active:disabled {
+    background: none;
+    color: var(--color-primary);
+  }
+
   .overflow-menu-wrapper {
     display: flex;
     align-items: center;
@@ -1947,6 +1981,20 @@
 
   .sheet-action-btn.danger :global(.icon) {
     color: var(--color-error, #dc2626);
+  }
+
+  .reader-mark-read {
+    display: flex;
+    justify-content: center;
+    margin: 2rem 0 0.5rem;
+  }
+
+  .reader-mark-read-done {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    font-size: var(--text-sm);
+    color: var(--color-primary);
   }
 
   @media (max-width: 1000px) {

@@ -529,6 +529,15 @@
 
     {#if !auth.isGuest}
       <a
+        href="/rooms"
+        class="nav-item nav-link"
+        class:active={$page.url.pathname === '/rooms'}
+        onclick={() => sidebarStore.closeMobile()}
+      >
+        <span class="nav-icon"><Icon name="book-open" /></span>
+        <span class="nav-label">Rooms</span>
+      </a>
+      <a
         href="/discover"
         class="nav-item nav-link"
         class:active={$page.url.pathname === '/discover'}

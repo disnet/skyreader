@@ -11,6 +11,7 @@ import type {
   FollowingPublication,
   Magazine,
   ShareDraft,
+  RoomInfo,
 } from '$lib/types';
 
 // Sync queue for offline operations
@@ -47,8 +48,51 @@ export interface FollowCacheEntry {
   avatar?: string;
   // Epoch ms this account's PDS was last scanned for publications (0 = never).
   scannedAt: number;
+  // Epoch ms this account's PDS was last scanned for reading rooms (0 = never).
+  // Unindexed: the graph is a few thousand rows and both scanners walk it in
+  // memory, so a second index would buy nothing and cost a migration.
+  roomsScannedAt?: number;
+  // Cached PDS endpoint, so the scanners don't each pay a plc.directory
+  // round trip per account (see pdsForFollow in services/followGraph.ts).
+  pdsUrl?: string;
   // User chose to ignore this account in discovery — never scanned or shown.
   hidden?: boolean;
+}
+
+// A reading room (a Semble/Margin collection) that a followed account has
+// joined, found by scanning their PDS for app.skyreader.reading.readAlong
+// records. One row per (follower, room): the /rooms index groups them into
+// "rooms people you follow are in". See docs/plans/READING_ROOMS_SPIKE.md.
+export interface FollowedRoomEntry {
+  did: string;
+  // The collection at-uri — the room's identity.
+  subject: string;
+  handle: string | null;
+  displayName?: string;
+  avatar?: string;
+  // The readAlong record's createdAt, when it carried one.
+  createdAt?: string;
+}
+
+// A cached snapshot of one reading room: the collection's article list exactly
+// as /api/rooms last served it, so opening a room paints from disk and refreshes
+// behind the paint instead of showing a spinner every time.
+//
+// Keyed by [did+subject] because the snapshot is per-reader: `readByMe`,
+// `canAdd` and `joined` are answers about one account, and a shared device must
+// never paint one reader's marks for the next. A signed-out visitor's copy is
+// filed under ANON_ROOM_DID (see services/roomCache.ts) — it carries no personal
+// read state to leak.
+export interface RoomSnapshotEntry {
+  // The reader this snapshot belongs to (a DID, or the anonymous sentinel).
+  did: string;
+  // The collection at-uri — the room's identity.
+  subject: string;
+  room: RoomInfo;
+  // Whether this reader had joined, as of the snapshot.
+  joined: boolean;
+  // Epoch ms this snapshot was taken.
+  cachedAt: number;
 }
 
 // Per-subscription durable-log cursor (RETENTION_SYNC_PLAN.md). The proxy returns
@@ -96,6 +140,8 @@ class SkyreaderDatabase extends Dexie {
   integrationCollections!: Table<IntegrationCollectionCacheEntry>;
   follows!: Table<FollowCacheEntry>;
   followingPublications!: Table<FollowingPublication>;
+  followingRooms!: Table<FollowedRoomEntry>;
+  roomSnapshots!: Table<RoomSnapshotEntry>;
   feedCursors!: Table<FeedCursorEntry>;
   magazines!: Table<Magazine>;
   shareDrafts!: Table<ShareDraft>;
@@ -450,6 +496,23 @@ class SkyreaderDatabase extends Dexie {
     this.version(38).stores({
       shareDrafts: 'articleUrl, updatedAt',
     });
+
+    // Reading rooms your follows have joined: their readAlong records, found by
+    // scanning the same cached follow graph /discover already walks. Keyed by
+    // [did+subject] (one row per person per room); `subject` is indexed so the
+    // /rooms index can group by room, `did` so a dropped follow takes their
+    // rows with them.
+    this.version(39).stores({
+      followingRooms: '[did+subject], did, subject',
+    });
+
+    // Cached room snapshots: the article list behind a room, per reader, so
+    // /rooms and Home's room lanes paint from disk and refresh behind the paint.
+    // Keyed by [did+subject]; `did` is indexed so one reader's rooms can be read
+    // in one query, `cachedAt` so stale snapshots can be pruned by age.
+    this.version(40).stores({
+      roomSnapshots: '[did+subject], did, cachedAt',
+    });
   }
 }
 
@@ -482,6 +545,8 @@ export async function clearAllData(options?: { holdSyncQueueFor?: string }): Pro
     db.integrationCollections.clear(),
     db.follows.clear(),
     db.followingPublications.clear(),
+    db.followingRooms.clear(),
+    db.roomSnapshots.clear(),
     db.feedCursors.clear(),
     db.magazines.clear(),
     db.shareDrafts.clear(),

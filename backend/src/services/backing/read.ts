@@ -46,6 +46,11 @@ export interface BackedMember {
   author?: string;
   description?: string;
   image?: string;
+  /** When this article joined the collection, off the MEMBERSHIP record — not the
+   *  item's own createdAt, which is when the card was made (the same article can be
+   *  filed into a collection long after it was first saved). ISO string; absent when
+   *  the record carries no timestamp. */
+  addedAt?: string;
 }
 
 /** A member that resolved but carried no usable article URL (skipped, not an error). */
@@ -123,12 +128,26 @@ export async function listAllRecordsPublic<T = Record<string, unknown>>(
 // twice, and so a cross-repo item only resolves its foreign PDS once.
 type ItemValue = Record<string, unknown> & { $type?: string };
 
-async function getRecordPublic(
+export async function getRecordPublic(
   pds: string,
   repo: string,
   collection: string,
   rkey: string
 ): Promise<ItemValue | null> {
+  return (await getRecordPublicWithCid(pds, repo, collection, rkey))?.value ?? null;
+}
+
+/**
+ * getRecordPublic, keeping the record's cid. Needed wherever a strongRef is written
+ * at a record in a repo we can't read with the session (a Semble collectionLink
+ * pointing at someone else's open collection).
+ */
+export async function getRecordPublicWithCid(
+  pds: string,
+  repo: string,
+  collection: string,
+  rkey: string
+): Promise<{ value: ItemValue; cid: string } | null> {
   const u = new URL(`${pds}/xrpc/com.atproto.repo.getRecord`);
   u.searchParams.set('repo', repo);
   u.searchParams.set('collection', collection);
@@ -148,8 +167,9 @@ async function getRecordPublic(
     }
     throw new Error(`getRecord ${repo}/${collection}/${rkey} -> ${res.status}`);
   }
-  const data = (await res.json()) as { value?: ItemValue };
-  return data.value ?? null;
+  const data = (await res.json()) as { value?: ItemValue; cid?: string };
+  if (!data.value) return null;
+  return { value: data.value, cid: data.cid ?? '' };
 }
 
 /**
@@ -174,10 +194,17 @@ export function extractUrlFromRecord(value: ItemValue | null): string | null {
     if (value.motivation && value.motivation !== 'bookmarking') return null; // highlight/comment
     return target?.source ?? null;
   }
+  // Margin's own bookmark record (still defined in paddinglabs/margin, and what
+  // Skyreader's Margin export wrote before it moved to notes): the URL sits at
+  // the top level as `source`, not under target.
+  if (type === 'at.margin.bookmark') {
+    return typeof value.source === 'string' ? value.source : null;
+  }
   // Generic fallback for an unknown item type — try the usual URL-bearing fields.
   return (
     (typeof value.subject === 'string' ? value.subject : undefined) ??
     (typeof value.url === 'string' ? value.url : undefined) ??
+    (typeof value.source === 'string' ? value.source : undefined) ??
     content?.url ??
     target?.source ??
     null
@@ -187,8 +214,9 @@ export function extractUrlFromRecord(value: ItemValue | null): string | null {
 /**
  * Pull display metadata (title/author/description/image) carried on the foreign
  * record, so an imported save can show a real title before its body is extracted.
- * Semble cards keep these in content.metadata; a margin note may have target.title;
- * community bookmarks carry none (they rely on extraction).
+ * Semble cards keep these in content.metadata; a margin note may have target.title and a
+ * margin bookmark carries title/description at the top level; community bookmarks carry
+ * none (they rely on extraction).
  */
 function extractRecordMetadata(value: ItemValue | null): {
   title?: string;
@@ -215,6 +243,9 @@ function extractRecordMetadata(value: ItemValue | null): {
     const target = value.target as { title?: unknown } | undefined;
     return { title: str(target?.title) };
   }
+  if (value.$type === 'at.margin.bookmark') {
+    return { title: str(value.title), description: str(value.description) };
+  }
   return {};
 }
 
@@ -235,7 +266,7 @@ function extractCanonicalAtUri(value: ItemValue | null): string | undefined {
  * how the membership record names its item + collection (handled by the callers).
  */
 async function resolveMembers(
-  pairs: Array<{ itemUri: string; linkUri: string }>
+  pairs: MembershipPair[]
 ): Promise<{ members: BackedMember[]; skipped: SkippedMember[]; typeMix: Record<string, number> }> {
   // Caches hold the in-flight PROMISE (not the resolved value) so concurrent workers
   // resolving the same DID/item share one fetch instead of racing into duplicates.
@@ -269,7 +300,7 @@ async function resolveMembers(
     return p;
   };
 
-  const handle = async ({ itemUri, linkUri }: { itemUri: string; linkUri: string }) => {
+  const handle = async ({ itemUri, linkUri, addedAt }: MembershipPair) => {
     const item = await resolveItem(itemUri);
     if (!item) {
       skipped.push({ reason: 'item-not-resolvable', itemUri, linkUri });
@@ -293,69 +324,229 @@ async function resolveMembers(
       itemUri,
       linkUri,
       itemType,
+      addedAt,
       canonicalAtUri: extractCanonicalAtUri(item),
       ...extractRecordMetadata(item),
     });
   };
 
-  // Bounded-concurrency worker pool over the membership pairs (see RESOLVE_CONCURRENCY).
-  const queue = [...pairs];
-  const worker = async () => {
-    for (;;) {
-      const pair = queue.shift();
-      if (!pair) return;
-      await handle(pair);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(RESOLVE_CONCURRENCY, queue.length) }, worker));
+  await mapPool(pairs, RESOLVE_CONCURRENCY, handle);
 
   return { members, skipped, typeMix };
 }
 
+/** Bounded-concurrency worker pool (see RESOLVE_CONCURRENCY). */
+async function mapPool<T>(items: T[], limit: number, run: (item: T) => Promise<void>) {
+  const queue = [...items];
+  const worker = async () => {
+    for (;;) {
+      const item = queue.shift();
+      if (item === undefined) return;
+      await run(item);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, queue.length) }, worker));
+}
+
+/**
+ * How each provider's membership record names the collection it belongs to and the
+ * item it carries. `backlinkPath` is the same reference expressed as a Constellation
+ * JSON path, which is how membership written by a repo OTHER than the owner's is
+ * discovered (see `listForeignMembership`).
+ */
+interface MembershipShape {
+  collection: string;
+  backlinkPath: string;
+  collectionUriOf(value: Record<string, unknown>): string | undefined;
+  itemUriOf(value: Record<string, unknown>): string | undefined;
+  /** when the article joined the collection (see BackedMember.addedAt) */
+  addedAtOf(value: Record<string, unknown>): string | undefined;
+}
+
+/** One membership record, reduced to what a snapshot needs from it. */
+interface MembershipPair {
+  itemUri: string;
+  linkUri: string;
+  addedAt?: string;
+}
+
+const isoStr = (v: unknown): string | undefined =>
+  typeof v === 'string' && !Number.isNaN(Date.parse(v)) ? v : undefined;
+
+const MEMBERSHIP: Record<BackingProviderName, MembershipShape> = {
+  // network.cosmik.collectionLink: nested strong refs { card:{uri}, collection:{uri} }
+  semble: {
+    collection: 'network.cosmik.collectionLink',
+    backlinkPath: '.collection.uri',
+    collectionUriOf: (v) => (v.collection as { uri?: string } | undefined)?.uri,
+    itemUriOf: (v) => (v.card as { uri?: string } | undefined)?.uri,
+    // Semble writes both, identically; addedAt is the one that names the act.
+    addedAtOf: (v) => isoStr(v.addedAt) ?? isoStr(v.createdAt),
+  },
+  // at.margin.collectionItem: FLAT at-uri strings { annotation, collection }
+  margin: {
+    collection: 'at.margin.collectionItem',
+    backlinkPath: '.collection',
+    collectionUriOf: (v) => (typeof v.collection === 'string' ? v.collection : undefined),
+    itemUriOf: (v) => (typeof v.annotation === 'string' ? v.annotation : undefined),
+    addedAtOf: (v) => isoStr(v.createdAt),
+  },
+};
+
+const CONSTELLATION_BASE = 'https://constellation.microcosm.blue';
+const FOREIGN_PAGES = 5;
+const FOREIGN_PAGE_LIMIT = 100;
+
+/**
+ * Membership records held in OTHER repos than the collection owner's — what an open
+ * collection accumulates when someone else adds to it, since a contributor can only
+ * ever write into their own repo.
+ *
+ * Constellation is the only way to find these (there is no repo to list), so this is
+ * opt-in per snapshot: for a backed SAVES collection the owner's repo is the whole
+ * truth and a stranger's link must not inject rows into the user's Saved list. Rooms
+ * ask for it, because there the point is that the list is co-curated.
+ *
+ * Constellation is an index, not the authority: every record it names is fetched and
+ * re-checked against the collection uri before it counts. Bounded by pages, and
+ * `complete: false` on any failure so the caller can say the list may be short
+ * rather than silently dropping other people's contributions.
+ */
+async function listForeignMembership(
+  shape: MembershipShape,
+  collectionUri: string,
+  ownerDid: string
+): Promise<{ pairs: MembershipPair[]; complete: boolean }> {
+  const refs: Array<{ did: string; rkey: string }> = [];
+  let cursor: string | undefined;
+  let complete = true;
+
+  for (let page = 0; page < FOREIGN_PAGES; page++) {
+    const u = new URL(`${CONSTELLATION_BASE}/links`);
+    u.searchParams.set('target', collectionUri);
+    u.searchParams.set('collection', shape.collection);
+    u.searchParams.set('path', shape.backlinkPath);
+    u.searchParams.set('limit', String(FOREIGN_PAGE_LIMIT));
+    if (cursor) u.searchParams.set('cursor', cursor);
+    let data: { linking_records?: Array<{ did?: string; rkey?: string }>; cursor?: string } | null;
+    try {
+      const res = await fetch(u.toString());
+      if (!res.ok) throw new Error(`constellation /links -> ${res.status}`);
+      data = (await res.json()) as typeof data;
+    } catch (err) {
+      console.error('[backing] foreign membership lookup failed:', err);
+      return { pairs: [], complete: false };
+    }
+    const records = data?.linking_records ?? [];
+    for (const r of records) {
+      // The owner's own links come from listRecords, which is authoritative and
+      // needs no per-record fetch.
+      if (r.did && r.rkey && r.did !== ownerDid) refs.push({ did: r.did, rkey: r.rkey });
+    }
+    cursor = data?.cursor ?? undefined;
+    if (!cursor || records.length === 0) break;
+    if (page === FOREIGN_PAGES - 1) complete = false;
+  }
+
+  if (refs.length === 0) return { pairs: [], complete };
+
+  const pdsCache = new Map<string, Promise<string | null>>();
+  const pairs: MembershipPair[] = [];
+  await mapPool(refs, RESOLVE_CONCURRENCY, async (ref) => {
+    try {
+      let pdsPromise = pdsCache.get(ref.did);
+      if (!pdsPromise) {
+        pdsPromise = resolvePdsUrl(ref.did);
+        pdsCache.set(ref.did, pdsPromise);
+      }
+      const pds = await pdsPromise;
+      if (!pds) {
+        complete = false;
+        return;
+      }
+      const value = await getRecordPublic(pds, ref.did, shape.collection, ref.rkey);
+      if (!value) return; // deleted since Constellation indexed it
+      if (shape.collectionUriOf(value) !== collectionUri) return; // stale index entry
+      const itemUri = shape.itemUriOf(value);
+      if (itemUri)
+        pairs.push({
+          itemUri,
+          linkUri: `at://${ref.did}/${shape.collection}/${ref.rkey}`,
+          addedAt: shape.addedAtOf(value),
+        });
+    } catch (err) {
+      // Transient — same stance as the owner-side snapshot: report incompleteness
+      // rather than presenting a short list as the whole collection.
+      console.error('[backing] foreign membership record failed:', err);
+      complete = false;
+    }
+  });
+
+  return { pairs, complete };
+}
+
+/**
+ * Oldest addition first — the order a collection was actually built in, which is
+ * the only order both repos agree on: owner membership arrives in listRecords
+ * order, foreign membership arrives from Constellation, and `resolveMembers`
+ * finishes them out of order anyway (bounded concurrency). A member whose record
+ * carries no timestamp sorts last rather than pretending to be the oldest, and
+ * `linkUri` breaks ties so the same collection always resolves to the same order.
+ */
+function sortByAddedAt(members: BackedMember[]): BackedMember[] {
+  const at = (m: BackedMember) => (m.addedAt ? Date.parse(m.addedAt) : Number.POSITIVE_INFINITY);
+  return members.sort((a, b) => at(a) - at(b) || a.linkUri.localeCompare(b.linkUri));
+}
+
+export interface SnapshotOptions {
+  /** Also count membership written by repos other than the owner's (see
+   *  `listForeignMembership`). Off by default: backed saves are owner-only. */
+  includeForeign?: boolean;
+}
+
 /**
  * Snapshot a backed collection into the set of article saves it currently contains.
- * `ownerDid` owns the collection (and its membership records); item records may live
- * elsewhere. A thrown listRecords error or a truncated membership listing yields
- * `complete: false` so the caller refuses to replace the membership table.
+ * `ownerDid` owns the collection (and, by default, its membership records); item
+ * records may live elsewhere. A thrown listRecords error or a truncated membership
+ * listing yields `complete: false` so the caller refuses to replace the membership
+ * table.
  */
 export async function snapshotBackedCollection(
   provider: BackingProviderName,
   ownerDid: string,
-  collectionUri: string
+  collectionUri: string,
+  options: SnapshotOptions = {}
 ): Promise<SnapshotResult> {
   const pds = await resolvePdsUrl(ownerDid);
   if (!pds) {
     return { complete: false, members: [], skipped: [], typeMix: {} };
   }
+  const shape = MEMBERSHIP[provider];
 
   try {
-    let pairs: Array<{ itemUri: string; linkUri: string }>;
-    let truncated: boolean;
+    const owned = await listAllRecordsPublic<Record<string, unknown>>(
+      pds,
+      ownerDid,
+      shape.collection
+    );
+    const pairs: MembershipPair[] = owned.records.flatMap((l) => {
+      if (shape.collectionUriOf(l.value) !== collectionUri) return [];
+      const itemUri = shape.itemUriOf(l.value);
+      return itemUri ? [{ itemUri, linkUri: l.uri, addedAt: shape.addedAtOf(l.value) }] : [];
+    });
+    let complete = !owned.truncated;
 
-    if (provider === 'semble') {
-      // network.cosmik.collectionLink: nested strong refs { card:{uri}, collection:{uri} }
-      const links = await listAllRecordsPublic<{
-        card?: { uri?: string };
-        collection?: { uri?: string };
-      }>(pds, ownerDid, 'network.cosmik.collectionLink');
-      truncated = links.truncated;
-      pairs = links.records
-        .filter((l) => l.value.collection?.uri === collectionUri && l.value.card?.uri)
-        .map((l) => ({ itemUri: l.value.card!.uri!, linkUri: l.uri }));
-    } else {
-      // at.margin.collectionItem: FLAT at-uri strings { annotation, collection }
-      const items = await listAllRecordsPublic<{
-        annotation?: string;
-        collection?: string;
-      }>(pds, ownerDid, 'at.margin.collectionItem');
-      truncated = items.truncated;
-      pairs = items.records
-        .filter((it) => it.value.collection === collectionUri && it.value.annotation)
-        .map((it) => ({ itemUri: it.value.annotation!, linkUri: it.uri }));
+    if (options.includeForeign) {
+      const foreign = await listForeignMembership(shape, collectionUri, ownerDid);
+      const seen = new Set(pairs.map((p) => p.linkUri));
+      for (const pair of foreign.pairs) {
+        if (!seen.has(pair.linkUri)) pairs.push(pair);
+      }
+      if (!foreign.complete) complete = false;
     }
 
     const { members, skipped, typeMix } = await resolveMembers(pairs);
-    return { complete: !truncated, members, skipped, typeMix };
+    return { complete, members: sortByAddedAt(members), skipped, typeMix };
   } catch (err) {
     console.error('[backing] snapshot failed:', err);
     return { complete: false, members: [], skipped: [], typeMix: {} };

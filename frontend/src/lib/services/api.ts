@@ -24,6 +24,8 @@ import type {
   CommunityHighlightNote,
   SembleContext,
   SocialDocument,
+  RoomInfo,
+  RoomItem,
   User,
 } from '$lib/types';
 import { getLinkPostTitle, isLinkPost } from '$lib/utils/linkPost';
@@ -1632,6 +1634,88 @@ class ApiClient {
     return this.fetch<ExtractedArticle>('/api/extract', {
       method: 'POST',
       body: JSON.stringify({ url }),
+    });
+  }
+
+  // Reading Rooms (spike) — see docs/plans/READING_ROOMS_SPIKE.md
+  async getRoom(uri: string): Promise<RoomInfo> {
+    return this.fetch(`/api/rooms?uri=${encodeURIComponent(uri)}`);
+  }
+
+  /** Start a room: a new collection in the user's own repo, joined on the way
+   *  out. `joined: false` means the collection exists but the join write
+   *  failed; the room page offers Join as usual. */
+  async createRoom(room: {
+    name: string;
+    description?: string;
+    provider?: 'semble' | 'margin';
+    access?: 'open' | 'closed';
+  }): Promise<{
+    uri: string;
+    provider: 'semble' | 'margin';
+    name: string;
+    description?: string;
+    access: 'open' | 'closed';
+    joined: boolean;
+  }> {
+    return this.fetch('/api/rooms', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: room.name,
+        description: room.description || undefined,
+        provider: room.provider,
+        access: room.access,
+      }),
+    });
+  }
+
+  async getRoomJoined(uri: string): Promise<{ joined: boolean }> {
+    return this.fetch(`/api/rooms/join?uri=${encodeURIComponent(uri)}`);
+  }
+
+  async joinRoom(collectionUri: string, rkey: string): Promise<{ joined: boolean; uri: string }> {
+    return this.fetch('/api/rooms/join', {
+      method: 'POST',
+      body: JSON.stringify({ collectionUri, rkey }),
+    });
+  }
+
+  async leaveRoom(collectionUri: string): Promise<{ joined: boolean }> {
+    return this.fetch('/api/rooms/join', {
+      method: 'DELETE',
+      body: JSON.stringify({ collectionUri }),
+    });
+  }
+
+  /** Add an article to a room's collection. Metadata is optional: pass what the
+   *  library already knows, and the backend extracts a title for a bare URL. */
+  async addRoomItem(
+    collectionUri: string,
+    article: {
+      url: string;
+      title?: string | null;
+      description?: string | null;
+      author?: string | null;
+      publishedAt?: string | null;
+    }
+  ): Promise<{ item: RoomItem }> {
+    return this.fetch('/api/rooms/items', {
+      method: 'POST',
+      body: JSON.stringify({
+        collectionUri,
+        url: article.url,
+        title: article.title ?? undefined,
+        description: article.description ?? undefined,
+        author: article.author ?? undefined,
+        publishedAt: article.publishedAt ?? undefined,
+      }),
+    });
+  }
+
+  async recordRoomRead(collectionUri: string, url: string): Promise<{ ok: boolean }> {
+    return this.fetch('/api/rooms/read', {
+      method: 'POST',
+      body: JSON.stringify({ collectionUri, url }),
     });
   }
 

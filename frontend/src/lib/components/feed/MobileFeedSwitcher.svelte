@@ -69,6 +69,7 @@
     | 'file-text'
     | 'folder'
     | 'users'
+    | 'book-open'
     | 'highlighter'
     | 'quote'
     | 'heart';
@@ -222,9 +223,18 @@
             } as NavItem,
           ]
         : []),
+      // Rooms and Discover, in the sidebar's order. Account-only in both places:
+      // a room is a join record in your own repo, so a guest tapping through
+      // would only meet the sign-in screen.
       ...(auth.isGuest
         ? []
         : [
+            {
+              type: 'utility',
+              id: 'rooms',
+              label: 'Rooms',
+              icon: 'book-open' as IconName,
+            } as NavItem,
             {
               type: 'utility',
               id: 'discover',

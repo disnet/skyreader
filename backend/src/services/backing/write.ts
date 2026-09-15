@@ -58,17 +58,30 @@ export interface MemberHandles {
 
 class BackingWriteError extends Error {}
 
+/** Semble's `accessType`: OPEN lets anyone add to the collection, CLOSED keeps
+ *  additions to the owner and listed collaborators. Margin has no equivalent. */
+export type SembleAccessType = 'OPEN' | 'CLOSED';
+
+export interface CreateCollectionOptions {
+  /** Semble-only; ignored for Margin, whose lexicon has no access field. */
+  accessType?: SembleAccessType;
+  /** Semble-only; the curator's blurb, shown on the collection and on a room. */
+  description?: string;
+}
+
 /**
- * Create a new backing collection record ("Skyreader Saves" by default). Record
- * shapes confirmed against live records (2026-06-18):
- *  - network.cosmik.collection: { name, createdAt, updatedAt, accessType, collaborators }
+ * Create a new collection record — a backing collection ("Skyreader Saves" by
+ * default) or a reading room. Record shapes confirmed against live records
+ * (2026-06-18):
+ *  - network.cosmik.collection: { name, description?, createdAt, updatedAt, accessType, collaborators }
  *  - at.margin.collection:      { name, createdAt, icon }
- * Returns the new collection's at-uri to write into the `backing` setting.
+ * Returns the new collection's at-uri.
  */
 export async function createCollection(
   pds: PDSClient,
   provider: BackingProviderName,
-  name: string
+  name: string,
+  opts: CreateCollectionOptions = {}
 ): Promise<{ uri: string }> {
   const rkey = generateTid();
   const nowIso = new Date().toISOString();
@@ -78,7 +91,9 @@ export async function createCollection(
       ? {
           $type: SEMBLE_COLLECTION,
           name,
-          accessType: 'CLOSED',
+          // Absent, not empty: a blank description would render as an empty line.
+          ...(opts.description ? { description: opts.description } : {}),
+          accessType: opts.accessType ?? 'CLOSED',
           collaborators: [],
           createdAt: nowIso,
           updatedAt: nowIso,
@@ -124,21 +139,32 @@ export async function createMember(
   did: string,
   provider: BackingProviderName,
   collectionUri: string,
-  input: CreateMemberInput
+  input: CreateMemberInput,
+  options: CreateMemberOptions = {}
 ): Promise<MemberHandles> {
   return provider === 'semble'
-    ? createSembleMember(pds, did, collectionUri, input)
+    ? createSembleMember(pds, did, collectionUri, input, options)
     : createMarginMember(pds, did, collectionUri, input);
+}
+
+export interface CreateMemberOptions {
+  /** The collection's current cid, when the caller already resolved it publicly.
+   *  Required for a collection in SOMEONE ELSE'S repo (an open reading room): the
+   *  membership record still goes in our own repo, but its strongRef points at a
+   *  record `pds.getRecord` — which only ever reads the session's own repo —
+   *  cannot see. */
+  collectionCid?: string;
 }
 
 async function createSembleMember(
   pds: PDSClient,
   did: string,
   collectionUri: string,
-  input: CreateMemberInput
+  input: CreateMemberInput,
+  options: CreateMemberOptions
 ): Promise<MemberHandles> {
   // collectionLink.collection is a strongRef — resolve the collection's current cid.
-  const collectionCid = await resolveCid(pds, did, collectionUri);
+  const collectionCid = options.collectionCid ?? (await resolveCid(pds, did, collectionUri));
   if (!collectionCid) throw new BackingWriteError('could not resolve backing collection cid');
 
   const metadata: Record<string, string> = {};

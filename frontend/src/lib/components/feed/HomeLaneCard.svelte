@@ -15,11 +15,23 @@
     metaLabel: string | null;
     /** 0–1 reading progress; renders the spine bar when present (Continue reading). */
     progress: number | null;
+    /** Read marker (room lanes): quiet check by the meta line, title dimmed. */
+    read?: boolean;
     onOpen?: () => void;
     onHover?: () => void;
   }
 
-  let { title, domain, image, faviconUrl, metaLabel, progress, onOpen, onHover }: Props = $props();
+  let {
+    title,
+    domain,
+    image,
+    faviconUrl,
+    metaLabel,
+    progress,
+    read = false,
+    onOpen,
+    onHover,
+  }: Props = $props();
 
   // Compact density switches the tile to a text-only square (see styles below); the
   // thumbnail is dropped and the shape/size come from the .home-body density vars.
@@ -39,6 +51,7 @@
 
 <button
   class="lane-card"
+  class:read
   data-density={density}
   onclick={() => onOpen?.()}
   onmouseenter={() => onHover?.()}
@@ -60,7 +73,9 @@
   </span>
 
   <span class="body">
-    <span class="title">{title}</span>
+    <span class="title">
+      {#if read}<span class="read-check"><Icon name="check" size={14} /></span>{/if}{title}
+    </span>
     <span class="meta">
       {#if domain}<span class="domain">{domain}</span>{/if}
       {#if domain && metaLabel}<span class="dot" aria-hidden="true">·</span>{/if}
@@ -186,6 +201,20 @@
   .read-time {
     white-space: nowrap;
     flex-shrink: 0;
+  }
+
+  /* Read marker: a check leading the title, with the title stepped back so
+     unread tiles carry the visual weight of the lane. Inline-flex inside the
+     clamped title so the icon rides the first line's baseline. */
+  .read-check {
+    display: inline-flex;
+    vertical-align: -0.125em;
+    margin-right: 0.3rem;
+    color: var(--color-primary);
+  }
+
+  .lane-card.read .title {
+    color: var(--color-text-secondary);
   }
 
   /* Reading-progress spine along the bottom edge — only on Continue reading.

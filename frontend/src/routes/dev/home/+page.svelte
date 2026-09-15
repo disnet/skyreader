@@ -169,7 +169,7 @@
     rkey: 'devmagazine00001',
     params: { order: 'shuffle', targetMinutes: 20, totalMinutes: 18 },
     items: savedItems.slice(0, 3).map((entry, index) => {
-      const s = entry.displayItem.item as SavedItem;
+      const s = entry.displayItem!.item as SavedItem;
       return {
         key: s.rkey,
         displayKey: s.uri || s.rkey,

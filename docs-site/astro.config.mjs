@@ -35,6 +35,7 @@ export default defineConfig({
             { slug: 'guide/reading' },
             { slug: 'guide/saving-and-highlights' },
             { slug: 'guide/sharing-and-your-linkblog' },
+            { slug: 'guide/reading-rooms' },
           ],
         },
         {

@@ -44,7 +44,7 @@
   // sign in, so a guest who reaches one gets the sign-in screen (returning
   // here afterwards), not a page whose every load 401s.
   const GUEST_ROUTES = ['/feeds', '/sources', '/home', '/saved', '/daily', '/highlights'];
-  const ACCOUNT_ROUTES = ['/linkblog', '/discover', '/settings'];
+  const ACCOUNT_ROUTES = ['/linkblog', '/discover', '/settings', '/rooms'];
   function isAccountOnly(pathname: string): boolean {
     if (GUEST_ROUTES.includes(pathname)) return false;
     return ACCOUNT_ROUTES.some((route) => pathname === route || pathname.startsWith(`${route}/`));
