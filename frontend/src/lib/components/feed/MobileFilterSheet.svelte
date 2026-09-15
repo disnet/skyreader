@@ -32,7 +32,8 @@
 
   interface Props {
     expandAllItems: boolean;
-    onToggleExpandAll: (value: boolean) => void;
+    /** Omitted on surfaces with no list/expanded choice — your own linkblog. */
+    onToggleExpandAll?: (value: boolean) => void;
     isSavedView: boolean;
     onMarkAllAsRead?: () => void;
     onclose: () => void;
@@ -480,27 +481,29 @@
         {/if}
       {/if}
     {:else}
-      <div class="sheet-section">
-        <div class="section-label">View</div>
-        <div class="toggle-row">
-          <button
-            class="toggle-btn"
-            class:active={!expandAllItems}
-            onclick={() => onToggleExpandAll(false)}
-          >
-            <Icon name="list" size={16} />
-            List
-          </button>
-          <button
-            class="toggle-btn"
-            class:active={expandAllItems}
-            onclick={() => onToggleExpandAll(true)}
-          >
-            <Icon name="newspaper" size={16} />
-            Expanded
-          </button>
+      {#if onToggleExpandAll}
+        <div class="sheet-section">
+          <div class="section-label">View</div>
+          <div class="toggle-row">
+            <button
+              class="toggle-btn"
+              class:active={!expandAllItems}
+              onclick={() => onToggleExpandAll(false)}
+            >
+              <Icon name="list" size={16} />
+              List
+            </button>
+            <button
+              class="toggle-btn"
+              class:active={expandAllItems}
+              onclick={() => onToggleExpandAll(true)}
+            >
+              <Icon name="newspaper" size={16} />
+              Expanded
+            </button>
+          </div>
         </div>
-      </div>
+      {/if}
 
       <div class="sheet-section">
         <div class="section-label">Appearance</div>

@@ -780,12 +780,14 @@
       >
         <MobileFilterSheet
           expandAllItems={preferences.expandAllItems}
-          onToggleExpandAll={(value) => {
-            preferences.setExpandAllItems(value);
-            if (!value) {
-              feedViewStore.resetSelection();
-            }
-          }}
+          onToggleExpandAll={mode === 'linkblog'
+            ? undefined
+            : (value) => {
+                preferences.setExpandAllItems(value);
+                if (!value) {
+                  feedViewStore.resetSelection();
+                }
+              }}
           {isSavedView}
           onMarkAllAsRead={!feedViewStore.savedFilter ? markAllAsReadInCurrentView : undefined}
           onclose={() => (filterSheetOpen = false)}
