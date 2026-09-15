@@ -11,6 +11,7 @@ import type {
   FollowingPublication,
   Magazine,
   ShareDraft,
+  RoomInfo,
 } from '$lib/types';
 
 // Sync queue for offline operations
@@ -73,6 +74,27 @@ export interface FollowedRoomEntry {
   createdAt?: string;
 }
 
+// A cached snapshot of one reading room: the collection's article list exactly
+// as /api/rooms last served it, so opening a room paints from disk and refreshes
+// behind the paint instead of showing a spinner every time.
+//
+// Keyed by [did+subject] because the snapshot is per-reader: `readByMe`,
+// `canAdd` and `joined` are answers about one account, and a shared device must
+// never paint one reader's marks for the next. A signed-out visitor's copy is
+// filed under ANON_ROOM_DID (see services/roomCache.ts) — it carries no personal
+// read state to leak.
+export interface RoomSnapshotEntry {
+  // The reader this snapshot belongs to (a DID, or the anonymous sentinel).
+  did: string;
+  // The collection at-uri — the room's identity.
+  subject: string;
+  room: RoomInfo;
+  // Whether this reader had joined, as of the snapshot.
+  joined: boolean;
+  // Epoch ms this snapshot was taken.
+  cachedAt: number;
+}
+
 // Per-subscription durable-log cursor (RETENTION_SYNC_PLAN.md). The proxy returns
 // a monotonic `cursor` (max seq seen) + a DB `generation` token with each feed
 // result; we store them and send `cursor` back as `since_seq` so the next poll
@@ -119,6 +141,7 @@ class SkyreaderDatabase extends Dexie {
   follows!: Table<FollowCacheEntry>;
   followingPublications!: Table<FollowingPublication>;
   followingRooms!: Table<FollowedRoomEntry>;
+  roomSnapshots!: Table<RoomSnapshotEntry>;
   feedCursors!: Table<FeedCursorEntry>;
   magazines!: Table<Magazine>;
   shareDrafts!: Table<ShareDraft>;
@@ -482,6 +505,14 @@ class SkyreaderDatabase extends Dexie {
     this.version(39).stores({
       followingRooms: '[did+subject], did, subject',
     });
+
+    // Cached room snapshots: the article list behind a room, per reader, so
+    // /rooms and Home's room lanes paint from disk and refresh behind the paint.
+    // Keyed by [did+subject]; `did` is indexed so one reader's rooms can be read
+    // in one query, `cachedAt` so stale snapshots can be pruned by age.
+    this.version(40).stores({
+      roomSnapshots: '[did+subject], did, cachedAt',
+    });
   }
 }
 
@@ -515,6 +546,7 @@ export async function clearAllData(options?: { holdSyncQueueFor?: string }): Pro
     db.follows.clear(),
     db.followingPublications.clear(),
     db.followingRooms.clear(),
+    db.roomSnapshots.clear(),
     db.feedCursors.clear(),
     db.magazines.clear(),
     db.shareDrafts.clear(),

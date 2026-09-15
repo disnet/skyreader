@@ -335,9 +335,10 @@ Home also grew one lane per joined room (same day): the room's articles as tiles
 reader via the shared extract path (`utils/roomArticle.ts`) with the same Mark-as-read wiring
 (archive/remove suppressed — the reader item is synthetic, not a save). Room data is cached per
 session in `stores/rooms.svelte.ts` (readAlong list + `GET /api/rooms` per room, loaded once per
-account; the room page still fetches fresh, pushes its read marks into the cache via
-`noteReadElsewhere`, and triggers a full cache refresh whenever a room view is left — that page is
-where joins/leaves/new articles happen). Lane tiles sort unread-first and read ones get a quiet
+account; the room page pushes its read marks into the cache via `noteReadElsewhere`, and triggers a
+full cache refresh whenever a room view is left — that page is where joins/leaves/new articles
+happen). Since **Local caching** below, that session cache sits on a disk cache, so a cold tab
+paints its lanes before any request settles. Lane tiles sort unread-first and read ones get a quiet
 check + dimmed title (`LaneCardVM.read` → `HomeLaneCard`).
 
 Also: `/rooms` with no `?uri=` lists the rooms you've joined (your own readAlong records, read
@@ -396,6 +397,39 @@ both surfaces ask at once) and rooms became a second scanner over it:
 Rows are dropped, not shown as husks, when the collection record can't be fetched (same stance as
 the featured list), rooms you've already joined stay under "Your rooms", and a room your follows
 are in is filtered out of Featured, which says the same thing with weaker evidence.
+
+### Local caching (built 2026-09-15)
+
+Every room list now paints from disk and refreshes behind the paint. Before this, opening a room
+meant watching "Loading room…" while the backend walked a foreign collection record by record, and
+the /rooms index re-described every room off its owner's PDS on each visit — for lists that change
+maybe daily. The reader paid a remote read for something they had already seen.
+
+`services/roomCache.ts` owns both halves. The article list is a per-room snapshot in Dexie v40
+`roomSnapshots`, keyed `[did+subject]`; the index's three lists (your rooms described, the featured
+rows, the presence counts) are small metadata blobs, since each is always read whole. Everything is
+dropped by `clearAllData` on sign-out.
+
+- **The snapshot is per reader, not per room.** `readByMe`, `canAdd` and `joined` are answers about
+  one account, so a shared device must never paint one reader's marks for the next. A signed-out
+  visitor's copy is filed under an anonymous owner (`ANON_ROOM_DID`) — a room reached by link is
+  often a visitor's first page, and it carries no personal read state to leak.
+- **A failed refresh leaves the last good copy standing.** The room page only shows "Could not load
+  this room" when it has nothing cached; `roomsStore` falls back to a room's snapshot when that one
+  room's read fails, rather than dropping its lane. `fetchMyRooms` returns **null** (not `[]`) when
+  the PDS doesn't answer, so a blip can't read as "you left every room" — the same stance
+  `fetchRoomMemberCount` already took for Constellation.
+- **The join list is cached in its own right** (`rooms.joined`, subjects in PDS order), so lanes
+  painted from cache are in the order the refresh will put them in and nothing reshuffles when it
+  lands.
+- **The snapshot is written from an effect**, not at each call site: a join, a leave, a mark-as-read
+  and an article added here all reassign `room`, and no path can update it and forget the cache.
+  `roomsStore` writes read marks through to the snapshot for the same reason.
+- **Presence counts are cached, failures aren't.** A null count is a failed lookup, not a number, so
+  it never overwrites a count we already hold and never reaches the cache — the marker stays as it
+  was through an outage instead of blanking.
+- Snapshots older than 30 days are pruned on the next write, so browsing rooms you never return to
+  can't grow the table without bound.
 
 ## Roomy as the conversation layer (assessed 2026-09-03)
 

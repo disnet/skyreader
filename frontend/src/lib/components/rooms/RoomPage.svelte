@@ -5,6 +5,11 @@
   // counts scoped to reads made through this surface. Join writes one public
   // readAlong record to the joiner's own repo; that record is the consent
   // boundary that licenses showing their avatar here.
+  //
+  // Every list on this page is stale-while-revalidate: the room's articles, your
+  // rooms, the featured rows and their presence counts all paint from the local
+  // cache (services/roomCache.ts) and refresh behind the paint, so reopening a
+  // room shows it immediately instead of spinning on a foreign collection read.
   // See docs/plans/READING_ROOMS_SPIKE.md.
   import { onDestroy } from 'svelte';
   import { page } from '$app/state';
@@ -24,10 +29,21 @@
     collectionOwnerDid,
     collectionPageLink,
     FEATURED_ROOM_URIS,
-    type CollectionMeta,
     type CollectionPageLink,
-    type MyRoom,
+    type RoomListing,
   } from '$lib/services/rooms';
+  import {
+    roomCacheDid,
+    readRoomSnapshot,
+    writeRoomSnapshot,
+    readMyRoomsCache,
+    writeMyRoomsCache,
+    readFeaturedCache,
+    writeFeaturedCache,
+    readPresenceCache,
+    writePresenceCache,
+    type MyRoomListing,
+  } from '$lib/services/roomCache';
   import type { FollowLite } from '$lib/services/socialGraph';
   import { auth } from '$lib/stores/auth.svelte';
   import { followingRoomsStore } from '$lib/stores/followingRooms.svelte';
@@ -50,13 +66,12 @@
   let memberCount = $state(0);
   let openingUrl = $state<string | null>(null);
   let collectionLink = $state<CollectionPageLink | null>(null);
+  // What the local snapshot already holds for this room — see the persist
+  // effect below.
+  let written: { room: RoomInfo; joined: boolean } | null = null;
 
   // --- index (no uri) state ---
-  interface RoomListing extends CollectionMeta {
-    subject: string;
-    link: CollectionPageLink | null;
-  }
-  let myRooms = $state<Array<MyRoom & RoomListing>>([]);
+  let myRooms = $state<MyRoomListing[]>([]);
   let myRoomsLoading = $state(false);
   let featuredRooms = $state<RoomListing[]>([]);
   // Rooms found on the people you follow, described one by one as the scan
@@ -90,6 +105,7 @@
     if (uri) {
       void loadRoom(uri);
     } else {
+      void loadCachedPresence();
       void loadMyRooms();
       void loadFeatured();
       void followingRoomsStore.load();
@@ -134,9 +150,23 @@
     loading = true;
     loadError = null;
     room = null;
+    written = null;
     members = [];
     memberCount = 0;
     collectionLink = null;
+
+    // The last copy of this room, painted before anything is requested. Only a
+    // disk read stands between the click and the list; the refresh below
+    // replaces it in place.
+    const cached = await readRoomSnapshot(target, roomCacheDid(auth.user?.did));
+    if (target !== uri) return;
+    if (cached) {
+      room = cached.room;
+      joined = cached.joined;
+      written = { room: cached.room, joined: cached.joined };
+      loading = false;
+    }
+
     const [roomResult, joinedResult] = await Promise.allSettled([
       api.getRoom(target),
       api.getRoomJoined(target),
@@ -144,14 +174,33 @@
     if (target !== uri) return;
     if (roomResult.status === 'fulfilled') {
       room = roomResult.value;
-    } else {
+    } else if (!room) {
+      // With a cached copy on screen there is nothing to tell the reader: the
+      // room they asked for is right there, and the next visit tries again.
       loadError = 'Could not load this room.';
     }
-    joined = joinedResult.status === 'fulfilled' && joinedResult.value.joined;
+    if (joinedResult.status === 'fulfilled') joined = joinedResult.value.joined;
     loading = false;
     void loadMembers(target);
     void loadCollectionLink(target);
   }
+
+  // Keep the snapshot in step with what's on screen — the refresh, a join or
+  // leave, a mark-as-read, an article added here. Writing from an effect rather
+  // than at each call site means no path can update the room and forget the
+  // cache. Guests are cached too (under the anonymous owner): a room reached by
+  // link is often a visitor's first page, and it should open fast the second
+  // time as well. `written` is what the cache already holds, so opening a room
+  // doesn't write its own snapshot straight back.
+  $effect(() => {
+    const current = room;
+    const target = uri;
+    const isJoined = joined;
+    if (!current || !target || loading) return;
+    if (written && written.room === current && written.joined === isJoined) return;
+    written = { room: current, joined: isJoined };
+    void writeRoomSnapshot(target, roomCacheDid(auth.user?.did), current, isJoined);
+  });
 
   // The collection's own page on its provider. Building it needs the owner's
   // handle, so it lands a beat after the room and is simply absent when the
@@ -289,36 +338,84 @@
     );
   }
 
+  // Your rooms: the cached list first, then the live one. Describing a room
+  // costs a record fetch per collection plus a profile lookup, which is why the
+  // described rows are what's cached, not just the subjects.
   async function loadMyRooms() {
-    if (!auth.user) return;
+    const user = auth.user;
+    if (!user) return;
     myRoomsLoading = true;
-    const rooms = await fetchMyRooms(auth.user.did, auth.user.pdsUrl);
+    const cached = await readMyRoomsCache(user.did);
+    if (uri) return;
+    if (cached) {
+      myRooms = cached;
+      myRoomsLoading = false;
+      void loadMemberCounts(cached.map((r) => r.subject));
+    }
+
+    const rooms = await fetchMyRooms(user.did, user.pdsUrl);
+    // Null is a PDS that didn't answer, not an empty shelf — keep the cached
+    // list rather than telling the reader they're in no rooms.
+    if (rooms === null) {
+      myRoomsLoading = false;
+      return;
+    }
     const listings = await describeRooms(rooms.map((r) => r.subject));
-    if (!uri) myRooms = rooms.map((r, i) => ({ ...r, ...listings[i] }));
+    const rows = rooms.map((r, i) => ({ ...r, ...listings[i] }));
+    if (!uri) myRooms = rows;
     myRoomsLoading = false;
+    void writeMyRoomsCache(user.did, rows);
     void loadMemberCounts(rooms.map((r) => r.subject));
   }
 
   async function loadFeatured() {
+    const cached = await readFeaturedCache();
+    if (!uri && cached?.length) {
+      featuredRooms = cached;
+      void loadMemberCounts(cached.map((l) => l.subject));
+    }
+
     const listings = await describeRooms(FEATURED_ROOM_URIS);
     // A featured collection whose record can't be fetched has no name to show
     // and nothing behind its link; drop the row rather than render a husk.
     const shown = listings.filter((l) => l.name !== null);
     if (!uri) featuredRooms = shown;
+    if (shown.length > 0) void writeFeaturedCache(shown);
     void loadMemberCounts(shown.map((l) => l.subject));
   }
 
   // One count per room, in parallel — the same presence signal the room page
   // shows, brought up to the index so a room reads as busy or quiet before you
   // open it. Deliberately not the DID list: nothing here draws avatars.
+  //
+  // Asked at most once per room per visit, tracked separately from the answers
+  // so a count seeded from cache is still re-checked.
+  const countAsked = new Set<string>();
   async function loadMemberCounts(subjects: string[]) {
+    const wanted = subjects.filter((s) => !countAsked.has(s));
+    if (wanted.length === 0) return;
+    wanted.forEach((s) => countAsked.add(s));
     await Promise.all(
-      subjects.map(async (subject) => {
-        if (subject in memberCounts) return;
+      wanted.map(async (subject) => {
         const count = await fetchRoomMemberCount(subject);
-        if (!uri) memberCounts[subject] = count;
+        // A failed lookup never overwrites a count we already have: an outage
+        // should leave the marker as it was, not blank it.
+        if (!uri && (count !== null || memberCounts[subject] === undefined)) {
+          memberCounts[subject] = count;
+        }
       })
     );
+    if (!uri) void writePresenceCache(memberCounts);
+  }
+
+  // Seed the presence markers from cache before any of them are asked for, so
+  // the rows don't pop a beat after they render.
+  async function loadCachedPresence() {
+    const cached = await readPresenceCache();
+    if (uri) return;
+    for (const [subject, count] of Object.entries(cached)) {
+      if (memberCounts[subject] === undefined) memberCounts[subject] = count;
+    }
   }
 
   // Rooms the people you follow are in: the store's subjects, joined to the

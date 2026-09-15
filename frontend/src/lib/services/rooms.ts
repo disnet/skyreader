@@ -82,8 +82,12 @@ export interface MyRoom {
 }
 
 /** The rooms this user has joined — their own readAlong records, read publicly
- *  from their own PDS (no session needed for reads). */
-export async function fetchMyRooms(did: string, pdsUrl: string): Promise<MyRoom[]> {
+ *  from their own PDS (no session needed for reads).
+ *
+ *  Null (not []) when the lookup fails, so a PDS blip doesn't read as "you left
+ *  every room": callers that paint from cache keep the cached list instead of
+ *  clearing it. Same stance as fetchRoomMemberCount. */
+export async function fetchMyRooms(did: string, pdsUrl: string): Promise<MyRoom[] | null> {
   const params = new URLSearchParams({
     repo: did,
     collection: READ_ALONG_NSID,
@@ -91,7 +95,7 @@ export async function fetchMyRooms(did: string, pdsUrl: string): Promise<MyRoom[
   });
   try {
     const res = await fetch(`${pdsUrl}/xrpc/com.atproto.repo.listRecords?${params}`);
-    if (!res.ok) return [];
+    if (!res.ok) return null;
     const data = (await res.json()) as {
       records?: Array<{ uri: string; value?: { subject?: string; createdAt?: string } }>;
     };
@@ -103,7 +107,7 @@ export async function fetchMyRooms(did: string, pdsUrl: string): Promise<MyRoom[
         createdAt: r.value?.createdAt,
       }));
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -287,6 +291,13 @@ export interface CollectionPageLink {
   url: string;
   /** The provider's name, so the link can say where it goes. */
   provider: string;
+}
+
+/** A room as the /rooms index lists it: the collection's own name and blurb,
+ *  plus the link out to the page it lives on. */
+export interface RoomListing extends CollectionMeta {
+  subject: string;
+  link: CollectionPageLink | null;
 }
 
 /** The DID whose repo holds a collection record — its owner. */
