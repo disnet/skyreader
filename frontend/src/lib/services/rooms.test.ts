@@ -3,6 +3,7 @@ import {
   aggregateFollowedRooms,
   collectionOwnerDid,
   collectionPageLink,
+  fetchMyRooms,
   fetchRoomMemberCount,
   fetchRoomMembers,
   resolveRoomInput,
@@ -255,6 +256,77 @@ describe('collectionPageLink', () => {
       collectionPageLink('at://did:plc:abc123/other.collection/3muahss6xki2b', 'x.com')
     ).toBeNull();
     expect(collectionPageLink('not a uri', 'disnetdev.com')).toBeNull();
+  });
+});
+
+describe('fetchMyRooms', () => {
+  const DID = 'did:plc:reader1';
+
+  it('lists the rooms in your own repo', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        recordsResponse([
+          { subject: COLLECTION_URI, createdAt: '2026-09-01T00:00:00Z' },
+          { subject: OTHER_URI },
+        ])
+      )
+    );
+    expect(await fetchMyRooms(DID, 'https://pds.example')).toEqual([
+      {
+        recordUri: 'at://did:plc:reader1/app.skyreader.reading.readAlong/rk0',
+        subject: COLLECTION_URI,
+        createdAt: '2026-09-01T00:00:00Z',
+      },
+      {
+        recordUri: 'at://did:plc:reader1/app.skyreader.reading.readAlong/rk1',
+        subject: OTHER_URI,
+        createdAt: undefined,
+      },
+    ]);
+  });
+
+  // Callers key off `subject` — a Home lane, a Dexie row — so two records for
+  // one room must not come back as two rooms.
+  it('keeps the first of a repeated room', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        recordsResponse([
+          { subject: COLLECTION_URI, createdAt: 'first' },
+          { subject: COLLECTION_URI, createdAt: 'rejoined' },
+          { subject: OTHER_URI },
+        ])
+      )
+    );
+    const rooms = await fetchMyRooms(DID, 'https://pds.example');
+    expect(rooms?.map((r) => r.subject)).toEqual([COLLECTION_URI, OTHER_URI]);
+    expect(rooms?.[0].createdAt).toBe('first');
+  });
+
+  it('skips a record with no subject', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => recordsResponse([{ createdAt: 'x' }, { subject: COLLECTION_URI }]))
+    );
+    expect((await fetchMyRooms(DID, 'https://pds.example'))?.map((r) => r.subject)).toEqual([
+      COLLECTION_URI,
+    ]);
+  });
+
+  it('reports null, not an empty list, when the repo read fails', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('nope', { status: 500 }))
+    );
+    expect(await fetchMyRooms(DID, 'https://pds.example')).toBeNull();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('offline');
+      })
+    );
+    expect(await fetchMyRooms(DID, 'https://pds.example')).toBeNull();
   });
 });
 

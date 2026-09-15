@@ -6,6 +6,8 @@
  * is aggregated client-side via Constellation, so the backend's whole surface is:
  *  - GET  /api/rooms?uri=…   — resolve the collection into its article list
  *    (reuses the auth-free backing read path) plus per-article read counts.
+ *    Session-free: a room is a public collection, and a shared link has to open
+ *    for a visitor who has never signed in. Everything below writes, so it doesn't.
  *  - POST /api/rooms         — start a room: create a collection in the caller's
  *    own repo and join it.
  *  - POST /api/rooms/read    — count a read made through the room surface.
@@ -121,15 +123,21 @@ function canAddTo(c: ResolvedCollection, did: string): boolean {
  * annotated with room-scoped read counts. `complete: false` means the snapshot
  * was truncated or a member failed to resolve transiently — render what came
  * back, but don't present it as the whole list.
+ *
+ * Session-free: a room is a public collection resolved off its owner's PDS, and
+ * a shared link has to open for someone who has never signed in. A signed-out
+ * reader gets the same list and the same aggregate read counts; what a session
+ * adds is the two per-reader fields, `readByMe` and `canAdd`, which are false
+ * without one.
  */
 export async function handleGetRoom(request: Request, env: Env): Promise<Response> {
   if (request.method !== 'GET') {
     return json({ error: 'Method not allowed' }, 405);
   }
   const session = await getSessionFromRequest(request, env);
-  if (!session) {
-    return json({ error: 'Unauthorized' }, 401);
-  }
+  // No real DID is the empty string, so the `mine` aggregate below is 0 for a
+  // signed-out reader without a second query.
+  const did = session?.did ?? '';
 
   const uri = new URL(request.url).searchParams.get('uri');
   if (!uri) return json({ error: 'Missing uri parameter' }, 400);
@@ -158,7 +166,7 @@ export async function handleGetRoom(request: Request, env: Env): Promise<Respons
               MAX(CASE WHEN did = ? THEN 1 ELSE 0 END) AS mine
          FROM room_reads WHERE collection_uri = ? GROUP BY url_normalized`
     )
-      .bind(session.did, uri)
+      .bind(did, uri)
       .all<{ url_normalized: string; n: number; mine: number }>();
     const counts = new Map(countRows.results.map((r) => [r.url_normalized, r]));
 
@@ -192,7 +200,7 @@ export async function handleGetRoom(request: Request, env: Env): Promise<Respons
       ownerDid: ref.did,
       name,
       description,
-      canAdd: canAddTo(collection, session.did),
+      canAdd: session ? canAddTo(collection, session.did) : false,
       complete: snapshot.complete,
       items,
     });
@@ -363,8 +371,12 @@ export async function handleRoomJoin(request: Request, env: Env): Promise<Respon
       return json({ error: 'Missing or invalid rkey (client-minted TID)' }, 400);
     }
     // Idempotent: an existing join for this collection is the answer, not a dupe.
+    // A failed read is NOT "not joined" — writing on a repo we couldn't read is
+    // how a second readAlong for one room gets minted, which every reader of
+    // that list then has to dedupe. Fail the join instead; it is retryable.
     const mine = await listMine();
-    if (mine && mine.length > 0) {
+    if (mine === null) return json({ error: 'Could not read your repo' }, 502);
+    if (mine.length > 0) {
       return json({ joined: true, uri: mine[0].uri });
     }
     const record: ReadAlongRecord = {

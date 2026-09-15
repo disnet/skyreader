@@ -81,6 +81,116 @@ const MAX_PAGES = 50;
 // once (Workers caps them); the per-snapshot caches dedup repeats and cross-repo PDS.
 const RESOLVE_CONCURRENCY = 8;
 
+/**
+ * How many outbound fetches one snapshot may spend.
+ *
+ * A Worker invocation is capped at 1000 subrequests, and D1 statements share that
+ * ceiling — but the cost of a snapshot is set by the collection, not by us. With
+ * `includeForeign` a room pays roughly two fetches per contributed article (verify
+ * the membership record, then resolve the item it points at) on top of Constellation
+ * paging, so a few hundred cross-repo contributions is enough to cross the cap. What
+ * makes that worth guarding is the failure mode: crossing it THROWS, so the room
+ * fails to load entirely rather than coming back short. `complete: false` already
+ * means "this list may be short", which is the honest answer here, so spend up to
+ * the budget, stop, and say so.
+ *
+ * 400 leaves the rest of the invocation (the caller's own record reads, the D1 count
+ * query) a wide margin, and still resolves a room of ~200 articles in full.
+ */
+export const SNAPSHOT_SUBREQUESTS = 400;
+
+/**
+ * The share of the budget the foreign-membership phase may spend verifying refs.
+ *
+ * Verification costs one getRecord per Constellation ref, so on a busy room it could
+ * eat the whole budget and leave nothing to resolve the articles those refs point at.
+ * A room that renders the owner's half is a better answer than one that renders
+ * nothing, so the phase that runs first is the one that gets capped.
+ */
+const FOREIGN_VERIFY_SHARE = 0.5;
+
+/**
+ * A snapshot's allowance of outbound fetches, claimed one at a time.
+ *
+ * `exceeded` is the load-bearing readout, and it is deliberately not "the budget is
+ * spent": it only goes true once a claim has actually been REFUSED, so a snapshot
+ * that finished on its last permitted fetch still reports itself complete.
+ */
+class SubrequestBudget {
+  private used = 0;
+  private denied = 0;
+
+  constructor(
+    readonly limit: number,
+    private readonly parent?: SubrequestBudget
+  ) {}
+
+  /** Claim one fetch. False means the caller must stop and report incompleteness. */
+  claim(): boolean {
+    if (this.used >= this.limit) {
+      this.denied += 1;
+      return false;
+    }
+    // A portion spends its parent's allowance too, so the phase caps compose
+    // instead of each phase getting its own fresh 400.
+    if (this.parent && !this.parent.claim()) {
+      this.denied += 1;
+      return false;
+    }
+    this.used += 1;
+    return true;
+  }
+
+  /**
+   * A sub-allowance drawing on this budget, capped at `share` of its limit.
+   *
+   * Bounding a phase by how many ITEMS it may touch doesn't bound what it costs:
+   * verifying one foreign ref is a getRecord plus, for a contributor we haven't
+   * seen, a DID resolution. Capping the spend is the only cap that holds.
+   */
+  portion(share: number): SubrequestBudget {
+    return new SubrequestBudget(Math.max(1, Math.floor(this.limit * share)), this);
+  }
+
+  /** True once work was actually turned away — the snapshot is short. */
+  get exceeded(): boolean {
+    return this.denied > 0;
+  }
+
+  get spent(): number {
+    return this.used;
+  }
+
+  get refused(): number {
+    return this.denied;
+  }
+}
+
+/**
+ * DID -> PDS for one snapshot: cached, and charged to the budget once per DID.
+ *
+ * Shared across BOTH phases (foreign verification and item resolution), which the
+ * two private caches it replaces were not — a DID that contributed a link and owned
+ * the item it pointed at used to be resolved twice, for two subrequests and one
+ * answer. A cache hit costs nothing, since the fetch was already paid for.
+ *
+ * Out of budget resolves to null, which every call site already treats as "couldn't
+ * reach this repo" and folds into `complete: false`.
+ */
+type PdsResolver = (did: string, budget: SubrequestBudget) => Promise<string | null>;
+
+function pdsResolver(): PdsResolver {
+  const cache = new Map<string, Promise<string | null>>();
+  return (did, budget) => {
+    let pending = cache.get(did);
+    if (!pending) {
+      pending = budget.claim() ? resolvePdsUrl(did) : Promise.resolve(null);
+      cache.set(did, pending);
+    }
+    return pending;
+  };
+}
+
 export interface RawRecord<T = Record<string, unknown>> {
   uri: string;
   cid: string;
@@ -98,12 +208,17 @@ export interface RawRecord<T = Record<string, unknown>> {
 export async function listAllRecordsPublic<T = Record<string, unknown>>(
   pds: string,
   repo: string,
-  collection: string
+  collection: string,
+  budget?: SubrequestBudget
 ): Promise<{ records: RawRecord<T>[]; truncated: boolean }> {
   const all: RawRecord<T>[] = [];
   let cursor: string | undefined;
   let pages = 0;
   for (;;) {
+    // Running out of budget mid-listing IS truncation — the same state the page cap
+    // below reports, reached for a different reason. Callers with no budget (the
+    // Margin highlight import) page to MAX_PAGES as before.
+    if (budget && !budget.claim()) return { records: all, truncated: true };
     const u = new URL(`${pds}/xrpc/com.atproto.repo.listRecords`);
     u.searchParams.set('repo', repo);
     u.searchParams.set('collection', collection);
@@ -266,24 +381,17 @@ function extractCanonicalAtUri(value: ItemValue | null): string | undefined {
  * how the membership record names its item + collection (handled by the callers).
  */
 async function resolveMembers(
-  pairs: MembershipPair[]
+  pairs: MembershipPair[],
+  budget: SubrequestBudget,
+  pdsFor: PdsResolver
 ): Promise<{ members: BackedMember[]; skipped: SkippedMember[]; typeMix: Record<string, number> }> {
-  // Caches hold the in-flight PROMISE (not the resolved value) so concurrent workers
-  // resolving the same DID/item share one fetch instead of racing into duplicates.
-  const pdsCache = new Map<string, Promise<string | null>>();
+  // The cache holds the in-flight PROMISE (not the resolved value) so concurrent
+  // workers resolving the same item share one fetch instead of racing into
+  // duplicates. PDS resolution is cached the same way one level up, across phases.
   const itemCache = new Map<string, Promise<ItemValue | null>>();
   const members: BackedMember[] = [];
   const skipped: SkippedMember[] = [];
   const typeMix: Record<string, number> = {};
-
-  const pdsFor = (did: string): Promise<string | null> => {
-    let p = pdsCache.get(did);
-    if (!p) {
-      p = resolvePdsUrl(did);
-      pdsCache.set(did, p);
-    }
-    return p;
-  };
 
   const resolveItem = (itemUri: string): Promise<ItemValue | null> => {
     let p = itemCache.get(itemUri);
@@ -291,8 +399,12 @@ async function resolveMembers(
       p = (async () => {
         const ref = parseAtUri(itemUri);
         if (!ref) return null;
-        const pds = await pdsFor(ref.did);
+        const pds = await pdsFor(ref.did, budget);
         if (!pds) return null;
+        // Out of budget: the item is skipped like any other unresolvable one, and
+        // snapshotBackedCollection reads `budget.exceeded` to mark the snapshot
+        // short. This is the one place a skip is NOT the collection's own fault.
+        if (!budget.claim()) return null;
         return getRecordPublic(pds, ref.did, ref.collection, ref.rkey);
       })();
       itemCache.set(itemUri, p);
@@ -408,20 +520,31 @@ const FOREIGN_PAGE_LIMIT = 100;
  * ask for it, because there the point is that the list is co-curated.
  *
  * Constellation is an index, not the authority: every record it names is fetched and
- * re-checked against the collection uri before it counts. Bounded by pages, and
- * `complete: false` on any failure so the caller can say the list may be short
- * rather than silently dropping other people's contributions.
+ * re-checked against the collection uri before it counts. Bounded by pages AND by a
+ * portion of the snapshot's fetch budget, with `complete: false` on any failure or
+ * either bound, so the caller can say the list may be short rather than silently
+ * dropping other people's contributions.
  */
 async function listForeignMembership(
   shape: MembershipShape,
   collectionUri: string,
-  ownerDid: string
+  ownerDid: string,
+  budget: SubrequestBudget,
+  pdsFor: PdsResolver
 ): Promise<{ pairs: MembershipPair[]; complete: boolean }> {
+  // Everything this phase spends comes out of a portion of the snapshot's budget,
+  // so a flood of contributions can't leave nothing to resolve the articles those
+  // contributions point at (see FOREIGN_VERIFY_SHARE).
+  const phase = budget.portion(FOREIGN_VERIFY_SHARE);
   const refs: Array<{ did: string; rkey: string }> = [];
   let cursor: string | undefined;
   let complete = true;
 
   for (let page = 0; page < FOREIGN_PAGES; page++) {
+    if (!phase.claim()) {
+      complete = false;
+      break;
+    }
     const u = new URL(`${CONSTELLATION_BASE}/links`);
     u.searchParams.set('target', collectionUri);
     u.searchParams.set('collection', shape.collection);
@@ -450,17 +573,15 @@ async function listForeignMembership(
 
   if (refs.length === 0) return { pairs: [], complete };
 
-  const pdsCache = new Map<string, Promise<string | null>>();
   const pairs: MembershipPair[] = [];
   await mapPool(refs, RESOLVE_CONCURRENCY, async (ref) => {
     try {
-      let pdsPromise = pdsCache.get(ref.did);
-      if (!pdsPromise) {
-        pdsPromise = resolvePdsUrl(ref.did);
-        pdsCache.set(ref.did, pdsPromise);
-      }
-      const pds = await pdsPromise;
+      const pds = await pdsFor(ref.did, phase);
       if (!pds) {
+        complete = false;
+        return;
+      }
+      if (!phase.claim()) {
         complete = false;
         return;
       }
@@ -502,14 +623,17 @@ export interface SnapshotOptions {
   /** Also count membership written by repos other than the owner's (see
    *  `listForeignMembership`). Off by default: backed saves are owner-only. */
   includeForeign?: boolean;
+  /** Override the per-snapshot fetch budget (see SNAPSHOT_SUBREQUESTS). Callers
+   *  normally leave this alone; tests set it small to exercise the short path. */
+  maxSubrequests?: number;
 }
 
 /**
  * Snapshot a backed collection into the set of article saves it currently contains.
  * `ownerDid` owns the collection (and, by default, its membership records); item
- * records may live elsewhere. A thrown listRecords error or a truncated membership
- * listing yields `complete: false` so the caller refuses to replace the membership
- * table.
+ * records may live elsewhere. A thrown listRecords error, a truncated membership
+ * listing, or a collection too large to resolve inside one snapshot's fetch budget
+ * yields `complete: false` so the caller refuses to replace the membership table.
  */
 export async function snapshotBackedCollection(
   provider: BackingProviderName,
@@ -517,7 +641,12 @@ export async function snapshotBackedCollection(
   collectionUri: string,
   options: SnapshotOptions = {}
 ): Promise<SnapshotResult> {
-  const pds = await resolvePdsUrl(ownerDid);
+  // One budget and one DID cache for the whole snapshot, so every phase draws on
+  // the same allowance and no DID is resolved twice across them.
+  const budget = new SubrequestBudget(options.maxSubrequests ?? SNAPSHOT_SUBREQUESTS);
+  const pdsFor = pdsResolver();
+
+  const pds = await pdsFor(ownerDid, budget);
   if (!pds) {
     return { complete: false, members: [], skipped: [], typeMix: {} };
   }
@@ -527,7 +656,8 @@ export async function snapshotBackedCollection(
     const owned = await listAllRecordsPublic<Record<string, unknown>>(
       pds,
       ownerDid,
-      shape.collection
+      shape.collection,
+      budget
     );
     const pairs: MembershipPair[] = owned.records.flatMap((l) => {
       if (shape.collectionUriOf(l.value) !== collectionUri) return [];
@@ -537,7 +667,7 @@ export async function snapshotBackedCollection(
     let complete = !owned.truncated;
 
     if (options.includeForeign) {
-      const foreign = await listForeignMembership(shape, collectionUri, ownerDid);
+      const foreign = await listForeignMembership(shape, collectionUri, ownerDid, budget, pdsFor);
       const seen = new Set(pairs.map((p) => p.linkUri));
       for (const pair of foreign.pairs) {
         if (!seen.has(pair.linkUri)) pairs.push(pair);
@@ -545,7 +675,22 @@ export async function snapshotBackedCollection(
       if (!foreign.complete) complete = false;
     }
 
-    const { members, skipped, typeMix } = await resolveMembers(pairs);
+    const { members, skipped, typeMix } = await resolveMembers(pairs, budget, pdsFor);
+
+    // The catch-all for every phase: item resolution reports a budget refusal as a
+    // skipped member, not as incompleteness, so the budget itself is what says the
+    // list may be short.
+    if (budget.exceeded) {
+      complete = false;
+      console.warn('[backing] snapshot hit its subrequest budget', {
+        collectionUri,
+        limit: budget.limit,
+        spent: budget.spent,
+        refused: budget.refused,
+        resolved: members.length,
+      });
+    }
+
     return { complete, members: sortByAddedAt(members), skipped, typeMix };
   } catch (err) {
     console.error('[backing] snapshot failed:', err);

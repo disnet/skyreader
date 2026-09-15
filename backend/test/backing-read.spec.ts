@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { extractUrlFromRecord, snapshotBackedCollection } from '../src/services/backing/read';
+import {
+  extractUrlFromRecord,
+  snapshotBackedCollection,
+  SNAPSHOT_SUBREQUESTS,
+} from '../src/services/backing/read';
 import { normalizeArticleUrl } from '../src/utils/url-normalize';
 import { parseBacking, serializeBacking } from '../src/routes/settings';
 import * as didResolver from '../src/utils/did-resolver';
@@ -650,6 +654,124 @@ describe('snapshotBackedCollection — includeForeign (co-curated collections)',
 // record lives (owner repo vs Constellation) nor the concurrency of the resolve
 // pool may decide that. See routes/rooms.ts.
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// The subrequest budget. A Worker invocation is capped at 1000 subrequests and
+// crossing it THROWS, so a big co-curated room used to fail to load entirely
+// rather than come back short. The budget converts that into the `complete: false`
+// the caller already knows how to render.
+// ---------------------------------------------------------------------------
+
+describe('snapshotBackedCollection — subrequest budget', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  /** `count` contributors, each with one link in their own repo pointing at a card
+   *  in that same repo — the shape of a busy open room. */
+  function installBusyRoom(count: number) {
+    const dids = Array.from({ length: count }, (_, i) => `did:plc:c${i}`);
+    mockPds({
+      [OWNER]: OWNER_PDS,
+      ...Object.fromEntries(dids.map((d, i) => [d, `https://c${i}.pds`])),
+    });
+    installFetch({
+      listRecords: () =>
+        jsonRes({
+          records: [
+            {
+              uri: `at://${OWNER}/network.cosmik.collectionLink/l1`,
+              cid: 'x',
+              value: {
+                collection: { uri: SEMBLE_COL },
+                card: { uri: `at://${OWNER}/network.cosmik.card/ownerCard` },
+              },
+            },
+          ],
+        }),
+      links: () =>
+        jsonRes({
+          linking_records: dids.map((did) => ({
+            did,
+            collection: 'network.cosmik.collectionLink',
+            rkey: 'theirLink',
+          })),
+          cursor: null,
+        }),
+      getRecord: (p) => {
+        const repo = p.get('repo')!;
+        if (p.get('collection') === 'network.cosmik.collectionLink') {
+          return jsonRes({
+            value: {
+              collection: { uri: SEMBLE_COL },
+              card: { uri: `at://${repo}/network.cosmik.card/theirCard` },
+            },
+          });
+        }
+        return jsonRes({
+          value: {
+            $type: 'network.cosmik.card',
+            type: 'URL',
+            content: { url: `https://a.test/${repo}` },
+          },
+        });
+      },
+    });
+    return dids;
+  }
+
+  it('answers a room too big to resolve with a short list, not a failure', async () => {
+    installBusyRoom(40);
+    const fetchSpy = vi.mocked(globalThis.fetch);
+
+    const snap = await snapshotBackedCollection('semble', OWNER, SEMBLE_COL, {
+      includeForeign: true,
+      maxSubrequests: 20,
+    });
+
+    // The old behaviour on a real Worker was a throw past the cap, which
+    // snapshotBackedCollection's catch turned into an empty list.
+    expect(snap.complete).toBe(false);
+    expect(snap.members.length).toBeGreaterThan(0);
+    expect(fetchSpy.mock.calls.length).toBeLessThanOrEqual(20);
+  });
+
+  it('caps foreign verification so it cannot starve item resolution', async () => {
+    installBusyRoom(40);
+
+    // Half the budget goes to verifying links; the rest is still there to resolve
+    // the cards, so the owner's own article survives a flood of contributions.
+    const snap = await snapshotBackedCollection('semble', OWNER, SEMBLE_COL, {
+      includeForeign: true,
+      maxSubrequests: 20,
+    });
+
+    expect(snap.members.map((m) => m.url)).toContain(`https://a.test/${OWNER}`);
+  });
+
+  it('leaves a room that fits inside the budget complete', async () => {
+    installBusyRoom(3);
+    const snap = await snapshotBackedCollection('semble', OWNER, SEMBLE_COL, {
+      includeForeign: true,
+    });
+    expect(snap.complete).toBe(true);
+    expect(snap.members).toHaveLength(4); // the owner's card plus three contributions
+  });
+
+  // The two phases used to keep separate PDS caches, so a contributor who owned the
+  // card their link pointed at was resolved twice — two subrequests, one answer.
+  it('resolves each DID once across both phases', async () => {
+    installBusyRoom(3);
+    const pdsSpy = vi.mocked(didResolver.resolvePdsUrl);
+
+    await snapshotBackedCollection('semble', OWNER, SEMBLE_COL, { includeForeign: true });
+
+    const resolved = pdsSpy.mock.calls.map(([did]) => did);
+    expect(new Set(resolved).size).toBe(resolved.length);
+  });
+
+  it('defaults to a budget with room for the rest of the invocation', () => {
+    expect(SNAPSHOT_SUBREQUESTS).toBeLessThan(1000);
+  });
+});
 
 describe('snapshotBackedCollection — addedAt ordering', () => {
   afterEach(() => vi.restoreAllMocks());

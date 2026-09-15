@@ -371,7 +371,53 @@ a confident zero), and none for an empty room. A room you've joined floors at 1,
 lags your own join record by seconds — the same reason the join button shows your avatar early.
 Room surface: `GET /api/rooms?uri=` (backing read path + `room_reads` counts),
 `POST /api/rooms/read`, migration `0077_room_reads.sql`, `RoomPage.svelte`, membership via
-Constellation `/links/distinct-dids` on `.subject`. The lexicon is published at
+Constellation `/links/distinct-dids` on `.subject`.
+
+`GET /api/rooms` is **session-free**. The chrome above was already written for a signed-out visitor
+on a shared link, but the endpoint behind it 401'd, which the api client reads as a dead session —
+so the one reader the link exists for got logged out and an error. A room is a public collection
+resolved off its owner's PDS, so the read answers without a session; what a session adds is the two
+per-reader fields, `readByMe` and `canAdd`, both false without one. Everything that writes still
+needs a session (`POST /api/rooms`, `/join`, `/items`, `/read`), and `RoomPage` skips the join check
+and hides the reader's "Mark as read" when `auth.isAuthenticated` is false — a guest is `isInApp`
+but has no session either.
+
+### The snapshot's fetch budget
+
+Opening the read put the `includeForeign` fan-out behind an unauthenticated GET, which made an
+already-real ceiling worth guarding. A Worker invocation is capped at 1000 subrequests, and a room's
+cost is set by the collection, not by us: roughly two fetches per contributed article (verify the
+membership record, then resolve the item it points at) on top of Constellation paging, so a few
+hundred cross-repo contributions crosses it. Crossing it **throws**, which
+`snapshotBackedCollection`'s catch turns into an empty list, so a busy room failed to load at all
+rather than coming back short.
+
+`SNAPSHOT_SUBREQUESTS` (400, overridable per snapshot via `SnapshotOptions.maxSubrequests`) is the
+allowance, claimed one fetch at a time. Running out is not an error: the phases stop and the
+snapshot reports `complete: false`, which the room page already renders as "this list may be
+short". Three details earn their keep:
+
+- **The foreign phase gets a portion, not the whole budget.** Verification runs before item
+  resolution, so left uncapped it would spend everything and leave nothing to resolve the articles
+  those refs point at — a room that renders empty is worse than one that renders the owner's half.
+  `FOREIGN_VERIFY_SHARE` is that split.
+- **The cap has to be on spend, not on item count.** The first attempt capped how many refs were
+  verified, which doesn't bound the cost: a ref is a `getRecord` _plus_, for a contributor not seen
+  yet, a DID resolution. A ten-ref cap against a twenty-fetch budget still spent all twenty. The
+  test caught it.
+- **One DID cache across both phases.** They used to hold separate ones, so a contributor who owned
+  the card their own link pointed at was resolved twice: two subrequests, one answer.
+
+`budget.exceeded` only goes true once a claim was actually refused, so a snapshot that finished on
+its last permitted fetch still reports itself complete.
+
+This bounds the worst case; it does not make the endpoint cheap. Edge-caching would, but the
+response isn't reader-neutral (`readByMe` per item, `canAdd`), `caches.default` is keyed by URL, and
+`readByMe` is exactly the per-user read state this document promises never leaves D1 — so a shared
+cache entry is a privacy bug, and a per-DID key gives a 0% hit rate on the traffic shape that
+matters here (many readers, one room, once each). The fix is splitting the response into a public
+room-keyed part and a per-reader overlay, which also has no natural invalidation point: a room's
+membership changes when someone writes to their own repo, a write we never see. The lexicon is published at
 `/.well-known/lexicons/app/skyreader/reading/readAlong.json`. The Semble pitch (render "n reading
 along in Skyreader" from the NSID) is still unraised — raise it before this ships beyond a spike;
 the calls and the join-link shape to hand them are written out under "The whole integration,

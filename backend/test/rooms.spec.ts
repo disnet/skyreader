@@ -53,6 +53,14 @@ function request(path: string, body?: unknown, method = 'POST') {
   });
 }
 
+/** The same request with no session cookie — a visitor on a shared room link. */
+function anonRequest(path: string, method = 'GET') {
+  return new IncomingRequest(`http://localhost${path}`, {
+    method,
+    headers: { Origin: env.FRONTEND_URL, 'Content-Type': 'application/json' },
+  });
+}
+
 async function call(req: Request): Promise<{ status: number; body: any }> {
   const ctx = createExecutionContext();
   const res = await worker.fetch(req, env, ctx);
@@ -121,6 +129,134 @@ describe('GET /api/rooms — canAdd', () => {
       request(`/api/rooms?uri=${encodeURIComponent(MARGIN_COLLECTION)}`, undefined, 'GET')
     );
     expect(body.canAdd).toBe(false);
+  });
+});
+
+// A room IS a public collection, and a shared link is often a visitor's first
+// page: the read has to answer without a session. What a session adds is the two
+// per-reader fields.
+describe('GET /api/rooms — signed out', () => {
+  beforeEach(() => reset());
+  afterEach(() => vi.restoreAllMocks());
+
+  it('resolves a room for a visitor with no session', async () => {
+    mockCollection({ name: 'Theirs', description: 'Open to all', accessType: 'OPEN' });
+    emptySnapshot();
+    const { status, body } = await call(
+      anonRequest(`/api/rooms?uri=${encodeURIComponent(OTHER_COLLECTION)}`)
+    );
+    expect(status).toBe(200);
+    expect(body.name).toBe('Theirs');
+    expect(body.description).toBe('Open to all');
+    expect(body.ownerDid).toBe(OWNER);
+  });
+
+  it('reports canAdd false even for an OPEN collection — adding needs a repo', async () => {
+    mockCollection({ name: 'Theirs', accessType: 'OPEN' });
+    emptySnapshot();
+    const { body } = await call(
+      anonRequest(`/api/rooms?uri=${encodeURIComponent(OTHER_COLLECTION)}`)
+    );
+    expect(body.canAdd).toBe(false);
+  });
+
+  it('serves the aggregate read count but never readByMe', async () => {
+    mockCollection({ name: 'Theirs', accessType: 'OPEN' });
+    vi.spyOn(read, 'snapshotBackedCollection').mockResolvedValue({
+      complete: true,
+      skipped: [],
+      typeMix: {},
+      members: [
+        {
+          url: 'https://a.test/x',
+          urlNormalized: 'a.test/x',
+          itemType: 'article',
+        },
+      ] as never,
+    });
+    // Someone else has read this article through the room.
+    await env.DB.prepare(
+      `INSERT INTO room_reads (collection_uri, url_normalized, did, read_at)
+       VALUES (?, 'a.test/x', ?, unixepoch())`
+    )
+      .bind(OTHER_COLLECTION, DID)
+      .run();
+
+    const { body } = await call(
+      anonRequest(`/api/rooms?uri=${encodeURIComponent(OTHER_COLLECTION)}`)
+    );
+    expect(body.items).toHaveLength(1);
+    expect(body.items[0].readCount).toBe(1);
+    expect(body.items[0].readByMe).toBe(false);
+  });
+
+  it('still requires a session to start a room', async () => {
+    const created = vi.spyOn(write, 'createCollection');
+    const { status } = await call(anonRequest('/api/rooms', 'POST'));
+    expect(status).toBe(401);
+    expect(created).not.toHaveBeenCalled();
+  });
+});
+
+// The join is idempotent off a listing of the caller's own repo, so what that
+// listing does when it FAILS is the whole correctness question: read "not
+// joined" from an unreadable repo and you mint a second readAlong for one room.
+describe('POST /api/rooms/join', () => {
+  const JOINER_SCOPES = `${FULL_SCOPES} ${READING_ROOM_SCOPES.join(' ')}`;
+  const RKEY = '3kzabcdefghij';
+  beforeEach(() => reset(JOINER_SCOPES));
+  afterEach(() => vi.restoreAllMocks());
+
+  /** A PDS whose readAlong listing answers `list`, and whose writes succeed. */
+  function pdsWithRecords(list: { success: boolean; data?: unknown[] }) {
+    const putRecord = vi.fn(async (collection: string, rkey: string) => ({
+      success: true,
+      data: { uri: `at://${DID}/${collection}/${rkey}`, cid: 'c' },
+    }));
+    const listAllRecords = vi.fn(async () =>
+      list.success
+        ? { success: true, data: list.data ?? [] }
+        : { success: false, error: 'pds down' }
+    );
+    vi.spyOn(pdsClient, 'createPDSClient').mockReturnValue({
+      putRecord,
+      listAllRecords,
+    } as never);
+    return putRecord;
+  }
+
+  it('writes one readAlong record for a room you have not joined', async () => {
+    const putRecord = pdsWithRecords({ success: true, data: [] });
+    const { status, body } = await call(
+      request('/api/rooms/join', { collectionUri: OTHER_COLLECTION, rkey: RKEY })
+    );
+    expect(status).toBe(200);
+    expect(body.joined).toBe(true);
+    expect(putRecord).toHaveBeenCalledTimes(1);
+    expect(putRecord.mock.calls[0][1]).toBe(RKEY);
+  });
+
+  it('is idempotent: an existing join is the answer, not a second record', async () => {
+    const existing = `at://${DID}/app.skyreader.reading.readAlong/already`;
+    const putRecord = pdsWithRecords({
+      success: true,
+      data: [{ uri: existing, value: { subject: OTHER_COLLECTION } }],
+    });
+    const { status, body } = await call(
+      request('/api/rooms/join', { collectionUri: OTHER_COLLECTION, rkey: RKEY })
+    );
+    expect(status).toBe(200);
+    expect(body).toEqual({ joined: true, uri: existing });
+    expect(putRecord).not.toHaveBeenCalled();
+  });
+
+  it('fails the join when the repo cannot be read, rather than minting a duplicate', async () => {
+    const putRecord = pdsWithRecords({ success: false });
+    const { status } = await call(
+      request('/api/rooms/join', { collectionUri: OTHER_COLLECTION, rkey: RKEY })
+    );
+    expect(status).toBe(502);
+    expect(putRecord).not.toHaveBeenCalled();
   });
 });
 
