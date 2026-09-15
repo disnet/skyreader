@@ -15,6 +15,7 @@ It runs on the AT Protocol, the open network behind Bluesky. That matters for on
 - **Read.** One chronological library with full offline support. [Reading](/guide/reading/)
 - **Keep.** Save articles from anywhere, highlight passages, attach notes, and revisit them in a review deck. [Saving and highlights](/guide/saving-and-highlights/)
 - **Share.** Post links with commentary to your linkblog, a public publication anyone can read or subscribe to. [Sharing and your linkblog](/guide/sharing-and-your-linkblog/)
+- **Read together.** Join a reading room and see who else is reading along. [Reading rooms](/guide/reading-rooms/)
 
 ## Try it without an account
 

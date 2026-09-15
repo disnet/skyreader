@@ -1642,6 +1642,33 @@ class ApiClient {
     return this.fetch(`/api/rooms?uri=${encodeURIComponent(uri)}`);
   }
 
+  /** Start a room: a new collection in the user's own repo, joined on the way
+   *  out. `joined: false` means the collection exists but the join write
+   *  failed; the room page offers Join as usual. */
+  async createRoom(room: {
+    name: string;
+    description?: string;
+    provider?: 'semble' | 'margin';
+    access?: 'open' | 'closed';
+  }): Promise<{
+    uri: string;
+    provider: 'semble' | 'margin';
+    name: string;
+    description?: string;
+    access: 'open' | 'closed';
+    joined: boolean;
+  }> {
+    return this.fetch('/api/rooms', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: room.name,
+        description: room.description || undefined,
+        provider: room.provider,
+        access: room.access,
+      }),
+    });
+  }
+
   async getRoomJoined(uri: string): Promise<{ joined: boolean }> {
     return this.fetch(`/api/rooms/join?uri=${encodeURIComponent(uri)}`);
   }

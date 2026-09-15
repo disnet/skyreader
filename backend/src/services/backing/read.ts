@@ -194,10 +194,17 @@ export function extractUrlFromRecord(value: ItemValue | null): string | null {
     if (value.motivation && value.motivation !== 'bookmarking') return null; // highlight/comment
     return target?.source ?? null;
   }
+  // Margin's own bookmark record (still defined in paddinglabs/margin, and what
+  // Skyreader's Margin export wrote before it moved to notes): the URL sits at
+  // the top level as `source`, not under target.
+  if (type === 'at.margin.bookmark') {
+    return typeof value.source === 'string' ? value.source : null;
+  }
   // Generic fallback for an unknown item type — try the usual URL-bearing fields.
   return (
     (typeof value.subject === 'string' ? value.subject : undefined) ??
     (typeof value.url === 'string' ? value.url : undefined) ??
+    (typeof value.source === 'string' ? value.source : undefined) ??
     content?.url ??
     target?.source ??
     null
@@ -207,8 +214,9 @@ export function extractUrlFromRecord(value: ItemValue | null): string | null {
 /**
  * Pull display metadata (title/author/description/image) carried on the foreign
  * record, so an imported save can show a real title before its body is extracted.
- * Semble cards keep these in content.metadata; a margin note may have target.title;
- * community bookmarks carry none (they rely on extraction).
+ * Semble cards keep these in content.metadata; a margin note may have target.title and a
+ * margin bookmark carries title/description at the top level; community bookmarks carry
+ * none (they rely on extraction).
  */
 function extractRecordMetadata(value: ItemValue | null): {
   title?: string;
@@ -234,6 +242,9 @@ function extractRecordMetadata(value: ItemValue | null): {
   if (value.$type === 'at.margin.note') {
     const target = value.target as { title?: unknown } | undefined;
     return { title: str(target?.title) };
+  }
+  if (value.$type === 'at.margin.bookmark') {
+    return { title: str(value.title), description: str(value.description) };
   }
   return {};
 }

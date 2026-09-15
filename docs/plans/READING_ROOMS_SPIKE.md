@@ -314,10 +314,13 @@ Semble," and each row of the `/rooms` index carries the same link as a quiet ico
 inverse of the paste-a-link parser (`collectionPageLink` sits next to `sembleCollectionPageToUri`),
 and it inherits that parser's constraint: Semble keys a collection page by the owner's **handle**,
 not their DID, so the link needs a DID → handle resolution and is simply **absent** when that fails
-(`handle.invalid` included) rather than built from a guess. Same for a provider with no such page:
-`at.margin.collection` has no constructible collection view, so a Margin room links nowhere. The
-feed proxy's filed-in-a-collection cards already took this stance
-(`feed-proxy/src/mention-lane.ts`); the reader now matches it.
+(`handle.invalid` included) rather than built from a guess. The feed proxy's
+filed-in-a-collection cards already took this stance (`feed-proxy/src/mention-lane.ts`); the reader
+now matches it. Margin's page is `margin.at/<handle>/collection/<rkey>` and its router accepts a
+DID in the handle slot (`web/src/views/AppShell.tsx` in paddinglabs/margin), so a Margin room
+always links, by DID when the handle didn't resolve; the paste box reads the same shape back
+(`marginCollectionPageToUri`). Margin's `/collections/<rkey>` route names no owner and is not a
+room link.
 
 One consequence worth knowing: writing a Semble `collectionLink` at someone else's collection needs
 that collection's **cid** for the strongRef, and `PDSClient.getRecord` only ever reads the session's
@@ -457,6 +460,22 @@ Everything is dropped by `clearAllData` on sign-out.
 - **Presence is the most perishable thing here**, since it's a claim about who is around right now:
   a reading nobody has refreshed in a week is dropped rather than painted, and the blob keeps the 60
   most recently refreshed rooms. Snapshots, being just article lists, are pruned at 30 days.
+
+### Starting a room (built 2026-09-15)
+
+The index has a "Start a new room" disclosure under the open box (`RoomCreateBox.svelte`) that
+creates the collection from Skyreader instead of sending the reader to Semble first. A room is a
+collection, so this is the same `createCollection` backed saves use, now taking the room's own
+settings: Semble's `accessType` (OPEN / CLOSED, the rule `canAddTo` and the room's add box already
+read) and an optional `description`. `POST /api/rooms` (`handleCreateRoom`) checks the provider
+scopes **and** `READING_ROOM_SCOPES` before writing anything, creates the collection in the
+caller's own repo, then writes the creator's readAlong record with a server-minted TID (the client
+has nothing to reconcile it against); a join failure after the collection exists still returns the
+room with `joined: false`, and the room page offers Join as usual. Semble is the default, closed
+is the default access; Margin is offered but has no access field and no description, so a Margin
+room is owner-only and takes a name alone. On success the page invalidates the provider's
+`collectionsStore` list (so the open box lists it), refreshes `roomsStore` (so Home grows a lane),
+and navigates into the new room.
 
 ## Roomy as the conversation layer (assessed 2026-09-03)
 

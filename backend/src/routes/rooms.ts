@@ -6,6 +6,8 @@
  * is aggregated client-side via Constellation, so the backend's whole surface is:
  *  - GET  /api/rooms?uri=…   — resolve the collection into its article list
  *    (reuses the auth-free backing read path) plus per-article read counts.
+ *  - POST /api/rooms         — start a room: create a collection in the caller's
+ *    own repo and join it.
  *  - POST /api/rooms/read    — count a read made through the room surface.
  *  - POST /api/rooms/items   — add an article to the room's collection.
  *
@@ -21,7 +23,7 @@ import {
   getRecordPublicWithCid,
   type BackingProviderName,
 } from '../services/backing/read';
-import { createMember } from '../services/backing/write';
+import { createCollection, createMember, type SembleAccessType } from '../services/backing/write';
 import { createPDSClient } from '../services/pds-client';
 import { FeedProxyClient } from '../services/feed-proxy-client';
 import { hasRequiredScopes, insufficientScopesResponse } from './auth';
@@ -29,6 +31,7 @@ import { MARGIN_SCOPES, READING_ROOM_SCOPES, SEMBLE_SCOPES } from '../config/sco
 import { parseAtUri } from '../utils/canonical-url';
 import { resolvePdsUrl } from '../utils/did-resolver';
 import { normalizeArticleUrl } from '../utils/url-normalize';
+import { generateTid } from '../utils/tid';
 
 export const READ_ALONG_COLLECTION = 'app.skyreader.reading.readAlong';
 
@@ -197,6 +200,111 @@ export async function handleGetRoom(request: Request, env: Env): Promise<Respons
     console.error('[rooms] failed to resolve room:', error);
     return json({ error: 'Failed to resolve room' }, 502);
   }
+}
+
+/** Caps on what a room is called. Semble's lexicon sets no limit we know of;
+ *  these keep a room row readable. */
+export const ROOM_NAME_MAX = 120;
+export const ROOM_DESCRIPTION_MAX = 500;
+
+/**
+ * POST /api/rooms — body { name, description?, provider?, access? }.
+ * Starts a room: creates a collection in the caller's OWN repo, then joins it.
+ *
+ * The room is the collection, so this is the same record backed saves create,
+ * with the room's own settings on it. `provider` defaults to Semble, the only
+ * one whose collections carry an access rule: `access` "open" (anyone may add)
+ * or "closed" (owner and collaborators; the default) sets Semble's
+ * `accessType`. A Margin collection has no access field, so a Margin room is
+ * owner-only whatever was asked, and it takes no description either — the
+ * shape we write there is only what we've seen Margin itself write.
+ *
+ * Both scope sets are checked BEFORE anything is written, so a session that
+ * lacks one comes back with nothing created rather than a collection it can't
+ * join. The join is the creator's readAlong record, minted here (the client
+ * has nothing to reconcile it against); if it fails after the collection
+ * exists, the room is still returned with `joined: false` and the room page
+ * offers Join as usual.
+ */
+export async function handleCreateRoom(request: Request, env: Env): Promise<Response> {
+  const session = await getSessionFromRequest(request, env);
+  if (!session) return json({ error: 'Unauthorized' }, 401);
+
+  let body: { name?: unknown; description?: unknown; provider?: unknown; access?: unknown };
+  try {
+    body = (await request.json()) as typeof body;
+  } catch {
+    return json({ error: 'Invalid JSON body' }, 400);
+  }
+
+  const providerRaw = body.provider ?? 'semble';
+  if (providerRaw !== 'semble' && providerRaw !== 'margin') {
+    return json({ error: 'provider must be "semble" or "margin"' }, 400);
+  }
+  const provider: BackingProviderName = providerRaw;
+
+  const name = str(body.name);
+  if (!name) return json({ error: 'Missing name field' }, 400);
+  if (name.length > ROOM_NAME_MAX) {
+    return json({ error: `name must be at most ${ROOM_NAME_MAX} characters` }, 400);
+  }
+  const description = str(body.description);
+  if (description && description.length > ROOM_DESCRIPTION_MAX) {
+    return json({ error: `description must be at most ${ROOM_DESCRIPTION_MAX} characters` }, 400);
+  }
+  let accessType: SembleAccessType = 'CLOSED';
+  if (body.access !== undefined) {
+    if (body.access === 'open') accessType = 'OPEN';
+    else if (body.access === 'closed') accessType = 'CLOSED';
+    else return json({ error: 'access must be "open" or "closed"' }, 400);
+  }
+
+  const providerScopes = provider === 'semble' ? SEMBLE_SCOPES : MARGIN_SCOPES;
+  if (
+    !hasRequiredScopes(session.grantedScopes, providerScopes) ||
+    !hasRequiredScopes(session.grantedScopes, READING_ROOM_SCOPES)
+  ) {
+    return insufficientScopesResponse();
+  }
+
+  const pds = createPDSClient(session);
+  let uri: string;
+  try {
+    const created = await createCollection(
+      pds,
+      provider,
+      name,
+      provider === 'semble' ? { accessType, description } : {}
+    );
+    uri = created.uri;
+  } catch (error) {
+    console.error('[rooms] failed to create room collection:', error);
+    const message = error instanceof Error ? error.message : '';
+    if (/scope/i.test(message)) return insufficientScopesResponse();
+    return json({ error: 'Failed to create the room' }, 502);
+  }
+
+  const record: ReadAlongRecord = {
+    $type: READ_ALONG_COLLECTION,
+    subject: uri,
+    createdAt: new Date().toISOString(),
+  };
+  const join = await pds.putRecord(READ_ALONG_COLLECTION, generateTid(), record);
+  if (!join.success) {
+    console.error('[rooms] created room but could not join it:', join.error);
+  }
+
+  return json(
+    {
+      uri,
+      provider,
+      name,
+      description: provider === 'semble' ? description : undefined,
+      access: provider === 'semble' ? (accessType === 'OPEN' ? 'open' : 'closed') : 'closed',
+      joined: join.success,
+    },
+    201
+  );
 }
 
 /**

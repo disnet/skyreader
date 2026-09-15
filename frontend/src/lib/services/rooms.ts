@@ -253,6 +253,8 @@ export async function fetchCollectionMeta(collectionUri: string): Promise<Collec
 
 const SEMBLE_COLLECTION_NSID = 'network.cosmik.collection';
 const SEMBLE_HOST = 'semble.so';
+const MARGIN_COLLECTION_NSID = 'at.margin.collection';
+const MARGIN_HOST = 'margin.at';
 
 async function resolveHandleToDid(handle: string): Promise<string | null> {
   if (handle.startsWith('did:')) return handle;
@@ -279,8 +281,22 @@ async function sembleCollectionPageToUri(url: URL): Promise<string | null> {
   return `at://${did}/${SEMBLE_COLLECTION_NSID}/${parts[3]}`;
 }
 
-/** Accepts a pasted room link (/rooms?uri=…), a semble.so collection page, or a
- *  bare collection at-uri. */
+/** A margin.at collection page (https://margin.at/<handle>/collection/<rkey>)
+ *  → the collection's at-uri. Margin's own router accepts a DID in the handle
+ *  slot, so a link built that way resolves without a lookup. Margin's other
+ *  collection route, /collections/<rkey>, names no owner and can't be turned
+ *  into an at-uri, so it is not a room link. */
+async function marginCollectionPageToUri(url: URL): Promise<string | null> {
+  if (url.hostname !== MARGIN_HOST) return null;
+  const parts = url.pathname.split('/').filter(Boolean);
+  if (parts.length !== 3 || parts[1] !== 'collection') return null;
+  const did = await resolveHandleToDid(decodeURIComponent(parts[0]));
+  if (!did) return null;
+  return `at://${did}/${MARGIN_COLLECTION_NSID}/${parts[2]}`;
+}
+
+/** Accepts a pasted room link (/rooms?uri=…), a semble.so or margin.at
+ *  collection page, or a bare collection at-uri. */
 export async function resolveRoomInput(input: string): Promise<string | null> {
   const trimmed = input.trim();
   if (!trimmed) return null;
@@ -289,7 +305,7 @@ export async function resolveRoomInput(input: string): Promise<string | null> {
     const url = new URL(trimmed);
     const uri = url.searchParams.get('uri');
     if (uri && uri.startsWith('at://') && parseAtUri(uri)) return uri;
-    return await sembleCollectionPageToUri(url);
+    return (await sembleCollectionPageToUri(url)) ?? (await marginCollectionPageToUri(url));
   } catch {
     return null;
   }
@@ -315,8 +331,8 @@ export function collectionOwnerDid(collectionUri: string): string | null {
 }
 
 /**
- * The inverse of `sembleCollectionPageToUri`: a room's collection back to the
- * page a reader can open it on, so a room can be followed out to where its list
+ * The inverse of the page parsers above: a room's collection back to the page
+ * a reader can open it on, so a room can be followed out to where its list
  * actually lives.
  *
  * Semble keys that page by the owner's *handle*, not their DID (the same
@@ -326,21 +342,33 @@ export function collectionOwnerDid(collectionUri: string): string | null {
  * appview returns when resolution fails, and it is a real hostname shape, so it
  * would build a URL that 404s quietly.
  *
- * `at.margin.collection` has no collection page we can construct, so a Margin
- * room links nowhere — the same stance as its missing access field: what the
- * provider doesn't give us, we don't invent.
+ * Margin's page takes a handle or a DID in the same slot, so a Margin room
+ * always links: by handle when one resolved, by the owner's DID otherwise.
  */
 export function collectionPageLink(
   collectionUri: string,
   ownerHandle: string | null | undefined
 ): CollectionPageLink | null {
   const ref = parseAtUri(collectionUri);
-  if (!ref || ref.collection !== SEMBLE_COLLECTION_NSID) return null;
-  if (!ownerHandle || ownerHandle.startsWith('did:') || ownerHandle === 'handle.invalid') {
-    return null;
+  if (!ref) return null;
+  const handle =
+    ownerHandle && !ownerHandle.startsWith('did:') && ownerHandle !== 'handle.invalid'
+      ? ownerHandle
+      : null;
+  if (ref.collection === SEMBLE_COLLECTION_NSID) {
+    if (!handle) return null;
+    return {
+      url: `https://${SEMBLE_HOST}/profile/${encodeURIComponent(handle)}/collections/${ref.rkey}`,
+      provider: 'Semble',
+    };
   }
-  return {
-    url: `https://${SEMBLE_HOST}/profile/${encodeURIComponent(ownerHandle)}/collections/${ref.rkey}`,
-    provider: 'Semble',
-  };
+  if (ref.collection === MARGIN_COLLECTION_NSID) {
+    return {
+      // A DID's colons are legal path characters, and Margin's router matches the
+      // raw form, so neither owner shape is encoded.
+      url: `https://${MARGIN_HOST}/${handle ?? ref.did}/collection/${ref.rkey}`,
+      provider: 'Margin',
+    };
+  }
+  return null;
 }

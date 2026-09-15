@@ -19,6 +19,7 @@
   import Icon from '$lib/components/Icon.svelte';
   import RoomAddBox from './RoomAddBox.svelte';
   import RoomCover from './RoomCover.svelte';
+  import RoomCreateBox from './RoomCreateBox.svelte';
   import RoomOpenBox from './RoomOpenBox.svelte';
   import { useReaderStack } from '$lib/hooks/useReaderStack.svelte';
   import { api } from '$lib/services/api';
@@ -57,6 +58,7 @@
   import { generateTid } from '$lib/utils/tid';
   import { extractRoomArticle, sortRoomItems } from '$lib/utils/roomArticle';
   import { getFaviconUrl } from '$lib/utils/favicon';
+  import { docsUrl } from '$lib/constants/docs';
   import type { BlueskyProfile, RoomInfo, RoomItem } from '$lib/types';
 
   const reader = useReaderStack();
@@ -771,15 +773,23 @@
         </button>
         <h2>Public Reading Rooms</h2>
         <p>
-          A room is a set of articles people read together in public.
-          Rooms live on shared semble collections. Open
-          one of your own collections, paste a link, or start with a featured room.
-          The rooms you join and articles you read in a room is public.
+          A room is a set of articles people read together in public. Rooms live on shared Semble or
+          Margin collections. Open one of your own collections, paste a link, start a new room, or
+          begin with a featured room. Joining and read status are public.
+          <a
+            class="room-intro-link"
+            href={docsUrl('readingRooms')}
+            target="_blank"
+            rel="noopener noreferrer">Learn more</a
+          >
         </p>
       </aside>
     {/if}
 
     <RoomOpenBox joinedSubjects={myRoomSubjects} onOpen={openRoom} />
+    {#if auth.user}
+      <RoomCreateBox onCreated={openRoom} />
+    {/if}
 
     {#if myRoomsLoading}
       <p class="room-quiet">Loading your rooms…</p>
@@ -1004,6 +1014,17 @@
     font-size: var(--text-md);
     line-height: 1.5;
     color: var(--color-text-secondary);
+  }
+
+  /* Quiet "Learn more" into the docs, inline at the end of the sentence, the
+     way the settings cards do it. */
+  .room-intro-link {
+    color: var(--color-primary);
+    text-decoration: none;
+  }
+
+  .room-intro-link:hover {
+    text-decoration: underline;
   }
 
   .room-intro-dismiss {

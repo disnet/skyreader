@@ -4,7 +4,8 @@ import worker from '../src/index';
 import * as read from '../src/services/backing/read';
 import * as write from '../src/services/backing/write';
 import * as didResolver from '../src/utils/did-resolver';
-import { GRANULAR_SCOPES, SEMBLE_SCOPES } from '../src/config/scopes';
+import * as pdsClient from '../src/services/pds-client';
+import { GRANULAR_SCOPES, READING_ROOM_SCOPES, SEMBLE_SCOPES } from '../src/config/scopes';
 
 // Reading Rooms — the add-an-article surface. What's pinned here is the
 // permission rule (whose collection accepts additions, and from whom) and the
@@ -205,5 +206,116 @@ describe('POST /api/rooms/items', () => {
     );
     expect(body.item.readCount).toBe(1);
     expect(body.item.readByMe).toBe(true);
+  });
+});
+
+describe('POST /api/rooms — start a room', () => {
+  const CREATOR_SCOPES = `${FULL_SCOPES} ${READING_ROOM_SCOPES.join(' ')}`;
+  beforeEach(() => reset(CREATOR_SCOPES));
+  afterEach(() => vi.restoreAllMocks());
+
+  /** A PDS that accepts every write; returns the readAlong puts for inspection. */
+  function acceptingPds(joinResult: { success: boolean; error?: string } = { success: true }) {
+    const putRecord = vi.fn(async (collection: string, rkey: string) =>
+      joinResult.success
+        ? { success: true, data: { uri: `at://${DID}/${collection}/${rkey}`, cid: 'c' } }
+        : { success: false, error: joinResult.error ?? 'nope', retryable: false }
+    );
+    vi.spyOn(pdsClient, 'createPDSClient').mockReturnValue({ putRecord } as never);
+    return putRecord;
+  }
+
+  it('creates a closed Semble collection by default and joins it', async () => {
+    const putRecord = acceptingPds();
+    const created = vi
+      .spyOn(write, 'createCollection')
+      .mockResolvedValue({ uri: `at://${DID}/network.cosmik.collection/newroom` });
+
+    const { status, body } = await call(request('/api/rooms', { name: '  Slow Reads  ' }));
+
+    expect(status).toBe(201);
+    expect(created).toHaveBeenCalledTimes(1);
+    const [, provider, name, opts] = created.mock.calls[0];
+    expect(provider).toBe('semble');
+    expect(name).toBe('Slow Reads');
+    expect(opts).toEqual({ accessType: 'CLOSED', description: undefined });
+
+    // The creator's own readAlong record, pointing at the new collection.
+    expect(putRecord).toHaveBeenCalledTimes(1);
+    const [collection, rkey, record] = putRecord.mock.calls[0];
+    expect(collection).toBe('app.skyreader.reading.readAlong');
+    expect(rkey).toMatch(/^[a-z0-9]{13,16}$/);
+    expect(record.subject).toBe(`at://${DID}/network.cosmik.collection/newroom`);
+
+    expect(body).toMatchObject({
+      uri: `at://${DID}/network.cosmik.collection/newroom`,
+      provider: 'semble',
+      name: 'Slow Reads',
+      access: 'closed',
+      joined: true,
+    });
+  });
+
+  it('passes open access and the description through to the collection', async () => {
+    acceptingPds();
+    const created = vi
+      .spyOn(write, 'createCollection')
+      .mockResolvedValue({ uri: `at://${DID}/network.cosmik.collection/open` });
+
+    const { status, body } = await call(
+      request('/api/rooms', { name: 'Open Reads', description: ' Anyone adds. ', access: 'open' })
+    );
+
+    expect(status).toBe(201);
+    expect(created.mock.calls[0][3]).toEqual({ accessType: 'OPEN', description: 'Anyone adds.' });
+    expect(body.access).toBe('open');
+    expect(body.description).toBe('Anyone adds.');
+  });
+
+  it('still returns the room when the join write fails after the collection exists', async () => {
+    acceptingPds({ success: false, error: 'pds down' });
+    vi.spyOn(write, 'createCollection').mockResolvedValue({
+      uri: `at://${DID}/network.cosmik.collection/lonely`,
+    });
+
+    const { status, body } = await call(request('/api/rooms', { name: 'Lonely' }));
+
+    expect(status).toBe(201);
+    expect(body.uri).toBe(`at://${DID}/network.cosmik.collection/lonely`);
+    expect(body.joined).toBe(false);
+  });
+
+  it('refuses a session missing the readAlong scope before writing anything', async () => {
+    await reset(FULL_SCOPES); // provider scopes only
+    const putRecord = acceptingPds();
+    const created = vi.spyOn(write, 'createCollection');
+
+    const { status, body } = await call(request('/api/rooms', { name: 'Nope' }));
+
+    expect(status).toBe(403);
+    expect(body.error).toBe('scope_upgrade_required');
+    expect(created).not.toHaveBeenCalled();
+    expect(putRecord).not.toHaveBeenCalled();
+  });
+
+  it('refuses a session missing the provider scopes before writing anything', async () => {
+    await reset(`${GRANULAR_SCOPES} ${READING_ROOM_SCOPES.join(' ')}`);
+    acceptingPds();
+    const created = vi.spyOn(write, 'createCollection');
+
+    const { status } = await call(request('/api/rooms', { name: 'Nope' }));
+
+    expect(status).toBe(403);
+    expect(created).not.toHaveBeenCalled();
+  });
+
+  it('rejects a blank name, an unknown provider, and an unknown access value', async () => {
+    acceptingPds();
+    const created = vi.spyOn(write, 'createCollection');
+
+    expect((await call(request('/api/rooms', { name: '   ' }))).status).toBe(400);
+    expect((await call(request('/api/rooms', { name: 'X', provider: 'pocket' }))).status).toBe(400);
+    expect((await call(request('/api/rooms', { name: 'X', access: 'secret' }))).status).toBe(400);
+    expect(created).not.toHaveBeenCalled();
   });
 });

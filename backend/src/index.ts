@@ -93,7 +93,13 @@ import {
   handleSetBacking,
 } from './routes/saved';
 import { handleExtract } from './routes/extract';
-import { handleGetRoom, handleRoomAddItem, handleRoomJoin, handleRoomRead } from './routes/rooms';
+import {
+  handleCreateRoom,
+  handleGetRoom,
+  handleRoomAddItem,
+  handleRoomJoin,
+  handleRoomRead,
+} from './routes/rooms';
 import { handleGetSettings, handleUpdateSettings } from './routes/settings';
 import {
   handleCreateBillingPortal,
@@ -626,7 +632,10 @@ async function route(
     // Reading Rooms (spike) — see docs/plans/READING_ROOMS_SPIKE.md
     case url.pathname === '/api/rooms':
       if (!session) return unauthorizedResponse(headers);
-      response = await handleGetRoom(request, env);
+      response =
+        request.method === 'POST'
+          ? await handleCreateRoom(request, env)
+          : await handleGetRoom(request, env);
       break;
     case url.pathname === '/api/rooms/join':
       if (!session) return unauthorizedResponse(headers);

@@ -17,6 +17,7 @@ vi.mock('./followGraph', () => ({
 
 const COLLECTION_URI = 'at://did:plc:abc123/network.cosmik.collection/3muahss6xki2b';
 const OTHER_URI = 'at://did:plc:abc123/network.cosmik.collection/3zzzzzzzzzzzz';
+const MARGIN_URI = 'at://did:plc:abc123/at.margin.collection/3muahss6xki2b';
 const FOLLOW = { did: 'did:plc:reader1', handle: 'reader1.bsky.social', avatar: 'a.jpg' };
 
 function recordsResponse(values: unknown[]): Response {
@@ -72,6 +73,30 @@ describe('resolveRoomInput', () => {
     expect(
       await resolveRoomInput('https://semble.so/profile/nope.example/collections/3muahss6xki2b')
     ).toBeNull();
+  });
+
+  it('converts a margin.at collection page with a DID in the path', async () => {
+    expect(
+      await resolveRoomInput('https://margin.at/did:plc:abc123/collection/3muahss6xki2b')
+    ).toBe(MARGIN_URI);
+  });
+
+  it('converts a margin.at collection page by resolving the handle', async () => {
+    const fetchMock = vi.fn(
+      async (_input: string) =>
+        new Response(JSON.stringify({ did: 'did:plc:abc123' }), { status: 200 })
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await resolveRoomInput('https://margin.at/disnetdev.com/collection/3muahss6xki2b')).toBe(
+      MARGIN_URI
+    );
+    expect(fetchMock.mock.calls[0]?.[0]).toContain('resolveHandle?handle=disnetdev.com');
+  });
+
+  it('rejects a margin.at page that names no owner', async () => {
+    // Margin's own-collections route: no handle, so no repo to build an at-uri in.
+    expect(await resolveRoomInput('https://margin.at/collections/3muahss6xki2b')).toBeNull();
+    expect(await resolveRoomInput('https://margin.at/profile/did:plc:abc123')).toBeNull();
   });
 
   it('rejects everything else', async () => {
@@ -203,9 +228,32 @@ describe('collectionPageLink', () => {
     expect(collectionPageLink(COLLECTION_URI, 'handle.invalid')).toBeNull();
   });
 
-  it('has no link for a provider with no collection page', () => {
-    const margin = 'at://did:plc:abc123/at.margin.collection/3muahss6xki2b';
-    expect(collectionPageLink(margin, 'disnetdev.com')).toBeNull();
+  it('round-trips a Margin collection back to its page', async () => {
+    const link = collectionPageLink(MARGIN_URI, 'disnetdev.com');
+    expect(link).toEqual({
+      url: 'https://margin.at/disnetdev.com/collection/3muahss6xki2b',
+      provider: 'Margin',
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ did: 'did:plc:abc123' }), { status: 200 }))
+    );
+    expect(await resolveRoomInput(link!.url)).toBe(MARGIN_URI);
+  });
+
+  it('links a Margin collection by DID when the handle did not resolve', async () => {
+    // Margin's page accepts a DID in the handle slot, so the link never depends
+    // on the appview answering.
+    const byDid = 'https://margin.at/did:plc:abc123/collection/3muahss6xki2b';
+    expect(collectionPageLink(MARGIN_URI, null)?.url).toBe(byDid);
+    expect(collectionPageLink(MARGIN_URI, 'handle.invalid')?.url).toBe(byDid);
+    expect(await resolveRoomInput(byDid)).toBe(MARGIN_URI);
+  });
+
+  it('has no link for an unknown provider or a malformed uri', () => {
+    expect(
+      collectionPageLink('at://did:plc:abc123/other.collection/3muahss6xki2b', 'x.com')
+    ).toBeNull();
     expect(collectionPageLink('not a uri', 'disnetdev.com')).toBeNull();
   });
 });

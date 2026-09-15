@@ -158,6 +158,35 @@ describe('createCollection', () => {
     expect(uri).toContain('network.cosmik.collection');
   });
 
+  it('writes the room settings onto a Semble collection when asked', async () => {
+    const pds = fakeClient();
+    await createCollection(pds, 'semble', 'Slow Reads', {
+      accessType: 'OPEN',
+      description: 'Long pieces, read slowly.',
+    });
+    const [, , record] = (pds.putRecord as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(record.accessType).toBe('OPEN');
+    expect(record.description).toBe('Long pieces, read slowly.');
+  });
+
+  it('leaves description off the record rather than writing it blank', async () => {
+    const pds = fakeClient();
+    await createCollection(pds, 'semble', 'Slow Reads', { description: undefined });
+    const [, , record] = (pds.putRecord as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect('description' in record).toBe(false);
+  });
+
+  it('ignores the Semble-only options on a Margin collection', async () => {
+    const pds = fakeClient();
+    await createCollection(pds, 'margin', 'Slow Reads', {
+      accessType: 'OPEN',
+      description: 'x',
+    });
+    const [, , record] = (pds.putRecord as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect('accessType' in record).toBe(false);
+    expect('description' in record).toBe(false);
+  });
+
   it('writes an at.margin.collection with the Margin shape', async () => {
     const pds = fakeClient();
     await createCollection(pds, 'margin', 'Skyreader Saves');

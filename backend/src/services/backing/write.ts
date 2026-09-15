@@ -58,17 +58,30 @@ export interface MemberHandles {
 
 class BackingWriteError extends Error {}
 
+/** Semble's `accessType`: OPEN lets anyone add to the collection, CLOSED keeps
+ *  additions to the owner and listed collaborators. Margin has no equivalent. */
+export type SembleAccessType = 'OPEN' | 'CLOSED';
+
+export interface CreateCollectionOptions {
+  /** Semble-only; ignored for Margin, whose lexicon has no access field. */
+  accessType?: SembleAccessType;
+  /** Semble-only; the curator's blurb, shown on the collection and on a room. */
+  description?: string;
+}
+
 /**
- * Create a new backing collection record ("Skyreader Saves" by default). Record
- * shapes confirmed against live records (2026-06-18):
- *  - network.cosmik.collection: { name, createdAt, updatedAt, accessType, collaborators }
+ * Create a new collection record — a backing collection ("Skyreader Saves" by
+ * default) or a reading room. Record shapes confirmed against live records
+ * (2026-06-18):
+ *  - network.cosmik.collection: { name, description?, createdAt, updatedAt, accessType, collaborators }
  *  - at.margin.collection:      { name, createdAt, icon }
- * Returns the new collection's at-uri to write into the `backing` setting.
+ * Returns the new collection's at-uri.
  */
 export async function createCollection(
   pds: PDSClient,
   provider: BackingProviderName,
-  name: string
+  name: string,
+  opts: CreateCollectionOptions = {}
 ): Promise<{ uri: string }> {
   const rkey = generateTid();
   const nowIso = new Date().toISOString();
@@ -78,7 +91,9 @@ export async function createCollection(
       ? {
           $type: SEMBLE_COLLECTION,
           name,
-          accessType: 'CLOSED',
+          // Absent, not empty: a blank description would render as an empty line.
+          ...(opts.description ? { description: opts.description } : {}),
+          accessType: opts.accessType ?? 'CLOSED',
           collaborators: [],
           createdAt: nowIso,
           updatedAt: nowIso,

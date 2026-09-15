@@ -199,7 +199,7 @@
 
 <RoomCombo
   bind:value={query}
-  placeholder="Paste a semble collection link, or pick one of your collections"
+  placeholder="Paste a Semble or Margin collection link, or pick one of your collections"
   icon="search"
   idPrefix="room-open"
   {rows}

@@ -96,3 +96,12 @@ h1[data-page-title] {
 .sl-markdown-content a:hover {
   text-decoration: underline;
 }
+
+/* Screenshots sit on the page's own white, so without an edge their margins
+ * blend into the prose. A hairline in the Divider token and a small radius frame
+ * them as a window onto the app; flat, no shadow (the Flat-By-Default Rule). */
+.sl-markdown-content img {
+  border: 1px solid var(--sl-color-gray-5);
+  border-radius: 8px;
+  background: var(--sl-color-black);
+}

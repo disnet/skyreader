@@ -55,6 +55,17 @@ describe('extractUrlFromRecord — multi-type (heterogeneous collections)', () =
     ).toBeNull();
   });
 
+  it('at.margin.bookmark -> source (the record Margin still defines and older exports wrote)', () => {
+    expect(
+      extractUrlFromRecord({
+        $type: 'at.margin.bookmark',
+        source: 'https://example.com/post',
+        title: 'A post',
+      })
+    ).toBe('https://example.com/post');
+    expect(extractUrlFromRecord({ $type: 'at.margin.bookmark', title: 'no source' })).toBeNull();
+  });
+
   it('unknown type with a subject/url field -> generic fallback', () => {
     expect(extractUrlFromRecord({ $type: 'some.future.bookmark', url: 'https://x.test' })).toBe(
       'https://x.test'
@@ -319,6 +330,54 @@ describe('snapshotBackedCollection — Margin (collectionItem → annotation)', 
     expect(snap.members).toHaveLength(1);
     expect(snap.members[0].url).toBe('https://lettera.md/post');
     expect(snap.typeMix).toEqual({ 'community.lexicon.bookmarks.bookmark': 1 });
+  });
+});
+
+describe('snapshotBackedCollection — Margin (collectionItem → at.margin.bookmark)', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('resolves a Margin bookmark with its title and description, not as no-url', async () => {
+    // The live shape behind an empty room: a collection Skyreader's own Margin
+    // export filled before it moved to notes.
+    mockPds();
+    installFetch({
+      listRecords: () =>
+        jsonRes({
+          records: [
+            {
+              uri: `at://${OWNER}/at.margin.collectionItem/i1`,
+              cid: 'x',
+              value: {
+                collection: MARGIN_COL,
+                annotation: `at://${OWNER}/at.margin.bookmark/b1`,
+                createdAt: '2026-03-21T14:03:30.116Z',
+              },
+            },
+          ],
+        }),
+      getRecord: () =>
+        jsonRes({
+          value: {
+            $type: 'at.margin.bookmark',
+            source: 'https://www.techdirt.com/2026/03/20/some-post/',
+            title: 'Some post',
+            description: 'What the post is about.',
+            tags: [],
+          },
+        }),
+    });
+
+    const snap = await snapshotBackedCollection('margin', OWNER, MARGIN_COL);
+    expect(snap.complete).toBe(true);
+    expect(snap.skipped).toHaveLength(0);
+    expect(snap.members).toHaveLength(1);
+    expect(snap.members[0].url).toBe('https://www.techdirt.com/2026/03/20/some-post/');
+    expect(snap.members[0].itemType).toBe('at.margin.bookmark');
+    expect(snap.members[0]).toMatchObject({
+      title: 'Some post',
+      description: 'What the post is about.',
+      addedAt: '2026-03-21T14:03:30.116Z',
+    });
   });
 });
 
