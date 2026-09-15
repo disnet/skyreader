@@ -43,7 +43,7 @@
     readPresenceCache,
     readRoomPresence,
     writeRoomPresence,
-    PRESENCE_DID_CAP,
+    PRESENCE_READER_CAP,
     type MyRoomListing,
   } from '$lib/services/roomCache';
   import type { FollowLite } from '$lib/services/socialGraph';
@@ -157,10 +157,15 @@
     memberCount = 0;
     collectionLink = null;
 
-    // The last copy of this room, painted before anything is requested. Only a
-    // disk read stands between the click and the list; the refresh below
-    // replaces it in place.
-    const cached = await readRoomSnapshot(target, roomCacheDid(auth.user?.did));
+    // The last copy of this room and of who was in it, painted before anything
+    // is requested — together, in one tick, so the page arrives whole rather
+    // than growing a presence line under the reader a moment later. Two disk
+    // reads stand between the click and that; the refreshes below replace it
+    // all in place.
+    const [cached, presence] = await Promise.all([
+      readRoomSnapshot(target, roomCacheDid(auth.user?.did)),
+      readRoomPresence(target),
+    ]);
     if (target !== uri) return;
     if (cached) {
       room = cached.room;
@@ -168,6 +173,16 @@
       written = { room: cached.room, joined: cached.joined };
       loading = false;
     }
+    if (presence) {
+      memberCount = presence.total;
+      members = presence.readers ?? [];
+    }
+
+    // Who's here and where the collection lives are their own lookups, not the
+    // room's: start them now rather than behind the room read, which is the
+    // slowest thing on the page and used to gate them both.
+    void loadMembers(target);
+    void loadCollectionLink(target);
 
     const [roomResult, joinedResult] = await Promise.allSettled([
       api.getRoom(target),
@@ -183,8 +198,6 @@
     }
     if (joinedResult.status === 'fulfilled') joined = joinedResult.value.joined;
     loading = false;
-    void loadMembers(target);
-    void loadCollectionLink(target);
   }
 
   // Keep the snapshot in step with what's on screen — the refresh, a join or
@@ -215,40 +228,34 @@
     collectionLink = collectionPageLink(target, profile?.handle);
   }
 
-  // Who's reading along. Constellation is a third-party index on the far side of
-  // the network, so the last reading paints first and the live one replaces it.
-  // Both paints below fetch profiles, so they can land out of order; the pass
-  // number is what keeps the cached row from overwriting the live one.
+  // Who's reading along, refreshed. loadRoom has already painted the last
+  // reading; this replaces it once Constellation answers and the profiles for
+  // the avatar row land.
   let membersPass = 0;
   async function loadMembers(target: string) {
-    const cachedPass = ++membersPass;
-    const cached = await readRoomPresence(target);
-    if (target !== uri) return;
-    if (cached) {
-      memberCount = cached.total;
-      if (cached.dids?.length) void paintMembers(target, cached.dids, cachedPass);
-    }
-
+    const pass = ++membersPass;
     const dids = await fetchRoomMembers(target);
-    if (target !== uri) return;
+    if (target !== uri || pass !== membersPass) return;
     // Null is an unreachable index, not an empty room — leave the cached row
     // and count as they were rather than emptying the room out.
     if (dids === null) return;
     memberCount = dids.length;
-    void writeRoomPresence({ [target]: { total: dids.length, dids } });
-    await paintMembers(target, dids, ++membersPass);
-  }
 
-  // The avatar row: profiles for the first few readers. Profiles are cached in
-  // memory for five minutes, so re-painting a cached DID list is usually free.
-  async function paintMembers(target: string, dids: string[], pass: number) {
-    const shown = dids.slice(0, PRESENCE_DID_CAP);
+    const shown = dids.slice(0, PRESENCE_READER_CAP);
     const profiles = await profileService.getProfiles(shown);
     if (target !== uri || pass !== membersPass) return;
-    members = shown.flatMap((did) => {
+    const readers = shown.flatMap((did) => {
       const p = profiles.get(did);
       return p ? [p] : [];
     });
+    // Nobody resolving in a room that has readers is an appview blip, not an
+    // empty room: keep the row that's up and record the count alone.
+    if (readers.length === 0 && dids.length > 0) {
+      void writeRoomPresence({ [target]: { total: dids.length } });
+      return;
+    }
+    members = readers;
+    void writeRoomPresence({ [target]: { total: dids.length, readers } });
   }
 
   async function join() {
@@ -257,7 +264,8 @@
     try {
       await api.joinRoom(uri, generateTid());
       joined = true;
-      // Constellation lags a fresh write; show yourself right away.
+      // Constellation lags a fresh write; show yourself right away — and cache
+      // that, so coming back before it catches up doesn't drop you again.
       if (auth.user && !members.some((m) => m.did === auth.user!.did)) {
         memberCount += 1;
         members = [
@@ -269,6 +277,7 @@
           },
           ...members,
         ];
+        void writeRoomPresence({ [uri]: { total: memberCount, readers: members } });
       }
     } catch {
       toastStore.update(toastStore.add('Could not join the room'), 'error');
@@ -286,6 +295,7 @@
       if (auth.user) {
         members = members.filter((m) => m.did !== auth.user!.did);
         memberCount = Math.max(0, memberCount - 1);
+        void writeRoomPresence({ [uri]: { total: memberCount, readers: members } });
       }
     } catch {
       toastStore.update(toastStore.add('Could not leave the room'), 'error');

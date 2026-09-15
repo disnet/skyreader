@@ -17,7 +17,7 @@
 import { db, getMetadata, setMetadata, type RoomSnapshotEntry } from '$lib/services/db';
 import { safePut } from '$lib/services/safeDb.svelte';
 import { FEATURED_ROOM_URIS, type MyRoom, type RoomListing } from '$lib/services/rooms';
-import type { RoomInfo } from '$lib/types';
+import type { BlueskyProfile, RoomInfo } from '$lib/types';
 
 /** Cache owner for a signed-out visitor. A room reached by link renders without
  *  a session, and that snapshot carries no personal read state — but it still
@@ -155,12 +155,16 @@ export async function writeFeaturedCache(rooms: RoomListing[]): Promise<void> {
 /** What Constellation last said about a room: how many are reading along, and
  *  the first few of them for the room page's avatar row. Both surfaces write
  *  here — the index asks for the count alone, the room page for the readers —
- *  so whichever one you reach first warms the other. */
+ *  so whichever one you reach first warms the other.
+ *
+ *  The readers are stored as drawn (handle, name, avatar), not as bare DIDs: a
+ *  DID still costs a profile lookup before it can be rendered, and an avatar row
+ *  that arrives a beat late is exactly the pop this cache exists to remove. */
 export interface RoomPresence {
   /** distinct DIDs with a live readAlong record pointing at this room */
   total: number;
   /** the readers the room page draws, capped at what it actually shows */
-  dids?: string[];
+  readers?: BlueskyProfile[];
   cachedAt: number;
 }
 
@@ -173,8 +177,8 @@ const MAX_PRESENCE_AGE = 7 * 24 * 60 * 60 * 1000;
 /** Rooms kept in the blob, most recently refreshed last. It's read and written
  *  whole, so it stays small on purpose. */
 const MAX_PRESENCE_ROOMS = 60;
-/** DIDs kept per room: the room page builds its avatar row from the first 12. */
-export const PRESENCE_DID_CAP = 12;
+/** Readers kept per room: the room page's avatar row draws the first 12. */
+export const PRESENCE_READER_CAP = 12;
 
 function freshEntries(cache: PresenceCache | null): PresenceCache {
   if (!cache || typeof cache !== 'object') return {};
@@ -193,21 +197,22 @@ export async function readRoomPresence(subject: string): Promise<RoomPresence | 
   return (await readPresenceCache())[subject] ?? null;
 }
 
-/** Merge readings into the cache. A reading with no `dids` (the index's
- *  count-only lookup) keeps the readers an earlier room-page visit stored;
- *  null totals — failed lookups — are dropped, since a failure is not a count. */
+/** Merge readings into the cache. A reading with no `readers` (the index's
+ *  count-only lookup) keeps the ones an earlier room-page visit stored — an
+ *  empty array, which is a room that really has nobody, still replaces them.
+ *  Null totals — failed lookups — are dropped, since a failure is not a count. */
 export async function writeRoomPresence(
-  readings: Record<string, { total: number | null; dids?: string[] }>
+  readings: Record<string, { total: number | null; readers?: BlueskyProfile[] }>
 ): Promise<void> {
   const cache = freshEntries(await getMetadata<PresenceCache>(PRESENCE_KEY));
   const now = Date.now();
   for (const [subject, reading] of Object.entries(readings)) {
     if (reading.total === null) continue;
-    const dids = reading.dids?.slice(0, PRESENCE_DID_CAP) ?? cache[subject]?.dids;
+    const readers = reading.readers?.slice(0, PRESENCE_READER_CAP) ?? cache[subject]?.readers;
     // Re-insert rather than assign in place: key order is what "least recently
     // refreshed" means below, and a whole index pass shares one timestamp.
     delete cache[subject];
-    cache[subject] = { total: reading.total, dids, cachedAt: now };
+    cache[subject] = { total: reading.total, readers, cachedAt: now };
   }
   const kept = Object.entries(cache).slice(-MAX_PRESENCE_ROOMS);
   await setMetadata<PresenceCache>(PRESENCE_KEY, Object.fromEntries(kept));

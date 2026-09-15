@@ -54,6 +54,10 @@ const ROOM_A = 'at://did:plc:owner/network.cosmik.collection/aaa';
 const ROOM_B = 'at://did:plc:owner/network.cosmik.collection/bbb';
 const ME = 'did:plc:me';
 
+function reader(id: string) {
+  return { did: `did:plc:${id}`, handle: `${id}.bsky.social` };
+}
+
 function room(uri: string, name: string): RoomInfo {
   return {
     uri,
@@ -152,20 +156,27 @@ describe('presence cache', () => {
   });
 
   it('keeps the readers a room-page visit stored when the index refreshes the count', async () => {
-    await writeRoomPresence({ [ROOM_A]: { total: 2, dids: ['did:plc:a', 'did:plc:b'] } });
+    await writeRoomPresence({ [ROOM_A]: { total: 2, readers: [reader('a'), reader('b')] } });
     // The index asks for the count alone; that must not wipe the avatar row.
     await writeRoomPresence({ [ROOM_A]: { total: 3 } });
     const cached = await readRoomPresence(ROOM_A);
     expect(cached?.total).toBe(3);
-    expect(cached?.dids).toEqual(['did:plc:a', 'did:plc:b']);
+    expect(cached?.readers?.map((r) => r.did)).toEqual(['did:plc:a', 'did:plc:b']);
   });
 
-  it('stores only the readers the room page draws', async () => {
-    const many = Array.from({ length: 40 }, (_, i) => `did:plc:r${i}`);
-    await writeRoomPresence({ [ROOM_A]: { total: many.length, dids: many } });
+  it('empties the avatar row for a room that really has nobody', async () => {
+    await writeRoomPresence({ [ROOM_A]: { total: 2, readers: [reader('a'), reader('b')] } });
+    await writeRoomPresence({ [ROOM_A]: { total: 0, readers: [] } });
+    expect((await readRoomPresence(ROOM_A))?.readers).toEqual([]);
+  });
+
+  it('stores the readers as drawn, only as many as the row shows', async () => {
+    const many = Array.from({ length: 40 }, (_, i) => reader(`r${i}`));
+    await writeRoomPresence({ [ROOM_A]: { total: many.length, readers: many } });
     const cached = await readRoomPresence(ROOM_A);
     expect(cached?.total).toBe(40);
-    expect(cached?.dids).toHaveLength(12);
+    expect(cached?.readers).toHaveLength(12);
+    expect(cached?.readers?.[0]).toEqual({ did: 'did:plc:r0', handle: 'r0.bsky.social' });
   });
 
   it('drops a reading nobody has refreshed in a week', async () => {

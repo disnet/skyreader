@@ -427,9 +427,18 @@ Everything is dropped by `clearAllData` on sign-out.
   `roomsStore` writes read marks through to the snapshot for the same reason.
 - **Constellation is cached in one place for both surfaces.** The index asks it for a count per row
   (`fetchRoomMemberCount`), the room page for the readers themselves (`fetchRoomMembers`); both
-  write the same per-room reading (`total` + the DIDs the avatar row draws, capped at 12), so
+  write the same per-room reading (`total` + the readers the avatar row draws, capped at 12), so
   whichever surface you reach first warms the other. A count-only refresh keeps the readers an
-  earlier room-page visit stored.
+  earlier room-page visit stored; an empty array, a room that really has nobody, replaces them.
+  The readers are cached **as drawn** (handle, name, avatar), not as bare DIDs: a DID still costs a
+  profile lookup before it can be rendered, and a presence line that arrives a beat late is the
+  pop this cache exists to remove.
+- **Presence is read beside the snapshot, not behind the room fetch.** `loadRoom` reads both from
+  disk in one `Promise.all` and paints them in the same tick, then starts the Constellation and
+  collection-link lookups *before* awaiting `/api/rooms` — they are their own lookups, and gating
+  them on the slowest read on the page was what made the presence line grow in under the reader
+  after everything else had settled. Joining writes the optimistic row through to the cache too, so
+  coming back before Constellation catches up doesn't drop you from the room you just joined.
 - **Presence readings are cached, failures aren't.** A null count is a failed lookup, not a number,
   and `fetchRoomMembers` now returns null (not `[]`) when Constellation never answers, so an outage
   leaves the count and the avatar row as they were instead of emptying the room out. A later page
