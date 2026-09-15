@@ -17,7 +17,7 @@ To open any other room, paste a room link, or a Semble or Margin collection link
 
 ## Starting a room
 
-**Start a new room** creates a semble or margin collection in your own repo. Give it a name and an optional description. 
+**Start a new room** creates a semble or margin collection in your own repo. Give it a name and an optional description.
 
 ![The new room form: name, description, a Semble or Margin choice, and closed or open access](../../../assets/screenshots/room-create.png)
 

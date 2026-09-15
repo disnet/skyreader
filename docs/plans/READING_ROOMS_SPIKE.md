@@ -17,13 +17,13 @@ its record supplies the title and description. **Joining** writes one public rec
 The room page shows the collection's articles (via the proven external-backing read path), the
 avatars of everyone who joined (via Constellation backlink queries — no new backend index), and an
 anonymous per-article read count ("3 read this") served from a small D1 table that only counts reads
-made *through the room surface*. Comments, annotations, shared progress positions, and a rooms
+made _through the room surface_. Comments, annotations, shared progress positions, and a rooms
 directory are all deferred.
 
 ## Decisions
 
 - **Room identity = the collection at-uri.** No room entity, no room metadata store, no naming or
-  governance problem. Open vs. closed Semble collections both work: "closed" only gates *curation*
+  governance problem. Open vs. closed Semble collections both work: "closed" only gates _curation_
   in Semble, and reading along is orthogonal to curation rights — a closed collection is simply a
   curator-led room (a syllabus), which is a legitimate room flavor we get for free.
 - **Join is a public record in the joiner's own repo.** Structurally a follow:
@@ -35,11 +35,11 @@ directory are all deferred.
   collection URI, filtered to the `readAlong` NSID. Zero backend, reflects deletes. This matches
   the project's momentum away from firehose→D1 indexing (mentions, standard.site lazy fetch).
 - **No rooms directory in the spike.** Join is by link only (someone shares a room URL).
-  Constellation answers "who joined *this* room" but cannot enumerate "what rooms exist" — a
+  Constellation answers "who joined _this_ room" but cannot enumerate "what rooms exist" — a
   `/rooms` discover page is exactly the thing that would force a Jetstream→D1 index of the join
   NSID. Defer the directory, not just comments.
 - **"Read" means read-through-the-room, and it's explicit.** A read is counted when a user presses
-  **"Mark as read"** at the end of an article opened *from the room surface* (not merely on open —
+  **"Mark as read"** at the end of an article opened _from the room surface_ (not merely on open —
   opening is curiosity, marking is the done signal), into a D1 `room_reads` table keyed by
   `(collection_uri, url_normalized, did)`. We do **not** join room items against existing read
   state. See below for why.
@@ -65,7 +65,7 @@ Three reasons, in descending order of importance:
    `room_reads` keyed by `url_normalized` sidesteps reconciling against `item_labels_cache`
    entirely.
 3. **Honest semantics.** The count undercounts (someone read the piece elsewhere), and that's fine —
-   the number means "read *here, together*," which is the thing the spike is measuring anyway.
+   the number means "read _here, together_," which is the thing the spike is measuring anyway.
 
 ## The join lexicon
 
@@ -99,7 +99,7 @@ layout):
 ```
 
 Named for what it asserts — "I'm reading along with this collection," not "membership" (there is no
-membership authority to be a member *of*). `subject` is a generic at-uri: nothing Semble-specific,
+membership authority to be a member _of_). `subject` is a generic at-uri: nothing Semble-specific,
 so a Margin collection (or anything else) can host a room later without a lexicon change. If the
 primitive proves out, graduating to a community namespace is a rename, not a redesign.
 
@@ -196,7 +196,7 @@ Counts are `COUNT(DISTINCT did)` per `(collection_uri, url_normalized)`. No `roo
 - **Join flow**: paste/receive a room link → room page → Join writes the `readAlong` record
   (requires Atmospheric sync consent framing — see copy below).
 - **Optional cheap hedge** against the "quiet room" problem: link each member's avatar to their
-  existing public linkblog, so joiners have *something* of each other to read without any comment
+  existing public linkblog, so joiners have _something_ of each other to read without any comment
   infrastructure.
 
 ## Copy notes (per CLAUDE.md Atmosphere framing)
@@ -204,8 +204,8 @@ Counts are `COUNT(DISTINCT did)` per `(collection_uri, url_normalized)`. No `roo
 - Joining is **public to the whole Atmosphere** — it writes a record to the user's repo. Say so at
   the join moment, calmly: e.g. "Joining is public: anyone can see you're reading along."
 - Read activity is **only ever an anonymous count inside Skyreader**. Never per-user, never a
-  record. The honest line, true by construction: *joining is public; what you read here shows up
-  only as a count.*
+  record. The honest line, true by construction: _joining is public; what you read here shows up
+  only as a count._
 - No em-dashes in user-facing copy; keep it terse, reading-first.
 
 ## What the spike tests — and what it doesn't
@@ -214,7 +214,7 @@ Counts are `COUNT(DISTINCT did)` per `(collection_uri, url_normalized)`. No `roo
 link; whether read counts correlate with opens; whether rooms get shared at all).
 
 **Does not test:** "reading together." There is no conversation, so a room is ambient presence
-around a list. **Interpretation guard:** weak engagement here means *presence alone* may not carry
+around a list. **Interpretation guard:** weak engagement here means _presence alone_ may not carry
 the feature — it does not falsify rooms-with-conversation, which the full design treats as the core
 payload. Don't over-read a quiet spike.
 
@@ -303,7 +303,7 @@ owner's links arrive in `listRecords` order, a contributor's arrive from Constel
 `resolveMembers` finishes them out of order anyway (bounded concurrency), so an unsorted list would
 put every foreign add at the end and shuffle within a poll. `snapshotBackedCollection` sorts
 (undated last, `linkUri` as the tiebreak, so the same collection always resolves the same way), the
-dedupe of cross-repo duplicates therefore keeps the *earliest* add, and both surfaces re-apply the
+dedupe of cross-repo duplicates therefore keeps the _earliest_ add, and both surfaces re-apply the
 rule client-side through the shared `sortRoomItems` (`frontend/src/lib/utils/roomArticle.ts`) since
 marking something read must move it down live. One consequence for the add box: a fresh add now
 sorts to the end of the unread pile, which can be below the fold, so it confirms with a toast rather
@@ -404,7 +404,7 @@ both surfaces ask at once) and rooms became a second scanner over it:
 - **A re-scan replaces an account's rows rather than merging** — it is also how a room someone left
   stops being listed. Re-scan TTL is 3 days, shorter than the publications week: joining a room is
   a much more frequent act than starting a publication.
-- **No Constellation count on these rows.** The people you follow *are* the presence signal here,
+- **No Constellation count on these rows.** The people you follow _are_ the presence signal here,
   and a count per row would be one request each. The row shows their avatars and names; the total
   stays on the room page.
 
@@ -449,7 +449,7 @@ Everything is dropped by `clearAllData` on sign-out.
   pop this cache exists to remove.
 - **Presence is read beside the snapshot, not behind the room fetch.** `loadRoom` reads both from
   disk in one `Promise.all` and paints them in the same tick, then starts the Constellation and
-  collection-link lookups *before* awaiting `/api/rooms` — they are their own lookups, and gating
+  collection-link lookups _before_ awaiting `/api/rooms` — they are their own lookups, and gating
   them on the slowest read on the page was what made the presence line grow in under the reader
   after everything else had settled. Joining writes the optimistic row through to the cache too, so
   coming back before Constellation catches up doesn't drop you from the room you just joined.
@@ -563,7 +563,7 @@ the spike showing pull.
    above); optional published room digest via linkblog/standard.site machinery
    ("private process, public product").
 
-Bigger Semble asks, sequenced *after* the NSID/reader-count pitch: collaborators/ACLs on
+Bigger Semble asks, sequenced _after_ the NSID/reader-count pitch: collaborators/ACLs on
 collections (multi-curator support acknowledged in their UI, link-removal semantics), change
 notification (webhook or bumped `updatedAt`) so room lists feel live without aggressive polling,
 and whether NOTE cards attached to a collection are intended as a discussion surface (a candidate
