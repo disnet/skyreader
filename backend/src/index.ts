@@ -639,7 +639,7 @@ async function route(
         if (!session) return unauthorizedResponse(headers);
         response = await handleCreateRoom(request, env);
       } else {
-        response = await handleGetRoom(request, env);
+        response = await handleGetRoom(request, env, ctx);
       }
       break;
     case url.pathname === '/api/rooms/join':

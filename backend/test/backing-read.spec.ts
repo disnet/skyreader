@@ -3,6 +3,7 @@ import {
   extractUrlFromRecord,
   snapshotBackedCollection,
   SNAPSHOT_SUBREQUESTS,
+  TRANSIENT_SKIP,
 } from '../src/services/backing/read';
 import { normalizeArticleUrl } from '../src/utils/url-normalize';
 import { parseBacking, serializeBacking } from '../src/routes/settings';
@@ -866,5 +867,144 @@ describe('snapshotBackedCollection — addedAt ordering', () => {
       'https://a.test/undated',
     ]);
     expect(snap.members[1].addedAt).toBeUndefined();
+  });
+});
+
+// An incremental caller (the materialized room) stores what it resolved and hands
+// it back as `skipLinks`: those links are still LISTED, so the caller can diff
+// its store against the collection, but nothing is fetched for them. Together
+// with per-member failure containment, that is what makes a repeat snapshot
+// cost what changed.
+describe('snapshotBackedCollection — incremental (skipLinks / listed)', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const OWNER_LINK = (rkey: string) => `at://${OWNER}/network.cosmik.collectionLink/${rkey}`;
+  const cardFor = (url: string) =>
+    jsonRes({ value: { $type: 'network.cosmik.card', type: 'URL', content: { url } } });
+
+  /** Two owner links, one contributor link via Constellation. */
+  function installRoom(getRecord?: (p: URLSearchParams) => Response) {
+    installFetch({
+      listRecords: () =>
+        jsonRes({
+          records: ['a', 'b'].map((rkey) => ({
+            uri: OWNER_LINK(rkey),
+            cid: 'x',
+            value: {
+              collection: { uri: SEMBLE_COL },
+              card: { uri: `at://${OWNER}/network.cosmik.card/${rkey}` },
+            },
+          })),
+        }),
+      links: () =>
+        jsonRes({
+          linking_records: [
+            { did: OTHER, collection: 'network.cosmik.collectionLink', rkey: 'theirs' },
+          ],
+          cursor: null,
+        }),
+      getRecord:
+        getRecord ??
+        ((p) => {
+          if (p.get('collection') === 'network.cosmik.collectionLink') {
+            return jsonRes({
+              value: {
+                collection: { uri: SEMBLE_COL },
+                card: { uri: `at://${OTHER}/network.cosmik.card/theirCard` },
+              },
+            });
+          }
+          return cardFor(`https://a.test/${p.get('rkey')}`);
+        }),
+    });
+  }
+
+  it('lists a skipped link without fetching anything for it', async () => {
+    mockPds();
+    installRoom();
+    const fetchSpy = vi.mocked(globalThis.fetch);
+    const THEIRS = `at://${OTHER}/network.cosmik.collectionLink/theirs`;
+
+    const snap = await snapshotBackedCollection('semble', OWNER, SEMBLE_COL, {
+      includeForeign: true,
+      skipLinks: new Set([OWNER_LINK('a'), THEIRS]),
+    });
+
+    expect(snap.complete).toBe(true);
+    expect(snap.listingComplete).toBe(true);
+    expect(snap.listed.sort()).toEqual([OWNER_LINK('a'), OWNER_LINK('b'), THEIRS].sort());
+    // Only b was resolved: one getRecord, for its card. The contributor's link
+    // was neither verified nor followed, so their PDS was never even resolved.
+    expect(snap.members.map((m) => m.url)).toEqual(['https://a.test/b']);
+    const getRecords = fetchSpy.mock.calls
+      .map(([input]) => new URL(String(input)))
+      .filter((u) => u.pathname.endsWith('getRecord'));
+    expect(getRecords).toHaveLength(1);
+    expect(vi.mocked(didResolver.resolvePdsUrl)).not.toHaveBeenCalledWith(OTHER);
+  });
+
+  it('confines a transient failure to the member it hit', async () => {
+    mockPds();
+    installRoom((p) => {
+      if (p.get('rkey') === 'b') return jsonRes({ error: 'InternalServerError' }, 500);
+      return cardFor(`https://a.test/${p.get('rkey')}`);
+    });
+
+    const snap = await snapshotBackedCollection('semble', OWNER, SEMBLE_COL);
+
+    // Not complete — a live member may be missing — but the one that resolved is
+    // still there for a caller that stores members one at a time.
+    expect(snap.complete).toBe(false);
+    expect(snap.listingComplete).toBe(true);
+    expect(snap.members.map((m) => m.url)).toEqual(['https://a.test/a']);
+    expect(snap.skipped).toEqual([
+      {
+        reason: TRANSIENT_SKIP,
+        itemUri: `at://${OWNER}/network.cosmik.card/b`,
+        linkUri: OWNER_LINK('b'),
+      },
+    ]);
+  });
+
+  it('a genuinely gone item is a permanent skip, not a transient one', async () => {
+    mockPds();
+    installRoom((p) => {
+      if (p.get('rkey') === 'b') return jsonRes({ error: 'RecordNotFound' }, 400);
+      return cardFor(`https://a.test/${p.get('rkey')}`);
+    });
+    const snap = await snapshotBackedCollection('semble', OWNER, SEMBLE_COL);
+    expect(snap.complete).toBe(true);
+    expect(snap.skipped.map((s) => s.reason)).toEqual(['item-not-resolvable']);
+  });
+
+  it('a foreign ref that cannot be verified makes the listing incomplete', async () => {
+    mockPds();
+    installRoom((p) => {
+      if (p.get('collection') === 'network.cosmik.collectionLink') {
+        return jsonRes({ error: 'InternalServerError' }, 500);
+      }
+      return cardFor(`https://a.test/${p.get('rkey')}`);
+    });
+    const snap = await snapshotBackedCollection('semble', OWNER, SEMBLE_COL, {
+      includeForeign: true,
+    });
+    // We cannot say whether that ref belongs, so `listed` is not exhaustive and a
+    // caller must not delete against it — though the owner's members still came back.
+    expect(snap.listingComplete).toBe(false);
+    expect(snap.complete).toBe(false);
+    expect(snap.members).toHaveLength(2);
+  });
+
+  it('running out of budget mid-resolution keeps what resolved and stays retryable', async () => {
+    mockPds();
+    installRoom();
+    const snap = await snapshotBackedCollection('semble', OWNER, SEMBLE_COL, {
+      // owner PDS + one listRecords page + one getRecord: the second card is refused.
+      maxSubrequests: 3,
+    });
+    expect(snap.complete).toBe(false);
+    expect(snap.listingComplete).toBe(true);
+    expect(snap.members).toHaveLength(1);
+    expect(snap.skipped.map((s) => s.reason)).toEqual([TRANSIENT_SKIP]);
   });
 });

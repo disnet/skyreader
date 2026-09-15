@@ -4,10 +4,11 @@
  *
  * The room's identity is the collection at-uri; membership (readAlong records)
  * is aggregated client-side via Constellation, so the backend's whole surface is:
- *  - GET  /api/rooms?uri=…   — resolve the collection into its article list
- *    (reuses the auth-free backing read path) plus per-article read counts.
- *    Session-free: a room is a public collection, and a shared link has to open
- *    for a visitor who has never signed in. Everything below writes, so it doesn't.
+ *  - GET  /api/rooms?uri=…   — the room's article list plus per-article read
+ *    counts, served from the materialized copy in D1 (services/backing/room-sync)
+ *    and refreshed behind the response. Session-free: a room is a public
+ *    collection, and a shared link has to open for a visitor who has never
+ *    signed in. Everything below writes, so it doesn't.
  *  - POST /api/rooms         — start a room: create a collection in the caller's
  *    own repo and join it.
  *  - POST /api/rooms/read    — count a read made through the room surface.
@@ -20,18 +21,24 @@
 
 import type { Env } from '../types';
 import { getSessionFromRequest } from '../services/oauth';
+import type { BackingProviderName } from '../services/backing/read';
 import {
-  snapshotBackedCollection,
-  getRecordPublicWithCid,
-  type BackingProviderName,
-} from '../services/backing/read';
+  ensureRoomRow,
+  listRoomMembers,
+  lookupCollection,
+  noteRoomMember,
+  pollRoom,
+  providerForCollection,
+  readRoomRow,
+  roomNeedsPoll,
+  type ResolvedCollection,
+} from '../services/backing/room-sync';
 import { createCollection, createMember, type SembleAccessType } from '../services/backing/write';
 import { createPDSClient } from '../services/pds-client';
 import { FeedProxyClient } from '../services/feed-proxy-client';
 import { hasRequiredScopes, insufficientScopesResponse } from './auth';
 import { MARGIN_SCOPES, READING_ROOM_SCOPES, SEMBLE_SCOPES } from '../config/scopes';
 import { parseAtUri } from '../utils/canonical-url';
-import { resolvePdsUrl } from '../utils/did-resolver';
 import { normalizeArticleUrl } from '../utils/url-normalize';
 import { generateTid } from '../utils/tid';
 
@@ -57,13 +64,6 @@ const json = (body: unknown, status = 200): Response =>
     headers: { 'Content-Type': 'application/json' },
   });
 
-/** Map a collection record's NSID to the backing provider that reads it. */
-function providerForCollection(nsid: string): BackingProviderName | null {
-  if (nsid === 'network.cosmik.collection') return 'semble';
-  if (nsid === 'at.margin.collection') return 'margin';
-  return null;
-}
-
 export interface RoomItem {
   url: string;
   urlNormalized: string;
@@ -78,25 +78,29 @@ export interface RoomItem {
   readByMe: boolean;
 }
 
-interface ResolvedCollection {
-  ref: { did: string; collection: string; rkey: string };
-  provider: BackingProviderName;
-  record: Record<string, unknown>;
-  cid: string;
-}
-
 /** Fetch the room's collection record from its owner's PDS (auth-free), or a
  *  Response describing why it can't be a room. */
 async function resolveCollection(uri: string): Promise<ResolvedCollection | Response> {
-  const ref = parseAtUri(uri);
-  if (!ref) return json({ error: 'Invalid at-uri' }, 400);
-  const provider = providerForCollection(ref.collection);
-  if (!provider) return json({ error: `Unsupported collection type: ${ref.collection}` }, 400);
-  const pds = await resolvePdsUrl(ref.did);
-  if (!pds) return json({ error: 'Could not resolve collection owner' }, 502);
-  const record = await getRecordPublicWithCid(pds, ref.did, ref.collection, ref.rkey);
-  if (!record) return json({ error: 'Collection not found' }, 404);
-  return { ref, provider, record: record.value, cid: record.cid };
+  const lookup = await lookupCollection(uri);
+  if (lookup.ok) return lookup.collection;
+  switch (lookup.reason) {
+    case 'invalid':
+      return json({ error: 'Invalid at-uri' }, 400);
+    case 'unsupported':
+      return json({ error: `Unsupported collection type: ${parseAtUri(uri)?.collection}` }, 400);
+    case 'unresolvable':
+      return json({ error: 'Could not resolve collection owner' }, 502);
+    case 'not-found':
+      return json({ error: 'Collection not found' }, 404);
+  }
+}
+
+/** What canAdd needs to know about a collection: the same fields whether they
+ *  came off the PDS just now or out of the room's stored copy of the record. */
+interface AccessRule {
+  ownerDid: string;
+  provider: BackingProviderName;
+  record: Record<string, unknown>;
 }
 
 /**
@@ -108,8 +112,8 @@ async function resolveCollection(uri: string): Promise<ResolvedCollection | Resp
  * `at.margin.collection` carries no access field at all, so a Margin room is
  * owner-only — a stricter default is the right way to read a missing permission.
  */
-function canAddTo(c: ResolvedCollection, did: string): boolean {
-  if (c.ref.did === did) return true;
+function canAddTo(c: AccessRule, did: string): boolean {
+  if (c.ownerDid === did) return true;
   if (c.provider !== 'semble') return false;
   const access = typeof c.record.accessType === 'string' ? c.record.accessType.toUpperCase() : '';
   if (access === 'OPEN') return true;
@@ -119,10 +123,13 @@ function canAddTo(c: ResolvedCollection, did: string): boolean {
 
 /**
  * GET /api/rooms?uri=<collection at-uri>
- * Resolves the collection record (title/description) and its article members,
- * annotated with room-scoped read counts. `complete: false` means the snapshot
- * was truncated or a member failed to resolve transiently — render what came
- * back, but don't present it as the whole list.
+ * The collection's title/description and its article members, annotated with
+ * room-scoped read counts, from the room's materialized copy in D1. A room we
+ * have not seen is looked up and snapshotted inline, so its first reader still
+ * gets a list; a room we hold is served as it is and refreshed behind the
+ * response once its gate has passed (see room-sync). `complete: false` means the
+ * stored list is not yet the whole collection — render what came back, but don't
+ * present it as everything.
  *
  * Session-free: a room is a public collection resolved off its owner's PDS, and
  * a shared link has to open for someone who has never signed in. A signed-out
@@ -130,7 +137,11 @@ function canAddTo(c: ResolvedCollection, did: string): boolean {
  * adds is the two per-reader fields, `readByMe` and `canAdd`, which are false
  * without one.
  */
-export async function handleGetRoom(request: Request, env: Env): Promise<Response> {
+export async function handleGetRoom(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext
+): Promise<Response> {
   if (request.method !== 'GET') {
     return json({ error: 'Method not allowed' }, 405);
   }
@@ -143,40 +154,47 @@ export async function handleGetRoom(request: Request, env: Env): Promise<Respons
   if (!uri) return json({ error: 'Missing uri parameter' }, 400);
 
   try {
-    const collection = await resolveCollection(uri);
-    if (collection instanceof Response) return collection;
-    const { ref, provider, record: collectionRecord } = collection;
+    let room = await readRoomRow(env, uri);
+    if (!room) {
+      // First sight of this room: it has to exist before it can be stored, and
+      // its first reader is owed a list, so the first poll runs inline. It is
+      // budgeted like any other; a room too big for one look comes back short
+      // and fills in behind the next opens.
+      const collection = await resolveCollection(uri);
+      if (collection instanceof Response) return collection;
+      await ensureRoomRow(env, collection);
+      await pollRoom(env, uri, { force: true, collection });
+      room = await readRoomRow(env, uri);
+      if (!room) return json({ error: 'Collection not found' }, 404);
+    } else if (roomNeedsPoll(room)) {
+      // Auth-free throughout, so it can outlive the response. A room whose
+      // collection has gone is dropped by the poll and answers 404 next time.
+      ctx.waitUntil(
+        pollRoom(env, uri).catch((err) => {
+          console.error('[rooms] background poll failed:', err);
+        })
+      );
+    }
 
-    // includeForeign: a room's list is what everyone has added, and a contributor
-    // can only write membership into their OWN repo — so the owner's repo alone
-    // would hide (from everyone, the contributor included) every article added by
-    // someone else. Backed saves deliberately don't ask for this.
-    const snapshot = await snapshotBackedCollection(provider, ref.did, uri, {
-      includeForeign: true,
-    });
-
-    // Both providers carry the display name as `name` and an optional
-    // `description`. Blank is the same as absent here — a whitespace-only field
-    // would otherwise render an empty line.
-    const name = str(collectionRecord.name);
-    const description = str(collectionRecord.description);
-
-    const countRows = await env.DB.prepare(
-      `SELECT url_normalized, COUNT(DISTINCT did) AS n,
-              MAX(CASE WHEN did = ? THEN 1 ELSE 0 END) AS mine
-         FROM room_reads WHERE collection_uri = ? GROUP BY url_normalized`
-    )
-      .bind(did, uri)
-      .all<{ url_normalized: string; n: number; mine: number }>();
+    const [members, countRows] = await Promise.all([
+      listRoomMembers(env, uri),
+      env.DB.prepare(
+        `SELECT url_normalized, COUNT(DISTINCT did) AS n,
+                MAX(CASE WHEN did = ? THEN 1 ELSE 0 END) AS mine
+           FROM room_reads WHERE collection_uri = ? GROUP BY url_normalized`
+      )
+        .bind(did, uri)
+        .all<{ url_normalized: string; n: number; mine: number }>(),
+    ]);
     const counts = new Map(countRows.results.map((r) => [r.url_normalized, r]));
 
     // A collection can name the same article twice (cross-repo duplicates); the
-    // room shows each URL once. The snapshot comes back oldest-addition-first, so
+    // room shows each URL once. Members come back oldest-addition-first, so
     // first-seen is the earliest add — the room's order is the order it was built
     // in, and a re-add doesn't move an article to the end of the list.
     const seen = new Set<string>();
     const items: RoomItem[] = [];
-    for (const m of snapshot.members) {
+    for (const m of members) {
       if (seen.has(m.urlNormalized)) continue;
       seen.add(m.urlNormalized);
       const row = counts.get(m.urlNormalized);
@@ -196,12 +214,12 @@ export async function handleGetRoom(request: Request, env: Env): Promise<Respons
 
     return json({
       uri,
-      provider,
-      ownerDid: ref.did,
-      name,
-      description,
-      canAdd: session ? canAddTo(collection, session.did) : false,
-      complete: snapshot.complete,
+      provider: room.provider,
+      ownerDid: room.ownerDid,
+      name: room.name,
+      description: room.description,
+      canAdd: session ? canAddTo(room, session.did) : false,
+      complete: room.complete,
       items,
     });
   } catch (error) {
@@ -520,7 +538,7 @@ export async function handleRoomAddItem(request: Request, env: Env): Promise<Res
   try {
     const collection = await resolveCollection(body.collectionUri);
     if (collection instanceof Response) return collection;
-    if (!canAddTo(collection, session.did)) {
+    if (!canAddTo({ ownerDid: collection.ref.did, ...collection }, session.did)) {
       return json({ error: 'This room is not open for additions' }, 403);
     }
 
@@ -582,6 +600,25 @@ export async function handleRoomAddItem(request: Request, env: Env): Promise<Res
       readCount: row?.n ?? 0,
       readByMe: row?.mine === 1,
     };
+    // Write it through to the room's materialized list, so a reload shows the
+    // article before the next poll (or Constellation) has caught up. Not
+    // load-bearing: the record is in the repo, and the poll would find it.
+    try {
+      await noteRoomMember(env, body.collectionUri, {
+        linkUri: handles.linkUri,
+        itemUri: handles.itemUri,
+        url: rawUrl,
+        urlNormalized,
+        itemType: item.itemType,
+        title,
+        author,
+        description,
+        image,
+        addedAt: item.addedAt,
+      });
+    } catch (error) {
+      console.error('[rooms] could not note the added item on the room:', error);
+    }
     return json({ item, itemUri: handles.itemUri, linkUri: handles.linkUri });
   } catch (error) {
     console.error('[rooms] failed to add item:', error);

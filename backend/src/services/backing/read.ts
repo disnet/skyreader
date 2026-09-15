@@ -53,12 +53,20 @@ export interface BackedMember {
   addedAt?: string;
 }
 
-/** A member that resolved but carried no usable article URL (skipped, not an error). */
+/**
+ * A member that did not become a BackedMember. `reason` says whether trying again
+ * would help: `item-transient` (a 5xx, an unreachable PDS, the fetch budget) is the
+ * only one that might change; every other reason is the record's own (no URL, a
+ * free-text card, a deleted item, an unparseable at-uri). An incremental caller
+ * remembers the permanent ones so it never fetches them twice.
+ */
 export interface SkippedMember {
   reason: string;
   itemUri?: string;
   linkUri: string;
 }
+
+export const TRANSIENT_SKIP = 'item-transient';
 
 /**
  * The outcome of one snapshot poll. `complete` is the load-bearing flag: a poll
@@ -72,6 +80,19 @@ export interface SnapshotResult {
   skipped: SkippedMember[];
   /** count of each resolved item $type, for diagnostics */
   typeMix: Record<string, number>;
+  /**
+   * Every membership record seen to belong to this collection, by link at-uri —
+   * including the ones `skipLinks` told us not to resolve. With `listingComplete`
+   * this is the whole membership, so a link absent from it has left the collection.
+   */
+  listed: string[];
+  /**
+   * Whether `listed` names every membership record: the owner's listing was not
+   * truncated, the Constellation walk finished, and every foreign ref it named
+   * could be verified. Independent of whether the ITEMS behind those links could
+   * be resolved — `complete` covers that too.
+   */
+  listingComplete: boolean;
 }
 
 const MAX_PAGES = 50;
@@ -94,10 +115,13 @@ const RESOLVE_CONCURRENCY = 8;
  * means "this list may be short", which is the honest answer here, so spend up to
  * the budget, stop, and say so.
  *
- * 400 leaves the rest of the invocation (the caller's own record reads, the D1 count
- * query) a wide margin, and still resolves a room of ~200 articles in full.
+ * The default sits just under the cap: for a backed SAVES snapshot, `complete: false`
+ * means "keep the last good membership", so a lower default would silently freeze
+ * any Saved list too big to fit — where before it merely threw at the same point.
+ * Rooms pass their own, smaller budget: they resolve incrementally (see
+ * `SnapshotOptions.skipLinks`), so one poll never needs the whole allowance.
  */
-export const SNAPSHOT_SUBREQUESTS = 400;
+export const SNAPSHOT_SUBREQUESTS = 900;
 
 /**
  * The share of the budget the foreign-membership phase may spend verifying refs.
@@ -379,33 +403,54 @@ function extractCanonicalAtUri(value: ItemValue | null): string | undefined {
  * by the DID in its OWN at-uri (cross-repo safe) with per-snapshot caches for PDS
  * resolution and getRecord. Shared by both providers; the only per-provider logic is
  * how the membership record names its item + collection (handled by the callers).
+ *
+ * A failure is confined to the member it hit: a 5xx on one card is reported as a
+ * TRANSIENT skip and `transient` goes true, so the caller marks the snapshot
+ * incomplete without losing the members that did resolve. That distinction is what
+ * lets an incremental caller keep the ones it has and retry only the one it lacks.
  */
 async function resolveMembers(
   pairs: MembershipPair[],
   budget: SubrequestBudget,
   pdsFor: PdsResolver
-): Promise<{ members: BackedMember[]; skipped: SkippedMember[]; typeMix: Record<string, number> }> {
+): Promise<{
+  members: BackedMember[];
+  skipped: SkippedMember[];
+  typeMix: Record<string, number>;
+  transient: boolean;
+}> {
   // The cache holds the in-flight PROMISE (not the resolved value) so concurrent
   // workers resolving the same item share one fetch instead of racing into
   // duplicates. PDS resolution is cached the same way one level up, across phases.
-  const itemCache = new Map<string, Promise<ItemValue | null>>();
+  type Outcome = { item: ItemValue } | { item: null; transient: boolean };
+  const itemCache = new Map<string, Promise<Outcome>>();
   const members: BackedMember[] = [];
   const skipped: SkippedMember[] = [];
   const typeMix: Record<string, number> = {};
+  let transient = false;
 
-  const resolveItem = (itemUri: string): Promise<ItemValue | null> => {
+  const resolveItem = (itemUri: string): Promise<Outcome> => {
     let p = itemCache.get(itemUri);
     if (!p) {
-      p = (async () => {
+      p = (async (): Promise<Outcome> => {
         const ref = parseAtUri(itemUri);
-        if (!ref) return null;
+        if (!ref) return { item: null, transient: false };
+        // No PDS and no budget are both "couldn't reach it": the record may well
+        // exist, so neither is the collection's own fault and both are worth a
+        // retry. Out of budget is also what snapshotBackedCollection reads off
+        // `budget.exceeded` to mark the snapshot short.
         const pds = await pdsFor(ref.did, budget);
-        if (!pds) return null;
-        // Out of budget: the item is skipped like any other unresolvable one, and
-        // snapshotBackedCollection reads `budget.exceeded` to mark the snapshot
-        // short. This is the one place a skip is NOT the collection's own fault.
-        if (!budget.claim()) return null;
-        return getRecordPublic(pds, ref.did, ref.collection, ref.rkey);
+        if (!pds) return { item: null, transient: true };
+        if (!budget.claim()) return { item: null, transient: true };
+        try {
+          const item = await getRecordPublic(pds, ref.did, ref.collection, ref.rkey);
+          // getRecordPublic answers null only for a record that is genuinely gone.
+          return item ? { item } : { item: null, transient: false };
+        } catch (err) {
+          // A 5xx, a 429, a flaky cross-repo PDS: never silently drop a live member.
+          console.error('[backing] item resolve failed:', err);
+          return { item: null, transient: true };
+        }
       })();
       itemCache.set(itemUri, p);
     }
@@ -413,11 +458,17 @@ async function resolveMembers(
   };
 
   const handle = async ({ itemUri, linkUri, addedAt }: MembershipPair) => {
-    const item = await resolveItem(itemUri);
-    if (!item) {
-      skipped.push({ reason: 'item-not-resolvable', itemUri, linkUri });
+    const outcome = await resolveItem(itemUri);
+    if (!outcome.item) {
+      if (outcome.transient) transient = true;
+      skipped.push({
+        reason: outcome.transient ? TRANSIENT_SKIP : 'item-not-resolvable',
+        itemUri,
+        linkUri,
+      });
       return;
     }
+    const item = outcome.item;
     const itemType = item.$type ?? 'unknown';
     typeMix[itemType] = (typeMix[itemType] ?? 0) + 1;
     const rawUrl = extractUrlFromRecord(item);
@@ -444,7 +495,7 @@ async function resolveMembers(
 
   await mapPool(pairs, RESOLVE_CONCURRENCY, handle);
 
-  return { members, skipped, typeMix };
+  return { members, skipped, typeMix, transient };
 }
 
 /** Bounded-concurrency worker pool (see RESOLVE_CONCURRENCY). */
@@ -520,29 +571,40 @@ const FOREIGN_PAGE_LIMIT = 100;
  * ask for it, because there the point is that the list is co-curated.
  *
  * Constellation is an index, not the authority: every record it names is fetched and
- * re-checked against the collection uri before it counts. Bounded by pages AND by a
- * portion of the snapshot's fetch budget, with `complete: false` on any failure or
- * either bound, so the caller can say the list may be short rather than silently
- * dropping other people's contributions.
+ * re-checked against the collection uri before it counts — unless the caller has
+ * already done so (`skipLinks`), in which case the ref is listed and left alone. The
+ * walk is bounded by pages AND by a portion of the snapshot's fetch budget.
+ *
+ * Two completeness readouts: `listingComplete` says the WALK finished (every ref
+ * Constellation holds was seen), `verified` says every new ref it named could be
+ * checked. A caller diffing its stored membership against `listed` needs the first;
+ * whether the list may be short needs both.
  */
 async function listForeignMembership(
   shape: MembershipShape,
   collectionUri: string,
   ownerDid: string,
   budget: SubrequestBudget,
-  pdsFor: PdsResolver
-): Promise<{ pairs: MembershipPair[]; complete: boolean }> {
+  pdsFor: PdsResolver,
+  skipLinks: ReadonlySet<string>
+): Promise<{
+  pairs: MembershipPair[];
+  listed: string[];
+  listingComplete: boolean;
+  verified: boolean;
+}> {
   // Everything this phase spends comes out of a portion of the snapshot's budget,
   // so a flood of contributions can't leave nothing to resolve the articles those
   // contributions point at (see FOREIGN_VERIFY_SHARE).
   const phase = budget.portion(FOREIGN_VERIFY_SHARE);
-  const refs: Array<{ did: string; rkey: string }> = [];
+  const refs: Array<{ did: string; rkey: string; linkUri: string }> = [];
+  const listed: string[] = [];
   let cursor: string | undefined;
-  let complete = true;
+  let listingComplete = true;
 
   for (let page = 0; page < FOREIGN_PAGES; page++) {
     if (!phase.claim()) {
-      complete = false;
+      listingComplete = false;
       break;
     }
     const u = new URL(`${CONSTELLATION_BASE}/links`);
@@ -558,52 +620,55 @@ async function listForeignMembership(
       data = (await res.json()) as typeof data;
     } catch (err) {
       console.error('[backing] foreign membership lookup failed:', err);
-      return { pairs: [], complete: false };
+      return { pairs: [], listed: [], listingComplete: false, verified: false };
     }
     const records = data?.linking_records ?? [];
     for (const r of records) {
       // The owner's own links come from listRecords, which is authoritative and
       // needs no per-record fetch.
-      if (r.did && r.rkey && r.did !== ownerDid) refs.push({ did: r.did, rkey: r.rkey });
+      if (!r.did || !r.rkey || r.did === ownerDid) continue;
+      const linkUri = `at://${r.did}/${shape.collection}/${r.rkey}`;
+      // Already verified and resolved by the caller on an earlier pass: the index
+      // still lists it, so it is still a member, and that is all we need to know.
+      if (skipLinks.has(linkUri)) listed.push(linkUri);
+      else refs.push({ did: r.did, rkey: r.rkey, linkUri });
     }
     cursor = data?.cursor ?? undefined;
     if (!cursor || records.length === 0) break;
-    if (page === FOREIGN_PAGES - 1) complete = false;
+    if (page === FOREIGN_PAGES - 1) listingComplete = false;
   }
 
-  if (refs.length === 0) return { pairs: [], complete };
+  if (refs.length === 0) return { pairs: [], listed, listingComplete, verified: true };
 
   const pairs: MembershipPair[] = [];
+  let verified = true;
   await mapPool(refs, RESOLVE_CONCURRENCY, async (ref) => {
     try {
       const pds = await pdsFor(ref.did, phase);
       if (!pds) {
-        complete = false;
+        verified = false;
         return;
       }
       if (!phase.claim()) {
-        complete = false;
+        verified = false;
         return;
       }
       const value = await getRecordPublic(pds, ref.did, shape.collection, ref.rkey);
       if (!value) return; // deleted since Constellation indexed it
       if (shape.collectionUriOf(value) !== collectionUri) return; // stale index entry
       const itemUri = shape.itemUriOf(value);
-      if (itemUri)
-        pairs.push({
-          itemUri,
-          linkUri: `at://${ref.did}/${shape.collection}/${ref.rkey}`,
-          addedAt: shape.addedAtOf(value),
-        });
+      if (!itemUri) return;
+      listed.push(ref.linkUri);
+      pairs.push({ itemUri, linkUri: ref.linkUri, addedAt: shape.addedAtOf(value) });
     } catch (err) {
       // Transient — same stance as the owner-side snapshot: report incompleteness
       // rather than presenting a short list as the whole collection.
       console.error('[backing] foreign membership record failed:', err);
-      complete = false;
+      verified = false;
     }
   });
 
-  return { pairs, complete };
+  return { pairs, listed, listingComplete, verified };
 }
 
 /**
@@ -614,8 +679,8 @@ async function listForeignMembership(
  * carries no timestamp sorts last rather than pretending to be the oldest, and
  * `linkUri` breaks ties so the same collection always resolves to the same order.
  */
-function sortByAddedAt(members: BackedMember[]): BackedMember[] {
-  const at = (m: BackedMember) => (m.addedAt ? Date.parse(m.addedAt) : Number.POSITIVE_INFINITY);
+export function sortByAddedAt<T extends { addedAt?: string; linkUri: string }>(members: T[]): T[] {
+  const at = (m: T) => (m.addedAt ? Date.parse(m.addedAt) : Number.POSITIVE_INFINITY);
   return members.sort((a, b) => at(a) - at(b) || a.linkUri.localeCompare(b.linkUri));
 }
 
@@ -623,17 +688,29 @@ export interface SnapshotOptions {
   /** Also count membership written by repos other than the owner's (see
    *  `listForeignMembership`). Off by default: backed saves are owner-only. */
   includeForeign?: boolean;
-  /** Override the per-snapshot fetch budget (see SNAPSHOT_SUBREQUESTS). Callers
-   *  normally leave this alone; tests set it small to exercise the short path. */
+  /** Override the per-snapshot fetch budget (see SNAPSHOT_SUBREQUESTS). Rooms
+   *  set it low (they resolve incrementally); tests set it small to exercise the
+   *  short path. */
   maxSubrequests?: number;
+  /**
+   * Membership records (by link at-uri) the caller has already resolved and
+   * stored. They are still LISTED — so `listed` can be diffed against the store —
+   * but neither verified nor resolved again, which is what makes a repeat snapshot
+   * cost what changed rather than what the collection holds. `members` and
+   * `skipped` then cover only the links not in this set.
+   */
+  skipLinks?: ReadonlySet<string>;
 }
+
+const NO_LINKS: ReadonlySet<string> = new Set();
 
 /**
  * Snapshot a backed collection into the set of article saves it currently contains.
  * `ownerDid` owns the collection (and, by default, its membership records); item
  * records may live elsewhere. A thrown listRecords error, a truncated membership
- * listing, or a collection too large to resolve inside one snapshot's fetch budget
- * yields `complete: false` so the caller refuses to replace the membership table.
+ * listing, a member that failed transiently, or a collection too large to resolve
+ * inside one snapshot's fetch budget yields `complete: false` so the caller refuses
+ * to replace the membership table.
  */
 export async function snapshotBackedCollection(
   provider: BackingProviderName,
@@ -641,15 +718,22 @@ export async function snapshotBackedCollection(
   collectionUri: string,
   options: SnapshotOptions = {}
 ): Promise<SnapshotResult> {
+  const empty = (): SnapshotResult => ({
+    complete: false,
+    members: [],
+    skipped: [],
+    typeMix: {},
+    listed: [],
+    listingComplete: false,
+  });
   // One budget and one DID cache for the whole snapshot, so every phase draws on
   // the same allowance and no DID is resolved twice across them.
   const budget = new SubrequestBudget(options.maxSubrequests ?? SNAPSHOT_SUBREQUESTS);
   const pdsFor = pdsResolver();
+  const skipLinks = options.skipLinks ?? NO_LINKS;
 
   const pds = await pdsFor(ownerDid, budget);
-  if (!pds) {
-    return { complete: false, members: [], skipped: [], typeMix: {} };
-  }
+  if (!pds) return empty();
   const shape = MEMBERSHIP[provider];
 
   try {
@@ -659,23 +743,49 @@ export async function snapshotBackedCollection(
       shape.collection,
       budget
     );
-    const pairs: MembershipPair[] = owned.records.flatMap((l) => {
-      if (shape.collectionUriOf(l.value) !== collectionUri) return [];
+    const listed: string[] = [];
+    const pairs: MembershipPair[] = [];
+    for (const l of owned.records) {
+      if (shape.collectionUriOf(l.value) !== collectionUri) continue;
       const itemUri = shape.itemUriOf(l.value);
-      return itemUri ? [{ itemUri, linkUri: l.uri, addedAt: shape.addedAtOf(l.value) }] : [];
-    });
-    let complete = !owned.truncated;
+      if (!itemUri) continue;
+      listed.push(l.uri);
+      if (skipLinks.has(l.uri)) continue;
+      pairs.push({ itemUri, linkUri: l.uri, addedAt: shape.addedAtOf(l.value) });
+    }
+    let listingComplete = !owned.truncated;
+    let complete = listingComplete;
 
     if (options.includeForeign) {
-      const foreign = await listForeignMembership(shape, collectionUri, ownerDid, budget, pdsFor);
-      const seen = new Set(pairs.map((p) => p.linkUri));
-      for (const pair of foreign.pairs) {
-        if (!seen.has(pair.linkUri)) pairs.push(pair);
+      const foreign = await listForeignMembership(
+        shape,
+        collectionUri,
+        ownerDid,
+        budget,
+        pdsFor,
+        skipLinks
+      );
+      const seen = new Set(listed);
+      for (const linkUri of foreign.listed) {
+        if (!seen.has(linkUri)) {
+          seen.add(linkUri);
+          listed.push(linkUri);
+        }
       }
-      if (!foreign.complete) complete = false;
+      const paired = new Set(pairs.map((p) => p.linkUri));
+      for (const pair of foreign.pairs) {
+        if (!paired.has(pair.linkUri)) pairs.push(pair);
+      }
+      // A ref that could not be verified is one we cannot place: `listed` is only
+      // exhaustive when every new ref Constellation named was checked.
+      if (!foreign.listingComplete || !foreign.verified) {
+        listingComplete = false;
+        complete = false;
+      }
     }
 
-    const { members, skipped, typeMix } = await resolveMembers(pairs, budget, pdsFor);
+    const { members, skipped, typeMix, transient } = await resolveMembers(pairs, budget, pdsFor);
+    if (transient) complete = false;
 
     // The catch-all for every phase: item resolution reports a budget refusal as a
     // skipped member, not as incompleteness, so the budget itself is what says the
@@ -691,9 +801,9 @@ export async function snapshotBackedCollection(
       });
     }
 
-    return { complete, members: sortByAddedAt(members), skipped, typeMix };
+    return { complete, members: sortByAddedAt(members), skipped, typeMix, listed, listingComplete };
   } catch (err) {
     console.error('[backing] snapshot failed:', err);
-    return { complete: false, members: [], skipped: [], typeMix: {} };
+    return empty();
   }
 }

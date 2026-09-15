@@ -5,6 +5,7 @@ import * as read from '../src/services/backing/read';
 import * as write from '../src/services/backing/write';
 import * as didResolver from '../src/utils/did-resolver';
 import * as pdsClient from '../src/services/pds-client';
+import { pollRoom } from '../src/services/backing/room-sync';
 import { GRANULAR_SCOPES, READING_ROOM_SCOPES, SEMBLE_SCOPES } from '../src/config/scopes';
 
 // Reading Rooms — the add-an-article surface. What's pinned here is the
@@ -25,6 +26,8 @@ const FULL_SCOPES = `${GRANULAR_SCOPES} ${SEMBLE_SCOPES.join(' ')}`;
 
 async function reset(grantedScopes = FULL_SCOPES) {
   await env.DB.prepare('DELETE FROM room_reads WHERE did = ?').bind(DID).run();
+  await env.DB.prepare('DELETE FROM room_members').run();
+  await env.DB.prepare('DELETE FROM room_snapshots').run();
   await env.DB.prepare('DELETE FROM sessions WHERE did = ?').bind(DID).run();
   await env.DB.prepare('DELETE FROM users WHERE did = ?').bind(DID).run();
   await env.DB.prepare(
@@ -75,10 +78,43 @@ function mockCollection(value: Record<string, unknown>, cid = 'bafycollection') 
   return vi.spyOn(read, 'getRecordPublicWithCid').mockResolvedValue({ value, cid });
 }
 
+/** A snapshot result with the given members, listed and complete. */
+function snapshotOf(members: Array<Partial<read.BackedMember> & { url: string }> = []) {
+  const full = members.map((m, i) => ({
+    urlNormalized: m.url,
+    itemType: 'network.cosmik.card',
+    itemUri: `at://${OWNER}/network.cosmik.card/c${i}`,
+    linkUri: `at://${OWNER}/network.cosmik.collectionLink/l${i}`,
+    ...m,
+  })) as read.BackedMember[];
+  return {
+    complete: true,
+    members: full,
+    skipped: [],
+    typeMix: {},
+    listed: full.map((m) => m.linkUri),
+    listingComplete: true,
+  } satisfies read.SnapshotResult;
+}
+
 function emptySnapshot() {
-  return vi
-    .spyOn(read, 'snapshotBackedCollection')
-    .mockResolvedValue({ complete: true, members: [], skipped: [], typeMix: {} });
+  return vi.spyOn(read, 'snapshotBackedCollection').mockResolvedValue(snapshotOf());
+}
+
+/** The room's `last_poll_at`, pushed back so the next GET is past its gate. */
+async function ageRoom(uri: string) {
+  await env.DB.prepare('UPDATE room_snapshots SET last_poll_at = 0 WHERE collection_uri = ?')
+    .bind(uri)
+    .run();
+}
+
+async function storedLinks(uri: string): Promise<string[]> {
+  const rows = await env.DB.prepare(
+    'SELECT link_uri FROM room_members WHERE collection_uri = ? ORDER BY link_uri'
+  )
+    .bind(uri)
+    .all<{ link_uri: string }>();
+  return rows.results.map((r) => r.link_uri);
 }
 
 describe('GET /api/rooms — canAdd', () => {
@@ -162,18 +198,9 @@ describe('GET /api/rooms — signed out', () => {
 
   it('serves the aggregate read count but never readByMe', async () => {
     mockCollection({ name: 'Theirs', accessType: 'OPEN' });
-    vi.spyOn(read, 'snapshotBackedCollection').mockResolvedValue({
-      complete: true,
-      skipped: [],
-      typeMix: {},
-      members: [
-        {
-          url: 'https://a.test/x',
-          urlNormalized: 'a.test/x',
-          itemType: 'article',
-        },
-      ] as never,
-    });
+    vi.spyOn(read, 'snapshotBackedCollection').mockResolvedValue(
+      snapshotOf([{ url: 'https://a.test/x', urlNormalized: 'a.test/x' }])
+    );
     // Someone else has read this article through the room.
     await env.DB.prepare(
       `INSERT INTO room_reads (collection_uri, url_normalized, did, read_at)
@@ -195,6 +222,162 @@ describe('GET /api/rooms — signed out', () => {
     const { status } = await call(anonRequest('/api/rooms', 'POST'));
     expect(status).toBe(401);
     expect(created).not.toHaveBeenCalled();
+  });
+});
+
+// The room's list is materialized in D1 and refreshed incrementally: a poll
+// hands the snapshot every link it already holds, resolves only the rest, and
+// deletes what the listing no longer names — but only off a listing it can
+// vouch for. What's pinned here is that contract, since it is what makes a
+// room cost what changed rather than what it holds.
+describe('GET /api/rooms — materialized in D1', () => {
+  beforeEach(() => reset());
+  afterEach(() => vi.restoreAllMocks());
+
+  const ROOM = `/api/rooms?uri=${encodeURIComponent(OTHER_COLLECTION)}`;
+  const L0 = `at://${OWNER}/network.cosmik.collectionLink/l0`;
+  const L1 = `at://${OWNER}/network.cosmik.collectionLink/l1`;
+
+  it('snapshots a room on first sight, then serves the stored list without another snapshot', async () => {
+    mockCollection({ name: 'Theirs', accessType: 'OPEN' });
+    const snapshot = vi
+      .spyOn(read, 'snapshotBackedCollection')
+      .mockResolvedValue(
+        snapshotOf([{ url: 'https://a.test/one' }, { url: 'https://a.test/two' }])
+      );
+
+    const first = await call(anonRequest(ROOM));
+    expect(first.status).toBe(200);
+    expect(first.body.items.map((i: { url: string }) => i.url)).toEqual([
+      'https://a.test/one',
+      'https://a.test/two',
+    ]);
+    expect(first.body.complete).toBe(true);
+    expect(snapshot).toHaveBeenCalledTimes(1);
+
+    const second = await call(anonRequest(ROOM));
+    expect(second.body.items).toHaveLength(2);
+    expect(snapshot).toHaveBeenCalledTimes(1);
+    expect(await storedLinks(OTHER_COLLECTION)).toEqual([L0, L1]);
+  });
+
+  it('refreshes a stale room behind the response, resolving only links it does not hold', async () => {
+    mockCollection({ name: 'Theirs', accessType: 'OPEN' });
+    const snapshot = vi
+      .spyOn(read, 'snapshotBackedCollection')
+      .mockResolvedValue(
+        snapshotOf([{ url: 'https://a.test/one', addedAt: '2026-01-01T00:00:00Z' }])
+      );
+    await call(anonRequest(ROOM));
+    await ageRoom(OTHER_COLLECTION);
+
+    // The second poll: the stored link is still listed but not re-resolved, and
+    // a new contributor link arrives.
+    const L2 = `at://did:plc:friend/network.cosmik.collectionLink/theirs`;
+    snapshot.mockResolvedValue({
+      ...snapshotOf([
+        { url: 'https://a.test/three', linkUri: L2, addedAt: '2026-02-01T00:00:00Z' },
+      ]),
+      listed: [L0, L2],
+    });
+    const { body } = await call(anonRequest(ROOM));
+    // The response was served from the stored copy; the refresh ran in waitUntil.
+    expect(body.items.map((i: { url: string }) => i.url)).toEqual(['https://a.test/one']);
+    expect(snapshot).toHaveBeenCalledTimes(2);
+    const opts = snapshot.mock.calls[1][3]!;
+    expect([...opts.skipLinks!]).toEqual([L0]);
+    expect(opts.includeForeign).toBe(true);
+
+    const after = await call(anonRequest(ROOM));
+    expect(after.body.items.map((i: { url: string }) => i.url)).toEqual([
+      'https://a.test/one',
+      'https://a.test/three',
+    ]);
+  });
+
+  it('drops a link the listing no longer names, but only off a complete listing', async () => {
+    mockCollection({ name: 'Theirs', accessType: 'OPEN' });
+    const snapshot = vi
+      .spyOn(read, 'snapshotBackedCollection')
+      .mockResolvedValue(
+        snapshotOf([{ url: 'https://a.test/one' }, { url: 'https://a.test/two' }])
+      );
+    await call(anonRequest(ROOM));
+
+    // A truncated walk lists only one of the two: nothing may be deleted off it.
+    snapshot.mockResolvedValue({ ...snapshotOf(), listed: [L0], listingComplete: false });
+    await pollRoom(env, OTHER_COLLECTION, { force: true });
+    expect(await storedLinks(OTHER_COLLECTION)).toEqual([L0, L1]);
+    expect((await call(anonRequest(ROOM))).body.complete).toBe(false);
+
+    // A whole listing that omits l1 means l1 left the collection.
+    snapshot.mockResolvedValue({ ...snapshotOf(), listed: [L0] });
+    await pollRoom(env, OTHER_COLLECTION, { force: true });
+    expect(await storedLinks(OTHER_COLLECTION)).toEqual([L0]);
+    const { body } = await call(anonRequest(ROOM));
+    expect(body.items.map((i: { url: string }) => i.url)).toEqual(['https://a.test/one']);
+    expect(body.complete).toBe(true);
+  });
+
+  it('is complete only once every listed link has a row, filling in across polls', async () => {
+    mockCollection({ name: 'Theirs', accessType: 'OPEN' });
+    // First look: two links listed, the budget only resolved one.
+    const snapshot = vi.spyOn(read, 'snapshotBackedCollection').mockResolvedValue({
+      ...snapshotOf([{ url: 'https://a.test/one' }]),
+      skipped: [{ reason: read.TRANSIENT_SKIP, linkUri: L1 }],
+      listed: [L0, L1],
+    });
+    const first = await call(anonRequest(ROOM));
+    expect(first.body.complete).toBe(false);
+    expect(first.body.items).toHaveLength(1);
+
+    // Next poll resolves the rest. A NOTE card is not an article: it gets a row
+    // (so it is never fetched again) but no place in the list.
+    const L2 = `at://${OWNER}/network.cosmik.collectionLink/note`;
+    snapshot.mockResolvedValue({
+      ...snapshotOf([{ url: 'https://a.test/two', linkUri: L1 }]),
+      skipped: [{ reason: 'no-url (network.cosmik.card)', linkUri: L2 }],
+      listed: [L0, L1, L2],
+    });
+    await pollRoom(env, OTHER_COLLECTION, { force: true });
+    const { body } = await call(anonRequest(ROOM));
+    expect(body.complete).toBe(true);
+    expect(body.items).toHaveLength(2);
+    expect(await storedLinks(OTHER_COLLECTION)).toEqual([L0, L1, L2]);
+  });
+
+  it('lets one poll through at a time', async () => {
+    mockCollection({ name: 'Theirs', accessType: 'OPEN' });
+    const snapshot = emptySnapshot();
+    await call(anonRequest(ROOM));
+    await ageRoom(OTHER_COLLECTION);
+
+    const results = await Promise.all([
+      pollRoom(env, OTHER_COLLECTION),
+      pollRoom(env, OTHER_COLLECTION),
+    ]);
+    expect(results.filter((r) => r.polled)).toHaveLength(1);
+    expect(snapshot).toHaveBeenCalledTimes(2);
+  });
+
+  it('forgets a room whose collection is gone, and 404s the next open', async () => {
+    const record = mockCollection({ name: 'Theirs', accessType: 'OPEN' });
+    emptySnapshot();
+    await call(anonRequest(ROOM));
+
+    record.mockResolvedValue(null);
+    const result = await pollRoom(env, OTHER_COLLECTION, { force: true });
+    expect(result).toMatchObject({ polled: true, gone: true });
+    expect(await storedLinks(OTHER_COLLECTION)).toEqual([]);
+    expect((await call(anonRequest(ROOM))).status).toBe(404);
+  });
+
+  it('serves a stored room while its refresh is gated', async () => {
+    mockCollection({ name: 'Theirs', accessType: 'OPEN' });
+    const snapshot = emptySnapshot();
+    await call(anonRequest(ROOM));
+    expect(await pollRoom(env, OTHER_COLLECTION)).toEqual({ polled: false, reason: 'gated' });
+    expect(snapshot).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -342,6 +525,37 @@ describe('POST /api/rooms/items', () => {
     );
     expect(body.item.readCount).toBe(1);
     expect(body.item.readByMe).toBe(true);
+  });
+});
+
+describe('POST /api/rooms/items — the materialized room', () => {
+  beforeEach(() => reset());
+  afterEach(() => vi.restoreAllMocks());
+
+  it('shows the added article on the next open, before any poll has run', async () => {
+    mockCollection({ name: 'Theirs', accessType: 'OPEN' });
+    const snapshot = emptySnapshot();
+    const ROOM = `/api/rooms?uri=${encodeURIComponent(OTHER_COLLECTION)}`;
+    expect((await call(anonRequest(ROOM))).body.items).toHaveLength(0);
+
+    vi.spyOn(write, 'createMember').mockResolvedValue({
+      itemUri: `at://${DID}/network.cosmik.card/c1`,
+      linkUri: `at://${DID}/network.cosmik.collectionLink/l1`,
+    });
+    const added = await call(
+      request('/api/rooms/items', {
+        collectionUri: OTHER_COLLECTION,
+        url: 'https://example.com/post',
+        title: 'A Post',
+      })
+    );
+    expect(added.status).toBe(200);
+
+    const { body } = await call(anonRequest(ROOM));
+    expect(body.items.map((i: { url: string; title?: string }) => [i.url, i.title])).toEqual([
+      ['https://example.com/post', 'A Post'],
+    ]);
+    expect(snapshot).toHaveBeenCalledTimes(1);
   });
 });
 

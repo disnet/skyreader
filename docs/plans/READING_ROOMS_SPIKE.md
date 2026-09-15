@@ -183,8 +183,10 @@ CREATE TABLE room_reads (
 );
 ```
 
-Counts are `COUNT(DISTINCT did)` per `(collection_uri, url_normalized)`. No `rooms` table, no
-`room_members` table — identity is the at-uri, membership lives in members' repos.
+Counts are `COUNT(DISTINCT did)` per `(collection_uri, url_normalized)`. Identity is the at-uri and
+membership (who is reading along) lives in members' repos. The room's **article list** is
+materialized in `room_snapshots` + `room_members` (migration `0079`) as a cache of the collection,
+refreshed incrementally; see "Materialized rooms" below.
 
 ## Surfaces
 
@@ -382,42 +384,78 @@ needs a session (`POST /api/rooms`, `/join`, `/items`, `/read`), and `RoomPage` 
 and hides the reader's "Mark as read" when `auth.isAuthenticated` is false — a guest is `isInApp`
 but has no session either.
 
-### The snapshot's fetch budget
+### Materialized rooms (built 2026-09-15)
 
-Opening the read put the `includeForeign` fan-out behind an unauthenticated GET, which made an
-already-real ceiling worth guarding. A Worker invocation is capped at 1000 subrequests, and a room's
-cost is set by the collection, not by us: roughly two fetches per contributed article (verify the
-membership record, then resolve the item it points at) on top of Constellation paging, so a few
-hundred cross-repo contributions crosses it. Crossing it **throws**, which
-`snapshotBackedCollection`'s catch turns into an empty list, so a busy room failed to load at all
-rather than coming back short.
+Opening the read put the `includeForeign` fan-out behind an unauthenticated GET, and that fan-out
+was the wrong shape to begin with: every open resolved the whole collection record by record, off
+whichever PDS held each item, on the request path. A Worker invocation is capped at 1000
+subrequests and a room costs one or two fetches per article, so a busy room could not be read at
+all, and a quiet one still paid the whole walk per reader. A per-snapshot fetch budget bounded the
+worst case; it did not make the endpoint cheap, and it lowered the ceiling for backed saves, where
+`complete: false` freezes the Saved list rather than shortening a room.
 
-`SNAPSHOT_SUBREQUESTS` (400, overridable per snapshot via `SnapshotOptions.maxSubrequests`) is the
-allowance, claimed one fetch at a time. Running out is not an error: the phases stop and the
-snapshot reports `complete: false`, which the room page already renders as "this list may be
-short". Three details earn their keep:
+Rooms now have the shape backed saves already had: **serve the last snapshot from D1, refresh it
+behind the response**. `backend/src/services/backing/room-sync.ts` owns it; migration `0079` adds
+two tables:
 
-- **The foreign phase gets a portion, not the whole budget.** Verification runs before item
-  resolution, so left uncapped it would spend everything and leave nothing to resolve the articles
-  those refs point at — a room that renders empty is worse than one that renders the owner's half.
-  `FOREIGN_VERIFY_SHARE` is that split.
-- **The cap has to be on spend, not on item count.** The first attempt capped how many refs were
-  verified, which doesn't bound the cost: a ref is a `getRecord` _plus_, for a contributor not seen
-  yet, a DID resolution. A ten-ref cap against a twenty-fetch budget still spent all twenty. The
-  test caught it.
-- **One DID cache across both phases.** They used to hold separate ones, so a contributor who owned
-  the card their own link pointed at was resolved twice: two subrequests, one answer.
+- `room_snapshots`, one row per room we have opened: the collection record (Semble's
+  `accessType`/`collaborators` decide `canAdd`), `complete`, and `last_poll_at`.
+- `room_members`, one row per membership record keyed by the record's **own at-uri**, whichever
+  repo it lives in. A row with a NULL url is a link that resolved to something that is not an
+  article (a free-text card, a deleted item): kept so it is never fetched again, never shown.
 
-`budget.exceeded` only goes true once a claim was actually refused, so a snapshot that finished on
-its last permitted fetch still reports itself complete.
+`GET /api/rooms` reads both tables and joins `room_reads`. A room we have never seen is looked up
+and snapshotted inline so its first reader gets a list; a room we hold is served as it is, and if
+its gate has passed (a minute for a complete room, five seconds for one still filling in) the poll
+runs in `waitUntil`. The response shape is unchanged, and so is the privacy argument that ruled
+out edge caching: the public part now lives in D1 and the per-reader overlay (`readByMe`,
+`canAdd`) is the same query it always was.
 
-This bounds the worst case; it does not make the endpoint cheap. Edge-caching would, but the
-response isn't reader-neutral (`readByMe` per item, `canAdd`), `caches.default` is keyed by URL, and
-`readByMe` is exactly the per-user read state this document promises never leaves D1 — so a shared
-cache entry is a privacy bug, and a per-DID key gives a 0% hit rate on the traffic shape that
-matters here (many readers, one room, once each). The fix is splitting the response into a public
-room-keyed part and a per-reader overlay, which also has no natural invalidation point: a room's
-membership changes when someone writes to their own repo, a write we never see. The lexicon is published at
+What makes this cheap rather than merely bounded is that **the poll is incremental**. It lists the
+membership (the owner's `listRecords` pages plus the Constellation walk, a handful of fetches),
+hands every stored link uri to the snapshot as `SnapshotOptions.skipLinks`, and only verifies and
+resolves links it has not seen. So a poll costs what changed, not what the room holds. The read
+path grew two readouts to support that:
+
+- `SnapshotResult.listed`: every membership record seen to belong to the collection, the skipped
+  ones included. With `listingComplete` it is the whole membership, so a stored link absent from
+  it has left the collection and is deleted. A truncated listing, a Constellation outage, or a
+  foreign ref that could not be verified all make `listingComplete` false, and nothing is deleted
+  off such a listing.
+- Failures are confined to the member they hit. A 5xx on one card used to throw the whole snapshot
+  away; it is now a skip with reason `item-transient`, and the members that did resolve are kept.
+  The saves path is unaffected in what matters: `complete` still goes false, so it still refuses to
+  replace membership. The distinction lets a room store the ones it has and retry only the one it
+  lacks.
+
+`complete` on a room is therefore not the snapshot's verdict but a property of the table: **every
+listed link has a row**. A room too big for one poll's budget (`ROOM_SNAPSHOT_SUBREQUESTS`, 400)
+comes back short, is retried on the next opens, and turns complete when the last link lands. A
+stored row that failed to refresh is still a row, so a transient blip on a metadata refresh does
+not make the list "short".
+
+Two more things the poll does: it re-reads the collection record each time (name, description,
+access rule), and a record that is **gone** drops the room's rows so the next open answers 404 like
+a room we never knew. And rows older than a week are re-resolved a slice at a time
+(`ROOM_REFRESH_SLICE`, 25 per poll), so an edited card title eventually shows without a big room's
+rows ageing out all at once. The poll claims the room with a compare-and-set on `last_poll_at`, so
+two readers opening a stale room start one refresh.
+
+`POST /api/rooms/items` writes the added article through to `room_members`, so a reload shows it
+before the poll (or Constellation) has caught up. There is no invalidation beyond the gate: an
+article added from Semble or Margin directly shows up within a minute of the next open. The
+firehose would close that gap (the JetstreamPoller already drains `site.standard.document`; the two
+membership collections filtered to known room uris are the same pattern) and is deliberately not in
+the spike.
+
+The fetch budget from the previous round stays, now as a guard on the poll rather than the thing
+that decides what a visitor sees. Its default is back near the cap (`SNAPSHOT_SUBREQUESTS`, 900)
+so backed saves lose nothing; rooms pass their own. The mechanics are unchanged: the foreign phase
+draws on a portion (`FOREIGN_VERIFY_SHARE`) so verification cannot starve item resolution, the cap
+is on spend rather than item count, both phases share one DID cache, and `budget.exceeded` only
+goes true once a claim was refused.
+
+The lexicon is published at
 `/.well-known/lexicons/app/skyreader/reading/readAlong.json`. The Semble pitch (render "n reading
 along in Skyreader" from the NSID) is still unraised — raise it before this ships beyond a spike;
 the calls and the join-link shape to hand them are written out under "The whole integration,
