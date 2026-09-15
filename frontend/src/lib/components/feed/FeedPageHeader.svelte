@@ -231,7 +231,11 @@
             {#if feedViewStore.isSavedChannel && onEditChannel}
               <span class="toggle-divider"></span>
               <button
-                onclick={() => onEditChannel(parseInt(feedViewStore.viewFilter!))}
+                onclick={() => {
+                  // `viewFilter` is the channel's uuid, not its Dexie id.
+                  const id = feedViewStore.activeFilteredView?.id;
+                  if (id != null) onEditChannel(id);
+                }}
                 aria-label="Edit channel"
                 title="Edit channel"
               >

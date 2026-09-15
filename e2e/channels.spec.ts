@@ -3,14 +3,14 @@ import type { Page, Response } from '@playwright/test';
 import { seedSubscription, seedFeedItems, cleanupFeedItems } from './seed';
 import type { TestUser } from './seed';
 
-/** Create a source channel via the Feeds row's + button and modal form. */
-async function createChannel(page: Page, name: string) {
-  // Channels live under the Feeds nav row. Click the + add button on that row.
-  const feedsRow = page.locator('.nav-row', {
-    has: page.locator('.nav-label', { hasText: 'Feeds' }),
+/** Create a channel via a nav row's + button and the modal form. */
+async function createChannel(page: Page, name: string, row: 'Feeds' | 'Saved' = 'Feeds') {
+  // Channels live under the Feeds and Saved nav rows. Click the + add button.
+  const navRow = page.locator('.nav-row', {
+    has: page.locator('.nav-label', { hasText: row }),
   });
-  await expect(feedsRow).toBeVisible({ timeout: 15_000 });
-  await feedsRow.locator('.row-add-btn').click({ force: true });
+  await expect(navRow).toBeVisible({ timeout: 15_000 });
+  await navRow.locator('.row-add-btn').click({ force: true });
 
   // Fill the channel name in the modal
   const nameInput = page.locator('#view-name');
@@ -37,6 +37,23 @@ test.describe('Channels', () => {
 
     // URL should include view= parameter
     await expect(authedPage).toHaveURL(/view=/);
+  });
+
+  test('the header Edit button opens a saved channel in its editor', async ({ authedPage }) => {
+    // A saved channel routes to /saved?view=<uuid> and puts an Edit button in
+    // the header. That button used to resolve the channel with
+    // `parseInt(viewFilter)` — but `viewFilter` is the uuid, so it passed NaN
+    // and the editor opened blank, with its Save writing to no row at all.
+    await createChannel(authedPage, 'Edit From Header', 'Saved');
+    await expect(authedPage).toHaveURL(/\/saved\?view=/);
+
+    await authedPage.getByRole('button', { name: 'Edit channel' }).click();
+
+    // The editor is populated with this channel, not an empty create form.
+    await expect(authedPage.getByRole('heading', { name: 'Edit Channel' })).toBeVisible({
+      timeout: 5_000,
+    });
+    await expect(authedPage.locator('#view-name')).toHaveValue('Edit From Header');
   });
 
   test('rename a channel via context menu', async ({ authedPage }) => {
