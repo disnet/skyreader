@@ -147,43 +147,103 @@
   );
 
   // Save view state
-  let showNameInput = $state(false);
-  let newViewName = $state('');
-  let nameInputRef = $state<HTMLInputElement | null>(null);
   let saving = $state(false);
 
   let isEditingView = $derived(!!feedViewStore.viewFilter);
 
-  // Rename view state
+  // Rename view state — also how a freshly saved channel gets named: Save writes
+  // the channel immediately with an auto name, then opens this for editing.
   let showRenameInput = $state(false);
   let renameViewName = $state('');
-  let renameInputRef = $state<HTMLInputElement | null>(null);
+  let renameViewId = $state<number | null>(null);
 
-  function startRenameView() {
-    if (!feedViewStore.viewFilter) return;
-    const id = parseInt(feedViewStore.viewFilter);
-    const view = filteredViewsStore.getById(id);
-    if (!view) return;
+  /** Focus and select the name field whenever it mounts, however it got there. */
+  function selectOnMount(node: HTMLInputElement) {
+    node.focus();
+    node.select();
+  }
+
+  // --- Auto naming ---
+
+  const TYPE_SHORT_LABELS: Record<string, string> = {
+    rss: 'Feeds',
+    'atproto.documents': 'Documents',
+  };
+
+  let sourceTitleByKey = $derived.by(() => {
+    const map = new Map<string, string>();
+    for (const sub of subscriptionsStore.subscriptions) {
+      const key = subscriptionSourceKey(sub);
+      if (key) map.set(key, sub.customTitle || sub.title);
+    }
+    return map;
+  });
+
+  /** Terse label for a list of names: "A", "A & B", "A +2". */
+  function joinNames(names: string[]): string {
+    if (names.length === 1) return names[0];
+    if (names.length === 2) return `${names[0]} & ${names[1]}`;
+    return `${names[0]} +${names.length - 1}`;
+  }
+
+  /** Append " 2", " 3"… so a generated name never collides with an existing channel. */
+  function uniqueChannelName(base: string): string {
+    const taken = new Set(filteredViewsStore.views.map((v) => v.name));
+    if (!taken.has(base)) return base;
+    let n = 2;
+    while (taken.has(`${base} ${n}`)) n++;
+    return `${base} ${n}`;
+  }
+
+  /** Describe the current filters well enough to recognise, short enough to read. */
+  function autoChannelName(): string {
+    const parts: string[] = [];
+    const sourceNames = ef.sourceKeys
+      .map((k) => sourceTitleByKey.get(k))
+      .filter((n): n is string => !!n);
+
+    if (ef.sourceMode === 'include' && sourceNames.length > 0) {
+      parts.push(joinNames(sourceNames));
+    } else if (ef.sourceMode === 'exclude' && sourceNames.length > 0) {
+      parts.push(`Without ${joinNames(sourceNames)}`);
+    } else if (activeTypeFilter.length > 0) {
+      parts.push(joinNames(activeTypeFilter.map((t) => TYPE_SHORT_LABELS[t] ?? t)));
+    }
+
+    if (activeTagFilter.length > 0) parts.push(joinNames([...activeTagFilter]));
+
+    return uniqueChannelName(parts.join(' \u00b7 ') || 'New channel');
+  }
+
+  // --- Rename ---
+
+  function beginRename(view: { id?: number; name: string } | null | undefined) {
+    if (!view || view.id == null) return;
+    renameViewId = view.id;
     renameViewName = view.name;
     showRenameInput = true;
-    requestAnimationFrame(() => {
-      renameInputRef?.focus();
-      renameInputRef?.select();
-    });
+  }
+
+  function startRenameView() {
+    beginRename(feedViewStore.activeFilteredView);
   }
 
   async function commitRenameView() {
-    if (!feedViewStore.viewFilter) return;
+    const id = renameViewId;
+    showRenameInput = false;
+    renameViewId = null;
+    if (id == null) return;
     const trimmed = renameViewName.trim();
-    if (!trimmed) {
-      showRenameInput = false;
-      return;
-    }
-    const id = parseInt(feedViewStore.viewFilter);
+    if (!trimmed) return;
     const view = filteredViewsStore.getById(id);
     if (view && trimmed !== view.name) {
       await filteredViewsStore.update(id, { name: trimmed });
     }
+  }
+
+  function cancelRenameView() {
+    // Clear the target first so the input's blur handler doesn't commit.
+    renameViewId = null;
     showRenameInput = false;
   }
 
@@ -192,36 +252,31 @@
       e.preventDefault();
       commitRenameView();
     } else if (e.key === 'Escape') {
-      showRenameInput = false;
+      cancelRenameView();
     }
   }
 
   async function handleDeleteView() {
-    if (!feedViewStore.viewFilter) return;
+    const view = feedViewStore.activeFilteredView;
+    if (!view || view.id == null) return;
     if (!confirm('Are you sure you want to delete this channel?')) return;
-    const id = parseInt(feedViewStore.viewFilter);
-    await filteredViewsStore.remove(id);
+    await filteredViewsStore.remove(view.id);
     goto(FEEDS_PATH);
   }
 
   async function handleSave() {
     if (isEditingView) {
       feedViewStore.syncToolbarToSavedView();
-    } else {
-      showNameInput = true;
-      newViewName = '';
-      requestAnimationFrame(() => nameInputRef?.focus());
+      return;
     }
-  }
+    if (saving) return;
 
-  async function handleCreateView() {
-    const name = newViewName.trim();
-    if (!name || saving) return;
-
+    // Save means saved: write the channel now under a generated name, then open
+    // that name for editing so it can be changed without a second trip.
     saving = true;
     try {
-      const id = await filteredViewsStore.create({
-        name,
+      const uuid = await filteredViewsStore.create({
+        name: autoChannelName(),
         sourceMode: ef.sourceMode,
         sourceKeys: [...ef.sourceKeys],
         readFilter: feedViewStore.showOnlyUnread ? 'unread' : 'all',
@@ -229,21 +284,11 @@
         tagFilter: activeTagFilter.length > 0 ? [...activeTagFilter] : undefined,
         typeFilter: activeTypeFilter.length > 0 ? [...activeTypeFilter] : undefined,
       });
-      showNameInput = false;
-      newViewName = '';
-      goto(channelPath(id));
+      const created = filteredViewsStore.getByUuid(uuid);
+      await goto(channelPath(uuid));
+      beginRename(created);
     } finally {
       saving = false;
-    }
-  }
-
-  function handleNameKeydown(e: KeyboardEvent) {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      handleCreateView();
-    } else if (e.key === 'Escape') {
-      showNameInput = false;
-      newViewName = '';
     }
   }
 </script>
@@ -321,17 +366,21 @@
     <span class="toolbar-divider group-divider"></span>
 
     <div class="filter-group">
-      <button
-        class="filter-btn edit-channel-btn"
-        onclick={() => {
-          const id = feedViewStore.activeFilteredView?.id;
-          if (id != null) onEditChannel(id);
-        }}
-        title="Edit channel"
-      >
-        <Icon name="edit" size={16} />
-        <span class="filter-label">Edit Channel</span>
-      </button>
+      {#if showRenameInput}
+        {@render renameField()}
+      {:else}
+        <button
+          class="filter-btn edit-channel-btn"
+          onclick={() => {
+            const id = feedViewStore.activeFilteredView?.id;
+            if (id != null) onEditChannel(id);
+          }}
+          title="Edit channel"
+        >
+          <Icon name="edit" size={16} />
+          <span class="filter-label">Edit Channel</span>
+        </button>
+      {/if}
     </div>
   {:else}
     {#if isSavedChannel}
@@ -641,44 +690,8 @@
 
     <!-- Save button -->
     <div class="filter-group">
-      {#if showNameInput}
-        <div class="save-name-input">
-          <input
-            type="text"
-            bind:this={nameInputRef}
-            bind:value={newViewName}
-            placeholder="View name..."
-            onkeydown={handleNameKeydown}
-            class="name-input"
-          />
-          <button
-            class="filter-btn save-confirm-btn"
-            onclick={handleCreateView}
-            disabled={!newViewName.trim() || saving}
-            title="Create view"
-          >
-            <Icon name="check" size={16} />
-          </button>
-        </div>
-      {:else if showRenameInput}
-        <div class="save-name-input">
-          <input
-            bind:this={renameInputRef}
-            bind:value={renameViewName}
-            class="name-input"
-            placeholder="View name"
-            onkeydown={handleRenameKeydown}
-            onblur={commitRenameView}
-          />
-          <button
-            class="filter-btn save-confirm-btn"
-            onclick={commitRenameView}
-            disabled={!renameViewName.trim()}
-            title="Confirm rename"
-          >
-            <Icon name="check" size={16} />
-          </button>
-        </div>
+      {#if showRenameInput}
+        {@render renameField()}
       {:else}
         <button
           class="filter-btn save-btn"
@@ -688,11 +701,12 @@
               ? hasSavedChannelFilters
               : ef.sourceMode !== 'all' || activeTypeFilter.length > 0}
           onclick={handleSave}
-          disabled={isEditingView
-            ? !feedViewStore.hasUnsavedChanges
-            : isSavedChannel
-              ? !hasSavedChannelFilters
-              : ef.sourceMode === 'all' && activeTypeFilter.length === 0}
+          disabled={saving ||
+            (isEditingView
+              ? !feedViewStore.hasUnsavedChanges
+              : isSavedChannel
+                ? !hasSavedChannelFilters
+                : ef.sourceMode === 'all' && activeTypeFilter.length === 0)}
           title={isEditingView ? 'Update channel' : 'Save as new channel'}
         >
           <Icon name="save" size={16} />
@@ -710,6 +724,27 @@
     </div>
   {/if}
 </div>
+
+{#snippet renameField()}
+  <div class="save-name-input">
+    <input
+      use:selectOnMount
+      bind:value={renameViewName}
+      class="name-input"
+      placeholder="Channel name"
+      onkeydown={handleRenameKeydown}
+      onblur={commitRenameView}
+    />
+    <button
+      class="filter-btn save-confirm-btn"
+      onclick={commitRenameView}
+      disabled={!renameViewName.trim()}
+      title="Confirm name"
+    >
+      <Icon name="check" size={16} />
+    </button>
+  </div>
+{/snippet}
 
 <style>
   .filter-toolbar {

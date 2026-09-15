@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import type { Page } from '@playwright/test';
+import type { Page, Response } from '@playwright/test';
 import { seedSubscription, seedFeedItems, cleanupFeedItems } from './seed';
 import type { TestUser } from './seed';
 
@@ -161,8 +161,9 @@ test.describe('A channel filter survives a reload', () => {
 
   /**
    * Drive the toolbar exactly as the user does: exclude one source, then Save
-   * the resulting view as a named channel. Leaves the page on `?view=<uuid>`
-   * with the channel already written through to D1.
+   * the resulting view as a named channel. Save writes the channel immediately
+   * under a generated name and opens that name for editing, so renaming it is a
+   * second write. Leaves the page on `?view=<uuid>` with both through to D1.
    */
   async function excludeNoisyAndSaveChannel(page: Page, name: string) {
     await openFilterToolbar(page);
@@ -178,18 +179,23 @@ test.describe('A channel filter survives a reload', () => {
     // Close the popover so it isn't covering the Save button.
     await page.keyboard.press('Escape');
 
-    const channelWrite = page.waitForResponse(
-      (r) => /\/api\/channels\//.test(r.url()) && r.request().method() === 'PUT'
-    );
+    const isChannelWrite = (r: Response) =>
+      /\/api\/channels\//.test(r.url()) && r.request().method() === 'PUT';
+
+    const created = page.waitForResponse(isChannelWrite);
     await page.locator('.filter-toolbar .save-btn').click();
+
+    // The channel exists already; the input carries its auto-generated name.
+    await expect(page).toHaveURL(/view=/);
+    await created;
+
     const nameInput = page.locator('.filter-toolbar .save-name-input .name-input');
     await expect(nameInput).toBeVisible({ timeout: 5_000 });
+    const renamed = page.waitForResponse(isChannelWrite);
     await nameInput.fill(name);
     await nameInput.press('Enter');
-
-    await expect(page).toHaveURL(/view=/);
-    // Don't reload until the channel has actually landed in D1.
-    await channelWrite;
+    // Don't reload until the rename has actually landed in D1.
+    await renamed;
   }
 
   test('the excluded source is still excluded after a refresh', async ({
