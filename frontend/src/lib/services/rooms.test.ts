@@ -4,6 +4,7 @@ import {
   collectionOwnerDid,
   collectionPageLink,
   fetchRoomMemberCount,
+  fetchRoomMembers,
   resolveRoomInput,
   scanReadAlongs,
 } from './rooms';
@@ -79,6 +80,55 @@ describe('resolveRoomInput', () => {
     expect(await resolveRoomInput('at://did:plc:abc123/only-two')).toBeNull();
     expect(await resolveRoomInput('https://semble.so/url/whatever')).toBeNull();
     expect(await resolveRoomInput('https://example.com/profile/x/collections/y')).toBeNull();
+  });
+});
+
+describe('fetchRoomMembers', () => {
+  function didsResponse(dids: string[], cursor?: string): Response {
+    return new Response(JSON.stringify({ linking_dids: dids, cursor }), { status: 200 });
+  }
+
+  it('pages Constellation until it runs out of joiners', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(didsResponse(['did:plc:a', 'did:plc:b'], 'page2'))
+      .mockResolvedValueOnce(didsResponse(['did:plc:b', 'did:plc:c']));
+    vi.stubGlobal('fetch', fetchMock);
+    // Deduped across pages: the same reader can appear on both.
+    expect(await fetchRoomMembers(COLLECTION_URI)).toEqual(['did:plc:a', 'did:plc:b', 'did:plc:c']);
+  });
+
+  it('reads an empty room as empty, not as a failure', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => didsResponse([]))
+    );
+    expect(await fetchRoomMembers(COLLECTION_URI)).toEqual([]);
+  });
+
+  it('reports null when Constellation never answers', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('nope', { status: 503 }))
+    );
+    expect(await fetchRoomMembers(COLLECTION_URI)).toBeNull();
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('offline');
+      })
+    );
+    expect(await fetchRoomMembers(COLLECTION_URI)).toBeNull();
+  });
+
+  it('keeps what it collected when a later page fails', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(didsResponse(['did:plc:a'], 'page2'))
+      .mockResolvedValueOnce(new Response('nope', { status: 503 }));
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await fetchRoomMembers(COLLECTION_URI)).toEqual(['did:plc:a']);
   });
 });
 

@@ -406,9 +406,9 @@ the /rooms index re-described every room off its owner's PDS on each visit — f
 maybe daily. The reader paid a remote read for something they had already seen.
 
 `services/roomCache.ts` owns both halves. The article list is a per-room snapshot in Dexie v40
-`roomSnapshots`, keyed `[did+subject]`; the index's three lists (your rooms described, the featured
-rows, the presence counts) are small metadata blobs, since each is always read whole. Everything is
-dropped by `clearAllData` on sign-out.
+`roomSnapshots`, keyed `[did+subject]`; the index's lists (your rooms described, the featured rows)
+and the Constellation presence readings are small metadata blobs, since each is always read whole.
+Everything is dropped by `clearAllData` on sign-out.
 
 - **The snapshot is per reader, not per room.** `readByMe`, `canAdd` and `joined` are answers about
   one account, so a shared device must never paint one reader's marks for the next. A signed-out
@@ -425,11 +425,18 @@ dropped by `clearAllData` on sign-out.
 - **The snapshot is written from an effect**, not at each call site: a join, a leave, a mark-as-read
   and an article added here all reassign `room`, and no path can update it and forget the cache.
   `roomsStore` writes read marks through to the snapshot for the same reason.
-- **Presence counts are cached, failures aren't.** A null count is a failed lookup, not a number, so
-  it never overwrites a count we already hold and never reaches the cache — the marker stays as it
-  was through an outage instead of blanking.
-- Snapshots older than 30 days are pruned on the next write, so browsing rooms you never return to
-  can't grow the table without bound.
+- **Constellation is cached in one place for both surfaces.** The index asks it for a count per row
+  (`fetchRoomMemberCount`), the room page for the readers themselves (`fetchRoomMembers`); both
+  write the same per-room reading (`total` + the DIDs the avatar row draws, capped at 12), so
+  whichever surface you reach first warms the other. A count-only refresh keeps the readers an
+  earlier room-page visit stored.
+- **Presence readings are cached, failures aren't.** A null count is a failed lookup, not a number,
+  and `fetchRoomMembers` now returns null (not `[]`) when Constellation never answers, so an outage
+  leaves the count and the avatar row as they were instead of emptying the room out. A later page
+  failing mid-walk still returns what was collected — a short list beats no list.
+- **Presence is the most perishable thing here**, since it's a claim about who is around right now:
+  a reading nobody has refreshed in a week is dropped rather than painted, and the blob keeps the 60
+  most recently refreshed rooms. Snapshots, being just article lists, are pruned at 30 days.
 
 ## Roomy as the conversation layer (assessed 2026-09-03)
 

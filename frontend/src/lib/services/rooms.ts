@@ -24,10 +24,17 @@ function parseAtUri(uri: string): { did: string; collection: string; rkey: strin
   return { did: m[1], collection: m[2], rkey: m[3] };
 }
 
-/** DIDs with a live readAlong record pointing at this collection. */
-export async function fetchRoomMembers(collectionUri: string): Promise<string[]> {
+/** DIDs with a live readAlong record pointing at this collection.
+ *
+ *  Null (not []) when the first page fails, so a Constellation outage doesn't
+ *  read as "nobody is here" and blank a cached avatar row. A later page failing
+ *  still returns what was collected — a short list beats no list. */
+export async function fetchRoomMembers(collectionUri: string): Promise<string[] | null> {
   const dids: string[] = [];
   let cursor: string | undefined;
+  // Whether Constellation answered at all — the difference between an empty
+  // room and an unreachable index.
+  let answered = false;
   for (let page = 0; page < MAX_PAGES; page++) {
     const params = new URLSearchParams({
       target: collectionUri,
@@ -44,10 +51,12 @@ export async function fetchRoomMembers(collectionUri: string): Promise<string[]>
     } catch {
       break;
     }
+    answered = true;
     for (const did of data.linking_dids ?? []) dids.push(did);
     if (!data.cursor || (data.linking_dids ?? []).length === 0) break;
     cursor = data.cursor;
   }
+  if (!answered) return null;
   return [...new Set(dids)];
 }
 

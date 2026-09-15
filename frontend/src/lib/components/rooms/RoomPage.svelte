@@ -41,7 +41,9 @@
     readFeaturedCache,
     writeFeaturedCache,
     readPresenceCache,
-    writePresenceCache,
+    readRoomPresence,
+    writeRoomPresence,
+    PRESENCE_DID_CAP,
     type MyRoomListing,
   } from '$lib/services/roomCache';
   import type { FollowLite } from '$lib/services/socialGraph';
@@ -213,13 +215,37 @@
     collectionLink = collectionPageLink(target, profile?.handle);
   }
 
+  // Who's reading along. Constellation is a third-party index on the far side of
+  // the network, so the last reading paints first and the live one replaces it.
+  // Both paints below fetch profiles, so they can land out of order; the pass
+  // number is what keeps the cached row from overwriting the live one.
+  let membersPass = 0;
   async function loadMembers(target: string) {
+    const cachedPass = ++membersPass;
+    const cached = await readRoomPresence(target);
+    if (target !== uri) return;
+    if (cached) {
+      memberCount = cached.total;
+      if (cached.dids?.length) void paintMembers(target, cached.dids, cachedPass);
+    }
+
     const dids = await fetchRoomMembers(target);
     if (target !== uri) return;
+    // Null is an unreachable index, not an empty room — leave the cached row
+    // and count as they were rather than emptying the room out.
+    if (dids === null) return;
     memberCount = dids.length;
-    const profiles = await profileService.getProfiles(dids.slice(0, 12));
-    if (target !== uri) return;
-    members = dids.slice(0, 12).flatMap((did) => {
+    void writeRoomPresence({ [target]: { total: dids.length, dids } });
+    await paintMembers(target, dids, ++membersPass);
+  }
+
+  // The avatar row: profiles for the first few readers. Profiles are cached in
+  // memory for five minutes, so re-painting a cached DID list is usually free.
+  async function paintMembers(target: string, dids: string[], pass: number) {
+    const shown = dids.slice(0, PRESENCE_DID_CAP);
+    const profiles = await profileService.getProfiles(shown);
+    if (target !== uri || pass !== membersPass) return;
+    members = shown.flatMap((did) => {
       const p = profiles.get(did);
       return p ? [p] : [];
     });
@@ -395,9 +421,11 @@
     const wanted = subjects.filter((s) => !countAsked.has(s));
     if (wanted.length === 0) return;
     wanted.forEach((s) => countAsked.add(s));
+    const readings: Record<string, { total: number | null }> = {};
     await Promise.all(
       wanted.map(async (subject) => {
         const count = await fetchRoomMemberCount(subject);
+        readings[subject] = { total: count };
         // A failed lookup never overwrites a count we already have: an outage
         // should leave the marker as it was, not blank it.
         if (!uri && (count !== null || memberCounts[subject] === undefined)) {
@@ -405,7 +433,7 @@
         }
       })
     );
-    if (!uri) void writePresenceCache(memberCounts);
+    if (!uri) void writeRoomPresence(readings);
   }
 
   // Seed the presence markers from cache before any of them are asked for, so
@@ -413,8 +441,8 @@
   async function loadCachedPresence() {
     const cached = await readPresenceCache();
     if (uri) return;
-    for (const [subject, count] of Object.entries(cached)) {
-      if (memberCounts[subject] === undefined) memberCounts[subject] = count;
+    for (const [subject, presence] of Object.entries(cached)) {
+      if (memberCounts[subject] === undefined) memberCounts[subject] = presence.total;
     }
   }
 

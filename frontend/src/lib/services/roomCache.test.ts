@@ -45,7 +45,8 @@ const {
   readFeaturedCache,
   writeFeaturedCache,
   readPresenceCache,
-  writePresenceCache,
+  readRoomPresence,
+  writeRoomPresence,
 } = await import('./roomCache');
 const { FEATURED_ROOM_URIS } = await import('./rooms');
 
@@ -138,12 +139,49 @@ describe('index caches', () => {
     expect(cached?.map((r) => r.subject)).toEqual([FEATURED_ROOM_URIS[0]]);
   });
 
-  it('caches presence counts but not failed lookups', async () => {
-    await writePresenceCache({ [ROOM_A]: 4, [ROOM_B]: null });
-    expect(await readPresenceCache()).toEqual({ [ROOM_A]: 4 });
-  });
-
   it('answers an empty presence cache with an empty map', async () => {
     expect(await readPresenceCache()).toEqual({});
+  });
+});
+
+describe('presence cache', () => {
+  it('caches counts but not failed lookups', async () => {
+    await writeRoomPresence({ [ROOM_A]: { total: 4 }, [ROOM_B]: { total: null } });
+    expect((await readRoomPresence(ROOM_A))?.total).toBe(4);
+    expect(await readRoomPresence(ROOM_B)).toBeNull();
+  });
+
+  it('keeps the readers a room-page visit stored when the index refreshes the count', async () => {
+    await writeRoomPresence({ [ROOM_A]: { total: 2, dids: ['did:plc:a', 'did:plc:b'] } });
+    // The index asks for the count alone; that must not wipe the avatar row.
+    await writeRoomPresence({ [ROOM_A]: { total: 3 } });
+    const cached = await readRoomPresence(ROOM_A);
+    expect(cached?.total).toBe(3);
+    expect(cached?.dids).toEqual(['did:plc:a', 'did:plc:b']);
+  });
+
+  it('stores only the readers the room page draws', async () => {
+    const many = Array.from({ length: 40 }, (_, i) => `did:plc:r${i}`);
+    await writeRoomPresence({ [ROOM_A]: { total: many.length, dids: many } });
+    const cached = await readRoomPresence(ROOM_A);
+    expect(cached?.total).toBe(40);
+    expect(cached?.dids).toHaveLength(12);
+  });
+
+  it('drops a reading nobody has refreshed in a week', async () => {
+    await writeRoomPresence({ [ROOM_A]: { total: 4 } });
+    const stored = metadata.get('rooms.index.presence') as Record<string, { cachedAt: number }>;
+    stored[ROOM_A].cachedAt = Date.now() - 8 * 24 * 60 * 60 * 1000;
+    expect(await readRoomPresence(ROOM_A)).toBeNull();
+  });
+
+  it('keeps the blob bounded, newest readings first', async () => {
+    for (let i = 0; i < 70; i++) {
+      await writeRoomPresence({ [`at://did:plc:owner/c/${i}`]: { total: i } });
+    }
+    const cached = await readPresenceCache();
+    expect(Object.keys(cached)).toHaveLength(60);
+    expect(cached['at://did:plc:owner/c/69']?.total).toBe(69);
+    expect(cached['at://did:plc:owner/c/0']).toBeUndefined();
   });
 });

@@ -124,10 +124,6 @@ interface FeaturedCache {
   rooms: RoomListing[];
 }
 
-interface PresenceCache {
-  counts: Record<string, number>;
-}
-
 /** The rooms this reader had joined at last look, described. Null for another
  *  account's cache — your rooms are never someone else's. */
 export async function readMyRoomsCache(did: string): Promise<MyRoomListing[] | null> {
@@ -154,18 +150,65 @@ export async function writeFeaturedCache(rooms: RoomListing[]): Promise<void> {
   await setMetadata<FeaturedCache>(FEATURED_KEY, { rooms });
 }
 
-/** Cached "n reading along" counts, so the index rows don't wait on
- *  Constellation to say anything. Counts only, never the DIDs: the index draws
- *  no avatars, and a count is not a person. */
-export async function readPresenceCache(): Promise<Record<string, number>> {
-  const cached = await getMetadata<PresenceCache>(PRESENCE_KEY);
-  return cached?.counts && typeof cached.counts === 'object' ? cached.counts : {};
+// --- presence (Constellation) ---------------------------------------------
+
+/** What Constellation last said about a room: how many are reading along, and
+ *  the first few of them for the room page's avatar row. Both surfaces write
+ *  here — the index asks for the count alone, the room page for the readers —
+ *  so whichever one you reach first warms the other. */
+export interface RoomPresence {
+  /** distinct DIDs with a live readAlong record pointing at this room */
+  total: number;
+  /** the readers the room page draws, capped at what it actually shows */
+  dids?: string[];
+  cachedAt: number;
 }
 
-export async function writePresenceCache(counts: Record<string, number | null>): Promise<void> {
-  // A failed lookup (null) is not a count — cache what we actually learned.
-  const known = Object.fromEntries(
-    Object.entries(counts).filter((entry): entry is [string, number] => entry[1] !== null)
+type PresenceCache = Record<string, RoomPresence>;
+
+/** Presence is the most perishable thing cached here — it's a claim about who
+ *  is around right now — so an entry nobody has refreshed in a week is dropped
+ *  rather than painted. */
+const MAX_PRESENCE_AGE = 7 * 24 * 60 * 60 * 1000;
+/** Rooms kept in the blob, most recently refreshed last. It's read and written
+ *  whole, so it stays small on purpose. */
+const MAX_PRESENCE_ROOMS = 60;
+/** DIDs kept per room: the room page builds its avatar row from the first 12. */
+export const PRESENCE_DID_CAP = 12;
+
+function freshEntries(cache: PresenceCache | null): PresenceCache {
+  if (!cache || typeof cache !== 'object') return {};
+  const cutoff = Date.now() - MAX_PRESENCE_AGE;
+  return Object.fromEntries(
+    Object.entries(cache).filter(([, entry]) => entry && entry.cachedAt > cutoff)
   );
-  await setMetadata<PresenceCache>(PRESENCE_KEY, { counts: known });
+}
+
+/** Every room we hold a live presence reading for. */
+export async function readPresenceCache(): Promise<PresenceCache> {
+  return freshEntries(await getMetadata<PresenceCache>(PRESENCE_KEY));
+}
+
+export async function readRoomPresence(subject: string): Promise<RoomPresence | null> {
+  return (await readPresenceCache())[subject] ?? null;
+}
+
+/** Merge readings into the cache. A reading with no `dids` (the index's
+ *  count-only lookup) keeps the readers an earlier room-page visit stored;
+ *  null totals — failed lookups — are dropped, since a failure is not a count. */
+export async function writeRoomPresence(
+  readings: Record<string, { total: number | null; dids?: string[] }>
+): Promise<void> {
+  const cache = freshEntries(await getMetadata<PresenceCache>(PRESENCE_KEY));
+  const now = Date.now();
+  for (const [subject, reading] of Object.entries(readings)) {
+    if (reading.total === null) continue;
+    const dids = reading.dids?.slice(0, PRESENCE_DID_CAP) ?? cache[subject]?.dids;
+    // Re-insert rather than assign in place: key order is what "least recently
+    // refreshed" means below, and a whole index pass shares one timestamp.
+    delete cache[subject];
+    cache[subject] = { total: reading.total, dids, cachedAt: now };
+  }
+  const kept = Object.entries(cache).slice(-MAX_PRESENCE_ROOMS);
+  await setMetadata<PresenceCache>(PRESENCE_KEY, Object.fromEntries(kept));
 }
