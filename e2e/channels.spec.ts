@@ -215,7 +215,7 @@ test.describe('A channel filter survives a reload', () => {
     await expect(authedPage.getByText(NOISY_POST, { exact: true })).toHaveCount(0);
   });
 
-  test('a reloaded channel reports no unsaved changes', async ({ authedPage, testUser }) => {
+  test('a reload restores the active channel toolbar', async ({ authedPage, testUser }) => {
     await seedTwoFeeds(testUser);
     await authedPage.goto('/feeds');
     await expect(authedPage.getByText(NOISY_POST, { exact: true })).toBeVisible({
@@ -229,10 +229,11 @@ test.describe('A channel filter survives a reload', () => {
       timeout: 20_000,
     });
 
-    // The data-loss amplifier: while the channel was unresolved the toolbar sat
-    // on defaults, so Update looked like it had changes to write — and writing
-    // them replaced the saved filter with "all sources".
+    // An active desktop channel uses the dedicated editor instead of rendering
+    // the inline Save/Update control. Verify the restored channel reaches that
+    // state; the store-level tests cover the transient unsaved-changes guard.
     await openFilterToolbar(authedPage);
-    await expect(authedPage.locator('.filter-toolbar .save-btn')).toBeDisabled();
+    await expect(authedPage.getByRole('button', { name: 'Edit Channel' })).toBeVisible();
+    await expect(authedPage.getByRole('button', { name: 'Update' })).toHaveCount(0);
   });
 });
