@@ -18,6 +18,7 @@ import type {
   DateAddedPreset,
   ReadingLengthFilter,
   SortOrder,
+  FilteredView,
 } from '$lib/types';
 import { htmlToText, normalize, searchRank } from '$lib/services/savedSearch';
 import { sameUrlFilters, type UrlFilters } from '$lib/utils/urlFilters';
@@ -343,6 +344,15 @@ function createFeedViewStore() {
   let contentTypeFilter = $state<'documents' | null>(null);
   let viewFilter = $state<string | null>(null);
   let categoryFilter = $state<string | null>(null);
+  // A `?view=` key whose channel wasn't in `filteredViewsStore` when the URL was
+  // read. The URL effect runs before Phase 1 hydrates Dexie (and long before
+  // Phase 2 pulls a channel created on another device), so a cold load of a
+  // channel link used to miss the lookup, reset the toolbar to "all sources"
+  // and never recover — the filter the user saved looked like it hadn't stuck.
+  // Holding the raw key lets `applyPendingViewConfig` re-run the lookup once the
+  // store hydrates. Cleared on a successful apply and by any user gesture that
+  // edits toolbar filter state, so a late apply can't stomp deliberate edits.
+  let pendingViewKey = $state<string | null>(null);
   // The current user's own linkblog ("Your Linkblog" page). Sources documents
   // from myLinkblogStore rather than the followed-linkblog social feed.
   let myLinkblogFilter = $state(false);
@@ -359,15 +369,20 @@ function createFeedViewStore() {
     return ids;
   });
 
+  // Look a channel up by the raw `?view=` key: uuid first, falling back to the
+  // numeric Dexie id that old bookmarks carry.
+  function lookupView(key: string): FilteredView | undefined {
+    const byUuid = filteredViewsStore.getByUuid(key);
+    if (byUuid) return byUuid;
+    const asNum = parseInt(key, 10);
+    if (!isNaN(asNum)) return filteredViewsStore.getById(asNum);
+    return undefined;
+  }
+
   // Derived: active filtered view (looked up by uuid, with fallback to Dexie id for old bookmarks)
   let activeFilteredView = $derived.by(() => {
     if (!viewFilter) return null;
-    // Try uuid first, fall back to numeric Dexie id for old bookmarks
-    const byUuid = filteredViewsStore.getByUuid(viewFilter);
-    if (byUuid) return byUuid;
-    const asNum = parseInt(viewFilter, 10);
-    if (!isNaN(asNum)) return filteredViewsStore.getById(asNum) ?? null;
-    return null;
+    return lookupView(viewFilter) ?? null;
   });
 
   // Derived: whether the active channel is a saved-mode channel
@@ -418,6 +433,12 @@ function createFeedViewStore() {
 
   // Derived: whether toolbar state differs from the persisted saved view
   let hasUnsavedChanges = $derived.by(() => {
+    // The channel is known but its config hasn't been applied to the toolbar
+    // yet, so every comparison below would report a difference the user never
+    // made. Answering "true" here lights up Update, and one click writes the
+    // reset toolbar state (all sources, no types) over the saved channel —
+    // silently destroying the filter. Nothing is unsaved while we're waiting.
+    if (pendingViewKey !== null) return false;
     if (!activeFilteredView) return false;
     const view = activeFilteredView;
     const currentReadFilter = showOnlyUnread ? 'unread' : 'all';
@@ -1288,6 +1309,9 @@ function createFeedViewStore() {
       contentTypeFilter = null;
       viewFilter = null;
       categoryFilter = null;
+      // Leaving for a surface that has no channel — a pending apply would land
+      // on the linkblog's toolbar.
+      cancelPendingView();
       resetToolbarFilters();
     }
     loadedArticleCount = DEFAULT_PAGE_SIZE;
@@ -1314,6 +1338,11 @@ function createFeedViewStore() {
 
   function syncToolbarToSavedView() {
     if (!viewFilter) return;
+    // The toolbar is still showing defaults for a channel whose config hasn't
+    // been applied yet — writing it back would overwrite the saved filters with
+    // "all sources". `hasUnsavedChanges` already disables the button; this is
+    // the backstop for any other caller.
+    if (pendingViewKey !== null) return;
     const fv = activeFilteredView;
     if (!fv || fv.id == null) return;
     const id = fv.id;
@@ -1338,6 +1367,62 @@ function createFeedViewStore() {
     filteredViewsStore.update(id, updates);
   }
 
+  /**
+   * Copy a channel's persisted configuration into the toolbar working copy —
+   * the only thing item filtering reads. Called from `setFilters` when the
+   * lookup hits, and from `applyPendingViewConfig` when it hits late.
+   */
+  function applyViewConfig(fv: FilteredView) {
+    if (fv.mode === 'saved') {
+      // Saved channel — load saved-specific filters
+      toolbarSavedSourceFilter = fv.savedSourceFilter ? [...fv.savedSourceFilter] : [];
+      toolbarDateFilter = fv.savedDateFilter ?? null;
+      toolbarReadingLength = fv.savedReadingLength ? [...fv.savedReadingLength] : [];
+      toolbarDomainFilter = fv.savedDomainFilter ? [...fv.savedDomainFilter] : [];
+      toolbarSourceMode = 'all';
+      toolbarSourceKeys = [];
+      toolbarTypeFilter = [];
+      // Derive the inbox/archive tab from the channel's readFilter so
+      // entering a channel lands on its persisted Status, not leftover
+      // global state from a prior view.
+      savedView = fv.readFilter === 'read' ? 'archive' : 'inbox';
+    } else if (fv.sourceMode != null) {
+      // New format
+      toolbarSourceMode = fv.sourceMode;
+      toolbarSourceKeys = toolbarSourceMode === 'all' ? [] : [...(fv.sourceKeys ?? [])];
+      toolbarSavedSourceFilter = [];
+    } else {
+      // Legacy format — migrate
+      const migrated = migrateLegacyView(
+        {
+          showArticles: fv.showArticles,
+          showDocuments: fv.showDocuments,
+          feedMode: fv.feedMode,
+          feedIds: fv.feedIds,
+          accountMode: fv.accountMode,
+          accountDids: fv.accountDids,
+        },
+        getAllSubRkeys(),
+        getAllFollowDids(),
+        getIdToRkeyMap()
+      );
+      toolbarSourceMode = migrated.sourceMode;
+      toolbarSourceKeys = migrated.sourceKeys;
+      toolbarSavedSourceFilter = [];
+    }
+    showOnlyUnread = fv.readFilter === 'unread';
+    toolbarSortOrder = fv.sortOrder;
+    toolbarTagFilter = fv.tagFilter ? [...fv.tagFilter] : [];
+    toolbarTypeFilter = fv.typeFilter ? [...fv.typeFilter] : [];
+    // Fire-and-forget legacy migration write-back
+    if (fv.sourceMode == null && fv.mode !== 'saved' && fv.id != null) {
+      filteredViewsStore.update(fv.id, {
+        sourceMode: toolbarSourceMode,
+        sourceKeys: [...toolbarSourceKeys],
+      });
+    }
+  }
+
   function resetToolbarFilters() {
     toolbarSourceMode = 'all';
     toolbarSourceKeys = [];
@@ -1350,7 +1435,18 @@ function createFeedViewStore() {
     toolbarDomainFilter = [];
   }
 
+  /**
+   * A user gesture edited toolbar filter state, so a still-pending channel
+   * config must no longer be applied on top of it. Only call this from
+   * gesture-driven entry points — `setFilters` and `applyViewConfig` manage
+   * `pendingViewKey` themselves.
+   */
+  function cancelPendingView() {
+    pendingViewKey = null;
+  }
+
   function toggleUnreadFilter() {
+    cancelPendingView();
     showOnlyUnread = !showOnlyUnread;
   }
 
@@ -1514,7 +1610,10 @@ function createFeedViewStore() {
     toggleUnreadFilter,
     trackSeenThisSession,
     trackItemsAsReadThisSession,
+    // Every toolbar mutator below is gesture-driven, so each cancels a pending
+    // channel apply: the user's own edit wins over a config that hasn't landed.
     setShowOnlyUnread(value: boolean) {
+      cancelPendingView();
       showOnlyUnread = value;
     },
     setFilterToolbarOpen(open: boolean) {
@@ -1524,68 +1623,86 @@ function createFeedViewStore() {
       sourcePopoverOpen = open;
     },
     setToolbarTagFilter(tags: string[]) {
+      cancelPendingView();
       toolbarTagFilter = tags;
     },
     toggleToolbarTag(tag: string) {
+      cancelPendingView();
       toolbarTagFilter = toolbarTagFilter.includes(tag)
         ? toolbarTagFilter.filter((t) => t !== tag)
         : [...toolbarTagFilter, tag];
     },
     clearToolbarTag() {
+      cancelPendingView();
       toolbarTagFilter = [];
     },
     setToolbarTypeFilter(types: SubscriptionSourceType[]) {
+      cancelPendingView();
       toolbarTypeFilter = types;
     },
     toggleToolbarType(type: SubscriptionSourceType) {
+      cancelPendingView();
       toolbarTypeFilter = toolbarTypeFilter.includes(type)
         ? toolbarTypeFilter.filter((t) => t !== type)
         : [...toolbarTypeFilter, type];
     },
     clearToolbarType() {
+      cancelPendingView();
       toolbarTypeFilter = [];
     },
     setToolbarSavedSourceFilter(sources: SavedSourceType[]) {
+      cancelPendingView();
       toolbarSavedSourceFilter = sources;
     },
     toggleToolbarSavedSource(source: SavedSourceType) {
+      cancelPendingView();
       toolbarSavedSourceFilter = toolbarSavedSourceFilter.includes(source)
         ? toolbarSavedSourceFilter.filter((s) => s !== source)
         : [...toolbarSavedSourceFilter, source];
     },
     clearToolbarSavedSource() {
+      cancelPendingView();
       toolbarSavedSourceFilter = [];
     },
     setToolbarDateFilter(preset: DateAddedPreset | null) {
+      cancelPendingView();
       toolbarDateFilter = preset;
     },
     setToolbarReadingLength(lengths: ReadingLengthFilter[]) {
+      cancelPendingView();
       toolbarReadingLength = lengths;
     },
     toggleToolbarReadingLength(bucket: ReadingLengthFilter) {
+      cancelPendingView();
       toolbarReadingLength = toolbarReadingLength.includes(bucket)
         ? toolbarReadingLength.filter((l) => l !== bucket)
         : [...toolbarReadingLength, bucket];
     },
     clearToolbarReadingLength() {
+      cancelPendingView();
       toolbarReadingLength = [];
     },
     setToolbarDomainFilter(domains: string[]) {
+      cancelPendingView();
       toolbarDomainFilter = domains;
     },
     toggleToolbarDomain(domain: string) {
+      cancelPendingView();
       toolbarDomainFilter = toolbarDomainFilter.includes(domain)
         ? toolbarDomainFilter.filter((d) => d !== domain)
         : [...toolbarDomainFilter, domain];
     },
     clearToolbarDomain() {
+      cancelPendingView();
       toolbarDomainFilter = [];
     },
     setToolbarSourceFilter(mode: 'all' | 'include' | 'exclude', keys: string[]) {
+      cancelPendingView();
       toolbarSourceMode = mode;
       toolbarSourceKeys = keys;
     },
     toggleToolbarSourceKey(key: string) {
+      cancelPendingView();
       const keys = toolbarSourceKeys.includes(key)
         ? toolbarSourceKeys.filter((k) => k !== key)
         : [...toolbarSourceKeys, key];
@@ -1593,20 +1710,26 @@ function createFeedViewStore() {
     },
     setSortOrder(order: SortOrder) {
       if (viewFilter) {
+        cancelPendingView();
         toolbarSortOrder = order;
       }
     },
     toggleSortOrder() {
       if (viewFilter) {
+        cancelPendingView();
         const current = toolbarSortOrder ?? preferences.sortOrder;
         toolbarSortOrder = current === 'newest' ? 'oldest' : 'newest';
       } else {
         preferences.toggleSortOrder();
       }
     },
-    resetToolbarFilters,
+    resetToolbarFilters() {
+      cancelPendingView();
+      resetToolbarFilters();
+    },
     syncToolbarToSavedView,
     setSavedView(view: 'inbox' | 'archive') {
+      cancelPendingView();
       savedView = view;
       loadedArticleCount = DEFAULT_PAGE_SIZE;
     },
@@ -1670,64 +1793,38 @@ function createFeedViewStore() {
       loadedArticleCount = DEFAULT_PAGE_SIZE;
       // Populate toolbar from saved view, or reset to defaults
       if (filters.view) {
-        const fv =
-          filteredViewsStore.getByUuid(filters.view) ??
-          filteredViewsStore.getById(parseInt(filters.view, 10));
+        const fv = lookupView(filters.view);
         if (fv) {
-          if (fv.mode === 'saved') {
-            // Saved channel — load saved-specific filters
-            toolbarSavedSourceFilter = fv.savedSourceFilter ? [...fv.savedSourceFilter] : [];
-            toolbarDateFilter = fv.savedDateFilter ?? null;
-            toolbarReadingLength = fv.savedReadingLength ? [...fv.savedReadingLength] : [];
-            toolbarDomainFilter = fv.savedDomainFilter ? [...fv.savedDomainFilter] : [];
-            toolbarSourceMode = 'all';
-            toolbarSourceKeys = [];
-            toolbarTypeFilter = [];
-            // Derive the inbox/archive tab from the channel's readFilter so
-            // entering a channel lands on its persisted Status, not leftover
-            // global state from a prior view.
-            savedView = fv.readFilter === 'read' ? 'archive' : 'inbox';
-          } else if (fv.sourceMode != null) {
-            // New format
-            toolbarSourceMode = fv.sourceMode;
-            toolbarSourceKeys = toolbarSourceMode === 'all' ? [] : [...(fv.sourceKeys ?? [])];
-            toolbarSavedSourceFilter = [];
-          } else {
-            // Legacy format — migrate
-            const migrated = migrateLegacyView(
-              {
-                showArticles: fv.showArticles,
-                showDocuments: fv.showDocuments,
-                feedMode: fv.feedMode,
-                feedIds: fv.feedIds,
-                accountMode: fv.accountMode,
-                accountDids: fv.accountDids,
-              },
-              getAllSubRkeys(),
-              getAllFollowDids(),
-              getIdToRkeyMap()
-            );
-            toolbarSourceMode = migrated.sourceMode;
-            toolbarSourceKeys = migrated.sourceKeys;
-            toolbarSavedSourceFilter = [];
-          }
-          showOnlyUnread = fv.readFilter === 'unread';
-          toolbarSortOrder = fv.sortOrder;
-          toolbarTagFilter = fv.tagFilter ? [...fv.tagFilter] : [];
-          toolbarTypeFilter = fv.typeFilter ? [...fv.typeFilter] : [];
-          // Fire-and-forget legacy migration write-back
-          if (fv.sourceMode == null && fv.mode !== 'saved' && fv.id != null) {
-            filteredViewsStore.update(fv.id, {
-              sourceMode: toolbarSourceMode,
-              sourceKeys: [...toolbarSourceKeys],
-            });
-          }
+          pendingViewKey = null;
+          applyViewConfig(fv);
         } else {
+          // The channel isn't in the store yet (Dexie hydration, or a
+          // cross-device channel still on its way in from the backend sync).
+          // Defaults are the honest display while it's unresolved, but the
+          // config still has to land once it arrives — see `pendingViewKey`.
           resetToolbarFilters();
+          pendingViewKey = filters.view;
         }
       } else {
+        pendingViewKey = null;
         resetToolbarFilters();
       }
+    },
+    /**
+     * Re-run a `?view=` lookup that missed, now that `filteredViewsStore` may
+     * have hydrated. A no-op unless a lookup is actually pending, so the caller
+     * can fire it on every change to the channel list. A key that never
+     * resolves (a deleted or foreign channel) stays pending harmlessly: the
+     * view shows unfiltered items and Save acts as "create new".
+     */
+    applyPendingViewConfig() {
+      if (pendingViewKey === null) return;
+      const fv = lookupView(pendingViewKey);
+      if (!fv) return;
+      // Cleared before applying: `applyViewConfig`'s legacy write-back mutates
+      // `filteredViewsStore.views`, which re-runs the caller's effect.
+      pendingViewKey = null;
+      applyViewConfig(fv);
     },
   };
 }

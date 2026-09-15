@@ -96,6 +96,10 @@
 
   let dropdownOpen = $derived(sidebarStore.navigationDropdownOpen);
   let isSavedView = $derived(Boolean(feedViewStore.savedFilter) || feedViewStore.isSavedChannel);
+  // Your own linkblog is one stream of your own posts — there is nothing to
+  // filter by source or type, and the toolbar's Save turns whatever is set into
+  // a feed channel, navigating you off the surface entirely.
+  let isLinkblogView = $derived(feedViewStore.myLinkblogFilter);
 
   let menuItems = $derived.by(() => {
     const items: Array<{
@@ -231,7 +235,11 @@
             {#if feedViewStore.isSavedChannel && onEditChannel}
               <span class="toggle-divider"></span>
               <button
-                onclick={() => onEditChannel(parseInt(feedViewStore.viewFilter!))}
+                onclick={() => {
+                  // `viewFilter` is the channel's uuid, not its Dexie id.
+                  const id = feedViewStore.activeFilteredView?.id;
+                  if (id != null) onEditChannel(id);
+                }}
                 aria-label="Edit channel"
                 title="Edit channel"
               >
@@ -275,25 +283,27 @@
               <Icon name="type" size={16} />
               <span class="btn-label">Style</span>
             </button>
-            <span class="toggle-divider"></span>
-            <button
-              class="filter-toggle-btn"
-              class:active={feedViewStore.filterToolbarOpen}
-              onclick={() => {
-                const opening = !feedViewStore.filterToolbarOpen;
-                feedViewStore.setFilterToolbarOpen(opening);
-                if (opening) {
-                  styleToolbarOpen = false;
-                } else {
-                  feedViewStore.setSourcePopoverOpen(false);
-                }
-              }}
-              aria-label="Toggle filters"
-              title="Filter"
-            >
-              <Icon name="filter" size={16} />
-              <span class="btn-label">Filter</span>
-            </button>
+            {#if !isLinkblogView}
+              <span class="toggle-divider"></span>
+              <button
+                class="filter-toggle-btn"
+                class:active={feedViewStore.filterToolbarOpen}
+                onclick={() => {
+                  const opening = !feedViewStore.filterToolbarOpen;
+                  feedViewStore.setFilterToolbarOpen(opening);
+                  if (opening) {
+                    styleToolbarOpen = false;
+                  } else {
+                    feedViewStore.setSourcePopoverOpen(false);
+                  }
+                }}
+                aria-label="Toggle filters"
+                title="Filter"
+              >
+                <Icon name="filter" size={16} />
+                <span class="btn-label">Filter</span>
+              </button>
+            {/if}
           </div>
         {/if}
       </div>
@@ -305,7 +315,7 @@
       <AppearanceToolbar />
     </div>
   {/if}
-  {#if !feedViewStore.isSavedChannel && feedViewStore.filterToolbarOpen}
+  {#if !feedViewStore.isSavedChannel && !isLinkblogView && feedViewStore.filterToolbarOpen}
     <div class="filter-toolbar-row">
       <FilterToolbar {showSourceFilter} {onEditChannel} />
     </div>

@@ -132,6 +132,18 @@
     untrack(() => feedViewStore.setFilters(filters));
   });
 
+  // The URL effect above runs before `filteredViewsStore` has hydrated from
+  // Dexie (Phase 1) — and long before a channel created on another device
+  // arrives from the backend sync (Phase 2) — so a cold load of a `?view=` link
+  // misses the channel lookup and leaves the toolbar on defaults. Re-run the
+  // apply whenever the channel list changes; it no-ops unless a lookup is
+  // actually pending, and the store clears the pending key before its own
+  // write-backs so this can't loop.
+  $effect(() => {
+    void filteredViewsStore.views;
+    untrack(() => feedViewStore.applyPendingViewConfig());
+  });
+
   // Canonicalize a linkblog deep link. "Open in Skyreader" on a public linkblog
   // points at /?feed=<publicationUri> (or /?feed=<did>) — a stable, cross-user
   // identifier the page can emit without knowing the visitor's local DB. Once
@@ -768,12 +780,14 @@
       >
         <MobileFilterSheet
           expandAllItems={preferences.expandAllItems}
-          onToggleExpandAll={(value) => {
-            preferences.setExpandAllItems(value);
-            if (!value) {
-              feedViewStore.resetSelection();
-            }
-          }}
+          onToggleExpandAll={mode === 'linkblog'
+            ? undefined
+            : (value) => {
+                preferences.setExpandAllItems(value);
+                if (!value) {
+                  feedViewStore.resetSelection();
+                }
+              }}
           {isSavedView}
           onMarkAllAsRead={!feedViewStore.savedFilter ? markAllAsReadInCurrentView : undefined}
           onclose={() => (filterSheetOpen = false)}

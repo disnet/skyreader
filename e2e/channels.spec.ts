@@ -1,14 +1,16 @@
 import { test, expect } from './fixtures';
-import type { Page } from '@playwright/test';
+import type { Page, Response } from '@playwright/test';
+import { seedSubscription, seedFeedItems, cleanupFeedItems } from './seed';
+import type { TestUser } from './seed';
 
-/** Create a source channel via the Feeds row's + button and modal form. */
-async function createChannel(page: Page, name: string) {
-  // Channels live under the Feeds nav row. Click the + add button on that row.
-  const feedsRow = page.locator('.nav-row', {
-    has: page.locator('.nav-label', { hasText: 'Feeds' }),
+/** Create a channel via a nav row's + button and the modal form. */
+async function createChannel(page: Page, name: string, row: 'Feeds' | 'Saved' = 'Feeds') {
+  // Channels live under the Feeds and Saved nav rows. Click the + add button.
+  const navRow = page.locator('.nav-row', {
+    has: page.locator('.nav-label', { hasText: row }),
   });
-  await expect(feedsRow).toBeVisible({ timeout: 15_000 });
-  await feedsRow.locator('.row-add-btn').click({ force: true });
+  await expect(navRow).toBeVisible({ timeout: 15_000 });
+  await navRow.locator('.row-add-btn').click({ force: true });
 
   // Fill the channel name in the modal
   const nameInput = page.locator('#view-name');
@@ -35,6 +37,23 @@ test.describe('Channels', () => {
 
     // URL should include view= parameter
     await expect(authedPage).toHaveURL(/view=/);
+  });
+
+  test('the header Edit button opens a saved channel in its editor', async ({ authedPage }) => {
+    // A saved channel routes to /saved?view=<uuid> and puts an Edit button in
+    // the header. That button used to resolve the channel with
+    // `parseInt(viewFilter)` — but `viewFilter` is the uuid, so it passed NaN
+    // and the editor opened blank, with its Save writing to no row at all.
+    await createChannel(authedPage, 'Edit From Header', 'Saved');
+    await expect(authedPage).toHaveURL(/\/saved\?view=/);
+
+    await authedPage.getByRole('button', { name: 'Edit channel' }).click();
+
+    // The editor is populated with this channel, not an empty create form.
+    await expect(authedPage.getByRole('heading', { name: 'Edit Channel' })).toBeVisible({
+      timeout: 5_000,
+    });
+    await expect(authedPage.locator('#view-name')).toHaveValue('Edit From Header');
   });
 
   test('rename a channel via context menu', async ({ authedPage }) => {
@@ -116,5 +135,128 @@ test.describe('Channels', () => {
   test('Manage Sources link navigates to /sources', async ({ authedPage }) => {
     await authedPage.locator('.nav-label', { hasText: 'Manage Sources' }).click();
     await expect(authedPage).toHaveURL(/\/sources/);
+  });
+});
+
+/**
+ * "I hit SAVE, but then when I refresh the page it goes back to the old
+ * unfiltered view."
+ *
+ * The channel really was persisted — the load path lost it. `?view=` is read
+ * out of the URL before the channel store has hydrated from Dexie, the lookup
+ * missed, and the toolbar was reset to "all sources" with nothing to re-run it.
+ * This is a lifecycle bug in the ordering of a component effect against an
+ * async store load, so only a real reload can pin it.
+ */
+test.describe('A channel filter survives a reload', () => {
+  const NOISY_FEED = 'https://example.com/channel-noisy-feed.xml';
+  const QUIET_FEED = 'https://example.com/channel-quiet-feed.xml';
+  const NOISY_POST = 'Noisy Post One';
+  const QUIET_POST = 'Quiet Post One';
+
+  test.afterEach(async () => {
+    await cleanupFeedItems(NOISY_FEED);
+    await cleanupFeedItems(QUIET_FEED);
+  });
+
+  async function seedTwoFeeds(user: TestUser) {
+    await seedSubscription(user, { feedUrl: NOISY_FEED, title: 'Noisy Blog' });
+    await seedSubscription(user, { feedUrl: QUIET_FEED, title: 'Quiet Blog' });
+    await seedFeedItems(NOISY_FEED, [{ guid: 'channel-noisy-1', title: NOISY_POST }], {
+      title: 'Noisy Blog',
+      siteUrl: 'https://example.com',
+    });
+    await seedFeedItems(QUIET_FEED, [{ guid: 'channel-quiet-1', title: QUIET_POST }], {
+      title: 'Quiet Blog',
+      siteUrl: 'https://example.com',
+    });
+  }
+
+  function openFilterToolbar(page: Page) {
+    return page.locator('button[aria-label="Toggle filters"]').click();
+  }
+
+  /**
+   * Drive the toolbar exactly as the user does: exclude one source, then Save
+   * the resulting view as a named channel. Save writes the channel immediately
+   * under a generated name and opens that name for editing, so renaming it is a
+   * second write. Leaves the page on `?view=<uuid>` with both through to D1.
+   */
+  async function excludeNoisyAndSaveChannel(page: Page, name: string) {
+    await openFilterToolbar(page);
+
+    await page.locator('.filter-toolbar .source-btn').click();
+    await page.getByRole('radio', { name: 'Exclude only' }).check();
+    await page.getByRole('checkbox', { name: 'Noisy Blog' }).check();
+
+    // The excluded source drops out of the list right away — the state the user
+    // is trying to make permanent.
+    await expect(page.getByText(NOISY_POST, { exact: true })).toHaveCount(0);
+
+    // Close the popover so it isn't covering the Save button.
+    await page.keyboard.press('Escape');
+
+    const isChannelWrite = (r: Response) =>
+      /\/api\/channels\//.test(r.url()) && r.request().method() === 'PUT';
+
+    const created = page.waitForResponse(isChannelWrite);
+    await page.locator('.filter-toolbar .save-btn').click();
+
+    // The channel exists already; the input carries its auto-generated name.
+    await expect(page).toHaveURL(/view=/);
+    await created;
+
+    const nameInput = page.locator('.filter-toolbar .save-name-input .name-input');
+    await expect(nameInput).toBeVisible({ timeout: 5_000 });
+    const renamed = page.waitForResponse(isChannelWrite);
+    await nameInput.fill(name);
+    await nameInput.press('Enter');
+    // Don't reload until the rename has actually landed in D1.
+    await renamed;
+  }
+
+  test('the excluded source is still excluded after a refresh', async ({
+    authedPage,
+    testUser,
+  }) => {
+    await seedTwoFeeds(testUser);
+    await authedPage.goto('/feeds');
+    await expect(authedPage.getByText(NOISY_POST, { exact: true })).toBeVisible({
+      timeout: 20_000,
+    });
+    await expect(authedPage.getByText(QUIET_POST, { exact: true })).toBeVisible();
+
+    await excludeNoisyAndSaveChannel(authedPage, 'No Noise');
+
+    await authedPage.reload();
+
+    // The channel's own item is what tells us the list has rendered; asserting
+    // the absence of the noisy one first would pass against an empty list.
+    await expect(authedPage.getByText(QUIET_POST, { exact: true })).toBeVisible({
+      timeout: 20_000,
+    });
+    await expect(authedPage.getByText(NOISY_POST, { exact: true })).toHaveCount(0);
+  });
+
+  test('a reload restores the active channel toolbar', async ({ authedPage, testUser }) => {
+    await seedTwoFeeds(testUser);
+    await authedPage.goto('/feeds');
+    await expect(authedPage.getByText(NOISY_POST, { exact: true })).toBeVisible({
+      timeout: 20_000,
+    });
+
+    await excludeNoisyAndSaveChannel(authedPage, 'Still No Noise');
+
+    await authedPage.reload();
+    await expect(authedPage.getByText(QUIET_POST, { exact: true })).toBeVisible({
+      timeout: 20_000,
+    });
+
+    // An active desktop channel uses the dedicated editor instead of rendering
+    // the inline Save/Update control. Verify the restored channel reaches that
+    // state; the store-level tests cover the transient unsaved-changes guard.
+    await openFilterToolbar(authedPage);
+    await expect(authedPage.getByRole('button', { name: 'Edit Channel' })).toBeVisible();
+    await expect(authedPage.getByRole('button', { name: 'Update' })).toHaveCount(0);
   });
 });
