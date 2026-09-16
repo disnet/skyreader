@@ -630,12 +630,17 @@ async function route(
       break;
 
     // Reading Rooms (spike) — see docs/plans/READING_ROOMS_SPIKE.md
+    // Reading a room is public: a room IS a public collection, and a shared
+    // room link is often a visitor's first page — requiring a session there
+    // would 401 the one reader the link exists for. Starting a room writes a
+    // collection to the caller's own repo, so POST still needs one.
     case url.pathname === '/api/rooms':
-      if (!session) return unauthorizedResponse(headers);
-      response =
-        request.method === 'POST'
-          ? await handleCreateRoom(request, env)
-          : await handleGetRoom(request, env);
+      if (request.method === 'POST') {
+        if (!session) return unauthorizedResponse(headers);
+        response = await handleCreateRoom(request, env);
+      } else {
+        response = await handleGetRoom(request, env, ctx);
+      }
       break;
     case url.pathname === '/api/rooms/join':
       if (!session) return unauthorizedResponse(headers);

@@ -1169,7 +1169,8 @@ export interface RoomInfo {
   /** whether this reader may add articles: the collection is theirs, open, or
    *  lists them as a collaborator (the backend enforces it too) */
   canAdd: boolean;
-  /** false = the snapshot was truncated or a member failed transiently */
+  /** false = the stored list is not yet the whole collection (a big room still
+   *  filling in, or a member that failed transiently); it fills in on later opens */
   complete: boolean;
   items: RoomItem[];
 }

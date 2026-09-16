@@ -93,6 +93,11 @@ export interface MyRoom {
 /** The rooms this user has joined — their own readAlong records, read publicly
  *  from their own PDS (no session needed for reads).
  *
+ *  One entry per room, not per record: a repo can hold two readAlong records
+ *  for the same room (join/leave/rejoin, or a duplicate write), and callers key
+ *  off `subject` — a Home lane, a Dexie row. Keeping the first matches
+ *  scanReadAlongs, and it is the join the leave path deletes first.
+ *
  *  Null (not []) when the lookup fails, so a PDS blip doesn't read as "you left
  *  every room": callers that paint from cache keep the cached list instead of
  *  clearing it. Same stance as fetchRoomMemberCount. */
@@ -108,13 +113,19 @@ export async function fetchMyRooms(did: string, pdsUrl: string): Promise<MyRoom[
     const data = (await res.json()) as {
       records?: Array<{ uri: string; value?: { subject?: string; createdAt?: string } }>;
     };
-    return (data.records ?? [])
-      .filter((r) => typeof r.value?.subject === 'string')
-      .map((r) => ({
-        recordUri: r.uri,
-        subject: r.value!.subject!,
-        createdAt: r.value?.createdAt,
-      }));
+    const seen = new Set<string>();
+    const out: MyRoom[] = [];
+    for (const record of data.records ?? []) {
+      const subject = record.value?.subject;
+      if (typeof subject !== 'string' || seen.has(subject)) continue;
+      seen.add(subject);
+      out.push({
+        recordUri: record.uri,
+        subject,
+        createdAt: record.value?.createdAt,
+      });
+    }
+    return out;
   } catch {
     return null;
   }

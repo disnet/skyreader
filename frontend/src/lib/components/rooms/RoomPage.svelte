@@ -214,9 +214,13 @@
     void loadMembers(target);
     void loadCollectionLink(target);
 
+    // The room read is session-free (a shared link has to open for a visitor
+    // who has never signed in); the join check is not, and asking for it
+    // without a session is a 401 the api client reads as a dead session and
+    // logs out on. A signed-out reader and a guest are in no rooms.
     const [roomResult, joinedResult] = await Promise.allSettled([
       api.getRoom(target),
-      api.getRoomJoined(target),
+      auth.isAuthenticated ? api.getRoomJoined(target) : Promise.resolve({ joined: false }),
     ]);
     if (target !== uri) return;
     if (roomResult.status === 'fulfilled') {
@@ -929,7 +933,7 @@
   <SavedReader
     readerItem={reader.readerItem}
     onClose={reader.closeReader}
-    onMarkRead={openRoomItem ? () => markRead(openRoomItem) : undefined}
+    onMarkRead={openRoomItem && auth.isAuthenticated ? () => markRead(openRoomItem) : undefined}
     markedRead={openRoomItem?.readByMe ?? false}
   />
 {/if}

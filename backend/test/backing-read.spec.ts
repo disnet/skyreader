@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { extractUrlFromRecord, snapshotBackedCollection } from '../src/services/backing/read';
+import {
+  extractUrlFromRecord,
+  snapshotBackedCollection,
+  SNAPSHOT_SUBREQUESTS,
+  TRANSIENT_SKIP,
+} from '../src/services/backing/read';
 import { normalizeArticleUrl } from '../src/utils/url-normalize';
 import { parseBacking, serializeBacking } from '../src/routes/settings';
 import * as didResolver from '../src/utils/did-resolver';
@@ -651,6 +656,124 @@ describe('snapshotBackedCollection — includeForeign (co-curated collections)',
 // pool may decide that. See routes/rooms.ts.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// The subrequest budget. A Worker invocation is capped at 1000 subrequests and
+// crossing it THROWS, so a big co-curated room used to fail to load entirely
+// rather than come back short. The budget converts that into the `complete: false`
+// the caller already knows how to render.
+// ---------------------------------------------------------------------------
+
+describe('snapshotBackedCollection — subrequest budget', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  /** `count` contributors, each with one link in their own repo pointing at a card
+   *  in that same repo — the shape of a busy open room. */
+  function installBusyRoom(count: number) {
+    const dids = Array.from({ length: count }, (_, i) => `did:plc:c${i}`);
+    mockPds({
+      [OWNER]: OWNER_PDS,
+      ...Object.fromEntries(dids.map((d, i) => [d, `https://c${i}.pds`])),
+    });
+    installFetch({
+      listRecords: () =>
+        jsonRes({
+          records: [
+            {
+              uri: `at://${OWNER}/network.cosmik.collectionLink/l1`,
+              cid: 'x',
+              value: {
+                collection: { uri: SEMBLE_COL },
+                card: { uri: `at://${OWNER}/network.cosmik.card/ownerCard` },
+              },
+            },
+          ],
+        }),
+      links: () =>
+        jsonRes({
+          linking_records: dids.map((did) => ({
+            did,
+            collection: 'network.cosmik.collectionLink',
+            rkey: 'theirLink',
+          })),
+          cursor: null,
+        }),
+      getRecord: (p) => {
+        const repo = p.get('repo')!;
+        if (p.get('collection') === 'network.cosmik.collectionLink') {
+          return jsonRes({
+            value: {
+              collection: { uri: SEMBLE_COL },
+              card: { uri: `at://${repo}/network.cosmik.card/theirCard` },
+            },
+          });
+        }
+        return jsonRes({
+          value: {
+            $type: 'network.cosmik.card',
+            type: 'URL',
+            content: { url: `https://a.test/${repo}` },
+          },
+        });
+      },
+    });
+    return dids;
+  }
+
+  it('answers a room too big to resolve with a short list, not a failure', async () => {
+    installBusyRoom(40);
+    const fetchSpy = vi.mocked(globalThis.fetch);
+
+    const snap = await snapshotBackedCollection('semble', OWNER, SEMBLE_COL, {
+      includeForeign: true,
+      maxSubrequests: 20,
+    });
+
+    // The old behaviour on a real Worker was a throw past the cap, which
+    // snapshotBackedCollection's catch turned into an empty list.
+    expect(snap.complete).toBe(false);
+    expect(snap.members.length).toBeGreaterThan(0);
+    expect(fetchSpy.mock.calls.length).toBeLessThanOrEqual(20);
+  });
+
+  it('caps foreign verification so it cannot starve item resolution', async () => {
+    installBusyRoom(40);
+
+    // Half the budget goes to verifying links; the rest is still there to resolve
+    // the cards, so the owner's own article survives a flood of contributions.
+    const snap = await snapshotBackedCollection('semble', OWNER, SEMBLE_COL, {
+      includeForeign: true,
+      maxSubrequests: 20,
+    });
+
+    expect(snap.members.map((m) => m.url)).toContain(`https://a.test/${OWNER}`);
+  });
+
+  it('leaves a room that fits inside the budget complete', async () => {
+    installBusyRoom(3);
+    const snap = await snapshotBackedCollection('semble', OWNER, SEMBLE_COL, {
+      includeForeign: true,
+    });
+    expect(snap.complete).toBe(true);
+    expect(snap.members).toHaveLength(4); // the owner's card plus three contributions
+  });
+
+  // The two phases used to keep separate PDS caches, so a contributor who owned the
+  // card their link pointed at was resolved twice — two subrequests, one answer.
+  it('resolves each DID once across both phases', async () => {
+    installBusyRoom(3);
+    const pdsSpy = vi.mocked(didResolver.resolvePdsUrl);
+
+    await snapshotBackedCollection('semble', OWNER, SEMBLE_COL, { includeForeign: true });
+
+    const resolved = pdsSpy.mock.calls.map(([did]) => did);
+    expect(new Set(resolved).size).toBe(resolved.length);
+  });
+
+  it('defaults to a budget with room for the rest of the invocation', () => {
+    expect(SNAPSHOT_SUBREQUESTS).toBeLessThan(1000);
+  });
+});
+
 describe('snapshotBackedCollection — addedAt ordering', () => {
   afterEach(() => vi.restoreAllMocks());
 
@@ -744,5 +867,173 @@ describe('snapshotBackedCollection — addedAt ordering', () => {
       'https://a.test/undated',
     ]);
     expect(snap.members[1].addedAt).toBeUndefined();
+  });
+});
+
+// An incremental caller (the materialized room) stores what it resolved and hands
+// it back as `skipLinks`: those links are still LISTED, so the caller can diff
+// its store against the collection, but nothing is fetched for them. Together
+// with per-member failure containment, that is what makes a repeat snapshot
+// cost what changed.
+describe('snapshotBackedCollection — incremental (skipLinks / listed)', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const OWNER_LINK = (rkey: string) => `at://${OWNER}/network.cosmik.collectionLink/${rkey}`;
+  const cardFor = (url: string) =>
+    jsonRes({ value: { $type: 'network.cosmik.card', type: 'URL', content: { url } } });
+
+  /** Two owner links, one contributor link via Constellation. */
+  function installRoom(getRecord?: (p: URLSearchParams) => Response) {
+    installFetch({
+      listRecords: () =>
+        jsonRes({
+          records: ['a', 'b'].map((rkey) => ({
+            uri: OWNER_LINK(rkey),
+            cid: 'x',
+            value: {
+              collection: { uri: SEMBLE_COL },
+              card: { uri: `at://${OWNER}/network.cosmik.card/${rkey}` },
+            },
+          })),
+        }),
+      links: () =>
+        jsonRes({
+          linking_records: [
+            { did: OTHER, collection: 'network.cosmik.collectionLink', rkey: 'theirs' },
+          ],
+          cursor: null,
+        }),
+      getRecord:
+        getRecord ??
+        ((p) => {
+          if (p.get('collection') === 'network.cosmik.collectionLink') {
+            return jsonRes({
+              value: {
+                collection: { uri: SEMBLE_COL },
+                card: { uri: `at://${OTHER}/network.cosmik.card/theirCard` },
+              },
+            });
+          }
+          return cardFor(`https://a.test/${p.get('rkey')}`);
+        }),
+    });
+  }
+
+  it('lists a skipped link without fetching anything for it', async () => {
+    mockPds();
+    installRoom();
+    const fetchSpy = vi.mocked(globalThis.fetch);
+    const THEIRS = `at://${OTHER}/network.cosmik.collectionLink/theirs`;
+
+    const snap = await snapshotBackedCollection('semble', OWNER, SEMBLE_COL, {
+      includeForeign: true,
+      skipLinks: new Set([OWNER_LINK('a'), THEIRS]),
+    });
+
+    expect(snap.complete).toBe(true);
+    expect(snap.listingComplete).toBe(true);
+    expect(snap.listed.sort()).toEqual([OWNER_LINK('a'), OWNER_LINK('b'), THEIRS].sort());
+    // Only b was resolved: one getRecord, for its card. The contributor's link
+    // was neither verified nor followed, so their PDS was never even resolved.
+    expect(snap.members.map((m) => m.url)).toEqual(['https://a.test/b']);
+    const getRecords = fetchSpy.mock.calls
+      .map(([input]) => new URL(String(input)))
+      .filter((u) => u.pathname.endsWith('getRecord'));
+    expect(getRecords).toHaveLength(1);
+    expect(vi.mocked(didResolver.resolvePdsUrl)).not.toHaveBeenCalledWith(OTHER);
+  });
+
+  it('confines a transient failure to the member it hit', async () => {
+    mockPds();
+    installRoom((p) => {
+      if (p.get('rkey') === 'b') return jsonRes({ error: 'InternalServerError' }, 500);
+      return cardFor(`https://a.test/${p.get('rkey')}`);
+    });
+
+    const snap = await snapshotBackedCollection('semble', OWNER, SEMBLE_COL);
+
+    // Not complete — a live member may be missing — but the one that resolved is
+    // still there for a caller that stores members one at a time.
+    expect(snap.complete).toBe(false);
+    expect(snap.listingComplete).toBe(true);
+    expect(snap.members.map((m) => m.url)).toEqual(['https://a.test/a']);
+    expect(snap.skipped).toEqual([
+      {
+        reason: TRANSIENT_SKIP,
+        itemUri: `at://${OWNER}/network.cosmik.card/b`,
+        linkUri: OWNER_LINK('b'),
+      },
+    ]);
+  });
+
+  it('a genuinely gone item is a permanent skip, not a transient one', async () => {
+    mockPds();
+    installRoom((p) => {
+      if (p.get('rkey') === 'b') return jsonRes({ error: 'RecordNotFound' }, 400);
+      return cardFor(`https://a.test/${p.get('rkey')}`);
+    });
+    const snap = await snapshotBackedCollection('semble', OWNER, SEMBLE_COL);
+    expect(snap.complete).toBe(true);
+    expect(snap.skipped.map((s) => s.reason)).toEqual(['item-not-resolvable']);
+  });
+
+  it('a foreign ref that cannot be verified stays listed, and only the list is incomplete', async () => {
+    mockPds();
+    installRoom((p) => {
+      if (p.get('collection') === 'network.cosmik.collectionLink') {
+        return jsonRes({ error: 'InternalServerError' }, 500);
+      }
+      return cardFor(`https://a.test/${p.get('rkey')}`);
+    });
+    const snap = await snapshotBackedCollection('semble', OWNER, SEMBLE_COL, {
+      includeForeign: true,
+    });
+    // Constellation names the ref, so it is a member until its repo says otherwise:
+    // a caller holding a row for it must not delete that row over a 5xx. The walk
+    // itself finished, so the listing IS whole; what is missing is the member.
+    expect(snap.listingComplete).toBe(true);
+    expect(snap.listed).toContain(`at://${OTHER}/network.cosmik.collectionLink/theirs`);
+    expect(snap.complete).toBe(false);
+    expect(snap.members).toHaveLength(2);
+  });
+
+  it('a foreign ref whose repo cannot be resolved stays listed too', async () => {
+    mockPds({ [OWNER]: OWNER_PDS }); // OTHER resolves to nothing: a deactivated account
+    installRoom();
+    const snap = await snapshotBackedCollection('semble', OWNER, SEMBLE_COL, {
+      includeForeign: true,
+    });
+    expect(snap.listingComplete).toBe(true);
+    expect(snap.listed).toContain(`at://${OTHER}/network.cosmik.collectionLink/theirs`);
+    expect(snap.complete).toBe(false);
+  });
+
+  it('a foreign ref that answers "gone" or "elsewhere" is un-listed', async () => {
+    mockPds();
+    installRoom((p) => {
+      if (p.get('collection') === 'network.cosmik.collectionLink') {
+        return jsonRes({ error: 'RecordNotFound' }, 400);
+      }
+      return cardFor(`https://a.test/${p.get('rkey')}`);
+    });
+    const snap = await snapshotBackedCollection('semble', OWNER, SEMBLE_COL, {
+      includeForeign: true,
+    });
+    expect(snap.listingComplete).toBe(true);
+    expect(snap.complete).toBe(true);
+    expect(snap.listed).not.toContain(`at://${OTHER}/network.cosmik.collectionLink/theirs`);
+  });
+
+  it('running out of budget mid-resolution keeps what resolved and stays retryable', async () => {
+    mockPds();
+    installRoom();
+    const snap = await snapshotBackedCollection('semble', OWNER, SEMBLE_COL, {
+      // owner PDS + one listRecords page + one getRecord: the second card is refused.
+      maxSubrequests: 3,
+    });
+    expect(snap.complete).toBe(false);
+    expect(snap.listingComplete).toBe(true);
+    expect(snap.members).toHaveLength(1);
+    expect(snap.skipped.map((s) => s.reason)).toEqual([TRANSIENT_SKIP]);
   });
 });
