@@ -4,9 +4,8 @@
  * A room IS a Semble/Margin collection, read through the same auth-free path as
  * backed saves (`snapshotBackedCollection`, with everyone's contributions via
  * `includeForeign`). That read costs one or two fetches per article, which is
- * fine once and ruinous on every open: the room endpoint answers signed-out
- * visitors, and a Worker invocation caps outbound fetches at 1000, so a busy
- * room could not be read at all. This module gives the room the shape backed
+ * fine once and ruinous on every open: a Worker invocation caps outbound
+ * fetches at 1000, so a busy room could not be read at all. This module gives the room the shape backed
  * saves already have — serve the last snapshot from D1, refresh behind the
  * response — with one addition: the refresh is INCREMENTAL.
  *

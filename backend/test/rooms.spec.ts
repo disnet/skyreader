@@ -64,12 +64,17 @@ function request(path: string, body?: unknown, method = 'POST') {
   });
 }
 
-/** The same request with no session cookie — a visitor on a shared room link. */
+/** The same request with no session cookie. */
 function anonRequest(path: string, method = 'GET') {
   return new IncomingRequest(`http://localhost${path}`, {
     method,
     headers: { Origin: env.FRONTEND_URL, 'Content-Type': 'application/json' },
   });
+}
+
+/** An authenticated GET — every rooms route needs a session, the read included. */
+function get(path: string) {
+  return request(path, undefined, 'GET');
 }
 
 async function call(req: Request): Promise<{ status: number; body: any }> {
@@ -176,53 +181,27 @@ describe('GET /api/rooms — canAdd', () => {
   });
 });
 
-// A room IS a public collection, and a shared link is often a visitor's first
-// page: the read has to answer without a session. What a session adds is the two
-// per-reader fields.
+// Rooms is an account surface. The read was briefly session-free for shared
+// links (see the routing comment in index.ts); without a session it is now a
+// 401 that touches neither the owner's PDS nor D1, so an anonymous caller cannot
+// make the worker resolve arbitrary collections or seed room rows.
 describe('GET /api/rooms — signed out', () => {
   beforeEach(() => reset());
   afterEach(() => vi.restoreAllMocks());
 
-  it('resolves a room for a visitor with no session', async () => {
-    mockCollection({ name: 'Theirs', description: 'Open to all', accessType: 'OPEN' });
-    emptySnapshot();
-    const { status, body } = await call(
+  it('401s a visitor with no session without resolving the collection', async () => {
+    const lookup = mockCollection({ name: 'Theirs', accessType: 'OPEN' });
+    const snapshot = emptySnapshot();
+    const { status } = await call(
       anonRequest(`/api/rooms?uri=${encodeURIComponent(OTHER_COLLECTION)}`)
     );
-    expect(status).toBe(200);
-    expect(body.name).toBe('Theirs');
-    expect(body.description).toBe('Open to all');
-    expect(body.ownerDid).toBe(OWNER);
-  });
-
-  it('reports canAdd false even for an OPEN collection — adding needs a repo', async () => {
-    mockCollection({ name: 'Theirs', accessType: 'OPEN' });
-    emptySnapshot();
-    const { body } = await call(
-      anonRequest(`/api/rooms?uri=${encodeURIComponent(OTHER_COLLECTION)}`)
-    );
-    expect(body.canAdd).toBe(false);
-  });
-
-  it('serves the aggregate read count but never readByMe', async () => {
-    mockCollection({ name: 'Theirs', accessType: 'OPEN' });
-    vi.spyOn(read, 'snapshotBackedCollection').mockResolvedValue(
-      snapshotOf([{ url: 'https://a.test/x', urlNormalized: 'a.test/x' }])
-    );
-    // Someone else has read this article through the room.
-    await env.DB.prepare(
-      `INSERT INTO room_reads (collection_uri, url_normalized, did, read_at)
-       VALUES (?, 'a.test/x', ?, unixepoch())`
-    )
-      .bind(OTHER_COLLECTION, DID)
-      .run();
-
-    const { body } = await call(
-      anonRequest(`/api/rooms?uri=${encodeURIComponent(OTHER_COLLECTION)}`)
-    );
-    expect(body.items).toHaveLength(1);
-    expect(body.items[0].readCount).toBe(1);
-    expect(body.items[0].readByMe).toBe(false);
+    expect(status).toBe(401);
+    expect(lookup).not.toHaveBeenCalled();
+    expect(snapshot).not.toHaveBeenCalled();
+    const rows = await env.DB.prepare('SELECT COUNT(*) AS n FROM room_snapshots').first<{
+      n: number;
+    }>();
+    expect(rows?.n).toBe(0);
   });
 
   it('still requires a session to start a room', async () => {
@@ -254,7 +233,7 @@ describe('GET /api/rooms — materialized in D1', () => {
         snapshotOf([{ url: 'https://a.test/one' }, { url: 'https://a.test/two' }])
       );
 
-    const first = await call(anonRequest(ROOM));
+    const first = await call(get(ROOM));
     expect(first.status).toBe(200);
     expect(first.body.items.map((i: { url: string }) => i.url)).toEqual([
       'https://a.test/one',
@@ -263,7 +242,7 @@ describe('GET /api/rooms — materialized in D1', () => {
     expect(first.body.complete).toBe(true);
     expect(snapshot).toHaveBeenCalledTimes(1);
 
-    const second = await call(anonRequest(ROOM));
+    const second = await call(get(ROOM));
     expect(second.body.items).toHaveLength(2);
     expect(snapshot).toHaveBeenCalledTimes(1);
     expect(await storedLinks(OTHER_COLLECTION)).toEqual([L0, L1]);
@@ -276,7 +255,7 @@ describe('GET /api/rooms — materialized in D1', () => {
       .mockResolvedValue(
         snapshotOf([{ url: 'https://a.test/one', addedAt: '2026-01-01T00:00:00Z' }])
       );
-    await call(anonRequest(ROOM));
+    await call(get(ROOM));
     await ageRoom(OTHER_COLLECTION);
 
     // The second poll: the stored link is still listed but not re-resolved, and
@@ -288,7 +267,7 @@ describe('GET /api/rooms — materialized in D1', () => {
       ]),
       listed: [L0, L2],
     });
-    const { body } = await call(anonRequest(ROOM));
+    const { body } = await call(get(ROOM));
     // The response was served from the stored copy; the refresh ran in waitUntil.
     expect(body.items.map((i: { url: string }) => i.url)).toEqual(['https://a.test/one']);
     expect(snapshot).toHaveBeenCalledTimes(2);
@@ -296,7 +275,7 @@ describe('GET /api/rooms — materialized in D1', () => {
     expect([...opts.skipLinks!]).toEqual([L0]);
     expect(opts.includeForeign).toBe(true);
 
-    const after = await call(anonRequest(ROOM));
+    const after = await call(get(ROOM));
     expect(after.body.items.map((i: { url: string }) => i.url)).toEqual([
       'https://a.test/one',
       'https://a.test/three',
@@ -310,13 +289,13 @@ describe('GET /api/rooms — materialized in D1', () => {
       .mockResolvedValue(
         snapshotOf([{ url: 'https://a.test/one' }, { url: 'https://a.test/two' }])
       );
-    await call(anonRequest(ROOM));
+    await call(get(ROOM));
 
     // A truncated walk lists only one of the two: nothing may be deleted off it.
     snapshot.mockResolvedValue({ ...snapshotOf(), listed: [L0], listingComplete: false });
     await pollRoom(env, OTHER_COLLECTION, { force: true });
     expect(await storedLinks(OTHER_COLLECTION)).toEqual([L0, L1]);
-    expect((await call(anonRequest(ROOM))).body.complete).toBe(false);
+    expect((await call(get(ROOM))).body.complete).toBe(false);
 
     // A whole listing that omits l1 means l1 left the collection — once the row
     // is old enough for its absence to mean that (see ROOM_DELETE_GRACE_MS).
@@ -326,7 +305,7 @@ describe('GET /api/rooms — materialized in D1', () => {
     snapshot.mockResolvedValue({ ...snapshotOf(), listed: [L0] });
     await pollRoom(env, OTHER_COLLECTION, { force: true });
     expect(await storedLinks(OTHER_COLLECTION)).toEqual([L0]);
-    const { body } = await call(anonRequest(ROOM));
+    const { body } = await call(get(ROOM));
     expect(body.items.map((i: { url: string }) => i.url)).toEqual(['https://a.test/one']);
     expect(body.complete).toBe(true);
   });
@@ -339,7 +318,7 @@ describe('GET /api/rooms — materialized in D1', () => {
       skipped: [{ reason: read.TRANSIENT_SKIP, linkUri: L1 }],
       listed: [L0, L1],
     });
-    const first = await call(anonRequest(ROOM));
+    const first = await call(get(ROOM));
     expect(first.body.complete).toBe(false);
     expect(first.body.items).toHaveLength(1);
 
@@ -352,7 +331,7 @@ describe('GET /api/rooms — materialized in D1', () => {
       listed: [L0, L1, L2],
     });
     await pollRoom(env, OTHER_COLLECTION, { force: true });
-    const { body } = await call(anonRequest(ROOM));
+    const { body } = await call(get(ROOM));
     expect(body.complete).toBe(true);
     expect(body.items).toHaveLength(2);
     expect(await storedLinks(OTHER_COLLECTION)).toEqual([L0, L1, L2]);
@@ -361,7 +340,7 @@ describe('GET /api/rooms — materialized in D1', () => {
   it('lets one poll through at a time', async () => {
     mockCollection({ name: 'Theirs', accessType: 'OPEN' });
     const snapshot = emptySnapshot();
-    await call(anonRequest(ROOM));
+    await call(get(ROOM));
     await ageRoom(OTHER_COLLECTION);
 
     const results = await Promise.all([
@@ -375,13 +354,13 @@ describe('GET /api/rooms — materialized in D1', () => {
   it('forgets a room whose collection is gone, and 404s the next open', async () => {
     const record = mockCollection({ name: 'Theirs', accessType: 'OPEN' });
     emptySnapshot();
-    await call(anonRequest(ROOM));
+    await call(get(ROOM));
 
     record.mockResolvedValue(null);
     const result = await pollRoom(env, OTHER_COLLECTION, { force: true });
     expect(result).toMatchObject({ polled: true, gone: true });
     expect(await storedLinks(OTHER_COLLECTION)).toEqual([]);
-    expect((await call(anonRequest(ROOM))).status).toBe(404);
+    expect((await call(get(ROOM))).status).toBe(404);
   });
 
   // A contributor's write-through row reaches a listing only once Constellation
@@ -390,7 +369,7 @@ describe('GET /api/rooms — materialized in D1', () => {
   it('keeps a freshly written row through a whole listing that does not yet name it', async () => {
     mockCollection({ name: 'Theirs', accessType: 'OPEN' });
     const snapshot = emptySnapshot();
-    await call(anonRequest(ROOM));
+    await call(get(ROOM));
     const MINE = `at://${DID}/network.cosmik.collectionLink/l1`;
     vi.spyOn(write, 'createMember').mockResolvedValue({
       itemUri: `at://${DID}/network.cosmik.card/c1`,
@@ -424,7 +403,7 @@ describe('GET /api/rooms — materialized in D1', () => {
       .mockResolvedValue(
         snapshotOf([{ url: 'https://a.test/one' }, { url: 'https://a.test/two' }])
       );
-    await call(anonRequest(ROOM));
+    await call(get(ROOM));
     await env.DB.prepare('UPDATE room_members SET resolved_at = ?')
       .bind(Date.now() - ROOM_DELETE_GRACE_MS - 1)
       .run();
@@ -446,7 +425,7 @@ describe('GET /api/rooms — materialized in D1', () => {
       .mockResolvedValue(
         snapshotOf([{ url: 'https://a.test/one' }, { url: 'https://a.test/two' }])
       );
-    await call(anonRequest(ROOM));
+    await call(get(ROOM));
     await env.DB.prepare('UPDATE room_members SET resolved_at = ?')
       .bind(Date.now() - ROOM_MEMBER_TTL_MS - 1)
       .run();
@@ -475,7 +454,7 @@ describe('GET /api/rooms — materialized in D1', () => {
   it('serves a stored room while its refresh is gated', async () => {
     mockCollection({ name: 'Theirs', accessType: 'OPEN' });
     const snapshot = emptySnapshot();
-    await call(anonRequest(ROOM));
+    await call(get(ROOM));
     expect(await pollRoom(env, OTHER_COLLECTION)).toEqual({ polled: false, reason: 'gated' });
     expect(snapshot).toHaveBeenCalledTimes(1);
   });
@@ -683,7 +662,7 @@ describe('POST /api/rooms/items — the materialized room', () => {
     mockCollection({ name: 'Theirs', accessType: 'OPEN' });
     const snapshot = emptySnapshot();
     const ROOM = `/api/rooms?uri=${encodeURIComponent(OTHER_COLLECTION)}`;
-    expect((await call(anonRequest(ROOM))).body.items).toHaveLength(0);
+    expect((await call(get(ROOM))).body.items).toHaveLength(0);
 
     vi.spyOn(write, 'createMember').mockResolvedValue({
       itemUri: `at://${DID}/network.cosmik.card/c1`,
@@ -698,7 +677,7 @@ describe('POST /api/rooms/items — the materialized room', () => {
     );
     expect(added.status).toBe(200);
 
-    const { body } = await call(anonRequest(ROOM));
+    const { body } = await call(get(ROOM));
     expect(body.items.map((i: { url: string; title?: string }) => [i.url, i.title])).toEqual([
       ['https://example.com/post', 'A Post'],
     ]);

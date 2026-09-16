@@ -128,6 +128,11 @@
   // moment to re-sync the session cache.
   let dispatched: string | null = null;
   $effect(() => {
+    // Rooms is an account surface: the layout sends a guest or a signed-out
+    // visitor through sign-in (and back here), but that redirect and this
+    // effect race on the first paint, and a room read without a session is a
+    // 401 the api client treats as a dead session. Wait for the account.
+    if (!auth.isAuthenticated) return;
     const next = page.url.searchParams.get('uri');
     const sig = `${auth.user?.did ?? ''}|${next ?? ''}`;
     if (sig === dispatched) return;
@@ -214,13 +219,9 @@
     void loadMembers(target);
     void loadCollectionLink(target);
 
-    // The room read is session-free (a shared link has to open for a visitor
-    // who has never signed in); the join check is not, and asking for it
-    // without a session is a 401 the api client reads as a dead session and
-    // logs out on. A signed-out reader and a guest are in no rooms.
     const [roomResult, joinedResult] = await Promise.allSettled([
       api.getRoom(target),
-      auth.isAuthenticated ? api.getRoomJoined(target) : Promise.resolve({ joined: false }),
+      api.getRoomJoined(target),
     ]);
     if (target !== uri) return;
     if (roomResult.status === 'fulfilled') {
@@ -237,9 +238,7 @@
   // Keep the snapshot in step with what's on screen — the refresh, a join or
   // leave, a mark-as-read, an article added here. Writing from an effect rather
   // than at each call site means no path can update the room and forget the
-  // cache. Guests are cached too (under the anonymous owner): a room reached by
-  // link is often a visitor's first page, and it should open fast the second
-  // time as well. `written` is what the cache already holds, so opening a room
+  // cache. `written` is what the cache already holds, so opening a room
   // doesn't write its own snapshot straight back.
   $effect(() => {
     const current = room;
@@ -639,19 +638,14 @@
 
 <!-- On mobile the bottom bar's switcher is the only in-app way off a page (an
      installed PWA has no back button), and Rooms is one of its destinations, so
-     this page has to carry the chrome or it's a trap. A signed-out visitor
-     arriving on a shared room link gets no app chrome — same stance as
-     /supporter — and the room's own "All rooms" link is rendered outside the
-     load branches for exactly that reader. -->
-{#if auth.isInApp}
-  <StaticPageChrome title="Rooms" readerOpen={reader.readerItem !== null} />
-{/if}
+     this page has to carry the chrome or it's a trap. -->
+<StaticPageChrome title="Rooms" readerOpen={reader.readerItem !== null} />
 
 {#if uri}
   <div class="room">
     <!-- Always rendered, error state included: a room reached by link is often
-         the first Skyreader page a visitor sees, so the way back to their own
-         rooms cannot depend on the room loading. -->
+         the first rooms page someone sees, so the way back to their own rooms
+         cannot depend on the room loading. -->
     <a class="room-back" href="/rooms">
       <Icon name="arrow-left" size={14} />
       All rooms
@@ -933,7 +927,7 @@
   <SavedReader
     readerItem={reader.readerItem}
     onClose={reader.closeReader}
-    onMarkRead={openRoomItem && auth.isAuthenticated ? () => markRead(openRoomItem) : undefined}
+    onMarkRead={openRoomItem ? () => markRead(openRoomItem) : undefined}
     markedRead={openRoomItem?.readByMe ?? false}
   />
 {/if}

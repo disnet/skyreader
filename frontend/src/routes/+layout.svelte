@@ -40,9 +40,9 @@
   // review), channels and the daily magazine — all Dexie-first, with their
   // server halves queued until sign-in. What still needs an account is what
   // cannot exist without one — the linkblog (posts to the user's PDS), the
-  // social Discover surface, and account settings. Those are the reason to
-  // sign in, so a guest who reaches one gets the sign-in screen (returning
-  // here afterwards), not a page whose every load 401s.
+  // social Discover surface, reading rooms, and account settings. Those are
+  // the reason to sign in, so a guest who reaches one gets the sign-in screen
+  // (returning here afterwards), not a page whose every load 401s.
   const GUEST_ROUTES = ['/feeds', '/sources', '/home', '/saved', '/daily', '/highlights'];
   const ACCOUNT_ROUTES = ['/linkblog', '/discover', '/settings', '/rooms'];
   function isAccountOnly(pathname: string): boolean {
@@ -53,15 +53,26 @@
   $effect(() => {
     if (!browser || auth.isLoading) return;
     const pathname = $page.url.pathname;
+    // The query string rides along: a room link is /rooms?uri=…, and the point
+    // of sending someone through sign-in is to land them back in that room.
+    const returnUrl = `${pathname}${$page.url.search}`;
 
     if (auth.isGuest) {
       if (isAccountOnly(pathname)) {
-        goto(`/auth/login?returnUrl=${encodeURIComponent(pathname)}`, { replaceState: true });
+        goto(`/auth/login?returnUrl=${encodeURIComponent(returnUrl)}`, { replaceState: true });
       }
       return;
     }
 
-    if (!auth.isAuthenticated && APP_ROUTES.includes(pathname)) {
+    if (auth.isAuthenticated) return;
+    // A signed-out visitor on a shared room link is sent through sign-in and
+    // back to the room, rather than bounced to the landing page like the other
+    // app routes: the link is the invitation, and the room is where it leads.
+    if (pathname === '/rooms') {
+      goto(`/auth/login?returnUrl=${encodeURIComponent(returnUrl)}`, { replaceState: true });
+      return;
+    }
+    if (APP_ROUTES.includes(pathname)) {
       goto('/', { replaceState: true });
     }
   });

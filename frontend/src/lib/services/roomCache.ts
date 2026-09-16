@@ -19,10 +19,10 @@ import { safePut } from '$lib/services/safeDb.svelte';
 import { FEATURED_ROOM_URIS, type MyRoom, type RoomListing } from '$lib/services/rooms';
 import type { BlueskyProfile, RoomInfo } from '$lib/types';
 
-/** Cache owner for a signed-out visitor. A room reached by link renders without
- *  a session, and that snapshot carries no personal read state — but it still
- *  must not be handed to whoever signs in next, so it gets its own owner key.
- *  No real DID can collide: every DID starts with `did:`. */
+/** Cache owner when no account DID is known. Rooms is an account surface, so
+ *  this is a fallback rather than a supported reader — but a snapshot written
+ *  under it must still never be handed to whoever signs in next, so it gets its
+ *  own owner key. No real DID can collide: every DID starts with `did:`. */
 export const ANON_ROOM_DID = 'anon';
 
 /** Snapshots older than this are dropped on the next write. A room you opened
