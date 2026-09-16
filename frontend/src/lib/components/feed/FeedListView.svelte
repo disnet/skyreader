@@ -28,10 +28,8 @@
   // publication label can link and filter like an RSS feed title. Mirrors the
   // author + publication scoping in feedView.svelte.ts's document filter.
   function findDocumentSubscription(doc: SocialDocument) {
-    const subs = subscriptionsStore.subscriptions.filter(
-      (s) => s.sourceType === 'atproto.documents' && s.subjectDid === doc.authorDid
-    );
-    if (subs.length === 0) return undefined;
+    const subs = subscriptionsStore.documentSubsByAuthorDid.get(doc.authorDid);
+    if (!subs || subs.length === 0) return undefined;
     // Prefer a publication-scoped sub whose publication URI matches the doc's site
     const scoped = subs.find((s) => s.feedUrl?.startsWith('at://') && s.feedUrl === doc.siteUri);
     if (scoped) return scoped;
@@ -269,7 +267,7 @@
     <div class="article-item-anchor" bind:this={articleElements[index]}>
       {#if displayItem.type === 'article'}
         {@const article = displayItem.item}
-        {@const sub = subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId)}
+        {@const sub = subscriptionsStore.byId.get(article.subscriptionId)}
         <ArticleCard
           {article}
           siteUrl={sub?.siteUrl || sub?.feedUrl}

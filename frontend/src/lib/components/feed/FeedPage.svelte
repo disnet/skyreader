@@ -29,6 +29,7 @@
   import EditFeedModal from '$lib/components/EditFeedModal.svelte';
   import MobileBottomBar from '$lib/components/feed/MobileBottomBar.svelte';
   import MobileFeedSwitcher from '$lib/components/feed/MobileFeedSwitcher.svelte';
+  import { perfBegin, PERF_SHEET_OPEN } from '$lib/utils/perfMarks';
   import MobileFilterSheet from '$lib/components/feed/MobileFilterSheet.svelte';
   import PullToRefresh from '$lib/components/PullToRefresh.svelte';
   import BottomSheet from '$lib/components/common/BottomSheet.svelte';
@@ -206,7 +207,7 @@
   function handleEditFeed() {
     if (!feedViewStore.feedFilter) return;
     const feedId = parseInt(feedViewStore.feedFilter);
-    const sub = subscriptionsStore.subscriptions.find((s) => s.id === feedId);
+    const sub = subscriptionsStore.byId.get(feedId);
     if (sub) {
       editingSubscription = sub;
       editModalOpen = true;
@@ -229,9 +230,7 @@
       return feedViewStore.categoryFilter;
     }
     if (feedViewStore.feedFilter) {
-      const sub = subscriptionsStore.subscriptions.find(
-        (s) => s.id === parseInt(feedViewStore.feedFilter!)
-      );
+      const sub = subscriptionsStore.byId.get(parseInt(feedViewStore.feedFilter!));
       return sub?.customTitle || sub?.title || 'Feed';
     }
     if (feedViewStore.savedFilter) return 'Saved';
@@ -279,7 +278,7 @@
       const article = item.item;
       if (itemLabelsStore.isRead(article.guid)) return;
 
-      const sub = subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId);
+      const sub = subscriptionsStore.byId.get(article.subscriptionId);
       if (sub) {
         itemLabelsStore.markAsRead(sub.rkey, article.guid, article.url, article.title);
       }
@@ -319,7 +318,7 @@
     if (!feedViewStore.feedFilter) return;
 
     const feedId = parseInt(feedViewStore.feedFilter);
-    const sub = subscriptionsStore.subscriptions.find((s) => s.id === feedId);
+    const sub = subscriptionsStore.byId.get(feedId);
     if (!sub) return;
 
     const allFeedArticles = articlesStore.getForSubscription(feedId);
@@ -373,7 +372,7 @@
 
     for (const article of allArticles) {
       if (!itemLabelsStore.isRead(article.guid)) {
-        const sub = subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId);
+        const sub = subscriptionsStore.byId.get(article.subscriptionId);
         if (sub) {
           articlesToMark.push({
             subscriptionRkey: sub.rkey,
@@ -727,7 +726,10 @@
         controlsVisible={scrollDirection.controlsVisible}
         currentTitle={pageTitle}
         onScrollToTop={scrollToTop}
-        onOpenFeedSwitcher={() => (feedSwitcherOpen = true)}
+        onOpenFeedSwitcher={() => {
+          perfBegin(PERF_SHEET_OPEN);
+          feedSwitcherOpen = true;
+        }}
         onOpenNotifications={() => {
           notifSheetOpen = true;
           // Load the enriched list; the badge already polled the source list. Items
@@ -749,8 +751,10 @@
         open={feedSwitcherOpen}
         onclose={() => (feedSwitcherOpen = false)}
         title="Switch Feed"
+        keepMounted
       >
         <MobileFeedSwitcher
+          open={feedSwitcherOpen}
           onclose={() => (feedSwitcherOpen = false)}
           currentTitle={pageTitle}
           onEditChannel={handleEditChannel}
