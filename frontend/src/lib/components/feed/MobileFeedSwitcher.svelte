@@ -12,19 +12,30 @@
   import { preferences } from '$lib/stores/preferences.svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import { channelPath, feedPath, categoryPath, FEEDS_PATH, SAVED_PATH } from '$lib/utils/viewNav';
+  import { perfBegin, PERF_VIEW_SWITCH } from '$lib/utils/perfMarks';
   import Icon from '$lib/components/Icon.svelte';
   import type { Subscription } from '$lib/types';
 
   interface Props {
     onclose: () => void;
     currentTitle: string;
+    /** Whether the hosting sheet is showing. The sheet keeps this component
+     *  mounted between opens (BottomSheet `keepMounted`), so the unmount that
+     *  used to clear per-open state no longer happens — this is what tells us
+     *  to clear it instead. */
+    open?: boolean;
     onEditChannel?: (id: number) => void;
     onCreateChannel?: (type?: 'feed' | 'saved') => void;
   }
 
-  let { onclose, currentTitle, onEditChannel, onCreateChannel }: Props = $props();
+  let { onclose, currentTitle, open = true, onEditChannel, onCreateChannel }: Props = $props();
 
   let searchQuery = $state('');
+
+  // Reopening the switcher should show the library, not last time's search.
+  $effect(() => {
+    if (!open) searchQuery = '';
+  });
 
   const SOURCES_EXPANDED_KEY = 'skyreader-mobile-switcher-sources-expanded';
 
@@ -414,7 +425,18 @@
     return { type: 'all' };
   });
 
+  // The row the user just tapped, held until the URL catches up. Navigation is
+  // deferred a frame (see selectItem), so without this the tap would sit
+  // unacknowledged while the sheet slides away — the active pip would still be
+  // on the row you're leaving. Cleared as soon as the URL agrees with it.
+  let pendingItemKey = $state<string | null>(null);
+
+  function itemKey(item: NavItem): string {
+    return `${item.type}:${item.id}`;
+  }
+
   function isItemActive(item: NavItem): boolean {
+    if (pendingItemKey) return itemKey(item) === pendingItemKey;
     const filter = currentFilter;
     if (item.type === 'view') {
       if (item.id === 'home' && filter.type === 'home') return true;
@@ -443,9 +465,29 @@
     } else if (item.type === 'utility') {
       url = `/${item.id}`;
     }
-    goto(url);
+
+    // Acknowledge the tap in this same frame, then dismiss, and only then
+    // navigate. `goto` on a same-route switch synchronously kicks off the URL
+    // effect → setFilters → a whole page of cards torn down and rebuilt; run
+    // that before the close and it lands inside the frame that's supposed to be
+    // animating the sheet away, which is the "tap … freeze … new list" the user
+    // feels. One frame of delay is imperceptible; the stall isn't.
+    pendingItemKey = itemKey(item);
+    perfBegin(PERF_VIEW_SWITCH);
     onclose();
+    requestAnimationFrame(() => {
+      void goto(url);
+    });
   }
+
+  // Drop the optimistic highlight once the real URL says the same thing — or
+  // says something else entirely (a Back, or a navigation from elsewhere), which
+  // would otherwise leave a stale pip lit on a kept-mounted switcher.
+  $effect(() => {
+    void $page.url.href;
+    // Assigned, never read, so this effect doesn't depend on its own write.
+    pendingItemKey = null;
+  });
 </script>
 
 <div class="feed-switcher">
@@ -532,7 +574,13 @@
                 <span class="item-icon"><Icon name={item.icon} size={18} /></span>
               {:else if item.type === 'feed'}
                 {#if item.iconUrl}
-                  <img src={item.iconUrl} alt="" class="feed-icon" />
+                  <img
+                    src={item.iconUrl}
+                    alt=""
+                    class="feed-icon"
+                    loading="lazy"
+                    decoding="async"
+                  />
                 {:else}
                   <span class="feed-icon-placeholder"></span>
                 {/if}

@@ -9,6 +9,7 @@
   import MobileBottomBar from '$lib/components/feed/MobileBottomBar.svelte';
   import { shellToolbar } from '$lib/actions/shell-toolbar';
   import MobileFeedSwitcher from '$lib/components/feed/MobileFeedSwitcher.svelte';
+  import { perfBegin, PERF_SHEET_OPEN } from '$lib/utils/perfMarks';
   import BottomSheet from '$lib/components/common/BottomSheet.svelte';
   import NotificationList from '$lib/components/NotificationList.svelte';
   import SavedReader from '$lib/components/feed/SavedReader.svelte';
@@ -1200,7 +1201,10 @@
       controlsVisible={true}
       currentTitle="Review"
       onScrollToTop={() => appScrollTo({ top: 0, behavior: 'smooth' })}
-      onOpenFeedSwitcher={() => (feedSwitcherOpen = true)}
+      onOpenFeedSwitcher={() => {
+        perfBegin(PERF_SHEET_OPEN);
+        feedSwitcherOpen = true;
+      }}
       onOpenNotifications={() => {
         notifSheetOpen = true;
         void notificationsStore.load();
@@ -1214,8 +1218,10 @@
       open={feedSwitcherOpen}
       onclose={() => (feedSwitcherOpen = false)}
       title="Switch Feed"
+      keepMounted
     >
       <MobileFeedSwitcher
+        open={feedSwitcherOpen}
         onclose={() => (feedSwitcherOpen = false)}
         currentTitle="Review"
         onEditChannel={handleEditChannel}

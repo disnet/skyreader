@@ -642,6 +642,14 @@
   let isTruncated = $state(false);
 
   $effect(() => {
+    // Bail before touching `sanitizedContent` when there's no clamped preview to
+    // measure. That order is the whole point: the body only renders under
+    // `{#if isOpen}` in the view, so for a closed card this effect was the one
+    // thing forcing the derived — a full DOMPurify parse for HTML nobody sees,
+    // times a page of cards on every view switch. `selected`/`expanded` are read
+    // first, so the effect stays subscribed and re-measures the moment the card
+    // opens.
+    if (!selected || expanded) return;
     // Read the rendered content so this re-measures whenever the body's HTML
     // changes, not only on open. The body is "light" until its full text is
     // hydrated in after first paint (see displayContent); in Expand view every
@@ -650,7 +658,7 @@
     // and leave the "More" button wrongly disabled. List view dodged this only
     // because a card isn't `selected` until clicked — i.e. after hydration.
     sanitizedContent;
-    if (selected && !expanded && bodyEl) {
+    if (bodyEl) {
       // Check if content overflows the line clamp
       isTruncated = bodyEl.scrollHeight > bodyEl.clientHeight;
     }

@@ -2,6 +2,7 @@
   import FeedPageHeader from './FeedPageHeader.svelte';
   import MobileBottomBar from './MobileBottomBar.svelte';
   import MobileFeedSwitcher from './MobileFeedSwitcher.svelte';
+  import { perfBegin, PERF_SHEET_OPEN } from '$lib/utils/perfMarks';
   import BottomSheet from '$lib/components/common/BottomSheet.svelte';
   import NotificationList from '$lib/components/NotificationList.svelte';
   import { notificationsStore } from '$lib/stores/notifications.svelte';
@@ -36,7 +37,10 @@
     controlsVisible={true}
     currentTitle={title}
     onScrollToTop={() => appScrollTo({ top: 0, behavior: 'smooth' })}
-    onOpenFeedSwitcher={() => (feedSwitcherOpen = true)}
+    onOpenFeedSwitcher={() => {
+      perfBegin(PERF_SHEET_OPEN);
+      feedSwitcherOpen = true;
+    }}
     onOpenFilterSheet={() => {}}
     onOpenNotifications={() => {
       notifSheetOpen = true;
@@ -50,8 +54,13 @@
     open={feedSwitcherOpen}
     onclose={() => (feedSwitcherOpen = false)}
     title="Switch Feed"
+    keepMounted
   >
-    <MobileFeedSwitcher onclose={() => (feedSwitcherOpen = false)} currentTitle={title} />
+    <MobileFeedSwitcher
+      open={feedSwitcherOpen}
+      onclose={() => (feedSwitcherOpen = false)}
+      currentTitle={title}
+    />
   </BottomSheet>
 
   <BottomSheet
