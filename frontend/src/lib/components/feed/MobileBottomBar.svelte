@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import Icon from '$lib/components/Icon.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
@@ -7,7 +8,17 @@
   import { appManager } from '$lib/stores/app.svelte';
   import { bottomRail } from '$lib/stores/bottomRail.svelte';
   import { bottomBarInset } from '$lib/stores/bottomBarInset.svelte';
-  import { openSaveAnywhere } from '$lib/utils/saveAnywhere';
+  import {
+    openSaveAnywhere,
+    SAVE_ANYWHERE_LABEL,
+    saveAnywhereLabel,
+  } from '$lib/utils/saveAnywhere';
+
+  let saveAnywhereActionLabel = $state(SAVE_ANYWHERE_LABEL);
+
+  onMount(() => {
+    saveAnywhereActionLabel = saveAnywhereLabel(window.navigator.userAgent);
+  });
 
   interface Props {
     controlsVisible: boolean;
@@ -179,7 +190,7 @@
                 }}
               >
                 <Icon name="share" size={16} />
-                <span>Save from anywhere</span>
+                <span>{saveAnywhereActionLabel}</span>
               </button>
             {/if}
           </div>

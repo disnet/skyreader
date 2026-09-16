@@ -2,6 +2,7 @@ export const CHROME_EXTENSION_URL =
   'https://chromewebstore.google.com/detail/skyreader/kdefpnnpmajcclfepekgdkcdiklfooed';
 export const FIREFOX_EXTENSION_URL = 'https://addons.mozilla.org/firefox/addon/skyreader/';
 export const SAVE_ANYWHERE_SETTINGS_URL = '/settings#save-anywhere';
+export const SAVE_ANYWHERE_LABEL = 'Save from anywhere';
 
 /**
  * Send supported desktop browsers straight to their extension. Mobile browsers
@@ -19,6 +20,13 @@ export function saveAnywhereUrl(userAgent: string): string {
   }
 
   return SAVE_ANYWHERE_SETTINGS_URL;
+}
+
+export function saveAnywhereLabel(userAgent: string): string {
+  const url = saveAnywhereUrl(userAgent);
+  if (url === CHROME_EXTENSION_URL) return 'Install Chrome extension';
+  if (url === FIREFOX_EXTENSION_URL) return 'Install Firefox extension';
+  return SAVE_ANYWHERE_LABEL;
 }
 
 export function openSaveAnywhere(): void {

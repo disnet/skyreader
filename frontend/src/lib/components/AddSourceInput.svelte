@@ -5,7 +5,11 @@
   import Icon from '$lib/components/Icon.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { auth } from '$lib/stores/auth.svelte';
-  import { openSaveAnywhere } from '$lib/utils/saveAnywhere';
+  import {
+    openSaveAnywhere,
+    SAVE_ANYWHERE_LABEL,
+    saveAnywhereLabel,
+  } from '$lib/utils/saveAnywhere';
 
   // Open state lives in the store so the keyboard shortcut ("a") can toggle
   // this menu as well as the trigger button.
@@ -15,6 +19,7 @@
   let buttonRef: HTMLButtonElement | null = $state(null);
   let menuRef: HTMLDivElement | null = $state(null);
   let menuPosition = $state<{ top: number; left: number }>({ top: 0, left: 0 });
+  let saveAnywhereActionLabel = $state(SAVE_ANYWHERE_LABEL);
 
   // Detect what the user is typing
   let inputType = $derived.by((): 'handle' | 'url' | 'unknown' => {
@@ -145,6 +150,7 @@
   }
 
   onMount(() => {
+    saveAnywhereActionLabel = saveAnywhereLabel(window.navigator.userAgent);
     document.addEventListener('click', handleClickOutside);
     document.addEventListener('keydown', handleEscape);
   });
@@ -233,7 +239,7 @@
           </button>
           <button class="menu-item" onclick={(e) => handleAction(openSaveAnywhere, e)}>
             <span class="item-icon"><Icon name="share" size={16} /></span>
-            Save from anywhere
+            {saveAnywhereActionLabel}
           </button>
         {/if}
       </div>
