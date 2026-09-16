@@ -15,6 +15,8 @@ A room is a public [Semble](https://semble.so) or [Margin](https://margin.at) co
 
 To open any other room, paste a room link, or a Semble or Margin collection link, into the box at the top, or click into the box and pick one of your own collections.
 
+Rooms need a Skyreader account. A room link opened while signed out asks you to sign in first, then takes you to the room.
+
 ## Starting a room
 
 **Start a new room** creates a semble or margin collection in your own repo. Give it a name and an optional description.

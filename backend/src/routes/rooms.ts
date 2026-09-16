@@ -6,9 +6,10 @@
  * is aggregated client-side via Constellation, so the backend's whole surface is:
  *  - GET  /api/rooms?uri=…   — the room's article list plus per-article read
  *    counts, served from the materialized copy in D1 (services/backing/room-sync)
- *    and refreshed behind the response. Session-free: a room is a public
- *    collection, and a shared link has to open for a visitor who has never
- *    signed in. Everything below writes, so it doesn't.
+ *    and refreshed behind the response.
+ *
+ * Every route here needs a session (gated in index.ts). The read was briefly
+ * session-free for shared links; see the routing comment there for why not.
  *  - POST /api/rooms         — start a room: create a collection in the caller's
  *    own repo and join it.
  *  - POST /api/rooms/read    — count a read made through the room surface.
@@ -131,11 +132,8 @@ function canAddTo(c: AccessRule, did: string): boolean {
  * stored list is not yet the whole collection — render what came back, but don't
  * present it as everything.
  *
- * Session-free: a room is a public collection resolved off its owner's PDS, and
- * a shared link has to open for someone who has never signed in. A signed-out
- * reader gets the same list and the same aggregate read counts; what a session
- * adds is the two per-reader fields, `readByMe` and `canAdd`, which are false
- * without one.
+ * The list and the aggregate counts are the same for every reader; `readByMe`
+ * and `canAdd` are the two per-reader fields.
  */
 export async function handleGetRoom(
   request: Request,
@@ -146,9 +144,8 @@ export async function handleGetRoom(
     return json({ error: 'Method not allowed' }, 405);
   }
   const session = await getSessionFromRequest(request, env);
-  // No real DID is the empty string, so the `mine` aggregate below is 0 for a
-  // signed-out reader without a second query.
-  const did = session?.did ?? '';
+  if (!session) return json({ error: 'Unauthorized' }, 401);
+  const did = session.did;
 
   const uri = new URL(request.url).searchParams.get('uri');
   if (!uri) return json({ error: 'Missing uri parameter' }, 400);
@@ -218,7 +215,7 @@ export async function handleGetRoom(
       ownerDid: room.ownerDid,
       name: room.name,
       description: room.description,
-      canAdd: session ? canAddTo(room, session.did) : false,
+      canAdd: canAddTo(room, did),
       complete: room.complete,
       items,
     });

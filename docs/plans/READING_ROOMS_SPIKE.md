@@ -375,14 +375,24 @@ Room surface: `GET /api/rooms?uri=` (backing read path + `room_reads` counts),
 `POST /api/rooms/read`, migration `0077_room_reads.sql`, `RoomPage.svelte`, membership via
 Constellation `/links/distinct-dids` on `.subject`.
 
-`GET /api/rooms` is **session-free**. The chrome above was already written for a signed-out visitor
-on a shared link, but the endpoint behind it 401'd, which the api client reads as a dead session —
-so the one reader the link exists for got logged out and an error. A room is a public collection
-resolved off its owner's PDS, so the read answers without a session; what a session adds is the two
-per-reader fields, `readByMe` and `canAdd`, both false without one. Everything that writes still
-needs a session (`POST /api/rooms`, `/join`, `/items`, `/read`), and `RoomPage` skips the join check
-and hides the reader's "Mark as read" when `auth.isAuthenticated` is false — a guest is `isInApp`
-but has no session either.
+`GET /api/rooms` **requires a session**, like the rest of the rooms surface. It was briefly
+session-free (2026-09-15): the chrome above had been written for a signed-out visitor on a shared
+link, but the endpoint behind it 401'd, which the api client reads as a dead session, so the one
+reader the link existed for got logged out and an error. Opening the read fixed that visitor's page
+and created two problems worth more than it: rate limiting keys on the session DID, so an anonymous
+caller was entirely unmetered, and every open of an unseen room resolves a foreign collection off its
+owner's PDS and writes a room row, so the public GET was an unmetered write amplifier into D1 for any
+at-uri anyone cared to send. A visitor with no account also got the weakest version of the feature
+as their first impression — the list and the counts, but no join, no read status, no add box.
+
+Reversed 2026-09-16. Rooms is an account surface: `/rooms` sits in the layout's `ACCOUNT_ROUTES`, and
+a guest **or a signed-out visitor** who lands on a room link is sent through sign-in with the full
+`/rooms?uri=…` as `returnUrl`, so the link still leads to the room, just on the other side of an
+account. `RoomPage`'s dispatch effect waits on `auth.isAuthenticated` so the room read cannot race
+that redirect, and the `isInApp` chrome gate, the conditional join check and the conditional
+"Mark as read" are gone with the reader they served. The anonymous cache owner in `roomCache.ts`
+stays as a fallback key, not a supported reader. If shareable rooms for people without an account
+come back, they come back deliberately, behind an anonymous rate limit, not as a side door.
 
 ### Materialized rooms (built 2026-09-15)
 

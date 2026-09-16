@@ -80,9 +80,8 @@ export interface FollowedRoomEntry {
 //
 // Keyed by [did+subject] because the snapshot is per-reader: `readByMe`,
 // `canAdd` and `joined` are answers about one account, and a shared device must
-// never paint one reader's marks for the next. A signed-out visitor's copy is
-// filed under ANON_ROOM_DID (see services/roomCache.ts) — it carries no personal
-// read state to leak.
+// never paint one reader's marks for the next. A snapshot with no account DID
+// to file under goes to ANON_ROOM_DID (see services/roomCache.ts).
 export interface RoomSnapshotEntry {
   // The reader this snapshot belongs to (a DID, or the anonymous sentinel).
   did: string;
