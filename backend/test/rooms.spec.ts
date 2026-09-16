@@ -5,7 +5,15 @@ import * as read from '../src/services/backing/read';
 import * as write from '../src/services/backing/write';
 import * as didResolver from '../src/utils/did-resolver';
 import * as pdsClient from '../src/services/pds-client';
-import { pollRoom } from '../src/services/backing/room-sync';
+import {
+  pollRoom,
+  roomNeedsPoll,
+  ROOM_CONTINUE_GATE_MS,
+  ROOM_DELETE_GRACE_MS,
+  ROOM_MEMBER_TTL_MS,
+  ROOM_POLL_GATE_MS,
+  type RoomRow,
+} from '../src/services/backing/room-sync';
 import { GRANULAR_SCOPES, READING_ROOM_SCOPES, SEMBLE_SCOPES } from '../src/config/scopes';
 
 // Reading Rooms — the add-an-article surface. What's pinned here is the
@@ -310,7 +318,11 @@ describe('GET /api/rooms — materialized in D1', () => {
     expect(await storedLinks(OTHER_COLLECTION)).toEqual([L0, L1]);
     expect((await call(anonRequest(ROOM))).body.complete).toBe(false);
 
-    // A whole listing that omits l1 means l1 left the collection.
+    // A whole listing that omits l1 means l1 left the collection — once the row
+    // is old enough for its absence to mean that (see ROOM_DELETE_GRACE_MS).
+    await env.DB.prepare('UPDATE room_members SET resolved_at = ?')
+      .bind(Date.now() - ROOM_DELETE_GRACE_MS - 1)
+      .run();
     snapshot.mockResolvedValue({ ...snapshotOf(), listed: [L0] });
     await pollRoom(env, OTHER_COLLECTION, { force: true });
     expect(await storedLinks(OTHER_COLLECTION)).toEqual([L0]);
@@ -372,12 +384,147 @@ describe('GET /api/rooms — materialized in D1', () => {
     expect((await call(anonRequest(ROOM))).status).toBe(404);
   });
 
+  // A contributor's write-through row reaches a listing only once Constellation
+  // has indexed it. A poll landing in that gap sees a whole listing without it,
+  // and must not read that as a departure.
+  it('keeps a freshly written row through a whole listing that does not yet name it', async () => {
+    mockCollection({ name: 'Theirs', accessType: 'OPEN' });
+    const snapshot = emptySnapshot();
+    await call(anonRequest(ROOM));
+    const MINE = `at://${DID}/network.cosmik.collectionLink/l1`;
+    vi.spyOn(write, 'createMember').mockResolvedValue({
+      itemUri: `at://${DID}/network.cosmik.card/c1`,
+      linkUri: MINE,
+    });
+    await call(
+      request('/api/rooms/items', { collectionUri: OTHER_COLLECTION, url: 'https://a.test/mine' })
+    );
+    expect(await storedLinks(OTHER_COLLECTION)).toEqual([MINE]);
+
+    // Constellation has not caught up: a complete listing naming nothing.
+    snapshot.mockResolvedValue(snapshotOf());
+    await pollRoom(env, OTHER_COLLECTION, { force: true });
+    expect(await storedLinks(OTHER_COLLECTION)).toEqual([MINE]);
+
+    // Long enough for any index to have seen it: now an absence is a departure.
+    await env.DB.prepare('UPDATE room_members SET resolved_at = ? WHERE link_uri = ?')
+      .bind(Date.now() - ROOM_DELETE_GRACE_MS - 1, MINE)
+      .run();
+    await pollRoom(env, OTHER_COLLECTION, { force: true });
+    expect(await storedLinks(OTHER_COLLECTION)).toEqual([]);
+  });
+
+  // One contributor whose repo has gone must not freeze the rest of the room:
+  // the listing still names their link (so it is never deleted over that), but a
+  // whole walk is still whole, so a link that really left is still dropped.
+  it('still deletes departed links when a listed ref cannot be verified', async () => {
+    mockCollection({ name: 'Theirs', accessType: 'OPEN' });
+    const snapshot = vi
+      .spyOn(read, 'snapshotBackedCollection')
+      .mockResolvedValue(
+        snapshotOf([{ url: 'https://a.test/one' }, { url: 'https://a.test/two' }])
+      );
+    await call(anonRequest(ROOM));
+    await env.DB.prepare('UPDATE room_members SET resolved_at = ?')
+      .bind(Date.now() - ROOM_DELETE_GRACE_MS - 1)
+      .run();
+
+    const DEAD = `at://did:plc:gone/network.cosmik.collectionLink/theirs`;
+    snapshot.mockResolvedValue({ ...snapshotOf(), listed: [L0, DEAD], listingComplete: true });
+    const result = await pollRoom(env, OTHER_COLLECTION, { force: true });
+    expect(result).toMatchObject({ polled: true, complete: false });
+    expect(await storedLinks(OTHER_COLLECTION)).toEqual([L0]);
+  });
+
+  // The refresh slice picks the rows least recently TRIED. A row that fails to
+  // refresh must rotate to the back, or a dead repo's row is the oldest forever
+  // and spends every poll's slice on a fetch that cannot answer.
+  it('does not retry a stale row that failed to refresh on the very next poll', async () => {
+    mockCollection({ name: 'Theirs', accessType: 'OPEN' });
+    const snapshot = vi
+      .spyOn(read, 'snapshotBackedCollection')
+      .mockResolvedValue(
+        snapshotOf([{ url: 'https://a.test/one' }, { url: 'https://a.test/two' }])
+      );
+    await call(anonRequest(ROOM));
+    await env.DB.prepare('UPDATE room_members SET resolved_at = ?')
+      .bind(Date.now() - ROOM_MEMBER_TTL_MS - 1)
+      .run();
+
+    // Both rows are due; both fail to refresh. They are still rows, so the room
+    // is still complete.
+    snapshot.mockResolvedValue({
+      ...snapshotOf(),
+      skipped: [
+        { reason: read.TRANSIENT_SKIP, linkUri: L0 },
+        { reason: read.TRANSIENT_SKIP, linkUri: L1 },
+      ],
+      listed: [L0, L1],
+    });
+    expect(await pollRoom(env, OTHER_COLLECTION, { force: true })).toMatchObject({
+      complete: true,
+    });
+    expect([...snapshot.mock.calls[1][3]!.skipLinks!]).toEqual([]);
+    expect(await storedLinks(OTHER_COLLECTION)).toEqual([L0, L1]);
+
+    // Next poll: tried a moment ago, so back in skipLinks rather than the slice.
+    await pollRoom(env, OTHER_COLLECTION, { force: true });
+    expect([...snapshot.mock.calls[2][3]!.skipLinks!].sort()).toEqual([L0, L1]);
+  });
+
   it('serves a stored room while its refresh is gated', async () => {
     mockCollection({ name: 'Theirs', accessType: 'OPEN' });
     const snapshot = emptySnapshot();
     await call(anonRequest(ROOM));
     expect(await pollRoom(env, OTHER_COLLECTION)).toEqual({ polled: false, reason: 'gated' });
     expect(snapshot).toHaveBeenCalledTimes(1);
+  });
+});
+
+// An incomplete room is retried fast so a big one fills in, but some rooms can
+// never finish (a listed link into a repo that no longer answers), so the gate
+// grows with how long the room has stayed incomplete, up to the complete gate.
+describe('roomNeedsPoll', () => {
+  const T0 = 1_700_000_000_000;
+  const row = (over: Partial<RoomRow>): RoomRow => ({
+    collectionUri: OTHER_COLLECTION,
+    provider: 'semble',
+    ownerDid: OWNER,
+    record: {},
+    cid: 'c',
+    complete: false,
+    lastPollAt: T0,
+    lastCompleteAt: null,
+    createdAt: T0,
+    ...over,
+  });
+
+  it('holds a complete room for the full gate', () => {
+    const r = row({ complete: true });
+    expect(roomNeedsPoll(r, T0 + ROOM_POLL_GATE_MS - 1)).toBe(false);
+    expect(roomNeedsPoll(r, T0 + ROOM_POLL_GATE_MS)).toBe(true);
+  });
+
+  it('retries a room that just turned incomplete quickly', () => {
+    const r = row({ lastCompleteAt: T0 });
+    expect(roomNeedsPoll(r, T0 + ROOM_CONTINUE_GATE_MS - 1)).toBe(false);
+    expect(roomNeedsPoll(r, T0 + ROOM_CONTINUE_GATE_MS)).toBe(true);
+  });
+
+  it('backs off the longer a room stays incomplete, capped at the complete gate', () => {
+    // Incomplete for five minutes (never complete; measured from first sight):
+    // the gate is now about thirty seconds, not five.
+    const fiveMin = 5 * 60_000;
+    const r = row({ lastPollAt: T0 + fiveMin });
+    expect(roomNeedsPoll(r, T0 + fiveMin + ROOM_CONTINUE_GATE_MS)).toBe(false);
+    expect(roomNeedsPoll(r, T0 + fiveMin + 30_000)).toBe(false);
+    expect(roomNeedsPoll(r, T0 + fiveMin + 34_000)).toBe(true);
+
+    // Incomplete for a day: it polls like a complete room, no slower.
+    const day = 24 * 60 * 60_000;
+    const stuck = row({ lastPollAt: T0 + day });
+    expect(roomNeedsPoll(stuck, T0 + day + ROOM_POLL_GATE_MS - 1)).toBe(false);
+    expect(roomNeedsPoll(stuck, T0 + day + ROOM_POLL_GATE_MS)).toBe(true);
   });
 });
 

@@ -81,16 +81,17 @@ export interface SnapshotResult {
   /** count of each resolved item $type, for diagnostics */
   typeMix: Record<string, number>;
   /**
-   * Every membership record seen to belong to this collection, by link at-uri —
-   * including the ones `skipLinks` told us not to resolve. With `listingComplete`
-   * this is the whole membership, so a link absent from it has left the collection.
+   * Every membership record the listing names for this collection, by link at-uri —
+   * including the ones `skipLinks` told us not to resolve, and any foreign ref that
+   * could not be verified this time (the index still names it; only an answer from
+   * its repo can un-list it). With `listingComplete` this is the whole membership,
+   * so a link absent from it has left the collection.
    */
   listed: string[];
   /**
    * Whether `listed` names every membership record: the owner's listing was not
-   * truncated, the Constellation walk finished, and every foreign ref it named
-   * could be verified. Independent of whether the ITEMS behind those links could
-   * be resolved — `complete` covers that too.
+   * truncated and the Constellation walk finished. Independent of whether the refs
+   * could be verified or the ITEMS behind them resolved — `complete` covers both.
    */
   listingComplete: boolean;
 }
@@ -577,8 +578,11 @@ const FOREIGN_PAGE_LIMIT = 100;
  *
  * Two completeness readouts: `listingComplete` says the WALK finished (every ref
  * Constellation holds was seen), `verified` says every new ref it named could be
- * checked. A caller diffing its stored membership against `listed` needs the first;
- * whether the list may be short needs both.
+ * checked. A caller diffing its stored membership against `listed` needs only the
+ * first, because a ref that could not be verified is still LISTED: Constellation
+ * names it, so it is a member until a successful fetch says otherwise, and a caller
+ * holding a row for it must not delete that row over a contributor's PDS being down.
+ * Whether the list may be short needs both.
  */
 async function listForeignMembership(
   shape: MembershipShape,
@@ -642,17 +646,18 @@ async function listForeignMembership(
 
   const pairs: MembershipPair[] = [];
   let verified = true;
+  // Could not be checked this time (no PDS, no budget, a 5xx): still named by the
+  // index, so still listed. Only a fetch that ANSWERS can un-list a ref — a record
+  // that is gone, or one that turned out to belong elsewhere.
+  const unverified = (linkUri: string) => {
+    verified = false;
+    listed.push(linkUri);
+  };
   await mapPool(refs, RESOLVE_CONCURRENCY, async (ref) => {
     try {
       const pds = await pdsFor(ref.did, phase);
-      if (!pds) {
-        verified = false;
-        return;
-      }
-      if (!phase.claim()) {
-        verified = false;
-        return;
-      }
+      if (!pds) return unverified(ref.linkUri);
+      if (!phase.claim()) return unverified(ref.linkUri);
       const value = await getRecordPublic(pds, ref.did, shape.collection, ref.rkey);
       if (!value) return; // deleted since Constellation indexed it
       if (shape.collectionUriOf(value) !== collectionUri) return; // stale index entry
@@ -664,7 +669,7 @@ async function listForeignMembership(
       // Transient — same stance as the owner-side snapshot: report incompleteness
       // rather than presenting a short list as the whole collection.
       console.error('[backing] foreign membership record failed:', err);
-      verified = false;
+      unverified(ref.linkUri);
     }
   });
 
@@ -776,12 +781,11 @@ export async function snapshotBackedCollection(
       for (const pair of foreign.pairs) {
         if (!paired.has(pair.linkUri)) pairs.push(pair);
       }
-      // A ref that could not be verified is one we cannot place: `listed` is only
-      // exhaustive when every new ref Constellation named was checked.
-      if (!foreign.listingComplete || !foreign.verified) {
-        listingComplete = false;
-        complete = false;
-      }
+      // The listing is whole when the WALK was: an unverified ref is still listed
+      // (see listForeignMembership), so a caller may diff against it. What it cannot
+      // do is call the list complete, since that ref has no member behind it.
+      if (!foreign.listingComplete) listingComplete = false;
+      if (!foreign.listingComplete || !foreign.verified) complete = false;
     }
 
     const { members, skipped, typeMix, transient } = await resolveMembers(pairs, budget, pdsFor);

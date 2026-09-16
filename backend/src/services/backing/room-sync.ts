@@ -50,8 +50,29 @@ export const ROOM_POLL_GATE_MS = 60_000;
 
 /** An incomplete room (a first look that ran out of budget, a member that failed
  *  transiently) is retried this soon, so a big room fills in across the reader's
- *  next few opens rather than one a minute. */
+ *  next few opens rather than one a minute. The gate then grows with how long the
+ *  room has stayed incomplete (see `roomNeedsPoll`), because some rooms never
+ *  finish: a contributor whose repo is gone leaves a listed link that no poll
+ *  can ever give a row. */
 export const ROOM_CONTINUE_GATE_MS = 5_000;
+
+/** How fast the incomplete gate grows: one tenth of the time the room has been
+ *  incomplete, so a room still filling in after ten minutes polls like a complete
+ *  one, and never slower than that. */
+const ROOM_CONTINUE_BACKOFF_DIVISOR = 10;
+
+/**
+ * A row written this recently is not deleted for being absent from the listing.
+ *
+ * `POST /api/rooms/items` writes a contributor's new article straight into the
+ * table, and the only way that link reaches a later listing is through
+ * Constellation, which indexes on its own schedule. A poll landing in that gap
+ * would see a whole listing that does not name the row and take the article
+ * back out — until Constellation caught up and a poll re-resolved it from
+ * scratch. Rows older than this have had every chance to be indexed, so an
+ * absence then is a departure.
+ */
+export const ROOM_DELETE_GRACE_MS = 10 * 60_000;
 
 /**
  * Stored item metadata goes stale — a Semble card's title can be edited — so
@@ -109,6 +130,7 @@ export interface RoomRow {
   complete: boolean;
   lastPollAt: number;
   lastCompleteAt: number | null;
+  createdAt: number;
 }
 
 interface RoomDbRow {
@@ -122,6 +144,7 @@ interface RoomDbRow {
   complete: number;
   last_poll_at: number;
   last_complete_at: number | null;
+  created_at: number;
 }
 
 function toRoomRow(r: RoomDbRow): RoomRow {
@@ -143,6 +166,7 @@ function toRoomRow(r: RoomDbRow): RoomRow {
     complete: r.complete === 1,
     lastPollAt: r.last_poll_at,
     lastCompleteAt: r.last_complete_at,
+    createdAt: r.created_at,
   };
 }
 
@@ -183,9 +207,24 @@ export async function ensureRoomRow(env: Env, collection: ResolvedCollection): P
     .run();
 }
 
-/** Is this room due a refresh? The gate depends on whether the last one saw everything. */
+/**
+ * Is this room due a refresh? A complete room waits the full gate. An incomplete
+ * one is retried fast at first — that is how a big room fills in across a
+ * reader's next few opens — and then progressively slower, measured from the
+ * last time it WAS complete (or from when we first saw it), up to the complete
+ * gate. So a room that can never finish, because one listed link points into a
+ * repo that no longer answers, settles at one poll a minute rather than one
+ * every five seconds for as long as anyone keeps opening it.
+ */
 export function roomNeedsPoll(row: RoomRow, now = Date.now()): boolean {
-  const gate = row.complete ? ROOM_POLL_GATE_MS : ROOM_CONTINUE_GATE_MS;
+  let gate = ROOM_POLL_GATE_MS;
+  if (!row.complete) {
+    const incompleteFor = now - (row.lastCompleteAt ?? row.createdAt);
+    gate = Math.min(
+      ROOM_POLL_GATE_MS,
+      Math.max(ROOM_CONTINUE_GATE_MS, incompleteFor / ROOM_CONTINUE_BACKOFF_DIVISOR)
+    );
+  }
   return now - row.lastPollAt >= gate;
 }
 
@@ -364,10 +403,13 @@ export type PollRoomResult =
  *     so the next open answers 404 like a room we never knew. A transient
  *     failure leaves everything as it was; the claim already stamped the attempt.
  *  3. Snapshot with every stored link in `skipLinks`, minus a slice of the
- *     oldest rows so metadata refreshes over time.
+ *     least-recently-tried rows so metadata refreshes over time. Every row in
+ *     the slice is stamped as tried, so one that cannot refresh (its repo is
+ *     gone) rotates to the back instead of sitting in every poll's slice.
  *  4. Store what resolved (articles as rows, non-articles as NULL rows), delete
  *     what the listing no longer names — only when the listing is provably
- *     whole — and mark the room complete only if every listed link now has a row.
+ *     whole, and never a row written inside `ROOM_DELETE_GRACE_MS` — and mark
+ *     the room complete only if every listed link now has a row.
  */
 export async function pollRoom(
   env: Env,
@@ -410,20 +452,24 @@ export async function pollRoom(
     collection = lookup.collection;
   }
 
-  // (3) What we already hold, and which of it is due a refresh.
+  // (3) What we already hold, and which of it is due a refresh: the rows least
+  // recently tried, oldest first, up to a slice. `attempted_at` is the last time
+  // the slice picked a row; NULL means never since it was written.
   const stored = await env.DB.prepare(
-    `SELECT link_uri, resolved_at FROM room_members WHERE collection_uri = ?
-      ORDER BY resolved_at ASC`
+    `SELECT link_uri, resolved_at, COALESCE(attempted_at, resolved_at) AS tried_at
+       FROM room_members WHERE collection_uri = ?
+      ORDER BY tried_at ASC`
   )
     .bind(uri)
-    .all<{ link_uri: string; resolved_at: number }>();
+    .all<{ link_uri: string; resolved_at: number; tried_at: number }>();
   const known = new Set(stored.results.map((r) => r.link_uri));
+  const writtenAt = new Map(stored.results.map((r) => [r.link_uri, r.resolved_at]));
   const skipLinks = new Set(known);
-  let refreshing = 0;
+  const refreshing: string[] = [];
   for (const r of stored.results) {
-    if (refreshing >= ROOM_REFRESH_SLICE || now - r.resolved_at < ROOM_MEMBER_TTL_MS) break;
+    if (refreshing.length >= ROOM_REFRESH_SLICE || now - r.tried_at < ROOM_MEMBER_TTL_MS) break;
     skipLinks.delete(r.link_uri);
-    refreshing += 1;
+    refreshing.push(r.link_uri);
   }
 
   const snapshot = await snapshotBackedCollection(collection.provider, collection.ref.did, uri, {
@@ -440,9 +486,23 @@ export async function pollRoom(
   const after = new Set(known);
   const listed = new Set(snapshot.listed);
 
+  // Stamp the slice as tried before anything else lands: a row that resolves is
+  // rewritten below (which clears the stamp), and one that did not rotates to the
+  // back of the next slice instead of being the oldest row forever.
+  if (refreshing.length > 0) {
+    statements.push(
+      env.DB.prepare(
+        `UPDATE room_members SET attempted_at = ? WHERE collection_uri = ?
+            AND link_uri IN (${refreshing.map(() => '?').join(', ')})`
+      ).bind(now, uri, ...refreshing)
+    );
+  }
+
   if (snapshot.listingComplete) {
     for (const linkUri of known) {
       if (listed.has(linkUri)) continue;
+      // Written too recently for its absence to mean anything: see ROOM_DELETE_GRACE_MS.
+      if (now - (writtenAt.get(linkUri) ?? 0) < ROOM_DELETE_GRACE_MS) continue;
       after.delete(linkUri);
       statements.push(
         env.DB.prepare(`DELETE FROM room_members WHERE collection_uri = ? AND link_uri = ?`).bind(

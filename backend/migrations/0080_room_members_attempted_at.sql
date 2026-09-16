@@ -1,0 +1,13 @@
+-- Reading Rooms: remember when a stored member was last TRIED, not only when it
+-- last resolved.
+--
+-- The poll re-resolves a room's oldest rows a slice at a time (0079) so edited
+-- titles eventually show. It picked that slice by resolved_at, which a failed
+-- refresh never advances — so a row whose repo has gone (a deactivated
+-- contributor, a dead PDS) stayed the oldest forever and sat in every poll's
+-- slice, spending budget on a fetch that could never answer. attempted_at is
+-- stamped on every row the slice picks, whether or not it resolved, and the slice
+-- orders by the later of the two, so a row that cannot refresh rotates to the back
+-- and is tried again a week later like any other. NULL means never re-tried since
+-- it was written, which reads as resolved_at.
+ALTER TABLE room_members ADD COLUMN attempted_at INTEGER;

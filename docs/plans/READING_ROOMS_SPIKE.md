@@ -406,8 +406,8 @@ two tables:
 
 `GET /api/rooms` reads both tables and joins `room_reads`. A room we have never seen is looked up
 and snapshotted inline so its first reader gets a list; a room we hold is served as it is, and if
-its gate has passed (a minute for a complete room, five seconds for one still filling in) the poll
-runs in `waitUntil`. The response shape is unchanged, and so is the privacy argument that ruled
+its gate has passed (a minute for a complete room; five seconds for one still filling in, growing
+toward a minute the longer it stays incomplete) the poll runs in `waitUntil`. The response shape is unchanged, and so is the privacy argument that ruled
 out edge caching: the public part now lives in D1 and the per-reader overlay (`readByMe`,
 `canAdd`) is the same query it always was.
 
@@ -417,11 +417,16 @@ hands every stored link uri to the snapshot as `SnapshotOptions.skipLinks`, and 
 resolves links it has not seen. So a poll costs what changed, not what the room holds. The read
 path grew two readouts to support that:
 
-- `SnapshotResult.listed`: every membership record seen to belong to the collection, the skipped
-  ones included. With `listingComplete` it is the whole membership, so a stored link absent from
-  it has left the collection and is deleted. A truncated listing, a Constellation outage, or a
-  foreign ref that could not be verified all make `listingComplete` false, and nothing is deleted
-  off such a listing.
+- `SnapshotResult.listed`: every membership record the listing names, the skipped ones included,
+  and also any foreign ref that could not be verified this time: Constellation still names it, so
+  it is a member until its own repo answers otherwise, and a stored row for it must not be dropped
+  over a contributor's PDS being down. With `listingComplete` it is the whole membership, so a
+  stored link absent from it has left the collection and is deleted. A truncated listing or a
+  Constellation outage makes `listingComplete` false, and nothing is deleted off such a listing.
+  An unverified ref does not: the walk was whole, only the check failed, so `complete` goes false
+  while deletes proceed. Nor is a row written inside `ROOM_DELETE_GRACE_MS` (ten minutes) deleted
+  for being absent: a contributor's write-through row only reaches a listing once Constellation
+  has indexed it, and a poll landing in that gap would otherwise take the article back out.
 - Failures are confined to the member they hit. A 5xx on one card used to throw the whole snapshot
   away; it is now a skip with reason `item-transient`, and the members that did resolve are kept.
   The saves path is unaffected in what matters: `complete` still goes false, so it still refuses to
@@ -429,16 +434,21 @@ path grew two readouts to support that:
   lacks.
 
 `complete` on a room is therefore not the snapshot's verdict but a property of the table: **every
-listed link has a row**. A room too big for one poll's budget (`ROOM_SNAPSHOT_SUBREQUESTS`, 400)
+listed link has a row**. Some rooms never get there: a link into a repo that no longer answers is
+listed on every poll and can never be given a row, which is why the incomplete gate backs off
+(one tenth of the time since the room was last complete, capped at the complete gate) instead of
+holding at five seconds. A room too big for one poll's budget (`ROOM_SNAPSHOT_SUBREQUESTS`, 400)
 comes back short, is retried on the next opens, and turns complete when the last link lands. A
 stored row that failed to refresh is still a row, so a transient blip on a metadata refresh does
 not make the list "short".
 
 Two more things the poll does: it re-reads the collection record each time (name, description,
 access rule), and a record that is **gone** drops the room's rows so the next open answers 404 like
-a room we never knew. And rows older than a week are re-resolved a slice at a time
+a room we never knew. And rows not tried in a week are re-resolved a slice at a time
 (`ROOM_REFRESH_SLICE`, 25 per poll), so an edited card title eventually shows without a big room's
-rows ageing out all at once. The poll claims the room with a compare-and-set on `last_poll_at`, so
+rows ageing out all at once. Every row the slice picks is stamped `attempted_at` (0080) whether or
+not it resolved, and the slice orders by the later of that and `resolved_at`, so a row whose repo
+has gone rotates to the back rather than sitting in every poll's slice for good. The poll claims the room with a compare-and-set on `last_poll_at`, so
 two readers opening a stale room start one refresh.
 
 `POST /api/rooms/items` writes the added article through to `room_members`, so a reload shows it

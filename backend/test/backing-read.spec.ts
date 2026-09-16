@@ -977,7 +977,7 @@ describe('snapshotBackedCollection — incremental (skipLinks / listed)', () => 
     expect(snap.skipped.map((s) => s.reason)).toEqual(['item-not-resolvable']);
   });
 
-  it('a foreign ref that cannot be verified makes the listing incomplete', async () => {
+  it('a foreign ref that cannot be verified stays listed, and only the list is incomplete', async () => {
     mockPds();
     installRoom((p) => {
       if (p.get('collection') === 'network.cosmik.collectionLink') {
@@ -988,11 +988,40 @@ describe('snapshotBackedCollection — incremental (skipLinks / listed)', () => 
     const snap = await snapshotBackedCollection('semble', OWNER, SEMBLE_COL, {
       includeForeign: true,
     });
-    // We cannot say whether that ref belongs, so `listed` is not exhaustive and a
-    // caller must not delete against it — though the owner's members still came back.
-    expect(snap.listingComplete).toBe(false);
+    // Constellation names the ref, so it is a member until its repo says otherwise:
+    // a caller holding a row for it must not delete that row over a 5xx. The walk
+    // itself finished, so the listing IS whole; what is missing is the member.
+    expect(snap.listingComplete).toBe(true);
+    expect(snap.listed).toContain(`at://${OTHER}/network.cosmik.collectionLink/theirs`);
     expect(snap.complete).toBe(false);
     expect(snap.members).toHaveLength(2);
+  });
+
+  it('a foreign ref whose repo cannot be resolved stays listed too', async () => {
+    mockPds({ [OWNER]: OWNER_PDS }); // OTHER resolves to nothing: a deactivated account
+    installRoom();
+    const snap = await snapshotBackedCollection('semble', OWNER, SEMBLE_COL, {
+      includeForeign: true,
+    });
+    expect(snap.listingComplete).toBe(true);
+    expect(snap.listed).toContain(`at://${OTHER}/network.cosmik.collectionLink/theirs`);
+    expect(snap.complete).toBe(false);
+  });
+
+  it('a foreign ref that answers "gone" or "elsewhere" is un-listed', async () => {
+    mockPds();
+    installRoom((p) => {
+      if (p.get('collection') === 'network.cosmik.collectionLink') {
+        return jsonRes({ error: 'RecordNotFound' }, 400);
+      }
+      return cardFor(`https://a.test/${p.get('rkey')}`);
+    });
+    const snap = await snapshotBackedCollection('semble', OWNER, SEMBLE_COL, {
+      includeForeign: true,
+    });
+    expect(snap.listingComplete).toBe(true);
+    expect(snap.complete).toBe(true);
+    expect(snap.listed).not.toContain(`at://${OTHER}/network.cosmik.collectionLink/theirs`);
   });
 
   it('running out of budget mid-resolution keeps what resolved and stays retryable', async () => {
