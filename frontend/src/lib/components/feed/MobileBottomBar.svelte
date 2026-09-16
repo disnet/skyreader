@@ -7,6 +7,7 @@
   import { appManager } from '$lib/stores/app.svelte';
   import { bottomRail } from '$lib/stores/bottomRail.svelte';
   import { bottomBarInset } from '$lib/stores/bottomBarInset.svelte';
+  import { openSaveAnywhere } from '$lib/utils/saveAnywhere';
 
   interface Props {
     controlsVisible: boolean;
@@ -174,7 +175,7 @@
                 class="add-menu-item"
                 onclick={() => {
                   addMenuOpen = false;
-                  goto('/settings#save-anywhere');
+                  openSaveAnywhere();
                 }}
               >
                 <Icon name="share" size={16} />

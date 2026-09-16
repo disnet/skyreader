@@ -5,6 +5,7 @@
   import Icon from '$lib/components/Icon.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { auth } from '$lib/stores/auth.svelte';
+  import { openSaveAnywhere } from '$lib/utils/saveAnywhere';
 
   // Open state lives in the store so the keyboard shortcut ("a") can toggle
   // this menu as well as the trigger button.
@@ -230,10 +231,7 @@
             <span class="item-icon"><Icon name="bookmark" size={16} /></span>
             Save article by URL
           </button>
-          <button
-            class="menu-item"
-            onclick={(e) => handleAction(() => goto('/settings#save-anywhere'), e)}
-          >
+          <button class="menu-item" onclick={(e) => handleAction(openSaveAnywhere, e)}>
             <span class="item-icon"><Icon name="share" size={16} /></span>
             Save from anywhere
           </button>

@@ -4,6 +4,7 @@
   import Icon from '$lib/components/Icon.svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
+  import { openSaveAnywhere } from '$lib/utils/saveAnywhere';
 
   let isOpen = $state(false);
   let menuRef: HTMLDivElement | null = $state(null);
@@ -156,7 +157,7 @@
           </button>
           <button
             class="add-menu-item"
-            onclick={(e) => handleItemClick(() => goto('/settings#save-anywhere'), e)}
+            onclick={(e) => handleItemClick(openSaveAnywhere, e)}
             role="menuitem"
           >
             <span class="item-icon"><Icon name="share" size={16} /></span>
