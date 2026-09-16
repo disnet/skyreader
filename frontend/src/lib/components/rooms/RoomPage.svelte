@@ -22,7 +22,7 @@
   import RoomCreateBox from './RoomCreateBox.svelte';
   import RoomOpenBox from './RoomOpenBox.svelte';
   import { useReaderStack } from '$lib/hooks/useReaderStack.svelte';
-  import { api } from '$lib/services/api';
+  import { api, ApiError, ScopeUpgradeError } from '$lib/services/api';
   import { profileService } from '$lib/services/profiles';
   import {
     fetchRoomMembers,
@@ -312,11 +312,24 @@
         ];
         void writeRoomPresence({ [uri]: { total: memberCount, readers: members } });
       }
-    } catch {
-      toastStore.update(toastStore.add('Could not join the room'), 'error');
+    } catch (error) {
+      toastStore.update(toastStore.add(joinFailureMessage('join', error)), 'error');
     } finally {
       joinBusy = false;
     }
+  }
+
+  // The join is a write to the reader's own PDS, and when that write fails the
+  // useful words are the PDS's, not ours: the same record has been accepted by
+  // one PDS implementation and refused by another. Pass its message through on
+  // a server-side failure; a stale session gets the one actionable sentence.
+  function joinFailureMessage(verb: 'join' | 'leave', error: unknown): string {
+    const base = `Could not ${verb} the room`;
+    if (error instanceof ScopeUpgradeError) return `${base}. Log in again to update permissions.`;
+    if (error instanceof ApiError && error.status >= 500 && error.message) {
+      return `${base}. Your PDS said: ${error.message}`;
+    }
+    return base;
   }
 
   async function leave() {
@@ -330,8 +343,8 @@
         memberCount = Math.max(0, memberCount - 1);
         void writeRoomPresence({ [uri]: { total: memberCount, readers: members } });
       }
-    } catch {
-      toastStore.update(toastStore.add('Could not leave the room'), 'error');
+    } catch (error) {
+      toastStore.update(toastStore.add(joinFailureMessage('leave', error)), 'error');
     } finally {
       joinBusy = false;
     }

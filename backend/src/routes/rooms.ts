@@ -314,7 +314,7 @@ export async function handleCreateRoom(request: Request, env: Env): Promise<Resp
   };
   const join = await pds.putRecord(READ_ALONG_COLLECTION, generateTid(), record);
   if (!join.success) {
-    console.error('[rooms] created room but could not join it:', join.error);
+    console.error(`[rooms] created room but could not join it on ${session.pdsUrl}: ${join.error}`);
   }
 
   return json(
@@ -402,6 +402,10 @@ export async function handleRoomJoin(request: Request, env: Env): Promise<Respon
     const result = await createPDSClient(session).putRecord(READ_ALONG_COLLECTION, rkey, record);
     if (!result.success) {
       if (/scope/i.test(result.error)) return insufficientScopesResponse();
+      // The PDS's own words, with its host: the same readAlong write has been
+      // accepted by one PDS implementation and 500'd by another, so a failure
+      // here is only diagnosable with both in the stored log.
+      console.error(`[rooms] join write failed on ${session.pdsUrl}: ${result.error}`);
       return json({ error: result.error }, result.retryable ? 503 : 502);
     }
     return json({ joined: true, uri: result.data.uri });
@@ -422,6 +426,7 @@ export async function handleRoomJoin(request: Request, env: Env): Promise<Respon
       );
       if (!result.success) {
         if (/scope/i.test(result.error)) return insufficientScopesResponse();
+        console.error(`[rooms] leave delete failed on ${session.pdsUrl}: ${result.error}`);
         return json({ error: result.error }, result.retryable ? 503 : 502);
       }
     }

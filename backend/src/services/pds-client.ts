@@ -365,10 +365,14 @@ export class PDSClient {
         if (isNotFound) {
           console.log(`[PDSClient] ${method} ${endpoint} — record not found`);
         } else {
-          console.error(`[PDSClient] Request failed: ${method} ${endpoint}`, {
-            status: response.status,
-            error: errorMessage,
-          });
+          // One flat line: Workers Logs keeps only the first console argument,
+          // so a trailing object with the status and body never reaches the
+          // stored log. Inline the host too, since the same write can succeed on one
+          // PDS implementation and fail on another.
+          console.error(
+            `[PDSClient] Request failed: ${method} ${endpoint} on ${this.session.pdsUrl}: ` +
+              `HTTP ${response.status}${errorData?.error ? ` ${errorData.error}` : ''}: ${errorMessage}`
+          );
         }
 
         // A stale/migrated endpoint shows up as an auth rejection: the request
@@ -389,7 +393,9 @@ export class PDSClient {
       return { result: { success: true, data }, staleEndpoint: false };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Network error';
-      console.error(`[PDSClient] Request error: ${method} ${endpoint}`, error);
+      console.error(
+        `[PDSClient] Request error: ${method} ${endpoint} on ${this.session.pdsUrl}: ${errorMessage}`
+      );
       // A network throw can mean the old host is unreachable after a migration.
       // Treat it as a stale-endpoint candidate; recoverEndpoint() only retries
       // if the DID doc actually points somewhere new, so a transient blip with
