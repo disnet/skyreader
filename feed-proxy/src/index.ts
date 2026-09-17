@@ -307,5 +307,23 @@ console.log(`[Proxy] Starting on port ${port}`);
 
 export default {
   port,
+  // Bun's HTTP server closes a connection after `idleTimeout` seconds without
+  // socket activity, and ITS DEFAULT IS 10. A handler that is still working has
+  // sent no bytes yet, so a slow route is killed at the socket: the client gets
+  // a bare `error code: 502` from Fly's edge, this process logs nothing (the
+  // handler is still running, with nowhere to write), and the machine never
+  // restarts — which is exactly how a /extract of a large page failed silently
+  // while every other save worked.
+  //
+  // INVARIANT: this must stay above the slowest route's OWN budget, so a route
+  // times out on its own terms (a real error body, a real log line) instead of
+  // being cut off underneath. /extract is the slowest, and its budget is the sum
+  // of every stage that can block, not just the fetch: waiting for a concurrency
+  // permit (EXTRACT_QUEUE_WAIT_MS, 5s) + an honest-UA probe (10s) + a browser-UA
+  // retry (EXTRACT_FETCH_TIMEOUT_MS, 20s) + a synchronous Defuddle parse. Every
+  // one of those is capped, which is what makes the sum meaningful — an uncapped
+  // stage would put the route back under this ceiling no matter how high it goes.
+  // Raise this before raising any of them, never after.
+  idleTimeout: 45,
   fetch: app.fetch,
 };

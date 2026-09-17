@@ -16,9 +16,23 @@
         {/if}
         <span>{toast.message}</span>
         {#if toast.action}
-          <a class="toast-action" href={safeHref(toast.action.href)} target="_blank" rel="noopener"
-            >{toast.action.label}</a
-          >
+          {#if toast.action.href.startsWith('/') && !toast.action.href.startsWith('//')}
+            <!-- An in-app route. safeHref deliberately rejects relative URLs (it
+                 guards links authored elsewhere), and a toast action's href is
+                 ours, so it is resolved here instead — and stays in the app
+                 rather than opening a second tab onto it. The `//` exclusion
+                 matters: a protocol-relative URL also starts with `/` but is a
+                 link off-site, and some action hrefs come from external data
+                 (Semble card URLs), so those go through safeHref below. -->
+            <a class="toast-action" href={toast.action.href}>{toast.action.label}</a>
+          {:else}
+            <a
+              class="toast-action"
+              href={safeHref(toast.action.href)}
+              target="_blank"
+              rel="noopener">{toast.action.label}</a
+            >
+          {/if}
         {/if}
       </div>
     {/each}

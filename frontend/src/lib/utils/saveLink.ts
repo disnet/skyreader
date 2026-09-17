@@ -7,8 +7,9 @@
 // anything; a toast for the happy path would be noise on a reading surface.
 import { savesStore } from '$lib/stores/saves.svelte';
 import { toastStore } from '$lib/stores/toast.svelte';
-import { UrlSaveLimitError } from '$lib/services/api';
+import { UrlSaveLimitError, ExtractionBlockedError } from '$lib/services/api';
 import { saveLimitLine } from '$lib/utils/limitCopy';
+import { BLOCKED_SAVE_LINE, blockedSaveAction } from '$lib/utils/saveAnywhere';
 
 /** Toggle `url` in and out of Saved. Resolves once the list reflects the change. */
 export async function toggleSavedLink(url: string): Promise<void> {
@@ -26,6 +27,13 @@ export async function toggleSavedLink(url: string): Promise<void> {
         label: 'Become a Supporter',
         href: '/supporter',
       });
+      return;
+    }
+    // Same shape as the cap above: a refusal the reader can actually get past
+    // says so, and says how, instead of hiding behind "could not save that".
+    if (err instanceof ExtractionBlockedError) {
+      const id = toastStore.add(BLOCKED_SAVE_LINE);
+      toastStore.update(id, 'error', undefined, blockedSaveAction());
       return;
     }
     const id = toastStore.add(existing ? 'Could not remove that save' : 'Could not save that');

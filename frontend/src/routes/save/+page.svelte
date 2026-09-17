@@ -4,10 +4,15 @@
   import { page } from '$app/stores';
   import { auth } from '$lib/stores/auth.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
-  import { ScopeUpgradeError, UrlSaveLimitError } from '$lib/services/api';
+  import { ScopeUpgradeError, UrlSaveLimitError, ExtractionBlockedError } from '$lib/services/api';
   import Logo from '$lib/assets/logo.svg';
   import LimitNotice from '$lib/components/LimitNotice.svelte';
   import { saveLimitLine } from '$lib/utils/limitCopy';
+  import {
+    BLOCKED_SAVE_LINE,
+    blockedSaveAction,
+    type BlockedSaveAction,
+  } from '$lib/utils/saveAnywhere';
   import type { SavedItem } from '$lib/types';
 
   // Lightweight share-target / bookmarklet endpoint. An Apple Shortcut (or a
@@ -16,12 +21,13 @@
   // and this page runs the same save flow the in-app modal uses, reusing the
   // browser's existing session cookie — no token or API key needed.
 
-  type Status = 'working' | 'success' | 'invalid' | 'limit' | 'scope' | 'error';
+  type Status = 'working' | 'success' | 'invalid' | 'limit' | 'scope' | 'blocked' | 'error';
 
   let status = $state<Status>('working');
   let saved = $state<SavedItem | null>(null);
   let errorMessage = $state<string | null>(null);
   let limitInfo = $state<{ limit: number; resetsAt: string } | null>(null);
+  let blockedAction = $state<BlockedSaveAction | null>(null);
 
   // Pull a clean http(s) URL out of a shared string. A Shortcut/bookmarklet
   // sends a bare URL; the Web Share Target on Android often delivers it inside
@@ -86,6 +92,9 @@
       } else if (err instanceof UrlSaveLimitError) {
         limitInfo = { limit: err.limit, resetsAt: err.resetsAt };
         status = 'limit';
+      } else if (err instanceof ExtractionBlockedError) {
+        blockedAction = blockedSaveAction();
+        status = 'blocked';
       } else {
         errorMessage = err instanceof Error ? err.message : 'Failed to save article';
         status = 'error';
@@ -104,6 +113,7 @@
   function retry() {
     status = 'working';
     errorMessage = null;
+    blockedAction = null;
     run();
   }
 
@@ -148,6 +158,21 @@
           <p>{saveLimitLine(limitInfo?.limit ?? 0, limitInfo?.resetsAt)}</p>
         </LimitNotice>
       </div>
+      <a class="btn-secondary" href="/">Go to Skyreader</a>
+    {:else if status === 'blocked'}
+      <p class="title">Couldn't save that</p>
+      <p class="sub">
+        {BLOCKED_SAVE_LINE}
+        {blockedAction?.hint ?? ''}
+      </p>
+      {#if blockedAction}
+        <a
+          class="btn-primary"
+          href={blockedAction.href}
+          target={blockedAction.href.startsWith('/') ? null : '_blank'}
+          rel="noopener">{blockedAction.label}</a
+        >
+      {/if}
       <a class="btn-secondary" href="/">Go to Skyreader</a>
     {:else if status === 'scope'}
       <p class="title">Log in again to save</p>

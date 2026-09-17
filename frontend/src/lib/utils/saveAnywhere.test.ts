@@ -4,6 +4,7 @@ import {
   FIREFOX_EXTENSION_URL,
   SAVE_ANYWHERE_LABEL,
   SAVE_ANYWHERE_SETTINGS_URL,
+  saveAnywhereHint,
   saveAnywhereLabel,
   saveAnywhereUrl,
 } from './saveAnywhere';
@@ -53,5 +54,24 @@ describe('saveAnywhereLabel', () => {
         'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1'
       )
     ).toBe(SAVE_ANYWHERE_LABEL);
+  });
+});
+
+describe('saveAnywhereHint', () => {
+  it.each([CHROME_USER_AGENT, FIREFOX_USER_AGENT])(
+    'promises the extension only where there is one to install',
+    (userAgent) => {
+      expect(saveAnywhereHint(userAgent)).toContain('extension');
+    }
+  );
+
+  // The sentence and the link have to agree: these readers are sent to the
+  // instructions, where no extension is on offer.
+  it.each([
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/140.0.0.0 Safari/537.36 Edg/140.0.0.0',
+  ])('drops the extension promise where the link goes to the instructions', (userAgent) => {
+    expect(saveAnywhereUrl(userAgent)).toBe(SAVE_ANYWHERE_SETTINGS_URL);
+    expect(saveAnywhereHint(userAgent)).not.toContain('extension');
   });
 });

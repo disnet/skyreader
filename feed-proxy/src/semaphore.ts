@@ -17,12 +17,19 @@ export class OverloadError extends Error {
   }
 }
 
+interface Waiter {
+  /** Hands the permit over (and cancels the wait deadline, if any). */
+  admit: () => void;
+  /** Set once the waiter has been admitted or has given up. */
+  settled: boolean;
+}
+
 export class Semaphore {
   private available: number;
   private readonly maxConcurrent: number;
   private readonly maxQueue: number;
   // Waiters resolve when a permit is handed directly to them by release().
-  private readonly waiters: Array<() => void> = [];
+  private readonly waiters: Waiter[] = [];
 
   constructor(maxConcurrent: number, maxQueue: number) {
     // A zero/negative concurrency would deadlock; clamp to at least one permit.
@@ -45,8 +52,15 @@ export class Semaphore {
    * Take a permit. Resolves immediately when one is free; otherwise parks in the
    * waiter queue. Rejects with OverloadError when the queue is already full, so
    * the caller can shed load rather than wait unbounded.
+   *
+   * `timeoutMs` bounds the wait itself. The queue caps how many callers may
+   * wait, not how long any of them waits: with every permit held by slow work, a
+   * caller at the back of a full queue can sit for the sum of everything ahead of
+   * it. On a request path that is a request nobody answers — it outlives the
+   * server's socket timeout and dies as a bare gateway error. Shedding on a
+   * deadline turns that into a 503 the caller can act on.
    */
-  async acquire(): Promise<void> {
+  async acquire(timeoutMs?: number): Promise<void> {
     if (this.available > 0) {
       this.available--;
       return;
@@ -56,22 +70,50 @@ export class Semaphore {
     }
     // The permit is handed to us directly by release(); `available` stays
     // decremented across the handoff (never returned to the pool in between).
-    await new Promise<void>((resolve) => this.waiters.push(resolve));
+    const waiter: Waiter = { admit: () => {}, settled: false };
+    this.waiters.push(waiter);
+    await new Promise<void>((resolve, reject) => {
+      if (timeoutMs === undefined) {
+        waiter.admit = resolve;
+        return;
+      }
+      const timer = setTimeout(() => {
+        if (waiter.settled) return;
+        waiter.settled = true;
+        const at = this.waiters.indexOf(waiter);
+        if (at !== -1) this.waiters.splice(at, 1);
+        reject(new OverloadError(`Overloaded: no capacity within ${timeoutMs}ms`));
+      }, timeoutMs);
+      timer.unref();
+      waiter.admit = () => {
+        clearTimeout(timer);
+        resolve();
+      };
+    });
   }
 
-  /** Return a permit: hand it to the oldest waiter, or back to the pool. */
+  /**
+   * Return a permit: hand it to the oldest waiter still waiting, or back to the
+   * pool. Waiters that timed out are skipped (they hold no permit), so a permit
+   * is never handed into the void.
+   */
   release(): void {
-    const next = this.waiters.shift();
-    if (next) {
-      next();
-    } else {
-      this.available++;
+    for (;;) {
+      const next = this.waiters.shift();
+      if (!next) {
+        this.available++;
+        return;
+      }
+      if (next.settled) continue;
+      next.settled = true;
+      next.admit();
+      return;
     }
   }
 
   /** Run `fn` while holding a permit, releasing it even if `fn` throws. */
-  async run<T>(fn: () => Promise<T>): Promise<T> {
-    await this.acquire();
+  async run<T>(fn: () => Promise<T>, timeoutMs?: number): Promise<T> {
+    await this.acquire(timeoutMs);
     try {
       return await fn();
     } finally {

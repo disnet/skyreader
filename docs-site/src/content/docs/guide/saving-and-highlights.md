@@ -11,6 +11,10 @@ Save an article from its card or from the reader, or from outside Skyreader enti
 
 Saves are **private to Skyreader** by default. Nothing is published.
 
+### When a site won't let Skyreader read it
+
+Some sites refuse automated readers, so Skyreader's servers can't fetch the article even though it opens fine in your browser. Skyreader will say so and point you at the extension, which reads the page you already have open. That gets you the full text where a plain URL save can't.
+
 ### Backing your saves with Semble or Margin
 
 If you use [Semble](https://semble.so) or [Margin](https://margin.at), you can back your Saved list with one of them (**Settings → Saved articles**). Your Saved list becomes a collection there: edit it in either app, or in any Atmospheric app, and the two stay in sync.

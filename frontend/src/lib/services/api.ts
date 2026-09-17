@@ -166,6 +166,20 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * The target site refused Skyreader's fetcher (a bot filter or CDN in front of
+ * it). Its own type rather than a generic ApiError because it is not an outage
+ * and it is not the reader's mistake: the page is readable in their browser, so
+ * the extension can extract it even though the server can't. Callers turn this
+ * into that offer instead of a dead end.
+ */
+export class ExtractionBlockedError extends Error {
+  constructor() {
+    super('That site blocks automated readers');
+    this.name = 'ExtractionBlockedError';
+  }
+}
+
 export class OfflineError extends Error {
   constructor() {
     super('You are offline');
@@ -523,6 +537,16 @@ class ApiClient {
       }
 
       const error = await response.json().catch(() => ({ error: 'Request failed' }));
+      // The proxy marks a fetch the target site refused. The server-side message
+      // is diagnostic prose about bot filters and CDNs, so it is dropped here in
+      // favour of copy written for a reader. Scoped to /api/extract on purpose:
+      // that is the only route that fetches the target site (a save posts content
+      // the client already extracted), and feed discovery flags blocked fetches
+      // the same way but its callers show the server's message and have no
+      // extension fallback to offer.
+      if ((error as { blocked?: boolean }).blocked === true && path.startsWith('/api/extract')) {
+        throw new ExtractionBlockedError();
+      }
       throw new ApiError(
         (error as { error: string }).error || `HTTP ${response.status}`,
         response.status

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { api, SessionRefreshError } from './api';
+import { api, SessionRefreshError, ExtractionBlockedError, ApiError } from './api';
 
 // Regression coverage for the "logged out on deploy" fix. The backend now returns a
 // retryable 503 for a live session whose token couldn't be refreshed yet, and a 401
@@ -198,5 +198,58 @@ describe('extract() shares the same auth handling', () => {
     expect(article).toMatchObject({ title: 'Hello' });
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(onUnauthorized).not.toHaveBeenCalled();
+  });
+});
+
+// A save fails with a 502 whether the proxy broke or the target site refused it.
+// Only the second has a way forward (the browser extension), so the client has
+// to be able to tell them apart from the body alone.
+describe('api extraction blocked', () => {
+  it('raises ExtractionBlockedError when the server marks the fetch blocked', async () => {
+    fetchMock.mockResolvedValueOnce(
+      json(502, {
+        error: 'example.com is blocking automated access (HTTP 403). The site likely...',
+        blocked: true,
+      })
+    );
+
+    await expect(api.extract('https://example.com/a-piece')).rejects.toBeInstanceOf(
+      ExtractionBlockedError
+    );
+  });
+
+  it('drops the server-side diagnostic prose in favour of reader copy', async () => {
+    fetchMock.mockResolvedValueOnce(
+      json(502, { error: 'example.com is blocking automated access (HTTP 403).', blocked: true })
+    );
+
+    await expect(api.extract('https://example.com/a-piece')).rejects.toThrow(
+      'That site blocks automated readers'
+    );
+  });
+
+  // Feed discovery reports blocked fetches with the same flag, but a subscribe
+  // flow has no extension fallback and its callers render the server message.
+  it('leaves a blocked feed-discovery 502 a plain ApiError', async () => {
+    fetchMock.mockResolvedValueOnce(
+      json(502, {
+        error: 'example.com is blocking automated access (HTTP 403).',
+        blocked: true,
+      })
+    );
+
+    const err = await api.discoverFeedsV2('https://example.com').catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err).not.toBeInstanceOf(ExtractionBlockedError);
+    expect(err.message).toContain('blocking automated access');
+  });
+
+  it('leaves an unmarked 502 a plain ApiError — that one IS our outage', async () => {
+    fetchMock.mockResolvedValueOnce(json(502, { error: 'Timeout after 20s', blocked: false }));
+
+    const err = await api.extract('https://example.com/a-piece').catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err).not.toBeInstanceOf(ExtractionBlockedError);
+    expect(err.status).toBe(502);
   });
 });

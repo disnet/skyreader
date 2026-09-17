@@ -215,11 +215,14 @@ export async function handleCreateSaved(
       // Metadata save: use provided metadata, skip extraction
       return await handleMetadataSave(request, env, ctx, session, body, source);
     } else {
-      // URL save: extract content via feed proxy
+      // URL save: the client has already extracted the article (via /api/extract)
+      // and posts the content, so nothing here fetches the page.
       return await handleUrlSave(request, env, ctx, session, body);
     }
   } catch (error) {
     console.error('Failed to save item:', error);
+    // No `blocked` flag here: this route never fetches the target site, so a
+    // refusal by the site surfaces on /api/extract, before the save is attempted.
     return new Response(
       JSON.stringify({
         error: error instanceof Error ? error.message : 'Failed to save item',

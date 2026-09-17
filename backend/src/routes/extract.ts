@@ -1,6 +1,6 @@
 import type { Env } from '../types';
 import { getSessionFromRequest } from '../services/oauth';
-import { FeedProxyClient } from '../services/feed-proxy-client';
+import { FeedProxyClient, FeedProxyError } from '../services/feed-proxy-client';
 
 // POST /api/extract — fetch a URL and return extracted article content via the
 // feed proxy (which runs Defuddle and caches the result).
@@ -53,9 +53,14 @@ export async function handleExtract(request: Request, env: Env): Promise<Respons
       headers: { 'Content-Type': 'application/json' },
     });
   } catch (error) {
+    // Forward `blocked`: "the site refused our fetcher" and "our proxy broke"
+    // are the same 502 to HTTP but not to the reader — only the first has a way
+    // forward (the browser extension, which reads the page they can already
+    // see). Dropping the flag here is what left that save a dead end.
     return new Response(
       JSON.stringify({
         error: error instanceof Error ? error.message : 'Failed to extract article',
+        blocked: error instanceof FeedProxyError && error.blocked === true,
       }),
       {
         status: 502,

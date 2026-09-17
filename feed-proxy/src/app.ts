@@ -332,6 +332,19 @@ const MAX_DELAY_MS = 24 * 60 * 60 * 1000; // 24 hours
 const PERMANENT_ERROR_DELAY_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 const MAX_RECOVERABLE_ERRORS = 5;
 const FETCH_TIMEOUT_MS = 30 * 1000; // 30 seconds
+// Tighter budget for /extract's browser-UA retry. The route is interactive (a
+// reader is watching a save spin) and its worst case has to fit under the
+// server's idleTimeout with room for the parse: honest probe (10s) + this retry
+// + Defuddle. Raising it means raising idleTimeout in index.ts first.
+const EXTRACT_FETCH_TIMEOUT_MS = 20 * 1000; // 20 seconds
+// How long an /extract may wait for a permit before it is shed. The semaphore's
+// queue bounds how MANY callers wait, not how long — without a deadline, a caller
+// behind four slow extractions waits past the server's idleTimeout and dies as a
+// bare edge 502, the exact failure the rest of this budget exists to prevent.
+const EXTRACT_QUEUE_WAIT_MS = 5 * 1000;
+// An /extract slower than this is logged even when it succeeds: it is the near
+// miss for the socket-level cutoff that a silent 502 gives no other warning of.
+const SLOW_EXTRACT_LOG_MS = 8 * 1000;
 // How long a single feed may block a /feeds batch on an inline upstream fetch
 // (cache miss / past-stale). The batch fans out with Promise.all and waits for
 // the slowest feed, so without this cap one new-or-cold feed drags the whole
@@ -476,22 +489,36 @@ export async function fetchWithBotFallback(
     return browserFetch();
   }
 
-  // Attempt 1: honest UA, short timeout.
+  // Attempt 1: honest UA. The short probe budget covers only the wait for
+  // response headers, which is what a silent black-hole stalls; once headers
+  // arrive the deadline widens to the full fetch budget. Callers stream the body
+  // after this function returns, so leaving the probe deadline on it would abort
+  // a large-but-healthy page mid-download — past the fallback, as an error no
+  // retry can absorb.
+  const probe = new AbortController();
+  const abortAsTimeout = () =>
+    probe.abort(new DOMException('The operation timed out.', 'TimeoutError'));
+  let deadline = setTimeout(abortAsTimeout, probeTimeoutMs);
   try {
-    const res = await safeFetch(url, {
-      headers,
-      signal: AbortSignal.timeout(probeTimeoutMs),
-    });
+    const res = await safeFetch(url, { headers, signal: probe.signal });
     // Only a 403 is treated as a block worth retrying; every other status
     // (200/304/404/5xx) is a real answer the caller should handle as-is.
     if (!isBlockedStatus(res.status)) {
+      clearTimeout(deadline);
+      // Not a black hole: give the body the full budget. Unref'd because nothing
+      // here can observe the caller finishing the read, and a fetch that has
+      // already completed ignores the abort.
+      deadline = setTimeout(abortAsTimeout, fetchTimeoutMs);
+      deadline.unref();
       // Honest UA works for this host — drop any stale block memory (e.g. a TTL
       // just expired and the host has since dropped its bot wall).
       uaBlockedHosts.delete(host ?? '');
       return res;
     }
+    clearTimeout(deadline);
     await res.body?.cancel().catch(() => {});
   } catch {
+    clearTimeout(deadline);
     // Timeout / connection error on the honest attempt: possibly a silent block,
     // possibly a genuinely slow or down feed — indistinguishable here, so fall
     // through to the browser-UA attempt and let it settle the outcome.
@@ -2593,18 +2620,21 @@ export function createApp(db: Database, config: AppConfig) {
     if (!pending) {
       pending = (async () => {
         // Acquire a permit before the fetch + DOM build (the heavy part). Throws
-        // OverloadError when the queue is full — followers awaiting this promise
-        // see the same shed, which is correct: they'd do identical heavy work.
+        // OverloadError when the queue is full, or when the wait for a permit
+        // outlasts EXTRACT_QUEUE_WAIT_MS — followers awaiting this promise see
+        // the same shed, which is correct: they'd do identical heavy work.
         // acquire() is outside the try so a failed acquire never calls release().
-        await extractSemaphore.acquire();
+        await extractSemaphore.acquire(EXTRACT_QUEUE_WAIT_MS);
         try {
-          const response = await safeFetch(url, {
-            headers: {
-              ...FETCH_HEADERS,
-              Accept: 'text/html, application/xhtml+xml, */*',
-            },
-            signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-          });
+          // The same bot fallback the crawl (fetchFeed) and discovery paths
+          // use. Without it a site that gates on the honest UA's shape is
+          // crawlable as a feed but unsavable as an article, which is a
+          // difference the reader has no way to understand.
+          const response = await fetchWithBotFallback(
+            url,
+            { ...FETCH_HEADERS, Accept: 'text/html, application/xhtml+xml, */*' },
+            { fetchTimeoutMs: EXTRACT_FETCH_TIMEOUT_MS }
+          );
 
           if (!response.ok) {
             const { error, blocked } = describeFetchFailure(response.status, url);
@@ -2629,27 +2659,41 @@ export function createApp(db: Database, config: AppConfig) {
 
     try {
       const extracted = await pending;
+      const elapsed = Date.now() - now;
+      // A save is interactive, and a slow extract is the shape that used to end
+      // as a silent socket close. Leave a trail while it is still succeeding so
+      // the next one that doesn't is diagnosable from the logs alone.
+      if (elapsed > SLOW_EXTRACT_LOG_MS) {
+        console.warn(`[Proxy] /extract ${url}: slow (${elapsed}ms)`);
+      }
       c.header('X-Cache', isLeader ? 'MISS' : 'COALESCED');
       return c.json(extracted);
     } catch (error) {
+      const elapsed = Date.now() - now;
       if (error instanceof OverloadError) {
         // Load shed: extraction capacity is saturated. Ask the caller to retry.
+        console.error(`[Proxy] /extract ${url}: ${error.message} (${elapsed}ms)`);
         return c.json({ error: 'Extraction capacity reached, retry shortly' }, 503, {
           'Retry-After': '5',
         });
       }
       if (error instanceof FetchHtmlError) {
+        console.error(`[Proxy] /extract ${url}: ${error.message} (${elapsed}ms)`);
         return c.json({ error: error.message, blocked: error.blocked }, 502);
       }
       const isTimeout = error instanceof Error && error.name === 'TimeoutError';
       const isTooLarge = error instanceof ResponseTooLargeError;
       const msg = isTimeout
-        ? `Timeout after ${FETCH_TIMEOUT_MS / 1000}s`
+        ? // Report what actually elapsed, not a constant: the cut can land at the
+          // honest probe, at the browser-UA retry, or at the two combined, and
+          // this string is what an operator reasons from (see docs/RUNBOOK.md).
+          `Timeout after ${Math.round(elapsed / 1000)}s`
         : isTooLarge
           ? error.message
           : error instanceof Error
             ? error.message
             : 'Unknown error';
+      console.error(`[Proxy] /extract ${url}: ${msg} (${elapsed}ms)`);
       return c.json({ error: msg }, 502);
     } finally {
       if (isLeader) inFlightExtract.delete(urlHash);
