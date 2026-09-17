@@ -22,6 +22,65 @@ describe('FeedProxyClient', () => {
     vi.restoreAllMocks();
   });
 
+  // The proxy answers 200 with `{ error, blocked }` for anything it determined,
+  // because a 5xx body does not survive the hop from Fly to the Worker: a blocked
+  // save encoded as a 502 reached this client as a bare `error code: 502`, and the
+  // reader was told the gateway had failed rather than that the site refused us.
+  describe('extract() error contract', () => {
+    it('raises a blocked FeedProxyError from a 200 determination', async () => {
+      globalThis.fetch = vi.fn().mockResolvedValueOnce(
+        Response.json({
+          error: 'www.cambridge.org is blocking automated access (HTTP 403).',
+          blocked: true,
+        })
+      );
+
+      const err = await createClient()
+        .extract('https://www.cambridge.org/core/journals/x')
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(FeedProxyError);
+      expect(err.blocked).toBe(true);
+      expect(err.message).toContain('blocking automated access');
+    });
+
+    it('raises a non-blocked FeedProxyError from a 200 timeout determination', async () => {
+      globalThis.fetch = vi
+        .fn()
+        .mockResolvedValueOnce(Response.json({ error: 'Timeout after 12s', blocked: false }));
+
+      const err = await createClient()
+        .extract('https://slow.example/a')
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(FeedProxyError);
+      expect(err.blocked).toBe(false);
+      expect(err.message).toBe('Timeout after 12s');
+    });
+
+    it('returns the article when the body carries no error', async () => {
+      globalThis.fetch = vi
+        .fn()
+        .mockResolvedValueOnce(Response.json({ title: 'A piece', content: '<p>hi</p>' }));
+
+      const article = await createClient().extract('https://example.com/a');
+      expect(article.title).toBe('A piece');
+    });
+
+    // A non-2xx now means the app never answered — the body is the edge's.
+    it('carries the status and the edge body out of a bare gateway error', async () => {
+      globalThis.fetch = vi
+        .fn()
+        .mockResolvedValueOnce(new Response('error code: 502\n', { status: 502 }));
+
+      const err = await createClient()
+        .extract('https://example.com/a')
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(FeedProxyError);
+      expect(err.message).toContain('HTTP 502');
+      expect(err.message).toContain('error code: 502');
+      expect(err.blocked).toBeUndefined();
+    });
+  });
+
   describe('non-JSON proxy responses', () => {
     // Regression: a plain-text infra error like "error code: 502" used to leak a
     // confusing "Unexpected token 'e'... is not valid JSON" SyntaxError to the user.

@@ -472,6 +472,16 @@ A `[Proxy] /extract <url>: Timeout after Ns` line reports the time that actually
 elapsed, so N tells you which stage ran out: ~10s is the honest probe, ~30s the
 probe plus the browser-UA retry.
 
+**A 5xx body does not survive the hop from the proxy to the Worker.** The caller
+receives a bare `error code: 502` from the edge instead, whatever the app wrote.
+So a proxy route answers 200 with `{ error, blocked }` for everything it
+_determines_ (the site refused us, the fetch timed out, the page was too large),
+and keeps a non-2xx only for failures before it can run — 401, 400 — and for load
+shedding (503). `/discover` and `/extract` both follow this; a new route that
+reports a diagnosis through a 5xx will have that diagnosis reach the logs and
+nothing else. The symptom to recognise: the proxy logs a clear one-line reason at
+the same second the reader is shown a gateway error.
+
 ---
 
 ## 4b. The admin ops panel
