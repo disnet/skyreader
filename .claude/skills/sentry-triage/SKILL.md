@@ -30,7 +30,7 @@ reported into a Fly-managed org; both projects now live in `tim-disney`.)
 
 The proxy is **much quieter than the backend** — single-digit issues against the
 backend's hundreds of events. That is a real asymmetry, not a broken DSN, but if
-the proxy shows *zero* events over a window where the backend is busy, check that
+the proxy shows _zero_ events over a window where the backend is busy, check that
 `SENTRY_DSN` is still set on the Fly app before concluding it is healthy.
 
 **Filter every query to `environment:production`.** Staging and production share
@@ -40,13 +40,13 @@ line and move on — never open a PR for it.
 
 ## Tools
 
-| Need                        | Tool                                       |
-| --------------------------- | ------------------------------------------ |
-| Confirm org / project slugs | `find_organizations`, `find_projects`      |
-| The issue list              | `search_issues` (grouped issues)           |
-| One issue in depth          | `get_sentry_resource` (issue id or URL)    |
-| Counts, rates, time series  | `search_events`                            |
-| Root cause you can't derive | `analyze_issue_with_seer`                  |
+| Need                        | Tool                                    |
+| --------------------------- | --------------------------------------- |
+| Confirm org / project slugs | `find_organizations`, `find_projects`   |
+| The issue list              | `search_issues` (grouped issues)        |
+| One issue in depth          | `get_sentry_resource` (issue id or URL) |
+| Counts, rates, time series  | `search_events`                         |
+| Root cause you can't derive | `analyze_issue_with_seer`               |
 
 `search_issues` returns grouped issues; `search_events` returns individual events
 and aggregations. Reaching for the wrong one is the usual way to get a confusing
@@ -75,15 +75,15 @@ deliberately; re-litigating it is exactly the noise §8 is trying to kill.
 Every backend event carries a `source` tag. It tells you which entry point failed,
 and the runbook has a section per failure mode:
 
-| `source`           | What it is                        | Runbook            |
-| ------------------ | --------------------------------- | ------------------ |
-| `fetch`            | An HTTP request handler threw     | §4a, §4            |
-| `route`            | A named route handler threw       | §4a                |
-| `cron`             | A scheduled run failed (has `phase`) | §4 `backend-cron`  |
-| `jetstream-poller` | The firehose DO alarm             | §4 `jetstream_alarm_stuck` |
-| `warmer`           | Feed proxy warm loop              | §4 `proxy-warmer`  |
-| `ingest-push`      | Proxy → backend ingest push       | §4d                |
-| `client`           | Browser error via `/api/telemetry/error` | §4 `source: client` |
+| `source`           | What it is                               | Runbook                    |
+| ------------------ | ---------------------------------------- | -------------------------- |
+| `fetch`            | An HTTP request handler threw            | §4a, §4                    |
+| `route`            | A named route handler threw              | §4a                        |
+| `cron`             | A scheduled run failed (has `phase`)     | §4 `backend-cron`          |
+| `jetstream-poller` | The firehose DO alarm                    | §4 `jetstream_alarm_stuck` |
+| `warmer`           | Feed proxy warm loop                     | §4 `proxy-warmer`          |
+| `ingest-push`      | Proxy → backend ingest push              | §4d                        |
+| `client`           | Browser error via `/api/telemetry/error` | §4 `source: client`        |
 
 `client` events deserve special suspicion: they arrive through a **deliberately
 public, forgeable endpoint**. Stack frames come from a minified bundle, so the
@@ -108,11 +108,11 @@ commit in the report.
 Backend events carry a `requestId` tag, and a `did` when authenticated. That id
 threads Sentry to Workers Logs (§4a):
 
-| Question                     | Workers Logs filter                            |
-| ---------------------------- | ---------------------------------------------- |
-| Everything about one failure | `requestId = <id from Sentry>`                 |
-| Error rate on one endpoint   | `event = request AND route = <route>`          |
-| What failed inside a cron    | `event = cron_phase_failed` → `phase`          |
+| Question                     | Workers Logs filter                   |
+| ---------------------------- | ------------------------------------- |
+| Everything about one failure | `requestId = <id from Sentry>`        |
+| Error rate on one endpoint   | `event = request AND route = <route>` |
+| What failed inside a cron    | `event = cron_phase_failed` → `phase` |
 
 You can't query Workers Logs from a headless session. Put the exact filter in the
 report so a human can paste it.
@@ -130,7 +130,7 @@ Sort each issue into exactly one bucket:
   Report the rate; a code change is usually the wrong lever.
 - **Alert-policy noise** — firing without anything actionable behind it. Say so,
   and name the §8 pruning action (delete, loosen, downgrade push→email). This is a
-  real outcome, not a cop-out: §8 says make that call on the *first* false page.
+  real outcome, not a cop-out: §8 says make that call on the _first_ false page.
 
 Read the runbook section before classifying. Several of these errors are
 **documented expected behavior** under specific conditions — `firehose_lag_high`
@@ -144,14 +144,14 @@ The production stream already carries long-running issues. They are listed so a
 daily pass does not re-diagnose them from scratch every morning — **not** so it
 skips them. Treat a jump in rate, or a reappearance after quiet, as new.
 
-| Issue                                             | Shape                            | Read                                                                   |
-| ------------------------------------------------- | -------------------------------- | ---------------------------------------------------------------------- |
-| `TimeoutError` in `recordProxyStats`              | ~528 events / 29d, the loudest   | Cron's proxy-stats fetch timing out. RUNBOOK §4d. Not user-facing.      |
-| `preload_recovery_failed` (client)                | ~44 events / 12d                 | The **only** condition wired to page (§2). A rate change here matters.  |
-| `D1_ERROR: D1 DB is overloaded`                   | Several groupings, same cause    | Cloudflare-side saturation. Infrastructure bucket unless it correlates with a deploy. |
-| `JetstreamPoller alarm overdue by Ns; re-armed`   | ~20 events / 6d                  | The 2026-09-10 pruning-log fix *working* — it re-arms and reports. Self-healing, not an outage. |
-| `Actively read document authors past re-list floor` | ~115 events / 16d              | The threshold tuned on 2026-09-03 (pruning log). Check the log before touching it. |
-| `unread counts diverged on N/M feeds` (client)    | Recurring, low volume            | Client-reported divergence. Forgeable endpoint — needs a cluster, not one event. |
+| Issue                                               | Shape                          | Read                                                                                            |
+| --------------------------------------------------- | ------------------------------ | ----------------------------------------------------------------------------------------------- |
+| `TimeoutError` in `recordProxyStats`                | ~528 events / 29d, the loudest | Cron's proxy-stats fetch timing out. RUNBOOK §4d. Not user-facing.                              |
+| `preload_recovery_failed` (client)                  | ~44 events / 12d               | The **only** condition wired to page (§2). A rate change here matters.                          |
+| `D1_ERROR: D1 DB is overloaded`                     | Several groupings, same cause  | Cloudflare-side saturation. Infrastructure bucket unless it correlates with a deploy.           |
+| `JetstreamPoller alarm overdue by Ns; re-armed`     | ~20 events / 6d                | The 2026-09-10 pruning-log fix _working_ — it re-arms and reports. Self-healing, not an outage. |
+| `Actively read document authors past re-list floor` | ~115 events / 16d              | The threshold tuned on 2026-09-03 (pruning log). Check the log before touching it.              |
+| `unread counts diverged on N/M feeds` (client)      | Recurring, low volume          | Client-reported divergence. Forgeable endpoint — needs a cluster, not one event.                |
 
 The bottom four are **documented, deliberate behavior with history in the §8
 pruning log**. Do not "fix" them. If one is firing without action available, the
