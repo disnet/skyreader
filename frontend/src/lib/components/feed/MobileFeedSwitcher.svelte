@@ -58,7 +58,12 @@
   // Render/compute the Sources tree only when the section is open or the user is
   // searching. With a large subscription list, building and rendering every feed
   // row on open is the expensive part, so keep it lazy.
-  let showSources = $derived(sourcesExpanded || searchQuery.trim().length > 0);
+  // A kept-mounted sheet must not keep its largest branch reactive while it is
+  // hidden. In particular, unread/read-position updates would otherwise regroup,
+  // sort and patch every source row after a reader had expanded Sources once.
+  // Preserve the disclosure preference, but only materialize the tree while the
+  // user can see or search it.
+  let showSources = $derived(open && (sourcesExpanded || searchQuery.trim().length > 0));
 
   // Derive data from stores
   let subscriptions = $derived(subscriptionsStore.subscriptions);
