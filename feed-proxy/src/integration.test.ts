@@ -3575,6 +3575,10 @@ describe('POST /extract', () => {
     db.close();
   });
 
+  // Every outcome the route DETERMINES rides a 200 (see the status contract on
+  // /extract): a 5xx body does not survive the hop to the Worker, so a diagnosis
+  // sent as a 502 arrives as a bare `error code: 502` and the reader is told the
+  // gateway failed when in fact the site refused us.
   it('marks a site that refuses both attempts as blocked, not a bare gateway error', async () => {
     const { db, app } = createTestApp();
     fetchMock = mockFetch(() => new Response('Forbidden', { status: 403 }));
@@ -3584,7 +3588,7 @@ describe('POST /extract', () => {
 
     // `blocked` is what lets a caller offer the extension instead of a dead end;
     // without it this is indistinguishable from the proxy itself failing.
-    expect(res.status).toBe(502);
+    expect(res.status).toBe(200);
     expect(json.blocked).toBe(true);
     expect(json.error).toContain('blocking automated access');
 
@@ -3598,9 +3602,40 @@ describe('POST /extract', () => {
     const res = await extract(app, 'https://example.com/a-piece');
     const json = await res.json();
 
-    expect(res.status).toBe(502);
+    expect(res.status).toBe(200);
     expect(json.blocked).toBe(false);
     expect(json.error).toContain('HTTP 500');
+
+    db.close();
+  });
+
+  it('reports a timed-out fetch as a readable determination', async () => {
+    const { db, app } = createTestApp();
+    fetchMock = spyOn(globalThis, 'fetch').mockImplementation((async () => {
+      throw new DOMException('The operation timed out.', 'TimeoutError');
+    }) as unknown as typeof fetch);
+
+    const res = await extract(app, 'https://slow.example.com/a-piece');
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.blocked).toBe(false);
+    expect(json.error).toContain('Timeout after');
+
+    db.close();
+  });
+
+  // Auth runs before the route determines anything, so it keeps its own status.
+  it('still answers 401 without the shared secret', async () => {
+    const { db, app } = createTestApp();
+
+    const res = await app.request('/extract', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: 'https://example.com/a-piece' }),
+    });
+
+    expect(res.status).toBe(401);
 
     db.close();
   });

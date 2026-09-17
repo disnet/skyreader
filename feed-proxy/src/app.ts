@@ -2572,6 +2572,16 @@ export function createApp(db: Database, config: AppConfig) {
   // Fetch a URL and return cleaned, extracted article content (Defuddle).
   // Results are cached (article content is effectively immutable per URL), so
   // repeat and cross-user saves of the same article skip the fetch + extract.
+  //
+  // STATUS CONTRACT: every outcome this route DETERMINES answers 200 with
+  // `{ error, blocked }` — the site refused us, the fetch timed out, the page was
+  // too large. Only failures before the route can run its own logic (401, 400)
+  // and load shedding (503) use a non-2xx status. The reason is not aesthetic:
+  // a 5xx body does not survive the hop from this app to the Worker (the caller
+  // receives a bare `error code: 502` from the edge instead), so a diagnosis
+  // encoded as a 502 reaches the logs and nothing else — which is how a blocked
+  // save looked like a gateway outage to the reader for a whole release.
+  // `/discover` above answers the same way, for the same reason.
   app.post('/extract', async (c) => {
     if (proxySecret && c.req.header('X-Proxy-Secret') !== proxySecret) {
       return c.json({ error: 'Unauthorized' }, 401);
@@ -2679,7 +2689,7 @@ export function createApp(db: Database, config: AppConfig) {
       }
       if (error instanceof FetchHtmlError) {
         console.error(`[Proxy] /extract ${url}: ${error.message} (${elapsed}ms)`);
-        return c.json({ error: error.message, blocked: error.blocked }, 502);
+        return c.json({ error: error.message, blocked: error.blocked }, 200);
       }
       const isTimeout = error instanceof Error && error.name === 'TimeoutError';
       const isTooLarge = error instanceof ResponseTooLargeError;
@@ -2694,7 +2704,7 @@ export function createApp(db: Database, config: AppConfig) {
             ? error.message
             : 'Unknown error';
       console.error(`[Proxy] /extract ${url}: ${msg} (${elapsed}ms)`);
-      return c.json({ error: msg }, 502);
+      return c.json({ error: msg, blocked: false }, 200);
     } finally {
       if (isLeader) inFlightExtract.delete(urlHash);
     }

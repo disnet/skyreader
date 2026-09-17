@@ -782,24 +782,41 @@ export class FeedProxyClient {
       throw err;
     }
 
-    if (!response.ok) {
-      // The proxy returns a JSON error body ({ error, blocked }); fall back to
-      // the raw text if it's a non-JSON edge error.
-      const text = await response.text();
-      try {
-        const body = JSON.parse(text) as { error?: string; blocked?: boolean };
-        throw new FeedProxyError(
-          body.error || `Failed to extract article: HTTP ${response.status}`,
-          undefined,
-          undefined,
-          body.blocked
-        );
-      } catch (e) {
-        if (e instanceof FeedProxyError) throw e;
-        throw new FeedProxyError(text || `Failed to extract article: HTTP ${response.status}`);
-      }
+    // The proxy answers 200 with `{ error, blocked }` for everything it
+    // determined — the site refused us, the fetch timed out, the page was too
+    // large (see the status contract on its /extract route). A 5xx body does not
+    // survive the hop from Fly to here, so a non-2xx means the app never
+    // answered at all and the body is the edge's, not ours.
+    type ExtractBody = Partial<ExtractedArticle> & { error?: string; blocked?: boolean };
+    const text = await response.text();
+    let body: ExtractBody | null;
+    try {
+      body = JSON.parse(text) as ExtractBody;
+    } catch {
+      body = null;
     }
 
-    return (await response.json()) as ExtractedArticle;
+    if (!response.ok) {
+      // Carry the status and a snippet: without them an edge error is
+      // indistinguishable from every other failure at the call site.
+      const detail = body?.error || text.trim().slice(0, 200);
+      throw new FeedProxyError(
+        detail
+          ? `Failed to extract article (HTTP ${response.status}): ${detail}`
+          : `Failed to extract article: HTTP ${response.status}`,
+        undefined,
+        undefined,
+        body?.blocked
+      );
+    }
+
+    if (!body) {
+      throw new FeedProxyError('Failed to extract article: the feed service sent no JSON');
+    }
+    if (body.error) {
+      throw new FeedProxyError(body.error, undefined, undefined, body.blocked);
+    }
+
+    return body as ExtractedArticle;
   }
 }
