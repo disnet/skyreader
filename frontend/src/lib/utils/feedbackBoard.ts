@@ -24,13 +24,27 @@ export const DEFAULT_FEEDBACK_TYPES: FeedbackType[] = [
  */
 export const OPEN_STATUS = 'open';
 
+// userinput.app's own status vocabulary, in the order its board walks a post
+// through: `open`, `under-review`, `backlog`, `planned`, `in-progress`,
+// `implemented`, `declined`, `duplicate`, `closed`. A comment rather than a
+// list, because nothing has to be in it to render — the set below is the only
+// judgement this file makes about it.
+
 /**
- * The statuses that mean the board is done with a post. Everything else — the
- * untriaged default, and the states a post passes through on the way — is open,
- * including any status upstream invents later: a state we don't recognize is
- * shown rather than quietly filed away as finished.
+ * The statuses that mean the board is done with a post: it shipped, it was
+ * turned down, it was another post, or the owner simply closed it. Everything
+ * else — the untriaged default, and the states a post passes through on the way
+ * (`under-review`, `backlog`, `planned`, `in-progress`) — is open, including any
+ * status upstream invents later: a state we don't recognize is shown rather than
+ * quietly filed away as finished.
+ *
+ * `closed` was missing here and is the reason a settled post kept turning up
+ * under Open. The default is deliberately generous, so the cost of that
+ * generosity is exactly this: a state that plainly means finished has to be
+ * listed, or it reads as live. Compare against upstream's vocabulary above when
+ * this list is next touched.
  */
-export const CLOSED_STATUSES = new Set(['implemented', 'declined', 'duplicate']);
+export const CLOSED_STATUSES = new Set(['implemented', 'declined', 'duplicate', 'closed']);
 
 /** Which half of the board a reader is looking at. */
 export type StatusScope = 'open' | 'closed' | 'all';
@@ -77,9 +91,16 @@ export function postRef(uri: string): { did: string; rkey: string } | null {
   return match ? { did: match[1], rkey: match[2] } : null;
 }
 
-/** A post's status, with upstream's untriaged `null` reported as open. */
+/**
+ * A post's status, with upstream's untriaged `null` reported as open.
+ *
+ * Folded to lower case and trimmed: the state is upstream's string, written by
+ * whatever client set it, and `Implemented` must not read as a state nobody has
+ * heard of — which, under the open-by-default rule above, is what would put it
+ * back in the Open list.
+ */
 export function postStatus(post: FeedbackPost): string {
-  return post.status ?? OPEN_STATUS;
+  return post.status?.trim().toLowerCase() || OPEN_STATUS;
 }
 
 /**

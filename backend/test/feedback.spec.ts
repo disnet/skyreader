@@ -17,8 +17,9 @@ import {
 import type { Env, Session } from '../src/types';
 
 const get = () => new Request('http://localhost/api/v2/feedback');
+const DISCUSSION_URI = 'at://did:plc:alice/app.userinput.discussion/3abc123';
 const discussion = (overrides: Record<string, unknown> = {}) => ({
-  uri: 'at://did:plc:alice/app.userinput.discussion/3abc123',
+  uri: DISCUSSION_URI,
   authorDid: 'did:plc:alice',
   value: {
     title: 'A quieter reading mode',
@@ -31,6 +32,30 @@ const discussion = (overrides: Record<string, unknown> = {}) => ({
   status: { state: 'planned' },
   ...overrides,
 });
+
+/**
+ * One verdict as it is actually stored: a record in the moderator's repo
+ * pointing at the post it judges. The board reads these rather than the status
+ * the board API carries inline, which arrives `null` at random.
+ */
+const statusRecord = (
+  subject: string,
+  state: string,
+  { rkey = '3status1', createdAt = '2026-09-02T12:00:00Z' } = {}
+) => ({
+  uri: `at://did:plc:skyreaderfeedback/app.userinput.status/${rkey}`,
+  value: { $type: 'app.userinput.status', state, subject: { uri: subject }, createdAt },
+});
+
+/** The owner's status collection, listed off their PDS. */
+function statusLookup(input: RequestInfo | URL, pages: Array<Record<string, unknown>>) {
+  const url = String(input);
+  if (!url.includes('com.atproto.repo.listRecords')) return null;
+  if (!url.includes('app.userinput.status')) return null;
+  const cursor = new URL(url).searchParams.get('cursor');
+  const page = cursor ? pages.findIndex((entry) => entry.cursor === cursor) + 1 : 0;
+  return new Response(JSON.stringify(pages[page] ?? { records: [] }));
+}
 
 describe('GET /api/v2/feedback', () => {
   let originalFetch: typeof globalThis.fetch;
@@ -81,6 +106,8 @@ describe('GET /api/v2/feedback', () => {
     const url = String(input);
     const space = spaceLookup(input, tags);
     if (space) return space;
+    const statuses = statusLookup(input, [{ records: [statusRecord(DISCUSSION_URI, 'planned')] }]);
+    if (statuses) return statuses;
     if (url.includes('getProfiles')) return new Response(JSON.stringify({ profiles: [] }));
     return new Response(
       JSON.stringify({
@@ -104,6 +131,10 @@ describe('GET /api/v2/feedback', () => {
       // the space record at all.
       const space = spaceLookup(input, []);
       if (space) return space;
+      const statuses = statusLookup(input, [
+        { records: [statusRecord(DISCUSSION_URI, 'planned')] },
+      ]);
+      if (statuses) return statuses;
       if (url.includes('getProfiles')) {
         return new Response(
           JSON.stringify({
@@ -225,11 +256,12 @@ describe('GET /api/v2/feedback', () => {
   });
 
   it('falls back to the DID when profile hydration fails', async () => {
-    fetchMock
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ complete: true, posts: [discussion()] }))
-      )
-      .mockResolvedValueOnce(new Response('no', { status: 503 }));
+    // Matched on the url rather than on call order: the board read also lists
+    // the owner's statuses, and which of the two lands second is a race.
+    const healthy = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) =>
+      String(input).includes('getProfiles') ? new Response('no', { status: 503 }) : healthy(input)
+    );
     const body = (await (await handleGetFeedback(get(), env as Env, null)).json()) as {
       posts: Array<{ author: { handle: string } }>;
     };
@@ -256,15 +288,127 @@ describe('GET /api/v2/feedback', () => {
   it('briefly caches upstream failures', async () => {
     fetchMock.mockResolvedValueOnce(new Response('upstream broke', { status: 500 }));
     await handleGetFeedback(get(), env as Env, null);
+    const afterFirst = fetchMock.mock.calls.length;
     await handleGetFeedback(get(), env as Env, null);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // The point is that the second read goes nowhere, not how many requests the
+    // first one took to fail.
+    expect(fetchMock.mock.calls.length).toBe(afterFirst);
   });
 
   it('serves repeat requests from the edge cache', async () => {
     await handleGetFeedback(get(), env as Env, null);
+    const afterFirst = fetchMock.mock.calls.length;
     await handleGetFeedback(get(), env as Env, null);
-    // board + one profile batch + the space lookup's two, all on the first pass.
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock.mock.calls.length).toBe(afterFirst);
+    // Board, one profile batch, and two reads of the owner's PDS — the space
+    // record and the status collection — each resolving the PDS first. Only on
+    // a cold start: the space entry is cached for an hour, so the board's own
+    // five-minute misses re-resolve for the statuses alone.
+    expect(afterFirst).toBe(6);
+  });
+
+  /**
+   * The board API is not a reliable source for a post's status: on identical
+   * requests for one unchanged snapshot it returns `status: null` for a varying
+   * handful of posts. Untriaged reads as open, so a settled post kept surfacing
+   * under the board's Open filter. These pin the read to the moderator's own
+   * records, where the verdict is actually written.
+   */
+  describe('status', () => {
+    /** The whole world, with the owner's statuses under the test's control. */
+    function boardWith(
+      pages: Array<Record<string, unknown>>,
+      posts: Array<Record<string, unknown>> = [discussion({ status: null })]
+    ) {
+      fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+        const space = spaceLookup(input, []);
+        if (space) return space;
+        const statuses = statusLookup(input, pages);
+        if (statuses) return statuses;
+        if (String(input).includes('getProfiles')) {
+          return new Response(JSON.stringify({ profiles: [] }));
+        }
+        return new Response(JSON.stringify({ complete: true, posts }));
+      });
+    }
+
+    async function statusesOf(): Promise<Array<string | null>> {
+      const body = (await (await handleGetFeedback(get(), env as Env, null)).json()) as {
+        posts: Array<{ status: string | null }>;
+      };
+      return body.posts.map((post) => post.status);
+    }
+
+    it('reads a verdict the board payload dropped', async () => {
+      boardWith([{ records: [statusRecord(DISCUSSION_URI, 'implemented')] }]);
+      expect(await statusesOf()).toEqual(['implemented']);
+    });
+
+    it('keeps the newest verdict when the owner has changed their mind', async () => {
+      boardWith([
+        {
+          records: [
+            statusRecord(DISCUSSION_URI, 'implemented', {
+              rkey: '3statusb',
+              createdAt: '2026-09-09T12:00:00Z',
+            }),
+            statusRecord(DISCUSSION_URI, 'planned', {
+              rkey: '3statusa',
+              createdAt: '2026-09-02T12:00:00Z',
+            }),
+          ],
+        },
+      ]);
+      expect(await statusesOf()).toEqual(['implemented']);
+    });
+
+    it('settles same-instant verdicts on the rkey, which is a TID', async () => {
+      const at = '2026-09-09T12:00:00Z';
+      boardWith([
+        {
+          records: [
+            statusRecord(DISCUSSION_URI, 'planned', { rkey: '3statusa', createdAt: at }),
+            statusRecord(DISCUSSION_URI, 'declined', { rkey: '3statusb', createdAt: at }),
+          ],
+        },
+      ]);
+      expect(await statusesOf()).toEqual(['declined']);
+    });
+
+    it('walks the collection past its first page', async () => {
+      boardWith([
+        {
+          records: [statusRecord('at://did:plc:alice/app.userinput.discussion/other', 'planned')],
+          cursor: 'page2',
+        },
+        { records: [statusRecord(DISCUSSION_URI, 'declined', { rkey: '3statusz' })] },
+      ]);
+      expect(await statusesOf()).toEqual(['declined']);
+    });
+
+    it('reports a post the owner has never triaged as untriaged', async () => {
+      // Not the board payload's `implemented`: when the owner's repo can be
+      // read it answers for every post, and no record there means no verdict.
+      boardWith([{ records: [] }], [discussion({ status: { state: 'implemented' } })]);
+      expect(await statusesOf()).toEqual([null]);
+    });
+
+    it("falls back to the board's own copy when the owner's repo can't be read", async () => {
+      fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+        const space = spaceLookup(input, []);
+        if (space) return space;
+        if (String(input).includes('com.atproto.repo.listRecords')) {
+          return new Response('nope', { status: 503 });
+        }
+        if (String(input).includes('getProfiles')) {
+          return new Response(JSON.stringify({ profiles: [] }));
+        }
+        return new Response(
+          JSON.stringify({ complete: true, posts: [discussion({ status: { state: 'closed' } })] })
+        );
+      });
+      expect(await statusesOf()).toEqual(['closed']);
+    });
   });
 
   it('publishes the vocabulary a post is validated against', async () => {

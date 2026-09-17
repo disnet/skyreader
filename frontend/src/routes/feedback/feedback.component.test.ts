@@ -320,8 +320,10 @@ async function submitPost(title: string) {
 }
 
 /**
- * The fixture board plus the two settled posts the status switch exists for:
- * everything else on this board is still open.
+ * The fixture board plus the three settled posts the status switch exists for:
+ * everything else on this board is still open. One of each settled state the
+ * board actually uses — `closed` among them, which the open scope used to let
+ * straight through.
  */
 function boardWithClosed(): FeedbackBoard {
   const settled = structuredClone(board.posts[1]);
@@ -336,6 +338,7 @@ function boardWithClosed(): FeedbackBoard {
         status: 'implemented',
       },
       { ...settled, uri: 'at://did:plc:dan/x/five', title: 'Not happening', status: 'declined' },
+      { ...settled, uri: 'at://did:plc:dan/x/six', title: 'Done with it', status: 'closed' },
     ],
   };
 }
@@ -416,17 +419,17 @@ describe('the feedback board', () => {
     expect(texts('.post h3')).toEqual(['Add focus mode', 'Fix feed refresh', 'An untagged wish']);
 
     await click(chip('Filter by status', 'Closed'));
-    expect(texts('.post h3')).toEqual(['Already shipped', 'Not happening']);
+    expect(texts('.post h3')).toEqual(['Already shipped', 'Not happening', 'Done with it']);
 
     await click(chip('Filter by status', 'All'));
-    expect(texts('.post h3')).toHaveLength(5);
+    expect(texts('.post h3')).toHaveLength(6);
   });
 
   it('offers the same three from the narrow-width dropdown', async () => {
     getFeedbackBoard.mockImplementationOnce(async () => boardWithClosed());
     await render();
     await choose('Status', 'Closed');
-    expect(texts('.post h3')).toEqual(['Already shipped', 'Not happening']);
+    expect(texts('.post h3')).toEqual(['Already shipped', 'Not happening', 'Done with it']);
     // Both control sets read the same state.
     expect(chip('Filter by status', 'Closed').getAttribute('aria-pressed')).toBe('true');
   });

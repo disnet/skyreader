@@ -21,6 +21,7 @@
     filterByStatusScope,
     hasClosedPosts,
     postRef,
+    postStatus,
     sortFeedbackPosts,
     statusLabel,
     type StatusScope,
@@ -463,7 +464,9 @@
         <a href={post.url} target="_blank" rel="noopener noreferrer">{post.title}</a>
       </h3>
       {#each post.tags as tag}<span class="tag">{typeLabel(tag)}</span>{/each}
-      {#if post.status}<span class="status">{statusLabel(post.status)}</span>{/if}
+      <!-- Labelled off the same normalized state the filter reads, so the pill
+           and the Open/Closed split can never disagree about a post. -->
+      {#if post.status?.trim()}<span class="status">{statusLabel(postStatus(post))}</span>{/if}
     </div>
     {#if post.body}
       <p class="body" class:open={openBodies[post.uri]} use:clampProbe={post}>{post.body}</p>

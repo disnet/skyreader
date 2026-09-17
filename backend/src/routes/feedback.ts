@@ -10,6 +10,14 @@ const PROFILE_BATCH_SIZE = 25;
 const DISCUSSION_COLLECTION = 'app.userinput.discussion';
 const UPVOTE_COLLECTION = 'app.userinput.upvote';
 const SPACE_COLLECTION = 'app.userinput.space';
+const STATUS_COLLECTION = 'app.userinput.status';
+// A page of statuses, and the most pages one board read will walk. The owner
+// writes one record per verdict and never deletes the ones it supersedes, so
+// this collection grows with triage rather than with the board; the cap is
+// there so a board triaged for years can't turn one reader's request into an
+// unbounded crawl of the owner's repo.
+const STATUS_PAGE_SIZE = 100;
+const STATUS_MAX_PAGES = 10;
 const USER_AGENT = 'Skyreader/1.0 feedback-board';
 const TITLE_MAX = 300;
 const BODY_MAX = 10000;
@@ -137,6 +145,74 @@ async function loadProfiles(dids: string[]): Promise<Map<string, UnknownRecord>>
   return profiles;
 }
 
+/**
+ * Every post's status, read from the board owner's own repo rather than taken
+ * off the board payload.
+ *
+ * The board API drops them. On identical requests for the same snapshot
+ * (`indexedAt` unchanged) it returns `status: null` for a varying handful of
+ * posts — six of twenty-nine in one sample, a different six in the next — so a
+ * post the owner marked `implemented` months ago arrives untriaged often enough
+ * to be noticed. Untriaged reads as open, which is how a finished post kept
+ * turning up under the board's Open filter: nothing the filter could fix,
+ * because the verdict never reached it.
+ *
+ * `app.userinput.status` is where that verdict actually lives — one record per
+ * change, in the moderator's repo, pointing at the post it judges. This board
+ * has exactly one moderator and it is us (`USERINPUT_SPACE_DID` is the space
+ * owner), so listing that one collection covers every post on it.
+ *
+ * Returns null — not an empty map — when the repo can't be read, so the caller
+ * can fall back to whatever the board payload carried instead of publishing a
+ * board on which nothing has ever been triaged.
+ */
+async function loadStatuses(env: Env): Promise<Map<string, string> | null> {
+  try {
+    const pdsUrl = await resolvePdsUrl(env.USERINPUT_SPACE_DID);
+    if (!pdsUrl) throw new Error(`Could not resolve a PDS for ${env.USERINPUT_SPACE_DID}`);
+    const latest = new Map<string, { rank: string; state: string }>();
+    let cursor = '';
+    for (let page = 0; page < STATUS_MAX_PAGES; page += 1) {
+      const url = new URL('/xrpc/com.atproto.repo.listRecords', pdsUrl);
+      url.searchParams.set('repo', env.USERINPUT_SPACE_DID);
+      url.searchParams.set('collection', STATUS_COLLECTION);
+      url.searchParams.set('limit', String(STATUS_PAGE_SIZE));
+      if (cursor) url.searchParams.set('cursor', cursor);
+      const response = await fetch(url, {
+        headers: { 'User-Agent': USER_AGENT },
+        signal: AbortSignal.timeout(8000),
+      });
+      const text = await response.text();
+      if (!response.ok) throw new Error(`Status lookup returned ${response.status}: ${text}`);
+      const payload = record(JSON.parse(text));
+      if (!Array.isArray(payload.records)) throw new Error('Status response is malformed');
+      for (const entry of payload.records.map(record)) {
+        const value = record(entry.value);
+        const subject = string(record(value.subject).uri);
+        const state = string(value.state);
+        if (!subject || !state) continue;
+        // Newest wins, the way the board's own read of these does: changing a
+        // verdict writes another record rather than editing the one before, so
+        // a post that went planned → implemented has both. `createdAt` is the
+        // record's own claim and two can carry the same instant, so the rkey —
+        // a TID, and monotonic — settles the tie.
+        const rank = `${string(value.createdAt)}\u0000${string(entry.uri).split('/').at(-1) ?? ''}`;
+        const held = latest.get(subject);
+        if (!held || rank > held.rank) latest.set(subject, { rank, state });
+      }
+      cursor = string(payload.cursor);
+      if (!cursor || payload.records.length === 0) break;
+    }
+    return new Map([...latest].map(([subject, held]) => [subject, held.state]));
+  } catch (error) {
+    // A board nobody can read the verdicts for is still a readable board: every
+    // post falls back to the status the board payload carried, which is what
+    // this endpoint published before it read them here at all.
+    log.warn('feedback_statuses_failed', serializeError(error));
+    return null;
+  }
+}
+
 export async function handleGetFeedback(
   request: Request,
   env: Env,
@@ -164,10 +240,15 @@ export async function handleGetFeedback(
       `/api/board/${env.USERINPUT_SPACE_DID}/${env.USERINPUT_SPACE_RKEY}`,
       apiBase
     );
-    const upstream = await fetch(boardUrl, {
+    const boardFetch = fetch(boardUrl, {
       headers: { 'User-Agent': 'Skyreader/1.0 feedback-board' },
       signal: AbortSignal.timeout(8000),
     });
+    // Started alongside the board fetch rather than after it: it is a second
+    // round trip on the read path and needs nothing from the board's response.
+    // Kicked off second so the board stays the first request this handler makes.
+    const statusesFetch = loadStatuses(env);
+    const upstream = await boardFetch;
     const text = await upstream.text();
     if (!upstream.ok) throw new Error(`userinput.app returned ${upstream.status}: ${text}`);
     const payload = record(JSON.parse(text));
@@ -176,6 +257,10 @@ export async function handleGetFeedback(
     const visible = payload.posts.map(record).filter((post) => !post.hidden && !post.banned);
     const dids = [...new Set(visible.map((post) => string(post.authorDid)).filter(Boolean))];
     const profiles = await loadProfiles(dids);
+    // The owner's repo, when it could be read, is the whole truth about status —
+    // absence there means untriaged, not dropped in transit, so it answers for
+    // every post rather than only for the ones it happens to have a verdict on.
+    const statuses = await statusesFetch;
     const posts = visible
       .map((post) => {
         const value = record(post.value);
@@ -202,7 +287,7 @@ export async function handleGetFeedback(
           createdAt: string(value.createdAt),
           votes: { up: number(votes.up), down: number(votes.down), net: number(votes.net) },
           replyCount: number(post.replyCount),
-          status: string(status.state) || null,
+          status: statuses ? (statuses.get(uri) ?? null) : string(status.state) || null,
         };
       })
       .sort(
