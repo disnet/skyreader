@@ -129,6 +129,17 @@ test.describe('Collapsed card body', () => {
   // thing still forcing that work — this asserts it still runs once the card is
   // actually open, and that the body renders as HTML rather than escaped text.
   test('still expands, measures truncation, and renders HTML', async ({ authedPage, testUser }) => {
+    // Expand-all is the product default. This scenario specifically exercises
+    // the collapsed-card path, so opt out before the app initializes rather
+    // than asserting against a state the default configuration never enters.
+    await authedPage.addInitScript(() => {
+      const stored = localStorage.getItem('skyreader-preferences');
+      const preferences = stored ? JSON.parse(stored) : {};
+      localStorage.setItem(
+        'skyreader-preferences',
+        JSON.stringify({ ...preferences, expandAllItems: false })
+      );
+    });
     await seedSubscription(testUser, { feedUrl: FEED_URL, title: FEED_TITLE });
     await seedFeedItems(
       FEED_URL,
