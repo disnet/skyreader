@@ -4,11 +4,17 @@
   import Icon from '$lib/components/Icon.svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
+  import {
+    openSaveAnywhere,
+    SAVE_ANYWHERE_LABEL,
+    saveAnywhereLabel,
+  } from '$lib/utils/saveAnywhere';
 
   let isOpen = $state(false);
   let menuRef: HTMLDivElement | null = $state(null);
   let buttonRef: HTMLButtonElement | null = $state(null);
   let menuPosition = $state<{ top: number; left: number }>({ top: 0, left: 0 });
+  let saveAnywhereActionLabel = $state(SAVE_ANYWHERE_LABEL);
 
   function updateMenuPosition() {
     if (!buttonRef) return;
@@ -79,6 +85,7 @@
   }
 
   onMount(() => {
+    saveAnywhereActionLabel = saveAnywhereLabel(window.navigator.userAgent);
     document.addEventListener('click', handleClickOutside);
     document.addEventListener('keydown', handleKeydown);
   });
@@ -156,11 +163,11 @@
           </button>
           <button
             class="add-menu-item"
-            onclick={(e) => handleItemClick(() => goto('/settings#save-anywhere'), e)}
+            onclick={(e) => handleItemClick(openSaveAnywhere, e)}
             role="menuitem"
           >
             <span class="item-icon"><Icon name="share" size={16} /></span>
-            Save from anywhere
+            {saveAnywhereActionLabel}
           </button>
         {/if}
       </div>

@@ -9,6 +9,7 @@
   import { isGrantedSupporter } from '$lib/utils/tier';
   import { supporterLimits } from '$lib/constants/tierLimits';
   import { docsUrl } from '$lib/constants/docs';
+  import { CHROME_EXTENSION_URL, FIREFOX_EXTENSION_URL } from '$lib/utils/saveAnywhere';
   import {
     preferences,
     type ArticleFont,
@@ -74,7 +75,6 @@
   const subscribeBookmarklet = `javascript:void(window.open('${appOrigin}/subscribe?url='+encodeURIComponent(location.href)))`;
 
   let copiedKey = $state<string | null>(null);
-  let bookmarkletHint = $state(false);
 
   async function copyText(text: string, key: string) {
     try {
@@ -89,10 +89,10 @@
   }
 
   // A bookmarklet is meant to be dragged to the bookmarks bar, not clicked here:
-  // the app's CSP blocks the javascript: navigation anyway. Nudge the user.
-  function showDragHint(e: MouseEvent) {
+  // the app's CSP blocks the javascript: navigation anyway. The hint above the
+  // chips says so, so a click just does nothing rather than navigating.
+  function preventBookmarkletClick(e: MouseEvent) {
     e.preventDefault();
-    bookmarkletHint = true;
   }
 
   // PDS Sync state
@@ -1203,75 +1203,109 @@
     <h2>Save from anywhere</h2>
     <p>Save an article or subscribe to a feed without leaving the page you're reading.</p>
 
-    <h3 class="subhead">On your computer</h3>
-    <p class="hint-text">Drag a button to your bookmarks bar, then click it on any page:</p>
-    <div class="bookmarklet-row">
-      <a class="bookmarklet" href={saveBookmarklet} onclick={showDragHint}>Save to Skyreader</a>
-      <a class="bookmarklet" href={subscribeBookmarklet} onclick={showDragHint}>
-        Subscribe in Skyreader
-      </a>
-    </div>
-    {#if bookmarkletHint}
-      <p class="hint-text">Drag these up to your bookmarks bar. Clicking here won't run them.</p>
-    {/if}
-    <div class="button-row">
-      <button class="btn btn-secondary" onclick={() => copyText(saveBookmarklet, 'save')}>
-        {copiedKey === 'save' ? 'Copied' : 'Copy Save link'}
-      </button>
-      <button class="btn btn-secondary" onclick={() => copyText(subscribeBookmarklet, 'subscribe')}>
-        {copiedKey === 'subscribe' ? 'Copied' : 'Copy Subscribe link'}
-      </button>
-    </div>
-
-    <h3 class="subhead">On iPhone or iPad</h3>
-    {#if APPLE_SAVE_SHORTCUT_URL || APPLE_SUBSCRIBE_SHORTCUT_URL}
-      <p class="hint-text">Add a shortcut, then use it from any Share Sheet:</p>
+    <div class="platform">
+      <h3 class="subhead">On your computer</h3>
+      <p class="hint-text">
+        The extension saves the page you're on in one click, including articles the reader can't
+        fetch on its own.
+      </p>
       <div class="button-row">
-        {#if APPLE_SAVE_SHORTCUT_URL}
-          <a
-            class="btn btn-secondary"
-            href={APPLE_SAVE_SHORTCUT_URL}
-            target="_blank"
-            rel="noopener noreferrer">Add Save shortcut</a
-          >
-        {/if}
-        {#if APPLE_SUBSCRIBE_SHORTCUT_URL}
-          <a
-            class="btn btn-secondary"
-            href={APPLE_SUBSCRIBE_SHORTCUT_URL}
-            target="_blank"
-            rel="noopener noreferrer">Add Subscribe shortcut</a
-          >
-        {/if}
+        <a
+          class="btn btn-secondary"
+          href={CHROME_EXTENSION_URL}
+          target="_blank"
+          rel="noopener noreferrer">Chrome extension</a
+        >
+        <a
+          class="btn btn-secondary"
+          href={FIREFOX_EXTENSION_URL}
+          target="_blank"
+          rel="noopener noreferrer">Firefox extension</a
+        >
       </div>
-    {:else}
-      <details class="shortcut-steps">
-        <summary>Build a Share Sheet shortcut</summary>
-        <ol>
-          <li>Open the <strong>Shortcuts</strong> app and create a new shortcut.</li>
-          <li>
-            In its settings, turn on <strong>Show in Share Sheet</strong> and set the type to
-            <strong>URLs</strong>.
-          </li>
-          <li>Add <strong>Get URLs from Input</strong>, set to Shortcut Input.</li>
-          <li>Add <strong>URL Encode</strong> (Encode) on that URL.</li>
-          <li>
-            Add <strong>Text</strong>: <code>{appOrigin}/save?url=</code> followed by the Encoded
-            URL. Use <code>/subscribe?url=</code> instead for a feed shortcut.
-          </li>
-          <li>Add <strong>Open URLs</strong> with that text.</li>
-        </ol>
-        <p class="hint-text">
-          Share any page, pick your shortcut, and it opens here and saves while you stay logged in.
-        </p>
-      </details>
-    {/if}
 
-    <h3 class="subhead">On Android</h3>
-    <p class="hint-text">
-      Install Skyreader to your home screen and it appears right in the system share sheet. Share
-      any page, pick Skyreader, and it saves the article. No setup needed.
-    </p>
+      <details class="disclosure">
+        <summary>Use a bookmarklet instead</summary>
+        <p class="hint-text">
+          Drag either button to your bookmarks bar, then click it on any page. Clicking them here
+          won't work.
+        </p>
+        <div class="bookmarklet-row">
+          <a class="bookmarklet" href={saveBookmarklet} onclick={preventBookmarkletClick}>
+            Save to Skyreader
+          </a>
+          <a class="bookmarklet" href={subscribeBookmarklet} onclick={preventBookmarkletClick}>
+            Subscribe in Skyreader
+          </a>
+        </div>
+        <div class="button-row">
+          <button class="btn btn-secondary" onclick={() => copyText(saveBookmarklet, 'save')}>
+            {copiedKey === 'save' ? 'Copied' : 'Copy Save link'}
+          </button>
+          <button
+            class="btn btn-secondary"
+            onclick={() => copyText(subscribeBookmarklet, 'subscribe')}
+          >
+            {copiedKey === 'subscribe' ? 'Copied' : 'Copy Subscribe link'}
+          </button>
+        </div>
+      </details>
+    </div>
+
+    <div class="platform">
+      <h3 class="subhead">On iPhone or iPad</h3>
+      {#if APPLE_SAVE_SHORTCUT_URL || APPLE_SUBSCRIBE_SHORTCUT_URL}
+        <p class="hint-text">Add a shortcut, then use it from any Share Sheet.</p>
+        <div class="button-row">
+          {#if APPLE_SAVE_SHORTCUT_URL}
+            <a
+              class="btn btn-secondary"
+              href={APPLE_SAVE_SHORTCUT_URL}
+              target="_blank"
+              rel="noopener noreferrer">Add Save shortcut</a
+            >
+          {/if}
+          {#if APPLE_SUBSCRIBE_SHORTCUT_URL}
+            <a
+              class="btn btn-secondary"
+              href={APPLE_SUBSCRIBE_SHORTCUT_URL}
+              target="_blank"
+              rel="noopener noreferrer">Add Subscribe shortcut</a
+            >
+          {/if}
+        </div>
+      {:else}
+        <p class="hint-text">
+          Build a Share Sheet shortcut once, then use it from any app. It opens here and saves while
+          you stay logged in.
+        </p>
+        <details class="disclosure shortcut-steps">
+          <summary>Show the steps</summary>
+          <ol>
+            <li>Open the <strong>Shortcuts</strong> app and create a new shortcut.</li>
+            <li>
+              In its settings, turn on <strong>Show in Share Sheet</strong> and set the type to
+              <strong>URLs</strong>.
+            </li>
+            <li>Add <strong>Get URLs from Input</strong>, set to Shortcut Input.</li>
+            <li>Add <strong>URL Encode</strong> (Encode) on that URL.</li>
+            <li>
+              Add <strong>Text</strong>: <code>{appOrigin}/save?url=</code> followed by the Encoded
+              URL. Use <code>/subscribe?url=</code> instead for a feed shortcut.
+            </li>
+            <li>Add <strong>Open URLs</strong> with that text.</li>
+          </ol>
+        </details>
+      {/if}
+    </div>
+
+    <div class="platform">
+      <h3 class="subhead">On Android</h3>
+      <p class="hint-text">
+        Install Skyreader to your home screen and it appears right in the system share sheet. Share
+        any page, pick Skyreader, and it saves the article. No setup needed.
+      </p>
+    </div>
   </section>
 
   <section class="card">
@@ -1755,11 +1789,43 @@
     margin: 0 0 0.5rem;
   }
 
+  /* "Save from anywhere" is three independent setups, not one procedure. Giving
+     each platform its own block on the same divider rhythm as .about-links /
+     .sync-toggle-section stops them reading as one run-on column of buttons —
+     which is what they were, with the computer setup alone stacking three
+     different button treatments under three paragraphs. */
+  .platform {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--color-border);
+  }
+
+  .platform .subhead {
+    margin-top: 0;
+  }
+
+  /* Secondary paths (the bookmarklet, the manual Shortcuts recipe) fold away so
+     each block shows one recommended action at rest. */
+  .disclosure {
+    margin-top: 1rem;
+  }
+
+  .disclosure summary {
+    cursor: pointer;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+    color: var(--color-primary);
+  }
+
+  .disclosure summary + * {
+    margin-top: 0.75rem;
+  }
+
   .bookmarklet-row {
     display: flex;
     flex-wrap: wrap;
     gap: 0.5rem;
-    margin-bottom: 0.5rem;
+    margin-bottom: 0.75rem;
   }
 
   .bookmarklet {
@@ -1780,14 +1846,8 @@
     cursor: grabbing;
   }
 
-  .shortcut-steps summary {
-    cursor: pointer;
-    font-weight: var(--weight-medium);
-    color: var(--color-primary);
-  }
-
   .shortcut-steps ol {
-    margin: 0.75rem 0;
+    margin: 0.75rem 0 0;
     padding-left: 1.25rem;
     display: flex;
     flex-direction: column;
