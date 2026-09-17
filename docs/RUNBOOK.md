@@ -144,10 +144,11 @@ a smoke check fails right after a hand deploy.
 
 ### Feed proxy (`fly secrets set <NAME>=...`)
 
-| Name                 | Required | Purpose                                         |
-| -------------------- | -------- | ----------------------------------------------- |
-| `SENTRY_DSN`         | no       | Already provisioned by `fly ext sentry create`. |
-| `WARM_HEARTBEAT_URL` | no       | Warmer dead-man ping URL.                       |
+| Name                 | Required | Purpose                                                                                                                                                                            |
+| -------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SENTRY_DSN`         | no       | Already provisioned by `fly ext sentry create`.                                                                                                                                    |
+| `WARM_HEARTBEAT_URL` | no       | Warmer dead-man ping URL.                                                                                                                                                          |
+| `WEB_BOT_AUTH_KEY`   | no       | Crawler's private Ed25519 JWK (Web Bot Auth). Same value on both apps; unset ⇒ fetches are unsigned. `bun run keygen:web-bot-auth`; see `feed-proxy/README.md` "Crawler identity". |
 
 `GIT_COMMIT_SHA` is a Docker build arg passed by CI, surfaced on `/health`.
 
@@ -459,8 +460,8 @@ prints `[Bun.serve]: request timed out after N seconds` when it cuts one off —
 for it in `fly logs` when a caller reports a bare edge 502.
 
 That budget is the sum of **every** stage that can block, not just the fetch.
-`/extract`'s stages: waiting for a concurrency permit (5s), the honest-UA probe
-(10s), the browser-UA retry (20s), then the Defuddle parse. Each is capped, which
+`/extract`'s stages: waiting for a concurrency permit (5s), the upstream fetch
+(20s), then the Defuddle parse. Each is capped, which
 is what makes the sum mean anything — an uncapped stage puts the route back under
 the ceiling however high `idleTimeout` goes. The queue wait was the uncapped one:
 the semaphore bounded how many callers could wait, not how long, so a caller behind
@@ -469,8 +470,8 @@ four slow extractions waited past the socket and died as a bare edge 502 with th
 (`Overloaded: no capacity within 5000ms`, HTTP 503).
 
 A `[Proxy] /extract <url>: Timeout after Ns` line reports the time that actually
-elapsed, so N tells you which stage ran out: ~10s is the honest probe, ~30s the
-probe plus the browser-UA retry.
+elapsed, so N tells you which stage ran out: ~20s is the fetch, ~25s the permit
+wait plus the fetch.
 
 **A 5xx body does not survive the hop from the proxy to the Worker.** The caller
 receives a bare `error code: 502` from the edge instead, whatever the app wrote.

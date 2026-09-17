@@ -27,6 +27,8 @@ import type { LaneId } from './lanes';
 import { normalizeArticleUrl } from './url-normalize';
 import { Semaphore, OverloadError } from './semaphore';
 import { safeFetch } from './ssrf-guard';
+import type { RobotsPolicy } from './robots';
+import { signRequestHeaders, signedDirectory, type WebBotAuth } from './web-bot-auth';
 import { reportError, VERSION } from './instrument';
 
 export interface AppConfig {
@@ -102,6 +104,15 @@ export interface AppConfig {
   // Whether this proxy pushes its item log into a paired Worker's D1 (INGEST_URL
   // is set). Reported by /stats; the loops themselves live in index.ts.
   ingestEnabled?: boolean;
+  // robots.txt policy for the crawl path (fetchParseAndCache). Unset = the crawl
+  // ignores robots.txt — the historical behaviour, and what unit tests get.
+  // index.ts wires a RobotsPolicy in unless ROBOTS_ENABLED=false. See robots.ts
+  // for scope (crawl only; /extract and /discover are user-initiated and exempt).
+  robots?: RobotsPolicy | null;
+  // The crawler's Web Bot Auth identity (web-bot-auth.ts). Set ⇒ every honest-UA
+  // upstream fetch is signed and GET /http-message-signatures-directory serves
+  // the public key. Unset ⇒ unsigned (local/dev, or before the key is provisioned).
+  webBotAuth?: WebBotAuth | null;
 }
 
 export interface CacheRow {
@@ -179,15 +190,17 @@ type DiscoverResult =
   | { kind: 'blocked'; error: string }
   | { kind: 'error'; error: string };
 
-// Our honest fetcher identity, used for the first attempt of every upstream fetch.
-// We don't impersonate Googlebot ("like FeedFetcher-Google"): CDNs such as Akamai
-// (used by cbc.ca) verify Google crawlers by reverse-DNS and 403 any non-Google IP
-// that claims to be one. But the honest UA is itself a problem on those same CDNs —
-// their bot managers gate on the UA's *shape* (a parenthetical comment, an embedded
-// URL, or the token "bot" all read as non-browser), so this string is frequently
-// blocked. When it's refused we transparently retry with BROWSER_FALLBACK_UA; see
-// fetchWithBotFallback.
-const HONEST_UA = 'Skyreader/1.0 (+https://skyreader.app)';
+// Our fetcher identity, sent on EVERY upstream fetch — there is no other one.
+// Some CDN bot managers (Akamai on cbc.ca, verified) gate on the UA's *shape*: a
+// parenthetical, an embedded URL, or the token "bot" all read as non-browser and
+// get a 403. We used to retry those with a spoofed Chrome UA; that was removed
+// (2026-09) because it is exactly the "evading website owner preferences" that
+// costs a crawler its Verified Bot standing, and the browser extension is the
+// honest path for a page a reader wants that a site won't serve to us. What
+// makes the honest identity *recognisable* instead of merely honest is the Web
+// Bot Auth signature every fetch now carries (web-bot-auth.ts); as more
+// verifiers adopt the standard, more of these 403s go away on their own.
+export const HONEST_UA = 'Skyreader/1.0 (+https://skyreader.app)';
 
 const FETCH_HEADERS = {
   'User-Agent': HONEST_UA,
@@ -327,15 +340,50 @@ export function describeFetchFailure(
   return { error: `Failed to fetch ${host}: HTTP ${status}`, blocked: false };
 }
 
+// robots.txt said no. Carries the same marker as a 403 block so the reader UI
+// ("Blocked by site") and the admin feed-health view treat it alike — from the
+// reader's side both are "this site doesn't want automated fetching".
+export function describeRobotsDisallow(url: string, pattern?: string): string {
+  let host: string;
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    host = url;
+  }
+  const rule = pattern ? ` via "Disallow: ${pattern}"` : '';
+  return `${host} is ${BLOCKED_MESSAGE_MARKER} (its robots.txt disallows Skyreader${rule})`;
+}
+
+// robots.txt said no to a *redirect target*, mid-fetch. The pre-fetch check can
+// only speak for the URL we hold; where that URL points is a separate site's
+// decision, so the verdict arrives as a throw from inside fetchUpstream and is
+// caught back into the same disallow bookkeeping as the pre-fetch case.
+export class RobotsDisallowedError extends Error {
+  constructor(
+    readonly url: string,
+    readonly matchedPattern?: string
+  ) {
+    super(describeRobotsDisallow(url, matchedPattern));
+    this.name = 'RobotsDisallowedError';
+  }
+}
+
 const BASE_DELAY_MS = 5 * 60 * 1000; // 5 minutes
 const MAX_DELAY_MS = 24 * 60 * 60 * 1000; // 24 hours
 const PERMANENT_ERROR_DELAY_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+// A robots.txt disallow is re-tried daily rather than weekly: that is the
+// RobotsPolicy's own cache TTL, so a lifted rule takes effect on the next retry.
+const ROBOTS_DISALLOW_RETRY_MS = 24 * 60 * 60 * 1000;
+// Longest a crawl worker will park waiting for its Crawl-delay turn on a host.
+// Past this the fetch is deferred to the next cycle instead (see
+// RobotsPolicy.reserveSlot) so one slow-walking host can't hold warm slots.
+const CRAWL_DELAY_MAX_WAIT_MS = 15 * 1000;
 const MAX_RECOVERABLE_ERRORS = 5;
 const FETCH_TIMEOUT_MS = 30 * 1000; // 30 seconds
-// Tighter budget for /extract's browser-UA retry. The route is interactive (a
+// Tighter budget for /extract's upstream fetch. The route is interactive (a
 // reader is watching a save spin) and its worst case has to fit under the
-// server's idleTimeout with room for the parse: honest probe (10s) + this retry
-// + Defuddle. Raising it means raising idleTimeout in index.ts first.
+// server's idleTimeout with room for the parse: permit wait + this fetch +
+// Defuddle. Raising it means raising idleTimeout in index.ts first.
 const EXTRACT_FETCH_TIMEOUT_MS = 20 * 1000; // 20 seconds
 // How long an /extract may wait for a permit before it is shed. The semaphore's
 // queue bounds how MANY callers wait, not how long — without a deadline, a caller
@@ -392,33 +440,6 @@ export const FEED_PARSER_VERSION = 2;
 //   2: restoreCollapsedMathML added
 export const EXTRACTOR_VERSION = 2;
 
-// A real desktop-Chrome User-Agent, used only as a fallback when HONEST_UA is
-// refused. Verified against cbc.ca (Akamai): a browser UA returns 200 straight
-// through Bun's fetch, so it's the UA string alone — not the TLS/JA3 fingerprint —
-// that these CDNs gate on, which is why swapping just this header is sufficient.
-const BROWSER_FALLBACK_UA =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
-
-// First-attempt timeout for the honest-UA probe. Hostile CDNs often don't 403 —
-// they silently black-hole the connection so the fetch hangs to the full timeout.
-// Capping the honest probe well below FETCH_TIMEOUT_MS means a black-hole costs
-// ~this long, not 30s, before we retry with a browser UA. Kept comfortably above a
-// healthy feed's latency so normal-but-slow feeds aren't needlessly retried.
-const HONEST_UA_PROBE_TIMEOUT_MS = 10 * 1000; // 10 seconds
-
-// Per-host memory of UA-blocking. A host behind a bot-managing CDN refuses
-// HONEST_UA on *every* fetch — and the silent-black-hole case costs a full
-// HONEST_UA_PROBE_TIMEOUT_MS each time before we fall back. Once we've learned a
-// host blocks us, we skip the doomed honest probe and go straight to the browser
-// UA, so that 10s penalty is paid at most once per TTL instead of on every refresh.
-// Keyed by hostname (bot policy is per-host, not per-path). In-memory and
-// per-machine: a restart just re-learns on the next fetch. Entries expire so a host
-// that drops its bot wall is eventually re-probed honestly, and the map is size-
-// capped so it can't grow without bound.
-const HOST_BLOCK_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
-const HOST_BLOCK_MAX_ENTRIES = 1000;
-const uaBlockedHosts = new Map<string, number>(); // host -> expires-at (epoch ms)
-
 function hostOf(url: string): string | null {
   try {
     return new URL(url).hostname;
@@ -427,113 +448,51 @@ function hostOf(url: string): string | null {
   }
 }
 
-function isHostUaBlocked(host: string | null, now: number): boolean {
-  if (!host) return false;
-  const expires = uaBlockedHosts.get(host);
-  if (expires === undefined) return false;
-  if (now >= expires) {
-    uaBlockedHosts.delete(host); // lazy expiry on access
-    return false;
-  }
-  return true;
+// The crawler's Web Bot Auth identity, if provisioned (see web-bot-auth.ts).
+// Module-level: fetchUpstream is called from module-level helpers (runDiscover)
+// as well as from inside createApp, so a config field alone can't reach every
+// caller. createApp sets it from AppConfig.webBotAuth; tests use the setter.
+let webBotAuth: WebBotAuth | null = null;
+export function configureWebBotAuth(auth: WebBotAuth | null): void {
+  webBotAuth = auth;
 }
 
-function rememberHostUaBlocked(host: string | null, now: number): void {
-  if (!host) return;
-  // Re-insert to refresh both the TTL and the insertion-order recency used for
-  // eviction. When at capacity, drop the oldest-inserted entry (Map preserves
-  // insertion order, so the first key is the oldest).
-  uaBlockedHosts.delete(host);
-  if (uaBlockedHosts.size >= HOST_BLOCK_MAX_ENTRIES) {
-    const oldest = uaBlockedHosts.keys().next().value;
-    if (oldest !== undefined) uaBlockedHosts.delete(oldest);
-  }
-  uaBlockedHosts.set(host, now + HOST_BLOCK_TTL_MS);
-}
-
-// Test seam: clear the learned-block memory between cases (module-level state).
-export function __resetUaBlockMemoryForTests(): void {
-  uaBlockedHosts.clear();
-}
-
-// Fetch an upstream URL identifying honestly (HONEST_UA), transparently retrying
-// once with a browser UA when the honest attempt is blocked — either an explicit
-// 403 or a silent black-hole (timeout / connection error on the short probe). A
-// host learned to block the honest UA skips the honest probe entirely on later
-// fetches (see uaBlockedHosts). `headers` carries the caller's headers (incl.
-// HONEST_UA and any conditional-request headers); only the User-Agent and
-// per-attempt timeout differ between the two attempts. Returns the final Response
-// unchanged for the caller to classify; if the browser-UA attempt also fails, its
-// error propagates (and is classified as a network/timeout error exactly as before
-// this fallback existed). `opts.now` is an injectable clock for deterministic tests.
-export async function fetchWithBotFallback(
+// Fetch an upstream URL as ourselves: HONEST_UA (already in `headers`, along
+// with any conditional-request headers) plus the Web Bot Auth signature when an
+// identity is configured. One attempt, one identity — a 403 is returned as-is
+// for the caller to classify as a block, never retried under another name.
+// A timeout or connection error propagates (classified as a network error by
+// the callers). `opts.now` is an injectable clock for deterministic signatures.
+//
+// Redirects (followed by safeFetch, which re-validates each hop) are signed
+// per hop, not once: the signature covers @authority, so replaying the first
+// hop's headers at the redirect target would arrive as a *failed* signature —
+// strictly worse than an unsigned request. `opts.onRedirect` lets a caller
+// re-apply its own per-URL policy (the crawl uses it for robots.txt) to each
+// target before it is fetched; throwing from it aborts the chain.
+export async function fetchUpstream(
   url: string,
   headers: Record<string, string>,
-  opts: { probeTimeoutMs?: number; fetchTimeoutMs?: number; now?: number } = {}
+  opts: {
+    fetchTimeoutMs?: number;
+    now?: Date;
+    onRedirect?: (url: string) => Promise<void> | void;
+  } = {}
 ): Promise<Response> {
-  const probeTimeoutMs = opts.probeTimeoutMs ?? HONEST_UA_PROBE_TIMEOUT_MS;
   const fetchTimeoutMs = opts.fetchTimeoutMs ?? FETCH_TIMEOUT_MS;
-  const now = opts.now ?? Date.now();
-  const host = hostOf(url);
-
-  // Browser-UA fetch — both the fallback and the fast path for known UA-blockers.
-  const browserFetch = (): Promise<Response> =>
-    safeFetch(url, {
-      headers: { ...headers, 'User-Agent': BROWSER_FALLBACK_UA },
-      signal: AbortSignal.timeout(fetchTimeoutMs),
-    });
-
-  // Known UA-blocker: skip the doomed honest probe (it would just burn
-  // probeTimeoutMs) and go straight to the browser UA.
-  if (isHostUaBlocked(host, now)) {
-    return browserFetch();
-  }
-
-  // Attempt 1: honest UA. The short probe budget covers only the wait for
-  // response headers, which is what a silent black-hole stalls; once headers
-  // arrive the deadline widens to the full fetch budget. Callers stream the body
-  // after this function returns, so leaving the probe deadline on it would abort
-  // a large-but-healthy page mid-download — past the fallback, as an error no
-  // retry can absorb.
-  const probe = new AbortController();
-  const abortAsTimeout = () =>
-    probe.abort(new DOMException('The operation timed out.', 'TimeoutError'));
-  let deadline = setTimeout(abortAsTimeout, probeTimeoutMs);
-  try {
-    const res = await safeFetch(url, { headers, signal: probe.signal });
-    // Only a 403 is treated as a block worth retrying; every other status
-    // (200/304/404/5xx) is a real answer the caller should handle as-is.
-    if (!isBlockedStatus(res.status)) {
-      clearTimeout(deadline);
-      // Not a black hole: give the body the full budget. Unref'd because nothing
-      // here can observe the caller finishing the read, and a fetch that has
-      // already completed ignores the abort.
-      deadline = setTimeout(abortAsTimeout, fetchTimeoutMs);
-      deadline.unref();
-      // Honest UA works for this host — drop any stale block memory (e.g. a TTL
-      // just expired and the host has since dropped its bot wall).
-      uaBlockedHosts.delete(host ?? '');
-      return res;
+  // The signature covers only @authority and signature-agent, so the caller's
+  // headers pass through untouched.
+  return safeFetch(
+    url,
+    { headers, signal: AbortSignal.timeout(fetchTimeoutMs) },
+    {
+      beforeHop: async (hopUrl, hop) => {
+        if (hop > 0 && opts.onRedirect) await opts.onRedirect(hopUrl);
+        if (!webBotAuth) return;
+        return signRequestHeaders(webBotAuth, hopUrl, { now: opts.now });
+      },
     }
-    clearTimeout(deadline);
-    await res.body?.cancel().catch(() => {});
-  } catch {
-    clearTimeout(deadline);
-    // Timeout / connection error on the honest attempt: possibly a silent block,
-    // possibly a genuinely slow or down feed — indistinguishable here, so fall
-    // through to the browser-UA attempt and let it settle the outcome.
-  }
-
-  // Attempt 2: browser UA, full timeout. Remember the host blocks the honest UA
-  // only when the browser UA actually gets through (any non-403 HTTP response): if
-  // the browser UA is also refused, the host is likely IP-blocked or down rather
-  // than UA-gating, and poisoning future honest attempts would be wrong. If the
-  // browser attempt throws, the error propagates and nothing is remembered.
-  const res = await browserFetch();
-  if (!isBlockedStatus(res.status)) {
-    rememberHostUaBlocked(host, now);
-  }
-  return res;
+  );
 }
 
 export interface ExtractedArticle {
@@ -1257,7 +1216,7 @@ export function initDatabase(db: Database): void {
 // an HTTP response. Never throws — failures return an 'error'/'blocked' kind.
 async function runDiscover(siteUrl: string): Promise<DiscoverResult> {
   try {
-    const response = await fetchWithBotFallback(siteUrl, FETCH_HEADERS);
+    const response = await fetchUpstream(siteUrl, FETCH_HEADERS);
 
     if (!response.ok) {
       const { error, blocked } = describeFetchFailure(response.status, siteUrl);
@@ -1379,6 +1338,8 @@ export function createApp(db: Database, config: AppConfig) {
   const { proxySecret, cacheTtlMs, staleTtlMs, defaultLimit } = config;
   const batchInlineFetchBudgetMs = config.batchInlineFetchBudgetMs ?? BATCH_INLINE_FETCH_BUDGET_MS;
   const firehoseRelistMs = config.firehoseRelistMs ?? FIREHOSE_RELIST_MS;
+  const robots = config.robots ?? null;
+  if (config.webBotAuth !== undefined) configureWebBotAuth(config.webBotAuth);
 
   // The durable-log generation token, read once (minted in initDatabase). Stable
   // for the process lifetime; returned in every feed response so clients can
@@ -1477,6 +1438,55 @@ export function createApp(db: Database, config: AppConfig) {
     }
   }
 
+  // Write a failed fetch onto the feed's cache row: bump error_count, store the
+  // message the reader UI shows, set the backoff. A feed never fetched
+  // successfully gets a content-less placeholder row so the failure is still
+  // tracked (and reported to the admin's feed health) without any content.
+  function recordFetchFailure(
+    url: string,
+    urlHash: string,
+    cached: CachedFeedState | undefined,
+    failure: { errorCount: number; errorMessage: string; nextRetryAt: number; now: number }
+  ): void {
+    const { errorCount, errorMessage, nextRetryAt, now } = failure;
+    if (cached) {
+      db.run(
+        'UPDATE cache SET error_count = ?, last_error = ?, last_error_at = ?, next_retry_at = ? WHERE url_hash = ?',
+        [errorCount, errorMessage, now, nextRetryAt, urlHash]
+      );
+      return;
+    }
+    const emptyFeed: ParsedFeed = { title: '', items: [], fetchedAt: now };
+    db.run(
+      `INSERT INTO cache (url_hash, url, parsed_json, cached_at, fetched_at, error_count, last_error, last_error_at, next_retry_at, last_requested_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        urlHash,
+        url,
+        JSON.stringify(emptyFeed),
+        now,
+        now,
+        errorCount,
+        errorMessage,
+        now,
+        nextRetryAt,
+        now,
+      ]
+    );
+  }
+
+  // What a failed (or skipped) fetch hands back: the cached feed if it holds
+  // real content, never an error placeholder, and nothing when the caller
+  // didn't want the blob anyway.
+  function contentIfReal(
+    cached: CachedFeedState | undefined,
+    wantParsed: boolean
+  ): ParsedFeed | null {
+    if (!wantParsed || !cached?.parsed_json) return null;
+    const cachedFeed = JSON.parse(cached.parsed_json) as ParsedFeed;
+    return cachedFeed.items.length > 0 || cachedFeed.title !== '' ? cachedFeed : null;
+  }
+
   /**
    * `wantParsed=false` (warm loop only) means the caller will discard the
    * return value: every path that would JSON.parse the cached blob purely to
@@ -1518,6 +1528,41 @@ export function createApp(db: Database, config: AppConfig) {
       ]);
     }
 
+    // robots.txt: the crawl is Skyreader acting on its own schedule, so it asks
+    // first. A disallow is recorded like a site-side block (same marker the
+    // reader UI keys on) and re-checked after ROBOTS_DISALLOW_RETRY_MS. The
+    // user-initiated fetches (/extract, /discover) don't come through here.
+    const recordRobotsDisallow = (errorMessage: string): void => {
+      console.error(`[Proxy] ${url}: ${errorMessage} (retry in 24h)`);
+      recordFetchFailure(url, urlHash, cached, {
+        errorCount: (cached?.error_count || 0) + 1,
+        errorMessage,
+        nextRetryAt: now + ROBOTS_DISALLOW_RETRY_MS,
+        now,
+      });
+    };
+
+    if (robots) {
+      const verdict = await robots.check(url);
+      if (!verdict.allowed) {
+        recordRobotsDisallow(describeRobotsDisallow(url, verdict.matchedPattern));
+        return contentIfReal(cached, wantParsed);
+      }
+      if (verdict.crawlDelayMs > 0) {
+        const host = hostOf(url) ?? url;
+        const wait = robots.reserveSlot(host, verdict.crawlDelayMs, CRAWL_DELAY_MAX_WAIT_MS);
+        if (wait === null) {
+          // Our turn on this host is too far off to hold a worker for. Not an
+          // error: nothing is written, the next cycle simply tries again.
+          console.log(
+            `[Proxy] ${url}: crawl-delay ${verdict.crawlDelayMs / 1000}s, host busy — deferring to next cycle`
+          );
+          return contentIfReal(cached, wantParsed);
+        }
+        if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+      }
+    }
+
     const headers: Record<string, string> = { ...FETCH_HEADERS };
 
     if (parserIsCurrent && cached?.etag) headers['If-None-Match'] = cached.etag;
@@ -1526,7 +1571,23 @@ export function createApp(db: Database, config: AppConfig) {
     }
 
     try {
-      const response = await fetchWithBotFallback(url, headers);
+      const response = await fetchUpstream(url, headers, {
+        // A redirect leaves the URL robots.txt was consulted for, and the
+        // target's own rules are the ones that govern it — without this a feed
+        // that 301s into a disallowed path (or onto another host entirely) is
+        // crawled anyway, which is exactly the standing this whole path exists
+        // to keep. Crawl-delay is deliberately not re-applied per hop: the slot
+        // for this fetch is already reserved, and sleeping mid-redirect would
+        // hold a warm worker well past the budget that reservation bought.
+        onRedirect: robots
+          ? async (target) => {
+              const verdict = await robots.check(target);
+              if (!verdict.allowed) {
+                throw new RobotsDisallowedError(target, verdict.matchedPattern);
+              }
+            }
+          : undefined,
+      });
 
       if (response.status === 304 && cached) {
         // Success: reset error tracking
@@ -1562,45 +1623,13 @@ export function createApp(db: Database, config: AppConfig) {
           );
         }
 
-        // Update error tracking in cache
-        if (cached) {
-          db.run(
-            'UPDATE cache SET error_count = ?, last_error = ?, last_error_at = ?, next_retry_at = ? WHERE url_hash = ?',
-            [newErrorCount, errorMessage, now, nextRetryAt, urlHash]
-          );
-        } else {
-          // Create a cache entry for tracking errors even without content
-          const emptyFeed: ParsedFeed = {
-            title: '',
-            items: [],
-            fetchedAt: now,
-          };
-          db.run(
-            `INSERT INTO cache (url_hash, url, parsed_json, cached_at, fetched_at, error_count, last_error, last_error_at, next_retry_at, last_requested_at)
-						VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-              urlHash,
-              url,
-              JSON.stringify(emptyFeed),
-              now,
-              now,
-              newErrorCount,
-              errorMessage,
-              now,
-              nextRetryAt,
-              now,
-            ]
-          );
-        }
-
-        // Only return cached content if it has real content (not an error placeholder)
-        if (wantParsed && cached?.parsed_json) {
-          const cachedFeed = JSON.parse(cached.parsed_json) as ParsedFeed;
-          if (cachedFeed.items.length > 0 || cachedFeed.title !== '') {
-            return cachedFeed;
-          }
-        }
-        return null;
+        recordFetchFailure(url, urlHash, cached, {
+          errorCount: newErrorCount,
+          errorMessage,
+          nextRetryAt,
+          now,
+        });
+        return contentIfReal(cached, wantParsed);
       }
 
       const content = await readResponseWithLimit(response, MAX_RESPONSE_SIZE_BYTES);
@@ -1643,14 +1672,7 @@ export function createApp(db: Database, config: AppConfig) {
           );
         }
 
-        // Only return cached content if it has real content (not an error placeholder)
-        if (wantParsed && cached?.parsed_json) {
-          const cachedFeed = JSON.parse(cached.parsed_json) as ParsedFeed;
-          if (cachedFeed.items.length > 0 || cachedFeed.title !== '') {
-            return cachedFeed;
-          }
-        }
-        return null;
+        return contentIfReal(cached, wantParsed);
       }
 
       const parsedJson = JSON.stringify(parsed);
@@ -1704,6 +1726,13 @@ export function createApp(db: Database, config: AppConfig) {
 
       return parsed;
     } catch (error) {
+      // A disallowed redirect target is a robots verdict, not a network fault:
+      // same marker and same daily re-check as the pre-fetch disallow.
+      if (error instanceof RobotsDisallowedError) {
+        recordRobotsDisallow(error.message);
+        return contentIfReal(cached, wantParsed);
+      }
+
       const isTimeout = error instanceof Error && error.name === 'TimeoutError';
       const isTooLarge = error instanceof ResponseTooLargeError;
       const msg = isTimeout
@@ -1721,39 +1750,13 @@ export function createApp(db: Database, config: AppConfig) {
         : now + calculateBackoff(newErrorCount);
       const errorMessage = isTooLarge ? msg : `Network error: ${msg}`;
 
-      if (cached) {
-        db.run(
-          'UPDATE cache SET error_count = ?, last_error = ?, last_error_at = ?, next_retry_at = ? WHERE url_hash = ?',
-          [newErrorCount, errorMessage, now, nextRetryAt, urlHash]
-        );
-      } else {
-        const emptyFeed: ParsedFeed = { title: '', items: [], fetchedAt: now };
-        db.run(
-          `INSERT INTO cache (url_hash, url, parsed_json, cached_at, fetched_at, error_count, last_error, last_error_at, next_retry_at, last_requested_at)
-					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            urlHash,
-            url,
-            JSON.stringify(emptyFeed),
-            now,
-            now,
-            newErrorCount,
-            errorMessage,
-            now,
-            nextRetryAt,
-            now,
-          ]
-        );
-      }
-
-      // Only return cached content if it has real content (not an error placeholder)
-      if (wantParsed && cached?.parsed_json) {
-        const cachedFeed = JSON.parse(cached.parsed_json) as ParsedFeed;
-        if (cachedFeed.items.length > 0 || cachedFeed.title !== '') {
-          return cachedFeed;
-        }
-      }
-      return null;
+      recordFetchFailure(url, urlHash, cached, {
+        errorCount: newErrorCount,
+        errorMessage,
+        nextRetryAt,
+        now,
+      });
+      return contentIfReal(cached, wantParsed);
     }
   }
 
@@ -2331,6 +2334,13 @@ export function createApp(db: Database, config: AppConfig) {
         pending: pendingCount?.count || 0,
       },
       extract: { inUse: extractSemaphore.inUse, queued: extractSemaphore.queued },
+      // Identity + etiquette: is the crawl signed, and is robots.txt in force.
+      crawler: {
+        webBotAuth: webBotAuth
+          ? { keyid: webBotAuth.keyid, signatureAgent: webBotAuth.signatureAgent }
+          : null,
+        robots: robots ? { cachedOrigins: robots.cachedOrigins } : null,
+      },
       // Observed crawl cycle — how long a full pass over the active feed set is
       // actually taking. This is the freshness number that means something now
       // that reads are served from D1: it bounds how late a newly published item
@@ -2569,6 +2579,21 @@ export function createApp(db: Database, config: AppConfig) {
     return c.json({ error: result.error, blocked: false }, 502);
   });
 
+  // The crawler's Web Bot Auth key directory, signed per request (web-bot-auth.ts
+  // explains why it can't be a static file). The paired Worker serves it at
+  // <signatureAgent>/.well-known/http-message-signatures-directory by proxying
+  // here, so the private key never leaves this process.
+  app.get('/http-message-signatures-directory', async (c) => {
+    if (proxySecret && c.req.header('X-Proxy-Secret') !== proxySecret) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+    if (!webBotAuth) {
+      return c.json({ error: 'Web Bot Auth is not configured on this proxy' }, 404);
+    }
+    const directory = await signedDirectory(webBotAuth);
+    return c.body(directory.body, 200, directory.headers);
+  });
+
   // Fetch a URL and return cleaned, extracted article content (Defuddle).
   // Results are cached (article content is effectively immutable per URL), so
   // repeat and cross-user saves of the same article skip the fetch + extract.
@@ -2636,11 +2661,10 @@ export function createApp(db: Database, config: AppConfig) {
         // acquire() is outside the try so a failed acquire never calls release().
         await extractSemaphore.acquire(EXTRACT_QUEUE_WAIT_MS);
         try {
-          // The same bot fallback the crawl (fetchFeed) and discovery paths
-          // use. Without it a site that gates on the honest UA's shape is
-          // crawlable as a feed but unsavable as an article, which is a
-          // difference the reader has no way to understand.
-          const response = await fetchWithBotFallback(
+          // Same identity as the crawl and discovery paths. A site that refuses
+          // it answers 403 → `blocked`, which is what lets the reader be offered
+          // the extension (the honest way to save a page a site won't serve us).
+          const response = await fetchUpstream(
             url,
             { ...FETCH_HEADERS, Accept: 'text/html, application/xhtml+xml, */*' },
             { fetchTimeoutMs: EXTRACT_FETCH_TIMEOUT_MS }
@@ -2694,9 +2718,9 @@ export function createApp(db: Database, config: AppConfig) {
       const isTimeout = error instanceof Error && error.name === 'TimeoutError';
       const isTooLarge = error instanceof ResponseTooLargeError;
       const msg = isTimeout
-        ? // Report what actually elapsed, not a constant: the cut can land at the
-          // honest probe, at the browser-UA retry, or at the two combined, and
-          // this string is what an operator reasons from (see docs/RUNBOOK.md).
+        ? // Report what actually elapsed, not a constant: the cut can land in
+          // the permit wait or the fetch, and this string is what an operator
+          // reasons from (see docs/RUNBOOK.md).
           `Timeout after ${Math.round(elapsed / 1000)}s`
         : isTooLarge
           ? error.message

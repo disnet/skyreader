@@ -288,22 +288,107 @@ curl "/feed?url=...&since_guids=old-guid&limit=50"
 
 ## Configuration
 
-| Environment Variable         | Default  | Description                                             |
-| ---------------------------- | -------- | ------------------------------------------------------- |
-| `PROXY_SECRET`               | (none)   | Shared secret for `X-Proxy-Secret` (inbound + outbound) |
-| `DATA_DIR`                   | `./data` | SQLite database location                                |
-| `CACHE_TTL_SECONDS`          | `900`    | Fresh cache duration (15 min)                           |
-| `STALE_TTL_SECONDS`          | `3600`   | Stale cache max age (1 hour)                            |
-| `PORT`                       | `3000`   | HTTP server port                                        |
-| `INGEST_URL`                 | (none)   | Paired Worker base URL. **Unset ⇒ ingest disabled**     |
-| `INGEST_INTERVAL_SECONDS`    | `15`     | Push cycle                                              |
-| `INGEST_BATCH_SIZE`          | `100`    | Items per push request                                  |
-| `CRAWL_SET_INTERVAL_SECONDS` | `300`    | How often to pull the crawl set                         |
-| `SENTRY_DSN`                 | (none)   | Error reporting; unset ⇒ no-op                          |
-| `WARM_HEARTBEAT_URL`         | (none)   | Dead-man ping after each successful warm tick           |
-| `GIT_COMMIT_SHA`             | `dev`    | Build stamp, reported by `/health`                      |
+| Environment Variable           | Default  | Description                                             |
+| ------------------------------ | -------- | ------------------------------------------------------- |
+| `PROXY_SECRET`                 | (none)   | Shared secret for `X-Proxy-Secret` (inbound + outbound) |
+| `DATA_DIR`                     | `./data` | SQLite database location                                |
+| `CACHE_TTL_SECONDS`            | `900`    | Fresh cache duration (15 min)                           |
+| `STALE_TTL_SECONDS`            | `3600`   | Stale cache max age (1 hour)                            |
+| `PORT`                         | `3000`   | HTTP server port                                        |
+| `INGEST_URL`                   | (none)   | Paired Worker base URL. **Unset ⇒ ingest disabled**     |
+| `INGEST_INTERVAL_SECONDS`      | `15`     | Push cycle                                              |
+| `INGEST_BATCH_SIZE`            | `100`    | Items per push request                                  |
+| `CRAWL_SET_INTERVAL_SECONDS`   | `300`    | How often to pull the crawl set                         |
+| `SENTRY_DSN`                   | (none)   | Error reporting; unset ⇒ no-op                          |
+| `WARM_HEARTBEAT_URL`           | (none)   | Dead-man ping after each successful warm tick           |
+| `GIT_COMMIT_SHA`               | `dev`    | Build stamp, reported by `/health`                      |
+| `WEB_BOT_AUTH_KEY`             | (none)   | Private Ed25519 JWK; set ⇒ upstream fetches are signed  |
+| `WEB_BOT_AUTH_SIGNATURE_AGENT` | (none)   | https origin publishing the public key (`fly.toml`)     |
+| `ROBOTS_ENABLED`               | `true`   | Honour robots.txt on the crawl path (`false` = debug)   |
 
 Observability setup and incident procedures live in [`docs/RUNBOOK.md`](../docs/RUNBOOK.md).
+
+## Crawler identity and etiquette
+
+Two things make the crawl a good citizen — and, to a CDN's bot manager, a
+_recognisable_ one instead of an anonymous client that gets a 403 for having a
+non-browser User-Agent. Both live in the proxy; the reader-facing effect is fewer
+"Blocked by site" feeds.
+
+### Web Bot Auth (signed fetches)
+
+Every honest-UA upstream fetch carries an RFC 9421 HTTP Message Signature
+(Ed25519) over the target authority, plus a `Signature-Agent` header naming the
+origin where the public key is published:
+
+```
+Signature-Agent: "https://api.skyreader.app"
+Signature-Input: sig1=("@authority" "signature-agent");created=…;keyid=…;alg="ed25519";expires=…;nonce=…;tag="web-bot-auth"
+Signature: sig1=:…:
+```
+
+A verifier fetches `https://api.skyreader.app/.well-known/http-message-signatures-directory`
+to get the key. The Worker relays that path from this proxy's
+`GET /http-message-signatures-directory`, which signs the directory response per
+request (the spec requires the directory to be self-signed with a short expiry, so
+it can't be a static file). The private key only ever lives here.
+
+**Provisioning (once):**
+
+```bash
+cd feed-proxy
+bun run keygen:web-bot-auth          # prints the private JWK on stdout
+fly secrets set WEB_BOT_AUTH_KEY='<that JSON>' -a skyreader-feed-proxy
+fly secrets set WEB_BOT_AUTH_KEY='<that JSON>' -a skyreader-feed-proxy-staging
+```
+
+Staging and prod share one key and one `WEB_BOT_AUTH_SIGNATURE_AGENT`
+(`https://api.skyreader.app`, in both `fly.toml`s): they are the same crawler.
+Signing turns on as soon as the secret exists (`/stats` → `crawler.webBotAuth`,
+and the boot log line `Web Bot Auth: signing upstream fetches as …`). Verify the
+published directory with:
+
+```bash
+curl -si https://api.skyreader.app/.well-known/http-message-signatures-directory
+# 200, Content-Type: application/http-message-signatures-directory+json,
+# Signature-Input with tag="http-message-signatures-directory", keys[0].x = the public key
+```
+
+**Registration (once, after the directory is live):** Cloudflare dashboard →
+Manage Account → Configurations → **Bot Submission Form**; verification method
+**Request Signature**; key directory URL as above; category **Feed Fetcher**;
+User-Agent `Skyreader/1.0 (+https://skyreader.app)`. Approval lists the crawler in
+Cloudflare Radar's bot directory and exempts it from Bot Fight Mode on every
+Cloudflare-fronted site. Being verified requires the etiquette below — losing it is
+what happens if the crawler ignores robots.txt or crawl-delay.
+
+**Rotation:** mint a new key, set the secret on both apps, redeploy. Cloudflare
+re-reads the directory (it honours the `max-age=86400`), so expect up to a day of
+unverified requests; the old key can't be served alongside the new one yet.
+
+### robots.txt (crawl path only)
+
+The crawl — the warm loop and the demand-driven feed refreshes it shares — asks
+`/robots.txt` before fetching a feed (RFC 9309; per-origin cache, 24h; product
+token `skyreader`, falling back to `*`). A disallowed feed is recorded like a
+site-side block (`… is blocking automated access (its robots.txt disallows
+Skyreader …)`, retried daily) so the reader sees "Blocked by site" and the admin
+feed-health view counts it. `Crawl-delay` is honoured per host up to 60s; a fetch
+whose turn is more than 15s away is deferred to the next cycle rather than slept on.
+
+Redirects are re-checked: a feed that 301s into another path — or another host —
+is judged by the target's own robots.txt, and a disallow there is recorded the
+same way. (Crawl-delay is not re-applied per hop; the slot the first check
+reserved covers the whole fetch.) The Web Bot Auth signature is likewise re-made
+for each hop, since it covers `@authority` — replaying the first hop's signature
+at the redirect target would arrive as a _failed_ signature, which is worse than
+sending none.
+
+Deliberately exempt, because they are one person's request carried out once, not
+a crawl: `POST /extract` (a reader clicked Save) and `GET /discover` (a reader
+typed a site into Subscribe). Deliberately lenient: an _unavailable_ robots.txt
+(5xx, timeout) is treated as no restrictions and re-probed after an hour, where the
+RFC would allow assuming a full disallow.
 
 ## Ingest push (crawler mode)
 

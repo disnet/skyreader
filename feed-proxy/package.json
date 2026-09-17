@@ -11,15 +11,18 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "bun test",
-    "test:watch": "bun test --watch"
+    "test:watch": "bun test --watch",
+    "keygen:web-bot-auth": "bun run scripts/generate-web-bot-auth-key.ts"
   },
   "dependencies": {
     "@sentry/bun": "^10.71.0",
     "defuddle": "^0.19.3",
     "fast-xml-parser": "^5.11.0",
     "hono": "^4.13.4",
+    "http-message-sig": "^0.3.0",
     "linkedom": "^0.18.13",
-    "temml": "^0.13.4"
+    "temml": "^0.13.4",
+    "web-bot-auth": "^0.2.0"
   },
   "devDependencies": {
     "@types/bun": "latest",

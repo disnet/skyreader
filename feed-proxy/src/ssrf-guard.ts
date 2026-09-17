@@ -143,16 +143,46 @@ export async function assertPublicUrl(raw: string): Promise<void> {
   }
 }
 
+export interface SafeFetchHooks {
+  /**
+   * Called before every hop with the URL actually about to be fetched — hop 0 is
+   * the original URL, hop >= 1 a redirect target. Headers it returns are merged
+   * over `init.headers` for that hop alone, which is how a signature bound to
+   * the request target (Web Bot Auth covers `@authority`) stays valid across a
+   * redirect instead of being replayed against the wrong host. Throwing aborts
+   * the chain, so it doubles as a per-hop policy gate.
+   */
+  beforeHop?: (url: string, hop: number) => Promise<Record<string, string> | void>;
+}
+
+// Merge per-hop headers over the caller's, keeping a plain-object `headers` a
+// plain object (every caller in this repo passes one) and only reaching for
+// Headers when the caller used a form that needs it.
+function mergeHeaders(base: HeadersInit | undefined, extra: Record<string, string>): HeadersInit {
+  if (base === undefined || (!Array.isArray(base) && !(base instanceof Headers))) {
+    return { ...(base as Record<string, string> | undefined), ...extra };
+  }
+  const merged = new Headers(base);
+  for (const [name, value] of Object.entries(extra)) merged.set(name, value);
+  return merged;
+}
+
 /**
  * Drop-in replacement for fetch() for caller-controlled URLs. Validates the target
  * is a public http(s) endpoint and follows redirects manually, re-validating every
  * hop. The caller's `redirect` option is ignored (always manual internally).
  */
-export async function safeFetch(input: string, init: RequestInit = {}): Promise<Response> {
+export async function safeFetch(
+  input: string,
+  init: RequestInit = {},
+  hooks: SafeFetchHooks = {}
+): Promise<Response> {
   let url = input;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     await assertPublicUrl(url);
-    const response = await fetch(url, { ...init, redirect: 'manual' });
+    const extra = hooks.beforeHop ? await hooks.beforeHop(url, hop) : undefined;
+    const headers = extra ? mergeHeaders(init.headers, extra) : init.headers;
+    const response = await fetch(url, { ...init, headers, redirect: 'manual' });
 
     const isRedirect =
       response.status >= 300 && response.status < 400 && response.headers.has('location');

@@ -18,6 +18,7 @@ import {
   handleV2MarginHighlights,
 } from './routes/feeds-v2';
 import { handleIngest, handleCrawlSet, handleFeedHealth } from './routes/ingest';
+import { handleSignatureDirectory } from './routes/web-bot-auth';
 import { handleDocumentBackfill, handleDocumentShadowCompare } from './routes/documents';
 import {
   createDocumentApplyContext,
@@ -371,6 +372,11 @@ async function route(
     // OAuth client metadata
     case url.pathname === '/.well-known/client-metadata':
       response = await handleClientMetadata(request, env);
+      break;
+
+    // The feed crawler's Web Bot Auth public key (relayed from the proxy)
+    case url.pathname === '/.well-known/http-message-signatures-directory':
+      response = await handleSignatureDirectory(request, env);
       break;
 
     // Lexicon schemas

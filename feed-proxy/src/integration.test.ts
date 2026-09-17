@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach, afterEach, mock, spyOn } from 'bun:test';
+import { describe, expect, it, afterEach, mock, spyOn } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import {
   createApp,
@@ -12,7 +12,6 @@ import {
   FEED_PARSER_VERSION,
   FEED_ITEMS_CAP,
   writeFeedItems,
-  __resetUaBlockMemoryForTests,
   type AppConfig,
   type CacheRow,
 } from './app';
@@ -3529,10 +3528,6 @@ describe('POST /extract', () => {
 
   let fetchMock: ReturnType<typeof spyOn> | undefined;
 
-  beforeEach(() => {
-    __resetUaBlockMemoryForTests();
-  });
-
   afterEach(() => {
     fetchMock?.mockRestore();
   });
@@ -3545,7 +3540,7 @@ describe('POST /extract', () => {
     });
   }
 
-  it('retries with a browser UA when the honest UA is refused', async () => {
+  it('fetches as itself and does not retry a refusal under another name', async () => {
     const { db, app } = createTestApp();
     const seenUserAgents: string[] = [];
 
@@ -3553,24 +3548,18 @@ describe('POST /extract', () => {
       _url: unknown,
       init?: RequestInit
     ) => {
-      const ua = new Headers(init?.headers).get('User-Agent') ?? '';
-      seenUserAgents.push(ua);
-      // The shape the crawl path already handles: the honest identity is
-      // refused, a browser-shaped one is served the real page.
-      if (ua.startsWith('Skyreader/')) return new Response('Forbidden', { status: 403 });
-      return new Response(ARTICLE_HTML, { headers: { 'Content-Type': 'text/html' } });
+      seenUserAgents.push(new Headers(init?.headers).get('User-Agent') ?? '');
+      return new Response('Forbidden', { status: 403 });
     }) as unknown as typeof fetch);
 
     const res = await extract(app, 'https://example.com/a-piece');
     const json = await res.json();
 
+    // One attempt, the honest one; the refusal is the answer (→ blocked, so the
+    // reader can be offered the extension), not a cue to try a browser UA.
+    expect(seenUserAgents).toEqual([expect.stringMatching(/^Skyreader\//)]);
     expect(res.status).toBe(200);
-    expect(json.title).toContain('A Piece');
-    // Both attempts happened, honest first: the fallback is a retry, not a
-    // decision to stop identifying ourselves.
-    expect(seenUserAgents.length).toBe(2);
-    expect(seenUserAgents[0]).toStartWith('Skyreader/');
-    expect(seenUserAgents[1]).not.toStartWith('Skyreader/');
+    expect(json.blocked).toBe(true);
 
     db.close();
   });

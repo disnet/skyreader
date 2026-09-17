@@ -126,3 +126,10 @@ primary_region = "sjc"
 
   EXTRACT_CONCURRENCY = "4"
   EXTRACT_QUEUE_MAX = "20"
+
+  # Web Bot Auth identity (src/web-bot-auth.ts). The public key is published at
+  # this origin's /.well-known/http-message-signatures-directory by the Worker.
+  # Deliberately the SAME in staging and prod: both proxies are one crawler
+  # ("Skyreader"), sharing one key (secret WEB_BOT_AUTH_KEY, set on both apps).
+  # Signing stays off until that secret exists — then it's on, nothing to flip.
+  WEB_BOT_AUTH_SIGNATURE_AGENT = "https://api.skyreader.app"

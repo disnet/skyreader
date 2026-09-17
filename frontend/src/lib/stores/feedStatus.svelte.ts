@@ -373,7 +373,7 @@ function createFeedStatusStore() {
     if (errorMsg.includes('blocking automated access')) {
       title = 'Blocked by site';
       description =
-        "This site blocks Skyreader's feed fetcher, likely through a bot filter or CDN (e.g. Cloudflare, Akamai). The feed can't be fetched automatically.";
+        "This site doesn't allow Skyreader's feed fetcher, through a bot filter or CDN (e.g. Cloudflare, Akamai) or its robots.txt. The feed can't be fetched automatically.";
     } else if (errorMsg.includes('401')) {
       title = 'Authentication Required';
       description = 'This feed requires login credentials that Skyreader cannot provide.';
