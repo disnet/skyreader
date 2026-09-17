@@ -59,6 +59,15 @@ describe('statuses', () => {
     expect(statusLabel('under-review')).toBe('Under review');
   });
 
+  it('normalizes a status before reading it', () => {
+    // Upstream's string, written by whatever client set it. A settled state in
+    // another casing must not read as an unrecognized one — under the
+    // open-by-default rule that would put it straight back in the Open list.
+    expect(postStatus(post({ uri: 'a', status: ' Implemented ' }))).toBe('implemented');
+    expect(postStatus(post({ uri: 'b', status: '  ' }))).toBe('open');
+    expect(isPostClosed(post({ uri: 'c', status: 'Closed' }))).toBe(true);
+  });
+
   it('counts only a settled status as closed', () => {
     // A status nobody here has heard of is open: it is a state the board is
     // passing a post through, and hiding it by default would lose it.
@@ -67,6 +76,39 @@ describe('statuses', () => {
     expect(isPostClosed(post({ uri: 'c', status: 'planned' }))).toBe(false);
     expect(isPostClosed(post({ uri: 'd', status: null }))).toBe(false);
     expect(isPostClosed(post({ uri: 'e', status: 'something-new' }))).toBe(false);
+  });
+
+  it('settles every status userinput.app means as finished', () => {
+    // The whole upstream vocabulary, in the order its own board walks a post
+    // through. `closed` is the one that was missing, and it is the reason a
+    // settled post kept showing under Open.
+    const scope = (status: string | null) =>
+      isPostClosed(post({ uri: status ?? 'none', status })) ? 'closed' : 'open';
+    expect(
+      [
+        null,
+        'open',
+        'under-review',
+        'backlog',
+        'planned',
+        'in-progress',
+        'implemented',
+        'declined',
+        'duplicate',
+        'closed',
+      ].map(scope)
+    ).toEqual([
+      'open',
+      'open',
+      'open',
+      'open',
+      'open',
+      'open',
+      'closed',
+      'closed',
+      'closed',
+      'closed',
+    ]);
   });
 
   it('knows whether the board has closed anything at all', () => {
@@ -82,6 +124,7 @@ describe('filterByStatusScope', () => {
     post({ uri: 'live' }),
     post({ uri: 'shipped', status: 'implemented' }),
     post({ uri: 'planned', status: 'planned' }),
+    post({ uri: 'settled', status: 'closed' }),
   ];
 
   it('splits the board in two, and hands back all of it on request', () => {
@@ -89,7 +132,10 @@ describe('filterByStatusScope', () => {
       'live',
       'planned',
     ]);
-    expect(filterByStatusScope(posts, 'closed').map((entry) => entry.uri)).toEqual(['shipped']);
+    expect(filterByStatusScope(posts, 'closed').map((entry) => entry.uri)).toEqual([
+      'shipped',
+      'settled',
+    ]);
     expect(filterByStatusScope(posts, 'all')).toEqual(posts);
   });
 });
