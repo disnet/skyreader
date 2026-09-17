@@ -30,5 +30,11 @@ export function saveAnywhereLabel(userAgent: string): string {
 }
 
 export function openSaveAnywhere(): void {
-  window.location.assign(saveAnywhereUrl(window.navigator.userAgent));
+  const url = saveAnywhereUrl(window.navigator.userAgent);
+  // Extension listings leave the app, so keep the reader open behind them.
+  if (url === SAVE_ANYWHERE_SETTINGS_URL) {
+    window.location.assign(url);
+    return;
+  }
+  window.open(url, '_blank', 'noopener,noreferrer');
 }
