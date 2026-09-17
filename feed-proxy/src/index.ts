@@ -3,7 +3,9 @@
 import { reportError } from './instrument';
 import { Database } from 'bun:sqlite';
 import { mkdirSync } from 'fs';
-import { createApp, initDatabase, cleanupCache } from './app';
+import { createApp, initDatabase, cleanupCache, HONEST_UA } from './app';
+import { RobotsPolicy } from './robots';
+import { loadWebBotAuth, type WebBotAuth } from './web-bot-auth';
 import { DocumentFirehose } from './jetstream';
 import { pingHeartbeat } from './heartbeat';
 import {
@@ -113,6 +115,17 @@ const FEED_FETCH_QUEUE_MAX = process.env.FEED_FETCH_QUEUE_MAX
   : undefined;
 const EXTRACT_QUEUE_MAX = parseInt(process.env.EXTRACT_QUEUE_MAX || '20', 10);
 
+// Crawler etiquette + identity (src/robots.ts, src/web-bot-auth.ts).
+// ROBOTS_ENABLED=false is an escape hatch for local debugging only; in
+// production honouring robots.txt is a condition of being a verified bot.
+const ROBOTS_ENABLED = (process.env.ROBOTS_ENABLED ?? 'true') !== 'false';
+// The private Ed25519 JWK (a Fly secret; mint one with `bun run keygen:web-bot-auth`)
+// and the https origin whose /.well-known/http-message-signatures-directory
+// publishes its public half (the paired Worker proxies that path here). Both
+// environments share ONE identity: the same key and the same agent origin.
+const WEB_BOT_AUTH_KEY = process.env.WEB_BOT_AUTH_KEY;
+const WEB_BOT_AUTH_SIGNATURE_AGENT = process.env.WEB_BOT_AUTH_SIGNATURE_AGENT;
+
 // Jetstream document firehose: keeps standard.site documents fresh via the AT
 // Proto firehose (push) instead of re-listing every active author (pull). The
 // pull path stays for cold-start backfill and as the firehose-down fallback.
@@ -133,6 +146,40 @@ initDatabase(db);
 
 console.log(`[Proxy] Initialized database at ${DATA_DIR}/cache.db`);
 console.log(`[Proxy] TTL: ${CACHE_TTL_MS / 1000}s fresh, ${STALE_TTL_MS / 1000}s stale`);
+
+// Web Bot Auth: load the crawler identity before anything can fetch. A key
+// without an agent origin (or an unparseable key) is a misconfiguration, not
+// something to run unsigned past — fail the boot so the deploy shows it.
+let webBotAuth: WebBotAuth | null = null;
+if (WEB_BOT_AUTH_KEY) {
+  if (!WEB_BOT_AUTH_SIGNATURE_AGENT) {
+    console.error(
+      '[Proxy] FATAL: WEB_BOT_AUTH_KEY is set but WEB_BOT_AUTH_SIGNATURE_AGENT is not (expected e.g. https://api.skyreader.app).'
+    );
+    process.exit(1);
+  }
+  try {
+    webBotAuth = await loadWebBotAuth({
+      key: WEB_BOT_AUTH_KEY,
+      signatureAgent: WEB_BOT_AUTH_SIGNATURE_AGENT,
+    });
+  } catch (error) {
+    console.error(`[Proxy] FATAL: ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  }
+  console.log(
+    `[Proxy] Web Bot Auth: signing upstream fetches as ${webBotAuth.signatureAgent} (keyid ${webBotAuth.keyid})`
+  );
+} else {
+  console.log(
+    '[Proxy] Web Bot Auth: disabled (WEB_BOT_AUTH_KEY unset) — upstream fetches are unsigned'
+  );
+}
+
+const robots = ROBOTS_ENABLED ? new RobotsPolicy({ userAgent: HONEST_UA }) : null;
+console.log(
+  `[Proxy] robots.txt: ${robots ? 'honoured on the crawl path' : 'DISABLED (ROBOTS_ENABLED=false)'}`
+);
 
 // The document firehose is created just below, but createApp's serve path needs
 // its status now — close over the binding so the accessor reads it lazily.
@@ -166,6 +213,8 @@ const { app, warmStaleFeeds, warmStaleDocuments } = createApp(db, {
       isSubscribed: () => false,
     },
   ingestEnabled: INGEST_ENABLED,
+  robots,
+  webBotAuth,
 });
 
 // Document firehose: push-based freshness for standard.site documents.
@@ -319,8 +368,8 @@ export default {
   // times out on its own terms (a real error body, a real log line) instead of
   // being cut off underneath. /extract is the slowest, and its budget is the sum
   // of every stage that can block, not just the fetch: waiting for a concurrency
-  // permit (EXTRACT_QUEUE_WAIT_MS, 5s) + an honest-UA probe (10s) + a browser-UA
-  // retry (EXTRACT_FETCH_TIMEOUT_MS, 20s) + a synchronous Defuddle parse. Every
+  // permit (EXTRACT_QUEUE_WAIT_MS, 5s) + the upstream fetch
+  // (EXTRACT_FETCH_TIMEOUT_MS, 20s) + a synchronous Defuddle parse. Every
   // one of those is capped, which is what makes the sum meaningful — an uncapped
   // stage would put the route back under this ceiling no matter how high it goes.
   // Raise this before raising any of them, never after.

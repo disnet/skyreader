@@ -281,3 +281,48 @@ describe('FeedProxyClient', () => {
     });
   });
 });
+
+describe('FeedProxyClient.fetchSignatureDirectory', () => {
+  let originalFetch: typeof fetch;
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+  });
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  it('relays the raw signed response, bypassing the outbound cache', async () => {
+    const upstream = new Response('{"keys":[]}', {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/http-message-signatures-directory+json',
+        'Cache-Control': 'max-age=86400',
+        Signature: 'sig1=:abc:',
+        'Signature-Input': 'sig1=("@authority";req);tag="http-message-signatures-directory"',
+      },
+    });
+    const fetchSpy = vi.fn().mockResolvedValueOnce(upstream);
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    const res = await createClient().fetchSignatureDirectory();
+    expect(res).toBe(upstream);
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://proxy.example/http-message-signatures-directory');
+    // The directory is self-signed with a short expiry: a cached copy would be
+    // served past its signature's validity.
+    expect(init.cache).toBe('no-store');
+    expect((init.headers as Headers).get('X-Proxy-Secret')).toBe('test-secret');
+  });
+
+  it('throws a FeedProxyError carrying the status when the proxy has no identity', async () => {
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('{"error":"not configured"}', { status: 404 }));
+    const err = await createClient()
+      .fetchSignatureDirectory()
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(FeedProxyError);
+    expect(err.status).toBe(404);
+  });
+});

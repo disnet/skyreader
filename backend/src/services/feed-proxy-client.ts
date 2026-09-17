@@ -757,6 +757,33 @@ export class FeedProxyClient {
    * Fetch a URL and return cleaned, extracted article content (Defuddle, done
    * proxy-side and cached).
    */
+  /**
+   * The crawler's signed Web Bot Auth key directory, as a raw Response: the
+   * caller relays the body AND the signature headers verbatim (see
+   * routes/web-bot-auth.ts). Fetched with `cache: 'no-store'` because the
+   * directory is self-signed with a short expiry — a cached copy would be
+   * served past its signature's validity, and the Worker's outbound fetch would
+   * otherwise happily cache a response carrying `Cache-Control: max-age`.
+   * Throws FeedProxyError (with `status`) on any non-2xx.
+   */
+  async fetchSignatureDirectory(): Promise<Response> {
+    const headers = new Headers();
+    headers.set('X-Proxy-Secret', this.proxySecret);
+    setRequestIdHeader(headers);
+    const response = await fetch(`${this.proxyUrl}/http-message-signatures-directory`, {
+      headers,
+      cache: 'no-store',
+      signal: AbortSignal.timeout(DEFAULT_PROXY_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => {});
+      const error = new FeedProxyError(`Signature directory unavailable: HTTP ${response.status}`);
+      error.status = response.status;
+      throw error;
+    }
+    return response;
+  }
+
   async extract(url: string): Promise<ExtractedArticle> {
     const proxyUrl = `${this.proxyUrl}/extract`;
 
