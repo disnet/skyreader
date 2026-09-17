@@ -439,6 +439,39 @@ poller would drown the log in identical entries), and leaf-level `console.log`
 calls elsewhere in the codebase are still plain strings. Convert them
 opportunistically; a big-bang rewrite is churn.
 
+### A proxy response that is `error code: 502` and nothing else
+
+That body is **Fly's edge**, not the proxy: the app never answered, so there is no
+JSON `{ error, blocked }` and usually no log line either. The proxy is not
+necessarily unhealthy — check `/health` before treating it as an outage.
+
+The cause that produced this once already (2026-09-17, article saves): Bun's HTTP
+server closes a connection after `idleTimeout` seconds of socket inactivity, and
+**its default is 10**. A handler still working has sent no bytes, so any route
+slower than 10s was cut off underneath, logged nothing, and left the machine
+running — indistinguishable, from the outside, from a crash. `feed-proxy/src/index.ts`
+now sets `idleTimeout` explicitly.
+
+**The invariant:** `idleTimeout` must stay above the slowest route's own budget, so
+a route times out on its own terms (real error body, real log line) rather than at
+the socket. Raising a route's fetch budget means raising `idleTimeout` first. Bun
+prints `[Bun.serve]: request timed out after N seconds` when it cuts one off — grep
+for it in `fly logs` when a caller reports a bare edge 502.
+
+That budget is the sum of **every** stage that can block, not just the fetch.
+`/extract`'s stages: waiting for a concurrency permit (5s), the honest-UA probe
+(10s), the browser-UA retry (20s), then the Defuddle parse. Each is capped, which
+is what makes the sum mean anything — an uncapped stage puts the route back under
+the ceiling however high `idleTimeout` goes. The queue wait was the uncapped one:
+the semaphore bounded how many callers could wait, not how long, so a caller behind
+four slow extractions waited past the socket and died as a bare edge 502 with the
+`idleTimeout` fix already in place. It now sheds on a deadline instead
+(`Overloaded: no capacity within 5000ms`, HTTP 503).
+
+A `[Proxy] /extract <url>: Timeout after Ns` line reports the time that actually
+elapsed, so N tells you which stage ran out: ~10s is the honest probe, ~30s the
+probe plus the browser-UA retry.
+
 ---
 
 ## 4b. The admin ops panel

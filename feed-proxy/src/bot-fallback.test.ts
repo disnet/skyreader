@@ -105,6 +105,42 @@ describe('fetchWithBotFallback', () => {
     expect(seen[1]).toContain('Mozilla/5.0');
   });
 
+  // Callers stream the body after this returns. The probe budget bounds the wait
+  // for headers only — a slow-but-healthy download must not be aborted mid-stream,
+  // which happens past the fallback and so can't be retried.
+  it('lets the body outlive the probe budget once headers have arrived', async () => {
+    const seen: string[] = [];
+    fetchMock = spyOn(globalThis, 'fetch').mockImplementation((async (
+      _url: unknown,
+      init: unknown
+    ) => {
+      seen.push(uaOf(init));
+      const signal = (init as RequestInit).signal!;
+      // Headers now, body well after the probe deadline.
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          const timer = setTimeout(() => {
+            controller.enqueue(new TextEncoder().encode('<rss/>'));
+            controller.close();
+          }, 80);
+          signal.addEventListener('abort', () => {
+            clearTimeout(timer);
+            controller.error(new DOMException('The operation timed out.', 'TimeoutError'));
+          });
+        },
+      });
+      return new Response(body, { status: 200 });
+    }) as unknown as typeof fetch);
+
+    const res = await fetchWithBotFallback(
+      URL,
+      { 'User-Agent': HONEST_UA },
+      { probeTimeoutMs: 20, fetchTimeoutMs: 2000 }
+    );
+    expect(await res.text()).toBe('<rss/>');
+    expect(seen).toEqual([HONEST_UA]);
+  });
+
   it('preserves conditional-request headers across the fallback, swapping only the UA', async () => {
     const seen: Array<Record<string, string>> = [];
     fetchMock = spyOn(globalThis, 'fetch').mockImplementation((async (

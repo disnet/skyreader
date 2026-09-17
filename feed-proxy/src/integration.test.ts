@@ -12,6 +12,7 @@ import {
   FEED_PARSER_VERSION,
   FEED_ITEMS_CAP,
   writeFeedItems,
+  __resetUaBlockMemoryForTests,
   type AppConfig,
   type CacheRow,
 } from './app';
@@ -3514,6 +3515,93 @@ describe('demand-driven fetch governor', () => {
     const { db, app } = createTestApp();
     const res = await app.request('/stats', { headers: { 'X-Proxy-Secret': 'test-secret' } });
     expect((await res.json()).feedFetch).toEqual({ enabled: false });
+    db.close();
+  });
+});
+
+// The article-extraction path a URL save runs through. Its failures used to be
+// invisible — the route returned rather than threw, and logged nothing — so
+// these pin the two things that made a blocked or refused site indistinguishable
+// from an outage.
+describe('POST /extract', () => {
+  const ARTICLE_HTML = `<!DOCTYPE html><html><head><title>A Piece</title></head>
+    <body><article><h1>A Piece</h1><p>${'Some words about a subject. '.repeat(40)}</p></article></body></html>`;
+
+  let fetchMock: ReturnType<typeof spyOn> | undefined;
+
+  beforeEach(() => {
+    __resetUaBlockMemoryForTests();
+  });
+
+  afterEach(() => {
+    fetchMock?.mockRestore();
+  });
+
+  async function extract(app: ReturnType<typeof createTestApp>['app'], url: string) {
+    return app.request('/extract', {
+      method: 'POST',
+      headers: { 'X-Proxy-Secret': 'test-secret', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+  }
+
+  it('retries with a browser UA when the honest UA is refused', async () => {
+    const { db, app } = createTestApp();
+    const seenUserAgents: string[] = [];
+
+    fetchMock = spyOn(globalThis, 'fetch').mockImplementation((async (
+      _url: unknown,
+      init?: RequestInit
+    ) => {
+      const ua = new Headers(init?.headers).get('User-Agent') ?? '';
+      seenUserAgents.push(ua);
+      // The shape the crawl path already handles: the honest identity is
+      // refused, a browser-shaped one is served the real page.
+      if (ua.startsWith('Skyreader/')) return new Response('Forbidden', { status: 403 });
+      return new Response(ARTICLE_HTML, { headers: { 'Content-Type': 'text/html' } });
+    }) as unknown as typeof fetch);
+
+    const res = await extract(app, 'https://example.com/a-piece');
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.title).toContain('A Piece');
+    // Both attempts happened, honest first: the fallback is a retry, not a
+    // decision to stop identifying ourselves.
+    expect(seenUserAgents.length).toBe(2);
+    expect(seenUserAgents[0]).toStartWith('Skyreader/');
+    expect(seenUserAgents[1]).not.toStartWith('Skyreader/');
+
+    db.close();
+  });
+
+  it('marks a site that refuses both attempts as blocked, not a bare gateway error', async () => {
+    const { db, app } = createTestApp();
+    fetchMock = mockFetch(() => new Response('Forbidden', { status: 403 }));
+
+    const res = await extract(app, 'https://example.com/a-piece');
+    const json = await res.json();
+
+    // `blocked` is what lets a caller offer the extension instead of a dead end;
+    // without it this is indistinguishable from the proxy itself failing.
+    expect(res.status).toBe(502);
+    expect(json.blocked).toBe(true);
+    expect(json.error).toContain('blocking automated access');
+
+    db.close();
+  });
+
+  it('leaves a non-403 upstream failure unblocked', async () => {
+    const { db, app } = createTestApp();
+    fetchMock = mockFetch(() => new Response('Server Error', { status: 500 }));
+
+    const res = await extract(app, 'https://example.com/a-piece');
+    const json = await res.json();
+
+    expect(res.status).toBe(502);
+    expect(json.blocked).toBe(false);
+    expect(json.error).toContain('HTTP 500');
+
     db.close();
   });
 });

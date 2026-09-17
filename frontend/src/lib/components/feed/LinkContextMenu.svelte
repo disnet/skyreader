@@ -4,8 +4,9 @@
   import { auth } from '$lib/stores/auth.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
   import { toastStore } from '$lib/stores/toast.svelte';
-  import { UrlSaveLimitError } from '$lib/services/api';
+  import { UrlSaveLimitError, ExtractionBlockedError } from '$lib/services/api';
   import { saveLimitLine } from '$lib/utils/limitCopy';
+  import { BLOCKED_SAVE_LINE, blockedSaveAction } from '$lib/utils/saveAnywhere';
 
   interface Props {
     url: string;
@@ -39,6 +40,10 @@
             label: 'Become a Supporter',
             href: '/supporter',
           });
+          return;
+        }
+        if (err instanceof ExtractionBlockedError) {
+          toastStore.update(toastId, 'error', BLOCKED_SAVE_LINE, blockedSaveAction());
           return;
         }
         toastStore.update(toastId, 'error', 'Failed to save article');

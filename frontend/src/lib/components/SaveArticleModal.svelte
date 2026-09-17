@@ -2,9 +2,14 @@
   import { goto } from '$app/navigation';
   import Modal from '$lib/components/common/Modal.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
-  import { ScopeUpgradeError, UrlSaveLimitError } from '$lib/services/api';
+  import { ScopeUpgradeError, UrlSaveLimitError, ExtractionBlockedError } from '$lib/services/api';
   import LimitNotice from '$lib/components/LimitNotice.svelte';
   import { saveLimitLine } from '$lib/utils/limitCopy';
+  import {
+    BLOCKED_SAVE_LINE,
+    blockedSaveAction,
+    type BlockedSaveAction,
+  } from '$lib/utils/saveAnywhere';
 
   interface Props {
     open: boolean;
@@ -20,6 +25,10 @@
   // Set when the monthly URL-save cap refuses the save. Held apart from `error`
   // so it renders as a notice with a way forward rather than a red line.
   let limitInfo = $state<{ limit: number; resetsAt: string } | null>(null);
+  // Set when the site refused the server's fetcher. Held apart from `error` for
+  // the same reason as limitInfo: it has a way forward, so it reads as a notice
+  // with a link rather than a red line the reader can only stare at.
+  let blockedAction = $state<BlockedSaveAction | null>(null);
 
   // Auto-focus input when modal opens
   $effect(() => {
@@ -28,6 +37,7 @@
       error = null;
       showScopeUpgrade = false;
       limitInfo = null;
+      blockedAction = null;
       requestAnimationFrame(() => inputEl?.focus());
     }
   });
@@ -45,6 +55,7 @@
 
     error = null;
     limitInfo = null;
+    blockedAction = null;
     try {
       const saved = await savesStore.saveFromUrl(url);
       urlValue = '';
@@ -60,6 +71,8 @@
         showScopeUpgrade = true;
       } else if (err instanceof UrlSaveLimitError) {
         limitInfo = { limit: err.limit, resetsAt: err.resetsAt };
+      } else if (err instanceof ExtractionBlockedError) {
+        blockedAction = blockedSaveAction();
       } else {
         error = err instanceof Error ? err.message : 'Failed to save article';
       }
@@ -101,7 +114,18 @@
         onkeydown={handleKeydown}
         disabled={savesStore.saving}
       />
-      {#if error}
+      {#if blockedAction}
+        <p class="blocked">
+          {BLOCKED_SAVE_LINE}
+          {blockedAction.hint}
+        </p>
+        <a
+          class="blocked-link"
+          href={blockedAction.href}
+          target={blockedAction.href.startsWith('/') ? null : '_blank'}
+          rel="noopener">{blockedAction.label}</a
+        >
+      {:else if error}
         <p class="error">{error}</p>
       {/if}
       <button
@@ -126,6 +150,24 @@
 
   .limit-aside {
     color: var(--color-text-secondary);
+  }
+
+  .blocked {
+    margin: 0;
+    color: var(--color-text-secondary);
+    font-size: 0.875rem;
+    line-height: 1.5;
+  }
+
+  .blocked-link {
+    align-self: flex-start;
+    color: var(--color-primary);
+    font-size: 0.875rem;
+    text-decoration: none;
+  }
+
+  .blocked-link:hover {
+    text-decoration: underline;
   }
 
   .form {

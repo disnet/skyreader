@@ -49,6 +49,41 @@ describe('Semaphore', () => {
     await queued;
   });
 
+  // The queue bounds how many callers wait, not how long. On a request path an
+  // unbounded wait outlives the server's socket timeout and dies as a bare edge
+  // error, which is the failure a 503 exists to replace.
+  it('sheds a waiter whose wait outlasts its deadline', async () => {
+    const sem = new Semaphore(1, 5);
+    await sem.acquire(); // holds the only permit, and never releases it
+
+    await expect(sem.acquire(20)).rejects.toBeInstanceOf(OverloadError);
+    expect(sem.queued).toBe(0); // the timed-out waiter left the queue
+  });
+
+  it('keeps waiting when a permit arrives before the deadline', async () => {
+    const sem = new Semaphore(1, 5);
+    await sem.acquire();
+
+    const queued = sem.acquire(1000);
+    sem.release();
+    await queued; // admitted, not shed
+    expect(sem.inUse).toBe(1);
+  });
+
+  // A permit handed to a waiter that already gave up would be lost for good:
+  // `available` stays decremented across the handoff.
+  it('does not lose a permit when release() meets a timed-out waiter', async () => {
+    const sem = new Semaphore(1, 5);
+    await sem.acquire();
+
+    await expect(sem.acquire(20)).rejects.toBeInstanceOf(OverloadError);
+    sem.release();
+
+    expect(sem.inUse).toBe(0);
+    await sem.acquire(); // the permit is back in the pool
+    expect(sem.inUse).toBe(1);
+  });
+
   it('run() releases the permit on success and on throw', async () => {
     const sem = new Semaphore(1, 1);
 

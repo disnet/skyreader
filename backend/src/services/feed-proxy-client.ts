@@ -11,6 +11,12 @@ function setRequestIdHeader(headers: Headers): void {
 // Default ceiling on a single proxy round-trip. Generous because endpoints like
 // /extract legitimately fetch + parse large pages.
 const DEFAULT_PROXY_TIMEOUT_MS = 25_000;
+// Ceiling on one /extract round-trip. Deliberately ABOVE the proxy's own socket
+// idleTimeout (45s), which is itself above /extract's route budget: each layer
+// gives the one beneath it room to fail on its own terms, so the error the reader
+// sees comes from the layer that knows what went wrong. Without any ceiling here
+// a wedged proxy hangs the save until the Worker's own limit.
+const EXTRACT_TIMEOUT_MS = 50_000;
 // Tighter ceiling for the batch endpoints: the proxy bounds each feed/author to
 // BATCH_INLINE_FETCH_BUDGET_MS (6s) and fans out concurrently, so a healthy
 // batch returns in well under this. Exceeding it means the proxy is wedged.
@@ -759,11 +765,22 @@ export class FeedProxyClient {
     headers.set('Content-Type', 'application/json');
     setRequestIdHeader(headers);
 
-    const response = await fetch(proxyUrl, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ url }),
-    });
+    let response: Response;
+    try {
+      response = await fetch(proxyUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ url }),
+        signal: AbortSignal.timeout(EXTRACT_TIMEOUT_MS),
+      });
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'TimeoutError') {
+        throw new FeedProxyError(
+          `That article took too long to fetch (after ${Math.round(EXTRACT_TIMEOUT_MS / 1000)}s).`
+        );
+      }
+      throw err;
+    }
 
     if (!response.ok) {
       // The proxy returns a JSON error body ({ error, blocked }); fall back to
