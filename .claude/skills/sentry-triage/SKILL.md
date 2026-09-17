@@ -16,22 +16,47 @@ that reports "nothing needs action" is a good pass. Do not manufacture work.
 
 ## Scope
 
-Two projects, one Sentry org:
+Org slug: **`tim-disney`** (region `https://us.sentry.io`). Two live projects:
 
-| Project                | Runtime                       | Reports via                     |
-| ---------------------- | ----------------------------- | ------------------------------- |
-| `skyreader-backend`    | Cloudflare Worker             | `backend/src/observability/sentry.ts` |
-| `skyreader-feed-proxy` | Fly.io (Bun + Hono)           | `feed-proxy/src/instrument.ts`  |
+| Project                | Runtime             | Reports via                           |
+| ---------------------- | ------------------- | ------------------------------------- |
+| `skyreader-backend`    | Cloudflare Worker   | `backend/src/observability/sentry.ts` |
+| `skyreader-feed-proxy` | Fly.io (Bun + Hono) | `feed-proxy/src/instrument.ts`        |
 
-The proxy project may carry a different slug — its DSN was provisioned by
-`fly ext sentry create` into a Fly-managed org (RUNBOOK §3 "Sentry account
-ownership"). Use `find_projects` to discover the real slugs rather than assuming
-these; if only one project exists, say so in the report instead of guessing.
+A third project, `weathered-wind-8393`, is the leftover artifact of
+`fly ext sentry create` and has never received an event. Ignore it. (RUNBOOK §3
+"Sentry account ownership" still describes the pre-migration state where the proxy
+reported into a Fly-managed org; both projects now live in `tim-disney`.)
+
+The proxy is **much quieter than the backend** — single-digit issues against the
+backend's hundreds of events. That is a real asymmetry, not a broken DSN, but if
+the proxy shows *zero* events over a window where the backend is busy, check that
+`SENTRY_DSN` is still set on the Fly app before concluding it is healthy.
 
 **Filter every query to `environment:production`.** Staging and production share
 one project and are separated only by the `SENTRY_ENVIRONMENT` tag. Staging noise
 is not an incident. If a staging issue looks genuinely alarming, mention it in one
 line and move on — never open a PR for it.
+
+## Tools
+
+| Need                        | Tool                                       |
+| --------------------------- | ------------------------------------------ |
+| Confirm org / project slugs | `find_organizations`, `find_projects`      |
+| The issue list              | `search_issues` (grouped issues)           |
+| One issue in depth          | `get_sentry_resource` (issue id or URL)    |
+| Counts, rates, time series  | `search_events`                            |
+| Root cause you can't derive | `analyze_issue_with_seer`                  |
+
+`search_issues` returns grouped issues; `search_events` returns individual events
+and aggregations. Reaching for the wrong one is the usual way to get a confusing
+answer. Reach for `analyze_issue_with_seer` only when the stack trace and the code
+genuinely do not explain the failure — it takes minutes, and on a well-instrumented
+path the issue detail is usually enough.
+
+`update_issue` exists and can resolve, ignore, or assign. **Do not use it.**
+Deciding an issue is closed is the operator's call, not the triage pass's; say what
+you would resolve and let a human click it.
 
 ## Procedure
 
@@ -112,6 +137,25 @@ Read the runbook section before classifying. Several of these errors are
 is a message and not an exception on purpose, `documents_cap_saturated` has a
 tuned threshold with a history in the pruning log. Do not "fix" a deliberate
 design decision.
+
+## Standing state (baseline as of 2026-09-17)
+
+The production stream already carries long-running issues. They are listed so a
+daily pass does not re-diagnose them from scratch every morning — **not** so it
+skips them. Treat a jump in rate, or a reappearance after quiet, as new.
+
+| Issue                                             | Shape                            | Read                                                                   |
+| ------------------------------------------------- | -------------------------------- | ---------------------------------------------------------------------- |
+| `TimeoutError` in `recordProxyStats`              | ~528 events / 29d, the loudest   | Cron's proxy-stats fetch timing out. RUNBOOK §4d. Not user-facing.      |
+| `preload_recovery_failed` (client)                | ~44 events / 12d                 | The **only** condition wired to page (§2). A rate change here matters.  |
+| `D1_ERROR: D1 DB is overloaded`                   | Several groupings, same cause    | Cloudflare-side saturation. Infrastructure bucket unless it correlates with a deploy. |
+| `JetstreamPoller alarm overdue by Ns; re-armed`   | ~20 events / 6d                  | The 2026-09-10 pruning-log fix *working* — it re-arms and reports. Self-healing, not an outage. |
+| `Actively read document authors past re-list floor` | ~115 events / 16d              | The threshold tuned on 2026-09-03 (pruning log). Check the log before touching it. |
+| `unread counts diverged on N/M feeds` (client)    | Recurring, low volume            | Client-reported divergence. Forgeable endpoint — needs a cluster, not one event. |
+
+The bottom four are **documented, deliberate behavior with history in the §8
+pruning log**. Do not "fix" them. If one is firing without action available, the
+correct output is a pruning recommendation, not a patch.
 
 ## Proposing fixes
 
