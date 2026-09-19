@@ -138,6 +138,10 @@
         font-weight: 600;
         overflow-wrap: anywhere;
       }
+      .perm-hint {
+        margin-top: 10px;
+        margin-bottom: 0;
+      }
 
       .feed {
         display: flex;
@@ -287,6 +291,9 @@
         save pages or find feeds.
       </div>
       <button class="primary" id="grantBtn">Grant access</button>
+      <div class="muted perm-text perm-hint" id="permissionHint" hidden>
+        In Safari, you can also grant this from Settings → Extensions → Skyreader.
+      </div>
       <div class="status" id="permissionStatus" role="status"></div>
     </div>
 

@@ -2,3 +2,9 @@ node_modules/
 content/
 dist/
 skyreader-extension*.zip
+
+# Xcode build products for the Safari wrapper app (the project itself is
+# committed; see the Safari section of CLAUDE.md).
+safari/build/
+safari/**/xcuserdata/
+safari/**/*.xcuserstate
