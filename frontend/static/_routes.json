@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "include": ["/*"],
+  "exclude": [
+    "/_app/immutable/*",
+    "/fonts/*",
+    "/icons/*",
+    "/service-worker.js",
+    "/manifest.json",
+    "/robots.txt",
+    "/og-image.png",
+    "/og-image.svg"
+  ]
+}

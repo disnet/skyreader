@@ -1,9 +1,36 @@
 import { sveltekit } from '@sveltejs/kit/vite';
 import { SvelteKitPWA } from '@vite-pwa/sveltekit';
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
+
+// The /dev/* component harness is a local-only playground. src/routes/dev/+layout.ts
+// already 404s the whole tree in production, but that's a runtime guard — the page
+// code still got compiled, shipped, and (worse) precached onto every user's device
+// by the service worker, since the SW precaches the entire client build.
+//
+// Replacing each dev +page.svelte with an empty component at build time removes the
+// bodies and lets their harness/fixture imports tree-shake away. The route nodes
+// themselves still exist, so SvelteKit's manifest and the +layout.ts 404 guard are
+// untouched — behavior in production is identical, minus the dead weight.
+function stripDevRoutes(): Plugin {
+  const DEV_PAGE = /\/src\/routes\/dev\/.*\+page\.svelte$/;
+  return {
+    name: 'skyreader:strip-dev-routes',
+    // Build only: `vite dev` must keep serving the real harness.
+    apply: 'build',
+    // Ahead of vite-plugin-svelte, so it compiles the stub instead of the source.
+    enforce: 'pre',
+    load(id) {
+      if (DEV_PAGE.test(id.split('?')[0])) {
+        return '<!-- dev route stripped from production build -->';
+      }
+      return null;
+    },
+  };
+}
 
 export default defineConfig({
   plugins: [
+    stripDevRoutes(),
     sveltekit(),
     SvelteKitPWA({
       // injectManifest lets us keep a hand-written service worker for our custom

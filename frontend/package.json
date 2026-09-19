@@ -37,7 +37,6 @@
     "workbox-strategies": "^7.4.1"
   },
   "dependencies": {
-    "@atproto/api": "^0.20.41",
     "@sveltejs/adapter-static": "^3.0.10",
     "dexie": "^4.4.5",
     "dompurify": "^3.4.14",
