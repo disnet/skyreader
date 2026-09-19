@@ -85,17 +85,21 @@ jobs:
           command: pages deploy --project-name=skyreader-staging --commit-dirty=true
           workingDirectory: frontend
 
-      # Two assertions, because they catch different failures. `/_app/version.json`
+      # Three assertions, because they catch different failures. `/_app/version.json`
       # carries `kit.version.name`, which svelte.config.js stamps with the deployed
       # SHA — matching it proves *this build* is serving, the same proof the Workers
       # smoke check gives. The content sniff then proves the shell actually renders;
       # a deploy that serves a broken/empty document goes red here, not in a bug report.
+      # The asset check proves /_app/immutable/* is still served statically rather than
+      # through functions/_middleware.ts — a regression there costs ~800ms per chunk on
+      # every deploy and is otherwise completely silent, since the site still works.
       - name: Smoke check staging
         env:
           SMOKE_URL: https://staging.skyreader.app
         run: |
           node ../scripts/smoke-check.mjs "$SMOKE_URL/_app/version.json" --version "$GITHUB_SHA"
           node ../scripts/smoke-check.mjs "$SMOKE_URL" --contains '<title>Skyreader</title>'
+          node ../scripts/check-asset-caching.mjs "$SMOKE_URL"
 
   deploy-staging-prod:
     name: Deploy Staging (Prod Backend)
@@ -142,6 +146,7 @@ jobs:
         run: |
           node ../scripts/smoke-check.mjs "$SMOKE_URL/_app/version.json" --version "$GITHUB_SHA"
           node ../scripts/smoke-check.mjs "$SMOKE_URL" --contains '<title>Skyreader</title>'
+          node ../scripts/check-asset-caching.mjs "$SMOKE_URL"
 
   deploy-production:
     name: Deploy to Production
@@ -188,3 +193,4 @@ jobs:
         run: |
           node ../scripts/smoke-check.mjs "$SMOKE_URL/_app/version.json" --version "$GITHUB_SHA"
           node ../scripts/smoke-check.mjs "$SMOKE_URL" --contains '<title>Skyreader</title>'
+          node ../scripts/check-asset-caching.mjs "$SMOKE_URL"
