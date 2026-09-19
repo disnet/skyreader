@@ -10,7 +10,7 @@ import { articlesStore } from './articles.svelte';
 import { syncStore } from './sync.svelte';
 import { savesStore } from './saves.svelte';
 import { magazineStore } from './magazine.svelte';
-import { fetchAllFeeds, fetchAllDocuments } from '$lib/services/feedFetcher';
+import { fetchAllFeeds, fetchAllDocuments, forceRefreshAllFeeds } from '$lib/services/feedFetcher';
 import { api } from '$lib/services/api';
 import { dedupeRemoteSubscriptionRecords } from '$lib/services/subscriptionDedup';
 import { getMetadata, setMetadata, checkDbHealth } from '$lib/services/db';
@@ -409,7 +409,6 @@ function createAppManager() {
     phase = 'refreshing';
 
     try {
-      const { forceRefreshAllFeeds } = await import('$lib/services/feedFetcher');
       await forceRefreshAllFeeds(liveDb.subscriptions, articlesStore.savedGuids);
       lastRefreshAt = Date.now();
       // Persist to IndexedDB for service worker and cross-session access
