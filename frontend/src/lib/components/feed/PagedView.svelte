@@ -410,7 +410,14 @@
        glides in and eases to rest (like flicking a page). Disabled inline by the
        paginator while a finger is actively dragging. */
     transition: transform 0.34s cubic-bezier(0.22, 1, 0.36, 1);
-    will-change: transform;
+    /* Deliberately NOT `will-change: transform`. Promoting this element makes
+       Chrome paint the whole column flow once, into a composited layer whose
+       cull rect is only the viewport plus ~4000px — and because a composited
+       transform never repaints, every column past that stayed blank forever.
+       Long articles simply stopped mid-sentence a few pages in (the rest of the
+       pages rendered empty) while the page count still counted them. The turn
+       stays smooth without it: Chrome composites the transform for the duration
+       of the transition, and a page turn only paints the cull rect. */
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -437,10 +444,21 @@
     break-inside: avoid;
   }
 
+  /* Cap media at one column. `100%` cannot do this: the column flow's containing
+     block has an indefinite height, so a percentage max-height resolves to none
+     and a portrait image just overflowed its column and got clipped by the
+     viewport. `--paged-col-height` is the measured column height in px, written
+     by the paginator, so the cap is real. The 2rem is the media's own margins. */
+  .paged-content :global(img),
+  .paged-content :global(svg),
+  .paged-content :global(video),
+  .paged-content :global(iframe) {
+    max-height: calc(var(--paged-col-height, 100%) - 2rem);
+  }
+
   .paged-content :global(img),
   .paged-content :global(svg),
   .paged-content :global(video) {
-    max-height: 100%;
     object-fit: contain;
   }
 

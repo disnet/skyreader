@@ -89,6 +89,11 @@ export function usePagination(params: PaginationParams) {
     content.style.height = `${H}px`;
     content.style.columnGap = `${gap}px`;
     content.style.columnWidth = `${colWidth}px`;
+    // The one real measure of "one column tall", for the host CSS to cap media
+    // against: a percentage max-height can't do it (the column flow's containing
+    // block height is indefinite, so it resolves to none and tall media overflows
+    // its column and gets clipped).
+    content.style.setProperty('--paged-col-height', `${H}px`);
 
     const colStride = colWidth + gap;
     pageStride = cols * colStride;
