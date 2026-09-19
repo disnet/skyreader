@@ -6,6 +6,7 @@
   import AtmospherePanel from '$lib/components/feed/AtmospherePanel.svelte';
   import CollectionReader from '$lib/components/feed/CollectionReader.svelte';
   import { bskyEmbed } from '$lib/actions/bsky-embed';
+  import { mathRender } from '$lib/actions/math-render';
   import { overlapShadow } from '$lib/actions/overlap-shadow';
   import { appScrollElement } from '$lib/utils/appScroll';
   import type { ArticleCardViewProps } from './articleCardView.types';
@@ -385,6 +386,7 @@
             class="article-body"
             class:truncated={selected && !expanded}
             use:bskyEmbed
+            use:mathRender
           >
             {@html sanitizedContent}
           </div>

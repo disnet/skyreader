@@ -80,7 +80,12 @@ export function getDisplayContent(item: FeedDisplayItem): string {
   if (item.type === 'document') {
     const doc = item.item;
     if (doc.content && isLeafletContent(doc.content)) {
-      return renderLeafletContent(doc.content as LeafletContent, doc.authorDid);
+      return (
+        renderLeafletContent(doc.content as LeafletContent, doc.authorDid) ||
+        doc.textContent ||
+        doc.description ||
+        ''
+      );
     }
     if (doc.content && isPcktBlogContent(doc.content)) {
       return renderPcktBlogContent(doc.content as PcktBlogContent, doc.authorDid);

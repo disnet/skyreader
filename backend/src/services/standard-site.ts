@@ -485,7 +485,7 @@ export function createPdsMemo(): PdsMemo {
   return new Map();
 }
 
-function resolveAuthorPds(authorDid: string, memo?: PdsMemo): Promise<string | null> {
+export function resolveAuthorPds(authorDid: string, memo?: PdsMemo): Promise<string | null> {
   if (!memo) return resolvePdsUrl(authorDid);
   let pending = memo.get(authorDid);
   if (!pending) {

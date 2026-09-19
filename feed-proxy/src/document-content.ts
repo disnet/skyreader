@@ -126,6 +126,16 @@ export function extractContentText(content: unknown): string | null {
   switch (type) {
     case 'pub.leaflet.content': {
       const pages = (content as { pages?: Array<{ blocks?: unknown }> }).pages ?? [];
+      // A long Leaflet post offloads its pages to a `blobPages` blob and leaves this
+      // array empty or a stub, so there is nothing here to snip. Deliberately not
+      // inflated on this path: the blob is a per-document fetch against the author's
+      // PDS, which the backend already pays once at ingest
+      // (`inflateLeafletBlobPages`), and doing it again per snippet would put a
+      // cross-PDS round trip inside the lane fan-out. The caller falls back to the
+      // record's own `textContent`/`description`. Consequence while
+      // `sync_state.documents_v2_enabled` is off and documents are still served from
+      // here: such a post's *body* arrives empty too, and the reader shows the
+      // record's text content rather than the full article until the gate flips.
       // Prose anywhere in the document beats a quote on the first page, so the
       // skip pass runs across every page before the take pass does.
       for (const quotes of ['skip', 'take'] as const) {

@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { renderOffprintContent } from './offprint-renderer';
 import { sanitizeHtml } from './sanitize';
@@ -298,5 +299,71 @@ describe('styling survives sanitizing', () => {
 
     expect(html).toContain('op-callout');
     expect(html).not.toContain('156 163 175');
+  });
+});
+
+describe('current Offprint lexicon support', () => {
+  it('renders buttons and math blocks', () => {
+    const clean = sanitizeHtml(
+      renderOffprintContent(
+        doc(
+          { $type: 'app.offprint.block.button', text: 'Visit', href: 'https://example.com' },
+          { $type: 'app.offprint.block.mathBlock', tex: 'a^2+b^2=c^2' }
+        ),
+        AUTHOR_DID
+      )
+    );
+    expect(clean).toContain('op-button');
+    // The TeX placeholder the on-demand parser hydrates, source and all.
+    expect(clean).toContain('data-tex="a^2+b^2=c^2"');
+    expect(clean).toContain('a^2+b^2=c^2</code>');
+  });
+
+  it('keeps the degradation notice for what was actually dropped', () => {
+    // An empty paragraph renders to nothing without anything being lost.
+    const empty = renderOffprintContent(
+      doc(
+        { $type: 'app.offprint.block.text', plaintext: 'Body' },
+        { $type: 'app.offprint.block.text', plaintext: '' }
+      ),
+      AUTHOR_DID
+    );
+    expect(empty).not.toContain('Some content');
+
+    const unknown = renderOffprintContent(
+      doc({ $type: 'app.offprint.block.component' } as unknown as OffprintBlock),
+      AUTHOR_DID
+    );
+    expect(unknown).toContain('Some content');
+  });
+
+  it('accepts the lexicon blob key and honours requested grid rows', () => {
+    const html = renderOffprintContent(
+      doc({
+        $type: 'app.offprint.block.imageGrid',
+        gridRows: 2,
+        aspectRatio: 'square',
+        images: [
+          { blob: blob('one') },
+          { blob: blob('two') },
+          { blob: blob('three') },
+          { blob: blob('four') },
+        ],
+      }),
+      AUTHOR_DID
+    );
+    expect(html).toContain('op-grid--cols-2');
+    expect(html).toContain('op-grid--square');
+    expect(html).toContain('one@jpeg');
+  });
+
+  // A class the stylesheet doesn't match renders identically to no class at all, so
+  // asserting only that the renderer emits it is coverage for a feature that isn't
+  // there. Every value of the lexicon's enum has to reach a rule.
+  it('styles every grid aspect-ratio mode it emits', () => {
+    const css = readFileSync(`${process.cwd()}/src/app.css`, 'utf8');
+    for (const ratio of ['landscape', 'portrait', 'square', 'mosaic']) {
+      expect(css).toContain(`.op-grid--${ratio} .op-grid__cell`);
+    }
   });
 });
