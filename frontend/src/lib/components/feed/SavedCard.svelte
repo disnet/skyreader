@@ -75,7 +75,7 @@
   // Feed info (for articles only)
   let sub = $derived(
     displayItem.type === 'article'
-      ? subscriptionsStore.subscriptions.find((s) => s.id === displayItem.item.subscriptionId)
+      ? subscriptionsStore.byId.get(displayItem.item.subscriptionId)
       : undefined
   );
   let feedTitle = $derived.by(() => {

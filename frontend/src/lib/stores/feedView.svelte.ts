@@ -7,6 +7,7 @@ import { savesStore } from './saves.svelte';
 import { savedSearchStore } from './savedSearch.svelte';
 import { preferences } from './preferences.svelte';
 import { filteredViewsStore } from './filteredViews.svelte';
+import { mobileStore } from './mediaQuery.svelte';
 import { liveDb } from '$lib/services/liveDb.svelte';
 import type {
   Article,
@@ -44,6 +45,19 @@ export type FeedDisplayItem =
   | { type: 'saved'; item: SavedItem; key: string };
 
 const DEFAULT_PAGE_SIZE = 50;
+
+// The first batch a view switch has to mount. Every card in it is a component
+// tree built synchronously on the main thread, so on a phone this number *is*
+// the tap-to-painted-list latency. The sentinel backfills at DEFAULT_PAGE_SIZE
+// as soon as the reader scrolls, so a smaller opening batch costs nothing but
+// buys back the stall. Desktop keeps 50: it has the headroom, and a wide window
+// can show more than 15 rows at once.
+const MOBILE_INITIAL_PAGE_SIZE = 15;
+
+/** Size of the batch a filter change / view switch starts from. */
+function initialPageSize(): number {
+  return mobileStore.isMobile ? MOBILE_INITIAL_PAGE_SIZE : DEFAULT_PAGE_SIZE;
+}
 
 export interface EffectiveFilters {
   sourceMode: 'all' | 'include' | 'exclude';
@@ -303,7 +317,7 @@ function createFeedViewStore() {
   // different item after a refresh.
   let selectedKey = $state<string | null>(null);
   let expandedKey = $state<string | null>(null);
-  let loadedArticleCount = $state(DEFAULT_PAGE_SIZE);
+  let loadedArticleCount = $state(initialPageSize());
 
   // Tag menu state (which item key should show the tag menu, null = closed)
   let tagMenuItemKey = $state<string | null>(null);
@@ -1314,7 +1328,7 @@ function createFeedViewStore() {
       cancelPendingView();
       resetToolbarFilters();
     }
-    loadedArticleCount = DEFAULT_PAGE_SIZE;
+    loadedArticleCount = initialPageSize();
     resetSelection();
   }
 
@@ -1731,7 +1745,7 @@ function createFeedViewStore() {
     setSavedView(view: 'inbox' | 'archive') {
       cancelPendingView();
       savedView = view;
-      loadedArticleCount = DEFAULT_PAGE_SIZE;
+      loadedArticleCount = initialPageSize();
     },
     openTagMenu(itemKey: string) {
       tagMenuItemKey = itemKey;
@@ -1790,7 +1804,7 @@ function createFeedViewStore() {
       viewFilter = filters.view ?? null;
       categoryFilter = filters.category ?? null;
       // Reset pagination when filters change
-      loadedArticleCount = DEFAULT_PAGE_SIZE;
+      loadedArticleCount = initialPageSize();
       // Populate toolbar from saved view, or reset to defaults
       if (filters.view) {
         const fv = lookupView(filters.view);

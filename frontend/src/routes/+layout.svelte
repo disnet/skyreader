@@ -1,8 +1,9 @@
 <script lang="ts">
   import { browser, version as appVersion } from '$app/environment';
   import { page } from '$app/stores';
-  import { goto } from '$app/navigation';
+  import { goto, afterNavigate } from '$app/navigation';
   import { onMount } from 'svelte';
+  import { perfEndOnPaint, PERF_VIEW_SWITCH } from '$lib/utils/perfMarks';
   import { writable, type Writable } from 'svelte/store';
   import type { Component, Snippet } from 'svelte';
   import { useRegisterSW } from 'virtual:pwa-register/svelte';
@@ -14,6 +15,12 @@
 
   let { children } = $props();
   let updating = $state(false);
+
+  // Closes the switcher's tap→painted-list measurement (dev only; no-ops unless
+  // something opened one). Lives here rather than per-surface because a view
+  // switch can be a same-route filter change or a whole route hop, and both end
+  // at the same place: the first frame after the navigation settles.
+  afterNavigate(() => perfEndOnPaint(PERF_VIEW_SWITCH));
 
   // The authenticated app shell is code-split: it (and its heavy dependency graph —
   // the IndexedDB data layer, feed stores, Sidebar, @mention polling) is fetched
