@@ -410,7 +410,78 @@ async function selectionSnapshot(page: Page): Promise<SelectionSnapshot | null> 
   });
 }
 
+/**
+ * How much dark pixel the page is actually *painting* inside `.paged-viewport`.
+ * A DOM measurement can't answer this: the column flow's layout stays correct
+ * even when the browser never paints it (see the far-page test below), so the
+ * only honest check is to look at the pixels. The shot is decoded on a canvas in
+ * the page, which keeps the test free of an image-decoding dependency.
+ */
+async function visibleInk(page: Page): Promise<number> {
+  const shot = await page.locator('.paged-viewport').screenshot();
+  return page.evaluate(async (base64) => {
+    const image = new Image();
+    image.src = `data:image/png;base64,${base64}`;
+    await image.decode();
+    const canvas = document.createElement('canvas');
+    canvas.width = image.width;
+    canvas.height = image.height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('no 2d context to decode the page shot with');
+    ctx.drawImage(image, 0, 0);
+    const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    let ink = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      const luminance = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+      if (luminance < 150) ink++;
+    }
+    return ink;
+  }, shot.toString('base64'));
+}
+
 test.describe('Paged reader interactions', () => {
+  // A long article's later pages used to render blank. The layout was never
+  // wrong — `will-change: transform` on the column flow promoted it to a
+  // composited layer, Chrome painted that layer once with a cull rect of roughly
+  // the viewport plus 4000px, and a composited transform never repaints, so every
+  // column past the cull rect stayed unpainted while the pager kept counting it.
+  // The article simply stopped mid-sentence a few pages in.
+  test('every page of a long article actually paints', async ({ authedPage, testUser }) => {
+    // Twenty screenshots, each decoded pixel by pixel, is legitimately slow — and
+    // the point of the test is the *number* of pages it walks, so it buys headroom
+    // rather than checking fewer of them.
+    test.slow();
+    await openPagedReader(authedPage, testUser);
+
+    const flow = await authedPage.evaluate(() => {
+      const content = document.querySelector('.paged-content');
+      const viewport = document.querySelector('.paged-viewport');
+      if (!content || !viewport) throw new Error('no paged flow to measure');
+      return { overhang: content.scrollWidth - viewport.clientWidth };
+    });
+    // The test only means something if the flow runs past a composited layer's
+    // cull rect — otherwise a promoted layer would paint every page anyway.
+    expect(flow.overhang).toBeGreaterThan(4000);
+
+    const total = Number((await pageLabel(authedPage)).match(/of (\d+)$/)?.[1]);
+    expect(total).toBeGreaterThan(1);
+    const firstPageInk = await visibleInk(authedPage);
+    expect(firstPageInk).toBeGreaterThan(1000);
+
+    // Walk far enough past the old cull-rect boundary to have caught it, and stop
+    // before the last page, whose column is only partly filled by design.
+    const lastToCheck = Math.min(total - 1, 20);
+    for (let page = 2; page <= lastToCheck; page++) {
+      await authedPage.getByRole('button', { name: 'Next page' }).click();
+      await expect(authedPage.locator('.paged-count')).toHaveText(`Page ${page} of ${total}`);
+      await settlePageTransform(authedPage);
+      expect(
+        await visibleInk(authedPage),
+        `page ${page} of ${total} rendered blank`
+      ).toBeGreaterThan(1000);
+    }
+  });
+
   test('a tap in the right reading area never turns the page', async ({ authedPage, testUser }) => {
     await openPagedReader(authedPage, testUser);
     const label = await pageLabel(authedPage);
