@@ -266,9 +266,9 @@ describe('crawl-set registration', () => {
     db.close();
   });
 
-  it('creates a cache row for an unknown feed, due for the warm loop', () => {
+  it('creates a cache row for an unknown feed, due for the warm loop', async () => {
     const now = Date.now();
-    expect(registerCrawlFeeds(db, [FEED_URL], now)).toBe(1);
+    expect(await registerCrawlFeeds(db, [FEED_URL], now)).toEqual({ registered: 1, written: 1 });
 
     const row = db
       .query<
@@ -283,12 +283,12 @@ describe('crawl-set registration', () => {
     expect(row?.parser_version).toBe(0);
   });
 
-  it('keeps a known feed warm without any read traffic', () => {
+  it('keeps a known feed warm without any read traffic', async () => {
     seedCache(db);
     db.run('UPDATE cache SET last_requested_at = ? WHERE url_hash = ?', [1000, URL_HASH]);
 
     const now = Date.now();
-    registerCrawlFeeds(db, [FEED_URL], now);
+    await registerCrawlFeeds(db, [FEED_URL], now);
 
     const row = db
       .query<{ last_requested_at: number; parsed_json: string; parser_version: number }, [string]>(
@@ -322,7 +322,128 @@ describe('crawl-set registration', () => {
     spy.mockRestore();
 
     expect(result.registered).toBe(2);
+    expect(result.written).toBe(2);
     expect(db.query<{ c: number }, []>('SELECT COUNT(*) AS c FROM cache').get()?.c).toBe(2);
+  });
+
+  // The regression that matters: before this, every pull rewrote every row in the
+  // crawl set, and `last_requested_at` leads one index and sits inside another —
+  // so a 2,100-feed set blocked the single-threaded process for 20-25s every 5
+  // minutes. A row still inside its refresh window must not be touched at all.
+  it('skips the write for a feed re-stamped inside its refresh window', async () => {
+    const now = Date.now();
+    await registerCrawlFeeds(db, [FEED_URL], now - 60_000, { refreshAfterMs: 3_600_000 });
+
+    const second = await registerCrawlFeeds(db, [FEED_URL], now, { refreshAfterMs: 3_600_000 });
+
+    // Still in the crawl set, but nothing was rewritten.
+    expect(second).toEqual({ registered: 1, written: 0 });
+    expect(
+      db
+        .query<{ last_requested_at: number }, [string]>(
+          'SELECT last_requested_at FROM cache WHERE url_hash = ?'
+        )
+        .get(URL_HASH)?.last_requested_at
+    ).toBe(now - 60_000);
+  });
+
+  it('re-stamps a feed once its stamp ages past the refresh window', async () => {
+    const now = Date.now();
+    await registerCrawlFeeds(db, [FEED_URL], now - 7_200_000, { refreshAfterMs: 3_600_000 });
+
+    const second = await registerCrawlFeeds(db, [FEED_URL], now, { refreshAfterMs: 3_600_000 });
+
+    expect(second).toEqual({ registered: 1, written: 1 });
+    expect(
+      db
+        .query<{ last_requested_at: number }, [string]>(
+          'SELECT last_requested_at FROM cache WHERE url_hash = ?'
+        )
+        .get(URL_HASH)?.last_requested_at
+    ).toBe(now);
+  });
+
+  // `last_requested_at` is nullable (ALTER TABLE), and `NULL <= n` is NULL, not
+  // true — so a bare `<=` guard leaves such a row un-stamped forever, and
+  // WARM_DUE_FEEDS_SQL skips rows whose stamp IS NULL. The feed would silently stop
+  // being crawled with no way back. The pull has to repair it, as it used to.
+  it('re-stamps a feed whose stamp is NULL', async () => {
+    const now = Date.now();
+    db.run(
+      `INSERT INTO cache (url_hash, url, parsed_json, parser_version, cached_at, fetched_at, last_requested_at)
+       VALUES (?, ?, '{"title":"","items":[]}', 1, 0, 0, NULL)`,
+      [URL_HASH, FEED_URL]
+    );
+
+    const result = await registerCrawlFeeds(db, [FEED_URL], now, { refreshAfterMs: 3_600_000 });
+
+    expect(result).toEqual({ registered: 1, written: 1 });
+    expect(
+      db
+        .query<{ last_requested_at: number | null }, [string]>(
+          'SELECT last_requested_at FROM cache WHERE url_hash = ?'
+        )
+        .get(URL_HASH)?.last_requested_at
+    ).toBe(now);
+  });
+
+  // Without per-feed jitter the whole crawl set is stamped in one cycle and ages
+  // out in one cycle, which reinstates the very stall the fast path removed — just
+  // once a window instead of every 5 minutes. Feeds stamped together must come due
+  // apart. Deterministic: the spread is a hash of the URL, not a random draw.
+  it('spreads the refresh deadline across feeds stamped together', async () => {
+    const urls = Array.from({ length: 60 }, (_, i) => `https://jitter.example/${i}.xml`);
+    const refreshAfterMs = 3_600_000;
+    const start = Date.now();
+    await registerCrawlFeeds(db, urls, start, { refreshAfterMs });
+
+    // Three quarters of a window on: past the earliest deadline, short of the
+    // latest, so a synchronised set would write all 60 or none.
+    const second = await registerCrawlFeeds(db, urls, start + refreshAfterMs * 0.75, {
+      refreshAfterMs,
+    });
+
+    expect(second.registered).toBe(60);
+    expect(second.written).toBeGreaterThan(0);
+    expect(second.written).toBeLessThan(60);
+  });
+
+  // No feed may be held past the window the caller sized against the warm loop's
+  // active window: jitter only ever pulls a refresh EARLIER.
+  it('re-stamps every feed by the end of the refresh window', async () => {
+    const urls = Array.from({ length: 60 }, (_, i) => `https://jitter.example/${i}.xml`);
+    const refreshAfterMs = 3_600_000;
+    const start = Date.now();
+    await registerCrawlFeeds(db, urls, start, { refreshAfterMs });
+
+    const second = await registerCrawlFeeds(db, urls, start + refreshAfterMs, { refreshAfterMs });
+
+    expect(second.written).toBe(60);
+  });
+
+  // A new feed must be registered even when every other feed in the set is
+  // inside its refresh window — the fast path skips writes, not feeds.
+  it('still inserts unknown feeds during an otherwise no-op cycle', async () => {
+    const now = Date.now();
+    await registerCrawlFeeds(db, [FEED_URL], now, { refreshAfterMs: 3_600_000 });
+
+    const second = await registerCrawlFeeds(db, [FEED_URL, 'https://new.example/f.xml'], now, {
+      refreshAfterMs: 3_600_000,
+    });
+
+    expect(second).toEqual({ registered: 2, written: 1 });
+    expect(db.query<{ c: number }, []>('SELECT COUNT(*) AS c FROM cache').get()?.c).toBe(2);
+  });
+
+  // Chunking is what bounds the cycles that DO have work (cold start, bulk
+  // import). Crossing a chunk boundary must not drop or double-count anything.
+  it('registers every feed across chunk boundaries', async () => {
+    const urls = Array.from({ length: 25 }, (_, i) => `https://chunk.example/${i}.xml`);
+
+    const result = await registerCrawlFeeds(db, urls, Date.now(), { chunkSize: 4 });
+
+    expect(result).toEqual({ registered: 25, written: 25 });
+    expect(db.query<{ c: number }, []>('SELECT COUNT(*) AS c FROM cache').get()?.c).toBe(25);
   });
 
   it('reports a failed pull without touching the cache', async () => {

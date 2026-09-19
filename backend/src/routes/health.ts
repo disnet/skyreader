@@ -20,8 +20,30 @@ const DEEP_HEALTH_PATH = '/api/health/deep';
 const POLLER_STALE_MS = 5 * 60 * 1000;
 
 // Dependency checks are for a monitor with a timeout of its own; fail fast rather
-// than hang.
+// than hang. D1 and the poller are in-network (a Worker-to-D1 query, a Worker-to-DO
+// fetch), so 3s is already far outside their normal spread.
 const DEPENDENCY_TIMEOUT_MS = 3000;
+
+// The proxy leg gets its own, wider budget, because it is the only check that
+// leaves Cloudflare's network: DNS + TCP + TLS to Fly's edge happen INSIDE this
+// timeout, and that setup — not the proxy's own handling, which is ~10ms — is
+// where the variance lives.
+//
+// Sized from measurement, not taste. Over the 24h to 2026-09-19 the wall time of
+// SUCCESSFUL deep-health calls ran p50 597ms / p90 1054ms / p95 1289ms /
+// p99 2543ms, against the 3000ms this check used to give the proxy. A threshold
+// sitting on its own p99 is not a threshold: ~3% of probes (64 of ~2,100) 503'd
+// while not one user-facing route failed in the same windows. 8s clears the
+// observed maximum (6384ms) with room, and still returns inside any sane uptime
+// monitor's own timeout — including when the proxy really is gone, since the
+// three checks run concurrently and this is the longest any of them can take.
+//
+// This is headroom, not a substitute for the proxy being responsive. The stalls
+// that produced those 503s were real (a 20-25s event-loop block every 5 minutes,
+// from the crawl-set pull rewriting its whole set — fixed in
+// feed-proxy/src/ingest-push.ts registerCrawlFeeds). If this timeout starts
+// firing again, look there first, not here.
+const FEED_PROXY_TIMEOUT_MS = 8000;
 
 export function getVersion(env: Env): string {
   return env.GIT_COMMIT_SHA || 'dev';
@@ -163,7 +185,7 @@ async function checkFeedProxy(env: Env): Promise<CheckResult> {
   const start = Date.now();
   try {
     const response = await fetch(`${env.FEED_PROXY_URL}/health`, {
-      signal: AbortSignal.timeout(DEPENDENCY_TIMEOUT_MS),
+      signal: AbortSignal.timeout(FEED_PROXY_TIMEOUT_MS),
     });
     if (!response.ok) {
       return {

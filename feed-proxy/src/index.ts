@@ -79,6 +79,18 @@ const INGEST_INTERVAL_MS = parseInt(process.env.INGEST_INTERVAL_SECONDS || '15',
 const INGEST_CHAIN_DELAY_MS = parseInt(process.env.INGEST_CHAIN_DELAY_MS || '1000', 10);
 const INGEST_BATCH_SIZE = parseInt(process.env.INGEST_BATCH_SIZE || '100', 10);
 const CRAWL_SET_INTERVAL_MS = parseInt(process.env.CRAWL_SET_INTERVAL_SECONDS || '300', 10) * 1000;
+// How stale a crawl-set feed's `last_requested_at` may get before the pull
+// rewrites it (see registerCrawlFeeds). Derived from the warm loop's active
+// window rather than from the pull interval, because the window is the only
+// thing the stamp actually has to satisfy: a feed whose stamp ages past
+// WARM_ACTIVE_WINDOW_MS stops being crawled.
+//
+// A half-window keeps two margins honest at once. A feed is re-stamped at ~half
+// the window, so it is never anywhere near ageing out; and if the pull itself
+// fails, the oldest stamp in the set still has the other half of the window to
+// spare before the set starts draining — at the 1-day window that is ~12 hours
+// of grace, against the ~24 the old always-stamp behaviour bought.
+const CRAWL_REFRESH_AFTER_MS = Math.floor(WARM_ACTIVE_WINDOW_MS / 2);
 const PUSH_BACKOFF_BASE_MS = 30 * 1000;
 const PUSH_BACKOFF_MAX_MS = 10 * 60 * 1000;
 
@@ -283,6 +295,7 @@ if (INGEST_ENABLED) {
     ingestUrl: INGEST_URL,
     secret: PROXY_SECRET,
     batchSize: INGEST_BATCH_SIZE,
+    crawlRefreshAfterMs: CRAWL_REFRESH_AFTER_MS,
   };
   // Drain chaining, failure backoff, and the re-entrancy guard live in
   // createPushLoop (ingest-push.ts), where they are unit-tested; this wires in
@@ -316,7 +329,12 @@ if (INGEST_ENABLED) {
           );
         } else {
           crawlSetFailures = 0;
-          console.log(`[Proxy] Crawl set: ${result.registered} feed(s) registered`);
+          // `written` is the number that matters operationally: it should sit near
+          // zero once the set is steady. A cycle that rewrites most of the set is
+          // the blocked-event-loop failure mode coming back.
+          console.log(
+            `[Proxy] Crawl set: ${result.registered} feed(s) registered, ${result.written ?? 0} written`
+          );
         }
         // Report health AFTER the pull, so a feed registered for the first time
         // this cycle is already in the crawl set and its errors are reportable.

@@ -200,6 +200,58 @@ Only those two decide the status code, so `poller.ok = false` is never why this
 is 503ing — a stale poller alone returns `200 degraded`. For that one see
 `jetstream_alarm_stuck` below.
 
+**First question on a `feedProxy` timeout: did anything else fail?** This alert
+has a known false-positive shape — the proxy answers `/health` in ~10ms, but the
+whole check (DNS + TCP + TLS out of Cloudflare's network, then the round trip)
+has a fat tail. Before 2026-09-19 the proxy leg had a 3000ms budget against a
+measured p99 of 2543ms, so a healthy proxy tripped it a few times an hour. Now it
+gets 8000ms (`FEED_PROXY_TIMEOUT_MS` in `backend/src/routes/health.ts`), sized
+off that distribution.
+
+Check the Worker's 5xx by route over the alerting window before touching
+anything:
+
+```
+$workers.event.response.status >= 500, group by $metadata.trigger
+```
+
+If `GET /api/health/deep` is the ONLY route with 5xx, no reader was affected —
+timeline and feed reads come from D1, and the proxy-backed paths (`/api/extract`,
+feed discovery, `warmFeedIntoArchive`, the `/api/v2/feeds/fetch` pull-through)
+would have failed alongside it if the proxy were genuinely gone. Treat it as a
+latency event and go to the proxy, not the Worker.
+
+**The signature to rule out first: an event-loop stall on the proxy.** It is
+single-threaded, so a long synchronous SQLite burst makes it accept connections
+and then answer none of them — which looks exactly like "the proxy is down" for
+the duration, and then clears on its own. The 2026-09-19 case was the 5-minutely
+crawl-set pull rewriting all ~2,100 rows of the crawl set (and two indexes over
+`last_requested_at`) in one transaction: **20-25s of dead air, every 5 minutes**,
+producing bursts of consecutive 503s that resolved before anyone looked.
+
+To confirm one, probe `/health` from outside on a short budget while tailing the
+proxy, and line the two up:
+
+```bash
+while :; do curl -s -o /dev/null --max-time 3 \
+  -w "$(date -u +%H:%M:%S) ttfb=%{time_starttransfer} code=%{http_code}\n" \
+  https://skyreader-feed-proxy.fly.dev/health; sleep 5; done
+fly logs -a skyreader-feed-proxy
+```
+
+A stall reads as several consecutive `code=000` whose TLS handshake still
+completed quickly — the socket is accepted, the handler never runs — ending at
+the instant the blocking task logs its completion line. That last detail is the
+diagnosis: whatever prints when the stall ends is what caused it.
+
+`Crawl set: N feed(s) registered, M written` is instrumented for exactly this.
+**`M` should sit near zero in steady state** — a few tens of rows per cycle is
+normal and expected, since refresh deadlines are jittered per feed so the set
+comes due a handful at a time rather than all at once. A cycle that writes most
+of the set means the no-op fast path in `registerCrawlFeeds` has stopped working
+and the stalls are back. A cold start or a fresh volume writes the whole set
+once; that is the one benign case.
+
 ### `backend-cron` heartbeat missed
 
 **Means:** the every-minute cron stopped firing or failed. **The JetstreamPoller
