@@ -54,6 +54,18 @@ primary_region = "sjc"
 # 90s starved), and diskstats deltas. Changing cpu_kind migrates the machine to
 # a different host and forks the volume. One variable per deploy.
 #
+# A fourth instrument, added 2026-09-19: the `written` count on the crawl-set log
+# line (`Crawl set: N feed(s) registered, M written`). This process is
+# single-threaded, so a long synchronous SQLite burst is indistinguishable from
+# the box being down — connections get accepted and then answered by nobody. The
+# pull used to rewrite all ~2,100 rows every 300s, and `last_requested_at` leads
+# one index and sits inside the 7-column idx_cache_warm, so each of those no-op
+# bumps moved two b-tree keys: 20-25s of dead air every 5 minutes, which showed up
+# only as the Worker's deep-health probe 503ing in bursts. `M` near zero means the
+# no-op fast path is working; `M` near `N` in steady state means it isn't, and the
+# stalls are back. This is a CPU-shaped symptom that no amount of [vm] buys off —
+# check it before reaching for the rollback ladder below.
+#
 # Rollback ladder if starvation returns: performance-1x/2048, then
 # performance-2x/4096 (both held this workload on 2026-08-21).
 [vm]

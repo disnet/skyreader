@@ -27,6 +27,10 @@ export interface IngestConfig {
   // Items per push request. The Worker's own cap is well above this.
   batchSize?: number;
   timeoutMs?: number;
+  // How stale a feed's `last_requested_at` may get before the crawl-set pull
+  // rewrites it. See registerCrawlFeeds — this is what keeps the 5-minutely pull
+  // from rewriting the whole crawl set, and every index entry over it, each time.
+  crawlRefreshAfterMs?: number;
 }
 
 const DEFAULT_BATCH_SIZE = 100;
@@ -250,6 +254,59 @@ export async function pushDirtyItems(db: Database, config: IngestConfig): Promis
   }
 }
 
+export interface RegisterCrawlFeedsResult {
+  /** Feeds in the crawl set — i.e. how many URLs were processed. */
+  registered: number;
+  /** Rows actually written (inserted or re-stamped). Near zero in steady state. */
+  written: number;
+}
+
+export interface RegisterCrawlFeedsOptions {
+  /**
+   * Re-stamp a feed only once its stamp is older than this. Must stay well below
+   * the warm loop's active window, since a feed whose stamp ages past that window
+   * stops being crawled: the gap between the two is the grace period a crawl-set
+   * outage gets before the set starts ageing out.
+   */
+  refreshAfterMs?: number;
+  /** Rows per transaction. The loop yields between chunks. */
+  chunkSize?: number;
+}
+
+const DEFAULT_CRAWL_CHUNK_SIZE = 250;
+
+/** Hand the event loop back so queued requests are served between chunks. */
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+/**
+ * The cutoff a feed's stamp must fall at or below to be rewritten — derived per
+ * URL, not once for the whole set.
+ *
+ * A single shared deadline re-synchronises the crawl set: every row stamped in one
+ * cycle then ages out in one cycle, so the whole set is rewritten together every
+ * refresh window. That is the same 20-25s stall this fast path exists to avoid,
+ * moved from every 5 minutes to every ~12 hours rather than removed — and it puts
+ * `written` near the set size on a HEALTHY box, which is exactly the reading the
+ * RUNBOOK treats as the fast path having broken.
+ *
+ * Hashing the URL spreads each feed's effective window over
+ * [refreshAfterMs/2, refreshAfterMs), so rewrites arrive a few per cycle. They stay
+ * spread: a feed keeps its own period across cycles, so phases drift apart rather
+ * than collapsing back together.
+ *
+ * The upper bound stays strictly BELOW refreshAfterMs, so the grace the caller
+ * sized against the warm loop's active window is preserved, never widened.
+ */
+function staleBefore(urlHash: string, now: number, refreshAfterMs: number): number {
+  const half = Math.floor(refreshAfterMs / 2);
+  // refreshAfterMs of 0 (always re-stamp) lands here; `% 0` is NaN, which would
+  // compare false against every stamp and freeze the whole set.
+  if (half <= 0) return now - refreshAfterMs;
+  return now - (half + (parseInt(urlHash.slice(0, 8), 16) % half));
+}
+
 /**
  * Register a feed in the crawl set: create its cache row if missing and stamp
  * `last_requested_at`. That single stamp is the whole trick — the existing warm
@@ -258,28 +315,92 @@ export async function pushDirtyItems(db: Database, config: IngestConfig): Promis
  *
  * A newly created row starts with parser_version 0 and fetched_at 0 so the warm
  * loop treats it as due immediately.
+ *
+ * TWO THINGS KEEP THIS OFF THE EVENT LOOP, and both are load-bearing:
+ *
+ * 1. The stamp is only rewritten once the existing one is older than
+ *    `refreshAfterMs` (production passes CRAWL_REFRESH_AFTER_MS, half the warm
+ *    loop's active window — see index.ts), jittered per feed so the set does not
+ *    all age out on the same cycle (see staleBefore). Stamping is not the point; staying
+ *    inside that window is, and the window is a DAY. Bumping every row every 300s
+ *    wrote the whole crawl set ~288x more often than the window needs, and
+ *    `last_requested_at` leads `idx_cache_last_requested_at` and sits inside the
+ *    7-column `idx_cache_warm`, so each of those no-op bumps relocated two b-tree
+ *    keys. On 2026-09-19 that was measured blocking the (single-threaded) process
+ *    for 20-25s every 5 minutes: connections were accepted and then went
+ *    unanswered, which is what tripped the Worker's deep-health probe into bursts
+ *    of 503s while every real reader path was fine. Same shape as the `body_hash`
+ *    no-change fast path on the warm loop — do the read, skip the write.
+ * 2. The writes are chunked, with a yield between chunks. The fast path above is
+ *    what makes a STEADY-STATE cycle nearly free; this is what bounds the cycles
+ *    that genuinely have work — a cold start, or a big subscription import, where
+ *    every row really does need writing.
+ *
+ * `written` is the number of rows actually inserted or re-stamped. In steady state
+ * it should sit near zero; a cycle that reports it near the crawl-set size means
+ * the fast path has stopped working. It is logged every cycle for that reason.
  */
-export function registerCrawlFeeds(db: Database, feedUrls: string[], now: number): number {
-  if (feedUrls.length === 0) return 0;
+export async function registerCrawlFeeds(
+  db: Database,
+  feedUrls: string[],
+  now: number,
+  options: RegisterCrawlFeedsOptions = {}
+): Promise<RegisterCrawlFeedsResult> {
+  if (feedUrls.length === 0) return { registered: 0, written: 0 };
+
+  // `refreshAfterMs` of 0 means "always re-stamp" — the pre-2026-09-19 behaviour,
+  // kept reachable because it is what the tests assert the stamp semantics with.
+  const refreshAfterMs = options.refreshAfterMs ?? 0;
+  const chunkSize = Math.max(1, options.chunkSize ?? DEFAULT_CRAWL_CHUNK_SIZE);
+
+  // The `WHERE` belongs to DO UPDATE, not to the INSERT: it decides whether an
+  // EXISTING row is rewritten. A row inside its refresh window matches nothing to
+  // update, so SQLite leaves it — and both of its index entries — untouched.
+  //
+  // The NULL arm is not defensive noise. `last_requested_at` is nullable (added by
+  // ALTER TABLE, so pre-migration rows carry NULL), and `NULL <= n` is NULL, not
+  // true — without it such a row can never be re-stamped, while WARM_DUE_FEEDS_SQL
+  // requires `last_requested_at IS NOT NULL`. That feed would drop out of the crawl
+  // set permanently and silently. The old unconditional DO UPDATE repaired it on the
+  // next pull; this keeps that self-healing.
   const upsert = db.query(
     `INSERT INTO cache (url_hash, url, parsed_json, parser_version, parser_upgrade_attempted_version,
 		                    cached_at, fetched_at, error_count, last_requested_at)
 		 VALUES (?, ?, '{"title":"","items":[],"fetchedAt":0}', 0, 0, 0, 0, 0, ?)
-		 ON CONFLICT(url_hash) DO UPDATE SET last_requested_at = excluded.last_requested_at`
+		 ON CONFLICT(url_hash) DO UPDATE SET last_requested_at = excluded.last_requested_at
+		   WHERE cache.last_requested_at IS NULL OR cache.last_requested_at <= ?`
   );
-  let registered = 0;
-  db.transaction(() => {
-    for (const url of feedUrls) {
-      if (!url) continue;
-      upsert.run(hashUrl(url), url, now);
-      registered++;
-    }
-  })();
-  return registered;
+
+  // total_changes() counts rows written on this CONNECTION, which everything else
+  // in the process shares — so it is sampled around each synchronous chunk and
+  // summed, never once across the whole run. The yields between chunks are
+  // exactly when the warm loop gets to write its own rows; spanning them would
+  // bill that work to the crawl set and quietly ruin `written` as a signal.
+  const totalChanges = (): number =>
+    db.query<{ c: number }, []>('SELECT total_changes() AS c').get()?.c ?? 0;
+
+  const urls = feedUrls.filter(Boolean);
+  let written = 0;
+  for (let i = 0; i < urls.length; i += chunkSize) {
+    const chunk = urls.slice(i, i + chunkSize);
+    const before = totalChanges();
+    db.transaction(() => {
+      for (const url of chunk) {
+        const urlHash = hashUrl(url);
+        upsert.run(urlHash, url, now, staleBefore(urlHash, now, refreshAfterMs));
+      }
+    })();
+    written += totalChanges() - before;
+    if (i + chunkSize < urls.length) await yieldToEventLoop();
+  }
+
+  return { registered: urls.length, written };
 }
 
 export interface CrawlSetResult {
   registered: number;
+  /** Rows actually written this cycle. See registerCrawlFeeds. */
+  written?: number;
   error?: string;
 }
 
@@ -453,7 +574,9 @@ export async function pullCrawlSet(db: Database, config: IngestConfig): Promise<
     }
     const body = (await response.json()) as { feeds?: Array<{ feedUrl: string }> };
     const urls = (body.feeds ?? []).map((f) => f.feedUrl).filter(Boolean);
-    return { registered: registerCrawlFeeds(db, urls, Date.now()) };
+    return await registerCrawlFeeds(db, urls, Date.now(), {
+      refreshAfterMs: config.crawlRefreshAfterMs,
+    });
   } catch (error) {
     return {
       registered: 0,
