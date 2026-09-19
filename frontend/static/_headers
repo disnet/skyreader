@@ -1,0 +1,28 @@
+# Cloudflare Pages response headers for statically-served paths.
+#
+# NOTE: _headers only applies to responses Pages serves as STATIC ASSETS. A path
+# handled by a Pages Function ignores this file entirely, so every rule here
+# depends on the matching path being listed in static/_routes.json's "exclude".
+# Keep the two files in sync.
+
+# Content-hashed build output. The hash IS the cache key, so these can never go
+# stale — a changed file gets a new URL. Previously these inherited Cloudflare's
+# default 4h browser TTL *with* must-revalidate, so the edge never returned a
+# clean HIT (only MISS/REVALIDATED) and every chunk cost an origin round trip.
+# That dominated service-worker precache time on deploy: ~800ms per file across
+# ~240 files, regardless of how small the file was.
+/_app/immutable/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# Fonts and icons are stable but NOT content-hashed, so a replacement reuses the
+# same URL. A month is long enough to stay out of the way, short enough that
+# swapping one doesn't strand clients for a year.
+/fonts/*
+  Cache-Control: public, max-age=2592000
+/icons/*
+  Cache-Control: public, max-age=2592000
+
+# The service worker is the update mechanism — it must never be served stale, or
+# clients can't discover a new build.
+/service-worker.js
+  Cache-Control: public, max-age=0, must-revalidate

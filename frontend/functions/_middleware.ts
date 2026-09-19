@@ -1,7 +1,26 @@
 // Cloudflare Pages Function middleware for CSP with dynamic nonces
+//
+// This must NOT run for /_app/immutable/* and the other static asset paths. A
+// path handled by a Function is dynamic output: Cloudflare won't serve it from
+// the edge cache and _headers is ignored for it. That made every content-hashed
+// chunk an origin round trip (~800ms each, even for a 600-byte file), which is
+// what made service-worker precaching slow on deploy. static/_routes.json
+// excludes those paths so Pages serves them directly as cacheable static assets.
+//
+// CSP is a document-level policy, so subresources lose nothing by skipping this.
+
+// Belt-and-suspenders: if _routes.json is ever lost or mis-deployed, still don't
+// reconstruct asset responses here — pass them through untouched so they stay
+// cacheable rather than silently regressing to a Function-served round trip.
+const STATIC_ASSET_PATH = /^\/(_app\/immutable|fonts|icons)\//;
 
 export const onRequest: PagesFunction = async (context) => {
   const response = await context.next();
+
+  if (STATIC_ASSET_PATH.test(new URL(context.request.url).pathname)) {
+    return response;
+  }
+
   const contentType = response.headers.get('content-type') || '';
 
   // Generate a random nonce for this request
