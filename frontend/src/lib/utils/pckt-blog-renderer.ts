@@ -20,6 +20,7 @@ import type {
   PcktBlogIframeBlock,
   PcktBlogWebsiteBlock,
 } from '$lib/types';
+import { escapeHtml } from '$lib/utils/html';
 
 /**
  * Check if content is blog.pckt.content format
@@ -39,18 +40,6 @@ export function isPcktBlogContent(content: unknown): content is PcktBlogContent 
  */
 function getBlobUrl(authorDid: string, blobCid: string): string {
   return `https://cdn.bsky.app/img/feed_fullsize/plain/${authorDid}/${blobCid}@jpeg`;
-}
-
-/**
- * Escape HTML special characters to prevent XSS
- */
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
 }
 
 /**

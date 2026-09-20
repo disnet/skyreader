@@ -19,6 +19,7 @@ import type {
   LeafletBskyPostBlock,
   LeafletPageBlock,
 } from '$lib/types';
+import { escapeHtml } from '$lib/utils/html';
 
 /**
  * Check if content is pub.leaflet.content format
@@ -38,18 +39,6 @@ export function isLeafletContent(content: unknown): content is LeafletContent {
  */
 function getBlobUrl(authorDid: string, blobCid: string): string {
   return `https://cdn.bsky.app/img/feed_fullsize/plain/${authorDid}/${blobCid}@jpeg`;
-}
-
-/**
- * Escape HTML special characters to prevent XSS
- */
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
 }
 
 const FOOTNOTE_FEATURE = 'pub.leaflet.richtext.facet#footnote';

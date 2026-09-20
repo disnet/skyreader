@@ -5,6 +5,8 @@
  * Security: All user content is escaped via escapeHtml() before rendering
  */
 
+import { escapeHtml } from '$lib/utils/html';
+
 interface BskyPost {
   uri: string;
   cid: string;
@@ -29,15 +31,6 @@ interface BskyPost {
   likeCount?: number;
   repostCount?: number;
   replyCount?: number;
-}
-
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
 }
 
 function formatDate(dateStr: string): string {

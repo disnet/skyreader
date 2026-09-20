@@ -6,6 +6,7 @@ import { isPcktBlogContent, renderPcktBlogContent } from '$lib/utils/pckt-blog-r
 import { isOffprintContent, renderOffprintContent } from '$lib/utils/offprint-renderer';
 import { isGreengaleContent, renderGreengaleContent } from '$lib/utils/greengale-renderer';
 import { isMarkpubContent, renderMarkpubContent } from '$lib/utils/markpub-renderer';
+import { renderPlaintextBody } from '$lib/utils/plaintext';
 import { getDocumentEffectiveUrl } from '$lib/utils/linkPost';
 import { decodeEntities } from '$lib/utils/entities';
 import type {
@@ -94,7 +95,18 @@ export function getDisplayContent(item: FeedDisplayItem): string {
     if (doc.content && isMarkpubContent(doc.content)) {
       return renderMarkpubContent(doc.content as MarkpubContent);
     }
-    return doc.textContent || doc.description || '';
+    // No structured content (it's optional, and some publishers ship none). All
+    // that's left is `textContent`, which the lexicon defines as plaintext — so
+    // render it as plaintext rather than feeding it to the reader as HTML.
+    if (doc.textContent) {
+      const body = renderPlaintextBody(doc.textContent);
+      if (body) return body;
+    }
+    // `description` is plaintext by the same lexicon, and it's the state readers
+    // see most: `toLightDocument` strips `textContent`, so a card shows this until
+    // the body hydrates. Render it the same way — otherwise the excerpt drops the
+    // angle brackets the body a moment later keeps, and the card contradicts itself.
+    return doc.description ? renderPlaintextBody(doc.description) : '';
   }
   if (item.type === 'saved') {
     return item.item.content || item.item.description || '';

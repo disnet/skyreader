@@ -150,11 +150,65 @@ function findInTextMap(
 ): Range | null {
   if (nodes.length === 0 || !selector.exact) return null;
 
+  const exact = locate(text, selector.exact, selector.prefix, selector.suffix);
+  if (exact !== null) return offsetToRange(exact, exact + selector.exact.length, nodes);
+
+  return findIgnoringWhitespace(selector, text, nodes);
+}
+
+/**
+ * Second pass for a quote whose whitespace no longer matches the document's.
+ *
+ * A stored `exact` is a verbatim copy of what the DOM read at highlight time, so
+ * it pins the highlight to that rendering. Re-render the same body with different
+ * block structure and the characters between words change — a plaintext document
+ * that used to be one text node with newlines in it now renders as paragraphs and
+ * `<br>`s, which contribute no text at all — and `indexOf` finds nothing. The
+ * highlight then disappears with no way back.
+ *
+ * So retry matching on the non-whitespace characters alone and map the hit back to
+ * real offsets. Dropping whitespace rather than collapsing it is what covers the
+ * `<br>` case, where a newline became nothing at all rather than a space. This only
+ * runs once an exact match has already failed, and prefix/suffix still disambiguate
+ * repeats, so the looser match costs nothing when the document is unchanged.
+ */
+function findIgnoringWhitespace(
+  selector: TextQuoteSelector,
+  text: string,
+  nodes: Array<{ node: Text; start: number; end: number }>
+): Range | null {
+  const needle = stripWhitespace(selector.exact).text;
+  if (!needle) return null;
+
+  const { text: bare, offsets } = stripWhitespace(text);
+  const hit = locate(
+    bare,
+    needle,
+    selector.prefix ? stripWhitespace(selector.prefix).text : undefined,
+    selector.suffix ? stripWhitespace(selector.suffix).text : undefined
+  );
+  if (hit === null) return null;
+
+  // `offsets` maps each surviving character back to where it sat in `text`; the
+  // match runs to just past the last one it covers.
+  return offsetToRange(offsets[hit], offsets[hit + needle.length - 1] + 1, nodes);
+}
+
+/**
+ * The offset of the best match for `needle` in `haystack`, using prefix/suffix
+ * context to choose between repeats. Null when the needle doesn't occur.
+ */
+function locate(
+  haystack: string,
+  needle: string,
+  prefix: string | undefined,
+  suffix: string | undefined
+): number | null {
   // Find all matches of the exact text
   const matches: number[] = [];
   let searchFrom = 0;
-  while (searchFrom < text.length) {
-    const idx = text.indexOf(selector.exact, searchFrom);
+  while (searchFrom < haystack.length) {
+    const idx = haystack.indexOf(needle, searchFrom);
     if (idx < 0) break;
     matches.push(idx);
     searchFrom = idx + 1;
@@ -164,20 +218,20 @@ function findInTextMap(
 
   // Score each match based on prefix/suffix context
   let bestMatch = matches[0];
-  if (matches.length > 1 && (selector.prefix || selector.suffix)) {
+  if (matches.length > 1 && (prefix || suffix)) {
     let bestScore = -1;
     for (const matchIdx of matches) {
       let score = 0;
-      if (selector.prefix) {
-        const actualPrefix = text.slice(Math.max(0, matchIdx - selector.prefix.length), matchIdx);
-        score += commonSuffixLength(selector.prefix, actualPrefix);
+      if (prefix) {
+        const actualPrefix = haystack.slice(Math.max(0, matchIdx - prefix.length), matchIdx);
+        score += commonSuffixLength(prefix, actualPrefix);
       }
-      if (selector.suffix) {
-        const actualSuffix = text.slice(
-          matchIdx + selector.exact.length,
-          matchIdx + selector.exact.length + selector.suffix.length
+      if (suffix) {
+        const actualSuffix = haystack.slice(
+          matchIdx + needle.length,
+          matchIdx + needle.length + suffix.length
         );
-        score += commonPrefixLength(selector.suffix, actualSuffix);
+        score += commonPrefixLength(suffix, actualSuffix);
       }
       if (score > bestScore) {
         bestScore = score;
@@ -186,8 +240,24 @@ function findInTextMap(
     }
   }
 
-  // Convert the character offset back to a DOM Range
-  return offsetToRange(bestMatch, bestMatch + selector.exact.length, nodes);
+  return bestMatch;
+}
+
+/**
+ * The string's non-whitespace characters, plus the index each one came from — the
+ * offsets are what turn a match in stripped space back into a range over the real
+ * text nodes.
+ */
+function stripWhitespace(text: string): { text: string; offsets: number[] } {
+  let bare = '';
+  const offsets: number[] = [];
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (/\s/.test(char)) continue;
+    bare += char;
+    offsets.push(i);
+  }
+  return { text: bare, offsets };
 }
 
 /** Find how many chars match at the end of two strings */
