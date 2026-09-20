@@ -34,6 +34,7 @@ import type {
   OffprintTaskItem,
   OffprintImageGridImage,
 } from '$lib/types';
+import { escapeHtml } from '$lib/utils/html';
 
 /**
  * Check if content is app.offprint.content format
@@ -94,18 +95,6 @@ function sizeAttrs(aspectRatio?: { width: number; height: number }): string {
     return '';
   }
   return ` width="${Math.round(width)}" height="${Math.round(height)}"`;
-}
-
-/**
- * Escape HTML special characters to prevent XSS
- */
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
 }
 
 /**

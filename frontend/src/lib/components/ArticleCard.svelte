@@ -6,27 +6,13 @@
   // in ArticleCardView.svelte so the visual layer is iterable from mock data
   // (see /dev/cards). Keep this component's public props stable — FeedListView
   // and SavedReader depend on them.
-  import type {
-    Article,
-    SocialDocument,
-    BlueskyProfile,
-    LeafletContent,
-    PcktBlogContent,
-    OffprintContent,
-    GreengaleContent,
-    MarkpubContent,
-    ReaderCollectionItem,
-  } from '$lib/types';
+  import type { Article, SocialDocument, BlueskyProfile, ReaderCollectionItem } from '$lib/types';
   import { formatRelativeDate } from '$lib/utils/date';
   import { getFaviconUrl } from '$lib/utils/favicon';
   import { sanitizeHtml } from '$lib/utils/sanitize';
   import { decodeEntities } from '$lib/utils/entities';
   import { marked } from 'marked';
-  import { isLeafletContent, renderLeafletContent } from '$lib/utils/leaflet-renderer';
-  import { isPcktBlogContent, renderPcktBlogContent } from '$lib/utils/pckt-blog-renderer';
-  import { isOffprintContent, renderOffprintContent } from '$lib/utils/offprint-renderer';
-  import { isGreengaleContent, renderGreengaleContent } from '$lib/utils/greengale-renderer';
-  import { isMarkpubContent, renderMarkpubContent } from '$lib/utils/markpub-renderer';
+  import { getDisplayContent } from '$lib/utils/displayItem';
   import {
     getExternalArticleLink,
     getLinkPostNote,
@@ -273,37 +259,19 @@
     if (localArticle?.content) return localArticle.content;
     if (localArticle?.summary) return localArticle.summary;
 
-    // For documents with structured Leaflet content, render it
-    if (document?.content && isLeafletContent(document.content)) {
-      return renderLeafletContent(document.content as LeafletContent, document.authorDid);
+    // Documents go through the shared renderer chain: structured `content` first
+    // (Leaflet / pckt / Offprint / Greengale / markpub), then the plaintext
+    // `textContent` fallback, then description. This card used to inline its own
+    // copy of that chain, which is how it drifted from the reader's. textContent
+    // is stripped from in-memory documents (see toLightDocument); lazyDocText
+    // holds it once read back from IndexedDB on open.
+    if (document) {
+      const doc =
+        document.textContent || lazyDocText == null
+          ? document
+          : { ...document, textContent: lazyDocText };
+      return getDisplayContent({ type: 'document', item: doc, key: doc.recordUri });
     }
-
-    // For documents with structured pckt.blog content, render it
-    if (document?.content && isPcktBlogContent(document.content)) {
-      return renderPcktBlogContent(document.content as PcktBlogContent, document.authorDid);
-    }
-
-    // For documents with structured Offprint content, render it
-    if (document?.content && isOffprintContent(document.content)) {
-      return renderOffprintContent(document.content as OffprintContent, document.authorDid);
-    }
-
-    // For documents with structured Greengale content, render it
-    if (document?.content && isGreengaleContent(document.content)) {
-      return renderGreengaleContent(document.content as GreengaleContent, document.authorDid);
-    }
-
-    // For documents with markpub (at.markpub.markdown) content, render it
-    if (document?.content && isMarkpubContent(document.content)) {
-      return renderMarkpubContent(document.content as MarkpubContent);
-    }
-
-    // Fall back to flat text content or description. textContent is stripped from
-    // in-memory documents (see toLightDocument); lazyDocText holds it once read
-    // back from IndexedDB on open.
-    if (document?.textContent) return document.textContent;
-    if (lazyDocText) return lazyDocText;
-    if (document?.description) return document.description;
 
     return '';
   });
