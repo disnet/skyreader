@@ -77,14 +77,18 @@ async function call(path: string) {
 }
 
 describe('isValidExtensionReturnUrl', () => {
-  it('accepts connected.html on each extension scheme', () => {
+  it("accepts connected.html on Safari's extension scheme", () => {
     expect(isValidExtensionReturnUrl(RETURN)).toBe(true);
+  });
+
+  it('rejects Chrome and Firefox extensions, which ride the cookie instead', () => {
+    // Otherwise any installed extension could be handed a session by a crafted link.
     expect(
       isValidExtensionReturnUrl(`chrome-extension://abcdefghijklmnop/connected.html?nonce=${NONCE}`)
-    ).toBe(true);
+    ).toBe(false);
     expect(
       isValidExtensionReturnUrl(`moz-extension://1234-5678/connected.html?nonce=${NONCE}`)
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it('rejects web origins, other pages, and extra URL parts', () => {
@@ -141,6 +145,26 @@ describe('extension login', () => {
     const row = await env.DB.prepare('SELECT state FROM oauth_state').first<{ state: string }>();
     const state = await getOAuthState(env, row!.state);
     expect(state?.extensionReturnUrl).toBe(RETURN);
+  });
+
+  it('keeps the extension return on the error page so a retry logs the extension in', async () => {
+    mockNetwork();
+    await storeOAuthState(env, TEST_STATE, {
+      codeVerifier: 'verifier',
+      did: TEST_DID,
+      handle: TEST_HANDLE,
+      pdsUrl: 'https://pds.example.com',
+      authServer: 'https://bsky.social',
+      frontendUrl: env.FRONTEND_URL,
+      extensionReturnUrl: RETURN,
+    });
+
+    const res = await call(`/api/auth/callback?error=access_denied&state=${TEST_STATE}`);
+    expect(res.status).toBe(302);
+    const location = new URL(res.headers.get('Location')!);
+    expect(location.pathname).toBe('/auth/error');
+    expect(location.searchParams.get('error')).toBe('access_denied');
+    expect(location.searchParams.get('extensionReturn')).toBe(RETURN);
   });
 
   it('hands the session to the extension page in the fragment, without a cookie', async () => {

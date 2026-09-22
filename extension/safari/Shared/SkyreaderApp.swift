@@ -6,9 +6,9 @@ struct SkyreaderApp: App {
     var body: some Scene {
         WindowGroup {
             VStack(spacing: 18) {
-                Image(systemName: "book.pages")
-                    .font(.system(size: 52))
-                    .foregroundStyle(Color(red: 0, green: 0.4, blue: 0.8))
+                Image(nsImage: NSApplication.shared.applicationIconImage)
+                    .resizable()
+                    .frame(width: 96, height: 96)
                 Text("Skyreader for Safari")
                     .font(.title2)
                 Text("Enable Skyreader in Safari Extensions, then allow access to api.skyreader.app.")
@@ -23,7 +23,7 @@ struct SkyreaderApp: App {
                 .tint(Color(red: 0, green: 0.4, blue: 0.8))
             }
             .padding(32)
-            .frame(width: 440, height: 280)
+            .frame(width: 440)
         }
         .windowResizability(.contentSize)
     }
