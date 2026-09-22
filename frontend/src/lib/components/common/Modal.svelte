@@ -93,6 +93,7 @@
     onkeydown={handleKeydown}
     role="dialog"
     aria-modal="true"
+    aria-label={title}
     tabindex="-1"
     style:--modal-max-width={maxWidth}
     style:--modal-z-index={zIndex}
