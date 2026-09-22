@@ -48,8 +48,9 @@ const DEFAULTS = {
 };
 
 async function getConfig() {
-  // Store builds use production URLs; only unpacked development has settings.
-  if (!api.runtime.getManifest().permissions.includes('storage')) return { ...DEFAULTS };
+  // Store builds use production URLs; only unpacked development has settings
+  // (the options page is stripped from every store manifest).
+  if (!api.runtime.getManifest().options_ui) return { ...DEFAULTS };
   const stored = await api.storage.sync.get(DEFAULTS);
   return { ...DEFAULTS, ...stored };
 }
@@ -121,17 +122,59 @@ function flashBadge(tabId, text, color, title) {
 
 class UnauthorizedError extends Error {}
 
+// Safari doesn't attach the skyreader.app session cookie to an extension's
+// fetch (even with the host permission granted), and its cookies API can't see
+// that cookie either. So the Safari build runs its own login: the backend hands
+// the new session id to connected.html (see startExtensionLogin), which stores
+// it in storage.local, and every call sends it as the
+// `Authorization: Bearer <session_id>` the backend already accepts for the CLI.
+// Chrome and Firefox never store one, so they keep riding the cookie.
+async function sessionHeaders() {
+  if (!usesExtensionLogin()) return {};
+  const { session } = await api.storage.local.get('session');
+  return session ? { Authorization: `Bearer ${session}` } : {};
+}
+
+// Only the Safari build exposes connected.html (scripts/manifest.mjs).
+function usesExtensionLogin() {
+  return (api.runtime.getManifest().web_accessible_resources ?? []).some((entry) =>
+    entry.resources?.includes('connected.html')
+  );
+}
+
+async function hasSession() {
+  const { session } = await api.storage.local.get('session');
+  return Boolean(session);
+}
+
+// Open the web app's login page with this extension's connected.html as the
+// return target. The nonce is checked by connected.html, so only a login this
+// extension started can hand it a session.
+async function startExtensionLogin(cfg) {
+  const bytes = crypto.getRandomValues(new Uint8Array(24));
+  const nonce = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  await api.storage.local.set({ pendingLogin: { nonce, at: Date.now() } });
+  const extensionReturn = `${api.runtime.getURL('connected.html')}?nonce=${nonce}`;
+  await api.tabs.create({
+    url: `${cfg.frontendBase}/auth/login?extensionReturn=${encodeURIComponent(extensionReturn)}`,
+  });
+}
+
 async function apiFetch(cfg, path, body) {
   return fetch(`${cfg.apiBase}${path}`, {
     method: 'POST',
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(await sessionHeaders()) },
     body: JSON.stringify(body),
   });
 }
 
 async function apiGet(cfg, path) {
-  return fetch(`${cfg.apiBase}${path}`, { method: 'GET', credentials: 'include' });
+  return fetch(`${cfg.apiBase}${path}`, {
+    method: 'GET',
+    credentials: 'include',
+    headers: await sessionHeaders(),
+  });
 }
 
 // One retry for the backend's mid-token-refresh 503 (session_refresh_pending).
@@ -153,10 +196,32 @@ async function apiFetchWithRetry(cfg, path, body) {
 async function getAccount() {
   const cfg = await getConfig();
   const res = await apiGet(cfg, '/api/auth/me');
-  if (res.status === 401) return { ok: true, user: null };
+  if (res.status === 401) {
+    // An expired or revoked extension session: drop it so the popup offers login.
+    if (usesExtensionLogin()) await api.storage.local.remove('session');
+    return { ok: true, user: null };
+  }
   if (!res.ok) return { ok: false, message: "Couldn't check your account. Try again." };
   const user = await res.json();
-  return { ok: true, user: { did: user.did, handle: user.handle } };
+  // ownSession: the popup offers "Log out" only for an extension-held session;
+  // elsewhere the extension shares the website's login.
+  return {
+    ok: true,
+    user: { did: user.did, handle: user.handle },
+    ownSession: usesExtensionLogin(),
+  };
+}
+
+// End the extension's own session (Safari). The server deletes it too; the
+// local copy goes regardless, so a failed request can't leave you logged in.
+async function logOutExtension() {
+  const cfg = await getConfig();
+  try {
+    await apiFetch(cfg, '/api/auth/logout', {});
+  } catch {
+    // Offline or no host access: still forget the session locally.
+  }
+  await api.storage.local.remove('session');
 }
 
 // --- Extraction -------------------------------------------------------------
@@ -315,7 +380,13 @@ async function saveWithBadge(url, tabId, opts) {
     case 'auth': {
       setBadge(tabId, '', BADGE_BLUE, 'Skyreader');
       const cfg = await getConfig();
-      openSavePage(cfg, result.url || url);
+      // With no extension session, the /save page would log in the website,
+      // not this extension, so log the extension in instead.
+      if (result.status === 'auth' && usesExtensionLogin() && !(await hasSession())) {
+        await startExtensionLogin(cfg);
+      } else {
+        openSavePage(cfg, result.url || url);
+      }
       break;
     }
     default:
@@ -566,6 +637,19 @@ api.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           break;
         case 'subscribe':
           sendResponse(await performSubscribe(msg.feed));
+          break;
+        case 'logout':
+          if (usesExtensionLogin()) await logOutExtension();
+          sendResponse({ ok: true });
+          break;
+        case 'login':
+          // Safari: popup "Log in" links route here instead of the web login.
+          if (usesExtensionLogin()) {
+            await startExtensionLogin(await getConfig());
+            sendResponse({ ok: true, handled: true });
+          } else {
+            sendResponse({ ok: true, handled: false });
+          }
           break;
         default:
           sendResponse({ ok: false, error: 'unknown message' });

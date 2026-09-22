@@ -531,17 +531,30 @@ class ApiClient {
   }
 
   // Auth
-  async login(handle: string, returnUrl?: string): Promise<{ authUrl: string }> {
+  // `extensionReturn` is set when a browser extension (Safari) started the login:
+  // the backend then hands the new session to that extension page instead of
+  // setting this site's cookie.
+  async login(
+    handle: string,
+    returnUrl?: string,
+    extensionReturn?: string
+  ): Promise<{ authUrl: string }> {
     const params = new URLSearchParams({ handle });
     if (returnUrl) params.set('returnUrl', returnUrl);
+    if (extensionReturn) params.set('extension_return', extensionReturn);
     return this.fetch(`/api/auth/login?${params}`);
   }
 
   // Server-first sign-up: start OAuth against a provider's PDS/entryway host with
   // no account yet. The provider offers account creation, then redirects back here.
-  async signup(pds: string, returnUrl?: string): Promise<{ authUrl: string }> {
+  async signup(
+    pds: string,
+    returnUrl?: string,
+    extensionReturn?: string
+  ): Promise<{ authUrl: string }> {
     const params = new URLSearchParams({ pds });
     if (returnUrl) params.set('returnUrl', returnUrl);
+    if (extensionReturn) params.set('extension_return', extensionReturn);
     return this.fetch(`/api/auth/login?${params}`);
   }
 

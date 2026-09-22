@@ -21,6 +21,18 @@ import { execFileSync } from 'node:child_process';
 import { manifestFor, TARGETS } from './manifest.mjs';
 
 const target = process.argv[2] || 'chrome';
+// `--dev` (Safari only): point the build at the local dev servers. Safari has
+// no unpacked load and store builds strip the options page, so the local URLs
+// are baked in instead. Xcode builds this with SKYREADER_DEV=1.
+const dev = process.argv.includes('--dev');
+const DEV_URLS = {
+  "apiBase: 'https://api.skyreader.app'": "apiBase: 'http://127.0.0.1:8787'",
+  "frontendBase: 'https://skyreader.app'": "frontendBase: 'http://127.0.0.1:5173'",
+};
+if (dev && target !== 'safari') {
+  console.error('--dev is only for the Safari build (the others load unpacked)');
+  process.exit(1);
+}
 if (!TARGETS.includes(target)) {
   console.error(`usage: node scripts/package.mjs [${TARGETS.join('|')}]`);
   process.exit(1);
@@ -50,6 +62,23 @@ function copyRuntime(source, destination) {
 for (const file of ['background.js', 'popup.html', 'popup.js', 'icons', 'LICENSE']) {
   copyRuntime(join(root, file), join(staging, file));
 }
+if (dev) {
+  for (const file of ['background.js', 'popup.js']) {
+    const path = join(staging, file);
+    let code = readFileSync(path, 'utf8');
+    for (const [from, to] of Object.entries(DEV_URLS)) {
+      if (!code.includes(from)) throw new Error(`${file}: expected ${from}`);
+      code = code.replace(from, to);
+    }
+    writeFileSync(path, code);
+  }
+}
+// Safari's own-login landing page (see manifest.mjs).
+if (target === 'safari') {
+  for (const file of ['connected.html', 'connected.js']) {
+    copyRuntime(join(root, file), join(staging, file));
+  }
+}
 
 // The Defuddle content script is bundled straight into the staging tree rather
 // than copied from the checked-in `npm run build` output, because the targets
@@ -77,6 +106,7 @@ execFileSync(
 
 const source = JSON.parse(readFileSync(join(root, 'manifest.json'), 'utf8'));
 const manifest = manifestFor(target, source);
+if (dev) manifest.host_permissions = ['http://127.0.0.1/*'];
 writeFileSync(join(staging, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
 
 // Safari's containing Xcode app is the distributable; the staged directory is

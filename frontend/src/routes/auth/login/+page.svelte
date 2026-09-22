@@ -45,7 +45,9 @@
       // Carry ?returnUrl through OAuth so deep links (e.g. /follow) resume after
       // login. The backend validates it against open-redirects.
       const returnUrl = $page.url.searchParams.get('returnUrl') || undefined;
-      const { authUrl } = await api.login(loginHandle, returnUrl);
+      // Set by the Safari extension's "Log in" link; the backend validates it.
+      const extensionReturn = $page.url.searchParams.get('extensionReturn') || undefined;
+      const { authUrl } = await api.login(loginHandle, returnUrl, extensionReturn);
       window.location.href = authUrl;
     } catch (err) {
       error = err instanceof Error ? err.message : 'Failed to start login';
@@ -90,7 +92,8 @@
     isLoading = true;
     try {
       const returnUrl = $page.url.searchParams.get('returnUrl') || undefined;
-      const { authUrl } = await api.signup(pds, returnUrl);
+      const extensionReturn = $page.url.searchParams.get('extensionReturn') || undefined;
+      const { authUrl } = await api.signup(pds, returnUrl, extensionReturn);
       window.location.href = authUrl;
     } catch (err) {
       error = err instanceof Error ? err.message : 'Failed to start sign up';

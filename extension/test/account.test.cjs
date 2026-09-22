@@ -20,8 +20,13 @@ function worker(
     contextMenus = true,
     badgeTextColor = true,
     timer = setTimeout,
+    // Extra manifest keys, e.g. the Safari build's web_accessible_resources.
+    manifestExtra = {},
+    local = {},
+    tabs = [],
   } = {}
 ) {
+  const isDev = permissions.includes('storage') && !manifestExtra.web_accessible_resources;
   let listener;
   let installed;
   let menuClick;
@@ -30,13 +35,24 @@ function worker(
     storage: {
       sync: {
         get: async (defaults) => {
-          assert.ok(permissions.includes('storage'), 'store builds must not access storage');
+          assert.ok(isDev, 'store builds must not read development settings');
           return { ...defaults, ...config };
         },
       },
+      local: {
+        get: async (key) => (key in local ? { [key]: local[key] } : {}),
+        set: async (values) => Object.assign(local, values),
+        remove: async (key) => delete local[key],
+      },
     },
     runtime: {
-      getManifest: () => ({ permissions }),
+      // The source manifest's `storage` + options page mark unpacked development.
+      getManifest: () => ({
+        permissions,
+        ...(isDev ? { options_ui: manifest.options_ui } : {}),
+        ...manifestExtra,
+      }),
+      getURL: (path) => `safari-web-extension://test-id/${path}`,
       onMessage: { addListener: (fn) => (listener = fn) },
       onInstalled: { addListener: (fn) => (installed = fn) },
     },
@@ -48,7 +64,7 @@ function worker(
           onClicked: { addListener: (fn) => (menuClick = fn) },
         }
       : undefined,
-    tabs: { create() {} },
+    tabs: { create: async (tab) => tabs.push(tab) },
     action: {
       setBadgeText: async () => {},
       setBadgeBackgroundColor: async () => {},
@@ -58,7 +74,7 @@ function worker(
     },
     scripting: { executeScript: async () => [{ result: null }] },
   };
-  const context = vm.createContext({ fetch, URL, setTimeout: timer, [namespace]: stub });
+  const context = vm.createContext({ fetch, URL, crypto, setTimeout: timer, [namespace]: stub });
   vm.runInContext(source, context);
   const send = (msg) =>
     new Promise((resolve) => listener(typeof msg === 'string' ? { type: msg } : msg, {}, resolve));
@@ -210,4 +226,117 @@ test('a save from the context menu survives a missing setBadgeTextColor', async 
   send.clickMenu({ menuItemId: 'save-page', pageUrl: 'https://example.com/post' }, { id: 7 });
   await done;
   assert.deepEqual(seen, ['/api/extract', '/api/saved']);
+});
+
+// Safari won't send the website's session cookie with an extension's fetches,
+// so the Safari build logs in on its own and sends a stored Bearer session.
+const SAFARI = {
+  manifestExtra: {
+    web_accessible_resources: [{ resources: ['connected.html'], matches: ['<all_urls>'] }],
+  },
+};
+const safariPermissions = [...manifest.permissions];
+
+test('Safari sends its stored session as a Bearer token', async () => {
+  const send = worker(
+    async (url, options) => {
+      assert.equal(url, 'https://api.skyreader.app/api/auth/me');
+      assert.equal(options.headers.Authorization, 'Bearer sess-123');
+      return Response.json({ did: 'did:plc:alice', handle: 'alice.test' });
+    },
+    {},
+    safariPermissions,
+    { ...SAFARI, local: { session: 'sess-123' } }
+  );
+  const result = await send('account');
+  assert.equal(result.user.handle, 'alice.test');
+});
+
+test('Safari drops a session the server no longer accepts', async () => {
+  const local = { session: 'expired' };
+  const send = worker(async () => new Response(null, { status: 401 }), {}, safariPermissions, {
+    ...SAFARI,
+    local,
+  });
+  const result = await send('account');
+  assert.equal(result.user, null);
+  assert.equal(local.session, undefined);
+});
+
+test('Safari login opens the web login with a nonce-bound return page', async () => {
+  const local = {};
+  const tabs = [];
+  const send = worker(async () => assert.fail('login makes no API call'), {}, safariPermissions, {
+    ...SAFARI,
+    local,
+    tabs,
+  });
+  const result = await send('login');
+  assert.equal(result.handled, true);
+  const opened = new URL(tabs[0].url);
+  assert.equal(opened.origin + opened.pathname, 'https://skyreader.app/auth/login');
+  const back = new URL(opened.searchParams.get('extensionReturn'));
+  assert.equal(back.pathname, '/connected.html');
+  assert.equal(back.searchParams.get('nonce'), local.pendingLogin.nonce);
+  assert.ok(local.pendingLogin.nonce.length >= 32);
+});
+
+test('other browsers leave login to the website and send no Authorization', async () => {
+  const tabs = [];
+  const send = worker(
+    async (_url, options) => {
+      assert.equal(options.headers.Authorization, undefined);
+      return new Response(null, { status: 401 });
+    },
+    {},
+    manifest.permissions.filter((permission) => permission !== 'storage'),
+    { tabs }
+  );
+  assert.equal((await send('login')).handled, false);
+  assert.equal(tabs.length, 0);
+  assert.equal((await send('account')).user, null);
+});
+
+test('Safari logout ends the session on the server and forgets it locally', async () => {
+  const local = { session: 'sess-123' };
+  const calls = [];
+  const send = worker(
+    async (url, options) => {
+      calls.push([url, options.method, options.headers.Authorization]);
+      return Response.json({ ok: true });
+    },
+    {},
+    safariPermissions,
+    { ...SAFARI, local }
+  );
+  await send('logout');
+  assert.deepEqual(calls, [
+    ['https://api.skyreader.app/api/auth/logout', 'POST', 'Bearer sess-123'],
+  ]);
+  assert.equal(local.session, undefined);
+});
+
+test('Safari logout still forgets the session when the server is unreachable', async () => {
+  const local = { session: 'sess-123' };
+  const send = worker(
+    async () => {
+      throw new Error('Offline');
+    },
+    {},
+    safariPermissions,
+    { ...SAFARI, local }
+  );
+  assert.equal((await send('logout')).ok, true);
+  assert.equal(local.session, undefined);
+});
+
+test('only an extension-held session is offered a logout', async () => {
+  const me = async () => Response.json({ did: 'did:plc:alice', handle: 'alice.test' });
+  const safari = await worker(me, {}, safariPermissions, {
+    ...SAFARI,
+    local: { session: 's' },
+  })('account');
+  assert.equal(safari.ownSession, true);
+  const chrome = await worker(me)('account');
+  assert.equal(chrome.ownSession, false);
 });

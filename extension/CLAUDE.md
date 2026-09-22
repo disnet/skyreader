@@ -181,12 +181,38 @@ globalThis.chrome`. Firefox's `chrome` alias is callback-style, and this code
   `options.js` calls `request()` with no `permissions.contains()` check ahead of
   it (`request()` resolves true without prompting when already granted).
 - **The session cookie.** `session_id` is `SameSite=Lax` on `.skyreader.app`
-  (`backend/src/routes/auth.ts`). Every browser here treats an extension's fetch
-  as first-party for a host it holds permission for, which is what exempts these
-  calls from SameSite and CORS. If that ever stops holding — Safari is the one
-  most likely to break it — the symptom is a blanket 401 from `/api/auth/me`
-  with the permission granted, and the fix is on the backend
-  (`SameSite=None; Secure`), not here. Do not try to fix it by allowlisting the
+  (`backend/src/routes/auth.ts`). Chrome and Firefox treat an extension's fetch
+  as first-party for a host it holds permission for, which exempts these calls
+  from SameSite and CORS, so the cookie just rides along. **Safari doesn't**: it
+  sends no cookie on extension fetches (`/api/auth/me` is a blanket 401 for a
+  logged-in user), and its `cookies` API can't see the website's cookie either.
+  So the Safari build logs in on its own, the way the CLI does:
+  1. The popup's "Log in" (or a logged-out save/subscribe) sends `login` to the
+     background, which stores a one-time `pendingLogin.nonce` in
+     `storage.local` and opens `/auth/login?extensionReturn=<connected.html?nonce=…>`.
+  2. The login page passes it to `/api/auth/login?extension_return=`; the
+     backend accepts only `connected.html?nonce=…` on an extension scheme
+     (`isValidExtensionReturnUrl`), stores it on the OAuth state
+     (`oauth_state.extension_return_url`), and the callback redirects there with
+     `#session_id=…` instead of setting a cookie.
+  3. `connected.js` keeps the session only if the nonce matches the pending
+     login (so a site can't plant its own session), then `sessionHeaders()` in
+     `background.js` sends it as `Authorization: Bearer <session_id>`. A 401
+     drops it.
+  4. The popup shows **Log out** only for this extension-held session
+     (`ownSession` on the `account` reply): it POSTs `/api/auth/logout` with the
+     Bearer session (the server revokes and deletes it) and forgets it locally
+     even if that request fails.
+
+  To test against local servers, `npm run package:safari:dev` (or an Xcode build
+  with `SKYREADER_DEV=1`) bakes in `127.0.0.1:8787` / `127.0.0.1:5173` and the
+  matching host permission, since Safari store-shaped builds have no options page.
+
+  Only the Safari manifest carries `storage` (for the session) and
+  `web_accessible_resources: connected.html` (so the redirect can land);
+  `usesExtensionLogin()` keys off the latter, so Chrome and Firefox never store
+  or send a Bearer session. Dev-mode detection keys off `options_ui`, which every
+  store build strips. Do not try to fix cookie trouble by allowlisting the
   extension origin in CORS: both Firefox's `moz-extension://` UUID and Safari's
   `safari-web-extension://` origin are per-install.
 
@@ -308,16 +334,39 @@ is the input; everything below needs macOS with Xcode, and distribution needs an
 Apple Developer Program membership.
 
 The Xcode project is committed at `safari/Skyreader.xcodeproj`. Open it in Xcode,
-select the Skyreader scheme, choose signing teams for both targets, and build.
-The extension target's final build phase runs `npm run package:safari` and copies
-the staged files into the extension bundle, so web resources cannot silently go
-stale. Node and the extension's npm dependencies must be installed before the
-first build.
+select the Skyreader scheme, and build. Both targets are signed automatically with
+the Skyreader team (`R54QLXZTK7`); anyone else changes the team on both targets
+(or passes `DEVELOPMENT_TEAM=...` to `xcodebuild`), or builds with
+`CODE_SIGNING_ALLOWED=NO` and uses Allow Unsigned Extensions. Both targets are
+sandboxed (`Shared/Skyreader.entitlements`, `Extension/Extension.entitlements`):
+Safari won't load an unsandboxed extension, and the App Store requires it of the
+app. The extension target's final build phase runs `npm run package:safari` and
+copies the staged files into the extension bundle, so web resources cannot
+silently go stale. Node and the extension's npm dependencies must be installed
+before the first build. Xcode.app doesn't inherit your shell's PATH, so the phase
+prepends `~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin`, and Volta, and
+sources nvm, before looking for `npm`.
 
 ```
 npm install
 open safari/Skyreader.xcodeproj
+# or, headless:
+xcodebuild -project safari/Skyreader.xcodeproj -scheme Skyreader \
+  -derivedDataPath safari/build -allowProvisioningUpdates build
 ```
+
+The app icon is an Icon Composer document (`Shared/AppIcon.icon`), not an asset
+catalog: macOS 26+ puts a flat `.appiconset` icon on a grey platter in the Dock and
+app switcher. It is `frontend/static/icons/icon-512.svg` split into layers. The sky
+gradient is the document fill, and the RSS dot and waves are two white glass layers
+on a 1024 canvas (the glyph scaled 1.7× about its center). The system applies the
+squircle mask, so layers are never pre-rounded. Icon Composer's renderer fills
+stroked paths even with `fill="none"`, so the waves are outlined as filled shapes.
+Xcode generates the flat fallback icon for macOS 13–15 from the same file. To
+preview without Xcode: `"$(xcode-select -p)/../Applications/Icon Composer.app/Contents/Executables/ictool"
+Shared/AppIcon.icon --export-image --output-file out.png --platform macOS
+--rendition Default --width 512 --height 512 --scale 1` (also `Dark`,
+`ClearLight`, `TintedLight`).
 
 - The refresh build phase also reads `manifest.json` and fails when its version
   differs from `MARKETING_VERSION`. Update both targets' Marketing Version when

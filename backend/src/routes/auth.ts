@@ -178,6 +178,31 @@ function isValidReturnUrl(url: string, allowedOrigins: string[] = []): boolean {
   }
 }
 
+// Browser-extension login hands the session id to a page inside the extension,
+// because Safari won't send the web app's session cookie on an extension's
+// fetches. Only the extension's own `connected.html` is accepted, on an
+// extension scheme: the host is a per-install id we can't allowlist, but no
+// website can serve a URL on these schemes. The `nonce` is the extension's
+// one-time value; connected.html refuses a session that doesn't carry the nonce
+// it issued, so a site can't plant its own session in someone's extension.
+const EXTENSION_SCHEMES = ['safari-web-extension:', 'chrome-extension:', 'moz-extension:'];
+const EXTENSION_NONCE = /^\?nonce=[A-Za-z0-9_-]{16,128}$/;
+
+export function isValidExtensionReturnUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return (
+      EXTENSION_SCHEMES.includes(parsed.protocol) &&
+      parsed.host !== '' &&
+      parsed.pathname === '/connected.html' &&
+      EXTENSION_NONCE.test(parsed.search) &&
+      !parsed.hash
+    );
+  } catch {
+    return false;
+  }
+}
+
 // Get the list of allowed frontend origins
 function getAllowedOrigins(env: Env): string[] {
   return env.ALLOWED_ORIGINS
@@ -245,6 +270,16 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
   // CLI mode: capture the local callback port
   const cliPortParam = url.searchParams.get('cli_port');
   const cliPort = cliPortParam ? parseInt(cliPortParam, 10) : undefined;
+
+  // Extension mode: the extension page that receives the session id.
+  const extensionReturnParam = url.searchParams.get('extension_return');
+  if (extensionReturnParam && !isValidExtensionReturnUrl(extensionReturnParam)) {
+    return new Response(JSON.stringify({ error: 'Invalid extension_return' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  const extensionReturnUrl = extensionReturnParam || undefined;
 
   if (!handle && !pdsParam) {
     return new Response(JSON.stringify({ error: 'Missing handle or pds parameter' }), {
@@ -321,6 +356,7 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
       returnUrl,
       frontendUrl,
       cliPort,
+      extensionReturnUrl,
     });
 
     const baseUrl = getBaseUrl(url);
@@ -784,6 +820,18 @@ export async function handleAuthCallback(
         status: 302,
         headers: {
           Location: cliRedirectUrl,
+        },
+      });
+    }
+
+    // Extension mode: hand the session to the extension's own page, in the
+    // fragment so it never reaches a server log. No cookie: this is the
+    // extension's session, separate from any web login in the same browser.
+    if (oauthState.extensionReturnUrl && isValidExtensionReturnUrl(oauthState.extensionReturnUrl)) {
+      return new Response(null, {
+        status: 302,
+        headers: {
+          Location: `${oauthState.extensionReturnUrl}#session_id=${encodeURIComponent(sessionId)}`,
         },
       });
     }

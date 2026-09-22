@@ -28,6 +28,7 @@ const els = {
   accountName: document.getElementById('accountName'),
   accountStatus: document.getElementById('accountStatus'),
   retryAccountBtn: document.getElementById('retryAccountBtn'),
+  logoutBtn: document.getElementById('logoutBtn'),
 };
 
 let tab = null;
@@ -37,8 +38,22 @@ let apiOrigin = null;
 // The API host on its own, for the permission prompt's copy.
 let apiHost = '';
 
+// null until the account check answers.
+let loggedIn = null;
+
+// Safari logs the extension in on its own (startExtensionLogin in background.js),
+// because Safari won't share the website's session cookie with it. Elsewhere the
+// background declines and the caller falls through to the web app.
+async function logInExtension() {
+  const result = await send({ type: 'login' });
+  if (!result?.handled) return false;
+  window.close();
+  return true;
+}
+
 async function refreshAccount() {
   els.retryAccountBtn.hidden = true;
+  els.logoutBtn.hidden = true;
   els.accountStatus.hidden = true;
   try {
     const cfg = await getConfig();
@@ -46,6 +61,8 @@ async function refreshAccount() {
     const result = await send({ type: 'account' });
     if (!result?.ok) throw new Error(result?.message || "Couldn't check your account. Try again.");
     const user = result.user;
+    loggedIn = Boolean(user);
+    els.logoutBtn.hidden = !(user && result.ownSession);
     els.accountName.textContent = user
       ? user.handle
         ? `@${user.handle}`
@@ -65,8 +82,9 @@ function send(msg) {
 }
 
 async function getConfig() {
-  // Store builds use production URLs; only unpacked development has settings.
-  if (!api.runtime.getManifest().permissions.includes('storage')) return { ...DEFAULTS };
+  // Store builds use production URLs; only unpacked development has settings
+  // (the options page is stripped from every store manifest).
+  if (!api.runtime.getManifest().options_ui) return { ...DEFAULTS };
   const stored = await api.storage.sync.get(DEFAULTS);
   return { ...DEFAULTS, ...stored };
 }
@@ -212,7 +230,9 @@ async function onSave() {
       break;
     case 'auth': {
       // Logged out, over the monthly limit, or a scope upgrade — the /save page
-      // handles all three with proper UI.
+      // handles all three with proper UI. Logged out in Safari, though, the
+      // extension needs its own login first.
+      if (loggedIn === false && (await logInExtension())) return;
       const cfg = await getConfig();
       api.tabs.create({ url: `${cfg.frontendBase}/save?url=${encodeURIComponent(tab.url)}` });
       window.close();
@@ -355,6 +375,7 @@ async function subscribe(feed, btn) {
       showPermissionPrompt(await getConfig());
       return;
     case 'auth': {
+      if (await logInExtension()) return;
       await openTab('');
       return;
     }
@@ -454,6 +475,24 @@ function startPageWork() {
 
 async function init() {
   els.retryAccountBtn.addEventListener('click', refreshAccount);
+  els.logoutBtn.addEventListener('click', async () => {
+    els.logoutBtn.disabled = true;
+    await send({ type: 'logout' });
+    // Start over: saved state and feed subscriptions belonged to that account.
+    location.reload();
+  });
+  els.accountName.addEventListener('click', (event) => {
+    if (loggedIn !== false) return;
+    // Hold the web login link until the background says whether the extension
+    // logs in on its own.
+    event.preventDefault();
+    const href = els.accountName.href;
+    logInExtension().then((handled) => {
+      if (handled) return;
+      api.tabs.create({ url: href });
+      window.close();
+    });
+  });
   els.saveBtn.addEventListener('click', onSave);
   els.grantBtn.addEventListener('click', onGrant);
 
