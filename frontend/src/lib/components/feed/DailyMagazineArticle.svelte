@@ -48,11 +48,12 @@
     registerControls,
     registerRoot,
     itemKey: itemKeyProp,
+    entryKey: entryKeyProp,
     itemType = 'saved',
     labelKeys: labelKeysProp,
   }: {
     // A SavedItem-shaped view model. Feed-sourced entries synthesize one from the
-    // issue snapshot and pass their own guid key / 'article' type below.
+    // issue snapshot and pass their guid label key / 'article' type below.
     item: SavedItem;
     index: number;
     count: number;
@@ -74,6 +75,10 @@
     // Reading-state identity. Defaults derive from the save; a feed entry passes
     // its guid and 'article' so labels land where the feed reader keeps them.
     itemKey?: string;
+    // The key this entry registers its controls/root under — the issue's
+    // per-entry key. Defaults to itemKey; a feed entry passes its feed-qualified
+    // key, since the guid alone can repeat across feeds.
+    entryKey?: string;
     itemType?: 'saved' | 'article';
     labelKeys?: string[];
   } = $props();
@@ -81,6 +86,7 @@
   let rootEl = $state<HTMLElement>();
   let bodyEl = $state<HTMLElement>();
   let itemKey = $derived(itemKeyProp ?? savedItemDisplayKey(item));
+  let entryKey = $derived(entryKeyProp ?? itemKey);
   let labelKeys = $derived(labelKeysProp ?? savedItemLabelKeys(item));
   // Discussion is URL-driven, so the SavedItem-shaped view model serves both kinds.
   let readerItem = $derived({ type: 'saved', item, key: itemKey } satisfies FeedDisplayItem);
@@ -123,8 +129,8 @@
   };
 
   onMount(() => {
-    registerControls(itemKey, controls);
-    registerRoot(itemKey, rootEl ?? null);
+    registerControls(entryKey, controls);
+    registerRoot(entryKey, rootEl ?? null);
     if (!itemLabelsStore.getReadActivity(labelKeys)) {
       const primaryKey = labelKeys[0] || itemKey;
       const observer = new IntersectionObserver(
@@ -138,13 +144,13 @@
       if (rootEl) observer.observe(rootEl);
       return () => {
         observer.disconnect();
-        registerControls(itemKey, null);
-        registerRoot(itemKey, null);
+        registerControls(entryKey, null);
+        registerRoot(entryKey, null);
       };
     }
     return () => {
-      registerControls(itemKey, null);
-      registerRoot(itemKey, null);
+      registerControls(entryKey, null);
+      registerRoot(entryKey, null);
     };
   });
 

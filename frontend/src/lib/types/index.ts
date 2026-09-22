@@ -1273,15 +1273,19 @@ export interface ItemLabel {
 // reading time without re-deriving from live saves; the body is still fetched
 // lazily by `rkey` (a snapshot whose save was deleted renders a "missing" body).
 // Feed-sourced entries (`sourceType: 'article'`) have no save: they're keyed by
-// the article guid and fetch their body from the local feed copy or by URL.
+// feed URL + guid (feedMagazineKey) and fetch their body from the local feed copy
+// or by URL. Their read state is labelled by the bare guid.
 export interface MagazineItemSnapshot {
-  key: string; // stable magazine key (savedItemMagazineKey, or the guid for feed items)
-  displayKey: string; // reader key (savedItemDisplayKey, or the guid for feed items)
+  key: string; // stable magazine key (savedItemMagazineKey, or feedMagazineKey for feed items)
+  displayKey: string; // reader/resume key (savedItemDisplayKey, or feedMagazineKey for feed items)
   rkey: string; // save rkey — used to lazily fetch the body ('' for feed items)
   // Absent = 'saved' (issues generated before feed-sourced magazines existed).
   sourceType?: 'saved' | 'article';
-  // Feed item guid — the portable identity (never the device-local subscription id).
+  // Feed item guid — the read-label key. Unique only within its feed.
   guid?: string;
+  // The item's feed URL — with the guid, its portable identity (never the
+  // device-local subscription id).
+  feedUrl?: string;
   title: string | null;
   author: string | null;
   url: string;

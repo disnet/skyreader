@@ -2,7 +2,7 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { onDestroy, onMount } from 'svelte';
-  import type { Magazine, MagazineItemSnapshot, SavedItem } from '$lib/types';
+  import type { Magazine, MagazineItemSnapshot } from '$lib/types';
   import type { MagazineArticleControls } from '$lib/components/feed/DailyMagazineArticle.svelte';
   import DailyMagazineArticle from '$lib/components/feed/DailyMagazineArticle.svelte';
   import ArchiveMagazineModal from '$lib/components/feed/ArchiveMagazineModal.svelte';
@@ -24,19 +24,17 @@
   import { savesStore } from '$lib/stores/saves.svelte';
   import { integrationSaveStore } from '$lib/stores/integrationSave.svelte';
   import { auth } from '$lib/stores/auth.svelte';
-  import { syncStore } from '$lib/stores/sync.svelte';
   import { articlesStore } from '$lib/stores/articles.svelte';
   import { liveDb } from '$lib/services/liveDb.svelte';
-  import { db } from '$lib/services/db';
-  import { extractArticle } from '$lib/services/extract';
   import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
   import { decodeEntities } from '$lib/utils/entities';
   import { sanitizeHtml } from '$lib/utils/sanitize';
   import {
     formatMagazineDate,
     magazineIssueSummary,
-    savedItemDisplayKey,
-    savedItemLabelKeys,
+    isFeedMagazineSnapshot,
+    magazineEntries,
+    type MagazineEntry,
   } from '$lib/utils/dailyMagazine';
 
   interface BodyState {
@@ -44,23 +42,7 @@
     html: string;
   }
 
-  // A rendered magazine entry: the frozen snapshot plus the live SavedItem it maps
-  // to (or a read-only synthesis when the underlying save was later deleted, or
-  // the entry came from a feed). `itemType`/`labelKeys` say where its reading
-  // state lives: feed entries are labelled by guid as 'article', like the inbox.
-  interface Entry {
-    snap: MagazineItemSnapshot;
-    item: SavedItem;
-    displayKey: string;
-    itemType: 'saved' | 'article';
-    labelKeys: string[];
-  }
-
-  function isFeedSnap(snap: MagazineItemSnapshot): snap is MagazineItemSnapshot & {
-    guid: string;
-  } {
-    return snap.sourceType === 'article' && !!snap.guid;
-  }
+  type Entry = MagazineEntry;
 
   // The magazine to read: an explicit `?id` (opening a specific past issue from
   // the Home rail), else the user's current (newest) durable issue. Frozen at
@@ -75,53 +57,9 @@
   // Live SavedItem lookup by rkey — frozen snapshots still fetch their body by rkey.
   let savedByRkey = $derived(new Map(savesStore.articles.map((s) => [s.rkey, s])));
 
-  function synthesizeItem(snap: MagazineItemSnapshot): SavedItem {
-    // Fallback for a snapshot whose save no longer exists — read-only. `uri` is
-    // the frozen displayKey so savedItemDisplayKey() stays stable across the swap.
-    return {
-      rkey: snap.rkey,
-      uri: snap.displayKey,
-      url: snap.url,
-      title: snap.title,
-      author: snap.author,
-      description: null,
-      content: null,
-      contentType: null,
-      domain: snap.domain,
-      image: snap.image,
-      wordCount: snap.wordCount,
-      publishedAt: null,
-      savedAt: snap.savedAt ?? '',
-      source: isFeedSnap(snap) ? 'feed' : 'url',
-      itemGuid: snap.guid,
-    };
-  }
-
-  let entries = $derived.by<Entry[]>(() => {
-    const mag = magazine;
-    if (!mag) return [];
-    return mag.items.map((snap) => {
-      if (isFeedSnap(snap)) {
-        // Always the snapshot view model: the guid is the reading-state key even
-        // when the article has since been saved (the body ladder prefers the save).
-        return {
-          snap,
-          item: synthesizeItem(snap),
-          displayKey: snap.guid,
-          itemType: 'article',
-          labelKeys: [snap.guid],
-        };
-      }
-      const item = savedByRkey.get(snap.rkey) ?? synthesizeItem(snap);
-      return {
-        snap,
-        item,
-        displayKey: savedItemDisplayKey(item),
-        itemType: 'saved',
-        labelKeys: savedItemLabelKeys(item),
-      };
-    });
-  });
+  // Feed entries are keyed by feed URL + guid within the issue; their read state
+  // stays under the bare guid (see MagazineEntry).
+  let entries = $derived<Entry[]>(magazine ? magazineEntries(magazine.items, savedByRkey) : []);
 
   let issueDate = $derived(magazine ? new Date(magazine.createdAt * 1000) : new Date());
   let totalMinutes = $derived(magazine?.params.totalMinutes ?? 0);
@@ -187,11 +125,11 @@
 
   function handleMagazinePageChange(page: number) {
     if (!paged || !pagedController || entries.length === 0) return;
-    let nearestKey = entries[0].displayKey;
+    let nearestKey = entries[0].entryKey;
     for (const entry of entries) {
-      const root = articleRoots.get(entry.displayKey);
+      const root = articleRoots.get(entry.entryKey);
       if (!root) continue;
-      if (pagedController.pageOfElement(root) <= page) nearestKey = entry.displayKey;
+      if (pagedController.pageOfElement(root) <= page) nearestKey = entry.entryKey;
     }
     if (nearestKey !== activeKey) {
       activeKey = nearestKey;
@@ -204,15 +142,15 @@
   // the article starts on instead.
   function jumpToArticle(e: MouseEvent, entry: Entry) {
     if (!paged || !pagedController) return; // let the anchor scroll natively
-    const root = articleRoots.get(entry.displayKey);
+    const root = articleRoots.get(entry.entryKey);
     if (!root) return;
     e.preventDefault();
     pagedController.goToElement(root);
   }
 
-  let activeEntry = $derived(entries.find((entry) => entry.displayKey === activeKey) ?? entries[0]);
+  let activeEntry = $derived(entries.find((entry) => entry.entryKey === activeKey) ?? entries[0]);
   let activeItem = $derived(activeEntry?.item);
-  let activeDisplayKey = $derived(activeEntry?.displayKey ?? '');
+  let activeEntryKey = $derived(activeEntry?.entryKey ?? '');
 
   // Saving the article you're on out to Semble / Margin. The picker is global
   // (mounted in AppShell), so the magazine's own chrome can offer it.
@@ -260,44 +198,21 @@
     return () => viewTitleStore.set('');
   });
 
-  // A feed entry's body, mirroring the standard reader's ladder: the saved copy
-  // if the article has since been saved, else the feed body in IndexedDB, else an
-  // online extract by URL (covers a device whose window never held the item).
-  // Null when none is available — the article renders calmly as 'missing'.
-  // Found bodies are kept for this visit so a saves refresh (which rebuilds
+  // A feed entry's body, via magazineStore.findFeedBody (saved copy, local feed
+  // copy, then an online extract). Found bodies are kept for this visit so a saves refresh (which rebuilds
   // `entries`) doesn't re-read IndexedDB or re-extract. Misses aren't cached, so
   // an offline miss retries once the next rebuild happens online.
   const feedBodies = new Map<string, string>();
 
-  async function loadFeedBody(guid: string, url: string): Promise<string | null> {
-    const known = feedBodies.get(guid);
+  async function loadFeedBody(snap: MagazineItemSnapshot): Promise<string | null> {
+    const known = feedBodies.get(snap.key);
     if (known) return known;
-    const body = await findFeedBody(guid, url);
-    if (body?.trim()) feedBodies.set(guid, body);
+    const body = await magazineStore.findFeedBody(snap);
+    if (body?.trim()) feedBodies.set(snap.key, body);
     return body;
   }
 
-  async function findFeedBody(guid: string, url: string): Promise<string | null> {
-    try {
-      const saved = savesStore.getByGuid(guid);
-      if (saved?.rkey) {
-        const savedBody = await savesStore.getContent(saved.rkey);
-        if (savedBody?.trim()) return savedBody;
-      }
-      const row = await db.articles.where('guid').equals(guid).first();
-      if (row?.content?.trim() && !row.contentTruncated) return row.content;
-    } catch {
-      // Fall through to the extract.
-    }
-    if (!url || !auth.user || !syncStore.isOnline) return null;
-    try {
-      return (await extractArticle(url)).content;
-    } catch {
-      return null;
-    }
-  }
-
-  // Fetch each entry's body lazily: saves by rkey, feed entries by the ladder above.
+  // Fetch each entry's body lazily: saves by rkey, feed entries by feed URL + guid.
   $effect(() => {
     const selected = entries;
     let cancelled = false;
@@ -305,8 +220,8 @@
       selected.map(({ snap }) => [snap.key, { status: 'loading', html: '' } as BodyState])
     );
     for (const { snap, item } of selected) {
-      const load = isFeedSnap(snap)
-        ? loadFeedBody(snap.guid, snap.url)
+      const load = isFeedMagazineSnapshot(snap)
+        ? loadFeedBody(snap)
         : savesStore.getContent(item.rkey);
       load.then((content) => {
         if (cancelled) return;
@@ -335,11 +250,11 @@
     if (!mag || entries.length === 0) return;
     if (resumedFor === mag.rkey) return;
     const stored = mag.position?.itemKey;
-    const hasStored = !!stored && entries.some((e) => e.displayKey === stored);
-    const key = hasStored ? (stored as string) : entries[0].displayKey;
+    const hasStored = !!stored && entries.some((e) => e.entryKey === stored);
+    const key = hasStored ? (stored as string) : entries[0].entryKey;
 
     if (paged) {
-      const targetEntry = entries.find((e) => e.displayKey === key);
+      const targetEntry = entries.find((e) => e.entryKey === key);
       const status = targetEntry ? bodies.get(targetEntry.snap.key)?.status : undefined;
       // 'missing' still settles (no paragraphs → we fall back to the article start).
       const bodySettled = status === 'ready' || status === 'missing';
@@ -450,12 +365,12 @@
     const line = scrollEl.getBoundingClientRect().top + scrollEl.clientHeight * 0.28;
     let nearest = entries[0];
     for (const entry of entries) {
-      const root = articleRoots.get(entry.displayKey);
+      const root = articleRoots.get(entry.entryKey);
       if (!root) continue;
       if (root.getBoundingClientRect().top <= line) nearest = entry;
       else break;
     }
-    const nextKey = nearest.displayKey;
+    const nextKey = nearest.entryKey;
     if (nextKey !== activeKey) {
       activeKey = nextKey;
       recordPosition(nextKey);
@@ -518,7 +433,7 @@
     archivePromptOpen = false;
     if (!mag) return;
     if (alsoClearArticles) {
-      const feedItems = mag.items.filter(isFeedSnap).map((snap) => ({
+      const feedItems = mag.items.filter(isFeedMagazineSnapshot).map((snap) => ({
         subscriptionRkey: '',
         articleGuid: snap.guid,
         articleUrl: snap.url,
@@ -526,7 +441,8 @@
       }));
       if (feedItems.length) void itemLabelsStore.markAllAsRead(feedItems);
       for (const snap of mag.items) {
-        if (!isFeedSnap(snap)) void itemLabelsStore.archiveItem(snap.displayKey, 'saved');
+        if (!isFeedMagazineSnapshot(snap))
+          void itemLabelsStore.archiveItem(snap.displayKey, 'saved');
       }
     }
     void magazineStore.remove(mag.rkey);
@@ -534,13 +450,13 @@
   }
 
   function nextParagraph() {
-    articleControls.get(activeDisplayKey)?.nextParagraph();
-    recordPosition(activeDisplayKey);
+    articleControls.get(activeEntryKey)?.nextParagraph();
+    recordPosition(activeEntryKey);
   }
 
   function previousParagraph() {
-    articleControls.get(activeDisplayKey)?.previousParagraph();
-    recordPosition(activeDisplayKey);
+    articleControls.get(activeEntryKey)?.previousParagraph();
+    recordPosition(activeEntryKey);
   }
 </script>
 
@@ -556,7 +472,7 @@
 
 <div class="daily-reader" class:paged bind:this={scrollEl} onscroll={handleScroll}>
   <ReaderChrome
-    itemKey={activeDisplayKey}
+    itemKey={activeEntry?.itemKey ?? ''}
     itemType={activeEntry?.itemType ?? 'saved'}
     showTag={false}
     isArchived={false}
@@ -577,7 +493,7 @@
         : introEl?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
     onNextParagraph={nextParagraph}
     onPreviousParagraph={previousParagraph}
-    onHighlightParagraph={() => articleControls.get(activeDisplayKey)?.highlightParagraph()}
+    onHighlightParagraph={() => articleControls.get(activeEntryKey)?.highlightParagraph()}
   />
 
   <main class="reader-container" class:paged>
@@ -693,14 +609,15 @@
               item={entry.item}
               {index}
               count={entries.length}
-              itemKey={entry.displayKey}
+              itemKey={entry.itemKey}
+              entryKey={entry.entryKey}
               itemType={entry.itemType}
               labelKeys={entry.labelKeys}
               minutes={entry.snap.minutes}
               bodyStatus={body.status}
               bodyHtml={body.html}
-              active={entry.displayKey === activeDisplayKey}
-              restore={resumeKey !== null && entry.displayKey === resumeKey}
+              active={entry.entryKey === activeEntryKey}
+              restore={resumeKey !== null && entry.entryKey === resumeKey}
               {paged}
               {pagedController}
               scrollRoot={scrollEl}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  articleMagazineKey,
+  feedMagazineKey,
   buildDailyMagazine,
   isFeedMagazineCandidate,
   MIN_FEED_ARTICLE_WORDS,
@@ -132,8 +132,14 @@ describe('daily magazine', () => {
 });
 
 describe('feed magazine candidates', () => {
-  it('keys feed items by guid', () => {
-    expect(articleMagazineKey({ guid: 'g-1' })).toBe('g-1');
+  it('keys feed items by feed URL and guid', () => {
+    const a = feedMagazineKey('https://a.example/feed', 'g-1');
+    expect(a).not.toBe(feedMagazineKey('https://b.example/feed', 'g-1'));
+    expect(a).toBe(feedMagazineKey('https://a.example/feed', 'g-1'));
+    // A '|' in either part can't make two different pairs collide.
+    expect(feedMagazineKey('https://a.example/x|y', 'z')).not.toBe(
+      feedMagazineKey('https://a.example/x', 'y|z')
+    );
   });
 
   it('excludes truncated, uncounted and below-floor items', () => {

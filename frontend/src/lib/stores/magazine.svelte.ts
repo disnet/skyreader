@@ -1,18 +1,20 @@
 import type { Magazine, MagazineItemSnapshot, MagazineParams, MagazinePosition } from '$lib/types';
 import { db, getMetadata, setMetadata } from '$lib/services/db';
 import { api } from '$lib/services/api';
+import { extractArticle } from '$lib/services/extract';
 import { syncStore } from './sync.svelte';
 import { auth } from './auth.svelte';
 import { syncQueue, type MagazinePayload } from '$lib/services/sync-queue';
 import { savesStore } from './saves.svelte';
 import { articlesStore } from './articles.svelte';
+import { subscriptionsStore } from './subscriptions.svelte';
 import { itemLabelsStore } from './itemLabels.svelte';
 import { preferences } from './preferences.svelte';
 import { generateTid } from '$lib/utils/tid';
 import { domainFromUrl } from '$lib/utils/highlightSource';
 import {
-  articleMagazineKey,
   buildDailyMagazine,
+  feedMagazineKey,
   isFeedMagazineCandidate,
   savedItemDisplayKey,
   savedItemLabelKeys,
@@ -196,8 +198,9 @@ function createMagazineStore() {
   }
 
   // Build the frozen snapshot from unread feed items in this device's window
-  // ("what's in your reader now"). Entries are keyed by guid — the key the feed
-  // reader labels them under — and carry no save rkey.
+  // ("what's in your reader now"). Entries are keyed by feed URL + guid (guids
+  // are only unique within a feed) and carry no save rkey; read state is still
+  // looked up by the bare guid, the key the feed reader labels them under.
   function buildFeedsSnapshot(): { items: MagazineItemSnapshot[]; params: MagazineParams } {
     const order = preferences.dailyMagazineOrder;
     const targetMinutes = preferences.dailyMagazineMinutes;
@@ -205,13 +208,13 @@ function createMagazineStore() {
     const candidates = [];
     for (const article of articlesStore.unreadArticles) {
       if (!isFeedMagazineCandidate(article)) continue;
-      const key = articleMagazineKey(article);
-      if (itemLabelsStore.isArchived(key)) continue;
+      const feedUrl = subscriptionsStore.getById(article.subscriptionId)?.feedUrl;
+      if (!feedUrl || itemLabelsStore.isArchived(article.guid)) continue;
       candidates.push({
-        item: article,
-        key,
+        item: { ...article, feedUrl },
+        key: feedMagazineKey(feedUrl, article.guid),
         wordCount: article.wordCount,
-        opened: itemLabelsStore.getReadActivity([key]) !== null,
+        opened: itemLabelsStore.getReadActivity([article.guid]) !== null,
         sortValue: Date.parse(article.publishedAt),
       });
     }
@@ -223,6 +226,7 @@ function createMagazineStore() {
       rkey: '',
       sourceType: 'article',
       guid: entry.item.guid,
+      feedUrl: entry.item.feedUrl,
       title: entry.item.title || null,
       author: entry.item.author || null,
       url: entry.item.url,
@@ -366,6 +370,40 @@ function createMagazineStore() {
     }
   }
 
+  // A feed entry's body, mirroring the standard reader's ladder: the saved copy
+  // if the article has since been saved, else the feed body in IndexedDB, else an
+  // online extract by URL (covers a device whose window never held the item).
+  // Null when none is available — the article renders calmly as 'missing'.
+  //
+  // Guids are unique only within a feed, so both local lookups are pinned to this
+  // entry: the save must be of the same URL, and the IndexedDB row must belong to
+  // the subscription with the snapshot's feed URL. Otherwise two feeds sharing a
+  // guid would render one feed's body in both entries.
+  async function findFeedBody(snap: MagazineItemSnapshot): Promise<string | null> {
+    const guid = snap.guid;
+    if (!guid) return null;
+    try {
+      const saved = savesStore.getByGuid(guid);
+      if (saved?.rkey && saved.url === snap.url) {
+        const savedBody = await savesStore.getContent(saved.rkey);
+        if (savedBody?.trim()) return savedBody;
+      }
+      const rows = await db.articles.where('guid').equals(guid).toArray();
+      const row = snap.feedUrl
+        ? rows.find((r) => subscriptionsStore.getById(r.subscriptionId)?.feedUrl === snap.feedUrl)
+        : rows.find((r) => r.url === snap.url);
+      if (row?.content?.trim() && !row.contentTruncated) return row.content;
+    } catch {
+      // Fall through to the extract.
+    }
+    if (!snap.url || !auth.user || !syncStore.isOnline) return null;
+    try {
+      return (await extractArticle(snap.url)).content;
+    } catch {
+      return null;
+    }
+  }
+
   return {
     get magazines() {
       return list;
@@ -385,6 +423,7 @@ function createMagazineStore() {
     getById,
     setPosition,
     remove,
+    findFeedBody,
   };
 }
 
