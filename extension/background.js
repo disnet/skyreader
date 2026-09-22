@@ -142,39 +142,73 @@ function usesExtensionLogin() {
   );
 }
 
-async function hasSession() {
-  const { session } = await api.storage.local.get('session');
-  return Boolean(session);
-}
+// Matches connected.js: an unfinished login this old is abandoned.
+const PENDING_LOGIN_TTL_MS = 15 * 60 * 1000;
 
 // Open the web app's login page with this extension's connected.html as the
 // return target. The nonce is checked by connected.html, so only a login this
-// extension started can hand it a session.
+// extension started can hand it a session. Each login keeps its own nonce, so
+// starting a second one (a logged-out save, then the popup's "Log in") doesn't
+// strand the first tab.
 async function startExtensionLogin(cfg) {
   const bytes = crypto.getRandomValues(new Uint8Array(24));
   const nonce = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
-  await api.storage.local.set({ pendingLogin: { nonce, at: Date.now() } });
+  const { pendingLogins = {} } = await api.storage.local.get('pendingLogins');
+  const now = Date.now();
+  const live = Object.fromEntries(
+    Object.entries(pendingLogins).filter(([, at]) => now - at < PENDING_LOGIN_TTL_MS)
+  );
+  await api.storage.local.set({ pendingLogins: { ...live, [nonce]: now } });
   const extensionReturn = `${api.runtime.getURL('connected.html')}?nonce=${nonce}`;
   await api.tabs.create({
     url: `${cfg.frontendBase}/auth/login?extensionReturn=${encodeURIComponent(extensionReturn)}`,
   });
 }
 
+// A Bearer session goes without cookies: if Safari ever did attach the
+// website's cookie, the backend reads it first, and the extension would act as
+// (or log out) the website's session instead of its own.
+async function authInit() {
+  const headers = await sessionHeaders();
+  return { credentials: headers.Authorization ? 'omit' : 'include', headers };
+}
+
+// A 401 means a stored extension session is dead, and a scope_upgrade_required
+// 403 means it can never do this call: drop it either way so the next login
+// starts fresh (with current scopes) instead of resending it.
+async function forgetRejectedSession(res) {
+  if (!usesExtensionLogin()) return res;
+  if (res.status === 401 || (res.status === 403 && (await isScopeUpgrade(res)))) {
+    await api.storage.local.remove('session');
+  }
+  return res;
+}
+
+async function isScopeUpgrade(res) {
+  const data = await res
+    .clone()
+    .json()
+    .catch(() => null);
+  return data?.error === 'scope_upgrade_required';
+}
+
 async function apiFetch(cfg, path, body) {
-  return fetch(`${cfg.apiBase}${path}`, {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json', ...(await sessionHeaders()) },
-    body: JSON.stringify(body),
-  });
+  const { credentials, headers } = await authInit();
+  return forgetRejectedSession(
+    await fetch(`${cfg.apiBase}${path}`, {
+      method: 'POST',
+      credentials,
+      headers: { 'Content-Type': 'application/json', ...headers },
+      body: JSON.stringify(body),
+    })
+  );
 }
 
 async function apiGet(cfg, path) {
-  return fetch(`${cfg.apiBase}${path}`, {
-    method: 'GET',
-    credentials: 'include',
-    headers: await sessionHeaders(),
-  });
+  const { credentials, headers } = await authInit();
+  return forgetRejectedSession(
+    await fetch(`${cfg.apiBase}${path}`, { method: 'GET', credentials, headers })
+  );
 }
 
 // One retry for the backend's mid-token-refresh 503 (session_refresh_pending).
@@ -196,11 +230,8 @@ async function apiFetchWithRetry(cfg, path, body) {
 async function getAccount() {
   const cfg = await getConfig();
   const res = await apiGet(cfg, '/api/auth/me');
-  if (res.status === 401) {
-    // An expired or revoked extension session: drop it so the popup offers login.
-    if (usesExtensionLogin()) await api.storage.local.remove('session');
-    return { ok: true, user: null };
-  }
+  // apiGet already dropped a rejected extension session.
+  if (res.status === 401) return { ok: true, user: null };
   if (!res.ok) return { ok: false, message: "Couldn't check your account. Try again." };
   const user = await res.json();
   // ownSession: the popup offers "Log out" only for an extension-held session;
@@ -291,8 +322,8 @@ function openSavePage(cfg, url) {
 // extraction runs in-page with the backend extractor as fallback. Link saves
 // have no open page, so they go straight to the backend extractor.
 //
-// Result: { status: 'saved' | 'updated' | 'duplicate' | 'auth' | 'permission' |
-//           'error', url?, message? }
+// Result: { status: 'saved' | 'updated' | 'duplicate' | 'auth' | 'limit' |
+//           'permission' | 'error', url?, message? }
 async function performSave(url, { fallbackTitle, extractTabId } = {}) {
   if (!isHttpUrl(url)) {
     return { status: 'error', message: 'Not a saveable page' };
@@ -345,13 +376,22 @@ async function performSave(url, { fallbackTitle, extractTabId } = {}) {
     // Duplicate — already saved (nothing to upgrade). Treat as success.
     return { status: 'duplicate' };
   }
-  if (res.status === 401 || res.status === 403) {
-    // 401 = logged out; 403 = monthly URL-save limit or a session needing a
-    // scope upgrade. The /save page renders proper UI for all of these.
-    return { status: 'auth', url };
-  }
+  if (res.status === 401) return { status: 'auth', url };
 
   const data = await res.json().catch(() => null);
+  if (res.status === 403) {
+    // 403 = monthly URL-save limit or a session needing a scope upgrade. With
+    // the shared cookie, the /save page renders proper UI for both. The Safari
+    // extension's session isn't the website's, so the /save page could save
+    // into (or re-login) another account: a scope upgrade already dropped the
+    // extension session, so it logs in again; anything else is shown here.
+    if (!usesExtensionLogin() || data?.error === 'scope_upgrade_required') {
+      return { status: 'auth', url };
+    }
+    if (data?.error === 'url_save_limit_reached') {
+      return { status: 'limit', message: data.message || 'Monthly save limit reached' };
+    }
+  }
   return { status: 'error', message: data?.error || `save failed (${res.status})` };
 }
 
@@ -380,9 +420,10 @@ async function saveWithBadge(url, tabId, opts) {
     case 'auth': {
       setBadge(tabId, '', BADGE_BLUE, 'Skyreader');
       const cfg = await getConfig();
-      // With no extension session, the /save page would log in the website,
-      // not this extension, so log the extension in instead.
-      if (result.status === 'auth' && usesExtensionLogin() && !(await hasSession())) {
+      // In Safari, 'auth' means the extension's own session is gone (performSave
+      // only returns it then), and the /save page would use the website's
+      // session, not this extension's, so log the extension in instead.
+      if (result.status === 'auth' && usesExtensionLogin()) {
         await startExtensionLogin(cfg);
       } else {
         openSavePage(cfg, result.url || url);
@@ -448,6 +489,9 @@ async function performSubscribe(feed) {
   if (res.status === 401) return { status: 'auth' };
 
   const data = await res.json().catch(() => null);
+  // A scope upgrade needs a fresh login (forgetRejectedSession already dropped
+  // a Safari extension session).
+  if (res.status === 403 && data?.error === 'scope_upgrade_required') return { status: 'auth' };
   if (res.status === 403 && data?.error === 'subscription_limit_reached') {
     return { status: 'limit', message: data.message || 'Feed limit reached' };
   }
@@ -643,7 +687,11 @@ api.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           sendResponse({ ok: true });
           break;
         case 'login':
-          // Safari: popup "Log in" links route here instead of the web login.
+          // Safari: popup "Log in" links and logged-out saves/subscribes route
+          // here instead of the web login, which would log in the website's
+          // session rather than the extension's. Save and subscribe only report
+          // 'auth' once the extension session is gone (limits come back as
+          // their own status), so never hand these off to the website.
           if (usesExtensionLogin()) {
             await startExtensionLogin(await getConfig());
             sendResponse({ ok: true, handled: true });

@@ -136,6 +136,8 @@ Error handling:
   handles login-then-resume.
 - `403` (monthly URL-save limit, scope upgrade) → same `/save` page, which
   renders proper UI for both. Content upgrades don't count against the limit.
+  Safari differs (its session isn't the website's): see "The session cookie"
+  below.
 - `409` duplicate (only when there was no content to upgrade) → treated as
   success ("Already in your Saved list").
 - `503 session_refresh_pending` → one retry after 2s.
@@ -172,8 +174,9 @@ globalThis.chrome`. Firefox's `chrome` alias is callback-style, and this code
   error, so `hasApiAccess` (background) and the popup's grant prompt gate the API
   up front. `performSave` / `performSubscribe` return `status: 'permission'`
   rather than attempting the call. The popup's prompt adds a Safari-only line
-  pointing at those settings (`IS_SAFARI` in `popup.js` — UA sniffing, because a
-  web extension has no cleaner engine signal), and reuses it as the copy when a
+  pointing at those settings (`IS_SAFARI` in `popup.js`, keyed off the Safari
+  build's `connected.html` web-accessible resource, like `usesExtensionLogin()`),
+  and reuses it as the copy when a
   Safari `permissions.request()` comes back denied.
 - **`permissions.request` needs a live user gesture.** Firefox drops the gesture
   across an `await`, so `request()` must be the first `await` in a click
@@ -188,17 +191,29 @@ globalThis.chrome`. Firefox's `chrome` alias is callback-style, and this code
   logged-in user), and its `cookies` API can't see the website's cookie either.
   So the Safari build logs in on its own, the way the CLI does:
   1. The popup's "Log in" (or a logged-out save/subscribe) sends `login` to the
-     background, which stores a one-time `pendingLogin.nonce` in
-     `storage.local` and opens `/auth/login?extensionReturn=<connected.html?nonce=…>`.
+     background, which stores a one-time nonce in `storage.local` (`pendingLogins`,
+     nonce → start time, so a second login doesn't strand the first tab) and opens
+     `/auth/login?extensionReturn=<connected.html?nonce=…>`.
   2. The login page passes it to `/api/auth/login?extension_return=`; the
-     backend accepts only `connected.html?nonce=…` on an extension scheme
-     (`isValidExtensionReturnUrl`), stores it on the OAuth state
+     backend accepts only `connected.html?nonce=…` on `safari-web-extension:`
+     (`isValidExtensionReturnUrl`; Chrome/Firefox schemes are refused so no
+     other installed extension can be handed a session), and the login page says
+     it is logging in the extension. It stores it on the OAuth state
      (`oauth_state.extension_return_url`), and the callback redirects there with
      `#session_id=…` instead of setting a cookie.
-  3. `connected.js` keeps the session only if the nonce matches the pending
-     login (so a site can't plant its own session), then `sessionHeaders()` in
-     `background.js` sends it as `Authorization: Bearer <session_id>`. A 401
-     drops it.
+  3. `connected.js` keeps the session only if the nonce matches a pending
+     login (so a site can't plant its own session), and consumes only that
+     nonce (so a stray visit can't cancel a login in progress).
+     `sessionHeaders()` in `background.js` sends it as `Authorization: Bearer <session_id>` with
+     `credentials: 'omit'` (the backend reads a cookie first, so a stray one
+     would win). Any 401 or `403 scope_upgrade_required` drops it
+     (`forgetRejectedSession`), and the save or subscribe reports `auth`, which
+     starts a fresh extension login. Nothing auth-related in Safari hands off to
+     the website's `/save` page: that page runs on the website's session, which
+     may be logged out or another account. A `403 url_save_limit_reached` comes
+     back as `status: 'limit'` and is shown in place. A failed OAuth lands on
+     `/auth/error` with the `extensionReturn` carried through, so "Try again"
+     retries the extension's login.
   4. The popup shows **Log out** only for this extension-held session
      (`ownSession` on the `account` reply): it POSTs `/api/auth/logout` with the
      Bearer session (the server revokes and deletes it) and forgets it locally
@@ -371,6 +386,10 @@ Shared/AppIcon.icon --export-image --output-file out.png --platform macOS
 - The refresh build phase also reads `manifest.json` and fails when its version
   differs from `MARKETING_VERSION`. Update both targets' Marketing Version when
   bumping the manifest version.
+- `Shared/Info.plist` carries the two keys App Store Connect asks for:
+  `LSApplicationCategoryType` (News; uploads fail without a category) and
+  `ITSAppUsesNonExemptEncryption = false` (HTTPS only, so every upload skips the
+  export-compliance question).
 - Keep the container app thin: the converter's stock "open Safari settings to
   enable" window, restyled with the Skyreader icon and One Blue `#0066cc`
   (DESIGN.md). Apple accepts thin container apps for extensions; don't invent

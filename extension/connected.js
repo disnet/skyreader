@@ -22,14 +22,11 @@ async function connect() {
   // Keep the session id out of history and anything that copies the URL.
   history.replaceState(null, '', location.pathname);
 
-  const { pendingLogin } = await api.storage.local.get('pendingLogin');
-  await api.storage.local.remove('pendingLogin');
-
-  const valid =
-    session &&
-    nonce &&
-    pendingLogin?.nonce === nonce &&
-    Date.now() - pendingLogin.at < PENDING_TTL_MS;
+  // Only the matching login is consumed: a stray visit (or a site opening this
+  // page) mustn't cancel a login that's still in progress in another tab.
+  const { pendingLogins = {} } = await api.storage.local.get('pendingLogins');
+  const startedAt = nonce && Object.hasOwn(pendingLogins, nonce) ? pendingLogins[nonce] : null;
+  const valid = session && startedAt != null && Date.now() - startedAt < PENDING_TTL_MS;
   if (!valid) {
     show(
       'Couldn’t connect',
@@ -39,7 +36,8 @@ async function connect() {
     return;
   }
 
-  await api.storage.local.set({ session });
+  delete pendingLogins[nonce];
+  await api.storage.local.set({ session, pendingLogins });
   show('You’re logged in', 'Skyreader is ready in Safari. You can close this tab.');
 }
 

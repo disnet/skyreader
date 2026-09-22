@@ -22,6 +22,15 @@
   const error = $derived(
     errorMessages[errorCode] || 'An unexpected error occurred. Please try again.'
   );
+
+  // A failed Safari extension login retries as the extension's login (the
+  // backend passes its return target through), not the website's.
+  const retryHref = $derived.by(() => {
+    const extensionReturn = $page.url.searchParams.get('extensionReturn');
+    return extensionReturn
+      ? `/auth/login?${new URLSearchParams({ extensionReturn })}`
+      : '/auth/login';
+  });
 </script>
 
 <div class="error-page">
@@ -35,7 +44,7 @@
         >
       </p>
     {/if}
-    <a href="/auth/login" class="btn btn-primary">Try Again</a>
+    <a href={retryHref} class="btn btn-primary">Try Again</a>
   </div>
 </div>
 

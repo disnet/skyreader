@@ -42,8 +42,9 @@ let apiHost = '';
 let loggedIn = null;
 
 // Safari logs the extension in on its own (startExtensionLogin in background.js),
-// because Safari won't share the website's session cookie with it. Elsewhere the
-// background declines and the caller falls through to the web app.
+// because Safari won't share the website's session cookie with it. Elsewhere,
+// or when the extension already holds a session, the background declines and
+// the caller falls through to the web app.
 async function logInExtension() {
   const result = await send({ type: 'login' });
   if (!result?.handled) return false;
@@ -138,10 +139,11 @@ async function hasApiAccess(origin) {
 
 // Safari also lets the user set host access from Safari's own settings, and
 // declining there is not the same dead end it is in Firefox — so the prompt
-// carries an extra line pointing at it. A web extension has no cleaner runtime
-// signal for the engine than the user agent.
-const IS_SAFARI =
-  /\bSafari\//.test(navigator.userAgent) && !/\bChrom(e|ium)\//.test(navigator.userAgent);
+// carries an extra line pointing at it. Only the Safari build exposes
+// connected.html (scripts/manifest.mjs; usesExtensionLogin in background.js).
+const IS_SAFARI = (api.runtime.getManifest().web_accessible_resources ?? []).some((entry) =>
+  entry.resources?.includes('connected.html')
+);
 
 const SAFARI_GRANT_HINT = 'Open Safari → Settings → Extensions → Skyreader and allow';
 
@@ -228,11 +230,16 @@ async function onSave() {
       setStatus(els.saveStatus, 'Access to the Skyreader API was withdrawn.', 'error');
       showPermissionPrompt(await getConfig());
       break;
+    case 'limit':
+      // Safari only: the extension's session isn't the website's, so the /save
+      // page can't show this for it (it might even be another account).
+      setStatus(els.saveStatus, result.message || 'Monthly save limit reached', 'error');
+      break;
     case 'auth': {
       // Logged out, over the monthly limit, or a scope upgrade — the /save page
-      // handles all three with proper UI. Logged out in Safari, though, the
-      // extension needs its own login first.
-      if (loggedIn === false && (await logInExtension())) return;
+      // handles all three with proper UI. In Safari the extension needs its own
+      // login instead (the website's session isn't the extension's).
+      if (await logInExtension()) return;
       const cfg = await getConfig();
       api.tabs.create({ url: `${cfg.frontendBase}/save?url=${encodeURIComponent(tab.url)}` });
       window.close();

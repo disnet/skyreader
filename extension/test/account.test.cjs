@@ -242,6 +242,9 @@ test('Safari sends its stored session as a Bearer token', async () => {
     async (url, options) => {
       assert.equal(url, 'https://api.skyreader.app/api/auth/me');
       assert.equal(options.headers.Authorization, 'Bearer sess-123');
+      // No cookie alongside: the backend reads a cookie first, so one riding
+      // along would make the extension act as the website's session.
+      assert.equal(options.credentials, 'omit');
       return Response.json({ did: 'did:plc:alice', handle: 'alice.test' });
     },
     {},
@@ -277,8 +280,91 @@ test('Safari login opens the web login with a nonce-bound return page', async ()
   assert.equal(opened.origin + opened.pathname, 'https://skyreader.app/auth/login');
   const back = new URL(opened.searchParams.get('extensionReturn'));
   assert.equal(back.pathname, '/connected.html');
-  assert.equal(back.searchParams.get('nonce'), local.pendingLogin.nonce);
-  assert.ok(local.pendingLogin.nonce.length >= 32);
+  const nonce = back.searchParams.get('nonce');
+  assert.ok(nonce.length >= 32);
+  assert.ok(local.pendingLogins[nonce]);
+});
+
+test('a second Safari login keeps the first one completable', async () => {
+  const local = {};
+  const tabs = [];
+  const send = worker(async () => assert.fail('login makes no API call'), {}, safariPermissions, {
+    ...SAFARI,
+    local,
+    tabs,
+  });
+  await send('login');
+  await send('login');
+  const nonces = tabs.map((tab) =>
+    new URL(new URL(tab.url).searchParams.get('extensionReturn')).searchParams.get('nonce')
+  );
+  assert.notEqual(nonces[0], nonces[1]);
+  assert.deepEqual(Object.keys(local.pendingLogins).sort(), [...nonces].sort());
+});
+
+// The Safari extension's session isn't the website's, so an auth failure must
+// never hand off to the website's /save page: it could save into another
+// account, or re-login the website instead of the extension.
+function safariSaveWorker(savedResponse, local, tabs) {
+  return worker(
+    async (url) => {
+      if (url.endsWith('/api/extract')) return Response.json({});
+      return savedResponse();
+    },
+    {},
+    safariPermissions,
+    { ...SAFARI, local, tabs }
+  );
+}
+
+test('Safari reports the monthly save limit itself instead of opening the website', async () => {
+  const local = { session: 'sess-123' };
+  const tabs = [];
+  const send = safariSaveWorker(
+    () =>
+      Response.json(
+        {
+          error: 'url_save_limit_reached',
+          message: 'You have reached your monthly URL save limit of 30.',
+        },
+        { status: 403 }
+      ),
+    local,
+    tabs
+  );
+  const result = await send({ type: 'save', url: 'https://example.com/post' });
+  assert.equal(result.status, 'limit');
+  assert.match(result.message, /monthly URL save limit/);
+  assert.equal(local.session, 'sess-123');
+  assert.equal(tabs.length, 0);
+});
+
+test('Safari drops a session that needs a scope upgrade and logs the extension in again', async () => {
+  const local = { session: 'old-scopes' };
+  const tabs = [];
+  const send = safariSaveWorker(
+    () => Response.json({ error: 'scope_upgrade_required' }, { status: 403 }),
+    local,
+    tabs
+  );
+  const result = await send({ type: 'save', url: 'https://example.com/post' });
+  assert.equal(result.status, 'auth');
+  assert.equal(local.session, undefined);
+  assert.equal((await send('login')).handled, true);
+  assert.equal(new URL(tabs[0].url).pathname, '/auth/login');
+});
+
+test('Safari drops a session any API call rejects, so the next login starts fresh', async () => {
+  const local = { session: 'expired' };
+  const tabs = [];
+  const send = worker(async () => new Response(null, { status: 401 }), {}, safariPermissions, {
+    ...SAFARI,
+    local,
+    tabs,
+  });
+  await send({ type: 'subscribe', feed: { feedUrl: 'https://example.com/feed.xml' } });
+  assert.equal(local.session, undefined);
+  assert.equal((await send('login')).handled, true);
 });
 
 test('other browsers leave login to the website and send no Authorization', async () => {
