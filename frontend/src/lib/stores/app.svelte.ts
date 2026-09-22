@@ -158,6 +158,7 @@ function createAppManager() {
       const loads: Array<[string, Promise<unknown>]> = [
         ['saves', savesStore.load()],
         ['magazine', magazineStore.load()],
+        ['shareDrafts', shareDraftsStore.sync()],
         ['social', socialStore.loadFeed(true)],
         ['filteredViews', filteredViewsStore.syncWithBackend()],
         // Pull the user's own linkblog so share-state reconciles across devices.

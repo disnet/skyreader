@@ -1,13 +1,18 @@
 import { db, type SyncQueueEntry } from './db';
 import { api } from './api';
 import { toUnifiedReadItem } from './readSync';
-import type { MagazineItemSnapshot, MagazineParams, MagazinePosition } from '$lib/types';
+import type {
+  MagazineItemSnapshot,
+  MagazineParams,
+  MagazinePosition,
+  ShareDraft,
+} from '$lib/types';
 
 const MAX_RETRIES = 5;
 
 export type SyncOperation = 'create' | 'update' | 'delete';
 export type SyncCollection =
-  'reading' | 'socialReading' | 'label' | 'saved' | 'integration' | 'magazine';
+  'reading' | 'socialReading' | 'label' | 'saved' | 'integration' | 'magazine' | 'shareDraft';
 
 // Payload types for each collection
 export interface ReadingPayload {
@@ -91,6 +96,14 @@ export interface MagazinePayload {
   title?: string | null;
 }
 
+// Offline share-draft write. Carries the whole draft (like magazines) so the
+// generic create+update / update+update conflict collapse stays trivial; the
+// key is the article URL. The draft's own `updatedAt` (client ms) is what the
+// server's last-write-wins guard compares, so a queued write that has been
+// overtaken by an edit elsewhere is dropped server-side rather than clobbering
+// it — which is exactly what makes replaying a stale queue safe.
+export type ShareDraftPayload = ShareDraft;
+
 type SyncPayload =
   | ReadingPayload
   | SocialReadingPayload
@@ -98,7 +111,8 @@ type SyncPayload =
   | SavedPayload
   | IntegrationPayload
   | MarginNotePayload
-  | MagazinePayload;
+  | MagazinePayload
+  | ShareDraftPayload;
 
 class SyncQueue {
   private processing = false;
@@ -474,6 +488,24 @@ class SyncQueue {
       }
       case 'magazine':
         await this.executeMagazineOperation(entry.operation, payload as MagazinePayload);
+        break;
+      case 'shareDraft':
+        await this.executeShareDraftOperation(entry.operation, payload as ShareDraftPayload);
+        break;
+    }
+  }
+
+  private async executeShareDraftOperation(
+    operation: SyncOperation,
+    payload: ShareDraftPayload
+  ): Promise<void> {
+    switch (operation) {
+      case 'create':
+      case 'update':
+        await api.upsertShareDraft(payload);
+        break;
+      case 'delete':
+        await api.deleteShareDraft(payload.articleUrl, payload.updatedAt);
         break;
     }
   }
