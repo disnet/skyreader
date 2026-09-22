@@ -117,6 +117,44 @@ test.describe('Mobile switcher', () => {
     await authedPage.getByRole('button', { name: 'Switch feed' }).click();
     await expect(search).toHaveValue('');
   });
+
+  // `keepMounted` is only worth anything if the branch it keeps warm is the
+  // expensive one. The Sources tree is that branch — grouping, sorting and
+  // mapping the whole library — so it has to survive a close *in the DOM*. If it
+  // unmounts, the second open rebuilds it and the warm sheet buys nothing for
+  // exactly the readers who disclosed it (a persisted preference).
+  test('keeps an expanded Sources tree built across closes', async ({ authedPage }) => {
+    await authedPage.goto('/feeds');
+    await expect(authedPage.getByText('Switcher Article One', { exact: true })).toBeVisible({
+      timeout: 15_000,
+    });
+
+    await authedPage.getByRole('button', { name: 'Switch feed' }).click();
+
+    // Source rows render as `button.nav-item` (the `.nav-item-row` variant is
+    // only for rows carrying an add/edit affordance).
+    const sourceRow = authedPage.locator('.feed-switcher button.nav-item', {
+      has: authedPage.locator('.item-label', { hasText: FEED_TITLE }),
+    });
+
+    // Disclose Sources and wait for the row it builds.
+    await authedPage.locator('.feed-switcher button.section-toggle').click();
+    await expect(sourceRow).toBeVisible({ timeout: 5_000 });
+
+    // Closed: hidden, but still built. Dismiss from the top-left corner rather
+    // than the backdrop's centre — a disclosed Sources tree makes the sheet tall
+    // enough to cover the middle of the viewport, so a centred forced click
+    // lands on a row instead of the backdrop and navigates.
+    await authedPage
+      .locator('.bottom-sheet-portal .backdrop')
+      .click({ force: true, position: { x: 5, y: 5 } });
+    await expect(authedPage.locator('.feed-switcher')).toBeHidden();
+    await expect(sourceRow).toHaveCount(1);
+
+    // Reopened: the same tree, not a rebuilt one.
+    await authedPage.getByRole('button', { name: 'Switch feed' }).click();
+    await expect(sourceRow).toBeVisible({ timeout: 5_000 });
+  });
 });
 
 test.describe('Collapsed card body', () => {

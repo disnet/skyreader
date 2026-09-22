@@ -1,5 +1,5 @@
 // Mounted component test (jsdom) — see the "component" project in vitest.config.ts.
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { mount, unmount, flushSync, createRawSnippet } from 'svelte';
 import { reactiveBox } from '../../../../test/stubs/reactive-box.svelte';
 import BottomSheet from './BottomSheet.svelte';
@@ -85,10 +85,33 @@ describe('BottomSheet', () => {
     expect(inertOf(sheet.portal())).toBe(true);
   });
 
-  // A warm sheet must not hold the body scroll lock while it's hidden.
-  it('releases the body scroll lock on close even when it stays mounted', () => {
-    const sheet = render({ open: false, keepMounted: true });
-    sheet.setOpen(true);
+  // A warm sheet must not hold the body scroll lock while it's hidden — but it
+  // must hold it until it is actually gone. It stays on screen, covering the
+  // page, for the length of its exit transition, and it is pointer-events:none
+  // by then, so releasing on the first close frame lets a touch started in that
+  // window scroll the page behind a sheet that still visually covers it.
+  it('holds the body scroll lock until a warm sheet has finished animating out', () => {
+    vi.useFakeTimers();
+    try {
+      const sheet = render({ open: false, keepMounted: true });
+      sheet.setOpen(true);
+      expect(document.body.style.overflow).toBe('hidden');
+
+      sheet.setOpen(false);
+      expect(document.body.style.overflow).toBe('hidden');
+
+      vi.advanceTimersByTime(250);
+      flushSync();
+      expect(document.body.style.overflow).toBe('');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // A lazy sheet is removed from the DOM in the same frame, so nothing is left
+  // covering the page and the lock must not linger.
+  it('releases the body scroll lock immediately without keepMounted', () => {
+    const sheet = render({ open: true });
     expect(document.body.style.overflow).toBe('hidden');
 
     sheet.setOpen(false);

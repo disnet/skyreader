@@ -78,9 +78,38 @@
     else perfCancel(PERF_SHEET_OPEN);
   });
 
-  // Lock body scroll when open
+  // Still covering the page: `open` plus the exit transition. A warm sheet is
+  // held on screen for EXIT_MS after `open` goes false while it slides out, and
+  // it is `pointer-events: none` by then — so anything keyed to `open` (the body
+  // scroll lock below especially) would let a touch started in that window
+  // scroll the page behind a sheet that still visually covers it. A lazy sheet
+  // is removed from the DOM in the same frame, so it must not lag.
+  const EXIT_MS = 250;
+  let covering = $state(false);
+  // Plain mirror of `covering`, so the effect below can branch on the current
+  // value without taking a reactive dependency on the state it also writes.
+  let coveringNow = false;
+  function setCovering(next: boolean) {
+    coveringNow = next;
+    covering = next;
+  }
   $effect(() => {
     if (open) {
+      setCovering(true);
+      return;
+    }
+    if (!coveringNow) return;
+    if (!keepMounted) {
+      setCovering(false);
+      return;
+    }
+    const timer = setTimeout(() => setCovering(false), EXIT_MS);
+    return () => clearTimeout(timer);
+  });
+
+  // Lock body scroll for as long as the sheet is on screen.
+  $effect(() => {
+    if (covering) {
       document.body.style.overflow = 'hidden';
       return () => {
         document.body.style.overflow = '';

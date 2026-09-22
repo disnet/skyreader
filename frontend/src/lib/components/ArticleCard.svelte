@@ -611,12 +611,17 @@
 
   $effect(() => {
     // Bail before touching `sanitizedContent` when there's no clamped preview to
-    // measure. That order is the whole point: the body only renders under
-    // `{#if isOpen}` in the view, so for a closed card this effect was the one
-    // thing forcing the derived — a full DOMPurify parse for HTML nobody sees,
-    // times a page of cards on every view switch. `selected`/`expanded` are read
-    // first, so the effect stays subscribed and re-measures the moment the card
-    // opens.
+    // measure. The order is the point: the body only renders under `{#if isOpen}`
+    // (`isOpen = selected || expanded`), so for a *closed* card this effect was
+    // the one thing forcing the derived — a full DOMPurify parse for HTML nobody
+    // sees. `selected`/`expanded` are read first, so the effect stays subscribed
+    // and re-measures the moment the card opens.
+    //
+    // Scope, so this isn't mistaken for more than it is: the saving is List view
+    // only. `expandAllItems` defaults to true and FeedListView passes
+    // `selected={preferences.expandAllItems || …}`, so in the default Expand view
+    // every card is `selected`, every body renders, and the sanitize is work the
+    // render needs anyway — there is nothing to skip there.
     if (!selected || expanded) return;
     // Read the rendered content so this re-measures whenever the body's HTML
     // changes, not only on open. The body is "light" until its full text is
