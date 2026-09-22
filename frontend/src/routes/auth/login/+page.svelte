@@ -87,7 +87,9 @@
     error = '';
     isLoading = true;
     try {
-      const { authUrl } = await api.login(loginHandle, returnUrlParam());
+      // Set by the Safari extension's "Log in" link; the backend validates it.
+      const extensionReturn = $page.url.searchParams.get('extensionReturn') || undefined;
+      const { authUrl } = await api.login(loginHandle, returnUrlParam(), undefined, extensionReturn);
       window.location.href = authUrl;
     } catch (err) {
       error = err instanceof Error ? err.message : 'Failed to start login';
@@ -132,7 +134,8 @@
     error = '';
     isLoading = true;
     try {
-      const { authUrl } = await api.signup(pds, returnUrlParam());
+      const extensionReturn = $page.url.searchParams.get('extensionReturn') || undefined;
+      const { authUrl } = await api.signup(pds, returnUrlParam(), undefined, extensionReturn);
       window.location.href = authUrl;
     } catch (err) {
       error = err instanceof Error ? err.message : 'Failed to start sign up';

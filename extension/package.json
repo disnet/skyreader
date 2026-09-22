@@ -11,6 +11,7 @@
     "package:firefox": "node scripts/package.mjs firefox",
     "package:firefox:source": "node scripts/source-package.mjs",
     "package:safari": "node scripts/package.mjs safari",
+    "package:safari:dev": "node scripts/package.mjs safari --dev",
     "package:all": "npm run package && npm run package:firefox && npm run package:safari",
     "lint:firefox": "npm run package:firefox && web-ext lint --source-dir dist/firefox",
     "start:firefox": "npm run build && web-ext run --source-dir ."

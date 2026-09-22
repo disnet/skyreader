@@ -936,14 +936,19 @@ class ApiClient {
   // `frameRelayHash` starts a sign-in from inside a workspace frame
   // ($lib/workspace/frameSignIn.ts); the popup's callback then parks the session
   // for claimFrameSignIn instead of setting a cookie.
+  // `extensionReturn` is set when a browser extension (Safari) started the login:
+  // the backend then hands the new session to that extension page instead of
+  // setting this site's cookie.
   async login(
     handle: string,
     returnUrl?: string,
-    frameRelayHash?: string
+    frameRelayHash?: string,
+    extensionReturn?: string
   ): Promise<{ authUrl: string }> {
     const params = new URLSearchParams({ handle });
     if (returnUrl) params.set('returnUrl', returnUrl);
     if (frameRelayHash) params.set('frame_relay_hash', frameRelayHash);
+    if (extensionReturn) params.set('extension_return', extensionReturn);
     return this.fetch(`/api/auth/login?${params}`);
   }
 
@@ -952,11 +957,13 @@ class ApiClient {
   async signup(
     pds: string,
     returnUrl?: string,
-    frameRelayHash?: string
+    frameRelayHash?: string,
+    extensionReturn?: string
   ): Promise<{ authUrl: string }> {
     const params = new URLSearchParams({ pds });
     if (returnUrl) params.set('returnUrl', returnUrl);
     if (frameRelayHash) params.set('frame_relay_hash', frameRelayHash);
+    if (extensionReturn) params.set('extension_return', extensionReturn);
     return this.fetch(`/api/auth/login?${params}`);
   }
 

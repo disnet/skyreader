@@ -405,8 +405,8 @@ export async function storeOAuthState(env: Env, state: string, data: OAuthState)
   const expiresAt = Date.now() + 600 * 1000; // 10 minutes
   await env.DB.prepare(
     `
-    INSERT INTO oauth_state (state, code_verifier, did, handle, pds_url, auth_server, return_url, frontend_url, cli_port, scope, replace_session_id, frame_relay_hash, frame_binding_hash, expires_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO oauth_state (state, code_verifier, did, handle, pds_url, auth_server, return_url, frontend_url, cli_port, scope, replace_session_id, frame_relay_hash, frame_binding_hash, extension_return_url, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `
   )
     .bind(
@@ -423,6 +423,7 @@ export async function storeOAuthState(env: Env, state: string, data: OAuthState)
       data.replaceSessionId || null,
       data.frameRelayHash || null,
       data.frameBindingHash || null,
+      data.extensionReturnUrl || null,
       expiresAt
     )
     .run();
@@ -445,6 +446,7 @@ export async function getOAuthState(env: Env, state: string): Promise<OAuthState
       replace_session_id: string | null;
       frame_relay_hash: string | null;
       frame_binding_hash: string | null;
+      extension_return_url: string | null;
     }>();
 
   if (!row) return null;
@@ -462,6 +464,7 @@ export async function getOAuthState(env: Env, state: string): Promise<OAuthState
     replaceSessionId: row.replace_session_id || undefined,
     frameRelayHash: row.frame_relay_hash || undefined,
     frameBindingHash: row.frame_binding_hash || undefined,
+    extensionReturnUrl: row.extension_return_url || undefined,
   };
 }
 

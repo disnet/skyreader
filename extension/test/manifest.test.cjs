@@ -48,13 +48,26 @@ test('the Safari build declares one background key and a Safari version floor', 
   assert.equal(manifest.browser_specific_settings.safari.strict_min_version, SAFARI_MIN_VERSION);
 });
 
+test('only the Safari build carries its own login', async () => {
+  const { manifestFor } = await load();
+  // Safari won't share the website's session cookie with the extension, so it
+  // stores its own session (storage) from a web-accessible landing page.
+  const safari = manifestFor('safari', source);
+  assert.ok(safari.permissions.includes('storage'));
+  assert.deepEqual(safari.web_accessible_resources[0].resources, ['connected.html']);
+  for (const target of ['chrome', 'firefox']) {
+    const manifest = manifestFor(target, source);
+    assert.ok(!manifest.permissions.includes('storage'), target);
+    assert.equal(manifest.web_accessible_resources, undefined, target);
+  }
+});
+
 test('no store build ships the development server override', async () => {
   const { manifestFor, TARGETS } = await load();
   for (const target of TARGETS) {
     const manifest = manifestFor(target, source);
     assert.equal(manifest.options_ui, undefined, target);
     assert.equal(manifest.optional_host_permissions, undefined, target);
-    assert.ok(!manifest.permissions.includes('storage'), target);
   }
 });
 

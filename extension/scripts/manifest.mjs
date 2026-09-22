@@ -42,6 +42,14 @@ export function manifestFor(target, source) {
     // The Gecko block is AMO-only (`data_collection_permissions` means nothing
     // to Safari); the version floor is the one key Safari reads here.
     manifest.browser_specific_settings = { safari: { strict_min_version: SAFARI_MIN_VERSION } };
+    // Safari won't send the session cookie on extension fetches, so the
+    // extension logs in on its own: the backend redirects to connected.html
+    // with a session id, kept in storage.local and sent as a Bearer token.
+    // The page must be web-accessible for that redirect to land.
+    manifest.permissions.push('storage');
+    manifest.web_accessible_resources = [
+      { resources: ['connected.html'], matches: ['<all_urls>'] },
+    ];
   } else {
     // Firefox has no extension service workers, and AMO review rejects a
     // manifest that declares one even though the browser would ignore it.
