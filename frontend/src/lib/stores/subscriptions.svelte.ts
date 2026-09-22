@@ -50,6 +50,32 @@ function createSubscriptionsStore() {
   // Derived: subscription count
   let count = $derived(subscriptions.length);
 
+  // Derived: id → subscription. The feed list resolves a source per rendered
+  // card, so a linear `.find` there is O(cards × subscriptions) on every list
+  // render — a real cost on a view switch with a few hundred sources. Built
+  // once per subscriptions change instead.
+  let byId = $derived.by(() => {
+    const map = new Map<number, Subscription>();
+    for (const sub of subscriptions) {
+      if (sub.id != null) map.set(sub.id, sub);
+    }
+    return map;
+  });
+
+  // Derived: author DID → that author's atproto.documents subscriptions, in
+  // subscription order. Same reason as `byId`: resolving a document card's
+  // publication used to filter the whole list per card.
+  let documentSubsByAuthorDid = $derived.by(() => {
+    const map = new Map<string, Subscription[]>();
+    for (const sub of subscriptions) {
+      if (sub.sourceType !== 'atproto.documents' || !sub.subjectDid) continue;
+      const existing = map.get(sub.subjectDid);
+      if (existing) existing.push(sub);
+      else map.set(sub.subjectDid, [sub]);
+    }
+    return map;
+  });
+
   // Derived: max subscriptions from user tier (fallback to 100 for free).
   // A guest's ceiling is the guest timeline's per-request feed cap: the whole
   // library travels in every refresh, and going over it would 400 the request —
@@ -497,6 +523,12 @@ function createSubscriptionsStore() {
     // State
     get subscriptions() {
       return subscriptions;
+    },
+    get byId() {
+      return byId;
+    },
+    get documentSubsByAuthorDid() {
+      return documentSubsByAuthorDid;
     },
     get isLoading() {
       return isLoading;

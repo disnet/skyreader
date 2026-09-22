@@ -12,19 +12,47 @@
   import { preferences } from '$lib/stores/preferences.svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import { channelPath, feedPath, categoryPath, FEEDS_PATH, SAVED_PATH } from '$lib/utils/viewNav';
+  import { perfBegin, PERF_VIEW_SWITCH } from '$lib/utils/perfMarks';
   import Icon from '$lib/components/Icon.svelte';
   import type { Subscription } from '$lib/types';
 
   interface Props {
     onclose: () => void;
     currentTitle: string;
+    /** Whether the hosting sheet is showing. The sheet keeps this component
+     *  mounted between opens (BottomSheet `keepMounted`), so the unmount that
+     *  used to clear per-open state no longer happens — this is what tells us
+     *  to clear it instead. */
+    open?: boolean;
     onEditChannel?: (id: number) => void;
     onCreateChannel?: (type?: 'feed' | 'saved') => void;
   }
 
-  let { onclose, currentTitle, onEditChannel, onCreateChannel }: Props = $props();
+  let { onclose, currentTitle, open = true, onEditChannel, onCreateChannel }: Props = $props();
 
   let searchQuery = $state('');
+
+  /** Backstop for the deferred navigation in selectItem, for when rAF never
+   *  fires (hidden tab). Comfortably longer than a frame so rAF wins normally. */
+  const NAV_FALLBACK_MS = 100;
+
+  // Reopening the switcher should show the library, not last time's search.
+  //
+  // Cleared on the way *in*, not on the way out. The sheet now animates closed
+  // over a quarter second with this component still mounted behind it
+  // (BottomSheet `keepMounted`), so clearing on `open → false` plays the
+  // teardown on screen: search for a feed, tap it, and you watch the list snap
+  // back to the full library while the sheet is still sliding away. Doing it on
+  // the open edge is also the version with no timing to get wrong — Svelte
+  // flushes effects before paint, so the cleared list is what the reopen
+  // renders. `prevOpen` is deliberately a plain variable: this effect writes
+  // `searchQuery`, and tracking its own edge state reactively would make it
+  // depend on itself.
+  let prevOpen = false;
+  $effect(() => {
+    if (open && !prevOpen) searchQuery = '';
+    prevOpen = open;
+  });
 
   const SOURCES_EXPANDED_KEY = 'skyreader-mobile-switcher-sources-expanded';
 
@@ -44,9 +72,14 @@
     }
   }
 
-  // Render/compute the Sources tree only when the section is open or the user is
-  // searching. With a large subscription list, building and rendering every feed
-  // row on open is the expensive part, so keep it lazy.
+  // Build the Sources tree only when the section is disclosed or the user is
+  // searching: with a large library the grouping/sorting/mapping pass is the
+  // expensive part of an open, so keep it off the critical path otherwise.
+  // Deliberately NOT gated on `open` — a kept-mounted sheet should keep the tree
+  // it already built, or a reader who has expanded Sources (a persisted
+  // preference) pays a full rebuild on every open and gets nothing from
+  // `keepMounted` at all. What makes that safe is the freeze below, which stops
+  // the tree recomputing while nobody is looking at it.
   let showSources = $derived(sourcesExpanded || searchQuery.trim().length > 0);
 
   // Derive data from stores
@@ -167,7 +200,7 @@
     };
   }
 
-  let filteredItems = $derived.by((): SectionData[] => {
+  let liveFilteredItems = $derived.by((): SectionData[] => {
     const query = searchQuery.toLowerCase().trim();
 
     const homeItem: NavItem = {
@@ -397,6 +430,24 @@
     return sections;
   });
 
+  // A kept-mounted sheet must not keep its largest branch reactive while it is
+  // hidden: unread and read-position updates would otherwise regroup, sort and
+  // patch every source row for a sheet nobody is looking at. Snapshotting into
+  // state is what makes keeping it warm safe — `liveFilteredItems` is a lazy
+  // derived, so while the sheet is closed this effect never reads it and it
+  // never recomputes, and the last snapshot stays in the DOM so the next open is
+  // the class toggle `keepMounted` promised rather than a rebuild.
+  // `$state.raw` because the snapshot is always replaced wholesale, never
+  // mutated in place.
+  // Seeded, not empty: the sheet mounts already open, and starting from `[]`
+  // would render an empty library for a pass before the effect below fills it.
+  // svelte-ignore state_referenced_locally
+  let filteredItems = $state.raw<SectionData[]>(liveFilteredItems);
+  $effect(() => {
+    if (!open) return;
+    filteredItems = liveFilteredItems;
+  });
+
   // Get current filter from URL
   let currentFilter = $derived.by(() => {
     const url = $page.url;
@@ -414,7 +465,19 @@
     return { type: 'all' };
   });
 
+  // The row the user just tapped, held until the URL catches up. Navigation is
+  // deferred a frame (see selectItem), so without this the tap would sit
+  // unacknowledged while the sheet slides away — the active pip would still be
+  // on the row you're leaving. Cleared when the navigation settles, or when the
+  // URL changes out from under us (a Back, say).
+  let pendingItemKey = $state<string | null>(null);
+
+  function itemKey(item: NavItem): string {
+    return `${item.type}:${item.id}`;
+  }
+
   function isItemActive(item: NavItem): boolean {
+    if (pendingItemKey) return itemKey(item) === pendingItemKey;
     const filter = currentFilter;
     if (item.type === 'view') {
       if (item.id === 'home' && filter.type === 'home') return true;
@@ -443,9 +506,47 @@
     } else if (item.type === 'utility') {
       url = `/${item.id}`;
     }
-    goto(url);
+
+    // Acknowledge the tap in this same frame, then dismiss, and only then
+    // navigate. `goto` on a same-route switch synchronously kicks off the URL
+    // effect → setFilters → a whole page of cards torn down and rebuilt; run
+    // that before the close and it lands inside the frame that's supposed to be
+    // animating the sheet away, which is the "tap … freeze … new list" the user
+    // feels. One frame of delay is imperceptible; the stall isn't.
+    const key = itemKey(item);
+    pendingItemKey = key;
+    perfBegin(PERF_VIEW_SWITCH);
     onclose();
+
+    // rAF gets us past the close frame, but it does not run at all while the
+    // document is hidden: lock the phone straight after a tap and the
+    // navigation would sit queued until you came back, with the switcher
+    // holding a pending row the whole time. The timer is the liveness floor —
+    // whichever fires first navigates, and it is long enough that rAF normally
+    // wins, so the deferral we actually want is unaffected.
+    let navigated = false;
+    const navigate = () => {
+      if (navigated) return;
+      navigated = true;
+      // Clearing on settle, not only on a URL change: re-selecting the row you
+      // are already on resolves without `$page` ever changing, which would
+      // otherwise leave the pip latched on a now kept-mounted switcher.
+      void goto(url).finally(() => {
+        if (pendingItemKey === key) pendingItemKey = null;
+      });
+    };
+    requestAnimationFrame(navigate);
+    setTimeout(navigate, NAV_FALLBACK_MS);
   }
+
+  // Drop the optimistic highlight once the real URL says the same thing — or
+  // says something else entirely (a Back, or a navigation from elsewhere), which
+  // would otherwise leave a stale pip lit on a kept-mounted switcher.
+  $effect(() => {
+    void $page.url.href;
+    // Assigned, never read, so this effect doesn't depend on its own write.
+    pendingItemKey = null;
+  });
 </script>
 
 <div class="feed-switcher">
@@ -532,7 +633,13 @@
                 <span class="item-icon"><Icon name={item.icon} size={18} /></span>
               {:else if item.type === 'feed'}
                 {#if item.iconUrl}
-                  <img src={item.iconUrl} alt="" class="feed-icon" />
+                  <img
+                    src={item.iconUrl}
+                    alt=""
+                    class="feed-icon"
+                    loading="lazy"
+                    decoding="async"
+                  />
                 {:else}
                   <span class="feed-icon-placeholder"></span>
                 {/if}

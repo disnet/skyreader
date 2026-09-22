@@ -11,7 +11,12 @@ export const MOBILE_BREAKPOINT = 1000;
 function createMobileStore() {
   let isMobile = $state(false);
 
-  if (browser) {
+  // `typeof matchMedia` as well as `browser`: this store is now imported at
+  // module scope by feedView (the initial page size depends on it), so anything
+  // that imports a feed store — including jsdom component tests — evaluates this
+  // line. jsdom has no matchMedia, and throwing here would take the importing
+  // module down with it. Non-mobile is the right answer where we can't ask.
+  if (browser && typeof window.matchMedia === 'function') {
     const mql = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`);
     isMobile = mql.matches;
     mql.addEventListener('change', (e) => {
