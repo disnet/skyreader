@@ -333,6 +333,49 @@ describe('current Leaflet lexicon support', () => {
     expect(html).not.toContain('Some content');
   });
 
+  it('keeps a list numbered from zero', () => {
+    const content = doc({
+      block: {
+        $type: 'pub.leaflet.blocks.orderedList',
+        startIndex: 0,
+        children: [listItem('Zeroth')],
+      },
+    } as LeafletBlockWrapper);
+    expect(renderLeafletContent(content, AUTHOR_DID)).toContain('<ol start="0">');
+  });
+
+  it('only links an Atmosphere reference that has a web address', () => {
+    const mention = (uri: string): LeafletFacet => ({
+      index: { byteStart: 0, byteEnd: 4 },
+      features: [{ $type: 'pub.leaflet.richtext.facet#atMention', atURI: uri } as never],
+    });
+    const atOnly = sanitizeHtml(
+      renderLeafletContent(
+        doc(text('Post', [mention('at://did:plc:x/site.standard.document/3abc')])),
+        AUTHOR_DID
+      )
+    );
+    expect(parse(atOnly).querySelector('a')).toBeNull();
+    expect(atOnly).toContain('Post');
+
+    const web = renderLeafletContent(
+      doc(text('Post', [mention('https://example.com/post')])),
+      AUTHOR_DID
+    );
+    expect(parse(web).querySelector('a')?.getAttribute('href')).toBe('https://example.com/post');
+
+    const embed = renderLeafletContent(
+      doc(text('Body'), {
+        block: {
+          $type: 'pub.leaflet.blocks.standardSitePost',
+          uri: 'at://did:plc:x/site.standard.document/3abc',
+        },
+      } as LeafletBlockWrapper),
+      AUTHOR_DID
+    );
+    expect(embed).not.toContain('View in the Atmosphere');
+  });
+
   it('still reads a nested list written as a bare array of items', () => {
     const content = doc({
       block: {

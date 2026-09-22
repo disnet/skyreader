@@ -56,8 +56,15 @@ function sizeAttrs(aspectRatio?: { width: number; height: number }): string {
 
 /** The `start` attribute for a list numbered from anything but 1, as an integer. */
 function startAttr(startIndex?: number): string {
+  if (startIndex == null) return '';
   const start = Math.trunc(Number(startIndex));
-  return Number.isFinite(start) && start !== 1 && start !== 0 ? ` start="${start}"` : '';
+  return Number.isFinite(start) && start !== 1 ? ` start="${start}"` : '';
+}
+
+/** A link target a browser can follow. `at://` URIs aren't one: the sanitizer strips
+ *  them, which would leave a link that goes nowhere. */
+function webHref(uri: string | undefined): string | null {
+  return uri && /^https?:\/\//i.test(uri) ? uri : null;
 }
 
 function alignmentClass(value?: string): string {
@@ -266,7 +273,7 @@ function applyFacets(
           break;
         case 'pub.leaflet.richtext.facet#atMention': {
           const at = feature as typeof feature & { atURI?: string; href?: string };
-          const href = at.href || at.atURI;
+          const href = webHref(at.href) ?? webHref(at.atURI);
           if (href) wrappedText = `<a href="${escapeHtml(href)}">${wrappedText}</a>`;
           break;
         }
@@ -612,9 +619,11 @@ function renderGenericBlock(block: Record<string, unknown>, authorDid: string): 
     type === 'pub.leaflet.blocks.standardSitePost' ||
     type === 'pub.leaflet.blocks.standardSitePublication'
   ) {
-    const uri = typeof block.uri === 'string' ? block.uri : '';
-    return uri
-      ? `<div class="website-preview"><div><a href="${escapeHtml(uri)}">View in the Atmosphere</a></div></div>`
+    // The block names the record by `at://` URI only; with no web address to open,
+    // there is nothing useful to show.
+    const href = webHref(typeof block.uri === 'string' ? block.uri : undefined);
+    return href
+      ? `<div class="website-preview"><div><a href="${escapeHtml(href)}">View in the Atmosphere</a></div></div>`
       : null;
   }
   if (SKIPPED_BLOCK_TYPES.has(type)) return null;

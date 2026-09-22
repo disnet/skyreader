@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
-import { hydrateMathIn } from './math-render';
+import { hydrateMathIn, installScopedStyles } from './math-render';
 import { renderMathPlaceholder } from '$lib/utils/math';
 import { sanitizeHtml } from '$lib/utils/sanitize';
 
@@ -20,5 +20,26 @@ describe('math hydration', () => {
     host.innerHTML = renderMathPlaceholder('\\frac{');
     await hydrateMathIn(host);
     expect(host.textContent).toContain('\\frac{');
+  });
+});
+
+describe('scoped Temml styles', () => {
+  it('scopes rules under .op-math so native MathML elsewhere is untouched', () => {
+    installScopedStyles(`
+      @font-face { font-family: 'Temml'; src: url('Temml.woff2'); }
+      math { display: inline-flex; }
+      math > mrow, *.mathcal { padding: 0.5ex 0; }
+      @supports (not (-moz-appearance: none)) { .tml-right { margin: 0; } }
+      body { counter-reset: tmlEqnNo; }
+    `);
+    const style = [...document.head.querySelectorAll('style')].at(-1)!;
+    expect(style.hasAttribute('media')).toBe(false);
+    const text = style.textContent ?? '';
+    expect(text).toContain('.op-math math {');
+    expect(text).toContain('.op-math math > mrow, .op-math *.mathcal {');
+    expect(text).toContain('.op-math .tml-right');
+    expect(text).toContain('@font-face');
+    expect(text).toMatch(/^body \{/m);
+    expect(text).not.toMatch(/^math/m);
   });
 });
