@@ -121,3 +121,28 @@ describe('getDisplayContent, document with no structured content', () => {
     expect(html).toContain('<h1>Heading</h1>');
   });
 });
+
+describe('getDisplayContent, Leaflet document that renders empty', () => {
+  it('falls back to textContent rendered as plaintext', () => {
+    const html = getDisplayContent(
+      docItem({
+        // An un-inflated page stub: no pages to render.
+        content: { $type: 'pub.leaflet.content', pages: [], blobPages: {} },
+        textContent: 'First <b>para</b>.\n\nSecond.',
+        description: 'Excerpt',
+      })
+    );
+    const el = document.createElement('div');
+    el.innerHTML = html;
+    expect(el.querySelectorAll('p')).toHaveLength(2);
+    expect(el.textContent).toContain('<b>para</b>');
+  });
+
+  it('falls back to the description when there is no textContent', () => {
+    expect(
+      getDisplayContent(
+        docItem({ content: { $type: 'pub.leaflet.content', pages: [] }, description: 'a < b' })
+      )
+    ).toBe('<p>a &lt; b</p>');
+  });
+});

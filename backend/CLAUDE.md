@@ -50,9 +50,16 @@ Each fan-out asks `canAffordBackfill` before starting an author and leaves the r
 reconcile queue rather than throwing halfway through a walk that has already written rows.
 `BACKFILL_QUERY_COST` is a true worst case — every per-row term is either one statement (the
 prune is a single `updated_at`-scoped DELETE; the sidecars are one read plus one capped batch) or
-capped (`MAX_SITE_RESOLVES_PER_BACKFILL`, `MAX_COLLECTION_WRITES_PER_BACKFILL`). A walk resolves
-the author's DID once for both of its listings (`PdsMemo`) — `resolvePdsUrl` is an uncached fetch,
-and the second one is a subrequest the listing term does not budget. The sidecar cap is the floor
+capped (`MAX_SITE_RESOLVES_PER_BACKFILL`, `MAX_COLLECTION_WRITES_PER_BACKFILL`,
+`MAX_BLOB_INFLATIONS_PER_BACKFILL`). A walk resolves
+the author's DID once for both of its listings and every blob it fetches (`PdsMemo`, now on the
+apply context) — `resolvePdsUrl` is an uncached fetch,
+and the second one is a subrequest the listing term does not budget. A Leaflet post over ~100 KB
+offloads its pages to a blob (`content.blobPages`) that `inflateLeafletBlobPages` fetches at write
+time; that is the one per-row PDS fetch here, so a walk spends at most
+`MAX_BLOB_INFLATIONS_PER_BACKFILL` of them and stamps `updated_at` on a row it already inflated
+rather than overwriting it with the listing's stub — which is what lets successive reconcile passes
+converge on a whole offloaded back catalogue instead of re-fetching the same ten bodies. The sidecar cap is the floor
 that arithmetic leaves at every other cap at once, not a flat limit: a walk spends its unspent
 headroom on sidecars and records what it still couldn't afford as `collections_pending`, which
 keeps the author in the reconcile queue instead of parking them for an interval. The same ceiling

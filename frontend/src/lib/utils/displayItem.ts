@@ -81,7 +81,13 @@ export function getDisplayContent(item: FeedDisplayItem): string {
   if (item.type === 'document') {
     const doc = item.item;
     if (doc.content && isLeafletContent(doc.content)) {
-      return renderLeafletContent(doc.content as LeafletContent, doc.authorDid);
+      // An unexpanded page stub renders empty; fall back to the plaintext fields,
+      // rendered as plaintext like the no-structured-content path below.
+      return (
+        renderLeafletContent(doc.content as LeafletContent, doc.authorDid) ||
+        renderPlaintextBody(doc.textContent ?? '') ||
+        renderPlaintextBody(doc.description ?? '')
+      );
     }
     if (doc.content && isPcktBlogContent(doc.content)) {
       return renderPcktBlogContent(doc.content as PcktBlogContent, doc.authorDid);

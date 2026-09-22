@@ -21,6 +21,7 @@ import {
   READER_COLLECTION,
   type CollectionRecord,
   type DocumentRecord,
+  type PdsMemo,
   type SiteMeta,
   EMPTY_SITE_META,
   buildCanonicalUrl,
@@ -35,6 +36,7 @@ import {
   publishedAtMs,
   recordToDocument,
   resolveReaderCollection,
+  resolveAuthorPds,
   resolveSiteMeta,
 } from './standard-site';
 import { parseAtUri } from '../utils/canonical-url';
@@ -42,6 +44,136 @@ import { log } from '../utils/logger';
 
 /** How long a resolved curated-edition preview is reused before re-resolving. */
 const COLLECTION_PREVIEW_TTL_MS = 24 * 60 * 60 * 1000;
+
+/** Leave room below D1's 2 MB row ceiling for columns and SQLite overhead. */
+export const MAX_INFLATED_DOCUMENT_BYTES = 1_500_000;
+
+type LeafletBlobContent = {
+  $type?: string;
+  pages?: unknown[];
+  blobPages?: { ref?: { $link?: string } };
+  blobs?: unknown;
+  truncated?: boolean;
+};
+
+const encoder = new TextEncoder();
+const jsonBytes = (value: unknown): number => encoder.encode(JSON.stringify(value)).length;
+
+/** Does this record carry Leaflet's blob-offloaded page array rather than its pages? */
+export function needsBlobInflation(record: DocumentRecord): boolean {
+  const content = record.content as LeafletBlobContent | undefined;
+  return content?.$type === 'pub.leaflet.content' && Boolean(content.blobPages?.ref?.$link);
+}
+
+/**
+ * Keep as many leading blocks as `MAX_INFLATED_DOCUMENT_BYTES` allows, flagged
+ * `truncated` so the reader offers the publication instead of pretending the body
+ * ended there.
+ *
+ * Sized by a running total, not by re-serialising the whole document per candidate
+ * block: a record only reaches here because it is already over a megabyte — i.e.
+ * thousands of blocks — and the quadratic version spent thousands of megabyte
+ * stringifies inside the invocation that is draining the firehose. Each element is
+ * charged one byte over its own JSON for the separator it needs, which overshoots
+ * by a byte or two per page and never undershoots.
+ */
+function truncateLeafletPages(
+  record: DocumentRecord,
+  content: LeafletBlobContent,
+  pages: unknown[]
+): DocumentRecord {
+  let remaining =
+    MAX_INFLATED_DOCUMENT_BYTES -
+    jsonBytes({ ...record, content: { ...content, pages: [], truncated: true } });
+
+  const kept: unknown[] = [];
+  for (const page of pages) {
+    const blocks = (page as { blocks?: unknown }).blocks;
+    if (!Array.isArray(blocks)) {
+      // A page with no block list (`pub.leaflet.pages.canvas`) can't be cut in half,
+      // so it is kept whole or not at all. Skipping it outright is how the earlier
+      // version turned a canvas page into a silent stop signal for everything after it.
+      const cost = jsonBytes(page) + 1;
+      if (cost > remaining) break;
+      remaining -= cost;
+      kept.push(page);
+      continue;
+    }
+
+    const pageCost = jsonBytes({ ...(page as object), blocks: [] }) + 1;
+    if (pageCost > remaining) break;
+    remaining -= pageCost;
+
+    const keptBlocks: unknown[] = [];
+    let whole = true;
+    for (const block of blocks) {
+      const cost = jsonBytes(block) + 1;
+      if (cost > remaining) {
+        whole = false;
+        break;
+      }
+      remaining -= cost;
+      keptBlocks.push(block);
+    }
+    if (keptBlocks.length > 0) kept.push({ ...(page as object), blocks: keptBlocks });
+    if (!whole) break;
+  }
+
+  return { ...record, content: { ...content, pages: kept, truncated: true } };
+}
+
+/**
+ * Inflate Leaflet's offloaded page array before the record reaches D1.
+ *
+ * Costs one subrequest for the blob, plus the author's DID document on the first
+ * record of a run — the context's {@link PdsMemo} is what keeps that from being one
+ * uncached plc.directory fetch per record. A walk may only spend
+ * `MAX_BLOB_INFLATIONS_PER_BACKFILL` of these (see `ctx.blobInflations`); past that
+ * the stub is stored as-is and a later walk inflates it, which is why
+ * `backfillAuthorDocuments` refuses to overwrite a row it already inflated.
+ */
+export async function inflateLeafletBlobPages(
+  record: DocumentRecord,
+  authorDid: string,
+  ctx?: DocumentApplyContext
+): Promise<DocumentRecord> {
+  const content = record.content as LeafletBlobContent | undefined;
+  const cid = content?.blobPages?.ref?.$link;
+  if (content?.$type !== 'pub.leaflet.content' || !cid) return record;
+  if (ctx && ctx.blobInflations <= 0) return record;
+
+  try {
+    const memo = ctx?.pds;
+    // Charged where it is actually spent: the DID document once per run, the blob
+    // once per record. A memo hit is no fetch and so no charge.
+    if (ctx && !memo?.has(authorDid)) chargeQueries(ctx.ledger, 1);
+    const pds = await resolveAuthorPds(authorDid, memo);
+    if (!pds) return record;
+    if (ctx) {
+      ctx.blobInflations--;
+      chargeQueries(ctx.ledger, 1);
+    }
+    const params = new URLSearchParams({ did: authorDid, cid });
+    const response = await fetch(`${pds}/xrpc/com.atproto.sync.getBlob?${params}`, {
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) return record;
+    const pages = (await response.json()) as unknown;
+    if (!Array.isArray(pages)) return record;
+
+    const { blobPages: _blobPages, blobs: _blobs, ...inlineContent } = content;
+    const inflated: DocumentRecord = {
+      ...record,
+      content: { ...inlineContent, pages },
+    };
+    if (jsonBytes(inflated) <= MAX_INFLATED_DOCUMENT_BYTES) return inflated;
+    return truncateLeafletPages(record, inlineContent, pages);
+  } catch {
+    // Keep the original stub. A replay/backfill retries; the frontend falls back
+    // to textContent in the meantime instead of presenting an empty article.
+    return record;
+  }
+}
 
 /**
  * How many curated editions one request may resolve from scratch. Each edition
@@ -136,13 +268,22 @@ export function tryChargeQueries(ledger: QueryLedger, subrequests: number): bool
 export const SUBREQUESTS_PER_SITE_RESOLVE = 5;
 
 /**
- * Worst-case subrequests one applied event costs: the record write, plus a
- * first-seen publication's whole resolve. Every later event for that publication
- * costs the write alone, because the resolved metadata is memoised on the context.
- * This is lookahead only — what the drain must still be able to afford before
- * handling one more event; the ledger tracks what events actually cost.
+ * Subrequests one Leaflet `blobPages` inflation costs at worst: the author's DID
+ * document (once per run — later records for the same author hit the context's
+ * `PdsMemo`) and the blob itself. A record without `blobPages` spends neither, but
+ * which records a burst carries is not knowable before draining it.
  */
-const QUERIES_PER_APPLIED_EVENT = 1 + SUBREQUESTS_PER_SITE_RESOLVE;
+export const SUBREQUESTS_PER_BLOB_INFLATE = 2;
+
+/**
+ * Worst-case subrequests one applied event costs: the record write, plus a
+ * first-seen publication's whole resolve, plus a blob-offloaded Leaflet body's
+ * inflation. Every later event for that publication costs the write alone, because
+ * the resolved metadata is memoised on the context. This is lookahead only — what
+ * the drain must still be able to afford before handling one more event; the ledger
+ * tracks what events actually cost.
+ */
+const QUERIES_PER_APPLIED_EVENT = 1 + SUBREQUESTS_PER_SITE_RESOLVE + SUBREQUESTS_PER_BLOB_INFLATE;
 
 /** Queries the end-of-run flush spends per author written during the run. */
 const QUERIES_PER_FLUSHED_AUTHOR = 2;
@@ -174,6 +315,22 @@ export const MAX_SITE_RESOLVES_PER_BACKFILL = 4;
 export const MAX_COLLECTION_WRITES_PER_BACKFILL = 20;
 
 /**
+ * Leaflet `blobPages` bodies one backfill may fetch. Each is a subrequest against the
+ * author's PDS on top of the row's own write, and a publication whose whole back
+ * catalogue is blob-offloaded would otherwise spend a hundred of them inside a
+ * reservation that budgets for none — which is not a slow walk but a walk that throws
+ * past the invocation ceiling with rows already written.
+ *
+ * Capping it converges instead of truncating: the walk inflates the newest offloaded
+ * documents first, and because it refuses to overwrite a row it has already inflated
+ * (see `backfillAuthorDocuments`), the next reconcile pass spends its allowance on the
+ * next ones down. Anything not yet inflated renders from `textContent` in the meantime
+ * rather than as an empty article. Newly published documents don't wait for any of
+ * this — the drain inflates them as they arrive, budgeted per event.
+ */
+export const MAX_BLOB_INFLATIONS_PER_BACKFILL = 10;
+
+/**
  * Fetches a backfill's own listing spends: document pages, the DID doc, the sidecar
  * page. One DID document, not two, because the walk hands the same `PdsMemo` to both
  * listings — `resolvePdsUrl` is an uncached plc.directory fetch, so without that memo
@@ -196,10 +353,11 @@ export const BACKFILL_QUERY_COST =
   // one upsert per document, up to the per-author cap
   MAX_DOCUMENTS_PER_AUTHOR +
   MAX_SITE_RESOLVES_PER_BACKFILL * SUBREQUESTS_PER_SITE_RESOLVE +
+  MAX_BLOB_INFLATIONS_PER_BACKFILL +
   MAX_COLLECTION_WRITES_PER_BACKFILL +
   BACKFILL_LIST_SUBREQUESTS +
-  // the consolidated prune, the one sidecar read, the bookkeeping
-  3;
+  // the consolidated prune, the one sidecar read, the inflated-rows read, the bookkeeping
+  4;
 
 /** Room for one more worst-case backfill, on top of any already reserved. */
 export function canAffordBackfill(ledger: QueryLedger, reserved = 0): boolean {
@@ -346,6 +504,17 @@ export interface DocumentApplyContext {
   ledger: QueryLedger;
   /** Cold publication resolves this run may still pay for (`Infinity` = uncapped). */
   siteResolves: number;
+  /**
+   * Leaflet `blobPages` inflations this run may still pay for (`Infinity` = uncapped,
+   * which is the drain's case — there the per-event lookahead is the bound).
+   */
+  blobInflations: number;
+  /**
+   * The run's PDS resolutions. `resolvePdsUrl` is an uncached plc.directory fetch, so
+   * without this an author's whole back catalogue re-resolves the same DID document
+   * once per record.
+   */
+  pds: PdsMemo;
   /** Timestamp of the most recent applied event, for the flush's bookkeeping. */
   lastEventAt: number;
 }
@@ -354,7 +523,15 @@ export function createDocumentApplyContext(
   ledger: QueryLedger = createQueryLedger(),
   siteResolves = Infinity
 ): DocumentApplyContext {
-  return { siteMeta: new Map(), touched: new Set(), ledger, siteResolves, lastEventAt: 0 };
+  return {
+    siteMeta: new Map(),
+    touched: new Set(),
+    ledger,
+    siteResolves,
+    blobInflations: Infinity,
+    pds: createPdsMemo(),
+    lastEventAt: 0,
+  };
 }
 
 /**
@@ -451,6 +628,7 @@ async function documentUpsertStatement(
   const parsed = parseAtUri(recordUri);
   if (!parsed) return null;
 
+  record = await inflateLeafletBlobPages(record, authorDid, ctx);
   const siteUri = record.site || '';
   const meta = await siteMetaForWrite(env, siteUri, ctx);
   const canonicalUrl = meta.baseUrl
@@ -931,14 +1109,15 @@ export async function backfillAuthorDocuments(
   // Resolves are per author, not per invocation: the fan-out bound above is stated
   // per author, so each one has to get the same allowance.
   ctx.siteResolves = MAX_SITE_RESOLVES_PER_BACKFILL;
+  ctx.blobInflations = MAX_BLOB_INFLATIONS_PER_BACKFILL;
   // What this walk may spend is `BACKFILL_QUERY_COST` from here, which is what
   // `canAffordBackfill` just admitted it against.
   const spentAtWalkStart = ctx.ledger.spent;
 
   // Both listings need the author's PDS and `resolvePdsUrl` is an uncached fetch, so
   // they share one resolution — the difference between the budgeted one DID document
-  // and two.
-  const pds = createPdsMemo();
+  // and two. The blob inflations below ride the same memo.
+  const pds = ctx.pds;
 
   const now = Date.now();
   let listing: Awaited<ReturnType<typeof listAuthorDocuments>>;
@@ -973,9 +1152,36 @@ export async function backfillAuthorDocuments(
     })
     .slice(0, MAX_DOCUMENTS_PER_AUTHOR);
 
+  // Which of this author's rows already hold an inflated Leaflet body. A listing
+  // carries the record as the repo holds it — the `blobPages` stub — so re-upserting
+  // one we inflated on an earlier walk would replace a full article with an empty
+  // one, and the allowance above guarantees some walk will be out of inflations. Such
+  // a row gets its `updated_at` stamped instead (same one statement, and the stamp is
+  // what keeps the prune below from deleting it as untouched).
+  // Read only when the listing actually carries an offloaded body, so an author who
+  // has never published one pays nothing for the guard.
+  const inflatedCids = new Map<string, string>();
+  if (kept.some((record) => needsBlobInflation(record.value))) {
+    const inflatedRows = await env.DB.prepare(
+      `SELECT record_uri, record_cid FROM documents_v2
+        WHERE author_did = ? AND record_json NOT LIKE '%"blobPages"%'`
+    )
+      .bind(authorDid)
+      .all<{ record_uri: string; record_cid: string }>();
+    chargeQueries(ctx.ledger, 1);
+    for (const row of inflatedRows.results || []) inflatedCids.set(row.record_uri, row.record_cid);
+  }
+
   for (const record of kept) {
     const parsed = parseAtUri(record.uri);
     if (!parsed || parsed.did !== authorDid) continue;
+    if (needsBlobInflation(record.value) && inflatedCids.get(record.uri) === record.cid) {
+      chargeQueries(ctx.ledger, 1);
+      await env.DB.prepare('UPDATE documents_v2 SET updated_at = ? WHERE record_uri = ?')
+        .bind(now, record.uri)
+        .run();
+      continue;
+    }
     await upsertDocument(env, authorDid, record.uri, record.cid, record.value, now, ctx);
   }
 

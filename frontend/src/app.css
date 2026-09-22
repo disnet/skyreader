@@ -584,6 +584,67 @@ section.footnotes {
   text-align: right;
 }
 
+.lf-align-justify {
+  text-align: justify;
+}
+
+.lf-text-small {
+  font-size: 0.875em;
+}
+
+.lf-text-large {
+  font-size: 1.25em;
+}
+
+.lf-full-bleed {
+  max-width: none;
+  width: min(100vw, 70rem);
+  margin-left: 50%;
+  transform: translateX(-50%);
+}
+
+.lf-page-reference {
+  margin: 1em 0;
+  padding: 0.75em 1em;
+  border: 1px solid color-mix(in srgb, currentColor 16%, transparent);
+  border-radius: 6px;
+}
+
+.op-button {
+  display: inline-block;
+  padding: 0.5em 1em;
+  border-radius: 6px;
+  background: #0066cc;
+  color: #fff;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.op-button:hover {
+  background: #0052a3;
+}
+
+.op-math {
+  margin: 1.25em 0;
+  overflow-x: auto;
+}
+
+/* What a math block looks like before (and without) the TeX parser: its own source,
+   set as code. The parser is loaded on demand by the `mathRender` action, so this is
+   what a reader sees for the moment before it arrives — and permanently if it never
+   does. Legible either way, which is why the equation is never dropped. */
+.op-math-fallback {
+  margin: 0;
+}
+
+.op-degraded {
+  margin: 1.5em 0;
+  padding-top: 0.75em;
+  border-top: 1px solid color-mix(in srgb, currentColor 16%, transparent);
+  color: color-mix(in srgb, currentColor 68%, transparent);
+  font-size: 0.875em;
+}
+
 /* Figures. The reader's measure is narrow, so an image fills it by default;
    `op-figure--w*` carries a width the author deliberately reduced, bucketed to
    10% (see widthClass). Centered rather than left-hung: a narrowed image reads
@@ -674,10 +735,41 @@ section.footnotes {
   grid-template-columns: repeat(3, 1fr);
 }
 
+/* The grid's `aspectRatio` mode: the shape every cell is cropped to. Without a rule
+   per value the class is inert and the grid renders exactly as it would unset, which
+   is a gap that reads as support. The cell carries the ratio, not the image, so the
+   `object-fit: cover` above does the cropping. */
+.op-grid--landscape .op-grid__cell {
+  aspect-ratio: 3 / 2;
+}
+
+.op-grid--portrait .op-grid__cell {
+  aspect-ratio: 2 / 3;
+}
+
+.op-grid--square .op-grid__cell {
+  aspect-ratio: 1 / 1;
+}
+
+/* Mosaic: one photo leads at twice the width, the rest fill in square beside it. */
+.op-grid--mosaic .op-grid__cell {
+  aspect-ratio: 1 / 1;
+}
+
+.op-grid--mosaic .op-grid__cell:first-child {
+  grid-column: span 2;
+  aspect-ratio: 2 / 1;
+}
+
 @media (max-width: 640px) {
   .op-grid--cols-2,
   .op-grid--cols-3 {
     grid-template-columns: 1fr;
+  }
+
+  /* One column: a mosaic's lead photo has no second column to span into. */
+  .op-grid--mosaic .op-grid__cell:first-child {
+    grid-column: auto;
   }
 }
 
