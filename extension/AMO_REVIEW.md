@@ -52,7 +52,7 @@ This produces:
    `background.service_worker` key, and drops the development-only options page,
    `storage` permission, and `http://127.0.0.1/*` optional host permission. The
    checked-in manifest keeps them so the repository can be loaded unpacked in
-   both browsers during development.
+   every supported browser during development.
 
 ## Third-party code
 

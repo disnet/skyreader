@@ -21,21 +21,40 @@ const els = {
   feedsMsg: document.getElementById('feedsMsg'),
   permissionPrompt: document.getElementById('permissionPrompt'),
   permissionHost: document.getElementById('permissionHost'),
+  permissionHint: document.getElementById('permissionHint'),
   permissionStatus: document.getElementById('permissionStatus'),
   grantBtn: document.getElementById('grantBtn'),
   accountSection: document.getElementById('accountSection'),
   accountName: document.getElementById('accountName'),
   accountStatus: document.getElementById('accountStatus'),
   retryAccountBtn: document.getElementById('retryAccountBtn'),
+  logoutBtn: document.getElementById('logoutBtn'),
 };
 
 let tab = null;
 // Match pattern for the API host, captured at init so the Grant button can call
 // permissions.request() with no await ahead of it (see onGrant).
 let apiOrigin = null;
+// The API host on its own, for the permission prompt's copy.
+let apiHost = '';
+
+// null until the account check answers.
+let loggedIn = null;
+
+// Safari logs the extension in on its own (startExtensionLogin in background.js),
+// because Safari won't share the website's session cookie with it. Elsewhere,
+// or when the extension already holds a session, the background declines and
+// the caller falls through to the web app.
+async function logInExtension() {
+  const result = await send({ type: 'login' });
+  if (!result?.handled) return false;
+  window.close();
+  return true;
+}
 
 async function refreshAccount() {
   els.retryAccountBtn.hidden = true;
+  els.logoutBtn.hidden = true;
   els.accountStatus.hidden = true;
   try {
     const cfg = await getConfig();
@@ -43,6 +62,8 @@ async function refreshAccount() {
     const result = await send({ type: 'account' });
     if (!result?.ok) throw new Error(result?.message || "Couldn't check your account. Try again.");
     const user = result.user;
+    loggedIn = Boolean(user);
+    els.logoutBtn.hidden = !(user && result.ownSession);
     els.accountName.textContent = user
       ? user.handle
         ? `@${user.handle}`
@@ -62,8 +83,9 @@ function send(msg) {
 }
 
 async function getConfig() {
-  // Store builds use production URLs; only unpacked development has settings.
-  if (!api.runtime.getManifest().permissions.includes('storage')) return { ...DEFAULTS };
+  // Store builds use production URLs; only unpacked development has settings
+  // (the options page is stripped from every store manifest).
+  if (!api.runtime.getManifest().options_ui) return { ...DEFAULTS };
   const stored = await api.storage.sync.get(DEFAULTS);
   return { ...DEFAULTS, ...stored };
 }
@@ -115,14 +137,27 @@ async function hasApiAccess(origin) {
   }
 }
 
+// Safari also lets the user set host access from Safari's own settings, and
+// declining there is not the same dead end it is in Firefox — so the prompt
+// carries an extra line pointing at it. Only the Safari build exposes
+// connected.html (scripts/manifest.mjs; usesExtensionLogin in background.js).
+const IS_SAFARI = (api.runtime.getManifest().web_accessible_resources ?? []).some((entry) =>
+  entry.resources?.includes('connected.html')
+);
+
+const SAFARI_GRANT_HINT = 'Open Safari → Settings → Extensions → Skyreader and allow';
+
 function showPermissionPrompt(cfg) {
-  els.permissionHost.textContent = (() => {
+  const host = (() => {
     try {
       return new URL(cfg.apiBase).host;
     } catch {
       return cfg.apiBase;
     }
   })();
+  apiHost = host;
+  els.permissionHost.textContent = host;
+  els.permissionHint.hidden = !IS_SAFARI;
   els.mainUi.hidden = true;
   els.accountSection.hidden = true;
   els.permissionPrompt.hidden = false;
@@ -141,7 +176,9 @@ async function onGrant() {
   if (!granted) {
     setStatus(
       els.permissionStatus,
-      'Access declined. Skyreader can still be used on the web.',
+      IS_SAFARI
+        ? `${SAFARI_GRANT_HINT} ${apiHost}.`
+        : 'Access declined. Skyreader can still be used on the web.',
       'error'
     );
     return;
@@ -193,9 +230,16 @@ async function onSave() {
       setStatus(els.saveStatus, 'Access to the Skyreader API was withdrawn.', 'error');
       showPermissionPrompt(await getConfig());
       break;
+    case 'limit':
+      // Safari only: the extension's session isn't the website's, so the /save
+      // page can't show this for it (it might even be another account).
+      setStatus(els.saveStatus, result.message || 'Monthly save limit reached', 'error');
+      break;
     case 'auth': {
       // Logged out, over the monthly limit, or a scope upgrade — the /save page
-      // handles all three with proper UI.
+      // handles all three with proper UI. In Safari the extension needs its own
+      // login instead (the website's session isn't the extension's).
+      if (await logInExtension()) return;
       const cfg = await getConfig();
       api.tabs.create({ url: `${cfg.frontendBase}/save?url=${encodeURIComponent(tab.url)}` });
       window.close();
@@ -338,6 +382,7 @@ async function subscribe(feed, btn) {
       showPermissionPrompt(await getConfig());
       return;
     case 'auth': {
+      if (await logInExtension()) return;
       await openTab('');
       return;
     }
@@ -437,6 +482,24 @@ function startPageWork() {
 
 async function init() {
   els.retryAccountBtn.addEventListener('click', refreshAccount);
+  els.logoutBtn.addEventListener('click', async () => {
+    els.logoutBtn.disabled = true;
+    await send({ type: 'logout' });
+    // Start over: saved state and feed subscriptions belonged to that account.
+    location.reload();
+  });
+  els.accountName.addEventListener('click', (event) => {
+    if (loggedIn !== false) return;
+    // Hold the web login link until the background says whether the extension
+    // logs in on its own.
+    event.preventDefault();
+    const href = els.accountName.href;
+    logInExtension().then((handled) => {
+      if (handled) return;
+      api.tabs.create({ url: href });
+      window.close();
+    });
+  });
   els.saveBtn.addEventListener('click', onSave);
   els.grantBtn.addEventListener('click', onGrant);
 

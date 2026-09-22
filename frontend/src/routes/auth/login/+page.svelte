@@ -26,6 +26,11 @@
   // sync queue carries reads and local saves up), so say so.
   let hasGuestFeeds = $derived(auth.hasGuestData);
 
+  // Set by the Safari extension's "Log in" link; the backend validates it. The
+  // login then belongs to the extension, not this site, so say so: the user
+  // should know which app they're handing a session to.
+  let extensionReturn = $derived($page.url.searchParams.get('extensionReturn') || undefined);
+
   function markAvatarBroken(handle: string) {
     brokenAvatars = new Set(brokenAvatars).add(handle);
   }
@@ -45,7 +50,7 @@
       // Carry ?returnUrl through OAuth so deep links (e.g. /follow) resume after
       // login. The backend validates it against open-redirects.
       const returnUrl = $page.url.searchParams.get('returnUrl') || undefined;
-      const { authUrl } = await api.login(loginHandle, returnUrl);
+      const { authUrl } = await api.login(loginHandle, returnUrl, extensionReturn);
       window.location.href = authUrl;
     } catch (err) {
       error = err instanceof Error ? err.message : 'Failed to start login';
@@ -90,7 +95,7 @@
     isLoading = true;
     try {
       const returnUrl = $page.url.searchParams.get('returnUrl') || undefined;
-      const { authUrl } = await api.signup(pds, returnUrl);
+      const { authUrl } = await api.signup(pds, returnUrl, extensionReturn);
       window.location.href = authUrl;
     } catch (err) {
       error = err instanceof Error ? err.message : 'Failed to start sign up';
@@ -243,6 +248,10 @@
     </div>
 
     <p class="tagline">Log in with your Atmosphere account</p>
+
+    {#if extensionReturn}
+      <p class="guest-note">This logs in the Skyreader extension for Safari.</p>
+    {/if}
 
     {#if hasGuestFeeds}
       <p class="guest-note">Your feeds and saves come with you.</p>

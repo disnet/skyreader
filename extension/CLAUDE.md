@@ -1,14 +1,15 @@
 # Skyreader Browser Extension
 
 Save-to-Skyreader and subscribe-to-feeds browser extension (Manifest V3), for
-Chrome and Firefox from one source tree. Plain JS; the only build step bundles
-the Defuddle content script (`npm run build`).
+Chrome, Firefox, and Safari from one source tree. Plain JS; the only build step
+bundles the Defuddle content script (`npm run build`). Safari additionally needs
+a native app wrapper around the packaged extension — see Safari below.
 
 ## Files
 
-- `manifest.json` — MV3 manifest, and the **source** manifest for both browsers:
+- `manifest.json` — MV3 manifest, and the **source** manifest for every browser:
   it carries both background keys and the Gecko add-on id so this directory
-  loads unpacked in either one. Store builds get a target-specific manifest (see
+  loads unpacked in any of them. Store builds get a target-specific manifest (see
   Release). The toolbar action opens `popup.html` (`action.default_popup`).
   Required host permission for `api.skyreader.app`; optional host permissions,
   storage permission, and the options page cover local development only and are
@@ -16,9 +17,9 @@ the Defuddle content script (`npm run build`).
 - `background.js` — the background script. All logic lives here: the save flow,
   the subscribe flow, feed discovery, context menus (save link / save page),
   badge feedback, and a `runtime.onMessage` router the popup drives. It runs as
-  a service worker in Chrome and a non-persistent event page in Firefox, so
-  every listener is registered at the top level and nothing is expected to
-  survive a restart.
+  a service worker in Chrome and a non-persistent event page in Firefox and
+  Safari, so every listener is registered at the top level and nothing is
+  expected to survive a restart.
 - `popup.html` / `popup.js` — the toolbar popup. Offers "Save this page" plus
   Subscribe buttons for any feeds discovered on the page. Pure UI + messaging;
   it calls no APIs directly — everything routes through the service worker so
@@ -30,7 +31,7 @@ the Defuddle content script (`npm run build`).
 - `scripts/manifest.mjs` — per-target manifest transforms (`manifestFor`),
   pinned by `test/manifest.test.cjs`.
 - `scripts/package.mjs` — builds one store ZIP: `node scripts/package.mjs
-[chrome|firefox]`.
+[chrome|firefox|safari]`.
 - `options.html` / `options.js` — local development server override,
   requesting the matching optional host permission on save. Unpacked only;
   store builds use fixed production URLs and never read stored overrides.
@@ -135,6 +136,8 @@ Error handling:
   handles login-then-resume.
 - `403` (monthly URL-save limit, scope upgrade) → same `/save` page, which
   renders proper UI for both. Content upgrades don't count against the limit.
+  Safari differs (its session isn't the website's): see "The session cookie"
+  below.
 - `409` duplicate (only when there was no content to upgrade) → treated as
   success ("Already in your Saved list").
 - `503 session_refresh_pending` → one retry after 2s.
@@ -144,36 +147,110 @@ Error handling:
 
 ## Cross-browser notes
 
-One source tree serves both browsers. The differences that actually matter:
+One source tree serves all three browsers. The differences that actually matter:
 
 - **API namespace.** Every script binds `const api = globalThis.browser ??
 globalThis.chrome`. Firefox's `chrome` alias is callback-style, and this code
-  awaits everything; `browser` is promise-based in Firefox and in Chrome 148+.
-  Never write a bare `chrome.` call.
-- **Background.** Chrome runs `background.js` as a service worker, Firefox as a
-  non-persistent event page (it has no extension service workers). Both unload
-  when idle, so listeners stay top-level and no module state is durable. The
-  4-second `flashBadge` timer is best-effort in both; a lost timer leaves a
-  stale badge, nothing worse.
-- **Host permissions are revocable in Firefox.** MV3 lets the user withdraw
-  `api.skyreader.app` from `about:addons` at any time, and a dev build pointed
-  at `127.0.0.1` holds only an optional permission. Without it every fetch fails
-  as an opaque network error, so `hasApiAccess` (background) and the popup's
-  grant prompt gate the API up front. `performSave` / `performSubscribe` return
-  `status: 'permission'` rather than attempting the call.
+  awaits everything; `browser` is promise-based in Firefox, Safari, and Chrome
+  148+. Never write a bare `chrome.` call.
+- **Background.** Chrome runs `background.js` as a service worker, Firefox and
+  Safari as a non-persistent event page (Firefox has no extension service
+  workers; Safari has them but the store build ships one background key, and the
+  event page is the lifecycle this code has already been exercised under). All
+  unload when idle, so listeners stay top-level and no module state is durable.
+  The 4-second `flashBadge` timer is best-effort everywhere; a lost timer leaves
+  a stale badge, nothing worse.
+- **Not every action API exists everywhere.** `action.setBadgeTextColor` is
+  optional-chained because Safari doesn't implement it (the badge just uses the
+  browser's own text color), and `contextMenus` registration is guarded by an
+  existence check because iOS/iPadOS Safari has no context menus at all. Same
+  defensive shape for anything else that turns out to be missing: degrade the
+  affordance, don't throw in a top-level listener.
+- **Host permissions are revocable in Firefox and Safari.** MV3 lets the user
+  withdraw `api.skyreader.app` from `about:addons` at any time (Safari: Safari →
+  Settings → Extensions → Skyreader, where host access is per-site Ask / Allow
+  and is not granted at install), and a dev build pointed at `127.0.0.1` holds
+  only an optional permission. Without it every fetch fails as an opaque network
+  error, so `hasApiAccess` (background) and the popup's grant prompt gate the API
+  up front. `performSave` / `performSubscribe` return `status: 'permission'`
+  rather than attempting the call. The popup's prompt adds a Safari-only line
+  pointing at those settings (`IS_SAFARI` in `popup.js`, keyed off the Safari
+  build's `connected.html` web-accessible resource, like `usesExtensionLogin()`),
+  and reuses it as the copy when a
+  Safari `permissions.request()` comes back denied.
 - **`permissions.request` needs a live user gesture.** Firefox drops the gesture
   across an `await`, so `request()` must be the first `await` in a click
   handler. That is why `popup.js` captures `apiOrigin` at init, and why
   `options.js` calls `request()` with no `permissions.contains()` check ahead of
   it (`request()` resolves true without prompting when already granted).
 - **The session cookie.** `session_id` is `SameSite=Lax` on `.skyreader.app`
-  (`backend/src/routes/auth.ts`). Both browsers treat an extension's fetch as
-  first-party for a host it holds permission for, which is what exempts these
-  calls from SameSite and CORS. If that ever stops holding in Firefox, the
-  symptom is a blanket 401 from `/api/auth/me` with the permission granted, and
-  the fix is on the backend (`SameSite=None; Secure`), not here. Do not try to
-  fix it by allowlisting the extension origin in CORS: Firefox's
-  `moz-extension://` UUID is per-install.
+  (`backend/src/routes/auth.ts`). Chrome and Firefox treat an extension's fetch
+  as first-party for a host it holds permission for, which exempts these calls
+  from SameSite and CORS, so the cookie just rides along. **Safari doesn't**: it
+  sends no cookie on extension fetches (`/api/auth/me` is a blanket 401 for a
+  logged-in user), and its `cookies` API can't see the website's cookie either.
+  So the Safari build logs in on its own, the way the CLI does:
+  1. The popup's "Log in" (or a logged-out save/subscribe) sends `login` to the
+     background, which stores a one-time nonce in `storage.local` (`pendingLogins`,
+     nonce → start time, so a second login doesn't strand the first tab) and opens
+     `/auth/login?extensionReturn=<connected.html?nonce=…>`.
+  2. The login page passes it to `/api/auth/login?extension_return=`; the
+     backend accepts only `connected.html?nonce=…` on `safari-web-extension:`
+     (`isValidExtensionReturnUrl`; Chrome/Firefox schemes are refused so no
+     other installed extension can be handed a session), and the login page says
+     it is logging in the extension. It stores it on the OAuth state
+     (`oauth_state.extension_return_url`), and the callback redirects there with
+     `#session_id=…` instead of setting a cookie.
+  3. `connected.js` keeps the session only if the nonce matches a pending
+     login (so a site can't plant its own session), and consumes only that
+     nonce (so a stray visit can't cancel a login in progress).
+     `sessionHeaders()` in `background.js` sends it as `Authorization: Bearer <session_id>` with
+     `credentials: 'omit'` (the backend reads a cookie first, so a stray one
+     would win). Any 401 or `403 scope_upgrade_required` drops it
+     (`forgetRejectedSession`), and the save or subscribe reports `auth`, which
+     starts a fresh extension login. Nothing auth-related in Safari hands off to
+     the website's `/save` page: that page runs on the website's session, which
+     may be logged out or another account. A `403 url_save_limit_reached` comes
+     back as `status: 'limit'` and is shown in place. A failed OAuth lands on
+     `/auth/error` with the `extensionReturn` carried through, so "Try again"
+     retries the extension's login.
+  4. The popup shows **Log out** only for this extension-held session
+     (`ownSession` on the `account` reply): it POSTs `/api/auth/logout` with the
+     Bearer session (the server revokes and deletes it) and forgets it locally
+     even if that request fails.
+
+  To test against local servers, `npm run package:safari:dev` (or an Xcode build
+  with `SKYREADER_DEV=1`) bakes in `127.0.0.1:8787` / `127.0.0.1:5173` and the
+  matching host permission, since Safari store-shaped builds have no options page.
+
+  Only the Safari manifest carries `storage` (for the session) and
+  `web_accessible_resources: connected.html` (so the redirect can land);
+  `usesExtensionLogin()` keys off the latter, so Chrome and Firefox never store
+  or send a Bearer session. Dev-mode detection keys off `options_ui`, which every
+  store build strips. Do not try to fix cookie trouble by allowlisting the
+  extension origin in CORS: both Firefox's `moz-extension://` UUID and Safari's
+  `safari-web-extension://` origin are per-install.
+
+## Safari
+
+Safari runs the same source tree, plus two things the other browsers don't need:
+
+- **A native app wrapper.** A Safari web extension ships inside a macOS app,
+  distributed through the App Store (or a notarized Developer ID build).
+  `xcrun safari-web-extension-converter` generates that wrapper from a staged
+  extension directory; the extension resources it wraps are `dist/safari/`, which
+  `npm run package:safari` writes. See Release for the exact invocation and the
+  resource-refresh loop. **macOS only** — the converter and Xcode aren't
+  available anywhere else, so this part of the build can't run in CI on Linux.
+- **A consent model closer to Firefox's than Chrome's.** Host access to
+  `api.skyreader.app` is not granted at install; the user allows it (per-site or
+  for all sites) from Safari's extension settings. The existing
+  `status: 'permission'` plumbing already covers this — the only Safari-specific
+  code is the prompt copy noted above.
+
+Scope today is **macOS Safari**. iOS/iPadOS is a separate effort: the popup
+layout, the missing `contextMenus` API (already guarded), and stricter ITP around
+the session cookie all need their own pass.
 
 ## Local development
 
@@ -196,12 +273,25 @@ globalThis.chrome`. Firefox's `chrome` alias is callback-style, and this code
 `npm run start:firefox` launches a scratch Firefox profile with the extension
 loaded (`web-ext run`), if you'd rather not reload by hand.
 
+**Safari** (macOS, Xcode required) is a longer loop, because there's no unpacked
+load: build the wrapper app from `extension/safari/` in Xcode and run it once, then
+Safari → Settings → **Advanced** → _Show features for web developers_, Develop →
+**Allow Unsigned Extensions** (resets every Safari restart), and enable Skyreader
+in Safari → Settings → Extensions. No paid Apple account is needed for this.
+Grant `api.skyreader.app` there too — Safari does not grant host access on
+install. Iterate with `npm run package:safari` + rebuild in Xcode; inspect the
+background page and popup from Develop → Web Extension Background Content.
+Options-page overrides work the same way (Safari maps `storage.sync` to local
+storage — no real syncing, which the localhost override doesn't need).
+
 ## Release
 
 No pipeline yet. `npm run package` (Chrome) and `npm run package:firefox` build
-one ZIP each; `npm run package:all` does both. Each run stages into
-`dist/<target>/` (left in place for loading unpacked or linting) and writes
-`skyreader-extension-<target>.zip`. Both include only runtime files and omit
+store ZIPs; `npm run package:safari` stages resources for the committed Xcode
+wrapper, and `npm run package:all` does all three. Each run stages into
+`dist/<target>/` (left in place for loading unpacked, linting, or — for Safari —
+building the wrapper app). The Chrome and Firefox commands also write
+`skyreader-extension-<target>.zip`. All include only runtime files and omit
 localhost permissions, the storage permission, and the server settings page; the
 source manifest keeps settings and localhost access for unpacked development.
 Bump `version` in `manifest.json` first.
@@ -212,11 +302,16 @@ Target differences, all in `scripts/manifest.mjs` and `scripts/package.mjs`:
   (Chrome reports the Gecko key as unrecognized).
 - Firefox gets `background.scripts`; AMO **rejects** a manifest declaring a
   service worker even though the browser would ignore it.
+- Safari gets `background.scripts` plus a `browser_specific_settings.safari`
+  version floor (`SAFARI_MIN_VERSION`, 16.4 — the first release with full MV3),
+  with `background.persistent: false` and the Gecko block dropped. Ship exactly
+  one background script key: the converter warns about whichever it ignores.
 - The Firefox content-script bundle is **not** minified, because AMO requires a
   source-code submission for minified code. It's a content script, so the size
-  difference doesn't matter. `content/extract.js` in the working tree is always
-  the minified dev build; the packager bundles into the staging tree instead of
-  copying, so a Firefox build never clobbers it.
+  difference doesn't matter. Chrome and Safari (App Review asks for no such
+  submission) get the minified bundle. `content/extract.js` in the working tree
+  is always the minified dev build; the packager bundles into the staging tree
+  instead of copying, so a Firefox build never clobbers it.
 - `browser_specific_settings.gecko.data_collection_permissions` is required for
   new AMO submissions (since Nov 2025). It declares `websiteContent`: saving
   transmits the page URL and extracted article text to the user's account, on a
@@ -246,3 +341,69 @@ anything above `extension/`. That is why the esbuild invocations pass
 reviewer's build wouldn't reproduce. To re-verify after changing the build,
 unzip the source package somewhere else, run `npm ci && node
 scripts/package.mjs firefox`, and `diff -r` its `dist/firefox` against yours.
+
+### Safari: the wrapper app
+
+Safari has no ZIP upload — the extension ships inside a macOS app. `dist/safari/`
+is the input; everything below needs macOS with Xcode, and distribution needs an
+Apple Developer Program membership.
+
+The Xcode project is committed at `safari/Skyreader.xcodeproj`. Open it in Xcode,
+select the Skyreader scheme, and build. Both targets are signed automatically with
+the Skyreader team (`R54QLXZTK7`); anyone else changes the team on both targets
+(or passes `DEVELOPMENT_TEAM=...` to `xcodebuild`), or builds with
+`CODE_SIGNING_ALLOWED=NO` and uses Allow Unsigned Extensions. Both targets are
+sandboxed (`Shared/Skyreader.entitlements`, `Extension/Extension.entitlements`):
+Safari won't load an unsandboxed extension, and the App Store requires it of the
+app. The extension target's final build phase runs `npm run package:safari` and
+copies the staged files into the extension bundle, so web resources cannot
+silently go stale. Node and the extension's npm dependencies must be installed
+before the first build. Xcode.app doesn't inherit your shell's PATH, so the phase
+prepends `~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin`, and Volta, and
+sources nvm, before looking for `npm`.
+
+```
+npm install
+open safari/Skyreader.xcodeproj
+# or, headless:
+xcodebuild -project safari/Skyreader.xcodeproj -scheme Skyreader \
+  -derivedDataPath safari/build -allowProvisioningUpdates build
+```
+
+The app icon is an Icon Composer document (`Shared/AppIcon.icon`), not an asset
+catalog: macOS 26+ puts a flat `.appiconset` icon on a grey platter in the Dock and
+app switcher. It is `frontend/static/icons/icon-512.svg` split into layers. The sky
+gradient is the document fill, and the RSS dot and waves are two white glass layers
+on a 1024 canvas (the glyph scaled 1.7× about its center). The system applies the
+squircle mask, so layers are never pre-rounded. Icon Composer's renderer fills
+stroked paths even with `fill="none"`, so the waves are outlined as filled shapes.
+Xcode generates the flat fallback icon for macOS 13–15 from the same file. To
+preview without Xcode: `"$(xcode-select -p)/../Applications/Icon Composer.app/Contents/Executables/ictool"
+Shared/AppIcon.icon --export-image --output-file out.png --platform macOS
+--rendition Default --width 512 --height 512 --scale 1` (also `Dark`,
+`ClearLight`, `TintedLight`).
+
+- The refresh build phase also reads `manifest.json` and fails when its version
+  differs from `MARKETING_VERSION`. Update both targets' Marketing Version when
+  bumping the manifest version.
+- `Shared/Info.plist` carries the two keys App Store Connect asks for:
+  `LSApplicationCategoryType` (News; uploads fail without a category) and
+  `ITSAppUsesNonExemptEncryption = false` (HTTPS only, so every upload skips the
+  export-compliance question).
+- Keep the container app thin: the converter's stock "open Safari settings to
+  enable" window, restyled with the Skyreader icon and One Blue `#0066cc`
+  (DESIGN.md). Apple accepts thin container apps for extensions; don't invent
+  app UI.
+
+Distribution (Mac App Store, so the same pipeline can carry iOS later): create
+the app record in App Store Connect, then archive / sign / upload from Xcode —
+manual, matching the no-pipeline posture for the other two stores. The privacy
+label mirrors the AMO `websiteContent` disclosure: the page URL and extracted
+article text go to the user's account, on a user action. Screenshots live in
+`store-assets/`. A macOS-runner GitHub Actions job (`xcodebuild archive` +
+upload) is a later follow-up.
+
+When the App Store listing goes live, the docs-site pages that tell users how to
+install the extension (`guide/saving-and-highlights.md`, `guide/adding-sources.md`,
+`faq.md`) need the Safari install path plus the "allow `api.skyreader.app`" grant
+step — a Safari-only speed bump every user hits.
