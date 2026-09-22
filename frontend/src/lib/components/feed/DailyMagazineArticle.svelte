@@ -47,7 +47,12 @@
     scrollRoot,
     registerControls,
     registerRoot,
+    itemKey: itemKeyProp,
+    itemType = 'saved',
+    labelKeys: labelKeysProp,
   }: {
+    // A SavedItem-shaped view model. Feed-sourced entries synthesize one from the
+    // issue snapshot and pass their own guid key / 'article' type below.
     item: SavedItem;
     index: number;
     count: number;
@@ -66,11 +71,18 @@
     scrollRoot: HTMLElement | undefined;
     registerControls: (key: string, controls: MagazineArticleControls | null) => void;
     registerRoot: (key: string, root: HTMLElement | null) => void;
+    // Reading-state identity. Defaults derive from the save; a feed entry passes
+    // its guid and 'article' so labels land where the feed reader keeps them.
+    itemKey?: string;
+    itemType?: 'saved' | 'article';
+    labelKeys?: string[];
   } = $props();
 
   let rootEl = $state<HTMLElement>();
   let bodyEl = $state<HTMLElement>();
-  let itemKey = $derived(savedItemDisplayKey(item));
+  let itemKey = $derived(itemKeyProp ?? savedItemDisplayKey(item));
+  let labelKeys = $derived(labelKeysProp ?? savedItemLabelKeys(item));
+  // Discussion is URL-driven, so the SavedItem-shaped view model serves both kinds.
   let readerItem = $derived({ type: 'saved', item, key: itemKey } satisfies FeedDisplayItem);
   let originalUrl = $derived(safeHref(item.url));
   let title = $derived(decodeEntities(item.title || '') || item.url);
@@ -80,7 +92,7 @@
     contentEl: () => bodyEl,
     scrollRoot: () => scrollRoot,
     itemKey: () => itemKey,
-    itemType: () => 'saved',
+    itemType: () => itemType,
     enabled: () => active,
   });
   const linkInterception = useLinkInterception({
@@ -93,7 +105,7 @@
   const highlightsHook = useHighlights({
     contentEl: () => bodyEl,
     itemKey: () => itemKey,
-    itemType: () => 'saved',
+    itemType: () => itemType,
     enabled: () => true,
     itemUrl: () => item.url,
     itemTitle: () => title,
@@ -113,13 +125,12 @@
   onMount(() => {
     registerControls(itemKey, controls);
     registerRoot(itemKey, rootEl ?? null);
-    const labelKeys = savedItemLabelKeys(item);
     if (!itemLabelsStore.getReadActivity(labelKeys)) {
       const primaryKey = labelKeys[0] || itemKey;
       const observer = new IntersectionObserver(
         (entries) => {
           if (!entries.some((entry) => entry.isIntersecting)) return;
-          itemLabelsStore.markOpened(primaryKey, 'saved');
+          itemLabelsStore.markOpened(primaryKey, itemType);
           observer.disconnect();
         },
         { threshold: 0 }
@@ -190,7 +201,7 @@
     }
     if (pagedSaveTimer) clearTimeout(pagedSaveTimer);
     pagedSaveTimer = setTimeout(() => {
-      itemLabelsStore.setReadProgress(itemKey, 'saved', furthest, paras.length);
+      itemLabelsStore.setReadProgress(itemKey, itemType, furthest, paras.length);
     }, 500);
   });
 
@@ -222,10 +233,16 @@
   <div class="body-wrapper">
     <div class="article-body" bind:this={bodyEl} use:bskyEmbed use:mathRender>
       {#if bodyStatus === 'loading'}
-        <p class="body-state" aria-live="polite">Loading saved copy…</p>
+        <p class="body-state" aria-live="polite">
+          {itemType === 'article' ? 'Loading article…' : 'Loading saved copy…'}
+        </p>
       {:else if bodyStatus === 'missing'}
         <div class="body-state missing">
-          <p>The saved copy isn’t available on this device.</p>
+          <p>
+            {itemType === 'article'
+              ? 'This article isn’t available on this device.'
+              : 'The saved copy isn’t available on this device.'}
+          </p>
           {#if originalUrl}<a href={originalUrl} target="_blank" rel="noopener noreferrer"
               >Read the original article</a
             >{/if}

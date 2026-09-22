@@ -1,4 +1,4 @@
-import type { SavedItem } from '$lib/types';
+import type { Article, SavedItem } from '$lib/types';
 
 export const DAILY_MAGAZINE_WORDS_PER_MINUTE = 200;
 
@@ -59,6 +59,33 @@ export function savedItemMagazineKey(item: SavedItem): string {
 /** Matches the key used when the same save opens in the standard saved reader. */
 export function savedItemDisplayKey(item: SavedItem): string {
   return item.uri || item.itemGuid || item.rkey || item.url;
+}
+
+/**
+ * A feed item's magazine key: its guid. That's the key the feed reader labels it
+ * under (FeedDisplayItem.key), so reading it in an issue and in the inbox stays
+ * one read state. Never the subscription id — that's a device-local Dexie id.
+ */
+export function articleMagazineKey(article: Pick<Article, 'guid'>): string {
+  return article.guid;
+}
+
+/**
+ * Feed items shorter than this are left out of feed-sourced issues. Summary-only
+ * (excerpt) feeds would otherwise fill the issue with one-minute fragments.
+ */
+export const MIN_FEED_ARTICLE_WORDS = 120;
+
+/**
+ * Whether a feed item can go into an issue. Truncated rows are excluded: their
+ * local body is a stub (dropped at ingest) and their word count measures the
+ * stub, so they'd enter as dishonest one-minute entries.
+ */
+export function isFeedMagazineCandidate(
+  article: Pick<Article, 'guid' | 'wordCount' | 'contentTruncated'>
+): boolean {
+  if (!article.guid || article.contentTruncated) return false;
+  return typeof article.wordCount === 'number' && article.wordCount >= MIN_FEED_ARTICLE_WORDS;
 }
 
 /**

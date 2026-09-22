@@ -5,11 +5,15 @@ import { syncStore } from './sync.svelte';
 import { auth } from './auth.svelte';
 import { syncQueue, type MagazinePayload } from '$lib/services/sync-queue';
 import { savesStore } from './saves.svelte';
+import { articlesStore } from './articles.svelte';
 import { itemLabelsStore } from './itemLabels.svelte';
 import { preferences } from './preferences.svelte';
 import { generateTid } from '$lib/utils/tid';
+import { domainFromUrl } from '$lib/utils/highlightSource';
 import {
+  articleMagazineKey,
   buildDailyMagazine,
+  isFeedMagazineCandidate,
   savedItemDisplayKey,
   savedItemLabelKeys,
   savedItemMagazineKey,
@@ -146,7 +150,7 @@ function createMagazineStore() {
   // Build the frozen item snapshot from the current saved-articles pile, honoring
   // the daily-magazine controls (minutes/order). Mirrors the candidate loop the
   // /daily route used to run live — but the result is persisted, not re-derived.
-  function buildSnapshot(): { items: MagazineItemSnapshot[]; params: MagazineParams } {
+  function buildSavedSnapshot(): { items: MagazineItemSnapshot[]; params: MagazineParams } {
     const order = preferences.dailyMagazineOrder;
     const targetMinutes = preferences.dailyMagazineMinutes;
 
@@ -182,7 +186,61 @@ function createMagazineStore() {
 
     return {
       items,
-      params: { order, targetMinutes: issue.targetMinutes, totalMinutes: issue.totalMinutes },
+      params: {
+        order,
+        targetMinutes: issue.targetMinutes,
+        totalMinutes: issue.totalMinutes,
+        source: 'saved',
+      },
+    };
+  }
+
+  // Build the frozen snapshot from unread feed items in this device's window
+  // ("what's in your reader now"). Entries are keyed by guid — the key the feed
+  // reader labels them under — and carry no save rkey.
+  function buildFeedsSnapshot(): { items: MagazineItemSnapshot[]; params: MagazineParams } {
+    const order = preferences.dailyMagazineOrder;
+    const targetMinutes = preferences.dailyMagazineMinutes;
+
+    const candidates = [];
+    for (const article of articlesStore.unreadArticles) {
+      if (!isFeedMagazineCandidate(article)) continue;
+      const key = articleMagazineKey(article);
+      if (itemLabelsStore.isArchived(key)) continue;
+      candidates.push({
+        item: article,
+        key,
+        wordCount: article.wordCount,
+        opened: itemLabelsStore.getReadActivity([key]) !== null,
+        sortValue: Date.parse(article.publishedAt),
+      });
+    }
+
+    const issue = buildDailyMagazine(candidates, targetMinutes, new Date(), order);
+    const items: MagazineItemSnapshot[] = issue.items.map((entry) => ({
+      key: entry.key,
+      displayKey: entry.key,
+      rkey: '',
+      sourceType: 'article',
+      guid: entry.item.guid,
+      title: entry.item.title || null,
+      author: entry.item.author || null,
+      url: entry.item.url,
+      domain: domainFromUrl(entry.item.url),
+      image: entry.item.imageUrl || null,
+      wordCount: entry.item.wordCount ?? null,
+      minutes: entry.minutes,
+      savedAt: null,
+    }));
+
+    return {
+      items,
+      params: {
+        order,
+        targetMinutes: issue.targetMinutes,
+        totalMinutes: issue.totalMinutes,
+        source: 'feeds',
+      },
     };
   }
 
@@ -190,7 +248,8 @@ function createMagazineStore() {
   async function generate(): Promise<Magazine | null> {
     generating = true;
     try {
-      const { items, params } = buildSnapshot();
+      const { items, params } =
+        preferences.dailyMagazineSource === 'feeds' ? buildFeedsSnapshot() : buildSavedSnapshot();
       if (items.length === 0) return null;
 
       const rkey = generateTid();

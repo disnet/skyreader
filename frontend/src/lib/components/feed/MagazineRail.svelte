@@ -10,19 +10,23 @@
   import {
     DAILY_MAGAZINE_MINUTE_OPTIONS,
     DAILY_MAGAZINE_ORDER_OPTIONS,
+    DAILY_MAGAZINE_SOURCE_OPTIONS,
     preferences,
     type DailyMagazineMinutes,
     type DailyMagazineOrder,
+    type DailyMagazineSource,
   } from '$lib/stores/preferences.svelte';
 
   interface Props {
     issues: Magazine[];
     generating: boolean;
+    // A one-line note after a generate that found nothing to put in an issue.
+    hint?: string;
     onGenerate: () => void | Promise<void>;
     onOpen: (rkey: string) => void;
   }
 
-  let { issues, generating, onGenerate, onOpen }: Props = $props();
+  let { issues, generating, hint = '', onGenerate, onOpen }: Props = $props();
 
   function updateLength(event: Event) {
     const minutes = Number((event.currentTarget as HTMLSelectElement).value);
@@ -32,6 +36,11 @@
   function updateOrder(event: Event) {
     const order = (event.currentTarget as HTMLSelectElement).value as DailyMagazineOrder;
     preferences.setDailyMagazineOrder(order);
+  }
+
+  function updateSource(event: Event) {
+    const source = (event.currentTarget as HTMLSelectElement).value as DailyMagazineSource;
+    preferences.setDailyMagazineSource(source);
   }
 
   // Fraction read, from the resume pointer (which article of how many). Null when
@@ -88,6 +97,14 @@
     </h2>
     <div class="header-controls">
       <label class="control">
+        <span>From</span>
+        <select value={preferences.dailyMagazineSource} onchange={updateSource}>
+          {#each DAILY_MAGAZINE_SOURCE_OPTIONS as option}
+            <option value={option.value}>{option.label}</option>
+          {/each}
+        </select>
+      </label>
+      <label class="control">
         <span>Length</span>
         <select value={preferences.dailyMagazineMinutes} onchange={updateLength}>
           {#each DAILY_MAGAZINE_MINUTE_OPTIONS as minutes}
@@ -110,8 +127,11 @@
     </div>
   </div>
 
+  {#if hint}
+    <p class="empty">{hint}</p>
+  {/if}
   {#if issues.length === 0}
-    <p class="empty">Generate an issue to start reading across devices.</p>
+    {#if !hint}<p class="empty">Generate an issue to start reading across devices.</p>{/if}
   {:else}
     <div class="lane-viewport" class:fade-left={canLeft} class:fade-right={canRight}>
       <button
@@ -134,6 +154,7 @@
               <span class="meta"
                 >{magazineIssueSummary(mag.items.length, mag.params.totalMinutes)}</span
               >
+              {#if mag.params.source === 'feeds'}<span class="meta">From your feeds</span>{/if}
             </span>
             {#if pct !== null}
               <span class="progress" aria-hidden="true">

@@ -1272,10 +1272,16 @@ export interface ItemLabel {
 // One frozen entry in a magazine. Carries enough to render the TOC/headers and
 // reading time without re-deriving from live saves; the body is still fetched
 // lazily by `rkey` (a snapshot whose save was deleted renders a "missing" body).
+// Feed-sourced entries (`sourceType: 'article'`) have no save: they're keyed by
+// the article guid and fetch their body from the local feed copy or by URL.
 export interface MagazineItemSnapshot {
-  key: string; // stable magazine key (savedItemMagazineKey)
-  displayKey: string; // reader key (savedItemDisplayKey)
-  rkey: string; // save rkey — used to lazily fetch the body
+  key: string; // stable magazine key (savedItemMagazineKey, or the guid for feed items)
+  displayKey: string; // reader key (savedItemDisplayKey, or the guid for feed items)
+  rkey: string; // save rkey — used to lazily fetch the body ('' for feed items)
+  // Absent = 'saved' (issues generated before feed-sourced magazines existed).
+  sourceType?: 'saved' | 'article';
+  // Feed item guid — the portable identity (never the device-local subscription id).
+  guid?: string;
   title: string | null;
   author: string | null;
   url: string;
@@ -1295,6 +1301,8 @@ export interface MagazinePosition {
 
 export interface MagazineParams {
   order: 'shuffle' | 'recent' | 'oldest'; // mirrors DailyMagazineOrder
+  // What the issue was built from. Absent = 'saved' (older issues/clients).
+  source?: 'saved' | 'feeds';
   targetMinutes: number;
   totalMinutes: number;
 }

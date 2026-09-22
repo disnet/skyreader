@@ -4,27 +4,35 @@
   interface Props {
     open: boolean;
     count: number;
+    // What the issue was built from: saves offer "archive all", feeds "mark all read".
+    source?: 'saved' | 'feeds';
     onclose: () => void;
-    // alsoArchiveArticles=true archives the issue's articles too; false dismisses
-    // just the issue and leaves its articles in the saved inbox.
-    onArchive: (alsoArchiveArticles: boolean) => void;
+    // alsoClearArticles=true archives the issue's saved articles too (or marks a
+    // feeds issue's articles read); false dismisses just the issue.
+    onArchive: (alsoClearArticles: boolean) => void;
   }
 
-  let { open, count, onclose, onArchive }: Props = $props();
+  let { open, count, source = 'saved', onclose, onArchive }: Props = $props();
+  let articles = $derived(`${count} article${count === 1 ? '' : 's'}`);
 </script>
 
 <!-- zIndex above the full-screen daily reader (.daily-reader is z-index: 100) so
      the modal isn't painted behind it. -->
 <Modal {open} {onclose} title="Archive this issue?" maxWidth="400px" zIndex={300}>
   <p class="prompt">
-    This issue drops off Home. You can also archive its {count}
-    article{count === 1 ? '' : 's'} to clear them from your saved inbox.
+    {#if source === 'feeds'}
+      This issue drops off Home. You can also mark its {articles} read.
+    {:else}
+      This issue drops off Home. You can also archive its {articles} to clear them from your saved inbox.
+    {/if}
   </p>
 
   {#snippet footer()}
     <button type="button" class="btn-text" onclick={onclose}>Cancel</button>
     <button type="button" class="btn-secondary" onclick={() => onArchive(false)}>Issue only</button>
-    <button type="button" class="btn-primary" onclick={() => onArchive(true)}>Archive all</button>
+    <button type="button" class="btn-primary" onclick={() => onArchive(true)}>
+      {source === 'feeds' ? 'Mark all read' : 'Archive all'}
+    </button>
   {/snippet}
 </Modal>
 

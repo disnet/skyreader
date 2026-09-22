@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  articleMagazineKey,
   buildDailyMagazine,
+  isFeedMagazineCandidate,
+  MIN_FEED_ARTICLE_WORDS,
   localDateKey,
   magazineIssueSummary,
   magazineReadingMinutes,
@@ -125,5 +128,20 @@ describe('daily magazine', () => {
     expect(savedItemDisplayKey(item)).toBe(item.uri);
     expect(savedItemDisplayKey({ ...item, uri: '' })).toBe(item.itemGuid);
     expect(savedItemDisplayKey({ ...item, uri: '', itemGuid: undefined })).toBe(item.rkey);
+  });
+});
+
+describe('feed magazine candidates', () => {
+  it('keys feed items by guid', () => {
+    expect(articleMagazineKey({ guid: 'g-1' })).toBe('g-1');
+  });
+
+  it('excludes truncated, uncounted and below-floor items', () => {
+    const ok = { guid: 'g', wordCount: MIN_FEED_ARTICLE_WORDS };
+    expect(isFeedMagazineCandidate(ok)).toBe(true);
+    expect(isFeedMagazineCandidate({ ...ok, contentTruncated: true })).toBe(false);
+    expect(isFeedMagazineCandidate({ ...ok, wordCount: MIN_FEED_ARTICLE_WORDS - 1 })).toBe(false);
+    expect(isFeedMagazineCandidate({ ...ok, wordCount: undefined })).toBe(false);
+    expect(isFeedMagazineCandidate({ ...ok, guid: '' })).toBe(false);
   });
 });

@@ -36,7 +36,9 @@ Articles carry a **Discussion** section at the end that gathers what people acro
 
 ## The daily magazine
 
-**Daily** builds a magazine issue from your saved articles. Pick an issue length in minutes and an ordering, then **Generate issue**. An issue is a snapshot: new saves don't reshuffle it, and it resumes where you left off on any device. When you finish, archive the issue or generate a new one from the current pile.
+**Daily** builds a magazine issue from your saved articles or from what's unread in your feeds. Pick a source, an issue length in minutes, and an ordering, then **Generate issue**. An issue is a snapshot: new saves and new posts don't reshuffle it, and it resumes where you left off on any device. Reading a feed article in an issue counts as reading it in your feeds. When you finish, archive the issue (and, if you like, its articles, or mark a feeds issue read) or generate a new one.
+
+Feed issues skip very short excerpts and items whose full text wasn't kept, so every entry is something you can read in place. Issues stay private to Skyreader.
 
 ![A daily magazine issue: a dated table of contents built from saved articles, followed by the first article](../../../assets/screenshots/daily-magazine.png)
 
