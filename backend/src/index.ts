@@ -107,6 +107,12 @@ import {
   handleRoomJoin,
   handleRoomRead,
 } from './routes/rooms';
+import {
+  handleFollowLinkState,
+  handleFollowLinksProbe,
+  handleGetFollowLinks,
+} from './routes/follow-links';
+import { purgeFollowLinks } from './services/follow-links-store';
 import { handleGetSettings, handleUpdateSettings } from './routes/settings';
 import {
   handleCreateBillingPortal,
@@ -468,6 +474,20 @@ async function route(
     case url.pathname === '/api/v2/mention-lane':
       if (!session) return unauthorizedResponse(headers);
       response = await handleV2MentionLane(request, env);
+      break;
+    // From your follows — see docs/plans/FOLLOWS_LINKS_PLAN.md.
+    case url.pathname === '/api/v2/following-links':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleGetFollowLinks(request, env, ctx, session);
+      break;
+    case url.pathname === '/api/v2/following-links/state':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleFollowLinkState(request, env, session);
+      break;
+    // Phase 0 probe: local dev only, 404s when deployed.
+    case url.pathname === '/api/v2/following-links/probe':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleFollowLinksProbe(request, env);
       break;
     case url.pathname === '/api/v2/margin-highlights':
       if (!session) return unauthorizedResponse(headers);
@@ -1230,6 +1250,15 @@ async function runScheduled(
           ...serializeError(error),
         });
         reportError(error, { tags: { source: 'cron', phase: 'share-draft-tombstone-purge' } });
+      }
+
+      // From your follows: shares past the 7-day window, and opened/dismissed
+      // state nobody has touched in a month.
+      try {
+        await purgeFollowLinks(env, now);
+      } catch (error) {
+        log.error('cron_phase_failed', { phase: 'follow-links-purge', ...serializeError(error) });
+        reportError(error, { tags: { source: 'cron', phase: 'follow-links-purge' } });
       }
 
       d1CleanupDuration = Date.now() - cleanupStart;

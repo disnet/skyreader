@@ -110,6 +110,15 @@ export const USERINPUT_VOTE_SCOPES = ['repo:app.userinput.upvote'];
 // The composer offers the attach control only when this one is granted.
 export const USERINPUT_IMAGE_SCOPES = ['blob:image/*'];
 
+// From your follows — reading the user's Bluesky Following timeline to collect the
+// links their follows share (docs/plans/FOLLOWS_LINKS_PLAN.md). An `rpc:` scope, not
+// a repo one: getTimeline is an appview method the PDS proxies on the user's
+// behalf, and `aud` names the appview it may be proxied to. Kept OUT of
+// GRANULAR_SCOPES for the usual reason: every live session predates it.
+export const FOLLOWS_LINKS_SCOPES = [
+  'rpc:app.bsky.feed.getTimeline?aud=did:web:api.bsky.app%23bsky_appview',
+];
+
 // All possible granular scopes (base + all integrations). Still part of the client
 // metadata so sessions granted before permission sets / progressive requests keep
 // refreshing, and so the granular fallback (permission sets disabled) can request them.
