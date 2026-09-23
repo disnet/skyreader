@@ -1,10 +1,12 @@
+import { articleTextWalker } from './textSelector';
+
 /** Wrap only the text nodes intersecting a range, preserving the article's element tree. */
 export function wrapTextRange(
   range: Range,
   container: HTMLElement,
   createMark: () => HTMLElement
 ): HTMLElement[] {
-  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+  const walker = articleTextWalker(container);
   const nodes: Text[] = [];
   let node = walker.nextNode();
   while (node) {

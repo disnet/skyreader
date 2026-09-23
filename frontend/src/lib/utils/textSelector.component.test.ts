@@ -5,6 +5,7 @@ import {
   createSelector,
   exceedsSelectorLimit,
   findTextInDOM,
+  MARGINALIA_ATTR,
 } from './textSelector';
 
 /** A container of `paragraphs` blocks, each `chars` long, plus the range over all of them. */
@@ -103,5 +104,40 @@ describe('finding a stored quote again', () => {
 
   it('returns null for a quote that is nothing but whitespace', () => {
     expect(findIn('<p>One two.</p>', { type: 'TextQuoteSelector', exact: ' \n ' })).toBeNull();
+  });
+});
+
+describe('marginalia drawn into the article', () => {
+  /** A paragraph, then a gloss the reader unfolded under it, then another. */
+  function glossed(): { container: HTMLElement; first: Text; second: Text } {
+    const container = document.createElement('div');
+    container.innerHTML =
+      '<p>The note was the point.</p>' +
+      `<div ${MARGINALIA_ATTR}><span>the book was the occasion</span></div>` +
+      '<p>The book was the occasion.</p>';
+    document.body.replaceChildren(container);
+    const [first, , second] = Array.from(container.children);
+    return {
+      container,
+      first: first.firstChild as Text,
+      second: second.firstChild as Text,
+    };
+  }
+
+  it("never reads a gloss's text as the article's", () => {
+    const { container } = glossed();
+    // The gloss says "the book was the occasion" too; only the paragraph counts.
+    const range = findTextInDOM({ type: 'TextQuoteSelector', exact: 'the occasion' }, container);
+    expect(range?.startContainer.parentElement?.tagName).toBe('P');
+  });
+
+  it('keeps prefixes and offsets as if the gloss were not there', () => {
+    const { container, second } = glossed();
+    const range = document.createRange();
+    range.setStart(second, 4);
+    range.setEnd(second, 8);
+    const selector = createSelector(range, container);
+    expect(selector.exact).toBe('book');
+    expect(selector.prefix).toBe('The note was the point.The ');
   });
 });

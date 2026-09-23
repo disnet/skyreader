@@ -29,6 +29,12 @@
     // 'note' (jump straight into the note editor — used by callers that have a
     // dedicated "add a note" control).
     initialView?: 'toolbar' | 'note';
+    /**
+     * Where the "Note" action goes. Hosts that draw notes themselves (the
+     * reader's margin, or its inline gloss) take it; without it, the popover
+     * turns into its own floating note editor.
+     */
+    onNote?: () => void;
     onClose: () => void;
   }
 
@@ -45,6 +51,7 @@
     existingNote = '',
     marginSaved = false,
     initialView = 'toolbar',
+    onNote,
     onClose,
   }: Props = $props();
 
@@ -96,6 +103,11 @@
     positionMenu();
     textareaEl?.focus();
     textareaEl?.select();
+  }
+
+  function handleNote() {
+    if (onNote) onNote();
+    else void openNoteEditor();
   }
 
   function handleKeydown(e: KeyboardEvent) {
@@ -246,7 +258,7 @@
       class="popover-btn icon-only"
       use:tooltip={'Add a note'}
       aria-label="Add a note"
-      onclick={openNoteEditor}
+      onclick={handleNote}
     >
       <Icon name="message-circle" size={20} />
     </button>
@@ -321,7 +333,7 @@
         class="popover-btn icon-only"
         use:tooltip={existingNote ? 'Edit note' : 'Add a note'}
         aria-label={existingNote ? 'Edit note' : 'Add a note'}
-        onclick={openNoteEditor}
+        onclick={handleNote}
       >
         <Icon name="message-circle" size={20} />
       </button>

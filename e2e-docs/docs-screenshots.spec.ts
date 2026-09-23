@@ -385,15 +385,33 @@ test.describe('Saving and highlights', () => {
     await reader.getByTitle('Switch to scroll view').filter({ visible: true }).click();
     await expect(reader.getByTitle('Switch to paged view').filter({ visible: true })).toBeVisible();
 
-    // A highlight: double-click the second paragraph.
+    // A highlight: double-click the second paragraph, then write a note beside
+    // it by clicking its bracket in the margin.
     await body.locator('p').nth(1).dblclick();
     await expect(body.locator('mark.highlight')).toBeVisible();
-    await shootRegion(
-      authedPage,
-      body.locator('p').nth(0),
-      body.locator('p').nth(2),
-      'highlight.png'
-    );
+    await reader.getByRole('button', { name: 'Add a note' }).click();
+    await authedPage.keyboard.type('the decisions are the understanding. keep the pen.');
+    await authedPage.keyboard.press('Escape');
+    const note = reader.locator('.rail-right .note-read');
+    await expect(note).toBeVisible();
+    // The passage and its note: the region spans the column and the margin.
+    const first = body.locator('p').nth(0);
+    const last = body.locator('p').nth(2);
+    await first.evaluate((el) => el.scrollIntoView({ block: 'start' }));
+    await authedPage.evaluate(() => document.fonts.ready);
+    const [a, b, n] = await Promise.all([
+      first.boundingBox(),
+      last.boundingBox(),
+      note.boundingBox(),
+    ]);
+    if (!a || !b || !n) throw new Error('Cannot measure region for highlight.png');
+    const x = Math.max(0, a.x - 20);
+    const y = Math.max(0, a.y - 20);
+    await authedPage.screenshot({
+      path: join(OUT_DIR, 'highlight.png'),
+      animations: 'disabled',
+      clip: { x, y, width: n.x + n.width + 20 - x, height: b.y + b.height + 20 - y },
+    });
   });
 
   test('review deck', async ({ authedPage, testUser }) => {

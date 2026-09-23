@@ -1,0 +1,412 @@
+<script lang="ts">
+  import { onDestroy, tick, untrack } from 'svelte';
+  import Icon from '$lib/components/Icon.svelte';
+  import { tooltip } from '$lib/actions/tooltip';
+  import type { Highlight } from '$lib/types';
+
+  interface Props {
+    highlight: Highlight;
+    editing: boolean;
+    /** `margin`: a note in the page margin. `gloss`: unfolded under its paragraph. */
+    variant: 'margin' | 'gloss';
+    /** Its passage is being pointed at. */
+    active?: boolean;
+    onEdit: () => void;
+    /** Persist the note. Called with the draft on every way out of the editor. */
+    onSave: (note: string) => void;
+    onClose: () => void;
+    onRemove: () => void;
+    /** Absent for a guest (Margin is account-only). */
+    onPublish?: () => void;
+    onHover?: (hovering: boolean) => void;
+    /** Gloss only: fold the note back up. */
+    onFold?: () => void;
+  }
+
+  let {
+    highlight,
+    editing,
+    variant,
+    active = false,
+    onEdit,
+    onSave,
+    onClose,
+    onRemove,
+    onPublish,
+    onHover,
+    onFold,
+  }: Props = $props();
+
+  let rootEl = $state<HTMLElement | null>(null);
+  let editorEl = $state<HTMLElement | null>(null);
+  // A press inside the note is in progress. Safari doesn't focus a clicked
+  // button, so pressing Done looks like focus leaving for nowhere; the press
+  // itself says it didn't.
+  let pressingInside = false;
+  let textareaEl = $state<HTMLTextAreaElement | null>(null);
+  let draft = $state('');
+  // True while an editor is open and its draft hasn't been handed to `onSave`.
+  let dirty = false;
+
+  // Seed the draft each time the editor opens, and put the caret at the end of
+  // what's already written — you're adding to a note, not replacing it.
+  $effect(() => {
+    if (!editing) return;
+    // Untracked: the host hands down fresh highlight objects as it re-measures,
+    // and none of that may reset what's being written.
+    draft = untrack(() => highlight.note ?? '');
+    dirty = false;
+    void tick().then(() => {
+      if (!textareaEl) return;
+      textareaEl.focus({ preventScroll: variant === 'margin' });
+      const end = textareaEl.value.length;
+      textareaEl.setSelectionRange(end, end);
+      autosize();
+    });
+  });
+
+  function autosize() {
+    const el = textareaEl;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }
+
+  function commit() {
+    if (!dirty) return;
+    dirty = false;
+    onSave(draft);
+  }
+
+  function finish() {
+    commit();
+    onClose();
+  }
+
+  function handleInput() {
+    dirty = true;
+    autosize();
+  }
+
+  function handleKeydown(e: KeyboardEvent) {
+    // Escape and ⌘/Ctrl+Enter both put the pen down. Neither discards: a margin
+    // note is never lost to a stray key.
+    if (e.key === 'Escape' || (e.key === 'Enter' && (e.metaKey || e.ctrlKey))) {
+      e.preventDefault();
+      e.stopPropagation();
+      finish();
+      return;
+    }
+    // Keep typing from triggering the reader's single-key shortcuts.
+    e.stopPropagation();
+  }
+
+  // Leaving the note (focus moves anywhere outside it) saves and closes it.
+  // Only the editor's own controls count: opening the editor removes the button
+  // that opened it, and Chrome reports that removal as the button losing focus.
+  // Where focus actually went is checked once it has settled.
+  function handleFocusOut(e: FocusEvent) {
+    if (!editing || !editorEl?.contains(e.target as Node) || pressingInside) return;
+    const next = e.relatedTarget as Node | null;
+    if (next && rootEl?.contains(next)) return;
+    queueMicrotask(() => {
+      if (editing && !rootEl?.contains(document.activeElement)) finish();
+    });
+  }
+
+  // A tab going to the background may never come back; save what's written.
+  function handleVisibility() {
+    if (document.visibilityState === 'hidden' && editing) commit();
+  }
+
+  $effect(() => {
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
+  });
+
+  // The article can re-render underneath an open editor (a lazy body settling);
+  // whatever was written goes with it into the store, not into the void.
+  onDestroy(commit);
+
+  const onMargin = $derived(!!highlight.marginUri);
+  const hasNote = $derived(!!highlight.note?.trim());
+</script>
+
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+  class="marginalia-note {variant}"
+  class:editing
+  class:active
+  bind:this={rootEl}
+  onmouseenter={() => onHover?.(true)}
+  onmouseleave={() => onHover?.(false)}
+  onfocusout={handleFocusOut}
+  onpointerdown={() => {
+    pressingInside = true;
+    window.addEventListener('pointerup', () => setTimeout(() => (pressingInside = false)), {
+      once: true,
+    });
+  }}
+>
+  {#if editing}
+    <div class="editor" bind:this={editorEl}>
+      <label class="visually-hidden" for="note-{highlight.id}">Note</label>
+      <textarea
+        id="note-{highlight.id}"
+        class="note-hand note-input"
+        bind:this={textareaEl}
+        bind:value={draft}
+        rows="2"
+        placeholder="Write a note"
+        oninput={handleInput}
+        onkeydown={handleKeydown}></textarea>
+      <div class="note-tools">
+        <button class="tool done" onclick={finish}>Done</button>
+        {#if onMargin}
+          <span class="tool-status" use:tooltip={'Public on margin.at'}>
+            <Icon name="margin" size={13} />
+            On Margin
+          </span>
+        {:else if onPublish}
+          <button
+            class="tool"
+            use:tooltip={'Publishes this highlight and note on margin.at, where anyone can see it'}
+            onclick={() => {
+              commit();
+              onPublish?.();
+            }}
+          >
+            <Icon name="margin" size={13} />
+            Save to Margin
+          </button>
+        {/if}
+        <button
+          class="tool remove"
+          aria-label="Remove highlight"
+          use:tooltip={'Remove highlight'}
+          onclick={() => {
+            dirty = false;
+            onRemove();
+          }}
+        >
+          <Icon name="trash" size={14} />
+        </button>
+      </div>
+    </div>
+  {:else if hasNote}
+    <button class="note-hand note-read" onclick={onEdit} aria-label="Edit note: {highlight.note}">
+      <span class="note-text">{highlight.note}</span>
+    </button>
+    {#if variant === 'gloss'}
+      <div class="gloss-foot">
+        {#if onMargin}
+          <span class="tool-status"><Icon name="margin" size={13} /> On Margin</span>
+        {/if}
+        <button class="tool" onclick={onEdit}>Edit</button>
+        <button class="tool" onclick={onFold}>Fold</button>
+      </div>
+    {/if}
+  {/if}
+</div>
+
+<style>
+  .marginalia-note {
+    position: relative;
+    color: var(--ink-note);
+    font-size: calc(var(--article-font-size, 1.125rem) * 0.9);
+  }
+
+  /* Handwriting, sized off the article so a note keeps its proportion to the
+     text it's about when the reader changes type size. */
+  .note-hand {
+    font-family: var(--font-hand);
+    font-size: 1em;
+    line-height: 1.34;
+    color: inherit;
+    letter-spacing: 0.005em;
+  }
+
+  .note-read {
+    display: block;
+    width: 100%;
+    padding: 0;
+    border: none;
+    background: none;
+    text-align: left;
+    cursor: text;
+    border-radius: 2px;
+  }
+
+  .note-text {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 7;
+    line-clamp: 7;
+    overflow: hidden;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .gloss .note-text {
+    -webkit-line-clamp: unset;
+    line-clamp: unset;
+    display: block;
+  }
+
+  .note-read:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 3px;
+  }
+
+  /* Pointing at a note (or its passage) darkens the ink a touch: the same
+     note, pressed a little harder. */
+  .marginalia-note.margin {
+    opacity: 0.86;
+    transition: opacity 0.18s ease;
+  }
+
+  .marginalia-note.margin.active,
+  .marginalia-note.margin.editing,
+  .marginalia-note.margin:hover,
+  .marginalia-note.margin:focus-within {
+    opacity: 1;
+  }
+
+  /* Writing: no box, no border. The pen goes straight onto the page, over a
+     faint pencil rule that says "this is where it goes". */
+  .note-input {
+    display: block;
+    width: 100%;
+    min-height: 2.8em;
+    margin: 0;
+    padding: 0 0 0.15em;
+    border: none;
+    border-radius: 0;
+    background: linear-gradient(var(--ink-note-soft), var(--ink-note-soft)) left bottom / 100% 1px
+      no-repeat;
+    resize: none;
+    overflow: hidden;
+    outline: none;
+    caret-color: var(--ink-note);
+    field-sizing: content;
+  }
+
+  .note-input::placeholder {
+    color: var(--ink-note-soft);
+    opacity: 1;
+  }
+
+  .note-input::selection {
+    background: color-mix(in srgb, #f5c518 38%, transparent);
+  }
+
+  /* The few tools a note needs, in the chrome voice: typed, small, quiet. */
+  .note-tools,
+  .gloss-foot {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    margin-top: 0.4rem;
+    font-family: var(--font-sans-serif);
+    font-size: var(--text-xs);
+    line-height: 1;
+  }
+
+  .tool,
+  .tool-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    min-height: 1.75rem;
+    padding: 0 0.45rem;
+    border: none;
+    border-radius: 4px;
+    background: none;
+    color: var(--color-text-secondary);
+    font: inherit;
+    white-space: nowrap;
+  }
+
+  .tool {
+    cursor: pointer;
+  }
+
+  .tool:first-child {
+    margin-left: -0.45rem;
+  }
+
+  .tool:hover {
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+  }
+
+  .tool:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 1px;
+  }
+
+  .tool.done {
+    color: var(--color-primary);
+    font-weight: var(--weight-medium, 500);
+  }
+
+  .tool.remove {
+    margin-left: auto;
+  }
+
+  .tool.remove:hover {
+    color: var(--color-error, #d32f2f);
+  }
+
+  .tool-status {
+    color: var(--ink-note);
+  }
+
+  /* ── The gloss: a note unfolded under its paragraph ─────────────
+     Set off by a hand-ruled line down its left, the way a reader squeezes a
+     note between the lines when there is no margin to write in. */
+  .marginalia-note.gloss {
+    margin: -0.35em 0 1.35em;
+    padding: 0.1em 0 0.1em 1rem;
+    background: var(--gloss-rule) 0.05rem 0.3em / 6px 5em repeat-y;
+    animation: gloss-unfold 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .gloss .gloss-foot {
+    margin-top: 0.25rem;
+  }
+
+  @keyframes gloss-unfold {
+    from {
+      opacity: 0;
+      transform: translateY(-0.35rem);
+    }
+  }
+
+  @media (pointer: coarse) {
+    .tool,
+    .tool-status {
+      min-height: 2.25rem;
+      font-size: var(--text-sm);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .marginalia-note.gloss {
+      animation: none;
+    }
+
+    .marginalia-note.margin {
+      transition: none;
+    }
+  }
+
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+</style>

@@ -18,6 +18,24 @@ export function exceedsSelectorLimit(text: string): boolean {
 }
 
 /**
+ * Marks a subtree the reader draws *into* the article body (the inline gloss
+ * that unfolds a note under its paragraph) as not part of the article. Text
+ * under it is invisible to selectors, so a gloss can never shift a quote's
+ * offsets, leak into a prefix/suffix, or be matched as a passage itself.
+ */
+export const MARGINALIA_ATTR = 'data-marginalia';
+
+/** A text-node walker over `container` that skips anything under `[data-marginalia]`. */
+export function articleTextWalker(container: Node): TreeWalker {
+  return document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
+    acceptNode: (node) =>
+      node.parentElement?.closest(`[${MARGINALIA_ATTR}]`)
+        ? NodeFilter.FILTER_REJECT
+        : NodeFilter.FILTER_ACCEPT,
+  });
+}
+
+/**
  * Build a map of text nodes and their character offsets within a container.
  * Returns { text: concatenated string, nodes: array of { node, start, end } }
  */
@@ -26,7 +44,7 @@ function buildTextMap(container: HTMLElement): {
   nodes: Array<{ node: Text; start: number; end: number }>;
 } {
   const nodes: Array<{ node: Text; start: number; end: number }> = [];
-  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+  const walker = articleTextWalker(container);
   let offset = 0;
 
   let current = walker.nextNode();
@@ -68,6 +86,7 @@ export function createSelector(range: Range, container: HTMLElement): TextQuoteS
       let childOffset = 0;
       for (let i = 0; i < range.startOffset; i++) {
         const child = children[i];
+        if (child instanceof Element && child.hasAttribute(MARGINALIA_ATTR)) continue;
         childOffset += child.textContent?.length ?? 0;
       }
       startOffset = nodeInfo.start + childOffset;

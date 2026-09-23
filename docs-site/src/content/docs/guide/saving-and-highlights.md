@@ -23,9 +23,17 @@ One thing to know before turning it on: **backing publishes all of your saves pu
 
 ## Highlights
 
-While reading, double-click a paragraph or select text to highlight it. Drag the handles at either end to adjust what a highlight covers. Add a note to any highlight.
+While reading, double-click a paragraph or select text to highlight it. Drag the handles at either end to adjust what a highlight covers.
 
-![A highlighted passage in the reader, marked in yellow](../../../assets/screenshots/highlight.png)
+### Notes in the margin
+
+Notes live beside the text, the way they would in a book. On a wide screen, every highlight gets a small bracket in the margin. Click the bracket (or choose **Note** after selecting text) and write right there, next to the passage. Your note saves when you click away or press Escape.
+
+On a phone, or when reading in pages, there's no margin to write in. An asterisk after a passage means it has a note: tap it and the note unfolds under the paragraph.
+
+Other readers' notes from Margin appear in the left margin, in pencil, when **Community highlights** is on.
+
+![A highlighted passage in the reader, with a handwritten note beside it in the margin](../../../assets/screenshots/highlight.png)
 
 Highlights are private to Skyreader and sync across your devices. Two optional Margin connections exist, in both directions:
 
