@@ -24,7 +24,6 @@
   import { savesStore } from '$lib/stores/saves.svelte';
   import { integrationSaveStore } from '$lib/stores/integrationSave.svelte';
   import { auth } from '$lib/stores/auth.svelte';
-  import { articlesStore } from '$lib/stores/articles.svelte';
   import { liveDb } from '$lib/services/liveDb.svelte';
   import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
   import { decodeEntities } from '$lib/utils/entities';
@@ -123,6 +122,35 @@
   let resumedFor = $state<string | null>(null);
   let resumeKey = $state<string | null>(null);
 
+  // A feeds issue shares read state with the feed inbox. Moving on from an
+  // article (a later one becomes current) marks it read there, and reaching the
+  // end of the issue marks the one you finished on. Scrolling into an article
+  // doesn't count; "Mark all read" on archive still sweeps up anything skipped.
+  // Waits for the resume restore so landing mid-issue marks nothing.
+  function markFeedEntryRead(key: string) {
+    const snap = entries.find((e) => e.entryKey === key)?.snap;
+    if (!snap || !isFeedMagazineSnapshot(snap)) return;
+    itemLabelsStore.markAsRead('', snap.guid, snap.url, snap.title ?? undefined);
+  }
+
+  function advanceActive(nextKey: string) {
+    const mag = magazine;
+    if (mag && resumedFor === mag.rkey && activeKey) {
+      const from = entries.findIndex((e) => e.entryKey === activeKey);
+      const to = entries.findIndex((e) => e.entryKey === nextKey);
+      if (from >= 0 && to > from) markFeedEntryRead(activeKey);
+    }
+    activeKey = nextKey;
+    recordPosition(nextKey);
+  }
+
+  function markEndReached() {
+    const mag = magazine;
+    if (!mag || resumedFor !== mag.rkey || entries.length === 0) return;
+    const last = entries[entries.length - 1].entryKey;
+    if (activeKey === last) markFeedEntryRead(last);
+  }
+
   function handleMagazinePageChange(page: number) {
     if (!paged || !pagedController || entries.length === 0) return;
     let nearestKey = entries[0].entryKey;
@@ -131,10 +159,8 @@
       if (!root) continue;
       if (pagedController.pageOfElement(root) <= page) nearestKey = entry.entryKey;
     }
-    if (nearestKey !== activeKey) {
-      activeKey = nearestKey;
-      recordPosition(nearestKey);
-    }
+    if (nearestKey !== activeKey) advanceActive(nearestKey);
+    if (pagedTotal > 1 && page >= pagedTotal - 1) markEndReached();
   }
 
   // Contents-list navigation. In scroll mode the native `#article-N` anchor jump
@@ -300,17 +326,20 @@
     const minutes = Number((event.currentTarget as HTMLSelectElement).value);
     if (DAILY_MAGAZINE_MINUTE_OPTIONS.includes(minutes as DailyMagazineMinutes)) {
       preferences.setDailyMagazineMinutes(minutes as DailyMagazineMinutes);
+      generateHint = '';
     }
   }
 
   function updateOrder(event: Event) {
     const order = (event.currentTarget as HTMLSelectElement).value as DailyMagazineOrder;
     preferences.setDailyMagazineOrder(order);
+    generateHint = '';
   }
 
   function updateSource(event: Event) {
     const source = (event.currentTarget as HTMLSelectElement).value as DailyMagazineSource;
     preferences.setDailyMagazineSource(source);
+    generateHint = '';
   }
 
   // Generate / reroll: mint a fresh issue from the saved pile or unread feed
@@ -320,18 +349,7 @@
     generateHint = '';
     const result = await magazineStore.generate();
     if (!result) {
-      const emptyPool =
-        preferences.dailyMagazineSource === 'feeds'
-          ? articlesStore.unreadArticles.length === 0
-          : savesStore.articles.length === 0;
-      if (emptyPool) {
-        generateHint =
-          preferences.dailyMagazineSource === 'feeds'
-            ? 'You’re all caught up — nothing unread to put in an issue.'
-            : 'Save an article first, then generate an issue.';
-      } else {
-        generateHint = 'Nothing fits this issue length. Choose a longer issue and try again.';
-      }
+      generateHint = magazineStore.emptyIssueHint();
       return;
     }
     resumedFor = null;
@@ -370,11 +388,13 @@
       if (root.getBoundingClientRect().top <= line) nearest = entry;
       else break;
     }
+    // At the bottom, the last article counts as current even if it's too short
+    // for its top to reach the line; otherwise it could never be marked read.
+    const atEnd = scrollEl.scrollTop + scrollEl.clientHeight >= scrollEl.scrollHeight - 4;
+    if (atEnd) nearest = entries[entries.length - 1];
     const nextKey = nearest.entryKey;
-    if (nextKey !== activeKey) {
-      activeKey = nextKey;
-      recordPosition(nextKey);
-    }
+    if (nextKey !== activeKey) advanceActive(nextKey);
+    if (atEnd) markEndReached();
 
     const body = articleControls.get(nextKey)?.body();
     if (!body) {
@@ -553,8 +573,8 @@
           <section class="state">
             <h2>Generate your reading issue</h2>
             <p>
-              Build an issue from what’s unread in your feeds. It stays put — new posts won’t change
-              it — and picks up where you left off on any device.
+              Build an issue from what’s unread in your feeds. It stays put when new posts arrive,
+              and picks up where you left off on any device.
             </p>
             <button class="generate" onclick={generate} disabled={magazineStore.generating}>
               {magazineStore.generating ? 'Generating…' : 'Generate issue'}
@@ -570,8 +590,8 @@
           <section class="state">
             <h2>Generate your reading issue</h2>
             <p>
-              Build an issue from your saved articles. It stays put — new saves won’t change it —
-              and picks up where you left off on any device.
+              Build an issue from your saved articles. It stays put when you save more, and picks up
+              where you left off on any device.
             </p>
             <button class="generate" onclick={generate} disabled={magazineStore.generating}>
               {magazineStore.generating ? 'Generating…' : 'Generate issue'}

@@ -201,10 +201,7 @@ function createMagazineStore() {
   // ("what's in your reader now"). Entries are keyed by feed URL + guid (guids
   // are only unique within a feed) and carry no save rkey; read state is still
   // looked up by the bare guid, the key the feed reader labels them under.
-  function buildFeedsSnapshot(): { items: MagazineItemSnapshot[]; params: MagazineParams } {
-    const order = preferences.dailyMagazineOrder;
-    const targetMinutes = preferences.dailyMagazineMinutes;
-
+  function feedCandidates() {
     const candidates = [];
     for (const article of articlesStore.unreadArticles) {
       if (!isFeedMagazineCandidate(article)) continue;
@@ -218,8 +215,14 @@ function createMagazineStore() {
         sortValue: Date.parse(article.publishedAt),
       });
     }
+    return candidates;
+  }
 
-    const issue = buildDailyMagazine(candidates, targetMinutes, new Date(), order);
+  function buildFeedsSnapshot(): { items: MagazineItemSnapshot[]; params: MagazineParams } {
+    const order = preferences.dailyMagazineOrder;
+    const targetMinutes = preferences.dailyMagazineMinutes;
+
+    const issue = buildDailyMagazine(feedCandidates(), targetMinutes, new Date(), order);
     const items: MagazineItemSnapshot[] = issue.items.map((entry) => ({
       key: entry.key,
       displayKey: entry.key,
@@ -249,6 +252,24 @@ function createMagazineStore() {
   }
 
   // Mint a new magazine (Generate / New issue). Newest becomes `current`.
+  // Why a generate came back empty, as a one-line hint for the current source.
+  // A feeds pool can hold unread items that are all excerpts or truncated, and a
+  // longer issue won't help those, so that case gets its own line.
+  function emptyIssueHint(): string {
+    const tooLong = 'Nothing fits this issue length. Choose a longer issue and try again.';
+    if (preferences.dailyMagazineSource === 'feeds') {
+      if (articlesStore.unreadArticles.length === 0) {
+        return 'You’re all caught up. Nothing unread to put in an issue.';
+      }
+      if (feedCandidates().length === 0) {
+        return 'Nothing unread has enough full text for an issue.';
+      }
+      return tooLong;
+    }
+    if (savesStore.articles.length === 0) return 'Save an article first, then generate an issue.';
+    return tooLong;
+  }
+
   async function generate(): Promise<Magazine | null> {
     generating = true;
     try {
@@ -424,6 +445,7 @@ function createMagazineStore() {
     setPosition,
     remove,
     findFeedBody,
+    emptyIssueHint,
   };
 }
 

@@ -261,12 +261,18 @@ test.describe('Daily magazine from feeds', () => {
     );
 
     await authedPage.goto('/home');
-    await authedPage.getByRole('combobox', { name: 'From' }).selectOption('feeds');
-    const generate = authedPage.getByRole('button', { name: 'Generate issue' });
-    await expect(generate).toBeEnabled({ timeout: 15_000 });
-    // The timeline may still be landing items in IndexedDB; retry until the issue
-    // is minted (a generate over an empty pool stays on Home).
+    // The split button's settings panel picks the source; the timeline may still
+    // be landing items in IndexedDB, so retry until the issue is minted (a generate
+    // over an empty pool stays on Home).
+    await authedPage.getByRole('button', { name: 'Issue settings' }).click();
+    const settings = authedPage.getByRole('dialog', { name: 'Issue settings' });
+    await settings.getByRole('radio', { name: /Your feeds/ }).click();
     await expect(async () => {
+      if (!(await settings.isVisible())) {
+        await authedPage.getByRole('button', { name: 'Issue settings' }).click();
+      }
+      const generate = settings.getByRole('button', { name: /Generate issue/ });
+      await expect(generate).toBeEnabled({ timeout: 2_000 });
       await generate.click();
       await expect(authedPage).toHaveURL(/\/daily$/, { timeout: 2_000 });
     }).toPass({ timeout: 20_000 });
@@ -283,6 +289,24 @@ test.describe('Daily magazine from feeds', () => {
     const firstUrl = await authedPage.locator('#article-1 a.original-link').getAttribute('href');
     const firstGuid = firstUrl?.split('/').pop() ?? '';
     await expect.poll(() => labelsFor(authedPage, firstGuid)).toContain('article:readProgress');
+    // Opening alone doesn't mark it read in the feed inbox.
+    expect(await labelsFor(authedPage, firstGuid)).not.toContain('article:read');
+
+    // Moving on to the next article marks the one you left read.
+    const secondArticle = authedPage.locator('.issue-article').nth(1);
+    const secondUrl = await secondArticle.locator('a.original-link').getAttribute('href');
+    const secondGuid = secondUrl?.split('/').pop() ?? '';
+    await expect(secondArticle.getByText('Filler paragraph 20')).toBeVisible({ timeout: 15_000 });
+    await secondArticle.evaluate((element) => element.scrollIntoView({ block: 'start' }));
+    await expect.poll(() => labelsFor(authedPage, firstGuid)).toContain('article:read');
+    expect(await labelsFor(authedPage, secondGuid)).not.toContain('article:read');
+
+    // Reaching the end of the issue marks the last article read too.
+    await authedPage.evaluate(() => {
+      const reader = document.querySelector<HTMLElement>('.daily-reader');
+      reader?.scrollTo(0, reader.scrollHeight);
+    });
+    await expect.poll(() => labelsFor(authedPage, secondGuid)).toContain('article:read');
 
     // Archiving a feeds issue offers "mark all read" instead of archiving saves.
     await authedPage.getByTitle('Archive (e)').first().click();

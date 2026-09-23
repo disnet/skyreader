@@ -57,9 +57,9 @@ export type CardDensity = 'compact' | 'cozy' | 'comfortable';
 
 export const DAILY_MAGAZINE_MINUTE_OPTIONS: DailyMagazineMinutes[] = [10, 20, 30, 45, 60];
 export const DAILY_MAGAZINE_ORDER_OPTIONS: { value: DailyMagazineOrder; label: string }[] = [
-  { value: 'shuffle', label: 'Random' },
   { value: 'recent', label: 'Most recent' },
   { value: 'oldest', label: 'Oldest' },
+  { value: 'shuffle', label: 'Random' },
 ];
 export const DAILY_MAGAZINE_SOURCE_OPTIONS: { value: DailyMagazineSource; label: string }[] = [
   { value: 'saved', label: 'Saved pile' },
@@ -138,7 +138,7 @@ function createPreferencesStore() {
     defaultViewConfigured: false,
     cardDensity: 'cozy',
     dailyMagazineMinutes: 20,
-    dailyMagazineOrder: 'shuffle',
+    dailyMagazineOrder: 'recent',
     dailyMagazineSource: 'saved',
     communityHighlights: true,
     communityHighlightsConfigured: false,

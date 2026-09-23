@@ -27,7 +27,6 @@
   import { extractRoomArticle, sortRoomItems } from '$lib/utils/roomArticle';
   import { magazineStore } from '$lib/stores/magazine.svelte';
   import { liveDb } from '$lib/services/liveDb.svelte';
-  import { articlesStore } from '$lib/stores/articles.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
@@ -175,18 +174,19 @@
   // The Home card reflects the user's durable current magazine (if any). Mint a
   // new one on demand and open it straight away; past issues stay reachable via
   // the rail below.
-  let magazineHint = $state('');
+  // A hint only speaks for the recipe it was generated with; changing the
+  // source, length or order in the rail hides it.
+  let magazineHint = $state<{ recipe: string; text: string } | null>(null);
+  let magazineRecipe = $derived(
+    `${preferences.dailyMagazineSource}|${preferences.dailyMagazineMinutes}|${preferences.dailyMagazineOrder}`
+  );
 
   async function generateMagazine() {
-    magazineHint = '';
+    magazineHint = null;
+    const recipe = magazineRecipe;
     const magazine = await magazineStore.generate();
     if (magazine) goto('/daily');
-    else if (preferences.dailyMagazineSource === 'feeds') {
-      magazineHint =
-        articlesStore.unreadArticles.length === 0
-          ? 'You’re all caught up — nothing unread to put in an issue.'
-          : 'Nothing unread fits this issue length.';
-    }
+    else magazineHint = { recipe, text: magazineStore.emptyIssueHint() };
   }
 
   // Continue reading: only items actually started in the reader and not yet
@@ -503,9 +503,9 @@
       <HighlightReviewCard />
       <MagazineRail
         issues={magazineStore.magazines}
-        generating={magazineStore.generating ||
-          (preferences.dailyMagazineSource === 'feeds' && !liveDb.articlesLoaded)}
-        hint={magazineHint}
+        generating={magazineStore.generating}
+        feedsReady={liveDb.articlesLoaded}
+        hint={magazineHint?.recipe === magazineRecipe ? magazineHint.text : ''}
         onGenerate={generateMagazine}
         onOpen={(rkey) => goto(`/daily?id=${rkey}`)}
       />

@@ -265,3 +265,27 @@ describe('feed snapshots without a feed URL', () => {
     expect(await magazineStore.findFeedBody(snap)).toBe('<p>B</p>');
   });
 });
+
+describe('empty issue hints', () => {
+  it('says caught up when nothing is unread', () => {
+    expect(magazineStore.emptyIssueHint()).toMatch(/all caught up/);
+  });
+
+  it('says there is no full text when every unread item is an excerpt or truncated', () => {
+    state.articles = [
+      article('short', MIN_FEED_ARTICLE_WORDS - 1, '2026-09-10T00:00:00Z'),
+      article('truncated', 400, '2026-09-10T00:00:00Z', { contentTruncated: true }),
+    ];
+    expect(magazineStore.emptyIssueHint()).toMatch(/enough full text/);
+  });
+
+  it('falls back to the length hint when full-text candidates exist', () => {
+    state.articles = [article('long', 400, '2026-09-10T00:00:00Z')];
+    expect(magazineStore.emptyIssueHint()).toMatch(/longer issue/);
+  });
+
+  it('asks for a save when the saved pile is empty', () => {
+    state.source = 'saved';
+    expect(magazineStore.emptyIssueHint()).toMatch(/Save an article first/);
+  });
+});
