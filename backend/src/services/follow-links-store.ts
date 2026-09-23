@@ -49,7 +49,13 @@ interface SyncRow {
   newest_seen_at: number | null;
   complete: number;
   last_error: string | null;
+  gap_cursor: string | null;
+  gap_stop_at: number | null;
+  gap_at: number | null;
 }
+
+const SYNC_COLUMNS =
+  'last_poll_at, newest_seen_at, complete, last_error, gap_cursor, gap_stop_at, gap_at';
 
 export interface FollowLinksSync {
   lastPollAt: number;
@@ -82,16 +88,104 @@ export type RefreshResult =
   | { refreshed: false; reason: 'gated' | 'locked' }
   | { refreshed: true; pages: number; shares: number; reachedEnd: boolean; error?: string };
 
+/** Pages and upserts left in this refresh, shared by the walks it makes. */
+interface WalkBudget {
+  pages: number;
+  shares: number;
+}
+
+interface WalkResult {
+  pages: number;
+  written: number;
+  /** Newest and oldest item times seen, or null if no page came back. */
+  newest: number | null;
+  oldest: number | null;
+  /** Where to carry on from: the next page to fetch, or the one that failed. */
+  cursor: string | undefined;
+  /** The walk got down to `stopAt` (or the end of the timeline). */
+  reachedStop: boolean;
+  error?: string;
+}
+
+/**
+ * Walk the timeline newest-first from `cursor` down to `stopAt`, upserting the
+ * link shares on the way, until the budget runs out. Pages are written whole:
+ * the share cap stops the walk before a page rather than part-way through one,
+ * so `cursor` is always a clean place to resume.
+ */
+async function walkTimeline(
+  env: Env,
+  pds: ReturnType<typeof createPDSClient>,
+  did: string,
+  cursor: string | undefined,
+  stopAt: number,
+  budget: WalkBudget
+): Promise<WalkResult> {
+  const out: WalkResult = {
+    pages: 0,
+    written: 0,
+    newest: null,
+    oldest: null,
+    cursor,
+    reachedStop: false,
+  };
+
+  // A page carries at most PAGE_SIZE shares, so this never overshoots the cap.
+  while (budget.pages > 0 && budget.shares >= PAGE_SIZE) {
+    const res = await pds.getTimeline<TimelineItem>(out.cursor, PAGE_SIZE);
+    if (!res.success) {
+      out.error = res.error;
+      break;
+    }
+    budget.pages--;
+    out.pages++;
+    const feed = res.data.feed ?? [];
+
+    const shares: LinkShare[] = [];
+    let pageOldest = Infinity;
+    for (const item of feed) {
+      const at = itemTime(item);
+      if (at === null) continue;
+      if (out.newest === null || at > out.newest) out.newest = at;
+      if (out.oldest === null || at < out.oldest) out.oldest = at;
+      pageOldest = Math.min(pageOldest, at);
+      if (at < stopAt) continue;
+      const share = extractLinkShare(item, did);
+      if (share) shares.push(share);
+    }
+
+    if (shares.length > 0) {
+      await env.DB.batch(shares.map((s) => upsertShare(env, did, s)));
+      out.written += shares.length;
+      budget.shares -= shares.length;
+    }
+
+    const next = res.data.cursor;
+    if (!next || feed.length === 0 || pageOldest < stopAt) {
+      out.reachedStop = true;
+      break;
+    }
+    out.cursor = next;
+  }
+  return out;
+}
+
 /**
  * Pull new link shares from the reader's Following timeline into D1.
  *
  * Safe to run from `waitUntil` and from several requests at once: the claim is
- * a compare-and-set on `last_poll_at`, so only one caller walks. The walk goes
- * newest-first and stops at the high-water mark (or, the first time, the
- * retention window), the page cap, or the share cap. The high-water mark only
- * advances when nothing failed, so an error mid-walk means the next refresh
- * walks the same ground again (upserts make that harmless) instead of leaving
- * a hole.
+ * a compare-and-set on `last_poll_at`, so only one caller walks.
+ *
+ * The walk goes newest-first down to the high-water mark (or, the first time,
+ * the retention window). Nothing between the top of the timeline and where a
+ * walk stopped is ever skipped:
+ *  - An error leaves the high-water mark where it was, so the next refresh
+ *    walks the same ground again (upserts make that harmless).
+ *  - Running out of pages or shares first leaves a gap. Its cursor is saved,
+ *    the high-water mark moves to the top (which is now covered), and later
+ *    refreshes finish the gap once they have caught up on new posts. A second
+ *    gap folds into the first: the one saved walk runs from the newer cursor
+ *    down to the older stop, re-walking the covered ground in between.
  */
 export async function refreshFollowLinks(
   env: Env,
@@ -101,7 +195,7 @@ export async function refreshFollowLinks(
   const did = session.did;
   const now = opts.now ?? Date.now();
   const existing = await env.DB.prepare(
-    'SELECT last_poll_at, newest_seen_at, complete, last_error FROM follow_link_sync WHERE user_did = ?'
+    `SELECT ${SYNC_COLUMNS} FROM follow_link_sync WHERE user_did = ?`
   )
     .bind(did)
     .first<SyncRow>();
@@ -132,62 +226,75 @@ export async function refreshFollowLinks(
 
   const firstRun = !existing?.complete;
   const retentionCutoff = now - FOLLOW_LINKS_RETENTION_MS;
-  const stopAt = Math.max(existing?.newest_seen_at ?? 0, retentionCutoff);
-  const maxPages = firstRun ? FIRST_REFRESH_MAX_PAGES : REFRESH_MAX_PAGES;
-
+  const budget: WalkBudget = {
+    pages: firstRun ? FIRST_REFRESH_MAX_PAGES : REFRESH_MAX_PAGES,
+    shares: MAX_SHARES_PER_REFRESH,
+  };
   const pds = createPDSClient(session);
-  let cursor: string | undefined;
-  let pages = 0;
-  let written = 0;
-  let newest: number | null = null;
-  let reachedEnd = false;
-  let error: string | undefined;
 
-  while (pages < maxPages && written < MAX_SHARES_PER_REFRESH) {
-    const res = await pds.getTimeline<TimelineItem>(cursor, PAGE_SIZE);
-    if (!res.success) {
-      error = res.error;
-      break;
+  let newestSeen = existing?.newest_seen_at ?? null;
+  // A saved gap whose walk has already passed its stop (or aged out of the
+  // window) has nothing left to fetch.
+  let gap =
+    existing?.gap_cursor &&
+    !(
+      existing.gap_at !== null &&
+      existing.gap_at < Math.max(existing.gap_stop_at ?? 0, retentionCutoff)
+    )
+      ? { cursor: existing.gap_cursor, stopAt: existing.gap_stop_at ?? 0, at: existing.gap_at }
+      : null;
+
+  // The top of the timeline, down to the high-water mark.
+  const topStop = Math.max(newestSeen ?? 0, retentionCutoff);
+  const top = await walkTimeline(env, pds, did, undefined, topStop, budget);
+  let error = top.error;
+  if (!error && top.newest !== null) {
+    if (!top.reachedStop) {
+      gap = { cursor: top.cursor!, stopAt: gap?.stopAt ?? topStop, at: top.oldest };
     }
-    pages++;
-    const feed = res.data.feed ?? [];
+    newestSeen = Math.max(newestSeen ?? 0, top.newest);
+  }
 
-    const shares: LinkShare[] = [];
-    let pageOldest = Infinity;
-    for (const item of feed) {
-      const at = itemTime(item);
-      if (at === null) continue;
-      if (newest === null || at > newest) newest = at;
-      pageOldest = Math.min(pageOldest, at);
-      if (at < stopAt) continue;
-      const share = extractLinkShare(item, did);
-      if (share) shares.push(share);
-    }
-
-    const room = MAX_SHARES_PER_REFRESH - written;
-    const batch = shares.slice(0, room);
-    if (batch.length > 0) {
-      await env.DB.batch(batch.map((s) => upsertShare(env, did, s)));
-      written += batch.length;
-    }
-
-    cursor = res.data.cursor;
-    if (!cursor || feed.length === 0 || pageOldest < stopAt) {
-      reachedEnd = true;
-      break;
+  // Then an older gap, with whatever budget is left.
+  let gapWalk: WalkResult | null = null;
+  if (!error && top.reachedStop && gap) {
+    gapWalk = await walkTimeline(
+      env,
+      pds,
+      did,
+      gap.cursor,
+      Math.max(gap.stopAt, retentionCutoff),
+      budget
+    );
+    if (gapWalk.reachedStop) {
+      gap = null;
+    } else {
+      // Keep what it covered, whether it ran out or hit an error.
+      gap = { cursor: gapWalk.cursor!, stopAt: gap.stopAt, at: gapWalk.oldest ?? gap.at };
+      error = gapWalk.error;
     }
   }
 
-  // Advance the high-water mark only past ground we actually covered.
-  const advance = !error && newest !== null;
+  const pages = top.pages + (gapWalk?.pages ?? 0);
+  const written = top.written + (gapWalk?.written ?? 0);
+  const reachedEnd = !error && top.reachedStop && gap === null;
+
   await env.DB.prepare(
     `UPDATE follow_link_sync
-        SET newest_seen_at = CASE WHEN ?1 THEN MAX(COALESCE(newest_seen_at, 0), ?2) ELSE newest_seen_at END,
-            complete = CASE WHEN ?3 THEN 1 ELSE complete END,
-            last_error = ?4
-      WHERE user_did = ?5`
+        SET newest_seen_at = ?1, gap_cursor = ?2, gap_stop_at = ?3, gap_at = ?4,
+            complete = CASE WHEN ?5 THEN 1 ELSE complete END,
+            last_error = ?6
+      WHERE user_did = ?7`
   )
-    .bind(advance ? 1 : 0, newest ?? 0, error ? 0 : 1, error ?? null, did)
+    .bind(
+      newestSeen,
+      gap?.cursor ?? null,
+      gap?.stopAt ?? null,
+      gap?.at ?? null,
+      top.error ? 0 : 1,
+      error ?? null,
+      did
+    )
     .run();
 
   if (error) {

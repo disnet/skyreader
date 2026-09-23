@@ -4,8 +4,11 @@ import worker from '../src/index';
 import { GRANULAR_SCOPES, FOLLOWS_LINKS_SCOPES } from '../src/config/scopes';
 import type { Session } from '../src/types';
 import {
+  FIRST_REFRESH_MAX_PAGES,
   FOLLOW_LINKS_GATE_MS,
   FOLLOW_LINKS_RETENTION_MS,
+  MAX_SHARES_PER_REFRESH,
+  REFRESH_MAX_PAGES,
   groupFollowLinks,
   purgeFollowLinks,
   readFollowLinks,
@@ -136,7 +139,7 @@ function stubTimeline(pages: Record<string, { feed: unknown[]; cursor?: string }
 
 async function syncRow() {
   return env.DB.prepare(
-    'SELECT last_poll_at, newest_seen_at, complete, last_error FROM follow_link_sync WHERE user_did = ?'
+    'SELECT last_poll_at, newest_seen_at, complete, last_error, gap_cursor, gap_stop_at FROM follow_link_sync WHERE user_did = ?'
   )
     .bind(DID)
     .first<{
@@ -144,6 +147,8 @@ async function syncRow() {
       newest_seen_at: number | null;
       complete: number;
       last_error: string | null;
+      gap_cursor: string | null;
+      gap_stop_at: number | null;
     }>();
 }
 
@@ -302,6 +307,119 @@ describe('follow links store', () => {
       expect(sync?.last_error).toBeTruthy();
       // What it did get is kept: the upserts make the re-walk harmless.
       expect(await readFollowLinks(env, DID, '24h', now)).toHaveLength(1);
+    });
+
+    it('saves a gap when the first run hits the page cap, and finishes it later', async () => {
+      const now = Date.now();
+      const total = FIRST_REFRESH_MAX_PAGES + 5;
+      // One link per page, an hour apart, all inside the window.
+      const pages: Record<string, { feed: unknown[]; cursor?: string }> = {};
+      for (let i = 0; i < total; i++) {
+        pages[i === 0 ? '' : `p${i}`] = {
+          feed: [linkItem({ n: i, at: now - i * HOUR, url: `https://p${i}.example` })],
+          ...(i < total - 1 ? { cursor: `p${i + 1}` } : {}),
+        };
+      }
+      stubTimeline(pages);
+      const first = await refreshFollowLinks(env, SESSION, { now });
+      expect(first).toMatchObject({ pages: FIRST_REFRESH_MAX_PAGES, reachedEnd: false });
+      expect(await syncRow()).toMatchObject({
+        complete: 1,
+        newest_seen_at: now,
+        gap_cursor: `p${FIRST_REFRESH_MAX_PAGES}`,
+        gap_stop_at: now - FOLLOW_LINKS_RETENTION_MS,
+      });
+
+      // Next time: catch up on the new post first, then carry on down the gap.
+      const later = now + FOLLOW_LINKS_GATE_MS + 1;
+      const calls = stubTimeline({
+        ...pages,
+        '': {
+          feed: [
+            linkItem({ n: 100, at: later - 1000, url: 'https://new.example' }),
+            textItem(1, now - 1000),
+          ],
+          cursor: 'unused',
+        },
+      });
+      const second = await refreshFollowLinks(env, SESSION, { now: later });
+      expect(second).toMatchObject({ reachedEnd: true, shares: 1 + 5 });
+      expect(calls.map((c) => c.cursor)).toEqual([
+        '',
+        ...Array.from({ length: 5 }, (_, i) => `p${FIRST_REFRESH_MAX_PAGES + i}`),
+      ]);
+      expect(await syncRow()).toMatchObject({ newest_seen_at: later - 1000, gap_cursor: null });
+      expect(await readFollowLinks(env, DID, '7d', later)).toHaveLength(total + 1);
+    });
+
+    it('does not skip the posts past the page cap on an incremental run', async () => {
+      // Seed a high-water mark two days back, then come back to a busy timeline.
+      const t0 = Date.now() - 48 * HOUR;
+      stubTimeline({ '': { feed: [linkItem({ n: 0, at: t0, url: 'https://old.example' })] } });
+      await refreshFollowLinks(env, SESSION, { now: t0 + 1000 });
+
+      const now = Date.now();
+      const total = REFRESH_MAX_PAGES + 2;
+      const pages: Record<string, { feed: unknown[]; cursor?: string }> = {};
+      for (let i = 0; i < total; i++) {
+        pages[i === 0 ? '' : `p${i}`] = {
+          feed: [linkItem({ n: i + 1, at: now - (i + 1) * HOUR, url: `https://p${i}.example` })],
+          cursor: `p${i + 1}`,
+        };
+      }
+      pages[`p${total}`] = { feed: [textItem(1, t0 - HOUR)] };
+      stubTimeline(pages);
+      const first = await refreshFollowLinks(env, SESSION, { now });
+      expect(first).toMatchObject({ pages: REFRESH_MAX_PAGES, reachedEnd: false });
+      expect(await syncRow()).toMatchObject({
+        newest_seen_at: now - HOUR,
+        gap_cursor: `p${REFRESH_MAX_PAGES}`,
+        gap_stop_at: t0,
+      });
+
+      const calls = stubTimeline({
+        ...pages,
+        '': { feed: [textItem(2, now - 2 * HOUR)], cursor: 'x' },
+      });
+      const second = await refreshFollowLinks(env, SESSION, {
+        now: now + FOLLOW_LINKS_GATE_MS + 1,
+      });
+      expect(second).toMatchObject({ reachedEnd: true });
+      expect(calls.map((c) => c.cursor)).toEqual(['', 'p10', 'p11', 'p12']);
+      expect((await syncRow())?.gap_cursor).toBeNull();
+      expect(await readFollowLinks(env, DID, '7d', now)).toHaveLength(total + 1);
+    });
+
+    it('stops before a page that would pass the share cap, and resumes there', async () => {
+      const now = Date.now();
+      const perPage = 100;
+      const pageCount = MAX_SHARES_PER_REFRESH / perPage + 1;
+      const pages: Record<string, { feed: unknown[]; cursor?: string }> = {};
+      for (let p = 0; p < pageCount; p++) {
+        pages[p === 0 ? '' : `p${p}`] = {
+          feed: Array.from({ length: perPage }, (_, i) => {
+            const n = p * perPage + i;
+            return linkItem({ n, at: now - n * 60_000, url: `https://s${n}.example` });
+          }),
+          ...(p < pageCount - 1 ? { cursor: `p${p + 1}` } : {}),
+        };
+      }
+      stubTimeline(pages);
+      const first = await refreshFollowLinks(env, SESSION, { now });
+      expect(first).toMatchObject({ shares: MAX_SHARES_PER_REFRESH, reachedEnd: false });
+      expect((await syncRow())?.gap_cursor).toBe(`p${pageCount - 1}`);
+
+      const later = now + FOLLOW_LINKS_GATE_MS + 1;
+      stubTimeline({ ...pages, '': { feed: [textItem(1, now - 1000)], cursor: 'x' } });
+      const second = await refreshFollowLinks(env, SESSION, { now: later });
+      expect(second).toMatchObject({ shares: perPage, reachedEnd: true });
+      expect(await readFollowLinks(env, DID, '7d', later)).toHaveLength(60);
+      const count = await env.DB.prepare(
+        'SELECT COUNT(*) AS n FROM follow_link_shares WHERE user_did = ?'
+      )
+        .bind(DID)
+        .first<{ n: number }>();
+      expect(count?.n).toBe(pageCount * perPage);
     });
 
     it('is gated, and a concurrent claim loses', async () => {
@@ -472,6 +590,10 @@ describe('follow links store', () => {
       await seedSession(SCOPES);
       stubTimeline({ '': { feed: [] } });
       expect((await send('/api/v2/following-links?window=1y')).status).toBe(400);
+      // Inherited object keys are not windows either.
+      for (const key of ['toString', 'constructor', '__proto__']) {
+        expect((await send(`/api/v2/following-links?window=${key}`)).status).toBe(400);
+      }
     });
 
     it('dismisses, restores, and marks opened', async () => {
