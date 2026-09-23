@@ -3,6 +3,7 @@
 //
 //   GET  /api/v2/following-links?window=24h|3d|7d   serve from D1, refresh behind
 //        (200 { scopeRequired: true } until the reader grants getTimeline)
+//   GET  /api/v2/following-links/for?url=           who you follow shared one URL
 //   POST /api/v2/following-links/state              opened / dismissed / restored
 //   GET  /api/v2/following-links/probe              local-dev diagnostic (Phase 0)
 
@@ -14,6 +15,7 @@ import { extractLinkShare, type LinkShare, type TimelineItem } from '../services
 import {
   FOLLOW_LINKS_WINDOWS,
   followLinksNeedRefresh,
+  readFollowLinkSharers,
   readFollowLinks,
   readFollowLinksSync,
   refreshFollowLinks,
@@ -92,6 +94,30 @@ export async function handleGetFollowLinks(
       error: sync?.error ?? null,
     },
   });
+}
+
+/**
+ * GET /api/v2/following-links/for?url=
+ *
+ * The people you follow who shared this article, for the reader's Discussion
+ * panel. Served from what the last refresh stored; it never walks the timeline
+ * itself (that's /following's and Home's job), so opening an article costs one
+ * indexed query. Without the scope it answers empty, quietly: the panel is no
+ * place to ask for a permission.
+ */
+export async function handleFollowLinkSharers(
+  request: Request,
+  env: Env,
+  session: Session
+): Promise<Response> {
+  if (!hasRequiredScopes(session.grantedScopes, FOLLOWS_LINKS_SCOPES)) {
+    return json({ scopeRequired: true, sharers: [] });
+  }
+  const raw = new URL(request.url).searchParams.get('url');
+  const urlNormalized = raw ? normalizeArticleUrl(raw) : null;
+  if (!urlNormalized) return json({ error: 'Missing or invalid url' }, 400);
+  const sharers = await readFollowLinkSharers(env, session.did, urlNormalized);
+  return json({ scopeRequired: false, sharers });
 }
 
 const ACTIONS: FollowLinkAction[] = ['opened', 'dismissed', 'restored'];

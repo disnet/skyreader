@@ -65,6 +65,8 @@ const RATE_LIMITS: Record<string, RateLimitConfig> = {
   // gated to one per reader per 10 minutes server-side, whatever the call rate.
   '/api/v2/following-links': STANDARD_LIMIT,
   '/api/v2/following-links/state': STANDARD_LIMIT,
+  // One indexed query per article opened, like the mention counts.
+  '/api/v2/following-links/for': LIGHT_LIMIT,
 
   // AT Intents service-auth pre-verification. Keyed by client IP (not did) and checked
   // BEFORE the signature, since verifying a service-auth JWT triggers an outbound DID

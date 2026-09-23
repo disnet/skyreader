@@ -31,9 +31,10 @@ import type {
 } from '$lib/components/articleCardView.types';
 import { articleMentionsStore } from '$lib/stores/articleMentions.svelte';
 import { mentionLaneItemsStore } from '$lib/stores/mentionLaneItems.svelte';
+import { followLinkSharersStore } from '$lib/stores/followLinkSharers.svelte';
+import { byFollowedThenEngagement, followExtras } from '$lib/utils/discussionFollows';
 import { preferences } from '$lib/stores/preferences.svelte';
 import { cleanDiscussionNote } from '$lib/utils/discussionNote';
-import { byEngagement } from '$lib/utils/discussionSort';
 import { formatRelativeDate } from '$lib/utils/date';
 
 // Per-lane display metadata. The count + verb come from the network breakdown;
@@ -230,7 +231,19 @@ export function useAtmosphere(opts: UseAtmosphereOptions): AtmosphereApi {
       if (lane.count > 0) mentionLaneItemsStore.load(url, lane.id, { docUri: opts.itemAtUri?.() });
     }
     mentionLaneItemsStore.load(url, 'semble');
+    // Which of the people you follow shared it. One indexed read, and nothing at
+    // all for a guest or a reader who hasn't turned on From your follows.
+    followLinkSharersStore.load(url);
   });
+
+  // The people you follow who shared this, from your own timeline. Empty until
+  // the stream opens. See utils/discussionFollows.ts for how they merge in.
+  const followSharers = $derived.by(() => {
+    const url = opts.itemUrl();
+    if (!url || !streamOpen) return [];
+    return followLinkSharersStore.get(url).sharers;
+  });
+  const followedDids = $derived(new Set(followSharers.map((s) => s.did)));
 
   // Per-lane resolved people, keyed by lane. Reading through the store here (not
   // in the merge) keeps the derivation cheap to invalidate.
@@ -262,7 +275,8 @@ export function useAtmosphere(opts: UseAtmosphereOptions): AtmosphereApi {
   // total; a single populated lane needs no chips at all (the panel hides them).
   const filters = $derived.by<DiscussionFilterVM[]>(() => {
     const populated = laneRow.filter((lane) => lane.count > 0);
-    if (populated.length === 0) return [];
+    const followCount = followedDids.size;
+    if (populated.length === 0 && followCount === 0) return [];
     const all: DiscussionFilterVM = {
       id: 'all',
       label: 'All',
@@ -270,8 +284,23 @@ export function useAtmosphere(opts: UseAtmosphereOptions): AtmosphereApi {
       capped: populated.some((lane) => lane.capped),
       icon: null,
     };
+    // People you follow cut across networks, so their chip sits beside All
+    // rather than among the networks.
+    const following: DiscussionFilterVM[] =
+      followCount > 0
+        ? [
+            {
+              id: 'following',
+              label: 'People you follow',
+              count: followCount,
+              capped: false,
+              icon: 'users',
+            },
+          ]
+        : [];
     return [
       all,
+      ...following,
       ...populated.map((lane) => ({
         id: lane.id,
         label: lane.label,
@@ -294,7 +323,7 @@ export function useAtmosphere(opts: UseAtmosphereOptions): AtmosphereApi {
   function setFilter(id: DiscussionFilterId) {
     activeFilter = id;
     // Picking a lane is also a request to see it: make sure it is resolving.
-    if (id !== 'all') {
+    if (id !== 'all' && id !== 'following') {
       const url = opts.itemUrl();
       const lane = laneRow.find((l) => l.id === id);
       if (url && lane && lane.count > 0)
@@ -315,9 +344,11 @@ export function useAtmosphere(opts: UseAtmosphereOptions): AtmosphereApi {
     const entries: DiscussionEntryVM[] = [];
     let loading = false;
     let failed = false;
+    // `following` cuts across every lane, so it reads them all and narrows after.
+    const laneFilter = activeFilter === 'following' ? 'all' : activeFilter;
     for (const lane of laneRow) {
       if (lane.count === 0) continue;
-      if (activeFilter !== 'all' && activeFilter !== lane.id) continue;
+      if (laneFilter !== 'all' && laneFilter !== lane.id) continue;
       const state = laneItems.get(lane.id);
       if (!state || state.loading) {
         loading = true;
@@ -340,10 +371,22 @@ export function useAtmosphere(opts: UseAtmosphereOptions): AtmosphereApi {
           relativeTime: entry.createdAt ? formatRelativeDate(entry.createdAt) : null,
           isoTime: entry.createdAt,
           cleanNote: cleanDiscussionNote(entry.note, titles),
+          followed: followedDids.has(entry.did),
         });
       }
     }
-    entries.sort(byEngagement);
+
+    // Follows shares the lanes don't carry (reposts, mostly) are Bluesky rows.
+    // Held back from the other networks' filters; deduped against the Bluesky
+    // lane once it has resolved, so a follow's post isn't listed twice.
+    if (laneFilter === 'all' || laneFilter === 'bluesky') {
+      const bluesky = laneItems.get('bluesky');
+      const blueskyDids =
+        bluesky && !bluesky.loading ? new Set(bluesky.entries.map((e) => e.did)) : null;
+      entries.push(...followExtras(followSharers, blueskyDids, titles));
+    }
+    const inView = activeFilter === 'following' ? entries.filter((e) => e.followed) : entries;
+    inView.sort(byFollowedThenEngagement);
 
     // Split the conversation from the distribution. An entry with no words, no
     // quoted passage and no named collection is a bare link drop — a bridge or a
@@ -356,7 +399,7 @@ export function useAtmosphere(opts: UseAtmosphereOptions): AtmosphereApi {
     // an account whose post the bridge mirrors into a second lane, is still one
     // linker — and the line says who linked, not how many times.
     const linkers = new Set<string>();
-    for (const entry of entries) {
+    for (const entry of inView) {
       const saidSomething = Boolean(entry.cleanNote || entry.quote || entry.collections?.length);
       if (saidSomething) {
         said.push(entry);
@@ -372,7 +415,7 @@ export function useAtmosphere(opts: UseAtmosphereOptions): AtmosphereApi {
     // network shouldn't put an error over the people who did show up.
     return {
       loading,
-      failed: failed && entries.length === 0,
+      failed: failed && inView.length === 0,
       entries: said,
       linkOnly,
     };

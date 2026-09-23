@@ -625,6 +625,55 @@ describe('follow links store', () => {
     });
   });
 
+  describe('who you follow shared one URL', () => {
+    it('answers for any URL form, newest sharer first, ignoring dismissal', async () => {
+      await seedSession(SCOPES);
+      const now = Date.now();
+      stubTimeline({
+        '': {
+          feed: [
+            linkItem({ n: 1, at: now - HOUR, url: 'https://a.example/x', author: 'did:plc:maya' }),
+            linkItem({
+              n: 2,
+              at: now - 2 * HOUR,
+              url: 'https://a.example/x',
+              repostBy: 'did:plc:ben',
+            }),
+            linkItem({ n: 3, at: now - 3 * HOUR, url: 'https://b.example/other' }),
+          ],
+        },
+      });
+      await refreshFollowLinks(env, SESSION, { now });
+      await send('/api/v2/following-links/state', {
+        method: 'POST',
+        body: { url: 'https://a.example/x', action: 'dismissed' },
+      });
+
+      const res = await send(
+        `/api/v2/following-links/for?url=${encodeURIComponent('https://A.example/x/?utm_source=bsky')}`
+      );
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { sharers: { did: string; kind: string }[] };
+      expect(body.sharers.map((s) => [s.did, s.kind])).toEqual([
+        ['did:plc:maya', 'post'],
+        ['did:plc:ben', 'repost'],
+      ]);
+    });
+
+    it('answers empty without the scope, and never walks the timeline', async () => {
+      await seedSession(GRANULAR_SCOPES);
+      const calls = stubTimeline({ '': { feed: [] } });
+      const res = await send('/api/v2/following-links/for?url=https://a.example/x');
+      expect(await res.json()).toEqual({ scopeRequired: true, sharers: [] });
+      expect(calls).toHaveLength(0);
+    });
+
+    it('rejects a missing url', async () => {
+      await seedSession(SCOPES);
+      expect((await send('/api/v2/following-links/for')).status).toBe(400);
+    });
+  });
+
   describe('purgeFollowLinks', () => {
     it('drops shares past retention and state untouched for a month', async () => {
       const now = Date.now();
