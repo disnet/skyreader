@@ -136,6 +136,7 @@ export const ALL_POSSIBLE_SCOPES = [
   ...USERINPUT_SCOPES,
   ...USERINPUT_VOTE_SCOPES,
   ...USERINPUT_IMAGE_SCOPES,
+  ...FOLLOWS_LINKS_SCOPES,
 ].join(' ');
 
 // ---------------------------------------------------------------------------
@@ -147,7 +148,8 @@ export const ALL_POSSIBLE_SCOPES = [
 // sign-in asks for the same set again. See docs/OAUTH_SCOPES.md.
 // ---------------------------------------------------------------------------
 
-export type ScopeFeature = 'semble' | 'margin' | 'linkblog' | 'pckt' | 'offprint' | 'feedback';
+export type ScopeFeature =
+  'semble' | 'margin' | 'linkblog' | 'pckt' | 'offprint' | 'feedback' | 'follows';
 
 export const SCOPE_FEATURES: Record<ScopeFeature, string[]> = {
   semble: [...SEMBLE_SCOPES, ...SEMBLE_CONNECTION_SCOPES],
@@ -158,6 +160,7 @@ export const SCOPE_FEATURES: Record<ScopeFeature, string[]> = {
   pckt: [...LINKBLOG_SCOPES, ...PCKT_SCOPES],
   offprint: [...LINKBLOG_SCOPES, ...OFFPRINT_SCOPES],
   feedback: [...USERINPUT_SCOPES, ...USERINPUT_VOTE_SCOPES, ...USERINPUT_IMAGE_SCOPES],
+  follows: FOLLOWS_LINKS_SCOPES,
 };
 
 // The scopes whose presence means a reader opted into a feature, used to

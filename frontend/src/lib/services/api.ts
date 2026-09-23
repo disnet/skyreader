@@ -29,6 +29,8 @@ import type {
   SocialDocument,
   RoomInfo,
   RoomItem,
+  FollowLinksResponse,
+  FollowLinksWindow,
   User,
 } from '$lib/types';
 import { getLinkPostTitle, isLinkPost } from '$lib/utils/linkPost';
@@ -1798,6 +1800,24 @@ class ApiClient {
         author: article.author ?? undefined,
         publishedAt: article.publishedAt ?? undefined,
       }),
+    });
+  }
+
+  // From your follows — see docs/plans/FOLLOWS_LINKS_PLAN.md. The read answers
+  // `scopeRequired` (200) rather than a 403 until the reader has granted the
+  // getTimeline permission, so visiting the page never raises the app-wide
+  // re-login banner; the page's own empty state asks instead.
+  async getFollowLinks(window: FollowLinksWindow = '24h'): Promise<FollowLinksResponse> {
+    return this.fetch(`/api/v2/following-links?window=${window}`);
+  }
+
+  async setFollowLinkState(
+    url: string,
+    action: 'opened' | 'dismissed' | 'restored'
+  ): Promise<{ ok: boolean }> {
+    return this.fetch('/api/v2/following-links/state', {
+      method: 'POST',
+      body: JSON.stringify({ url, action }),
     });
   }
 

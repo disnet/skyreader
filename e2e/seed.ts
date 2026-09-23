@@ -249,12 +249,50 @@ export async function seedShareDraft(user: TestUser, opts: SeedShareDraftOpts): 
   ]);
 }
 
+export interface SeedFollowLinkShare {
+  url: string;
+  sharerDid: string;
+  sharerName: string;
+  title?: string;
+  text?: string;
+  kind?: 'post' | 'quote' | 'repost';
+  /** How long ago it was shared, in ms. */
+  ageMs?: number;
+}
+
+const FOLLOWS_LINKS_SCOPE = 'rpc:app.bsky.feed.getTimeline?aud=did:web:api.bsky.app%23bsky_appview';
+
+/**
+ * Stand in for a timeline refresh that already ran: grant the session the
+ * getTimeline scope, write the shares, and stamp the sync row fresh and complete
+ * so no request walks the (fake) PDS. See docs/plans/FOLLOWS_LINKS_PLAN.md.
+ */
+export async function seedFollowLinks(
+  user: TestUser,
+  shares: SeedFollowLinkShare[]
+): Promise<void> {
+  const now = Date.now();
+  await execD1([
+    `UPDATE sessions SET granted_scopes = ${sqlString(
+      `atproto repo:app.skyreader.feed.subscription repo:app.skyreader.social.follow ${FOLLOWS_LINKS_SCOPE}`
+    )} WHERE session_id = ${sqlString(user.sessionId)}`,
+    `INSERT OR REPLACE INTO follow_link_sync (user_did, last_poll_at, newest_seen_at, complete) VALUES (${sqlString(user.did)}, ${now}, ${now}, 1)`,
+    ...shares.map((s, i) => {
+      const normalized = s.url.replace(/\/$/, '');
+      return `INSERT INTO follow_link_shares (user_did, post_uri, sharer_did, kind, url, url_normalized, post_text, card_title, sharer_handle, sharer_name, shared_at) VALUES (${sqlString(user.did)}, ${sqlString(`at://${s.sharerDid}/app.bsky.feed.post/${i}`)}, ${sqlString(s.sharerDid)}, ${sqlString(s.kind ?? 'post')}, ${sqlString(s.url)}, ${sqlString(normalized)}, ${sqlNullableString(s.text)}, ${sqlNullableString(s.title)}, NULL, ${sqlString(s.sharerName)}, ${now - (s.ageMs ?? 60 * 60 * 1000)})`;
+    }),
+  ]);
+}
+
 export async function cleanupTestData(user: TestUser) {
   await execD1([
     `DELETE FROM channels WHERE user_did = '${user.did}'`,
     `DELETE FROM item_labels_cache WHERE user_did = '${user.did}'`,
     `DELETE FROM saved_articles WHERE user_did = '${user.did}'`,
     `DELETE FROM share_drafts WHERE user_did = '${user.did}'`,
+    `DELETE FROM follow_link_shares WHERE user_did = '${user.did}'`,
+    `DELETE FROM follow_link_state WHERE user_did = '${user.did}'`,
+    `DELETE FROM follow_link_sync WHERE user_did = '${user.did}'`,
     `DELETE FROM subscriptions_cache WHERE user_did = '${user.did}'`,
     `DELETE FROM user_settings WHERE user_did = '${user.did}'`,
     `DELETE FROM sessions WHERE did = '${user.did}'`,

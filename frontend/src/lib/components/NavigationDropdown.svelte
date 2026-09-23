@@ -158,7 +158,8 @@
     | 'folder'
     | 'users'
     | 'highlighter'
-    | 'quote';
+    | 'quote'
+    | 'share-2';
 
   // Navigation item type
   type NavItem =
@@ -418,6 +419,7 @@
     if (pathname === '/linkblog') return { type: 'icon', name: 'share' };
     if (pathname === '/highlights') return { type: 'icon', name: 'highlighter' };
     if (pathname === '/discover') return { type: 'icon', name: 'users' };
+    if (pathname === '/following') return { type: 'icon', name: 'share-2' };
     if (pathname === '/sources') return { type: 'icon', name: 'rss' };
     if (pathname === '/settings') return { type: 'icon', name: 'settings' };
 

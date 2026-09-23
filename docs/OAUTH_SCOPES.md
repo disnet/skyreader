@@ -30,6 +30,7 @@ callback).
 | `pckt`     | linkblog + `blog.pckt.document`                            | linkblog + `blog.pckt.document`                    |
 | `offprint` | linkblog + `app.offprint.document.article`                 | linkblog + `app.offprint.document.article`         |
 | `feedback` | `app.userinput.discussion/upvote` + `blob:image/*`         | `include:app.userinput.authBasic` + `blob:image/*` |
+| `follows`  | `rpc:app.bsky.feed.getTimeline?aud=…bsky_appview`          | same (granular)                                    |
 
 A gated route answers `403 { error: 'scope_upgrade_required', feature }`. The frontend offers
 "Allow access", which calls `POST /api/auth/upgrade { features, returnUrl }`. That starts a new

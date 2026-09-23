@@ -24,6 +24,8 @@
   import type { LaneCardVM } from '$lib/components/feed/homeLane';
   import { savesStore } from '$lib/stores/saves.svelte';
   import { roomsStore } from '$lib/stores/rooms.svelte';
+  import { followLinksStore } from '$lib/stores/followLinks.svelte';
+  import { followLinkTitle, openFollowLink, sharedByShort } from '$lib/utils/followLinks';
   import { extractRoomArticle, sortRoomItems } from '$lib/utils/roomArticle';
   import { magazineStore } from '$lib/stores/magazine.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
@@ -382,13 +384,37 @@
     return null;
   });
 
+  // From your follows: the most-shared links from your Bluesky follows, as one
+  // lane. Hidden until the reader has granted the timeline permission (the ask
+  // lives on /following, not here) and there is something to show. The store
+  // no-ops for a guest. See docs/plans/FOLLOWS_LINKS_PLAN.md.
+  onMount(() => void followLinksStore.load());
+
+  const FOLLOW_LANE_CAP = 8;
+  let followLinkByKey = $derived(new Map(followLinksStore.links.map((l) => [l.urlNormalized, l])));
+  let followItems = $derived.by((): LaneCardVM[] =>
+    followLinksStore.scopeRequired
+      ? []
+      : followLinksStore.links.slice(0, FOLLOW_LANE_CAP).map((l) => ({
+          key: l.urlNormalized,
+          title: followLinkTitle(l),
+          domain: l.site,
+          image: l.thumb,
+          faviconUrl: getFaviconUrl(l.url),
+          metaLabel: sharedByShort(l.sharers),
+          progress: null,
+          read: l.opened,
+        }))
+  );
+
   let isLoading = $derived(savesStore.loading && savesStore.articles.length === 0);
   let hasAnyLane = $derived(
     continueItems.length > 0 ||
       randomItems.length > 0 ||
       recentItems.length > 0 ||
       channelLanes.length > 0 ||
-      roomLanes.length > 0
+      roomLanes.length > 0 ||
+      followItems.length > 0
   );
 
   // --- Reader stack (shared with the saved list) ---
@@ -524,6 +550,19 @@
           items={continueItems}
           onOpen={openLaneItem}
           onHover={handlePrefetch}
+        />
+      {/if}
+
+      {#if followItems.length > 0}
+        <HomeLane
+          title="Shared by people you follow"
+          icon="share-2"
+          items={followItems}
+          action={{ kind: 'link', label: 'View all', href: '/following' }}
+          onOpen={(vm) => {
+            const link = followLinkByKey.get(vm.key);
+            if (link) void openFollowLink(link, reader);
+          }}
         />
       {/if}
 

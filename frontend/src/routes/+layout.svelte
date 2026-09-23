@@ -47,11 +47,12 @@
   // review), channels and the daily magazine — all Dexie-first, with their
   // server halves queued until sign-in. What still needs an account is what
   // cannot exist without one — the linkblog (posts to the user's PDS), the
-  // social Discover surface, reading rooms, and account settings. Those are
+  // social Discover surface, reading rooms, the links your Bluesky follows share
+  // (read from your own timeline), and account settings. Those are
   // the reason to sign in, so a guest who reaches one gets the sign-in screen
   // (returning here afterwards), not a page whose every load 401s.
   const GUEST_ROUTES = ['/feeds', '/sources', '/home', '/saved', '/daily', '/highlights'];
-  const ACCOUNT_ROUTES = ['/linkblog', '/discover', '/settings', '/rooms'];
+  const ACCOUNT_ROUTES = ['/linkblog', '/discover', '/settings', '/rooms', '/following'];
   function isAccountOnly(pathname: string): boolean {
     if (GUEST_ROUTES.includes(pathname)) return false;
     return ACCOUNT_ROUTES.some((route) => pathname === route || pathname.startsWith(`${route}/`));
