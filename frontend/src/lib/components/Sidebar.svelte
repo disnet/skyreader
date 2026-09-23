@@ -538,6 +538,15 @@
         <span class="nav-label">Rooms</span>
       </a>
       <a
+        href="/following"
+        class="nav-item nav-link"
+        class:active={$page.url.pathname === '/following'}
+        onclick={() => sidebarStore.closeMobile()}
+      >
+        <span class="nav-icon"><Icon name="share-2" /></span>
+        <span class="nav-label">From your follows</span>
+      </a>
+      <a
         href="/discover"
         class="nav-item nav-link"
         class:active={$page.url.pathname === '/discover'}

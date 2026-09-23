@@ -31,25 +31,41 @@ export function roomItemDomain(url: string): string | null {
   }
 }
 
+/** The metadata a surface already holds for a link, used where extraction
+ *  doesn't return a field. */
+export interface ArticleRef {
+  url: string;
+  title?: string | null;
+  author?: string | null;
+  description?: string | null;
+  image?: string | null;
+}
+
 /** Extract the article body for the reader. Null = no body came back; the
- *  caller should fall back to opening the URL directly. */
-export async function extractRoomArticle(item: RoomItem): Promise<SavedItem | null> {
-  const extracted = await api.extract(item.url).catch(() => null);
+ *  caller should fall back to opening the URL directly. Rooms and the
+ *  follows-links surface both open articles this way, without saving them. */
+export async function extractArticle(ref: ArticleRef): Promise<SavedItem | null> {
+  const extracted = await api.extract(ref.url).catch(() => null);
   if (!extracted?.content) return null;
   return {
     rkey: '',
     uri: '',
-    url: item.url,
-    title: extracted.title ?? item.title ?? null,
-    author: extracted.author ?? item.author ?? null,
-    description: extracted.description ?? item.description ?? null,
+    url: ref.url,
+    title: extracted.title ?? ref.title ?? null,
+    author: extracted.author ?? ref.author ?? null,
+    description: extracted.description ?? ref.description ?? null,
     content: extracted.content,
     contentType: null,
-    domain: extracted.domain ?? roomItemDomain(item.url),
-    image: extracted.image ?? item.image ?? null,
+    domain: extracted.domain ?? roomItemDomain(ref.url),
+    image: extracted.image ?? ref.image ?? null,
     wordCount: extracted.wordCount ?? null,
     publishedAt: extracted.published ?? null,
     savedAt: new Date().toISOString(),
     source: 'url',
   };
+}
+
+/** Extract a room article for the reader (see extractArticle). */
+export function extractRoomArticle(item: RoomItem): Promise<SavedItem | null> {
+  return extractArticle(item);
 }

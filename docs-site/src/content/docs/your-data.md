@@ -15,6 +15,7 @@ The short version: **your reading is private to you by default.** A few things a
 | Highlights and notes    | Skyreader's servers + your devices             | Private; a highlight you publish is public      |
 | Shared links (linkblog) | Your PDS                                       | Always public                                   |
 | Reading rooms           | Your PDS (joins); Skyreader's servers (reads)  | Joining is public; reads are an anonymous count |
+| Links from your follows | Skyreader's servers, for a week                | Private                                         |
 | Guest data              | Your device only                               | Private                                         |
 
 ## Subscriptions and Atmospheric sync
@@ -46,6 +47,10 @@ Shared links are always public. That's their point: a linkblog is a publication 
 ## Reading rooms
 
 Joining a room writes a public record to your PDS, so anyone can see you're reading along. What you read in a room shows up only as an anonymous count, stored on Skyreader. See [Reading rooms](/guide/reading-rooms/).
+
+## Links from your follows
+
+If you turn on [From your follows](/guide/from-your-follows/), Skyreader reads your Bluesky Following timeline and keeps the links it finds for a week, privately. It never posts anything.
 
 ## Seeing for yourself
 

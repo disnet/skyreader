@@ -2,7 +2,8 @@
  * An optional feature whose OAuth permission is requested the first time the
  * reader uses it (progressive scopes), rather than at sign-in.
  */
-export type ScopeFeature = 'semble' | 'margin' | 'linkblog' | 'pckt' | 'offprint' | 'feedback';
+export type ScopeFeature =
+  'semble' | 'margin' | 'linkblog' | 'pckt' | 'offprint' | 'feedback' | 'follows';
 
 /** The reader-facing name of a scope feature, for "X needs your permission" copy. */
 export const SCOPE_FEATURE_LABELS: Record<ScopeFeature, string> = {
@@ -12,6 +13,7 @@ export const SCOPE_FEATURE_LABELS: Record<ScopeFeature, string> = {
   pckt: 'pckt',
   offprint: 'Offprint',
   feedback: 'Feedback',
+  follows: 'From your follows',
 };
 
 export interface User {
@@ -1237,6 +1239,55 @@ export interface SavedItem {
   savedAt: string;
   source?: 'url' | 'feed' | 'document';
   itemGuid?: string;
+}
+
+// From your follows: the links people you follow share on Bluesky, grouped by
+// article. Served by GET /api/v2/following-links. See
+// docs/plans/FOLLOWS_LINKS_PLAN.md.
+export type FollowLinkShareKind = 'post' | 'quote' | 'repost';
+
+export interface FollowLinkSharer {
+  did: string;
+  handle: string | null;
+  name: string | null;
+  avatar: string | null;
+  kind: FollowLinkShareKind;
+  /** at-uri of the post that carried the link (the reposted post, for a repost) */
+  postUri: string;
+  /** Their words, truncated. For a repost, the original author's. */
+  text: string | null;
+  sharedAt: number;
+}
+
+export interface FollowLink {
+  url: string;
+  urlNormalized: string;
+  site: string;
+  title: string | null;
+  description: string | null;
+  thumb: string | null;
+  sharers: FollowLinkSharer[];
+  sharerCount: number;
+  firstSharedAt: number;
+  lastSharedAt: number;
+  opened: boolean;
+}
+
+export type FollowLinksWindow = '24h' | '3d' | '7d';
+
+export interface FollowLinksResponse {
+  /** True until the reader grants the getTimeline permission (a fresh sign-in). */
+  scopeRequired: boolean;
+  window?: FollowLinksWindow;
+  links: FollowLink[];
+  sync: {
+    /** A first refresh has finished. False = still gathering. */
+    complete: boolean;
+    /** This request started a refresh; ask again shortly for its results. */
+    refreshing: boolean;
+    lastPollAt: number | null;
+    error: string | null;
+  } | null;
 }
 
 // Reading Rooms (spike): a room IS a Semble/Margin collection, resolved by the
