@@ -37,14 +37,20 @@ CREATE INDEX IF NOT EXISTS idx_follow_link_shares_user_url
 
 -- Refresh bookkeeping, one row per reader. `last_poll_at` is both the gate and
 -- the lock (compare-and-set, like room_snapshots). `newest_seen_at` is the
--- high-water mark an incremental refresh pages back to; it only advances when a
--- refresh reached it, so a page that fails mid-walk leaves no gap behind it.
+-- high-water mark an incremental refresh pages back to. A refresh that errors
+-- leaves it alone; one that runs out of pages or shares before reaching it
+-- saves where it stopped as the gap (`gap_cursor`, walking down to
+-- `gap_stop_at`; `gap_at` is the oldest item it has reached), and later
+-- refreshes finish that walk. Either way no shares are skipped.
 CREATE TABLE IF NOT EXISTS follow_link_sync (
     user_did TEXT PRIMARY KEY,
     last_poll_at INTEGER NOT NULL DEFAULT 0,
     newest_seen_at INTEGER,
     complete INTEGER NOT NULL DEFAULT 0, -- a first refresh has finished
     last_error TEXT,
+    gap_cursor TEXT,                    -- timeline cursor to resume an unfinished walk
+    gap_stop_at INTEGER,                -- how far down that walk goes
+    gap_at INTEGER,                     -- the oldest item time it has reached
     FOREIGN KEY (user_did) REFERENCES users(did) ON DELETE CASCADE
 );
 
