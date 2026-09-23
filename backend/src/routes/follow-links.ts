@@ -61,7 +61,7 @@ export async function handleGetFollowLinks(
   }
 
   const param = new URL(request.url).searchParams.get('window') ?? '24h';
-  if (!(param in FOLLOW_LINKS_WINDOWS)) {
+  if (!Object.hasOwn(FOLLOW_LINKS_WINDOWS, param)) {
     return json({ error: 'window must be one of 24h, 3d, 7d' }, 400);
   }
   const window = param as FollowLinksWindow;
