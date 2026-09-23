@@ -134,6 +134,18 @@ export interface PDSRecoveryContext {
   sessionId: string;
 }
 
+interface RequestOptions {
+  /**
+   * Service-proxy target (`<did>#<service id>`). The PDS forwards the call to
+   * that service with a service-auth token, so an appview method like
+   * getTimeline can be read on the user's behalf. Needs a matching `rpc:` scope.
+   */
+  proxy?: string;
+}
+
+/** The Bluesky appview, as a service-proxy target. */
+export const BSKY_APPVIEW_PROXY = 'did:web:api.bsky.app#bsky_appview';
+
 /**
  * Client for interacting with the user's Personal Data Server (PDS)
  * Uses DPoP for authenticated requests
@@ -162,9 +174,10 @@ export class PDSClient {
   private async request<T>(
     method: string,
     endpoint: string,
-    body?: unknown
+    body?: unknown,
+    opts: RequestOptions = {}
   ): Promise<PDSResult<T>> {
-    const first = await this.attemptRequest<T>(method, endpoint, body);
+    const first = await this.attemptRequest<T>(method, endpoint, body, opts);
     if (!first.staleEndpoint || !this.recovery || this.recoveryAttempted) {
       return first.result;
     }
@@ -177,7 +190,7 @@ export class PDSClient {
       return first.result;
     }
 
-    const second = await this.attemptRequest<T>(method, endpoint, body);
+    const second = await this.attemptRequest<T>(method, endpoint, body, opts);
     if (second.staleEndpoint && !second.result.success) {
       // New host resolved but auth still rejected: the tokens were minted by
       // the old PDS's auth server and don't carry over. Signal re-auth.
@@ -235,7 +248,8 @@ export class PDSClient {
   private async attemptRequest<T>(
     method: string,
     endpoint: string,
-    body?: unknown
+    body?: unknown,
+    opts: RequestOptions = {}
   ): Promise<{ result: PDSResult<T>; staleEndpoint: boolean }> {
     // A session whose stored DPoP key isn't a usable private JWK can't sign
     // anything, so there is no request to attempt. Fail closed on one line
@@ -273,6 +287,9 @@ export class PDSClient {
         Authorization: `DPoP ${this.session.accessToken}`,
         DPoP: dpopProof,
       };
+      if (opts.proxy) {
+        headers['atproto-proxy'] = opts.proxy;
+      }
 
       const raw = isRawBody(body) ? body : null;
       if (body) {
@@ -523,6 +540,24 @@ export class PDSClient {
     return this.request<{ uri: string; cid: string; value: T }>(
       'GET',
       `com.atproto.repo.getRecord?${params}`
+    );
+  }
+
+  /**
+   * Read the user's Following timeline from the Bluesky appview, proxied
+   * through their PDS. Needs FOLLOWS_LINKS_SCOPES.
+   */
+  async getTimeline<T = unknown>(
+    cursor?: string,
+    limit = 100
+  ): Promise<PDSResult<{ feed: T[]; cursor?: string }>> {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (cursor) params.set('cursor', cursor);
+    return this.request<{ feed: T[]; cursor?: string }>(
+      'GET',
+      `app.bsky.feed.getTimeline?${params}`,
+      undefined,
+      { proxy: BSKY_APPVIEW_PROXY }
     );
   }
 

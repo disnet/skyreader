@@ -91,6 +91,15 @@ export const USERINPUT_VOTE_SCOPES = ['repo:app.userinput.upvote'];
 // The composer offers the attach control only when this one is granted.
 export const USERINPUT_IMAGE_SCOPES = ['blob:image/*'];
 
+// From your follows — reading the user's Bluesky Following timeline to collect the
+// links their follows share (docs/plans/FOLLOWS_LINKS_PLAN.md). An `rpc:` scope, not
+// a repo one: getTimeline is an appview method the PDS proxies on the user's
+// behalf, and `aud` names the appview it may be proxied to. Kept OUT of
+// GRANULAR_SCOPES for the usual reason: every live session predates it.
+export const FOLLOWS_LINKS_SCOPES = [
+  'rpc:app.bsky.feed.getTimeline?aud=did:web:api.bsky.app%23bsky_appview',
+];
+
 // All possible scopes (base + all integrations) — used in client metadata
 export const ALL_POSSIBLE_SCOPES = [
   GRANULAR_SCOPES,

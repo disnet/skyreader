@@ -61,6 +61,10 @@ const RATE_LIMITS: Record<string, RateLimitConfig> = {
   // Each attachment is its own upload of up to a megabyte, and a post can carry
   // four, so this one sits a little above the post ceiling it feeds.
   '/api/v2/feedback/image': { limit: 20, windowMs: 60000 },
+  // From your follows. A read is a D1 query; the timeline walk behind it is
+  // gated to one per reader per 10 minutes server-side, whatever the call rate.
+  '/api/v2/following-links': STANDARD_LIMIT,
+  '/api/v2/following-links/state': STANDARD_LIMIT,
 
   // AT Intents service-auth pre-verification. Keyed by client IP (not did) and checked
   // BEFORE the signature, since verifying a service-auth JWT triggers an outbound DID
