@@ -1,0 +1,415 @@
+// From your follows: the D1 half. Refreshes a reader's link shares from their
+// Following timeline and serves them grouped by article.
+// See docs/plans/FOLLOWS_LINKS_PLAN.md; extraction rules live in follow-links.ts.
+
+import type { Env, Session } from '../types';
+import { createPDSClient } from './pds-client';
+import {
+  extractLinkShare,
+  type LinkShare,
+  type ShareKind,
+  type TimelineItem,
+} from './follow-links';
+import { log } from '../utils/logger';
+
+/** A refresh is due once the last one is this old. */
+export const FOLLOW_LINKS_GATE_MS = 10 * 60 * 1000;
+/** How long a share is kept, and the widest window the surface serves. */
+export const FOLLOW_LINKS_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+/** How long opened/dismissed state outlives the shares it was about. */
+export const FOLLOW_LINKS_STATE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+/**
+ * Page caps. A first refresh walks back up to the retention window; a later one
+ * only back to the high-water mark, which is usually a page or two. ~470ms a
+ * page (Phase 0), so a full first walk is ~10s: fine under waitUntil.
+ */
+export const FIRST_REFRESH_MAX_PAGES = 20;
+export const REFRESH_MAX_PAGES = 10;
+const PAGE_SIZE = 100;
+/**
+ * One upsert per share, and D1 allows 1,000 queries plus subrequests per
+ * invocation. A link-heavy timeline could otherwise spend it all; stop paging
+ * once this many shares are written.
+ */
+export const MAX_SHARES_PER_REFRESH = 600;
+/** Rows read to build the served list; enough for a heavy week. */
+const SERVE_ROW_LIMIT = 3000;
+/** Articles served per request. The list ends; that is part of the calm. */
+export const SERVE_LINK_LIMIT = 60;
+
+export type FollowLinksWindow = '24h' | '3d' | '7d';
+export const FOLLOW_LINKS_WINDOWS: Record<FollowLinksWindow, number> = {
+  '24h': 24 * 60 * 60 * 1000,
+  '3d': 3 * 24 * 60 * 60 * 1000,
+  '7d': FOLLOW_LINKS_RETENTION_MS,
+};
+
+interface SyncRow {
+  last_poll_at: number;
+  newest_seen_at: number | null;
+  complete: number;
+  last_error: string | null;
+}
+
+export interface FollowLinksSync {
+  lastPollAt: number;
+  complete: boolean;
+  error: string | null;
+}
+
+export async function readFollowLinksSync(env: Env, did: string): Promise<FollowLinksSync | null> {
+  const row = await env.DB.prepare(
+    'SELECT last_poll_at, newest_seen_at, complete, last_error FROM follow_link_sync WHERE user_did = ?'
+  )
+    .bind(did)
+    .first<SyncRow>();
+  if (!row) return null;
+  return { lastPollAt: row.last_poll_at, complete: !!row.complete, error: row.last_error };
+}
+
+export function followLinksNeedRefresh(sync: FollowLinksSync | null, now: number): boolean {
+  return !sync || now - sync.lastPollAt >= FOLLOW_LINKS_GATE_MS;
+}
+
+/** When a timeline item landed in the feed: the repost's time for a repost. */
+function itemTime(item: TimelineItem): number | null {
+  const at = item.reason?.indexedAt ?? item.post?.indexedAt;
+  const ms = at ? Date.parse(at) : NaN;
+  return Number.isFinite(ms) ? ms : null;
+}
+
+export type RefreshResult =
+  | { refreshed: false; reason: 'gated' | 'locked' }
+  | { refreshed: true; pages: number; shares: number; reachedEnd: boolean; error?: string };
+
+/**
+ * Pull new link shares from the reader's Following timeline into D1.
+ *
+ * Safe to run from `waitUntil` and from several requests at once: the claim is
+ * a compare-and-set on `last_poll_at`, so only one caller walks. The walk goes
+ * newest-first and stops at the high-water mark (or, the first time, the
+ * retention window), the page cap, or the share cap. The high-water mark only
+ * advances when nothing failed, so an error mid-walk means the next refresh
+ * walks the same ground again (upserts make that harmless) instead of leaving
+ * a hole.
+ */
+export async function refreshFollowLinks(
+  env: Env,
+  session: Session,
+  opts: { force?: boolean; now?: number } = {}
+): Promise<RefreshResult> {
+  const did = session.did;
+  const now = opts.now ?? Date.now();
+  const existing = await env.DB.prepare(
+    'SELECT last_poll_at, newest_seen_at, complete, last_error FROM follow_link_sync WHERE user_did = ?'
+  )
+    .bind(did)
+    .first<SyncRow>();
+
+  if (
+    existing &&
+    !opts.force &&
+    !followLinksNeedRefresh(
+      { lastPollAt: existing.last_poll_at, complete: !!existing.complete, error: null },
+      now
+    )
+  ) {
+    return { refreshed: false, reason: 'gated' };
+  }
+
+  const claim = existing
+    ? await env.DB.prepare(
+        'UPDATE follow_link_sync SET last_poll_at = ? WHERE user_did = ? AND last_poll_at = ?'
+      )
+        .bind(now, did, existing.last_poll_at)
+        .run()
+    : await env.DB.prepare(
+        'INSERT INTO follow_link_sync (user_did, last_poll_at) VALUES (?, ?) ON CONFLICT(user_did) DO NOTHING'
+      )
+        .bind(did, now)
+        .run();
+  if (!claim.meta.changes) return { refreshed: false, reason: 'locked' };
+
+  const firstRun = !existing?.complete;
+  const retentionCutoff = now - FOLLOW_LINKS_RETENTION_MS;
+  const stopAt = Math.max(existing?.newest_seen_at ?? 0, retentionCutoff);
+  const maxPages = firstRun ? FIRST_REFRESH_MAX_PAGES : REFRESH_MAX_PAGES;
+
+  const pds = createPDSClient(session);
+  let cursor: string | undefined;
+  let pages = 0;
+  let written = 0;
+  let newest: number | null = null;
+  let reachedEnd = false;
+  let error: string | undefined;
+
+  while (pages < maxPages && written < MAX_SHARES_PER_REFRESH) {
+    const res = await pds.getTimeline<TimelineItem>(cursor, PAGE_SIZE);
+    if (!res.success) {
+      error = res.error;
+      break;
+    }
+    pages++;
+    const feed = res.data.feed ?? [];
+
+    const shares: LinkShare[] = [];
+    let pageOldest = Infinity;
+    for (const item of feed) {
+      const at = itemTime(item);
+      if (at === null) continue;
+      if (newest === null || at > newest) newest = at;
+      pageOldest = Math.min(pageOldest, at);
+      if (at < stopAt) continue;
+      const share = extractLinkShare(item, did);
+      if (share) shares.push(share);
+    }
+
+    const room = MAX_SHARES_PER_REFRESH - written;
+    const batch = shares.slice(0, room);
+    if (batch.length > 0) {
+      await env.DB.batch(batch.map((s) => upsertShare(env, did, s)));
+      written += batch.length;
+    }
+
+    cursor = res.data.cursor;
+    if (!cursor || feed.length === 0 || pageOldest < stopAt) {
+      reachedEnd = true;
+      break;
+    }
+  }
+
+  // Advance the high-water mark only past ground we actually covered.
+  const advance = !error && newest !== null;
+  await env.DB.prepare(
+    `UPDATE follow_link_sync
+        SET newest_seen_at = CASE WHEN ?1 THEN MAX(COALESCE(newest_seen_at, 0), ?2) ELSE newest_seen_at END,
+            complete = CASE WHEN ?3 THEN 1 ELSE complete END,
+            last_error = ?4
+      WHERE user_did = ?5`
+  )
+    .bind(advance ? 1 : 0, newest ?? 0, error ? 0 : 1, error ?? null, did)
+    .run();
+
+  if (error) {
+    log.warn('follow_links_refresh_failed', { did, pages, written, error });
+  } else {
+    log.info('follow_links_refreshed', { did, pages, written, reachedEnd, firstRun });
+  }
+  return { refreshed: true, pages, shares: written, reachedEnd, ...(error ? { error } : {}) };
+}
+
+function upsertShare(env: Env, did: string, s: LinkShare) {
+  const sharedAt = Date.parse(s.sharedAt);
+  return env.DB.prepare(
+    `INSERT INTO follow_link_shares
+       (user_did, post_uri, sharer_did, kind, url, url_normalized, post_text,
+        card_title, card_description, card_thumb, sharer_handle, sharer_name, sharer_avatar, shared_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(user_did, post_uri, sharer_did) DO UPDATE SET
+       post_text = excluded.post_text,
+       card_title = COALESCE(excluded.card_title, card_title),
+       card_description = COALESCE(excluded.card_description, card_description),
+       card_thumb = COALESCE(excluded.card_thumb, card_thumb),
+       sharer_handle = excluded.sharer_handle,
+       sharer_name = excluded.sharer_name,
+       sharer_avatar = excluded.sharer_avatar`
+  ).bind(
+    did,
+    s.postUri,
+    s.sharer.did,
+    s.kind,
+    s.url,
+    s.urlNormalized,
+    s.text,
+    s.card?.title ?? null,
+    s.card?.description ?? null,
+    s.card?.thumb ?? null,
+    s.sharer.handle ?? null,
+    s.sharer.displayName ?? null,
+    s.sharer.avatar ?? null,
+    Number.isFinite(sharedAt) ? sharedAt : Date.now()
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Serving
+
+interface ShareRow {
+  post_uri: string;
+  sharer_did: string;
+  kind: ShareKind;
+  url: string;
+  url_normalized: string;
+  post_text: string | null;
+  card_title: string | null;
+  card_description: string | null;
+  card_thumb: string | null;
+  sharer_handle: string | null;
+  sharer_name: string | null;
+  sharer_avatar: string | null;
+  shared_at: number;
+}
+
+export interface FollowLinkSharer {
+  did: string;
+  handle: string | null;
+  name: string | null;
+  avatar: string | null;
+  kind: ShareKind;
+  postUri: string;
+  text: string | null;
+  sharedAt: number;
+}
+
+export interface FollowLink {
+  /** The link to open: the posted URL behind the best card, tracking and all. */
+  url: string;
+  urlNormalized: string;
+  /** Host, for the byline and as the title of last resort. */
+  site: string;
+  title: string | null;
+  description: string | null;
+  thumb: string | null;
+  sharers: FollowLinkSharer[];
+  sharerCount: number;
+  firstSharedAt: number;
+  lastSharedAt: number;
+  opened: boolean;
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * Group rows (newest first) into one entry per article, ranked by how many
+ * distinct people shared it, then by the latest share. Pure, for testing.
+ *
+ * Each sharer appears once per article, at their latest share of it. The card
+ * is the freshest share that has one, since a bare-facet share has none and
+ * another follow's post of the same link usually does.
+ */
+export function groupFollowLinks(
+  rows: ShareRow[],
+  state: Map<string, { opened: boolean; dismissed: boolean }>,
+  limit = SERVE_LINK_LIMIT
+): FollowLink[] {
+  const byUrl = new Map<string, { rows: ShareRow[]; sharers: Map<string, ShareRow> }>();
+  for (const row of rows) {
+    if (state.get(row.url_normalized)?.dismissed) continue;
+    let group = byUrl.get(row.url_normalized);
+    if (!group) {
+      group = { rows: [], sharers: new Map() };
+      byUrl.set(row.url_normalized, group);
+    }
+    group.rows.push(row);
+    const prior = group.sharers.get(row.sharer_did);
+    if (!prior || row.shared_at > prior.shared_at) group.sharers.set(row.sharer_did, row);
+  }
+
+  const links: FollowLink[] = [];
+  for (const [urlNormalized, group] of byUrl) {
+    const byTime = [...group.rows].sort((a, b) => b.shared_at - a.shared_at);
+    const carded = byTime.find((r) => r.card_title) ?? byTime[0];
+    const sharers = [...group.sharers.values()]
+      .sort((a, b) => b.shared_at - a.shared_at)
+      .map((r) => ({
+        did: r.sharer_did,
+        handle: r.sharer_handle,
+        name: r.sharer_name,
+        avatar: r.sharer_avatar,
+        kind: r.kind,
+        postUri: r.post_uri,
+        text: r.post_text,
+        sharedAt: r.shared_at,
+      }));
+    links.push({
+      url: carded.url,
+      urlNormalized,
+      site: hostOf(urlNormalized),
+      title: carded.card_title,
+      description: carded.card_description,
+      thumb: carded.card_thumb,
+      sharers,
+      sharerCount: sharers.length,
+      firstSharedAt: byTime[byTime.length - 1].shared_at,
+      lastSharedAt: byTime[0].shared_at,
+      opened: !!state.get(urlNormalized)?.opened,
+    });
+  }
+
+  links.sort((a, b) => b.sharerCount - a.sharerCount || b.lastSharedAt - a.lastSharedAt);
+  return links.slice(0, limit);
+}
+
+export async function readFollowLinks(
+  env: Env,
+  did: string,
+  window: FollowLinksWindow,
+  now = Date.now()
+): Promise<FollowLink[]> {
+  const since = now - FOLLOW_LINKS_WINDOWS[window];
+  const [rows, state] = await env.DB.batch([
+    env.DB.prepare(
+      `SELECT post_uri, sharer_did, kind, url, url_normalized, post_text, card_title,
+              card_description, card_thumb, sharer_handle, sharer_name, sharer_avatar, shared_at
+         FROM follow_link_shares
+        WHERE user_did = ? AND shared_at >= ?
+        ORDER BY shared_at DESC
+        LIMIT ?`
+    ).bind(did, since, SERVE_ROW_LIMIT),
+    env.DB.prepare(
+      `SELECT url_normalized, opened_at, dismissed_at FROM follow_link_state WHERE user_did = ?`
+    ).bind(did),
+  ]);
+  const stateMap = new Map<string, { opened: boolean; dismissed: boolean }>();
+  for (const s of state.results as {
+    url_normalized: string;
+    opened_at: number | null;
+    dismissed_at: number | null;
+  }[]) {
+    stateMap.set(s.url_normalized, { opened: !!s.opened_at, dismissed: !!s.dismissed_at });
+  }
+  return groupFollowLinks(rows.results as ShareRow[], stateMap);
+}
+
+export type FollowLinkAction = 'opened' | 'dismissed' | 'restored';
+
+export async function setFollowLinkState(
+  env: Env,
+  did: string,
+  urlNormalized: string,
+  action: FollowLinkAction,
+  now = Date.now()
+): Promise<void> {
+  const opened = action === 'opened' ? now : null;
+  const dismissed = action === 'dismissed' ? now : null;
+  await env.DB.prepare(
+    `INSERT INTO follow_link_state (user_did, url_normalized, opened_at, dismissed_at, updated_at)
+     VALUES (?1, ?2, ?3, ?4, ?5)
+     ON CONFLICT(user_did, url_normalized) DO UPDATE SET
+       opened_at = COALESCE(opened_at, excluded.opened_at),
+       dismissed_at = CASE WHEN ?6 = 'restored' THEN NULL
+                           ELSE COALESCE(excluded.dismissed_at, dismissed_at) END,
+       updated_at = excluded.updated_at`
+  )
+    .bind(did, urlNormalized, opened, dismissed, now, action)
+    .run();
+}
+
+/** Hourly cron: drop shares past retention, and state nobody has touched in a month. */
+export async function purgeFollowLinks(env: Env, now = Date.now()): Promise<number> {
+  const [shares, state] = await env.DB.batch([
+    env.DB.prepare('DELETE FROM follow_link_shares WHERE shared_at < ?').bind(
+      now - FOLLOW_LINKS_RETENTION_MS
+    ),
+    env.DB.prepare('DELETE FROM follow_link_state WHERE updated_at < ?').bind(
+      now - FOLLOW_LINKS_STATE_RETENTION_MS
+    ),
+  ]);
+  return (shares.meta?.changes ?? 0) + (state.meta?.changes ?? 0);
+}
