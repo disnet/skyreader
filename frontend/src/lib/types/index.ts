@@ -1275,6 +1275,12 @@ export interface FollowLink {
 
 export type FollowLinksWindow = '24h' | '3d' | '7d';
 
+/** GET /api/v2/following-links/for: who you follow shared one article. */
+export interface FollowLinkSharersResponse {
+  scopeRequired: boolean;
+  sharers: FollowLinkSharer[];
+}
+
 export interface FollowLinksResponse {
   /** True until the reader grants the getTimeline permission (a fresh sign-in). */
   scopeRequired: boolean;

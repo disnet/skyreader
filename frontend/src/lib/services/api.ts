@@ -31,6 +31,7 @@ import type {
   RoomItem,
   FollowLinksResponse,
   FollowLinksWindow,
+  FollowLinkSharersResponse,
   User,
 } from '$lib/types';
 import { getLinkPostTitle, isLinkPost } from '$lib/utils/linkPost';
@@ -1809,6 +1810,12 @@ class ApiClient {
   // re-login banner; the page's own empty state asks instead.
   async getFollowLinks(window: FollowLinksWindow = '24h'): Promise<FollowLinksResponse> {
     return this.fetch(`/api/v2/following-links?window=${window}`);
+  }
+
+  /** Who you follow shared this article, for the Discussion panel. Empty (not
+   *  a 403) without the permission, so the panel never raises the re-login banner. */
+  async getFollowLinkSharers(url: string): Promise<FollowLinkSharersResponse> {
+    return this.fetch(`/api/v2/following-links/for?url=${encodeURIComponent(url)}`);
   }
 
   async setFollowLinkState(

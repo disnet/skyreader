@@ -484,6 +484,31 @@ export async function readFollowLinks(
   return groupFollowLinks(rows.results as ShareRow[], stateMap);
 }
 
+/**
+ * Who among the reader's follows shared this one article, newest first, across
+ * the whole retention window. Feeds the "People you follow" group in the
+ * reader's Discussion panel, for any article however it was opened. Dismissing
+ * a link on /following doesn't hide who shared it here.
+ */
+export async function readFollowLinkSharers(
+  env: Env,
+  did: string,
+  urlNormalized: string,
+  now = Date.now()
+): Promise<FollowLinkSharer[]> {
+  const rows = await env.DB.prepare(
+    `SELECT post_uri, sharer_did, kind, url, url_normalized, post_text, card_title,
+            card_description, card_thumb, sharer_handle, sharer_name, sharer_avatar, shared_at
+       FROM follow_link_shares
+      WHERE user_did = ? AND url_normalized = ? AND shared_at >= ?
+      ORDER BY shared_at DESC`
+  )
+    .bind(did, urlNormalized, now - FOLLOW_LINKS_RETENTION_MS)
+    .all<ShareRow>();
+  const [link] = groupFollowLinks(rows.results, new Map(), 1);
+  return link?.sharers ?? [];
+}
+
 export type FollowLinkAction = 'opened' | 'dismissed' | 'restored';
 
 export async function setFollowLinkState(

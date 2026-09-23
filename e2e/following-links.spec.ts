@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { seedFollowLinks } from './seed';
+import { seedFollowLinks, seedSavedArticle } from './seed';
 
 // From your follows (docs/plans/FOLLOWS_LINKS_PLAN.md): the page asks for the
 // timeline permission in place (never via the app-wide re-login banner), then
@@ -118,5 +118,40 @@ test.describe('From your follows', () => {
       'Lane Piece',
       'Week-old Piece',
     ]);
+  });
+
+  test("leads an article's Discussion with the people you follow", async ({
+    authedPage,
+    testUser,
+  }) => {
+    const url = 'https://example.com/discussed';
+    await seedSavedArticle(testUser, {
+      url,
+      title: 'A Discussed Piece',
+      content: '<p>' + 'Words worth reading. '.repeat(60) + '</p>',
+      wordCount: 180,
+    });
+    await seedFollowLinks(testUser, [
+      {
+        url,
+        sharerDid: 'did:plc:maya',
+        sharerName: 'Maya',
+        text: 'The part about margins is the best bit.',
+      },
+      { url, sharerDid: 'did:plc:ben', sharerName: 'Ben', kind: 'repost', ageMs: 2 * HOUR },
+    ]);
+
+    await authedPage.goto('/?saved=true');
+    await authedPage.getByText('A Discussed Piece').first().click({ timeout: 15_000 });
+
+    const discussion = authedPage.locator('section.reader-discussion');
+    await discussion.scrollIntoViewIfNeeded();
+    // Maya said something, so she's a row with her words and the mark.
+    const row = discussion.locator('li.entry', { hasText: 'Maya' });
+    await expect(row).toBeVisible({ timeout: 15_000 });
+    await expect(row.getByText('You follow')).toBeVisible();
+    await expect(row.getByText('The part about margins is the best bit.')).toBeVisible();
+    // Ben only reposted: no words of his own, so he's in the linked-by line.
+    await expect(discussion.locator('.also-linked')).toContainText('Ben');
   });
 });

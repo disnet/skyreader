@@ -27,6 +27,8 @@ Open a link to read it in the reader, like any article. It isn't saved unless yo
 
 Under each link, **… shared this** opens what each person said when they shared it, with a link to their post on Bluesky.
 
+The same works in reverse. Open any article, from a feed, your saves, or anywhere else, and if people you follow shared it, they lead its **Discussion**, marked **You follow**, with what they said. **People you follow** narrows the discussion to just them.
+
 **Day**, **3 days**, and **Week** change how far back the list looks. The **×** on a row hides that link, on every device.
 
 ## What's kept

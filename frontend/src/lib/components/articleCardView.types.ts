@@ -57,7 +57,8 @@ export interface LanePersonVM {
 }
 
 /** `all` is the resting state of the discussion: every lane, one stream. */
-export type DiscussionFilterId = LaneId | 'all';
+/** `following` narrows to people the reader follows on Bluesky, across lanes. */
+export type DiscussionFilterId = LaneId | 'all' | 'following';
 
 /** One chip in the discussion's filter row. `all` carries no icon. */
 export interface DiscussionFilterVM {
@@ -92,6 +93,9 @@ export interface DiscussionEntryVM extends LanePersonVM {
   /** `note` with the article's title and bare URLs stripped; null when nothing
       of substance was left. */
   cleanNote: string | null;
+  /** Someone the reader follows on Bluesky. Their rows lead the stream. See
+   *  docs/plans/FOLLOWS_LINKS_PLAN.md. */
+  followed?: boolean;
 }
 
 /**

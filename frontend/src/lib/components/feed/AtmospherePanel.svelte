@@ -655,6 +655,11 @@
                     {#if entry.displayName?.trim() && entry.handle}
                       <span class="entry-handle">@{entry.handle}</span>
                     {/if}
+                    <!-- Someone the reader follows on Bluesky. Their rows lead
+                     the stream; the mark says why this one is up here. -->
+                    {#if entry.followed}
+                      <span class="entry-follows">You follow</span>
+                    {/if}
                     {#if entry.headVerb}
                       <span class="entry-verb">{entry.headVerb}</span>
                     {/if}
@@ -793,9 +798,12 @@
             <span class="also-linked-label">Also linked by</span>
             {#each visibleLinks as entry (entry.key)}
               {@const label = displayNameFor(entry)}
+              {@const via = entry.followed
+                ? `${entry.headVerb ?? entry.laneLabel} · you follow`
+                : entry.laneLabel}
               {@const hint = entry.relativeTime
-                ? `${label} · ${entry.laneLabel} · ${entry.relativeTime}`
-                : `${label} · ${entry.laneLabel}`}
+                ? `${label} · ${via} · ${entry.relativeTime}`
+                : `${label} · ${via}`}
               {#if entry.url}
                 <a
                   class="also-link"
@@ -1807,6 +1815,16 @@
     min-width: 0;
     font-size: var(--text-sm);
     line-height: var(--leading-snug);
+  }
+
+  /* Quiet: a label, not a badge. It explains the order, it doesn't rank people. */
+  .entry-follows {
+    font-size: var(--text-xs);
+    color: var(--color-text-secondary);
+    padding: 0 0.3125rem;
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    line-height: 1.4;
   }
 
   .entry-name {

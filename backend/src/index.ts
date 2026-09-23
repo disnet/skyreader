@@ -108,6 +108,7 @@ import {
   handleRoomRead,
 } from './routes/rooms';
 import {
+  handleFollowLinkSharers,
   handleFollowLinkState,
   handleFollowLinksProbe,
   handleGetFollowLinks,
@@ -479,6 +480,10 @@ async function route(
     case url.pathname === '/api/v2/following-links':
       if (!session) return unauthorizedResponse(headers);
       response = await handleGetFollowLinks(request, env, ctx, session);
+      break;
+    case url.pathname === '/api/v2/following-links/for':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleFollowLinkSharers(request, env, session);
       break;
     case url.pathname === '/api/v2/following-links/state':
       if (!session) return unauthorizedResponse(headers);
