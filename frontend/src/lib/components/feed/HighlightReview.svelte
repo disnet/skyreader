@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { marginPublishQueue } from '$lib/stores/marginPublishQueue.svelte';
   import { appScrollTo } from '$lib/utils/appScroll';
   // Highlight review — a finite deck of a handful of highlights, one card at a
   // time. Deliberately not a durable issue like the daily magazine: a session is
@@ -1010,7 +1011,7 @@
       </button>
       <!-- A Margin note is a record in the reader's own atproto repo, so it
            needs an account. -->
-      {#if !shown.marginUri && !auth.isGuest}
+      {#if !shown.marginUri && !marginPublishQueue.has(shown.id) && !auth.isGuest}
         <button
           class="action-btn"
           onclick={handleSaveToMargin}
@@ -1274,7 +1275,7 @@
 
 <RemoveHighlightModal
   open={removePrompt}
-  onMargin={Boolean(live?.marginUri)}
+  onMargin={!!live && (!!live.marginUri || marginPublishQueue.has(live.id))}
   onRemove={confirmRemove}
   onclose={() => (removePrompt = false)}
 />

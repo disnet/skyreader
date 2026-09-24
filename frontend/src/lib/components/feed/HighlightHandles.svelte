@@ -386,9 +386,24 @@
     });
   });
 
+  // The handles render outside the reader overlay, which is where touches are
+  // normally kept from bubbling to PullToRefresh (see SavedReader). Without
+  // this, dragging the end knob down reads as a pull and refreshes the feed.
+  // Native listeners, not ontouch* attributes: Svelte delegates those to the
+  // root, after PullToRefresh's wrapper has already seen the event.
+  let layerEl: HTMLDivElement | undefined;
+  const stopTouch = (e: TouchEvent) => e.stopPropagation();
+  const touchEvents = ['touchstart', 'touchmove', 'touchend', 'touchcancel'] as const;
+
   onMount(() => {
     measure();
     frame = requestAnimationFrame(tick);
+    for (const type of touchEvents) {
+      layerEl?.addEventListener(type, stopTouch, { passive: true });
+    }
+    return () => {
+      for (const type of touchEvents) layerEl?.removeEventListener(type, stopTouch);
+    };
   });
 
   onDestroy(() => {
@@ -397,7 +412,7 @@
   });
 </script>
 
-<div class="highlight-handles">
+<div class="highlight-handles" bind:this={layerEl}>
   {#each previewBoxes as box, i (i)}
     <div
       class="preview"

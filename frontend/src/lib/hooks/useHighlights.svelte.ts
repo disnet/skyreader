@@ -1,6 +1,7 @@
 import { onDestroy } from 'svelte';
 import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
 import {
+  articleText,
   createSelector,
   createSelectorForElement,
   exceedsSelectorLimit,
@@ -17,6 +18,7 @@ import type { ItemLabelType, Highlight, TextQuoteSelector } from '$lib/types';
 import { wrapTextRange } from '$lib/utils/wrapTextRange';
 import { visibleClientRect } from '$lib/utils/paginatedSelection';
 import { MARGINALIA_ATTR } from '$lib/utils/textSelector';
+import { marginPublishQueue } from '$lib/stores/marginPublishQueue.svelte';
 import { GLOSS_MARKER_SVG, inkVariant } from '$lib/utils/marginaliaInk';
 
 const BLOCK_SELECTORS = 'p, h1, h2, h3, h4, h5, h6, blockquote, pre, figure, li';
@@ -343,7 +345,7 @@ export function useHighlights(params: HighlightParams) {
 
     // Check if this paragraph already has a highlight
     const highlights = itemLabelsStore.getHighlights(params.itemKey());
-    const paragraphText = blockEl.textContent ?? '';
+    const paragraphText = articleText(blockEl);
     const existingHighlight = highlights.find((h) => h.selector.exact === paragraphText);
 
     if (existingHighlight) {
@@ -762,14 +764,16 @@ export function useHighlights(params: HighlightParams) {
 
   /**
    * Remove a highlight (and its note), offering an undo. Undo restores it
-   * locally with the same id; a highlight that was on Margin is published
-   * again, since its Margin record went with the removal.
+   * locally with the same id; a highlight that was on Margin (or queued to be)
+   * is published again, since its Margin record went with the removal.
    */
   function removeHighlightWithUndo(highlightId: string) {
     const existing = findHighlight(highlightId);
     if (!existing) return;
     const itemKey = params.itemKey();
     const itemType = params.itemType();
+    // Read before the removal, which cancels a publish still in the queue.
+    const wasOnMargin = !!existing.marginUri || marginPublishQueue.has(highlightId);
     void removeFromMargin(existing);
     itemLabelsStore.removeHighlight(itemKey, highlightId);
     if (editingId === highlightId) editingId = null;
@@ -779,7 +783,6 @@ export function useHighlights(params: HighlightParams) {
     popoverState = null;
     requestAnimationFrame(applyHighlights);
 
-    const wasOnMargin = !!existing.marginUri;
     const toastId = toastStore.add('Highlight removed');
     toastStore.update(toastId, 'success', undefined, {
       label: 'Undo',
@@ -807,14 +810,15 @@ export function useHighlights(params: HighlightParams) {
   /**
    * Take a published highlight (and its note) private again: forget its Margin
    * record locally, then delete that record (queued if offline). Local first,
-   * so the note reads private at once, and so a queued publish that hasn't
-   * drained yet is cancelled rather than landing afterwards.
+   * so the note reads private at once. A publish still in the queue has no
+   * record yet; removing it from Margin cancels the queued publish instead.
    */
   async function unpublishFromMargin(highlightId: string) {
     await pendingNoteSave.catch(() => {});
     const hl = findHighlight(highlightId);
-    if (!hl?.marginUri) return;
-    await itemLabelsStore.setHighlightMargin(params.itemKey(), highlightId, null);
+    if (!hl) return;
+    if (!hl.marginUri && !marginPublishQueue.has(highlightId)) return;
+    if (hl.marginUri) await itemLabelsStore.setHighlightMargin(params.itemKey(), highlightId, null);
     await removeFromMargin(hl);
     const id = toastStore.add('Private again');
     toastStore.update(id, 'success');
@@ -982,7 +986,7 @@ export function useHighlights(params: HighlightParams) {
     const hl = itemLabelsStore
       .getHighlights(params.itemKey())
       .find((h) => h.id === popoverState!.highlightId);
-    return !!hl?.marginUri;
+    return !!hl && (!!hl.marginUri || marginPublishQueue.has(hl.id));
   }
 
   /**
@@ -1047,13 +1051,11 @@ export function useHighlights(params: HighlightParams) {
     if (!container) return;
 
     const paragraphs = Array.from(container.querySelectorAll(BLOCK_SELECTORS)) as HTMLElement[];
-    const para = paragraphs.filter((el) => (el.textContent?.trim() || '').length >= 20)[
-      paragraphIndex
-    ];
+    const para = paragraphs.filter((el) => articleText(el).trim().length >= 20)[paragraphIndex];
     if (!para) return;
 
     const highlights = itemLabelsStore.getHighlights(params.itemKey());
-    const paragraphText = para.textContent ?? '';
+    const paragraphText = articleText(para);
     const existingHighlight = highlights.find((h) => h.selector.exact === paragraphText);
 
     if (existingHighlight) {

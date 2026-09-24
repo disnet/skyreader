@@ -3,6 +3,7 @@
   import Icon from '$lib/components/Icon.svelte';
   import { tooltip } from '$lib/actions/tooltip';
   import type { Highlight } from '$lib/types';
+  import { marginPublishQueue } from '$lib/stores/marginPublishQueue.svelte';
 
   interface Props {
     highlight: Highlight;
@@ -131,7 +132,10 @@
   // whatever was written goes with it into the store, not into the void.
   onDestroy(commit);
 
-  const onMargin = $derived(!!highlight.marginUri);
+  // A publish queued offline counts: it goes public once the queue drains, and
+  // "Make private" is what cancels it.
+  const queued = $derived(!highlight.marginUri && marginPublishQueue.has(highlight.id));
+  const onMargin = $derived(!!highlight.marginUri || queued);
   const hasNote = $derived(!!highlight.note?.trim());
 </script>
 
@@ -139,7 +143,11 @@
 {#snippet visibility()}
   <span
     class="tool-status visibility"
-    use:tooltip={onMargin ? 'Public on margin.at' : 'Only you can see this'}
+    use:tooltip={queued
+      ? 'Public on margin.at once it syncs'
+      : onMargin
+        ? 'Public on margin.at'
+        : 'Only you can see this'}
   >
     <Icon name={onMargin ? 'globe' : 'lock'} size={12} />
     {onMargin ? 'Public' : 'Private'}

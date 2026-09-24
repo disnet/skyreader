@@ -35,6 +35,16 @@ export function articleTextWalker(container: Node): TreeWalker {
   });
 }
 
+/** The article text under `el`: its `textContent` minus any `[data-marginalia]`. */
+export function articleText(el: Node): string {
+  const walker = articleTextWalker(el);
+  let text = '';
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    text += node.textContent ?? '';
+  }
+  return text;
+}
+
 /**
  * Build a map of text nodes and their character offsets within a container.
  * Returns { text: concatenated string, nodes: array of { node, start, end } }
@@ -118,24 +128,15 @@ export function createSelectorForElement(
   element: HTMLElement,
   container: HTMLElement
 ): TextQuoteSelector {
-  const exact = (element.textContent ?? '').slice(0, MAX_EXACT_LENGTH);
-  const { text } = buildTextMap(container);
-
-  // Find the element's text offset in the container
-  const beforeRange = document.createRange();
-  beforeRange.setStartBefore(container.firstChild || container);
-  beforeRange.setEndBefore(element);
-  const prefix = beforeRange.toString().slice(-MAX_CONTEXT_LENGTH);
-
-  // Find suffix: text after this element
-  const afterRange = document.createRange();
-  if (element.nextSibling) {
-    afterRange.setStartAfter(element);
-  } else {
-    afterRange.setStart(element, element.childNodes.length);
-  }
-  afterRange.setEndAfter(container.lastChild || container);
-  const suffix = afterRange.toString().slice(0, MAX_CONTEXT_LENGTH);
+  // Read through the text map, not `textContent`/`Range.toString()`, so a gloss
+  // unfolded inside or around the element stays out of the quote and context.
+  const { text, nodes } = buildTextMap(container);
+  const inside = nodes.filter((n) => element.contains(n.node));
+  const start = inside[0]?.start ?? 0;
+  const end = inside.at(-1)?.end ?? 0;
+  const exact = text.slice(start, end).slice(0, MAX_EXACT_LENGTH);
+  const prefix = text.slice(Math.max(0, start - MAX_CONTEXT_LENGTH), start);
+  const suffix = text.slice(end, end + MAX_CONTEXT_LENGTH);
 
   return {
     type: 'TextQuoteSelector',

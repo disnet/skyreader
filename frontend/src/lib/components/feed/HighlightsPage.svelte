@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { marginPublishQueue } from '$lib/stores/marginPublishQueue.svelte';
   import { shellToolbar } from '$lib/actions/shell-toolbar';
   import { appScrollTo } from '$lib/utils/appScroll';
   import NavigationDropdown from '$lib/components/NavigationDropdown.svelte';
@@ -144,7 +145,7 @@
         text: highlight.selector.exact,
         note: highlight.note,
         createdAt: highlight.createdAt,
-        isMargin: Boolean(highlight.marginUri),
+        isMargin: Boolean(highlight.marginUri) || marginPublishQueue.has(highlight.id),
         intent: highlight.reviewIntent ?? REVIEW_INTENT_DEFAULT,
         highlight,
       });

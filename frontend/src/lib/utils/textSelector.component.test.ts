@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import type { TextQuoteSelector } from '$lib/types';
 import {
   MAX_EXACT_LENGTH,
+  articleText,
   createSelector,
+  createSelectorForElement,
   exceedsSelectorLimit,
   findTextInDOM,
   MARGINALIA_ATTR,
@@ -139,5 +141,23 @@ describe('marginalia drawn into the article', () => {
     const selector = createSelector(range, container);
     expect(selector.exact).toBe('book');
     expect(selector.prefix).toBe('The note was the point.The ');
+  });
+
+  it('quotes a whole paragraph without the gloss unfolded inside it', () => {
+    const container = document.createElement('div');
+    container.innerHTML =
+      '<p>Before.</p>' +
+      `<p>The note was <span ${MARGINALIA_ATTR}>Private Publish Done</span>the point.</p>` +
+      `<div ${MARGINALIA_ATTR}>a gloss</div>` +
+      '<p>After.</p>';
+    document.body.replaceChildren(container);
+    const para = container.children[1] as HTMLElement;
+    expect(articleText(para)).toBe('The note was the point.');
+    expect(createSelectorForElement(para, container)).toEqual({
+      type: 'TextQuoteSelector',
+      exact: 'The note was the point.',
+      prefix: 'Before.',
+      suffix: 'After.',
+    });
   });
 });
