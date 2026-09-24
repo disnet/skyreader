@@ -1,11 +1,13 @@
 <script lang="ts">
   import { shellToolbar } from '$lib/actions/shell-toolbar';
   import { appScrollTo } from '$lib/utils/appScroll';
-  // The Home view: the default landing surface. Not a feed — a fixed composition
-  // of lanes drawn from the reader's saved pile (Continue reading / From your saved
-  // / Recently saved, then one lane per saved channel), so opening the app offers
-  // something to read rather than an undifferentiated river. Reuses the saved-list
-  // reader stack so a tile opens the same in-app reader as everywhere else.
+  // The Home view: the default landing surface. Not a feed — a composition of
+  // lanes drawn from the reader's saved pile (Continue reading / From your saved
+  // / Recently saved, then one lane per room and saved channel), so opening the
+  // app offers something to read rather than an undifferentiated river. The
+  // reader can hide and reorder sections (Customize; see utils/homeLayout.ts).
+  // Reuses the saved-list reader stack so a tile opens the same in-app reader as
+  // everywhere else.
   import { onMount } from 'svelte';
   import NavigationDropdown from '$lib/components/NavigationDropdown.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
@@ -20,6 +22,20 @@
   import MagazineRail from '$lib/components/feed/MagazineRail.svelte';
   import HighlightReviewCard from '$lib/components/feed/HighlightReviewCard.svelte';
   import GuestModeBanner from '$lib/components/feed/GuestModeBanner.svelte';
+  import HomeCustomizeDialog from '$lib/components/feed/HomeCustomizeDialog.svelte';
+  import Icon from '$lib/components/Icon.svelte';
+  import { auth } from '$lib/stores/auth.svelte';
+  import {
+    channelSectionId,
+    EMPTY_HOME_LAYOUT,
+    HOME_SECTION,
+    mergeHomeOrder,
+    orderHomeSections,
+    pruneHomeLayout,
+    roomSectionId,
+    type HomeLayout,
+    type HomeSectionOption,
+  } from '$lib/utils/homeLayout';
   import { goto } from '$app/navigation';
   import type { LaneCardVM } from '$lib/components/feed/homeLane';
   import { savesStore } from '$lib/stores/saves.svelte';
@@ -51,7 +67,7 @@
     savedAtMs,
     savedItemLabelKeys,
   } from '$lib/utils/savedPile';
-  import { preferences, type CardDensity, type DefaultView } from '$lib/stores/preferences.svelte';
+  import { preferences } from '$lib/stores/preferences.svelte';
   import {
     datePresetToMs,
     isSavedRowArchived,
@@ -60,20 +76,6 @@
     type FeedDisplayItem,
   } from '$lib/stores/feedView.svelte';
   import type { FilteredView, RoomItem, SavedItem, SortOrder } from '$lib/types';
-
-  // Quiet Home preferences strip (under the greeting). "Opens to" reuses the
-  // global default-view preference (consumed by the `/` redirector); "Cards"
-  // drives the lane-tile density variables set on .home-body below.
-  const defaultViewOptions: { value: DefaultView; label: string }[] = [
-    { value: 'home', label: 'Home' },
-    { value: 'feeds', label: 'Feeds' },
-    { value: 'saved', label: 'Saved' },
-  ];
-  const densityOptions: { value: CardDensity; label: string }[] = [
-    { value: 'compact', label: 'Compact' },
-    { value: 'cozy', label: 'Cozy' },
-    { value: 'comfortable', label: 'Comfortable' },
-  ];
 
   const CONTINUE_CAP = 12;
   const RANDOM_CAP = 12;
@@ -305,6 +307,7 @@
   }
 
   interface ChannelLane {
+    id: string;
     view: FilteredView;
     items: LaneCardVM[];
   }
@@ -316,7 +319,11 @@
           enriched.filter((e) => matchesChannel(e.s, v)),
           v.sortOrder
         ).slice(0, CHANNEL_CAP);
-        return { view: v, items: matched.map((e) => toVM(e.s, null)) };
+        return {
+          id: channelSectionId(v.uuid),
+          view: v,
+          items: matched.map((e) => toVM(e.s, null)),
+        };
       })
       .filter((lane) => lane.items.length > 0)
   );
@@ -340,6 +347,7 @@
   let roomLanes = $derived.by(() =>
     roomsStore.rooms
       .map((room) => ({
+        id: roomSectionId(room.subject),
         subject: room.subject,
         title: room.name ?? 'Untitled room',
         byKey: new Map(room.items.map((i) => [i.urlNormalized, i])),
@@ -426,6 +434,97 @@
       followItems.length > 0
   );
 
+  // --- Layout: which sections show, and in what order ---
+  // Every section Home can show right now, in its built-in order. Rooms and
+  // channels are listed even while empty (their lanes still hide then), so the
+  // reader can place one before it has anything in it.
+  let builtInSections = $derived.by((): HomeSectionOption[] => [
+    { id: HOME_SECTION.highlights, label: 'Revisit your highlights', icon: 'highlighter' },
+    { id: HOME_SECTION.magazine, label: 'Daily magazine', icon: 'newspaper' },
+    { id: HOME_SECTION.continue, label: 'Continue reading', icon: 'clock' },
+    ...(auth.isAuthenticated
+      ? [
+          {
+            id: HOME_SECTION.follows,
+            label: 'Shared by people you follow',
+            icon: 'share-2' as const,
+          },
+        ]
+      : []),
+    { id: HOME_SECTION.random, label: 'Random picks', icon: 'layers' },
+    { id: HOME_SECTION.recent, label: 'Recently saved', icon: 'bookmark' },
+    ...roomsStore.rooms.map((room): HomeSectionOption => ({
+      id: roomSectionId(room.subject),
+      label: room.name ?? 'Untitled room',
+      icon: 'book-open',
+      kind: 'Room',
+    })),
+    ...savedChannels.map((v): HomeSectionOption => ({
+      id: channelSectionId(v.uuid),
+      label: v.name,
+      icon: 'filter',
+      kind: 'Channel',
+    })),
+  ]);
+
+  let sections = $derived.by(() => {
+    const byId = new Map(builtInSections.map((o) => [o.id, o]));
+    return orderHomeSections(
+      builtInSections.map((o) => o.id),
+      preferences.homeLayout.order
+    ).map((id) => byId.get(id)!);
+  });
+  let hiddenSections = $derived(new Set(preferences.homeLayout.hidden));
+  let visibleSectionIds = $derived(
+    sections.map((o) => o.id).filter((id) => !hiddenSections.has(id))
+  );
+
+  let roomLaneById = $derived(new Map(roomLanes.map((lane) => [lane.id, lane])));
+  let channelLaneById = $derived(new Map(channelLanes.map((lane) => [lane.id, lane])));
+
+  function laneHasItems(id: string): boolean {
+    switch (id) {
+      case HOME_SECTION.continue:
+        return continueItems.length > 0;
+      case HOME_SECTION.follows:
+        return followItems.length > 0;
+      case HOME_SECTION.random:
+        return randomItems.length > 0;
+      case HOME_SECTION.recent:
+        return recentItems.length > 0;
+      default:
+        return roomLaneById.has(id) || channelLaneById.has(id);
+    }
+  }
+  // There is something to read, but the reader has hidden every lane holding it.
+  let allLanesHidden = $derived(hasAnyLane && !visibleSectionIds.some(laneHasItems));
+
+  let customizeOpen = $state(false);
+
+  // Every layout write also forgets deleted channels (see pruneHomeLayout).
+  // Against all channels, not just saved ones: one switched to river mode and
+  // back keeps its place.
+  function saveLayout(layout: HomeLayout) {
+    preferences.setHomeLayout(
+      pruneHomeLayout(layout, new Set(filteredViewsStore.views.map((v) => v.uuid)))
+    );
+  }
+
+  function reorderSections(order: string[]) {
+    saveLayout({
+      order: mergeHomeOrder(preferences.homeLayout.order, order),
+      hidden: preferences.homeLayout.hidden,
+    });
+  }
+
+  function toggleSection(id: string) {
+    const hidden = preferences.homeLayout.hidden;
+    saveLayout({
+      order: preferences.homeLayout.order,
+      hidden: hidden.includes(id) ? hidden.filter((h) => h !== id) : [...hidden, id],
+    });
+  }
+
   // --- Reader stack (shared with the saved list) ---
   const reader = useReaderStack();
   let readerItem = $derived(reader.readerItem);
@@ -470,39 +569,102 @@
   }
 </script>
 
-{#snippet homeControls()}
-  <label class="control-group">
-    <span class="control-label">Opens to</span>
-    <select
-      class="control-select"
-      value={preferences.defaultView}
-      onchange={(e) => preferences.setDefaultView(e.currentTarget.value as DefaultView)}
-    >
-      {#each defaultViewOptions as option}
-        <option value={option.value}>{option.label}</option>
-      {/each}
-    </select>
-  </label>
+{#snippet customizeButton()}
+  <button type="button" class="customize-button" onclick={() => (customizeOpen = true)}>
+    <Icon name="sliders" size={14} />
+    Customize
+  </button>
+{/snippet}
 
-  <label class="control-group">
-    <span class="control-label">Cards</span>
-    <select
-      class="control-select"
-      value={preferences.cardDensity}
-      onchange={(e) => preferences.setCardDensity(e.currentTarget.value as CardDensity)}
-    >
-      {#each densityOptions as option}
-        <option value={option.value}>{option.label}</option>
-      {/each}
-    </select>
-  </label>
+{#snippet homeSection(id: string)}
+  {#if id === HOME_SECTION.highlights}
+    <HighlightReviewCard />
+  {:else if id === HOME_SECTION.magazine}
+    <MagazineRail
+      issues={magazineStore.magazines}
+      generating={magazineStore.generating}
+      onGenerate={generateMagazine}
+      onOpen={(rkey) => goto(`/daily?id=${rkey}`)}
+    />
+  {:else if id === HOME_SECTION.continue}
+    {#if continueItems.length > 0}
+      <HomeLane
+        title="Continue reading"
+        icon="clock"
+        items={continueItems}
+        onOpen={openLaneItem}
+        onHover={handlePrefetch}
+      />
+    {/if}
+  {:else if id === HOME_SECTION.follows}
+    {#if followItems.length > 0}
+      <HomeLane
+        title="Shared by people you follow"
+        icon="share-2"
+        items={followItems}
+        action={{ kind: 'link', label: 'View all', href: FOLLOWING_PATH }}
+        onOpen={(vm) => {
+          const link = followLinkByKey.get(vm.key);
+          if (link) void openFollowLink(link, reader);
+        }}
+      />
+    {/if}
+  {:else if id === HOME_SECTION.random}
+    {#if randomItems.length > 0}
+      <HomeLane
+        title="Random picks"
+        icon="layers"
+        items={randomItems}
+        action={{ kind: 'button', label: 'Shuffle', icon: 'refresh-cw', onClick: reshuffle }}
+        onOpen={openLaneItem}
+        onHover={handlePrefetch}
+      />
+    {/if}
+  {:else if id === HOME_SECTION.recent}
+    {#if recentItems.length > 0}
+      <HomeLane
+        title="Recently saved"
+        icon="bookmark"
+        items={recentItems}
+        action={{ kind: 'link', label: 'View all', href: '/saved' }}
+        onOpen={openLaneItem}
+        onHover={handlePrefetch}
+      />
+    {/if}
+  {:else if roomLaneById.has(id)}
+    {@const lane = roomLaneById.get(id)!}
+    <HomeLane
+      title={lane.title}
+      icon="book-open"
+      items={lane.items}
+      action={{
+        kind: 'link',
+        label: 'Open room',
+        href: `/rooms?uri=${encodeURIComponent(lane.subject)}`,
+      }}
+      onOpen={(vm) => {
+        const item = lane.byKey.get(vm.key);
+        if (item) void openRoomArticle(lane.subject, item);
+      }}
+    />
+  {:else if channelLaneById.has(id)}
+    {@const lane = channelLaneById.get(id)!}
+    <HomeLane
+      title={lane.view.name}
+      icon="filter"
+      items={lane.items}
+      action={{ kind: 'link', label: 'View all', href: `/saved?view=${lane.view.uuid}` }}
+      onOpen={openLaneItem}
+      onHover={handlePrefetch}
+    />
+  {/if}
 {/snippet}
 
 <div class="home-page">
   <header class="home-header" use:shellToolbar>
     <div class="header-inner">
       <NavigationDropdown currentTitle="Home" />
-      <div class="home-controls">{@render homeControls()}</div>
+      {@render customizeButton()}
     </div>
   </header>
 
@@ -514,118 +676,63 @@
       </div>
 
       <!-- Below 1000px the toolbar strip is gone (mobile uses the bottom bar), so
-           the same controls ride in the masthead there instead. -->
-      <div class="home-controls masthead-controls">{@render homeControls()}</div>
+           the button rides in the masthead there instead. -->
+      <div class="masthead-customize">{@render customizeButton()}</div>
     </div>
 
     <!-- Renders itself only for a guest, and only until dismissed. -->
     <GuestModeBanner />
 
-    {#if !isLoading}
-      <!-- Highlights and the daily magazine work from local data for a guest
-           (the server half queues until sign-in), so both surfaces show. -->
-      <HighlightReviewCard />
-      <MagazineRail
-        issues={magazineStore.magazines}
-        generating={magazineStore.generating}
-        onGenerate={generateMagazine}
-        onOpen={(rkey) => goto(`/daily?id=${rkey}`)}
-      />
-    {/if}
-
     {#if isLoading}
-      <HomeLane title="Continue reading" icon="clock" items={[]} loading onOpen={() => {}} />
-      <HomeLane title="Random picks" icon="layers" items={[]} loading onOpen={() => {}} />
-    {:else if !hasAnyLane}
-      {#if subscriptionsStore.subscriptions.length === 0}
-        <LibraryEmptyState
-          onAddFeed={() => sidebarStore.openAddFeedModal()}
-          onAddHandle={() => sidebarStore.openAddHandleModal()}
-        />
-      {:else}
-        <EmptyState
-          title="Nothing to read here yet"
-          description="Save an article and it collects here: your recent reads, a few to pick back up, and a rotating handful from your pile."
-          actionHref="/feeds"
-          actionText="Browse your feeds"
-          icon="📚"
-        />
+      {#if !hiddenSections.has(HOME_SECTION.continue)}
+        <HomeLane title="Continue reading" icon="clock" items={[]} loading onOpen={() => {}} />
+      {/if}
+      {#if !hiddenSections.has(HOME_SECTION.random)}
+        <HomeLane title="Random picks" icon="layers" items={[]} loading onOpen={() => {}} />
       {/if}
     {:else}
-      {#if continueItems.length > 0}
-        <HomeLane
-          title="Continue reading"
-          icon="clock"
-          items={continueItems}
-          onOpen={openLaneItem}
-          onHover={handlePrefetch}
-        />
-      {/if}
-
-      {#if followItems.length > 0}
-        <HomeLane
-          title="Shared by people you follow"
-          icon="share-2"
-          items={followItems}
-          action={{ kind: 'link', label: 'View all', href: FOLLOWING_PATH }}
-          onOpen={(vm) => {
-            const link = followLinkByKey.get(vm.key);
-            if (link) void openFollowLink(link, reader);
-          }}
-        />
-      {/if}
-
-      {#if randomItems.length > 0}
-        <HomeLane
-          title="Random picks"
-          icon="layers"
-          items={randomItems}
-          action={{ kind: 'button', label: 'Shuffle', icon: 'refresh-cw', onClick: reshuffle }}
-          onOpen={openLaneItem}
-          onHover={handlePrefetch}
-        />
-      {/if}
-
-      {#if recentItems.length > 0}
-        <HomeLane
-          title="Recently saved"
-          icon="bookmark"
-          items={recentItems}
-          action={{ kind: 'link', label: 'View all', href: '/saved' }}
-          onOpen={openLaneItem}
-          onHover={handlePrefetch}
-        />
-      {/if}
-
-      {#each roomLanes as lane (lane.subject)}
-        <HomeLane
-          title={lane.title}
-          icon="book-open"
-          items={lane.items}
-          action={{
-            kind: 'link',
-            label: 'Open room',
-            href: `/rooms?uri=${encodeURIComponent(lane.subject)}`,
-          }}
-          onOpen={(vm) => {
-            const item = lane.byKey.get(vm.key);
-            if (item) void openRoomArticle(lane.subject, item);
-          }}
-        />
+      <!-- In the reader's order (Customize). Highlights and the daily magazine work
+           from local data for a guest (the server half queues until sign-in), so
+           both surfaces show. Empty lanes render nothing. -->
+      {#each visibleSectionIds as id (id)}
+        {@render homeSection(id)}
       {/each}
 
-      {#each channelLanes as lane (lane.view.uuid)}
-        <HomeLane
-          title={lane.view.name}
-          icon="filter"
-          items={lane.items}
-          action={{ kind: 'link', label: 'View all', href: `/saved?view=${lane.view.uuid}` }}
-          onOpen={openLaneItem}
-          onHover={handlePrefetch}
-        />
-      {/each}
+      {#if !hasAnyLane}
+        {#if subscriptionsStore.subscriptions.length === 0}
+          <LibraryEmptyState
+            onAddFeed={() => sidebarStore.openAddFeedModal()}
+            onAddHandle={() => sidebarStore.openAddHandleModal()}
+          />
+        {:else}
+          <EmptyState
+            title="Nothing to read here yet"
+            description="Save an article and it collects here: your recent reads, a few to pick back up, and a rotating handful from your pile."
+            actionHref="/feeds"
+            actionText="Browse your feeds"
+            icon="📚"
+          />
+        {/if}
+      {:else if allLanesHidden}
+        <p class="all-hidden">
+          Every lane is hidden.
+          <button type="button" class="link-button" onclick={() => (customizeOpen = true)}>
+            Customize Home
+          </button>
+        </p>
+      {/if}
     {/if}
   </div>
+
+  <HomeCustomizeDialog
+    open={customizeOpen}
+    onclose={() => (customizeOpen = false)}
+    {sections}
+    hidden={hiddenSections}
+    onReorder={reorderSections}
+    onToggle={toggleSection}
+    onReset={() => preferences.setHomeLayout(EMPTY_HOME_LAYOUT)}
+  />
 
   {#if mobileStore.isMobile && !readerItem}
     <MobileBottomBar
@@ -714,9 +821,8 @@
 
   /* Full card width, title on the card's left edge and the preferences on its
      right — matching FeedPageHeader, so the bar reads as the card's own chrome
-     and not as a floating column. Home's two preferences live here rather than
-     in the masthead: the strip is already the width of the card, so it absorbs
-     them for free, and the greeting is left to be a greeting. */
+     and not as a floating column. Customize lives here rather than in the
+     masthead, so the greeting is left to be a greeting. */
   .header-inner {
     min-height: var(--shell-bar-height);
     padding: 0.25rem var(--shell-bar-inset);
@@ -772,39 +878,38 @@
     --lane-gap: 0.95rem;
   }
 
-  /* Just the greeting on the framed layout — the preferences moved up to the
-     toolbar strip, which spans the card and so doesn't strand them a full card's
-     width from the text they used to share a row with. The hairline under the
-     masthead separates it from the lanes. Below 1000px there is no strip, so the
-     controls come back into this row (see .masthead-controls). */
+  /* Just the greeting on the framed layout — Customize sits up in the toolbar
+     strip. The hairline under the masthead separates it from the lanes. Below
+     1000px there is no strip, so the button comes back into this row, opposite
+     the greeting (see .masthead-customize). */
   .masthead {
     display: flex;
-    flex-wrap: wrap;
     align-items: flex-end;
     justify-content: space-between;
-    gap: 0.5rem 1.5rem;
+    gap: 0.5rem 1rem;
     padding: 1rem 0.25rem 0.875rem;
     margin-bottom: 0.875rem;
     border-bottom: 1px solid var(--color-border);
   }
 
-  /* Two-class selector so it outranks the `.home-controls` display below,
-     whichever order they end up in. */
-  .home-controls.masthead-controls {
+  .masthead-customize {
     display: none;
   }
 
   @media (max-width: 1000px) {
-    .home-controls.masthead-controls {
-      display: flex;
+    .masthead-customize {
+      display: block;
+      flex-shrink: 0;
       /* Sit level with the greeting's text rather than its descenders when the
          row bottom-aligns the two. */
       padding-bottom: 0.15rem;
     }
   }
 
+  /* May shrink (the greeting wraps) so the button never pushes the row wider
+     than a phone. */
   .masthead-text {
-    flex-shrink: 0;
+    min-width: 0;
   }
 
   .masthead-date {
@@ -822,29 +927,13 @@
     color: var(--color-text);
   }
 
-  /* Quiet preferences strip. Two compact <select>s styled to match the daily-magazine
-     dropdowns that share this screen (MagazineRail's `.control` / `.control select`),
-     so the toolbar and the magazine rail read as one control vocabulary. */
-  .home-controls {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.4rem 1.25rem;
-    flex-shrink: 0;
-    min-width: 0;
-  }
-
-  .control-group {
+  /* One quiet button: every Home setting (where the app opens, card density,
+     which sections show and their order) lives behind it, in HomeCustomizeDialog.
+     Matches the daily-magazine rail's small bordered controls. */
+  .customize-button {
     display: inline-flex;
     align-items: center;
-    gap: 0.4rem;
-    color: var(--color-text-secondary);
-    font-size: var(--text-xs);
-    font-weight: var(--weight-medium);
-    cursor: pointer;
-  }
-
-  .control-select {
+    gap: 0.35rem;
     padding: 0.25rem 0.5rem;
     border: 1px solid var(--color-border);
     border-radius: 6px;
@@ -852,11 +941,37 @@
     color: var(--color-text);
     font-size: var(--text-sm);
     font-weight: var(--weight-medium);
+    white-space: nowrap;
     cursor: pointer;
   }
 
-  .control-select:focus-visible {
+  .customize-button:hover {
+    background: var(--color-bg-secondary);
+  }
+
+  .customize-button:focus-visible,
+  .link-button:focus-visible {
     outline: 2px solid var(--color-primary);
     outline-offset: 1px;
+  }
+
+  .all-hidden {
+    margin: 2rem 0;
+    text-align: center;
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+  }
+
+  .link-button {
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--color-primary);
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .link-button:hover {
+    text-decoration: underline;
   }
 </style>
