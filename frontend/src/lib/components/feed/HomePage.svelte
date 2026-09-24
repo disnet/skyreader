@@ -24,8 +24,14 @@
   import type { LaneCardVM } from '$lib/components/feed/homeLane';
   import { savesStore } from '$lib/stores/saves.svelte';
   import { roomsStore } from '$lib/stores/rooms.svelte';
-  import { followLinksLaneStore } from '$lib/stores/followLinks.svelte';
-  import { followLinkTitle, openFollowLink, sharedByShort } from '$lib/utils/followLinks';
+  import { followLinksStore } from '$lib/stores/followLinks.svelte';
+  import {
+    followLinkReadKey,
+    followLinkTitle,
+    openFollowLink,
+    sharedByShort,
+  } from '$lib/utils/followLinks';
+  import { FOLLOWING_PATH } from '$lib/utils/followsChannel';
   import { extractRoomArticle, sortRoomItems } from '$lib/utils/roomArticle';
   import { magazineStore } from '$lib/stores/magazine.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
@@ -384,29 +390,29 @@
     return null;
   });
 
-  // From your follows: the most-shared links from your Bluesky follows, as one
-  // lane. Hidden until the reader has granted the timeline permission (the ask
-  // lives on /following, not here) and there is something to show. Always the
-  // week, whatever window /following is on. The store no-ops for a guest.
-  // See docs/plans/FOLLOWS_LINKS_PLAN.md.
-  onMount(() => void followLinksLaneStore.load());
+  // From your follows: the week's most-shared links from your Bluesky follows,
+  // as one lane (the server ranks them). Hidden until the reader has granted the
+  // timeline permission (the ask lives on Manage Sources and the follows
+  // channel, not here) and there is something to show. The store no-ops for a
+  // guest. See docs/plans/FOLLOWS_LINKS_PLAN.md.
+  onMount(() => void followLinksStore.load());
 
   const FOLLOW_LANE_CAP = 8;
   let followLinkByKey = $derived(
-    new Map(followLinksLaneStore.links.map((l) => [l.urlNormalized, l]))
+    new Map(followLinksStore.links.map((l) => [followLinkReadKey(l), l]))
   );
   let followItems = $derived.by((): LaneCardVM[] =>
-    followLinksLaneStore.scopeRequired
+    followLinksStore.scopeRequired
       ? []
-      : followLinksLaneStore.links.slice(0, FOLLOW_LANE_CAP).map((l) => ({
-          key: l.urlNormalized,
+      : followLinksStore.links.slice(0, FOLLOW_LANE_CAP).map((l) => ({
+          key: followLinkReadKey(l),
           title: followLinkTitle(l),
           domain: l.site,
           image: l.thumb,
           faviconUrl: getFaviconUrl(l.url),
           metaLabel: sharedByShort(l.sharers),
           progress: null,
-          read: l.opened,
+          read: itemLabelsStore.isRead(followLinkReadKey(l)),
         }))
   );
 
@@ -561,7 +567,7 @@
           title="Shared by people you follow"
           icon="share-2"
           items={followItems}
-          action={{ kind: 'link', label: 'View all', href: '/following?window=7d' }}
+          action={{ kind: 'link', label: 'View all', href: FOLLOWING_PATH }}
           onOpen={(vm) => {
             const link = followLinkByKey.get(vm.key);
             if (link) void openFollowLink(link, reader);

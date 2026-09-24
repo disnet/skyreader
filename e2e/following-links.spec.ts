@@ -1,35 +1,37 @@
 import { test, expect } from './fixtures';
 import { seedFollowLinks, seedSavedArticle } from './seed';
 
-// From your follows (docs/plans/FOLLOWS_LINKS_PLAN.md): the page asks for the
-// timeline permission in place (never via the app-wide re-login banner), then
-// lists what the people you follow shared, most-shared first. A hidden link
-// stays hidden across a reload, because that state lives in D1.
+// From your follows (docs/plans/FOLLOWS_LINKS_PLAN.md) is a source, not a page:
+// the links your Bluesky follows share arrive as rows of a channel, read and
+// marked read like any other river item. /following resolves to that channel
+// (making it the first time) or, without the timeline permission, to the ask
+// on Manage Sources, which never goes through the app-wide re-login banner.
 
 const HOUR = 60 * 60 * 1000;
 
 test.describe('From your follows', () => {
-  test('asks for the timeline permission in the page, not the app banner', async ({
+  test('asks for the timeline permission on Manage Sources, not the app banner', async ({
     authedPage,
   }) => {
     await authedPage.goto('/following');
-    await expect(
-      authedPage.getByRole('heading', { name: 'See what your follows are sharing' })
-    ).toBeVisible();
-    await expect(authedPage.getByRole('button', { name: 'Allow access' })).toBeVisible();
+    await expect(authedPage).toHaveURL(/\/sources#follows/, { timeout: 15_000 });
+    const row = authedPage.locator('#follows');
+    await expect(row.getByText('Links from people you follow')).toBeVisible();
+    await expect(row.getByRole('button', { name: 'Allow' })).toBeVisible();
     await expect(authedPage.locator('.scope-upgrade-banner')).toHaveCount(0);
   });
 
-  test('lists links most-shared first, shows what people said, and remembers a hide', async ({
+  test('makes a channel of them, newest first, read like everything else', async ({
     authedPage,
     testUser,
   }) => {
     await seedFollowLinks(testUser, [
       {
-        url: 'https://example.com/solo',
+        url: 'https://example.com/fresh',
         sharerDid: 'did:plc:sam',
         sharerName: 'Sam',
-        title: 'Solo Piece',
+        title: 'Fresh Piece',
+        ageMs: 1 * HOUR,
       },
       {
         url: 'https://example.com/popular',
@@ -45,7 +47,6 @@ test.describe('From your follows', () => {
         sharerName: 'Ben',
         ageMs: 3 * HOUR,
       },
-      // Older than a day: only in the week window.
       {
         url: 'https://example.com/old',
         sharerDid: 'did:plc:kat',
@@ -56,27 +57,84 @@ test.describe('From your follows', () => {
     ]);
 
     await authedPage.goto('/following');
-    const titles = authedPage.locator('.following-title');
-    await expect(titles).toHaveText(['Popular Piece', 'Solo Piece']);
+    await expect(authedPage).toHaveURL(/\/feeds\?view=/, { timeout: 15_000 });
+    await expect(
+      authedPage.locator('.sidebar').getByText('From your follows', { exact: true })
+    ).toBeVisible();
 
-    await authedPage.getByRole('button', { name: /Maya and Ben shared this/ }).click();
-    await expect(authedPage.getByText('Worth your whole afternoon.')).toBeVisible();
+    // Dated by first share: Popular was first shared three hours ago.
+    const titles = authedPage.locator('.article-list .article-title');
+    await expect(titles).toHaveText(['Fresh Piece', 'Popular Piece', 'Old Piece']);
+    await expect(
+      authedPage.locator('.article-list .follows-pill', { hasText: 'Maya +1' })
+    ).toHaveAttribute('title', 'Maya and Ben shared this');
 
-    await authedPage.getByRole('button', { name: 'Week' }).click();
-    await expect(titles).toHaveText(['Popular Piece', 'Solo Piece', 'Old Piece']);
-
-    const hidden = authedPage.waitForResponse(
-      (r) => r.url().includes('/api/v2/following-links/state') && r.ok()
+    // Marking one read is an ordinary read label, so it holds across a reload.
+    const marked = authedPage.waitForResponse(
+      (r) => r.url().includes('/api/reading/mark-read') && r.ok()
     );
     await authedPage
-      .locator('.following-row', { hasText: 'Solo Piece' })
-      .getByRole('button', { name: 'Hide this link' })
+      .locator('.article-item', { hasText: 'Fresh Piece' })
+      .locator('.read-toggle')
       .click();
-    await hidden;
-    await expect(titles).toHaveText(['Popular Piece', 'Old Piece']);
+    await marked;
 
     await authedPage.reload();
-    await expect(titles).toHaveText(['Popular Piece']);
+    await expect(titles).toHaveText(['Popular Piece', 'Old Piece'], { timeout: 15_000 });
+
+    // Coming back through /following finds the channel rather than making another.
+    await authedPage.goto('/following');
+    await expect(authedPage).toHaveURL(/\/feeds\?view=/, { timeout: 15_000 });
+    await expect(
+      authedPage.locator('.sidebar').getByText('From your follows', { exact: true })
+    ).toHaveCount(1);
+  });
+
+  test('asks once, in Everything, whether to add them there', async ({ authedPage, testUser }) => {
+    await seedFollowLinks(testUser, [
+      {
+        url: 'https://example.com/everything',
+        sharerDid: 'did:plc:maya',
+        sharerName: 'Maya',
+        title: 'Everything Piece',
+      },
+    ]);
+
+    await authedPage.goto('/feeds');
+    const intro = authedPage.locator('section.follows-intro');
+    await expect(intro).toBeVisible({ timeout: 15_000 });
+    await expect(authedPage.getByText('Everything Piece')).toHaveCount(0);
+
+    const saved = authedPage.waitForResponse(
+      (r) => r.url().includes('/api/v2/following-links/settings') && r.ok()
+    );
+    await intro.getByRole('button', { name: 'Add them to Everything' }).click();
+    await saved;
+    await expect(intro).toHaveCount(0);
+    await expect(authedPage.locator('.article-list .article-title')).toHaveText([
+      'Everything Piece',
+    ]);
+
+    // Answered for the account: not asked again, and still on after a reload.
+    await authedPage.reload();
+    await expect(authedPage.locator('.article-list .article-title')).toHaveText(
+      ['Everything Piece'],
+      { timeout: 15_000 }
+    );
+    await expect(intro).toHaveCount(0);
+
+    // Manage Sources turns it back off.
+    await authedPage.goto('/sources#follows');
+    const toggle = authedPage.getByRole('checkbox', { name: 'Show them in Everything too' });
+    await expect(toggle).toBeChecked();
+    const off = authedPage.waitForResponse(
+      (r) => r.url().includes('/api/v2/following-links/settings') && r.ok()
+    );
+    await toggle.uncheck();
+    await off;
+    await authedPage.goto('/feeds');
+    await expect(authedPage.getByText('Everything Piece')).toHaveCount(0);
+    await expect(intro).toHaveCount(0);
   });
 
   test('puts the most-shared links on Home', async ({ authedPage, testUser }) => {
@@ -101,20 +159,16 @@ test.describe('From your follows', () => {
     ).toBeVisible({ timeout: 15_000 });
     await expect(authedPage.getByText('Lane Piece')).toBeVisible();
     await expect(authedPage.getByText('Maya shared')).toBeVisible();
-    // The lane looks back a week, whatever window /following was left on.
+    // The lane looks back a week.
     await expect(authedPage.getByText('Week-old Piece')).toBeVisible();
 
-    // "View all" continues the same list: the page opens on the week.
+    // "View all" is the channel.
     await authedPage
       .getByRole('region', { name: 'Shared by people you follow' })
       .getByRole('link', { name: 'View all' })
       .click();
-    await expect(authedPage).toHaveURL(/\/following\?window=7d/);
-    await expect(authedPage.getByRole('button', { name: 'Week', exact: true })).toHaveAttribute(
-      'aria-pressed',
-      'true'
-    );
-    await expect(authedPage.locator('.following-title')).toHaveText([
+    await expect(authedPage).toHaveURL(/\/feeds\?view=/, { timeout: 15_000 });
+    await expect(authedPage.locator('.article-list .article-title')).toHaveText([
       'Lane Piece',
       'Week-old Piece',
     ]);

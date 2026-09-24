@@ -107,7 +107,8 @@ CREATE TABLE follow_link_state (
 - **Retention: 7 days.** The hourly cron (`minute === 0` branch in `backend/src/index.ts`) deletes
   `follow_link_shares` older than 7 days and `follow_link_state` older than 30. This is a
   "what's being shared now" surface, not an archive; anything worth keeping gets saved.
-- **Opened / dismissed state is server-side** (D1), because read state is server-side everywhere
+- **(Superseded in Phase 4: `follow_link_state` is gone; a link's read state is an item label.)**
+  **Opened / dismissed state is server-side** (D1), because read state is server-side everywhere
   else in the app and the surface should agree across devices.
 - **Account deletion** must purge all three tables (add them next to the other per-user deletes in
   `backend/src/index.ts`).
@@ -249,7 +250,10 @@ the dev-only probe `GET /api/v2/following-links/probe?pages=N` (`backend/src/rou
   (walk + high-water mark, failed page, gate + CAS, repost sharers, ranking, card borrowing,
   state, purge, routes).
 
-### Phase 2: the surface — DONE (2026-09-23)
+### Phase 2: the surface — DONE (2026-09-23), superseded by Phase 4
+
+The `/following` page, its window toggle and hide below were replaced by the follows source; kept
+for the history.
 
 - **Permission ask in the page.** `GET /api/v2/following-links` answers `200 { scopeRequired: true }`
   instead of a 403 without the scope: a 403 `scope_upgrade_required` also raises the app-wide
@@ -298,6 +302,62 @@ property of a row, so "someone you follow" is a property of a row too.
   counted in it.
 - Tests: `frontend/src/lib/utils/discussionFollows.test.ts`, backend `/for` cases in
   `follow-links-store.spec.ts`, E2E "leads an article's Discussion with the people you follow".
+
+### Phase 4: a source, not a page — DONE (2026-09-24)
+
+Phase 2 shipped a fourth feed-like list: its own page, row style, window toggle, opened/dismissed
+state and reader wiring, beside the river, Rooms and Discover. Everywhere else one shape is handled
+once (`FeedListView` + `ArticleCard`, channels for filtering, item labels for read state), so the
+follows became one more **source** in it.
+
+- **Source key `bsky~follows`** (`FOLLOWS_SOURCE_KEY`, `utils/sourceKeys.ts`). One source, not one
+  per person: the timeline arrives merged. **Never part of "All sources"** (nor exclude mode, nor a
+  type filter): a view shows the links only by naming the key, so a heavy timeline can't flood the
+  river or its unread counts. A follows-only channel's sidebar count is 0 by design.
+- **River rows.** `feedView` merges `{ type: 'link' }` rows (`FollowLinkRow`; `RiverItem` =
+  `FeedDisplayItem | FollowLinkRow`, so the reader and Saved never see one) into the combined view,
+  dated by **first** share so a late repost doesn't lift a link back to the top. Rendered by
+  `ArticleCard` via `followLinkArticle()` with `isFollowLink` (site + globe icon, no read-time
+  estimate until the page is fetched). Opening goes through `openFollowLink` (extract → synthetic
+  `saved` item), including `openSelectedReader`.
+- **Dedupe.** A link the river already shows as an article or document (any URL form, `urlKey`) is
+  dropped; that row carries a **Shared by** pill (avatars + "Maya +2") instead. Any river card whose
+  URL your follows shared gets the pill, in every channel, whether or not it includes the source.
+  Articles older than 14 days don't dedupe (they sit far down the list).
+- **Read state is an item label** keyed by `urlNormalized` (`followLinkReadKey`), written through
+  `markAsRead` like an article. Selecting, scroll-to-mark, `m`, mark-all-read and opening all mark
+  it. `follow_link_state`, `POST /following-links/state` and `FollowLink.opened` are gone; the × to
+  hide is gone too (mark read is the river's hide).
+- **The channel preset.** `utils/followsChannel.ts`: `/following` resolves to the first feed channel
+  that includes the source, creating **From your follows** if none does (after Phase 2 of
+  `initialize`, so a channel from another device is found, not duplicated), or to
+  `/sources#follows` without the permission. The sign-in that grants it returns to `/following`, so
+  granting makes the channel. Home's "View all" and the docs link there too.
+- **The ask** moved to Manage Sources (`FollowsSourceRow`, top of The Atmosphere) and the channel's
+  own empty state. Sidebar / mobile-switcher entries for the page are gone; the channel is the entry.
+- **Mixing in:** the three source pickers (toolbar popover, mobile sheet, channel modal) offer
+  **People you follow on Bluesky** in Include-only mode.
+- **One store**, always the week (`followLinksStore`); the per-window page instance is gone. It holds
+  a "no permission" answer for the session, and exposes `forUrl()` for the pill.
+- Tests: `feedViewFollowLinks.component.test.ts` (not under All, sort, merge, dedupe, type filter,
+  read), `followLinks.component.test.ts`, `followLinks.test.ts`; E2E rewritten around the channel.
+
+- **The link card** (follow-up): an open follows row shows what was posted, the quoted words of the
+  sharer whose post about it has the **most likes**, then a Bluesky-style link card, until the page
+  is fetched (automatically on expand). Likes come from the timeline at ingest (`like_count`,
+  migration 0084; null for reposts) and are re-read from the public appview (`getPosts`) once an
+  hour old, only for links two or more follows shared with words, ≤100 posts per refresh
+  (`refreshShareLikes`).
+
+- **Everything is opt-in** (follow-up): "All sources" views include the source when
+  `follow_link_sync.in_everything` is 1 (migration 0084; NULL = never asked). Everything asks once,
+  in a `FollowsIntro` box at the top; "yes" is saved before the sign-in that grants the permission
+  (returning to `/feeds`), so it's on when the reader comes back. `POST /following-links/settings`
+  needs no scope; `GET /following-links` returns `inEverything` either way. Toggle on Manage
+  Sources. Categories never include it. Still never in unread counts.
+
+Not built: a **Most shared** sort for channels that include the source (the server already ranks and
+caps at 60/week, which picks the links; the river orders them by time).
 
 ### Later, only if the hypothesis holds
 

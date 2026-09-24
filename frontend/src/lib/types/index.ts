@@ -1150,7 +1150,8 @@ export interface FeedItem {
 // Combined feed item for unified "all" view
 export type CombinedFeedItem =
   | { type: 'article'; item: Article; date: string }
-  | { type: 'document'; item: SocialDocument; date: string };
+  | { type: 'document'; item: SocialDocument; date: string }
+  | { type: 'link'; item: FollowLink; date: string };
 
 /**
  * Auto-update rule for a channel. When set, sourceKeys are automatically
@@ -1257,6 +1258,9 @@ export interface FollowLinkSharer {
   /** Their words, truncated. For a repost, the original author's. */
   text: string | null;
   sharedAt: number;
+  /** Likes on their own post, as last read; null for a repost or when unknown.
+   *  Optional: rows from before the count was kept don't carry it. */
+  likeCount?: number | null;
 }
 
 export interface FollowLink {
@@ -1270,7 +1274,6 @@ export interface FollowLink {
   sharerCount: number;
   firstSharedAt: number;
   lastSharedAt: number;
-  opened: boolean;
 }
 
 export type FollowLinksWindow = '24h' | '3d' | '7d';
@@ -1284,6 +1287,8 @@ export interface FollowLinkSharersResponse {
 export interface FollowLinksResponse {
   /** True until the reader grants the getTimeline permission (a fresh sign-in). */
   scopeRequired: boolean;
+  /** Whether the reader wants these in Everything; null until they've been asked. */
+  inEverything?: boolean | null;
   window?: FollowLinksWindow;
   links: FollowLink[];
   sync: {

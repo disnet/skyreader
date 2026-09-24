@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 
 // followLinks.ts (for bskyPostUrl) imports the store and the api client.
-vi.mock('$lib/stores/followLinks.svelte', () => ({ followLinksStore: {} }));
+vi.mock('$lib/stores/itemLabels.svelte', () => ({ itemLabelsStore: {} }));
 vi.mock('$lib/utils/roomArticle', () => ({ extractArticle: vi.fn() }));
 vi.mock('$lib/stores/toast.svelte', () => ({ toastStore: {} }));
 

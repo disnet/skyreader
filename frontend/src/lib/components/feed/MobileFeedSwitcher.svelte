@@ -256,7 +256,7 @@
             } as NavItem,
           ]
         : []),
-      // Rooms, From your follows and Discover, in the sidebar's order. Account-only in both places:
+      // Rooms and Discover, in the sidebar's order. Account-only in both places:
       // a room is a join record in your own repo, so a guest tapping through
       // would only meet the sign-in screen.
       ...(auth.isGuest
@@ -267,12 +267,6 @@
               id: 'rooms',
               label: 'Rooms',
               icon: 'book-open' as IconName,
-            } as NavItem,
-            {
-              type: 'utility',
-              id: 'following',
-              label: 'From your follows',
-              icon: 'share-2' as IconName,
             } as NavItem,
             {
               type: 'utility',

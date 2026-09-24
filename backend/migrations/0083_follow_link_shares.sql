@@ -53,18 +53,3 @@ CREATE TABLE IF NOT EXISTS follow_link_sync (
     gap_at INTEGER,                     -- the oldest item time it has reached
     FOREIGN KEY (user_did) REFERENCES users(did) ON DELETE CASCADE
 );
-
--- What the reader did with a link, keyed by URL so it holds across every share
--- of it. Server-side so it agrees across devices, like read state elsewhere.
-CREATE TABLE IF NOT EXISTS follow_link_state (
-    user_did TEXT NOT NULL,
-    url_normalized TEXT NOT NULL,
-    opened_at INTEGER,
-    dismissed_at INTEGER,
-    updated_at INTEGER NOT NULL,
-    PRIMARY KEY (user_did, url_normalized),
-    FOREIGN KEY (user_did) REFERENCES users(did) ON DELETE CASCADE
-);
-
-CREATE INDEX IF NOT EXISTS idx_follow_link_state_updated
-    ON follow_link_state(updated_at);

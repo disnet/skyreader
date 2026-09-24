@@ -13,7 +13,11 @@
   import { preferences } from '$lib/stores/preferences.svelte';
   import { useReaderStack } from '$lib/hooks/useReaderStack.svelte';
   import { toggleSavedItemSave } from '$lib/utils/readerSave';
-  import type { Article, SocialDocument } from '$lib/types';
+  import { toggleSavedLink } from '$lib/utils/saveLink';
+  import { savesStore } from '$lib/stores/saves.svelte';
+  import { followLinksStore } from '$lib/stores/followLinks.svelte';
+  import { followLinkArticle, markFollowLinkRead, openFollowLink } from '$lib/utils/followLinks';
+  import type { Article, FollowLink, SocialDocument } from '$lib/types';
   import { getDocumentEffectiveUrl } from '$lib/utils/linkPost';
 
   interface Props {
@@ -190,6 +194,15 @@
     }
   }
 
+  function handleToggleFollowLinkRead(link: FollowLink, key: string) {
+    if (itemLabelsStore.isRead(key)) {
+      itemLabelsStore.markAsUnread(key);
+    } else {
+      feedViewStore.trackSeenThisSession({ type: 'link', item: link, key });
+      markFollowLinkRead(link);
+    }
+  }
+
   function handleReaderSave() {
     if (!readerItem) return;
     if (readerItem.type === 'article') {
@@ -277,6 +290,7 @@
           isSaved={itemLabelsStore.isSaved(article.guid)}
           isShared={linkblogStore.isShared(article.url)}
           shareNote={linkblogStore.getNote(article.url)}
+          followSharers={followLinksStore.forUrl(article.url)?.sharers}
           selected={preferences.expandAllItems || feedViewStore.selectedKey === displayItem.key}
           expanded={feedViewStore.expandedKey === displayItem.key}
           highlighted={feedViewStore.selectedKey === displayItem.key}
@@ -296,6 +310,7 @@
           feedId={docSub?.id}
           isRead={itemLabelsStore.isSocialRead(doc.recordUri)}
           isSaved={itemLabelsStore.isSaved(doc.recordUri)}
+          followSharers={followLinksStore.forUrl(docUrl)?.sharers}
           selected={preferences.expandAllItems || feedViewStore.selectedKey === displayItem.key}
           expanded={feedViewStore.expandedKey === displayItem.key}
           highlighted={feedViewStore.selectedKey === displayItem.key}
@@ -313,6 +328,28 @@
           onExpand={() => handleExpand(index)}
           onOpenFullscreen={() => openReader(displayItem)}
           onOpenCollectionPiece={openCollectionPiece}
+        />
+      {:else if displayItem.type === 'link'}
+        {@const link = displayItem.item}
+        {@const linkArticle = followLinkArticle(link)}
+        <ArticleCard
+          article={linkArticle}
+          feedTitle={link.site}
+          followLink={link}
+          followSharers={link.sharers}
+          isRead={itemLabelsStore.isRead(displayItem.key)}
+          isSaved={savesStore.isSaved(link.url)}
+          isShared={linkblogStore.isShared(link.url)}
+          shareNote={linkblogStore.getNote(link.url)}
+          selected={preferences.expandAllItems || feedViewStore.selectedKey === displayItem.key}
+          expanded={feedViewStore.expandedKey === displayItem.key}
+          highlighted={feedViewStore.selectedKey === displayItem.key}
+          onToggleSave={() => void toggleSavedLink(link.url)}
+          onToggleRead={() => handleToggleFollowLinkRead(link, displayItem.key)}
+          onUnshare={() => onUnshare(link.url)}
+          onSelect={() => handleSelect(index)}
+          onExpand={() => handleExpand(index)}
+          onOpenFullscreen={() => void openFollowLink(link, reader)}
         />
       {/if}
     </div>

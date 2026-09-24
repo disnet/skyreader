@@ -10,14 +10,13 @@ import {
   type ShareKind,
   type TimelineItem,
 } from './follow-links';
+import { fetchPostLikeCounts } from './bsky-appview';
 import { log } from '../utils/logger';
 
 /** A refresh is due once the last one is this old. */
 export const FOLLOW_LINKS_GATE_MS = 10 * 60 * 1000;
 /** How long a share is kept, and the widest window the surface serves. */
 export const FOLLOW_LINKS_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
-/** How long opened/dismissed state outlives the shares it was about. */
-export const FOLLOW_LINKS_STATE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 /**
  * Page caps. A first refresh walks back up to the retention window; a later one
  * only back to the high-water mark, which is usually a page or two. ~470ms a
@@ -32,6 +31,16 @@ const PAGE_SIZE = 100;
  * once this many shares are written.
  */
 export const MAX_SHARES_PER_REFRESH = 600;
+/**
+ * Like counts pick whose words a link's card quotes, so they're only worth
+ * reading where there's a choice: a link two or more follows shared with words.
+ * The timeline gives each post's count when it's first seen, usually minutes
+ * old; a refresh then re-reads the stale ones (public appview getPosts, 25 a
+ * call), up to this many.
+ */
+export const MAX_LIKE_CHECKS = 100;
+/** How old a like count gets before a refresh reads it again. */
+export const LIKES_STALE_MS = 60 * 60 * 1000;
 /** Rows read to build the served list; enough for a heavy week. */
 const SERVE_ROW_LIMIT = 3000;
 /** Articles served per request. The list ends; that is part of the calm. */
@@ -61,6 +70,27 @@ export interface FollowLinksSync {
   lastPollAt: number;
   complete: boolean;
   error: string | null;
+}
+
+/** Whether the reader wants follows links in Everything; null = never asked. */
+export async function readFollowLinksInEverything(env: Env, did: string): Promise<boolean | null> {
+  const row = await env.DB.prepare('SELECT in_everything FROM follow_link_sync WHERE user_did = ?')
+    .bind(did)
+    .first<{ in_everything: number | null }>();
+  return row?.in_everything == null ? null : row.in_everything === 1;
+}
+
+export async function setFollowLinksInEverything(
+  env: Env,
+  did: string,
+  on: boolean
+): Promise<void> {
+  await env.DB.prepare(
+    `INSERT INTO follow_link_sync (user_did, in_everything) VALUES (?1, ?2)
+     ON CONFLICT(user_did) DO UPDATE SET in_everything = excluded.in_everything`
+  )
+    .bind(did, on ? 1 : 0)
+    .run();
 }
 
 export async function readFollowLinksSync(env: Env, did: string): Promise<FollowLinksSync | null> {
@@ -119,7 +149,8 @@ async function walkTimeline(
   did: string,
   cursor: string | undefined,
   stopAt: number,
-  budget: WalkBudget
+  budget: WalkBudget,
+  now: number
 ): Promise<WalkResult> {
   const out: WalkResult = {
     pages: 0,
@@ -155,7 +186,7 @@ async function walkTimeline(
     }
 
     if (shares.length > 0) {
-      await env.DB.batch(shares.map((s) => upsertShare(env, did, s)));
+      await env.DB.batch(shares.map((s) => upsertShare(env, did, s, now)));
       out.written += shares.length;
       budget.shares -= shares.length;
     }
@@ -246,7 +277,7 @@ export async function refreshFollowLinks(
 
   // The top of the timeline, down to the high-water mark.
   const topStop = Math.max(newestSeen ?? 0, retentionCutoff);
-  const top = await walkTimeline(env, pds, did, undefined, topStop, budget);
+  const top = await walkTimeline(env, pds, did, undefined, topStop, budget, now);
   let error = top.error;
   if (!error && top.newest !== null) {
     if (!top.reachedStop) {
@@ -264,7 +295,8 @@ export async function refreshFollowLinks(
       did,
       gap.cursor,
       Math.max(gap.stopAt, retentionCutoff),
-      budget
+      budget,
+      now
     );
     if (gapWalk.reachedStop) {
       gap = null;
@@ -297,22 +329,77 @@ export async function refreshFollowLinks(
     )
     .run();
 
+  // An adornment: a failure here leaves the counts as they were.
+  let likesChecked = 0;
+  try {
+    likesChecked = await refreshShareLikes(env, did, now);
+  } catch (e) {
+    log.warn('follow_links_likes_failed', { did, error: String(e) });
+  }
+
   if (error) {
     log.warn('follow_links_refresh_failed', { did, pages, written, error });
   } else {
-    log.info('follow_links_refreshed', { did, pages, written, reachedEnd, firstRun });
+    log.info('follow_links_refreshed', {
+      did,
+      pages,
+      written,
+      reachedEnd,
+      firstRun,
+      likesChecked,
+    });
   }
   return { refreshed: true, pages, shares: written, reachedEnd, ...(error ? { error } : {}) };
 }
 
-function upsertShare(env: Env, did: string, s: LinkShare) {
+/**
+ * Re-read stale like counts where they decide something: the worded shares of
+ * links that two or more follows shared with words. Newest first, capped, so a
+ * heavy week costs a few getPosts calls. Returns how many posts were asked about.
+ */
+export async function refreshShareLikes(env: Env, did: string, now: number): Promise<number> {
+  const rows = await env.DB.prepare(
+    `SELECT DISTINCT post_uri FROM follow_link_shares
+      WHERE user_did = ?1 AND kind != 'repost' AND post_text IS NOT NULL AND shared_at >= ?2
+        AND (likes_checked_at IS NULL OR likes_checked_at < ?3)
+        AND url_normalized IN (
+          SELECT url_normalized FROM follow_link_shares
+           WHERE user_did = ?1 AND kind != 'repost' AND post_text IS NOT NULL AND shared_at >= ?2
+           GROUP BY url_normalized HAVING COUNT(DISTINCT sharer_did) > 1)
+      ORDER BY shared_at DESC
+      LIMIT ?4`
+  )
+    .bind(did, now - FOLLOW_LINKS_RETENTION_MS, now - LIKES_STALE_MS, MAX_LIKE_CHECKS)
+    .all<{ post_uri: string }>();
+  const uris = rows.results.map((r) => r.post_uri);
+  if (uris.length === 0) return 0;
+
+  const counts = await fetchPostLikeCounts(uris);
+  // Every uri asked about is marked checked, found or not, so a deleted post
+  // isn't asked about again every refresh; its last count stands.
+  await env.DB.batch(
+    uris.map((uri) =>
+      env.DB.prepare(
+        `UPDATE follow_link_shares
+            SET like_count = COALESCE(?1, like_count), likes_checked_at = ?2
+          WHERE user_did = ?3 AND post_uri = ?4`
+      ).bind(counts.get(uri) ?? null, now, did, uri)
+    )
+  );
+  return uris.length;
+}
+
+function upsertShare(env: Env, did: string, s: LinkShare, now: number) {
   const sharedAt = Date.parse(s.sharedAt);
   return env.DB.prepare(
     `INSERT INTO follow_link_shares
        (user_did, post_uri, sharer_did, kind, url, url_normalized, post_text,
-        card_title, card_description, card_thumb, sharer_handle, sharer_name, sharer_avatar, shared_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        card_title, card_description, card_thumb, sharer_handle, sharer_name, sharer_avatar, shared_at,
+        like_count, likes_checked_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(user_did, post_uri, sharer_did) DO UPDATE SET
+       like_count = COALESCE(excluded.like_count, like_count),
+       likes_checked_at = COALESCE(excluded.likes_checked_at, likes_checked_at),
        post_text = excluded.post_text,
        card_title = COALESCE(excluded.card_title, card_title),
        card_description = COALESCE(excluded.card_description, card_description),
@@ -334,7 +421,9 @@ function upsertShare(env: Env, did: string, s: LinkShare) {
     s.sharer.handle ?? null,
     s.sharer.displayName ?? null,
     s.sharer.avatar ?? null,
-    Number.isFinite(sharedAt) ? sharedAt : Date.now()
+    Number.isFinite(sharedAt) ? sharedAt : Date.now(),
+    s.likeCount,
+    s.likeCount === null ? null : now
   );
 }
 
@@ -355,6 +444,7 @@ interface ShareRow {
   sharer_name: string | null;
   sharer_avatar: string | null;
   shared_at: number;
+  like_count: number | null;
 }
 
 export interface FollowLinkSharer {
@@ -366,6 +456,8 @@ export interface FollowLinkSharer {
   postUri: string;
   text: string | null;
   sharedAt: number;
+  /** Likes on their post, as last read; null for a repost or when unknown. */
+  likeCount: number | null;
 }
 
 export interface FollowLink {
@@ -381,7 +473,6 @@ export interface FollowLink {
   sharerCount: number;
   firstSharedAt: number;
   lastSharedAt: number;
-  opened: boolean;
 }
 
 function hostOf(url: string): string {
@@ -400,14 +491,9 @@ function hostOf(url: string): string {
  * is the freshest share that has one, since a bare-facet share has none and
  * another follow's post of the same link usually does.
  */
-export function groupFollowLinks(
-  rows: ShareRow[],
-  state: Map<string, { opened: boolean; dismissed: boolean }>,
-  limit = SERVE_LINK_LIMIT
-): FollowLink[] {
+export function groupFollowLinks(rows: ShareRow[], limit = SERVE_LINK_LIMIT): FollowLink[] {
   const byUrl = new Map<string, { rows: ShareRow[]; sharers: Map<string, ShareRow> }>();
   for (const row of rows) {
-    if (state.get(row.url_normalized)?.dismissed) continue;
     let group = byUrl.get(row.url_normalized);
     if (!group) {
       group = { rows: [], sharers: new Map() };
@@ -433,6 +519,7 @@ export function groupFollowLinks(
         postUri: r.post_uri,
         text: r.post_text,
         sharedAt: r.shared_at,
+        likeCount: r.like_count ?? null,
       }));
     links.push({
       url: carded.url,
@@ -445,7 +532,6 @@ export function groupFollowLinks(
       sharerCount: sharers.length,
       firstSharedAt: byTime[byTime.length - 1].shared_at,
       lastSharedAt: byTime[0].shared_at,
-      opened: !!state.get(urlNormalized)?.opened,
     });
   }
 
@@ -460,35 +546,23 @@ export async function readFollowLinks(
   now = Date.now()
 ): Promise<FollowLink[]> {
   const since = now - FOLLOW_LINKS_WINDOWS[window];
-  const [rows, state] = await env.DB.batch([
-    env.DB.prepare(
-      `SELECT post_uri, sharer_did, kind, url, url_normalized, post_text, card_title,
-              card_description, card_thumb, sharer_handle, sharer_name, sharer_avatar, shared_at
-         FROM follow_link_shares
-        WHERE user_did = ? AND shared_at >= ?
-        ORDER BY shared_at DESC
-        LIMIT ?`
-    ).bind(did, since, SERVE_ROW_LIMIT),
-    env.DB.prepare(
-      `SELECT url_normalized, opened_at, dismissed_at FROM follow_link_state WHERE user_did = ?`
-    ).bind(did),
-  ]);
-  const stateMap = new Map<string, { opened: boolean; dismissed: boolean }>();
-  for (const s of state.results as {
-    url_normalized: string;
-    opened_at: number | null;
-    dismissed_at: number | null;
-  }[]) {
-    stateMap.set(s.url_normalized, { opened: !!s.opened_at, dismissed: !!s.dismissed_at });
-  }
-  return groupFollowLinks(rows.results as ShareRow[], stateMap);
+  const rows = await env.DB.prepare(
+    `SELECT post_uri, sharer_did, kind, url, url_normalized, post_text, card_title,
+            card_description, card_thumb, sharer_handle, sharer_name, sharer_avatar, shared_at, like_count
+       FROM follow_link_shares
+      WHERE user_did = ? AND shared_at >= ?
+      ORDER BY shared_at DESC
+      LIMIT ?`
+  )
+    .bind(did, since, SERVE_ROW_LIMIT)
+    .all<ShareRow>();
+  return groupFollowLinks(rows.results);
 }
 
 /**
  * Who among the reader's follows shared this one article, newest first, across
  * the whole retention window. Feeds the "People you follow" group in the
- * reader's Discussion panel, for any article however it was opened. Dismissing
- * a link on /following doesn't hide who shared it here.
+ * reader's Discussion panel, for any article however it was opened.
  */
 export async function readFollowLinkSharers(
   env: Env,
@@ -498,50 +572,21 @@ export async function readFollowLinkSharers(
 ): Promise<FollowLinkSharer[]> {
   const rows = await env.DB.prepare(
     `SELECT post_uri, sharer_did, kind, url, url_normalized, post_text, card_title,
-            card_description, card_thumb, sharer_handle, sharer_name, sharer_avatar, shared_at
+            card_description, card_thumb, sharer_handle, sharer_name, sharer_avatar, shared_at, like_count
        FROM follow_link_shares
       WHERE user_did = ? AND url_normalized = ? AND shared_at >= ?
       ORDER BY shared_at DESC`
   )
     .bind(did, urlNormalized, now - FOLLOW_LINKS_RETENTION_MS)
     .all<ShareRow>();
-  const [link] = groupFollowLinks(rows.results, new Map(), 1);
+  const [link] = groupFollowLinks(rows.results, 1);
   return link?.sharers ?? [];
 }
 
-export type FollowLinkAction = 'opened' | 'dismissed' | 'restored';
-
-export async function setFollowLinkState(
-  env: Env,
-  did: string,
-  urlNormalized: string,
-  action: FollowLinkAction,
-  now = Date.now()
-): Promise<void> {
-  const opened = action === 'opened' ? now : null;
-  const dismissed = action === 'dismissed' ? now : null;
-  await env.DB.prepare(
-    `INSERT INTO follow_link_state (user_did, url_normalized, opened_at, dismissed_at, updated_at)
-     VALUES (?1, ?2, ?3, ?4, ?5)
-     ON CONFLICT(user_did, url_normalized) DO UPDATE SET
-       opened_at = COALESCE(opened_at, excluded.opened_at),
-       dismissed_at = CASE WHEN ?6 = 'restored' THEN NULL
-                           ELSE COALESCE(excluded.dismissed_at, dismissed_at) END,
-       updated_at = excluded.updated_at`
-  )
-    .bind(did, urlNormalized, opened, dismissed, now, action)
-    .run();
-}
-
-/** Hourly cron: drop shares past retention, and state nobody has touched in a month. */
+/** Hourly cron: drop shares past retention. */
 export async function purgeFollowLinks(env: Env, now = Date.now()): Promise<number> {
-  const [shares, state] = await env.DB.batch([
-    env.DB.prepare('DELETE FROM follow_link_shares WHERE shared_at < ?').bind(
-      now - FOLLOW_LINKS_RETENTION_MS
-    ),
-    env.DB.prepare('DELETE FROM follow_link_state WHERE updated_at < ?').bind(
-      now - FOLLOW_LINKS_STATE_RETENTION_MS
-    ),
-  ]);
-  return (shares.meta?.changes ?? 0) + (state.meta?.changes ?? 0);
+  const res = await env.DB.prepare('DELETE FROM follow_link_shares WHERE shared_at < ?')
+    .bind(now - FOLLOW_LINKS_RETENTION_MS)
+    .run();
+  return res.meta?.changes ?? 0;
 }

@@ -51,7 +51,7 @@
   $effect(() => {
     const key = savesStore.pendingOpenKey;
     if (!key) return;
-    const item = feedViewStore.currentItems.find((i) => i.key === key);
+    const item = feedViewStore.savedItems.find((i) => i.key === key);
     if (item) {
       savesStore.pendingOpenKey = null;
       if (readerItem?.key !== key) openReader(item);
@@ -129,7 +129,7 @@
 {/if}
 
 <div class="bookmark-list" class:hidden-behind-reader={readerItem !== null}>
-  {#each feedViewStore.currentItems as displayItem, index (displayItem.key)}
+  {#each feedViewStore.savedItems as displayItem, index (displayItem.key)}
     <div bind:this={articleElements[index]}>
       <SavedCard
         {displayItem}
@@ -142,7 +142,7 @@
     </div>
   {/each}
 
-  {#if feedViewStore.currentItems.length === 0}
+  {#if feedViewStore.savedItems.length === 0}
     {#if savedSearchStore.active}
       <!-- Search is scoped to the current sub-view like every other filter, so
            point at the other one when that's where the match actually is. -->

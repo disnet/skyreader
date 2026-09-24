@@ -35,6 +35,9 @@
     authorDisplayName,
     authorAvatar,
     authorDid,
+    followSharers,
+    isFollowLink = false,
+    followLinkCard,
     socialContext,
     laneRow = [],
     filters = [],
@@ -287,6 +290,19 @@
             <span class="via-name">{authorDisplayName}</span>
           </span>
         {/if}
+        {#if followSharers && !isLinkPostMode}
+          <span class="via-pill follows-pill" title={followSharers.title}>
+            <span class="via-label">Shared by</span>
+            {#if followSharers.avatars.length > 0}
+              <span class="follows-avatars" aria-hidden="true">
+                {#each followSharers.avatars as avatar, i (i)}
+                  <img src={avatar} alt="" class="via-avatar" />
+                {/each}
+              </span>
+            {/if}
+            <span class="via-name">{followSharers.names}</span>
+          </span>
+        {/if}
         {#if collectionPieceCount > 0}
           <span
             class="edition-tag"
@@ -297,7 +313,11 @@
             <Icon name="layers" size={12} />Edition · {collectionPieceCount}
           </span>
         {/if}
-        {#if displayFeedTitle && !isLinkPostMode}
+        {#if displayFeedTitle && isFollowLink}
+          <span class="feed-title-label" title="Shared on Bluesky"
+            ><Icon name="globe" size={12} />{displayFeedTitle}</span
+          >
+        {:else if displayFeedTitle && !isLinkPostMode}
           {#if feedId}
             <a
               href="/feeds?feed={feedId}"
@@ -379,6 +399,38 @@
             />
           </div>
         </div>
+      {:else if followLinkCard}
+        <!-- A follows link, drawn as what was posted: the sharer's words, then
+             the link card. There's no article text until the page is fetched
+             (opening the card, or the button below), and the card says so
+             better than an empty or one-line body would. -->
+        {#if followLinkCard.said}
+          <blockquote class="link-post-quote follow-said">{followLinkCard.said.text}</blockquote>
+          <p class="follow-said-by">{followLinkCard.said.name}, on Bluesky</p>
+        {/if}
+        <button
+          type="button"
+          class="follow-link-card"
+          title={itemUrl}
+          onclick={(e) => {
+            e.stopPropagation();
+            onOpenFullscreen?.();
+          }}
+        >
+          <span class="follow-link-card-text">
+            <span class="follow-link-card-title">{followLinkCard.title}</span>
+            {#if followLinkCard.description}
+              <span class="follow-link-card-description">{followLinkCard.description}</span>
+            {/if}
+            <span class="follow-link-card-domain">
+              {#if faviconUrl}<img src={faviconUrl} alt="" class="link-post-url-favicon" />{/if}
+              {followLinkCard.domain}
+            </span>
+          </span>
+          {#if followLinkCard.thumb}
+            <img src={followLinkCard.thumb} alt="" class="follow-link-card-thumb" loading="lazy" />
+          {/if}
+        </button>
       {:else if hasContent}
         <div class="article-body-wrapper" class:has-fade={selected && !expanded && isTruncated}>
           <div
@@ -391,11 +443,13 @@
             {@html sanitizedContent}
           </div>
         </div>
-        <!-- When the feed only gave us a short excerpt, offer to pull the full
-             article inline. Hidden once the body is long (full-content feeds)
-             or already fetched. Sits at the end of the body, not in the ⋯ menu,
-             so it reads as a natural "continue reading" affordance. Hidden while
-             the collapsed preview is clamped — you can't reach the body's end. -->
+      {/if}
+      <!-- When the feed only gave us a short excerpt, offer to pull the full
+           article inline. Hidden once the body is long (full-content feeds)
+           or already fetched. Sits at the end of the body, not in the ⋯ menu,
+           so it reads as a natural "continue reading" affordance. Hidden while
+           the collapsed preview is clamped — you can't reach the body's end. -->
+      {#if !isLinkPostMode && !collection && hasContent}
         {#if showFetchOriginal && !(selected && !expanded && isTruncated)}
           <button
             class="fetch-original"
@@ -535,7 +589,7 @@
               >{/if}
           </button>
         {/if}
-        {#if hasOpenFullscreen && (hasContent || collectionPieceCount > 0)}
+        {#if hasOpenFullscreen && (hasContent || collectionPieceCount > 0 || isFollowLink)}
           <button
             class="action-btn"
             onclick={(e) => {
@@ -808,6 +862,27 @@
     white-space: nowrap;
   }
 
+  /* The follows version of the byline: several people, no one to open, so it
+     reads as meta rather than a control (tapping it opens the card, like the
+     rest of the header). Avatars overlap into a small stack. */
+  .follows-pill {
+    cursor: inherit;
+  }
+
+  .follows-pill:hover {
+    color: var(--color-text-secondary);
+  }
+
+  .follows-avatars {
+    display: inline-flex;
+    flex-shrink: 0;
+  }
+
+  .follows-avatars .via-avatar + .via-avatar {
+    margin-left: -5px;
+    box-shadow: 0 0 0 1.5px var(--color-bg);
+  }
+
   .via-name {
     overflow: hidden;
     text-overflow: ellipsis;
@@ -938,6 +1013,100 @@
     line-height: 1.6;
     color: var(--color-text-secondary);
     overflow-wrap: break-word;
+  }
+
+  /* A follows link's sharer and their words, above the card they posted. */
+  .follow-said {
+    margin-bottom: 0.25rem;
+  }
+
+  .follow-said-by {
+    margin: 0 0 0.75rem;
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+  }
+
+  /* The link card a follow posted, the way Bluesky draws one: a bordered box
+     with the page's title, blurb and site, thumbnail beside. Flat: it sits in
+     the card, it doesn't float over it. The whole box opens the reader. */
+  .follow-link-card {
+    display: flex;
+    align-items: stretch;
+    gap: 0.75rem;
+    width: 100%;
+    padding: 0.75rem;
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md, 8px);
+    font: inherit;
+    text-align: left;
+    color: inherit;
+    cursor: pointer;
+    transition: border-color 0.15s ease;
+  }
+
+  .follow-link-card:hover {
+    border-color: var(--color-primary);
+  }
+
+  .follow-link-card:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+
+  .follow-link-card-text {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .follow-link-card-title {
+    font-size: var(--text-base);
+    font-weight: var(--weight-medium);
+    color: var(--color-text);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .follow-link-card-description {
+    font-size: var(--text-sm);
+    line-height: var(--leading-normal);
+    color: var(--color-text-secondary);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .follow-link-card-domain {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    font-size: var(--text-xs);
+    color: var(--color-text-secondary);
+  }
+
+  .follow-link-card-thumb {
+    flex-shrink: 0;
+    width: 7rem;
+    aspect-ratio: 16 / 10;
+    height: auto;
+    align-self: center;
+    object-fit: cover;
+    border-radius: var(--radius-sm, 4px);
+    background: var(--color-bg-secondary);
+  }
+
+  @container card (max-width: 480px) {
+    .follow-link-card-thumb {
+      width: 5rem;
+    }
   }
 
   /* The address, as a plain link rather than a card. One Blue, favicon for

@@ -5,7 +5,8 @@
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { articlesStore } from '$lib/stores/articles.svelte';
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
-  import { subscriptionSourceKey } from '$lib/utils/sourceKeys';
+  import { FOLLOWS_SOURCE_KEY, subscriptionSourceKey } from '$lib/utils/sourceKeys';
+  import { auth } from '$lib/stores/auth.svelte';
   import { computeSourceKeys } from '$lib/utils/channelLogic';
   import { filterSubscriptionsBySearch, subscriptionIconUrl } from '$lib/utils/subscriptionDisplay';
   import DomainPatternInput from '$lib/components/DomainPatternInput.svelte';
@@ -881,6 +882,19 @@
               />
             {/if}
             <div class="source-list">
+              {#if chSourceMode === 'include' && !auth.isGuest && !chFeedSearch}
+                <!-- Never part of "All sources": a channel shows your follows'
+                     links only by naming them. -->
+                <label class="source-item">
+                  <input
+                    type="checkbox"
+                    checked={chSourceKeys.has(FOLLOWS_SOURCE_KEY)}
+                    onchange={() => toggleChSourceKey(FOLLOWS_SOURCE_KEY)}
+                  />
+                  <Icon name="share-2" size={16} />
+                  <span class="source-name">People you follow on Bluesky</span>
+                </label>
+              {/if}
               {#each chFilteredSubscriptions as sub}
                 {@const key = subscriptionSourceKey(sub)}
                 {#if key}

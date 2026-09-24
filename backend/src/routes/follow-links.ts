@@ -4,7 +4,7 @@
 //   GET  /api/v2/following-links?window=24h|3d|7d   serve from D1, refresh behind
 //        (200 { scopeRequired: true } until the reader grants getTimeline)
 //   GET  /api/v2/following-links/for?url=           who you follow shared one URL
-//   POST /api/v2/following-links/state              opened / dismissed / restored
+//   POST /api/v2/following-links/settings           { inEverything } (no scope needed)
 //   GET  /api/v2/following-links/probe              local-dev diagnostic (Phase 0)
 
 import type { Env, Session } from '../types';
@@ -17,13 +17,13 @@ import {
   followLinksNeedRefresh,
   readFollowLinkSharers,
   readFollowLinks,
+  readFollowLinksInEverything,
   readFollowLinksSync,
   refreshFollowLinks,
-  setFollowLinkState,
-  type FollowLinkAction,
+  setFollowLinksInEverything,
   type FollowLinksWindow,
 } from '../services/follow-links-store';
-import { hasRequiredScopes, insufficientScopesResponse } from './auth';
+import { hasRequiredScopes } from './auth';
 import { normalizeArticleUrl } from '../utils/url-normalize';
 import { log, serializeError } from '../utils/logger';
 
@@ -58,8 +58,11 @@ export async function handleGetFollowLinks(
   // Not a 403: the surface's empty state IS the permission prompt, and a 403
   // scope_upgrade_required would also raise the app-wide "log in again" banner
   // on every load of the page for anyone who hasn't opted in.
+  // Answered with or without the permission: the first-run question in
+  // Everything is asked before it's granted.
+  const inEverything = await readFollowLinksInEverything(env, session.did);
   if (!hasRequiredScopes(session.grantedScopes, FOLLOWS_LINKS_SCOPES)) {
-    return json({ scopeRequired: true, links: [], sync: null });
+    return json({ scopeRequired: true, inEverything, links: [], sync: null });
   }
 
   const param = new URL(request.url).searchParams.get('window') ?? '24h';
@@ -85,6 +88,7 @@ export async function handleGetFollowLinks(
 
   return json({
     scopeRequired: false,
+    inEverything,
     window,
     links,
     sync: {
@@ -101,7 +105,7 @@ export async function handleGetFollowLinks(
  *
  * The people you follow who shared this article, for the reader's Discussion
  * panel. Served from what the last refresh stored; it never walks the timeline
- * itself (that's /following's and Home's job), so opening an article costs one
+ * itself (the follows channel and Home's lane do that), so opening an article costs one
  * indexed query. Without the scope it answers empty, quietly: the panel is no
  * place to ask for a permission.
  */
@@ -120,31 +124,30 @@ export async function handleFollowLinkSharers(
   return json({ scopeRequired: false, sharers });
 }
 
-const ACTIONS: FollowLinkAction[] = ['opened', 'dismissed', 'restored'];
-
-/** POST /api/v2/following-links/state  { url, action: 'opened'|'dismissed'|'restored' } */
-export async function handleFollowLinkState(
+/**
+ * POST /api/v2/following-links/settings  { inEverything: boolean }
+ *
+ * Whether follows links show in Everything. Needs no permission: "not now" is
+ * an answer someone gives before granting it, and "yes" is saved before the
+ * sign-in that grants it, so it's already on when they come back.
+ */
+export async function handleFollowLinksSettings(
   request: Request,
   env: Env,
   session: Session
 ): Promise<Response> {
   if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
-  if (!hasRequiredScopes(session.grantedScopes, FOLLOWS_LINKS_SCOPES)) {
-    return insufficientScopesResponse();
-  }
-  let body: { url?: unknown; action?: unknown };
+  let body: { inEverything?: unknown };
   try {
     body = await request.json();
   } catch {
     return json({ error: 'Invalid JSON' }, 400);
   }
-  const urlNormalized = typeof body.url === 'string' ? normalizeArticleUrl(body.url) : null;
-  if (!urlNormalized) return json({ error: 'Missing or invalid url' }, 400);
-  if (!ACTIONS.includes(body.action as FollowLinkAction)) {
-    return json({ error: `action must be one of ${ACTIONS.join(', ')}` }, 400);
+  if (typeof body.inEverything !== 'boolean') {
+    return json({ error: 'inEverything must be a boolean' }, 400);
   }
-  await setFollowLinkState(env, session.did, urlNormalized, body.action as FollowLinkAction);
-  return json({ ok: true });
+  await setFollowLinksInEverything(env, session.did, body.inEverything);
+  return json({ ok: true, inEverything: body.inEverything });
 }
 
 // Local dev is the one place FRONTEND_URL is a loopback address (.dev.vars).

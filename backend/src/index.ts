@@ -109,7 +109,7 @@ import {
 } from './routes/rooms';
 import {
   handleFollowLinkSharers,
-  handleFollowLinkState,
+  handleFollowLinksSettings,
   handleFollowLinksProbe,
   handleGetFollowLinks,
 } from './routes/follow-links';
@@ -485,9 +485,9 @@ async function route(
       if (!session) return unauthorizedResponse(headers);
       response = await handleFollowLinkSharers(request, env, session);
       break;
-    case url.pathname === '/api/v2/following-links/state':
+    case url.pathname === '/api/v2/following-links/settings':
       if (!session) return unauthorizedResponse(headers);
-      response = await handleFollowLinkState(request, env, session);
+      response = await handleFollowLinksSettings(request, env, session);
       break;
     // Phase 0 probe: local dev only, 404s when deployed.
     case url.pathname === '/api/v2/following-links/probe':
@@ -1257,8 +1257,7 @@ async function runScheduled(
         reportError(error, { tags: { source: 'cron', phase: 'share-draft-tombstone-purge' } });
       }
 
-      // From your follows: shares past the 7-day window, and opened/dismissed
-      // state nobody has touched in a month.
+      // From your follows: shares past the 7-day window.
       try {
         await purgeFollowLinks(env, now);
       } catch (error) {
