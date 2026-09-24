@@ -60,21 +60,21 @@ export function followShareEntry(
 }
 
 /**
- * Mark and extend the lane rows with the reader's follows.
+ * The follows shares to add as rows of their own.
  *
- * `blueskyEntries` are the Bluesky lane's rows when that lane has resolved
- * (null while it's loading or has nobody): a follow already there is marked
- * rather than repeated. Returns the rows to add; mutates nothing.
+ * `knownDids` are the people the lanes in view have already resolved: a follow
+ * among them is marked on their existing row rather than repeated. Each person
+ * is added once. Mutates nothing.
  */
 export function followExtras(
   sharers: FollowLinkSharer[],
-  blueskyDids: Set<string> | null,
+  knownDids: Set<string>,
   titles: (string | null | undefined)[]
 ): DiscussionEntryVM[] {
   const seen = new Set<string>();
   const out: DiscussionEntryVM[] = [];
   for (const s of sharers) {
-    if (seen.has(s.did) || blueskyDids?.has(s.did)) continue;
+    if (seen.has(s.did) || knownDids.has(s.did)) continue;
     seen.add(s.did);
     out.push(followShareEntry(s, titles));
   }

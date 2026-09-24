@@ -3,6 +3,7 @@ import { describe, it, expect, vi } from 'vitest';
 // followLinks.ts (for bskyPostUrl) imports the store and the api client.
 vi.mock('$lib/stores/followLinks.svelte', () => ({ followLinksStore: {} }));
 vi.mock('$lib/utils/roomArticle', () => ({ extractArticle: vi.fn() }));
+vi.mock('$lib/stores/toast.svelte', () => ({ toastStore: {} }));
 
 import { byFollowedThenEngagement, followExtras, followShareEntry } from './discussionFollows';
 import type { DiscussionEntryVM } from '$lib/components/articleCardView.types';
@@ -71,14 +72,14 @@ describe('followExtras', () => {
   const maya = sharer();
   const ben = sharer({ did: 'did:plc:ben', name: 'Ben', kind: 'repost' });
 
-  it('adds every follow share while the Bluesky lane has nothing resolved', () => {
-    expect(followExtras([maya, ben], null, []).map((e) => e.did)).toEqual([
+  it('adds every follow share while no lane has resolved them', () => {
+    expect(followExtras([maya, ben], new Set(), []).map((e) => e.did)).toEqual([
       'did:plc:maya',
       'did:plc:ben',
     ]);
   });
 
-  it('skips a follow the Bluesky lane already carries', () => {
+  it('skips a follow a lane already carries', () => {
     expect(followExtras([maya, ben], new Set(['did:plc:maya']), []).map((e) => e.did)).toEqual([
       'did:plc:ben',
     ]);
@@ -86,7 +87,7 @@ describe('followExtras', () => {
 
   it('lists each person once', () => {
     const again = sharer({ postUri: 'at://did:plc:maya/app.bsky.feed.post/3def' });
-    expect(followExtras([maya, again], null, [])).toHaveLength(1);
+    expect(followExtras([maya, again], new Set(), [])).toHaveLength(1);
   });
 });
 
