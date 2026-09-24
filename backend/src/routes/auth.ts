@@ -274,12 +274,15 @@ interface AuthorizationParams {
   loginHint?: string;
   pdsUrl: string;
   authMeta: Awaited<ReturnType<typeof fetchAuthServerMetadata>>;
-  requestedScopes: string;
+  // Optional features to ask for on top of the base scopes.
+  features: Iterable<ScopeFeature>;
   returnUrl: string;
   frontendUrl: string;
   cliPort?: number;
   replaceSessionId?: string;
 }
+
+type ParResult = { ok: true; requestUri: string } | { ok: false; errorText: string };
 
 // Start an authorization: PKCE + state, then a PAR (confidential client) or a
 // direct authorization URL (localhost public client). Shared by sign-in and by
@@ -296,32 +299,21 @@ async function buildAuthorizationUrl(
     loginHint,
     pdsUrl,
     authMeta,
-    requestedScopes,
+    features,
     returnUrl,
     frontendUrl,
     cliPort,
     replaceSessionId,
   } = params;
 
+  const featureList = [...features];
+  let requestedScopes = buildRequestedScopes(env, featureList);
+
   // Generate PKCE
   const { codeVerifier, codeChallenge } = await generatePKCE();
 
   // Generate state
   const state = generateRandomString(32);
-
-  // Store state in KV (handle will be updated from profile in callback)
-  await storeOAuthState(env, state, {
-    codeVerifier,
-    did,
-    handle,
-    pdsUrl,
-    authServer: authMeta.issuer,
-    returnUrl,
-    frontendUrl,
-    cliPort,
-    scope: requestedScopes,
-    replaceSessionId,
-  });
 
   const baseUrl = getBaseUrl(url);
   const redirectUri = `${baseUrl}/api/auth/callback`;
@@ -337,71 +329,60 @@ async function buildAuthorizationUrl(
   // Build authorization URL
   let authUrl: string;
 
-  if (authMeta.pushed_authorization_request_endpoint && !isPublicClient) {
+  const parEndpoint = authMeta.pushed_authorization_request_endpoint;
+  if (parEndpoint && !isPublicClient) {
     // Use PAR (Pushed Authorization Request) - only for confidential clients
-    // Create client assertion for confidential client authentication
-    const clientAssertion = await createClientAssertion(env, authMeta.issuer, clientId);
-
-    const parResponse = await fetch(authMeta.pushed_authorization_request_endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        client_id: clientId,
-        redirect_uri: redirectUri,
-        response_type: 'code',
-        scope: requestedScopes,
-        state,
-        code_challenge: codeChallenge,
-        code_challenge_method: 'S256',
-        ...(loginHint ? { login_hint: loginHint } : {}),
-        client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
-        client_assertion: clientAssertion,
-      }),
-    });
-
-    // Retry once for transient invalid_client_metadata errors
-    // (auth server intermittently fails to fetch our client metadata)
-    if (!parResponse.ok) {
-      const errorText = await parResponse.text();
-
-      if (errorText.includes('invalid_client_metadata')) {
-        console.warn('PAR got invalid_client_metadata, retrying once...');
-        await new Promise((r) => setTimeout(r, 1000));
-
-        const retryAssertion = await createClientAssertion(env, authMeta.issuer, clientId);
-        const retryParResponse = await fetch(authMeta.pushed_authorization_request_endpoint!, {
+    const pushAuthorizationRequest = async (scope: string): Promise<ParResult> => {
+      const post = async () =>
+        fetch(parEndpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
           body: new URLSearchParams({
             client_id: clientId,
             redirect_uri: redirectUri,
             response_type: 'code',
-            scope: requestedScopes,
+            scope,
             state,
             code_challenge: codeChallenge,
             code_challenge_method: 'S256',
             ...(loginHint ? { login_hint: loginHint } : {}),
             client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
-            client_assertion: retryAssertion,
+            // Create client assertion for confidential client authentication
+            client_assertion: await createClientAssertion(env, authMeta.issuer, clientId),
           }),
         });
 
-        if (!retryParResponse.ok) {
-          const retryError = await retryParResponse.text();
-          throw new Error(`PAR request failed: ${retryError}`);
-        }
-
-        const retryParData = (await retryParResponse.json()) as {
-          request_uri: string;
-        };
-        authUrl = `${authMeta.authorization_endpoint}?client_id=${encodeURIComponent(clientId)}&request_uri=${encodeURIComponent(retryParData.request_uri)}`;
-      } else {
-        throw new Error(`PAR request failed: ${errorText}`);
+      let response = await post();
+      // Retry once for transient invalid_client_metadata errors
+      // (auth server intermittently fails to fetch our client metadata)
+      if (!response.ok) {
+        const errorText = await response.text();
+        if (!errorText.includes('invalid_client_metadata')) return { ok: false, errorText };
+        console.warn('PAR got invalid_client_metadata, retrying once...');
+        await new Promise((r) => setTimeout(r, 1000));
+        response = await post();
+        if (!response.ok) return { ok: false, errorText: await response.text() };
       }
-    } else {
-      const parData = (await parResponse.json()) as { request_uri: string };
-      authUrl = `${authMeta.authorization_endpoint}?client_id=${encodeURIComponent(clientId)}&request_uri=${encodeURIComponent(parData.request_uri)}`;
+      const data = (await response.json()) as { request_uri: string };
+      return { ok: true, requestUri: data.request_uri };
+    };
+
+    let par = await pushAuthorizationRequest(requestedScopes);
+
+    // A PDS answers invalid_scope when it can't resolve an included permission
+    // set (the app's lexicon hosting is down, or the set was unpublished) and it
+    // has no earlier copy cached. Remembered features are re-requested at every
+    // sign-in, so without this one app's outage would lock its users out of
+    // Skyreader. The granular form asks for the same access without any set.
+    const granularScopes = buildRequestedScopes({ OAUTH_PERMISSION_SETS: 'false' }, featureList);
+    if (!par.ok && par.errorText.includes('invalid_scope') && granularScopes !== requestedScopes) {
+      console.warn('PAR rejected the permission sets, asking for granular scopes:', par.errorText);
+      requestedScopes = granularScopes;
+      par = await pushAuthorizationRequest(requestedScopes);
     }
+
+    if (!par.ok) throw new Error(`PAR request failed: ${par.errorText}`);
+    authUrl = `${authMeta.authorization_endpoint}?client_id=${encodeURIComponent(clientId)}&request_uri=${encodeURIComponent(par.requestUri)}`;
   } else {
     // Direct authorization request (used for localhost public clients and fallback)
     const params = new URLSearchParams({
@@ -416,6 +397,21 @@ async function buildAuthorizationUrl(
     });
     authUrl = `${authMeta.authorization_endpoint}?${params}`;
   }
+
+  // Stored once the scope is settled: the callback falls back to it when the
+  // token response carries no scope. Handle is updated from the profile there.
+  await storeOAuthState(env, state, {
+    codeVerifier,
+    did,
+    handle,
+    pdsUrl,
+    authServer: authMeta.issuer,
+    returnUrl,
+    frontendUrl,
+    cliPort,
+    scope: requestedScopes,
+    replaceSessionId,
+  });
 
   return authUrl;
 }
@@ -507,8 +503,6 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
     if (did) {
       for (const feature of await rememberedFeatures(env, did)) features.add(feature);
     }
-    const requestedScopes = buildRequestedScopes(env, features);
-
     // login_hint pre-fills the account on the auth screen; omitted when signing up.
     const loginHint = isSignup ? undefined : normalizedHandle;
 
@@ -518,7 +512,7 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
       loginHint,
       pdsUrl,
       authMeta,
-      requestedScopes,
+      features,
       returnUrl,
       frontendUrl,
       cliPort,
@@ -603,7 +597,7 @@ export async function handleAuthUpgrade(request: Request, env: Env): Promise<Res
       loginHint: session.did,
       pdsUrl,
       authMeta,
-      requestedScopes: buildRequestedScopes(env, features),
+      features,
       returnUrl,
       frontendUrl: getValidatedFrontendUrl(request, env),
       replaceSessionId: sessionId,

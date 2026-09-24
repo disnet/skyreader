@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { IncludeScope } from '@atproto/oauth-scopes';
 import authFull from '../../lexicons/app/skyreader/authFull.json';
+import { EXTERNAL_PERMISSION_SETS } from '../src/config/external-permission-sets';
 import {
   ALL_POSSIBLE_SCOPES,
   GRANULAR_SCOPES,
@@ -12,6 +13,7 @@ import {
   baseScopes,
   buildRequestedScopes,
   clientMetadataScopes,
+  featureScopes,
   type ScopeFeature,
 } from '../src/config/scopes';
 import { grantedFeatures, grantsScopes } from '../src/services/scope-check';
@@ -37,6 +39,59 @@ describe('permission set lexicon', () => {
     // IncludeScope silently drops permissions outside the set's own namespace.
     expect(expandedSet).toHaveLength(1);
     expect(grantsScopes(['atproto', ...expandedSet].join(' '), SKYREADER_REPO_SCOPES)).toBe(true);
+  });
+});
+
+// What a PDS returns for a request: every include: expanded from the published
+// set (here, our snapshots), everything else as-is.
+function expandLikePds(scope: string): string {
+  const sets: Record<string, unknown> = {
+    [authFull.id]: authFull.defs.main,
+    ...Object.fromEntries(EXTERNAL_PERMISSION_SETS.map((set) => [set.id, set.main])),
+  };
+  return scope
+    .split(' ')
+    .flatMap((s) => {
+      const include = IncludeScope.fromString(s);
+      if (!include) return [s];
+      const set = sets[include.nsid];
+      if (!set) throw new Error(`no snapshot for ${include.nsid}`);
+      return include.toScopes(set as Parameters<IncludeScope['toScopes']>[0]);
+    })
+    .join(' ');
+}
+
+describe("other apps' permission sets", () => {
+  const features = Object.keys(SCOPE_FEATURES) as ScopeFeature[];
+
+  it('each set survives the namespace-authority filter', () => {
+    for (const set of EXTERNAL_PERMISSION_SETS) {
+      const expanded = IncludeScope.fromString(`include:${set.id}`)!.toScopes(
+        set.main as unknown as Parameters<IncludeScope['toScopes']>[0]
+      );
+      expect(expanded).toHaveLength(set.main.permissions.length);
+    }
+  });
+
+  it('a feature requested through sets grants everything its gates check', () => {
+    for (const feature of features) {
+      const granted = expandLikePds(['atproto', ...featureScopes(SETS_ON, feature)].join(' '));
+      expect(grantsScopes(granted, SCOPE_FEATURES[feature])).toBe(true);
+      expect(grantedFeatures(granted)).toContain(feature);
+    }
+  });
+
+  it('is only used when permission sets are on', () => {
+    for (const feature of features) {
+      expect(featureScopes(SETS_OFF, feature)).toEqual(SCOPE_FEATURES[feature]);
+    }
+    expect(featureScopes(SETS_ON, 'semble')).toContain('include:network.cosmik.authFull');
+    expect(featureScopes(SETS_ON, 'linkblog')).toEqual(['include:site.standard.authFull']);
+    expect(featureScopes(SETS_ON, 'margin')).toEqual(SCOPE_FEATURES.margin);
+  });
+
+  it('a raw include: stored unexpanded is expanded from the snapshot', () => {
+    expect(grantsScopes('atproto include:site.standard.authFull', LINKBLOG_SCOPES)).toBe(true);
   });
 });
 

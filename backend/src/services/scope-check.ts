@@ -6,6 +6,7 @@ import {
 } from '@atproto/oauth-scopes';
 import skyreaderAuthFull from '../../../lexicons/app/skyreader/authFull.json';
 import { FEATURE_OPT_IN_SCOPES, type ScopeFeature } from '../config/scopes';
+import { EXTERNAL_PERMISSION_SETS } from '../config/external-permission-sets';
 
 // Answers "does this session's granted scope allow X?" by meaning, not by string.
 //
@@ -16,11 +17,13 @@ import { FEATURE_OPT_IN_SCOPES, type ScopeFeature } from '../config/scopes';
 // `transition:generic`. Exact string matching only understands the first, so
 // every gate goes through here.
 
-// Permission sets we publish ourselves, so a stored scope that still carries the
-// raw `include:` (a token response without `scope`, where we fall back to what
-// we requested) can be expanded locally.
+// Permission sets we request, so a stored scope that still carries the raw
+// `include:` (a token response without `scope`, where we fall back to what we
+// requested) can be expanded locally. Other apps' sets are snapshots; the PDS's
+// own expansion, when it returns one, is what actually counts.
 const LOCAL_PERMISSION_SETS: Record<string, unknown> = {
   [skyreaderAuthFull.id]: skyreaderAuthFull.defs.main,
+  ...Object.fromEntries(EXTERNAL_PERMISSION_SETS.map((set) => [set.id, set.main])),
 };
 
 function expandLocalIncludes(scopes: string[]): string[] {

@@ -218,9 +218,12 @@ describe('progressive scope requests', () => {
   const originalFetch = globalThis.fetch;
   const SESSION = 'progressive-scope-session';
   let parBodies: URLSearchParams[] = [];
+  // Scopes the mock PDS refuses as invalid_scope, like a set it can't resolve.
+  let unresolvable: string[] = [];
 
   beforeEach(async () => {
     parBodies = [];
+    unresolvable = [];
     await env.DB.prepare('DELETE FROM sessions WHERE did = ?').bind(TEST_DID).run();
     await env.DB.prepare('DELETE FROM users WHERE did = ?').bind(TEST_DID).run();
     await env.DB.prepare('DELETE FROM oauth_state').run();
@@ -233,7 +236,17 @@ describe('progressive scope requests', () => {
       if (urlStr.includes('.well-known/oauth-protected-resource')) return mockResourceMeta();
       if (urlStr.includes('.well-known/oauth-authorization-server')) return mockAuthServerMeta();
       if (urlStr.includes('/oauth/par')) {
-        parBodies.push(new URLSearchParams(init?.body as string));
+        const body = new URLSearchParams(init?.body as string);
+        parBodies.push(body);
+        const scope = body.get('scope')?.split(' ') ?? [];
+        const refused = scope.find((s) => unresolvable.includes(s));
+        if (refused) {
+          const error = JSON.stringify({
+            error: 'invalid_scope',
+            error_description: `Could not resolve Lexicon for NSID (${refused.slice('include:'.length)})`,
+          });
+          return { ok: false, status: 400, headers: new Headers(), text: async () => error };
+        }
         return mockParResponse();
       }
       throw new Error(`Unexpected fetch: ${urlStr}`);
@@ -245,13 +258,13 @@ describe('progressive scope requests', () => {
     vi.restoreAllMocks();
   });
 
-  async function call(path: string, init: RequestInit = {}) {
+  async function call(path: string, init: RequestInit = {}, workerEnv: typeof env = env) {
     const request = new IncomingRequest(`http://localhost${path}`, {
       ...init,
       headers: { Origin: env.FRONTEND_URL, ...(init.headers ?? {}) },
     });
     const ctx = createExecutionContext();
-    const response = await worker.fetch(request, env, ctx);
+    const response = await worker.fetch(request, workerEnv, ctx);
     await waitOnExecutionContext(ctx);
     return response;
   }
@@ -327,6 +340,36 @@ describe('progressive scope requests', () => {
       'SELECT replace_session_id, return_url FROM oauth_state'
     ).first<{ replace_session_id: string; return_url: string }>();
     expect(state).toEqual({ replace_session_id: SESSION, return_url: '/settings' });
+  });
+
+  it("falls back to granular scopes when the PDS can't resolve a permission set", async () => {
+    const setsOn = { ...env, OAUTH_PERMISSION_SETS: 'true' };
+    unresolvable = ['include:app.userinput.authBasic'];
+    await seedUser('feedback');
+
+    const response = await call(`/api/auth/login?handle=${TEST_HANDLE}`, {}, setsOn);
+    expect(response.status).toBe(200);
+    expect(parBodies).toHaveLength(2);
+    expect(parBodies[0].get('scope')?.split(' ')).toContain('include:app.userinput.authBasic');
+    const scope = requestedScope();
+    expect(scope.some((s) => s.startsWith('include:'))).toBe(false);
+    expect(scope).toEqual(
+      expect.arrayContaining([
+        'repo:app.skyreader.feed.subscription',
+        'repo:app.userinput.discussion',
+      ])
+    );
+
+    // The callback falls back to the stored scope, so it must be what was asked for.
+    const state = await env.DB.prepare('SELECT scope FROM oauth_state').first<{ scope: string }>();
+    expect(state?.scope).toBe(parBodies[1].get('scope'));
+  });
+
+  it('does not retry an invalid_scope when nothing was asked for through a set', async () => {
+    unresolvable = ['repo:app.skyreader.feed.subscription'];
+    const response = await call(`/api/auth/login?handle=${TEST_HANDLE}`);
+    expect(response.status).toBe(500);
+    expect(parBodies).toHaveLength(1);
   });
 
   it('requires a session to upgrade', async () => {
