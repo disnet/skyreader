@@ -781,7 +781,7 @@
   </section>
 
   <!-- Subscriptions -->
-  <section class="card">
+  <section class="card" id="subscriptions">
     <div class="card-head">
       <h2>Subscriptions</h2>
       {@render visBadge(pdsSyncEnabled)}

@@ -153,6 +153,8 @@ test.describe('From your follows', () => {
         ageMs: 4 * 24 * HOUR,
       },
     ]);
+    // A library to draw lanes from; an empty one gets the first-run Home instead.
+    await seedSavedArticle(testUser, { url: 'https://example.com/saved', title: 'A Saved Piece' });
     await authedPage.goto('/home');
     await expect(
       authedPage.getByRole('heading', { name: 'Shared by people you follow' })
@@ -172,6 +174,30 @@ test.describe('From your follows', () => {
       'Lane Piece',
       'Week-old Piece',
     ]);
+  });
+
+  test("leads a new account's Home with what its follows share", async ({
+    authedPage,
+    testUser,
+  }) => {
+    await seedFollowLinks(testUser, [
+      {
+        url: 'https://example.com/first-read',
+        sharerDid: 'did:plc:maya',
+        sharerName: 'Maya Ortiz',
+        title: 'First Read',
+        text: 'Start with this one.',
+      },
+    ]);
+    await authedPage.goto('/home');
+    await expect(authedPage.getByRole('heading', { name: 'Welcome to Skyreader' })).toBeVisible({
+      timeout: 15_000,
+    });
+    const follows = authedPage.getByRole('region', { name: 'Shared by people you follow' });
+    await expect(follows.getByText('First Read')).toBeVisible({ timeout: 15_000 });
+    await expect(follows.getByText('Maya Ortiz shared this')).toBeVisible();
+    await expect(follows.getByText('“Start with this one.”')).toBeVisible();
+    await expect(authedPage.getByRole('button', { name: 'Add a site or RSS feed' })).toBeVisible();
   });
 
   test("leads an article's Discussion with the people you follow", async ({

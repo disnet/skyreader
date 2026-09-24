@@ -23,7 +23,7 @@ Sign-in asks only for the basics. When you first turn on a feature that writes t
 
 ## Finding your way around
 
-- **Home** is the front page: your reading, resumable where you left off.
+- **Home** is the front page: your reading, resumable where you left off. On a new account, it starts with the links people you follow are sharing, and ways to add your own sources.
 - **Feeds** is the full library, with the sidebar of sources and channels.
 - **Saved** holds articles you've saved, from your feeds or from anywhere on the web.
 - **Daily** is your magazine, built from your saves. See [Reading](/guide/reading/).
