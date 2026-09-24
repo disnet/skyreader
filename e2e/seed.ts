@@ -286,8 +286,36 @@ export async function seedFollowLinks(
   ]);
 }
 
+const BLUESKY_READ_SCOPES = [
+  FOLLOWS_LINKS_SCOPE,
+  'rpc:app.bsky.feed.getFeed?aud=did:web:api.bsky.app%23bsky_appview',
+  'rpc:app.bsky.actor.getPreferences?aud=did:web:api.bsky.app%23bsky_appview',
+];
+const BLUESKY_WRITE_SCOPES = [
+  'repo:app.bsky.feed.like',
+  'repo:app.bsky.feed.repost',
+  'repo:app.bsky.feed.post',
+];
+
+/**
+ * Grant the session the Bluesky feeds permissions (docs/plans/BLUESKY_FEEDS_PLAN.md):
+ * reading always, writing (like/repost/reply) when `write`. Feed pages and writes
+ * still go to the (fake) PDS, so a spec routes those itself.
+ */
+export async function seedBlueskyAccess(user: TestUser, opts: { write?: boolean } = {}) {
+  const scopes = [
+    'atproto repo:app.skyreader.feed.subscription repo:app.skyreader.social.follow',
+    ...BLUESKY_READ_SCOPES,
+    ...(opts.write ? BLUESKY_WRITE_SCOPES : []),
+  ].join(' ');
+  await execD1([
+    `UPDATE sessions SET granted_scopes = ${sqlString(scopes)} WHERE session_id = ${sqlString(user.sessionId)}`,
+  ]);
+}
+
 export async function cleanupTestData(user: TestUser) {
   await execD1([
+    `DELETE FROM bsky_feeds WHERE user_did = '${user.did}'`,
     `DELETE FROM channels WHERE user_did = '${user.did}'`,
     `DELETE FROM item_labels_cache WHERE user_did = '${user.did}'`,
     `DELETE FROM saved_articles WHERE user_did = '${user.did}'`,

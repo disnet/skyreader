@@ -3,7 +3,15 @@
  * reader uses it (progressive scopes), rather than at sign-in.
  */
 export type ScopeFeature =
-  'semble' | 'margin' | 'linkblog' | 'pckt' | 'offprint' | 'feedback' | 'follows';
+  | 'semble'
+  | 'margin'
+  | 'linkblog'
+  | 'pckt'
+  | 'offprint'
+  | 'feedback'
+  | 'follows'
+  | 'bluesky'
+  | 'blueskyWrite';
 
 /** The reader-facing name of a scope feature, for "X needs your permission" copy. */
 export const SCOPE_FEATURE_LABELS: Record<ScopeFeature, string> = {
@@ -14,6 +22,8 @@ export const SCOPE_FEATURE_LABELS: Record<ScopeFeature, string> = {
   offprint: 'Offprint',
   feedback: 'Feedback',
   follows: 'From your follows',
+  bluesky: 'Bluesky feeds',
+  blueskyWrite: 'Liking and replying on Bluesky',
 };
 
 export interface User {
@@ -1151,7 +1161,8 @@ export interface FeedItem {
 export type CombinedFeedItem =
   | { type: 'article'; item: Article; date: string }
   | { type: 'document'; item: SocialDocument; date: string }
-  | { type: 'link'; item: FollowLink; date: string };
+  | { type: 'link'; item: FollowLink; date: string }
+  | { type: 'post'; item: BskyPost; date: string };
 
 /**
  * Auto-update rule for a channel. When set, sourceKeys are automatically
@@ -1301,6 +1312,127 @@ export interface FollowLinksResponse {
     lastPollAt: number | null;
     error: string | null;
   } | null;
+}
+
+// Bluesky feeds as sources (docs/plans/BLUESKY_FEEDS_PLAN.md). Mirrors
+// backend/src/services/bsky-posts.ts; posts are read live, never stored.
+export interface BskyActor {
+  did: string;
+  handle: string;
+  displayName?: string;
+  avatar?: string;
+}
+
+/** A run of a post's text, with the facet over it (at most one) resolved. */
+export interface BskyTextSegment {
+  text: string;
+  link?: string;
+  /** A mention's DID. */
+  mention?: string;
+  /** A hashtag, without the '#'. */
+  tag?: string;
+}
+
+export interface BskyImage {
+  thumb: string;
+  fullsize: string;
+  alt: string;
+  aspectRatio?: { width: number; height: number };
+}
+
+export interface BskyExternal {
+  uri: string;
+  title: string;
+  description: string;
+  thumb?: string;
+}
+
+export interface BskyVideo {
+  playlist: string;
+  thumbnail?: string;
+  alt?: string;
+  aspectRatio?: { width: number; height: number };
+}
+
+export interface BskyStrongRef {
+  uri: string;
+  cid: string;
+}
+
+export type BskyQuote =
+  | {
+      uri: string;
+      url: string;
+      author: BskyActor;
+      text: string;
+      segments: BskyTextSegment[];
+      createdAt: string;
+      images?: BskyImage[];
+      external?: BskyExternal;
+      video?: BskyVideo;
+    }
+  | { unavailable: 'notFound' | 'blocked' | 'detached' };
+
+export interface BskyPost {
+  uri: string;
+  cid: string;
+  /** The post on bsky.app. */
+  url: string;
+  author: BskyActor;
+  text: string;
+  segments: BskyTextSegment[];
+  createdAt: string;
+  indexedAt: string;
+  images?: BskyImage[];
+  external?: BskyExternal;
+  video?: BskyVideo;
+  quote?: BskyQuote;
+  replyCount: number;
+  repostCount: number;
+  likeCount: number;
+  quoteCount: number;
+  viewer: { like?: string; repost?: string; replyDisabled?: boolean };
+  /** What a reply to this post points at. */
+  replyRef?: { root: BskyStrongRef; parent: BskyStrongRef };
+  replyParent?: { author: BskyActor; text: string } | { unavailable: true };
+  repostedBy?: BskyActor;
+  pinned?: boolean;
+  /** A label that hides the media until clicked. */
+  mediaWarning?: string;
+  /** When the feed places it: the repost time for a repost. */
+  sortAt: string;
+}
+
+/** A Bluesky feed as a source: the Following timeline, or a custom feed. */
+export interface BskyFeedSource {
+  /** 'following', or an app.bsky.feed.generator at-uri. */
+  uri: string;
+  displayName: string;
+  description?: string;
+  avatar?: string;
+}
+
+export interface BskyAccess {
+  /** The Following timeline (also granted by From your follows). */
+  timeline: boolean;
+  /** Custom feeds and the list of feeds saved in Bluesky. */
+  feeds: boolean;
+  /** Like, repost and reply. */
+  write: boolean;
+}
+
+export interface BskyFeedsResponse {
+  access: BskyAccess;
+  feeds: BskyFeedSource[];
+  /** With `saved`: Following, then the feeds saved in Bluesky. */
+  saved?: (BskyFeedSource & { added: boolean })[];
+  savedError?: string | null;
+}
+
+export interface BskyFeedPageResponse {
+  scopeRequired?: boolean;
+  posts: BskyPost[];
+  cursor: string | null;
 }
 
 // Reading Rooms (spike): a room IS a Semble/Margin collection, resolved by the

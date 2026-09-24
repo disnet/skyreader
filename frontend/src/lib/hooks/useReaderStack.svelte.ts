@@ -32,6 +32,7 @@ import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
 import { feedViewStore, type FeedDisplayItem } from '$lib/stores/feedView.svelte';
 import { fetchCollectionDoc } from '$lib/utils/collectionPiece';
 import { openFollowLink } from '$lib/utils/followLinks';
+import { openBskyPost } from '$lib/utils/bskyPosts';
 import { getItemTitle } from '$lib/utils/displayItem';
 import {
   READ_PARAM,
@@ -185,6 +186,7 @@ export function useReaderStack(config: { onReaderChange?: (open: boolean) => voi
     if (!item) return;
     // A follows link has no body to open: extract the page, then push that.
     if (item.type === 'link') void openFollowLink(item.item, { openReader });
+    else if (item.type === 'post') void openBskyPost(item.item, { openReader });
     else openReader(item);
   }
 

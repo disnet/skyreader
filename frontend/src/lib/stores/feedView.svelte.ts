@@ -8,6 +8,7 @@ import { savedSearchStore } from './savedSearch.svelte';
 import { preferences } from './preferences.svelte';
 import { filteredViewsStore } from './filteredViews.svelte';
 import { followLinksStore } from './followLinks.svelte';
+import { bskyFeedsStore, bskyPostKey } from './bskyFeeds.svelte';
 import { mobileStore } from './mediaQuery.svelte';
 import { liveDb } from '$lib/services/liveDb.svelte';
 import type {
@@ -22,6 +23,7 @@ import type {
   SortOrder,
   FilteredView,
   FollowLink,
+  BskyPost,
 } from '$lib/types';
 import { htmlToText, normalize, searchRank } from '$lib/services/savedSearch';
 import { sameUrlFilters, type UrlFilters } from '$lib/utils/urlFilters';
@@ -32,6 +34,8 @@ import {
   isRssSource,
   isDocumentsSource,
   isFollowsSource,
+  isBskyFeedSource,
+  getBskyFeedUri,
   getRssSubscriptionRkey,
   resolveDocScopes,
   docInAnyScope,
@@ -56,8 +60,15 @@ export type FeedDisplayItem =
  */
 export type FollowLinkRow = { type: 'link'; item: FollowLink; key: string };
 
-/** A row of the list: a readable item, or a follows link. */
-export type RiverItem = FeedDisplayItem | FollowLinkRow;
+/**
+ * A Bluesky post, as a row of the river (docs/plans/BLUESKY_FEEDS_PLAN.md).
+ * Like a follows link it lives only in the river: it has no read state, and
+ * its link card opens in the reader the way a follows link does.
+ */
+export type BskyPostRow = { type: 'post'; item: BskyPost; key: string };
+
+/** A row of the list: a readable item, a follows link, or a Bluesky post. */
+export type RiverItem = FeedDisplayItem | FollowLinkRow | BskyPostRow;
 
 /**
  * How far back a river article can dedupe a follows link. Links are at most a
@@ -865,6 +876,40 @@ function createFeedViewStore() {
     );
   });
 
+  // Derived: the Bluesky feeds this view names. Like the follows source, a feed
+  // is never part of "All sources" or a category: a channel shows one only by
+  // naming it. A type filter, which picks subscription types, leaves them out.
+  let shownBskyFeedUris = $derived.by((): string[] => {
+    const fv = effectiveFilters;
+    if (isSavedView || viewMode !== 'combined') return [];
+    if (fv.typeFilter.length > 0 || fv.sourceMode !== 'include') return [];
+    return fv.sourceKeys.filter(isBskyFeedSource).map(getBskyFeedUri);
+  });
+
+  // Derived: the view is one Bluesky feed and nothing else, so it keeps the
+  // feed's own order (a custom feed is ranked, not chronological) and pages it
+  // by cursor. Mixed with anything, posts sort by when the feed placed them.
+  let bskyFeedOnly = $derived(
+    shownBskyFeedUris.length === 1 && effectiveFilters.sourceKeys.every((k) => isBskyFeedSource(k))
+  );
+
+  // Derived: the posts of every Bluesky feed in view, as loaded so far. The same
+  // post from two feeds (or reposted twice in one) shows once per row key.
+  let displayedBskyPosts = $derived.by((): BskyPost[] => {
+    if (shownBskyFeedUris.length === 0) return [];
+    const seen = new Set<string>();
+    const out: BskyPost[] = [];
+    for (const uri of shownBskyFeedUris) {
+      for (const post of bskyFeedsStore.page(uri).posts) {
+        const key = bskyPostKey(post);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(post);
+      }
+    }
+    return out;
+  });
+
   // Derived: full combined view (articles + documents merged by date),
   // pre-pagination. Merging the complete sets and sorting once means the
   // newest items win regardless of type — no date-window heuristic needed to
@@ -874,6 +919,10 @@ function createFeedViewStore() {
     if (viewMode !== 'combined') return [];
 
     const sortOrder = effectiveFilters.sortOrder;
+
+    if (bskyFeedOnly) {
+      return displayedBskyPosts.map((item) => ({ type: 'post' as const, item, date: item.sortAt }));
+    }
 
     const combined: CombinedFeedItem[] = [
       ...filteredArticles.map((item) => ({
@@ -890,6 +939,11 @@ function createFeedViewStore() {
         type: 'link' as const,
         item,
         date: new Date(item.firstSharedAt).toISOString(),
+      })),
+      ...displayedBskyPosts.map((item) => ({
+        type: 'post' as const,
+        item,
+        date: item.sortAt,
       })),
     ];
 
@@ -1289,6 +1343,8 @@ function createFeedViewStore() {
           };
         } else if (item.type === 'link') {
           return { type: 'link' as const, item: item.item, key: followLinkReadKey(item.item) };
+        } else if (item.type === 'post') {
+          return { type: 'post' as const, item: item.item, key: bskyPostKey(item.item) };
         } else {
           return {
             type: 'document' as const,
@@ -1327,7 +1383,12 @@ function createFeedViewStore() {
   let hasMore = $derived.by(() => {
     const mode = viewMode;
     if (isSavedView) return loadedArticleCount < savedItemsAll.length;
-    if (mode === 'combined') return loadedArticleCount < combinedAll.length;
+    if (mode === 'combined') {
+      return (
+        loadedArticleCount < combinedAll.length ||
+        shownBskyFeedUris.some((uri) => bskyFeedsStore.page(uri).cursor !== null)
+      );
+    }
     // 'shares' mode shows documents, which aren't cursor-paginated.
     if (mode === 'shares') return false;
     return loadedArticleCount < filteredArticles.length;
@@ -1335,6 +1396,9 @@ function createFeedViewStore() {
 
   let isLoadingMore = $derived.by(() => {
     const mode = viewMode;
+    if (mode === 'combined' && shownBskyFeedUris.some((uri) => bskyFeedsStore.page(uri).loading)) {
+      return true;
+    }
     if (mode === 'combined' || mode === 'shares') return socialStore.isLoading;
     return false;
   });
@@ -1357,6 +1421,7 @@ function createFeedViewStore() {
       if (loadedArticleCount < combinedAll.length) {
         loadedArticleCount += DEFAULT_PAGE_SIZE;
       }
+      loadMoreBskyPosts();
       return;
     }
 
@@ -1366,6 +1431,30 @@ function createFeedViewStore() {
       }
     }
     // 'shares' mode shows documents (not paginated) — nothing to load.
+  }
+
+  // Page in more of the Bluesky feeds in view once the list reaches past what's
+  // loaded of them. A feed on its own pages whenever the list nears its end; in
+  // a mixed view, a feed pages once the rows shown are older than its oldest
+  // post, so its next page belongs in the part of the list being reached.
+  function loadMoreBskyPosts() {
+    if (shownBskyFeedUris.length === 0) return;
+    const shown = combinedAll.slice(0, loadedArticleCount);
+    const lastDate = shown.length ? new Date(shown[shown.length - 1].date).getTime() : Infinity;
+    for (const uri of shownBskyFeedUris) {
+      const page = bskyFeedsStore.page(uri);
+      if (!page.cursor || page.loading) continue;
+      if (bskyFeedOnly) {
+        if (loadedArticleCount + DEFAULT_PAGE_SIZE >= combinedAll.length) {
+          void bskyFeedsStore.loadMore(uri);
+        }
+        continue;
+      }
+      const oldest = page.posts.at(-1);
+      if (!oldest || new Date(oldest.sortAt).getTime() >= lastDate) {
+        void bskyFeedsStore.loadMore(uri);
+      }
+    }
   }
 
   // Single entry point for changing the expanded item.
@@ -1771,6 +1860,14 @@ function createFeedViewStore() {
     },
     get displayedDocuments() {
       return displayedDocuments;
+    },
+    /** The Bluesky feeds this view names (their uris), which the page loads. */
+    get shownBskyFeedUris() {
+      return shownBskyFeedUris;
+    },
+    /** The view is one Bluesky feed and nothing else. */
+    get bskyFeedOnly() {
+      return bskyFeedOnly;
     },
     get displayedFollowLinks() {
       return displayedFollowLinks;

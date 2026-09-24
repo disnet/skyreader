@@ -119,6 +119,26 @@ export const FOLLOWS_LINKS_SCOPES = [
   'rpc:app.bsky.feed.getTimeline?aud=did:web:api.bsky.app%23bsky_appview',
 ];
 
+// Bluesky feeds as sources (docs/plans/BLUESKY_FEEDS_PLAN.md): reading a custom
+// feed and the reader's saved-feed list, on top of the timeline read above, so a
+// Following timeline, or any feed pinned in Bluesky, can be a channel. Appview
+// methods the PDS proxies; getPreferences is answered by the PDS itself but
+// checked against the same appview audience. Kept OUT of GRANULAR_SCOPES.
+export const BLUESKY_READ_SCOPES = [
+  ...FOLLOWS_LINKS_SCOPES,
+  'rpc:app.bsky.feed.getFeed?aud=did:web:api.bsky.app%23bsky_appview',
+  'rpc:app.bsky.actor.getPreferences?aud=did:web:api.bsky.app%23bsky_appview',
+];
+
+// Liking, reposting and replying from a Bluesky feed: records in the reader's own
+// repo. Asked for separately, the first time the reader acts on a post, so
+// nobody grants posting rights just to read.
+export const BLUESKY_WRITE_SCOPES = [
+  'repo:app.bsky.feed.like',
+  'repo:app.bsky.feed.repost',
+  'repo:app.bsky.feed.post',
+];
+
 // All possible granular scopes (base + all integrations). Still part of the client
 // metadata so sessions granted before permission sets / progressive requests keep
 // refreshing, and so the granular fallback (permission sets disabled) can request them.
@@ -137,6 +157,8 @@ export const ALL_POSSIBLE_SCOPES = [
   ...USERINPUT_VOTE_SCOPES,
   ...USERINPUT_IMAGE_SCOPES,
   ...FOLLOWS_LINKS_SCOPES,
+  ...BLUESKY_READ_SCOPES.filter((s) => !FOLLOWS_LINKS_SCOPES.includes(s)),
+  ...BLUESKY_WRITE_SCOPES,
 ].join(' ');
 
 // ---------------------------------------------------------------------------
@@ -149,7 +171,15 @@ export const ALL_POSSIBLE_SCOPES = [
 // ---------------------------------------------------------------------------
 
 export type ScopeFeature =
-  'semble' | 'margin' | 'linkblog' | 'pckt' | 'offprint' | 'feedback' | 'follows';
+  | 'semble'
+  | 'margin'
+  | 'linkblog'
+  | 'pckt'
+  | 'offprint'
+  | 'feedback'
+  | 'follows'
+  | 'bluesky'
+  | 'blueskyWrite';
 
 export const SCOPE_FEATURES: Record<ScopeFeature, string[]> = {
   semble: [...SEMBLE_SCOPES, ...SEMBLE_CONNECTION_SCOPES],
@@ -161,6 +191,8 @@ export const SCOPE_FEATURES: Record<ScopeFeature, string[]> = {
   offprint: [...LINKBLOG_SCOPES, ...OFFPRINT_SCOPES],
   feedback: [...USERINPUT_SCOPES, ...USERINPUT_VOTE_SCOPES, ...USERINPUT_IMAGE_SCOPES],
   follows: FOLLOWS_LINKS_SCOPES,
+  bluesky: BLUESKY_READ_SCOPES,
+  blueskyWrite: BLUESKY_WRITE_SCOPES,
 };
 
 // The scopes whose presence means a reader opted into a feature, used to

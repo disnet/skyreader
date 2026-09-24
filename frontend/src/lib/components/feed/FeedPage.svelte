@@ -15,6 +15,7 @@
   import { unreadCounts } from '$lib/stores/unreadCounts.svelte';
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
   import { followLinksStore } from '$lib/stores/followLinks.svelte';
+  import { bskyFeedsStore } from '$lib/stores/bskyFeeds.svelte';
   import { followLinkReadKey, markFollowLinkRead } from '$lib/utils/followLinks';
   import { grantFollowsAccess } from '$lib/utils/followsChannel';
   import { appManager } from '$lib/stores/app.svelte';
@@ -516,6 +517,25 @@
     untrack(() => void followLinksStore.load());
   });
 
+  // Bluesky feeds: the reader's sources and permissions (the pickers name them),
+  // and the first page of each feed this view names. Read live; the store
+  // reuses a page for a couple of minutes.
+  $effect(() => {
+    if (mode === 'linkblog' || !auth.isAuthenticated || auth.isGuest) return;
+    untrack(() => void bskyFeedsStore.load().catch(() => {}));
+  });
+  $effect(() => {
+    const uris = feedViewStore.shownBskyFeedUris;
+    if (!auth.isAuthenticated || auth.isGuest) return;
+    untrack(() => {
+      for (const uri of uris) void bskyFeedsStore.loadFeed(uri);
+    });
+  });
+  let bskyPages = $derived(feedViewStore.shownBskyFeedUris.map((uri) => bskyFeedsStore.page(uri)));
+  let bskyLoading = $derived(bskyPages.some((p) => !p.loaded));
+  let bskyScopeRequired = $derived(bskyPages.some((p) => p.scopeRequired));
+  let bskyError = $derived(bskyPages.find((p) => p.error)?.error ?? null);
+
   // Everything: the river with no channel, feed, category or saved filter on it.
   // The one place the follows first-run question is asked.
   let isEverything = $derived(
@@ -537,6 +557,14 @@
   );
 
   async function handleRefreshWithToast() {
+    if (feedViewStore.bskyFeedOnly) {
+      // A Bluesky feed on its own: the fresh posts are the answer; no toast.
+      await Promise.all(
+        feedViewStore.shownBskyFeedUris.map((uri) => bskyFeedsStore.loadFeed(uri, true))
+      );
+      return;
+    }
+    for (const uri of feedViewStore.shownBskyFeedUris) void bskyFeedsStore.loadFeed(uri, true);
     if (feedViewStore.showFollowLinks) void followLinksStore.load(true);
     const newArticles = await appManager.refreshFromBackend();
     feedViewStore.clearReadThisSession();
@@ -691,7 +719,7 @@
         onRefresh={handleRefreshWithToast}
         disabled={!syncStore.isOnline || appManager.isRefreshing}
       >
-        {#if (appManager.isHydrating || appManager.isRefreshing || (mode === 'linkblog' && myLinkblogStore.loading && !myLinkblogStore.loaded) || (feedViewStore.showFollowLinks && !followLinksStore.loaded && !followLinksStore.error)) && feedViewStore.currentItems.length === 0 && !hasLinkblogDrafts}
+        {#if (appManager.isHydrating || appManager.isRefreshing || (mode === 'linkblog' && myLinkblogStore.loading && !myLinkblogStore.loaded) || (feedViewStore.showFollowLinks && !followLinksStore.loaded && !followLinksStore.error) || bskyLoading) && feedViewStore.currentItems.length === 0 && !hasLinkblogDrafts}
           <LoadingState />
         {:else if !isSavedView && feedViewStore.currentItems.length === 0 && !hasLinkblogDrafts && !readerLinkPending}
           {#if mode === 'linkblog'}
@@ -727,6 +755,23 @@
               title="All caught up"
               description="You've read everything your follows shared this week."
             />
+          {:else if feedViewStore.shownBskyFeedUris.length > 0 && bskyScopeRequired}
+            <EmptyState
+              title="Read your Bluesky feeds here"
+              description="Skyreader can read your Bluesky feeds through your account, so a feed you follow there can be a channel here. Reading never posts anything; liking and replying ask separately."
+              onAction={() => bskyFeedsStore.requestRead()}
+              actionText="Allow access"
+            />
+          {:else if feedViewStore.bskyFeedOnly && bskyError}
+            <EmptyState
+              title="Couldn't reach Bluesky"
+              description="Bluesky didn't answer. Try again in a bit."
+              onAction={() =>
+                void bskyFeedsStore.loadFeed(feedViewStore.shownBskyFeedUris[0], true)}
+              actionText="Try again"
+            />
+          {:else if feedViewStore.bskyFeedOnly}
+            <EmptyState title="Nothing here yet" description="This feed has no posts right now." />
           {:else if feedViewStore.viewFilter}
             <EmptyState
               title="No matching items"
@@ -785,6 +830,14 @@
         {:else if isSavedView}
           <SavedListView bind:this={savedListView} onReaderChange={(open) => (readerOpen = open)} />
         {:else}
+          {#if bskyScopeRequired}
+            <p class="bsky-scope-note">
+              The Bluesky feeds in this channel need your permission to show.
+              <button type="button" onclick={() => bskyFeedsStore.requestRead()}
+                >Allow access</button
+              >
+            </p>
+          {/if}
           <FeedListView
             bind:this={feedListView}
             onToggleSave={(article) =>
@@ -899,6 +952,25 @@
 {/if}
 
 <style>
+  .bsky-scope-note {
+    margin: 0 1rem 0.5rem;
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+  }
+
+  .bsky-scope-note button {
+    padding: 0;
+    font: inherit;
+    color: var(--color-primary);
+    background: none;
+    border: none;
+    cursor: pointer;
+  }
+
+  .bsky-scope-note button:hover {
+    text-decoration: underline;
+  }
+
   /* Full main-area width so the sticky header bar can span edge-to-edge; the
      reading content is re-centered by .feed-page-body below. */
   .feed-page {

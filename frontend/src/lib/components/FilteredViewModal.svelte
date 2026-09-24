@@ -14,7 +14,12 @@
   } from '$lib/types';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
-  import { FOLLOWS_SOURCE_KEY, subscriptionSourceKey } from '$lib/utils/sourceKeys';
+  import {
+    FOLLOWS_SOURCE_KEY,
+    bskyFeedSourceKey,
+    subscriptionSourceKey,
+  } from '$lib/utils/sourceKeys';
+  import { bskyFeedsStore } from '$lib/stores/bskyFeeds.svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import { getFaviconUrl } from '$lib/utils/favicon';
   import { computeSourceKeys } from '$lib/utils/channelLogic';
@@ -677,8 +682,22 @@
                       onchange={() => toggleSourceKey(FOLLOWS_SOURCE_KEY)}
                     />
                     <Icon name="share-2" size={16} />
-                    <span class="checklist-label">People you follow on Bluesky</span>
+                    <span class="checklist-label">Links from people you follow</span>
                   </label>
+                  <!-- Bluesky feeds you added: like the follows source, never part of
+                       "All sources"; a channel shows a feed only by naming it. -->
+                  {#each bskyFeedsStore.feeds as feed (feed.uri)}
+                    {@const key = bskyFeedSourceKey(feed.uri)}
+                    <label class="checklist-item">
+                      <input
+                        type="checkbox"
+                        checked={sourceKeys.has(key)}
+                        onchange={() => toggleSourceKey(key)}
+                      />
+                      <Icon name="bluesky" size={16} />
+                      <span class="checklist-label">{feed.displayName}</span>
+                    </label>
+                  {/each}
                 {/if}
                 {#each filteredSubscriptions as sub (sub.id)}
                   {@const key = subscriptionSourceKey(sub)}

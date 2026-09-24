@@ -22,15 +22,17 @@ callback).
 
 **Optional features ask when first used.** Each is a `ScopeFeature` in `SCOPE_FEATURES`:
 
-| Feature    | Scopes (granular)                                          | With permission sets on                            |
-| ---------- | ---------------------------------------------------------- | -------------------------------------------------- |
-| `semble`   | `network.cosmik.card/collection/collectionLink/connection` | `include:network.cosmik.authFull` + `connection`   |
-| `margin`   | `at.margin.note/collection/collectionItem`                 | same (granular)                                    |
-| `linkblog` | `site.standard.publication/document`                       | `include:site.standard.authFull`                   |
-| `pckt`     | linkblog + `blog.pckt.document`                            | linkblog + `blog.pckt.document`                    |
-| `offprint` | linkblog + `app.offprint.document.article`                 | linkblog + `app.offprint.document.article`         |
-| `feedback` | `app.userinput.discussion/upvote` + `blob:image/*`         | `include:app.userinput.authBasic` + `blob:image/*` |
-| `follows`  | `rpc:app.bsky.feed.getTimeline?aud=…bsky_appview`          | same (granular)                                    |
+| Feature        | Scopes (granular)                                                                                  | With permission sets on                            |
+| -------------- | -------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `semble`       | `network.cosmik.card/collection/collectionLink/connection`                                         | `include:network.cosmik.authFull` + `connection`   |
+| `margin`       | `at.margin.note/collection/collectionItem`                                                         | same (granular)                                    |
+| `linkblog`     | `site.standard.publication/document`                                                               | `include:site.standard.authFull`                   |
+| `pckt`         | linkblog + `blog.pckt.document`                                                                    | linkblog + `blog.pckt.document`                    |
+| `offprint`     | linkblog + `app.offprint.document.article`                                                         | linkblog + `app.offprint.document.article`         |
+| `feedback`     | `app.userinput.discussion/upvote` + `blob:image/*`                                                 | `include:app.userinput.authBasic` + `blob:image/*` |
+| `follows`      | `rpc:app.bsky.feed.getTimeline?aud=…bsky_appview`                                                  | same (granular)                                    |
+| `bluesky`      | `follows` + `rpc:app.bsky.feed.getFeed`, `rpc:app.bsky.actor.getPreferences` (`aud=…bsky_appview`) | same (granular)                                    |
+| `blueskyWrite` | `repo:app.bsky.feed.like/repost/post`                                                              | same (granular)                                    |
 
 A gated route answers `403 { error: 'scope_upgrade_required', feature }`. The frontend offers
 "Allow access", which calls `POST /api/auth/upgrade { features, returnUrl }`. That starts a new

@@ -1,5 +1,5 @@
 // Source key utilities for unified source filter model
-// Format: "rss~{rkey}", "{rkey}~documents", and the one "bsky~follows"
+// Format: "rss~{rkey}", "{rkey}~documents", "{feed uri}~bskyfeed", and the one "bsky~follows"
 //
 // A documents source is keyed by the subscription rkey (like RSS), so two
 // publications owned by the same author DID are distinct sources. Legacy keys
@@ -27,6 +27,19 @@ export function documentsSourceKey(rkey: string): string {
  * never counts toward unread badges either way.
  */
 export const FOLLOWS_SOURCE_KEY = 'bsky~follows';
+
+const BSKY_FEED_KIND = 'bskyfeed';
+
+/**
+ * A Bluesky feed as a source (docs/plans/BLUESKY_FEEDS_PLAN.md): the Following
+ * timeline ('following') or a custom feed's at-uri. Like the follows source, it
+ * is never part of "All sources" or unread counts: a channel shows its posts
+ * only by naming it. The uri leads and the kind trails, so parseSourceKey's
+ * last-separator split reads it even though a record key may contain a '~'.
+ */
+export function bskyFeedSourceKey(feedUri: string): string {
+  return `${feedUri}${SEP}${BSKY_FEED_KIND}`;
+}
 
 // --- Parsing ---
 
@@ -57,6 +70,15 @@ export function isRssSource(key: string): boolean {
 
 export function isFollowsSource(key: string): boolean {
   return key === FOLLOWS_SOURCE_KEY;
+}
+
+export function isBskyFeedSource(key: string): boolean {
+  return key.endsWith(`${SEP}${BSKY_FEED_KIND}`);
+}
+
+/** The feed uri a Bluesky feed source names. */
+export function getBskyFeedUri(key: string): string {
+  return key.slice(0, -(SEP.length + BSKY_FEED_KIND.length));
 }
 
 export function isDocumentsSource(key: string): boolean {

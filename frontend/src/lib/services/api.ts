@@ -30,6 +30,10 @@ import type {
   RoomInfo,
   RoomItem,
   FollowLinksResponse,
+  BskyFeedsResponse,
+  BskyFeedPageResponse,
+  BskyFeedSource,
+  BskyStrongRef,
   FollowLinksWindow,
   FollowLinkSharersResponse,
   User,
@@ -1817,6 +1821,60 @@ class ApiClient {
     return this.fetch('/api/v2/following-links/settings', {
       method: 'POST',
       body: JSON.stringify({ inEverything }),
+    });
+  }
+
+  // Bluesky feeds as sources (docs/plans/BLUESKY_FEEDS_PLAN.md).
+
+  /** The reader's Bluesky sources and permissions; `saved` adds the feeds saved in Bluesky. */
+  async getBskyFeeds(saved = false): Promise<BskyFeedsResponse> {
+    return this.fetch(`/api/v2/bsky/feeds${saved ? '?saved=1' : ''}`);
+  }
+
+  async addBskyFeed(uri: string): Promise<{ feed: BskyFeedSource }> {
+    return this.fetch('/api/v2/bsky/feeds', { method: 'POST', body: JSON.stringify({ uri }) });
+  }
+
+  async removeBskyFeed(uri: string): Promise<{ ok: boolean }> {
+    return this.fetch('/api/v2/bsky/feeds', { method: 'DELETE', body: JSON.stringify({ uri }) });
+  }
+
+  /** One page of a Bluesky feed, read live. `scopeRequired` (not a 403) without the permission. */
+  async getBskyFeed(uri: string, cursor?: string | null): Promise<BskyFeedPageResponse> {
+    const params = new URLSearchParams({ uri });
+    if (cursor) params.set('cursor', cursor);
+    return this.fetch(`/api/v2/bsky/feed?${params}`);
+  }
+
+  async bskyLike(post: BskyStrongRef): Promise<{ uri: string }> {
+    return this.fetch('/api/v2/bsky/like', { method: 'POST', body: JSON.stringify(post) });
+  }
+
+  async bskyUnlike(likeUri: string): Promise<{ ok: boolean }> {
+    return this.fetch('/api/v2/bsky/like', {
+      method: 'DELETE',
+      body: JSON.stringify({ uri: likeUri }),
+    });
+  }
+
+  async bskyRepost(post: BskyStrongRef): Promise<{ uri: string }> {
+    return this.fetch('/api/v2/bsky/repost', { method: 'POST', body: JSON.stringify(post) });
+  }
+
+  async bskyUnrepost(repostUri: string): Promise<{ ok: boolean }> {
+    return this.fetch('/api/v2/bsky/repost', {
+      method: 'DELETE',
+      body: JSON.stringify({ uri: repostUri }),
+    });
+  }
+
+  async bskyPost(
+    text: string,
+    reply?: { root: BskyStrongRef; parent: BskyStrongRef }
+  ): Promise<{ uri: string; cid: string; url: string }> {
+    return this.fetch('/api/v2/bsky/post', {
+      method: 'POST',
+      body: JSON.stringify(reply ? { text, reply } : { text }),
     });
   }
 
