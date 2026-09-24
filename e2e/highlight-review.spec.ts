@@ -214,17 +214,24 @@ test.describe('highlight review', () => {
     await authedPage.goto('/highlights/review');
     await expect(authedPage.getByText(`1 of ${DECK_SIZE}`)).toBeVisible({ timeout: 15_000 });
 
+    const frontPassage = async () =>
+      (await authedPage.locator('.deck-card:not(.behind) .passage').textContent())?.trim();
+
+    /** Clicks through a hand, returning the passages it dealt. */
     async function finishHand(size: number) {
+      const dealt: string[] = [];
       for (let card = 1; card <= size; card++) {
+        dealt.push((await frontPassage()) ?? '');
         const written = authedPage.waitForResponse(
           (res) => res.url().includes('/api/labels') && res.request().method() === 'POST'
         );
         await authedPage.getByRole('button', { name: card === size ? 'Finish' : 'Next' }).click();
         await written;
       }
+      return dealt;
     }
 
-    await finishHand(DECK_SIZE);
+    const firstHand = await finishHand(DECK_SIZE);
     await expect(authedPage.getByText(`${DECK_SIZE} highlights revisited.`)).toBeVisible();
 
     const more = authedPage.getByRole('button', { name: `Review ${DECK_SIZE} more` });
@@ -234,7 +241,10 @@ test.describe('highlight review', () => {
     // The stamps from the first hand make its cards ineligible, so this is the
     // next ones due rather than the same deck again.
     await expect(authedPage.getByText(`1 of ${DECK_SIZE}`)).toBeVisible();
-    await expect(authedPage.getByText('Seeded highlight number 1')).toHaveCount(0);
+    // Ties in the ranking break on a date-seeded hash, so which highlights the
+    // first hand dealt varies by day; compare against what it actually dealt.
+    expect(firstHand).toHaveLength(DECK_SIZE);
+    expect(firstHand).not.toContain(await frontPassage());
 
     await finishHand(DECK_SIZE);
     // The tally is the session's, not the hand's.

@@ -138,13 +138,13 @@ test.describe('Feedback', () => {
     await expect(authedPage.getByRole('heading', { name: 'Sync highlights faster' })).toBeVisible();
   });
 
-  test('offers a re-login when the session predates the posting permission', async ({
+  test('offers the permission grant when the session predates the posting permission', async ({
     authedPage,
   }) => {
     await stubBoard(authedPage, { canPost: false });
     await authedPage.goto('/feedback');
 
-    await expect(authedPage.getByRole('button', { name: 'Log in again' })).toBeVisible();
+    await expect(authedPage.getByRole('button', { name: 'Allow access' })).toBeVisible();
     await expect(authedPage.getByRole('button', { name: 'Post feedback' })).toBeHidden();
     await expect(authedPage.getByRole('link', { name: 'post on userinput.app →' })).toBeVisible();
   });
