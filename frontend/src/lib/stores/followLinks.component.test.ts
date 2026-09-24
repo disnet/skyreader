@@ -110,7 +110,7 @@ describe('followLinksStore', () => {
     const secondLoad = store.load(true);
 
     first.resolve(answer(['https://a.example/old']));
-    await firstLoad;
+    await vi.advanceTimersByTimeAsync(0);
     expect(store.loading).toBe(true);
     expect(store.links).toEqual([]);
 
@@ -118,6 +118,30 @@ describe('followLinksStore', () => {
     await secondLoad;
     expect(store.loading).toBe(false);
     expect(store.links.map((l) => l.url)).toEqual(['https://a.example/new']);
+    await firstLoad;
+  });
+
+  it('resolves a superseded load only once the answer that replaced it is in', async () => {
+    // Two forced loads at once (back from a grant, the app shell and /following
+    // both ask): each caller must read the answer when its load resolves.
+    const store = await freshStore();
+    const first = deferred<FollowLinksResponse>();
+    const second = deferred<FollowLinksResponse>();
+    getFollowLinks.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+
+    let firstDone = false;
+    const firstLoad = store.load(true).then(() => (firstDone = true));
+    const secondLoad = store.load(true);
+
+    first.resolve(answer(['https://a.example/old']));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(firstDone).toBe(false);
+
+    second.resolve(answer(['https://a.example/new']));
+    await firstLoad;
+    expect(store.loaded).toBe(true);
+    expect(store.links.map((l) => l.url)).toEqual(['https://a.example/new']);
+    await secondLoad;
   });
 
   it("doesn't carry one account's permission ask or error into another's", async () => {

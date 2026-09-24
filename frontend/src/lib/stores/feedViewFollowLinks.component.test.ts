@@ -310,4 +310,19 @@ describe('follows links in the river', () => {
     expect(feedViewStore.canSortByPopularity).toBe(false);
     expect(rows()).toEqual(['article:new', 'article:old']);
   });
+
+  it('keeps popular to channels that name the source, not All sources with follows in Everything', () => {
+    river.inEverything = true;
+    river.links = [link('a', 1)];
+    show(channel([], { sourceMode: 'all', sortOrder: 'popular' }));
+    expect(feedViewStore.canSortByPopularity).toBe(false);
+  });
+
+  it('flips a sort it shows as newest to oldest', () => {
+    river.articles = [article('old', 5), article('new', 1)];
+    show(channel(['rss~feedaaaaaaaaa'], { sortOrder: 'popular' }));
+    feedViewStore.toggleSortOrder();
+    expect(feedViewStore.currentSortOrder).toBe('oldest');
+    expect(rows()).toEqual(['article:old', 'article:new']);
+  });
 });

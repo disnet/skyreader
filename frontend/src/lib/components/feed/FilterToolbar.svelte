@@ -386,14 +386,14 @@
       <button
         class="filter-btn"
         onclick={() => feedViewStore.toggleSortOrder()}
-        title={feedViewStore.currentSortOrder === 'newest' ? 'Newest first' : 'Oldest first'}
+        title={feedViewStore.currentSortOrder === 'oldest' ? 'Oldest first' : 'Newest first'}
       >
         <Icon
-          name={feedViewStore.currentSortOrder === 'newest' ? 'arrow-down' : 'arrow-up'}
+          name={feedViewStore.currentSortOrder === 'oldest' ? 'arrow-up' : 'arrow-down'}
           size={16}
         />
         <span class="filter-label"
-          >{feedViewStore.currentSortOrder === 'newest' ? 'New' : 'Old'}</span
+          >{feedViewStore.currentSortOrder === 'oldest' ? 'Old' : 'New'}</span
         >
       </button>
     {/if}
