@@ -257,13 +257,13 @@ AT Protocol (Bluesky PDS) + Fly.io Feed Proxy + Jetstream Firehose
 
 ## AT Protocol Integration
 
-Custom lexicons live per-package under `<package>/lexicons/app/skyreader/` (e.g.
-`frontend/lexicons/app/skyreader/feed/subscription.json`, `backend/lexicons/app/skyreader/...`):
+Skyreader's lexicons live in one place, the root `lexicons/app/skyreader/` directory (the backend
+imports them from there and serves them at `/.well-known/lexicons/`). They're published to the
+network with `goat lex publish` from the repo root; see `docs/OAUTH_SCOPES.md`.
 
-- `feed/subscription.json` - RSS subscription record
-- `feed/saved.json` - Saved article record
-- `feed/highlight.json` - Article highlight record (frontend)
-- `social/follow.json` - In-app follow relationship (frontend)
-- `authFull.json` - OAuth permission set covering Skyreader's own collections (backend; see `docs/OAUTH_SCOPES.md`)
+- `feed/subscription.json` - RSS/atproto subscription record
+- `social/follow.json` - In-app follow relationship
+- `reading/readAlong.json` - Reading-room join record
+- `authFull.json` - OAuth permission set covering Skyreader's own collections (see `docs/OAUTH_SCOPES.md`)
 
 Records are synced bidirectionally between the app and user's PDS.

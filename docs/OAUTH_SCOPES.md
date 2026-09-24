@@ -53,7 +53,7 @@ Every request must fit inside it. For the localhost public client it is baked in
 
 ## The permission set
 
-`backend/lexicons/app/skyreader/authFull.json` defines `app.skyreader.authFull`: repo access to
+`lexicons/app/skyreader/authFull.json` defines `app.skyreader.authFull`: repo access to
 every `app.skyreader.*` collection Skyreader writes. A set can only name resources under its own
 namespace (`app.skyreader.`), so other apps' lexicons stay granular.
 
@@ -63,26 +63,47 @@ collection. And **the PDS re-resolves the set on every token refresh**, so addin
 the new scope back to `sessions.granted_scopes`. Before sets, every new collection meant the
 "log in again" dance (see the comments on `READING_ROOM_SCOPES`, `AT_INTENT_SCOPES`, etc.).
 
-### Publishing it (one-time, then on every change)
+### Publishing the lexicons (one-time, then on every change)
 
-A PDS resolves `include:app.skyreader.authFull` like any lexicon: the authority `app.skyreader`
-reversed is `skyreader.app`, so it reads a DNS TXT record at `_lexicon.skyreader.app`, then
-fetches the `com.atproto.lexicon.schema` record with rkey `app.skyreader.authFull` from that
-DID's repo.
+The set and every `app.skyreader.*` record schema are published together from the repo-root
+`lexicons/` directory. A PDS resolves `include:app.skyreader.authFull` like any lexicon: it drops
+the last NSID segment, reverses the rest into a domain, reads the DNS TXT record
+`_lexicon.<domain>`, then fetches the `com.atproto.lexicon.schema` record whose rkey is the NSID
+from that DID's repo. Every NSID group needs its own TXT record, so `app.skyreader.authFull`
+resolves via `_lexicon.skyreader.app` but `app.skyreader.feed.subscription` via
+`_lexicon.feed.skyreader.app`.
 
-1. Pick the account that publishes Skyreader's lexicons (the Skyreader account), and note its DID.
-2. Add DNS: `_lexicon.skyreader.app  TXT  "did=<that DID>"`.
-3. Publish with [goat](https://github.com/bluesky-social/goat), logged in as that account
-   (`goat account login`), from `backend/`:
+1. Pick the account that publishes Skyreader's lexicons (the Skyreader account). Log in with
+   [goat](https://github.com/bluesky-social/goat) using an app password, and note the DID:
 
    ```bash
-   goat lex lint lexicons/app/skyreader/authFull.json
-   goat lex publish lexicons/app/skyreader/authFull.json
+   goat account login -u <handle> -p <app-password>
+   goat account status
    ```
 
-4. Verify: `dig TXT _lexicon.skyreader.app` returns the DID, and
-   `<PDS>/xrpc/com.atproto.repo.getRecord?repo=<DID>&collection=com.atproto.lexicon.schema&rkey=app.skyreader.authFull`
-   returns the schema.
+2. Add one TXT record per NSID group in the `skyreader.app` zone, each `"did=<that DID>"`:
+
+   | Name                             | Covers                    |
+   | -------------------------------- | ------------------------- |
+   | `_lexicon.skyreader.app`         | `app.skyreader.authFull`  |
+   | `_lexicon.feed.skyreader.app`    | `app.skyreader.feed.*`    |
+   | `_lexicon.reading.skyreader.app` | `app.skyreader.reading.*` |
+   | `_lexicon.social.skyreader.app`  | `app.skyreader.social.*`  |
+
+   A new group (say `app.skyreader.linkblog.*`) needs a new record before it can publish.
+
+3. From the repo root (goat's default `--lexicons-dir` is `lexicons/`):
+
+   ```bash
+   goat lex lint lexicons/
+   goat lex check-dns        # every group should resolve to the DID
+   goat lex breaking         # on updates: refuse changes that break evolution rules
+   goat lex publish          # first publish; add --update to change existing schemas
+   goat lex status           # all in sync
+   ```
+
+4. Verify from the network: `goat lex resolve app.skyreader.authFull` (and one record NSID, e.g.
+   `app.skyreader.feed.subscription`) returns the schema.
 5. Turn it on: set `OAUTH_PERMISSION_SETS = "true"` in `backend/wrangler.toml` (staging first,
    under `[env.staging]` `vars`), deploy, sign in, check the consent screen shows "Skyreader".
 

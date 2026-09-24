@@ -12,7 +12,7 @@ on:
   # deploy keeps using the old logic. See feed-proxy-deploy.yml for the incident.
   push:
     branches: [main]
-    paths: ['backend/**', '.github/workflows/backend-deploy.yml']
+    paths: ['backend/**', 'lexicons/**', '.github/workflows/backend-deploy.yml']
   release:
     types: [published]
 

@@ -4,7 +4,7 @@ import {
   RepoPermission,
   ScopePermissionsTransition,
 } from '@atproto/oauth-scopes';
-import skyreaderAuthFull from '../../lexicons/app/skyreader/authFull.json';
+import skyreaderAuthFull from '../../../lexicons/app/skyreader/authFull.json';
 import { FEATURE_OPT_IN_SCOPES, type ScopeFeature } from '../config/scopes';
 
 // Answers "does this session's granted scope allow X?" by meaning, not by string.

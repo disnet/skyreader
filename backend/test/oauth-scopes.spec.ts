@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { IncludeScope } from '@atproto/oauth-scopes';
-import authFull from '../lexicons/app/skyreader/authFull.json';
+import authFull from '../../lexicons/app/skyreader/authFull.json';
 import {
   ALL_POSSIBLE_SCOPES,
   GRANULAR_SCOPES,

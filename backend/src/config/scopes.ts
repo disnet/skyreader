@@ -3,7 +3,7 @@
 // OAuth service can reconstruct the localhost public-client client_id during
 // refresh without importing a route module (which would create a cycle).
 
-import skyreaderAuthFull from '../../lexicons/app/skyreader/authFull.json';
+import skyreaderAuthFull from '../../../lexicons/app/skyreader/authFull.json';
 
 // Granular scopes for Skyreader's custom lexicons
 // Requests write access only to app.skyreader.* record collections.

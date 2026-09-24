@@ -283,8 +283,9 @@ Key tables:
 
 ### Adding a New Lexicon
 
-1. Add schema in `lexicons/app/skyreader/`
-2. Add handler support in the appropriate route file
+1. Add schema in the repo-root `lexicons/app/skyreader/`
+2. Serve it from `src/routes/lexicons.ts`; if it's a new collection, add it to `authFull.json` and `SKYREADER_REPO_SCOPES`
+3. Publish it (`docs/OAUTH_SCOPES.md`)
 
 ### Debugging OAuth Issues
 
@@ -340,19 +341,5 @@ For staging, create a separate database with `npx wrangler d1 create skyreader-s
 
 ## Lexicon Schemas
 
-Located in `backend/lexicons/app/skyreader/`:
-
-```
-feed/subscription.json      - RSS feed subscription
-  - feedUrl (required)
-  - title
-  - category
-  - tags[]
-  - createdAt (required)
-
-feed/saved.json             - Saved article
-  - url (required)
-  - title, description, author, domain, image
-  - contentType, fullContent, wordCount
-  - publishedAt, savedAt (required)
-```
+Skyreader's lexicons live in the repo-root `lexicons/` directory, shared by every package. See
+the root `CLAUDE.md` and `docs/OAUTH_SCOPES.md` (publishing).
