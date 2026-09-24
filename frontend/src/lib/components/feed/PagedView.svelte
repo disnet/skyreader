@@ -21,6 +21,10 @@
     recalc: () => void;
     readonly currentPage: number;
     readonly totalPages: number;
+    /** Horizontal distance between two consecutive pages (px). */
+    readonly pageStride: number;
+    /** Columns per page: 1, or 2 for a spread. */
+    readonly columns: number;
   }
 
   let {
@@ -34,8 +38,17 @@
     totalPages = $bindable(1),
     oncontroller,
     onpagechange,
+    overlay,
+    sideRoom = $bindable(0),
   }: {
     children: Snippet;
+    /**
+     * Drawn over the page window, outside its clipping, so it can hang into
+     * the space beside the spread (the reader's margin notes).
+     */
+    overlay?: Snippet;
+    /** Room (px) between the page window and the nearer edge of the window. */
+    sideRoom?: number;
     bottomInset?: number;
     deps?: () => unknown;
     currentPage?: number;
@@ -324,6 +337,23 @@
     };
   });
 
+  $effect(() => {
+    const vp = viewportEl;
+    if (!vp) return;
+    const update = () => {
+      const rect = vp.getBoundingClientRect();
+      sideRoom = Math.max(0, Math.min(rect.left, window.innerWidth - rect.right));
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(vp);
+    window.addEventListener('resize', update);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', update);
+    };
+  });
+
   // Wheel + touch need non-passive listeners to preventDefault, so attach them
   // manually rather than via the (passive-by-default) on* attributes.
   $effect(() => {
@@ -345,10 +375,15 @@
 </script>
 
 <div class="paged-root" style:padding-bottom={bottomInset ? `${bottomInset}px` : undefined}>
-  <div class="paged-viewport" bind:this={viewportEl}>
-    <div class="paged-content" bind:this={contentEl}>
-      {@render children()}
+  <div class="paged-stage">
+    <div class="paged-viewport" bind:this={viewportEl}>
+      <div class="paged-content" bind:this={contentEl}>
+        {@render children()}
+      </div>
     </div>
+    {#if overlay}
+      <div class="paged-overlay">{@render overlay()}</div>
+    {/if}
   </div>
 
   <div class="paged-nav">
@@ -388,9 +423,17 @@
     box-sizing: border-box;
   }
 
+  .paged-stage {
+    position: relative;
+    display: flex;
+    flex: 1;
+    min-height: 0;
+  }
+
   .paged-viewport {
     position: relative;
     flex: 1;
+    min-width: 0;
     min-height: 0;
     overflow: hidden;
     /* Let JS own horizontal swipes (no browser back-gesture hijack); vertical is
@@ -418,6 +461,13 @@
        pages rendered empty) while the page count still counted them. The turn
        stays smooth without it: Chrome composites the transform for the duration
        of the transition, and a page turn only paints the cull rect. */
+  }
+
+  /* Exactly over the page window, but not clipped by it. */
+  .paged-overlay {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
   }
 
   @media (prefers-reduced-motion: reduce) {

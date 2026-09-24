@@ -315,6 +315,11 @@ export function usePagination(params: PaginationParams) {
     get pageStride() {
       return pageStride;
     },
+    // Columns per page (1 or 2), so a caller can tell a spread's left column
+    // from its right.
+    get columns() {
+      return cols;
+    },
     next,
     prev,
     goToPage,
