@@ -38,7 +38,14 @@ vi.mock('./articles.svelte', () => ({
     },
   },
 }));
-vi.mock('./social.svelte', () => ({ socialStore: { documents: [], isLoading: false } }));
+vi.mock('./social.svelte', () => ({
+  socialStore: {
+    get documents() {
+      return river.documents;
+    },
+    isLoading: false,
+  },
+}));
 vi.mock('./myLinkblog.svelte', () => ({ myLinkblogStore: { documents: [] } }));
 vi.mock('./saves.svelte', () => ({
   savesStore: { articles: [], find: () => undefined, getByUrl: () => undefined },
@@ -55,7 +62,7 @@ vi.mock('./itemLabels.svelte', () => ({
     isSaved: () => false,
     isArchived: () => false,
     isRead: (key: string) => river.read.includes(key),
-    isSocialRead: () => false,
+    isSocialRead: (uri: string) => river.read.includes(uri),
     itemHasAnyTag: () => true,
     get tagsByItem() {
       return {};
@@ -210,6 +217,50 @@ describe('follows links in the river', () => {
     river.articles = [article('same', 3)];
     show(channel([FOLLOWS_SOURCE_KEY, 'rss~feedaaaaaaaaa']));
     expect(rows()).toEqual(['link:other', 'article:same']);
+  });
+
+  it('drops a link to an old article whose guid is its permalink, so no two rows share a key', () => {
+    // Three weeks old: past the URL-parsing window, caught by the exact match.
+    const old = {
+      ...article('perma', 21 * 24),
+      guid: 'https://site.example/perma',
+      url: 'https://site.example/perma',
+    };
+    river.links = [link('perma', 1)];
+    river.articles = [old];
+    show(channel([FOLLOWS_SOURCE_KEY, 'rss~feedaaaaaaaaa']));
+    expect(rows()).toEqual(['article:perma']);
+  });
+
+  it('keeps a link folded into an article you have read, even under Unread', () => {
+    river.links = [link('same', 1)];
+    river.articles = [article('same', 3)];
+    river.read = ['guid-same'];
+    show(channel([FOLLOWS_SOURCE_KEY, 'rss~feedaaaaaaaaa']));
+    expect(rows()).toEqual([]);
+  });
+
+  it('keeps a link folded into a document you have read, even under Unread', () => {
+    river.links = [link('essay', 1)];
+    river.documents = [
+      {
+        authorDid: 'did:plc:author',
+        recordUri: 'at://did:plc:author/site.standard.document/essay',
+        siteUri: 'at://did:plc:author/site.standard.publication/pub',
+        title: 'essay',
+        publishedAt: new Date(NOW - 3 * HOUR).toISOString(),
+        canonicalUrl: 'https://site.example/essay',
+        createdAt: new Date(NOW - 3 * HOUR).toISOString(),
+      },
+    ];
+    const view = channel([FOLLOWS_SOURCE_KEY, 'did:plc:author~documents']);
+    show(view);
+    expect(rows()).toEqual(['document:essay']);
+
+    river.read = ['at://did:plc:author/site.standard.document/essay'];
+    show(null);
+    show(view);
+    expect(rows()).toEqual([]);
   });
 
   it('leaves them out under a type filter, which picks subscription types', () => {

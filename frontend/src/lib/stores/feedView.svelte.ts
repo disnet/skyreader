@@ -591,8 +591,10 @@ function createFeedViewStore() {
     return fv.sourceKeys.some(isDocumentsSource);
   });
 
-  // Derived: filtered articles based on current filters
-  let filteredArticles = $derived.by((): Article[] => {
+  // Derived: the view's articles before the read filter. The follows-link dedupe
+  // reads this, so a link to an article you've already read stays folded into it
+  // rather than surfacing as an unread row of its own.
+  let scopedArticles = $derived.by((): Article[] => {
     const fv = effectiveFilters;
 
     // If no articles are allowed by source filter, return empty
@@ -637,15 +639,6 @@ function createFeedViewStore() {
       if (rssAllowed !== null) {
         articles = articles.filter((a) => rssAllowed(a.subscriptionId));
       }
-
-      // Apply read filter
-      if (fv.readFilter === 'unread') {
-        articles = articles.filter(
-          (a) => !itemLabelsStore.isRead(a.guid) || readArticleGuidsThisSession.has(a.guid)
-        );
-      } else if (fv.readFilter === 'read') {
-        articles = articles.filter((a) => itemLabelsStore.isRead(a.guid));
-      }
     }
 
     // Deduplicate by GUID
@@ -664,11 +657,25 @@ function createFeedViewStore() {
     return articles;
   });
 
+  // Derived: filtered articles based on current filters (the saved view keeps
+  // its own inbox/archive split and ignores the read filter).
+  let filteredArticles = $derived.by((): Article[] => {
+    const readFilter = effectiveFilters.readFilter;
+    if (isSavedView || readFilter === 'all') return scopedArticles;
+    if (readFilter === 'unread') {
+      return scopedArticles.filter(
+        (a) => !itemLabelsStore.isRead(a.guid) || readArticleGuidsThisSession.has(a.guid)
+      );
+    }
+    return scopedArticles.filter((a) => itemLabelsStore.isRead(a.guid));
+  });
+
   // Derived: paginated articles (limited to loadedArticleCount)
   let displayedArticles = $derived(filteredArticles.slice(0, loadedArticleCount));
 
-  // Derived: filtered documents
-  let displayedDocuments = $derived.by((): SocialDocument[] => {
+  // Derived: the view's documents before the read filter. Like scopedArticles,
+  // the follows-link dedupe reads this so a read document still folds its link in.
+  let scopedDocuments = $derived.by((): SocialDocument[] => {
     const fv = effectiveFilters;
 
     // "Your Linkblog": the user's own shared documents, independent of the
@@ -740,16 +747,6 @@ function createFeedViewStore() {
       filtered = filtered.filter((d) => docInAnyScope(d, categoryScopes));
     }
 
-    // Apply read filter
-    if (fv.readFilter === 'unread') {
-      filtered = filtered.filter(
-        (d) =>
-          !itemLabelsStore.isSocialRead(d.recordUri) || readDocumentUrisThisSession.has(d.recordUri)
-      );
-    } else if (fv.readFilter === 'read') {
-      filtered = filtered.filter((d) => itemLabelsStore.isSocialRead(d.recordUri));
-    }
-
     // Apply sort order
     filtered.sort((a, b) => {
       const dateA = new Date(a.publishedAt).getTime();
@@ -758,6 +755,20 @@ function createFeedViewStore() {
     });
 
     return filtered;
+  });
+
+  // Derived: filtered documents. Your own linkblog skips the read filter (see
+  // scopedDocuments).
+  let displayedDocuments = $derived.by((): SocialDocument[] => {
+    const readFilter = effectiveFilters.readFilter;
+    if (myLinkblogFilter || readFilter === 'all') return scopedDocuments;
+    if (readFilter === 'unread') {
+      return scopedDocuments.filter(
+        (d) =>
+          !itemLabelsStore.isSocialRead(d.recordUri) || readDocumentUrisThisSession.has(d.recordUri)
+      );
+    }
+    return scopedDocuments.filter((d) => itemLabelsStore.isSocialRead(d.recordUri));
   });
 
   // Derived: whether follows links are shown. A view that names the source gets
@@ -780,23 +791,38 @@ function createFeedViewStore() {
     if (!showFollowLinks) return [];
     const fv = effectiveFilters;
 
+    // Exact matches first, against every article in the view whatever its age: a
+    // link whose read key is an article's guid (feeds that use the permalink as
+    // the guid) would otherwise share that row's key and read state.
+    const linkStrings = new Set<string>();
+    for (const l of followLinksStore.links) {
+      linkStrings.add(l.url);
+      linkStrings.add(followLinkReadKey(l));
+    }
+    const shownExact = new Set<string>();
+    for (const a of scopedArticles) {
+      if (linkStrings.has(a.guid)) shownExact.add(a.guid);
+      if (a.url && linkStrings.has(a.url)) shownExact.add(a.url);
+    }
+
     const shown = new Set<string>();
     const cutoff = Date.now() - FOLLOW_DEDUPE_WINDOW_MS;
     // Newest first (liveDb order, or reversed for 'oldest'), so a walk from the
     // newest end stops at the cutoff instead of parsing every URL in the archive.
-    const articles = fv.sortOrder === 'oldest' ? [...filteredArticles].reverse() : filteredArticles;
+    const articles = fv.sortOrder === 'oldest' ? [...scopedArticles].reverse() : scopedArticles;
     for (const a of articles) {
       if (new Date(a.publishedAt).getTime() < cutoff) break;
       const key = a.url ? urlKey(a.url) : null;
       if (key) shown.add(key);
     }
-    for (const d of displayedDocuments) {
+    for (const d of scopedDocuments) {
       const url = d.canonicalUrl || d.path;
       const key = url ? urlKey(url) : null;
       if (key) shown.add(key);
     }
 
     let links = followLinksStore.links.filter((l) => {
+      if (shownExact.has(l.url) || shownExact.has(followLinkReadKey(l))) return false;
       const key = urlKey(l.url);
       const normalizedKey = urlKey(l.urlNormalized);
       return !(key && shown.has(key)) && !(normalizedKey && shown.has(normalizedKey));
