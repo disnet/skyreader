@@ -10,6 +10,7 @@
   import { FOLLOWS_SOURCE_KEY, subscriptionSourceKey } from '$lib/utils/sourceKeys';
   import { FOLLOWS_CHANNEL_NAME } from '$lib/utils/followsChannel';
   import { auth } from '$lib/stores/auth.svelte';
+  import { followLinksStore } from '$lib/stores/followLinks.svelte';
   import { filterSubscriptionsBySearch, subscriptionIconUrl } from '$lib/utils/subscriptionDisplay';
   import {
     TYPE_OPTIONS,
@@ -142,6 +143,28 @@
     const allKeySet = new Set(allSourceKeys);
     const keys = ef.sourceKeys.filter((k) => !allKeySet.has(k));
     feedViewStore.setToolbarSourceFilter(ef.sourceMode, keys);
+  }
+
+  // Everything takes your follows' links only when you say so; the choice is
+  // saved for the account (see followLinksStore.setInEverything).
+  let showFollowsInEverythingToggle = $derived(
+    feedViewStore.isEverythingView &&
+      ef.sourceMode === 'all' &&
+      !auth.isGuest &&
+      followLinksStore.loaded &&
+      !followLinksStore.scopeRequired
+  );
+  let savingFollowsInEverything = $state(false);
+
+  async function toggleFollowsInEverything(on: boolean) {
+    savingFollowsInEverything = true;
+    try {
+      await followLinksStore.setInEverything(on);
+    } catch {
+      // The store puts the old value back; the checkbox follows it.
+    } finally {
+      savingFollowsInEverything = false;
+    }
   }
 
   let sourceFilterLabel = $derived(
@@ -569,6 +592,21 @@
               Exclude only
             </label>
           </div>
+
+          {#if showFollowsInEverythingToggle}
+            <div class="popover-list">
+              <label class="check-label">
+                <input
+                  type="checkbox"
+                  checked={followLinksStore.inEverything === true}
+                  disabled={savingFollowsInEverything}
+                  onchange={(e) => toggleFollowsInEverything(e.currentTarget.checked)}
+                />
+                <Icon name="share-2" size={16} />
+                <span class="check-text">Links from people you follow</span>
+              </label>
+            </div>
+          {/if}
 
           {#if ef.sourceMode !== 'all'}
             {#if subscriptionsStore.subscriptions.length > 0}

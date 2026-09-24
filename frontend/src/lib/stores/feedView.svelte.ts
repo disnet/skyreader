@@ -771,6 +771,12 @@ function createFeedViewStore() {
     return scopedDocuments.filter((d) => itemLabelsStore.isSocialRead(d.recordUri));
   });
 
+  // Derived: the plain Everything river — no channel, category, feed or saved
+  // list narrowing it. Where the "follows links in Everything" choice applies.
+  let isEverythingView = $derived(
+    viewMode === 'combined' && !viewFilter && !categoryFilter && !myLinkblogFilter && !isSavedView
+  );
+
   // Derived: whether follows links are shown. A view that names the source gets
   // them. "All sources" (Everything) gets them only when the reader has said yes
   // (see FOLLOWS_SOURCE_KEY), and a category, being a set of subscriptions,
@@ -1665,6 +1671,9 @@ function createFeedViewStore() {
     },
     get categoryFilter() {
       return categoryFilter;
+    },
+    get isEverythingView() {
+      return isEverythingView;
     },
     get myLinkblogFilter() {
       return myLinkblogFilter;

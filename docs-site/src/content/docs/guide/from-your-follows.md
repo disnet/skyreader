@@ -37,7 +37,7 @@ Open any article, from a feed, your saves, or anywhere else, and if people you f
 
 ## Everything and other channels
 
-Your follows' links show in **Everything** only if you said yes to that. Change it any time with **Show them in Everything too** on **Manage Sources**. They never add to your unread counts.
+Your follows' links show in **Everything** only if you said yes to that. Change it any time with **Links from people you follow** in Everything's **Sources** filter, or **Show them in Everything too** on **Manage Sources**. They never add to your unread counts.
 
 The **From your follows** channel is an ordinary channel. Rename it, change its filters, or delete it. To add your follows' links to another channel, edit that channel's sources, choose **Include only**, and check **People you follow on Bluesky**.
 
