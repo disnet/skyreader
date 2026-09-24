@@ -4,6 +4,11 @@
 // refresh without importing a route module (which would create a cycle).
 
 import skyreaderAuthFull from '../../../lexicons/app/skyreader/authFull.json';
+import {
+  SEMBLE_AUTH_FULL,
+  SITE_STANDARD_AUTH_FULL,
+  USERINPUT_AUTH_BASIC,
+} from './external-permission-sets';
 
 // Granular scopes for Skyreader's custom lexicons
 // Requests write access only to app.skyreader.* record collections.
@@ -22,8 +27,9 @@ export const GRANULAR_SCOPES = [
 // screen instead of one line per collection. Because the PDS re-resolves the set
 // on every token refresh, adding a new app.skyreader.* collection to the set is
 // picked up by live sessions without a re-auth. Sets can only cover collections
-// under their own namespace, so other apps' lexicons (Semble, Margin,
-// standard.site, …) stay granular and are requested progressively below.
+// under their own namespace, so other apps' lexicons are requested progressively
+// below, through that app's own published set where one fits
+// (FEATURE_PERMISSION_SET_SCOPES).
 export const SKYREADER_PERMISSION_SET = skyreaderAuthFull.id;
 export const SKYREADER_PERMISSION_SET_SCOPE = `include:${SKYREADER_PERMISSION_SET}`;
 
@@ -160,6 +166,40 @@ export function isScopeFeature(value: string): value is ScopeFeature {
   return Object.prototype.hasOwnProperty.call(SCOPE_FEATURES, value);
 }
 
+// Other apps' published permission sets (see external-permission-sets.ts).
+export const SITE_STANDARD_PERMISSION_SET_SCOPE = `include:${SITE_STANDARD_AUTH_FULL.id}`;
+export const SEMBLE_PERMISSION_SET_SCOPE = `include:${SEMBLE_AUTH_FULL.id}`;
+export const USERINPUT_PERMISSION_SET_SCOPE = `include:${USERINPUT_AUTH_BASIC.id}`;
+
+// What each feature asks for when permission sets are on: the owning app's set,
+// plus whatever it doesn't cover. The consent screen then shows one line per app
+// ("Semble", "Standard.site") instead of one per collection. Must grant at least
+// SCOPE_FEATURES[feature] (test/oauth-scopes.spec.ts), since gates check those.
+//
+// Margin, pckt and Offprint stay granular: their only sets are "full access"
+// (Margin's includes API keys and preferences), far more than the one or three
+// collections we write. A PDS refuses the whole authorization if an included set
+// won't resolve; buildAuthorizationUrl (routes/auth.ts) then retries with the
+// granular form, so an app's lexicon hosting going down costs the consent screen,
+// not sign-in.
+const FEATURE_PERMISSION_SET_SCOPES: Partial<Record<ScopeFeature, string[]>> = {
+  semble: [SEMBLE_PERMISSION_SET_SCOPE, ...SEMBLE_CONNECTION_SCOPES],
+  linkblog: [SITE_STANDARD_PERMISSION_SET_SCOPE],
+  pckt: [SITE_STANDARD_PERMISSION_SET_SCOPE, ...PCKT_SCOPES],
+  offprint: [SITE_STANDARD_PERMISSION_SET_SCOPE, ...OFFPRINT_SCOPES],
+  feedback: [USERINPUT_PERMISSION_SET_SCOPE, ...USERINPUT_IMAGE_SCOPES],
+};
+
+/** The scopes an authorization request asks for to enable `feature`. */
+export function featureScopes(
+  env: { OAUTH_PERMISSION_SETS?: string },
+  feature: ScopeFeature
+): string[] {
+  return (
+    (usePermissionSets(env) && FEATURE_PERMISSION_SET_SCOPES[feature]) || SCOPE_FEATURES[feature]
+  );
+}
+
 /**
  * Whether sign-in requests Skyreader's own collections through the published
  * permission set (`include:app.skyreader.authFull`) rather than one granular
@@ -199,7 +239,7 @@ export function buildRequestedScopes(
 ): string {
   const scopes = new Set(baseScopes(env));
   for (const feature of features) {
-    for (const scope of SCOPE_FEATURES[feature]) scopes.add(scope);
+    for (const scope of featureScopes(env, feature)) scopes.add(scope);
   }
   return [...scopes].join(' ');
 }
@@ -211,6 +251,12 @@ export function buildRequestedScopes(
  */
 export function clientMetadataScopes(env: { OAUTH_PERMISSION_SETS?: string }): string {
   return usePermissionSets(env)
-    ? `${ALL_POSSIBLE_SCOPES} ${SKYREADER_PERMISSION_SET_SCOPE}`
+    ? [
+        ALL_POSSIBLE_SCOPES,
+        SKYREADER_PERMISSION_SET_SCOPE,
+        SITE_STANDARD_PERMISSION_SET_SCOPE,
+        SEMBLE_PERMISSION_SET_SCOPE,
+        USERINPUT_PERMISSION_SET_SCOPE,
+      ].join(' ')
     : ALL_POSSIBLE_SCOPES;
 }
