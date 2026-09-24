@@ -123,6 +123,13 @@ export interface DiscussionStreamVM {
    * surface collects them into one line instead of giving each an empty row.
    */
   linkOnly?: DiscussionEntryVM[];
+  /**
+   * People in the stream no lane counted: shares by people the reader follows
+   * that no network's backlink lookup found (reposts, mostly). The surface adds
+   * them to the lanes' total so its headline and "more" counts match the rows.
+   * See docs/plans/FOLLOWS_LINKS_PLAN.md.
+   */
+  extraCount?: number;
 }
 
 export type SembleContextVM = SembleContext;
