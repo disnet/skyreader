@@ -18,11 +18,13 @@
   import AddFeedModal from '$lib/components/AddFeedModal.svelte';
   import AddHandleModal from '$lib/components/AddHandleModal.svelte';
   import SourceRow from '$lib/components/sources/SourceRow.svelte';
-  import SourceGroupHeader from '$lib/components/sources/SourceGroupHeader.svelte';
+  import SourceList from '$lib/components/sources/SourceList.svelte';
   import SourcesToolbar from '$lib/components/sources/SourcesToolbar.svelte';
   import BulkActionBar from '$lib/components/sources/BulkActionBar.svelte';
   import SourceSectionHeader from '$lib/components/sources/SourceSectionHeader.svelte';
-  import SourcesDiscovery from '$lib/components/sources/SourcesDiscovery.svelte';
+  import SourcesDiscovery, {
+    type AuthorPublication,
+  } from '$lib/components/sources/SourcesDiscovery.svelte';
   import FollowsSourceRow from '$lib/components/sources/FollowsSourceRow.svelte';
   import LimitNotice from '$lib/components/LimitNotice.svelte';
   import { feedLimitLine } from '$lib/utils/limitCopy';
@@ -63,45 +65,20 @@
   }
   let parkedFeeds = $state<ParkedRecord[]>([]);
   let parkedError = $state<string | null>(null);
-  // Atmosphere-panel subscribe outcome. Split so the active-feed cap renders as
-  // a notice with a way forward, not as a red line.
-  let atmoError = $state<string | null>(null);
-  let atmoLimitHit = $state(false);
 
-  // -- Section collapse (persisted) --
-  const COLLAPSE_KEY = 'skyreader:sources-collapsed';
-  let webCollapsed = $state(false);
-  let atmoCollapsed = $state(false);
+  // -- Scope: which kind of source the list shows. Replaces the per-section
+  // collapse toggles: one control, and parked feeds get a place in it. --
+  type Scope = 'all' | 'atmosphere' | 'web' | 'parked';
+  let scope = $state<Scope>('all');
 
-  function loadCollapse() {
-    try {
-      const raw = localStorage.getItem(COLLAPSE_KEY);
-      if (!raw) return;
-      const obj = JSON.parse(raw) as { web?: boolean; atmo?: boolean };
-      webCollapsed = !!obj.web;
-      atmoCollapsed = !!obj.atmo;
-    } catch {
-      // ignore
-    }
-    // Arriving at the follows row (the permission ask links here) opens its
-    // section for this visit, without changing the remembered state.
-    if (location.hash === '#follows') atmoCollapsed = false;
+  // Checkboxes only appear once the reader asks to select; the everyday list
+  // stays quiet. Selection is scoped to the Web (folders only apply to RSS).
+  let selecting = $state(false);
+
+  function stopSelecting() {
+    selecting = false;
+    selectedIds = new Set();
   }
-
-  function saveCollapse() {
-    try {
-      localStorage.setItem(
-        COLLAPSE_KEY,
-        JSON.stringify({ web: webCollapsed, atmo: atmoCollapsed })
-      );
-    } catch {
-      // ignore
-    }
-  }
-
-  // While searching, sections stay open so results are never hidden.
-  let webOpen = $derived(!webCollapsed || !!searchQuery);
-  let atmoOpen = $derived(!atmoCollapsed || !!searchQuery);
 
   // -- Unify duplicates: a site followed both by RSS and on standard.site.
   // "Keep both" dismissals are persisted by host so the notice doesn't nag. --
@@ -155,39 +132,68 @@
     }
   }
 
-  // -- The Atmosphere: AT Proto sources grouped by person --
-  interface PersonGroup {
-    did: string;
-    profile: BlueskyProfile | null;
-    subscriptions: Subscription[];
+  // -- The Atmosphere: AT Proto sources, one row each, ordered by person --
+  interface AtmosphereRow {
+    sub: Subscription;
+    handle: string;
+    name: string;
+    avatarUrl: string | null;
   }
 
-  let atmosphereGroups = $derived.by((): PersonGroup[] => {
-    const byDid = new Map<string, Subscription[]>();
-    for (const sub of subscriptionsStore.subscriptions) {
-      if (!sub.subjectDid) continue;
-      if (sub.sourceType === 'atproto.documents' || sub.sourceType === 'atproto.collection') {
-        const existing = byDid.get(sub.subjectDid) || [];
-        existing.push(sub);
-        byDid.set(sub.subjectDid, existing);
-      }
-    }
+  function isAtmosphere(sub: Subscription): boolean {
+    return (
+      !!sub.subjectDid &&
+      (sub.sourceType === 'atproto.documents' || sub.sourceType === 'atproto.collection')
+    );
+  }
 
-    const groups: PersonGroup[] = [];
-    for (const [did, subs] of byDid) {
-      groups.push({
-        did,
-        profile: profiles.get(did) || null,
-        subscriptions: subs,
+  let atmosphereRows = $derived.by((): AtmosphereRow[] => {
+    const rows: AtmosphereRow[] = [];
+    for (const sub of subscriptionsStore.subscriptions) {
+      if (!isAtmosphere(sub)) continue;
+      const profile = profiles.get(sub.subjectDid!);
+      rows.push({
+        sub,
+        handle: profile?.handle || sub.subjectDid!,
+        name: profile?.displayName || profile?.handle || sub.subjectDid!,
+        avatarUrl: profile?.avatar ?? null,
       });
     }
+    rows.sort(
+      (a, b) =>
+        a.name.localeCompare(b.name) ||
+        (a.sub.customTitle || a.sub.title).localeCompare(b.sub.customTitle || b.sub.title)
+    );
+    return rows;
+  });
 
-    groups.sort((a, b) => {
-      const nameA = a.profile?.displayName || a.profile?.handle || a.did;
-      const nameB = b.profile?.displayName || b.profile?.handle || b.did;
-      return nameA.localeCompare(nameB);
-    });
-    return groups;
+  // Publications on those same accounts that the reader hasn't added. They used
+  // to sit faded inside the reader's own list; they're suggestions, so they go
+  // to Find more with the rest.
+  let authorPublications = $derived.by((): AuthorPublication[] => {
+    const out: AuthorPublication[] = [];
+    const subscribedUris = new Set(
+      subscriptionsStore.subscriptions
+        .filter((s) => s.sourceType === 'atproto.documents' && s.feedUrl)
+        .map((s) => s.feedUrl as string)
+    );
+    for (const [did, content] of detectedContent) {
+      if (!atprotoDids.includes(did)) continue;
+      const profile = profiles.get(did);
+      for (const pub of content.publications) {
+        if (subscribedUris.has(pub.uri)) continue;
+        out.push({
+          did,
+          handle: profile?.handle || did,
+          avatarUrl: profile?.avatar ?? null,
+          uri: pub.uri,
+          name: pub.name,
+          url: pub.url,
+          iconUrl: pub.iconUrl,
+        });
+      }
+    }
+    return out;
   });
 
   // -- The Web: RSS feeds --
@@ -219,18 +225,18 @@
   let uncategorizedWebsites = $derived(websites.filter((s) => !s.category));
 
   // -- Filtering --
-  let filteredPeople = $derived(
+  let filteredAtmosphere = $derived(
     searchQuery
-      ? atmosphereGroups.filter((g) => {
+      ? atmosphereRows.filter((r) => {
           const q = searchQuery.toLowerCase();
-          const name = g.profile?.displayName || g.profile?.handle || g.did;
           return (
-            name.toLowerCase().includes(q) ||
-            g.did.toLowerCase().includes(q) ||
-            g.subscriptions.some((s) => (s.customTitle || s.title).toLowerCase().includes(q))
+            r.name.toLowerCase().includes(q) ||
+            r.handle.toLowerCase().includes(q) ||
+            (r.sub.customTitle || r.sub.title).toLowerCase().includes(q) ||
+            (r.sub.siteUrl || '').toLowerCase().includes(q)
           );
         })
-      : atmosphereGroups
+      : atmosphereRows
   );
 
   let filteredWebsites = $derived(
@@ -268,7 +274,44 @@
 
   let filteredUncategorizedWebsites = $derived(filterWebsitesBySearch(uncategorizedWebsites));
 
-  let hasNoSources = $derived(websites.length === 0 && atmosphereGroups.length === 0);
+  let filteredParked = $derived(
+    searchQuery
+      ? parkedFeeds.filter((p) => {
+          const q = searchQuery.toLowerCase();
+          return p.title.toLowerCase().includes(q) || p.subtitle.toLowerCase().includes(q);
+        })
+      : parkedFeeds
+  );
+
+  let hasNoSources = $derived(websites.length === 0 && atmosphereRows.length === 0);
+
+  // Only offer the scope control when there's more than one kind to choose from.
+  let scopes = $derived(
+    (
+      [
+        { id: 'all', label: 'All', count: websites.length + atmosphereRows.length },
+        { id: 'atmosphere', label: 'Atmosphere', count: atmosphereRows.length },
+        { id: 'web', label: 'Web', count: websites.length },
+        { id: 'parked', label: 'Parked', count: parkedFeeds.length },
+      ] as { id: Scope; label: string; count: number }[]
+    ).filter((s) => s.id === 'all' || s.count > 0)
+  );
+
+  // A scope that empties out (the last parked feed reactivated) falls back to All.
+  $effect(() => {
+    if (!scopes.some((s) => s.id === scope)) scope = 'all';
+  });
+
+  let showAtmosphere = $derived(scope === 'all' || scope === 'atmosphere');
+  let showWeb = $derived(scope === 'all' || scope === 'web');
+  let showParked = $derived(scope === 'all' || scope === 'parked');
+
+  let noMatches = $derived(
+    !!searchQuery &&
+      (!showAtmosphere || filteredAtmosphere.length === 0) &&
+      (!showWeb || filteredWebsites.length === 0) &&
+      (!showParked || filteredParked.length === 0)
+  );
 
   // -- Selection (scoped to The Web — folders only apply to RSS) --
   let allVisibleIds = $derived.by(() => {
@@ -293,42 +336,6 @@
     if (next.has(id)) next.delete(id);
     else next.add(id);
     selectedIds = next;
-  }
-
-  // -- Atmosphere helpers --
-  function getPersonHandle(group: PersonGroup): string {
-    return group.profile?.handle || group.did;
-  }
-
-  function getPersonName(group: PersonGroup): string {
-    return group.profile?.displayName || group.profile?.handle || group.did;
-  }
-
-  // Subscribing from the Atmosphere panel used to have no catch at all, so
-  // hitting the active-feed cap here was an unhandled rejection: the row just
-  // reset and the reader was told nothing.
-  async function subscribePublication(did: string, pub: DetectedPublication) {
-    atmoError = null;
-    atmoLimitHit = false;
-    try {
-      const subId = await subscriptionsStore.add(pub.uri, pub.name || pub.url, {
-        sourceType: 'atproto.documents',
-        subjectDid: did,
-        siteUrl: pub.url,
-        feedUrl: pub.uri,
-      });
-      if (pub.iconUrl) {
-        await subscriptionsStore.updateLocal(subId, {
-          customIconUrl: pub.iconUrl,
-        });
-      }
-      // Fetch this publication's documents now so its feed isn't empty until the
-      // next full refresh (also refreshed on the regular cycle).
-      void fetchAllDocuments(subscriptionsStore.subscriptions);
-    } catch (e) {
-      if (e instanceof SubscriptionLimitError) atmoLimitHit = true;
-      else atmoError = e instanceof Error ? e.message : 'Could not subscribe to that publication.';
-    }
   }
 
   // -- Actions --
@@ -376,18 +383,13 @@
     return url.replace(/^https?:\/\//, '').replace(/\/$/, '');
   }
 
-  // Subtitle for a subscribed Atmosphere source. standard.site blogs surface
-  // their publication URL (it identifies the blog); everything else shows the
-  // owner's handle.
+  // Subtitle for a subscribed Atmosphere source: whose it is, then what it is.
+  // With no per-person header above the rows, the handle always leads.
   function getAtmosphereSubtitle(sub: Subscription, handle: string): string {
-    if (
-      sub.sourceType === 'atproto.documents' &&
-      !isLinkblogPublication(sub.feedUrl, sub.siteUrl) &&
-      sub.siteUrl
-    ) {
-      return formatPublicationUrl(sub.siteUrl);
-    }
-    return '@' + handle;
+    const who = handle.startsWith('did:') ? handle : '@' + handle;
+    if (sub.sourceType === 'atproto.collection') return `${who} · Collection`;
+    if (isLinkblogPublication(sub.feedUrl, sub.siteUrl)) return `${who} · Linkblog`;
+    return sub.siteUrl ? `${who} · ${formatPublicationUrl(sub.siteUrl)}` : who;
   }
 
   // -- Bulk operations (The Web) --
@@ -397,7 +399,7 @@
     for (const id of [...selectedIds]) {
       await subscriptionsStore.remove(id);
     }
-    selectedIds = new Set();
+    stopSelecting();
   }
 
   let folders = $derived.by(() => {
@@ -508,7 +510,6 @@
   }
 
   onMount(() => {
-    loadCollapse();
     dismissedUnifyHosts = loadDismissedUnifyHosts();
     // Seed detected-content from cache so unsubscribed publications show instantly.
     detectedContent = new Map(
@@ -574,16 +575,6 @@
         });
     }
   });
-
-  function toggleWeb() {
-    webCollapsed = !webCollapsed;
-    saveCollapse();
-  }
-
-  function toggleAtmo() {
-    atmoCollapsed = !atmoCollapsed;
-    saveCollapse();
-  }
 </script>
 
 <svelte:head>
@@ -592,6 +583,25 @@
 
 <StaticPageChrome title="Manage Sources" />
 
+{#snippet webRow(sub: Subscription)}
+  {@const status = sub.feedUrl ? feedStatusStore.getStatus(sub.feedUrl) : undefined}
+  <SourceRow
+    iconUrl={getFaviconUrl(sub)}
+    title={sub.customTitle || sub.title}
+    subtitle={getSubtitle(sub)}
+    hasError={status?.status === 'error' || status?.status === 'circuit-open'}
+    errorDetails={sub.feedUrl ? feedStatusStore.getErrorDetails(sub.feedUrl) : null}
+    subscribed={true}
+    selected={sub.id != null && selectedIds.has(sub.id)}
+    fallbackIcon="rss"
+    onToggleSelect={selecting ? () => sub.id && toggleSelect(sub.id) : undefined}
+    onEdit={() => handleEdit(sub)}
+    onRefresh={() => fetchSingleFeed(sub, true, articlesStore.savedGuids)}
+    onPark={auth.isGuest ? null : () => park(sub)}
+    onRemove={() => handleRemove(sub)}
+  />
+{/snippet}
+
 <div class="sources-page">
   <SourcesToolbar
     {searchQuery}
@@ -599,6 +609,35 @@
     onAddRss={() => sidebarStore.openAddFeedModal()}
     onAddHandle={() => sidebarStore.openAddHandleModal()}
   />
+
+  {#if !hasNoSources && (scopes.length > 2 || websites.length > 0)}
+    <div class="scope-bar">
+      {#if scopes.length > 2}
+        <div class="scopes" role="group" aria-label="Show sources">
+          {#each scopes as s (s.id)}
+            <button
+              class="scope"
+              class:active={scope === s.id}
+              aria-pressed={scope === s.id}
+              onclick={() => (scope = s.id)}
+            >
+              {s.label}
+              <span class="scope-count">{s.count}</span>
+            </button>
+          {/each}
+        </div>
+      {/if}
+      {#if websites.length > 0 && showWeb}
+        <button
+          class="select-toggle"
+          aria-pressed={selecting}
+          onclick={() => (selecting ? stopSelecting() : (selecting = true))}
+        >
+          {selecting ? 'Done' : 'Select'}
+        </button>
+      {/if}
+    </div>
+  {/if}
 
   {#if selectionCount > 0}
     <BulkActionBar
@@ -635,218 +674,104 @@
       {:else}
         <p>
           Follow RSS feeds, standard.site blogs, and the linkblogs of people you know on Bluesky.
-          Everything you follow lives in your PDS — portable across the Atmosphere.
+          Use <strong>Add source</strong> above, or start from the suggestions below.
         </p>
       {/if}
     </div>
     {#if !auth.isGuest}
-      <SourcesDiscovery />
-      <div class="source-list follows-list">
-        <FollowsSourceRow />
-      </div>
+      <section class="sources-section">
+        <SourceSectionHeader title="The Atmosphere" />
+        <SourceList>
+          <FollowsSourceRow />
+        </SourceList>
+      </section>
     {/if}
   {:else}
-    {#if !searchQuery && !auth.isGuest}
-      <SourcesDiscovery />
+    {#if noMatches}
+      <p class="section-empty">No sources match “{searchQuery}”.</p>
     {/if}
 
     <!-- THE ATMOSPHERE -->
-    <section class="sources-section">
-      <SourceSectionHeader
-        icon="users"
-        title="The Atmosphere"
-        subtitle="people you follow"
-        count={atmosphereGroups.length}
-        collapsed={!atmoOpen}
-        onToggle={toggleAtmo}
-      />
-
-      {#if atmoOpen}
-        {#if !auth.isGuest && !searchQuery}
-          <div class="source-list follows-list">
+    {#if showAtmosphere && (!searchQuery || filteredAtmosphere.length > 0)}
+      <section class="sources-section">
+        <SourceSectionHeader title="The Atmosphere" count={atmosphereRows.length} />
+        <SourceList>
+          {#if !auth.isGuest && !searchQuery}
             <FollowsSourceRow />
-          </div>
-        {/if}
-        {#if atmoLimitHit}
-          <div class="atmo-notice">
-            <LimitNotice kind="feeds">
-              <p>{feedLimitLine(subscriptionsStore.maxSubscriptions, { onSources: true })}</p>
-            </LimitNotice>
-          </div>
-        {:else if atmoError}
-          <p class="parked-error">{atmoError}</p>
-        {/if}
-        {#if filteredPeople.length > 0}
-          <div class="source-list person-list">
-            {#each filteredPeople as group (group.did)}
-              {@const detected = detectedContent.get(group.did)}
-              {@const handle = getPersonHandle(group)}
-              {@const avatarUrl = group.profile?.avatar ?? null}
-
-              <SourceGroupHeader
-                {avatarUrl}
-                displayName={getPersonName(group)}
-                {handle}
-                onRemoveAll={async () => {
-                  if (confirm(`Remove all subscriptions for ${getPersonName(group)}?`)) {
-                    await Promise.all(
-                      group.subscriptions
-                        .filter((s) => s.id != null)
-                        .map((s) => subscriptionsStore.remove(s.id!))
-                    );
-                  }
-                }}
-              />
-
-              <!-- Subscribed streams (blog / linkblog) -->
-              {#each group.subscriptions as sub (sub.rkey)}
-                {@const display = getSourceDisplay(sub.sourceType, sub.feedUrl, sub.siteUrl)}
-                <SourceRow
-                  iconUrl={sub.customIconUrl || avatarUrl}
-                  iconRound={!sub.customIconUrl}
-                  title={sub.customTitle || sub.title}
-                  subtitle={getAtmosphereSubtitle(sub, handle)}
-                  subscribed={true}
-                  fallbackIcon={display.iconName}
-                  onRemove={() => handleRemove(sub)}
-                  onPark={() => park(sub)}
-                  onEdit={sub.sourceType === 'atproto.documents' ? () => handleEdit(sub) : null}
-                />
-              {/each}
-
-              <!-- Detected but not yet subscribed -->
-              {#if detected && !detected.loading}
-                {#each detected.publications as pub (pub.uri)}
-                  {#if !group.subscriptions.some((s) => s.sourceType === 'atproto.documents' && s.feedUrl === pub.uri)}
-                    {@const pubDisplay = getSourceDisplay('atproto.documents', pub.uri)}
-                    <SourceRow
-                      iconUrl={pub.iconUrl || avatarUrl}
-                      iconRound={!pub.iconUrl}
-                      title={pub.name || pub.url}
-                      subtitle={formatPublicationUrl(pub.url)}
-                      subscribed={false}
-                      fallbackIcon={pubDisplay.iconName}
-                      onSubscribe={() => subscribePublication(group.did, pub)}
-                    />
-                  {/if}
-                {/each}
-              {/if}
-
-              {#if detected?.loading}
-                <div class="content-type-loading">
-                  <span class="spinner-small"></span>
-                  <span>Detecting content…</span>
-                </div>
-              {/if}
-            {/each}
-          </div>
-        {:else if searchQuery}
-          <p class="section-empty">No people match “{searchQuery}”.</p>
-        {:else}
-          <p class="section-empty">
-            You're not following anyone's blog or linkblog yet. Find people in Find more above.
+          {/if}
+          {#each filteredAtmosphere as row (row.sub.rkey)}
+            {@const display = getSourceDisplay(
+              row.sub.sourceType,
+              row.sub.feedUrl,
+              row.sub.siteUrl
+            )}
+            <SourceRow
+              iconUrl={row.sub.customIconUrl || row.avatarUrl}
+              iconRound={!row.sub.customIconUrl}
+              title={row.sub.customTitle || row.sub.title}
+              subtitle={getAtmosphereSubtitle(row.sub, row.handle)}
+              subscribed={true}
+              fallbackIcon={display.iconName}
+              onRemove={() => handleRemove(row.sub)}
+              onPark={() => park(row.sub)}
+              onEdit={row.sub.sourceType === 'atproto.documents' ? () => handleEdit(row.sub) : null}
+            />
+          {/each}
+        </SourceList>
+        {#if atmosphereRows.length === 0 && !searchQuery}
+          <p class="section-note">
+            No blogs or linkblogs yet. Find people in <strong>Find more</strong> below.
           </p>
         {/if}
-      {/if}
-    </section>
+      </section>
+    {/if}
 
     <!-- THE WEB -->
-    <section class="sources-section">
-      <SourceSectionHeader
-        icon="globe"
-        title="The Web"
-        subtitle="RSS feeds"
-        count={websites.length}
-        collapsed={!webOpen}
-        onToggle={toggleWeb}
-      />
-
-      {#if webOpen}
-        {#if filteredWebsites.length > 0}
-          <div class="select-all-row">
-            <label class="checkbox-label">
+    {#if showWeb && (!searchQuery || filteredWebsites.length > 0)}
+      <section class="sources-section">
+        <SourceSectionHeader title="The Web" count={websites.length}>
+          {#if selecting && filteredWebsites.length > 0}
+            <label class="select-all">
               <input type="checkbox" checked={allSelected} onchange={toggleSelectAll} />
-              <span class="select-all-text">Select all</span>
+              Select all
             </label>
-          </div>
-
-          {#each filteredWebsiteCategories as cat (cat.name)}
-            <div class="category-section">
-              <h3 class="category-title">
-                <Icon name="folder" size={14} />
-                {cat.name}
-                <span class="group-count">{cat.websites.length}</span>
-              </h3>
-              <div class="source-list">
-                {#each cat.websites as sub (sub.id)}
-                  {@const status = sub.feedUrl ? feedStatusStore.getStatus(sub.feedUrl) : undefined}
-                  <SourceRow
-                    iconUrl={getFaviconUrl(sub)}
-                    title={sub.customTitle || sub.title}
-                    subtitle={getSubtitle(sub)}
-                    hasError={status?.status === 'error' || status?.status === 'circuit-open'}
-                    errorDetails={sub.feedUrl ? feedStatusStore.getErrorDetails(sub.feedUrl) : null}
-                    subscribed={true}
-                    selected={sub.id != null && selectedIds.has(sub.id)}
-                    fallbackIcon="rss"
-                    onToggleSelect={() => sub.id && toggleSelect(sub.id)}
-                    onEdit={() => handleEdit(sub)}
-                    onRefresh={() => fetchSingleFeed(sub, true, articlesStore.savedGuids)}
-                    onRemove={() => handleRemove(sub)}
-                  />
-                {/each}
-              </div>
-            </div>
-          {/each}
-
-          {#if filteredUncategorizedWebsites.length > 0}
-            {#if filteredWebsiteCategories.length > 0}
-              <h3 class="category-title uncategorized-title">
-                Uncategorized
-                <span class="group-count">{filteredUncategorizedWebsites.length}</span>
-              </h3>
-            {/if}
-            <div class="source-list">
-              {#each filteredUncategorizedWebsites as sub (sub.id)}
-                {@const status = sub.feedUrl ? feedStatusStore.getStatus(sub.feedUrl) : undefined}
-                <SourceRow
-                  iconUrl={getFaviconUrl(sub)}
-                  title={sub.customTitle || sub.title}
-                  subtitle={getSubtitle(sub)}
-                  hasError={status?.status === 'error' || status?.status === 'circuit-open'}
-                  errorDetails={sub.feedUrl ? feedStatusStore.getErrorDetails(sub.feedUrl) : null}
-                  subscribed={true}
-                  selected={sub.id != null && selectedIds.has(sub.id)}
-                  fallbackIcon="rss"
-                  onToggleSelect={() => sub.id && toggleSelect(sub.id)}
-                  onEdit={() => handleEdit(sub)}
-                  onRefresh={() => fetchSingleFeed(sub, true, articlesStore.savedGuids)}
-                  onPark={() => park(sub)}
-                  onRemove={() => handleRemove(sub)}
-                />
-              {/each}
-            </div>
           {/if}
-        {:else if searchQuery}
-          <p class="section-empty">No feeds match “{searchQuery}”.</p>
-        {:else}
-          <p class="section-empty">
+        </SourceSectionHeader>
+
+        {#each filteredWebsiteCategories as cat (cat.name)}
+          <SourceList label={cat.name} count={cat.websites.length}>
+            {#snippet icon()}<Icon name="folder" size={13} />{/snippet}
+            {#each cat.websites as sub (sub.id)}
+              {@render webRow(sub)}
+            {/each}
+          </SourceList>
+        {/each}
+
+        {#if filteredUncategorizedWebsites.length > 0}
+          <SourceList
+            label={filteredWebsiteCategories.length > 0 ? 'Not in a folder' : null}
+            count={filteredUncategorizedWebsites.length}
+          >
+            {#each filteredUncategorizedWebsites as sub (sub.id)}
+              {@render webRow(sub)}
+            {/each}
+          </SourceList>
+        {/if}
+
+        {#if websites.length === 0 && !searchQuery}
+          <p class="section-note">
             No RSS feeds yet. Use <strong>Add source → RSS feed</strong> to follow a blog or site.
           </p>
         {/if}
-      {/if}
-    </section>
+      </section>
+    {/if}
   {/if}
 
-  <!-- PARKED — feeds over the active limit; saved + portable, just not serviced.
-       Shown independent of the active-sources empty state and search. -->
-  {#if parkedFeeds.length > 0}
+  <!-- PARKED: feeds over the active limit, or parked by hand. Saved and
+       portable, just not fetched. -->
+  {#if showParked && filteredParked.length > 0}
     <section class="sources-section">
-      <h2 class="parked-heading">
-        <Icon name="archive" size={16} />
-        Parked
-        <span class="group-count">{parkedFeeds.length}</span>
-      </h2>
+      <SourceSectionHeader title="Parked" count={parkedFeeds.length} />
       <!-- The upgrade prompt belongs here only when the cap is what put these
            feeds here. A reader can also park a feed by hand at any count, and
            telling someone with 3 of 100 feeds that they're over their limit is
@@ -862,16 +787,15 @@
           </LimitNotice>
         </div>
       {:else}
-        <p class="parked-note">
-          Parked feeds stay saved to your account and just aren't fetched. Reactivate one to start
-          reading it again.
+        <p class="section-note above">
+          Kept on your account, just not fetched. Reactivate one to read it again.
         </p>
       {/if}
       {#if parkedError}
         <p class="parked-error">{parkedError}</p>
       {/if}
-      <div class="source-list">
-        {#each parkedFeeds as rec (rec.rkey)}
+      <SourceList>
+        {#each filteredParked as rec (rec.rkey)}
           <SourceRow
             iconUrl={rec.iconUrl}
             title={rec.title}
@@ -882,8 +806,14 @@
             onRemove={() => removeParked(rec)}
           />
         {/each}
-      </div>
+      </SourceList>
     </section>
+  {/if}
+
+  <!-- FIND MORE: suggestions come after the reader's own sources, in the same
+       rows, so the page is about what you follow first. -->
+  {#if !auth.isGuest && !searchQuery && scope === 'all'}
+    <SourcesDiscovery {authorPublications} />
   {/if}
 </div>
 
@@ -913,13 +843,103 @@
     }
   }
 
-  .sources-section {
-    margin-bottom: 1.25rem;
+  .sources-section + .sources-section {
+    margin-top: 2rem;
+  }
+
+  /* Scope control: which kind of source the list shows, plus Select. */
+  .scope-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: -0.25rem 0 1.5rem;
+  }
+
+  .scopes {
+    display: flex;
+    gap: 0.25rem;
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .scope {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.375rem;
+    padding: 0.3125rem 0.75rem;
+    font: inherit;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+    color: var(--color-text-secondary);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-pill, 999px);
+    cursor: pointer;
+    transition:
+      background-color 0.15s,
+      color 0.15s;
+  }
+
+  .scope:hover {
+    color: var(--color-text);
+    background: var(--color-bg-secondary);
+  }
+
+  .scope.active {
+    color: var(--color-text);
+    background: var(--color-bg-secondary);
+    border-color: var(--color-border);
+  }
+
+  .scope-count {
+    font-size: var(--text-xs);
+    font-weight: var(--weight-regular);
+    color: var(--color-text-secondary);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .scope:focus-visible,
+  .select-toggle:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+
+  .select-toggle {
+    flex-shrink: 0;
+    margin-left: auto;
+    padding: 0.3125rem 0.5rem;
+    font: inherit;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+    color: var(--color-primary);
+    background: none;
+    border: none;
+    border-radius: var(--radius-md, 6px);
+    cursor: pointer;
+  }
+
+  .select-toggle:hover {
+    background: var(--color-primary-wash, rgba(0, 102, 204, 0.1));
+  }
+
+  .select-all {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .select-all input {
+    margin: 0;
+    cursor: pointer;
   }
 
   .onboarding {
     padding: 0.5rem 0.25rem 0;
-    margin-bottom: 1rem;
+    margin-bottom: 2rem;
   }
 
   .onboarding h2 {
@@ -937,135 +957,37 @@
     max-width: 56ch;
   }
 
-  .select-all-row {
-    padding: 0.25rem 0.25rem 0.5rem;
-  }
-
-  .checkbox-label {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    cursor: pointer;
-    font-size: var(--text-xs);
-    color: var(--color-text-secondary);
-  }
-
-  .select-all-text {
-    user-select: none;
-  }
-
-  .group-count {
-    font-weight: var(--weight-regular);
-  }
-
-  .source-list {
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-    background: var(--color-border);
-    border-radius: 12px;
-  }
-
-  /* The follows row sits in its own rounded group, ahead of the people. */
-  .follows-list {
-    margin: 0.5rem 0 0.75rem;
-  }
-
-  .source-list > :global(:first-child) {
-    border-radius: 12px 12px 0 0;
-  }
-
-  .source-list > :global(:last-child) {
-    border-radius: 0 0 12px 12px;
-  }
-
-  .source-list > :global(:only-child) {
-    border-radius: 12px;
-  }
-
-  .category-section {
-    margin-bottom: 1rem;
-  }
-
-  .category-title {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-size: var(--text-xs);
+  .onboarding strong,
+  .section-note strong {
     font-weight: var(--weight-semibold);
-    color: var(--color-text-secondary);
-    margin: 0.75rem 0 0.375rem;
-    padding: 0 0.25rem;
-  }
-
-  .uncategorized-title {
-    margin-top: 1rem;
-  }
-
-  .content-type-loading {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.5rem 0.75rem;
-    font-size: var(--text-xs);
-    color: var(--color-text-secondary);
-    background: var(--color-bg);
-  }
-
-  .spinner-small {
-    width: 14px;
-    height: 14px;
-    border: 2px solid var(--color-border);
-    border-top-color: var(--color-primary);
-    border-radius: 50%;
-    animation: spin 0.6s linear infinite;
-  }
-
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-
-  .parked-heading {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-size: var(--text-md);
-    font-weight: var(--weight-semibold);
-    letter-spacing: var(--tracking-tight);
     color: var(--color-text);
-    margin: 0 0 0.375rem;
-    padding: 0 0.25rem;
   }
 
-  .atmo-notice,
-  .parked-note {
-    margin: 0 0 0.75rem;
+  .section-note {
+    margin: 0.5rem 0.25rem 0;
     font-size: var(--text-sm);
     color: var(--color-text-secondary);
+    line-height: var(--leading-normal);
   }
 
-  .parked-notice {
-    padding: 0.5rem 0 0.75rem;
-  }
-
-  .parked-error {
-    font-size: var(--text-xs);
-    color: var(--color-error, #dc2626);
-    margin: 0 0.25rem 0.5rem;
+  .section-note.above {
+    margin: 0 0.25rem 0.625rem;
   }
 
   .section-empty {
     font-size: var(--text-md);
     color: var(--color-text-secondary);
-    line-height: var(--leading-normal);
-    margin: 0.25rem 0.25rem 0.5rem;
+    margin: 0.5rem 0.25rem 1.5rem;
   }
 
-  .section-empty strong {
-    font-weight: var(--weight-semibold);
-    color: var(--color-text);
+  .parked-notice {
+    margin-bottom: 0.75rem;
+  }
+
+  .parked-error {
+    font-size: var(--text-xs);
+    color: var(--color-error);
+    margin: 0 0.25rem 0.5rem;
   }
 
   /* Unify notice: a site followed both by RSS and on standard.site. */
@@ -1073,6 +995,6 @@
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
-    margin-bottom: 1.25rem;
+    margin-bottom: 1.5rem;
   }
 </style>

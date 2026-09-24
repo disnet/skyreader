@@ -51,11 +51,11 @@ export const harnesses: HarnessEntry[] = [
     slug: 'sources',
     title: 'Sources',
     description:
-      'The feed-management surface: toolbar, section + group headers, source rows in every state, and the bulk-action bar.',
+      'The feed-management surface: toolbar, section header, grouped list, source rows in every state, and the bulk-action bar.',
     components: [
       'SourcesToolbar',
       'SourceSectionHeader',
-      'SourceGroupHeader',
+      'SourceList',
       'SourceRow',
       'BulkActionBar',
     ],
