@@ -680,8 +680,11 @@ export function useHighlights(params: HighlightParams) {
     notePeek = null;
   }
 
-  /** Create a highlight from the current selection, optionally pushing it to Margin. */
-  function createHighlightFromPopover(note?: string, toMargin = false) {
+  /**
+   * Create a highlight from the current selection, optionally pushing it to
+   * Margin. `applyNow` draws its marks in this task rather than the next frame.
+   */
+  function createHighlightFromPopover(note?: string, toMargin = false, applyNow = false) {
     if (!popoverState?.pendingSelector) return;
 
     const highlight = makeHighlight(popoverState.pendingSelector, note);
@@ -690,7 +693,8 @@ export function useHighlights(params: HighlightParams) {
     window.getSelection()?.removeAllRanges();
     popoverState = null;
     freshId = highlight.id;
-    requestAnimationFrame(applyHighlights);
+    if (applyNow) applyHighlights();
+    else requestAnimationFrame(applyHighlights);
     if (toMargin) void saveHighlightToMargin(highlight);
     return highlight;
   }
@@ -707,7 +711,10 @@ export function useHighlights(params: HighlightParams) {
    * leave the note empty and the highlight simply stays bare.
    */
   function createHighlightForNote() {
-    const highlight = createHighlightFromPopover();
+    // Marked now, not next frame: the editor can't open (or take focus) until
+    // its passage is on the page, and whatever the reader types in between
+    // lands on the page instead of in the note.
+    const highlight = createHighlightFromPopover(undefined, false, true);
     if (highlight) openNote(highlight.id);
   }
 
