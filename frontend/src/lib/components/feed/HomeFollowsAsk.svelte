@@ -23,8 +23,7 @@
   </div>
   <p>
     Skyreader can gather the links people you follow share on Bluesky into a lane here, each marked
-    with who shared it. It reads your Following timeline for them, keeps them for a week, and never
-    posts anything.
+    with who shared it.
   </p>
   <div class="follows-ask-actions">
     <button
