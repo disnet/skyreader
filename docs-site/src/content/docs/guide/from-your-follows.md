@@ -9,6 +9,8 @@ It's a source, like a feed you subscribe to. Its links arrive in a channel calle
 
 ## Turning it on
 
+On a new account, **Home** asks first. Under **See what people you follow are sharing**, choose **Allow access**, confirm on your account provider's page, and you come back to Home with the week's links ready to read.
+
 The first time you open **Everything**, a box at the top asks whether to add your follows' links there. **Add them to Everything** turns it on; **Not now** leaves Everything as it is. You're only asked once.
 
 You can also go to **Manage Sources** and find **Links from people you follow**. Skyreader asks to read your Bluesky Following timeline. Choose **Allow**, confirm on your account provider's page, and you come back still signed in. You only do this once, and it makes the channel for you.

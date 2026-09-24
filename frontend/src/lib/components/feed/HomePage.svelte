@@ -23,6 +23,8 @@
   import HighlightReviewCard from '$lib/components/feed/HighlightReviewCard.svelte';
   import GuestModeBanner from '$lib/components/feed/GuestModeBanner.svelte';
   import HomeCustomizeDialog from '$lib/components/feed/HomeCustomizeDialog.svelte';
+  import HomeFirstRun from '$lib/components/feed/HomeFirstRun.svelte';
+  import HomeFollowsStart from '$lib/components/feed/HomeFollowsStart.svelte';
   import Icon from '$lib/components/Icon.svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import {
@@ -51,6 +53,8 @@
   import { extractRoomArticle, sortRoomItems } from '$lib/utils/roomArticle';
   import { magazineStore } from '$lib/stores/magazine.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
+  import { appManager } from '$lib/stores/app.svelte';
+  import { highlightReviewStore } from '$lib/stores/highlightReview.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
   import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
@@ -75,7 +79,7 @@
     setSavedRowArchived,
     type FeedDisplayItem,
   } from '$lib/stores/feedView.svelte';
-  import type { FilteredView, RoomItem, SavedItem, SortOrder } from '$lib/types';
+  import type { FilteredView, FollowLink, RoomItem, SavedItem, SortOrder } from '$lib/types';
 
   const CONTINUE_CAP = 12;
   const RANDOM_CAP = 12;
@@ -399,10 +403,11 @@
   });
 
   // From your follows: the week's most-shared links from your Bluesky follows,
-  // as one lane (the server ranks them). Hidden until the reader has granted the
-  // timeline permission (the ask lives on Manage Sources and the follows
-  // channel, not here) and there is something to show. The store no-ops for a
-  // guest. See docs/plans/FOLLOWS_LINKS_PLAN.md.
+  // as one lane (the server ranks them). The lane shows once the reader has
+  // granted the timeline permission and there is something to show; before
+  // that, an empty Home asks for it (HomeFollowsStart), since it's the one
+  // thing a new account can read with no setup. The store no-ops for a guest.
+  // See docs/plans/FOLLOWS_LINKS_PLAN.md.
   onMount(() => void followLinksStore.load());
 
   const FOLLOW_LANE_CAP = 8;
@@ -424,15 +429,46 @@
         }))
   );
 
-  let isLoading = $derived(savesStore.loading && savesStore.articles.length === 0);
-  let hasAnyLane = $derived(
+  // Lanes drawn from the reader's own library (saves, rooms, channels), as
+  // opposed to the follows lane, which a new account can have on day one.
+  let hasLibraryLane = $derived(
     continueItems.length > 0 ||
       randomItems.length > 0 ||
       recentItems.length > 0 ||
       channelLanes.length > 0 ||
-      roomLanes.length > 0 ||
-      followItems.length > 0
+      roomLanes.length > 0
   );
+  let hasAnyLane = $derived(hasLibraryLane || followItems.length > 0);
+
+  // Whether Home knows what this account holds yet: the cache has hydrated and
+  // the backend has answered at least once on this device (a persisted last
+  // refresh, or this launch's first refresh settling). Until then an empty cache
+  // means "not loaded yet" (a new device, a cleared IndexedDB), not "new account".
+  let libraryKnown = $derived(
+    appManager.phase === 'ready' ||
+      appManager.phase === 'error' ||
+      (appManager.phase === 'refreshing' && appManager.lastRefreshAt !== null)
+  );
+
+  let isLoading = $derived(
+    (savesStore.loading && savesStore.articles.length === 0) || (!libraryKnown && !hasAnyLane)
+  );
+
+  // First run: an account with no sources and nothing in its library. Home then
+  // leads with what the reader's follows are sharing and how to bring in what
+  // they already read (HomeFirstRun), in place of the lanes. Highlights count as
+  // a library too, so a reader who has some keeps their review card.
+  let isFirstRun = $derived(
+    auth.isAuthenticated &&
+      libraryKnown &&
+      subscriptionsStore.subscriptions.length === 0 &&
+      !hasLibraryLane &&
+      !highlightReviewStore.hasHighlights
+  );
+
+  function openFollowLinkItem(link: FollowLink) {
+    void openFollowLink(link, reader);
+  }
 
   // --- Layout: which sections show, and in what order ---
   // Every section Home can show right now, in its built-in order. Rooms and
@@ -672,7 +708,7 @@
     <div class="masthead">
       <div class="masthead-text">
         {#if dateLabel}<p class="masthead-date">{dateLabel}</p>{/if}
-        <h1 class="masthead-greeting">{greeting}</h1>
+        <h1 class="masthead-greeting">{isFirstRun ? 'Welcome to Skyreader' : greeting}</h1>
       </div>
 
       <!-- Below 1000px the toolbar strip is gone (mobile uses the bottom bar), so
@@ -690,6 +726,13 @@
       {#if !hiddenSections.has(HOME_SECTION.random)}
         <HomeLane title="Random picks" icon="layers" items={[]} loading onOpen={() => {}} />
       {/if}
+    {:else if isFirstRun}
+      <HomeFirstRun
+        showFollows={!hiddenSections.has(HOME_SECTION.follows)}
+        onOpenFollowLink={openFollowLinkItem}
+        onAddFeed={() => sidebarStore.openAddFeedModal()}
+        onAddHandle={() => sidebarStore.openAddHandleModal()}
+      />
     {:else}
       <!-- In the reader's order (Customize). Highlights and the daily magazine work
            from local data for a guest (the server half queues until sign-in), so
@@ -705,6 +748,11 @@
             onAddHandle={() => sidebarStore.openAddHandleModal()}
           />
         {:else}
+          {#if auth.isAuthenticated && followLinksStore.scopeRequired && !hiddenSections.has(HOME_SECTION.follows)}
+            <div class="follows-ask">
+              <HomeFollowsStart onOpen={openFollowLinkItem} />
+            </div>
+          {/if}
           <EmptyState
             title="Nothing to read here yet"
             description="Save an article and it collects here: your recent reads, a few to pick back up, and a rotating handful from your pile."
@@ -953,6 +1001,11 @@
   .link-button:focus-visible {
     outline: 2px solid var(--color-primary);
     outline-offset: 1px;
+  }
+
+  .follows-ask {
+    max-width: 48rem;
+    margin: 0.75rem 0.25rem 0;
   }
 
   .all-hidden {
