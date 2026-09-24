@@ -341,15 +341,18 @@ test.describe('highlight review', () => {
     await expect(bar).toBeVisible();
     await expect(bar.getByRole('button', { name: 'Switch feed' })).toContainText('Review');
 
-    // The card clears the bar rather than sitting under it.
-    const gap = await authedPage.evaluate(() => {
-      const card = document.querySelector('.review-body .deck-card');
-      const chrome = document.querySelector('.mobile-bottom-bar');
-      if (!card || !chrome) return null;
-      return chrome.getBoundingClientRect().top - card.getBoundingClientRect().bottom;
-    });
-    expect(gap).not.toBeNull();
-    expect(gap!).toBeGreaterThan(0);
+    // The card clears the bar rather than sitting under it. Polled: the resize
+    // redeals the deck, so the card may not be mounted on the first look.
+    await expect
+      .poll(() =>
+        authedPage.evaluate(() => {
+          const card = document.querySelector('.review-body .deck-card');
+          const chrome = document.querySelector('.mobile-bottom-bar');
+          if (!card || !chrome) return null;
+          return chrome.getBoundingClientRect().top - card.getBoundingClientRect().bottom;
+        })
+      )
+      .toBeGreaterThan(0);
 
     await bar.getByRole('button', { name: 'Switch feed' }).click();
     await authedPage.getByRole('button', { name: 'Highlights', exact: true }).click();
