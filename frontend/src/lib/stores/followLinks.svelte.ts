@@ -12,9 +12,10 @@ import type { FollowLink, FollowLinksWindow } from '$lib/types';
 // and keeps asking while a reader's first refresh is still gathering.
 //
 // Two instances: the page's, whose window the reader picks, and Home's lane,
-// which always shows the day (what the page opens on, so "View all" continues
-// the same list). Picking Week on /following doesn't change Home. Opening or
-// hiding a link applies to both.
+// which always shows the week: the most-shared links need the longest look to
+// rank, and a lane that's empty on a quiet day helps nobody. "View all" opens
+// the page on the week too. Picking a window on /following doesn't change
+// Home. Opening or hiding a link applies to both.
 
 /** How long to wait before asking again after a response started a refresh. */
 const FOLLOW_UP_MS = 4000;
@@ -168,5 +169,5 @@ function createFollowLinksStore(initialWindow: FollowLinksWindow = '24h') {
 
 /** The /following page: the reader picks the window. */
 export const followLinksStore = createFollowLinksStore();
-/** Home's "Shared by people you follow" lane: always the day. */
-export const followLinksLaneStore = createFollowLinksStore('24h');
+/** Home's "Shared by people you follow" lane: always the week. */
+export const followLinksLaneStore = createFollowLinksStore('7d');

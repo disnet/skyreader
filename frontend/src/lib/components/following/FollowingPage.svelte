@@ -3,6 +3,8 @@
   // row per article, ranked by how many of them shared it. Opening a row reads
   // it in the calm reader without saving it (the rooms path). The list ends;
   // there is no infinite scroll. See docs/plans/FOLLOWS_LINKS_PLAN.md.
+  import { page } from '$app/stores';
+  import { get } from 'svelte/store';
   import SavedReader from '$lib/components/feed/SavedReader.svelte';
   import StaticPageChrome from '$lib/components/feed/StaticPageChrome.svelte';
   import Icon from '$lib/components/Icon.svelte';
@@ -30,9 +32,18 @@
 
   // Wait for the account: a hard load can run this before auth hydrates, and
   // the layout sends a guest through sign-in anyway.
+  //
+  // `?window=` picks the window to open on (Home's "View all" asks for the week,
+  // which is what its lane shows). Read once, at arrival: the URL changes again
+  // when a reader opens, and that mustn't undo a window picked since.
+  const param = get(page).url.searchParams.get('window');
+  let arrivalWindow: FollowLinksWindow | null =
+    param === '24h' || param === '3d' || param === '7d' ? param : null;
   $effect(() => {
     if (!auth.isAuthenticated) return;
-    void followLinksStore.load();
+    const w = arrivalWindow ?? undefined;
+    arrivalWindow = null;
+    void followLinksStore.load(w);
   });
 
   let expanded = $state<Record<string, boolean>>({});
