@@ -25,6 +25,7 @@
   import HomeCustomizeDialog from '$lib/components/feed/HomeCustomizeDialog.svelte';
   import HomeFirstRun from '$lib/components/feed/HomeFirstRun.svelte';
   import HomeFollowsStart from '$lib/components/feed/HomeFollowsStart.svelte';
+  import HomeFollowsAsk from '$lib/components/feed/HomeFollowsAsk.svelte';
   import Icon from '$lib/components/Icon.svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import {
@@ -466,6 +467,13 @@
       !highlightReviewStore.hasHighlights
   );
 
+  // A reader with a library but no timeline permission gets the follows ask in
+  // the lane's own slot, so an account from before the feature meets it on Home.
+  // (Without any lane, the empty state below asks with HomeFollowsStart.)
+  let askForFollows = $derived(
+    auth.isAuthenticated && followLinksStore.scopeRequired && hasLibraryLane
+  );
+
   function openFollowLinkItem(link: FollowLink) {
     void openFollowLink(link, reader);
   }
@@ -633,7 +641,9 @@
       />
     {/if}
   {:else if id === HOME_SECTION.follows}
-    {#if followItems.length > 0}
+    {#if askForFollows}
+      <HomeFollowsAsk onDismiss={() => toggleSection(HOME_SECTION.follows)} />
+    {:else if followItems.length > 0}
       <HomeLane
         title="Shared by people you follow"
         icon="share-2"

@@ -176,6 +176,26 @@ test.describe('From your follows', () => {
     ]);
   });
 
+  test('asks on Home when an account with a library has not allowed it', async ({
+    authedPage,
+    testUser,
+  }) => {
+    // An account from before the feature: saves, lanes, no timeline permission.
+    await seedSavedArticle(testUser, { url: 'https://example.com/saved', title: 'A Saved Piece' });
+    await authedPage.goto('/home');
+    const ask = authedPage.getByRole('region', { name: 'New: links from people you follow' });
+    await expect(ask).toBeVisible({ timeout: 15_000 });
+    await expect(ask.getByRole('button', { name: 'Allow access' })).toBeVisible();
+    await expect(authedPage.getByText('A Saved Piece').first()).toBeVisible();
+
+    // "Not now" hides the section; it stays hidden on the next visit.
+    await ask.getByRole('button', { name: 'Not now' }).click();
+    await expect(ask).toHaveCount(0);
+    await authedPage.reload();
+    await expect(authedPage.getByText('A Saved Piece').first()).toBeVisible({ timeout: 15_000 });
+    await expect(ask).toHaveCount(0);
+  });
+
   test("leads a new account's Home with what its follows share", async ({
     authedPage,
     testUser,
