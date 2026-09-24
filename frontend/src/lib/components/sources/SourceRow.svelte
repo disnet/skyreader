@@ -1,13 +1,26 @@
+<script module lang="ts">
+  export interface RowAction {
+    label: string;
+    icon?: string;
+    onclick: () => void;
+  }
+</script>
+
 <script lang="ts">
   import Icon from '$lib/components/Icon.svelte';
   import FeedErrorPopover from '$lib/components/sidebar/FeedErrorPopover.svelte';
   import type { ErrorDetails } from '$lib/stores/feedStatus.svelte';
+  import { safeHref } from '$lib/utils/sanitize';
 
   interface Props {
     iconUrl: string | null;
     iconRound?: boolean;
     title: string;
     subtitle: string;
+    /** Opens the source's own site in a new tab from the title. */
+    href?: string | null;
+    /** A second, quieter line (a publication's blurb). */
+    description?: string | null;
     hasError?: boolean;
     errorDetails?: ErrorDetails | null;
     subscribed?: boolean;
@@ -20,6 +33,12 @@
     onSubscribe?: (() => void) | null;
     onPark?: (() => void) | null;
     onReactivate?: (() => void) | null;
+    /** Hide the source's owner from discovery. */
+    onHide?: (() => void) | null;
+    /** A labeled action other than Add/Reactivate (e.g. Unhide). */
+    action?: RowAction | null;
+    /** Already in the library: a quiet check stands where Add would be. */
+    added?: boolean;
     /** An Add/Reactivate is in flight: the labeled button shows a spinner. */
     pending?: boolean;
   }
@@ -29,6 +48,8 @@
     iconRound = false,
     title,
     subtitle,
+    href = null,
+    description = null,
     hasError = false,
     errorDetails = null,
     subscribed = true,
@@ -41,6 +62,9 @@
     onSubscribe = null,
     onPark = null,
     onReactivate = null,
+    onHide = null,
+    action = null,
+    added = false,
     pending = false,
   }: Props = $props();
 
@@ -130,12 +154,13 @@
 
   // The one action a suggested or parked row exists for gets words and stays
   // visible; everything else is a quiet icon that surfaces on hover.
-  let primary = $derived(
-    onSubscribe
-      ? { label: 'Add', icon: 'plus', onclick: onSubscribe }
-      : onReactivate
-        ? { label: 'Reactivate', icon: 'inbox', onclick: onReactivate }
-        : null
+  let primary = $derived<RowAction | null>(
+    action ??
+      (onSubscribe
+        ? { label: 'Add', icon: 'plus', onclick: onSubscribe }
+        : onReactivate
+          ? { label: 'Reactivate', icon: 'inbox', onclick: onReactivate }
+          : null)
   );
 
   // Phones get one overflow button instead of a row of icons: four glyphs on
@@ -198,6 +223,7 @@
     if (onEdit) items.push({ label: 'Edit', icon: 'edit', onclick: onEdit });
     if (onRefresh) items.push({ label: 'Refresh', icon: 'refresh-cw', onclick: onRefresh });
     if (onPark) items.push({ label: 'Park', icon: 'archive', onclick: onPark });
+    if (onHide) items.push({ label: 'Hide account', icon: 'x', onclick: onHide });
     if (onRemove)
       items.push({
         label: 'Remove',
@@ -232,7 +258,14 @@
   </div>
 
   <div class="source-info">
-    <span class="source-title">{title}</span>
+    {#if href && safeHref(href)}
+      <a class="source-title" href={safeHref(href)} target="_blank" rel="noopener">{title}</a>
+    {:else}
+      <span class="source-title">{title}</span>
+    {/if}
+    {#if description}
+      <span class="source-desc">{description}</span>
+    {/if}
     <span class="source-meta">{subtitle}</span>
   </div>
 
@@ -271,17 +304,6 @@
         </div>
       {/if}
     </div>
-  {/if}
-
-  {#if primary}
-    <button class="primary-btn" disabled={pending} onclick={primary.onclick}>
-      {#if pending}
-        <span class="spinner"></span>
-      {:else}
-        <Icon name={primary.icon as any} size={14} />
-      {/if}
-      {primary.label}
-    </button>
   {/if}
 
   {#if actions.length > 0}
@@ -330,6 +352,18 @@
         {/each}
       </div>
     {/if}
+  {/if}
+  {#if added}
+    <span class="added"><Icon name="check" size={14} /> Added</span>
+  {:else if primary}
+    <button class="primary-btn" disabled={pending} onclick={primary.onclick}>
+      {#if pending}
+        <span class="spinner"></span>
+      {:else}
+        {#if primary.icon}<Icon name={primary.icon as any} size={14} />{/if}
+      {/if}
+      {primary.label}
+    </button>
   {/if}
 </div>
 
@@ -451,6 +485,34 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  a.source-title {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  a.source-title:hover {
+    text-decoration: underline;
+  }
+
+  .source-desc {
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .added {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.3125rem 0.25rem;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+    color: var(--color-text-secondary);
   }
 
   .source-meta {

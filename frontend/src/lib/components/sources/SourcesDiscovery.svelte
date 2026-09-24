@@ -28,6 +28,7 @@
   import { api, SubscriptionLimitError } from '$lib/services/api';
   import Icon from '$lib/components/Icon.svelte';
   import LimitNotice from '$lib/components/LimitNotice.svelte';
+  import ShowMoreButton from '$lib/components/ShowMoreButton.svelte';
   import SourceRow from './SourceRow.svelte';
   import SourceList from './SourceList.svelte';
   import SourceSectionHeader from './SourceSectionHeader.svelte';
@@ -260,11 +261,11 @@
       {#each visibleFollows as s (s.key)}
         {@render row(s)}
       {/each}
-      {#if fromFollows.length > followsWindow}
-        <button class="more" onclick={() => (followsWindow += FOLLOWS_STEP)}>
-          Show {Math.min(FOLLOWS_STEP, fromFollows.length - followsWindow)} more
-        </button>
-      {/if}
+      <ShowMoreButton
+        remaining={fromFollows.length - followsWindow}
+        batchSize={FOLLOWS_STEP}
+        onclick={() => (followsWindow += FOLLOWS_STEP)}
+      />
     </SourceList>
   {/if}
 
@@ -330,28 +331,5 @@
     align-items: center;
     gap: 0.375rem;
     margin-top: 0.75rem;
-  }
-
-  .more {
-    display: block;
-    width: 100%;
-    padding: 0.625rem 0.75rem;
-    font: inherit;
-    font-size: var(--text-sm);
-    font-weight: var(--weight-medium);
-    color: var(--color-primary);
-    text-align: left;
-    background: var(--color-bg);
-    border: none;
-    cursor: pointer;
-  }
-
-  .more:hover {
-    background: var(--color-bg-hover, rgba(0, 0, 0, 0.02));
-  }
-
-  .more:focus-visible {
-    outline: 2px solid var(--color-primary);
-    outline-offset: -2px;
   }
 </style>

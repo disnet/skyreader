@@ -19,6 +19,7 @@
   import AddHandleModal from '$lib/components/AddHandleModal.svelte';
   import SourceRow from '$lib/components/sources/SourceRow.svelte';
   import SourceList from '$lib/components/sources/SourceList.svelte';
+  import ScopeTabs from '$lib/components/sources/ScopeTabs.svelte';
   import SourcesToolbar from '$lib/components/sources/SourcesToolbar.svelte';
   import BulkActionBar from '$lib/components/sources/BulkActionBar.svelte';
   import SourceSectionHeader from '$lib/components/sources/SourceSectionHeader.svelte';
@@ -613,19 +614,12 @@
   {#if !hasNoSources && (scopes.length > 2 || websites.length > 0)}
     <div class="scope-bar">
       {#if scopes.length > 2}
-        <div class="scopes" role="group" aria-label="Show sources">
-          {#each scopes as s (s.id)}
-            <button
-              class="scope"
-              class:active={scope === s.id}
-              aria-pressed={scope === s.id}
-              onclick={() => (scope = s.id)}
-            >
-              {s.label}
-              <span class="scope-count">{s.count}</span>
-            </button>
-          {/each}
-        </div>
+        <ScopeTabs
+          options={scopes}
+          value={scope}
+          label="Show sources"
+          onchange={(id) => (scope = id)}
+        />
       {/if}
       {#if websites.length > 0 && showWeb}
         <button
@@ -855,52 +849,6 @@
     margin: -0.25rem 0 1.5rem;
   }
 
-  .scopes {
-    display: flex;
-    gap: 0.25rem;
-    min-width: 0;
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-
-  .scope {
-    flex-shrink: 0;
-    display: inline-flex;
-    align-items: baseline;
-    gap: 0.375rem;
-    padding: 0.3125rem 0.75rem;
-    font: inherit;
-    font-size: var(--text-sm);
-    font-weight: var(--weight-medium);
-    color: var(--color-text-secondary);
-    background: transparent;
-    border: 1px solid transparent;
-    border-radius: var(--radius-pill, 999px);
-    cursor: pointer;
-    transition:
-      background-color 0.15s,
-      color 0.15s;
-  }
-
-  .scope:hover {
-    color: var(--color-text);
-    background: var(--color-bg-secondary);
-  }
-
-  .scope.active {
-    color: var(--color-text);
-    background: var(--color-bg-secondary);
-    border-color: var(--color-border);
-  }
-
-  .scope-count {
-    font-size: var(--text-xs);
-    font-weight: var(--weight-regular);
-    color: var(--color-text-secondary);
-    font-variant-numeric: tabular-nums;
-  }
-
-  .scope:focus-visible,
   .select-toggle:focus-visible {
     outline: 2px solid var(--color-primary);
     outline-offset: 2px;

@@ -1,61 +1,78 @@
 <script lang="ts">
-  import type { Snippet } from 'svelte';
   import Icon from './Icon.svelte';
 
+  // One toolbar for the whole Discover page: a single search that filters every
+  // section, and "Hide added". Each section used to carry its own copy.
   interface Props {
-    /** Free-text filter, owned by the parent so it can drive its own predicates. */
+    /** Free-text filter, owned by the page and passed to each section. */
     query: string;
     /** "Hide added": drop rows the user already subscribes to. Off by default. */
     hideAdded: boolean;
     /** Placeholder + aria-label for the search input. */
     searchLabel: string;
-    /** The count line — each surface phrases its own totals. */
-    count: Snippet;
   }
-  let { query = $bindable(''), hideAdded = $bindable(false), searchLabel, count }: Props = $props();
+  let { query = $bindable(''), hideAdded = $bindable(false), searchLabel }: Props = $props();
 </script>
 
 <div class="discovery-toolbar">
-  <p class="count">{@render count()}</p>
-  <div class="controls">
-    <label class="hide-added">
-      <input type="checkbox" bind:checked={hideAdded} />
-      Hide added
-    </label>
-    <div class="search">
-      <Icon name="search" size={15} />
-      <input type="search" placeholder={searchLabel} aria-label={searchLabel} bind:value={query} />
-    </div>
+  <div class="search">
+    <Icon name="search" size={16} />
+    <input type="search" placeholder={searchLabel} aria-label={searchLabel} bind:value={query} />
   </div>
+  <label class="hide-added">
+    <input type="checkbox" bind:checked={hideAdded} />
+    Hide added
+  </label>
 </div>
 
 <style>
   .discovery-toolbar {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 0.75rem;
-    margin-bottom: 0.25rem;
-  }
-
-  .count {
-    font-size: var(--text-sm);
-    color: var(--color-text-secondary);
-    margin: 0;
-  }
-
-  .controls {
     display: flex;
     align-items: center;
-    justify-self: end;
     gap: 0.75rem;
-    flex-wrap: wrap;
+    margin-bottom: 1rem;
+  }
+
+  /* Matches the Sources page search field. */
+  .search {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    color: var(--color-text-secondary);
+    background: var(--color-bg-secondary, rgba(0, 0, 0, 0.04));
+    border-radius: var(--radius-lg, 8px);
+  }
+
+  .search input {
+    flex: 1;
+    min-width: 0;
+    font: inherit;
+    font-size: var(--text-md);
+    color: var(--color-text);
+    background: transparent;
+    border: none;
+    outline: none;
+    padding: 0;
+  }
+
+  .search:focus-within {
+    outline: 2px solid var(--color-primary);
+    outline-offset: -1px;
+  }
+
+  .search input::placeholder {
+    color: var(--color-text-secondary);
   }
 
   .hide-added {
+    flex-shrink: 0;
     display: inline-flex;
     align-items: center;
     gap: 0.375rem;
+    min-height: 36px;
     font-size: var(--text-sm);
     color: var(--color-text-secondary);
     cursor: pointer;
@@ -70,60 +87,5 @@
     margin: 0;
     accent-color: var(--color-primary);
     cursor: pointer;
-  }
-
-  .search {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.375rem;
-    padding: 0.375rem 0.625rem;
-    color: var(--color-text-secondary);
-    background: var(--color-bg-secondary, rgba(0, 0, 0, 0.04));
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-md, 6px);
-    transition: border-color 0.15s;
-  }
-
-  .search:focus-within {
-    border-color: var(--color-primary);
-  }
-
-  .search input {
-    width: 14rem;
-    max-width: 100%;
-    font: inherit;
-    font-size: var(--text-sm);
-    color: var(--color-text);
-    background: transparent;
-    border: none;
-    outline: none;
-    padding: 0;
-  }
-
-  .search input::placeholder {
-    color: var(--color-text-secondary);
-  }
-
-  @media (max-width: 520px) {
-    .discovery-toolbar {
-      grid-template-columns: minmax(0, 1fr);
-    }
-
-    .controls {
-      width: 100%;
-      justify-self: stretch;
-    }
-
-    .search {
-      flex: 1;
-    }
-
-    .search input {
-      width: 100%;
-    }
-
-    .hide-added {
-      min-height: 44px;
-    }
   }
 </style>

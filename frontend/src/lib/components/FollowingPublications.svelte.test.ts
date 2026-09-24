@@ -1,4 +1,5 @@
 // Mounted component test (jsdom) — see the "component" project in vitest.config.ts.
+// A .svelte.test.ts so the filter props can be driven by $state.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import type { FollowingPublication } from '$lib/types';
@@ -48,15 +49,38 @@ function pub(i: number): FollowingPublication {
 let component: Record<string, any> | undefined;
 let target: HTMLElement;
 
-function render(props: Record<string, unknown> = {}) {
+// The page owns search and "Hide added"; the section reads them as props.
+const filters = $state({ query: '', hideAdded: false });
+// What the section reports back for its tab.
+let shown: number | null = null;
+
+function render() {
   target = document.createElement('div');
   document.body.appendChild(target);
-  component = mount(FollowingPublications, { target, props });
+  component = mount(FollowingPublications, {
+    target,
+    props: {
+      get query() {
+        return filters.query;
+      },
+      get hideAdded() {
+        return filters.hideAdded;
+      },
+      get shownCount() {
+        return shown;
+      },
+      set shownCount(v: number | null) {
+        shown = v;
+      },
+    },
+  });
   flushSync();
 }
 
-function accounts(): HTMLElement[] {
-  return [...target.querySelectorAll<HTMLElement>('.account')];
+// One publication per account unless a test says otherwise, so rows count
+// accounts too.
+function rows(): HTMLElement[] {
+  return [...target.querySelectorAll<HTMLElement>('.source-row')];
 }
 
 function showMore(): HTMLButtonElement[] {
@@ -64,13 +88,11 @@ function showMore(): HTMLButtonElement[] {
 }
 
 function countText(): string {
-  return target.querySelector('.count')!.textContent!.replace(/\s+/g, ' ').trim();
+  return String(shown);
 }
 
 function type(value: string) {
-  const input = target.querySelector<HTMLInputElement>('input[type="search"]')!;
-  input.value = value;
-  input.dispatchEvent(new Event('input', { bubbles: true }));
+  filters.query = value;
   flushSync();
 }
 
@@ -85,17 +107,19 @@ describe('FollowingPublications full variant windowing', () => {
   afterEach(() => {
     if (component) unmount(component);
     component = undefined;
+    filters.query = '';
+    filters.hideAdded = false;
     document.body.innerHTML = '';
   });
 
   it('caps the list at 10 account groups and reveals the rest on Show more', () => {
     render();
-    expect(accounts()).toHaveLength(10);
+    expect(rows()).toHaveLength(10);
     expect(showMore()[0].textContent).toContain('Show 20 more');
 
     showMore()[0].click();
     flushSync();
-    expect(accounts()).toHaveLength(30);
+    expect(rows()).toHaveLength(30);
     expect(showMore()).toHaveLength(0);
   });
 
@@ -106,43 +130,43 @@ describe('FollowingPublications full variant windowing', () => {
     expect(showMore()[0].textContent).toContain('Show 25 more');
     showMore()[0].click();
     flushSync();
-    expect(accounts()).toHaveLength(35);
+    expect(rows()).toHaveLength(35);
     expect(showMore()[0].textContent).toContain('Show 25 more');
   });
 
   it('keeps the count line reporting what the scan found, not what is on screen', () => {
     render();
-    expect(countText()).toContain('30 publications from 30 accounts you follow');
+    expect(countText()).toBe('30');
   });
 
   it('filters on search and resets the window so late matches are visible', () => {
     render();
     // "Publication 29" is the last group, far past the initial window.
     type('Publication 29');
-    expect(accounts()).toHaveLength(1);
+    expect(rows()).toHaveLength(1);
     expect(showMore()).toHaveLength(0);
     expect(target.textContent).toContain('Publication 29');
-    expect(countText()).toContain('1 of 30 accounts');
+    expect(countText()).toBe('1');
 
     type('');
-    expect(accounts()).toHaveLength(10);
+    expect(rows()).toHaveLength(10);
   });
 
   it('re-caps the window when the query changes after an expansion', () => {
     render();
     showMore()[0].click();
     flushSync();
-    expect(accounts()).toHaveLength(30);
+    expect(rows()).toHaveLength(30);
 
     type('Account');
-    expect(accounts()).toHaveLength(10);
+    expect(rows()).toHaveLength(10);
     expect(showMore()[0].textContent).toContain('Show 20 more');
   });
 
   it('reports no matches for a query that hits nothing', () => {
     render();
     type('nothing here');
-    expect(accounts()).toHaveLength(0);
+    expect(rows()).toHaveLength(0);
     expect(target.textContent).toContain('No publications match');
   });
 
@@ -153,37 +177,40 @@ describe('FollowingPublications full variant windowing', () => {
     render();
     showMore()[0].click();
     flushSync();
-    expect(accounts()).toHaveLength(30);
+    expect(rows()).toHaveLength(30);
 
-    const toggle = target.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
-    toggle.click();
+    filters.hideAdded = true;
     flushSync();
     // 22 accounts left, re-windowed to 10.
-    expect(accounts()).toHaveLength(10);
+    expect(rows()).toHaveLength(10);
     expect(showMore()[0].textContent).toContain('Show 12 more');
-    expect(countText()).toContain('22 of 30 accounts');
+    expect(countText()).toBe('22');
   });
 });
 
-describe('FollowingPublications suggestions variant', () => {
+describe('FollowingPublications per-account cap', () => {
   afterEach(() => {
     if (component) unmount(component);
     component = undefined;
     document.body.innerHTML = '';
   });
 
-  it('still honours the limit, with no toolbar or Show more', () => {
-    store.publications = Array.from({ length: 30 }, (_, i) => pub(i));
+  it('shows two publications per account until asked for the rest', () => {
+    store.publications = Array.from({ length: 5 }, (_, i) => ({
+      ...pub(0),
+      publicationUri: `at://did:plc:acct0/site.standard.publication/p${i}`,
+      name: `Publication 0.${i}`,
+    }));
     subs.subscriptions = [];
-    render({
-      variant: 'suggestions',
-      limit: 3,
-      heading: 'Publications from people you follow',
-    });
+    render();
 
-    expect(target.querySelectorAll('.suggestion')).toHaveLength(3);
-    expect(accounts()).toHaveLength(0);
-    expect(showMore()).toHaveLength(0);
-    expect(target.querySelector('.discovery-toolbar')).toBeNull();
+    expect(rows()).toHaveLength(2);
+    const more = target.querySelector<HTMLButtonElement>('.account-more')!;
+    expect(more.textContent).toContain('3 more from @acct0.bsky.social');
+
+    more.click();
+    flushSync();
+    expect(rows()).toHaveLength(5);
+    expect(target.querySelector('.account-more')).toBeNull();
   });
 });
