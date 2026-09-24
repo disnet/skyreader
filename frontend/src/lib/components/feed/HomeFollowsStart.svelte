@@ -52,7 +52,7 @@
       <h2 id="follows-start-title">See what people you follow are sharing</h2>
       <p>
         Skyreader can gather the links from your Bluesky Following timeline, so you can read them
-        here without the timeline. It keeps them for a week and never posts anything.
+        here without the timeline.
       </p>
       <div class="invite-actions">
         <button
