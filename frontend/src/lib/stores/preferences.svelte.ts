@@ -48,6 +48,8 @@ export type BaseSortOrder = 'newest' | 'oldest';
 export type DailyMagazineMinutes = 10 | 20 | 30 | 45 | 60;
 // How the daily magazine picks which saved articles to include.
 export type DailyMagazineOrder = 'shuffle' | 'recent' | 'oldest';
+// What the daily magazine is built from: the saved pile, or unread feed items.
+export type DailyMagazineSource = 'saved' | 'feeds';
 // Which reading surface the app opens to on a fresh load (the `/` redirector).
 export type DefaultView = 'home' | 'feeds' | 'saved';
 // How tightly the Home lane tiles are packed (tile width, thumbnail, padding).
@@ -55,9 +57,13 @@ export type CardDensity = 'compact' | 'cozy' | 'comfortable';
 
 export const DAILY_MAGAZINE_MINUTE_OPTIONS: DailyMagazineMinutes[] = [10, 20, 30, 45, 60];
 export const DAILY_MAGAZINE_ORDER_OPTIONS: { value: DailyMagazineOrder; label: string }[] = [
-  { value: 'shuffle', label: 'Random' },
   { value: 'recent', label: 'Most recent' },
   { value: 'oldest', label: 'Oldest' },
+  { value: 'shuffle', label: 'Random' },
+];
+export const DAILY_MAGAZINE_SOURCE_OPTIONS: { value: DailyMagazineSource; label: string }[] = [
+  { value: 'saved', label: 'Saved pile' },
+  { value: 'feeds', label: 'Your feeds' },
 ];
 
 interface PreferencesState {
@@ -96,6 +102,7 @@ interface PreferencesState {
   cardDensity: CardDensity;
   dailyMagazineMinutes: DailyMagazineMinutes;
   dailyMagazineOrder: DailyMagazineOrder;
+  dailyMagazineSource: DailyMagazineSource;
   communityHighlights: boolean;
   // Distinguishes an explicit opt-out from the former default-off value that
   // was written whenever any preference was saved.
@@ -131,7 +138,8 @@ function createPreferencesStore() {
     defaultViewConfigured: false,
     cardDensity: 'cozy',
     dailyMagazineMinutes: 20,
-    dailyMagazineOrder: 'shuffle',
+    dailyMagazineOrder: 'recent',
+    dailyMagazineSource: 'saved',
     communityHighlights: true,
     communityHighlightsConfigured: false,
     highlightReviewCount: HIGHLIGHT_REVIEW_COUNT_DEFAULT,
@@ -196,6 +204,9 @@ function createPreferencesStore() {
         }
         if (DAILY_MAGAZINE_ORDER_OPTIONS.some((o) => o.value === parsed.dailyMagazineOrder)) {
           state.dailyMagazineOrder = parsed.dailyMagazineOrder;
+        }
+        if (DAILY_MAGAZINE_SOURCE_OPTIONS.some((o) => o.value === parsed.dailyMagazineSource)) {
+          state.dailyMagazineSource = parsed.dailyMagazineSource;
         }
         if (
           parsed.communityHighlightsConfigured === true &&
@@ -352,6 +363,12 @@ function createPreferencesStore() {
     state.dailyMagazineOrder = order;
     save();
   }
+
+  function setDailyMagazineSource(source: DailyMagazineSource) {
+    if (!DAILY_MAGAZINE_SOURCE_OPTIONS.some((o) => o.value === source)) return;
+    state.dailyMagazineSource = source;
+    save();
+  }
   function setCommunityHighlights(enabled: boolean) {
     state.communityHighlights = enabled;
     state.communityHighlightsConfigured = true;
@@ -430,6 +447,9 @@ function createPreferencesStore() {
     get dailyMagazineOrder() {
       return state.dailyMagazineOrder;
     },
+    get dailyMagazineSource() {
+      return state.dailyMagazineSource;
+    },
     get communityHighlights() {
       return state.communityHighlights;
     },
@@ -449,6 +469,7 @@ function createPreferencesStore() {
     setCardDensity,
     setDailyMagazineMinutes,
     setDailyMagazineOrder,
+    setDailyMagazineSource,
     setCommunityHighlights,
     setArticleFont,
     setArticleFontSize,

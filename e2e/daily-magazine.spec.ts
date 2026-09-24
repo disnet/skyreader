@@ -1,6 +1,12 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { seedSavedArticle, type TestUser } from './seed';
+import {
+  cleanupFeedItems,
+  seedFeedItems,
+  seedSavedArticle,
+  seedSubscription,
+  type TestUser,
+} from './seed';
 
 // The magazine orders articles by a per-day shuffle (a hash of each URL), so which
 // story renders first is deterministic-per-day but NOT insertion order — tests must
@@ -194,5 +200,121 @@ test.describe('Daily magazine reader', () => {
       () => (window as Window & { __openedMagazineUrl?: string }).__openedMagazineUrl
     );
     expect(openedUrl).toBe(lastUrl);
+  });
+});
+
+// Label rows in this browser's IndexedDB for one item key — reading state that a
+// feed-sourced issue must write where the feed reader keeps it (guid, 'article').
+async function labelsFor(page: Page, itemKey: string) {
+  return page.evaluate(async (key) => {
+    const request = indexedDB.open('skyreader');
+    const database: IDBDatabase = await new Promise((resolve, reject) => {
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const store = database.transaction('itemLabels', 'readonly').objectStore('itemLabels');
+    const all: Array<{ itemKey: string; itemType: string; label: string }> = await new Promise(
+      (resolve, reject) => {
+        const req = store.getAll();
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      }
+    );
+    return all.filter((row) => row.itemKey === key).map((row) => `${row.itemType}:${row.label}`);
+  }, itemKey);
+}
+
+test.describe('Daily magazine from feeds', () => {
+  const FEED_URL = 'https://example.com/magazine-feed.xml';
+  const FEED_TITLE = 'Magazine Feed';
+  const FEED_ITEMS = [
+    { guid: 'magazine-feed-1', title: 'The First Feed Story', lead: 'The first feed story leads.' },
+    { guid: 'magazine-feed-2', title: 'The Second Feed Story', lead: 'The second feed story.' },
+  ];
+
+  test.afterEach(async () => {
+    await cleanupFeedItems(FEED_URL);
+  });
+
+  test('builds an issue from unread feed items and keeps reading state on the guid', async ({
+    authedPage,
+    testUser,
+  }) => {
+    await seedSubscription(testUser, { feedUrl: FEED_URL, title: FEED_TITLE });
+    await seedFeedItems(
+      FEED_URL,
+      [
+        ...FEED_ITEMS.map((item) => ({
+          guid: item.guid,
+          title: item.title,
+          content: longBody(item.lead),
+        })),
+        // A body dropped at ingest: its local copy is a stub, so it stays out.
+        {
+          guid: 'magazine-feed-truncated',
+          title: 'The Truncated Feed Story',
+          content: longBody('Truncated.'),
+          contentTruncated: true,
+        },
+      ],
+      { title: FEED_TITLE, siteUrl: 'https://example.com' }
+    );
+
+    await authedPage.goto('/home');
+    // The split button's settings panel picks the source; the timeline may still
+    // be landing items in IndexedDB, so retry until the issue is minted (a generate
+    // over an empty pool stays on Home).
+    await authedPage.getByRole('button', { name: 'Issue settings' }).click();
+    const settings = authedPage.getByRole('dialog', { name: 'Issue settings' });
+    await settings.getByRole('radio', { name: /Your feeds/ }).click();
+    await expect(async () => {
+      if (!(await settings.isVisible())) {
+        await authedPage.getByRole('button', { name: 'Issue settings' }).click();
+      }
+      const generate = settings.getByRole('button', { name: /Generate issue/ });
+      await expect(generate).toBeEnabled({ timeout: 2_000 });
+      await generate.click();
+      await expect(authedPage).toHaveURL(/\/daily$/, { timeout: 2_000 });
+    }).toPass({ timeout: 20_000 });
+
+    const contents = authedPage.locator('nav.contents');
+    for (const item of FEED_ITEMS) {
+      await expect(contents.getByText(item.title)).toBeVisible({ timeout: 15_000 });
+      await expect(authedPage.getByText(item.lead)).toBeVisible({ timeout: 15_000 });
+    }
+    await expect(contents.getByText('The Truncated Feed Story')).toHaveCount(0);
+
+    // Opening the issue marks the first article opened — on its guid, as an
+    // 'article', exactly where the feed reader would record it.
+    const firstUrl = await authedPage.locator('#article-1 a.original-link').getAttribute('href');
+    const firstGuid = firstUrl?.split('/').pop() ?? '';
+    await expect.poll(() => labelsFor(authedPage, firstGuid)).toContain('article:readProgress');
+    // Opening alone doesn't mark it read in the feed inbox.
+    expect(await labelsFor(authedPage, firstGuid)).not.toContain('article:read');
+
+    // Moving on to the next article marks the one you left read.
+    const secondArticle = authedPage.locator('.issue-article').nth(1);
+    const secondUrl = await secondArticle.locator('a.original-link').getAttribute('href');
+    const secondGuid = secondUrl?.split('/').pop() ?? '';
+    await expect(secondArticle.getByText('Filler paragraph 20')).toBeVisible({ timeout: 15_000 });
+    await secondArticle.evaluate((element) => element.scrollIntoView({ block: 'start' }));
+    await expect.poll(() => labelsFor(authedPage, firstGuid)).toContain('article:read');
+    expect(await labelsFor(authedPage, secondGuid)).not.toContain('article:read');
+
+    // Reaching the end of the issue marks the last article read too.
+    await authedPage.evaluate(() => {
+      const reader = document.querySelector<HTMLElement>('.daily-reader');
+      reader?.scrollTo(0, reader.scrollHeight);
+    });
+    await expect.poll(() => labelsFor(authedPage, secondGuid)).toContain('article:read');
+
+    // Archiving a feeds issue offers "mark all read" instead of archiving saves.
+    await authedPage.getByTitle('Archive (e)').first().click();
+    const dialog = authedPage.getByRole('dialog', { name: 'Archive this issue?' });
+    await expect(dialog.getByText(/mark its 2 articles read/)).toBeVisible();
+    await dialog.getByRole('button', { name: 'Mark all read' }).click();
+    for (const item of FEED_ITEMS) {
+      await expect.poll(() => labelsFor(authedPage, item.guid)).toContain('article:read');
+    }
   });
 });

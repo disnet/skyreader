@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  feedMagazineKey,
   buildDailyMagazine,
+  isFeedMagazineCandidate,
+  MIN_FEED_ARTICLE_WORDS,
   localDateKey,
   magazineIssueSummary,
   magazineReadingMinutes,
@@ -125,5 +128,26 @@ describe('daily magazine', () => {
     expect(savedItemDisplayKey(item)).toBe(item.uri);
     expect(savedItemDisplayKey({ ...item, uri: '' })).toBe(item.itemGuid);
     expect(savedItemDisplayKey({ ...item, uri: '', itemGuid: undefined })).toBe(item.rkey);
+  });
+});
+
+describe('feed magazine candidates', () => {
+  it('keys feed items by feed URL and guid', () => {
+    const a = feedMagazineKey('https://a.example/feed', 'g-1');
+    expect(a).not.toBe(feedMagazineKey('https://b.example/feed', 'g-1'));
+    expect(a).toBe(feedMagazineKey('https://a.example/feed', 'g-1'));
+    // A '|' in either part can't make two different pairs collide.
+    expect(feedMagazineKey('https://a.example/x|y', 'z')).not.toBe(
+      feedMagazineKey('https://a.example/x', 'y|z')
+    );
+  });
+
+  it('excludes truncated, uncounted and below-floor items', () => {
+    const ok = { guid: 'g', wordCount: MIN_FEED_ARTICLE_WORDS };
+    expect(isFeedMagazineCandidate(ok)).toBe(true);
+    expect(isFeedMagazineCandidate({ ...ok, contentTruncated: true })).toBe(false);
+    expect(isFeedMagazineCandidate({ ...ok, wordCount: MIN_FEED_ARTICLE_WORDS - 1 })).toBe(false);
+    expect(isFeedMagazineCandidate({ ...ok, wordCount: undefined })).toBe(false);
+    expect(isFeedMagazineCandidate({ ...ok, guid: '' })).toBe(false);
   });
 });
