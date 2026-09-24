@@ -397,11 +397,13 @@
     }
 
     // Follows links are read like articles, under their own key; there's no
-    // subscription behind one.
+    // subscription behind one. Kept apart from articlesToMark: the whole-view
+    // server call below covers subscribed feeds only, so links go per item.
+    const linksToMark: typeof articlesToMark = [];
     for (const link of feedViewStore.displayedFollowLinks) {
       const key = followLinkReadKey(link);
       if (!itemLabelsStore.isRead(key)) {
-        articlesToMark.push({
+        linksToMark.push({
           subscriptionRkey: '',
           articleGuid: key,
           articleUrl: link.url,
@@ -410,7 +412,7 @@
       }
     }
 
-    const totalCount = articlesToMark.length + documentUrisToTrack.length;
+    const totalCount = articlesToMark.length + linksToMark.length + documentUrisToTrack.length;
     if (totalCount === 0) return;
 
     if (totalCount > 100) {
@@ -419,7 +421,7 @@
 
     // Track in session sets so items stay visible (greyed out) in unread filter
     feedViewStore.trackItemsAsReadThisSession(
-      articlesToMark.map((a) => a.articleGuid),
+      [...articlesToMark, ...linksToMark].map((a) => a.articleGuid),
       documentUrisToTrack
     );
 
@@ -462,6 +464,9 @@
           wholeView ? { beforeSeq: unreadCounts.serverCountsHead } : undefined
         )
       );
+    }
+    if (linksToMark.length > 0) {
+      promises.push(itemLabelsStore.markAllAsRead(linksToMark));
     }
     if (socialItemsToMark.length > 0) {
       promises.push(itemLabelsStore.markAllSocialAsRead(socialItemsToMark));
@@ -686,7 +691,7 @@
         onRefresh={handleRefreshWithToast}
         disabled={!syncStore.isOnline || appManager.isRefreshing}
       >
-        {#if (appManager.isHydrating || appManager.isRefreshing || (mode === 'linkblog' && myLinkblogStore.loading && !myLinkblogStore.loaded) || (feedViewStore.showFollowLinks && !followLinksStore.loaded)) && feedViewStore.currentItems.length === 0 && !hasLinkblogDrafts}
+        {#if (appManager.isHydrating || appManager.isRefreshing || (mode === 'linkblog' && myLinkblogStore.loading && !myLinkblogStore.loaded) || (feedViewStore.showFollowLinks && !followLinksStore.loaded && !followLinksStore.error)) && feedViewStore.currentItems.length === 0 && !hasLinkblogDrafts}
           <LoadingState />
         {:else if !isSavedView && feedViewStore.currentItems.length === 0 && !hasLinkblogDrafts && !readerLinkPending}
           {#if mode === 'linkblog'}
