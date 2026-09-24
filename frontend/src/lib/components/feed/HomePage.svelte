@@ -24,7 +24,7 @@
   import type { LaneCardVM } from '$lib/components/feed/homeLane';
   import { savesStore } from '$lib/stores/saves.svelte';
   import { roomsStore } from '$lib/stores/rooms.svelte';
-  import { followLinksStore } from '$lib/stores/followLinks.svelte';
+  import { followLinksLaneStore } from '$lib/stores/followLinks.svelte';
   import { followLinkTitle, openFollowLink, sharedByShort } from '$lib/utils/followLinks';
   import { extractRoomArticle, sortRoomItems } from '$lib/utils/roomArticle';
   import { magazineStore } from '$lib/stores/magazine.svelte';
@@ -386,16 +386,19 @@
 
   // From your follows: the most-shared links from your Bluesky follows, as one
   // lane. Hidden until the reader has granted the timeline permission (the ask
-  // lives on /following, not here) and there is something to show. The store
-  // no-ops for a guest. See docs/plans/FOLLOWS_LINKS_PLAN.md.
-  onMount(() => void followLinksStore.load());
+  // lives on /following, not here) and there is something to show. Always the
+  // day, whatever window /following is on. The store no-ops for a guest.
+  // See docs/plans/FOLLOWS_LINKS_PLAN.md.
+  onMount(() => void followLinksLaneStore.load());
 
   const FOLLOW_LANE_CAP = 8;
-  let followLinkByKey = $derived(new Map(followLinksStore.links.map((l) => [l.urlNormalized, l])));
+  let followLinkByKey = $derived(
+    new Map(followLinksLaneStore.links.map((l) => [l.urlNormalized, l]))
+  );
   let followItems = $derived.by((): LaneCardVM[] =>
-    followLinksStore.scopeRequired
+    followLinksLaneStore.scopeRequired
       ? []
-      : followLinksStore.links.slice(0, FOLLOW_LANE_CAP).map((l) => ({
+      : followLinksLaneStore.links.slice(0, FOLLOW_LANE_CAP).map((l) => ({
           key: l.urlNormalized,
           title: followLinkTitle(l),
           domain: l.site,

@@ -10,6 +10,11 @@ import type { FollowLink, FollowLinksWindow } from '$lib/types';
 // response (at most every 10 minutes). When a response says it started a
 // refresh, this store asks again a few seconds later to pick up what it found,
 // and keeps asking while a reader's first refresh is still gathering.
+//
+// Two instances: the page's, whose window the reader picks, and Home's lane,
+// which always shows the day (what the page opens on, so "View all" continues
+// the same list). Picking Week on /following doesn't change Home. Opening or
+// hiding a link applies to both.
 
 /** How long to wait before asking again after a response started a refresh. */
 const FOLLOW_UP_MS = 4000;
@@ -20,9 +25,12 @@ const MAX_FOLLOW_UPS = 6;
  *  asking also refreshes from the timeline, so this only bounds staleness. */
 const STALE_MS = 5 * 60 * 1000;
 
-function createFollowLinksStore() {
+/** Every instance's local half of an open or hide, so both lists agree. */
+const instances = new Set<{ applyOpened(u: string): void; applyDismissed(u: string): void }>();
+
+function createFollowLinksStore(initialWindow: FollowLinksWindow = '24h') {
   let links = $state<FollowLink[]>([]);
-  let currentWindow = $state<FollowLinksWindow>('24h');
+  let currentWindow = $state<FollowLinksWindow>(initialWindow);
   let loading = $state(false);
   let scopeRequired = $state(false);
   let complete = $state(false);
@@ -107,13 +115,22 @@ function createFollowLinksStore() {
     }
   }
 
+  instances.add({
+    applyOpened(urlNormalized) {
+      links = links.map((l) => (l.urlNormalized === urlNormalized ? { ...l, opened: true } : l));
+    },
+    applyDismissed(urlNormalized) {
+      links = links.filter((l) => l.urlNormalized !== urlNormalized);
+    },
+  });
+
   function markOpened(url: string, urlNormalized: string) {
-    links = links.map((l) => (l.urlNormalized === urlNormalized ? { ...l, opened: true } : l));
+    for (const i of instances) i.applyOpened(urlNormalized);
     void api.setFollowLinkState(url, 'opened').catch(() => {});
   }
 
   function dismiss(url: string, urlNormalized: string) {
-    links = links.filter((l) => l.urlNormalized !== urlNormalized);
+    for (const i of instances) i.applyDismissed(urlNormalized);
     void api.setFollowLinkState(url, 'dismissed').catch(() => {});
   }
 
@@ -149,4 +166,7 @@ function createFollowLinksStore() {
   };
 }
 
+/** The /following page: the reader picks the window. */
 export const followLinksStore = createFollowLinksStore();
+/** Home's "Shared by people you follow" lane: always the day. */
+export const followLinksLaneStore = createFollowLinksStore('24h');
