@@ -7,6 +7,7 @@
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
   import { FOLLOWS_SOURCE_KEY, subscriptionSourceKey } from '$lib/utils/sourceKeys';
   import { auth } from '$lib/stores/auth.svelte';
+  import { followLinksStore } from '$lib/stores/followLinks.svelte';
   import { computeSourceKeys } from '$lib/utils/channelLogic';
   import { filterSubscriptionsBySearch, subscriptionIconUrl } from '$lib/utils/subscriptionDisplay';
   import DomainPatternInput from '$lib/components/DomainPatternInput.svelte';
@@ -60,6 +61,28 @@
     oncreated,
     ondeleted,
   }: Props = $props();
+
+  // Everything takes your follows' links only when you say so; the choice is
+  // saved for the account (see followLinksStore.setInEverything).
+  let showFollowsInEverythingToggle = $derived(
+    feedViewStore.isEverythingView &&
+      feedViewStore.effectiveFilters.sourceMode === 'all' &&
+      !auth.isGuest &&
+      followLinksStore.loaded &&
+      !followLinksStore.scopeRequired
+  );
+  let savingFollowsInEverything = $state(false);
+
+  async function toggleFollowsInEverything(on: boolean) {
+    savingFollowsInEverything = true;
+    try {
+      await followLinksStore.setInEverything(on);
+    } catch {
+      // The store puts the old value back; the checkbox follows it.
+    } finally {
+      savingFollowsInEverything = false;
+    }
+  }
 
   // --- Tab state ---
   let activeTab = $state<'filters' | 'channel'>('filters');
@@ -547,6 +570,27 @@
           {/if}
         </div>
       </div>
+
+      {#if showFollowsInEverythingToggle}
+        <div class="sheet-section">
+          <div class="section-label">
+            <Icon name="filter" size={12} />
+            Sources
+          </div>
+          <div class="source-list">
+            <label class="source-item">
+              <input
+                type="checkbox"
+                checked={followLinksStore.inEverything === true}
+                disabled={savingFollowsInEverything}
+                onchange={(e) => toggleFollowsInEverything(e.currentTarget.checked)}
+              />
+              <Icon name="share-2" size={16} />
+              <span class="source-name">Links from people you follow</span>
+            </label>
+          </div>
+        </div>
+      {/if}
     {/if}
 
     {#if onMarkAllAsRead}
