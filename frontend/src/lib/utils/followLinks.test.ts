@@ -3,6 +3,7 @@ import { describe, it, expect, vi } from 'vitest';
 // followLinks.ts imports the store (and through it the api client); the pure
 // helpers under test don't touch either.
 vi.mock('$lib/stores/followLinks.svelte', () => ({ followLinksStore: {} }));
+vi.mock('$lib/stores/toast.svelte', () => ({ toastStore: {} }));
 vi.mock('$lib/utils/roomArticle', () => ({ extractArticle: vi.fn() }));
 
 import {
@@ -40,8 +41,11 @@ describe('bskyPostUrl', () => {
     );
   });
 
-  it('falls back to bsky.app for anything else', () => {
-    expect(bskyPostUrl('at://did:plc:abc/app.bsky.feed.repost/3kxyz')).toBe('https://bsky.app');
+  it("falls back to the author's profile, then to bsky.app", () => {
+    expect(bskyPostUrl('at://did:plc:abc/app.bsky.feed.repost/3kxyz')).toBe(
+      'https://bsky.app/profile/did:plc:abc'
+    );
+    expect(bskyPostUrl('not a uri')).toBe('https://bsky.app');
   });
 });
 
@@ -58,6 +62,15 @@ describe('titleFromUrl', () => {
     );
   });
 
+  it('allows plain numbers among the words, and keeps an acronym', () => {
+    expect(titleFromUrl('https://a.example/p/best-books-of-2026', 'a.example')).toBe(
+      'Best books of 2026'
+    );
+    expect(titleFromUrl('https://a.example/p/what-AI-reads-for', 'a.example')).toBe(
+      'What AI reads for'
+    );
+  });
+
   it('keeps the site for ids, short paths, and the root', () => {
     expect(titleFromUrl('https://meri.leaflet.pub/3mw3nb6ofps2n', 'meri.leaflet.pub')).toBe(
       'meri.leaflet.pub'
@@ -65,6 +78,8 @@ describe('titleFromUrl', () => {
     expect(titleFromUrl('https://a.example/about', 'a.example')).toBe('a.example');
     expect(titleFromUrl('https://a.example/', 'a.example')).toBe('a.example');
     expect(titleFromUrl('https://a.example/x/a1b2-c3d4-e5f6', 'a.example')).toBe('a.example');
+    expect(titleFromUrl('https://a.example/x/2026-09-24', 'a.example')).toBe('a.example');
+    expect(titleFromUrl('https://a.example/x/top-10', 'a.example')).toBe('a.example');
   });
 });
 

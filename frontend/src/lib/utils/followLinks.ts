@@ -2,6 +2,7 @@ import type { useReaderStack } from '$lib/hooks/useReaderStack.svelte';
 import { followLinksStore } from '$lib/stores/followLinks.svelte';
 import { extractArticle } from '$lib/utils/roomArticle';
 import { decodeEntities } from '$lib/utils/entities';
+import { toastStore } from '$lib/stores/toast.svelte';
 import type { FollowLink, FollowLinkSharer } from '$lib/types';
 
 // Shared by the /following page and Home's "Shared by people you follow" lane,
@@ -24,10 +25,30 @@ export async function openFollowLink(link: FollowLink, reader: ReaderStack): Pro
     image: link.thumb,
   });
   if (!saved) {
-    window.open(link.url, '_blank', 'noopener');
+    openOutside(link.url);
     return;
   }
   reader.openReader({ type: 'saved', item: saved, key: link.url });
+}
+
+/**
+ * Open a URL in a new tab after an await. By then the click no longer counts
+ * as a user gesture, so a popup blocker (Safari's, notably) may refuse the tab;
+ * when it does, a toast carries the link, and tapping that is a fresh gesture.
+ * `noopener` would make window.open return null either way, so the opener is
+ * cut by hand instead.
+ */
+function openOutside(url: string): void {
+  const tab = window.open(url, '_blank');
+  if (tab) {
+    tab.opener = null;
+    return;
+  }
+  const id = toastStore.add('');
+  toastStore.update(id, 'error', "This one doesn't open in Skyreader.", {
+    label: 'Open it',
+    href: url,
+  });
 }
 
 /**
@@ -48,9 +69,14 @@ export function titleFromUrl(url: string, site: string): string {
     .replace(/\.[a-z0-9]{2,5}$/i, '')
     .split(/[-_+]+/)
     .filter(Boolean);
-  // Three or more words, each mostly letters: a slug, not an id.
-  if (words.length < 3 || !words.every((w) => /^[\p{L}'’]+\d*$/u.test(w))) return site;
-  const text = words.join(' ').toLowerCase();
+  // Words, each mostly letters, with plain numbers allowed among them
+  // ("best-books-of-2026"): a slug, not an id. At least three real words, so a
+  // mixed id ("a1b2-c3d4") or a short path ("/about") keeps the site.
+  const isWord = (w: string) => /^[\p{L}'’]+\d*$/u.test(w);
+  if (!words.every((w) => isWord(w) || /^\d+$/.test(w))) return site;
+  if (words.filter(isWord).length < 3) return site;
+  // Slugs are almost always lowercase; one that kept an acronym ("AI") keeps it.
+  const text = words.map((w) => (/^\p{Lu}{2,}\d*$/u.test(w) ? w : w.toLowerCase())).join(' ');
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
@@ -83,9 +109,11 @@ export function sharedByShort(sharers: Pick<FollowLinkSharer, 'name' | 'handle'>
   return `${first} shared`;
 }
 
-/** The bsky.app page for a post at-uri, or the author's profile if it won't parse. */
+/** The bsky.app page for a post at-uri; for any other at-uri, its author's
+ *  profile; bsky.app itself if there's no author to find. */
 export function bskyPostUrl(postUri: string): string {
   const m = /^at:\/\/([^/]+)\/app\.bsky\.feed\.post\/([^/]+)$/.exec(postUri);
-  if (!m) return 'https://bsky.app';
-  return `https://bsky.app/profile/${m[1]}/post/${m[2]}`;
+  if (m) return `https://bsky.app/profile/${m[1]}/post/${m[2]}`;
+  const author = /^at:\/\/([^/]+)/.exec(postUri)?.[1];
+  return author ? `https://bsky.app/profile/${author}` : 'https://bsky.app';
 }

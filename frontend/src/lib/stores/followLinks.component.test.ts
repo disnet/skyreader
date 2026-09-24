@@ -53,9 +53,13 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-async function freshStore() {
+async function freshStores() {
   vi.resetModules();
-  return (await import('./followLinks.svelte')).followLinksStore;
+  return await import('./followLinks.svelte');
+}
+
+async function freshStore() {
+  return (await freshStores()).followLinksStore;
 }
 
 beforeEach(() => {
@@ -126,5 +130,24 @@ describe('followLinksStore', () => {
     other.resolve(answer(['https://a.example/x']));
     await load;
     expect(store.links.map((l) => l.url)).toEqual(['https://a.example/x']);
+  });
+
+  it("keeps Home's lane on the day, and applies a hide to both lists", async () => {
+    const { followLinksStore: page, followLinksLaneStore: lane } = await freshStores();
+    getFollowLinks.mockImplementation(async (w: string) =>
+      answer(
+        w === '7d' ? ['https://a.example/1', 'https://a.example/old'] : ['https://a.example/1']
+      )
+    );
+
+    await page.load('7d');
+    await lane.load();
+    expect(getFollowLinks).toHaveBeenLastCalledWith('24h');
+    expect(lane.window).toBe('24h');
+    expect(lane.links.map((l) => l.url)).toEqual(['https://a.example/1']);
+
+    page.dismiss('https://a.example/1', 'https://a.example/1');
+    expect(page.links.map((l) => l.url)).toEqual(['https://a.example/old']);
+    expect(lane.links).toEqual([]);
   });
 });
