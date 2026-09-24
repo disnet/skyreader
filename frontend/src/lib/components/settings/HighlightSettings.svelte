@@ -5,9 +5,8 @@
   // The Margin toggle is gated on the margin scopes even though the read itself
   // is public XRPC: without them, editing an imported highlight's note would
   // queue a PDS write the session can't perform. Same posture as
-  // SaveBackingPicker — disabled plus a re-auth prompt, never a broken half-state.
+  // SaveBackingPicker — disabled plus a grant prompt, never a broken half-state.
   import { onMount } from 'svelte';
-  import { goto } from '$app/navigation';
   import { auth } from '$lib/stores/auth.svelte';
   import { api } from '$lib/services/api';
   import { syncStore } from '$lib/stores/sync.svelte';
@@ -40,8 +39,8 @@
   let loaded = $state(false);
   // Three states, not two. Offline and a failed status call both leave the grant
   // unknown, and treating unknown as missing tells a reader who granted the
-  // scopes months ago to log in again — while offline, where the re-auth button
-  // logs them out and can't log them back in. It also locks the toggle, so they
+  // scopes months ago to grant them again — while offline, where the grant
+  // round-trip can't complete. It also locks the toggle, so they
   // can't even switch the import off.
   let marginScopes = $state<'unknown' | 'granted' | 'missing'>('unknown');
   let importing = $state(false);
@@ -61,9 +60,8 @@
     loaded = true;
   });
 
-  async function reauthForScopes() {
-    await auth.logout();
-    goto(`/auth/login?returnUrl=${encodeURIComponent(returnUrl)}`);
+  function grantMarginAccess() {
+    void auth.grantPermissions(['margin'], returnUrl);
   }
 
   // Keeping the promise the toggle makes when it lands mid-hydration. The deck
@@ -106,7 +104,7 @@
       } else if (outcome.status === 'scope-expired') {
         // The grant is gone and the import switched itself back off. Say that,
         // rather than blaming the network for a permissions problem — and let
-        // the re-auth prompt below appear, which is the only way out of it.
+        // the "Allow Margin access" prompt below appear, the way out of it.
         marginScopes = 'missing';
         importNote = null;
       } else if (outcome.status === 'skipped' && outcome.reason === 'stores-loading') {
@@ -156,8 +154,13 @@
   {#if marginScopes === 'missing'}
     <p class="setting-description">
       This needs permission to read and write your Margin notes.
-      <button class="link-btn" onclick={reauthForScopes} type="button">
-        Log in again to grant access
+      <button
+        class="link-btn"
+        onclick={grantMarginAccess}
+        disabled={auth.grantingPermissions}
+        type="button"
+      >
+        Allow Margin access
       </button>
     </p>
   {:else if marginScopes === 'unknown'}

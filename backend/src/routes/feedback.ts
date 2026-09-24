@@ -625,8 +625,9 @@ export async function handleUploadFeedbackImage(
     return json(
       {
         error: 'scope_upgrade_required',
-        message: 'Attaching an image needs a new permission. Please log in again.',
+        message: 'Attaching an image needs a new permission.',
         integration: 'userinput',
+        feature: 'feedback',
       },
       403
     );
@@ -676,8 +677,9 @@ export async function handleCreateFeedback(
     return json(
       {
         error: 'scope_upgrade_required',
-        message: 'Posting feedback needs a new permission. Please log in again.',
+        message: 'Posting feedback needs a new permission.',
         integration: 'userinput',
+        feature: 'feedback',
       },
       403
     );

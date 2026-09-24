@@ -285,7 +285,7 @@ page would have no reader stack to receive it and would sit there inert.
 
 ### Adding a New Lexicon Field
 
-1. Update schema in `lexicons/app/skyreader/...`
+1. Update schema in the repo-root `lexicons/app/skyreader/...` (then republish it; see `docs/OAUTH_SCOPES.md`)
 2. Update TypeScript types in `src/lib/types/index.ts`
 3. Update Dexie schema version in `src/lib/services/db.ts`
 4. Update relevant store and components
@@ -363,31 +363,8 @@ VITE_API_URL=https://your-backend.workers.dev
 
 ## Lexicon Schemas
 
-Located in `frontend/lexicons/app/skyreader/`:
-
-```
-feed/subscription.json  - RSS feed subscription
-  - feedUrl (required)
-  - title
-  - category
-  - tags[]
-  - createdAt (required)
-
-feed/saved.json         - Saved article
-  - url (required)
-  - title, description, author, domain, image
-  - contentType, fullContent, wordCount
-  - publishedAt, savedAt (required)
-
-feed/highlight.json     - Article highlights (W3C TextQuoteSelector)
-  - itemUrl (required)
-  - highlights[] (required)
-  - createdAt (required)
-
-social/follow.json      - In-app follow relationship
-  - subject (required, DID of followed user)
-  - createdAt (required)
-```
+Skyreader's lexicons live in the repo-root `lexicons/` directory, shared by every package. See
+the root `CLAUDE.md` and `docs/OAUTH_SCOPES.md` (publishing).
 
 ## PWA Features
 

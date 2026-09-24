@@ -12,6 +12,7 @@ import {
   PCKT_SCOPES,
   OFFPRINT_SCOPES,
 } from './auth';
+import type { ScopeFeature } from '../config/scopes';
 import { isValidRkey, invalidRkeyResponse } from '../utils/validation';
 import {
   deleteLinkblogShare,
@@ -88,6 +89,10 @@ function missingCompanionScopes(
   return !!required && !hasRequiredScopes(session.grantedScopes, required);
 }
 
+function companionFeature(format: ContentFormat): ScopeFeature | undefined {
+  return format === 'pckt' || format === 'offprint' ? format : undefined;
+}
+
 function isHttpUrl(value: string): boolean {
   try {
     const u = new URL(value);
@@ -117,7 +122,7 @@ export async function handleCreateLinkblogShare(request: Request, env: Env): Pro
   const session = await getSessionFromRequest(request, env);
   if (!session) return json({ error: 'Unauthorized' }, 401);
   if (!hasRequiredScopes(session.grantedScopes, LINKBLOG_SCOPES)) {
-    return insufficientScopesResponse();
+    return insufficientScopesResponse('linkblog');
   }
   if (await isLinkblogDisabled(env, session.did)) {
     return json({ error: 'linkblog_deleted' }, 409);
@@ -145,7 +150,8 @@ export async function handleCreateLinkblogShare(request: Request, env: Env): Pro
   }
 
   const target = await getLinkblogTarget(env, session.did);
-  if (missingCompanionScopes(session, target.format)) return insufficientScopesResponse();
+  if (missingCompanionScopes(session, target.format))
+    return insufficientScopesResponse(companionFeature(target.format));
 
   const input: LinkblogShareInput = {
     articleUrl: body.articleUrl,
@@ -161,7 +167,7 @@ export async function handleCreateLinkblogShare(request: Request, env: Env): Pro
 
   const result = await writeLinkblogShare(session, env, rkey, input);
   if (!result.success) {
-    if (isScopeError(result.error)) return insufficientScopesResponse();
+    if (isScopeError(result.error)) return insufficientScopesResponse('linkblog');
     return json({ error: result.error }, result.retryable ? 503 : 502);
   }
 
@@ -183,7 +189,7 @@ export async function handleUpdateLinkblogShare(request: Request, env: Env): Pro
   const session = await getSessionFromRequest(request, env);
   if (!session) return json({ error: 'Unauthorized' }, 401);
   if (!hasRequiredScopes(session.grantedScopes, LINKBLOG_SCOPES)) {
-    return insufficientScopesResponse();
+    return insufficientScopesResponse('linkblog');
   }
 
   const pathParts = new URL(request.url).pathname.split('/');
@@ -207,11 +213,12 @@ export async function handleUpdateLinkblogShare(request: Request, env: Env): Pro
   // much as on the create. Checked against the current target rather than the
   // stored record, which we haven't read yet.
   const target = await getLinkblogTarget(env, session.did);
-  if (missingCompanionScopes(session, target.format)) return insufficientScopesResponse();
+  if (missingCompanionScopes(session, target.format))
+    return insufficientScopesResponse(companionFeature(target.format));
 
   const result = await updateLinkblogShareNote(session, rkey, body.note);
   if (!result.success) {
-    if (isScopeError(result.error)) return insufficientScopesResponse();
+    if (isScopeError(result.error)) return insufficientScopesResponse('linkblog');
     // Not a PDS failure: the record isn't ours to rewrite.
     if (result.error === FOREIGN_RECORD_ERROR) return json({ error: result.error }, 409);
     return json({ error: result.error }, result.retryable ? 503 : 502);
@@ -228,7 +235,7 @@ export async function handleDeleteLinkblogShare(request: Request, env: Env): Pro
   const session = await getSessionFromRequest(request, env);
   if (!session) return json({ error: 'Unauthorized' }, 401);
   if (!hasRequiredScopes(session.grantedScopes, LINKBLOG_SCOPES)) {
-    return insufficientScopesResponse();
+    return insufficientScopesResponse('linkblog');
   }
 
   const pathParts = new URL(request.url).pathname.split('/');
@@ -239,7 +246,7 @@ export async function handleDeleteLinkblogShare(request: Request, env: Env): Pro
 
   const result = await deleteLinkblogShare(session, rkey);
   if (!result.success) {
-    if (isScopeError(result.error)) return insufficientScopesResponse();
+    if (isScopeError(result.error)) return insufficientScopesResponse('linkblog');
     // Not a PDS failure: the record isn't ours to delete.
     if (result.error === FOREIGN_RECORD_ERROR) return json({ error: result.error }, 409);
     return json({ error: result.error }, result.retryable ? 503 : 502);
@@ -261,7 +268,7 @@ export async function handleSetLinkblogFormatting(request: Request, env: Env): P
   if (!session) return json({ error: 'Unauthorized' }, 401);
   if (request.method !== 'PUT') return json({ error: 'Method not allowed' }, 405);
   if (!hasRequiredScopes(session.grantedScopes, LINKBLOG_SCOPES)) {
-    return insufficientScopesResponse();
+    return insufficientScopesResponse('linkblog');
   }
 
   let body: { titleStyle?: unknown; cardPosition?: unknown };
@@ -328,7 +335,7 @@ export async function handleUpdatePublication(request: Request, env: Env): Promi
   const session = await getSessionFromRequest(request, env);
   if (!session) return json({ error: 'Unauthorized' }, 401);
   if (!hasRequiredScopes(session.grantedScopes, LINKBLOG_SCOPES)) {
-    return insufficientScopesResponse();
+    return insufficientScopesResponse('linkblog');
   }
   if (await isLinkblogDisabled(env, session.did)) {
     return json({ error: 'linkblog_deleted' }, 409);
@@ -356,7 +363,7 @@ export async function handleUpdatePublication(request: Request, env: Env): Promi
     description: body.description,
   });
   if (!result.success) {
-    if (isScopeError(result.error)) return insufficientScopesResponse();
+    if (isScopeError(result.error)) return insufficientScopesResponse('linkblog');
     return json({ error: result.error }, result.retryable ? 503 : 502);
   }
 
@@ -738,7 +745,7 @@ export async function handleDeletePublication(request: Request, env: Env): Promi
   const session = await getSessionFromRequest(request, env);
   if (!session) return json({ error: 'Unauthorized' }, 401);
   if (!hasRequiredScopes(session.grantedScopes, LINKBLOG_SCOPES)) {
-    return insufficientScopesResponse();
+    return insufficientScopesResponse('linkblog');
   }
   const result = await deleteLinkblog(session, env);
   if (!result.success) return json({ error: result.error }, result.retryable ? 503 : 502);
@@ -762,7 +769,7 @@ export async function handleRestorePublication(request: Request, env: Env): Prom
   // a session that can't write is one whose next share fails — better to send it
   // into the re-auth flow here than to hand back a linkblog it can't publish to.
   if (!hasRequiredScopes(session.grantedScopes, LINKBLOG_SCOPES)) {
-    return insufficientScopesResponse();
+    return insufficientScopesResponse('linkblog');
   }
   await restoreLinkblog(session, env);
   return json(await getPublicationMeta(session, env));
@@ -849,7 +856,7 @@ export async function handleSetPageVisibility(request: Request, env: Env): Promi
   // one whose next share fails, so let it re-auth here rather than let it manage a
   // linkblog it can't publish to.
   if (!hasRequiredScopes(session.grantedScopes, LINKBLOG_SCOPES)) {
-    return insufficientScopesResponse();
+    return insufficientScopesResponse('linkblog');
   }
   let body: { pageHidden?: unknown };
   try {

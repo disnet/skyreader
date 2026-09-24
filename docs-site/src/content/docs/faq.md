@@ -11,9 +11,9 @@ You need an Atmosphere account, and a Bluesky account is one (the most common on
 
 No. Read state, saves, highlights, and notes are private to you. Two things are or can be public: your linkblog (always public, that's its point) and anything you explicitly opt into syncing or backing externally. [Your data](/your-data/) has the complete list.
 
-## Why does Skyreader sometimes ask me to log in again?
+## Why does Skyreader ask for permission when I turn something on?
 
-Some features, like backing your saves with Semble or Margin, need a permission your original sign-in didn't include. The extra login is your account provider confirming the new permission. Nothing is wrong with your account.
+Sign-in only asks for what Skyreader needs to keep your reading in order. Features that write to other Atmospheric apps, like backing your saves with Semble or Margin, publishing a linkblog, or posting feedback, ask for their own permission the first time you use them. Choose **Allow access**, confirm on your account provider's page, and you land back where you were, still signed in. Skyreader remembers what you've allowed, so signing in again later asks for the same set.
 
 ## A feed hasn't shown anything new in a while. Is it broken?
 

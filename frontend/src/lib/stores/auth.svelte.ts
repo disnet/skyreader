@@ -1,12 +1,17 @@
 import { browser } from '$app/environment';
 import { api, OfflineError, SessionExpiredError, SessionRefreshError } from '$lib/services/api';
-import type { User } from '$lib/types';
+import { toastStore } from '$lib/stores/toast.svelte';
+import type { ScopeFeature, User } from '$lib/types';
 
 interface AuthState {
   user: User | null;
   isLoading: boolean;
   error: string | null;
   scopeUpgradeRequired: boolean;
+  // The optional feature a 403 asked permission for. Null alongside
+  // scopeUpgradeRequired means the session's core permissions are outdated.
+  scopeUpgradeFeature: ScopeFeature | null;
+  grantingPermissions: boolean;
 }
 
 // A trimmed profile for the login screen's "continue as" affordance. Persisted
@@ -85,6 +90,8 @@ function createAuthStore() {
     isLoading: true,
     error: null,
     scopeUpgradeRequired: false,
+    scopeUpgradeFeature: null,
+    grantingPermissions: false,
   });
 
   // Guest mode is a SIGNAL, not a localStorage read: every consumer gates
@@ -132,8 +139,9 @@ function createAuthStore() {
     api.setOnUnauthorized(handleUnauthorized);
 
     // Set up scope upgrade handler
-    api.setOnScopeUpgradeRequired(() => {
+    api.setOnScopeUpgradeRequired((feature) => {
       state.scopeUpgradeRequired = true;
+      state.scopeUpgradeFeature = feature ?? null;
     });
   }
 
@@ -287,6 +295,44 @@ function createAuthStore() {
     }
   }
 
+  // The backend refuses any returnUrl containing `//`, so a share link that
+  // arrived with an unencoded URL in its query (`/save?url=https://…`, as some
+  // Shortcuts send it) would come back to `/` and drop the save. Re-serializing
+  // the query percent-encodes every value.
+  function normalizeReturnUrl(target: string): string {
+    const [path, query] = target.split(/\?(.*)/s, 2);
+    return query ? `${path}?${new URLSearchParams(query).toString()}` : path;
+  }
+
+  // Progressive scopes: ask the provider for the permissions `features` need and
+  // come back to `returnUrl` (default: this page) still signed in. Navigates
+  // away on success; the backend's callback swaps in the upgraded session.
+  // `features` empty re-grants the core permissions of an outdated session.
+  async function grantPermissions(features: ScopeFeature[] = [], returnUrl?: string) {
+    if (!browser || state.grantingPermissions) return;
+    const target = normalizeReturnUrl(
+      returnUrl ?? window.location.pathname + window.location.search
+    );
+    state.grantingPermissions = true;
+    try {
+      const authUrl = await api.requestPermissions(features, target);
+      window.location.href = authUrl;
+      // Stay "granting" while the browser leaves, so the button can't double-fire.
+    } catch (error) {
+      state.grantingPermissions = false;
+      if (error instanceof OfflineError || !navigator.onLine) {
+        toastStore.update(toastStore.add(''), 'error', 'You’re offline. Connect to allow access.');
+        return;
+      }
+      if (error instanceof SessionExpiredError) return; // the 401 handler redirects
+      // Anything else (an older backend without the upgrade route, a provider
+      // error): fall back to a full sign-in. That restores everything the account
+      // granted before, though not a feature it's asking for the first time.
+      console.error('Permission request failed, falling back to sign-in:', error);
+      window.location.href = `/auth/login?returnUrl=${encodeURIComponent(target)}`;
+    }
+  }
+
   function setError(error: string) {
     state.error = error;
   }
@@ -325,9 +371,17 @@ function createAuthStore() {
     get scopeUpgradeRequired() {
       return state.scopeUpgradeRequired;
     },
+    get scopeUpgradeFeature() {
+      return state.scopeUpgradeFeature;
+    },
+    get grantingPermissions() {
+      return state.grantingPermissions;
+    },
     dismissScopeUpgrade() {
       state.scopeUpgradeRequired = false;
+      state.scopeUpgradeFeature = null;
     },
+    grantPermissions,
     setUser,
     cacheUser,
     enterGuestMode,

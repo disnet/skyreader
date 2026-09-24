@@ -89,8 +89,8 @@ function createSembleConnectionStore() {
         href: article.cardUrl || sembleCardUrl(article.url) || undefined,
       });
     } catch (err) {
-      // The global banner already says "log in again" — a second, vaguer copy of
-      // the same news in a toast is noise.
+      // The global banner already offers "Allow access" for Semble — a second
+      // copy of the same news in a toast is noise.
       if (err instanceof ScopeUpgradeError) {
         toastStore.remove(toastId);
         open = false;

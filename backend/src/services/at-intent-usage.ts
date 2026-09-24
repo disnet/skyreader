@@ -2,6 +2,7 @@ import type { Session } from '../types';
 import { createPDSClient } from './pds-client';
 import { generateTid } from '../utils/tid';
 import { AT_INTENT_SCOPES } from '../config/scopes';
+import { grantsScopes } from './scope-check';
 import { SKYREADER_APP_DID } from '../config/identity';
 
 // AT Intents discovery footprint.
@@ -42,7 +43,7 @@ function rkeyFromUri(uri: string): string {
 export async function writeUsageRecord(session: Session): Promise<void> {
   // Skip silently if the user hasn't granted the usage write scope (e.g. a session that
   // predates AT_INTENT_SCOPES, or a PDS that didn't grant it).
-  if (!session.grantedScopes?.split(' ').includes(USAGE_SCOPE)) {
+  if (!grantsScopes(session.grantedScopes, [USAGE_SCOPE])) {
     return;
   }
 

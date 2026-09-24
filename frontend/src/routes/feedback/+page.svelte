@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { goto } from '$app/navigation';
   import StaticPageChrome from '$lib/components/feed/StaticPageChrome.svelte';
   import {
     api,
@@ -68,6 +67,9 @@
   // can be able to post and not to attach. Asked at the same time, for the same
   // reason: don't offer a control that can only fail.
   let imageScopes = $state(false);
+  // An upload hit a missing permission: the attach control is gone, and this
+  // says why and offers the grant in its place.
+  let imageGrantNeeded = $state(false);
   let composerOpen = $state(false);
   let draftTitle = $state('');
   let draftBody = $state('');
@@ -282,9 +284,10 @@
     }
   }
 
-  async function reauthForScopes() {
-    await auth.logout();
-    goto(`/auth/login?returnUrl=${encodeURIComponent('/feedback')}`);
+  // Posting, voting and image attachments all ride the one 'feedback'
+  // permission; granting it round-trips through the provider and lands back here.
+  function grantFeedbackAccess() {
+    void auth.grantPermissions(['feedback'], '/feedback');
   }
 
   /**
@@ -336,8 +339,8 @@
       } catch (error) {
         if (error instanceof ScopeUpgradeError) {
           imageScopes = false;
+          imageGrantNeeded = true;
           remove(attachment.id);
-          attachmentError = 'Attaching images needs a new permission. Log in again to grant it.';
           continue;
         }
         console.error('Failed to upload feedback image:', error);
@@ -558,8 +561,10 @@
       </a>
     {:else if postScopes === 'missing'}
       <p class="note">
-        Posting from here needs one new permission.
-        <button class="link" onclick={reauthForScopes}>Log in again</button> to grant it, or
+        Posting from here needs your permission.
+        <button class="link" onclick={grantFeedbackAccess} disabled={auth.grantingPermissions}
+          >Allow access</button
+        >, or
         <a href={board?.spaceUrl ?? fallbackUrl} target="_blank" rel="noopener noreferrer"
           >post on userinput.app →</a
         >
@@ -683,6 +688,13 @@
             {#if attachmentError}<span class="error" aria-live="polite">{attachmentError}</span
               >{/if}
           </div>
+        {:else if imageGrantNeeded}
+          <p class="hint" aria-live="polite">
+            Attaching images needs your permission.
+            <button class="link" onclick={grantFeedbackAccess} disabled={auth.grantingPermissions}
+              >Allow access</button
+            >
+          </p>
         {/if}
         {#if postError}<p class="error" aria-live="polite">{postError}</p>{/if}
         <div class="composer-actions">

@@ -133,7 +133,6 @@ skyreader-backend/
 │   └── config/
 │       └── tier-limits.ts          # Tier definitions
 ├── migrations/                      # D1 SQL migrations
-├── lexicons/                        # AT Protocol schemas
 ├── test/                            # Tests
 ├── wrangler.toml                    # Cloudflare config
 └── ARCHITECTURE.md                  # Detailed architecture docs

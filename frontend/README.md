@@ -115,7 +115,6 @@ skyreader-frontend/
 │   └── service-worker.ts     # PWA service worker
 ├── static/
 │   └── manifest.json         # PWA manifest
-├── lexicons/                 # AT Protocol schemas
 └── svelte.config.js
 ```
 

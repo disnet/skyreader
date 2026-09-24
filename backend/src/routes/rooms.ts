@@ -283,10 +283,10 @@ export async function handleCreateRoom(request: Request, env: Env): Promise<Resp
   }
 
   const providerScopes = provider === 'semble' ? SEMBLE_SCOPES : MARGIN_SCOPES;
-  if (
-    !hasRequiredScopes(session.grantedScopes, providerScopes) ||
-    !hasRequiredScopes(session.grantedScopes, READING_ROOM_SCOPES)
-  ) {
+  if (!hasRequiredScopes(session.grantedScopes, providerScopes)) {
+    return insufficientScopesResponse(provider);
+  }
+  if (!hasRequiredScopes(session.grantedScopes, READING_ROOM_SCOPES)) {
     return insufficientScopesResponse();
   }
 
@@ -303,7 +303,7 @@ export async function handleCreateRoom(request: Request, env: Env): Promise<Resp
   } catch (error) {
     console.error('[rooms] failed to create room collection:', error);
     const message = error instanceof Error ? error.message : '';
-    if (/scope/i.test(message)) return insufficientScopesResponse();
+    if (/scope/i.test(message)) return insufficientScopesResponse(provider);
     return json({ error: 'Failed to create the room' }, 502);
   }
 
@@ -537,16 +537,19 @@ export async function handleRoomAddItem(request: Request, env: Env): Promise<Res
   const urlNormalized = normalizeArticleUrl(rawUrl);
   if (!urlNormalized) return json({ error: 'Invalid url' }, 400);
 
+  // Hoisted so the catch below can say which provider's permission is missing.
+  let roomProvider: BackingProviderName | undefined;
   try {
     const collection = await resolveCollection(body.collectionUri);
     if (collection instanceof Response) return collection;
+    roomProvider = collection.provider;
     if (!canAddTo({ ownerDid: collection.ref.did, ...collection }, session.did)) {
       return json({ error: 'This room is not open for additions' }, 403);
     }
 
     const scopes = collection.provider === 'semble' ? SEMBLE_SCOPES : MARGIN_SCOPES;
     if (!hasRequiredScopes(session.grantedScopes, scopes)) {
-      return insufficientScopesResponse();
+      return insufficientScopesResponse(collection.provider);
     }
 
     let title = str(body.title);
@@ -625,7 +628,7 @@ export async function handleRoomAddItem(request: Request, env: Env): Promise<Res
   } catch (error) {
     console.error('[rooms] failed to add item:', error);
     const message = error instanceof Error ? error.message : 'Failed to add the article';
-    if (/scope/i.test(message)) return insufficientScopesResponse();
+    if (/scope/i.test(message)) return insufficientScopesResponse(roomProvider);
     return json({ error: 'Failed to add the article' }, 502);
   }
 }

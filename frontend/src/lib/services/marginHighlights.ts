@@ -1,4 +1,5 @@
 import { api, ScopeUpgradeError } from '$lib/services/api';
+import { permissionToast } from '$lib/services/permissions';
 import { syncQueue, type MarginNotePayload } from '$lib/services/sync-queue';
 import { syncStore } from '$lib/stores/sync.svelte';
 import { toastStore } from '$lib/stores/toast.svelte';
@@ -101,7 +102,8 @@ export async function saveHighlightToMargin(
     return true;
   } catch (err) {
     if (err instanceof ScopeUpgradeError) {
-      toastStore.update(id, 'error', 'Log in again to grant Margin permissions');
+      const prompt = permissionToast(err, 'margin');
+      toastStore.update(id, 'error', prompt.message, prompt.action);
       return false;
     }
     console.error('Failed to save highlight to Margin, queueing:', err);

@@ -3,6 +3,8 @@
 // OAuth service can reconstruct the localhost public-client client_id during
 // refresh without importing a route module (which would create a cycle).
 
+import skyreaderAuthFull from '../../../lexicons/app/skyreader/authFull.json';
+
 // Granular scopes for Skyreader's custom lexicons
 // Requests write access only to app.skyreader.* record collections.
 // Note: saves are NOT written to the PDS (they live in D1, and optionally in a
@@ -13,6 +15,17 @@ export const GRANULAR_SCOPES = [
   'repo:app.skyreader.feed.subscription',
   'repo:app.skyreader.social.follow',
 ].join(' ');
+
+// Permission set covering every app.skyreader.* collection Skyreader writes
+// (lexicons/app/skyreader/authFull.json). Requested as `include:<nsid>`, the PDS
+// resolves the published lexicon and shows its title/detail on the consent
+// screen instead of one line per collection. Because the PDS re-resolves the set
+// on every token refresh, adding a new app.skyreader.* collection to the set is
+// picked up by live sessions without a re-auth. Sets can only cover collections
+// under their own namespace, so other apps' lexicons (Semble, Margin,
+// standard.site, …) stay granular and are requested progressively below.
+export const SKYREADER_PERMISSION_SET = skyreaderAuthFull.id;
+export const SKYREADER_PERMISSION_SET_SCOPE = `include:${SKYREADER_PERMISSION_SET}`;
 
 // Integration-specific scopes (written to external app lexicons on user's PDS)
 export const SEMBLE_SCOPES = [
@@ -91,7 +104,9 @@ export const USERINPUT_VOTE_SCOPES = ['repo:app.userinput.upvote'];
 // The composer offers the attach control only when this one is granted.
 export const USERINPUT_IMAGE_SCOPES = ['blob:image/*'];
 
-// All possible scopes (base + all integrations) — used in client metadata
+// All possible granular scopes (base + all integrations). Still part of the client
+// metadata so sessions granted before permission sets / progressive requests keep
+// refreshing, and so the granular fallback (permission sets disabled) can request them.
 export const ALL_POSSIBLE_SCOPES = [
   GRANULAR_SCOPES,
   ...SEMBLE_SCOPES,
@@ -107,3 +122,95 @@ export const ALL_POSSIBLE_SCOPES = [
   ...USERINPUT_VOTE_SCOPES,
   ...USERINPUT_IMAGE_SCOPES,
 ].join(' ');
+
+// ---------------------------------------------------------------------------
+// Progressive scope requests
+//
+// Sign-in asks only for the base scopes. Each optional feature asks for its own
+// scopes the first time the reader uses it (POST /api/auth/upgrade), and the
+// features a reader has granted are remembered (users.oauth_features) so the next
+// sign-in asks for the same set again. See docs/OAUTH_SCOPES.md.
+// ---------------------------------------------------------------------------
+
+export type ScopeFeature = 'semble' | 'margin' | 'linkblog' | 'pckt' | 'offprint' | 'feedback';
+
+export const SCOPE_FEATURES: Record<ScopeFeature, string[]> = {
+  semble: [...SEMBLE_SCOPES, ...SEMBLE_CONNECTION_SCOPES],
+  margin: MARGIN_SCOPES,
+  linkblog: LINKBLOG_SCOPES,
+  // Companion records only make sense on top of a linkblog, so granting one
+  // also grants the linkblog itself.
+  pckt: [...LINKBLOG_SCOPES, ...PCKT_SCOPES],
+  offprint: [...LINKBLOG_SCOPES, ...OFFPRINT_SCOPES],
+  feedback: [...USERINPUT_SCOPES, ...USERINPUT_VOTE_SCOPES, ...USERINPUT_IMAGE_SCOPES],
+};
+
+// The scopes whose presence means a reader opted into a feature, used to
+// remember features across sign-ins. Narrower than SCOPE_FEATURES where a
+// feature's set grew after launch (the Semble connection scope, the feedback
+// vote/image scopes): sessions granted before those additions still opted in,
+// and the next request re-asks for the full SCOPE_FEATURES set anyway.
+export const FEATURE_OPT_IN_SCOPES: Record<ScopeFeature, string[]> = {
+  ...SCOPE_FEATURES,
+  semble: SEMBLE_SCOPES,
+  feedback: USERINPUT_SCOPES,
+};
+
+export function isScopeFeature(value: string): value is ScopeFeature {
+  return Object.prototype.hasOwnProperty.call(SCOPE_FEATURES, value);
+}
+
+/**
+ * Whether sign-in requests Skyreader's own collections through the published
+ * permission set (`include:app.skyreader.authFull`) rather than one granular
+ * `repo:` scope each. Off until the set is published under `_lexicon.skyreader.app`
+ * — a PDS rejects the whole authorization if it can't resolve an included set.
+ */
+export function usePermissionSets(env: { OAUTH_PERMISSION_SETS?: string }): boolean {
+  return env.OAUTH_PERMISSION_SETS === 'true';
+}
+
+// Skyreader's own collections, granular form. The permission set expands to
+// exactly these (kept in sync by test/oauth-scopes.spec.ts).
+export const SKYREADER_REPO_SCOPES = [
+  ...GRANULAR_SCOPES.split(' ').filter((s) => s !== 'atproto'),
+  ...READING_ROOM_SCOPES,
+];
+
+/**
+ * What every sign-in asks for. Beyond Skyreader's own collections this carries
+ * two small cross-namespace scopes that background work depends on without the
+ * reader opting into anything: the standard.site follow-graph mirror that rides
+ * Atmospheric sync, and the AT Intents discovery record.
+ */
+export function baseScopes(env: { OAUTH_PERMISSION_SETS?: string }): string[] {
+  return [
+    'atproto',
+    ...(usePermissionSets(env) ? [SKYREADER_PERMISSION_SET_SCOPE] : SKYREADER_REPO_SCOPES),
+    ...ATMOSPHERE_SCOPES,
+    ...AT_INTENT_SCOPES,
+  ];
+}
+
+/** The scope string for an authorization request: base + the given features. */
+export function buildRequestedScopes(
+  env: { OAUTH_PERMISSION_SETS?: string },
+  features: Iterable<ScopeFeature>
+): string {
+  const scopes = new Set(baseScopes(env));
+  for (const feature of features) {
+    for (const scope of SCOPE_FEATURES[feature]) scopes.add(scope);
+  }
+  return [...scopes].join(' ');
+}
+
+/**
+ * The client metadata `scope`: the ceiling every authorization request must fit
+ * inside. It must stay stable across login, callback, refresh and revoke (for the
+ * localhost public client it is baked into the client_id itself).
+ */
+export function clientMetadataScopes(env: { OAUTH_PERMISSION_SETS?: string }): string {
+  return usePermissionSets(env)
+    ? `${ALL_POSSIBLE_SCOPES} ${SKYREADER_PERMISSION_SET_SCOPE}`
+    : ALL_POSSIBLE_SCOPES;
+}

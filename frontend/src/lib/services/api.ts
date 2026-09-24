@@ -1,4 +1,5 @@
 import type {
+  ScopeFeature,
   FeedItem,
   IntegrationMembershipEditResult,
   IntegrationMemberships,
@@ -97,9 +98,16 @@ export class RateLimitError extends Error {
 }
 
 export class ScopeUpgradeError extends Error {
-  constructor(message?: string) {
-    super(message || 'Your session was created with outdated permissions. Please log in again.');
+  /**
+   * The optional feature whose permission is missing. Absent means the
+   * session's core permissions are outdated (re-grant with no features).
+   */
+  feature?: ScopeFeature;
+
+  constructor(message?: string, feature?: ScopeFeature) {
+    super(message || 'Skyreader needs your permission to continue.');
     this.name = 'ScopeUpgradeError';
+    this.feature = feature;
   }
 }
 
@@ -389,7 +397,7 @@ type SessionProbeResult = 'active' | 'expired' | 'unknown';
 
 class ApiClient {
   private onUnauthorized: (() => void) | null = null;
-  private onScopeUpgradeRequired: (() => void) | null = null;
+  private onScopeUpgradeRequired: ((feature?: ScopeFeature) => void) | null = null;
   private sessionProbe: Promise<SessionProbeResult> | null = null;
 
   // Set callback for when 401 is received (session invalid)
@@ -398,7 +406,7 @@ class ApiClient {
   }
 
   // Set callback for when 403 scope_upgrade_required is received
-  setOnScopeUpgradeRequired(callback: () => void) {
+  setOnScopeUpgradeRequired(callback: (feature?: ScopeFeature) => void) {
     this.onScopeUpgradeRequired = callback;
   }
 
@@ -511,10 +519,11 @@ class ApiClient {
       if (response.status === 403) {
         const body = await response.json().catch(() => ({ error: 'Forbidden' }));
         if ((body as { error: string }).error === 'scope_upgrade_required') {
+          const { message, feature } = body as { message?: string; feature?: ScopeFeature };
           if (this.onScopeUpgradeRequired) {
-            this.onScopeUpgradeRequired();
+            this.onScopeUpgradeRequired(feature);
           }
-          throw new ScopeUpgradeError((body as { message?: string }).message);
+          throw new ScopeUpgradeError(message, feature);
         }
         if ((body as { error: string }).error === 'url_save_limit_reached') {
           const b = body as {
@@ -571,6 +580,18 @@ class ApiClient {
     const params = new URLSearchParams({ pds });
     if (returnUrl) params.set('returnUrl', returnUrl);
     return this.fetch(`/api/auth/login?${params}`);
+  }
+
+  // Progressive scopes: ask the provider for the permissions these features need
+  // without signing out. Returns the consent URL to navigate to; the callback
+  // swaps in the upgraded session and lands back on `returnUrl` (a same-origin
+  // path). `features: []` re-grants the core permissions of an outdated session.
+  async requestPermissions(features: ScopeFeature[], returnUrl?: string): Promise<string> {
+    const { authUrl } = await this.fetch<{ authUrl: string }>('/api/auth/upgrade', {
+      method: 'POST',
+      body: JSON.stringify(returnUrl ? { features, returnUrl } : { features }),
+    });
+    return authUrl;
   }
 
   async logout(): Promise<void> {
@@ -1388,7 +1409,7 @@ class ApiClient {
 
   // Posting writes an app.userinput.discussion record to the reader's own repo,
   // so it needs a session with the userinput scope — a session that predates it
-  // throws ScopeUpgradeError, which the page turns into a "log in again" line
+  // throws ScopeUpgradeError, which the page turns into an "Allow access" prompt
   // rather than losing what they wrote. The response's `upvoted` says whether the
   // self-upvote that follows the post landed — it doesn't when the session lacks
   // the separate vote scope, or when the PDS refuses that second write — so the

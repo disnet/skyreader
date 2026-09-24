@@ -3,12 +3,14 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { auth } from '$lib/stores/auth.svelte';
+  import { permissionMessage } from '$lib/services/permissions';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { api, ScopeUpgradeError, SubscriptionLimitError } from '$lib/services/api';
   import Logo from '$lib/assets/logo.svg';
   import Icon from '$lib/components/Icon.svelte';
   import LimitNotice from '$lib/components/LimitNotice.svelte';
   import { feedLimitLine } from '$lib/utils/limitCopy';
+  import type { ScopeFeature } from '$lib/types';
 
   // Lightweight share-target / bookmarklet endpoint for subscribing. An Apple
   // Shortcut (or bookmarklet, or future PWA share_target) opens
@@ -29,6 +31,8 @@
     'working' | 'select' | 'success' | 'already' | 'invalid' | 'scope' | 'limit' | 'error';
 
   let status = $state<Status>('working');
+  // The feature a 'scope' failure asked permission for; undefined = core.
+  let scopeFeature = $state<ScopeFeature | undefined>(undefined);
   let isSubscribing = $state(false);
   let discoveredFeeds = $state<string[]>([]);
   let standardSite = $state<StandardSite | null>(null);
@@ -101,6 +105,7 @@
 
   function handleError(err: unknown) {
     if (err instanceof ScopeUpgradeError) {
+      scopeFeature = err.feature;
       status = 'scope';
       return;
     }
@@ -170,13 +175,6 @@
     }
   }
 
-  const loginReturnUrl = $derived.by(() => {
-    const url = readUrl();
-    return url
-      ? `/auth/login?returnUrl=${encodeURIComponent(`/subscribe?url=${encodeURIComponent(url)}`)}`
-      : '/auth/login';
-  });
-
   onMount(run);
 </script>
 
@@ -240,9 +238,14 @@
       <p class="sub">This page needs a <code>?url=</code> link. Try sharing again.</p>
       <a class="btn-secondary" href="/">Go to Skyreader</a>
     {:else if status === 'scope'}
-      <p class="title">Log in again to subscribe</p>
-      <p class="sub">Subscribing needs updated permissions for your account.</p>
-      <a class="btn-primary" href={loginReturnUrl}>Log in again</a>
+      <p class="title">{permissionMessage(scopeFeature)}</p>
+      <p class="sub">Allow access, then Skyreader will subscribe this for you.</p>
+      <button
+        class="btn-primary"
+        disabled={auth.grantingPermissions}
+        onclick={() => auth.grantPermissions(scopeFeature ? [scopeFeature] : [])}
+        >{scopeFeature ? 'Allow access' : 'Refresh access'}</button
+      >
     {:else if status === 'limit'}
       <p class="title">Your feed list is full</p>
       <div class="limit-wrap">

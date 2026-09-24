@@ -19,6 +19,7 @@
   import Modal from '$lib/components/common/Modal.svelte';
   import Icon from '$lib/components/Icon.svelte';
   import { api } from '$lib/services/api';
+  import { grantPermissions } from '$lib/services/permissions';
   import { savesStore } from '$lib/stores/saves.svelte';
   import { sembleConnectionStore } from '$lib/stores/sembleConnection.svelte';
   import { matchesTerms, normalize, parseQuery } from '$lib/services/savedSearch';
@@ -309,7 +310,12 @@
     {#if hasScope === false}
       <p class="notice notice-warn">
         <span class="notice-icon" aria-hidden="true"><Icon name="alert-circle" size={15} /></span>
-        <span>You'll be asked to log in again to allow this.</span>
+        <span
+          >Semble needs your permission to draw connections.
+          <button class="notice-action" type="button" onclick={() => grantPermissions(['semble'])}
+            >Allow access</button
+          ></span
+        >
       </p>
     {/if}
 
@@ -473,6 +479,20 @@
     padding: 0.5rem 0.625rem;
     border-radius: 6px;
     background: var(--color-bg-secondary);
+  }
+
+  .notice-action {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    font-weight: var(--weight-medium);
+    color: var(--color-primary);
+    cursor: pointer;
+  }
+
+  .notice-action:hover {
+    text-decoration: underline;
   }
 
   .notice-icon {

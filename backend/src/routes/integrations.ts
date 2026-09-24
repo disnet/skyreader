@@ -15,7 +15,9 @@ import {
   USERINPUT_IMAGE_SCOPES,
   USERINPUT_SCOPES,
   USERINPUT_VOTE_SCOPES,
+  type ScopeFeature,
 } from '../config/scopes';
+import { grantsScopes } from '../services/scope-check';
 import { listAllRecordsPublic } from '../services/backing/read';
 import { resolvePdsUrl } from '../utils/did-resolver';
 
@@ -43,10 +45,18 @@ const SCOPE_SETS: Record<ScopeGate, string[]> = {
  * Check if the session has the required scopes for a specific integration
  */
 export function hasIntegrationScopes(session: Session, integration: ScopeGate): boolean {
-  if (!session.grantedScopes) return false;
-  const granted = new Set(session.grantedScopes.split(' '));
-  return SCOPE_SETS[integration].every((scope) => granted.has(scope));
+  return grantsScopes(session.grantedScopes, SCOPE_SETS[integration]);
 }
+
+/** The feature a reader grants (POST /api/auth/upgrade) to pass a gate. */
+export const GATE_FEATURE: Record<ScopeGate, ScopeFeature> = {
+  semble: 'semble',
+  margin: 'margin',
+  'semble-connections': 'semble',
+  userinput: 'feedback',
+  'userinput-votes': 'feedback',
+  'userinput-images': 'feedback',
+};
 
 /**
  * GET /api/integrations/status — return scope status for integrations
@@ -91,8 +101,9 @@ function checkIntegrationScopes(session: Session, integration: ScopeGate): Respo
     return new Response(
       JSON.stringify({
         error: 'scope_upgrade_required',
-        message: `Additional permissions are needed for ${name}. Please log in again.`,
+        message: `Additional permissions are needed for ${name}.`,
         integration: name,
+        feature: GATE_FEATURE[integration],
       }),
       { status: 403, headers: { 'Content-Type': 'application/json' } }
     );

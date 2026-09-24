@@ -1,0 +1,22 @@
+{
+  "lexicon": 1,
+  "id": "app.skyreader.authFull",
+  "defs": {
+    "main": {
+      "type": "permission-set",
+      "title": "Skyreader",
+      "detail": "Save your subscriptions, follows, and reading rooms to your account, where other Atmospheric apps can see them.",
+      "permissions": [
+        {
+          "type": "permission",
+          "resource": "repo",
+          "collection": [
+            "app.skyreader.feed.subscription",
+            "app.skyreader.social.follow",
+            "app.skyreader.reading.readAlong"
+          ]
+        }
+      ]
+    }
+  }
+}

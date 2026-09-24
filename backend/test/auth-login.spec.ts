@@ -1,5 +1,5 @@
 import { env, createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import worker from '../src/index';
 
 const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
@@ -211,5 +211,130 @@ describe('auth login PAR retry', () => {
 
     // PAR should only be called once (no retry)
     expect(getParCallCount()).toBe(1);
+  });
+});
+
+describe('progressive scope requests', () => {
+  const originalFetch = globalThis.fetch;
+  const SESSION = 'progressive-scope-session';
+  let parBodies: URLSearchParams[] = [];
+
+  beforeEach(async () => {
+    parBodies = [];
+    await env.DB.prepare('DELETE FROM sessions WHERE did = ?').bind(TEST_DID).run();
+    await env.DB.prepare('DELETE FROM users WHERE did = ?').bind(TEST_DID).run();
+    await env.DB.prepare('DELETE FROM oauth_state').run();
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string | URL, init?: RequestInit) => {
+      const urlStr = url.toString();
+      if (urlStr.includes('com.atproto.identity.resolveHandle')) return mockHandleResolve(TEST_DID);
+      if (urlStr.includes('plc.directory') || urlStr.includes('did:plc:')) {
+        return mockDidDocument(TEST_DID);
+      }
+      if (urlStr.includes('.well-known/oauth-protected-resource')) return mockResourceMeta();
+      if (urlStr.includes('.well-known/oauth-authorization-server')) return mockAuthServerMeta();
+      if (urlStr.includes('/oauth/par')) {
+        parBodies.push(new URLSearchParams(init?.body as string));
+        return mockParResponse();
+      }
+      throw new Error(`Unexpected fetch: ${urlStr}`);
+    });
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  async function call(path: string, init: RequestInit = {}) {
+    const request = new IncomingRequest(`http://localhost${path}`, {
+      ...init,
+      headers: { Origin: env.FRONTEND_URL, ...(init.headers ?? {}) },
+    });
+    const ctx = createExecutionContext();
+    const response = await worker.fetch(request, env, ctx);
+    await waitOnExecutionContext(ctx);
+    return response;
+  }
+
+  const requestedScope = () => parBodies.at(-1)?.get('scope')?.split(' ') ?? [];
+
+  async function seedUser(oauthFeatures: string | null) {
+    await env.DB.prepare(
+      `INSERT INTO users (did, handle, pds_url, created_at, oauth_features) VALUES (?, ?, 'https://pds.example.com', unixepoch(), ?)`
+    )
+      .bind(TEST_DID, TEST_HANDLE, oauthFeatures)
+      .run();
+  }
+
+  it('signs in with only the base scopes by default', async () => {
+    const response = await call(`/api/auth/login?handle=${TEST_HANDLE}`);
+    expect(response.status).toBe(200);
+    const scope = requestedScope();
+    expect(scope).toContain('atproto');
+    expect(scope).toContain('repo:app.skyreader.feed.subscription');
+    expect(scope).not.toContain('repo:network.cosmik.card');
+    expect(scope).not.toContain('repo:site.standard.document');
+  });
+
+  it('adds the features the caller asks for', async () => {
+    await call(`/api/auth/login?handle=${TEST_HANDLE}&features=semble,linkblog`);
+    expect(requestedScope()).toEqual(
+      expect.arrayContaining(['repo:network.cosmik.card', 'repo:site.standard.document'])
+    );
+  });
+
+  it('rejects an unknown feature', async () => {
+    const response = await call(`/api/auth/login?handle=${TEST_HANDLE}&features=everything`);
+    expect(response.status).toBe(400);
+  });
+
+  it('asks again for the features the account granted last time', async () => {
+    await seedUser('margin');
+    await call(`/api/auth/login?handle=${TEST_HANDLE}`);
+    expect(requestedScope()).toContain('repo:at.margin.note');
+    expect(requestedScope()).not.toContain('repo:network.cosmik.card');
+  });
+
+  it('upgrades a live session without dropping what it already holds', async () => {
+    await seedUser(null);
+    await env.DB.prepare(
+      `INSERT INTO sessions (session_id, did, handle, pds_url, access_token, refresh_token, dpop_private_key, expires_at, granted_scopes)
+       VALUES (?, ?, ?, 'https://pds.example.com', 'tok', 'rtok', ?, ?, ?)`
+    )
+      .bind(
+        SESSION,
+        TEST_DID,
+        TEST_HANDLE,
+        JSON.stringify({ kty: 'EC' }),
+        Date.now() + 3_600_000,
+        'atproto repo:app.skyreader.feed.subscription repo:app.skyreader.social.follow repo:at.margin.note repo:at.margin.collection repo:at.margin.collectionItem'
+      )
+      .run();
+
+    const response = await call('/api/auth/upgrade', {
+      method: 'POST',
+      headers: { Cookie: `session_id=${SESSION}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ features: ['semble'], returnUrl: '/settings' }),
+    });
+    expect(response.status).toBe(200);
+    const scope = requestedScope();
+    expect(scope).toEqual(
+      expect.arrayContaining(['repo:network.cosmik.card', 'repo:at.margin.note'])
+    );
+    expect(parBodies.at(-1)?.get('login_hint')).toBe(TEST_DID);
+
+    const state = await env.DB.prepare(
+      'SELECT replace_session_id, return_url FROM oauth_state'
+    ).first<{ replace_session_id: string; return_url: string }>();
+    expect(state).toEqual({ replace_session_id: SESSION, return_url: '/settings' });
+  });
+
+  it('requires a session to upgrade', async () => {
+    const response = await call('/api/auth/upgrade', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ features: ['semble'] }),
+    });
+    expect(response.status).toBe(401);
   });
 });

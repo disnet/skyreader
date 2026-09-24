@@ -1,3 +1,19 @@
+/**
+ * An optional feature whose OAuth permission is requested the first time the
+ * reader uses it (progressive scopes), rather than at sign-in.
+ */
+export type ScopeFeature = 'semble' | 'margin' | 'linkblog' | 'pckt' | 'offprint' | 'feedback';
+
+/** The reader-facing name of a scope feature, for "X needs your permission" copy. */
+export const SCOPE_FEATURE_LABELS: Record<ScopeFeature, string> = {
+  semble: 'Semble',
+  margin: 'Margin',
+  linkblog: 'Your linkblog',
+  pckt: 'pckt',
+  offprint: 'Offprint',
+  feedback: 'Feedback',
+};
+
 export interface User {
   did: string;
   handle: string;

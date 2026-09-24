@@ -6,7 +6,7 @@ permissions:
 on:
   pull_request:
     branches: [main]
-    paths: ['backend/**']
+    paths: ['backend/**', 'lexicons/**']
 
 concurrency:
   group: backend-ci-${{ github.head_ref }}

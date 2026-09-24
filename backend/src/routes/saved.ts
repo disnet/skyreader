@@ -645,8 +645,9 @@ export async function handleSetBacking(request: Request, env: Env): Promise<Resp
         return new Response(
           JSON.stringify({
             error: 'scope_upgrade_required',
-            message: `Additional permissions are needed for ${body.provider}. Please log in again.`,
+            message: `Additional permissions are needed for ${body.provider}.`,
             integration: body.provider,
+            feature: body.provider,
           }),
           { status: 403, headers: { 'Content-Type': 'application/json' } }
         );

@@ -19,7 +19,7 @@ If you're new to the Atmosphere, the sign-in page has a sign-up path that create
 
 There is no separate Skyreader password. Sign-in happens on your provider's page, and Skyreader never sees your credentials.
 
-Occasionally Skyreader will ask you to log in again to grant access for a specific feature, such as backing your saves with Semble or Margin. That is your provider confirming a new permission, not an error.
+Sign-in asks only for the basics. When you first turn on a feature that writes to another Atmospheric app, such as backing your saves with Semble or Margin, Skyreader asks for that one permission. Your provider confirms it and you come straight back, still signed in.
 
 ## Finding your way around
 
