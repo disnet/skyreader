@@ -26,6 +26,7 @@
     DATE_PRESET_OPTIONS_SHORT as DATE_PRESET_OPTIONS,
     READING_LENGTH_OPTIONS_SHORT as READING_LENGTH_OPTIONS,
     SAVED_SORT_OPTIONS_SHORT as SAVED_SORT_OPTIONS,
+    FOLLOWS_SORT_OPTIONS,
     AUTO_RULE_OPTIONS,
     AUTO_RULE_DEFAULT_NAMES as DEFAULT_NAMES,
     autoRuleToOption,
@@ -72,6 +73,11 @@
       !followLinksStore.scopeRequired
   );
   let savingFollowsInEverything = $state(false);
+  let followsSortOrder = $derived(
+    feedViewStore.currentSortOrder === 'popular' || feedViewStore.currentSortOrder === 'oldest'
+      ? feedViewStore.currentSortOrder
+      : 'newest'
+  );
 
   async function toggleFollowsInEverything(on: boolean) {
     savingFollowsInEverything = true;
@@ -281,6 +287,14 @@
     }
   });
 
+  // A feed channel that names the follows source can rank by shares.
+  let chIncludesFollows = $derived(
+    chMode === 'manual' && chSourceMode === 'include' && chSourceKeys.has(FOLLOWS_SOURCE_KEY)
+  );
+  let chFollowsSortOrder = $derived<SortOrder>(
+    chSortOrder === 'popular' || chSortOrder === 'oldest' ? chSortOrder : 'newest'
+  );
+
   function toggleChSourceKey(key: string) {
     const next = new Set(chSourceKeys);
     if (next.has(key)) {
@@ -347,7 +361,7 @@
                     ? Array.from(chTypeFilter)
                     : undefined,
               readFilter: 'unread' as const,
-              sortOrder: 'newest' as const,
+              sortOrder: chIncludesFollows ? chFollowsSortOrder : ('newest' as const),
             };
 
       if (editingChannelId != null) {
@@ -541,14 +555,29 @@
           <Icon name="arrow-down" size={12} />
           {feedViewStore.myLinkblogFilter ? 'Sort' : 'Sort & Read'}
         </div>
+        {#if feedViewStore.canSortByPopularity}
+          <div class="toggle-row sort-row">
+            {#each FOLLOWS_SORT_OPTIONS as opt}
+              <button
+                class="toggle-btn"
+                class:active={followsSortOrder === opt.value}
+                onclick={() => feedViewStore.setSortOrder(opt.value)}
+              >
+                {opt.label}
+              </button>
+            {/each}
+          </div>
+        {/if}
         <div class="toggle-row">
-          <button class="toggle-btn" onclick={() => feedViewStore.toggleSortOrder()}>
-            <Icon
-              name={feedViewStore.currentSortOrder === 'newest' ? 'arrow-down' : 'arrow-up'}
-              size={16}
-            />
-            {feedViewStore.currentSortOrder === 'newest' ? 'Newest' : 'Oldest'}
-          </button>
+          {#if !feedViewStore.canSortByPopularity}
+            <button class="toggle-btn" onclick={() => feedViewStore.toggleSortOrder()}>
+              <Icon
+                name={feedViewStore.currentSortOrder === 'oldest' ? 'arrow-up' : 'arrow-down'}
+                size={16}
+              />
+              {feedViewStore.currentSortOrder === 'oldest' ? 'Oldest' : 'Newest'}
+            </button>
+          {/if}
           <!-- Your own linkblog always shows everything, so no read/unread toggle. -->
           {#if !feedViewStore.myLinkblogFilter}
             <button
@@ -964,6 +993,23 @@
         </div>
       {/if}
 
+      {#if chChannelType === 'feed' && chIncludesFollows}
+        <div class="sheet-section">
+          <div class="section-label">Sort Order</div>
+          <div class="toggle-row">
+            {#each FOLLOWS_SORT_OPTIONS as opt}
+              <button
+                class="toggle-btn"
+                class:active={chFollowsSortOrder === opt.value}
+                onclick={() => (chSortOrder = opt.value)}
+              >
+                {opt.label}
+              </button>
+            {/each}
+          </div>
+        </div>
+      {/if}
+
       {#if chChannelType === 'feed' && !(chMode === 'manual' && chSourceMode === 'include')}
         <div class="sheet-section">
           <div class="section-label">Content Types</div>
@@ -1075,6 +1121,10 @@
     text-transform: uppercase;
     letter-spacing: var(--tracking-wider);
     padding-left: 0.25rem;
+  }
+
+  .sort-row {
+    margin-bottom: 0.5rem;
   }
 
   .toggle-row {

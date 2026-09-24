@@ -9,6 +9,7 @@
 // dated by its first share, and it reads like everything else.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Article, FilteredView, FollowLink } from '$lib/types';
+import { urlKey } from '$lib/utils/urlKey';
 import { river, resetRiver } from '../../../test/stubs/follow-links-river-fixtures.svelte';
 
 vi.mock('./filteredViews.svelte', () => ({
@@ -29,6 +30,10 @@ vi.mock('./followLinks.svelte', () => ({
     get inEverything() {
       return river.inEverything;
     },
+    forUrl: (url: string | null | undefined) =>
+      river.links.find(
+        (l) => !!url && [l.url, l.urlNormalized].some((u) => urlKey(u) === urlKey(url))
+      ),
   },
 }));
 vi.mock('./articles.svelte', () => ({
@@ -279,5 +284,30 @@ describe('follows links in the river', () => {
     feedViewStore.select(0);
     expect(river.read).toContain('https://site.example/fresh');
     expect(rows()).toEqual(['link:fresh']);
+  });
+
+  it('ranks a channel by how many of your follows shared each item', () => {
+    river.links = [
+      link('one', 1, { sharerCount: 1 }),
+      link('three', 5, { sharerCount: 3 }),
+      link('two', 3, { sharerCount: 2 }),
+    ];
+    show(channel([FOLLOWS_SOURCE_KEY], { sortOrder: 'popular' }));
+    expect(rows()).toEqual(['link:three', 'link:two', 'link:one']);
+  });
+
+  it('breaks a popularity tie by date, and counts an article’s shares by its URL', () => {
+    river.links = [link('a', 1), link('b', 4)];
+    river.articles = [article('b', 6), article('x', 2)];
+    show(channel([FOLLOWS_SOURCE_KEY, 'rss~feedaaaaaaaaa'], { sortOrder: 'popular' }));
+    // b is shown as the article (the link folds into it) and carries its one share.
+    expect(rows()).toEqual(['link:a', 'article:b', 'article:x']);
+  });
+
+  it('reads popular as newest where there are no follows links to count', () => {
+    river.articles = [article('old', 5), article('new', 1)];
+    show(channel(['rss~feedaaaaaaaaa'], { sortOrder: 'popular' }));
+    expect(feedViewStore.canSortByPopularity).toBe(false);
+    expect(rows()).toEqual(['article:new', 'article:old']);
   });
 });

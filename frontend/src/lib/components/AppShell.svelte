@@ -19,6 +19,7 @@
   import { savedSearchStore } from '$lib/stores/savedSearch.svelte';
   import { notificationsStore } from '$lib/stores/notifications.svelte';
   import { feedPath, FEEDS_PATH, SAVED_PATH } from '$lib/utils/viewNav';
+  import { completeFollowsGrant } from '$lib/utils/followsChannel';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import { APP_SCROLL_ID, appScrollElement, SHELL_FRAME_QUERY } from '$lib/utils/appScroll';
   import { SHELL_TOOLBAR_ID } from '$lib/actions/shell-toolbar';
@@ -103,6 +104,16 @@
     if (browser && !$page.url.pathname.startsWith('/dev')) {
       appManager.initialize();
     }
+  });
+
+  // Back from granting the follows permission: make the follows channel, once
+  // the channel sync has had its say (see completeFollowsGrant).
+  let followsGrantChecked = false;
+  $effect(() => {
+    if (followsGrantChecked || !auth.isAuthenticated || auth.isGuest) return;
+    if (appManager.phase !== 'ready' && appManager.phase !== 'error') return;
+    followsGrantChecked = true;
+    void completeFollowsGrant().catch(() => {});
   });
 
   // Register global keyboard shortcuts on mount. keyboardStore.register() keys by

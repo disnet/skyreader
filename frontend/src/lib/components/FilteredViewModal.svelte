@@ -60,6 +60,11 @@
   let sourceKeys = $state<Set<string>>(new Set());
   let readFilter = $state<'all' | 'unread' | 'read'>('all');
   let sortOrder = $state<SortOrder>('newest');
+
+  // Ranking by shares needs the follows source (see canSortByPopularity).
+  let includesFollows = $derived(
+    channelMode === 'manual' && sourceMode === 'include' && sourceKeys.has(FOLLOWS_SOURCE_KEY)
+  );
   let savedDateFilter = $state<DateAddedPreset | ''>('');
   let savedReadingLength = $state<Set<ReadingLengthFilter>>(new Set());
   let savedDomainFilter = $state<Set<string>>(new Set());
@@ -325,7 +330,7 @@
               sourceKeys: isSmartMode ? matchedSourceKeys : Array.from(sourceKeys),
               autoRule: isSmartMode ? currentAutoRule : undefined,
               readFilter,
-              sortOrder,
+              sortOrder: sortOrder === 'popular' && !includesFollows ? 'newest' : sortOrder,
               typeFilter:
                 channelMode === 'manual' && sourceMode === 'include'
                   ? undefined
@@ -775,6 +780,12 @@
               <input type="radio" bind:group={sortOrder} value="oldest" />
               Oldest first
             </label>
+            {#if includesFollows}
+              <label class="radio-label">
+                <input type="radio" bind:group={sortOrder} value="popular" />
+                Most shared by people you follow
+              </label>
+            {/if}
           </div>
         {/if}
       </div>

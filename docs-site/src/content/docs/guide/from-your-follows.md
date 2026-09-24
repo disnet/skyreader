@@ -15,7 +15,9 @@ If you were already reading on Skyreader, **Home** asks too, in a box called **N
 
 The first time you open **Everything**, a box at the top asks whether to add your follows' links there. **Add them to Everything** turns it on; **Not now** leaves Everything as it is. You're only asked once.
 
-You can also go to **Manage Sources** and find **Links from people you follow**. Skyreader asks to read your Bluesky Following timeline. Choose **Allow**, confirm on your account provider's page, and you come back still signed in. You only do this once, and it makes the channel for you.
+You can also go to **Manage Sources** and find **Links from people you follow**. Skyreader asks to read your Bluesky Following timeline. Choose **Allow**, confirm on your account provider's page, and you come back still signed in. You only do this once.
+
+However you allow it, Skyreader makes the **From your follows** channel for you. Delete it and it stays gone.
 
 Skyreader never posts anything with it. It reads the same timeline you see in Bluesky, so anyone you've muted or blocked stays out.
 
@@ -40,6 +42,8 @@ Open any article, from a feed, your saves, or anywhere else, and if people you f
 Your follows' links show in **Everything** only if you said yes to that. Change it any time with **Links from people you follow** in Everything's **Sources** filter, or **Show them in Everything too** on **Manage Sources**. They never add to your unread counts.
 
 The **From your follows** channel is an ordinary channel. Rename it, change its filters, or delete it. To add your follows' links to another channel, edit that channel's sources, choose **Include only**, and check **People you follow on Bluesky**.
+
+A channel with your follows' links in it can also sort by **Most shared**: the links the most people you follow shared come first, newest first among equals. An article from your feeds counts the people you follow who shared it too. Pick it from the sort menu, or under **Sort Order** when you edit the channel.
 
 ## What's kept
 

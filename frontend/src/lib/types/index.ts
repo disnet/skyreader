@@ -1177,7 +1177,9 @@ export type SortOrder =
   | 'shortest'
   | 'longest'
   | 'domain-asc'
-  | 'domain-desc';
+  | 'domain-desc'
+  // Feed channels with the follows source: most shared by your follows first.
+  | 'popular';
 
 export interface FilteredView {
   id?: number;

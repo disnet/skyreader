@@ -176,3 +176,11 @@ export const SAVED_SORT_OPTIONS_SHORT: { value: SortOrder; label: string }[] = [
   { value: 'domain-asc', label: 'Domain A–Z' },
   { value: 'domain-desc', label: 'Domain Z–A' },
 ];
+
+/** Feed channels that include the follows source; 'popular' ranks by how many
+ *  of your follows shared each item. */
+export const FOLLOWS_SORT_OPTIONS: { value: SortOrder; label: string }[] = [
+  { value: 'newest', label: 'Newest' },
+  { value: 'oldest', label: 'Oldest' },
+  { value: 'popular', label: 'Most shared' },
+];
