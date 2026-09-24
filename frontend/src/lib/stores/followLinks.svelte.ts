@@ -39,6 +39,8 @@ function createFollowLinksStore() {
   let loadedDid: string | null = null;
   /** Bumped by every load; a response or follow-up from an older one is dropped. */
   let seq = 0;
+  /** The newest load; an older one it superseded waits on it before returning. */
+  let latestLoad: Promise<void> | null = null;
   let followUp: ReturnType<typeof setTimeout> | null = null;
   let followUps = 0;
 
@@ -114,15 +116,26 @@ function createFollowLinksStore() {
     loadedAt = Date.now();
     followUps = 0;
     loading = true;
-    try {
-      await fetchOnce(token, user.did);
-    } catch (err) {
-      if (token !== seq) return;
-      loadedAt = 0;
-      error = err instanceof Error ? err.message : 'Could not load';
-    } finally {
-      // Only the latest load owns the flag.
-      if (token === seq) loading = false;
+    const promise = (async () => {
+      try {
+        await fetchOnce(token, user.did);
+      } catch (err) {
+        if (token !== seq) return;
+        loadedAt = 0;
+        error = err instanceof Error ? err.message : 'Could not load';
+      } finally {
+        // Only the latest load owns the flag.
+        if (token === seq) loading = false;
+      }
+    })();
+    latestLoad = promise;
+    await promise;
+    // Superseded: its answer was dropped, so wait for the one that replaced it.
+    // Otherwise a caller would resolve still reading "not loaded".
+    while (latestLoad && latestLoad !== promise && token !== seq) {
+      const newer: Promise<void> = latestLoad;
+      await newer;
+      if (latestLoad === newer) break;
     }
   }
 

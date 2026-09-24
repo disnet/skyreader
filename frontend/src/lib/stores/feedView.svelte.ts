@@ -789,9 +789,13 @@ function createFeedViewStore() {
     return fv.sourceMode === 'include' && fv.sourceKeys.some(isFollowsSource);
   });
 
-  // Derived: a channel that shows follows links can rank by how many of your
-  // follows shared each item. Everywhere else 'popular' reads as newest.
-  let canSortByPopularity = $derived(!!viewFilter && showFollowLinks);
+  // Derived: a channel that names the follows source can rank by how many of
+  // your follows shared each item. Everywhere else 'popular' reads as newest.
+  // "All sources" doesn't qualify even with follows in Everything, matching the
+  // channel editors (FilteredViewModal, MobileFilterSheet).
+  let canSortByPopularity = $derived(
+    !!viewFilter && showFollowLinks && effectiveFilters.sourceMode === 'include'
+  );
 
   /** How many of your follows shared this page; 0 when none did. */
   function followShareCount(item: CombinedFeedItem): number {
@@ -1895,7 +1899,8 @@ function createFeedViewStore() {
       if (viewFilter) {
         cancelPendingView();
         const current = toolbarSortOrder ?? preferences.sortOrder;
-        toolbarSortOrder = current === 'newest' ? 'oldest' : 'newest';
+        // Anything but 'oldest' shows as newest (see combinedAll), so flip from that.
+        toolbarSortOrder = current === 'oldest' ? 'newest' : 'oldest';
       } else {
         preferences.toggleSortOrder();
       }
