@@ -387,7 +387,7 @@
   // From your follows: the most-shared links from your Bluesky follows, as one
   // lane. Hidden until the reader has granted the timeline permission (the ask
   // lives on /following, not here) and there is something to show. Always the
-  // day, whatever window /following is on. The store no-ops for a guest.
+  // week, whatever window /following is on. The store no-ops for a guest.
   // See docs/plans/FOLLOWS_LINKS_PLAN.md.
   onMount(() => void followLinksLaneStore.load());
 
@@ -561,7 +561,7 @@
           title="Shared by people you follow"
           icon="share-2"
           items={followItems}
-          action={{ kind: 'link', label: 'View all', href: '/following' }}
+          action={{ kind: 'link', label: 'View all', href: '/following?window=7d' }}
           onOpen={(vm) => {
             const link = followLinkByKey.get(vm.key);
             if (link) void openFollowLink(link, reader);

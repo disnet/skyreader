@@ -132,7 +132,7 @@ describe('followLinksStore', () => {
     expect(store.links.map((l) => l.url)).toEqual(['https://a.example/x']);
   });
 
-  it("keeps Home's lane on the day, and applies a hide to both lists", async () => {
+  it("keeps Home's lane on the week, and applies a hide to both lists", async () => {
     const { followLinksStore: page, followLinksLaneStore: lane } = await freshStores();
     getFollowLinks.mockImplementation(async (w: string) =>
       answer(
@@ -140,14 +140,14 @@ describe('followLinksStore', () => {
       )
     );
 
-    await page.load('7d');
+    await page.load('24h');
     await lane.load();
-    expect(getFollowLinks).toHaveBeenLastCalledWith('24h');
-    expect(lane.window).toBe('24h');
-    expect(lane.links.map((l) => l.url)).toEqual(['https://a.example/1']);
+    expect(getFollowLinks).toHaveBeenLastCalledWith('7d');
+    expect(lane.window).toBe('7d');
+    expect(lane.links.map((l) => l.url)).toEqual(['https://a.example/1', 'https://a.example/old']);
 
     page.dismiss('https://a.example/1', 'https://a.example/1');
-    expect(page.links.map((l) => l.url)).toEqual(['https://a.example/old']);
-    expect(lane.links).toEqual([]);
+    expect(page.links).toEqual([]);
+    expect(lane.links.map((l) => l.url)).toEqual(['https://a.example/old']);
   });
 });

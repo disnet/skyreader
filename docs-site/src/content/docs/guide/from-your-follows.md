@@ -5,7 +5,7 @@ description: Read the links the people you follow on Bluesky are sharing, withou
 
 **From your follows** gathers the links people you follow on Bluesky are sharing and lists them one article at a time. The article most of them shared comes first. Nothing is ranked by engagement, and the list ends.
 
-It's in the sidebar, and the most-shared links also show up on **Home** as **Shared by people you follow**.
+It's in the sidebar, and the week's most-shared links also show up on **Home** as **Shared by people you follow**.
 
 ## Turning it on
 

@@ -87,6 +87,13 @@ test.describe('From your follows', () => {
         sharerName: 'Maya Ortiz',
         title: 'Lane Piece',
       },
+      {
+        url: 'https://example.com/week-old',
+        sharerDid: 'did:plc:kat',
+        sharerName: 'Kat',
+        title: 'Week-old Piece',
+        ageMs: 4 * 24 * HOUR,
+      },
     ]);
     await authedPage.goto('/home');
     await expect(
@@ -94,5 +101,22 @@ test.describe('From your follows', () => {
     ).toBeVisible({ timeout: 15_000 });
     await expect(authedPage.getByText('Lane Piece')).toBeVisible();
     await expect(authedPage.getByText('Maya shared')).toBeVisible();
+    // The lane looks back a week, whatever window /following was left on.
+    await expect(authedPage.getByText('Week-old Piece')).toBeVisible();
+
+    // "View all" continues the same list: the page opens on the week.
+    await authedPage
+      .getByRole('region', { name: 'Shared by people you follow' })
+      .getByRole('link', { name: 'View all' })
+      .click();
+    await expect(authedPage).toHaveURL(/\/following\?window=7d/);
+    await expect(authedPage.getByRole('button', { name: 'Week', exact: true })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    );
+    await expect(authedPage.locator('.following-title')).toHaveText([
+      'Lane Piece',
+      'Week-old Piece',
+    ]);
   });
 });
