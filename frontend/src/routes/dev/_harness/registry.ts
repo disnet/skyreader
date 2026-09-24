@@ -75,6 +75,13 @@ export const harnesses: HarnessEntry[] = [
     components: ['ReaderBottomBar', 'MobileBottomBar', 'ReadingModeToggle', 'BottomSheet'],
   },
   {
+    slug: 'marginalia',
+    title: 'Marginalia',
+    description:
+      'The full reader over a seeded article: hand-drawn highlights, notes in the margin on desktop, the inline gloss on mobile and in paged mode, and other readers’ notes in pencil.',
+    components: ['SavedReader', 'Marginalia', 'MarginNote', 'HighlightPopover'],
+  },
+  {
     slug: 'collections',
     title: 'Collection picker',
     description:

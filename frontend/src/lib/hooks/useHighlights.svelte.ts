@@ -1,6 +1,7 @@
 import { onDestroy } from 'svelte';
 import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
 import {
+  articleText,
   createSelector,
   createSelectorForElement,
   exceedsSelectorLimit,
@@ -16,6 +17,9 @@ import {
 import type { ItemLabelType, Highlight, TextQuoteSelector } from '$lib/types';
 import { wrapTextRange } from '$lib/utils/wrapTextRange';
 import { visibleClientRect } from '$lib/utils/paginatedSelection';
+import { MARGINALIA_ATTR } from '$lib/utils/textSelector';
+import { marginPublishQueue } from '$lib/stores/marginPublishQueue.svelte';
+import { GLOSS_MARKER_SVG, inkVariant } from '$lib/utils/marginaliaInk';
 
 const BLOCK_SELECTORS = 'p, h1, h2, h3, h4, h5, h6, blockquote, pre, figure, li';
 const INTERACTIVE_MEDIA_SELECTOR = 'video, audio, iframe, embed, object';
@@ -37,6 +41,19 @@ const EMULATED_MOUSE_MS = 700;
 // via the Icon component. Styled in SavedReader's `.highlight-note-marker`.
 const NOTE_MARKER_SVG =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" /></svg>';
+
+/**
+ * How a host lays out notes.
+ * - `legacy`: the floating popover/peek surfaces (the article card, the daily
+ *   magazine). Marks are flat.
+ * - `margin`: notes live in the page margin (the host renders them from this
+ *   hook's state); nothing marks the note inline because the note is visible.
+ * - `gloss`: no margin to use; an inline marker unfolds the note under its
+ *   paragraph (the host renders the gloss).
+ */
+export type HighlightLayout = 'legacy' | 'margin' | 'gloss';
+
+const MARGINALIA_SELECTOR = `[${MARGINALIA_ATTR}]`;
 
 function canHover(): boolean {
   return typeof window !== 'undefined' && !!window.matchMedia?.('(hover: hover)').matches;
@@ -64,6 +81,8 @@ interface HighlightParams {
   // Article URL/title, used as the target when saving a highlight to Margin.
   itemUrl?: () => string | undefined;
   itemTitle?: () => string | undefined;
+  /** How notes are laid out; `legacy` when omitted. See `HighlightLayout`. */
+  layout?: () => HighlightLayout;
 }
 
 export function useHighlights(params: HighlightParams) {
@@ -102,6 +121,24 @@ export function useHighlights(params: HighlightParams) {
   let mouseoutHandler: ((e: MouseEvent) => void) | null = null;
   let appliedMarks: HTMLElement[] = [];
   let appliedNoteMarkers: HTMLElement[] = [];
+
+  // --- Marginalia state (the `margin` and `gloss` layouts) ---
+  // Bumped every time the marks are re-drawn, so a host laying notes out
+  // against them knows to re-measure.
+  let marksVersion = $state(0);
+  // The highlight whose note editor is open, wherever the host draws it.
+  let editingId = $state<string | null>(null);
+  // Gloss layout: the highlight whose note is unfolded under its paragraph.
+  let glossId = $state<string | null>(null);
+  // The highlight being pointed at — from its passage or from its note — so the
+  // two can light up together.
+  let activeId = $state<string | null>(null);
+  // A highlight made a moment ago, drawn on with the stroke animation once.
+  let freshId: string | null = null;
+
+  function layout(): HighlightLayout {
+    return params.layout?.() ?? 'legacy';
+  }
 
   // Touch bookkeeping. Mobile browsers don't emit `dblclick`/`mouseup` for
   // tap-to-highlight or touch text selection, so we synthesize both. A
@@ -163,18 +200,59 @@ export function useHighlights(params: HighlightParams) {
     const el = params.contentEl();
     if (!el) return;
 
+    const mode = layout();
     const highlights = itemLabelsStore.getHighlights(params.itemKey());
     for (const highlight of highlights) {
       const range = findTextInDOM(highlight.selector, el);
       if (!range) continue;
       const before = appliedMarks.length;
       wrapRange(range, highlight.id);
-      // A note gets an inline marker after the highlight's final mark.
-      if (highlight.note) {
+      if (mode !== 'legacy') inkMarks(appliedMarks.slice(before), highlight.id);
+      // A note gets an inline marker after the highlight's final mark — except
+      // in the margin layout, where the note itself is on the page.
+      if (highlight.note && mode !== 'margin') {
         const lastMark = appliedMarks[appliedMarks.length - 1];
         if (lastMark && appliedMarks.length > before) insertNoteMarker(lastMark, highlight.id);
       }
     }
+    freshId = null;
+    paintActive();
+    marksVersion++;
+  }
+
+  /**
+   * Dress a highlight's marks for the hand-drawn ink (app.css
+   * `.marginalia-ink`): which stroke variant it wears, and which of its marks
+   * carry the passage's real ends — a passage crossing a link or an <em> is
+   * several marks, and only the outer ends get the ragged caps.
+   */
+  function inkMarks(marks: HTMLElement[], highlightId: string) {
+    const variant = String(inkVariant(highlightId));
+    marks.forEach((mark, i) => {
+      mark.dataset.ink = variant;
+      const first = i === 0;
+      const last = i === marks.length - 1;
+      if (!(first && last)) mark.dataset.edge = first ? 'start' : last ? 'end' : 'mid';
+      if (highlightId === freshId) {
+        mark.classList.add('ink-drawing');
+        mark.addEventListener('animationend', () => mark.classList.remove('ink-drawing'), {
+          once: true,
+        });
+      }
+    });
+  }
+
+  /** Light up the active highlight's marks (and only those). */
+  function paintActive() {
+    for (const mark of appliedMarks) {
+      mark.classList.toggle('is-active', !!activeId && mark.dataset.highlightId === activeId);
+    }
+  }
+
+  function setActive(id: string | null) {
+    if (activeId === id) return;
+    activeId = id;
+    paintActive();
   }
 
   /** Append the inline comment-glyph marker immediately after a highlight's last mark. */
@@ -183,8 +261,14 @@ export function useHighlights(params: HighlightParams) {
     marker.type = 'button';
     marker.className = 'highlight-note-marker';
     marker.dataset.highlightId = highlightId;
-    marker.setAttribute('aria-label', 'Show note');
-    marker.innerHTML = NOTE_MARKER_SVG;
+    if (layout() === 'gloss') {
+      marker.setAttribute('aria-label', 'Note');
+      marker.setAttribute('aria-expanded', String(glossId === highlightId));
+      marker.innerHTML = GLOSS_MARKER_SVG;
+    } else {
+      marker.setAttribute('aria-label', 'Show note');
+      marker.innerHTML = NOTE_MARKER_SVG;
+    }
     afterMark.after(marker);
     appliedNoteMarkers.push(marker);
   }
@@ -248,6 +332,8 @@ export function useHighlights(params: HighlightParams) {
    */
   function highlightParagraph(target: HTMLElement | null): boolean {
     if (!target) return false;
+    // A note drawn into the body (the gloss) is not article text.
+    if (target.closest(MARGINALIA_SELECTOR)) return false;
     // Don't intercept interactive content.
     if (target.closest(`a, ${INTERACTIVE_MEDIA_SELECTOR}`)) return false;
 
@@ -259,7 +345,7 @@ export function useHighlights(params: HighlightParams) {
 
     // Check if this paragraph already has a highlight
     const highlights = itemLabelsStore.getHighlights(params.itemKey());
-    const paragraphText = blockEl.textContent ?? '';
+    const paragraphText = articleText(blockEl);
     const existingHighlight = highlights.find((h) => h.selector.exact === paragraphText);
 
     if (existingHighlight) {
@@ -276,7 +362,9 @@ export function useHighlights(params: HighlightParams) {
       return true;
     }
     const selector = createSelectorForElement(blockEl, container);
-    itemLabelsStore.addHighlight(params.itemKey(), params.itemType(), makeHighlight(selector));
+    const highlight = makeHighlight(selector);
+    itemLabelsStore.addHighlight(params.itemKey(), params.itemType(), highlight);
+    freshId = highlight.id;
     requestAnimationFrame(applyHighlights);
     return true;
   }
@@ -420,7 +508,9 @@ export function useHighlights(params: HighlightParams) {
     }
     const selector = pendingTouchSelector;
     pendingTouchSelector = null;
-    itemLabelsStore.addHighlight(params.itemKey(), params.itemType(), makeHighlight(selector));
+    const highlight = makeHighlight(selector);
+    itemLabelsStore.addHighlight(params.itemKey(), params.itemType(), highlight);
+    freshId = highlight.id;
     requestAnimationFrame(applyHighlights);
   }
 
@@ -441,7 +531,11 @@ export function useHighlights(params: HighlightParams) {
   function handleMouseDown(e: MouseEvent) {
     const container = params.contentEl();
     const target = e.target as Node | null;
-    pressStartedInContent = !!container && !!target && container.contains(target);
+    pressStartedInContent =
+      !!container &&
+      !!target &&
+      container.contains(target) &&
+      !(target instanceof Element && target.closest(MARGINALIA_SELECTOR));
   }
 
   function handlePointerDown(e: PointerEvent) {
@@ -451,7 +545,7 @@ export function useHighlights(params: HighlightParams) {
     // A press on the handles, on the toolbar that came up with them, or on the
     // highlight they belong to is part of working on that highlight. Anything
     // else — including a press that starts a fresh selection — deselects it.
-    if (target?.closest?.('.highlight-handles, .highlight-popover')) return;
+    if (target?.closest?.('.highlight-handles, .highlight-popover, .marginalia-note')) return;
     const mark = target?.closest?.('mark.highlight') as HTMLElement | null;
     if (mark?.dataset.highlightId === selectedHighlightId) return;
     selectedHighlightId = null;
@@ -501,14 +595,20 @@ export function useHighlights(params: HighlightParams) {
   function handleClick(e: MouseEvent) {
     const target = e.target as HTMLElement;
     if (target.closest(INTERACTIVE_MEDIA_SELECTOR)) return;
+    if (target.closest(MARGINALIA_SELECTOR)) return;
 
-    // The inline note marker opens the read-first note popover.
+    // The inline note marker opens the read-first note popover — or, in the
+    // gloss layout, unfolds the note under its paragraph.
     const marker = target.closest('.highlight-note-marker') as HTMLElement | null;
     if (marker) {
       const highlightId = marker.dataset.highlightId;
       if (!highlightId) return;
       e.preventDefault();
       e.stopPropagation();
+      if (layout() === 'gloss') {
+        toggleGloss(highlightId);
+        return;
+      }
       notePeek = null;
       selectedHighlightId = highlightId;
       popoverState = {
@@ -547,6 +647,12 @@ export function useHighlights(params: HighlightParams) {
    */
   function handleMouseOver(e: MouseEvent) {
     if (!canHover()) return;
+    if (layout() !== 'legacy') {
+      // Pointing at a passage lights up its note in the margin, and vice versa.
+      const mark = (e.target as HTMLElement).closest?.('mark.highlight') as HTMLElement | null;
+      if (mark?.dataset.highlightId) setActive(mark.dataset.highlightId);
+      return;
+    }
     const marker = (e.target as HTMLElement).closest?.(
       '.highlight-note-marker'
     ) as HTMLElement | null;
@@ -558,6 +664,14 @@ export function useHighlights(params: HighlightParams) {
   }
 
   function handleMouseOut(e: MouseEvent) {
+    if (layout() !== 'legacy') {
+      const mark = (e.target as HTMLElement).closest?.('mark.highlight') as HTMLElement | null;
+      const related = (e.relatedTarget as HTMLElement | null)?.closest?.(
+        'mark.highlight'
+      ) as HTMLElement | null;
+      if (mark && related?.dataset.highlightId !== mark.dataset.highlightId) setActive(null);
+      return;
+    }
     if (!notePeek) return;
     const marker = (e.target as HTMLElement).closest?.('.highlight-note-marker');
     if (!marker) return;
@@ -575,8 +689,139 @@ export function useHighlights(params: HighlightParams) {
     pendingTouchSelector = null;
     window.getSelection()?.removeAllRanges();
     popoverState = null;
+    freshId = highlight.id;
     requestAnimationFrame(applyHighlights);
     if (toMargin) void saveHighlightToMargin(highlight);
+    return highlight;
+  }
+
+  // --- Marginalia actions (the `margin` and `gloss` layouts) ---
+
+  function findHighlight(highlightId: string): Highlight | undefined {
+    return itemLabelsStore.getHighlights(params.itemKey()).find((h) => h.id === highlightId);
+  }
+
+  /**
+   * "Note" on the selection toolbar: make the highlight now and open its note
+   * where the host draws notes. Writing is never a precondition of marking —
+   * leave the note empty and the highlight simply stays bare.
+   */
+  function createHighlightForNote() {
+    const highlight = createHighlightFromPopover();
+    if (highlight) openNote(highlight.id);
+  }
+
+  /** Open the note editor for a highlight (in the margin, or in its gloss). */
+  function openNote(highlightId: string) {
+    popoverState = null;
+    notePeek = null;
+    editingId = highlightId;
+    if (layout() === 'gloss') setGloss(highlightId);
+  }
+
+  /** Close the note editor. The gloss, if any, stays unfolded to read. */
+  function closeNote() {
+    editingId = null;
+  }
+
+  function setGloss(highlightId: string | null) {
+    glossId = highlightId;
+    for (const marker of appliedNoteMarkers) {
+      marker.setAttribute('aria-expanded', String(marker.dataset.highlightId === highlightId));
+    }
+  }
+
+  function toggleGloss(highlightId: string) {
+    if (glossId === highlightId) {
+      setGloss(null);
+      if (editingId === highlightId) editingId = null;
+    } else {
+      setGloss(highlightId);
+      editingId = null;
+    }
+  }
+
+  /**
+   * Save a note. An unchanged note is not a write (closing an editor you only
+   * glanced at shouldn't queue a sync or touch Margin).
+   */
+  function saveNote(highlightId: string, note: string) {
+    const existing = findHighlight(highlightId);
+    if (!existing) return;
+    const next = note.trim();
+    if ((existing.note ?? '') === next) return;
+    const itemKey = params.itemKey();
+    pendingNoteSave = (async () => {
+      await itemLabelsStore.setHighlightNote(itemKey, highlightId, next);
+      requestAnimationFrame(applyHighlights);
+      const updated = itemLabelsStore.getHighlights(itemKey).find((h) => h.id === highlightId);
+      if (updated?.marginRkey) await updateNoteOnMargin(updated);
+    })();
+  }
+
+  // The latest note write, so publishing right after typing sends the new text.
+  let pendingNoteSave: Promise<void> = Promise.resolve();
+
+  /**
+   * Remove a highlight (and its note), offering an undo. Undo restores it
+   * locally with the same id; a highlight that was on Margin (or queued to be)
+   * is published again, since its Margin record went with the removal.
+   */
+  function removeHighlightWithUndo(highlightId: string) {
+    const existing = findHighlight(highlightId);
+    if (!existing) return;
+    const itemKey = params.itemKey();
+    const itemType = params.itemType();
+    // Read before the removal, which cancels a publish still in the queue.
+    const wasOnMargin = !!existing.marginUri || marginPublishQueue.has(highlightId);
+    void removeFromMargin(existing);
+    itemLabelsStore.removeHighlight(itemKey, highlightId);
+    if (editingId === highlightId) editingId = null;
+    if (glossId === highlightId) glossId = null;
+    if (selectedHighlightId === highlightId) selectedHighlightId = null;
+    if (activeId === highlightId) activeId = null;
+    popoverState = null;
+    requestAnimationFrame(applyHighlights);
+
+    const toastId = toastStore.add('Highlight removed');
+    toastStore.update(toastId, 'success', undefined, {
+      label: 'Undo',
+      run: () => {
+        const restored: Highlight = { ...existing };
+        delete restored.marginUri;
+        delete restored.marginRkey;
+        itemLabelsStore.addHighlight(itemKey, itemType, restored);
+        if (params.itemKey() === itemKey) {
+          freshId = restored.id;
+          requestAnimationFrame(applyHighlights);
+          if (wasOnMargin) void saveHighlightToMargin(restored);
+        }
+      },
+    });
+  }
+
+  /** Publish a highlight (and its note) to Margin. */
+  async function publishToMargin(highlightId: string) {
+    await pendingNoteSave.catch(() => {});
+    const hl = findHighlight(highlightId);
+    if (hl && !hl.marginUri) await saveHighlightToMargin(hl);
+  }
+
+  /**
+   * Take a published highlight (and its note) private again: forget its Margin
+   * record locally, then delete that record (queued if offline). Local first,
+   * so the note reads private at once. A publish still in the queue has no
+   * record yet; removing it from Margin cancels the queued publish instead.
+   */
+  async function unpublishFromMargin(highlightId: string) {
+    await pendingNoteSave.catch(() => {});
+    const hl = findHighlight(highlightId);
+    if (!hl) return;
+    if (!hl.marginUri && !marginPublishQueue.has(highlightId)) return;
+    if (hl.marginUri) await itemLabelsStore.setHighlightMargin(params.itemKey(), highlightId, null);
+    await removeFromMargin(hl);
+    const id = toastStore.add('Private again');
+    toastStore.update(id, 'success');
   }
 
   async function commitSelectorAdjustment(highlightId: string, selector: TextQuoteSelector) {
@@ -741,7 +986,7 @@ export function useHighlights(params: HighlightParams) {
     const hl = itemLabelsStore
       .getHighlights(params.itemKey())
       .find((h) => h.id === popoverState!.highlightId);
-    return !!hl?.marginUri;
+    return !!hl && (!!hl.marginUri || marginPublishQueue.has(hl.id));
   }
 
   /**
@@ -806,13 +1051,11 @@ export function useHighlights(params: HighlightParams) {
     if (!container) return;
 
     const paragraphs = Array.from(container.querySelectorAll(BLOCK_SELECTORS)) as HTMLElement[];
-    const para = paragraphs.filter((el) => (el.textContent?.trim() || '').length >= 20)[
-      paragraphIndex
-    ];
+    const para = paragraphs.filter((el) => articleText(el).trim().length >= 20)[paragraphIndex];
     if (!para) return;
 
     const highlights = itemLabelsStore.getHighlights(params.itemKey());
-    const paragraphText = para.textContent ?? '';
+    const paragraphText = articleText(para);
     const existingHighlight = highlights.find((h) => h.selector.exact === paragraphText);
 
     if (existingHighlight) {
@@ -907,6 +1150,10 @@ export function useHighlights(params: HighlightParams) {
     selectedHighlightId = null;
     popoverState = null;
     notePeek = null;
+    editingId = null;
+    glossId = null;
+    activeId = null;
+    freshId = null;
     pressStartedInContent = false;
     lastPointerWasMouse = false;
   }
@@ -952,6 +1199,45 @@ export function useHighlights(params: HighlightParams) {
     },
     get popoverHighlightNote() {
       return popoverHighlightNote();
+    },
+
+    // --- Marginalia (the `margin` and `gloss` layouts) ---
+    /** Bumped on every re-draw of the marks; re-measure against them after. */
+    get marksVersion() {
+      return marksVersion;
+    },
+    get editingId() {
+      return editingId;
+    },
+    get glossId() {
+      return glossId;
+    },
+    get activeId() {
+      return activeId;
+    },
+    setActive,
+    openNote,
+    closeNote,
+    toggleGloss,
+    saveNote,
+    createHighlightForNote,
+    /** The "Note" toolbar action for whatever the popover is on. */
+    noteFromPopover() {
+      const state = popoverState;
+      if (!state) return;
+      if (state.mode === 'create') createHighlightForNote();
+      else if (state.highlightId) openNote(state.highlightId);
+    },
+    /** Remove the popover's highlight, with an undo. */
+    removePopoverHighlightWithUndo() {
+      if (popoverState?.highlightId) removeHighlightWithUndo(popoverState.highlightId);
+    },
+    removeHighlightWithUndo,
+    get publishToMargin() {
+      return auth.isGuest ? undefined : publishToMargin;
+    },
+    get unpublishFromMargin() {
+      return auth.isGuest ? undefined : unpublishFromMargin;
     },
   };
 }

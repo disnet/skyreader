@@ -18,6 +18,34 @@ export function exceedsSelectorLimit(text: string): boolean {
 }
 
 /**
+ * Marks a subtree the reader draws *into* the article body (the inline gloss
+ * that unfolds a note under its paragraph) as not part of the article. Text
+ * under it is invisible to selectors, so a gloss can never shift a quote's
+ * offsets, leak into a prefix/suffix, or be matched as a passage itself.
+ */
+export const MARGINALIA_ATTR = 'data-marginalia';
+
+/** A text-node walker over `container` that skips anything under `[data-marginalia]`. */
+export function articleTextWalker(container: Node): TreeWalker {
+  return document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
+    acceptNode: (node) =>
+      node.parentElement?.closest(`[${MARGINALIA_ATTR}]`)
+        ? NodeFilter.FILTER_REJECT
+        : NodeFilter.FILTER_ACCEPT,
+  });
+}
+
+/** The article text under `el`: its `textContent` minus any `[data-marginalia]`. */
+export function articleText(el: Node): string {
+  const walker = articleTextWalker(el);
+  let text = '';
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    text += node.textContent ?? '';
+  }
+  return text;
+}
+
+/**
  * Build a map of text nodes and their character offsets within a container.
  * Returns { text: concatenated string, nodes: array of { node, start, end } }
  */
@@ -26,7 +54,7 @@ function buildTextMap(container: HTMLElement): {
   nodes: Array<{ node: Text; start: number; end: number }>;
 } {
   const nodes: Array<{ node: Text; start: number; end: number }> = [];
-  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+  const walker = articleTextWalker(container);
   let offset = 0;
 
   let current = walker.nextNode();
@@ -68,6 +96,7 @@ export function createSelector(range: Range, container: HTMLElement): TextQuoteS
       let childOffset = 0;
       for (let i = 0; i < range.startOffset; i++) {
         const child = children[i];
+        if (child instanceof Element && child.hasAttribute(MARGINALIA_ATTR)) continue;
         childOffset += child.textContent?.length ?? 0;
       }
       startOffset = nodeInfo.start + childOffset;
@@ -99,24 +128,15 @@ export function createSelectorForElement(
   element: HTMLElement,
   container: HTMLElement
 ): TextQuoteSelector {
-  const exact = (element.textContent ?? '').slice(0, MAX_EXACT_LENGTH);
-  const { text } = buildTextMap(container);
-
-  // Find the element's text offset in the container
-  const beforeRange = document.createRange();
-  beforeRange.setStartBefore(container.firstChild || container);
-  beforeRange.setEndBefore(element);
-  const prefix = beforeRange.toString().slice(-MAX_CONTEXT_LENGTH);
-
-  // Find suffix: text after this element
-  const afterRange = document.createRange();
-  if (element.nextSibling) {
-    afterRange.setStartAfter(element);
-  } else {
-    afterRange.setStart(element, element.childNodes.length);
-  }
-  afterRange.setEndAfter(container.lastChild || container);
-  const suffix = afterRange.toString().slice(0, MAX_CONTEXT_LENGTH);
+  // Read through the text map, not `textContent`/`Range.toString()`, so a gloss
+  // unfolded inside or around the element stays out of the quote and context.
+  const { text, nodes } = buildTextMap(container);
+  const inside = nodes.filter((n) => element.contains(n.node));
+  const start = inside[0]?.start ?? 0;
+  const end = inside.at(-1)?.end ?? 0;
+  const exact = text.slice(start, end).slice(0, MAX_EXACT_LENGTH);
+  const prefix = text.slice(Math.max(0, start - MAX_CONTEXT_LENGTH), start);
+  const suffix = text.slice(end, end + MAX_CONTEXT_LENGTH);
 
   return {
     type: 'TextQuoteSelector',

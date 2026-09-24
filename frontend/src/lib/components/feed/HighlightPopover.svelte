@@ -29,6 +29,12 @@
     // 'note' (jump straight into the note editor — used by callers that have a
     // dedicated "add a note" control).
     initialView?: 'toolbar' | 'note';
+    /**
+     * Where the "Note" action goes. Hosts that draw notes themselves (the
+     * reader's margin, or its inline gloss) take it; without it, the popover
+     * turns into its own floating note editor.
+     */
+    onNote?: () => void;
     onClose: () => void;
   }
 
@@ -45,6 +51,7 @@
     existingNote = '',
     marginSaved = false,
     initialView = 'toolbar',
+    onNote,
     onClose,
   }: Props = $props();
 
@@ -96,6 +103,11 @@
     positionMenu();
     textareaEl?.focus();
     textareaEl?.select();
+  }
+
+  function handleNote() {
+    if (onNote) onNote();
+    else void openNoteEditor();
   }
 
   function handleKeydown(e: KeyboardEvent) {
@@ -201,7 +213,7 @@
             }}
           >
             <Icon name="margin" size={16} />
-            Save to Margin
+            Publish
           </button>
         {/if}
       {:else}
@@ -218,9 +230,11 @@
       {/if}
     </div>
   {:else if mode === 'create'}
+    <!-- The one labeled action: what a selection is for. Its pen tip is drawn
+         in Note Ink, the reader's own hand, so it previews the mark it makes. -->
     <button
-      class="popover-btn icon-only highlight"
-      use:tooltip={'Save private highlight'}
+      class="popover-btn labeled highlight"
+      use:tooltip={'Private to you'}
       aria-label="Save private highlight"
       onclick={() => {
         onHighlight?.();
@@ -228,25 +242,14 @@
       }}
     >
       <Icon name="highlighter" size={20} />
+      <span class="btn-label">Highlight</span>
     </button>
-    {#if onHighlightToMargin}
-      <button
-        class="popover-btn icon-only"
-        use:tooltip={'Save public margin highlight'}
-        aria-label="Save public margin highlight"
-        onclick={() => {
-          onHighlightToMargin?.();
-          onClose();
-        }}
-      >
-        <Icon name="margin" size={20} />
-      </button>
-    {/if}
+    <span class="divider" aria-hidden="true"></span>
     <button
       class="popover-btn icon-only"
       use:tooltip={'Add a note'}
       aria-label="Add a note"
-      onclick={openNoteEditor}
+      onclick={handleNote}
     >
       <Icon name="message-circle" size={20} />
     </button>
@@ -261,6 +264,19 @@
         }}
       >
         <Icon name="quote" size={20} />
+      </button>
+    {/if}
+    {#if onHighlightToMargin}
+      <button
+        class="popover-btn icon-only"
+        use:tooltip={'Publish highlight (public, on margin.at)'}
+        aria-label="Publish highlight"
+        onclick={() => {
+          onHighlightToMargin?.();
+          onClose();
+        }}
+      >
+        <Icon name="margin" size={20} />
       </button>
     {/if}
   {:else if mode === 'view'}
@@ -282,48 +298,15 @@
       </button>
     </div>
   {:else}
-    <button
-      class="popover-btn icon-only remove"
-      use:tooltip={'Remove highlight'}
-      aria-label="Remove highlight"
-      onclick={() => {
-        onRemove?.();
-        onClose();
-      }}
-    >
-      <Icon name="x" size={20} />
-    </button>
-    {#if onSaveToMargin}
-      {#if marginSaved}
-        <span
-          class="popover-status icon-only"
-          use:tooltip={'Saved to Margin'}
-          aria-label="Saved to Margin"
-        >
-          <Icon name="check" size={20} />
-        </span>
-      {:else}
-        <button
-          class="popover-btn icon-only"
-          use:tooltip={'Save public margin highlight'}
-          aria-label="Save public margin highlight"
-          onclick={() => {
-            onSaveToMargin?.();
-            onClose();
-          }}
-        >
-          <Icon name="margin" size={20} />
-        </button>
-      {/if}
-    {/if}
     {#if onSaveNote}
       <button
-        class="popover-btn icon-only"
+        class="popover-btn labeled"
         use:tooltip={existingNote ? 'Edit note' : 'Add a note'}
         aria-label={existingNote ? 'Edit note' : 'Add a note'}
-        onclick={openNoteEditor}
+        onclick={handleNote}
       >
         <Icon name="message-circle" size={20} />
+        <span class="btn-label">{existingNote ? 'Edit note' : 'Note'}</span>
       </button>
     {/if}
     {#if onQuoteToShare}
@@ -339,6 +322,48 @@
         <Icon name="quote" size={20} />
       </button>
     {/if}
+    {#if onSaveToMargin}
+      {#if marginSaved}
+        <!-- Published: the mark with a check badge, so the state doesn't rest
+             on the tooltip alone. -->
+        <span
+          class="popover-status icon-only"
+          use:tooltip={'Published on margin.at'}
+          aria-label="Published"
+          role="img"
+        >
+          <Icon name="margin" size={20} />
+          <span class="status-check"><Icon name="check" size={10} /></span>
+        </span>
+      {:else}
+        <button
+          class="popover-btn icon-only"
+          use:tooltip={'Publish highlight (public, on margin.at)'}
+          aria-label="Publish highlight"
+          onclick={() => {
+            onSaveToMargin?.();
+            onClose();
+          }}
+        >
+          <Icon name="margin" size={20} />
+        </button>
+      {/if}
+    {/if}
+    {#if onSaveNote || onQuoteToShare || onSaveToMargin}
+      <span class="divider" aria-hidden="true"></span>
+    {/if}
+    <!-- Trash, not ✕: an ✕ on a floating bar reads as "close this bar". -->
+    <button
+      class="popover-btn icon-only remove"
+      use:tooltip={'Remove highlight'}
+      aria-label="Remove highlight"
+      onclick={() => {
+        onRemove?.();
+        onClose();
+      }}
+    >
+      <Icon name="trash" size={20} />
+    </button>
   {/if}
 </div>
 
@@ -439,29 +464,78 @@
     padding: 0;
   }
 
-  /* The highlighter previews its own action: a wash of the highlight gold. */
+  /* The bar's lead action carries a word; everything after it is a glyph. */
+  .popover-btn.labeled {
+    height: var(--btn-size);
+    padding: 0 0.75rem 0 0.5625rem;
+    font-size: var(--text-sm);
+    font-weight: 500;
+    color: var(--color-text);
+  }
+
+  .btn-label {
+    line-height: 1;
+  }
+
+  /* Hairline between the lead action and the rest; between the rest and
+     Remove on an existing highlight, so the destructive one stands apart. */
+  .divider {
+    flex: none;
+    align-self: center;
+    width: 1px;
+    height: 1.25rem;
+    margin: 0 0.1875rem;
+    background: var(--color-border);
+  }
+
+  /* The highlighter's pen tip is inked in the reader's own hand, and pressing
+     it previews its mark: a wash of the highlight gold. */
+  .popover-btn.highlight :global(svg path:first-child) {
+    stroke: var(--ink-note);
+  }
+
   .popover-btn.highlight:hover {
-    background: rgba(245, 197, 24, 0.22);
+    background: color-mix(in srgb, #f5c518 25%, transparent);
     color: var(--color-text);
   }
 
   .popover-btn.remove:hover {
-    background: rgba(244, 67, 54, 0.12);
-    color: #f44336;
+    background: color-mix(in srgb, var(--color-error) 12%, transparent);
+    color: var(--color-error);
   }
 
   .popover-status {
+    position: relative;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     width: var(--btn-size);
     height: var(--btn-size);
-    color: #4caf50;
   }
 
   .popover-status :global(svg) {
     width: var(--icon-size);
     height: var(--icon-size);
+  }
+
+  .status-check {
+    position: absolute;
+    right: calc(50% - var(--icon-size) / 2 - 0.3125rem);
+    bottom: calc(50% - var(--icon-size) / 2 - 0.25rem);
+    display: grid;
+    place-items: center;
+    width: 0.875rem;
+    height: 0.875rem;
+    border-radius: 50%;
+    background: var(--color-success);
+    color: #fff;
+    box-shadow: 0 0 0 2px var(--color-bg);
+  }
+
+  .popover-status .status-check :global(svg) {
+    width: 0.625rem;
+    height: 0.625rem;
+    stroke-width: 3;
   }
 
   .note-input {

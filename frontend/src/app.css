@@ -47,6 +47,35 @@
     U+A720-A7FF, U+FB00-FB06;
 }
 
+/* ── Kalam ───────────────────────────────────────────────────
+   The marginalia hand: the reader's own notes in the margin (and
+   the inline gloss on mobile) are set in it, so what you wrote
+   reads as written rather than typed. Annotations only — never
+   chrome. Self-hosted (Indian Type Foundry, SIL OFL); it downloads
+   only once a note is on screen, and latin-ext only when an
+   accented glyph appears. */
+@font-face {
+  font-family: 'Kalam';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/kalam-latin-400-normal.woff2') format('woff2');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Kalam';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/kalam-latin-ext-400-normal.woff2') format('woff2');
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+    U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
+    U+A720-A7FF;
+}
+
 :root {
   --color-primary: #0066cc;
   --color-primary-dark: #0052a3;
@@ -101,6 +130,16 @@
   --font-literata: Literata, 'Iowan Old Style', Charter, Georgia, Cambria, serif;
   --font-mono:
     ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+  /* The marginalia hand (Kalam, above). Annotations only: margin notes and
+     the inline gloss. Falls back to the platform's own handwriting faces. */
+  --font-hand: Kalam, 'Bradley Hand', 'Segoe Print', 'Comic Neue', cursive;
+  /* Marginalia inks. Note ink is Highlight Ink pushed darker so handwriting
+     at note size clears 4.5:1; pencil is the graphite of another reader's
+     hand (community highlights). */
+  --ink-note: #735a14;
+  --ink-note-soft: #a4892f;
+  --ink-pencil: #5d6570;
+  --ink-pencil-soft: #9aa1aa;
   /* Default reading font: serif, matching the preferences store default
      so first paint (before the data-article-font attribute is applied)
      doesn't flash sans → serif. */
@@ -168,6 +207,10 @@
     /* Darker than Surface, so the ground recedes and the card lifts —
        the same relationship as light mode, inverted. */
     --color-canvas: #111111;
+    --ink-note: #e0c270;
+    --ink-note-soft: #a58b3e;
+    --ink-pencil: #a7b0bb;
+    --ink-pencil-soft: #6d7580;
   }
 }
 
@@ -550,6 +593,185 @@ section.footnotes {
 
   .highlight-note-marker:active,
   .community-note-marker:active {
+    transform: none;
+  }
+}
+
+/* ── Marginalia ink ─────────────────────────────────────────────
+   Highlights drawn as chisel-marker strokes and community highlights as a
+   pencil underline, on any content element that carries `.marginalia-ink`
+   (the saved reader's body). The stroke images and their per-theme colors are
+   built in lib/utils/marginaliaInk.ts; these rules only lay them out.
+
+   A stroke is three background layers — left end, middle, right end — and
+   `box-decoration-break: clone` repeats all three on every line a mark wraps
+   onto, so each line gets its own ragged ends. A highlight that crosses an
+   inline element (a link, an <em>) is several marks; `data-edge` says which
+   of them carry the passage's real ends, so the joins between them stay
+   seamless. The inline padding (cancelled by an equal negative margin) lets
+   the stroke overshoot the text a little, the way a marker does, without
+   moving a single glyph. */
+.marginalia-ink mark.highlight {
+  --cap: 0.62em;
+  color: inherit;
+  background-color: transparent;
+  background-image: var(--ink-l), var(--ink-m), var(--ink-r);
+  background-repeat: no-repeat;
+  background-position:
+    left top,
+    calc(var(--cap) - 0.5px) top,
+    right top;
+  background-size:
+    var(--cap) 100%,
+    calc(100% - 2 * var(--cap) + 1px) 100%,
+    var(--cap) 100%;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  padding: 0 0.14em;
+  margin: 0 -0.14em;
+  border-radius: 0;
+  cursor: pointer;
+}
+
+.marginalia-ink mark.highlight[data-edge='start'] {
+  background-image: var(--ink-l), var(--ink-m), none;
+  background-size:
+    var(--cap) 100%,
+    calc(100% - var(--cap) + 0.5px) 100%,
+    0 0;
+  padding-right: 0;
+  margin-right: 0;
+}
+
+.marginalia-ink mark.highlight[data-edge='end'] {
+  background-image: none, var(--ink-m), var(--ink-r);
+  background-position:
+    left top,
+    left top,
+    right top;
+  background-size:
+    0 0,
+    calc(100% - var(--cap) + 0.5px) 100%,
+    var(--cap) 100%;
+  padding-left: 0;
+  margin-left: 0;
+}
+
+.marginalia-ink mark.highlight[data-edge='mid'] {
+  background-image: none, var(--ink-m), none;
+  background-position:
+    left top,
+    left top,
+    right top;
+  background-size:
+    0 0,
+    100% 100%,
+    0 0;
+  padding: 0;
+  margin: 0;
+}
+
+/* Selecting text to mark it: a pale wash of the same gold, so a selection
+   reads as a highlight about to happen rather than as browser chrome. */
+.marginalia-ink ::selection {
+  background: color-mix(in srgb, #f5c518 30%, transparent);
+}
+
+/* A fresh highlight is drawn on: the stroke runs out from its left end. */
+.marginalia-ink mark.highlight.ink-drawing {
+  animation: ink-draw 460ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes ink-draw {
+  from {
+    background-size:
+      var(--cap) 100%,
+      0% 100%,
+      0 100%;
+  }
+}
+
+.marginalia-ink mark.community-highlight {
+  color: inherit;
+  background-color: transparent;
+  text-decoration: none;
+  background-image: var(--pencil-rest);
+  background-repeat: repeat-x;
+  background-size: 5.6em 0.34em;
+  background-position: 0 calc(100% - 0.04em);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  cursor: pointer;
+}
+
+.marginalia-ink mark.community-highlight:hover,
+.marginalia-ink mark.community-highlight.is-active {
+  background-image: var(--pencil-active);
+}
+
+.marginalia-ink mark.community-highlight:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* The inline gloss marker (mobile and paged reading, where there is no
+   margin): a hand-drawn asterisk after an annotated passage. Tapping it
+   unfolds the note under the paragraph. */
+.marginalia-ink .highlight-note-marker,
+.marginalia-ink .community-note-marker {
+  width: 0.78em;
+  height: 0.78em;
+  top: -0.32em;
+  margin: 0 0.02em 0 0.1em;
+  color: var(--ink-note);
+  border-radius: 0;
+}
+
+.marginalia-ink .highlight-note-marker:hover,
+.marginalia-ink .community-note-marker:hover {
+  background: none;
+  color: var(--ink-note);
+  transform: rotate(-12deg);
+}
+
+.marginalia-ink .community-note-marker:hover {
+  color: var(--ink-pencil);
+}
+
+.marginalia-ink .highlight-note-marker[aria-expanded='true'] {
+  transform: rotate(18deg);
+}
+
+.marginalia-ink .community-note-marker {
+  color: var(--ink-pencil);
+}
+
+@media (pointer: coarse) {
+  .marginalia-ink .highlight-note-marker,
+  .marginalia-ink .community-note-marker {
+    /* The glyph stays small; the tap target grows past it. */
+    width: 0.78em;
+    height: 0.78em;
+    top: -0.32em;
+  }
+
+  .marginalia-ink .highlight-note-marker::after,
+  .marginalia-ink .community-note-marker::after {
+    content: '';
+    position: absolute;
+    inset: -0.7em;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .marginalia-ink mark.highlight.ink-drawing {
+    animation: none;
+  }
+
+  .marginalia-ink .highlight-note-marker:hover,
+  .marginalia-ink .community-note-marker:hover,
+  .marginalia-ink .highlight-note-marker[aria-expanded='true'] {
     transform: none;
   }
 }

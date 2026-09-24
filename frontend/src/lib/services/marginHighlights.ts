@@ -5,6 +5,7 @@ import { syncStore } from '$lib/stores/sync.svelte';
 import { toastStore } from '$lib/stores/toast.svelte';
 import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
 import { auth } from '$lib/stores/auth.svelte';
+import { marginPublishQueue } from '$lib/stores/marginPublishQueue.svelte';
 import type { Highlight } from '$lib/types';
 
 // Shared Margin (at.margin.note) sync for highlights. Used both by the in-reader
@@ -15,6 +16,32 @@ import type { Highlight } from '$lib/types';
 
 export function marginDedupKey(itemKey: string, highlightId: string): string {
   return `margin-note:${itemKey}:${highlightId}`;
+}
+
+/**
+ * A delete gets a key of its own, naming the record it removes. Sharing the
+ * highlight's key would let a later publish of the same highlight (Undo, or
+ * Make private then Publish, both offline) merge over the queued delete: the
+ * old public record would never be deleted, and a second one would be made.
+ */
+function marginDeleteKey(itemKey: string, highlightId: string, rkey: string): string {
+  return `${marginDedupKey(itemKey, highlightId)}:delete:${rkey}`;
+}
+
+/** Queue a Margin publish for later, and show it as published meanwhile. */
+async function enqueueCreate(
+  itemKey: string,
+  highlight: Highlight,
+  source: string,
+  title: string | undefined
+): Promise<void> {
+  await syncQueue.enqueue(
+    'create',
+    'integration',
+    marginDedupKey(itemKey, highlight.id),
+    notePayload(itemKey, highlight, source, title)
+  );
+  marginPublishQueue.add(highlight.id);
 }
 
 function notePayload(
@@ -51,6 +78,7 @@ export async function saveHighlightToMargin(
   title?: string
 ): Promise<boolean> {
   if (highlight.marginUri) return true; // already saved
+  if (marginPublishQueue.has(highlight.id)) return true; // already queued
 
   // A Margin note is a record in the reader's own atproto repo, so it needs an
   // account — and unlike a local highlight, queueing it would be a false
@@ -73,12 +101,7 @@ export async function saveHighlightToMargin(
   }
 
   if (!syncStore.isOnline) {
-    await syncQueue.enqueue(
-      'create',
-      'integration',
-      marginDedupKey(itemKey, highlight.id),
-      notePayload(itemKey, highlight, source, title)
-    );
+    await enqueueCreate(itemKey, highlight, source, title);
     const id = toastStore.add('Queued save to Margin');
     toastStore.update(id, 'success');
     return true;
@@ -107,12 +130,7 @@ export async function saveHighlightToMargin(
       return false;
     }
     console.error('Failed to save highlight to Margin, queueing:', err);
-    await syncQueue.enqueue(
-      'create',
-      'integration',
-      marginDedupKey(itemKey, highlight.id),
-      notePayload(itemKey, highlight, source, title)
-    );
+    await enqueueCreate(itemKey, highlight, source, title);
     toastStore.update(id, 'success', 'Queued save to Margin');
     return true;
   }
@@ -130,13 +148,15 @@ export async function removeHighlightFromMargin(
 ): Promise<void> {
   // Drop any still-queued (unsynced) save so it never creates an orphan note.
   await syncQueue.cancelPending('integration', marginDedupKey(itemKey, highlight.id));
+  marginPublishQueue.delete(highlight.id);
   if (!highlight.marginRkey) return; // never synced — nothing on the PDS
+  const deleteKey = marginDeleteKey(itemKey, highlight.id, highlight.marginRkey);
 
   if (!syncStore.isOnline) {
     await syncQueue.enqueue(
       'delete',
       'integration',
-      marginDedupKey(itemKey, highlight.id),
+      deleteKey,
       notePayload(itemKey, highlight, highlight.marginUri ?? '', undefined, highlight.marginRkey)
     );
     return;
@@ -148,7 +168,7 @@ export async function removeHighlightFromMargin(
     await syncQueue.enqueue(
       'delete',
       'integration',
-      marginDedupKey(itemKey, highlight.id),
+      deleteKey,
       notePayload(itemKey, highlight, highlight.marginUri ?? '', undefined, highlight.marginRkey)
     );
   }

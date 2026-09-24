@@ -25,6 +25,14 @@ colors:
   highlight: '#f5c518'
   highlight-ink: '#9a7700'
   night-highlight-ink: '#e3b94a'
+  ink-note: '#735a14'
+  ink-note-soft: '#a4892f'
+  night-ink-note: '#e0c270'
+  night-ink-note-soft: '#a58b3e'
+  ink-pencil: '#5d6570'
+  ink-pencil-soft: '#9aa1aa'
+  night-ink-pencil: '#a7b0bb'
+  night-ink-pencil-soft: '#6d7580'
   sky: '#4a9fd4'
   sky-deep: '#1e6fa8'
   sky-light: '#87ceeb'
@@ -72,6 +80,12 @@ typography:
     fontWeight: 400
     lineHeight: 1.8
     letterSpacing: 'normal'
+  marginalia:
+    fontFamily: "Kalam, 'Bradley Hand', 'Segoe Print', 'Comic Neue', cursive"
+    fontSize: '0.9em'
+    fontWeight: 400
+    lineHeight: 1.34
+    letterSpacing: '0.005em'
   article-title:
     fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif"
     fontSize: '1.75rem'
@@ -273,8 +287,15 @@ semantic signals. The point of the restraint is that when color appears, it mean
   background via `color-mix` (25% at rest, 40% on hover, 32% behind a note marker, 70% as the rule
   on a quoted highlight). The one warm accent in the system, and only ever in reading surfaces.
 - **Highlight Ink** (`#9a7700`, night `#e3b94a`): The darker and lighter shades of the same hue used
-  for the inline note-marker glyph, so a note reads as part of its highlight rather than as new
-  chrome.
+  for the inline note-marker glyph in the article card and daily magazine, so a note reads as part
+  of its highlight rather than as new chrome.
+- **Note Ink** (`--ink-note` `#735a14`, night `#e0c270`; soft `#a4892f` / `#a58b3e`): The reader's
+  own handwriting in the margin, the brackets tying a note to its passage, and the gloss asterisk.
+  Highlight Ink pushed darker so handwriting at note size clears 4.5:1. The soft shade is for
+  strokes that aren't text: a bare highlight's bracket, the pencil rule under a note being written.
+- **Pencil** (`--ink-pencil` `#5d6570`, night `#a7b0bb`; soft `#9aa1aa` / `#6d7580`): Another
+  reader's hand. Community (Margin) highlights are underlined in it and their notes written in it,
+  so they read as the same kind of mark in someone else's pencil. Never used for your own marks.
 
 ### Neutral
 
@@ -386,6 +407,15 @@ the user should see is the one _they_ chose for the article body.
 type in the app shell. `--text-3xl` (24px) and `--text-4xl` (28px) exist and are legitimate, but
 only on three surfaces: the reader's article title, empty-state and welcome heroes, and roomy public
 pages. If a step above 20px appears in a sidebar, toolbar, list row, or modal, it is a mistake.
+
+**The Marginalia Hand (the one exception to One Voice).** Notes the reader writes, and other
+readers' notes beside them, are set in **Kalam** (`--font-hand`), a legible pen hand, self-hosted
+with split latin / latin-ext ranges so it only downloads once a note is on screen. It is not a
+second UI font: it is the reader's own writing on the page, and it appears **only** in annotations
+(margin notes, the gloss, the note editor). Every control around a note (Done, Save to Margin,
+Remove, a signature under a community note) stays in the system sans. The contrast is the point:
+the app's voice is typed, the reader's is written. Sized in `em` off `--article-font-size` (0.9em)
+so a note keeps its proportion to the text it's about.
 
 **The Reader-Owns-The-Article Rule.** Never hard-code a family or size on article body text. Read
 `var(--article-font)` and `var(--article-font-size)`, and size anything that sits inside the prose
@@ -582,9 +612,28 @@ The most precious surface in the app.
   bottom is the only edge it needs.
 - Body renders with `--article-font` and `--article-font-size` at 1.8 line-height. Paged mode
   switches to a 1200px two-column spread.
-- Text highlights use translucent Highlight Gold `mark` backgrounds (25% at rest, 40% on hover),
-  with an inline note glyph in Highlight Ink sized in `em`. This is the only place warm color
-  appears, and the only color besides links inside the prose.
+- **Marginalia.** Highlights are drawn, not boxed: a chisel-marker stroke in Highlight Gold with
+  ragged, slanted ends, a slight tilt and a darker pool along its lower edge, repeated per line
+  (`box-decoration-break: clone`) so each line gets its own ends. Three seeded stroke variants; a
+  highlight picks one from its id so it never changes shape on re-layout. The strokes are data-URI
+  SVG backgrounds on the marks themselves (`lib/utils/marginaliaInk.ts` + `.marginalia-ink` in
+  app.css), so they reflow and paginate with the text instead of being measured from it. A new
+  highlight is drawn on once (the stroke runs out from its left end); reduced motion skips it.
+  Community highlights get a wobbly pencil underline. This is the only place warm color appears,
+  and the only color besides links inside the prose.
+- **Notes live beside the text, never on it.** On desktop scroll reading (>1000px) every highlight
+  gets a hand-drawn bracket in the right margin, and a note sits level with its passage in the
+  Marginalia Hand; notes that would collide stack downward and a dotted pencil leader ties each
+  back to its bracket. Other readers' notes sit in the left margin in pencil, signed in small sans.
+  Below ~1280px the column slides left (never past a 1.5rem inset) to keep a ~15rem right margin,
+  and community notes shrink to brackets. Clicking a bracket or a note writes in place; there is no
+  note popover. On mobile and in paged mode there is no margin, so a note is a **gloss**: a drawn
+  asterisk after the passage unfolds the note under its paragraph, behind a hand-ruled line,
+  pushing the text down rather than covering it. The gloss is rendered into the article body
+  inside a `data-marginalia` subtree that the selector machinery never reads as article text.
+- **Writing a note.** A borderless textarea in the Marginalia Hand over a faint pencil rule; no box.
+  Leaving it (Done, Escape, ⌘/Ctrl+Enter, focus elsewhere, the tab hiding) saves. Nothing
+  discards. Removing a highlight always offers Undo.
 - Footnotes render text-first: a superscript reference and a hairline-ruled list at the end, muted
   off `currentColor` with `color-mix` rather than off app tokens, so they stay legible on a curated
   edition's own themed background. No boxes, no backgrounds.

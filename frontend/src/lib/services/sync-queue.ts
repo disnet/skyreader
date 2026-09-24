@@ -1,6 +1,7 @@
 import { db, type SyncQueueEntry } from './db';
 import { api } from './api';
 import { toUnifiedReadItem } from './readSync';
+import { marginPublishQueue } from '$lib/stores/marginPublishQueue.svelte';
 import type {
   MagazineItemSnapshot,
   MagazineParams,
@@ -664,6 +665,7 @@ class SyncQueue {
       uri: result.uri,
       rkey: result.rkey,
     });
+    marginPublishQueue.delete(payload.highlightId);
   }
 
   private async executeIntegrationOperation(

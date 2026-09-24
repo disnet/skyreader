@@ -46,7 +46,8 @@
   import HighlightPopover from '$lib/components/feed/HighlightPopover.svelte';
   import HighlightHandles from '$lib/components/feed/HighlightHandles.svelte';
   import CommunityHighlightPopover from '$lib/components/feed/CommunityHighlightPopover.svelte';
-  import NotePeek from '$lib/components/feed/NotePeek.svelte';
+  import Marginalia from '$lib/components/feed/Marginalia.svelte';
+  import { installMarginaliaInk } from '$lib/utils/marginaliaInk';
   import CollectionMagazine from '$lib/components/feed/CollectionMagazine.svelte';
   import PagedView, { type PagedController } from '$lib/components/feed/PagedView.svelte';
   import { magazineThemeVars } from '$lib/utils/magazineTheme';
@@ -708,6 +709,7 @@
   }
 
   onMount(() => {
+    installMarginaliaInk();
     document.body.style.overflow = 'hidden';
     // The overlay covers the sidebar, so anything that normally centers on the
     // content column (the share composer) has to center on the viewport while
@@ -760,6 +762,14 @@
     pagedController: () => pagedController,
   });
 
+  // Where notes live: in the page margin when reading on a wide screen, or
+  // unfolded under their paragraph (a gloss) where there is no margin — on
+  // mobile, and in paged mode, whose spread fills the width.
+  const marginaliaLayout = $derived<'margin' | 'gloss'>(
+    paged || mobileStore.isMobile ? 'gloss' : 'margin'
+  );
+  const communityEnabled = $derived(readerItem.type === 'saved' && preferences.communityHighlights);
+
   // Highlights hook
   const highlightsHook = useHighlights({
     contentEl: () => readerBodyEl,
@@ -768,11 +778,28 @@
     enabled: () => true,
     itemUrl: () => itemUrl,
     itemTitle: () => title,
+    layout: () => marginaliaLayout,
   });
   const communityHighlightsHook = useCommunityHighlights({
     contentEl: () => readerBodyEl,
     itemUrl: () => itemUrl,
-    enabled: () => readerItem.type === 'saved' && preferences.communityHighlights,
+    enabled: () => communityEnabled,
+    inMargin: () => marginaliaLayout === 'margin',
+  });
+
+  // Switching between margin and gloss (a resize across the mobile breakpoint,
+  // or toggling paged reading) changes what's drawn inline, so re-draw.
+  let lastMarginaliaLayout: 'margin' | 'gloss' | null = null;
+  $effect(() => {
+    const next = marginaliaLayout;
+    if (lastMarginaliaLayout && lastMarginaliaLayout !== next) {
+      untrack(() => {
+        highlightsHook.closeNote();
+        highlightsHook.applyHighlights();
+        communityHighlightsHook.apply();
+      });
+    }
+    lastMarginaliaLayout = next;
   });
 
   // Set up observer when the reader body is mounted — and re-run it whenever the
@@ -1041,7 +1068,7 @@
     bind:moreButtonEl={mobileMoreBtnRef}
   />
 
-  <div class="reader-container" class:paged>
+  <div class="reader-container" class:paged class:with-margin={!paged && !collection}>
     <!-- Mobile: style & actions bottom sheet -->
     {#if mobileStore.isMobile}
       <BottomSheet
@@ -1217,9 +1244,22 @@
             />
           </div>
         {:else}
-          <div class="reader-body" bind:this={readerBodyEl} use:bskyEmbed use:mathRender>
+          <div
+            class="reader-body marginalia-ink"
+            bind:this={readerBodyEl}
+            use:bskyEmbed
+            use:mathRender
+          >
             {@html sanitizedContent}
           </div>
+          <Marginalia
+            highlights={highlightsHook}
+            community={communityHighlightsHook}
+            contentEl={() => readerBodyEl}
+            itemKey={() => itemKey}
+            layout={marginaliaLayout}
+            {communityEnabled}
+          />
         {/if}
       </div>
 
@@ -1269,9 +1309,10 @@
     getAnchorRect={highlightsHook.popoverAnchorRect}
     onHighlight={highlightsHook.createHighlightFromPopover}
     onHighlightToMargin={highlightsHook.createHighlightFromPopoverToMargin}
-    onRemove={highlightsHook.removeHighlightFromPopover}
+    onRemove={highlightsHook.removePopoverHighlightWithUndo}
     onSaveToMargin={highlightsHook.savePopoverHighlightToMargin}
     onSaveNote={highlightsHook.saveNoteFromPopover}
+    onNote={highlightsHook.noteFromPopover}
     onQuoteToShare={composerOpenHere ? quoteSelectionToShare : undefined}
     existingNote={highlightsHook.popoverHighlightNote}
     marginSaved={highlightsHook.popoverHighlightSavedToMargin}
@@ -1297,10 +1338,6 @@
     capped={communityHighlightsHook.capped}
     onClose={communityHighlightsHook.closePopover}
   />
-{/if}
-
-{#if highlightsHook.notePeek}
-  <NotePeek note={highlightsHook.notePeek.note} anchorRect={highlightsHook.notePeek.anchorRect} />
 {/if}
 
 <style>
@@ -1449,6 +1486,19 @@
     max-width: 800px;
     margin: 0 auto;
     padding: 0 1rem 4rem;
+  }
+
+  /* Desktop scroll reading keeps a margin to write in. Wide screens have one
+     on both sides of the centered column; below ~1280px the column slides left
+     (never past a 1.5rem inset) so the right margin keeps the ~15rem a note
+     needs. The two formulas meet at the width where centering already leaves
+     that much room, so resizing through it never jumps. */
+  @media (min-width: 1001px) {
+    .reader-container.with-margin {
+      margin-left: clamp(1.5rem, calc(100vw - 800px - 15rem), calc(50vw - 400px));
+      margin-right: auto;
+      max-width: min(800px, calc(100vw - 15rem - 1.5rem));
+    }
   }
 
   /* A flat, solid bar pinned to the top of the overlay, full-bleed edge to edge.
@@ -1849,28 +1899,8 @@
     overflow-wrap: break-word;
   }
 
-  .reader-body :global(mark.highlight) {
-    background-color: color-mix(in srgb, #f5c518 25%, transparent);
-    border-radius: 1px;
-    cursor: pointer;
-    transition: background-color 0.2s ease;
-  }
-
-  .reader-body :global(mark.highlight:hover) {
-    background-color: color-mix(in srgb, #f5c518 40%, transparent);
-  }
-
-  .reader-body :global(mark.community-highlight) {
-    color: inherit;
-    background: transparent;
-    text-decoration: underline dotted #7a8694 1.5px;
-    text-underline-offset: 0.18em;
-    cursor: pointer;
-  }
-
-  :global([data-theme='dark']) .reader-body :global(mark.community-highlight) {
-    text-decoration-color: #9aa6b2;
-  }
+  /* Highlights and community highlights are drawn in hand-drawn ink — see
+     `.marginalia-ink` in app.css. */
 
   /* Leaflet footnote styling is shared by every surface that renders leaflet
      content, so it lives in app.css rather than here. */

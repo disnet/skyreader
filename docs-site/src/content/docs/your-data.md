@@ -7,15 +7,15 @@ The short version: **your reading is private to you by default.** A few things a
 
 ## At a glance
 
-| What                    | Where it lives                                 | Visibility                                        |
-| ----------------------- | ---------------------------------------------- | ------------------------------------------------- |
-| Read state              | Skyreader's servers + your devices             | Private                                           |
-| Subscriptions           | Skyreader's servers (+ your PDS if you opt in) | Private; public if Atmospheric sync is on         |
-| Saved articles          | Skyreader's servers + your devices             | Private; public if backed by Semble or Margin     |
-| Highlights and notes    | Skyreader's servers + your devices             | Private; a highlight you Save to Margin is public |
-| Shared links (linkblog) | Your PDS                                       | Always public                                     |
-| Reading rooms           | Your PDS (joins); Skyreader's servers (reads)  | Joining is public; reads are an anonymous count   |
-| Guest data              | Your device only                               | Private                                           |
+| What                    | Where it lives                                 | Visibility                                      |
+| ----------------------- | ---------------------------------------------- | ----------------------------------------------- |
+| Read state              | Skyreader's servers + your devices             | Private                                         |
+| Subscriptions           | Skyreader's servers (+ your PDS if you opt in) | Private; public if Atmospheric sync is on       |
+| Saved articles          | Skyreader's servers + your devices             | Private; public if backed by Semble or Margin   |
+| Highlights and notes    | Skyreader's servers + your devices             | Private; a highlight you publish is public      |
+| Shared links (linkblog) | Your PDS                                       | Always public                                   |
+| Reading rooms           | Your PDS (joins); Skyreader's servers (reads)  | Joining is public; reads are an anonymous count |
+| Guest data              | Your device only                               | Private                                         |
 
 ## Subscriptions and Atmospheric sync
 

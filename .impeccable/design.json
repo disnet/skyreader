@@ -228,6 +228,24 @@
           "oklch(84% 0.192 28.8)",
           "oklch(95% 0.179 28.8)"
         ]
+      },
+      "ink-note": {
+        "role": "tertiary",
+        "displayName": "Note Ink",
+        "canonical": "#735a14",
+        "night": "#e0c270",
+        "soft": "#a4892f",
+        "nightSoft": "#a58b3e",
+        "usage": "The reader's own handwriting in the margin, note brackets, the gloss asterisk. Annotations only."
+      },
+      "ink-pencil": {
+        "role": "tertiary",
+        "displayName": "Pencil",
+        "canonical": "#5d6570",
+        "night": "#a7b0bb",
+        "soft": "#9aa1aa",
+        "nightSoft": "#6d7580",
+        "usage": "Another reader's hand: community highlight underlines and their notes. Never your own marks."
       }
     },
     "typographyMeta": {
@@ -418,6 +436,11 @@
       "description": "The shared context menu. Floating shadow, 140px minimum width, destructive items hovering to a 10% Error tint.",
       "html": "<div class=\"ds-menu\"><button class=\"ds-menu-item\">Mark read</button><button class=\"ds-menu-item\">Save for later</button><button class=\"ds-menu-item ds-menu-item-danger\">Unsubscribe</button></div>",
       "css": ".ds-menu { display: flex; flex-direction: column; min-width: 140px; padding: 4px 0; background: var(--color-bg, #fff); border: 1px solid var(--color-border, #e0e0e0); border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); overflow: hidden; } .ds-menu-item { display: block; width: 100%; padding: 10px 14px; border: none; background: transparent; color: var(--color-text, #333); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 0.875rem; text-align: left; cursor: pointer; transition: background-color 0.15s; } .ds-menu-item:hover { background: var(--color-bg-secondary, #f5f5f5); } .ds-menu-item-danger { color: var(--color-error, #f44336); } .ds-menu-item-danger:hover { background: rgba(244,67,54,0.1); }"
+    },
+    {
+      "name": "Margin Note",
+      "description": "A note in the Marginalia Hand (0.9em of the article size, Note Ink), clamped to 7 lines in the margin. Editing is a borderless textarea over a pencil rule, with Done / Save to Margin / Remove in 12px system sans. Leaving it saves; nothing discards.",
+      "source": "frontend/src/lib/components/feed/MarginNote.svelte"
     }
   ],
   "narrative": {
@@ -454,7 +477,7 @@
       },
       {
         "name": "The One Voice Rule",
-        "body": "The chrome uses a single typeface family. Hierarchy comes from size, weight (400 / 500 / 600), and color, never from introducing a second UI font. The only typographic variety the user should see is the one they chose for the article body.",
+        "body": "The chrome uses a single typeface family. Hierarchy comes from size, weight (400 / 500 / 600), and color, never from introducing a second UI font. The only typographic variety the user should see is the one they chose for the article body. The one exception is the Marginalia Hand (Kalam, --font-hand): the reader's own notes and other readers' notes beside them. It is writing on the page, not a UI font, and every control around a note stays in the system sans.",
         "section": "typography"
       },
       {
@@ -481,6 +504,10 @@
         "name": "The One Ring Rule",
         "body": "Focus indication currently ships in five shapes (2px at 0.1, 0.15, and 0.18 alpha; 3px at 0.35 and against --color-sidebar-active; and a solid 2px var(--color-primary)). That inconsistency is drift. Standardize on the primary-tinted 2px ring, and never remove a focus affordance without replacing it.",
         "section": "elevation"
+      },
+      {
+        "name": "The Marginalia Rule",
+        "body": "Notes live beside the text, never on it. Desktop scroll reading keeps a right margin (the column slides left below ~1280px to keep ~15rem), with a hand-drawn bracket per highlight and notes level with their passage; other readers' notes sit left, in pencil. Mobile and paged reading have no margin, so a note unfolds under its paragraph as a gloss. Highlights are drawn as chisel-marker strokes (seeded per id, so they never change shape), not flat boxes."
       }
     ],
     "dos": [

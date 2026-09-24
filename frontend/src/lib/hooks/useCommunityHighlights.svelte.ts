@@ -2,18 +2,15 @@ import { communityHighlightsStore } from '$lib/stores/communityHighlights.svelte
 import { findAllInDOM } from '$lib/utils/textSelector';
 import { wrapTextRange } from '$lib/utils/wrapTextRange';
 import type { CommunityHighlightGroup } from '$lib/stores/communityHighlights.svelte';
-
-// The same comment glyph the private highlights use (Lucide message-circle), so
-// a passage someone wrote a note on reads the same way whoever made it. The
-// tint that tells the two apart lives in `.community-note-marker` (app.css).
-const NOTE_MARKER_SVG =
-  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" /></svg>';
+import { GLOSS_MARKER_SVG } from '$lib/utils/marginaliaInk';
 
 export function useCommunityHighlights(params: {
   contentEl: () => HTMLElement | undefined;
   itemUrl: () => string;
   /** Whether community marks should be drawn in the article. */
   enabled: () => boolean;
+  /** The notes are drawn in the page margin, so no inline note marker. */
+  inMargin?: () => boolean;
 }) {
   let marks: HTMLElement[] = [];
   let noteMarkers: HTMLElement[] = [];
@@ -22,6 +19,8 @@ export function useCommunityHighlights(params: {
     anchorRect: DOMRect;
     anchorEl: HTMLElement;
   } | null>(null);
+  // Bumped whenever the marks are re-drawn, so the margin can re-measure.
+  let version = $state(0);
   let wasLoadEnabled = false;
   $effect(() => {
     const url = params.itemUrl();
@@ -97,9 +96,10 @@ export function useCommunityHighlights(params: {
       // A passage someone wrote a note on gets the inline comment glyph, so it's
       // legible as a note without opening the popover to find out.
       const lastMark = created[created.length - 1];
-      if (lastMark && groups[i].people.some((person) => person.note))
+      if (lastMark && groups[i].people.some((person) => person.note) && !params.inMargin?.())
         insertNoteMarker(lastMark, groups[i], names);
     }
+    version++;
   }
   /** Append the comment glyph immediately after a group's final mark. */
   function insertNoteMarker(
@@ -113,7 +113,8 @@ export function useCommunityHighlights(params: {
     marker.dataset.communityId = group.id;
     marker.title = `${names.join(', ')} on margin.at`;
     marker.setAttribute('aria-label', `Show note by ${names.join(', ')}`);
-    marker.innerHTML = NOTE_MARKER_SVG;
+    // The reader's gloss asterisk, in pencil (`.marginalia-ink .community-note-marker`).
+    marker.innerHTML = GLOSS_MARKER_SVG;
     afterMark.after(marker);
     noteMarkers.push(marker);
   }
@@ -152,6 +153,26 @@ export function useCommunityHighlights(params: {
               `mark.community-highlight[data-community-id="${CSS.escape(state.group.id)}"]`
             ) ?? null);
       return el?.getBoundingClientRect() ?? null;
+    },
+    /** Bumped on every re-draw of the marks. */
+    get version() {
+      return version;
+    },
+    get groups(): CommunityHighlightGroup[] {
+      return communityHighlightsStore.get(params.itemUrl())?.groups ?? [];
+    },
+    /** Open a group's popover from outside the text (its note in the margin). */
+    open(groupId: string, anchorEl: HTMLElement) {
+      const group = communityHighlightsStore
+        .get(params.itemUrl())
+        ?.groups.find((item) => item.id === groupId);
+      if (group) popoverState = { group, anchorRect: anchorEl.getBoundingClientRect(), anchorEl };
+    },
+    /** Light up one group's marks (and only those). */
+    setActive(groupId: string | null) {
+      for (const mark of marks) {
+        mark.classList.toggle('is-active', !!groupId && mark.dataset.communityId === groupId);
+      }
     },
     get capped() {
       return communityHighlightsStore.get(params.itemUrl())?.capped ?? false;

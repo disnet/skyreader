@@ -43,7 +43,11 @@ vi.mock('$lib/stores/auth.svelte', () => ({
   },
 }));
 
-const { saveHighlightToMargin } = await import('./marginHighlights');
+vi.mock('$lib/services/db', () => ({ db: {} }));
+
+const { saveHighlightToMargin, removeHighlightFromMargin, marginDedupKey } =
+  await import('./marginHighlights');
+const { marginPublishQueue } = await import('$lib/stores/marginPublishQueue.svelte');
 
 const HIGHLIGHT = {
   id: 'h1',
@@ -91,5 +95,43 @@ describe('saveHighlightToMargin', () => {
     expect(ok).toBe(true);
     expect(enqueue).toHaveBeenCalledTimes(1);
     expect(api.createMarginNote).not.toHaveBeenCalled();
+  });
+});
+
+describe('an offline publish, and taking it back', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    authState.isGuest = false;
+    syncState.isOnline = false;
+  });
+
+  it('reads as published while queued, and removal cancels it', async () => {
+    const hl = { ...HIGHLIGHT, id: 'queued-1' } as Highlight;
+    await saveHighlightToMargin('item-1', hl, SOURCE);
+    expect(marginPublishQueue.has('queued-1')).toBe(true);
+
+    // Publishing again doesn't queue a second copy.
+    await saveHighlightToMargin('item-1', hl, SOURCE);
+    expect(enqueue).toHaveBeenCalledTimes(1);
+
+    await removeHighlightFromMargin('item-1', hl);
+    expect(cancelPending).toHaveBeenCalledWith('integration', marginDedupKey('item-1', 'queued-1'));
+    expect(marginPublishQueue.has('queued-1')).toBe(false);
+  });
+
+  it("queues a delete under its own key, so a later publish can't merge over it", async () => {
+    const hl = {
+      ...HIGHLIGHT,
+      id: 'synced-1',
+      marginUri: 'at://old',
+      marginRkey: 'old',
+    } as Highlight;
+    await removeHighlightFromMargin('item-1', hl);
+    await saveHighlightToMargin('item-1', { ...HIGHLIGHT, id: 'synced-1' } as Highlight, SOURCE);
+
+    const [deleteCall, createCall] = enqueue.mock.calls as unknown as [string, string, string][];
+    expect(deleteCall[0]).toBe('delete');
+    expect(createCall[0]).toBe('create');
+    expect(deleteCall[2]).not.toBe(createCall[2]);
   });
 });
