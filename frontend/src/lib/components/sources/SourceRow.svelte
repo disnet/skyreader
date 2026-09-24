@@ -20,6 +20,8 @@
     onSubscribe?: (() => void) | null;
     onPark?: (() => void) | null;
     onReactivate?: (() => void) | null;
+    /** An Add/Reactivate is in flight: the labeled button shows a spinner. */
+    pending?: boolean;
   }
 
   let {
@@ -39,7 +41,16 @@
     onSubscribe = null,
     onPark = null,
     onReactivate = null,
+    pending = false,
   }: Props = $props();
+
+  // A favicon that 404s falls back to the source-type glyph instead of a
+  // broken-image box. Reset when the row is reused for another source.
+  let iconFailed = $state(false);
+  $effect(() => {
+    void iconUrl;
+    iconFailed = false;
+  });
 
   const errorPopoverId = $props.id();
 
@@ -117,6 +128,66 @@
     }
   }
 
+  // The one action a suggested or parked row exists for gets words and stays
+  // visible; everything else is a quiet icon that surfaces on hover.
+  let primary = $derived(
+    onSubscribe
+      ? { label: 'Add', icon: 'plus', onclick: onSubscribe }
+      : onReactivate
+        ? { label: 'Reactivate', icon: 'inbox', onclick: onReactivate }
+        : null
+  );
+
+  // Phones get one overflow button instead of a row of icons: four glyphs on
+  // every row crowded the titles and read as noise.
+  let menuOpen = $state(false);
+  let menuPos = $state({ top: 0, right: 0 });
+  let moreBtn: HTMLButtonElement | null = $state(null);
+  let menuEl: HTMLDivElement | null = $state(null);
+
+  function toggleMenu() {
+    if (!menuOpen && moreBtn) {
+      const rect = moreBtn.getBoundingClientRect();
+      const below = rect.bottom + 4;
+      // Open upward when there isn't room under the button.
+      menuPos = {
+        top: below + 200 > window.innerHeight ? Math.max(8, rect.top - 4 - 200) : below,
+        right: window.innerWidth - rect.right,
+      };
+    }
+    menuOpen = !menuOpen;
+  }
+
+  function pick(action: () => void) {
+    menuOpen = false;
+    action();
+  }
+
+  $effect(() => {
+    if (!menuOpen) return;
+    function onPointer(e: PointerEvent) {
+      const t = e.target as Node;
+      if (menuEl?.contains(t) || moreBtn?.contains(t)) return;
+      menuOpen = false;
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== 'Escape') return;
+      menuOpen = false;
+      moreBtn?.focus();
+    }
+    function onScroll() {
+      menuOpen = false;
+    }
+    document.addEventListener('pointerdown', onPointer, true);
+    document.addEventListener('keydown', onKey);
+    window.addEventListener('scroll', onScroll, true);
+    return () => {
+      document.removeEventListener('pointerdown', onPointer, true);
+      document.removeEventListener('keydown', onKey);
+      window.removeEventListener('scroll', onScroll, true);
+    };
+  });
+
   let actions = $derived.by(() => {
     const items: {
       label: string;
@@ -124,8 +195,6 @@
       variant?: 'default' | 'danger';
       onclick: () => void;
     }[] = [];
-    if (onSubscribe) items.push({ label: 'Subscribe', icon: 'plus', onclick: onSubscribe });
-    if (onReactivate) items.push({ label: 'Reactivate', icon: 'inbox', onclick: onReactivate });
     if (onEdit) items.push({ label: 'Edit', icon: 'edit', onclick: onEdit });
     if (onRefresh) items.push({ label: 'Refresh', icon: 'refresh-cw', onclick: onRefresh });
     if (onPark) items.push({ label: 'Park', icon: 'archive', onclick: onPark });
@@ -140,7 +209,7 @@
   });
 </script>
 
-<div class="source-row" class:unsubscribed={!subscribed}>
+<div class="source-row" class:inactive={!subscribed && !onSubscribe}>
   {#if subscribed && onToggleSelect}
     <label class="row-checkbox">
       <input type="checkbox" checked={selected} onchange={onToggleSelect} />
@@ -148,8 +217,15 @@
   {/if}
 
   <div class="source-icon" class:round={iconRound}>
-    {#if iconUrl}
-      <img src={iconUrl} alt="" class="icon-img" class:round={iconRound} />
+    {#if iconUrl && !iconFailed}
+      <img
+        src={iconUrl}
+        alt=""
+        class="icon-img"
+        class:round={iconRound}
+        loading="lazy"
+        onerror={() => (iconFailed = true)}
+      />
     {:else}
       <Icon name={fallbackIcon as any} size={16} />
     {/if}
@@ -197,6 +273,17 @@
     </div>
   {/if}
 
+  {#if primary}
+    <button class="primary-btn" disabled={pending} onclick={primary.onclick}>
+      {#if pending}
+        <span class="spinner"></span>
+      {:else}
+        <Icon name={primary.icon as any} size={14} />
+      {/if}
+      {primary.label}
+    </button>
+  {/if}
+
   {#if actions.length > 0}
     <div class="source-actions">
       {#each actions as item (item.label)}
@@ -211,6 +298,38 @@
         </button>
       {/each}
     </div>
+
+    <button
+      bind:this={moreBtn}
+      class="action-btn more-btn"
+      aria-label="More actions for {title}"
+      aria-haspopup="menu"
+      aria-expanded={menuOpen}
+      onclick={toggleMenu}
+    >
+      <Icon name="more-horizontal" size={18} />
+    </button>
+
+    {#if menuOpen}
+      <div
+        bind:this={menuEl}
+        class="row-menu"
+        role="menu"
+        style="top: {menuPos.top}px; right: {menuPos.right}px;"
+      >
+        {#each actions as item (item.label)}
+          <button
+            class="row-menu-item"
+            class:danger={item.variant === 'danger'}
+            role="menuitem"
+            onclick={() => pick(item.onclick)}
+          >
+            <Icon name={item.icon as any} size={16} />
+            {item.label}
+          </button>
+        {/each}
+      </div>
+    {/if}
   {/if}
 </div>
 
@@ -228,12 +347,13 @@
     background: var(--color-bg-hover, rgba(0, 0, 0, 0.02));
   }
 
-  .source-row.unsubscribed {
-    opacity: 0.55;
+  /* Parked: kept, not fetched. The title steps back; the row stays legible. */
+  .source-row.inactive .source-title {
+    color: var(--color-text-secondary);
   }
 
-  .source-row.unsubscribed:hover {
-    opacity: 0.8;
+  .source-row.inactive .source-icon {
+    opacity: 0.6;
   }
 
   .row-checkbox {
@@ -249,8 +369,8 @@
 
   .source-icon {
     flex-shrink: 0;
-    width: 24px;
-    height: 24px;
+    width: 28px;
+    height: 28px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -261,10 +381,60 @@
     width: 20px;
     height: 20px;
     border-radius: 4px;
+    object-fit: cover;
   }
 
+  /* Avatars read as people: a touch larger than a favicon. */
   .icon-img.round {
+    width: 28px;
+    height: 28px;
     border-radius: 50%;
+  }
+
+  .primary-btn {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.3125rem 0.625rem;
+    font: inherit;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+    color: var(--color-primary);
+    background: transparent;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md, 6px);
+    cursor: pointer;
+    transition: border-color 0.15s;
+  }
+
+  .primary-btn:hover:not(:disabled) {
+    border-color: var(--color-primary);
+  }
+
+  .primary-btn:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+
+  .primary-btn:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+
+  .spinner {
+    width: 12px;
+    height: 12px;
+    border: 2px solid var(--color-border);
+    border-top-color: var(--color-primary);
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+  }
+
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   .source-info {
@@ -333,7 +503,8 @@
     transition: opacity 0.15s;
   }
 
-  .source-row:hover .source-actions {
+  .source-row:hover .source-actions,
+  .source-row:focus-within .source-actions {
     opacity: 1;
   }
 
@@ -364,10 +535,61 @@
     color: var(--color-error);
   }
 
+  .more-btn {
+    display: none;
+  }
+
   @media (max-width: 640px) {
     .source-actions {
-      opacity: 1;
+      display: none;
     }
+
+    .more-btn {
+      display: flex;
+    }
+  }
+
+  /* Floats over the list, so it's the one element here that gets a shadow. */
+  .row-menu {
+    position: fixed;
+    z-index: 1000;
+    min-width: 168px;
+    padding: 0.25rem;
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg, 8px);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  }
+
+  .row-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    width: 100%;
+    padding: 0.625rem 0.75rem;
+    font: inherit;
+    font-size: var(--text-md);
+    color: var(--color-text);
+    text-align: left;
+    background: none;
+    border: none;
+    border-radius: var(--radius-md, 6px);
+    cursor: pointer;
+  }
+
+  .row-menu-item > :global(svg) {
+    color: var(--color-text-secondary);
+  }
+
+  .row-menu-item:hover,
+  .row-menu-item:focus-visible {
+    background: var(--color-bg-secondary);
+    outline: none;
+  }
+
+  .row-menu-item.danger,
+  .row-menu-item.danger > :global(svg) {
+    color: var(--color-error);
   }
 
   @media (prefers-color-scheme: dark) {

@@ -4,14 +4,13 @@
   // backend (see ../+layout.ts).
   import SourcesToolbar from '$lib/components/sources/SourcesToolbar.svelte';
   import SourceSectionHeader from '$lib/components/sources/SourceSectionHeader.svelte';
-  import SourceGroupHeader from '$lib/components/sources/SourceGroupHeader.svelte';
+  import SourceList from '$lib/components/sources/SourceList.svelte';
   import SourceRow from '$lib/components/sources/SourceRow.svelte';
   import BulkActionBar from '$lib/components/sources/BulkActionBar.svelte';
   import Showcase from '../_harness/Showcase.svelte';
   import Case from '../_harness/Case.svelte';
 
   let search = $state('');
-  let sectionCollapsed = $state(false);
   let rowSelected = $state(false);
   let showBulkBar = $state(false);
 
@@ -33,24 +32,22 @@
     <p class="echo">searchQuery = {JSON.stringify(search)}</p>
   </Case>
 
-  <Case name="SourceSectionHeader" note="Collapsible — click to toggle the chevron." pad frame>
-    <SourceSectionHeader
-      icon="rss"
-      title="RSS feeds"
-      subtitle="Standard web feeds"
-      count={12}
-      collapsed={sectionCollapsed}
-      onToggle={() => (sectionCollapsed = !sectionCollapsed)}
-    />
+  <Case
+    name="SourceSectionHeader"
+    note="The one section heading, with optional trailing controls."
+    pad
+    frame
+  >
+    <SourceSectionHeader title="The Web" count={12}>
+      <span>Select all</span>
+    </SourceSectionHeader>
   </Case>
 
-  <Case name="SourceGroupHeader" note="Account group header with avatar + remove-all." pad frame>
-    <SourceGroupHeader
-      avatarUrl={AVATAR}
-      displayName="Ars Technica"
-      handle="arstechnica.com"
-      onRemoveAll={() => {}}
-    />
+  <Case name="SourceList" note="Bordered group of rows with an optional folder label." pad frame>
+    <SourceList label="Tech" count={2}>
+      <SourceRow iconUrl={FAVICON} title="Ars Technica" subtitle="arstechnica.com" />
+      <SourceRow iconUrl={null} title="Daring Fireball" subtitle="daringfireball.net" />
+    </SourceList>
   </Case>
 
   <Case name="SourceRow · default" note="Subscribed, no error; hover to reveal actions." frame>
@@ -92,8 +89,23 @@
   </Case>
 
   <Case
-    name="SourceRow · unsubscribed"
-    note="subscribed=false dims the row; offers Subscribe / Reactivate."
+    name="SourceRow · suggestion"
+    note="onSubscribe renders a labeled, always-visible Add button."
+    frame
+  >
+    <SourceRow
+      iconUrl={AVATAR}
+      iconRound
+      title="Paul's Leaflets"
+      subtitle="@pfrazee.com · pfrazee.leaflet.pub"
+      subscribed={false}
+      onSubscribe={() => {}}
+    />
+  </Case>
+
+  <Case
+    name="SourceRow · parked"
+    note="subscribed=false steps the title back; offers Reactivate."
     frame
   >
     <SourceRow
@@ -102,9 +114,8 @@
       subtitle="parked.example.com"
       subscribed={false}
       fallbackIcon="rss"
-      onToggleSelect={() => {}}
-      onSubscribe={() => {}}
       onReactivate={() => {}}
+      onRemove={() => {}}
     />
   </Case>
 

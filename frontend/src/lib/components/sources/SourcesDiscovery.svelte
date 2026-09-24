@@ -1,32 +1,92 @@
+<script module lang="ts">
+  /** A publication detected on the account of someone the reader already follows here. */
+  export interface AuthorPublication {
+    did: string;
+    handle: string;
+    avatarUrl: string | null;
+    uri: string;
+    name: string;
+    url: string;
+    iconUrl?: string;
+  }
+</script>
+
 <script lang="ts">
+  // "Find more": every way Skyreader can suggest a source, folded into one list
+  // of ordinary source rows with an Add button. It used to be four sub-panels
+  // (friends' linkblogs, standard.site subscriptions, follows' publications,
+  // registry linkblogs), each with its own row style, plus a fifth kind of
+  // suggestion faded into the reader's own Atmosphere list. Now a suggestion
+  // looks like the source it would become, and the subtitle says whose it is.
   import { onMount } from 'svelte';
   import { standardSubsStore } from '$lib/stores/standardSubs.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
+  import { linkblogDiscoveryStore } from '$lib/stores/linkblogDiscovery.svelte';
+  import { followingPublicationsStore } from '$lib/stores/followingPublications.svelte';
+  import { fetchAllDocuments } from '$lib/services/feedFetcher';
   import { getFaviconUrl } from '$lib/utils/favicon';
-  import type { StandardSub } from '$lib/stores/standardSubs.svelte';
   import { api, SubscriptionLimitError } from '$lib/services/api';
   import Icon from '$lib/components/Icon.svelte';
-  import LinkblogDiscovery from '$lib/components/LinkblogDiscovery.svelte';
-  import FollowingPublications from '$lib/components/FollowingPublications.svelte';
   import LimitNotice from '$lib/components/LimitNotice.svelte';
+  import SourceRow from './SourceRow.svelte';
+  import SourceList from './SourceList.svelte';
+  import SourceSectionHeader from './SourceSectionHeader.svelte';
   import { feedLimitLine } from '$lib/utils/limitCopy';
 
+  interface Props {
+    /** More publications from Atmosphere accounts the reader already subscribes to. */
+    authorPublications?: AuthorPublication[];
+  }
+
+  let { authorPublications = [] }: Props = $props();
+
+  const FOLLOWS_WINDOW = 5;
+  const FOLLOWS_STEP = 10;
+  const REGISTRY_LIMIT = 3;
+
   // When Atmospheric sync is on, standard.site follows are imported and
-  // reconciled automatically — so we show a synced summary instead of a list of
-  // per-item "Add" buttons.
+  // reconciled automatically, so they're not offered one by one here.
   let pdsSyncEnabled = $state(false);
 
   onMount(async () => {
     standardSubsStore.load();
+    linkblogDiscoveryStore.loadFriends();
+    linkblogDiscoveryStore.loadDiscover();
+    followingPublicationsStore.load();
     try {
       const settings = await api.getSettings();
       pdsSyncEnabled = settings.pdsSyncEnabled;
     } catch {
-      // Non-fatal: fall back to the manual suggestion list.
+      // Non-fatal: fall back to offering them manually.
     }
   });
 
-  // DIDs we already have an Atmosphere subscription for — hide those suggestions.
+  interface Suggestion {
+    key: string;
+    title: string;
+    subtitle: string;
+    iconUrl: string | null;
+    iconRound: boolean;
+    fallbackIcon: string;
+    add: () => Promise<void>;
+  }
+
+  function formatUrl(url: string): string {
+    return url.replace(/^https?:\/\//, '').replace(/\/$/, '');
+  }
+
+  function at(handle: string | null | undefined, did: string): string {
+    return handle && !handle.startsWith('did:') ? `@${handle}` : did;
+  }
+
+  let subscribedPubUris = $derived(
+    new Set(
+      subscriptionsStore.subscriptions
+        .filter((s) => s.sourceType === 'atproto.documents' && s.feedUrl)
+        .map((s) => s.feedUrl as string)
+    )
+  );
+
   let subscribedDids = $derived(
     new Set(
       subscriptionsStore.subscriptions
@@ -35,325 +95,263 @@
     )
   );
 
-  let suggestedStandardSubs = $derived(
-    standardSubsStore.subs.filter((s) => !subscribedDids.has(s.publisherDid))
+  async function addAuthorPublication(p: AuthorPublication) {
+    const id = await subscriptionsStore.add(p.uri, p.name || p.url, {
+      sourceType: 'atproto.documents',
+      subjectDid: p.did,
+      siteUrl: p.url,
+      feedUrl: p.uri,
+    });
+    if (p.iconUrl) await subscriptionsStore.updateLocal(id, { customIconUrl: p.iconUrl });
+    // Fetch its documents now so the feed isn't empty until the next refresh.
+    void fetchAllDocuments(subscriptionsStore.subscriptions);
+  }
+
+  // People the reader follows, in the order most likely to be wanted: more from
+  // authors already here, then their own standard.site follows, then friends'
+  // linkblogs, then publications found across the follow graph. One URI, one row.
+  let fromFollows = $derived.by((): Suggestion[] => {
+    const out: Suggestion[] = [];
+    const seen = new Set<string>(subscribedPubUris);
+    const push = (s: Suggestion) => {
+      if (seen.has(s.key)) return;
+      seen.add(s.key);
+      out.push(s);
+    };
+
+    for (const p of authorPublications) {
+      push({
+        key: p.uri,
+        title: p.name || formatUrl(p.url),
+        subtitle: `${at(p.handle, p.did)} · ${formatUrl(p.url)}`,
+        iconUrl: p.iconUrl || p.avatarUrl,
+        iconRound: !p.iconUrl,
+        fallbackIcon: 'standard-site',
+        add: () => addAuthorPublication(p),
+      });
+    }
+
+    if (!pdsSyncEnabled) {
+      for (const sub of standardSubsStore.subs) {
+        if (subscribedDids.has(sub.publisherDid)) continue;
+        push({
+          key: sub.publication.uri,
+          title: sub.publication.name,
+          subtitle: `${formatUrl(sub.publication.url)} · you subscribe on standard.site`,
+          iconUrl: sub.publication.url ? getFaviconUrl(sub.publication.url, 64) : null,
+          iconRound: false,
+          fallbackIcon: 'standard-site',
+          add: () => standardSubsStore.subscribe(sub),
+        });
+      }
+    }
+
+    for (const p of linkblogDiscoveryStore.friends) {
+      push({
+        key: p.publicationUri,
+        title: p.displayName?.trim() || at(p.handle, p.did),
+        subtitle: `${at(p.handle, p.did)} · Skyreader linkblog`,
+        iconUrl: p.avatar ?? null,
+        iconRound: true,
+        fallbackIcon: 'link',
+        add: () => linkblogDiscoveryStore.subscribe(p),
+      });
+    }
+
+    for (const p of followingPublicationsStore.publications) {
+      push({
+        key: p.publicationUri,
+        title: p.name?.trim() || formatUrl(p.url),
+        subtitle: `${at(p.handle, p.did)} · ${formatUrl(p.url)}`,
+        iconUrl: p.iconUrl || p.avatar || null,
+        iconRound: !p.iconUrl,
+        fallbackIcon: 'standard-site',
+        add: () => followingPublicationsStore.subscribe(p),
+      });
+    }
+    return out;
+  });
+
+  // Linkblogs from the wider registry: people the reader doesn't follow yet.
+  let fromRegistry = $derived.by((): Suggestion[] => {
+    const shown = new Set(fromFollows.map((s) => s.key));
+    return linkblogDiscoveryStore.people
+      .filter(
+        (p) =>
+          !p.isFollow && !subscribedPubUris.has(p.publicationUri) && !shown.has(p.publicationUri)
+      )
+      .map((p) => ({
+        key: p.publicationUri,
+        title: p.displayName?.trim() || at(p.handle, p.did),
+        subtitle: `${at(p.handle, p.did)} · Skyreader linkblog`,
+        iconUrl: p.avatar ?? null,
+        iconRound: true,
+        fallbackIcon: 'link',
+        add: () => linkblogDiscoveryStore.subscribe(p),
+      }));
+  });
+
+  let followsWindow = $state(FOLLOWS_WINDOW);
+  let visibleFollows = $derived(fromFollows.slice(0, followsWindow));
+  let visibleRegistry = $derived(fromRegistry.slice(0, REGISTRY_LIMIT));
+
+  let searching = $derived(
+    !standardSubsStore.loaded ||
+      !linkblogDiscoveryStore.friendsLoaded ||
+      !linkblogDiscoveryStore.peopleLoaded ||
+      !followingPublicationsStore.loaded
   );
 
-  let failedIcons = $state<Set<string>>(new Set());
-  function iconUrl(sub: StandardSub): string {
-    if (failedIcons.has(sub.uri)) return '';
-    return sub.publication.url ? getFaviconUrl(sub.publication.url, 64) : '';
-  }
-  function onIconError(uri: string) {
-    if (!failedIcons.has(uri)) failedIcons = new Set(failedIcons).add(uri);
-  }
-
-  // Strip protocol/trailing slash so a publication URL reads cleanly inline.
-  function formatPublicationUrl(url: string): string {
-    return url.replace(/^https?:\/\//, '').replace(/\/$/, '');
-  }
-
-  // Total registry linkbloggers eligible to suggest (before the inline cap) — drives "see all".
-  let moreLinkblogs = $state(0);
-  // Total accounts you follow with standard.site publications (before the cap) — drives "see all".
-  let moreFollowingPubs = $state(0);
-
-  let adding = $state<string | null>(null);
-  // Adding here used to have no catch: a failure was an unhandled rejection and
-  // the button silently reset. The active-feed cap gets its own state so it can
-  // render as a notice rather than a red line.
+  // One notice for the whole list: the active-feed cap is the same wall for
+  // every row, and any other failure is rare enough to say once.
+  let pending = $state<string | null>(null);
   let addError = $state<string | null>(null);
   let limitHit = $state(false);
 
-  async function add(sub: StandardSub) {
-    if (adding) return;
-    adding = sub.uri;
+  async function add(s: Suggestion) {
+    if (pending) return;
+    pending = s.key;
     addError = null;
     limitHit = false;
     try {
-      await standardSubsStore.subscribe(sub);
+      await s.add();
     } catch (e) {
       if (e instanceof SubscriptionLimitError) limitHit = true;
-      else addError = e instanceof Error ? e.message : 'Could not add that subscription.';
+      else addError = e instanceof Error ? e.message : 'Could not add that source.';
     } finally {
-      adding = null;
+      pending = null;
     }
   }
 </script>
 
+{#snippet row(s: Suggestion)}
+  <SourceRow
+    iconUrl={s.iconUrl}
+    iconRound={s.iconRound}
+    title={s.title}
+    subtitle={s.subtitle}
+    subscribed={false}
+    fallbackIcon={s.fallbackIcon}
+    pending={pending === s.key}
+    onSubscribe={() => add(s)}
+  />
+{/snippet}
+
 <section class="discovery">
-  <h2 class="discovery-title">Find more</h2>
+  <SourceSectionHeader title="Find more">
+    <a class="browse" href="/discover">
+      Browse all
+      <Icon name="chevron-right" size={14} />
+    </a>
+  </SourceSectionHeader>
 
-  <div class="block">
-    <h3 class="block-title">People you know with Skyreader linkblogs</h3>
-    <LinkblogDiscovery variant="friends" />
-  </div>
-
-  {#if pdsSyncEnabled}
-    <div class="block">
-      <h3 class="block-title">
-        <Icon name="standard-site" size={13} /> Your standard.site subscriptions
-      </h3>
-      <p class="status synced">
-        <Icon name="check" size={14} />
-        {#if standardSubsStore.loaded}
-          Syncing automatically. {standardSubsStore.subs.length} publication{standardSubsStore.subs
-            .length === 1
-            ? ''
-            : 's'} from the Atmosphere.
-        {:else}
-          Syncing automatically from the Atmosphere.
-        {/if}
-      </p>
+  {#if limitHit}
+    <div class="notice">
+      <LimitNotice kind="feeds">
+        <p>{feedLimitLine(subscriptionsStore.maxSubscriptions)}</p>
+      </LimitNotice>
     </div>
-  {:else if standardSubsStore.loading || suggestedStandardSubs.length > 0}
-    <div class="block">
-      <h3 class="block-title">
-        <Icon name="standard-site" size={13} /> Your standard.site subscriptions
-      </h3>
-      {#if limitHit}
-        <div class="add-notice">
-          <LimitNotice kind="feeds">
-            <p>{feedLimitLine(subscriptionsStore.maxSubscriptions)}</p>
-          </LimitNotice>
-        </div>
-      {:else if addError}
-        <p class="status add-error">{addError}</p>
-      {/if}
-      {#if standardSubsStore.loading && !standardSubsStore.loaded}
-        <p class="status">Looking for subscriptions…</p>
-      {:else}
-        <ul class="sub-list">
-          {#each suggestedStandardSubs as sub (sub.uri)}
-            <li class="sub-row">
-              {#if iconUrl(sub)}
-                <img
-                  class="sub-icon"
-                  src={iconUrl(sub)}
-                  alt=""
-                  loading="lazy"
-                  onerror={() => onIconError(sub.uri)}
-                />
-              {:else}
-                <span class="sub-icon placeholder"><Icon name="standard-site" size={15} /></span>
-              {/if}
-              <div class="sub-info">
-                <span class="sub-name">{sub.publication.name}</span>
-                <span class="sub-url">{formatPublicationUrl(sub.publication.url)}</span>
-              </div>
-              <button class="add-btn" disabled={adding === sub.uri} onclick={() => add(sub)}>
-                {#if adding === sub.uri}
-                  <span class="spinner"></span>
-                {:else}
-                  <Icon name="plus" size={14} />
-                {/if}
-                Add
-              </button>
-            </li>
-          {/each}
-        </ul>
-      {/if}
-    </div>
+  {:else if addError}
+    <p class="status error">{addError}</p>
   {/if}
 
-  <FollowingPublications
-    variant="suggestions"
-    limit={3}
-    heading="Publications from people you follow"
-    bind:totalAvailable={moreFollowingPubs}
-  />
-
-  {#if moreFollowingPubs > 3}
-    <a class="see-all" href="/discover">
-      See all publications
-      <Icon name="chevron-right" size={15} />
-    </a>
+  {#if visibleFollows.length > 0}
+    <SourceList label="From people you follow" count={fromFollows.length}>
+      {#each visibleFollows as s (s.key)}
+        {@render row(s)}
+      {/each}
+      {#if fromFollows.length > followsWindow}
+        <button class="more" onclick={() => (followsWindow += FOLLOWS_STEP)}>
+          Show {Math.min(FOLLOWS_STEP, fromFollows.length - followsWindow)} more
+        </button>
+      {/if}
+    </SourceList>
   {/if}
 
-  <LinkblogDiscovery
-    variant="suggestions"
-    limit={3}
-    heading="More Skyreader linkblogs"
-    bind:totalAvailable={moreLinkblogs}
-  />
+  {#if visibleRegistry.length > 0}
+    <SourceList label="Skyreader linkblogs">
+      {#each visibleRegistry as s (s.key)}
+        {@render row(s)}
+      {/each}
+    </SourceList>
+  {/if}
 
-  {#if moreLinkblogs > 3}
-    <a class="see-all" href="/discover">
-      See all linkblogs
-      <Icon name="chevron-right" size={15} />
-    </a>
+  {#if visibleFollows.length === 0 && visibleRegistry.length === 0}
+    <p class="status">
+      {searching ? 'Looking for sources…' : 'Nothing new to suggest right now.'}
+    </p>
+  {/if}
+
+  {#if pdsSyncEnabled && standardSubsStore.loaded && standardSubsStore.subs.length > 0}
+    <p class="status synced">
+      <Icon name="check" size={14} />
+      Your standard.site subscriptions sync automatically.
+    </p>
   {/if}
 </section>
 
 <style>
   .discovery {
-    margin-bottom: 1.5rem;
-    padding: 1rem;
-    background: var(--color-bg-secondary, rgba(0, 0, 0, 0.025));
-    border: 1px solid var(--color-border);
-    border-radius: 12px;
+    margin-top: 2.5rem;
   }
 
-  .discovery-title {
-    font-size: var(--text-lg);
-    font-weight: var(--weight-semibold);
-    letter-spacing: var(--tracking-tight);
-    margin: 0 0 0.75rem;
-  }
-
-  .block {
-    margin-bottom: 1rem;
-  }
-
-  .add-notice {
-    margin-bottom: 0.75rem;
-  }
-
-  .add-error {
-    color: var(--color-error);
-  }
-
-  .block-title {
-    display: flex;
-    align-items: center;
-    gap: 0.35rem;
-    font-size: var(--text-sm);
-    font-weight: var(--weight-semibold);
-    color: var(--color-text-secondary);
-    margin: 0 0 0.375rem;
-  }
-
-  .status {
-    font-size: var(--text-md);
-    color: var(--color-text-secondary);
-    margin: 0.25rem 0;
-  }
-
-  .status.synced {
-    display: flex;
-    align-items: center;
-    gap: 0.35rem;
-  }
-
-  .sub-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-  }
-
-  .sub-row {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 0.5rem 0;
-    border-bottom: 1px solid var(--color-border);
-  }
-
-  .sub-row:last-child {
-    border-bottom: none;
-  }
-
-  .sub-icon {
-    flex-shrink: 0;
-    width: 28px;
-    height: 28px;
-    border-radius: 6px;
-    object-fit: cover;
-    background: var(--color-bg);
-  }
-
-  .sub-icon.placeholder {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--color-text-secondary);
-  }
-
-  .sub-info {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    line-height: var(--leading-tight);
-  }
-
-  .sub-name {
-    font-size: var(--text-md);
-    font-weight: var(--weight-medium);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .sub-url {
-    font-size: var(--text-xs);
-    color: var(--color-text-secondary);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .add-btn {
-    flex-shrink: 0;
+  .browse {
     display: inline-flex;
     align-items: center;
-    gap: 0.25rem;
-    padding: 0.375rem 0.75rem;
-    font: inherit;
-    font-size: var(--text-sm);
-    font-weight: var(--weight-medium);
-    color: #fff;
-    background: var(--color-primary);
-    border: none;
-    border-radius: 6px;
-    cursor: pointer;
-    transition: opacity 0.15s;
-  }
-
-  .add-btn:hover:not(:disabled) {
-    opacity: 0.9;
-  }
-
-  .add-btn:disabled {
-    opacity: 0.6;
-    cursor: default;
-  }
-
-  .see-all {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.25rem;
-    margin-top: 0.75rem;
+    gap: 0.125rem;
     font-size: var(--text-sm);
     font-weight: var(--weight-medium);
     color: var(--color-primary);
     text-decoration: none;
   }
 
-  .see-all:hover {
+  .browse:hover {
     text-decoration: underline;
   }
 
-  .spinner {
-    width: 13px;
-    height: 13px;
-    border: 2px solid rgba(255, 255, 255, 0.5);
-    border-top-color: #fff;
-    border-radius: 50%;
-    animation: spin 0.6s linear infinite;
+  .notice {
+    margin-bottom: 0.75rem;
   }
 
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
+  .status {
+    margin: 0.25rem 0.25rem 0;
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+    line-height: var(--leading-normal);
   }
 
-  @media (prefers-color-scheme: dark) {
-    .discovery {
-      background: var(--color-bg-secondary, rgba(255, 255, 255, 0.04));
-    }
+  .status.error {
+    margin-bottom: 0.5rem;
+    color: var(--color-error);
+  }
+
+  .status.synced {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    margin-top: 0.75rem;
+  }
+
+  .more {
+    display: block;
+    width: 100%;
+    padding: 0.625rem 0.75rem;
+    font: inherit;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+    color: var(--color-primary);
+    text-align: left;
+    background: var(--color-bg);
+    border: none;
+    cursor: pointer;
+  }
+
+  .more:hover {
+    background: var(--color-bg-hover, rgba(0, 0, 0, 0.02));
+  }
+
+  .more:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: -2px;
   }
 </style>
