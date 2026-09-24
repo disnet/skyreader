@@ -802,7 +802,7 @@
             {#each visibleLinks as entry (entry.key)}
               {@const label = displayNameFor(entry)}
               {@const via = entry.followed
-                ? `${entry.headVerb ?? entry.laneLabel} · you follow`
+                ? [entry.laneLabel, entry.headVerb, 'you follow'].filter(Boolean).join(' · ')
                 : entry.laneLabel}
               {@const hint = entry.relativeTime
                 ? `${label} · ${via} · ${entry.relativeTime}`

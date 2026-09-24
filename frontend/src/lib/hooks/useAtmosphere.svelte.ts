@@ -260,15 +260,27 @@ export function useAtmosphere(opts: UseAtmosphereOptions): AtmosphereApi {
   });
 
   // Follows shares no lane carries (reposts, mostly) become Bluesky rows of their
-  // own, deduped against the Bluesky lane once it has resolved so a follow's post
-  // isn't listed twice. They're people the lanes' counts don't include, so the
-  // totals add them (see `extraCount`).
+  // own. They're people the lanes' counts don't include, so the totals add them
+  // (see `extraCount`). A follow already in a resolved lane isn't repeated: in
+  // the whole stream that's any lane (their Margin note is them), and narrowed
+  // to Bluesky it's the Bluesky lane alone, since the other rows aren't shown.
+  function resolvedDids(ids: LaneId[]): Set<string> {
+    const dids = new Set<string>();
+    for (const id of ids) {
+      const state = laneItems.get(id);
+      if (state && !state.loading) for (const e of state.entries) dids.add(e.did);
+    }
+    return dids;
+  }
+  const followTitles = $derived([opts.itemTitle?.(), opts.sourceTitle?.()]);
   const followOnly = $derived.by(() => {
     if (followSharers.length === 0) return [];
-    const bluesky = laneItems.get('bluesky');
-    const blueskyDids =
-      bluesky && !bluesky.loading ? new Set(bluesky.entries.map((e) => e.did)) : null;
-    return followExtras(followSharers, blueskyDids, [opts.itemTitle?.(), opts.sourceTitle?.()]);
+    const inStream = laneRow.filter((lane) => lane.count > 0).map((lane) => lane.id);
+    return followExtras(followSharers, resolvedDids(inStream), followTitles);
+  });
+  const followOnlyBluesky = $derived.by(() => {
+    if (followSharers.length === 0) return [];
+    return followExtras(followSharers, resolvedDids(['bluesky']), followTitles);
   });
 
   let activeFilter = $state<DiscussionFilterId>('all');
@@ -390,7 +402,8 @@ export function useAtmosphere(opts: UseAtmosphereOptions): AtmosphereApi {
 
     // Follows shares the lanes don't carry are Bluesky rows, held back from the
     // other networks' filters.
-    if (laneFilter === 'all' || laneFilter === 'bluesky') entries.push(...followOnly);
+    if (laneFilter === 'all') entries.push(...followOnly);
+    else if (laneFilter === 'bluesky') entries.push(...followOnlyBluesky);
     const inView = activeFilter === 'following' ? entries.filter((e) => e.followed) : entries;
     inView.sort(byFollowedThenEngagement);
 
