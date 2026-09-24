@@ -15,6 +15,10 @@ import type { FollowLink, FollowLinksWindow } from '$lib/types';
 const FOLLOW_UP_MS = 4000;
 /** A first refresh walks up to 20 timeline pages (~10s); give it room. */
 const MAX_FOLLOW_UPS = 6;
+/** How long a loaded answer is reused before a visit asks again. An installed
+ *  PWA stays open for days; the server's own 10-minute gate decides whether
+ *  asking also refreshes from the timeline, so this only bounds staleness. */
+const STALE_MS = 5 * 60 * 1000;
 
 function createFollowLinksStore() {
   let links = $state<FollowLink[]>([]);
@@ -25,6 +29,10 @@ function createFollowLinksStore() {
   let refreshing = $state(false);
   let error = $state<string | null>(null);
   let loadedKey: string | null = null;
+  let loadedAt = 0;
+  let loadedDid: string | null = null;
+  /** Bumped by every load; a response or follow-up from an older one is dropped. */
+  let seq = 0;
   let followUp: ReturnType<typeof setTimeout> | null = null;
   let followUps = 0;
 
@@ -33,10 +41,10 @@ function createFollowLinksStore() {
     followUp = null;
   }
 
-  async function fetchOnce(did: string, w: FollowLinksWindow): Promise<void> {
+  async function fetchOnce(token: number, did: string, w: FollowLinksWindow): Promise<void> {
     const res = await api.getFollowLinks(w);
-    // The account or the window changed while this was in flight.
-    if (auth.user?.did !== did || currentWindow !== w) return;
+    // A newer load (another window, another account, a re-visit) superseded this.
+    if (token !== seq || auth.user?.did !== did) return;
 
     scopeRequired = res.scopeRequired;
     links = res.links;
@@ -49,7 +57,7 @@ function createFollowLinksStore() {
       followUps++;
       followUp = setTimeout(() => {
         followUp = null;
-        void fetchOnce(did, w).catch(() => {});
+        void fetchOnce(token, did, w).catch(() => {});
       }, FOLLOW_UP_MS);
     } else if (!complete) {
       // Gave up waiting on a first refresh; stop showing it as in progress.
@@ -57,26 +65,45 @@ function createFollowLinksStore() {
     }
   }
 
-  /** Load for the signed-in account. Cached per account + window for the
-   *  session unless `force`; the server's own gate decides whether a load also
-   *  refreshes from the timeline. */
+  /** Load for the signed-in account. An answer is reused per account + window
+   *  for a few minutes unless `force`; the server's own gate decides whether a
+   *  load also refreshes from the timeline. */
   async function load(w: FollowLinksWindow = currentWindow, force = false): Promise<void> {
     const user = auth.user;
     if (!user || auth.isGuest) return;
     const key = `${user.did}|${w}`;
-    if (!force && loadedKey === key) return;
-    if (!loadedKey?.startsWith(`${user.did}|`)) links = []; // never show another account's
+    if (!force && loadedKey === key && Date.now() - loadedAt < STALE_MS) return;
+
+    if (loadedDid !== user.did) {
+      // Never show another account's links, permission ask or error.
+      links = [];
+      scopeRequired = false;
+      complete = false;
+      refreshing = false;
+      error = null;
+      loadedDid = user.did;
+    } else if (w !== currentWindow) {
+      // Another window's links under this window's chip would be wrong.
+      links = [];
+    }
+
+    const token = ++seq;
+    clearFollowUp();
     currentWindow = w;
     loadedKey = key;
+    loadedAt = Date.now();
     followUps = 0;
     loading = true;
     try {
-      await fetchOnce(user.did, w);
+      await fetchOnce(token, user.did, w);
     } catch (err) {
+      if (token !== seq) return;
       loadedKey = null;
       error = err instanceof Error ? err.message : 'Could not load';
     } finally {
-      loading = false;
+      // Only the latest load owns the flag: an older one finishing mustn't clear
+      // it while the current window is still in flight.
+      if (token === seq) loading = false;
     }
   }
 
