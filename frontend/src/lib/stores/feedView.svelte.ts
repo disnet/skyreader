@@ -789,6 +789,17 @@ function createFeedViewStore() {
     return fv.sourceMode === 'include' && fv.sourceKeys.some(isFollowsSource);
   });
 
+  // Derived: a channel that shows follows links can rank by how many of your
+  // follows shared each item. Everywhere else 'popular' reads as newest.
+  let canSortByPopularity = $derived(!!viewFilter && showFollowLinks);
+
+  /** How many of your follows shared this page; 0 when none did. */
+  function followShareCount(item: CombinedFeedItem): number {
+    if (item.type === 'link') return item.item.sharerCount;
+    const url = item.type === 'article' ? item.item.url : item.item.canonicalUrl || item.item.path;
+    return followLinksStore.forUrl(url)?.sharerCount ?? 0;
+  }
+
   // Derived: the follows links for this view, newest-shared first. A link is
   // dated by its FIRST share, so a late repost doesn't lift it back to the top.
   // One the river already shows as an article or document (same page, any URL
@@ -878,9 +889,19 @@ function createFeedViewStore() {
       })),
     ];
 
+    if (sortOrder === 'popular' && canSortByPopularity) {
+      // Most shared first; the newest breaks a tie. Counted once per row.
+      const counts = new Map(combined.map((c) => [c, followShareCount(c)]));
+      combined.sort(
+        (a, b) =>
+          counts.get(b)! - counts.get(a)! || new Date(b.date).getTime() - new Date(a.date).getTime()
+      );
+      return combined;
+    }
+
     combined.sort((a, b) => {
       const diff = new Date(b.date).getTime() - new Date(a.date).getTime();
-      return sortOrder === 'newest' ? diff : -diff;
+      return sortOrder === 'oldest' ? -diff : diff;
     });
     return combined;
   });
@@ -1674,6 +1695,9 @@ function createFeedViewStore() {
     },
     get isEverythingView() {
       return isEverythingView;
+    },
+    get canSortByPopularity() {
+      return canSortByPopularity;
     },
     get myLinkblogFilter() {
       return myLinkblogFilter;

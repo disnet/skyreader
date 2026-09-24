@@ -18,6 +18,7 @@
     DATE_PRESET_OPTIONS,
     READING_LENGTH_OPTIONS,
     SAVED_SORT_OPTIONS,
+    FOLLOWS_SORT_OPTIONS,
   } from '$lib/constants/channelOptions';
 
   interface Props {
@@ -76,6 +77,15 @@
     activeDomainFilter.length === 0 ? 'Domain' : `Domain (${activeDomainFilter.length})`
   );
   let availableDomains = $derived(feedViewStore.availableSavedDomains);
+
+  let followsSortOrder = $derived(
+    feedViewStore.currentSortOrder === 'popular' || feedViewStore.currentSortOrder === 'oldest'
+      ? feedViewStore.currentSortOrder
+      : 'newest'
+  );
+  let followsSortLabel = $derived(
+    followsSortOrder === 'popular' ? 'Most shared' : followsSortOrder === 'oldest' ? 'Old' : 'New'
+  );
 
   let savedSortLabel = $derived(
     SAVED_SORT_OPTIONS.find((o) => o.value === feedViewStore.currentSortOrder)?.label ?? 'Sort'
@@ -335,6 +345,33 @@
             <button
               class="popover-option"
               class:active={feedViewStore.currentSortOrder === opt.value}
+              onclick={() => {
+                feedViewStore.setSortOrder(opt.value);
+                sortPopoverOpen = false;
+              }}
+            >
+              {opt.label}
+            </button>
+          {/each}
+        </div>
+      </FilterPopover>
+    {:else if feedViewStore.canSortByPopularity}
+      <FilterPopover
+        iconName={followsSortOrder === 'popular'
+          ? 'users'
+          : followsSortOrder === 'oldest'
+            ? 'arrow-up'
+            : 'arrow-down'}
+        label={followsSortLabel}
+        title="Sort order"
+        open={sortPopoverOpen}
+        onOpenChange={(v) => (sortPopoverOpen = v)}
+      >
+        <div class="popover-list">
+          {#each FOLLOWS_SORT_OPTIONS as opt}
+            <button
+              class="popover-option"
+              class:active={followsSortOrder === opt.value}
               onclick={() => {
                 feedViewStore.setSortOrder(opt.value);
                 sortPopoverOpen = false;
