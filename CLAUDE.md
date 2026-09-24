@@ -264,5 +264,6 @@ Custom lexicons live per-package under `<package>/lexicons/app/skyreader/` (e.g.
 - `feed/saved.json` - Saved article record
 - `feed/highlight.json` - Article highlight record (frontend)
 - `social/follow.json` - In-app follow relationship (frontend)
+- `authFull.json` - OAuth permission set covering Skyreader's own collections (backend; see `docs/OAUTH_SCOPES.md`)
 
 Records are synced bidirectionally between the app and user's PDS.

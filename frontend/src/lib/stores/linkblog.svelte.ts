@@ -204,7 +204,7 @@ function createLinkblogStore() {
       }
       myLinkblogStore.removeByArticleUrl(article.url);
       // Already handled: optimistic state rolled back, and a scope-upgrade
-      // failure surfaces the global "log in again" banner via the api client.
+      // failure surfaces the global "Allow access" banner via the api client.
       // Don't rethrow — this runs from an onclick handler; the result says so.
       return 'failed';
     }

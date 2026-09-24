@@ -774,10 +774,10 @@ describe('the feedback board', () => {
     expect(document.body.querySelector('.composer .file-input')).toBeNull();
   });
 
-  it('offers a re-login instead of a composer when the session lacks the scope', async () => {
+  it('offers the permission grant instead of a composer when the session lacks the scope', async () => {
     scopeStatus = { semble: false, margin: false, userinput: false };
     await render();
-    expect(texts('button.link')).toEqual(['Log in again']);
+    expect(texts('button.link')).toEqual(['Allow access']);
     expect(document.body.querySelector('.composer')).toBeNull();
     expect(document.body.textContent).toContain('post on userinput.app');
   });

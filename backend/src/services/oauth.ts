@@ -1,7 +1,7 @@
 import type { Env, OAuthState, Session } from '../types';
 import { createClientAssertion } from './client-auth';
 import { parseCookies, SESSION_COOKIE_NAME } from '../utils/cookies';
-import { ALL_POSSIBLE_SCOPES } from '../config/scopes';
+import { clientMetadataScopes } from '../config/scopes';
 import { timedFirst } from '../utils/d1-timing';
 
 // Constants for refresh retry logic
@@ -403,8 +403,8 @@ export async function storeOAuthState(env: Env, state: string, data: OAuthState)
   const expiresAt = Date.now() + 600 * 1000; // 10 minutes
   await env.DB.prepare(
     `
-    INSERT INTO oauth_state (state, code_verifier, did, handle, pds_url, auth_server, return_url, frontend_url, cli_port, expires_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO oauth_state (state, code_verifier, did, handle, pds_url, auth_server, return_url, frontend_url, cli_port, scope, replace_session_id, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `
   )
     .bind(
@@ -417,6 +417,8 @@ export async function storeOAuthState(env: Env, state: string, data: OAuthState)
       data.returnUrl || null,
       data.frontendUrl,
       data.cliPort || null,
+      data.scope || null,
+      data.replaceSessionId || null,
       expiresAt
     )
     .run();
@@ -435,6 +437,8 @@ export async function getOAuthState(env: Env, state: string): Promise<OAuthState
       return_url: string | null;
       frontend_url: string | null;
       cli_port: number | null;
+      scope: string | null;
+      replace_session_id: string | null;
     }>();
 
   if (!row) return null;
@@ -448,6 +452,8 @@ export async function getOAuthState(env: Env, state: string): Promise<OAuthState
     returnUrl: row.return_url || undefined,
     frontendUrl: row.frontend_url || '',
     cliPort: row.cli_port || undefined,
+    scope: row.scope || undefined,
+    replaceSessionId: row.replace_session_id || undefined,
   };
 }
 
@@ -470,7 +476,10 @@ export async function storeSession(env: Env, sessionId: string, session: Session
     ON CONFLICT(session_id) DO UPDATE SET
       access_token = excluded.access_token,
       refresh_token = excluded.refresh_token,
-      expires_at = excluded.expires_at
+      expires_at = excluded.expires_at,
+      -- A refresh re-resolves permission sets, so the granted scope can change
+      -- without a re-auth; keep the stored one when the response omits it.
+      granted_scopes = COALESCE(excluded.granted_scopes, sessions.granted_scopes)
   `
   )
     .bind(
@@ -648,7 +657,7 @@ function resolveClientIdentity(env: Env, url: URL): { clientId: string; isPublic
   if (!hasSigningKey && isLoopback) {
     const redirectUri = `${baseUrl}/api/auth/callback`;
     return {
-      clientId: buildLocalhostClientId(redirectUri, ALL_POSSIBLE_SCOPES),
+      clientId: buildLocalhostClientId(redirectUri, clientMetadataScopes(env)),
       isPublicClient: true,
     };
   }
@@ -1087,14 +1096,18 @@ async function refreshSession(
       access_token: string;
       refresh_token: string;
       expires_in: number;
+      scope?: string;
     };
 
-    // Update session with new tokens
+    // Update session with new tokens. The PDS recomputes the scope on refresh
+    // (re-resolving any permission set), so a set that gained a collection shows
+    // up here without the reader re-authorizing.
     const updatedSession: Session = {
       ...session,
       accessToken: tokenData.access_token,
       refreshToken: tokenData.refresh_token,
       expiresAt: Date.now() + tokenData.expires_in * 1000,
+      grantedScopes: tokenData.scope || session.grantedScopes,
     };
 
     // Store updated session and reset failure counters

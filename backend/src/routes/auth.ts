@@ -18,6 +18,7 @@ import {
   getSession,
   deleteSession,
   getSessionFromRequest,
+  getSessionIdFromRequest,
 } from '../services/oauth';
 import { getClientJWKS, createClientAssertion } from '../services/client-auth';
 import { buildLocalhostClientId } from '../services/oauth';
@@ -29,7 +30,12 @@ import {
   PCKT_SCOPES,
   OFFPRINT_SCOPES,
   ALL_POSSIBLE_SCOPES,
+  buildRequestedScopes,
+  clientMetadataScopes,
+  isScopeFeature,
+  type ScopeFeature,
 } from '../config/scopes';
+import { grantsScopes, grantedFeatures } from '../services/scope-check';
 import { getUserTier, getUserTierInfo } from '../services/user-tier';
 import { writeUsageRecord } from '../services/at-intent-usage';
 import { getLimitsForTier } from '../config/tier-limits';
@@ -83,32 +89,29 @@ export {
   ALL_POSSIBLE_SCOPES,
 };
 
-// Check if granted scopes satisfy the required scopes
+// Check if granted scopes satisfy the required scopes: always Skyreader's own
+// base collections, plus any feature-specific ones. Matching is semantic (see
+// services/scope-check.ts), so a permission-set grant satisfies the granular form.
 export function hasRequiredScopes(
   grantedScopes: string | undefined,
   additionalScopes?: string[]
 ): boolean {
-  if (!grantedScopes) {
-    // Session without scope tracking - require re-auth
-    return false;
-  }
-
-  const granted = new Set(grantedScopes.split(' '));
-
-  // Check if all required granular scopes are present
-  const required = GRANULAR_SCOPES.split(' ');
-  if (additionalScopes) {
-    required.push(...additionalScopes);
-  }
-  return required.every((scope) => granted.has(scope));
+  // A session without scope tracking fails every check and is sent to re-grant.
+  return grantsScopes(grantedScopes, [...GRANULAR_SCOPES.split(' '), ...(additionalScopes ?? [])]);
 }
 
-// Create a 403 response for insufficient scopes
-export function insufficientScopesResponse(): Response {
+// Create a 403 response for insufficient scopes. `feature` names the optional
+// feature whose permission is missing, so the frontend can ask for exactly that
+// (POST /api/auth/upgrade) instead of a full re-login. Omitted means the
+// session's base permissions are outdated.
+export function insufficientScopesResponse(feature?: ScopeFeature): Response {
   return new Response(
     JSON.stringify({
       error: 'scope_upgrade_required',
-      message: 'Your session was created with outdated permissions. Please log in again.',
+      message: feature
+        ? "This needs a permission your sign-in didn't include."
+        : 'Your session was created with outdated permissions. Please log in again.',
+      ...(feature ? { feature } : {}),
     }),
     {
       status: 403,
@@ -212,7 +215,8 @@ export async function handleClientMetadata(request: Request, env: Env): Promise<
     redirect_uris: [`${baseUrl}/api/auth/callback`],
     grant_types: ['authorization_code', 'refresh_token'],
     response_types: ['code'],
-    scope: ALL_POSSIBLE_SCOPES,
+    // The ceiling: sign-in asks for a subset (base + the reader's features).
+    scope: clientMetadataScopes(env),
     token_endpoint_auth_method: 'private_key_jwt',
     token_endpoint_auth_signing_alg: 'ES256',
     jwks: await getClientJWKS(env),
@@ -225,6 +229,195 @@ export async function handleClientMetadata(request: Request, env: Env): Promise<
       'Cache-Control': 'public, max-age=300',
     },
   });
+}
+
+// Parse a `features` list (comma or space separated). Returns null if any entry
+// isn't a known feature, so a typo is a 400 rather than a silently narrower grant.
+function parseFeatures(raw: string | null | undefined | string[]): ScopeFeature[] | null {
+  const items = Array.isArray(raw) ? raw : (raw ?? '').split(/[\s,]+/);
+  const features: ScopeFeature[] = [];
+  for (const item of items) {
+    if (typeof item !== 'string') return null;
+    if (!item) continue;
+    if (!isScopeFeature(item)) return null;
+    features.push(item);
+  }
+  return features;
+}
+
+// The optional features this account has granted before: the preference recorded
+// at its last sign-in, plus whatever its live sessions hold. The second half
+// carries readers whose sessions predate progressive scopes (every one of them
+// was granted everything) through their first sign-in without losing anything.
+async function rememberedFeatures(env: Env, did: string): Promise<Set<ScopeFeature>> {
+  const features = new Set<ScopeFeature>();
+  const user = await env.DB.prepare('SELECT oauth_features FROM users WHERE did = ?')
+    .bind(did)
+    .first<{ oauth_features: string | null }>();
+  for (const feature of parseFeatures(user?.oauth_features) ?? []) features.add(feature);
+
+  const sessions = await env.DB.prepare(
+    'SELECT DISTINCT granted_scopes FROM sessions WHERE did = ? AND granted_scopes IS NOT NULL'
+  )
+    .bind(did)
+    .all<{ granted_scopes: string }>();
+  for (const row of sessions.results ?? []) {
+    for (const feature of grantedFeatures(row.granted_scopes)) features.add(feature);
+  }
+  return features;
+}
+
+interface AuthorizationParams {
+  // Empty in server-first sign-up: the account doesn't exist yet.
+  did: string;
+  handle: string;
+  loginHint?: string;
+  pdsUrl: string;
+  authMeta: Awaited<ReturnType<typeof fetchAuthServerMetadata>>;
+  requestedScopes: string;
+  returnUrl: string;
+  frontendUrl: string;
+  cliPort?: number;
+  replaceSessionId?: string;
+}
+
+// Start an authorization: PKCE + state, then a PAR (confidential client) or a
+// direct authorization URL (localhost public client). Shared by sign-in and by
+// permission upgrades, which differ only in the scope they ask for and whether
+// the callback retires an existing session.
+async function buildAuthorizationUrl(
+  env: Env,
+  url: URL,
+  params: AuthorizationParams
+): Promise<string> {
+  const {
+    did,
+    handle,
+    loginHint,
+    pdsUrl,
+    authMeta,
+    requestedScopes,
+    returnUrl,
+    frontendUrl,
+    cliPort,
+    replaceSessionId,
+  } = params;
+
+  // Generate PKCE
+  const { codeVerifier, codeChallenge } = await generatePKCE();
+
+  // Generate state
+  const state = generateRandomString(32);
+
+  // Store state in KV (handle will be updated from profile in callback)
+  await storeOAuthState(env, state, {
+    codeVerifier,
+    did,
+    handle,
+    pdsUrl,
+    authServer: authMeta.issuer,
+    returnUrl,
+    frontendUrl,
+    cliPort,
+    scope: requestedScopes,
+    replaceSessionId,
+  });
+
+  const baseUrl = getBaseUrl(url);
+  const redirectUri = `${baseUrl}/api/auth/callback`;
+  const clientMode = getClientMode(env, url);
+  const isPublicClient = clientMode === 'public';
+
+  // For public client (localhost): use AT Protocol's localhost exception
+  // For confidential client (production): use metadata URL
+  const clientId = isPublicClient
+    ? buildLocalhostClientId(redirectUri, clientMetadataScopes(env))
+    : `${baseUrl}/.well-known/client-metadata`;
+
+  // Build authorization URL
+  let authUrl: string;
+
+  if (authMeta.pushed_authorization_request_endpoint && !isPublicClient) {
+    // Use PAR (Pushed Authorization Request) - only for confidential clients
+    // Create client assertion for confidential client authentication
+    const clientAssertion = await createClientAssertion(env, authMeta.issuer, clientId);
+
+    const parResponse = await fetch(authMeta.pushed_authorization_request_endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: clientId,
+        redirect_uri: redirectUri,
+        response_type: 'code',
+        scope: requestedScopes,
+        state,
+        code_challenge: codeChallenge,
+        code_challenge_method: 'S256',
+        ...(loginHint ? { login_hint: loginHint } : {}),
+        client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+        client_assertion: clientAssertion,
+      }),
+    });
+
+    // Retry once for transient invalid_client_metadata errors
+    // (auth server intermittently fails to fetch our client metadata)
+    if (!parResponse.ok) {
+      const errorText = await parResponse.text();
+
+      if (errorText.includes('invalid_client_metadata')) {
+        console.warn('PAR got invalid_client_metadata, retrying once...');
+        await new Promise((r) => setTimeout(r, 1000));
+
+        const retryAssertion = await createClientAssertion(env, authMeta.issuer, clientId);
+        const retryParResponse = await fetch(authMeta.pushed_authorization_request_endpoint!, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            client_id: clientId,
+            redirect_uri: redirectUri,
+            response_type: 'code',
+            scope: requestedScopes,
+            state,
+            code_challenge: codeChallenge,
+            code_challenge_method: 'S256',
+            ...(loginHint ? { login_hint: loginHint } : {}),
+            client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+            client_assertion: retryAssertion,
+          }),
+        });
+
+        if (!retryParResponse.ok) {
+          const retryError = await retryParResponse.text();
+          throw new Error(`PAR request failed: ${retryError}`);
+        }
+
+        const retryParData = (await retryParResponse.json()) as {
+          request_uri: string;
+        };
+        authUrl = `${authMeta.authorization_endpoint}?client_id=${encodeURIComponent(clientId)}&request_uri=${encodeURIComponent(retryParData.request_uri)}`;
+      } else {
+        throw new Error(`PAR request failed: ${errorText}`);
+      }
+    } else {
+      const parData = (await parResponse.json()) as { request_uri: string };
+      authUrl = `${authMeta.authorization_endpoint}?client_id=${encodeURIComponent(clientId)}&request_uri=${encodeURIComponent(parData.request_uri)}`;
+    }
+  } else {
+    // Direct authorization request (used for localhost public clients and fallback)
+    const params = new URLSearchParams({
+      client_id: clientId,
+      redirect_uri: redirectUri,
+      response_type: 'code',
+      scope: requestedScopes,
+      state,
+      code_challenge: codeChallenge,
+      code_challenge_method: 'S256',
+      ...(loginHint ? { login_hint: loginHint } : {}),
+    });
+    authUrl = `${authMeta.authorization_endpoint}?${params}`;
+  }
+
+  return authUrl;
 }
 
 export async function handleAuthLogin(request: Request, env: Env): Promise<Response> {
@@ -246,6 +439,14 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
   const cliPortParam = url.searchParams.get('cli_port');
   const cliPort = cliPortParam ? parseInt(cliPortParam, 10) : undefined;
 
+  const requestedFeatures = parseFeatures(url.searchParams.get('features'));
+  if (!requestedFeatures) {
+    return new Response(JSON.stringify({ error: 'Unknown feature' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
   if (!handle && !pdsParam) {
     return new Response(JSON.stringify({ error: 'Missing handle or pds parameter' }), {
       status: 400,
@@ -262,9 +463,6 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
     // and the PDS host comes straight from the chosen provider.
     let did = '';
     let pdsUrl: string;
-
-    // Always request all scopes (base + integrations)
-    const requestedScopes = ALL_POSSIBLE_SCOPES;
 
     let authMeta;
     if (isSignup) {
@@ -302,120 +500,29 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
       }
     }
 
+    // Progressive scopes: the base set, plus the optional features the caller
+    // asks for and the ones this account already granted (so signing in again on
+    // a new device doesn't quietly drop an integration the reader turned on).
+    const features = new Set(requestedFeatures);
+    if (did) {
+      for (const feature of await rememberedFeatures(env, did)) features.add(feature);
+    }
+    const requestedScopes = buildRequestedScopes(env, features);
+
     // login_hint pre-fills the account on the auth screen; omitted when signing up.
     const loginHint = isSignup ? undefined : normalizedHandle;
 
-    // Generate PKCE
-    const { codeVerifier, codeChallenge } = await generatePKCE();
-
-    // Generate state
-    const state = generateRandomString(32);
-
-    // Store state in KV (handle will be updated from profile in callback)
-    await storeOAuthState(env, state, {
-      codeVerifier,
+    const authUrl = await buildAuthorizationUrl(env, url, {
       did,
       handle: normalizedHandle,
+      loginHint,
       pdsUrl,
-      authServer: authMeta.issuer,
+      authMeta,
+      requestedScopes,
       returnUrl,
       frontendUrl,
       cliPort,
     });
-
-    const baseUrl = getBaseUrl(url);
-    const redirectUri = `${baseUrl}/api/auth/callback`;
-    const clientMode = getClientMode(env, url);
-    const isPublicClient = clientMode === 'public';
-
-    // For public client (localhost): use AT Protocol's localhost exception
-    // For confidential client (production): use metadata URL
-    const clientId = isPublicClient
-      ? buildLocalhostClientId(redirectUri, requestedScopes)
-      : `${baseUrl}/.well-known/client-metadata`;
-
-    // Build authorization URL
-    let authUrl: string;
-
-    if (authMeta.pushed_authorization_request_endpoint && !isPublicClient) {
-      // Use PAR (Pushed Authorization Request) - only for confidential clients
-      // Create client assertion for confidential client authentication
-      const clientAssertion = await createClientAssertion(env, authMeta.issuer, clientId);
-
-      const parResponse = await fetch(authMeta.pushed_authorization_request_endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          client_id: clientId,
-          redirect_uri: redirectUri,
-          response_type: 'code',
-          scope: requestedScopes,
-          state,
-          code_challenge: codeChallenge,
-          code_challenge_method: 'S256',
-          ...(loginHint ? { login_hint: loginHint } : {}),
-          client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
-          client_assertion: clientAssertion,
-        }),
-      });
-
-      // Retry once for transient invalid_client_metadata errors
-      // (auth server intermittently fails to fetch our client metadata)
-      if (!parResponse.ok) {
-        const errorText = await parResponse.text();
-
-        if (errorText.includes('invalid_client_metadata')) {
-          console.warn('PAR got invalid_client_metadata, retrying once...');
-          await new Promise((r) => setTimeout(r, 1000));
-
-          const retryAssertion = await createClientAssertion(env, authMeta.issuer, clientId);
-          const retryParResponse = await fetch(authMeta.pushed_authorization_request_endpoint!, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: new URLSearchParams({
-              client_id: clientId,
-              redirect_uri: redirectUri,
-              response_type: 'code',
-              scope: requestedScopes,
-              state,
-              code_challenge: codeChallenge,
-              code_challenge_method: 'S256',
-              ...(loginHint ? { login_hint: loginHint } : {}),
-              client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
-              client_assertion: retryAssertion,
-            }),
-          });
-
-          if (!retryParResponse.ok) {
-            const retryError = await retryParResponse.text();
-            throw new Error(`PAR request failed: ${retryError}`);
-          }
-
-          const retryParData = (await retryParResponse.json()) as {
-            request_uri: string;
-          };
-          authUrl = `${authMeta.authorization_endpoint}?client_id=${encodeURIComponent(clientId)}&request_uri=${encodeURIComponent(retryParData.request_uri)}`;
-        } else {
-          throw new Error(`PAR request failed: ${errorText}`);
-        }
-      } else {
-        const parData = (await parResponse.json()) as { request_uri: string };
-        authUrl = `${authMeta.authorization_endpoint}?client_id=${encodeURIComponent(clientId)}&request_uri=${encodeURIComponent(parData.request_uri)}`;
-      }
-    } else {
-      // Direct authorization request (used for localhost public clients and fallback)
-      const params = new URLSearchParams({
-        client_id: clientId,
-        redirect_uri: redirectUri,
-        response_type: 'code',
-        scope: requestedScopes,
-        state,
-        code_challenge: codeChallenge,
-        code_challenge_method: 'S256',
-        ...(loginHint ? { login_hint: loginHint } : {}),
-      });
-      authUrl = `${authMeta.authorization_endpoint}?${params}`;
-    }
 
     return new Response(JSON.stringify({ authUrl }), {
       headers: { 'Content-Type': 'application/json' },
@@ -431,6 +538,80 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
         headers: { 'Content-Type': 'application/json' },
       }
     );
+  }
+}
+
+/**
+ * POST /api/auth/upgrade — body { features: ScopeFeature[], returnUrl? }.
+ *
+ * Progressive scopes: asks the reader's PDS for the permissions an optional
+ * feature needs, on top of what the current session already holds, without
+ * signing them out. Returns { authUrl }; the callback stores the upgraded session
+ * and retires this one. `features: []` just re-requests the base permissions
+ * (for a session whose base scopes are outdated).
+ */
+export async function handleAuthUpgrade(request: Request, env: Env): Promise<Response> {
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+  if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
+
+  const sessionId = getSessionIdFromRequest(request);
+  const session = await getSessionFromRequest(request, env);
+  if (!session || !sessionId) return json({ error: 'Unauthorized' }, 401);
+
+  let body: { features?: unknown; returnUrl?: unknown };
+  try {
+    body = (await request.json()) as typeof body;
+  } catch {
+    return json({ error: 'Invalid JSON' }, 400);
+  }
+  const requested = parseFeatures(
+    Array.isArray(body?.features) ? (body.features as string[]) : undefined
+  );
+  if (!requested) return json({ error: 'Unknown feature' }, 400);
+
+  const rawReturnUrl = typeof body.returnUrl === 'string' ? body.returnUrl : '/';
+  const returnUrl = isValidReturnUrl(rawReturnUrl, getAllowedOrigins(env)) ? rawReturnUrl : '/';
+
+  try {
+    // Keep everything this session and account already have; add the new asks.
+    const features = new Set<ScopeFeature>([
+      ...requested,
+      ...grantedFeatures(session.grantedScopes),
+      ...(await rememberedFeatures(env, session.did)),
+    ]);
+
+    let { pdsUrl, fromCache } = await getPdsFromDid(session.did, env);
+    let authMeta;
+    try {
+      authMeta = await fetchAuthServerMetadata(pdsUrl);
+    } catch (err) {
+      if (!fromCache) throw err;
+      await invalidatePdsCache(session.did, env);
+      ({ pdsUrl, fromCache } = await getPdsFromDid(session.did, env));
+      authMeta = await fetchAuthServerMetadata(pdsUrl);
+    }
+
+    const authUrl = await buildAuthorizationUrl(env, new URL(request.url), {
+      did: session.did,
+      handle: session.handle,
+      // The DID pins the consent screen to this account even if the handle moved.
+      loginHint: session.did,
+      pdsUrl,
+      authMeta,
+      requestedScopes: buildRequestedScopes(env, features),
+      returnUrl,
+      frontendUrl: getValidatedFrontendUrl(request, env),
+      replaceSessionId: sessionId,
+    });
+    return json({ authUrl });
+  } catch (error) {
+    console.error('Scope upgrade error:', error);
+    return json({ error: error instanceof Error ? error.message : 'Upgrade failed' }, 500);
   }
 }
 
@@ -493,10 +674,9 @@ export async function handleAuthCallback(
 
     // For public client (localhost): use AT Protocol's localhost exception
     // For confidential client (production): use metadata URL
-    // Use the same scopes that were requested during login so the client_id matches
-    const callbackScopes = ALL_POSSIBLE_SCOPES;
+    // The localhost client_id embeds the metadata scope, so it must match login's.
     const clientId = isPublicClient
-      ? buildLocalhostClientId(redirectUri, callbackScopes)
+      ? buildLocalhostClientId(redirectUri, clientMetadataScopes(env))
       : `${baseUrl}/.well-known/client-metadata`;
 
     // Build token request body - only include client assertion for confidential clients
@@ -705,8 +885,9 @@ export async function handleAuthCallback(
     }
 
     // Create session
-    // Use scope from token response if provided, otherwise use what we requested
-    const grantedScopes = tokenData.scope || callbackScopes;
+    // Use scope from token response if provided, otherwise use what we requested.
+    // The response carries permission sets already expanded to granular scopes.
+    const grantedScopes = tokenData.scope || oauthState.scope || clientMetadataScopes(env);
 
     const sessionId = generateRandomString(32);
     const session: Session = {
@@ -743,22 +924,41 @@ export async function handleAuthCallback(
     // Store/update user in D1 BEFORE storing session (sessions table has FK to users)
     await env.DB.prepare(
       `
-      INSERT INTO users (did, handle, display_name, avatar_url, pds_url, updated_at, registered_at)
-      VALUES (?, ?, ?, ?, ?, unixepoch(), unixepoch())
+      INSERT INTO users (did, handle, display_name, avatar_url, pds_url, updated_at, registered_at, oauth_features)
+      VALUES (?, ?, ?, ?, ?, unixepoch(), unixepoch(), ?)
       ON CONFLICT(did) DO UPDATE SET
         handle = excluded.handle,
         display_name = excluded.display_name,
         avatar_url = excluded.avatar_url,
         pds_url = excluded.pds_url,
         updated_at = unixepoch(),
-        registered_at = COALESCE(users.registered_at, unixepoch())
+        registered_at = COALESCE(users.registered_at, unixepoch()),
+        oauth_features = excluded.oauth_features
     `
     )
-      .bind(did, handle, displayName || null, avatarUrl || null, pdsUrl)
+      .bind(
+        did,
+        handle,
+        displayName || null,
+        avatarUrl || null,
+        pdsUrl,
+        // What the reader actually granted (they can untick scopes on the consent
+        // screen), so the next sign-in asks for the same set.
+        grantedFeatures(grantedScopes).join(' ')
+      )
       .run();
 
     // Now store session (after user exists in DB due to FK constraint)
     await storeSession(env, sessionId, session);
+
+    // A permission upgrade replaces the session it started from. Only ever retire
+    // a session of the same account, so a mismatched callback can't sign anyone out.
+    if (oauthState.replaceSessionId && oauthState.replaceSessionId !== sessionId) {
+      const previous = await getSession(env, oauthState.replaceSessionId);
+      if (previous?.did === did) {
+        await deleteSession(env, oauthState.replaceSessionId);
+      }
+    }
 
     // Write the AT Intents discovery footprint into the user's repo (best-effort,
     // skipped if the usage scope wasn't granted). Never block the login redirect on it.
@@ -899,10 +1099,9 @@ export async function handleAuthLogout(request: Request, env: Env): Promise<Resp
 
         // For public client (localhost): use AT Protocol's localhost exception
         // For confidential client (production): use metadata URL
-        // Use the session's granted scopes so the client_id matches what was used during auth
-        const logoutScopes = session.grantedScopes || GRANULAR_SCOPES;
+        // The localhost client_id embeds the metadata scope, same as at sign-in.
         const clientId = isPublicClient
-          ? buildLocalhostClientId(redirectUri, logoutScopes)
+          ? buildLocalhostClientId(redirectUri, clientMetadataScopes(env))
           : `${baseUrl}/.well-known/client-metadata`;
 
         let dpopProof = await createDPoPProof(

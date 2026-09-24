@@ -1,10 +1,12 @@
 // Lexicon schemas - imported statically for Cloudflare Workers
 import feedSubscription from '../../lexicons/app/skyreader/feed/subscription.json';
 import readingReadAlong from '../../lexicons/app/skyreader/reading/readAlong.json';
+import authFull from '../../lexicons/app/skyreader/authFull.json';
 
 const lexicons: Record<string, object> = {
   'app/skyreader/feed/subscription.json': feedSubscription,
   'app/skyreader/reading/readAlong.json': readingReadAlong,
+  'app/skyreader/authFull.json': authFull,
 };
 
 export function handleLexicon(request: Request): Response {

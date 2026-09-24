@@ -15,7 +15,17 @@
           <span class="icon">&#10007;</span>
         {/if}
         <span>{toast.message}</span>
-        {#if toast.action}
+        {#if toast.action?.run}
+          {@const run = toast.action.run}
+          <button
+            class="toast-action toast-action-btn"
+            type="button"
+            onclick={() => {
+              toastStore.remove(toast.id);
+              run();
+            }}>{toast.action.label}</button
+          >
+        {:else if toast.action?.href}
           {#if toast.action.href.startsWith('/') && !toast.action.href.startsWith('//')}
             <!-- An in-app route. safeHref deliberately rejects relative URLs (it
                  guards links authored elsewhere), and a toast action's href is
@@ -73,6 +83,15 @@
     font-weight: var(--weight-medium);
     color: var(--color-primary);
     text-decoration: none;
+  }
+
+  .toast-action-btn {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    font-weight: var(--weight-medium);
+    cursor: pointer;
   }
 
   .toast-action:hover {

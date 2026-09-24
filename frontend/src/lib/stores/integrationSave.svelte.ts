@@ -15,6 +15,7 @@
 // delete the wrong links), so there's no queueing on that path; the create path
 // keeps its offline queue untouched.
 import { api, ScopeUpgradeError } from '$lib/services/api';
+import { permissionToast } from '$lib/services/permissions';
 import { syncQueue, type IntegrationPayload } from '$lib/services/sync-queue';
 import { syncStore } from '$lib/stores/sync.svelte';
 import { toastStore } from '$lib/stores/toast.svelte';
@@ -132,7 +133,8 @@ function createIntegrationSaveStore() {
       toastStore.update(id, 'success', `Saved to ${label}${savedSuffix}`);
     } catch (err) {
       if (err instanceof ScopeUpgradeError) {
-        toastStore.update(id, 'error', 'Please log in again to grant integration permissions');
+        const prompt = permissionToast(err, integration);
+        toastStore.update(id, 'error', prompt.message, prompt.action);
         return;
       }
       console.error(`Failed to save to ${label}, queueing:`, err);
@@ -176,7 +178,8 @@ function createIntegrationSaveStore() {
       toastStore.update(id, 'success', `${label} save updated`);
     } catch (err) {
       if (err instanceof ScopeUpgradeError) {
-        toastStore.update(id, 'error', 'Please log in again to grant integration permissions');
+        const prompt = permissionToast(err, integration);
+        toastStore.update(id, 'error', prompt.message, prompt.action);
         return;
       }
       console.error(`Failed to update ${label} save:`, err);

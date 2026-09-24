@@ -4,6 +4,7 @@ import {
   handleAuthCallback,
   handleAuthLogout,
   handleAuthMe,
+  handleAuthUpgrade,
   handleClientMetadata,
 } from './routes/auth';
 import {
@@ -404,6 +405,9 @@ async function route(
       break;
     case url.pathname === '/api/auth/me':
       response = await handleAuthMe(request, env);
+      break;
+    case url.pathname === '/api/auth/upgrade':
+      response = await handleAuthUpgrade(request, env);
       break;
 
     // Internal crawler endpoints authenticate with FEED_PROXY_SECRET in their

@@ -10,6 +10,8 @@
   // room enforces. Margin has no such rule: a Margin room is owner-only.
   import Icon from '$lib/components/Icon.svelte';
   import { api, ScopeUpgradeError } from '$lib/services/api';
+  import { grantPermissions } from '$lib/services/permissions';
+  import { SCOPE_FEATURE_LABELS, type ScopeFeature } from '$lib/types';
   import { collectionsStore } from '$lib/stores/collections.svelte';
   import { roomsStore } from '$lib/stores/rooms.svelte';
   import { toastStore } from '$lib/stores/toast.svelte';
@@ -33,14 +35,17 @@
   let access = $state<Access>('closed');
   let busy = $state(false);
   let error = $state<string | null>(null);
+  // Set when the create failed for want of a permission: the error line then
+  // offers the grant in place.
+  let needsPermission = $state<ScopeFeature | null>(null);
   let nameEl = $state<HTMLInputElement | null>(null);
 
   const trimmedName = $derived(name.trim());
-  const providerLabel = $derived(provider === 'semble' ? 'Semble' : 'Margin');
 
   function show() {
     open = true;
     error = null;
+    needsPermission = null;
     // The field is what the click was for; the disclosure itself is chrome.
     queueMicrotask(() => nameEl?.focus());
   }
@@ -49,6 +54,7 @@
     if (busy) return;
     open = false;
     error = null;
+    needsPermission = null;
   }
 
   async function create(event: SubmitEvent) {
@@ -61,6 +67,7 @@
     }
     busy = true;
     error = null;
+    needsPermission = null;
     try {
       const created = await api.createRoom({
         name: trimmedName,
@@ -83,10 +90,12 @@
       open = false;
       onCreated(created.uri);
     } catch (err) {
-      error =
-        err instanceof ScopeUpgradeError
-          ? `Log in again to grant ${providerLabel} permissions, then create the room.`
-          : 'Could not create the room.';
+      if (err instanceof ScopeUpgradeError) {
+        needsPermission = err.feature ?? provider;
+        error = `${SCOPE_FEATURE_LABELS[needsPermission]} needs your permission to create the room.`;
+      } else {
+        error = 'Could not create the room.';
+      }
     } finally {
       busy = false;
     }
@@ -126,7 +135,10 @@
         autocomplete="off"
         disabled={busy}
         required
-        oninput={() => (error = null)}
+        oninput={() => {
+          error = null;
+          needsPermission = null;
+        }}
       />
     </label>
 
@@ -198,7 +210,17 @@
     </p>
 
     {#if error}
-      <p class="room-create-error" role="alert">{error}</p>
+      <p class="room-create-error" role="alert">
+        {error}
+        {#if needsPermission}
+          {@const feature = needsPermission}
+          <button
+            class="room-create-grant"
+            type="button"
+            onclick={() => grantPermissions([feature])}>Allow access</button
+          >
+        {/if}
+      </p>
     {/if}
 
     <div class="room-create-actions">
@@ -415,6 +437,20 @@
     margin: 0;
     font-size: var(--text-sm);
     color: var(--color-error);
+  }
+
+  .room-create-grant {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    font-weight: var(--weight-medium);
+    color: var(--color-primary);
+    cursor: pointer;
+  }
+
+  .room-create-grant:hover {
+    text-decoration: underline;
   }
 
   .room-create-actions {

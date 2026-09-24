@@ -23,6 +23,7 @@
   import RoomOpenBox from './RoomOpenBox.svelte';
   import { useReaderStack } from '$lib/hooks/useReaderStack.svelte';
   import { api, ApiError, ScopeUpgradeError } from '$lib/services/api';
+  import { permissionToast } from '$lib/services/permissions';
   import { profileService } from '$lib/services/profiles';
   import {
     fetchRoomMembers,
@@ -313,7 +314,7 @@
         void writeRoomPresence({ [uri]: { total: memberCount, readers: members } });
       }
     } catch (error) {
-      toastStore.update(toastStore.add(joinFailureMessage('join', error)), 'error');
+      reportJoinFailure('join', error);
     } finally {
       joinBusy = false;
     }
@@ -323,13 +324,19 @@
   // useful words are the PDS's, not ours: the same record has been accepted by
   // one PDS implementation and refused by another. Pass its message through on
   // a server-side failure; a stale session gets the one actionable sentence.
-  function joinFailureMessage(verb: 'join' | 'leave', error: unknown): string {
+  function reportJoinFailure(verb: 'join' | 'leave', error: unknown) {
     const base = `Could not ${verb} the room`;
-    if (error instanceof ScopeUpgradeError) return `${base}. Log in again to update permissions.`;
-    if (error instanceof ApiError && error.status >= 500 && error.message) {
-      return `${base}. Your PDS said: ${error.message}`;
+    const id = toastStore.add(base);
+    if (error instanceof ScopeUpgradeError) {
+      const prompt = permissionToast(error);
+      toastStore.update(id, 'error', `${base}. ${prompt.message}.`, prompt.action);
+      return;
     }
-    return base;
+    if (error instanceof ApiError && error.status >= 500 && error.message) {
+      toastStore.update(id, 'error', `${base}. Your PDS said: ${error.message}`);
+      return;
+    }
+    toastStore.update(id, 'error');
   }
 
   async function leave() {
@@ -344,7 +351,7 @@
         void writeRoomPresence({ [uri]: { total: memberCount, readers: members } });
       }
     } catch (error) {
-      toastStore.update(toastStore.add(joinFailureMessage('leave', error)), 'error');
+      reportJoinFailure('leave', error);
     } finally {
       joinBusy = false;
     }

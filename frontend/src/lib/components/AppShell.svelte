@@ -5,6 +5,7 @@
   // once the user is authenticated. A logged-out visitor never downloads any of it.
   import { browser } from '$app/environment';
   import { afterNavigate, beforeNavigate, goto } from '$app/navigation';
+  import { SCOPE_FEATURE_LABELS } from '$lib/types';
   import { page } from '$app/stores';
   import { onMount } from 'svelte';
   import type { Snippet } from 'svelte';
@@ -426,16 +427,18 @@
 
 <div class="app-shell">
   {#if auth.scopeUpgradeRequired}
+    {@const feature = auth.scopeUpgradeFeature}
     <div class="scope-upgrade-banner">
       <span
-        >Your session was created with outdated permissions. Please
+        >{feature
+          ? `${SCOPE_FEATURE_LABELS[feature]} needs your permission to continue.`
+          : 'Your sign-in needs refreshing.'}
         <button
           class="reauth-link"
-          onclick={async () => {
-            await auth.logout();
-            goto('/auth/login');
-          }}>log in again</button
-        > to restore full functionality.</span
+          disabled={auth.grantingPermissions}
+          onclick={() => auth.grantPermissions(feature ? [feature] : [])}
+          >{feature ? 'Allow access' : 'Refresh access'}</button
+        ></span
       >
       <button class="dismiss-btn" onclick={() => auth.dismissScopeUpgrade()}>Dismiss</button>
     </div>

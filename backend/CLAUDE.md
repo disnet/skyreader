@@ -109,7 +109,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed documentation.
 
 | File                          | Purpose                                                   |
 | ----------------------------- | --------------------------------------------------------- |
-| `src/routes/auth.ts`          | OAuth flow (login, callback, logout, client metadata)     |
+| `src/routes/auth.ts`          | OAuth flow (login, upgrade, callback, logout, metadata)   |
 | `src/routes/timeline.ts`      | `GET /api/v2/timeline` — the whole refresh, one query     |
 | `src/routes/ingest.ts`        | Crawler endpoints: item ingest, crawl set, feed health    |
 | `src/routes/documents.ts`     | Document backfill + proxy-vs-D1 shadow compare (internal) |
@@ -151,6 +151,15 @@ deliberately **not** part of `SEMBLE_SCOPES` — folding it in would 403 every e
 saves until they re-authed. `GET /api/integrations/status` reports the two separately
 (`scopeStatus.semble` vs `scopeStatus.sembleConnections`). Same pattern as `PCKT_SCOPES` /
 `ATMOSPHERE_SCOPES`; see `src/config/scopes.ts`.
+
+**Scopes are progressive and checked semantically** — see [`docs/OAUTH_SCOPES.md`](../docs/OAUTH_SCOPES.md).
+Sign-in asks for the base only; an optional feature (`ScopeFeature` in `src/config/scopes.ts`)
+is requested the first time it's used, via `POST /api/auth/upgrade`, and a gate that fails
+answers `insufficientScopesResponse('<feature>')` so the frontend can ask for exactly that.
+Skyreader's own collections are requested through the `app.skyreader.authFull` permission set
+once `OAUTH_PERMISSION_SETS` is on. Never compare `granted_scopes` strings directly: a PDS
+returns a permission set expanded (`repo?collection=…`), so every check goes through
+`grantsScopes()` in `src/services/scope-check.ts`.
 
 ### Services
 

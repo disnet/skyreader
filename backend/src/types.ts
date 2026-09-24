@@ -42,6 +42,10 @@ export interface OAuthState {
   returnUrl?: string;
   frontendUrl: string;
   cliPort?: number;
+  // The scope string this authorization requested.
+  scope?: string;
+  // Set by a permission upgrade: the session the new one replaces.
+  replaceSessionId?: string;
 }
 
 export interface FeedItem {

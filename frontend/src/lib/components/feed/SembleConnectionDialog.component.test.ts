@@ -295,12 +295,13 @@ describe('SembleConnectionDialog', () => {
     expect(q<HTMLButtonElement>('.btn-primary')!.disabled).toBe(true);
   });
 
-  it('says up front that a session without the scope will have to log in again', async () => {
+  it('offers the Semble permission up front when the session lacks the scope', async () => {
     scopeStatus = { semble: true, margin: false, sembleConnections: false };
     render();
     await vi.waitFor(() => {
       flushSync();
-      expect(document.body.textContent).toContain("You'll be asked to log in again");
+      expect(document.body.textContent).toContain('Semble needs your permission');
+      expect(document.querySelector('.notice-action')?.textContent).toBe('Allow access');
     });
   });
 });

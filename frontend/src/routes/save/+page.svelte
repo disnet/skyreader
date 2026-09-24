@@ -3,6 +3,7 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { auth } from '$lib/stores/auth.svelte';
+  import { permissionMessage } from '$lib/services/permissions';
   import { savesStore } from '$lib/stores/saves.svelte';
   import { ScopeUpgradeError, UrlSaveLimitError, ExtractionBlockedError } from '$lib/services/api';
   import Logo from '$lib/assets/logo.svg';
@@ -13,7 +14,7 @@
     blockedSaveAction,
     type BlockedSaveAction,
   } from '$lib/utils/saveAnywhere';
-  import type { SavedItem } from '$lib/types';
+  import type { SavedItem, ScopeFeature } from '$lib/types';
 
   // Lightweight share-target / bookmarklet endpoint. An Apple Shortcut (or a
   // bookmarklet, or a future PWA share_target) opens
@@ -24,6 +25,8 @@
   type Status = 'working' | 'success' | 'invalid' | 'limit' | 'scope' | 'blocked' | 'error';
 
   let status = $state<Status>('working');
+  // The feature a 'scope' failure asked permission for; undefined = core.
+  let scopeFeature = $state<ScopeFeature | undefined>(undefined);
   let saved = $state<SavedItem | null>(null);
   let errorMessage = $state<string | null>(null);
   let limitInfo = $state<{ limit: number; resetsAt: string } | null>(null);
@@ -88,6 +91,7 @@
       status = 'success';
     } catch (err) {
       if (err instanceof ScopeUpgradeError) {
+        scopeFeature = err.feature;
         status = 'scope';
       } else if (err instanceof UrlSaveLimitError) {
         limitInfo = { limit: err.limit, resetsAt: err.resetsAt };
@@ -116,13 +120,6 @@
     blockedAction = null;
     run();
   }
-
-  const loginReturnUrl = $derived.by(() => {
-    const url = readUrl();
-    return url
-      ? `/auth/login?returnUrl=${encodeURIComponent(`/save?url=${encodeURIComponent(url)}`)}`
-      : '/auth/login';
-  });
 
   onMount(run);
 </script>
@@ -175,9 +172,14 @@
       {/if}
       <a class="btn-secondary" href="/">Go to Skyreader</a>
     {:else if status === 'scope'}
-      <p class="title">Log in again to save</p>
-      <p class="sub">Saving needs updated permissions for your account.</p>
-      <a class="btn-primary" href={loginReturnUrl}>Log in again</a>
+      <p class="title">{permissionMessage(scopeFeature)}</p>
+      <p class="sub">Allow access, then Skyreader will save this for you.</p>
+      <button
+        class="btn-primary"
+        disabled={auth.grantingPermissions}
+        onclick={() => auth.grantPermissions(scopeFeature ? [scopeFeature] : [])}
+        >{scopeFeature ? 'Allow access' : 'Refresh access'}</button
+      >
     {:else}
       <p class="title">Couldn't save that</p>
       <p class="sub">{errorMessage}</p>

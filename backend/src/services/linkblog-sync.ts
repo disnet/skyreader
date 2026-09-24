@@ -16,6 +16,7 @@ import {
 } from './pds-client';
 import { resolveHandle } from './oauth';
 import { OFFPRINT_SCOPES, PCKT_SCOPES } from '../config/scopes';
+import { grantsScopes } from './scope-check';
 import { parseHandleTokens, buildMentionFacet, type MentionFacet } from '../utils/mention-facets';
 import { generateTid } from '../utils/tid';
 
@@ -1996,8 +1997,7 @@ const COMPANION_SCOPES: Partial<Record<ContentFormat, string[]>> = {
 function canWriteCompanion(session: Session, format: ContentFormat): boolean {
   const required = COMPANION_SCOPES[format];
   if (!required) return false;
-  const granted = new Set((session.grantedScopes ?? '').split(' '));
-  return required.every((scope) => granted.has(scope));
+  return grantsScopes(session.grantedScopes, required);
 }
 
 // The companion deletes a page of documents actually calls for, keyed by

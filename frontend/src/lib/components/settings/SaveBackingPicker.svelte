@@ -4,7 +4,6 @@
   // Shared by the Settings page and the first-run empty state so the two stay
   // in step. Owns its own backing/scope/collection state and loads on mount.
   import { onMount } from 'svelte';
-  import { goto } from '$app/navigation';
   import { auth } from '$lib/stores/auth.svelte';
   import { syncStore } from '$lib/stores/sync.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
@@ -22,7 +21,7 @@
     backing?: SaveBacking;
     /** Offer "copy my existing saves into this collection" (off for first-run). */
     allowExport?: boolean;
-    /** Where to return after a scope-grant re-auth. */
+    /** Where to return after granting a provider's permission. */
     returnUrl?: string;
   } = $props();
 
@@ -102,9 +101,8 @@
     backingError = null;
   }
 
-  async function reauthForScopes() {
-    await auth.logout();
-    goto(`/auth/login?returnUrl=${encodeURIComponent(returnUrl)}`);
+  function grantAccess(provider: 'semble' | 'margin') {
+    void auth.grantPermissions([provider], returnUrl);
   }
 
   async function handleEnableBacking() {
@@ -167,7 +165,10 @@
     } catch (err) {
       backingExportProgress = null;
       if (err instanceof ScopeUpgradeError) {
-        backingError = `Log in again to grant ${providerLabel(provider)} permissions, then turn this on.`;
+        // The status call said granted but the write disagreed: show the grant
+        // panel so the reader can allow access in place.
+        scopeStatus = { ...scopeStatus, [provider]: false };
+        backingError = `${providerLabel(provider)} needs your permission to turn this on.`;
       } else {
         backingError = err instanceof Error ? err.message : 'Failed to turn on backing.';
       }
@@ -274,8 +275,13 @@
           {providerLabel(configuring)} collections.
         </p>
         <div class="backing-actions">
-          <button class="btn btn-primary" onclick={reauthForScopes} type="button">
-            Log in again to grant access
+          <button
+            class="btn btn-primary"
+            onclick={() => configuring && grantAccess(configuring)}
+            disabled={auth.grantingPermissions}
+            type="button"
+          >
+            Allow {providerLabel(configuring)} access
           </button>
           <button class="btn btn-secondary" onclick={cancelConfigure} type="button">
             Cancel

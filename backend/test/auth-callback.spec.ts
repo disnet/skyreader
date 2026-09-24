@@ -239,3 +239,100 @@ describe('auth callback token exchange', () => {
     expect(tokenCallCount).toBe(1);
   });
 });
+
+describe('auth callback after a permission upgrade', () => {
+  const originalFetch = globalThis.fetch;
+  const OLD_SESSION = 'session-before-upgrade';
+  const UPGRADE_STATE = 'upgrade-state-token-1234567';
+  const GRANTED =
+    'atproto repo?collection=app.skyreader.feed.subscription&collection=app.skyreader.social.follow&collection=app.skyreader.reading.readAlong repo:network.cosmik.card repo:network.cosmik.collection repo:network.cosmik.collectionLink repo:network.cosmik.connection';
+
+  beforeEach(async () => {
+    await env.DB.prepare('DELETE FROM oauth_state').run();
+    await env.DB.prepare('DELETE FROM sessions').run();
+    await env.DB.prepare('DELETE FROM users').run();
+    await env.DB.prepare(
+      `INSERT INTO users (did, handle, pds_url, created_at, registered_at) VALUES (?, ?, 'https://pds.example.com', unixepoch(), unixepoch())`
+    )
+      .bind(TEST_DID, TEST_HANDLE)
+      .run();
+    await env.DB.prepare(
+      `INSERT INTO sessions (session_id, did, handle, pds_url, access_token, refresh_token, dpop_private_key, expires_at, granted_scopes)
+       VALUES (?, ?, ?, 'https://pds.example.com', 'tok', 'rtok', ?, ?, 'atproto')`
+    )
+      .bind(
+        OLD_SESSION,
+        TEST_DID,
+        TEST_HANDLE,
+        JSON.stringify({ kty: 'EC' }),
+        Date.now() + 3_600_000
+      )
+      .run();
+    await storeOAuthState(env, UPGRADE_STATE, {
+      codeVerifier: 'test-code-verifier-value',
+      did: TEST_DID,
+      handle: TEST_HANDLE,
+      pdsUrl: 'https://pds.example.com',
+      authServer: 'https://bsky.social',
+      returnUrl: '/settings',
+      frontendUrl: env.FRONTEND_URL,
+      replaceSessionId: OLD_SESSION,
+    });
+
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string | URL) => {
+      const urlStr = url.toString();
+      if (urlStr.includes('.well-known/oauth-protected-resource')) return mockResourceMeta();
+      if (urlStr.includes('.well-known/oauth-authorization-server')) return mockAuthServerMeta();
+      if (urlStr.includes('/oauth/token')) {
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers(),
+          json: async () => ({
+            access_token: 'new-access',
+            refresh_token: 'new-refresh',
+            expires_in: 3600,
+            sub: TEST_DID,
+            scope: GRANTED,
+          }),
+          text: async () => '',
+        };
+      }
+      if (urlStr.includes('app.bsky.actor.getProfile')) {
+        return mockProfileResponse(TEST_DID, TEST_HANDLE);
+      }
+      throw new Error(`Unexpected fetch: ${urlStr}`);
+    });
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  it('retires the old session and remembers the granted features', async () => {
+    const request = new IncomingRequest(
+      `http://localhost/api/auth/callback?code=test-auth-code&state=${UPGRADE_STATE}&iss=https%3A%2F%2Fbsky.social`
+    );
+    const ctx = createExecutionContext();
+    const response = await worker.fetch(request, env, ctx);
+    await waitOnExecutionContext(ctx);
+
+    expect(response.status).toBe(302);
+    expect(response.headers.get('Location')).toContain('/auth/callback');
+
+    const sessions = await env.DB.prepare(
+      'SELECT session_id, granted_scopes FROM sessions WHERE did = ?'
+    )
+      .bind(TEST_DID)
+      .all<{ session_id: string; granted_scopes: string }>();
+    expect(sessions.results).toHaveLength(1);
+    expect(sessions.results[0].session_id).not.toBe(OLD_SESSION);
+    expect(sessions.results[0].granted_scopes).toBe(GRANTED);
+
+    const user = await env.DB.prepare('SELECT oauth_features FROM users WHERE did = ?')
+      .bind(TEST_DID)
+      .first<{ oauth_features: string }>();
+    expect(user?.oauth_features).toBe('semble');
+  });
+});

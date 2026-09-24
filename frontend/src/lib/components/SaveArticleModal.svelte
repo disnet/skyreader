@@ -3,6 +3,8 @@
   import Modal from '$lib/components/common/Modal.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
   import { ScopeUpgradeError, UrlSaveLimitError, ExtractionBlockedError } from '$lib/services/api';
+  import { grantPermissions, permissionMessage } from '$lib/services/permissions';
+  import type { ScopeFeature } from '$lib/types';
   import LimitNotice from '$lib/components/LimitNotice.svelte';
   import { saveLimitLine } from '$lib/utils/limitCopy';
   import {
@@ -22,6 +24,7 @@
   let error = $state<string | null>(null);
   let inputEl = $state<HTMLInputElement | null>(null);
   let showScopeUpgrade = $state(false);
+  let scopeFeature = $state<ScopeFeature | undefined>(undefined);
   // Set when the monthly URL-save cap refuses the save. Held apart from `error`
   // so it renders as a notice with a way forward rather than a red line.
   let limitInfo = $state<{ limit: number; resetsAt: string } | null>(null);
@@ -68,6 +71,7 @@
       savesStore.pendingOpenKey = saved.uri || saved.itemGuid || saved.rkey;
     } catch (err) {
       if (err instanceof ScopeUpgradeError) {
+        scopeFeature = err.feature;
         showScopeUpgrade = true;
       } else if (err instanceof UrlSaveLimitError) {
         limitInfo = { limit: err.limit, resetsAt: err.resetsAt };
@@ -97,9 +101,14 @@
     </div>
   {:else if showScopeUpgrade}
     <div class="scope-upgrade">
-      <p>Saving articles requires updated permissions. Please log in again to grant access.</p>
+      <p>{permissionMessage(scopeFeature)} to save this. Then try again.</p>
       <div class="scope-upgrade-actions">
-        <a href="/auth/login" class="scope-upgrade-btn">Log in again</a>
+        <button
+          class="scope-upgrade-btn"
+          type="button"
+          onclick={() => grantPermissions(scopeFeature ? [scopeFeature] : [])}
+          >{scopeFeature ? 'Allow access' : 'Refresh access'}</button
+        >
         <button class="dismiss-btn" onclick={() => (showScopeUpgrade = false)}>Dismiss</button>
       </div>
     </div>
