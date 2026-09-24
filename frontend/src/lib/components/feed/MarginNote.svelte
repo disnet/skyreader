@@ -475,6 +475,12 @@
       min-height: 2.25rem;
       font-size: var(--text-sm);
     }
+
+    /* iOS zooms into any field under 16px on focus; the note tracks the
+       article size (x0.9), so small reading sizes would dip below it. */
+    .note-input {
+      font-size: max(1em, 16px);
+    }
   }
 
   @media (prefers-reduced-motion: reduce) {
