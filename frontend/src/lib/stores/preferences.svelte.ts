@@ -5,6 +5,7 @@ import {
   HIGHLIGHT_REVIEW_COUNT_OPTIONS,
   type HighlightReviewCount,
 } from '$lib/utils/highlightReview';
+import { coerceHomeLayout, EMPTY_HOME_LAYOUT, type HomeLayout } from '$lib/utils/homeLayout';
 
 export { HIGHLIGHT_REVIEW_COUNT_OPTIONS, type HighlightReviewCount };
 
@@ -94,6 +95,8 @@ interface PreferencesState {
   defaultViewConfigured: boolean;
   // How tightly the Home lane tiles are packed.
   cardDensity: CardDensity;
+  // Which Home sections show, and in what order. Device-local like the rest.
+  homeLayout: HomeLayout;
   dailyMagazineMinutes: DailyMagazineMinutes;
   dailyMagazineOrder: DailyMagazineOrder;
   communityHighlights: boolean;
@@ -130,6 +133,7 @@ function createPreferencesStore() {
     defaultView: 'home',
     defaultViewConfigured: false,
     cardDensity: 'cozy',
+    homeLayout: EMPTY_HOME_LAYOUT,
     dailyMagazineMinutes: 20,
     dailyMagazineOrder: 'shuffle',
     communityHighlights: true,
@@ -191,6 +195,7 @@ function createPreferencesStore() {
         ) {
           state.cardDensity = parsed.cardDensity;
         }
+        state.homeLayout = coerceHomeLayout(parsed.homeLayout);
         if (DAILY_MAGAZINE_MINUTE_OPTIONS.includes(parsed.dailyMagazineMinutes)) {
           state.dailyMagazineMinutes = parsed.dailyMagazineMinutes;
         }
@@ -341,6 +346,11 @@ function createPreferencesStore() {
     save();
   }
 
+  function setHomeLayout(layout: HomeLayout) {
+    state.homeLayout = { order: [...layout.order], hidden: [...layout.hidden] };
+    save();
+  }
+
   function setDailyMagazineMinutes(minutes: DailyMagazineMinutes) {
     if (!DAILY_MAGAZINE_MINUTE_OPTIONS.includes(minutes)) return;
     state.dailyMagazineMinutes = minutes;
@@ -424,6 +434,9 @@ function createPreferencesStore() {
     get cardDensity() {
       return state.cardDensity;
     },
+    get homeLayout() {
+      return state.homeLayout;
+    },
     get dailyMagazineMinutes() {
       return state.dailyMagazineMinutes;
     },
@@ -447,6 +460,7 @@ function createPreferencesStore() {
     setLinkblogAttributionOn,
     setDefaultView,
     setCardDensity,
+    setHomeLayout,
     setDailyMagazineMinutes,
     setDailyMagazineOrder,
     setCommunityHighlights,

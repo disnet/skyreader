@@ -13,6 +13,10 @@ Items you scroll past can be marked read automatically (a toggle in **Settings â
 
 **Home** is the calmer front page: pick up where you left off, recent saves, your daily magazine.
 
+To change Home, choose **Customize** at the top of it. Pick where the app opens and how large
+the cards are, hide any section, or drag one by its handle to reorder. Changes apply right away
+and are saved on this device.
+
 ## The reader
 
 Opening an article gives you a clean, full-screen reading surface.

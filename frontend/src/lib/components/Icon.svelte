@@ -64,6 +64,7 @@
     | 'standard-site'
     | 'book-open'
     | 'align-justify'
+    | 'grip-vertical'
     | 'circle-slash'
     | 'log-out'
     | 'bluesky';
@@ -368,6 +369,13 @@
     <path d="M3 12h18" />
     <path d="M3 6h18" />
     <path d="M3 18h18" />
+  {:else if name === 'grip-vertical'}
+    <circle cx="9" cy="12" r="1" />
+    <circle cx="9" cy="5" r="1" />
+    <circle cx="9" cy="19" r="1" />
+    <circle cx="15" cy="12" r="1" />
+    <circle cx="15" cy="5" r="1" />
+    <circle cx="15" cy="19" r="1" />
   {:else if name === 'circle-slash'}
     <circle cx="12" cy="12" r="10" />
     <path d="m4.9 4.9 14.2 14.2" />
