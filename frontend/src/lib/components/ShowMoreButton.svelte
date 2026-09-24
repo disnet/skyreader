@@ -1,6 +1,4 @@
 <script lang="ts">
-  import Icon from './Icon.svelte';
-
   interface Props {
     /** How many rows are still hidden behind the current window. */
     remaining: number;
@@ -11,35 +9,36 @@
   let { remaining, batchSize, onclick }: Props = $props();
 </script>
 
-<!-- Progressive disclosure, not a call to action: quiet text button, same
-     weight as the "N hidden accounts" toggle it sits near. -->
+<!-- Progressive disclosure, not a call to action: it sits as the last row of
+     the list it extends, in the list's own row rhythm. -->
 {#if remaining > 0}
   <button class="show-more" type="button" {onclick}>
-    <Icon name="chevron-down" size={14} />
     Show {Math.min(remaining, batchSize)} more
   </button>
 {/if}
 
 <style>
   .show-more {
-    align-self: flex-start;
-    display: inline-flex;
-    align-items: center;
-    gap: 0.375rem;
-    margin-top: 0.5rem;
-    padding: 0.375rem 0;
+    display: block;
+    width: 100%;
+    padding: 0.625rem 0.75rem;
     font: inherit;
     font-size: var(--text-sm);
     font-weight: var(--weight-medium);
-    color: var(--color-text-secondary);
-    background: transparent;
+    color: var(--color-primary);
+    text-align: left;
+    background: var(--color-bg);
     border: none;
     cursor: pointer;
-    transition: color 0.15s;
   }
 
   .show-more:hover {
-    color: var(--color-text);
+    background: var(--color-bg-hover, rgba(0, 0, 0, 0.02));
+  }
+
+  .show-more:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: -2px;
   }
 
   @media (max-width: 520px) {

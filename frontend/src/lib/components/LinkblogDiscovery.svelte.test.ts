@@ -1,4 +1,5 @@
 // Mounted component test (jsdom) — see the "component" project in vitest.config.ts.
+// A .svelte.test.ts so the filter props can be driven by $state.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import type { LinkblogPerson } from '$lib/types';
@@ -45,25 +46,37 @@ function person(i: number, isFollow: boolean): LinkblogPerson {
 let component: Record<string, any> | undefined;
 let target: HTMLElement;
 
-function render(props: Record<string, unknown> = { variant: 'full' }) {
+function render(props: Record<string, unknown> = {}) {
   target = document.createElement('div');
   document.body.appendChild(target);
-  component = mount(LinkblogDiscovery, { target, props });
+  component = mount(LinkblogDiscovery, {
+    target,
+    props: {
+      get query() {
+        return filters.query;
+      },
+      get hideAdded() {
+        return filters.hideAdded;
+      },
+      ...props,
+    },
+  });
   flushSync();
 }
 
 function rows(): HTMLElement[] {
-  return [...target.querySelectorAll<HTMLElement>('.person')];
+  return [...target.querySelectorAll<HTMLElement>('.source-row')];
 }
 
 function showMore(): HTMLButtonElement[] {
   return [...target.querySelectorAll<HTMLButtonElement>('.show-more')];
 }
 
+// The page owns search and "Hide added"; the section reads them as props.
+const filters = $state({ query: '', hideAdded: false });
+
 function type(value: string) {
-  const input = target.querySelector<HTMLInputElement>('input[type="search"]')!;
-  input.value = value;
-  input.dispatchEvent(new Event('input', { bubbles: true }));
+  filters.query = value;
   flushSync();
 }
 
@@ -81,6 +94,8 @@ describe('LinkblogDiscovery full variant windowing', () => {
   afterEach(() => {
     if (component) unmount(component);
     component = undefined;
+    filters.query = '';
+    filters.hideAdded = false;
     document.body.innerHTML = '';
   });
 
@@ -143,42 +158,13 @@ describe('LinkblogDiscovery full variant windowing', () => {
       .map((p) => ({ sourceType: 'atproto.documents', feedUrl: p.publicationUri }));
     render();
     expect(rows()).toHaveLength(20);
+    // Added rows show a quiet check instead of an Add button.
+    expect(target.querySelectorAll('.added')).toHaveLength(5);
 
-    const toggle = target.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
-    toggle.click();
+    filters.hideAdded = true;
     flushSync();
     // 7 friends left (5 of 12 hidden) + 10 of 18 others.
     expect(rows()).toHaveLength(17);
     expect(showMore()[0].textContent).toContain('Show 8 more');
-  });
-});
-
-describe('LinkblogDiscovery other variants', () => {
-  afterEach(() => {
-    if (component) unmount(component);
-    component = undefined;
-    document.body.innerHTML = '';
-  });
-
-  it('still honours the suggestions limit, with no toolbar or Show more', () => {
-    store.friends = [];
-    store.people = Array.from({ length: 30 }, (_, i) => person(i, false));
-    subs.subscriptions = [];
-    render({ variant: 'suggestions', limit: 3, heading: 'More Skyreader linkblogs' });
-
-    expect(rows()).toHaveLength(3);
-    expect(showMore()).toHaveLength(0);
-    expect(target.querySelector('.discovery-toolbar')).toBeNull();
-  });
-
-  it('renders the friends variant uncapped', () => {
-    store.friends = Array.from({ length: 14 }, (_, i) => person(i, true));
-    store.people = [];
-    subs.subscriptions = [];
-    render({ variant: 'friends' });
-
-    expect(rows()).toHaveLength(14);
-    expect(showMore()).toHaveLength(0);
-    expect(target.querySelector('.discovery-toolbar')).toBeNull();
   });
 });

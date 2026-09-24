@@ -35,7 +35,9 @@ You don't have to be in Skyreader to add to it:
 
 ## Discover
 
-The **Discover** page suggests linkblogs and standard.site publications owned by the accounts you follow on Bluesky.
+The **Discover** page suggests Skyreader linkblogs and standard.site publications owned by the accounts you follow on Bluesky, each on its own tab. One search covers both, and each tab shows how many match. To stop seeing an account's publications, choose **Hide account** on its row.
+
+**Manage Sources** shows a few of these suggestions under **Find more**, after your own sources.
 
 ## Channels
 

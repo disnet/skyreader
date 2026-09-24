@@ -1,7 +1,42 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
+  import { page } from '$app/state';
+  import { replaceState } from '$app/navigation';
   import LinkblogDiscovery from '$lib/components/LinkblogDiscovery.svelte';
   import FollowingPublications from '$lib/components/FollowingPublications.svelte';
+  import DiscoveryToolbar from '$lib/components/DiscoveryToolbar.svelte';
+  import ScopeTabs from '$lib/components/sources/ScopeTabs.svelte';
   import StaticPageChrome from '$lib/components/feed/StaticPageChrome.svelte';
+  import { linkblogDiscoveryStore } from '$lib/stores/linkblogDiscovery.svelte';
+  import { followingPublicationsStore } from '$lib/stores/followingPublications.svelte';
+
+  // Two kinds of source, one tab each. One search and one "Hide added" cover
+  // both, and each tab's count follows them, so a search shows where its
+  // matches are before you switch.
+  type Tab = 'linkblogs' | 'publications';
+  let tab = $state<Tab>(
+    page.url.searchParams.get('tab') === 'publications' ? 'publications' : 'linkblogs'
+  );
+
+  let query = $state('');
+  let hideAdded = $state(false);
+  let linkblogCount = $state<number | null>(null);
+  let publicationCount = $state<number | null>(null);
+
+  // Start both loads up front so the inactive tab's count fills in too.
+  onMount(() => {
+    linkblogDiscoveryStore.loadDiscover();
+    followingPublicationsStore.load();
+  });
+
+  // Keep the tab in the URL so a reload or a shared link lands on it.
+  function select(next: Tab) {
+    tab = next;
+    const url = new URL(page.url);
+    if (next === 'linkblogs') url.searchParams.delete('tab');
+    else url.searchParams.set('tab', next);
+    replaceState(url, page.state);
+  }
 </script>
 
 <svelte:head>
@@ -11,18 +46,28 @@
 <StaticPageChrome title="Discover" />
 
 <div class="discover-page">
-  <section class="discover-section">
-    <h2 class="section-title">Skyreader Linkblogs</h2>
-    <LinkblogDiscovery variant="full" />
-  </section>
+  <DiscoveryToolbar bind:query bind:hideAdded searchLabel="Search" />
 
-  <section class="discover-section">
-    <h2 class="section-title">Publications from people you follow</h2>
-    <p class="section-desc">
-      Standard.site publications owned by the accounts you follow on Bluesky.
-    </p>
-    <FollowingPublications />
-  </section>
+  <div class="tabs">
+    <ScopeTabs
+      label="Discover"
+      value={tab}
+      onchange={select}
+      options={[
+        { id: 'linkblogs', label: 'Linkblogs', count: linkblogCount },
+        { id: 'publications', label: 'Publications', count: publicationCount },
+      ]}
+    />
+  </div>
+
+  <!-- Both stay mounted so each keeps its count, scroll window and expanded
+       accounts while the other is showing. -->
+  <div role="tabpanel" hidden={tab !== 'linkblogs'}>
+    <LinkblogDiscovery {query} {hideAdded} bind:shownCount={linkblogCount} />
+  </div>
+  <div role="tabpanel" hidden={tab !== 'publications'}>
+    <FollowingPublications {query} {hideAdded} bind:shownCount={publicationCount} />
+  </div>
 </div>
 
 <style>
@@ -40,25 +85,7 @@
     }
   }
 
-  .discover-section {
-    margin-bottom: 2.5rem;
-  }
-
-  .discover-section:last-child {
-    margin-bottom: 0;
-  }
-
-  .section-title {
-    font-size: var(--text-base);
-    font-weight: var(--weight-semibold);
-    margin: 0 0 0.25rem;
-  }
-
-  .section-desc {
-    font-size: var(--text-sm);
-    color: var(--color-text-secondary);
-    line-height: var(--leading-normal);
-    margin: 0 0 1rem;
-    max-width: 52ch;
+  .tabs {
+    margin: -0.25rem 0 1rem;
   }
 </style>
