@@ -124,8 +124,11 @@
     }
   }
 
-  // The headline count: every reference across every lane, before filtering.
-  const total = $derived(laneRow.reduce((sum, lane) => sum + lane.count, 0));
+  // The headline count: every reference across every lane, before filtering,
+  // plus the follows' shares no lane counted (they're rows in the stream too).
+  const total = $derived(
+    laneRow.reduce((sum, lane) => sum + lane.count, 0) + (stream.extraCount ?? 0)
+  );
   const capped = $derived(laneRow.some((lane) => lane.capped));
   // One populated lane needs no filter row — there is nothing to filter to.
   const showFilters = $derived(filters.length > 2);

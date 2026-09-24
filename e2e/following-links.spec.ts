@@ -153,5 +153,8 @@ test.describe('From your follows', () => {
     await expect(row.getByText('The part about margins is the best bit.')).toBeVisible();
     // Ben only reposted: no words of his own, so he's in the linked-by line.
     await expect(discussion.locator('.also-linked')).toContainText('Ben');
+    // No network's backlinks found either share, but the count still says two:
+    // the headline counts the rows the stream shows.
+    await expect(discussion.getByText('2 references across the Atmosphere')).toBeVisible();
   });
 });

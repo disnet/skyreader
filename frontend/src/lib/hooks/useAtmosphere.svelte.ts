@@ -259,6 +259,18 @@ export function useAtmosphere(opts: UseAtmosphereOptions): AtmosphereApi {
     return out;
   });
 
+  // Follows shares no lane carries (reposts, mostly) become Bluesky rows of their
+  // own, deduped against the Bluesky lane once it has resolved so a follow's post
+  // isn't listed twice. They're people the lanes' counts don't include, so the
+  // totals add them (see `extraCount`).
+  const followOnly = $derived.by(() => {
+    if (followSharers.length === 0) return [];
+    const bluesky = laneItems.get('bluesky');
+    const blueskyDids =
+      bluesky && !bluesky.loading ? new Set(bluesky.entries.map((e) => e.did)) : null;
+    return followExtras(followSharers, blueskyDids, [opts.itemTitle?.(), opts.sourceTitle?.()]);
+  });
+
   let activeFilter = $state<DiscussionFilterId>('all');
 
   const sembleContext = $derived(laneItems.get('semble')?.sembleContext);
@@ -280,7 +292,7 @@ export function useAtmosphere(opts: UseAtmosphereOptions): AtmosphereApi {
     const all: DiscussionFilterVM = {
       id: 'all',
       label: 'All',
-      count: populated.reduce((sum, lane) => sum + lane.count, 0),
+      count: populated.reduce((sum, lane) => sum + lane.count, 0) + followOnly.length,
       capped: populated.some((lane) => lane.capped),
       icon: null,
     };
@@ -376,15 +388,9 @@ export function useAtmosphere(opts: UseAtmosphereOptions): AtmosphereApi {
       }
     }
 
-    // Follows shares the lanes don't carry (reposts, mostly) are Bluesky rows.
-    // Held back from the other networks' filters; deduped against the Bluesky
-    // lane once it has resolved, so a follow's post isn't listed twice.
-    if (laneFilter === 'all' || laneFilter === 'bluesky') {
-      const bluesky = laneItems.get('bluesky');
-      const blueskyDids =
-        bluesky && !bluesky.loading ? new Set(bluesky.entries.map((e) => e.did)) : null;
-      entries.push(...followExtras(followSharers, blueskyDids, titles));
-    }
+    // Follows shares the lanes don't carry are Bluesky rows, held back from the
+    // other networks' filters.
+    if (laneFilter === 'all' || laneFilter === 'bluesky') entries.push(...followOnly);
     const inView = activeFilter === 'following' ? entries.filter((e) => e.followed) : entries;
     inView.sort(byFollowedThenEngagement);
 
@@ -418,6 +424,7 @@ export function useAtmosphere(opts: UseAtmosphereOptions): AtmosphereApi {
       failed: failed && inView.length === 0,
       entries: said,
       linkOnly,
+      extraCount: followOnly.length,
     };
   });
 
@@ -432,7 +439,7 @@ export function useAtmosphere(opts: UseAtmosphereOptions): AtmosphereApi {
     mentionLaneItemsStore.load(url, 'semble', { force: true });
   }
 
-  const total = $derived(laneRow.reduce((sum, l) => sum + l.count, 0));
+  const total = $derived(laneRow.reduce((sum, l) => sum + l.count, 0) + followOnly.length);
   const capped = $derived(laneRow.some((l) => l.capped));
   const mine = $derived(laneRow.some((l) => l.isMine));
 
