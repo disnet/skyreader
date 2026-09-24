@@ -46,7 +46,7 @@
   import HighlightPopover from '$lib/components/feed/HighlightPopover.svelte';
   import HighlightHandles from '$lib/components/feed/HighlightHandles.svelte';
   import CommunityHighlightPopover from '$lib/components/feed/CommunityHighlightPopover.svelte';
-  import Marginalia from '$lib/components/feed/Marginalia.svelte';
+  import Marginalia, { MIN_MARGIN_ROOM } from '$lib/components/feed/Marginalia.svelte';
   import { installMarginaliaInk } from '$lib/utils/marginaliaInk';
   import CollectionMagazine from '$lib/components/feed/CollectionMagazine.svelte';
   import PagedView, { type PagedController } from '$lib/components/feed/PagedView.svelte';
@@ -762,11 +762,14 @@
     pagedController: () => pagedController,
   });
 
+  // Room beside the paged spread, measured by PagedView.
+  let pagedSideRoom = $state(0);
+
   // Where notes live: in the page margin when reading on a wide screen, or
   // unfolded under their paragraph (a gloss) where there is no margin — on
-  // mobile, and in paged mode, whose spread fills the width.
+  // mobile, and in paged mode when the spread leaves no room beside it.
   const marginaliaLayout = $derived<'margin' | 'gloss'>(
-    paged || mobileStore.isMobile ? 'gloss' : 'margin'
+    mobileStore.isMobile || (paged && pagedSideRoom < MIN_MARGIN_ROOM) ? 'gloss' : 'margin'
   );
   const communityEnabled = $derived(readerItem.type === 'saved' && preferences.communityHighlights);
 
@@ -784,7 +787,8 @@
     contentEl: () => readerBodyEl,
     itemUrl: () => itemUrl,
     enabled: () => communityEnabled,
-    inMargin: () => marginaliaLayout === 'margin',
+    // Paged, other readers' notes stay inline: the left margin is the spread's.
+    inMargin: () => marginaliaLayout === 'margin' && !paged,
   });
 
   // Switching between margin and gloss (a resize across the mobile breakpoint,
@@ -1252,14 +1256,9 @@
           >
             {@html sanitizedContent}
           </div>
-          <Marginalia
-            highlights={highlightsHook}
-            community={communityHighlightsHook}
-            contentEl={() => readerBodyEl}
-            itemKey={() => itemKey}
-            layout={marginaliaLayout}
-            {communityEnabled}
-          />
+          {#if !paged}
+            {@render marginalia()}
+          {/if}
         {/if}
       </div>
 
@@ -1282,9 +1281,25 @@
       <ReaderDiscussion {readerItem} />
     {/snippet}
 
+    <!-- Paged, it hangs over the page window rather than the column flow, so the
+         rails sit beside the spread and follow the page in view. -->
+    {#snippet marginalia()}
+      <Marginalia
+        highlights={highlightsHook}
+        community={communityHighlightsHook}
+        contentEl={() => readerBodyEl}
+        itemKey={() => itemKey}
+        layout={marginaliaLayout}
+        {communityEnabled}
+        pager={paged ? () => pagedController : undefined}
+      />
+    {/snippet}
+
     {#if paged}
       <!-- Kindle-style paged reading. -->
       <PagedView
+        overlay={collection ? undefined : marginalia}
+        bind:sideRoom={pagedSideRoom}
         bottomInset={mobileStore.isMobile ? READER_BAR_INSET : 0}
         deps={() => [sanitizedContent, preferences.articleFont, preferences.articleFontSize]}
         bind:currentPage={pagedPage}

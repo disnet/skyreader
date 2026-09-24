@@ -54,10 +54,16 @@
 
   // Seed the draft each time the editor opens, and put the caret at the end of
   // what's already written — you're adding to a note, not replacing it.
+  //
+  // Only on the opening itself. The host spreads these props, so reading
+  // `editing` also subscribes to everything the spread reads — the fresh
+  // highlight object each re-measure hands down, the hovered passage — and
+  // re-seeding on any of those wiped whatever had been typed so far.
+  let wasEditing = false;
   $effect(() => {
-    if (!editing) return;
-    // Untracked: the host hands down fresh highlight objects as it re-measures,
-    // and none of that may reset what's being written.
+    const opened = editing && !wasEditing;
+    wasEditing = editing;
+    if (!opened) return;
     draft = untrack(() => highlight.note ?? '');
     dirty = false;
     void tick().then(() => {

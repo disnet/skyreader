@@ -1,3 +1,11 @@
+<script lang="ts" module>
+  /**
+   * Room (px) the margin needs beside the text to write in: the narrowest rail
+   * plus the bracket gutter and the window edge. Below it, notes are glosses.
+   */
+  export const MIN_MARGIN_ROOM = 110 + 40 + 24;
+</script>
+
 <script lang="ts">
   import { tick, untrack } from 'svelte';
   import MarginNote from './MarginNote.svelte';
@@ -8,6 +16,7 @@
   import type { CommunityHighlightGroup } from '$lib/stores/communityHighlights.svelte';
   import type { useHighlights } from '$lib/hooks/useHighlights.svelte';
   import type { useCommunityHighlights } from '$lib/hooks/useCommunityHighlights.svelte';
+  import type { PagedController } from './PagedView.svelte';
 
   /**
    * The reader's marginalia: where highlights' notes live instead of in a
@@ -19,11 +28,17 @@
    *   a book's can. Other readers' notes (Margin community highlights) sit in
    *   the left margin in pencil — or, where the left margin is too narrow to
    *   write in, as bare brackets that open the community popover.
-   * - `gloss` (mobile, paged): there is no margin, so a note unfolds under its
-   *   paragraph instead, pushing the text down rather than covering it.
+   * - `margin` in paged reading: the rails hang beside the page window and
+   *   carry only the page in view. A two-column spread writes each column's
+   *   notes in its outer margin, as a book would; other readers' marks stay
+   *   inline (the left margin is the left column's).
+   * - `gloss` (mobile, or paged with no room beside the spread): there is no
+   *   margin, so a note unfolds under its paragraph instead, pushing the text
+   *   down rather than covering it.
    *
-   * Sits inside the article's positioned wrapper; margin geometry is measured
-   * from the marks themselves, relative to it.
+   * Sits inside the article's positioned wrapper (in paged reading, over the
+   * page window); margin geometry is measured from the marks themselves,
+   * relative to it.
    */
   interface Props {
     highlights: ReturnType<typeof useHighlights>;
@@ -32,17 +47,22 @@
     itemKey: () => string;
     layout: 'margin' | 'gloss';
     communityEnabled: boolean;
+    /** Set in paged reading: the rails follow the page in view. */
+    pager?: () => PagedController | undefined;
   }
 
-  let { highlights, community, contentEl, itemKey, layout, communityEnabled }: Props = $props();
+  let { highlights, community, contentEl, itemKey, layout, communityEnabled, pager }: Props =
+    $props();
 
   interface Span {
     top: number;
     bottom: number;
   }
+  type Side = 'left' | 'right';
   interface OwnItem extends Span {
     id: string;
     highlight: Highlight;
+    side: Side;
   }
   interface CommunityItem extends Span {
     id: string;
@@ -89,6 +109,53 @@
     return spans;
   }
 
+  /**
+   * Paged reading: the spans on the page in view, each with the side of the
+   * spread it sits on. Measured against where the page will rest, not where
+   * the flow is mid-turn, so the rails can change with the turn rather than
+   * after it. A passage broken across columns is placed by its first visible
+   * piece.
+   */
+  function pagedSpansFor(
+    body: HTMLElement,
+    selector: string,
+    key: string,
+    origin: DOMRect,
+    paged: PagedController
+  ) {
+    const spans = new Map<string, Span & { side: Side; col: number }>();
+    const flow = body.closest<HTMLElement>('.paged-content');
+    if (!flow || !(paged.pageStride > 0)) return spans;
+    const pageLeft = flow.getBoundingClientRect().left + paged.currentPage * paged.pageStride;
+    const colStride = paged.pageStride / paged.columns;
+    for (const mark of body.querySelectorAll<HTMLElement>(selector)) {
+      const id = mark.dataset[key];
+      if (!id) continue;
+      for (const rect of mark.getClientRects()) {
+        // A zero-width box (a mark's end at a line break) carries no ink.
+        if (!rect.width) continue;
+        const x = rect.left - pageLeft;
+        if (x + rect.width <= 1 || x >= origin.width - 1) continue;
+        // Placed by its middle: the ink's inline padding hangs every line a few
+        // px outside its text, so a line starting the right column begins in
+        // the gap and would read as the left column's by its left edge.
+        const mid = x + rect.width / 2;
+        const col = Math.max(0, Math.min(paged.columns - 1, Math.floor(mid / colStride)));
+        const top = rect.top - origin.top;
+        const bottom = rect.bottom - origin.top;
+        const span = spans.get(id);
+        if (!span || col < span.col) {
+          const side: Side = paged.columns > 1 && col === 0 ? 'left' : 'right';
+          spans.set(id, { top, bottom, side, col });
+        } else if (col === span.col) {
+          span.top = Math.min(span.top, top);
+          span.bottom = Math.max(span.bottom, bottom);
+        }
+      }
+    }
+    return spans;
+  }
+
   function measure() {
     const body = contentEl();
     const root = rootEl;
@@ -97,16 +164,23 @@
     rightSpace = window.innerWidth - origin.right;
     leftSpace = origin.left;
 
-    const ownSpans = spansFor(body, 'mark.highlight[data-highlight-id]', 'highlightId', origin);
+    const paged = pager?.();
+    const ownSelector = 'mark.highlight[data-highlight-id]';
+    const ownSpans: Map<string, Span & { side?: Side }> = paged
+      ? pagedSpansFor(body, ownSelector, 'highlightId', origin, paged)
+      : spansFor(body, ownSelector, 'highlightId', origin);
     own = itemLabelsStore
       .getHighlights(itemKey())
       .flatMap((highlight) => {
         const span = ownSpans.get(highlight.id);
-        return span ? [{ id: highlight.id, highlight, ...span }] : [];
+        if (!span) return [];
+        const { top, bottom, side = 'right' } = span;
+        return [{ id: highlight.id, highlight, top, bottom, side }];
       })
       .sort((a, b) => a.top - b.top);
 
-    if (!communityEnabled) {
+    // Paged, the left margin belongs to the spread's left column.
+    if (!communityEnabled || paged) {
       comm = [];
       return;
     }
@@ -134,7 +208,20 @@
     void community.version;
     void layout;
     void communityEnabled;
+    // A page turn brings other passages into view.
+    void pager?.()?.currentPage;
     schedule();
+  });
+
+  // An editor opening for a passage not yet measured (a highlight just made
+  // for a note) is placed at once rather than next frame, so it can take focus
+  // before the reader's first keystroke arrives.
+  $effect(() => {
+    const id = highlights.editingId;
+    void highlights.marksVersion;
+    if (id && layout === 'margin' && !untrack(() => own.some((item) => item.id === id))) {
+      untrack(measure);
+    }
   });
 
   // …and whenever anything reflows the text under them: width, type size,
@@ -174,7 +261,8 @@
   /**
    * Notes sit level with the first line of their passage; when the note above
    * runs long, the next one is pushed down just enough to clear it and a
-   * pencil leader ties it back to its bracket.
+   * pencil leader ties it back to its bracket. A page has a foot, so paged
+   * notes that would run off it are lifted back up (and drawn back the same way).
    */
   function stack<T extends Span & { id: string }>(items: T[]): Map<string, number> {
     const placed = new Map<string, number>();
@@ -184,14 +272,35 @@
       placed.set(item.id, y);
       cursor = y + (heights[item.id] ?? 40);
     }
+    if (pager && rootHeight > 0) {
+      let floor = rootHeight;
+      for (const item of [...items].reverse()) {
+        const y = Math.max(0, Math.min(placed.get(item.id)!, floor - (heights[item.id] ?? 40)));
+        placed.set(item.id, y);
+        floor = y - STACK_GAP;
+      }
+    }
     return placed;
   }
 
-  const ownLanes = $derived(lanes(own));
-  const writtenOwn = $derived(
-    own.filter((item) => !!item.highlight.note?.trim() || highlights.editingId === item.id)
-  );
-  const ownY = $derived(stack(writtenOwn));
+  interface OwnRail {
+    side: Side;
+    items: OwnItem[];
+    lanes: number[];
+    written: OwnItem[];
+    y: Map<string, number>;
+  }
+
+  function ownRail(side: Side): OwnRail {
+    const items = own.filter((item) => item.side === side);
+    const written = items.filter(
+      (item) => !!item.highlight.note?.trim() || highlights.editingId === item.id
+    );
+    return { side, items, lanes: lanes(items), written, y: stack(written) };
+  }
+
+  const rightOwn = $derived(ownRail('right'));
+  const leftOwn = $derived(ownRail('left'));
   const commLanes = $derived(lanes(comm));
   const writtenComm = $derived(
     leftWritable ? comm.filter((item) => item.group.people.some((p) => p.note)) : []
@@ -318,76 +427,99 @@
   }
 </script>
 
+{#snippet ownRailView(r: OwnRail, width: number)}
+  {@const mirrored = r.side === 'left'}
+  <aside
+    class="rail"
+    class:rail-right={!mirrored}
+    class:rail-left={mirrored}
+    aria-label={mirrored ? 'Your highlights and notes, left column' : 'Your highlights and notes'}
+    style:--rail={`${width}px`}
+  >
+    <svg class="rail-ink" width={width + NOTE_INSET} height={rootHeight} aria-hidden="true">
+      {#each r.items as item, i (item.id)}
+        {@const x = GUTTER + r.lanes[i] * LANE}
+        {@const h = item.bottom - item.top + 4}
+        {@const written = !!item.highlight.note?.trim()}
+        {@const active = highlights.activeId === item.id || highlights.editingId === item.id}
+        <!-- The left margin draws the same bracket, mirrored to face the text. -->
+        <g
+          class="bracket"
+          class:written
+          class:active
+          transform={mirrored
+            ? `translate(${width + NOTE_INSET - x} ${item.top - 2}) scale(-1 1)`
+            : `translate(${x} ${item.top - 2})`}
+        >
+          <path d={bracketPath(item.id, h)} />
+          {#if r.y.has(item.id) && Math.abs(r.y.get(item.id)! - (item.top - 2)) > 8}
+            {@const beakX = h < 34 ? 6 : 8.4}
+            <path
+              class="leader"
+              transform="translate({beakX} {h / 2})"
+              d={leaderPath(
+                item.id,
+                NOTE_INSET - x - beakX - 4,
+                r.y.get(item.id)! - (item.top - 2) - h / 2 + 11
+              )}
+            />
+          {/if}
+        </g>
+      {/each}
+    </svg>
+
+    {#each r.items as item, i (item.id)}
+      {@const written = !!item.highlight.note?.trim()}
+      {@const editing = highlights.editingId === item.id}
+      {@const inset = GUTTER + r.lanes[i] * LANE - 6}
+      <!-- Unwritten, the hit area reaches past the bracket over the ghost
+           "add a note" so the invitation holds as the pointer drifts to it. -->
+      <button
+        class="bracket-hit"
+        class:written
+        class:lit={!written && !editing && highlights.activeId === item.id}
+        style:top={`${item.top - (written ? 4 : 8)}px`}
+        style:height={`${item.bottom - item.top + (written ? 8 : 16)}px`}
+        style:left={mirrored ? undefined : `${inset}px`}
+        style:right={mirrored ? `${inset}px` : undefined}
+        style:width={written || editing ? undefined : `${NOTE_INSET - inset + GHOST_WIDTH}px`}
+        tabindex={written ? -1 : 0}
+        aria-label={written ? 'Edit note' : 'Add a note'}
+        onclick={() => highlights.openNote(item.id)}
+        onmouseenter={() => highlights.setActive(item.id)}
+        onmouseleave={() => highlights.setActive(null)}
+      >
+        {#if !written && !editing}
+          <span
+            class="ghost"
+            style:left={mirrored ? undefined : `${NOTE_INSET - inset}px`}
+            style:right={mirrored ? `${NOTE_INSET - inset}px` : undefined}
+            aria-hidden="true">add a note</span
+          >
+        {/if}
+      </button>
+    {/each}
+
+    {#each r.written as item (item.id)}
+      <div
+        class="rail-slot"
+        style:top={`${r.y.get(item.id) ?? item.top}px`}
+        bind:offsetHeight={heights[item.id]}
+      >
+        <MarginNote variant="margin" {...noteProps(item.highlight)} />
+      </div>
+    {/each}
+  </aside>
+{/snippet}
+
 <div class="marginalia" bind:this={rootEl} bind:clientHeight={rootHeight}>
   {#if layout === 'margin' && rightRail >= MIN_RAIL - 40}
-    <aside
-      class="rail rail-right"
-      aria-label="Your highlights and notes"
-      style:--rail={`${rightRail}px`}
-    >
-      <svg class="rail-ink" width={rightRail + NOTE_INSET} height={rootHeight} aria-hidden="true">
-        {#each own as item, i (item.id)}
-          {@const x = GUTTER + ownLanes[i] * LANE}
-          {@const h = item.bottom - item.top + 4}
-          {@const written = !!item.highlight.note?.trim()}
-          {@const active = highlights.activeId === item.id || highlights.editingId === item.id}
-          <g class="bracket" class:written class:active transform="translate({x} {item.top - 2})">
-            <path d={bracketPath(item.id, h)} />
-            {#if ownY.has(item.id) && ownY.get(item.id)! - (item.top - 2) > 8}
-              {@const beakX = h < 34 ? 6 : 8.4}
-              <path
-                class="leader"
-                transform="translate({beakX} {h / 2})"
-                d={leaderPath(
-                  item.id,
-                  NOTE_INSET - x - beakX - 4,
-                  ownY.get(item.id)! - (item.top - 2) - h / 2 + 11
-                )}
-              />
-            {/if}
-          </g>
-        {/each}
-      </svg>
-
-      {#each own as item, i (item.id)}
-        {@const written = !!item.highlight.note?.trim()}
-        {@const editing = highlights.editingId === item.id}
-        {@const left = GUTTER + ownLanes[i] * LANE - 6}
-        <!-- Unwritten, the hit area reaches past the bracket over the ghost
-             "add a note" so the invitation holds as the pointer drifts to it. -->
-        <button
-          class="bracket-hit"
-          class:written
-          class:lit={!written && !editing && highlights.activeId === item.id}
-          style:top={`${item.top - (written ? 4 : 8)}px`}
-          style:height={`${item.bottom - item.top + (written ? 8 : 16)}px`}
-          style:left={`${left}px`}
-          style:width={written || editing ? undefined : `${NOTE_INSET - left + GHOST_WIDTH}px`}
-          tabindex={written ? -1 : 0}
-          aria-label={written ? 'Edit note' : 'Add a note'}
-          onclick={() => highlights.openNote(item.id)}
-          onmouseenter={() => highlights.setActive(item.id)}
-          onmouseleave={() => highlights.setActive(null)}
-        >
-          {#if !written && !editing}
-            <span class="ghost" style:left={`${NOTE_INSET - left}px`} aria-hidden="true"
-              >add a note</span
-            >
-          {/if}
-        </button>
-      {/each}
-
-      {#each writtenOwn as item (item.id)}
-        <div
-          class="rail-slot"
-          style:top={`${ownY.get(item.id) ?? item.top}px`}
-          bind:offsetHeight={heights[item.id]}
-        >
-          <MarginNote variant="margin" {...noteProps(item.highlight)} />
-        </div>
-      {/each}
-    </aside>
-
+    {@render ownRailView(rightOwn, rightRail)}
+  {/if}
+  {#if layout === 'margin' && leftOwn.items.length > 0 && leftRail >= MIN_RAIL - 40}
+    {@render ownRailView(leftOwn, leftRail)}
+  {/if}
+  {#if layout === 'margin' && rightRail >= MIN_RAIL - 40}
     {#if comm.length > 0}
       <aside
         class="rail rail-left"
@@ -595,6 +727,11 @@
 
   .rail-left .rail-slot {
     right: 40px;
+    text-align: right;
+  }
+
+  /* A note in the left margin is set flush against the text it's about. */
+  .rail-left .rail-slot :global(.note-read) {
     text-align: right;
   }
 

@@ -6,7 +6,9 @@
   //
   // Wide desktop (≥1280px): notes in both margins. 1001–1279px: the column
   // slides left to keep the right margin; community notes shrink to brackets.
-  // ≤1000px, or paged mode: notes unfold under their paragraph as a gloss.
+  // Paged mode keeps the margins where the spread leaves room beside it (each
+  // column's notes in its outer margin, other readers' marks inline); ≤1000px,
+  // or a paged spread with no room: notes unfold under their paragraph as a gloss.
   import { onMount } from 'svelte';
   import SavedReader from '$lib/components/feed/SavedReader.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
@@ -58,6 +60,18 @@
       },
       createdAt: Date.now() - 86_400_000,
       note: "this is the whole argument, really. cf. Simon '71 and the café essay",
+    },
+    // Paged at ~1600×640 this runs from the foot of the left column onto the
+    // right one: its bracket must cover the left-column piece only.
+    {
+      id: 'seed-cross',
+      selector: {
+        type: 'TextQuoteSelector',
+        exact:
+          'A note says what the reader thought at the time, which is often more interesting than what the author said.',
+      },
+      createdAt: Date.now() - 60_000_000,
+      note: 'the margin is where the reader answers back',
     },
     {
       id: 'seed-bare',
