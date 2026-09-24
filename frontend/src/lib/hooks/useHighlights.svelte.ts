@@ -804,6 +804,22 @@ export function useHighlights(params: HighlightParams) {
     if (hl && !hl.marginUri) await saveHighlightToMargin(hl);
   }
 
+  /**
+   * Take a published highlight (and its note) private again: forget its Margin
+   * record locally, then delete that record (queued if offline). Local first,
+   * so the note reads private at once, and so a queued publish that hasn't
+   * drained yet is cancelled rather than landing afterwards.
+   */
+  async function unpublishFromMargin(highlightId: string) {
+    await pendingNoteSave.catch(() => {});
+    const hl = findHighlight(highlightId);
+    if (!hl?.marginUri) return;
+    await itemLabelsStore.setHighlightMargin(params.itemKey(), highlightId, null);
+    await removeFromMargin(hl);
+    const id = toastStore.add('Private again');
+    toastStore.update(id, 'success');
+  }
+
   async function commitSelectorAdjustment(highlightId: string, selector: TextQuoteSelector) {
     const itemKey = params.itemKey();
     await itemLabelsStore.setHighlightSelector(itemKey, highlightId, selector);
@@ -1217,6 +1233,9 @@ export function useHighlights(params: HighlightParams) {
     removeHighlightWithUndo,
     get publishToMargin() {
       return auth.isGuest ? undefined : publishToMargin;
+    },
+    get unpublishFromMargin() {
+      return auth.isGuest ? undefined : unpublishFromMargin;
     },
   };
 }

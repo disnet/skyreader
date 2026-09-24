@@ -37,7 +37,7 @@ Other readers' notes from Margin appear in the left margin, in pencil, when **Co
 
 Highlights are private to Skyreader and sync across your devices. Two optional Margin connections exist, in both directions:
 
-- **Save to Margin** publishes a single highlight as a note on your public PDS. It's per-highlight and explicit; nothing is published unless you choose it.
+- **Publish** puts a single highlight, and its note, on [Margin](https://margin.at), where anyone can see it. It's per-highlight and explicit; nothing is published unless you choose it.
 - **Bring in highlights from Margin** (**Settings → Highlights**) adds your existing Margin highlights to your review deck here.
 - **Community highlights** (**Settings → Reading**) shows passages other readers highlighted on Margin while you read saved articles.
 

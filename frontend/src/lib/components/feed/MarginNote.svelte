@@ -18,6 +18,8 @@
     onRemove: () => void;
     /** Absent for a guest (Margin is account-only). */
     onPublish?: () => void;
+    /** Take a published note private again. Absent for a guest. */
+    onUnpublish?: () => void;
     onHover?: (hovering: boolean) => void;
     /** Gloss only: fold the note back up. */
     onFold?: () => void;
@@ -33,6 +35,7 @@
     onClose,
     onRemove,
     onPublish,
+    onUnpublish,
     onHover,
     onFold,
   }: Props = $props();
@@ -132,6 +135,41 @@
   const hasNote = $derived(!!highlight.note?.trim());
 </script>
 
+<!-- Who can see the note, and the one step that changes it. -->
+{#snippet visibility()}
+  <span
+    class="tool-status visibility"
+    use:tooltip={onMargin ? 'Public on margin.at' : 'Only you can see this'}
+  >
+    <Icon name={onMargin ? 'globe' : 'lock'} size={12} />
+    {onMargin ? 'Public' : 'Private'}
+  </span>
+  {#if onMargin && onUnpublish}
+    <button
+      class="tool"
+      use:tooltip={'Removes it from margin.at'}
+      onclick={() => {
+        commit();
+        onUnpublish?.();
+      }}
+    >
+      Make private
+    </button>
+  {:else if !onMargin && onPublish}
+    <button
+      class="tool"
+      use:tooltip={'Anyone will be able to see it, on margin.at'}
+      onclick={() => {
+        commit();
+        onPublish?.();
+      }}
+    >
+      <Icon name="margin" size={13} />
+      Publish
+    </button>
+  {/if}
+{/snippet}
+
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   class="marginalia-note {variant}"
@@ -161,49 +199,45 @@
         oninput={handleInput}
         onkeydown={handleKeydown}></textarea>
       <div class="note-tools">
-        <button class="tool done" onclick={finish}>Done</button>
-        {#if onMargin}
-          <span class="tool-status" use:tooltip={'Public on margin.at'}>
-            <Icon name="margin" size={13} />
-            On Margin
-          </span>
-        {:else if onPublish}
+        {@render visibility()}
+        <span class="tools-end">
           <button
-            class="tool"
-            use:tooltip={'Publishes this highlight and note on margin.at, where anyone can see it'}
+            class="tool remove"
+            aria-label="Remove highlight"
+            use:tooltip={'Remove highlight'}
             onclick={() => {
-              commit();
-              onPublish?.();
+              dirty = false;
+              onRemove();
             }}
           >
-            <Icon name="margin" size={13} />
-            Save to Margin
+            <Icon name="trash" size={14} />
           </button>
-        {/if}
-        <button
-          class="tool remove"
-          aria-label="Remove highlight"
-          use:tooltip={'Remove highlight'}
-          onclick={() => {
-            dirty = false;
-            onRemove();
-          }}
-        >
-          <Icon name="trash" size={14} />
-        </button>
+          <button class="tool done" onclick={finish}>Done</button>
+        </span>
       </div>
     </div>
   {:else if hasNote}
     <button class="note-hand note-read" onclick={onEdit} aria-label="Edit note: {highlight.note}">
-      <span class="note-text">{highlight.note}</span>
+      <span class="note-text"
+        >{highlight.note}<span
+          class="visibility-mark"
+          class:public={onMargin}
+          use:tooltip={onMargin ? 'Public on margin.at' : 'Private'}
+          ><Icon name={onMargin ? 'globe' : 'lock'} size={11} /><span class="visually-hidden"
+            >{onMargin ? ' (public)' : ' (private)'}</span
+          ></span
+        ></span
+      >
     </button>
     {#if variant === 'gloss'}
       <div class="gloss-foot">
-        {#if onMargin}
-          <span class="tool-status"><Icon name="margin" size={13} /> On Margin</span>
-        {/if}
-        <button class="tool" onclick={onEdit}>Edit</button>
-        <button class="tool" onclick={onFold}>Fold</button>
+        {@render visibility()}
+        <!-- Same slots as the editor's row, so a tap never lands on a control
+             that moved in under the finger: Edit becomes Done in place. -->
+        <span class="tools-end">
+          <button class="tool" onclick={onFold}>Close</button>
+          <button class="tool" onclick={onEdit}>Edit</button>
+        </span>
       </div>
     {/if}
   {/if}
@@ -304,6 +338,7 @@
   .note-tools,
   .gloss-foot {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 0.25rem;
     margin-top: 0.4rem;
@@ -331,7 +366,47 @@
     cursor: pointer;
   }
 
-  .tool:first-child {
+  /* The note's own actions hold the right end of the row; whatever the
+     visibility controls on the left say, these don't move. */
+  .tools-end {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    margin-left: auto;
+  }
+
+  .tools-end .tool:last-child {
+    margin-right: -0.45rem;
+  }
+
+  /* Who can see a note: a lock while it's yours alone, a globe once it's
+     published. Quiet enough to ignore, there when you look for it. */
+  .visibility {
+    cursor: default;
+  }
+
+  .visibility-mark {
+    display: inline-flex;
+    margin-left: 0.35em;
+    vertical-align: -0.05em;
+    color: var(--ink-note-soft);
+    opacity: 0.7;
+    transition: opacity 0.18s ease;
+  }
+
+  /* The gloss says it in its foot instead. */
+  .gloss .visibility-mark {
+    display: none;
+  }
+
+  .marginalia-note:hover .visibility-mark,
+  .marginalia-note.active .visibility-mark,
+  .visibility-mark.public {
+    opacity: 1;
+  }
+
+  .tool:first-child,
+  .tool-status:first-child {
     margin-left: -0.45rem;
   }
 
@@ -350,10 +425,6 @@
     font-weight: var(--weight-medium, 500);
   }
 
-  .tool.remove {
-    margin-left: auto;
-  }
-
   .tool.remove:hover {
     color: var(--color-error, #d32f2f);
   }
@@ -365,8 +436,9 @@
   /* ── The gloss: a note unfolded under its paragraph ─────────────
      Set off by a hand-ruled line down its left, the way a reader squeezes a
      note between the lines when there is no margin to write in. */
+  /* Set into the paragraph right after its passage; the text resumes below. */
   .marginalia-note.gloss {
-    margin: -0.35em 0 1.35em;
+    margin: 0.5em 0 0.75em;
     padding: 0.1em 0 0.1em 1rem;
     background: var(--gloss-rule) 0.05rem 0.3em / 6px 5em repeat-y;
     animation: gloss-unfold 260ms cubic-bezier(0.22, 1, 0.36, 1) both;

@@ -213,7 +213,7 @@
             }}
           >
             <Icon name="margin" size={16} />
-            Save to Margin
+            Publish
           </button>
         {/if}
       {:else}
@@ -244,8 +244,8 @@
     {#if onHighlightToMargin}
       <button
         class="popover-btn icon-only"
-        use:tooltip={'Save public margin highlight'}
-        aria-label="Save public margin highlight"
+        use:tooltip={'Publish highlight (public, on margin.at)'}
+        aria-label="Publish highlight"
         onclick={() => {
           onHighlightToMargin?.();
           onClose();
@@ -309,16 +309,16 @@
       {#if marginSaved}
         <span
           class="popover-status icon-only"
-          use:tooltip={'Saved to Margin'}
-          aria-label="Saved to Margin"
+          use:tooltip={'Published on margin.at'}
+          aria-label="Published"
         >
           <Icon name="check" size={20} />
         </span>
       {:else}
         <button
           class="popover-btn icon-only"
-          use:tooltip={'Save public margin highlight'}
-          aria-label="Save public margin highlight"
+          use:tooltip={'Publish highlight (public, on margin.at)'}
+          aria-label="Publish highlight"
           onclick={() => {
             onSaveToMargin?.();
             onClose();

@@ -347,8 +347,8 @@
                         <button
                           class="action-btn"
                           onclick={() => handleSaveToMargin(group, row)}
-                          title="Save to Margin"
-                          aria-label="Save to Margin"
+                          title="Publish highlight (public, on margin.at)"
+                          aria-label="Publish highlight"
                         >
                           <Icon name="margin" size={15} />
                         </button>

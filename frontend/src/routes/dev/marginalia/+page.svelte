@@ -85,6 +85,9 @@
       },
       createdAt: Date.now() - 60_000_000,
       note: 'Lamb lent him books to get them back annotated! Find the source.',
+      // Published: shows the globe rather than the lock.
+      marginUri: 'at://did:plc:devharness/at.margin.note/3kdevharness00',
+      marginRkey: '3kdevharness00',
     },
     {
       id: 'seed-bubble',

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { tick, untrack } from 'svelte';
   import MarginNote from './MarginNote.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { MARGINALIA_ATTR } from '$lib/utils/textSelector';
@@ -57,6 +57,8 @@
   const STACK_GAP = 14;
   const EDGE = 24;
   const MIN_RAIL = 150;
+  /** Room the ghost "add a note" takes, and so its hover target. */
+  const GHOST_WIDTH = 120;
 
   let rootEl = $state<HTMLElement | null>(null);
   let rootHeight = $state(0);
@@ -206,34 +208,77 @@
   }
 
   // ── Gloss layout ──────────────────────────────────────────────────
-  // The open gloss is drawn into a host element inserted after the top-level
-  // block its passage ends in. The host is marked `data-marginalia`, so the
+  // The open gloss is drawn into a host element inserted right after the
+  // passage's note marker (or its last mark), splitting the paragraph there:
+  // a long paragraph shouldn't push the note a screen away from the passage
+  // it's about. The host is a block inside the paragraph, so the text simply
+  // resumes on the line below it. It is marked `data-marginalia`, so the
   // highlight machinery never reads its text as the article's.
   let glossHost = $state<HTMLElement | null>(null);
 
+  /** Where a gloss can't sit mid-block, it goes after the whole block. */
+  const UNSPLITTABLE = 'pre, table, h1, h2, h3, h4, h5, h6';
+
+  /** The element the gloss goes right after, or null if the passage is gone. */
+  function glossAnchor(body: HTMLElement, id: string): HTMLElement | null {
+    const escaped = CSS.escape(id);
+    const marks = body.querySelectorAll<HTMLElement>(
+      `mark.highlight[data-highlight-id="${escaped}"]`
+    );
+    const marker = body.querySelector<HTMLElement>(
+      `.highlight-note-marker[data-highlight-id="${escaped}"]`
+    );
+    let anchor: HTMLElement | null = marker ?? marks[marks.length - 1] ?? null;
+    if (!anchor) return null;
+    // Never inside a link (tapping the note would follow it) or a block that
+    // can't take a note mid-way; step out to after it instead.
+    const link = anchor.closest('a');
+    if (link && body.contains(link)) anchor = link;
+    const rigid = anchor.closest<HTMLElement>(UNSPLITTABLE);
+    if (rigid && body.contains(rigid)) {
+      anchor = rigid;
+      while (anchor.parentElement && anchor.parentElement !== body) anchor = anchor.parentElement;
+    }
+    return anchor;
+  }
+
+  /** Put the host right after its anchor, touching the DOM only if it moved. */
+  function placeGloss(host: HTMLElement, body: HTMLElement, id: string) {
+    const anchor = glossAnchor(body, id);
+    if (!anchor) host.remove();
+    else if (anchor.nextSibling !== host) anchor.after(host);
+  }
+
+  // One host per open gloss. Redrawing the marks (saving the note, publishing
+  // it) leaves the host where it is — the marks are rebuilt around it — so the
+  // note isn't torn down and unfolded again, or blurred mid-edit, each time.
   $effect(() => {
     const id = highlights.glossId;
-    void highlights.marksVersion;
     const body = contentEl();
     if (layout !== 'gloss' || !id || !body) {
-      glossHost = null;
-      return;
-    }
-    const marks = body.querySelectorAll<HTMLElement>(
-      `mark.highlight[data-highlight-id="${CSS.escape(id)}"]`
-    );
-    let block: HTMLElement | null = marks[marks.length - 1] ?? null;
-    while (block && block.parentElement !== body) block = block.parentElement;
-    if (!block) {
       glossHost = null;
       return;
     }
     const host = document.createElement('div');
     host.setAttribute(MARGINALIA_ATTR, '');
     host.className = 'marginalia-gloss-host';
-    block.after(host);
+    placeGloss(host, body, id);
     glossHost = host;
-    return () => host.remove();
+    return () => {
+      const parent = host.parentNode;
+      host.remove();
+      // Rejoin the text the host split, so the paragraph is as it was.
+      parent?.normalize();
+    };
+  });
+
+  // …and follows its passage if a redraw does move it.
+  $effect(() => {
+    void highlights.marksVersion;
+    const host = glossHost;
+    const body = contentEl();
+    const id = untrack(() => highlights.glossId);
+    if (host && body && id) placeGloss(host, body, id);
   });
 
   const glossHighlight = $derived.by(() => {
@@ -265,6 +310,9 @@
       onClose: () => highlights.closeNote(),
       onRemove: () => highlights.removeHighlightWithUndo(id),
       onPublish: highlights.publishToMargin ? () => highlights.publishToMargin?.(id) : undefined,
+      onUnpublish: highlights.unpublishFromMargin
+        ? () => highlights.unpublishFromMargin?.(id)
+        : undefined,
       onHover: (on: boolean) => highlights.setActive(on ? id : null),
     };
   }
@@ -304,21 +352,29 @@
       {#each own as item, i (item.id)}
         {@const written = !!item.highlight.note?.trim()}
         {@const editing = highlights.editingId === item.id}
+        {@const left = GUTTER + ownLanes[i] * LANE - 6}
+        <!-- Unwritten, the hit area reaches past the bracket over the ghost
+             "add a note" so the invitation holds as the pointer drifts to it. -->
         <button
           class="bracket-hit"
           class:written
-          style:top={`${item.top - 4}px`}
-          style:height={`${item.bottom - item.top + 8}px`}
-          style:left={`${GUTTER + ownLanes[i] * LANE - 6}px`}
+          class:lit={!written && !editing && highlights.activeId === item.id}
+          style:top={`${item.top - (written ? 4 : 8)}px`}
+          style:height={`${item.bottom - item.top + (written ? 8 : 16)}px`}
+          style:left={`${left}px`}
+          style:width={written || editing ? undefined : `${NOTE_INSET - left + GHOST_WIDTH}px`}
           tabindex={written ? -1 : 0}
           aria-label={written ? 'Edit note' : 'Add a note'}
           onclick={() => highlights.openNote(item.id)}
           onmouseenter={() => highlights.setActive(item.id)}
           onmouseleave={() => highlights.setActive(null)}
-        ></button>
-        {#if !written && !editing}
-          <span class="ghost" style:top={`${item.top - 2}px`} aria-hidden="true">add a note</span>
-        {/if}
+        >
+          {#if !written && !editing}
+            <span class="ghost" style:left={`${NOTE_INSET - left}px`} aria-hidden="true"
+              >add a note</span
+            >
+          {/if}
+        </button>
       {/each}
 
       {#each writtenOwn as item (item.id)}
@@ -505,7 +561,7 @@
 
   .ghost {
     position: absolute;
-    left: 40px;
+    top: 6px;
     font-family: var(--font-hand);
     font-size: calc(var(--article-font-size, 1.125rem) * 0.86);
     line-height: 1.3;
@@ -519,8 +575,9 @@
     white-space: nowrap;
   }
 
-  .bracket-hit:hover + .ghost,
-  .bracket-hit:focus-visible + .ghost {
+  .bracket-hit:hover .ghost,
+  .bracket-hit:focus-visible .ghost,
+  .bracket-hit.lit .ghost {
     opacity: 1;
     transform: none;
   }
