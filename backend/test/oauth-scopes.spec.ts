@@ -116,4 +116,14 @@ describe('progressive requests', () => {
     );
     expect(grantedFeatures(GRANULAR_SCOPES)).toEqual([]);
   });
+
+  it('remembers features granted before their scope sets grew', () => {
+    // Semble before the connection scope; feedback before the vote/image scopes.
+    const legacy = [
+      GRANULAR_SCOPES,
+      'repo:network.cosmik.card repo:network.cosmik.collection repo:network.cosmik.collectionLink',
+      'repo:app.userinput.discussion',
+    ].join(' ');
+    expect(grantedFeatures(legacy).sort()).toEqual(['feedback', 'semble']);
+  });
 });

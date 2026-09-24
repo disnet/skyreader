@@ -295,13 +295,24 @@ function createAuthStore() {
     }
   }
 
+  // The backend refuses any returnUrl containing `//`, so a share link that
+  // arrived with an unencoded URL in its query (`/save?url=https://…`, as some
+  // Shortcuts send it) would come back to `/` and drop the save. Re-serializing
+  // the query percent-encodes every value.
+  function normalizeReturnUrl(target: string): string {
+    const [path, query] = target.split(/\?(.*)/s, 2);
+    return query ? `${path}?${new URLSearchParams(query).toString()}` : path;
+  }
+
   // Progressive scopes: ask the provider for the permissions `features` need and
   // come back to `returnUrl` (default: this page) still signed in. Navigates
   // away on success; the backend's callback swaps in the upgraded session.
   // `features` empty re-grants the core permissions of an outdated session.
   async function grantPermissions(features: ScopeFeature[] = [], returnUrl?: string) {
     if (!browser || state.grantingPermissions) return;
-    const target = returnUrl ?? window.location.pathname + window.location.search;
+    const target = normalizeReturnUrl(
+      returnUrl ?? window.location.pathname + window.location.search
+    );
     state.grantingPermissions = true;
     try {
       const authUrl = await api.requestPermissions(features, target);

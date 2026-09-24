@@ -632,6 +632,16 @@ export async function handleAuthCallback(
     // login attempt re-resolves the DID fresh.
     if (state) {
       const oauthState = await getOAuthState(env, state).catch(() => null);
+      // Declining a permission upgrade isn't a failed sign-in: the reader's
+      // session is untouched, so send them back to where they asked from.
+      if (oauthState?.replaceSessionId && error === 'access_denied') {
+        await deleteOAuthState(env, state).catch(() => {});
+        const rawReturnUrl = oauthState.returnUrl || '/';
+        const returnUrl = isValidReturnUrl(rawReturnUrl, getAllowedOrigins(env))
+          ? rawReturnUrl
+          : '/';
+        return Response.redirect(`${oauthState.frontendUrl}${returnUrl}`);
+      }
       if (oauthState?.did) {
         await invalidatePdsCache(oauthState.did, env);
       }

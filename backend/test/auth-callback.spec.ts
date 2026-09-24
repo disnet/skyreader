@@ -335,4 +335,21 @@ describe('auth callback after a permission upgrade', () => {
       .first<{ oauth_features: string }>();
     expect(user?.oauth_features).toBe('semble');
   });
+
+  it('sends a reader who declines back to where they asked from, still signed in', async () => {
+    const request = new IncomingRequest(
+      `http://localhost/api/auth/callback?error=access_denied&state=${UPGRADE_STATE}`
+    );
+    const ctx = createExecutionContext();
+    const response = await worker.fetch(request, env, ctx);
+    await waitOnExecutionContext(ctx);
+
+    expect(response.status).toBe(302);
+    expect(response.headers.get('Location')).toBe(`${env.FRONTEND_URL}/settings`);
+
+    const session = await env.DB.prepare('SELECT session_id FROM sessions WHERE session_id = ?')
+      .bind(OLD_SESSION)
+      .first();
+    expect(session).not.toBeNull();
+  });
 });

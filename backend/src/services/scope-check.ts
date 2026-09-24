@@ -5,7 +5,7 @@ import {
   ScopePermissionsTransition,
 } from '@atproto/oauth-scopes';
 import skyreaderAuthFull from '../../lexicons/app/skyreader/authFull.json';
-import { SCOPE_FEATURES, type ScopeFeature } from '../config/scopes';
+import { FEATURE_OPT_IN_SCOPES, type ScopeFeature } from '../config/scopes';
 
 // Answers "does this session's granted scope allow X?" by meaning, not by string.
 //
@@ -67,9 +67,13 @@ export function grantsScopes(granted: string | undefined | null, required: strin
   });
 }
 
-/** The optional features whose scopes `granted` fully covers. */
+/**
+ * The optional features `granted` shows the reader opted into (see
+ * FEATURE_OPT_IN_SCOPES). This decides what to ask for again, not what is
+ * allowed: gates still check the exact scopes they need.
+ */
 export function grantedFeatures(granted: string | undefined | null): ScopeFeature[] {
-  return (Object.keys(SCOPE_FEATURES) as ScopeFeature[]).filter((feature) =>
-    grantsScopes(granted, SCOPE_FEATURES[feature])
+  return (Object.keys(FEATURE_OPT_IN_SCOPES) as ScopeFeature[]).filter((feature) =>
+    grantsScopes(granted, FEATURE_OPT_IN_SCOPES[feature])
   );
 }

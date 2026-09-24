@@ -145,6 +145,17 @@ export const SCOPE_FEATURES: Record<ScopeFeature, string[]> = {
   feedback: [...USERINPUT_SCOPES, ...USERINPUT_VOTE_SCOPES, ...USERINPUT_IMAGE_SCOPES],
 };
 
+// The scopes whose presence means a reader opted into a feature, used to
+// remember features across sign-ins. Narrower than SCOPE_FEATURES where a
+// feature's set grew after launch (the Semble connection scope, the feedback
+// vote/image scopes): sessions granted before those additions still opted in,
+// and the next request re-asks for the full SCOPE_FEATURES set anyway.
+export const FEATURE_OPT_IN_SCOPES: Record<ScopeFeature, string[]> = {
+  ...SCOPE_FEATURES,
+  semble: SEMBLE_SCOPES,
+  feedback: USERINPUT_SCOPES,
+};
+
 export function isScopeFeature(value: string): value is ScopeFeature {
   return Object.prototype.hasOwnProperty.call(SCOPE_FEATURES, value);
 }
