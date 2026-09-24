@@ -64,7 +64,7 @@ const RATE_LIMITS: Record<string, RateLimitConfig> = {
   // From your follows. A read is a D1 query; the timeline walk behind it is
   // gated to one per reader per 10 minutes server-side, whatever the call rate.
   '/api/v2/following-links': STANDARD_LIMIT,
-  '/api/v2/following-links/state': STANDARD_LIMIT,
+  '/api/v2/following-links/settings': STANDARD_LIMIT,
   // One indexed query per article opened, like the mention counts.
   '/api/v2/following-links/for': LIGHT_LIMIT,
 

@@ -48,6 +48,7 @@ export interface TimelineItem {
     };
     embed?: EmbedView;
     indexedAt?: string;
+    likeCount?: number;
   };
   reason?: {
     $type?: string;
@@ -67,6 +68,9 @@ export interface LinkShare {
   text: string | null;
   card: { title?: string; description?: string; thumb?: string } | null;
   sharedAt: string;
+  /** Likes on the sharer's own post, which picks whose words a card shows. Null
+   *  for a repost: those likes are on someone else's post. */
+  likeCount: number | null;
 }
 
 const REPOST = 'app.bsky.feed.defs#reasonRepost';
@@ -180,6 +184,7 @@ export function extractLinkShare(item: TimelineItem, viewerDid: string): LinkSha
       ? { title: external.title, description: external.description, thumb: external.thumb }
       : null,
     sharedAt: (isRepost ? item.reason?.indexedAt : undefined) ?? post.indexedAt,
+    likeCount: !isRepost && typeof post.likeCount === 'number' ? post.likeCount : null,
   };
 }
 

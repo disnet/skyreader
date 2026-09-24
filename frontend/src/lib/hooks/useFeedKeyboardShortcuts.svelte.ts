@@ -6,8 +6,10 @@ import {
   feedViewStore,
   isSavedRowArchived,
   setSavedRowArchived,
-  type FeedDisplayItem,
+  type RiverItem,
 } from '$lib/stores/feedView.svelte';
+import { toggleSavedLink } from '$lib/utils/saveLink';
+import { markFollowLinkRead } from '$lib/utils/followLinks';
 import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
 import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
 import { linkblogStore } from '$lib/stores/linkblog.svelte';
@@ -30,7 +32,7 @@ interface KeyboardShortcutsParams {
  */
 export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
   // Helper to get the article from a FeedDisplayItem
-  function getArticleFromItem(item: FeedDisplayItem): Article | null {
+  function getArticleFromItem(item: RiverItem): Article | null {
     if (item.type === 'article') {
       return item.item;
     }
@@ -44,7 +46,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
 
   // Helper to resolve the currently-selected item by key. Returns null when
   // nothing is selected or the previously-selected item is no longer present.
-  function getSelectedItem(): FeedDisplayItem | null {
+  function getSelectedItem(): RiverItem | null {
     const key = feedViewStore.selectedKey;
     if (key === null) return null;
     return feedViewStore.currentItems.find((i) => i.key === key) ?? null;
@@ -77,6 +79,8 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
       url = item.item.url;
     } else if (item.type === 'document') {
       url = item.item.canonicalUrl || item.item.path || '';
+    } else if (item.type === 'link') {
+      url = item.item.url;
     } else {
       url = item.item.url;
     }
@@ -116,6 +120,8 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
           publishedAt: item.item.publishedAt,
         }
       );
+    } else if (item.type === 'link') {
+      void toggleSavedLink(item.item.url);
     }
   }
 
@@ -124,7 +130,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
   // Article items only; the extract cache dedupes/caches per URL.
   function fetchSelectedOriginal() {
     const item = getSelectedItem();
-    if (!item || item.type !== 'article' || !item.item.url) return;
+    if (!item || (item.type !== 'article' && item.type !== 'link') || !item.item.url) return;
     linkPostContentStore.fetch(item.item.url);
     // Expand so the fetched (longer) body shows rather than the clamped excerpt.
     if (feedViewStore.expandedKey !== item.key) {
@@ -176,6 +182,13 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
           doc.canonicalUrl || '',
           doc.title
         );
+      }
+    } else if (item.type === 'link') {
+      if (itemLabelsStore.isRead(item.key)) {
+        itemLabelsStore.markAsUnread(item.key);
+      } else {
+        feedViewStore.trackSeenThisSession(item);
+        markFollowLinkRead(item.item);
       }
     }
   }
@@ -342,7 +355,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
       category: 'Article',
       action: () => {
         const item = getSelectedItem();
-        if (!item) return;
+        if (!item || item.type === 'link') return;
         void setSavedRowArchived(item, !isSavedRowArchived(item));
       },
       condition: () => hasSelected() && !!feedViewStore.savedFilter,

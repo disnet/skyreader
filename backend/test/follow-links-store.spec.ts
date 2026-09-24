@@ -7,6 +7,7 @@ import {
   FIRST_REFRESH_MAX_PAGES,
   FOLLOW_LINKS_GATE_MS,
   FOLLOW_LINKS_RETENTION_MS,
+  LIKES_STALE_MS,
   MAX_SHARES_PER_REFRESH,
   REFRESH_MAX_PAGES,
   groupFollowLinks,
@@ -26,7 +27,6 @@ import {
 //  - The gate holds: a second read inside 10 minutes serves from D1 only.
 //  - Serving groups by article, ranks by distinct sharers, and borrows a card
 //    from another sharer when the freshest share was a bare link.
-//  - Dismissed links drop out (and come back on restore); opened ones are flagged.
 //  - The route needs the getTimeline scope, and sends the appview proxy header.
 
 const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
@@ -65,6 +65,7 @@ function linkItem(opts: {
   author?: string;
   title?: string;
   repostBy?: string;
+  likes?: number;
 }) {
   const author = opts.author ?? `did:plc:author${opts.n}`;
   return {
@@ -86,6 +87,7 @@ function linkItem(opts: {
           }
         : undefined,
       indexedAt: iso(opts.at),
+      ...(opts.likes !== undefined ? { likeCount: opts.likes } : {}),
     },
     ...(opts.repostBy
       ? {
@@ -115,10 +117,24 @@ function textItem(n: number, at: number) {
  * with that cursor return a 500. Records every call so tests can count pages
  * and check headers.
  */
+/** Every getPosts call (public appview) the stub answered: the uris it asked for. */
+let likeLookups: string[][] = [];
+/** What the stubbed getPosts reports, by post uri. */
+let currentLikes: Record<string, number> = {};
+
 function stubTimeline(pages: Record<string, { feed: unknown[]; cursor?: string }>, fail?: string) {
   const calls: { cursor: string; proxy: string | null }[] = [];
+  likeLookups = [];
   globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input));
+    if (url.pathname.endsWith('/xrpc/app.bsky.feed.getPosts')) {
+      const uris = url.searchParams.getAll('uris');
+      likeLookups.push(uris);
+      const posts = uris
+        .filter((uri) => uri in currentLikes)
+        .map((uri) => ({ uri, likeCount: currentLikes[uri] }));
+      return new Response(JSON.stringify({ posts }), { status: 200 });
+    }
     if (!url.pathname.endsWith('/xrpc/app.bsky.feed.getTimeline')) {
       throw new Error(`Unexpected fetch: ${url}`);
     }
@@ -195,7 +211,6 @@ describe('follow links store', () => {
     for (const [table, column] of [
       ['follow_link_shares', 'user_did'],
       ['follow_link_sync', 'user_did'],
-      ['follow_link_state', 'user_did'],
       ['rate_limits', 'user_did'],
       ['sessions', 'did'],
       ['users', 'did'],
@@ -484,6 +499,7 @@ describe('follow links store', () => {
       sharer_name: null,
       sharer_avatar: null,
       shared_at: o.at,
+      like_count: null,
     });
 
     it('ranks by distinct sharers, then by latest share', () => {
@@ -496,7 +512,7 @@ describe('follow links store', () => {
         row({ url: 'https://twice.example', sharer: 'did:c', at: 200 }),
         row({ url: 'https://solo.example/old', sharer: 'did:d', at: 100 }),
       ];
-      const links = groupFollowLinks(rows, new Map());
+      const links = groupFollowLinks(rows);
       expect(links.map((l: FollowLink) => [l.urlNormalized, l.sharerCount])).toEqual([
         ['https://pair.example', 2],
         ['https://solo.example/new', 1],
@@ -509,35 +525,16 @@ describe('follow links store', () => {
     });
 
     it('borrows the card from another sharer when the freshest share was a bare link', () => {
-      const [link] = groupFollowLinks(
-        [
-          row({ url: 'https://a.example', sharer: 'did:a', at: 900 }),
-          row({ url: 'https://a.example', sharer: 'did:b', at: 100, title: 'The title' }),
-        ],
-        new Map()
-      );
+      const [link] = groupFollowLinks([
+        row({ url: 'https://a.example', sharer: 'did:a', at: 900 }),
+        row({ url: 'https://a.example', sharer: 'did:b', at: 100, title: 'The title' }),
+      ]);
       expect(link).toMatchObject({
         title: 'The title',
         site: 'a.example',
         firstSharedAt: 100,
         lastSharedAt: 900,
       });
-    });
-
-    it('drops dismissed links and flags opened ones', () => {
-      const links = groupFollowLinks(
-        [
-          row({ url: 'https://gone.example', sharer: 'did:a', at: 2 }),
-          row({ url: 'https://seen.example', sharer: 'did:a', at: 1 }),
-        ],
-        new Map([
-          ['https://gone.example', { opened: false, dismissed: true }],
-          ['https://seen.example', { opened: true, dismissed: false }],
-        ])
-      );
-      expect(links.map((l) => [l.urlNormalized, l.opened])).toEqual([
-        ['https://seen.example', true],
-      ]);
     });
   });
 
@@ -551,12 +548,6 @@ describe('follow links store', () => {
       expect(res.status).toBe(200);
       expect(await res.json()).toMatchObject({ scopeRequired: true, links: [] });
       expect(calls).toHaveLength(0);
-
-      const state = await send('/api/v2/following-links/state', {
-        method: 'POST',
-        body: { url: 'https://a.example/x', action: 'opened' },
-      });
-      expect(state.status).toBe(403);
     });
 
     it('serves what it has, refreshes behind, then holds the gate', async () => {
@@ -586,6 +577,41 @@ describe('follow links store', () => {
       expect(calls).toHaveLength(1);
     });
 
+    it('keeps the Everything choice, asked before or after the permission', async () => {
+      await seedSession(GRANULAR_SCOPES);
+      stubTimeline({ '': { feed: [] } });
+      const read = async () =>
+        ((await (await send('/api/v2/following-links')).json()) as { inEverything: unknown })
+          .inEverything;
+
+      // Never asked.
+      expect(await read()).toBeNull();
+
+      // "Yes" before granting: saved now, so it's on when the sign-in comes back.
+      const set = await send('/api/v2/following-links/settings', {
+        method: 'POST',
+        body: { inEverything: true },
+      });
+      expect(set.status).toBe(200);
+      expect(await read()).toBe(true);
+
+      await env.DB.prepare('UPDATE sessions SET granted_scopes = ? WHERE session_id = ?')
+        .bind(SCOPES, SESSION_ID)
+        .run();
+      expect(await read()).toBe(true);
+      await send('/api/v2/following-links/settings', {
+        method: 'POST',
+        body: { inEverything: false },
+      });
+      expect(await read()).toBe(false);
+
+      const bad = await send('/api/v2/following-links/settings', {
+        method: 'POST',
+        body: { inEverything: 'yes' },
+      });
+      expect(bad.status).toBe(400);
+    });
+
     it('rejects an unknown window', async () => {
       await seedSession(SCOPES);
       stubTimeline({ '': { feed: [] } });
@@ -595,38 +621,70 @@ describe('follow links store', () => {
         expect((await send(`/api/v2/following-links?window=${key}`)).status).toBe(400);
       }
     });
+  });
 
-    it('dismisses, restores, and marks opened', async () => {
-      await seedSession(SCOPES);
+  describe('like counts', () => {
+    it('keeps the count from the timeline, then re-reads stale ones where they pick a quote', async () => {
       const now = Date.now();
+      const maya = 'at://did:plc:maya/app.bsky.feed.post/1';
+      const ben = 'at://did:plc:ben/app.bsky.feed.post/2';
       stubTimeline({
-        '': { feed: [linkItem({ n: 1, at: now - HOUR, url: 'https://a.example/x' })] },
+        '': {
+          feed: [
+            linkItem({
+              n: 1,
+              at: now - HOUR,
+              url: 'https://a.example/x',
+              author: 'did:plc:maya',
+              likes: 3,
+            }),
+            linkItem({
+              n: 2,
+              at: now - 2 * HOUR,
+              url: 'https://a.example/x',
+              author: 'did:plc:ben',
+              likes: 1,
+            }),
+            // One worded share: no choice to make, so never looked up.
+            linkItem({ n: 3, at: now - HOUR, url: 'https://b.example/solo', likes: 9 }),
+          ],
+        },
       });
+      currentLikes = { [maya]: 5, [ben]: 40 };
       await refreshFollowLinks(env, SESSION, { now });
 
-      const state = (action: string) =>
-        send('/api/v2/following-links/state', {
-          method: 'POST',
-          // Tracking params and case don't matter: state is keyed by the normalized URL.
-          body: { url: 'https://A.example/x?utm_source=bsky', action },
-        });
+      // Fresh from the timeline: nothing to re-read yet.
+      expect(likeLookups).toEqual([]);
+      let [link] = (await readFollowLinks(env, DID, '24h', now)).filter(
+        (l) => l.urlNormalized === 'https://a.example/x'
+      );
+      expect(link.sharers.map((s) => [s.did, s.likeCount])).toEqual([
+        ['did:plc:maya', 3],
+        ['did:plc:ben', 1],
+      ]);
 
-      expect((await state('opened')).status).toBe(200);
-      expect((await readFollowLinks(env, DID, '24h'))[0].opened).toBe(true);
+      // An hour on, the next refresh re-reads both, and only those.
+      const later = now + LIKES_STALE_MS + 1;
+      stubTimeline({ '': { feed: [] } });
+      await refreshFollowLinks(env, SESSION, { now: later, force: true });
+      expect(likeLookups.flat().sort()).toEqual([ben, maya].sort());
+      [link] = (await readFollowLinks(env, DID, '24h', later)).filter(
+        (l) => l.urlNormalized === 'https://a.example/x'
+      );
+      expect(link.sharers.map((s) => [s.did, s.likeCount])).toEqual([
+        ['did:plc:maya', 5],
+        ['did:plc:ben', 40],
+      ]);
 
-      await state('dismissed');
-      expect(await readFollowLinks(env, DID, '24h')).toEqual([]);
-
-      await state('restored');
-      const [link] = await readFollowLinks(env, DID, '24h');
-      expect(link).toMatchObject({ opened: true });
-
-      expect((await state('bogus')).status).toBe(400);
+      // Checked just now, so a refresh right after asks again for nothing.
+      stubTimeline({ '': { feed: [] } });
+      await refreshFollowLinks(env, SESSION, { now: later + 1, force: true });
+      expect(likeLookups).toEqual([]);
     });
   });
 
   describe('who you follow shared one URL', () => {
-    it('answers for any URL form, newest sharer first, ignoring dismissal', async () => {
+    it('answers for any URL form, newest sharer first', async () => {
       await seedSession(SCOPES);
       const now = Date.now();
       stubTimeline({
@@ -644,10 +702,6 @@ describe('follow links store', () => {
         },
       });
       await refreshFollowLinks(env, SESSION, { now });
-      await send('/api/v2/following-links/state', {
-        method: 'POST',
-        body: { url: 'https://a.example/x', action: 'dismissed' },
-      });
 
       const res = await send(
         `/api/v2/following-links/for?url=${encodeURIComponent('https://A.example/x/?utm_source=bsky')}`
@@ -675,7 +729,7 @@ describe('follow links store', () => {
   });
 
   describe('purgeFollowLinks', () => {
-    it('drops shares past retention and state untouched for a month', async () => {
+    it('drops shares past retention', async () => {
       const now = Date.now();
       stubTimeline({
         '': {
@@ -691,13 +745,8 @@ describe('follow links store', () => {
       )
         .bind(now - FOLLOW_LINKS_RETENTION_MS - 1, DID, 'https://old.example/b')
         .run();
-      await env.DB.prepare(
-        `INSERT INTO follow_link_state (user_did, url_normalized, opened_at, updated_at) VALUES (?, ?, ?, ?)`
-      )
-        .bind(DID, 'https://stale.example', 1, now - 31 * 24 * HOUR)
-        .run();
 
-      expect(await purgeFollowLinks(env, now)).toBe(2);
+      expect(await purgeFollowLinks(env, now)).toBe(1);
       const links = await readFollowLinks(env, DID, '7d', now);
       expect(links.map((l) => l.urlNormalized)).toEqual(['https://keep.example/a']);
     });

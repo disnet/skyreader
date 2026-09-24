@@ -3,6 +3,7 @@
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { articlesStore } from '$lib/stores/articles.svelte';
   import Modal from '$lib/components/common/Modal.svelte';
+  import Icon from '$lib/components/Icon.svelte';
   import type {
     SubscriptionSourceType,
     ChannelAutoRule,
@@ -13,7 +14,8 @@
   } from '$lib/types';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
-  import { subscriptionSourceKey } from '$lib/utils/sourceKeys';
+  import { FOLLOWS_SOURCE_KEY, subscriptionSourceKey } from '$lib/utils/sourceKeys';
+  import { auth } from '$lib/stores/auth.svelte';
   import { getFaviconUrl } from '$lib/utils/favicon';
   import { computeSourceKeys } from '$lib/utils/channelLogic';
   import DomainPatternInput from '$lib/components/DomainPatternInput.svelte';
@@ -660,6 +662,19 @@
                 class="search-input"
               />
               <div class="checklist">
+                {#if sourceMode === 'include' && !auth.isGuest && !feedSearch}
+                  <!-- Never part of "All sources": a channel shows your follows'
+                       links only by naming them. -->
+                  <label class="checklist-item">
+                    <input
+                      type="checkbox"
+                      checked={sourceKeys.has(FOLLOWS_SOURCE_KEY)}
+                      onchange={() => toggleSourceKey(FOLLOWS_SOURCE_KEY)}
+                    />
+                    <Icon name="share-2" size={16} />
+                    <span class="checklist-label">People you follow on Bluesky</span>
+                  </label>
+                {/if}
                 {#each filteredSubscriptions as sub (sub.id)}
                   {@const key = subscriptionSourceKey(sub)}
                   {#if key}

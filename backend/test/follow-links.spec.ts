@@ -71,6 +71,21 @@ describe('extractLinkShare', () => {
     });
   });
 
+  it("keeps the sharer's own post's likes, but not a repost's", () => {
+    expect(extractLinkShare(linkPost({ likeCount: 12 }), VIEWER)?.likeCount).toBe(12);
+    expect(extractLinkShare(linkPost(), VIEWER)?.likeCount).toBeNull();
+    const repost: TimelineItem = {
+      ...linkPost({ likeCount: 40 }),
+      reason: {
+        $type: 'app.bsky.feed.defs#reasonRepost',
+        by: BEN,
+        indexedAt: '2026-09-21T08:00:00.000Z',
+      },
+    };
+    // Those 40 likes are on Maya's post, not on anything Ben said.
+    expect(extractLinkShare(repost, VIEWER)?.likeCount).toBeNull();
+  });
+
   it('skips a pinned-post reason', () => {
     const item: TimelineItem = { ...linkPost(), reason: { $type: 'app.bsky.feed.defs#reasonPin' } };
     expect(extractLinkShare(item, VIEWER)).toBeNull();

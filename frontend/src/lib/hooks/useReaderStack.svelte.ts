@@ -31,6 +31,7 @@ import { toastStore } from '$lib/stores/toast.svelte';
 import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
 import { feedViewStore, type FeedDisplayItem } from '$lib/stores/feedView.svelte';
 import { fetchCollectionDoc } from '$lib/utils/collectionPiece';
+import { openFollowLink } from '$lib/utils/followLinks';
 import { getItemTitle } from '$lib/utils/displayItem';
 import {
   READ_PARAM,
@@ -181,7 +182,10 @@ export function useReaderStack(config: { onReaderChange?: (open: boolean) => voi
     const key = feedViewStore.selectedKey;
     if (key === null) return;
     const item = feedViewStore.currentItems.find((i) => i.key === key);
-    if (item) openReader(item);
+    if (!item) return;
+    // A follows link has no body to open: extract the page, then push that.
+    if (item.type === 'link') void openFollowLink(item.item, { openReader });
+    else openReader(item);
   }
 
   // Open a curated Collection piece in the reader. The piece is a resolved preview

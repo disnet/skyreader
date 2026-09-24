@@ -134,6 +134,21 @@ export interface DiscussionStreamVM {
 
 export type SembleContextVM = SembleContext;
 
+export interface FollowLinkCardVM {
+  title: string;
+  description: string | null;
+  thumb: string | null;
+  domain: string;
+  /** What the latest sharer who said something said, and who they are. */
+  said: { text: string; name: string } | null;
+}
+
+export interface FollowSharersVM {
+  names: string;
+  title: string;
+  avatars: string[];
+}
+
 export interface SocialContextVM {
   quoteCount: number;
 }
@@ -176,6 +191,18 @@ export interface ArticleCardViewProps {
   authorDisplayName?: string;
   authorAvatar?: string;
   authorDid?: string;
+
+  /**
+   * People you follow who shared this article on Bluesky, pre-resolved for the
+   * "Shared by" pill: a short name line ("Maya +2"), the full sentence for its
+   * tooltip, and up to three avatars. Absent when none of them shared it.
+   */
+  followSharers?: FollowSharersVM;
+  /** The row is a follows link, not a feed article: its source is a site, not a feed. */
+  isFollowLink?: boolean;
+  /** A follows link's body until its page is fetched: the sharer's words, then
+   *  the link card they posted. */
+  followLinkCard?: FollowLinkCardVM;
 
   socialContext?: SocialContextVM;
 

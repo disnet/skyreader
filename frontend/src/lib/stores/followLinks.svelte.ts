@@ -1,21 +1,21 @@
 import { api } from '$lib/services/api';
+import { urlKey } from '$lib/utils/urlKey';
 import { auth } from './auth.svelte';
-import type { FollowLink, FollowLinksWindow } from '$lib/types';
+import type { FollowLink } from '$lib/types';
 
 // From your follows: the links people you follow share on Bluesky, grouped by
-// article. Backs the /following page and Home's "Shared by people you follow"
-// lane. See docs/plans/FOLLOWS_LINKS_PLAN.md.
+// article. One list backs every surface: the follows source in the river (any
+// channel that names it), the "shared by" line on river cards for articles your
+// follows also shared, and Home's lane. See docs/plans/FOLLOWS_LINKS_PLAN.md.
 //
-// The server answers from D1 at once and refreshes the timeline behind the
+// Always the week: the retention window, and what the river and the lane both
+// show. The server answers from D1 at once and refreshes the timeline behind the
 // response (at most every 10 minutes). When a response says it started a
 // refresh, this store asks again a few seconds later to pick up what it found,
 // and keeps asking while a reader's first refresh is still gathering.
 //
-// Two instances: the page's, whose window the reader picks, and Home's lane,
-// which always shows the week: the most-shared links need the longest look to
-// rank, and a lane that's empty on a quiet day helps nobody. "View all" opens
-// the page on the week too. Picking a window on /following doesn't change
-// Home. Opening or hiding a link applies to both.
+// Read state isn't here: a link is read the way everything else in the river
+// is, through an item label (see followLinkReadKey).
 
 /** How long to wait before asking again after a response started a refresh. */
 const FOLLOW_UP_MS = 4000;
@@ -26,18 +26,15 @@ const MAX_FOLLOW_UPS = 6;
  *  asking also refreshes from the timeline, so this only bounds staleness. */
 const STALE_MS = 5 * 60 * 1000;
 
-/** Every instance's local half of an open or hide, so both lists agree. */
-const instances = new Set<{ applyOpened(u: string): void; applyDismissed(u: string): void }>();
-
-function createFollowLinksStore(initialWindow: FollowLinksWindow = '24h') {
+function createFollowLinksStore() {
   let links = $state<FollowLink[]>([]);
-  let currentWindow = $state<FollowLinksWindow>(initialWindow);
+  let loaded = $state(false);
   let loading = $state(false);
   let scopeRequired = $state(false);
+  let inEverything = $state<boolean | null>(null);
   let complete = $state(false);
   let refreshing = $state(false);
   let error = $state<string | null>(null);
-  let loadedKey: string | null = null;
   let loadedAt = 0;
   let loadedDid: string | null = null;
   /** Bumped by every load; a response or follow-up from an older one is dropped. */
@@ -45,18 +42,33 @@ function createFollowLinksStore(initialWindow: FollowLinksWindow = '24h') {
   let followUp: ReturnType<typeof setTimeout> | null = null;
   let followUps = 0;
 
+  // Every form a river item's URL might match a link under: the posted URL
+  // (tracking and all) and the server's normalized one, both canonicalized.
+  let byUrlKey = $derived.by(() => {
+    const map = new Map<string, FollowLink>();
+    for (const link of links) {
+      for (const url of [link.url, link.urlNormalized]) {
+        const key = urlKey(url);
+        if (key && !map.has(key)) map.set(key, link);
+      }
+    }
+    return map;
+  });
+
   function clearFollowUp() {
     if (followUp) clearTimeout(followUp);
     followUp = null;
   }
 
-  async function fetchOnce(token: number, did: string, w: FollowLinksWindow): Promise<void> {
-    const res = await api.getFollowLinks(w);
-    // A newer load (another window, another account, a re-visit) superseded this.
+  async function fetchOnce(token: number, did: string): Promise<void> {
+    const res = await api.getFollowLinks('7d');
+    // A newer load (another account, a forced re-ask) superseded this.
     if (token !== seq || auth.user?.did !== did) return;
 
     scopeRequired = res.scopeRequired;
+    inEverything = res.inEverything ?? null;
     links = res.links;
+    loaded = true;
     complete = res.sync?.complete ?? false;
     refreshing = res.sync?.refreshing ?? false;
     error = res.sync?.error ?? null;
@@ -66,7 +78,7 @@ function createFollowLinksStore(initialWindow: FollowLinksWindow = '24h') {
       followUps++;
       followUp = setTimeout(() => {
         followUp = null;
-        void fetchOnce(token, did, w).catch(() => {});
+        void fetchOnce(token, did).catch(() => {});
       }, FOLLOW_UP_MS);
     } else if (!complete) {
       // Gave up waiting on a first refresh; stop showing it as in progress.
@@ -74,79 +86,83 @@ function createFollowLinksStore(initialWindow: FollowLinksWindow = '24h') {
     }
   }
 
-  /** Load for the signed-in account. An answer is reused per account + window
-   *  for a few minutes unless `force`; the server's own gate decides whether a
-   *  load also refreshes from the timeline. */
-  async function load(w: FollowLinksWindow = currentWindow, force = false): Promise<void> {
+  /** Load for the signed-in account. An answer is reused for a few minutes
+   *  unless `force`, and a "no permission" answer for the rest of the session:
+   *  granting it goes through the account provider and reloads the app. */
+  async function load(force = false): Promise<void> {
     const user = auth.user;
     if (!user || auth.isGuest) return;
-    const key = `${user.did}|${w}`;
-    if (!force && loadedKey === key && Date.now() - loadedAt < STALE_MS) return;
+    if (loadedDid === user.did && !force) {
+      if (scopeRequired) return;
+      if (Date.now() - loadedAt < STALE_MS) return;
+    }
 
     if (loadedDid !== user.did) {
       // Never show another account's links, permission ask or error.
       links = [];
+      loaded = false;
       scopeRequired = false;
+      inEverything = null;
       complete = false;
       refreshing = false;
       error = null;
       loadedDid = user.did;
-    } else if (w !== currentWindow) {
-      // Another window's links under this window's chip would be wrong.
-      links = [];
     }
 
     const token = ++seq;
     clearFollowUp();
-    currentWindow = w;
-    loadedKey = key;
     loadedAt = Date.now();
     followUps = 0;
     loading = true;
     try {
-      await fetchOnce(token, user.did, w);
+      await fetchOnce(token, user.did);
     } catch (err) {
       if (token !== seq) return;
-      loadedKey = null;
+      loadedAt = 0;
       error = err instanceof Error ? err.message : 'Could not load';
     } finally {
-      // Only the latest load owns the flag: an older one finishing mustn't clear
-      // it while the current window is still in flight.
+      // Only the latest load owns the flag.
       if (token === seq) loading = false;
     }
   }
 
-  instances.add({
-    applyOpened(urlNormalized) {
-      links = links.map((l) => (l.urlNormalized === urlNormalized ? { ...l, opened: true } : l));
-    },
-    applyDismissed(urlNormalized) {
-      links = links.filter((l) => l.urlNormalized !== urlNormalized);
-    },
-  });
-
-  function markOpened(url: string, urlNormalized: string) {
-    for (const i of instances) i.applyOpened(urlNormalized);
-    void api.setFollowLinkState(url, 'opened').catch(() => {});
+  /** Show follows links in Everything, or not. Applied at once; saved for the
+   *  account, so the first-run question is asked once, not once per device. */
+  async function setInEverything(on: boolean): Promise<void> {
+    const prior = inEverything;
+    inEverything = on;
+    try {
+      await api.setFollowLinksInEverything(on);
+    } catch (err) {
+      inEverything = prior;
+      throw err;
+    }
   }
 
-  function dismiss(url: string, urlNormalized: string) {
-    for (const i of instances) i.applyDismissed(urlNormalized);
-    void api.setFollowLinkState(url, 'dismissed').catch(() => {});
+  /** The link your follows shared at this URL, if any, in whatever form. */
+  function forUrl(url: string | null | undefined): FollowLink | undefined {
+    if (!url) return undefined;
+    const key = urlKey(url);
+    return key ? byUrlKey.get(key) : undefined;
   }
 
   return {
     get links() {
       return links;
     },
-    get window() {
-      return currentWindow;
+    /** An answer has arrived for this account (with or without the permission). */
+    get loaded() {
+      return loaded;
     },
     get loading() {
       return loading;
     },
     get scopeRequired() {
       return scopeRequired;
+    },
+    /** Whether they show in Everything; null until the reader has been asked. */
+    get inEverything() {
+      return inEverything;
     },
     /** A first refresh is still walking the timeline. */
     get gathering() {
@@ -162,12 +178,9 @@ function createFollowLinksStore(initialWindow: FollowLinksWindow = '24h') {
       return error;
     },
     load,
-    markOpened,
-    dismiss,
+    setInEverything,
+    forUrl,
   };
 }
 
-/** The /following page: the reader picks the window. */
 export const followLinksStore = createFollowLinksStore();
-/** Home's "Shared by people you follow" lane: always the week. */
-export const followLinksLaneStore = createFollowLinksStore('7d');

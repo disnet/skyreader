@@ -1,5 +1,5 @@
 // Source key utilities for unified source filter model
-// Format: "rss~{rkey}", "{rkey}~documents"
+// Format: "rss~{rkey}", "{rkey}~documents", and the one "bsky~follows"
 //
 // A documents source is keyed by the subscription rkey (like RSS), so two
 // publications owned by the same author DID are distinct sources. Legacy keys
@@ -17,6 +17,16 @@ export function rssSourceKey(rkey: string): string {
 export function documentsSourceKey(rkey: string): string {
   return `${rkey}${SEP}documents`;
 }
+
+/**
+ * The links people you follow share on Bluesky (docs/plans/FOLLOWS_LINKS_PLAN.md).
+ * One source, not one per person: the timeline arrives already merged. It is
+ * part of "All sources" (Everything) only when the reader has turned that on
+ * (followLinksStore.inEverything, asked once in Everything); otherwise a channel
+ * shows it only by naming it, so a heavy timeline can't flood the river. It
+ * never counts toward unread badges either way.
+ */
+export const FOLLOWS_SOURCE_KEY = 'bsky~follows';
 
 // --- Parsing ---
 
@@ -43,6 +53,10 @@ export function parseSourceKey(key: string): ParsedSourceKey {
 
 export function isRssSource(key: string): boolean {
   return key.startsWith(`rss${SEP}`);
+}
+
+export function isFollowsSource(key: string): boolean {
+  return key === FOLLOWS_SOURCE_KEY;
 }
 
 export function isDocumentsSource(key: string): boolean {

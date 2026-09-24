@@ -1806,26 +1806,24 @@ class ApiClient {
 
   // From your follows — see docs/plans/FOLLOWS_LINKS_PLAN.md. The read answers
   // `scopeRequired` (200) rather than a 403 until the reader has granted the
-  // getTimeline permission, so visiting the page never raises the app-wide
-  // re-login banner; the page's own empty state asks instead.
+  // getTimeline permission, so loading the river never raises the app-wide
+  // re-login banner; Manage Sources asks instead.
   async getFollowLinks(window: FollowLinksWindow = '24h'): Promise<FollowLinksResponse> {
     return this.fetch(`/api/v2/following-links?window=${window}`);
+  }
+
+  /** Whether follows links show in Everything. No permission needed. */
+  async setFollowLinksInEverything(inEverything: boolean): Promise<{ ok: boolean }> {
+    return this.fetch('/api/v2/following-links/settings', {
+      method: 'POST',
+      body: JSON.stringify({ inEverything }),
+    });
   }
 
   /** Who you follow shared this article, for the Discussion panel. Empty (not
    *  a 403) without the permission, so the panel never raises the re-login banner. */
   async getFollowLinkSharers(url: string): Promise<FollowLinkSharersResponse> {
     return this.fetch(`/api/v2/following-links/for?url=${encodeURIComponent(url)}`);
-  }
-
-  async setFollowLinkState(
-    url: string,
-    action: 'opened' | 'dismissed' | 'restored'
-  ): Promise<{ ok: boolean }> {
-    return this.fetch('/api/v2/following-links/state', {
-      method: 'POST',
-      body: JSON.stringify({ url, action }),
-    });
   }
 
   async recordRoomRead(collectionUri: string, url: string): Promise<{ ok: boolean }> {

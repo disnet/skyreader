@@ -1,23 +1,72 @@
 import type { useReaderStack } from '$lib/hooks/useReaderStack.svelte';
-import { followLinksStore } from '$lib/stores/followLinks.svelte';
+import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
 import { extractArticle } from '$lib/utils/roomArticle';
 import { decodeEntities } from '$lib/utils/entities';
 import { toastStore } from '$lib/stores/toast.svelte';
-import type { FollowLink, FollowLinkSharer } from '$lib/types';
+import type { Article, FollowLink, FollowLinkSharer } from '$lib/types';
 
-// Shared by the /following page and Home's "Shared by people you follow" lane,
-// so both open a link and describe its sharers the same way.
+// Shared by the river's follows rows and Home's "Shared by people you follow"
+// lane, so both open a link, mark it read and describe its sharers the same way.
 // See docs/plans/FOLLOWS_LINKS_PLAN.md.
 
 type ReaderStack = ReturnType<typeof useReaderStack>;
 
 /**
- * Open a follows link in the reader without saving it (the rooms path), and
- * mark it opened. A page the extractor can't read opens in a new tab instead,
- * which still counts as opened.
+ * The item key a follows link is read under, and its row key in the river. The
+ * normalized URL, not the posted one: the posted URL is whichever sharer's card
+ * won, so it can change between loads, and read state mustn't change with it.
  */
-export async function openFollowLink(link: FollowLink, reader: ReaderStack): Promise<void> {
-  followLinksStore.markOpened(link.url, link.urlNormalized);
+export function followLinkReadKey(link: Pick<FollowLink, 'urlNormalized'>): string {
+  return link.urlNormalized;
+}
+
+/** Mark a follows link read, the same label an RSS article gets. */
+export function markFollowLinkRead(link: FollowLink): void {
+  itemLabelsStore.markAsRead('', followLinkReadKey(link), link.url, followLinkTitle(link));
+}
+
+/** Whose words a link's card quotes: the sharer whose post about it has the
+ *  most likes, the latest of them on a tie (sharers arrive newest first).
+ *  Reposts carry no words of their own, so they're skipped. */
+export function followLinkSaid(link: FollowLink): { text: string; name: string } | null {
+  let said: FollowLinkSharer | null = null;
+  for (const s of link.sharers) {
+    if (s.kind === 'repost' || !s.text?.trim()) continue;
+    if (!said || (s.likeCount ?? 0) > (said.likeCount ?? 0)) said = s;
+  }
+  return said?.text ? { text: said.text.trim(), name: nameOf(said) } : null;
+}
+
+/**
+ * A follows link as the article a river card renders: its card title and blurb
+ * (for search and the "Shared by" rows' metadata; the card draws the link card
+ * instead), dated by its first share. No subscription (id -1) and no body; the
+ * card fetches the page itself, and opening it goes through openFollowLink,
+ * never the feed-article path.
+ */
+export function followLinkArticle(link: FollowLink): Article {
+  return {
+    subscriptionId: -1,
+    guid: followLinkReadKey(link),
+    url: link.url,
+    title: followLinkTitle(link),
+    summary: link.description ? decodeEntities(link.description) : undefined,
+    imageUrl: link.thumb ?? undefined,
+    publishedAt: new Date(link.firstSharedAt).toISOString(),
+    fetchedAt: link.lastSharedAt,
+  };
+}
+
+/**
+ * Open a follows link in the reader without saving it (the rooms path), and
+ * mark it read. A page the extractor can't read opens in a new tab instead,
+ * which still counts as read.
+ */
+export async function openFollowLink(
+  link: FollowLink,
+  reader: Pick<ReaderStack, 'openReader'>
+): Promise<void> {
+  markFollowLinkRead(link);
   const saved = await extractArticle({
     url: link.url,
     title: link.title,
@@ -96,6 +145,13 @@ export function sharedByLabel(sharers: Pick<FollowLinkSharer, 'name' | 'handle'>
   if (sharers.length === 1) return `${nameOf(sharers[0])} shared this`;
   if (sharers.length === 2) return `${nameOf(sharers[0])} and ${nameOf(sharers[1])} shared this`;
   return `${nameOf(sharers[0])} and ${sharers.length - 1} others shared this`;
+}
+
+/** The card pill's name line, after "Shared by": "Maya", "Maya +2". */
+export function sharedByPill(sharers: Pick<FollowLinkSharer, 'name' | 'handle'>[]): string {
+  if (sharers.length === 0) return '';
+  const first = nameOf(sharers[0]);
+  return sharers.length === 1 ? first : `${first} +${sharers.length - 1}`;
 }
 
 /** The lane-tile version: the tile's meta line fits "8 min read", not a

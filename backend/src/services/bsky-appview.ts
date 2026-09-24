@@ -65,6 +65,30 @@ export async function fetchFollows(actor: string, maxPages = 20): Promise<BskyPr
 }
 
 /**
+ * Like counts for a set of post at-uris, batched at getPosts' 25-uri limit. A
+ * post that's gone (deleted, or taken down) is simply absent, as is every post
+ * in a batch that failed.
+ */
+export async function fetchPostLikeCounts(uris: string[]): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  for (let i = 0; i < uris.length; i += 25) {
+    const params = new URLSearchParams();
+    for (const uri of uris.slice(i, i + 25)) params.append('uris', uri);
+    try {
+      const res = await fetch(`${APPVIEW_BASE}/xrpc/app.bsky.feed.getPosts?${params}`);
+      if (!res.ok) continue;
+      const data = (await res.json()) as { posts?: { uri?: string; likeCount?: number }[] };
+      for (const p of data.posts ?? []) {
+        if (p.uri && typeof p.likeCount === 'number') counts.set(p.uri, p.likeCount);
+      }
+    } catch (error) {
+      console.error('[bsky-appview] getPosts error:', error);
+    }
+  }
+  return counts;
+}
+
+/**
  * Resolve a set of DIDs to profile basics, batched at the AppView's 25-actor
  * limit. Returns a DID→profile map; DIDs that fail to resolve are simply absent.
  */

@@ -14,6 +14,9 @@
   import { savedSearchStore } from '$lib/stores/savedSearch.svelte';
   import { unreadCounts } from '$lib/stores/unreadCounts.svelte';
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
+  import { followLinksStore } from '$lib/stores/followLinks.svelte';
+  import { followLinkReadKey, markFollowLinkRead } from '$lib/utils/followLinks';
+  import { grantFollowsAccess } from '$lib/utils/followsChannel';
   import { appManager } from '$lib/stores/app.svelte';
   import { articlesStore } from '$lib/stores/articles.svelte';
   import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
@@ -46,6 +49,7 @@
   import { goto } from '$app/navigation';
   import { channelPath, FEEDS_PATH } from '$lib/utils/viewNav';
   import LinkblogIntro from '$lib/components/feed/LinkblogIntro.svelte';
+  import FollowsIntro from '$lib/components/following/FollowsIntro.svelte';
   import LinkblogListView from '$lib/components/feed/LinkblogListView.svelte';
   import { shareDraftsStore } from '$lib/stores/shareDrafts.svelte';
 
@@ -293,6 +297,8 @@
         doc.canonicalUrl || '',
         doc.title
       );
+    } else if (item.type === 'link') {
+      if (!itemLabelsStore.isRead(item.key)) markFollowLinkRead(item.item);
     }
   }
 
@@ -390,6 +396,20 @@
       }
     }
 
+    // Follows links are read like articles, under their own key; there's no
+    // subscription behind one.
+    for (const link of feedViewStore.displayedFollowLinks) {
+      const key = followLinkReadKey(link);
+      if (!itemLabelsStore.isRead(key)) {
+        articlesToMark.push({
+          subscriptionRkey: '',
+          articleGuid: key,
+          articleUrl: link.url,
+          articleTitle: link.title ?? link.site,
+        });
+      }
+    }
+
     const totalCount = articlesToMark.length + documentUrisToTrack.length;
     if (totalCount === 0) return;
 
@@ -482,7 +502,37 @@
     lastVisibleTime = Date.now();
   }
 
+  // Follows links: for a view that includes the source, and for the "shared by"
+  // line on any river card whose article your follows also shared. The store
+  // reuses an answer for a few minutes, and a "no permission" one for the
+  // session, so this costs nothing per navigation.
+  $effect(() => {
+    if (mode === 'linkblog' || !auth.isAuthenticated || auth.isGuest) return;
+    untrack(() => void followLinksStore.load());
+  });
+
+  // Everything: the river with no channel, feed, category or saved filter on it.
+  // The one place the follows first-run question is asked.
+  let isEverything = $derived(
+    mode === 'feed' &&
+      !isSavedView &&
+      !feedViewStore.viewFilter &&
+      !feedViewStore.feedFilter &&
+      !feedViewStore.categoryFilter &&
+      !feedViewStore.sharerFilter &&
+      !feedViewStore.followingFilter &&
+      feedViewStore.effectiveFilters.sourceMode === 'all'
+  );
+  let askAboutFollows = $derived(
+    isEverything &&
+      auth.isAuthenticated &&
+      !auth.isGuest &&
+      followLinksStore.loaded &&
+      followLinksStore.inEverything === null
+  );
+
   async function handleRefreshWithToast() {
+    if (feedViewStore.showFollowLinks) void followLinksStore.load(true);
     const newArticles = await appManager.refreshFromBackend();
     feedViewStore.clearReadThisSession();
     if (newArticles > 0) {
@@ -621,6 +671,9 @@
       {#if mode === 'linkblog'}
         <LinkblogIntro />
       {/if}
+      {#if askAboutFollows && !readerOpen}
+        <FollowsIntro />
+      {/if}
 
       <!-- Sits here rather than inside the header because the header is hidden
            below 1000px (the mobile bottom bar takes over) — this way the same
@@ -633,7 +686,7 @@
         onRefresh={handleRefreshWithToast}
         disabled={!syncStore.isOnline || appManager.isRefreshing}
       >
-        {#if (appManager.isHydrating || appManager.isRefreshing || (mode === 'linkblog' && myLinkblogStore.loading && !myLinkblogStore.loaded)) && feedViewStore.currentItems.length === 0 && !hasLinkblogDrafts}
+        {#if (appManager.isHydrating || appManager.isRefreshing || (mode === 'linkblog' && myLinkblogStore.loading && !myLinkblogStore.loaded) || (feedViewStore.showFollowLinks && !followLinksStore.loaded)) && feedViewStore.currentItems.length === 0 && !hasLinkblogDrafts}
           <LoadingState />
         {:else if !isSavedView && feedViewStore.currentItems.length === 0 && !hasLinkblogDrafts && !readerLinkPending}
           {#if mode === 'linkblog'}
@@ -641,6 +694,33 @@
             <EmptyState
               title="Nothing posted yet"
               description="Share an article from your feed and it lands here, and on your public page."
+            />
+          {:else if feedViewStore.showFollowLinks && followLinksStore.scopeRequired}
+            <EmptyState
+              title="See what your follows are sharing"
+              description="Skyreader can read your Bluesky Following timeline and gather the links in it, so you can read them here, calmly, without the timeline. It keeps them for a week and never posts anything."
+              onAction={() => grantFollowsAccess()}
+              actionText="Allow access"
+            />
+          {:else if feedViewStore.showFollowLinks && followLinksStore.gathering}
+            <EmptyState
+              title="Gathering links"
+              description="Reading your Following timeline for the links in it. This takes a few seconds the first time."
+            />
+          {:else if feedViewStore.showFollowLinks && followLinksStore.error && !followLinksStore.complete}
+            <EmptyState
+              title="Couldn't reach your timeline"
+              description="Bluesky didn't answer. Try again in a bit."
+            />
+          {:else if feedViewStore.showFollowLinks && followLinksStore.links.length === 0}
+            <EmptyState
+              title="Nothing shared this week"
+              description="Links the people you follow share on Bluesky land here."
+            />
+          {:else if feedViewStore.showFollowLinks && feedViewStore.showOnlyUnread}
+            <EmptyState
+              title="All caught up"
+              description="You've read everything your follows shared this week."
             />
           {:else if feedViewStore.viewFilter}
             <EmptyState

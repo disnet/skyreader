@@ -6,7 +6,15 @@
   // in ArticleCardView.svelte so the visual layer is iterable from mock data
   // (see /dev/cards). Keep this component's public props stable — FeedListView
   // and SavedReader depend on them.
-  import type { Article, SocialDocument, BlueskyProfile, ReaderCollectionItem } from '$lib/types';
+  import type {
+    Article,
+    SocialDocument,
+    BlueskyProfile,
+    ReaderCollectionItem,
+    FollowLink,
+    FollowLinkSharer,
+  } from '$lib/types';
+  import { followLinkSaid, sharedByLabel, sharedByPill } from '$lib/utils/followLinks';
   import { formatRelativeDate } from '$lib/utils/date';
   import { getFaviconUrl } from '$lib/utils/favicon';
   import { sanitizeHtml } from '$lib/utils/sanitize';
@@ -71,6 +79,8 @@
     selected = false,
     expanded = false,
     highlighted = false,
+    followSharers,
+    followLink,
     onToggleSave,
     onToggleRead,
     onUnshare,
@@ -92,6 +102,11 @@
     selected?: boolean;
     expanded?: boolean;
     highlighted?: boolean;
+    /** People you follow who shared this on Bluesky, newest first. */
+    followSharers?: FollowLinkSharer[];
+    /** The follows link this card renders (`article` is its followLinkArticle):
+     *  no feed behind it and no body of its own, so it shows as a link card. */
+    followLink?: FollowLink;
     onToggleSave?: () => void;
     onToggleRead?: () => void;
     onUnshare?: () => void;
@@ -102,6 +117,8 @@
      *  view, which owns the reader stack. */
     onOpenCollectionPiece?: (item: ReaderCollectionItem) => void | Promise<void>;
   } = $props();
+
+  let isFollowLink = $derived(Boolean(followLink));
 
   // Determine if we're in document mode (showing someone's published document)
   let isDocumentMode = $derived(Boolean(document && !article));
@@ -590,9 +607,49 @@
     return text.split(/\s+/).filter(Boolean).length;
   });
 
-  // Estimate read time from content (~200 words/min)
+  // Estimate read time from content (~200 words/min). A follows link's body is
+  // its card blurb until the page is fetched, so it gets no estimate before then.
   let readTimeMinutes = $derived(
-    bodyWordCount > 0 ? Math.max(1, Math.round(bodyWordCount / 200)) : 0
+    isFollowLink && !linkPostContentStore.get(itemUrl)?.content
+      ? 0
+      : bodyWordCount > 0
+        ? Math.max(1, Math.round(bodyWordCount / 200))
+        : 0
+  );
+
+  // A follows link, until its page is fetched, is what its sharer posted: their
+  // words, then the link card. Shown that way so a row with no article text
+  // reads as a link someone shared, not a feed item that lost its body.
+  let followLinkCardVM = $derived.by(() => {
+    // Once the page is fetched it's an article like any other; a fetch that came
+    // back empty leaves the card, which still says what the row is.
+    if (!followLink || linkPostContentStore.get(itemUrl)?.content) return undefined;
+    let domain = followLink.site;
+    try {
+      domain = new URL(followLink.url).hostname.replace(/^www\./, '');
+    } catch {
+      // keep the site
+    }
+    return {
+      title: itemTitle,
+      description: followLink.description ? decodeEntities(followLink.description) : null,
+      thumb: followLink.thumb,
+      domain,
+      said: followLinkSaid(followLink),
+    };
+  });
+
+  let followSharersVM = $derived(
+    followSharers && followSharers.length > 0
+      ? {
+          names: sharedByPill(followSharers),
+          title: sharedByLabel(followSharers),
+          avatars: followSharers
+            .map((s) => s.avatar)
+            .filter((a): a is string => !!a)
+            .slice(0, 3),
+        }
+      : undefined
   );
 
   // Compute favicon URL. For documents whose siteUri is an AT Protocol URI
@@ -670,8 +727,10 @@
   let canFetchOriginal = $derived(
     Boolean(auth.user) && Boolean(article) && Boolean(itemUrl) && !hasFetchedOriginal
   );
+  // Not for a follows link: its link card is the way in (it opens the reader),
+  // and expanding the row fetches the page. The ⋯ menu still offers a retry.
   let showFetchOriginal = $derived(
-    canFetchOriginal && bodyWordCount > 0 && bodyWordCount < SHORT_ARTICLE_WORDS
+    canFetchOriginal && !isFollowLink && bodyWordCount > 0 && bodyWordCount < SHORT_ARTICLE_WORDS
   );
   // Everything fetchable that isn't the short-excerpt inline case (long bodies,
   // and the rare empty body) surfaces in the overflow menu instead.
@@ -685,6 +744,17 @@
     // when not already expanded.
     if (!expanded) onExpand?.();
   }
+
+  // Opening a follows link's card is asking for the article: fetch it without a
+  // second tap. Only on an explicit expand (not "Expand all", which would pull
+  // every page in the list), and once per card, so a page that won't extract
+  // leaves the button to retry rather than looping.
+  let autoFetched = false;
+  $effect(() => {
+    if (!isFollowLink || !expanded || autoFetched || !canFetchOriginal) return;
+    autoFetched = true;
+    untrack(() => linkPostContentStore.fetch(itemUrl));
+  });
 
   function handleOverflowFetchOriginal() {
     overflowMenuOpen = false;
@@ -918,6 +988,9 @@
   {authorDisplayName}
   {authorAvatar}
   authorDid={document?.authorDid}
+  followSharers={followSharersVM}
+  {isFollowLink}
+  followLinkCard={followLinkCardVM}
   socialContext={socialContext ? { quoteCount: socialContext.quoteCount } : undefined}
   laneRow={atmosphere.laneRow}
   filters={atmosphere.filters}

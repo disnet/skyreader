@@ -1,11 +1,12 @@
 // Named `.component.test.ts` so it runs in the project that compiles runes —
 // the store is a `.svelte.ts` module and `$state` needs the Svelte plugin.
 //
-// The follows-links store caches per account + window. These tests pin what a
-// reader sees around that cache: a long-open app asks again once the answer is
-// stale, switching windows never shows the old window's links or loses the
-// loading state to a slower earlier request, and a new account never inherits
-// the last one's permission ask.
+// The follows-links store caches per account. These tests pin what a reader
+// sees around that cache: a long-open app asks again once the answer is stale,
+// a "no permission" answer isn't re-asked every navigation, a forced load
+// supersedes an older one without losing the loading state to it, a new account
+// never inherits the last one's permission ask, and a river card finds its link
+// whatever form its URL takes.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FollowLink, FollowLinksResponse } from '$lib/types';
 
@@ -17,15 +18,14 @@ const getFollowLinks = vi.fn();
 vi.mock('$lib/services/api', () => ({
   api: {
     getFollowLinks: (...a: unknown[]) => getFollowLinks(...a),
-    setFollowLinkState: vi.fn(async () => ({ ok: true })),
   },
 }));
 vi.mock('./auth.svelte', () => ({ auth }));
 
-function link(url: string): FollowLink {
+function link(url: string, urlNormalized = url): FollowLink {
   return {
     url,
-    urlNormalized: url,
+    urlNormalized,
     site: 'a.example',
     title: url,
     description: null,
@@ -34,14 +34,16 @@ function link(url: string): FollowLink {
     sharerCount: 0,
     firstSharedAt: 0,
     lastSharedAt: 0,
-    opened: false,
   };
 }
 
-function answer(urls: string[], over: Partial<FollowLinksResponse> = {}): FollowLinksResponse {
+function answer(
+  links: (string | FollowLink)[],
+  over: Partial<FollowLinksResponse> = {}
+): FollowLinksResponse {
   return {
     scopeRequired: false,
-    links: urls.map(link),
+    links: links.map((l) => (typeof l === 'string' ? link(l) : l)),
     sync: { complete: true, refreshing: false, lastPollAt: 0, error: null },
     ...over,
   };
@@ -53,13 +55,9 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-async function freshStores() {
-  vi.resetModules();
-  return await import('./followLinks.svelte');
-}
-
 async function freshStore() {
-  return (await freshStores()).followLinksStore;
+  vi.resetModules();
+  return (await import('./followLinks.svelte')).followLinksStore;
 }
 
 beforeEach(() => {
@@ -80,38 +78,46 @@ describe('followLinksStore', () => {
     await store.load();
     await store.load();
     expect(getFollowLinks).toHaveBeenCalledTimes(1);
+    // Always the week: the retention window, and what every surface shows.
+    expect(getFollowLinks).toHaveBeenLastCalledWith('7d');
 
     vi.advanceTimersByTime(6 * 60 * 1000);
     await store.load();
     expect(getFollowLinks).toHaveBeenCalledTimes(2);
   });
 
-  it("keeps loading until the current window answers, and never shows the old window's links", async () => {
+  it('holds a "no permission" answer for the session, until forced', async () => {
     const store = await freshStore();
-    getFollowLinks.mockResolvedValueOnce(answer(['https://a.example/day']));
-    await store.load('24h');
-    expect(store.links.map((l) => l.url)).toEqual(['https://a.example/day']);
+    getFollowLinks.mockResolvedValue(answer([], { scopeRequired: true, sync: null }));
 
-    const week = deferred<FollowLinksResponse>();
-    const day = deferred<FollowLinksResponse>();
-    getFollowLinks.mockReturnValueOnce(week.promise).mockReturnValueOnce(day.promise);
+    await store.load();
+    vi.advanceTimersByTime(60 * 60 * 1000);
+    await store.load();
+    expect(getFollowLinks).toHaveBeenCalledTimes(1);
+    expect(store.loaded).toBe(true);
 
-    const weekLoad = store.load('7d');
-    expect(store.links).toEqual([]);
-    const dayLoad = store.load('24h', true);
+    await store.load(true);
+    expect(getFollowLinks).toHaveBeenCalledTimes(2);
+  });
 
-    // The Week request lands after it was superseded: dropped, and it doesn't
-    // clear the loading flag the Day request still owns.
-    week.resolve(answer(['https://a.example/week']));
-    await weekLoad;
+  it('keeps loading until the latest load answers, and drops an older answer', async () => {
+    const store = await freshStore();
+    const first = deferred<FollowLinksResponse>();
+    const second = deferred<FollowLinksResponse>();
+    getFollowLinks.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+
+    const firstLoad = store.load();
+    const secondLoad = store.load(true);
+
+    first.resolve(answer(['https://a.example/old']));
+    await firstLoad;
     expect(store.loading).toBe(true);
     expect(store.links).toEqual([]);
 
-    day.resolve(answer(['https://a.example/day2']));
-    await dayLoad;
+    second.resolve(answer(['https://a.example/new']));
+    await secondLoad;
     expect(store.loading).toBe(false);
-    expect(store.window).toBe('24h');
-    expect(store.links.map((l) => l.url)).toEqual(['https://a.example/day2']);
+    expect(store.links.map((l) => l.url)).toEqual(['https://a.example/new']);
   });
 
   it("doesn't carry one account's permission ask or error into another's", async () => {
@@ -132,22 +138,22 @@ describe('followLinksStore', () => {
     expect(store.links.map((l) => l.url)).toEqual(['https://a.example/x']);
   });
 
-  it("keeps Home's lane on the week, and applies a hide to both lists", async () => {
-    const { followLinksStore: page, followLinksLaneStore: lane } = await freshStores();
-    getFollowLinks.mockImplementation(async (w: string) =>
-      answer(
-        w === '7d' ? ['https://a.example/1', 'https://a.example/old'] : ['https://a.example/1']
-      )
+  it('finds a link by the posted URL, the normalized one, or another form of either', async () => {
+    const store = await freshStore();
+    getFollowLinks.mockResolvedValue(
+      answer([link('https://a.example/post?utm_source=bsky', 'https://a.example/post')])
     );
+    await store.load();
 
-    await page.load('24h');
-    await lane.load();
-    expect(getFollowLinks).toHaveBeenLastCalledWith('7d');
-    expect(lane.window).toBe('7d');
-    expect(lane.links.map((l) => l.url)).toEqual(['https://a.example/1', 'https://a.example/old']);
-
-    page.dismiss('https://a.example/1', 'https://a.example/1');
-    expect(page.links).toEqual([]);
-    expect(lane.links.map((l) => l.url)).toEqual(['https://a.example/old']);
+    for (const url of [
+      'https://a.example/post?utm_source=bsky',
+      'https://a.example/post',
+      'https://A.example/post/',
+      'https://a.example/post#comments',
+    ]) {
+      expect(store.forUrl(url)?.urlNormalized).toBe('https://a.example/post');
+    }
+    expect(store.forUrl('https://a.example/other')).toBeUndefined();
+    expect(store.forUrl('at://did:plc:x/app.bsky.feed.post/1')).toBeUndefined();
   });
 });

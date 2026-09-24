@@ -23,6 +23,7 @@
   import BulkActionBar from '$lib/components/sources/BulkActionBar.svelte';
   import SourceSectionHeader from '$lib/components/sources/SourceSectionHeader.svelte';
   import SourcesDiscovery from '$lib/components/sources/SourcesDiscovery.svelte';
+  import FollowsSourceRow from '$lib/components/sources/FollowsSourceRow.svelte';
   import LimitNotice from '$lib/components/LimitNotice.svelte';
   import { feedLimitLine } from '$lib/utils/limitCopy';
   import { auth } from '$lib/stores/auth.svelte';
@@ -82,6 +83,9 @@
     } catch {
       // ignore
     }
+    // Arriving at the follows row (the permission ask links here) opens its
+    // section for this visit, without changing the remembered state.
+    if (location.hash === '#follows') atmoCollapsed = false;
   }
 
   function saveCollapse() {
@@ -637,6 +641,9 @@
     </div>
     {#if !auth.isGuest}
       <SourcesDiscovery />
+      <div class="source-list follows-list">
+        <FollowsSourceRow />
+      </div>
     {/if}
   {:else}
     {#if !searchQuery && !auth.isGuest}
@@ -655,6 +662,11 @@
       />
 
       {#if atmoOpen}
+        {#if !auth.isGuest && !searchQuery}
+          <div class="source-list follows-list">
+            <FollowsSourceRow />
+          </div>
+        {/if}
         {#if atmoLimitHit}
           <div class="atmo-notice">
             <LimitNotice kind="feeds">
@@ -952,6 +964,11 @@
     gap: 1px;
     background: var(--color-border);
     border-radius: 12px;
+  }
+
+  /* The follows row sits in its own rounded group, ahead of the people. */
+  .follows-list {
+    margin: 0.5rem 0 0.75rem;
   }
 
   .source-list > :global(:first-child) {

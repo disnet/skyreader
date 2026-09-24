@@ -7,6 +7,7 @@ import { savesStore } from './saves.svelte';
 import { savedSearchStore } from './savedSearch.svelte';
 import { preferences } from './preferences.svelte';
 import { filteredViewsStore } from './filteredViews.svelte';
+import { followLinksStore } from './followLinks.svelte';
 import { mobileStore } from './mediaQuery.svelte';
 import { liveDb } from '$lib/services/liveDb.svelte';
 import type {
@@ -20,14 +21,17 @@ import type {
   ReadingLengthFilter,
   SortOrder,
   FilteredView,
+  FollowLink,
 } from '$lib/types';
 import { htmlToText, normalize, searchRank } from '$lib/services/savedSearch';
 import { sameUrlFilters, type UrlFilters } from '$lib/utils/urlFilters';
 import { isSavedItemArchived, savedAtMs, setSavedItemArchived } from '$lib/utils/savedPile';
 import { urlKey } from '$lib/utils/urlKey';
+import { followLinkReadKey, markFollowLinkRead } from '$lib/utils/followLinks';
 import {
   isRssSource,
   isDocumentsSource,
+  isFollowsSource,
   getRssSubscriptionRkey,
   resolveDocScopes,
   docInAnyScope,
@@ -43,6 +47,24 @@ export type FeedDisplayItem =
   | { type: 'article'; item: Article; key: string }
   | { type: 'document'; item: SocialDocument; key: string }
   | { type: 'saved'; item: SavedItem; key: string };
+
+/**
+ * A link people you follow shared on Bluesky, as a row of the river. Only the
+ * river has these: opening one extracts the page and hands the reader a
+ * synthetic `saved` item (see openFollowLink), so nothing downstream of the list
+ * (the reader, Saved, Home) ever holds one.
+ */
+export type FollowLinkRow = { type: 'link'; item: FollowLink; key: string };
+
+/** A row of the list: a readable item, or a follows link. */
+export type RiverItem = FeedDisplayItem | FollowLinkRow;
+
+/**
+ * How far back a river article can dedupe a follows link. Links are at most a
+ * week old; an article published long before it was shared sits far down the
+ * list, where the link's own row at the top is the more useful of the two.
+ */
+const FOLLOW_DEDUPE_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
 
 const DEFAULT_PAGE_SIZE = 50;
 
@@ -738,6 +760,64 @@ function createFeedViewStore() {
     return filtered;
   });
 
+  // Derived: whether follows links are shown. A view that names the source gets
+  // them. "All sources" (Everything) gets them only when the reader has said yes
+  // (see FOLLOWS_SOURCE_KEY), and a category, being a set of subscriptions,
+  // never does. A type filter, which picks subscription types, leaves them out.
+  let showFollowLinks = $derived.by((): boolean => {
+    const fv = effectiveFilters;
+    if (isSavedView || viewMode !== 'combined') return false;
+    if (fv.typeFilter.length > 0) return false;
+    if (fv.sourceMode === 'all') return !categoryFilter && followLinksStore.inEverything === true;
+    return fv.sourceMode === 'include' && fv.sourceKeys.some(isFollowsSource);
+  });
+
+  // Derived: the follows links for this view, newest-shared first. A link is
+  // dated by its FIRST share, so a late repost doesn't lift it back to the top.
+  // One the river already shows as an article or document (same page, any URL
+  // form) is dropped: that row carries the "shared by" line instead.
+  let displayedFollowLinks = $derived.by((): FollowLink[] => {
+    if (!showFollowLinks) return [];
+    const fv = effectiveFilters;
+
+    const shown = new Set<string>();
+    const cutoff = Date.now() - FOLLOW_DEDUPE_WINDOW_MS;
+    // Newest first (liveDb order, or reversed for 'oldest'), so a walk from the
+    // newest end stops at the cutoff instead of parsing every URL in the archive.
+    const articles = fv.sortOrder === 'oldest' ? [...filteredArticles].reverse() : filteredArticles;
+    for (const a of articles) {
+      if (new Date(a.publishedAt).getTime() < cutoff) break;
+      const key = a.url ? urlKey(a.url) : null;
+      if (key) shown.add(key);
+    }
+    for (const d of displayedDocuments) {
+      const url = d.canonicalUrl || d.path;
+      const key = url ? urlKey(url) : null;
+      if (key) shown.add(key);
+    }
+
+    let links = followLinksStore.links.filter((l) => {
+      const key = urlKey(l.url);
+      const normalizedKey = urlKey(l.urlNormalized);
+      return !(key && shown.has(key)) && !(normalizedKey && shown.has(normalizedKey));
+    });
+
+    if (fv.readFilter === 'unread') {
+      links = links.filter((l) => {
+        const key = followLinkReadKey(l);
+        return !itemLabelsStore.isRead(key) || readArticleGuidsThisSession.has(key);
+      });
+    } else if (fv.readFilter === 'read') {
+      links = links.filter((l) => itemLabelsStore.isRead(followLinkReadKey(l)));
+    }
+
+    return [...links].sort((a, b) =>
+      fv.sortOrder === 'oldest'
+        ? a.firstSharedAt - b.firstSharedAt
+        : b.firstSharedAt - a.firstSharedAt
+    );
+  });
+
   // Derived: full combined view (articles + documents merged by date),
   // pre-pagination. Merging the complete sets and sorting once means the
   // newest items win regardless of type — no date-window heuristic needed to
@@ -758,6 +838,11 @@ function createFeedViewStore() {
         type: 'document' as const,
         item,
         date: item.publishedAt,
+      })),
+      ...displayedFollowLinks.map((item) => ({
+        type: 'link' as const,
+        item,
+        date: new Date(item.firstSharedAt).toISOString(),
       })),
     ];
 
@@ -1127,9 +1212,9 @@ function createFeedViewStore() {
     return body ? { ...a, content: body } : a;
   }
 
-  let currentItems = $derived.by((): FeedDisplayItem[] => {
+  let currentItems = $derived.by((): RiverItem[] => {
     const mode = viewMode;
-    let items: FeedDisplayItem[];
+    let items: RiverItem[];
 
     // Saved view: paginate the merged/filtered list so very long saved-item
     // lists don't render the whole DOM at once.
@@ -1138,13 +1223,15 @@ function createFeedViewStore() {
     }
 
     if (mode === 'combined') {
-      items = displayedCombined.map((item) => {
+      items = displayedCombined.map((item): RiverItem => {
         if (item.type === 'article') {
           return {
             type: 'article' as const,
             item: withArticleBody(item.item),
             key: item.item.guid,
           };
+        } else if (item.type === 'link') {
+          return { type: 'link' as const, item: item.item, key: followLinkReadKey(item.item) };
         } else {
           return {
             type: 'document' as const,
@@ -1251,6 +1338,9 @@ function createFeedViewStore() {
     } else if (item.type === 'document') {
       readDocumentUrisThisSession.add(item.item.recordUri);
       readDocumentUrisThisSession = new Set(readDocumentUrisThisSession);
+    } else if (item.type === 'link') {
+      readArticleGuidsThisSession.add(item.key);
+      readArticleGuidsThisSession = new Set(readArticleGuidsThisSession);
     }
 
     // Mark as read when selecting (after updating selection state).
@@ -1276,6 +1366,8 @@ function createFeedViewStore() {
           doc.title
         );
       }
+    } else if (item.type === 'link') {
+      if (!itemLabelsStore.isRead(item.key)) markFollowLinkRead(item.item);
     }
   }
 
@@ -1465,9 +1557,10 @@ function createFeedViewStore() {
   }
 
   // Track an item as "seen this session" so it stays visible after being marked read
-  function trackSeenThisSession(item: FeedDisplayItem) {
-    if (item.type === 'article') {
-      readArticleGuidsThisSession.add(item.item.guid);
+  function trackSeenThisSession(item: RiverItem) {
+    if (item.type === 'article' || item.type === 'link') {
+      // A link's key is what it's read under, in the same key space as a guid.
+      readArticleGuidsThisSession.add(item.key);
       readArticleGuidsThisSession = new Set(readArticleGuidsThisSession);
     } else if (item.type === 'document') {
       readDocumentUrisThisSession.add(item.item.recordUri);
@@ -1494,6 +1587,11 @@ function createFeedViewStore() {
     },
     get currentItems() {
       return currentItems;
+    },
+    /** The saved view's rows. Same list as currentItems there, typed without
+     *  follows links, which only the river has. */
+    get savedItems(): FeedDisplayItem[] {
+      return isSavedView ? savedItemsAll.slice(0, loadedArticleCount) : [];
     },
     get selectedKey() {
       return selectedKey;
@@ -1610,6 +1708,12 @@ function createFeedViewStore() {
     },
     get displayedDocuments() {
       return displayedDocuments;
+    },
+    get displayedFollowLinks() {
+      return displayedFollowLinks;
+    },
+    get showFollowLinks() {
+      return showFollowLinks;
     },
 
     // Actions
