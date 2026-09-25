@@ -56,6 +56,7 @@
     isOpen,
     highlighted = false,
     isTruncated = false,
+    canExpand = false,
     currentlyShared = false,
     canShare = false,
     currentNote,
@@ -752,8 +753,8 @@
         {:else}
           <button
             class="action-btn show-more-btn"
-            class:disabled={!isTruncated}
-            onclick={isTruncated
+            class:disabled={!canExpand}
+            onclick={canExpand
               ? (e) => {
                   e.stopPropagation();
                   onExpandToggle?.();

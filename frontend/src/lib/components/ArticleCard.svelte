@@ -323,7 +323,7 @@
   // (don't act on link/media clicks) and forwards a single semantic tap here.
   function handleContentTap() {
     if (expanded) return;
-    if (selected && isTruncated) {
+    if (selected && canExpand) {
       // Content is truncated, expand it (this also selects)
       onExpand?.();
     } else if (!selected) {
@@ -727,6 +727,15 @@
   let canFetchOriginal = $derived(
     Boolean(auth.user) && Boolean(article) && Boolean(itemUrl) && !hasFetchedOriginal
   );
+
+  // Whether "More" / a content tap can expand the card. Usually that's the
+  // measured clamp overflow, but an archive-truncated article (body dropped at
+  // ingest) previews only its feed <description> — for Substack, a one-line
+  // subtitle that never overflows — so the clamp alone would leave it stuck on
+  // the description with no way in. Expanding is what triggers the auto-extract
+  // below, so such an article stays expandable until its original is fetched.
+  // Kept separate from `isTruncated`, which also drives the clamp fade.
+  let canExpand = $derived(isTruncated || (Boolean(article?.contentTruncated) && canFetchOriginal));
   // Not for a follows link: its link card is the way in (it opens the reader),
   // and expanding the row fetches the page. The ⋯ menu still offers a retry.
   let showFetchOriginal = $derived(
@@ -1008,6 +1017,7 @@
   {isOpen}
   {highlighted}
   {isTruncated}
+  {canExpand}
   {currentlyShared}
   canShare={showShareAction}
   {currentNote}
