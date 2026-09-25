@@ -762,8 +762,8 @@
             </div>
           {/if}
           {#if showAttribution}
-            <!-- Off unless the user turned the feature on in Settings → Shared
-                 links: a checkbox in the way of every draft is exactly the kind
+            <!-- Off unless the user turned the feature on in Settings → Linkblog:
+                 a checkbox in the way of every draft is exactly the kind
                  of thing that stops being useful and starts being noise. -->
             <label class="attribution-toggle">
               <input

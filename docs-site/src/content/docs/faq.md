@@ -31,11 +31,11 @@ Reading your feeds and saved articles, marking read, highlighting, notes, and th
 
 ## How do I get my subscriptions out?
 
-**Settings → Import / Export → Export OPML** downloads your whole list in a format every feed reader understands.
+**Settings → Library & privacy → Export OPML** downloads your whole list in a format every feed reader understands.
 
 ## How do I delete my linkblog?
 
-**Settings → Shared links → Delete linkblog** removes every link post from your PDS. You can restore the linkblog later to share again, but deleted posts don't come back.
+**Settings → Linkblog → Delete linkblog** removes every link post from your PDS. You can restore the linkblog later to share again, but deleted posts don't come back.
 
 ## How do I report a problem or send feedback?
 

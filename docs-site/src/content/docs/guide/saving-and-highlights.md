@@ -17,7 +17,7 @@ Some sites refuse automated readers, so Skyreader's servers can't fetch the arti
 
 ### Backing your saves with Semble or Margin
 
-If you use [Semble](https://semble.so) or [Margin](https://margin.at), you can back your Saved list with one of them (**Settings → Saved articles**). Your Saved list becomes a collection there: edit it in either app, or in any Atmospheric app, and the two stay in sync.
+If you use [Semble](https://semble.so) or [Margin](https://margin.at), you can back your Saved list with one of them (**Settings → Library & privacy → Saved articles**). Your Saved list becomes a collection there: edit it in either app, or in any Atmospheric app, and the two stay in sync.
 
 One thing to know before turning it on: **backing publishes all of your saves publicly**, because Semble and Margin collections are public.
 
@@ -38,8 +38,8 @@ Other readers' notes from Margin appear in the left margin, in pencil, when **Co
 Highlights are private to Skyreader and sync across your devices. Two optional Margin connections exist, in both directions:
 
 - **Publish** puts a single highlight, and its note, on [Margin](https://margin.at), where anyone can see it. It's per-highlight and explicit; nothing is published unless you choose it.
-- **Bring in highlights from Margin** (**Settings → Highlights**) adds your existing Margin highlights to your review deck here.
-- **Community highlights** (**Settings → Reading**) shows passages other readers highlighted on Margin while you read saved articles.
+- **Bring in highlights from Margin** (**Settings → Reading → Highlights**) adds your existing Margin highlights to your review deck here.
+- **Community highlights** (**Settings → Reading → Highlights**) shows passages other readers highlighted on Margin while you read saved articles.
 
 ## The review deck
 
