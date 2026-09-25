@@ -412,6 +412,50 @@ raising the cap will not change: its events were costlier than the usual one
 statement apiece — many distinct authors in one cycle, or publications whose
 metadata had to be resolved cold. That drains too, just at fewer events per cycle.
 
+### `ingest_push_failing` (Sentry message, proxy project)
+
+**Means:** the proxy's push into D1 has failed **3 times in a row** (~3.5 min with
+the 30s-doubling backoff), or failed once with a 4xx other than 429, which a retry
+of the same request can't change. A failed push acknowledges nothing, so the next
+attempt resends the **same** lowest dirty rows: until this clears, no feed's new
+items reach readers — the whole outbox is queued behind that batch, not just the
+feed in it. One issue (fingerprint `ingest-push-failing`), first crossing then a
+reminder every 30 minutes while it lasts; recovery is a `Ingest push recovered`
+log line.
+
+**Check:** the event's `status` tag and `extra.batch` (`firstSeq`–`lastSeq`,
+`items`, `bytes`), then:
+
+- `413` — the batch is over the Worker's 8 MB ingest cap (Workers Logs
+  `event = ingest_payload_too_large` has the size). The pusher sizes batches to
+  4 MB (`PUSH_BODY_BUDGET_BYTES`), so this means that invariant broke; inspect the
+  rows in the reported seq range on the proxy volume.
+- `401` — `PROXY_SECRET` on the proxy and `FEED_PROXY_SECRET` on the Worker
+  disagree (usually a rotation half-done).
+- `5xx` or `network` — the Worker or D1 is down or slow; check `API (deep)` and
+  the `d1Ms` on `ingest_items` log lines.
+
+**Fix:** match the cause above. A restart doesn't help a `4xx` — the same rows are
+selected again on boot. Nothing is lost while it lasts; the backlog drains on its
+own once pushes succeed (watch `/stats` → `ingest.pending` fall).
+
+**Does not page** (§8): email. Readers see a quiet feed, not an error.
+
+### `item_body_put_failed` (Sentry message, backend)
+
+**Means:** R2 writes of over-cap item bodies are failing
+(`routes/item-bodies.ts`). Ingest carries on — the items land in D1 without a
+stored body, and readers fall back to extracting the page when they open one —
+so this is degraded, not down. At most one event per isolate per 10 minutes; every
+failing request also logs `event = item_body_put_failed` with the count.
+
+**Check:** the R2 dashboard and Cloudflare status; that the `ITEM_BODIES` binding
+still points at an existing bucket.
+
+**Fix:** once R2 recovers, new items store normally. Items ingested during the
+outage have no stored body — re-push them with the backfill in
+`docs/plans/D1_FEED_TIMELINE.md` (out-of-row bodies) if they matter.
+
 ### `source: client` errors after a deploy
 
 **Means:** the browser is throwing. One report is a user with an extension or a
@@ -646,7 +690,8 @@ walk when the reader looks stale but every tile above is green.
 | Clients reading the archive | `GET /api/v2/timeline` → `ingestActive`         | `true` in an ingesting environment | Any authenticated timeline response                                                                                  |
 | Rollout gate                | `sync_state.timeline_enabled` (D1)              | `'1'` once rolled out              | `npx wrangler d1 execute skyreader --remote --command "SELECT * FROM sync_state WHERE key = 'timeline_enabled'"`     |
 | Push backlog (outbox)       | proxy `GET /stats` → `ingest.pending`           | near zero in steady state          | `curl -H "X-Proxy-Secret: $SECRET" https://skyreader-feed-proxy.fly.dev/stats`                                       |
-| Push failing                | Sentry `source: ingest-push`, proxy logs        | silent                             | `fly logs -a skyreader-feed-proxy` → `Ingest push failed`                                                            |
+| Push failing                | Sentry `ingest-push-failing` (proxy project)    | silent                             | `fly logs -a skyreader-feed-proxy` → `Ingest push failed` / `Ingest push stuck`                                      |
+| Long bodies not stored      | Sentry `item-body-put-failed` (backend)         | silent                             | Workers Logs `event = item_body_put_failed`                                                                          |
 | Feeds gone quiet            | Admin → Feeds, "Subscribed Feeds Not Ingesting" | small and stable                   | The dashboard's Feeds metrics                                                                                        |
 
 Reading these correctly:

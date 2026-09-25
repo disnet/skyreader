@@ -61,3 +61,24 @@ export function reportError(error: unknown, context?: ReportContext): void {
     console.error('[Proxy] Failed to report error:', reportingError);
   }
 }
+
+/**
+ * Report a condition nothing threw for — a push stuck behind a rejected batch,
+ * not a crash. `fingerprint` groups every occurrence into one issue; callers own
+ * WHEN to send (see createPushLoop's re-alert interval). Never throws.
+ */
+export function reportMessage(
+  message: string,
+  options: ReportContext & { level?: 'warning' | 'error'; fingerprint?: string[] } = {}
+): void {
+  try {
+    Sentry.captureMessage(message, {
+      level: options.level ?? 'warning',
+      fingerprint: options.fingerprint,
+      tags: options.tags,
+      extra: options.extra,
+    });
+  } catch (reportingError) {
+    console.error('[Proxy] Failed to report message:', reportingError);
+  }
+}

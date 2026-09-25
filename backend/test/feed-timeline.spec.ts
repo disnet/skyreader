@@ -479,6 +479,40 @@ describe('feed timeline (D1 ingest + serve)', () => {
       expect(await storedBody('legacy')).toBe(LONG);
     });
 
+    it('ingests without a stored body when R2 writes fail', async () => {
+      const failingEnv = {
+        ...(env as Env),
+        ITEM_BODIES: {
+          ...env.ITEM_BODIES,
+          put: async () => {
+            throw new Error('R2 unavailable');
+          },
+        } as unknown as R2Bucket,
+      };
+      const res = await handleIngest(
+        ingestRequest({
+          feeds: [{ feedUrl: FEED_A }],
+          items: [
+            {
+              feedUrl: FEED_A,
+              guid: 'long',
+              item: item('long', { content: LONG }),
+              firstSeenAt: Date.now(),
+              contentHash: 'h1',
+            },
+          ],
+        }),
+        failingEnv
+      );
+      expect(res.status).toBe(200);
+
+      const stored = await row('long');
+      expect(stored.item.contentTruncated).toBe(true);
+      // Not marked stored, so a later re-push (after R2 recovers) backfills it.
+      expect(stored.item.bodyStored).toBeUndefined();
+      expect(await storedBody('long')).toBeNull();
+    });
+
     it('drops a body above the stored ceiling, as before', async () => {
       const huge = 'z'.repeat(MAX_STORED_BODY_BYTES + 1);
       await ingest(FEED_A, [{ item: item('huge', { content: huge }), contentHash: 'h1' }]);
