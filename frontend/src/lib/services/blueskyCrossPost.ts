@@ -25,6 +25,15 @@ function altFor(quote: string, title: string | undefined): string {
   return alt.length > ALT_MAX ? `${alt.slice(0, ALT_MAX - 1)}…` : alt;
 }
 
+/**
+ * The post's language, as Bluesky's own composer guesses it: the reader's UI
+ * language. Only the primary one — a reader's fallbacks aren't what they wrote in.
+ */
+function postLangs(): string[] | undefined {
+  const lang = typeof navigator !== 'undefined' ? navigator.language : '';
+  return lang ? [lang] : undefined;
+}
+
 async function uploadShots(plan: BlueskyPostPlan, article: Article) {
   const source = { title: article.title, domain: domainOf(article.url) };
   const images = [];
@@ -63,6 +72,7 @@ export async function crossPostToBluesky(
     const created = await api.createBlueskyPost({
       text: plan.text,
       articleUrl: article.url,
+      langs: postLangs(),
       ...(images.length > 0
         ? { linkText: plan.linkText, images }
         : {
@@ -79,7 +89,7 @@ export async function crossPostToBluesky(
     return true;
   } catch (error) {
     if (error instanceof ScopeUpgradeError) {
-      const { message, action } = permissionToast(error, 'bluesky');
+      const { message, action } = permissionToast(error, 'blueskyPost');
       toastStore.update(toastId, 'error', message, action);
     } else {
       console.error('Failed to post to Bluesky:', error);

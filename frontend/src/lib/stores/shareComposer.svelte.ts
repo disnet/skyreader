@@ -8,6 +8,7 @@
 // live record on Update and are not drafted.
 
 import { api } from '$lib/services/api';
+import { grantPermissions } from '$lib/services/permissions';
 import { crossPostToBluesky } from '$lib/services/blueskyCrossPost';
 import { linkblogStore } from '$lib/stores/linkblog.svelte';
 import { preferences } from '$lib/stores/preferences.svelte';
@@ -48,6 +49,9 @@ interface ComposerSession {
   submit?: (note: string) => Promise<void> | void;
   remove?: () => Promise<void> | void;
 }
+
+/** Set before leaving for the Bluesky grant: which account, and which draft. */
+const BLUESKY_GRANT_KEY = 'skyreader:bluesky-grant-draft';
 
 function createShareComposerStore() {
   let session = $state<ComposerSession | null>(null);
@@ -160,6 +164,8 @@ function createShareComposerStore() {
     attribution = mode === 'create' && preferences.linkblogAttributionOn;
     bluesky = mode === 'create' && !options.submit && preferences.blueskyCrossPost;
     textShots = preferences.blueskyTextShots;
+    // A new drawer knows nothing yet: an answer about the last one doesn't carry.
+    blueskyAccess = 'unknown';
     if (bluesky) void checkBlueskyAccess();
 
     if (mode === 'edit') {
@@ -176,12 +182,50 @@ function createShareComposerStore() {
   }
 
   async function checkBlueskyAccess() {
+    const asked = session;
     try {
       const status = await api.getIntegrationStatus();
-      blueskyAccess = status.scopeStatus.bluesky ? 'granted' : 'missing';
+      // The drawer moved on to another article while this was in flight.
+      if (session !== asked) return;
+      blueskyAccess = status.scopeStatus.blueskyPost ? 'granted' : 'missing';
     } catch {
       // Offline or a blip: leave it unknown and let the post itself find out.
     }
+  }
+
+  /**
+   * "Allow access" from the drawer. The grant leaves the page, so save the
+   * draft first and remember which one it was, so the drawer can reopen on it
+   * when the reader comes back (resumeAfterBlueskyGrant).
+   */
+  async function allowBluesky(did: string | undefined) {
+    const articleUrl = session?.article.url;
+    await saveNow();
+    if (did && articleUrl) {
+      try {
+        localStorage.setItem(BLUESKY_GRANT_KEY, JSON.stringify({ did, articleUrl }));
+      } catch {
+        // Storage blocked: the draft is still saved, just not reopened for them.
+      }
+    }
+    grantPermissions(['blueskyPost'], window.location.pathname + window.location.search);
+  }
+
+  /** Back from the Bluesky grant: reopen the draft it was asked from. */
+  async function resumeAfterBlueskyGrant(did: string) {
+    let pending: { did?: unknown; articleUrl?: unknown } | null = null;
+    try {
+      const raw = localStorage.getItem(BLUESKY_GRANT_KEY);
+      if (!raw) return;
+      localStorage.removeItem(BLUESKY_GRANT_KEY);
+      pending = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    if (!pending || pending.did !== did || typeof pending.articleUrl !== 'string') return;
+    await shareDraftsStore.load();
+    const draft = shareDraftsStore.get(pending.articleUrl);
+    if (draft && !session) openDraft(draft);
   }
 
   /** Resume a saved draft from the drafts list (no live Article in hand). */
@@ -360,7 +404,8 @@ function createShareComposerStore() {
       preferences.setBlueskyCrossPost(value);
       if (value) void checkBlueskyAccess();
     },
-    saveNow,
+    allowBluesky,
+    resumeAfterBlueskyGrant,
     setTextShots(value: boolean) {
       textShots = value;
       preferences.setBlueskyTextShots(value);

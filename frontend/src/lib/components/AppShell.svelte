@@ -20,6 +20,7 @@
   import { notificationsStore } from '$lib/stores/notifications.svelte';
   import { feedPath, FEEDS_PATH, SAVED_PATH } from '$lib/utils/viewNav';
   import { completeFollowsGrant } from '$lib/utils/followsChannel';
+  import { shareComposerStore } from '$lib/stores/shareComposer.svelte';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import { APP_SCROLL_ID, appScrollElement, SHELL_FRAME_QUERY } from '$lib/utils/appScroll';
   import { SHELL_TOOLBAR_ID } from '$lib/actions/shell-toolbar';
@@ -114,6 +115,15 @@
     if (appManager.phase !== 'ready' && appManager.phase !== 'error') return;
     followsGrantChecked = true;
     void completeFollowsGrant().catch(() => {});
+  });
+
+  // Back from granting "Also on Bluesky" from the share drawer: reopen the draft.
+  let blueskyGrantChecked = false;
+  $effect(() => {
+    const did = auth.user?.did;
+    if (blueskyGrantChecked || !did || auth.isGuest) return;
+    blueskyGrantChecked = true;
+    void shareComposerStore.resumeAfterBlueskyGrant(did).catch(() => {});
   });
 
   // Register global keyboard shortcuts on mount. keyboardStore.register() keys by

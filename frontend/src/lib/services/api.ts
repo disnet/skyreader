@@ -1463,7 +1463,7 @@ class ApiClient {
 
   // Also posting a linkblog share to Bluesky. A text shot goes up first, raw
   // under its own content type, and the post that embeds it is written after.
-  // Both need the 'bluesky' permission and throw ScopeUpgradeError without it.
+  // Both need the 'blueskyPost' permission and throw ScopeUpgradeError without it.
   async uploadBlueskyImage(image: Blob): Promise<{ blob: FeedbackBlobRef }> {
     return this.fetch('/api/v2/bluesky/image', {
       method: 'POST',
@@ -1480,6 +1480,8 @@ class ApiClient {
     title?: string;
     description?: string;
     imageUrl?: string;
+    /** The post's languages (BCP-47), for Bluesky's feeds and search. */
+    langs?: string[];
     images?: Array<{
       image: FeedbackBlobRef;
       alt: string;

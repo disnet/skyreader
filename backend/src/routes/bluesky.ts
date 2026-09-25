@@ -31,6 +31,9 @@ const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
 const EXTERNAL_TITLE_MAX = 300;
 const EXTERNAL_DESCRIPTION_MAX = 1000;
 const MAX_RESOLVED_HANDLES = 10;
+const MAX_LANGS = 3;
+// A BCP-47 tag's shape (en, pt-BR, zh-Hant-TW), enough to keep junk out of the record.
+const LANG_RE = /^[a-zA-Z]{2,3}(-[a-zA-Z0-9]{1,8}){0,3}$/;
 const THUMB_TIMEOUT_MS = 5000;
 const USER_AGENT = 'Skyreader/1.0 (+https://skyreader.app)';
 
@@ -60,7 +63,7 @@ function number(value: unknown): number {
 }
 
 function scopeUpgrade(message: string): Response {
-  return json({ error: 'scope_upgrade_required', message, feature: 'bluesky' }, 403);
+  return json({ error: 'scope_upgrade_required', message, feature: 'blueskyPost' }, 403);
 }
 
 function isHttpUrl(value: string): boolean {
@@ -216,6 +219,13 @@ async function uploadThumb(session: Session, imageUrl: string): Promise<BlobRef 
   }
 }
 
+/** The post's languages, as the client named them: well-formed tags only, deduplicated. */
+export function postLangs(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const langs = value.filter((v): v is string => typeof v === 'string' && LANG_RE.test(v));
+  return [...new Set(langs)].slice(0, MAX_LANGS);
+}
+
 /** https://bsky.app link for a post's at:// URI. */
 export function bskyPostUrl(uri: string): string {
   const match = /^at:\/\/([^/]+)\/app\.bsky\.feed\.post\/([^/]+)$/.exec(uri);
@@ -233,7 +243,7 @@ export async function handleUploadBlueskyImage(
   session: Session
 ): Promise<Response> {
   if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
-  if (!hasIntegrationScopes(session, 'bluesky')) {
+  if (!hasIntegrationScopes(session, 'blueskyPost')) {
     return scopeUpgrade('Posting to Bluesky needs a new permission.');
   }
 
@@ -262,7 +272,7 @@ export async function handleUploadBlueskyImage(
 /**
  * POST /api/v2/bluesky/post — write the cross-post.
  *
- * Body: { text, articleUrl, linkText?, title?, description?, imageUrl?, images? }.
+ * Body: { text, articleUrl, linkText?, title?, description?, imageUrl?, images?, langs? }.
  * With `images` the post embeds them and the article link lives in the text
  * (`linkText` marks where); without, it embeds the article's link card.
  */
@@ -272,7 +282,7 @@ export async function handleCreateBlueskyPost(
   session: Session
 ): Promise<Response> {
   if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
-  if (!hasIntegrationScopes(session, 'bluesky')) {
+  if (!hasIntegrationScopes(session, 'blueskyPost')) {
     return scopeUpgrade('Posting to Bluesky needs a new permission.');
   }
 
@@ -325,11 +335,13 @@ export async function handleCreateBlueskyPost(
   }
 
   const rkey = generateTid();
+  const langs = postLangs(body.langs);
   const post: UnknownRecord = {
     $type: POST_COLLECTION,
     text,
     ...(facets.length > 0 ? { facets } : {}),
     embed,
+    ...(langs.length > 0 ? { langs } : {}),
     createdAt: new Date().toISOString(),
   };
 

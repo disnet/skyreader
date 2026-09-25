@@ -25,7 +25,7 @@
   import { formatQuoteSeed } from '$lib/utils/linkPost';
   import { positionFloating } from '$lib/utils/floating';
   import { BLUESKY_MAX_GRAPHEMES, planBlueskyPost } from '$lib/utils/blueskyPost';
-  import { grantPermissions } from '$lib/services/permissions';
+  import { auth } from '$lib/stores/auth.svelte';
 
   const MAX = 3000;
 
@@ -113,10 +113,8 @@
   const RING_C = 2 * Math.PI * RING_R;
   const RING_WARN = 20;
 
-  async function allowBluesky() {
-    // The grant leaves the page; make sure the draft is saved before it goes.
-    await composer.saveNow();
-    grantPermissions(['bluesky'], window.location.pathname + window.location.search);
+  function allowBluesky() {
+    void composer.allowBluesky(auth.user?.did);
   }
 
   // ── Quote picker ────────────────────────────────────────────────────────────

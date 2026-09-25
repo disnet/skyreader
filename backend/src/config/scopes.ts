@@ -170,7 +170,7 @@ export const ALL_POSSIBLE_SCOPES = [
 // ---------------------------------------------------------------------------
 
 export type ScopeFeature =
-  'semble' | 'margin' | 'linkblog' | 'pckt' | 'offprint' | 'feedback' | 'follows' | 'bluesky';
+  'semble' | 'margin' | 'linkblog' | 'pckt' | 'offprint' | 'feedback' | 'follows' | 'blueskyPost';
 
 export const SCOPE_FEATURES: Record<ScopeFeature, string[]> = {
   semble: [...SEMBLE_SCOPES, ...SEMBLE_CONNECTION_SCOPES],
@@ -182,7 +182,7 @@ export const SCOPE_FEATURES: Record<ScopeFeature, string[]> = {
   offprint: [...LINKBLOG_SCOPES, ...OFFPRINT_SCOPES],
   feedback: [...USERINPUT_SCOPES, ...USERINPUT_VOTE_SCOPES, ...USERINPUT_IMAGE_SCOPES],
   follows: FOLLOWS_LINKS_SCOPES,
-  bluesky: [...BLUESKY_POST_SCOPES, ...BLUESKY_IMAGE_SCOPES],
+  blueskyPost: [...BLUESKY_POST_SCOPES, ...BLUESKY_IMAGE_SCOPES],
 };
 
 // The scopes whose presence means a reader opted into a feature, used to
@@ -197,7 +197,7 @@ export const FEATURE_OPT_IN_SCOPES: Record<ScopeFeature, string[]> = {
   // Either form of the getTimeline grant (the `aud=*` one covers it).
   follows: FOLLOWS_LINKS_ACCESS_SCOPES,
   // The blob scope is shared with feedback, so it can't say which one was asked for.
-  bluesky: BLUESKY_POST_SCOPES,
+  blueskyPost: BLUESKY_POST_SCOPES,
 };
 
 export function isScopeFeature(value: string): value is ScopeFeature {

@@ -22,16 +22,16 @@ callback).
 
 **Optional features ask when first used.** Each is a `ScopeFeature` in `SCOPE_FEATURES`:
 
-| Feature    | Scopes (granular)                                          | With permission sets on                            |
-| ---------- | ---------------------------------------------------------- | -------------------------------------------------- |
-| `semble`   | `network.cosmik.card/collection/collectionLink/connection` | `include:network.cosmik.authFull` + `connection`   |
-| `margin`   | `at.margin.note/collection/collectionItem`                 | same (granular)                                    |
-| `linkblog` | `site.standard.publication/document`                       | `include:site.standard.authFull`                   |
-| `pckt`     | linkblog + `blog.pckt.document`                            | linkblog + `blog.pckt.document`                    |
-| `offprint` | linkblog + `app.offprint.document.article`                 | linkblog + `app.offprint.document.article`         |
-| `feedback` | `app.userinput.discussion/upvote` + `blob:image/*`         | `include:app.userinput.authBasic` + `blob:image/*` |
-| `follows`  | `rpc:app.bsky.feed.getTimeline?aud=*` (see below)          | same (granular)                                    |
-| `bluesky`  | `app.bsky.feed.post` + `blob:image/*`                      | same (granular)                                    |
+| Feature       | Scopes (granular)                                          | With permission sets on                            |
+| ------------- | ---------------------------------------------------------- | -------------------------------------------------- |
+| `semble`      | `network.cosmik.card/collection/collectionLink/connection` | `include:network.cosmik.authFull` + `connection`   |
+| `margin`      | `at.margin.note/collection/collectionItem`                 | same (granular)                                    |
+| `linkblog`    | `site.standard.publication/document`                       | `include:site.standard.authFull`                   |
+| `pckt`        | linkblog + `blog.pckt.document`                            | linkblog + `blog.pckt.document`                    |
+| `offprint`    | linkblog + `app.offprint.document.article`                 | linkblog + `app.offprint.document.article`         |
+| `feedback`    | `app.userinput.discussion/upvote` + `blob:image/*`         | `include:app.userinput.authBasic` + `blob:image/*` |
+| `follows`     | `rpc:app.bsky.feed.getTimeline?aud=*` (see below)          | same (granular)                                    |
+| `blueskyPost` | `app.bsky.feed.post` + `blob:image/*`                      | same (granular)                                    |
 
 **`follows` asks for `aud=*` but gates on the appview.** The feature only ever proxies
 getTimeline to `did:web:api.bsky.app#bsky_appview`, and gates check that

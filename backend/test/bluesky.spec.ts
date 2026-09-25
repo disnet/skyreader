@@ -1,7 +1,7 @@
 import { env, createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import worker from '../src/index';
-import { bskyPostUrl, graphemeLength, linkFacets } from '../src/routes/bluesky';
+import { bskyPostUrl, graphemeLength, linkFacets, postLangs } from '../src/routes/bluesky';
 import * as pdsClient from '../src/services/pds-client';
 import {
   ALL_POSSIBLE_SCOPES,
@@ -42,6 +42,17 @@ describe('linkFacets', () => {
     expect(facets).toHaveLength(1);
     expect(facets[0].features[0].uri).toBe('https://other.example/a');
     expect(facets[0].index).toEqual({ byteStart: 4, byteEnd: 27 });
+  });
+});
+
+describe('postLangs', () => {
+  it('keeps well-formed tags, once each, at most three', () => {
+    expect(postLangs(['en-US', 'en-US', 'fr', 'de', 'ja'])).toEqual(['en-US', 'fr', 'de']);
+  });
+
+  it('drops anything that is not a language tag', () => {
+    expect(postLangs(['<script>', 42, 'english', 'pt-BR'])).toEqual(['pt-BR']);
+    expect(postLangs('en')).toEqual([]);
   });
 });
 
@@ -132,6 +143,7 @@ describe('POST /api/v2/bluesky/post', () => {
         title: 'On reading',
         description: 'An essay.',
         imageUrl: 'https://example.com/lead.png',
+        langs: ['en-US'],
       })
     );
 
@@ -142,6 +154,7 @@ describe('POST /api/v2/bluesky/post', () => {
     expect(record).toMatchObject({
       $type: 'app.bsky.feed.post',
       text: 'Worth your time.',
+      langs: ['en-US'],
       embed: {
         $type: 'app.bsky.embed.external',
         external: {
@@ -225,7 +238,7 @@ describe('POST /api/v2/bluesky/post', () => {
     await seedSession(`${GRANULAR_SCOPES} ${BLUESKY_IMAGE_SCOPES.join(' ')}`);
     const result = await call(post({ text: 'Hi', articleUrl: ARTICLE }));
     expect(result.status).toBe(403);
-    expect(result.body).toMatchObject({ error: 'scope_upgrade_required', feature: 'bluesky' });
+    expect(result.body).toMatchObject({ error: 'scope_upgrade_required', feature: 'blueskyPost' });
   });
 
   it('needs the blob scope too', async () => {

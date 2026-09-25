@@ -39,7 +39,14 @@ export function fitGraphemes(text: string, budget: number): { text: string; trim
   if (budget <= 1) return { text: '', trimmed: true };
   let cut = chars.slice(0, budget - 1).join('');
   const lastSpace = cut.search(/\s\S*$/);
-  if (lastSpace > cut.length * 0.7) cut = cut.slice(0, lastSpace);
+  if (lastSpace > cut.length * 0.7) {
+    cut = cut.slice(0, lastSpace);
+  } else {
+    // Never end on part of a URL: it would still read as a link (Bluesky and
+    // our own facets both find it), just to an address that doesn't exist.
+    const partialUrl = /(^|\s)https?:\/\/\S*$/.exec(cut);
+    if (partialUrl) cut = cut.slice(0, partialUrl.index);
+  }
   return { text: `${cut.trimEnd()}…`, trimmed: true };
 }
 

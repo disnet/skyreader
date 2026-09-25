@@ -35,6 +35,11 @@ describe('fitGraphemes', () => {
     expect(result).toEqual({ text: 'the quick brown…', trimmed: true });
   });
 
+  it('drops a URL the cut would land inside, rather than link half of it', () => {
+    const long = `See https://example.com/${'a'.repeat(40)} for more`;
+    expect(fitGraphemes(long, 30)).toEqual({ text: 'See…', trimmed: true });
+  });
+
   it('counts emoji as one character', () => {
     expect(fitGraphemes('👩‍👩‍👧👩‍👩‍👧', 2).trimmed).toBe(false);
   });

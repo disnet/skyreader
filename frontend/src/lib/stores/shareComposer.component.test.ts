@@ -33,13 +33,20 @@ vi.mock('$lib/stores/linkblog.svelte', () => ({
 }));
 
 // The real drafts store persists to IndexedDB; the composer only needs these.
+const getDraft = vi.fn<(url: string) => unknown>(() => undefined);
 vi.mock('$lib/stores/shareDrafts.svelte', () => ({
   shareDraftsStore: {
     load: () => Promise.resolve(),
-    get: () => undefined,
+    get: (url: string) => getDraft(url),
     save: () => Promise.resolve(),
     remove: () => Promise.resolve(),
+    flushServer: () => Promise.resolve(),
   },
+}));
+
+const grantPermissions = vi.fn();
+vi.mock('$lib/services/permissions', () => ({
+  grantPermissions: (...args: unknown[]) => grantPermissions(...args),
 }));
 
 // The cross-post runs after the share; the composer's job is only to hand it
@@ -49,7 +56,7 @@ vi.mock('$lib/services/blueskyCrossPost', () => ({
   crossPostToBluesky: (...args: unknown[]) => crossPostToBluesky(...args),
 }));
 vi.mock('$lib/services/api', () => ({
-  api: { getIntegrationStatus: () => Promise.resolve({ scopeStatus: { bluesky: true } }) },
+  api: { getIntegrationStatus: () => Promise.resolve({ scopeStatus: { blueskyPost: true } }) },
 }));
 
 const ARTICLE = {
@@ -78,6 +85,7 @@ async function openCreate(shareComposer: { open: (o: { article: typeof ARTICLE }
 
 beforeEach(() => {
   localStorage.clear();
+  getDraft.mockImplementation(() => undefined);
   shareLink.mockReset().mockResolvedValue('shared');
   crossPostToBluesky.mockReset().mockResolvedValue(true);
 });
@@ -173,5 +181,48 @@ describe('share composer: also on Bluesky', () => {
     await Promise.resolve();
     expect(shareComposer.blueskyOffered).toBe(false);
     expect(shareComposer.bluesky).toBe(false);
+  });
+
+  it('reopens the draft it asked from, back from the grant', async () => {
+    const { shareComposer } = await freshStores();
+    await openCreate(shareComposer);
+    shareComposer.appendQuote('A passage.');
+    await shareComposer.allowBluesky(DID);
+    expect(grantPermissions).toHaveBeenCalledWith(['blueskyPost'], expect.any(String));
+
+    // The page comes back fresh: a new store, the draft now in the drafts store.
+    const { shareComposer: back } = await freshStores();
+    getDraft.mockImplementation((url) =>
+      url === ARTICLE.url
+        ? {
+            articleUrl: ARTICLE.url,
+            articleTitle: ARTICLE.title,
+            blocks: [{ kind: 'quote', text: 'A passage.' }],
+            createdAt: 1,
+            updatedAt: 2,
+          }
+        : undefined
+    );
+    await back.resumeAfterBlueskyGrant(DID);
+    await Promise.resolve();
+    expect(back.session?.article.url).toBe(ARTICLE.url);
+
+    // Once only: a later load doesn't reopen it again.
+    back.close();
+    const { shareComposer: later } = await freshStores();
+    await later.resumeAfterBlueskyGrant(DID);
+    await Promise.resolve();
+    expect(later.session).toBeNull();
+  });
+
+  it('does not reopen a draft asked for by another account', async () => {
+    const { shareComposer } = await freshStores();
+    await openCreate(shareComposer);
+    shareComposer.appendQuote('A passage.');
+    await shareComposer.allowBluesky('did:plc:someone-else');
+    const { shareComposer: back } = await freshStores();
+    await back.resumeAfterBlueskyGrant(DID);
+    await Promise.resolve();
+    expect(back.session).toBeNull();
   });
 });

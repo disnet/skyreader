@@ -36,7 +36,7 @@ export type ScopeGate =
   | 'userinput'
   | 'userinput-votes'
   | 'userinput-images'
-  | 'bluesky';
+  | 'blueskyPost';
 
 const SCOPE_SETS: Record<ScopeGate, string[]> = {
   semble: SEMBLE_SCOPES,
@@ -49,7 +49,7 @@ const SCOPE_SETS: Record<ScopeGate, string[]> = {
   'userinput-images': USERINPUT_IMAGE_SCOPES,
   // Also posting a share to Bluesky: the post record plus its images, together,
   // since a text shot that can't upload is a post that can't be written.
-  bluesky: [...BLUESKY_POST_SCOPES, ...BLUESKY_IMAGE_SCOPES],
+  blueskyPost: [...BLUESKY_POST_SCOPES, ...BLUESKY_IMAGE_SCOPES],
 };
 
 /**
@@ -67,7 +67,7 @@ export const GATE_FEATURE: Record<ScopeGate, ScopeFeature> = {
   userinput: 'feedback',
   'userinput-votes': 'feedback',
   'userinput-images': 'feedback',
-  bluesky: 'bluesky',
+  blueskyPost: 'blueskyPost',
 };
 
 /**
@@ -98,7 +98,7 @@ export async function handleIntegrationStatus(request: Request, env: Env): Promi
         userinputImages: hasIntegrationScopes(session, 'userinput-images'),
         // The share composer offers "Also post to Bluesky" either way, and asks
         // for access up front rather than after the linkblog post has gone out.
-        bluesky: hasIntegrationScopes(session, 'bluesky'),
+        blueskyPost: hasIntegrationScopes(session, 'blueskyPost'),
       },
     }),
     { headers: { 'Content-Type': 'application/json' } }
