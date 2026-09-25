@@ -60,9 +60,14 @@ export interface FeedItem {
   // Stamped by the authed batch fetch handler (feeds-v2.ts) from a per-user read
   // join. Not a stored feed field — only present on annotated responses.
   read?: boolean;
-  // Set at ingest when `content` exceeded the stored-content cap and was dropped
-  // (routes/ingest.ts). The reader falls back to /extract for the full text.
+  // Set at ingest when `content` exceeded the inline stored-content cap and was
+  // dropped from the row (routes/ingest.ts). The reader fetches the stored body
+  // (routes/item-bodies.ts), falling back to /extract for the full text.
   contentTruncated?: boolean;
+  // Set alongside `contentTruncated` once the dropped body is in R2 under this
+  // item's (feed_url, guid). Absent means no stored copy is known — the reader
+  // still asks (a row cached before the flag existed may have been backfilled).
+  bodyStored?: boolean;
 }
 
 export interface ParsedFeed {

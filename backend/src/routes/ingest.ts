@@ -1,6 +1,12 @@
 import type { Env, FeedItem } from '../types';
 import { timedAll, timedBatch } from '../utils/d1-timing';
 import { STARTER_FEED_URLS } from '../config/starter-feeds';
+import {
+  MAX_STORED_BODY_BYTES,
+  deleteItemBodies,
+  putItemBodies,
+  type BodyWrite,
+} from './item-bodies';
 
 /**
  * Internal (proxy → Worker) endpoints for the D1-served feed timeline.
@@ -17,17 +23,19 @@ import { STARTER_FEED_URLS } from '../config/starter-feeds';
 // ~14 years to reach it, so a feed at the cap is a bug signal, not steady state.
 export const SANITY_CAP = 5000;
 
-// Stored-content cap per item. Unbounded retention makes this mandatory rather
-// than optional: D1 has a hard 10 GB database ceiling, so storage grows with
-// ingest velocity × item size × time. Oversized bodies are dropped at ingest
-// (summary/title/url/image kept) and `contentTruncated` is set, which the reader
-// acts on: ArticleCard and SavedReader auto-extract the full text via /api/extract
-// when a truncated article is opened, so the body the user sees is still the
-// whole article (see frontend/src/lib/components/{ArticleCard,feed/SavedReader}.svelte).
-// Extraction, not a bigger cap, is what makes long-form feeds readable: raising
-// this to 32 KB was tried and still dropped 19 of 20 posts on the feed that
-// motivated it, while quadrupling archive growth and the weight of a timeline
-// page. The page budgets in routes/timeline.ts (MAX_LIMIT, COLD_START_MAX_ITEMS)
+// Inline stored-content cap per item. Unbounded retention makes this mandatory
+// rather than optional: D1 has a hard 10 GB database ceiling, so storage grows
+// with ingest velocity × item size × time. Oversized bodies are dropped from the
+// row at ingest (summary/title/url/image kept), `contentTruncated` is set, and
+// the body itself goes to R2 (routes/item-bodies.ts; `bodyStored` marks the row
+// once it has). The reader acts on `contentTruncated`: ArticleCard and
+// SavedReader fetch the stored body when a truncated article is opened, and
+// auto-extract via /api/extract only when there's no stored copy (see
+// frontend/src/lib/components/{ArticleCard,feed/SavedReader}.svelte).
+// Out-of-row storage, not a bigger cap, is what makes long-form feeds readable:
+// raising this to 32 KB was tried and still dropped 19 of 20 posts on the feed
+// that motivated it, while quadrupling archive growth and the weight of a
+// timeline page. The page budgets in routes/timeline.ts (MAX_LIMIT, COLD_START_MAX_ITEMS)
 // bound response size in rows and are sized against this constant — raising it
 // means re-deriving them.
 export const MAX_ITEM_CONTENT_BYTES = 8 * 1024;
@@ -190,6 +198,71 @@ export async function computeContentHash(item: FeedItem): Promise<string> {
 }
 
 /**
+ * Apply the inline cap to each item and move every over-cap body (up to
+ * MAX_STORED_BODY_BYTES) to R2. Returns the item to persist per entry: capped,
+ * with `bodyStored: true` when R2 holds its current body.
+ *
+ * A body is only written when the archive doesn't already hold it: the proxy
+ * delivers at least once and the subscribe-time pull-through re-ingests whole
+ * feeds, so without this check every re-push of an unchanged long post would
+ * cost an R2 write. "Already holds it" is the row's own record — same content
+ * hash and `bodyStored` — so it costs one indexed D1 read per over-cap item.
+ */
+async function storeOversizedBodies(env: Env, entries: IngestItem[]): Promise<FeedItem[]> {
+  const capped = entries.map((entry) => capItemContent(entry.item));
+  const candidates: number[] = [];
+  const encoder = new TextEncoder();
+  for (const [index, item] of capped.entries()) {
+    const content = entries[index].item.content;
+    if (!item.contentTruncated || !content) continue;
+    if (encoder.encode(content).length > MAX_STORED_BODY_BYTES) continue;
+    candidates.push(index);
+  }
+  if (candidates.length === 0 || !env.ITEM_BODIES) return capped;
+
+  const existing = new Map<number, { content_hash: string; body_stored: number | null }>();
+  const lookups = candidates.map((index) =>
+    env.DB.prepare(
+      `SELECT content_hash, json_extract(item_json, '$.bodyStored') AS body_stored
+         FROM feed_items WHERE feed_url = ? AND guid = ?`
+    ).bind(entries[index].feedUrl, entries[index].guid)
+  );
+  for (let i = 0; i < lookups.length; i += INGEST_BATCH_SIZE) {
+    const results = await timedBatch<{ content_hash: string; body_stored: number | null }>(
+      'ingest_body_lookup',
+      env.DB,
+      lookups.slice(i, i + INGEST_BATCH_SIZE)
+    );
+    results.forEach((result, offset) => {
+      const row = result.results?.[0];
+      if (row) existing.set(candidates[i + offset], row);
+    });
+  }
+
+  const toWrite: number[] = [];
+  for (const index of candidates) {
+    const row = existing.get(index);
+    if (row && row.content_hash === entries[index].contentHash && row.body_stored === 1) {
+      capped[index] = { ...capped[index], bodyStored: true };
+    } else {
+      toWrite.push(index);
+    }
+  }
+
+  const writes: BodyWrite[] = toWrite.map((index) => ({
+    feedUrl: entries[index].feedUrl,
+    guid: entries[index].guid,
+    content: entries[index].item.content as string,
+    contentHash: entries[index].contentHash,
+  }));
+  const landed = await putItemBodies(env, writes);
+  toWrite.forEach((index, i) => {
+    if (landed[i]) capped[index] = { ...capped[index], bodyStored: true };
+  });
+  return capped;
+}
+
+/**
  * The write itself, shared by the pushed-batch endpoint and the subscribe-time
  * pull-through in feeds-v2.ts. Idempotent: a re-pushed item with the same content
  * hash is a no-op, a changed one updates in place (seq unchanged → not
@@ -238,9 +311,13 @@ export async function ingestBatch(
   }>();
   const maxSeqBefore = before?.max_seq ?? 0;
 
+  const valid = items.filter(
+    (entry) => entry?.feedUrl && entry.guid && entry.item && entry.contentHash
+  );
+  const storedItems = await storeOversizedBodies(env, valid);
+
   const touchedFeeds = new Set<string>();
-  for (const entry of items) {
-    if (!entry?.feedUrl || !entry.guid || !entry.item || !entry.contentHash) continue;
+  for (const [index, entry] of valid.entries()) {
     touchedFeeds.add(entry.feedUrl);
     statements.push(
       env.DB.prepare(
@@ -250,11 +327,16 @@ export async function ingestBatch(
            item_json    = excluded.item_json,
            content_hash = excluded.content_hash
          WHERE feed_items.content_hash <> excluded.content_hash
+            -- Backfill: an unchanged item re-pushed after its body reached R2
+            -- (a row archived before out-of-row storage existed). Edit-in-place,
+            -- so its seq — and every client's copy — is untouched.
+            OR (json_extract(excluded.item_json, '$.bodyStored') = 1
+                AND json_extract(feed_items.item_json, '$.bodyStored') IS NOT 1)
          RETURNING seq`
       ).bind(
         entry.feedUrl,
         entry.guid,
-        JSON.stringify(capItemContent(entry.item)),
+        JSON.stringify(storedItems[index]),
         entry.publishedAt ?? null,
         entry.firstSeenAt || Date.now(),
         entry.contentHash
@@ -304,14 +386,27 @@ export async function trimFeedsToSanityCap(
       `DELETE FROM feed_items
          WHERE feed_url = ?1
            AND seq <= (SELECT seq FROM feed_items WHERE feed_url = ?1
-                        ORDER BY seq DESC LIMIT 1 OFFSET ?2)`
+                        ORDER BY seq DESC LIMIT 1 OFFSET ?2)
+         RETURNING feed_url, guid, json_extract(item_json, '$.bodyStored') AS body_stored`
     ).bind(feedUrl, cap)
   );
+  const orphaned: Array<{ feedUrl: string; guid: string }> = [];
   for (let i = 0; i < trims.length; i += INGEST_BATCH_SIZE) {
     // Separately labelled from the upserts: a feed churning GUIDs shows up as
     // trim time climbing while ingest time stays flat.
-    await timedBatch('ingest_trim', env.DB, trims.slice(i, i + INGEST_BATCH_SIZE));
+    const results = await timedBatch<{
+      feed_url: string;
+      guid: string;
+      body_stored: number | null;
+    }>('ingest_trim', env.DB, trims.slice(i, i + INGEST_BATCH_SIZE));
+    for (const result of results) {
+      for (const row of result.results ?? []) {
+        if (row.body_stored === 1) orphaned.push({ feedUrl: row.feed_url, guid: row.guid });
+      }
+    }
   }
+  // The trimmed rows' R2 bodies go with them.
+  await deleteItemBodies(env, orphaned);
 }
 
 /**

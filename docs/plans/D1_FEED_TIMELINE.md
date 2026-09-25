@@ -45,7 +45,8 @@ read state (`getReadKeys`). Now:
 - `routes/ingest.ts`: `POST /api/internal/ingest` and `GET /api/internal/crawl-set`, both
   authenticated by a constant-time compare against `FEED_PROXY_SECRET` and **fail-closed** when
   it is unset. Idempotent upsert (edit-in-place keeps the seq), per-item content cap
-  (`MAX_ITEM_CONTENT_BYTES = 8 KB`, drops `content` and sets `contentTruncated`), and the per-feed
+  (`MAX_ITEM_CONTENT_BYTES = 8 KB`, drops `content` from the row and sets `contentTruncated`; the
+  body itself goes to R2 — see [Out-of-row bodies](#out-of-row-bodies-r2) below), and the per-feed
   `SANITY_CAP = 5000` trim — the only pruning that ever runs. A dropped body always leaves a
   `summary` behind: the proxy's parser derives one for any over-cap body whose feed supplies none
   (`CONTENT_EXCERPT_THRESHOLD_BYTES` in `feed-proxy/src/feed-parser.ts`), and `capItemContent`
@@ -114,8 +115,12 @@ read state (`getReadKeys`). Now:
 - OPML import backfills via the per-feed endpoint: a freshly imported feed's items sit below the
   global cursor, so only the single-feed path can deliver them. The requests are paced (3 at a
   time, 1 s apart) and no longer force a crawl, so a 250-feed import stays inside the rate limit.
-- An article whose body was dropped at ingest (`contentTruncated`) is extracted automatically when
-  its card opens, so the reader shows the whole article rather than an RSS summary.
+- An article whose body was dropped at ingest (`contentTruncated`) loads its full body when its
+  card is expanded: the stored copy first (`services/itemBody.ts` → `/api/v2/items/body`, or
+  `/api/guest/items/body` for a guest), cached into its IndexedDB row, and an automatic extraction
+  only when the archive holds none. So the reader shows the whole article rather than an RSS
+  summary. Such a card is always expandable in Expand view, where a one-line summary never
+  overflows the preview clamp.
 - Per-feed error badges come from the response's `feedHealth` (`reconcileFeedHealth` →
   `feedStatusStore.applyHealthSnapshot`). Absence from that map is what CLEARS an error, so the
   reconcile runs after the "these feeds delivered items, so they're fine" pass and overrides it — a
@@ -221,6 +226,39 @@ the proxy's `POST /feeds` batch read endpoint, the `since_guids`/`since_seq` cli
 `feedCursors`, `liveDb.getRecentGuids`, and `fetchAllFeedsViaBatch`. Optionally add an hourly cron
 step deleting `feeds`/`feed_items` rows whose feed has had **zero active subscribers for > 90 days**
 — the one deliberate deletion path, and skippable if even orphans should stay.
+
+### Out-of-row bodies (R2)
+
+The inline cap keeps the timeline's page budgets honest, but it left long-form feeds
+(thezvi.substack.com: 100–300 KB a post) showing only their `<description>` until an extraction of
+the web page came back. Bodies over the cap now go to an R2 bucket at ingest (`routes/item-bodies.ts`),
+keyed by `sha256(feed_url + "\n" + guid)` under `items/v1/`, up to `MAX_STORED_BODY_BYTES = 2 MB`
+(larger bodies are still dropped). The row keeps `contentTruncated` and gains `bodyStored: true`
+once the object is written; an unchanged re-push skips the write, and the sanity-cap trim deletes
+the bodies of the rows it removes. A failed R2 put is logged, not thrown, so an R2 outage degrades
+to extraction instead of stalling the pusher.
+
+Before deploying the Worker with the `ITEM_BODIES` binding, create each environment's bucket (the
+deploy fails against a missing one):
+
+```bash
+cd backend
+npx wrangler r2 bucket create skyreader-item-bodies-staging
+npx wrangler r2 bucket create skyreader-item-bodies
+```
+
+**Backfill.** Rows archived before this have no stored body; the reader extracts them as before.
+To give them one, make the proxy re-push its over-cap items — the Worker stores their bodies and
+flips `bodyStored` in place (same seq, so no client re-delivery). Push state is per seq, so on each
+environment's proxy volume:
+
+```sql
+DELETE FROM push_state
+ WHERE seq IN (SELECT seq FROM feed_items WHERE length(item_json) > 8192);
+```
+
+The pusher drains them at its normal rate. Only items still in the proxy's per-feed window can be
+backfilled; anything older keeps the extraction fallback.
 
 ## Invariants worth keeping
 

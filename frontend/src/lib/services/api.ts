@@ -670,6 +670,21 @@ class ApiClient {
     return this.fetch(`/api/v2/timeline${query ? `?${query}` : ''}`);
   }
 
+  /**
+   * A long item's full body, stored out-of-row at ingest because it exceeded the
+   * archive's inline cap (backend routes/item-bodies.ts). 404s (ApiError) when
+   * the archive holds no copy. Guests use the rate-limited guest twin; it's the
+   * same public archive content the guest timeline serves.
+   */
+  async fetchItemBody(
+    feedUrl: string,
+    guid: string,
+    options: { guest: boolean }
+  ): Promise<{ content: string }> {
+    const params = new URLSearchParams({ feed_url: feedUrl, guid });
+    return this.fetch(`/api/${options.guest ? 'guest' : 'v2'}/items/body?${params}`);
+  }
+
   async fetchGuestTimeline(
     feedUrls: string[],
     params: { since_seq?: number; generation?: string; limit?: number; cold_offset?: number }

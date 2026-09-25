@@ -13,6 +13,7 @@ import {
   CRAWL_ACTIVE_USER_WINDOW_SECONDS,
 } from '../src/routes/ingest';
 import { handleTimeline, readFeedSlice } from '../src/routes/timeline';
+import { handleItemBody, itemBodyKey, MAX_STORED_BODY_BYTES } from '../src/routes/item-bodies';
 import type { Env, FeedItem, Session } from '../src/types';
 import { STARTER_FEED_URLS } from '../src/config/starter-feeds';
 
@@ -197,6 +198,8 @@ describe('feed timeline (D1 ingest + serve)', () => {
     (env as Env).FEED_PROXY_SECRET = savedSecret as string;
     await env.DB.prepare('DELETE FROM feed_items').run();
     await env.DB.prepare('DELETE FROM feeds').run();
+    const stored = await env.ITEM_BODIES.list();
+    if (stored.objects.length > 0) await env.ITEM_BODIES.delete(stored.objects.map((o) => o.key));
     await env.DB.prepare('DELETE FROM subscriptions_cache').run();
     await env.DB.prepare('DELETE FROM item_labels_cache').run();
     await clearCrawlerHeartbeat();
@@ -374,6 +377,131 @@ describe('feed timeline (D1 ingest + serve)', () => {
       expect(parsed.summary).not.toContain('ignore()');
       expect(parsed.summary).not.toContain('<');
       expect(parsed.summary.length).toBeLessThanOrEqual(401);
+    });
+  });
+
+  describe('out-of-row bodies (R2)', () => {
+    const LONG = `<p>${'long-form prose '.repeat(1200)}</p>`;
+
+    async function row(guid: string) {
+      const r = await env.DB.prepare('SELECT seq, item_json FROM feed_items WHERE guid = ?')
+        .bind(guid)
+        .first<{ seq: number; item_json: string }>();
+      return { seq: r!.seq, item: JSON.parse(r!.item_json) as FeedItem };
+    }
+
+    async function storedBody(guid: string, feedUrl = FEED_A): Promise<string | null> {
+      const object = await env.ITEM_BODIES.get(await itemBodyKey(feedUrl, guid));
+      return object ? object.text() : null;
+    }
+
+    function bodyRequest(feedUrl: string, guid: string): Request {
+      const params = new URLSearchParams({ feed_url: feedUrl, guid });
+      return new Request(`https://api.example/api/v2/items/body?${params}`);
+    }
+
+    it('stores an over-cap body in R2 and marks the row', async () => {
+      await ingest(FEED_A, [
+        { item: item('long', { content: LONG, summary: 'subtitle' }), contentHash: 'h1' },
+        { item: item('short', { content: '<p>tiny</p>' }), contentHash: 'h2' },
+      ]);
+
+      const long = await row('long');
+      expect(long.item.content).toBeUndefined();
+      expect(long.item.contentTruncated).toBe(true);
+      expect(long.item.bodyStored).toBe(true);
+      expect(await storedBody('long')).toBe(LONG);
+
+      // An inline body never goes to R2.
+      expect((await row('short')).item.bodyStored).toBeUndefined();
+      expect(await storedBody('short')).toBeNull();
+    });
+
+    it('serves the stored body as JSON, and 404s when there is none', async () => {
+      await ingest(FEED_A, [{ item: item('long', { content: LONG }), contentHash: 'h1' }]);
+
+      const hit = await handleItemBody(bodyRequest(FEED_A, 'long'), env);
+      expect(hit.status).toBe(200);
+      expect(hit.headers.get('Content-Type')).toBe('application/json');
+      expect(((await hit.json()) as { content: string }).content).toBe(LONG);
+
+      const miss = await handleItemBody(bodyRequest(FEED_A, 'nope'), env);
+      expect(miss.status).toBe(404);
+      // Keyed by feed as well as guid.
+      expect((await handleItemBody(bodyRequest(FEED_B, 'long'), env)).status).toBe(404);
+
+      const bad = await handleItemBody(
+        new Request('https://api.example/api/v2/items/body?guid=long'),
+        env
+      );
+      expect(bad.status).toBe(400);
+    });
+
+    it('does not rewrite an unchanged body on re-push, but does on an edit', async () => {
+      await ingest(FEED_A, [{ item: item('long', { content: LONG }), contentHash: 'h1' }]);
+      // Remove the object behind the archive's back: a re-push that skipped the
+      // write leaves it missing, one that wrote would bring it back.
+      await env.ITEM_BODIES.delete(await itemBodyKey(FEED_A, 'long'));
+
+      await ingest(FEED_A, [{ item: item('long', { content: LONG }), contentHash: 'h1' }]);
+      expect(await storedBody('long')).toBeNull();
+
+      const edited = `${LONG}<p>Update: a correction.</p>`;
+      const { seq } = await row('long');
+      await ingest(FEED_A, [{ item: item('long', { content: edited }), contentHash: 'h2' }]);
+      expect(await storedBody('long')).toBe(edited);
+      // Edit-in-place: same seq, so it isn't re-delivered.
+      expect((await row('long')).seq).toBe(seq);
+    });
+
+    it('backfills a body for a row archived before out-of-row storage', async () => {
+      // A pre-R2 row: truncated, no bodyStored, same hash the re-push carries.
+      await env.DB.prepare(
+        `INSERT INTO feed_items (feed_url, guid, item_json, published_at, first_seen_at, content_hash)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      )
+        .bind(
+          FEED_A,
+          'legacy',
+          JSON.stringify(item('legacy', { summary: 'subtitle', contentTruncated: true })),
+          Date.now(),
+          Date.now(),
+          'h1'
+        )
+        .run();
+      const { seq } = await row('legacy');
+
+      await ingest(FEED_A, [{ item: item('legacy', { content: LONG }), contentHash: 'h1' }]);
+
+      const after = await row('legacy');
+      expect(after.item.bodyStored).toBe(true);
+      expect(after.seq).toBe(seq);
+      expect(await storedBody('legacy')).toBe(LONG);
+    });
+
+    it('drops a body above the stored ceiling, as before', async () => {
+      const huge = 'z'.repeat(MAX_STORED_BODY_BYTES + 1);
+      await ingest(FEED_A, [{ item: item('huge', { content: huge }), contentHash: 'h1' }]);
+
+      const huge_ = await row('huge');
+      expect(huge_.item.contentTruncated).toBe(true);
+      expect(huge_.item.bodyStored).toBeUndefined();
+      expect(await storedBody('huge')).toBeNull();
+    });
+
+    it('deletes the bodies of rows the sanity cap trims', async () => {
+      await ingest(
+        FEED_A,
+        ['t0', 't1', 't2'].map((guid) => ({
+          item: item(guid, { content: LONG }),
+          contentHash: `h-${guid}`,
+        }))
+      );
+      await trimFeedsToSanityCap(env, [FEED_A], 1);
+
+      expect(await storedBody('t0')).toBeNull();
+      expect(await storedBody('t1')).toBeNull();
+      expect(await storedBody('t2')).toBe(LONG);
     });
   });
 

@@ -56,6 +56,7 @@
   import { isInputFocused } from '$lib/stores/keyboard.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
+  import { loadStoredBody } from '$lib/services/itemBody';
   import { useParagraphTracking } from '$lib/hooks/useParagraphTracking.svelte';
   import { useLinkInterception } from '$lib/hooks/useLinkInterception.svelte';
   import { useHighlights } from '$lib/hooks/useHighlights.svelte';
@@ -561,20 +562,48 @@
     };
   });
 
-  // The archive drops oversized bodies at ingest (per-item content cap) and marks
-  // the item `contentTruncated`. Without this the reader would silently show the
-  // RSS summary — often two sentences — in place of a full-text post. So when
-  // such an article opens, extract the original automatically; the result flows
-  // into displayContent above (fetchedOriginal wins) and the extract cache means
-  // it happens once per URL.
+  // The archive drops oversized bodies from the row at ingest (per-item inline
+  // cap), marks the item `contentTruncated`, and keeps the body out-of-row.
+  // Without this the reader would silently show the RSS summary — often a
+  // one-line subtitle — in place of a full-text post. So when such an article
+  // opens: once the IndexedDB read above says there's no local copy, fetch the
+  // stored body (it lands in lazyContent and is cached into IndexedDB), and only
+  // if the archive has none, extract the original (fetchedOriginal wins in
+  // displayContent; the extract cache means it happens once per URL).
   // Gated on `expanded` rather than `isOpen`: a keyboard cursor moving across the
-  // list shouldn't fire an extraction per card it passes over.
+  // list — or Expand view, where every card is `selected` — shouldn't fire a
+  // request per card it passes over.
+  let storedBodyStatus = $state<'idle' | 'loading' | 'found' | 'missing'>('idle');
   $effect(() => {
     if (!expanded || !article?.contentTruncated || !itemUrl) return;
-    // `fetch` reads and mutates its reactive entry map. Keep those reads out of
-    // this effect's dependency graph so deleting a failed entry doesn't turn an
-    // extraction error (or offline mode) into an unbounded retry loop.
-    untrack(() => linkPostContentStore.fetch(itemUrl));
+    // Wait for the local read; a body already cached there needs neither fetch.
+    if (article.content || lazyContent == null || lazyContent) return;
+    const target = article;
+    const url = itemUrl;
+    // Everything below reads and writes state the effect must not depend on: the
+    // status guard, and `fetch`'s reactive entry map — tracking a failed extract's
+    // deleted entry would turn an error (or offline mode) into a retry loop.
+    untrack(() => {
+      if (storedBodyStatus === 'missing') {
+        linkPostContentStore.fetch(url);
+        return;
+      }
+      if (storedBodyStatus !== 'idle') return;
+      storedBodyStatus = 'loading';
+      const feedUrl = subscriptionsStore.getById(target.subscriptionId)?.feedUrl;
+      const pending = feedUrl
+        ? loadStoredBody(target, feedUrl, { guest: !auth.user })
+        : Promise.resolve(null);
+      pending.then((body) => {
+        if (body) {
+          lazyContent = body;
+          storedBodyStatus = 'found';
+        } else {
+          storedBodyStatus = 'missing';
+          linkPostContentStore.fetch(url);
+        }
+      });
+    });
   });
 
   // Same lazy-load for a document's flat text (stripped from memory). Only
@@ -729,13 +758,21 @@
   );
 
   // Whether "More" / a content tap can expand the card. Usually that's the
-  // measured clamp overflow, but an archive-truncated article (body dropped at
-  // ingest) previews only its feed <description> — for Substack, a one-line
-  // subtitle that never overflows — so the clamp alone would leave it stuck on
-  // the description with no way in. Expanding is what triggers the auto-extract
-  // below, so such an article stays expandable until its original is fetched.
-  // Kept separate from `isTruncated`, which also drives the clamp fade.
-  let canExpand = $derived(isTruncated || (Boolean(article?.contentTruncated) && canFetchOriginal));
+  // measured clamp overflow, but an archive-truncated article (body dropped from
+  // the row at ingest) previews only its feed <description> — for Substack, a
+  // one-line subtitle that never overflows — so the clamp alone would leave it
+  // stuck on the description with no way in. Expanding is what loads the full
+  // body (stored copy, else extraction), so such an article stays expandable
+  // until it has one — unless neither source can supply it (no stored copy and
+  // no account to extract with). Kept separate from `isTruncated`, which also
+  // drives the clamp fade.
+  let canExpand = $derived(
+    isTruncated ||
+      (Boolean(article?.contentTruncated) &&
+        !lazyContent &&
+        !hasFetchedOriginal &&
+        (storedBodyStatus !== 'missing' || canFetchOriginal))
+  );
   // Not for a follows link: its link card is the way in (it opens the reader),
   // and expanding the row fetches the page. The ⋯ menu still offers a retry.
   let showFetchOriginal = $derived(
