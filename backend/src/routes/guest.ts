@@ -5,6 +5,7 @@ import { handleV2Mentions, handleV2MentionLane, handleV2MarginHighlights } from 
 import { archiveHead, readArchiveState } from './timeline';
 import { timedAll, timedBatch } from '../utils/d1-timing';
 import { log } from '../utils/logger';
+import { handleItemBody } from './item-bodies';
 
 /**
  * The unauthenticated reading surface: the starter channels, and a timeline over
@@ -63,6 +64,18 @@ async function guestRateLimit(request: Request, env: Env, path: string): Promise
     : json({ error: 'Rate limit exceeded' }, 429, {
         'Retry-After': String(result.retryAfter || 60),
       });
+}
+
+/**
+ * A long item's stored body (routes/item-bodies.ts) for a guest. Same public
+ * archive content /api/guest/timeline already serves, so only the rate limit
+ * differs from the authed route. This is also a guest's only way to a long
+ * post's full text — extraction is account-only.
+ */
+export async function handleGuestItemBody(request: Request, env: Env): Promise<Response> {
+  const limited = await guestRateLimit(request, env, '/api/guest/items/body');
+  if (limited) return limited;
+  return handleItemBody(request, env);
 }
 
 interface GuestRow {

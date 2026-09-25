@@ -31,7 +31,9 @@ import {
 } from './services/document-store';
 import { readDocumentFlags } from './services/document-flags';
 import { handleTimeline } from './routes/timeline';
+import { handleItemBody } from './routes/item-bodies';
 import {
+  handleGuestItemBody,
   handleGuestMarginHighlights,
   handleGuestMentionLane,
   handleGuestMentions,
@@ -365,6 +367,9 @@ async function route(
     case url.pathname === '/api/guest/timeline':
       response = await handleGuestTimeline(request, env);
       break;
+    case url.pathname === '/api/guest/items/body':
+      response = await handleGuestItemBody(request, env);
+      break;
     // The discussion's read path, session-free (routes/guest.ts). Same handlers
     // as the /api/v2 twins below, answering from public Atmosphere data.
     case url.pathname === '/api/guest/mentions':
@@ -441,6 +446,12 @@ async function route(
     case url.pathname === '/api/v2/timeline':
       if (!session) return unauthorizedResponse(headers);
       response = await handleTimeline(request, env, session);
+      break;
+
+    // A long item's body, stored out-of-row in R2 at ingest.
+    case url.pathname === '/api/v2/items/body':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleItemBody(request, env);
       break;
 
     // Feed routes (v2 via Fly.io proxy)

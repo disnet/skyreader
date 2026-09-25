@@ -53,6 +53,15 @@ binding = "DB"
 database_name = "skyreader"
 database_id = "YOUR_D1_DATABASE_ID"
 
+# Feed-item bodies over the archive's inline cap (routes/item-bodies.ts). D1 keeps
+# bodies up to MAX_ITEM_CONTENT_BYTES in the row; bigger ones live here, keyed by
+# (feed_url, guid), and are fetched when an article is opened. The bucket must
+# exist before a deploy that carries this binding:
+#   npx wrangler r2 bucket create skyreader-item-bodies
+[[r2_buckets]]
+binding = "ITEM_BODIES"
+bucket_name = "skyreader-item-bodies"
+
 # Environment variables
 [vars]
 FRONTEND_URL = "https://skyreader.app"
@@ -141,6 +150,12 @@ bindings = [
 binding = "DB"
 database_name = "skyreader-staging"
 database_id = "YOUR_STAGING_D1_DATABASE_ID"
+
+# Bindings aren't inherited by environments. Create before the first deploy:
+#   npx wrangler r2 bucket create skyreader-item-bodies-staging
+[[env.staging.r2_buckets]]
+binding = "ITEM_BODIES"
+bucket_name = "skyreader-item-bodies-staging"
 
 # Cron Triggers in staging
 [env.staging.triggers]

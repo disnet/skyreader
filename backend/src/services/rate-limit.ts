@@ -45,6 +45,9 @@ const RATE_LIMITS: Record<string, RateLimitConfig> = {
   // Community highlights, one call per article opened (and a re-render or two),
   // answered from the proxy's cache. Poll-sized like the counts above.
   '/api/guest/margin-highlights': { limit: 60, windowMs: 60000 },
+  // A stored article body, fetched once per long article opened (then cached in
+  // IndexedDB). One R2 read; nothing fetches a caller-named URL.
+  '/api/guest/items/body': { limit: 120, windowMs: 60000 },
 
   // Expensive operations (external API calls, complex queries)
   '/api/social/feed': EXPENSIVE_LIMIT,
@@ -67,6 +70,8 @@ const RATE_LIMITS: Record<string, RateLimitConfig> = {
   '/api/v2/following-links/settings': STANDARD_LIMIT,
   // One indexed query per article opened, like the mention counts.
   '/api/v2/following-links/for': LIGHT_LIMIT,
+  // One R2 read per long article opened (routes/item-bodies.ts).
+  '/api/v2/items/body': LIGHT_LIMIT,
 
   // AT Intents service-auth pre-verification. Keyed by client IP (not did) and checked
   // BEFORE the signature, since verifying a service-auth JWT triggers an outbound DID

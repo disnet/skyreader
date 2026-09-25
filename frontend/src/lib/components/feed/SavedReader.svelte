@@ -19,6 +19,7 @@
   import { sanitizeHtml } from '$lib/utils/sanitize';
   import { formatRelativeDate } from '$lib/utils/date';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
+  import { loadStoredBody } from '$lib/services/itemBody';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { profileService } from '$lib/services/profiles';
   import { bskyEmbed } from '$lib/actions/bsky-embed';
@@ -324,6 +325,20 @@
         const cachedContent = row?.content ?? '';
         if (!cancelled) lazyArticleContent = cachedContent;
         if (!cancelled && !cachedContent && contentTruncated && url) {
+          // The archive dropped the body from the row but may hold it out-of-row
+          // (see services/itemBody.ts). Prefer that stored copy — the feed's own
+          // body — and extract the page only when there isn't one.
+          const feedUrl = subscriptionsStore.getById(subscriptionId)?.feedUrl;
+          const stored = feedUrl
+            ? await loadStoredBody({ id: row?.id ?? id, guid, subscriptionId }, feedUrl, {
+                guest: !auth.user,
+              })
+            : null;
+          if (cancelled) return;
+          if (stored) {
+            lazyArticleContent = stored;
+            return;
+          }
           // Keep the store's reactive entry map out of this effect's dependency
           // graph. Failed extracts delete their entry so a later open can retry;
           // tracking that deletion here would create an immediate retry loop.
