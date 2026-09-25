@@ -8,7 +8,7 @@
   import { countUrlSavesThisMonth } from '$lib/utils/usage';
   import { isGrantedSupporter } from '$lib/utils/tier';
   import { supporterLimits } from '$lib/constants/tierLimits';
-  import { docsUrl } from '$lib/constants/docs';
+  import { docsUrl, type DocsPage } from '$lib/constants/docs';
   import { CHROME_EXTENSION_URL, FIREFOX_EXTENSION_URL } from '$lib/utils/saveAnywhere';
   import {
     preferences,
@@ -26,6 +26,8 @@
   import DeleteLinkblogModal from '$lib/components/settings/DeleteLinkblogModal.svelte';
   import Diagnostics from '$lib/components/settings/Diagnostics.svelte';
   import HighlightSettings from '$lib/components/settings/HighlightSettings.svelte';
+  import SettingToggle from '$lib/components/settings/SettingToggle.svelte';
+  import { onAppScroll, appViewportRect } from '$lib/utils/appScroll';
   import StaticPageChrome from '$lib/components/feed/StaticPageChrome.svelte';
   import { myLinkblogStore } from '$lib/stores/myLinkblog.svelte';
   import { linkblogStore } from '$lib/stores/linkblog.svelte';
@@ -52,6 +54,72 @@
     { value: 'mono', label: 'Monospace', family: 'monospace' },
     { value: 'literata', label: 'Literata', family: 'Literata, serif' },
   ];
+
+  // The page's groups, in order. Each is a <section id> below, and the section
+  // nav (a sticky rail on desktop, a chip row on phones) jumps between them.
+  // `save-anywhere` and `subscriptions` are linked to from elsewhere in the app,
+  // so those ids are load-bearing.
+  const allSections = [
+    { id: 'account', label: 'Account' },
+    { id: 'reading', label: 'Reading' },
+    { id: 'library', label: 'Library & privacy' },
+    { id: 'linkblog', label: 'Linkblog' },
+    { id: 'save-anywhere', label: 'Save from anywhere' },
+    { id: 'about', label: 'About' },
+  ] as const;
+  const sections = $derived(
+    auth.user ? allSections : allSections.filter((section) => section.id !== 'account')
+  );
+
+  // Which group the reader is in, for the nav's current marker: the last one
+  // whose heading has scrolled past a line a little below the top of the view.
+  // At the very bottom the last group wins even if its heading never reaches
+  // that line — a short final section would otherwise never light up.
+  let activeSection = $state<string>('account');
+
+  function updateActiveSection() {
+    const view = appViewportRect();
+    const line = view.top + Math.min(160, view.height * 0.3);
+    let current: string = sections[0]?.id ?? 'account';
+    for (const section of sections) {
+      const el = document.getElementById(section.id);
+      if (el && el.getBoundingClientRect().top <= line) current = section.id;
+    }
+    const last = sections.at(-1);
+    const lastEl = last && document.getElementById(last.id);
+    if (lastEl && lastEl.getBoundingClientRect().bottom <= view.top + view.height + 2) {
+      current = last.id;
+    }
+    activeSection = current;
+  }
+
+  onMount(() => {
+    let frame = 0;
+    const schedule = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        updateActiveSection();
+      });
+    };
+    schedule();
+    const stop = onAppScroll(schedule);
+    window.addEventListener('resize', schedule);
+    return () => {
+      stop();
+      window.removeEventListener('resize', schedule);
+      cancelAnimationFrame(frame);
+    };
+  });
+
+  function jumpTo(event: MouseEvent, id: string) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    event.preventDefault();
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    el.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
+    activeSection = id;
+  }
 
   const defaultViewOptions: { value: DefaultView; label: string }[] = [
     { value: 'home', label: 'Home' },
@@ -120,11 +188,11 @@
   let syncWarnings = $state<string[]>([]);
 
   // External-backed saves: which engine holds the Saved list. Owned/managed by
-  // <SaveBackingPicker bind:backing>; kept here so the "Privacy & sharing" overview
+  // <SaveBackingPicker bind:backing>; kept here so the "Library & privacy" overview
   // and the Saved-articles badge can reflect public/private state.
   let backing = $state<SaveBacking>({ provider: 'skyreader' });
 
-  // Live public/private state for the "Privacy & sharing" overview and per-section badges.
+  // Live public/private state for the "Library & privacy" overview and per-section badges.
   // Saves are public once a foreign-collection backing engine (Semble/Margin) is on.
   const savesPublic = $derived(backing.provider !== 'skyreader');
 
@@ -464,10 +532,7 @@
     }
   }
 
-  async function handleTogglePdsSync(event: Event) {
-    const target = event.currentTarget as HTMLInputElement;
-    const newValue = target.checked;
-
+  async function handleTogglePdsSync(newValue: boolean) {
     syncError = null;
     syncSuccess = null;
     syncWarnings = [];
@@ -627,28 +692,6 @@
       goto('/feeds');
     }
   }
-
-  let isUnsubscribingAll = $state(false);
-
-  async function handleUnsubscribeAll() {
-    const count = subscriptionsStore.subscriptions.length;
-    if (count === 0) return;
-
-    if (
-      !confirm(
-        `Are you sure you want to unsubscribe from all ${count} feeds? This cannot be undone.`
-      )
-    ) {
-      return;
-    }
-
-    isUnsubscribingAll = true;
-    try {
-      await subscriptionsStore.removeAll();
-    } finally {
-      isUnsubscribingAll = false;
-    }
-  }
 </script>
 
 <StaticPageChrome title="Settings" />
@@ -659,693 +702,832 @@
     class:public={isPublic}
     title={isPublic ? 'Anyone can see this' : 'Only you, on Skyreader'}
   >
+    <Icon name={isPublic ? 'globe' : 'lock'} size={12} />
     {isPublic ? 'Public' : 'Private'}
   </span>
 {/snippet}
 
+{#snippet docsLink(key: DocsPage, label = 'Learn more')}
+  <a href={docsUrl(key)} target="_blank" rel="noopener noreferrer" class="docs-link">{label}</a>
+{/snippet}
+
 <div class="settings-page">
-  {#if auth.user}
-    <section class="card">
-      <h2>Account</h2>
-      <div class="user-info">
-        {#if auth.user.avatarUrl}
-          <img src={auth.user.avatarUrl} alt="" class="avatar" />
-        {/if}
-        <div>
-          <p class="display-name">
-            {auth.user.displayName || auth.user.handle}
-          </p>
-          <p class="handle">@{auth.user.handle}</p>
-          <p class="did">{auth.user.did}</p>
-        </div>
-      </div>
-      <button class="btn btn-danger" onclick={handleLogout}> Log Out </button>
-    </section>
+  <nav class="section-nav" aria-label="Settings sections">
+    <ul>
+      {#each sections as section (section.id)}
+        <li>
+          <a
+            href="#{section.id}"
+            class:active={activeSection === section.id}
+            aria-current={activeSection === section.id ? 'location' : undefined}
+            onclick={(e) => jumpTo(e, section.id)}>{section.label}</a
+          >
+        </li>
+      {/each}
+    </ul>
+  </nav>
 
-    <section class="card">
-      <h2>Plan</h2>
-      <div class="plan-header">
-        <span class="plan-name">{planName}</span>
-        {#if renewalLine}
-          <span class="plan-renewal">{renewalLine}</span>
-        {/if}
-      </div>
+  <div class="settings-content">
+    <!-- ── Account ─────────────────────────────────────────────── -->
+    {#if auth.user}
+      <section class="group" id="account" aria-labelledby="account-title">
+        <h2 id="account-title">Account</h2>
 
-      {#if auth.user.limits}
-        {@const subCount = subscriptionsStore.subscriptions.length}
-        {@const subLimit = auth.user.limits.maxSubscriptions}
-        {@const urlSaveLimit = auth.user.limits.maxUrlSavesPerMonth}
-        {@const urlSaveCount = countUrlSavesThisMonth(savesStore.articles)}
-        <div class="plan-limits">
-          <div class="limit-row">
-            <div class="limit-label">
-              <span>Feed subscriptions</span>
-              <span class="limit-numbers">{subCount} / {subLimit}</span>
+        <div class="panel">
+          <div class="row profile">
+            {#if auth.user.avatarUrl}
+              <img src={auth.user.avatarUrl} alt="" class="avatar" />
+            {/if}
+            <div class="profile-text">
+              <p class="display-name">{auth.user.displayName || auth.user.handle}</p>
+              <p class="handle">@{auth.user.handle}</p>
+              <p class="did">{auth.user.did}</p>
             </div>
-            <div class="limit-bar">
-              <div
-                class="limit-bar-fill"
-                class:limit-bar-warning={subCount / subLimit > 0.8}
-                class:limit-bar-full={subCount >= subLimit}
-                style:transform="translateX({Math.min((subCount / subLimit) * 100, 100) - 100}%)"
-              ></div>
-            </div>
-          </div>
-
-          <div class="limit-row">
-            <div class="limit-label">
-              <span>URL saves this month</span>
-              <span class="limit-numbers">{urlSaveCount} / {urlSaveLimit}</span>
-            </div>
-            <div class="limit-bar">
-              <div
-                class="limit-bar-fill"
-                class:limit-bar-warning={urlSaveCount / urlSaveLimit > 0.8}
-                class:limit-bar-full={urlSaveCount >= urlSaveLimit}
-                style:transform="translateX({Math.min((urlSaveCount / urlSaveLimit) * 100, 100) -
-                  100}%)"
-              ></div>
-            </div>
-          </div>
-        </div>
-      {/if}
-
-      {#if auth.user.tier !== 'supporter'}
-        <p class="plan-upgrade">
-          Supporters get {supporterLimits.feeds} feeds, {supporterLimits.saves} saves a month, and keep
-          Skyreader independent.
-        </p>
-        <a href="/supporter" class="btn btn-primary plan-upgrade-cta">Become a Supporter</a>
-      {:else if grantedSupporter}
-        <p class="plan-upgrade">
-          Supporter access is yours at no charge, as thanks for supporting Skyreader early. More on
-          the <a href="/supporter">Supporter page</a>.
-        </p>
-      {:else}
-        <!-- The billing portal itself is launched from /supporter, which owns
-             the async Polar-session handler; this stays a plain link. -->
-        <p class="plan-upgrade">
-          Manage billing, change plans, or cancel from the <a href="/supporter">Supporter page</a>.
-        </p>
-      {/if}
-    </section>
-  {/if}
-
-  <!-- Privacy & sharing: at-a-glance overview of what's public vs private -->
-  <section class="card">
-    <h2>Privacy &amp; sharing</h2>
-    <p class="setting-description" style="margin-top: 0;">
-      Your reading is private to you on Skyreader by default. A few things are public, or can be
-      made public, so they're portable across the Atmosphere. Here's where each one stands.
-      <a href={docsUrl('yourData')} target="_blank" rel="noopener noreferrer" class="docs-link"
-        >The full picture</a
-      >
-    </p>
-    {#if isSyncLoading}
-      <p class="loading">Loading…</p>
-    {:else}
-      <ul class="vis-overview">
-        <li><span class="vis-row-label">Subscriptions</span>{@render visBadge(pdsSyncEnabled)}</li>
-        <li><span class="vis-row-label">Saved articles</span>{@render visBadge(savesPublic)}</li>
-        <li><span class="vis-row-label">Shared links</span>{@render visBadge(true)}</li>
-      </ul>
-      {#if auth.user}
-        <a
-          href="https://pdsls.dev/at://{auth.user.did}"
-          target="_blank"
-          rel="noopener noreferrer"
-          class="pds-link">View your public PDS data</a
-        >
-      {/if}
-    {/if}
-  </section>
-
-  <!-- Subscriptions -->
-  <section class="card" id="subscriptions">
-    <div class="card-head">
-      <h2>Subscriptions</h2>
-      {@render visBadge(pdsSyncEnabled)}
-    </div>
-    <p class="setting-description" style="margin-top: 0;">
-      Your feed list is private, stored on Skyreader. Turn on Atmospheric sync to also store it on
-      your PDS, where it's backed up, portable to any Atmospheric app, and publicly visible. Your
-      standard.site follows stay in step either way: follow or unfollow in either place and the
-      other follows along.
-      <a
-        href={docsUrl('atmosphericSync')}
-        target="_blank"
-        rel="noopener noreferrer"
-        class="docs-link">Learn more</a
-      >
-    </p>
-
-    {#if isSyncLoading}
-      <p class="loading">Loading sync settings...</p>
-    {:else}
-      <div class="sync-toggle-section">
-        <label class="toggle-setting">
-          <input type="checkbox" checked={pdsSyncEnabled} onchange={handleTogglePdsSync} />
-          <span>Turn on Atmospheric sync</span>
-        </label>
-      </div>
-
-      {#if pdsSyncEnabled}
-        <div class="sync-status">
-          {#if pendingSubscriptions > 0}
-            <p class="sync-live sync-pending">
-              <Icon name="clock" size={14} />
-              <span>
-                {pendingSubscriptions}
-                {pendingSubscriptions === 1 ? 'feed has' : 'feeds have'} changes that haven't reached
-                your PDS yet.
-              </span>
-            </p>
-          {:else}
-            <p class="sync-live">
-              <Icon name="check" size={14} />
-              <span>On. Feeds you add, rename, or remove go to your PDS as you change them.</span>
-            </p>
-          {/if}
-
-          <div class="sync-recheck">
-            <span class="sync-time">Last full check: {formatSyncTime(lastSyncSubscriptions)}</span>
-            <button class="btn btn-secondary" onclick={handleSync} disabled={isSyncing}>
-              {#if isSyncing}
-                Checking...
-              {:else}
-                Check for changes
-              {/if}
+            <button class="btn btn-secondary logout" onclick={handleLogout}>
+              <Icon name="log-out" size={15} />
+              Log Out
             </button>
           </div>
-          <p class="sync-recheck-hint">
-            {pendingSubscriptions > 0
-              ? 'A check will send them.'
-              : 'Use it if your feed list looks out of step with your PDS.'}
-          </p>
         </div>
 
-        {#if syncError}
-          <p class="sync-error">{syncError}</p>
-        {/if}
-
-        {#if syncSuccess}
-          <p class="sync-success">{syncSuccess}</p>
-        {/if}
-
-        {#if syncFeedNotices.length > 0}
-          <div class="sync-warnings">
-            <LimitNotice kind="feeds">
-              {#each syncFeedNotices as notice}
-                <p>{notice.message}</p>
-              {/each}
-            </LimitNotice>
+        <div class="panel">
+          <div class="panel-head">
+            <div class="panel-title-line">
+              <h3>Plan</h3>
+              <span class="plan-name">{planName}</span>
+              {#if renewalLine}
+                <span class="plan-renewal">{renewalLine}</span>
+              {/if}
+            </div>
           </div>
-        {/if}
 
-        {#if syncMirrorNotices.length > 0}
-          <div class="sync-warnings">
-            <LimitNotice kind="mirror">
-              {#each syncMirrorNotices as notice}
-                <p>{notice.message}</p>
-              {/each}
-            </LimitNotice>
+          {#if auth.user.limits}
+            {@const subCount = subscriptionsStore.subscriptions.length}
+            {@const subLimit = auth.user.limits.maxSubscriptions}
+            {@const urlSaveLimit = auth.user.limits.maxUrlSavesPerMonth}
+            {@const urlSaveCount = countUrlSavesThisMonth(savesStore.articles)}
+            <div class="row plan-limits">
+              <div class="limit-row">
+                <div class="limit-label">
+                  <span>Feed subscriptions</span>
+                  <span class="limit-numbers">{subCount} / {subLimit}</span>
+                </div>
+                <div class="limit-bar">
+                  <div
+                    class="limit-bar-fill"
+                    class:limit-bar-warning={subCount / subLimit > 0.8}
+                    class:limit-bar-full={subCount >= subLimit}
+                    style:transform="translateX({Math.min((subCount / subLimit) * 100, 100) -
+                      100}%)"
+                  ></div>
+                </div>
+              </div>
+
+              <div class="limit-row">
+                <div class="limit-label">
+                  <span>URL saves this month</span>
+                  <span class="limit-numbers">{urlSaveCount} / {urlSaveLimit}</span>
+                </div>
+                <div class="limit-bar">
+                  <div
+                    class="limit-bar-fill"
+                    class:limit-bar-warning={urlSaveCount / urlSaveLimit > 0.8}
+                    class:limit-bar-full={urlSaveCount >= urlSaveLimit}
+                    style:transform="translateX({Math.min(
+                      (urlSaveCount / urlSaveLimit) * 100,
+                      100
+                    ) - 100}%)"
+                  ></div>
+                </div>
+              </div>
+            </div>
+          {/if}
+
+          <div class="row plan-footer">
+            {#if auth.user.tier !== 'supporter'}
+              <p class="row-desc">
+                Supporters get {supporterLimits.feeds} feeds, {supporterLimits.saves} saves a month, and
+                keep Skyreader independent.
+              </p>
+              <a href="/supporter" class="btn btn-primary">Become a Supporter</a>
+            {:else if grantedSupporter}
+              <p class="row-desc">
+                Supporter access is yours at no charge, as thanks for supporting Skyreader early.
+                More on the <a href="/supporter">Supporter page</a>.
+              </p>
+            {:else}
+              <!-- The billing portal itself is launched from /supporter, which owns
+                   the async Polar-session handler; this stays a plain link. -->
+              <p class="row-desc">
+                Manage billing, change plans, or cancel from the <a href="/supporter"
+                  >Supporter page</a
+                >.
+              </p>
+            {/if}
           </div>
-        {/if}
+        </div>
+      </section>
+    {/if}
 
-        {#if syncWarnings.length > 0}
-          <div class="sync-warnings">
-            {#each syncWarnings as warning}
-              <p class="sync-warning">{warning}</p>
+    <!-- ── Reading ─────────────────────────────────────────────── -->
+    <section class="group" id="reading" aria-labelledby="reading-title">
+      <h2 id="reading-title">Reading</h2>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h3>Article text</h3>
+        </div>
+        <div class="row stack">
+          <span class="row-label" id="article-font-label">Font</span>
+          <div class="font-options" role="group" aria-labelledby="article-font-label">
+            {#each fontOptions as option}
+              <button
+                class="font-option"
+                class:selected={preferences.articleFont === option.value}
+                aria-pressed={preferences.articleFont === option.value}
+                onclick={() => preferences.setArticleFont(option.value)}
+              >
+                <span class="font-preview" style:font-family={option.family}>Aa</span>
+                <span class="font-label">{option.label}</span>
+              </button>
             {/each}
           </div>
-        {/if}
-      {/if}
-    {/if}
-  </section>
-
-  <!-- Saved articles -->
-  <section class="card">
-    <div class="card-head">
-      <h2>Saved articles</h2>
-      {@render visBadge(savesPublic)}
-    </div>
-    <p class="setting-description" style="margin-top: 0;">
-      Your saves stay private on Skyreader. To turn your whole Saved list into a collection you can
-      edit in another app, back it with Semble or Margin. That collection is public. You can change
-      this anytime.
-      <a href={docsUrl('saveBacking')} target="_blank" rel="noopener noreferrer" class="docs-link"
-        >Learn more</a
-      >
-    </p>
-
-    <SaveBackingPicker bind:backing allowExport returnUrl="/settings" />
-  </section>
-
-  <!-- Shared links -->
-  <section class="card">
-    <div class="card-head">
-      <h2>Shared links</h2>
-      {@render visBadge(true)}
-    </div>
-    <p class="setting-description" style="margin-top: 0;">
-      Sharing an article publishes it to your <strong>linkblog</strong>, a public publication in
-      your PDS that's readable across the Atmosphere. Anyone with the link can read it.
-      <a
-        href={docsUrl('sharingAndLinkblog')}
-        target="_blank"
-        rel="noopener noreferrer"
-        class="docs-link">Learn more</a
-      >
-    </p>
-    {#if isLinkblogLoading}
-      <p class="loading">Loading linkblog…</p>
-    {:else if linkblogPub?.disabled}
-      <p class="setting-description">Your linkblog is deleted. Deleted posts cannot be restored.</p>
-      <button class="btn btn-secondary" onclick={handleRestoreLinkblog} disabled={isSavingLinkblog}>
-        {isSavingLinkblog ? 'Restoring…' : 'Restore linkblog'}
-      </button>
-    {:else}
-      {#if linkblogPub}
-        <p class="setting-description" style="margin-top: 0;">
-          {#if linkblogPub.pageHidden}
-            Your Skyreader page is off.
-          {:else}
-            <a href={linkblogPub.url} target="_blank" rel="noopener noreferrer"
-              >View your linkblog →</a
+        </div>
+        <div class="row inline">
+          <span class="row-label" id="article-size-label">Size</span>
+          <div class="font-size-control" role="group" aria-labelledby="article-size-label">
+            <button
+              class="size-step"
+              onclick={() => preferences.decreaseFontSize()}
+              disabled={preferences.articleFontSize <= ARTICLE_FONT_SIZE_MIN}
+              aria-label="Decrease font size"
             >
-          {/if}
-          {#if linkblogPub.externalUrl}
-            <br />
-            Your links are going into
-            <a href={linkblogPub.externalUrl} target="_blank" rel="noopener noreferrer"
-              >{linkblogPub.name}</a
-            >, alongside whatever else that publication holds.
-          {/if}
-        </p>
-
-        <LinkblogTargetPicker
-          current={linkblogPub}
-          choices={linkblogChoices}
-          busy={isSavingLinkblog}
-          onapply={handleConnectLinkblog}
-        />
-
-        <!-- Only with a connected publication: without one, this page is the only
-             public address the links have, and turning it off would be a second,
-             quieter way to spell "delete". -->
-        {#if linkblogPub.external}
-          <label class="toggle-setting">
-            <input
-              type="checkbox"
-              bind:checked={showLinkblogPage}
-              disabled={isSavingLinkblog}
-              onchange={(e) => handleToggleLinkblogPage(e.currentTarget.checked)}
-            />
-            <span>Also show my links on Skyreader</span>
-          </label>
-          <p class="setting-description">
-            A page at {linkblogPageHost} that lists only your links, with its own RSS feed. It keeps working
-            if you change publications later. Turn it off to send readers to {linkblogPub.name}
-            only.
+              <span class="size-glyph size-glyph-sm">A</span>
+            </button>
+            <span class="size-readout">{preferences.articleFontSize}<small>px</small></span>
+            <button
+              class="size-step"
+              onclick={() => preferences.increaseFontSize()}
+              disabled={preferences.articleFontSize >= ARTICLE_FONT_SIZE_MAX}
+              aria-label="Increase font size"
+            >
+              <span class="size-glyph size-glyph-lg">A</span>
+            </button>
+          </div>
+        </div>
+        <!-- The choice above, set the way an article will be. A reader picking a
+             face shouldn't have to open an article to see what they picked. -->
+        <div class="row">
+          <p
+            class="type-sample"
+            style:font-family={fontOptions.find((o) => o.value === preferences.articleFont)?.family}
+            style:font-size="{preferences.articleFontSize}px"
+            aria-hidden="true"
+          >
+            A quiet place to read deeply and think clearly. Everything you follow, in one calm room.
           </p>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h3>Getting around</h3>
+        </div>
+        <div class="row inline wrap">
+          <div class="row-text">
+            <span class="row-label" id="default-view-label">Open to</span>
+            <span class="row-desc">Which view loads first when you open Skyreader.</span>
+          </div>
+          <div class="segmented" role="group" aria-labelledby="default-view-label">
+            {#each defaultViewOptions as option}
+              <button
+                class="segment"
+                class:selected={preferences.defaultView === option.value}
+                aria-pressed={preferences.defaultView === option.value}
+                onclick={() => preferences.setDefaultView(option.value)}
+              >
+                {option.label}
+              </button>
+            {/each}
+          </div>
+        </div>
+        <div class="row">
+          <SettingToggle
+            label="Mark articles as read when scrolled past"
+            checked={preferences.scrollToMarkAsRead}
+            onchange={(checked) => preferences.setScrollToMarkAsRead(checked)}
+          >
+            Articles you scroll past in the feed count as read.
+          </SettingToggle>
+        </div>
+      </div>
+
+      <!-- Deck size lives with the deck it configures; the Margin toggle cannot,
+           because a reader with a Margin library and no Skyreader highlights has
+           no Review entry in the nav to find the deck's gear behind. -->
+      <div class="panel">
+        <div class="panel-head">
+          <h3>Highlights</h3>
+          <p class="row-desc">
+            Your highlights are private to Skyreader. Saving one to Margin publishes that note to
+            your public PDS.
+            {@render docsLink('highlights')}
+          </p>
+        </div>
+        <div class="row">
+          <SettingToggle
+            label="Show community highlights"
+            checked={preferences.communityHighlights}
+            onchange={(checked) => preferences.setCommunityHighlights(checked)}
+          >
+            Passages other readers highlighted on Margin, shown while you read saved articles.
+          </SettingToggle>
+        </div>
+        <div class="row">
+          <HighlightSettings showDeckSize={false} />
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Library & privacy ───────────────────────────────────── -->
+    <section class="group" id="library" aria-labelledby="library-title">
+      <h2 id="library-title">Library &amp; privacy</h2>
+      <p class="group-lead">
+        Your reading is private to you on Skyreader by default. A few things can be made public, so
+        they're portable across the Atmosphere.
+        {@render docsLink('yourData', 'The full picture')}
+      </p>
+
+      <!-- At a glance: where each kind of data stands. Each row jumps to the
+           panel that changes it. -->
+      <div class="panel">
+        {#if isSyncLoading}
+          <div class="row"><p class="loading">Loading…</p></div>
+        {:else}
+          <ul class="vis-overview">
+            <li>
+              <a href="#subscriptions" onclick={(e) => jumpTo(e, 'subscriptions')}>Subscriptions</a>
+              {@render visBadge(pdsSyncEnabled)}
+            </li>
+            <li>
+              <a href="#saved" onclick={(e) => jumpTo(e, 'saved')}>Saved articles</a>
+              {@render visBadge(savesPublic)}
+            </li>
+            <li>
+              <a href="#linkblog" onclick={(e) => jumpTo(e, 'linkblog')}>Shared links</a>
+              {@render visBadge(true)}
+            </li>
+          </ul>
+          {#if auth.user}
+            <div class="row quiet-footer">
+              <a
+                href="https://pdsls.dev/at://{auth.user.did}"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="pds-link"
+                >View your public PDS data
+                <Icon name="external-link" size={13} />
+              </a>
+            </div>
+          {/if}
         {/if}
-      {/if}
-
-      <!-- How a post reads where other people read it. These matter most on a
-           connected publication (leaflet.pub, Offprint), where a link post sits
-           beside that site's own writing — but they're written into every record,
-           so they're offered either way. -->
-      <h3 class="subhead">How your posts read</h3>
-      <div class="linkblog-field">
-        <label for="linkblog-title-style">Post title</label>
-        <select
-          id="linkblog-title-style"
-          bind:value={titleStyle}
-          disabled={isSavingLinkblog}
-          onchange={(e) =>
-            handleSaveFormatting({
-              titleStyle: e.currentTarget.value as LinkblogFormatting['titleStyle'],
-            })}
-        >
-          <option value="link">🔗 with the article title</option>
-          <option value="quoted">The article title in quotes</option>
-          <option value="plain">The article title exactly</option>
-        </select>
       </div>
-      <p class="setting-description">
-        Marks the post as a link rather than a copy of the article. Shows as
-        <strong>{titlePreview}</strong>. Skyreader always shows the plain title.
-      </p>
 
-      <div class="linkblog-field">
-        <label for="linkblog-card-position">Link card</label>
-        <select
-          id="linkblog-card-position"
-          bind:value={cardPosition}
-          disabled={isSavingLinkblog}
-          onchange={(e) =>
-            handleSaveFormatting({
-              cardPosition: e.currentTarget.value as LinkblogFormatting['cardPosition'],
-            })}
-        >
-          <option value="context">With the quote, above your commentary</option>
-          <option value="top">First</option>
-          <option value="bottom">Last</option>
-        </select>
+      <div class="panel" id="subscriptions">
+        <div class="panel-head">
+          <div class="panel-title-line spread">
+            <h3>Subscriptions</h3>
+            {@render visBadge(pdsSyncEnabled)}
+          </div>
+        </div>
+
+        {#if isSyncLoading}
+          <div class="row"><p class="loading">Loading sync settings…</p></div>
+        {:else}
+          <div class="row">
+            <SettingToggle
+              label="Atmospheric sync"
+              bind:checked={pdsSyncEnabled}
+              onchange={handleTogglePdsSync}
+            >
+              Your feed list is private, stored on Skyreader. Turn this on to also store it on your
+              PDS, where it's backed up, portable to any Atmospheric app, and publicly visible. Your
+              standard.site follows stay in step either way.
+              {@render docsLink('atmosphericSync')}
+            </SettingToggle>
+
+            {#if pdsSyncEnabled}
+              <div class="sync-status">
+                {#if pendingSubscriptions > 0}
+                  <p class="sync-live sync-pending">
+                    <Icon name="clock" size={14} />
+                    <span>
+                      {pendingSubscriptions}
+                      {pendingSubscriptions === 1 ? 'feed has' : 'feeds have'} changes that haven't reached
+                      your PDS yet.
+                    </span>
+                  </p>
+                {:else}
+                  <p class="sync-live">
+                    <Icon name="check" size={14} />
+                    <span
+                      >On. Feeds you add, rename, or remove go to your PDS as you change them.</span
+                    >
+                  </p>
+                {/if}
+
+                <div class="sync-recheck">
+                  <div>
+                    <p class="sync-time">
+                      Last full check: {formatSyncTime(lastSyncSubscriptions)}
+                    </p>
+                    <p class="sync-recheck-hint">
+                      {pendingSubscriptions > 0
+                        ? 'A check will send them.'
+                        : 'Use it if your feed list looks out of step with your PDS.'}
+                    </p>
+                  </div>
+                  <button class="btn btn-secondary" onclick={handleSync} disabled={isSyncing}>
+                    {#if isSyncing}
+                      Checking…
+                    {:else}
+                      Check for changes
+                    {/if}
+                  </button>
+                </div>
+              </div>
+            {/if}
+
+            <!-- Outside the "on" branch: a failed attempt to turn sync on leaves
+                 it off, and its error has to stay readable. -->
+            {#if syncError}
+              <p class="status-error">{syncError}</p>
+            {/if}
+
+            {#if pdsSyncEnabled}
+              {#if syncSuccess}
+                <p class="status-success">{syncSuccess}</p>
+              {/if}
+
+              {#if syncFeedNotices.length > 0}
+                <div class="sync-warnings">
+                  <LimitNotice kind="feeds">
+                    {#each syncFeedNotices as notice}
+                      <p>{notice.message}</p>
+                    {/each}
+                  </LimitNotice>
+                </div>
+              {/if}
+
+              {#if syncMirrorNotices.length > 0}
+                <div class="sync-warnings">
+                  <LimitNotice kind="mirror">
+                    {#each syncMirrorNotices as notice}
+                      <p>{notice.message}</p>
+                    {/each}
+                  </LimitNotice>
+                </div>
+              {/if}
+
+              {#if syncWarnings.length > 0}
+                <div class="sync-warnings">
+                  {#each syncWarnings as warning}
+                    <p class="sync-warning">{warning}</p>
+                  {/each}
+                </div>
+              {/if}
+            {/if}
+          </div>
+        {/if}
+
+        <div class="row inline wrap">
+          <div class="row-text">
+            <span class="row-label">Import &amp; export</span>
+            <span class="row-desc">Move your feed list in or out as OPML or a text file.</span>
+          </div>
+          <div class="button-row">
+            <button class="btn btn-secondary" onclick={() => (showImportModal = true)}>
+              Import Feeds
+            </button>
+            <button
+              class="btn btn-secondary"
+              onclick={() => downloadOPML(subscriptionsStore.subscriptions)}
+              disabled={subscriptionsStore.subscriptions.length === 0}
+            >
+              Export OPML
+            </button>
+          </div>
+        </div>
       </div>
-      <p class="setting-description">
-        Where the article sits in the post. With the quote, a reader knows what you're responding to
-        before they read the response.
+
+      <div class="panel" id="saved">
+        <div class="panel-head">
+          <div class="panel-title-line spread">
+            <h3>Saved articles</h3>
+            {@render visBadge(savesPublic)}
+          </div>
+          <p class="row-desc">
+            Your saves stay private on Skyreader. To turn your whole Saved list into a collection
+            you can edit in another app, back it with Semble or Margin. That collection is public.
+            You can change this anytime.
+            {@render docsLink('saveBacking')}
+          </p>
+        </div>
+        <div class="row">
+          <SaveBackingPicker bind:backing allowExport returnUrl="/settings" />
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Linkblog ────────────────────────────────────────────── -->
+    <section class="group" id="linkblog" aria-labelledby="linkblog-title">
+      <div class="group-title-line">
+        <h2 id="linkblog-title">Linkblog</h2>
+        {@render visBadge(true)}
+      </div>
+      <p class="group-lead">
+        Sharing an article publishes it to your linkblog, a public publication in your PDS that's
+        readable across the Atmosphere. Anyone with the link can read it.
+        {@render docsLink('sharingAndLinkblog')}
       </p>
 
-      <label class="toggle-setting">
-        <input
-          type="checkbox"
-          bind:checked={offerAttribution}
-          onchange={(e) => preferences.setLinkblogAttributionOffered(e.currentTarget.checked)}
-        />
-        <span>Offer a “Posted from Skyreader” line when sharing</span>
-      </label>
-      <p class="setting-description">
-        Adds a checkbox to the composer. Nothing is added to a post unless you tick it. This switch
-        is for this device.
-      </p>
-
-      <!-- Name/description belong to the Skyreader linkblog only. A connected
-           publication is its home app's record; Skyreader doesn't rename it. -->
-      {#if linkblogPub?.external}
-        <p class="setting-description">
-          <strong>{linkblogPub.name}</strong> is managed by its own app — change its name, description
-          and appearance there. Your Skyreader linkblog keeps its own name, ready if you switch back.
-        </p>
+      {#if isLinkblogLoading}
+        <div class="panel">
+          <div class="row"><p class="loading">Loading linkblog…</p></div>
+        </div>
+      {:else if linkblogPub?.disabled}
+        <div class="panel">
+          <div class="row inline wrap">
+            <p class="row-desc">Your linkblog is deleted. Deleted posts cannot be restored.</p>
+            <button
+              class="btn btn-secondary"
+              onclick={handleRestoreLinkblog}
+              disabled={isSavingLinkblog}
+            >
+              {isSavingLinkblog ? 'Restoring…' : 'Restore linkblog'}
+            </button>
+          </div>
+        </div>
       {:else}
-        <h3 class="subhead">Your Skyreader linkblog</h3>
-        <div class="linkblog-field">
-          <label for="linkblog-name">Name</label>
-          <input
-            id="linkblog-name"
-            type="text"
-            bind:value={linkblogName}
-            maxlength="120"
-            placeholder="My links"
-          />
+        {#if linkblogPub}
+          <div class="panel">
+            <div class="panel-head">
+              <div class="panel-title-line spread">
+                <h3>Where your links go</h3>
+                {#if !linkblogPub.pageHidden}
+                  <a
+                    class="panel-action"
+                    href={linkblogPub.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    >View your linkblog
+                    <Icon name="external-link" size={13} />
+                  </a>
+                {/if}
+              </div>
+              {#if linkblogPub.pageHidden || linkblogPub.externalUrl}
+                <p class="row-desc">
+                  {#if linkblogPub.pageHidden}
+                    Your Skyreader page is off.
+                  {/if}
+                  {#if linkblogPub.externalUrl}
+                    Your links are going into
+                    <a href={linkblogPub.externalUrl} target="_blank" rel="noopener noreferrer"
+                      >{linkblogPub.name}</a
+                    >, alongside whatever else that publication holds.
+                  {/if}
+                </p>
+              {/if}
+            </div>
+
+            <div class="row">
+              <LinkblogTargetPicker
+                current={linkblogPub}
+                choices={linkblogChoices}
+                busy={isSavingLinkblog}
+                onapply={handleConnectLinkblog}
+              />
+            </div>
+
+            <!-- Only with a connected publication: without one, this page is the only
+                 public address the links have, and turning it off would be a second,
+                 quieter way to spell "delete". -->
+            {#if linkblogPub.external}
+              <div class="row">
+                <SettingToggle
+                  label="Also show my links on Skyreader"
+                  bind:checked={showLinkblogPage}
+                  disabled={isSavingLinkblog}
+                  onchange={handleToggleLinkblogPage}
+                >
+                  A page at {linkblogPageHost} that lists only your links, with its own RSS feed. It keeps
+                  working if you change publications later. Turn it off to send readers to
+                  {linkblogPub.name} only.
+                </SettingToggle>
+              </div>
+            {/if}
+          </div>
+        {/if}
+
+        <!-- How a post reads where other people read it. These matter most on a
+             connected publication (leaflet.pub, Offprint), where a link post sits
+             beside that site's own writing — but they're written into every record,
+             so they're offered either way. -->
+        <div class="panel">
+          <div class="panel-head">
+            <h3>How your posts read</h3>
+          </div>
+          <div class="row field-row">
+            <div class="row-text">
+              <label class="row-label" for="linkblog-title-style">Post title</label>
+              <span class="row-desc">
+                Marks the post as a link rather than a copy of the article. Shows as
+                <strong>{titlePreview}</strong>. Skyreader always shows the plain title.
+              </span>
+            </div>
+            <select
+              id="linkblog-title-style"
+              class="field"
+              bind:value={titleStyle}
+              disabled={isSavingLinkblog}
+              onchange={(e) =>
+                handleSaveFormatting({
+                  titleStyle: e.currentTarget.value as LinkblogFormatting['titleStyle'],
+                })}
+            >
+              <option value="link">🔗 with the article title</option>
+              <option value="quoted">The article title in quotes</option>
+              <option value="plain">The article title exactly</option>
+            </select>
+          </div>
+
+          <div class="row field-row">
+            <div class="row-text">
+              <label class="row-label" for="linkblog-card-position">Link card</label>
+              <span class="row-desc">
+                Where the article sits in the post. With the quote, a reader knows what you're
+                responding to before they read the response.
+              </span>
+            </div>
+            <select
+              id="linkblog-card-position"
+              class="field"
+              bind:value={cardPosition}
+              disabled={isSavingLinkblog}
+              onchange={(e) =>
+                handleSaveFormatting({
+                  cardPosition: e.currentTarget.value as LinkblogFormatting['cardPosition'],
+                })}
+            >
+              <option value="context">With the quote, above your commentary</option>
+              <option value="top">First</option>
+              <option value="bottom">Last</option>
+            </select>
+          </div>
+
+          <div class="row">
+            <SettingToggle
+              label="Offer a “Posted from Skyreader” line when sharing"
+              bind:checked={offerAttribution}
+              onchange={(checked) => preferences.setLinkblogAttributionOffered(checked)}
+            >
+              Adds a checkbox to the composer. Nothing is added to a post unless you tick it. This
+              switch is for this device.
+            </SettingToggle>
+          </div>
         </div>
-        <div class="linkblog-field">
-          <label for="linkblog-description">Description</label>
-          <textarea
-            id="linkblog-description"
-            bind:value={linkblogDescription}
-            rows="2"
-            maxlength="500"
-            placeholder="Optional"></textarea>
+
+        <!-- Name/description belong to the Skyreader linkblog only. A connected
+             publication is its home app's record; Skyreader doesn't rename it. -->
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Your Skyreader linkblog</h3>
+            {#if linkblogPub?.external}
+              <p class="row-desc">
+                <strong>{linkblogPub.name}</strong> is managed by its own app — change its name, description
+                and appearance there. Your Skyreader linkblog keeps its own name, ready if you switch
+                back.
+              </p>
+            {/if}
+          </div>
+          {#if !linkblogPub?.external}
+            <div class="row form">
+              <div class="form-field">
+                <label for="linkblog-name">Name</label>
+                <input
+                  id="linkblog-name"
+                  class="field"
+                  type="text"
+                  bind:value={linkblogName}
+                  maxlength="120"
+                  placeholder="My links"
+                />
+              </div>
+              <div class="form-field">
+                <label for="linkblog-description">Description</label>
+                <textarea
+                  id="linkblog-description"
+                  class="field"
+                  bind:value={linkblogDescription}
+                  rows="2"
+                  maxlength="500"
+                  placeholder="Optional"></textarea>
+              </div>
+              <div>
+                <button
+                  class="btn btn-secondary"
+                  onclick={handleSaveLinkblog}
+                  disabled={isSavingLinkblog}
+                >
+                  {#if isSavingLinkblog}Saving…{:else}Save{/if}
+                </button>
+              </div>
+            </div>
+          {/if}
         </div>
-        <button class="btn btn-secondary" onclick={handleSaveLinkblog} disabled={isSavingLinkblog}>
-          {#if isSavingLinkblog}Saving…{:else}Save{/if}
-        </button>
+
+        <div class="panel danger-panel">
+          <div class="row inline wrap">
+            <div class="row-text">
+              <span class="row-label">Delete linkblog</span>
+              <span class="row-desc">
+                Deletes every link post from your PDS and removes the linkblog from Skyreader. This
+                cannot be undone.
+              </span>
+            </div>
+            <button
+              class="btn btn-danger"
+              onclick={handleDeleteLinkblog}
+              disabled={isSavingLinkblog}
+            >
+              Delete linkblog
+            </button>
+          </div>
+        </div>
       {/if}
-      <div class="danger-section">
-        <h3 class="subhead">Delete linkblog</h3>
-        <p class="setting-description">
-          Deletes every link post from your PDS and removes the linkblog from Skyreader. This cannot
-          be undone.
-        </p>
-        <button class="btn btn-danger" onclick={handleDeleteLinkblog} disabled={isSavingLinkblog}>
-          Delete linkblog
-        </button>
-      </div>
-    {/if}
-    <!-- Outside the branches above: delete and restore both report here, and each
-         one switches which branch is rendered. Nested in either, the delete's
-         "N posts removed" and a failed restore's error would never be seen. -->
-    {#if linkblogError}
-      <p class="sync-error">{linkblogError}</p>
-    {/if}
-    {#if linkblogSuccess}
-      <p class="sync-success">{linkblogSuccess}</p>
-    {/if}
-  </section>
+      <!-- Outside the branches above: delete and restore both report here, and each
+           one switches which branch is rendered. Nested in either, the delete's
+           "N posts removed" and a failed restore's error would never be seen. -->
+      {#if linkblogError}
+        <p class="status-error">{linkblogError}</p>
+      {/if}
+      {#if linkblogSuccess}
+        <p class="status-success">{linkblogSuccess}</p>
+      {/if}
+    </section>
 
-  <section class="card">
-    <h2>Appearance</h2>
-    <div class="setting-row">
-      <label for="article-font">Article Font</label>
-      <div class="font-options">
-        {#each fontOptions as option}
-          <button
-            class="font-option"
-            class:selected={preferences.articleFont === option.value}
-            onclick={() => preferences.setArticleFont(option.value)}
-          >
-            <span class="font-preview" style:font-family={option.family}>Aa</span>
-            <span class="font-label">{option.label}</span>
-          </button>
-        {/each}
-      </div>
-    </div>
-    <div class="setting-row">
-      <label for="article-font-size">Article Font Size</label>
-      <div class="font-size-control">
-        <button
-          class="size-step"
-          onclick={() => preferences.decreaseFontSize()}
-          disabled={preferences.articleFontSize <= ARTICLE_FONT_SIZE_MIN}
-          aria-label="Decrease font size"
-        >
-          <span class="size-glyph size-glyph-sm">A</span>
-        </button>
-        <span class="size-readout">{preferences.articleFontSize}<small>px</small></span>
-        <button
-          class="size-step"
-          onclick={() => preferences.increaseFontSize()}
-          disabled={preferences.articleFontSize >= ARTICLE_FONT_SIZE_MAX}
-          aria-label="Increase font size"
-        >
-          <span class="size-glyph size-glyph-lg">A</span>
-        </button>
-      </div>
-    </div>
-  </section>
-
-  <section class="card">
-    <h2>Reading</h2>
-    <div class="setting-row">
-      <label for="default-view">When you open the app</label>
-      <div class="font-options">
-        {#each defaultViewOptions as option}
-          <button
-            class="view-option"
-            class:selected={preferences.defaultView === option.value}
-            onclick={() => preferences.setDefaultView(option.value)}
-          >
-            {option.label}
-          </button>
-        {/each}
-      </div>
-    </div>
-    <p class="setting-description">Choose which view loads first when you open Skyreader.</p>
-    <label class="toggle-setting">
-      <input
-        type="checkbox"
-        checked={preferences.scrollToMarkAsRead}
-        onchange={(e) => preferences.setScrollToMarkAsRead(e.currentTarget.checked)}
-      />
-      <span>Mark articles as read when scrolled past</span>
-    </label>
-    <p class="setting-description">
-      Automatically mark articles as read when you scroll past them in the feed.
-    </p>
-    <label class="toggle-setting">
-      <input
-        type="checkbox"
-        checked={preferences.communityHighlights}
-        onchange={(e) => preferences.setCommunityHighlights(e.currentTarget.checked)}
-      />
-      <span>Show community highlights</span>
-    </label>
-    <p class="setting-description">
-      Show passages highlighted by other readers on Margin while reading saved articles.
-    </p>
-  </section>
-
-  <!-- Highlights. Deck size lives with the deck it configures; the Margin toggle
-       cannot, because a reader with a Margin library and no Skyreader highlights
-       has no Review entry in the nav to find the deck's gear behind. -->
-  <section class="card">
-    <h2>Highlights</h2>
-    <p class="setting-description" style="margin-top: 0;">
-      Your highlights are private to Skyreader. Saving one to Margin publishes that note to your
-      public PDS.
-      <a href={docsUrl('highlights')} target="_blank" rel="noopener noreferrer" class="docs-link"
-        >Learn more</a
-      >
-    </p>
-    <HighlightSettings showDeckSize={false} />
-  </section>
-
-  <section class="card">
-    <h2>Import / Export</h2>
-    <p>Import or export your subscriptions using OPML or text files.</p>
-    <div class="button-row">
-      <button class="btn btn-secondary" onclick={() => (showImportModal = true)}>
-        Import Feeds
-      </button>
-      <button
-        class="btn btn-secondary"
-        onclick={() => downloadOPML(subscriptionsStore.subscriptions)}
-        disabled={subscriptionsStore.subscriptions.length === 0}
-      >
-        Export OPML
-      </button>
-    </div>
-  </section>
-
-  <section class="card" id="save-anywhere">
-    <h2>Save from anywhere</h2>
-    <p>Save an article or subscribe to a feed without leaving the page you're reading.</p>
-
-    <div class="platform">
-      <h3 class="subhead">On your computer</h3>
-      <p class="hint-text">
-        The extension saves the page you're on in one click, including articles the reader can't
-        fetch on its own.
+    <!-- ── Save from anywhere ──────────────────────────────────── -->
+    <section class="group" id="save-anywhere" aria-labelledby="save-anywhere-title">
+      <h2 id="save-anywhere-title">Save from anywhere</h2>
+      <p class="group-lead">
+        Save an article or subscribe to a feed without leaving the page you're reading.
+        {@render docsLink('saveFromAnywhere')}
       </p>
-      <div class="button-row">
-        <a
-          class="btn btn-secondary"
-          href={CHROME_EXTENSION_URL}
-          target="_blank"
-          rel="noopener noreferrer">Chrome extension</a
-        >
-        <a
-          class="btn btn-secondary"
-          href={FIREFOX_EXTENSION_URL}
-          target="_blank"
-          rel="noopener noreferrer">Firefox extension</a
-        >
-      </div>
 
-      <details class="disclosure">
-        <summary>Use a bookmarklet instead</summary>
-        <p class="hint-text">
-          Drag either button to your bookmarks bar, then click it on any page. Clicking them here
-          won't work.
-        </p>
-        <div class="bookmarklet-row">
-          <a class="bookmarklet" href={saveBookmarklet} onclick={preventBookmarkletClick}>
-            Save to Skyreader
-          </a>
-          <a class="bookmarklet" href={subscribeBookmarklet} onclick={preventBookmarkletClick}>
-            Subscribe in Skyreader
-          </a>
-        </div>
-        <div class="button-row">
-          <button class="btn btn-secondary" onclick={() => copyText(saveBookmarklet, 'save')}>
-            {copiedKey === 'save' ? 'Copied' : 'Copy Save link'}
-          </button>
-          <button
-            class="btn btn-secondary"
-            onclick={() => copyText(subscribeBookmarklet, 'subscribe')}
-          >
-            {copiedKey === 'subscribe' ? 'Copied' : 'Copy Subscribe link'}
-          </button>
-        </div>
-      </details>
-    </div>
-
-    <div class="platform">
-      <h3 class="subhead">On iPhone or iPad</h3>
-      {#if APPLE_SAVE_SHORTCUT_URL || APPLE_SUBSCRIBE_SHORTCUT_URL}
-        <p class="hint-text">Add a shortcut, then use it from any Share Sheet.</p>
-        <div class="button-row">
-          {#if APPLE_SAVE_SHORTCUT_URL}
+      <!-- Three independent setups, not one procedure: each platform is its own
+           row with one recommended action at rest, and the secondary paths (the
+           bookmarklet, the manual Shortcuts recipe) fold away. -->
+      <div class="panel">
+        <div class="row">
+          <span class="row-label">On your computer</span>
+          <p class="row-desc">
+            The extension saves the page you're on in one click, including articles the reader can't
+            fetch on its own.
+          </p>
+          <div class="button-row">
             <a
               class="btn btn-secondary"
-              href={APPLE_SAVE_SHORTCUT_URL}
+              href={CHROME_EXTENSION_URL}
               target="_blank"
-              rel="noopener noreferrer">Add Save shortcut</a
+              rel="noopener noreferrer">Chrome extension</a
             >
-          {/if}
-          {#if APPLE_SUBSCRIBE_SHORTCUT_URL}
             <a
               class="btn btn-secondary"
-              href={APPLE_SUBSCRIBE_SHORTCUT_URL}
+              href={FIREFOX_EXTENSION_URL}
               target="_blank"
-              rel="noopener noreferrer">Add Subscribe shortcut</a
+              rel="noopener noreferrer">Firefox extension</a
             >
+          </div>
+
+          <details class="disclosure">
+            <summary>Use a bookmarklet instead</summary>
+            <p class="row-desc">
+              Drag either button to your bookmarks bar, then click it on any page. Clicking them
+              here won't work.
+            </p>
+            <div class="bookmarklet-row">
+              <a class="bookmarklet" href={saveBookmarklet} onclick={preventBookmarkletClick}>
+                Save to Skyreader
+              </a>
+              <a class="bookmarklet" href={subscribeBookmarklet} onclick={preventBookmarkletClick}>
+                Subscribe in Skyreader
+              </a>
+            </div>
+            <div class="button-row">
+              <button class="btn btn-secondary" onclick={() => copyText(saveBookmarklet, 'save')}>
+                {copiedKey === 'save' ? 'Copied' : 'Copy Save link'}
+              </button>
+              <button
+                class="btn btn-secondary"
+                onclick={() => copyText(subscribeBookmarklet, 'subscribe')}
+              >
+                {copiedKey === 'subscribe' ? 'Copied' : 'Copy Subscribe link'}
+              </button>
+            </div>
+          </details>
+        </div>
+
+        <div class="row">
+          <span class="row-label">On iPhone or iPad</span>
+          {#if APPLE_SAVE_SHORTCUT_URL || APPLE_SUBSCRIBE_SHORTCUT_URL}
+            <p class="row-desc">Add a shortcut, then use it from any Share Sheet.</p>
+            <div class="button-row">
+              {#if APPLE_SAVE_SHORTCUT_URL}
+                <a
+                  class="btn btn-secondary"
+                  href={APPLE_SAVE_SHORTCUT_URL}
+                  target="_blank"
+                  rel="noopener noreferrer">Add Save shortcut</a
+                >
+              {/if}
+              {#if APPLE_SUBSCRIBE_SHORTCUT_URL}
+                <a
+                  class="btn btn-secondary"
+                  href={APPLE_SUBSCRIBE_SHORTCUT_URL}
+                  target="_blank"
+                  rel="noopener noreferrer">Add Subscribe shortcut</a
+                >
+              {/if}
+            </div>
+          {:else}
+            <p class="row-desc">
+              Build a Share Sheet shortcut once, then use it from any app. It opens here and saves
+              while you stay logged in.
+            </p>
+            <details class="disclosure shortcut-steps">
+              <summary>Show the steps</summary>
+              <ol>
+                <li>Open the <strong>Shortcuts</strong> app and create a new shortcut.</li>
+                <li>
+                  In its settings, turn on <strong>Show in Share Sheet</strong> and set the type to
+                  <strong>URLs</strong>.
+                </li>
+                <li>Add <strong>Get URLs from Input</strong>, set to Shortcut Input.</li>
+                <li>Add <strong>URL Encode</strong> (Encode) on that URL.</li>
+                <li>
+                  Add <strong>Text</strong>: <code>{appOrigin}/save?url=</code> followed by the
+                  Encoded URL. Use <code>/subscribe?url=</code> instead for a feed shortcut.
+                </li>
+                <li>Add <strong>Open URLs</strong> with that text.</li>
+              </ol>
+            </details>
           {/if}
         </div>
-      {:else}
-        <p class="hint-text">
-          Build a Share Sheet shortcut once, then use it from any app. It opens here and saves while
-          you stay logged in.
-        </p>
-        <details class="disclosure shortcut-steps">
-          <summary>Show the steps</summary>
-          <ol>
-            <li>Open the <strong>Shortcuts</strong> app and create a new shortcut.</li>
-            <li>
-              In its settings, turn on <strong>Show in Share Sheet</strong> and set the type to
-              <strong>URLs</strong>.
-            </li>
-            <li>Add <strong>Get URLs from Input</strong>, set to Shortcut Input.</li>
-            <li>Add <strong>URL Encode</strong> (Encode) on that URL.</li>
-            <li>
-              Add <strong>Text</strong>: <code>{appOrigin}/save?url=</code> followed by the Encoded
-              URL. Use <code>/subscribe?url=</code> instead for a feed shortcut.
-            </li>
-            <li>Add <strong>Open URLs</strong> with that text.</li>
-          </ol>
-        </details>
-      {/if}
-    </div>
 
-    <div class="platform">
-      <h3 class="subhead">On Android</h3>
-      <p class="hint-text">
-        Install Skyreader to your home screen and it appears right in the system share sheet. Share
-        any page, pick Skyreader, and it saves the article. No setup needed.
-      </p>
-    </div>
-  </section>
+        <div class="row">
+          <span class="row-label">On Android</span>
+          <p class="row-desc">
+            Install Skyreader to your home screen and it appears right in the system share sheet.
+            Share any page, pick Skyreader, and it saves the article. No setup needed.
+          </p>
+        </div>
+      </div>
+    </section>
 
-  <section class="card">
-    <h2>About</h2>
-    <p>Skyreader is a reading app that helps you make sense of what you read.</p>
-    <p>
-      Your reading lives on Skyreader and stays private by default. You can make much of it portable
-      across the Atmosphere, stored on your own Personal Data Server (PDS). See
-      <strong>Privacy &amp; sharing</strong> above for what's public.
-    </p>
-    <div class="about-links">
-      <a href={docsUrl('home')} target="_blank" rel="noopener noreferrer">Docs</a>
-      <span class="separator">·</span>
-      <a href="/terms">Terms of Service</a>
-      <span class="separator">·</span>
-      <a href="/privacy">Privacy Policy</a>
-      <span class="separator">·</span>
-      <a href="mailto:abuse@skyreader.app">Report Abuse</a>
-      <span class="separator">·</span>
-      <a href="/feedback">Feedback</a>
-    </div>
-  </section>
+    <!-- ── About ───────────────────────────────────────────────── -->
+    <section class="group" id="about" aria-labelledby="about-title">
+      <h2 id="about-title">About</h2>
 
-  <Diagnostics />
+      <div class="panel">
+        <div class="row">
+          <p class="about-text">
+            Skyreader is a reading app that helps you make sense of what you read. Your reading
+            lives on Skyreader and stays private by default; much of it can be made portable across
+            the Atmosphere, stored on your own Personal Data Server (PDS).
+          </p>
+          <nav class="about-links" aria-label="About Skyreader">
+            <a href={docsUrl('home')} target="_blank" rel="noopener noreferrer">Docs</a>
+            <a href="/feedback">Feedback</a>
+            <a href="/terms">Terms of Service</a>
+            <a href="/privacy">Privacy Policy</a>
+            <a href="mailto:abuse@skyreader.app">Report Abuse</a>
+          </nav>
+        </div>
+      </div>
 
-  <section class="card debug-section">
-    <h2>Debug</h2>
-    <p>Development tools for testing.</p>
-    <button
-      class="btn btn-danger"
-      onclick={handleUnsubscribeAll}
-      disabled={isUnsubscribingAll || subscriptionsStore.subscriptions.length === 0}
-    >
-      {#if isUnsubscribingAll}
-        Unsubscribing...
-      {:else}
-        Unsubscribe from All ({subscriptionsStore.subscriptions.length} feeds)
-      {/if}
-    </button>
-  </section>
+      <div class="panel">
+        <div class="panel-head">
+          <h3>Diagnostics</h3>
+          <p class="row-desc">
+            What this device is running. Useful to include when something looks wrong.
+          </p>
+        </div>
+        <div class="row">
+          <Diagnostics />
+        </div>
+      </div>
+    </section>
+  </div>
 </div>
 
 <ImportOPMLModal open={showImportModal} onclose={() => (showImportModal = false)} />
@@ -1358,90 +1540,365 @@
 />
 
 <style>
+  /* ── Layout ───────────────────────────────────────────────────
+     A single column of groups. Above the shell breakpoint the section nav
+     becomes a sticky rail beside it; below, a row of chips above it. */
   .settings-page {
-    max-width: 600px;
+    max-width: 880px;
     margin: 0 auto;
-    padding-top: 3.5rem;
+    padding: 2.5rem 1rem 4rem;
+    display: grid;
+    grid-template-columns: 11rem minmax(0, 1fr);
+    gap: 2.5rem;
+    align-items: start;
+  }
+
+  .settings-content {
+    max-width: 640px;
+    min-width: 0;
   }
 
   @media (max-width: 1000px) {
     .settings-page {
-      padding-top: 0.5rem;
-      padding-bottom: calc(var(--bottom-bar-height) + var(--safe-area-bottom) + 1rem);
+      display: block;
+      padding: 0.5rem 0 calc(var(--bottom-bar-height) + var(--safe-area-bottom) + 1.5rem);
     }
   }
 
-  section {
-    margin-bottom: 1.5rem;
+  /* ── Section nav ──────────────────────────────────────────── */
+  .section-nav {
+    position: sticky;
+    top: 1.5rem;
   }
 
-  section h2 {
-    font-size: var(--text-xl);
-    margin-bottom: 1rem;
-    padding-bottom: 0.5rem;
-    border-bottom: 1px solid var(--color-border);
-  }
-
-  .user-info {
+  .section-nav ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
     display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .section-nav a {
+    display: block;
+    padding: 0.4rem 0.75rem;
+    border-radius: 6px;
+    font-size: var(--text-md);
+    font-weight: var(--weight-medium);
+    color: var(--color-text-secondary);
+    text-decoration: none;
+    transition:
+      background-color 0.15s ease,
+      color 0.15s ease;
+  }
+
+  .section-nav a:hover {
+    color: var(--color-text);
+    background: var(--color-bg-secondary);
+  }
+
+  .section-nav a.active {
+    color: var(--color-primary);
+    background: var(--color-sidebar-active);
+  }
+
+  @media (max-width: 1000px) {
+    .section-nav {
+      position: static;
+      margin: 0 -1rem 1.25rem;
+    }
+
+    /* A row of chips that scrolls sideways rather than wrapping into a block
+       of buttons above the page. */
+    .section-nav ul {
+      flex-direction: row;
+      gap: 0.375rem;
+      overflow-x: auto;
+      padding: 0 1rem;
+      scrollbar-width: none;
+    }
+
+    .section-nav ul::-webkit-scrollbar {
+      display: none;
+    }
+
+    .section-nav a {
+      white-space: nowrap;
+      padding: 0.375rem 0.75rem;
+      border-radius: 999px;
+      background: var(--color-bg-secondary);
+      font-size: var(--text-sm);
+    }
+  }
+
+  /* ── Groups ───────────────────────────────────────────────── */
+  .group {
+    scroll-margin-top: 1.5rem;
+  }
+
+  .group + .group {
+    margin-top: 3rem;
+  }
+
+  .group h2 {
+    font-size: var(--text-2xl);
+    font-weight: var(--weight-semibold);
+    letter-spacing: var(--tracking-tight);
+    line-height: var(--leading-tight);
+    margin: 0 0 0.75rem;
+  }
+
+  .group-title-line {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .group-title-line h2 {
+    margin: 0;
+  }
+
+  .group-lead {
+    font-size: var(--text-md);
+    line-height: var(--leading-normal);
+    color: var(--color-text-secondary);
+    max-width: 60ch;
+    margin: -0.25rem 0 1rem;
+  }
+
+  /* ── Panels and rows ──────────────────────────────────────────
+     A panel is one card of related settings; rows inside it are divided by
+     hairlines rather than boxed, so there's never a card inside a card. */
+  .panel {
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    scroll-margin-top: 1.5rem;
+  }
+
+  .panel + .panel {
+    margin-top: 1rem;
+  }
+
+  .panel-head {
+    padding: 0.875rem 1rem 0;
+  }
+
+  .panel-head h3 {
+    font-size: var(--text-lg);
+    font-weight: var(--weight-semibold);
+    margin: 0;
+  }
+
+  .panel-head .row-desc {
+    margin-top: 0.25rem;
+  }
+
+  /* The head and its first row read as one block: no divider between them,
+     and only a little air. */
+  .panel-head + .row {
+    padding-top: 0.625rem;
+  }
+
+  .panel-head:has(.row-desc) + .row {
+    padding-top: 0.875rem;
+  }
+
+  .panel-title-line {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem 0.75rem;
+  }
+
+  .panel-title-line.spread {
+    justify-content: space-between;
+  }
+
+  .panel-action {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+    color: var(--color-primary);
+    text-decoration: none;
+  }
+
+  .panel-action:hover {
+    text-decoration: underline;
+  }
+
+  .row {
+    padding: 0.875rem 1rem;
+  }
+
+  .row + .row {
+    border-top: 1px solid var(--color-border);
+  }
+
+  /* Label on the left, control on the right. */
+  .row.inline {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem 1rem;
+  }
+
+  .row.inline.wrap {
+    flex-wrap: wrap;
+  }
+
+  .row.stack {
+    display: flex;
+    flex-direction: column;
+    gap: 0.625rem;
+  }
+
+  .row-text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    min-width: 0;
+    flex: 1 1 16rem;
+  }
+
+  .row-label {
+    font-size: var(--text-lg);
+    font-weight: var(--weight-medium);
+    color: var(--color-text);
+  }
+
+  .row-desc {
+    font-size: var(--text-sm);
+    line-height: var(--leading-snug);
+    color: var(--color-text-secondary);
+    margin: 0;
+  }
+
+  .row > .row-label + .row-desc {
+    margin-top: 0.2rem;
+  }
+
+  .row > .row-desc + .button-row {
+    margin-top: 0.75rem;
+  }
+
+  .loading {
+    margin: 0;
+    font-size: var(--text-md);
+    color: var(--color-text-secondary);
+  }
+
+  /* Buttons here are Label type, like everywhere else in the chrome; the
+     shared .btn leaves size to its context. Anchors wearing .btn (the
+     extension and shortcut links) drop the link underline. */
+  .settings-page :global(.btn) {
+    font-size: var(--text-md);
+    text-decoration: none;
+  }
+
+  .button-row {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .docs-link {
+    color: var(--color-primary);
+    text-decoration: none;
+    white-space: nowrap;
+  }
+
+  .docs-link:hover {
+    text-decoration: underline;
+  }
+
+  .status-error,
+  .status-success {
+    font-size: var(--text-md);
+    margin: 0.75rem 0 0;
+  }
+
+  .status-error {
+    color: var(--color-error);
+  }
+
+  .status-success {
+    color: var(--color-success);
+  }
+
+  /* ── Account ──────────────────────────────────────────────── */
+  .profile {
+    display: flex;
+    align-items: center;
     gap: 1rem;
-    margin-bottom: 1rem;
   }
 
   .avatar {
-    width: 64px;
-    height: 64px;
+    width: 56px;
+    height: 56px;
     border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .profile-text {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .profile-text p {
+    margin: 0;
   }
 
   .display-name {
+    font-size: var(--text-base);
     font-weight: var(--weight-semibold);
   }
 
   .handle {
+    font-size: var(--text-md);
     color: var(--color-text-secondary);
   }
 
   .did {
+    margin-top: 0.125rem !important;
     font-size: var(--text-xs);
     color: var(--color-text-secondary);
     word-break: break-all;
   }
 
-  .plan-header {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    margin-bottom: 1rem;
+  .logout {
+    flex-shrink: 0;
   }
 
-  .plan-renewal {
-    font-size: var(--text-sm);
-    color: var(--color-text-secondary);
+  @media (max-width: 640px) {
+    .profile {
+      flex-wrap: wrap;
+    }
+
+    .logout {
+      width: 100%;
+    }
   }
 
   .plan-name {
     display: inline-block;
+    font-size: var(--text-2xs);
     font-weight: var(--weight-semibold);
-    font-size: var(--text-md);
     text-transform: uppercase;
     letter-spacing: var(--tracking-wider);
-    padding: 0.25rem 0.625rem;
+    padding: 0.2rem 0.5rem;
     border-radius: 4px;
     background: var(--color-bg-secondary);
     color: var(--color-text-secondary);
   }
 
-  .plan-upgrade {
-    margin-top: 1rem;
-    font-size: var(--text-md);
+  .plan-renewal {
+    font-size: var(--text-sm);
     color: var(--color-text-secondary);
-  }
-
-  /* An anchor wearing the shared .btn styles; the sell lives on /supporter. */
-  .plan-upgrade-cta {
-    display: inline-block;
-    text-decoration: none;
   }
 
   .plan-limits {
@@ -1489,33 +1946,28 @@
   }
 
   .limit-bar-full {
-    background: var(--color-danger);
+    background: var(--color-error);
   }
 
-  .debug-section {
-    border: 1px dashed var(--color-border);
+  .plan-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.75rem 1rem;
     background: var(--color-bg-secondary);
+    border-radius: 0 0 7px 7px;
   }
 
-  .debug-section h2 {
-    color: var(--color-text-secondary);
+  .plan-footer .row-desc {
+    flex: 1 1 18rem;
   }
 
-  .setting-row {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .setting-row label {
-    font-weight: var(--weight-medium);
-    color: var(--color-text-secondary);
-    font-size: var(--text-md);
-  }
-
+  /* ── Reading ──────────────────────────────────────────────── */
   .font-options {
-    display: flex;
-    gap: 0.75rem;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.5rem;
   }
 
   .font-option {
@@ -1523,14 +1975,14 @@
     flex-direction: column;
     align-items: center;
     gap: 0.25rem;
-    padding: 0.75rem 1rem;
+    padding: 0.75rem 0.5rem;
     background: var(--color-bg);
-    border: 2px solid var(--color-border);
+    border: 1px solid var(--color-border);
     border-radius: 8px;
     cursor: pointer;
     transition:
-      border-color 0.15s,
-      background-color 0.15s;
+      border-color 0.15s ease,
+      background-color 0.15s ease;
   }
 
   .font-option:hover {
@@ -1540,11 +1992,13 @@
   .font-option.selected {
     border-color: var(--color-primary);
     background: var(--color-sidebar-active);
+    box-shadow: inset 0 0 0 1px var(--color-primary);
   }
 
   .font-preview {
     font-size: var(--text-3xl);
     line-height: var(--leading-none);
+    color: var(--color-text);
     /* Normalize visual size across families by x-height so the Literata
        preview matches the others — see AppearanceToolbar. */
     font-size-adjust: 0.52;
@@ -1559,35 +2013,12 @@
     color: var(--color-primary);
   }
 
-  .view-option {
-    padding: 0.5rem 1rem;
-    background: var(--color-bg);
-    border: 2px solid var(--color-border);
-    border-radius: 8px;
-    color: var(--color-text-secondary);
-    font-size: var(--text-md);
-    font-weight: var(--weight-medium);
-    cursor: pointer;
-    transition:
-      border-color 0.15s,
-      background-color 0.15s,
-      color 0.15s;
-  }
-
-  .view-option:hover {
-    border-color: var(--color-primary);
-  }
-
-  .view-option.selected {
-    border-color: var(--color-primary);
-    background: var(--color-sidebar-active);
-    color: var(--color-primary);
-  }
-
   .font-size-control {
     display: inline-flex;
     align-items: center;
-    gap: 0.5rem;
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    overflow: hidden;
   }
 
   .size-step {
@@ -1595,19 +2026,16 @@
     align-items: center;
     justify-content: center;
     width: 2.75rem;
-    height: 2.75rem;
+    height: 2.5rem;
     background: var(--color-bg);
-    border: 2px solid var(--color-border);
-    border-radius: 8px;
+    border: none;
     cursor: pointer;
     color: var(--color-text);
-    transition:
-      border-color 0.15s,
-      background-color 0.15s;
+    transition: background-color 0.15s ease;
   }
 
   .size-step:hover:not(:disabled) {
-    border-color: var(--color-primary);
+    background: var(--color-bg-secondary);
   }
 
   .size-step:disabled {
@@ -1629,9 +2057,14 @@
   }
 
   .size-readout {
-    min-width: 3.25rem;
-    text-align: center;
-    font-size: var(--text-xl);
+    min-width: 3.5rem;
+    align-self: stretch;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-left: 1px solid var(--color-border);
+    border-right: 1px solid var(--color-border);
+    font-size: var(--text-lg);
     font-weight: var(--weight-semibold);
     color: var(--color-text);
     font-variant-numeric: tabular-nums;
@@ -1644,90 +2077,52 @@
     margin-left: 0.1rem;
   }
 
-  .toggle-setting {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    cursor: pointer;
+  /* The sample sits on the reading surface itself: Surface, not Sunken, at
+     the reading line-height, so it looks like an article and not a widget. */
+  .type-sample {
+    margin: 0;
+    line-height: 1.8;
+    color: var(--color-text);
+    font-size-adjust: 0.52;
   }
 
-  .toggle-setting input[type='checkbox'] {
-    width: 1rem;
-    height: 1rem;
-    cursor: pointer;
-  }
-
-  .setting-description {
-    font-size: var(--text-md);
-    color: var(--color-text-secondary);
-    margin: 0.5rem 0 0 0;
-  }
-
-  .pds-link {
-    display: inline-block;
-    margin-top: 0.5rem;
-    color: var(--color-primary);
-    text-decoration: none;
-  }
-
-  .pds-link:hover {
-    text-decoration: underline;
-  }
-
-  /* Quiet "Learn more" into docs.skyreader.app, inline at the end of a card's
-     description so it reads as part of the sentence, not extra chrome. */
-  .docs-link {
-    color: var(--color-primary);
-    text-decoration: none;
-  }
-
-  .docs-link:hover {
-    text-decoration: underline;
-  }
-
-  /* Card header with a visibility badge aligned to the heading. Mirrors the
-     h2 underline so badge'd cards read the same as plain ones. */
-  .card-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
-    margin-bottom: 1rem;
-    padding-bottom: 0.5rem;
-    border-bottom: 1px solid var(--color-border);
-  }
-
-  .card-head h2 {
-    margin-bottom: 0;
-    padding-bottom: 0;
-    border-bottom: none;
-  }
-
-  /* Visibility badge. Neutral = private (only you); amber = public (anyone can
-     see it). Never blue — blue is reserved for interaction (One Blue). */
-  .vis-badge {
-    flex-shrink: 0;
+  /* A segmented control: one pill track, the selection a raised tint. */
+  .segmented {
     display: inline-flex;
-    align-items: center;
-    font-size: var(--text-xs);
-    font-weight: var(--weight-semibold);
-    text-transform: uppercase;
-    letter-spacing: var(--tracking-wider);
-    padding: 0.15rem 0.5rem;
-    border-radius: 6px;
+    padding: 2px;
+    border-radius: 8px;
     background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border);
+  }
+
+  .segment {
+    padding: 0.375rem 0.875rem;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
     color: var(--color-text-secondary);
-    white-space: nowrap;
+    font-size: var(--text-md);
+    font-weight: var(--weight-medium);
+    cursor: pointer;
+    transition:
+      background-color 0.15s ease,
+      color 0.15s ease;
   }
 
-  .vis-badge.public {
-    background: color-mix(in srgb, var(--color-warning) 16%, var(--color-bg));
-    color: var(--color-warning);
+  .segment:hover:not(.selected) {
+    color: var(--color-text);
   }
 
+  .segment.selected {
+    background: var(--color-bg);
+    color: var(--color-primary);
+    box-shadow: 0 0 0 1px var(--color-border);
+  }
+
+  /* ── Library & privacy ────────────────────────────────────── */
   .vis-overview {
     list-style: none;
-    margin: 1rem 0 0;
+    margin: 0;
     padding: 0;
   }
 
@@ -1736,78 +2131,209 @@
     align-items: center;
     justify-content: space-between;
     gap: 0.75rem;
-    padding: 0.6rem 0;
-    border-bottom: 1px solid var(--color-border);
+    padding: 0.75rem 1rem;
   }
 
-  .vis-overview li:last-child {
-    border-bottom: none;
-  }
-
-  .vis-row-label {
-    font-size: var(--text-md);
-    color: var(--color-text);
-  }
-
-  .about-links {
-    margin-top: 1rem;
-    padding-top: 1rem;
+  .vis-overview li + li {
     border-top: 1px solid var(--color-border);
-    font-size: var(--text-md);
   }
 
-  .about-links a {
-    color: var(--color-text-secondary);
+  .vis-overview a {
+    font-size: var(--text-lg);
+    color: var(--color-text);
     text-decoration: none;
   }
 
-  .about-links a:hover {
+  .vis-overview a:hover {
     color: var(--color-primary);
     text-decoration: underline;
   }
 
-  .about-links .separator {
-    margin: 0 0.5rem;
-    color: var(--color-text-secondary);
-  }
-
-  .button-row {
-    display: flex;
-    gap: 0.75rem;
-    flex-wrap: wrap;
-  }
-
-  .subhead {
-    font-size: var(--text-md);
-    font-weight: var(--weight-semibold);
-    margin: 1.25rem 0 0.5rem;
-  }
-
-  .hint-text {
-    font-size: var(--text-sm);
-    color: var(--color-text-secondary);
-    margin: 0 0 0.5rem;
-  }
-
-  /* "Save from anywhere" is three independent setups, not one procedure. Giving
-     each platform its own block on the same divider rhythm as .about-links /
-     .sync-toggle-section stops them reading as one run-on column of buttons —
-     which is what they were, with the computer setup alone stacking three
-     different button treatments under three paragraphs. */
-  .platform {
-    margin-top: 1rem;
-    padding-top: 1rem;
+  .vis-overview + .row {
     border-top: 1px solid var(--color-border);
   }
 
-  .platform .subhead {
-    margin-top: 0;
+  /* Visibility badge. Neutral = private (only you); amber = public (anyone can
+     see it). Never blue — blue is reserved for interaction (One Blue). The
+     icon carries the same meaning, so colour is never the only signal. */
+  .vis-badge {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: var(--text-2xs);
+    font-weight: var(--weight-semibold);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wider);
+    padding: 0.2rem 0.5rem;
+    border-radius: 999px;
+    background: var(--color-bg-secondary);
+    color: var(--color-text-secondary);
+    white-space: nowrap;
   }
 
-  /* Secondary paths (the bookmarklet, the manual Shortcuts recipe) fold away so
-     each block shows one recommended action at rest. */
+  .vis-badge.public {
+    background: color-mix(in srgb, var(--color-warning) 16%, var(--color-bg));
+    color: color-mix(in srgb, var(--color-warning) 70%, var(--color-text));
+  }
+
+  .quiet-footer {
+    padding-top: 0.625rem;
+    padding-bottom: 0.625rem;
+  }
+
+  .pds-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+    color: var(--color-primary);
+    text-decoration: none;
+  }
+
+  .pds-link:hover {
+    text-decoration: underline;
+  }
+
+  .sync-status {
+    margin-top: 0.875rem;
+    padding: 0.75rem;
+    background: var(--color-bg-secondary);
+    border-radius: 6px;
+  }
+
+  /* The automatic state is the headline: it's what's actually true most of the
+     time, and burying it under a "Sync Now" button is what taught readers the
+     feed list only moves when they push it. */
+  .sync-live {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.4rem;
+    margin: 0;
+    font-size: var(--text-md);
+    color: var(--color-text);
+  }
+
+  .sync-live :global(svg) {
+    flex-shrink: 0;
+    margin-top: 0.15rem;
+    color: var(--color-success);
+  }
+
+  /* Pending work is a normal, self-clearing state, not a failure — it gets the
+     secondary tone rather than the error red. */
+  .sync-pending :global(svg) {
+    color: var(--color-text-secondary);
+  }
+
+  /* The manual check is a repair tool, so it sits below the divider as
+     secondary chrome rather than the primary thing to do here. */
+  .sync-recheck {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.5rem 0.75rem;
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--color-border);
+  }
+
+  .sync-time,
+  .sync-recheck-hint {
+    margin: 0;
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+  }
+
+  .sync-warnings {
+    margin-top: 0.75rem;
+  }
+
+  .sync-warning {
+    color: var(--color-text-secondary);
+    font-size: var(--text-md);
+    margin: 0 0 0.25rem;
+  }
+
+  /* ── Linkblog ─────────────────────────────────────────────── */
+  /* Label and explanation on the left, the select on the right; on a phone
+     the select drops under its explanation at full width. */
+  .field-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.625rem 1rem;
+    align-items: start;
+  }
+
+  /* Sized to its longest option, so a choice is never cut off mid-word. */
+  .field-row select {
+    width: auto;
+    min-width: 12rem;
+    max-width: 100%;
+  }
+
+  @media (max-width: 640px) {
+    .field-row {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .field-row select {
+      width: 100%;
+    }
+  }
+
+  .field {
+    width: 100%;
+    padding: 0.5rem 0.625rem;
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    background: var(--color-bg);
+    color: var(--color-text);
+    font: inherit;
+    font-size: var(--text-md);
+    box-sizing: border-box;
+  }
+
+  .field:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 2px var(--color-sidebar-active);
+  }
+
+  /* iOS Safari zooms the viewport when a focused input is smaller than 16px. */
+  @media (hover: none) and (pointer: coarse) {
+    .field {
+      font-size: 1rem;
+    }
+  }
+
+  textarea.field {
+    resize: vertical;
+  }
+
+  .form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.875rem;
+  }
+
+  .form-field label {
+    display: block;
+    font-size: var(--text-md);
+    font-weight: var(--weight-medium);
+    margin-bottom: 0.375rem;
+    color: var(--color-text-secondary);
+  }
+
+  .danger-panel {
+    border-color: color-mix(in srgb, var(--color-error) 35%, var(--color-border));
+  }
+
+  /* ── Save from anywhere ───────────────────────────────────── */
   .disclosure {
-    margin-top: 1rem;
+    margin-top: 0.875rem;
   }
 
   .disclosure summary {
@@ -1825,17 +2351,17 @@
     display: flex;
     flex-wrap: wrap;
     gap: 0.5rem;
-    margin-bottom: 0.75rem;
+    margin: 0.75rem 0;
   }
 
   .bookmarklet {
     display: inline-flex;
     align-items: center;
     padding: 0.45rem 0.85rem;
-    border: 1px solid var(--color-primary, #0066cc);
+    border: 1px dashed var(--color-primary);
     border-radius: 6px;
     background: var(--color-bg);
-    color: var(--color-primary, #0066cc);
+    color: var(--color-primary);
     font-size: var(--text-md);
     font-weight: var(--weight-medium);
     text-decoration: none;
@@ -1865,135 +2391,39 @@
     word-break: break-all;
   }
 
-  .loading {
-    color: var(--color-text-secondary);
-    font-style: italic;
-  }
-
-  .sync-toggle-section {
-    margin-top: 1rem;
-    padding-top: 1rem;
-    border-top: 1px solid var(--color-border);
-  }
-
-  /* Sets the destructive action apart from the settings above it, on the same
-     divider rhythm as .about-links / .sync-toggle-section. (It replaced a bare
-     <hr>, which drew the UA's grooved 2px line on ~8px of margin — too tight
-     above, and the wrong rule.) The subhead drops its own top margin so the
-     spacing is the section's, not the sum of both. */
-  .danger-section {
-    margin-top: 1rem;
-    padding-top: 1rem;
-    border-top: 1px solid var(--color-border);
-  }
-
-  .danger-section .subhead {
-    margin-top: 0;
-  }
-
-  .sync-status {
-    margin: 1rem 0;
-    padding: 0.75rem;
-    background: var(--color-bg-secondary);
-    border-radius: 6px;
-  }
-
-  /* The automatic state is the headline: it's what's actually true most of the
-     time, and burying it under a "Sync Now" button is what taught readers the
-     feed list only moves when they push it. */
-  .sync-live {
-    display: flex;
-    align-items: flex-start;
-    gap: 0.4rem;
+  /* ── About ────────────────────────────────────────────────── */
+  .about-text {
     margin: 0;
     font-size: var(--text-md);
+    line-height: var(--leading-normal);
     color: var(--color-text);
   }
 
-  .sync-live :global(svg) {
-    flex-shrink: 0;
-    margin-top: 0.15rem;
-    color: var(--color-success);
-  }
-
-  /* Pending work is a normal, self-clearing state, not a failure — it gets the
-     secondary tone rather than the danger red used by .sync-error. */
-  .sync-pending :global(svg) {
-    color: var(--color-text-secondary);
-  }
-
-  /* The manual check is a repair tool, so it sits below the divider as
-     secondary chrome rather than the primary thing to do here. */
-  .sync-recheck {
+  .about-links {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
     flex-wrap: wrap;
-    gap: 0.5rem 0.75rem;
-    margin-top: 0.75rem;
-    padding-top: 0.75rem;
-    border-top: 1px solid var(--color-border);
-  }
-
-  .sync-time {
-    font-size: var(--text-sm);
-    color: var(--color-text-secondary);
-    margin: 0;
-  }
-
-  .sync-recheck-hint {
-    margin: 0.5rem 0 0;
-    font-size: var(--text-sm);
-    color: var(--color-text-secondary);
-  }
-
-  .sync-error {
-    color: var(--color-danger);
+    gap: 0.375rem 1.25rem;
+    margin-top: 0.875rem;
     font-size: var(--text-md);
-    margin-top: 0.5rem;
   }
 
-  .sync-warnings {
-    margin-top: 0.75rem;
-  }
-
-  .sync-warning {
+  .about-links a {
     color: var(--color-text-secondary);
-    font-size: var(--text-md);
-    margin: 0 0 0.25rem;
+    text-decoration: none;
   }
 
-  .sync-success {
-    color: var(--color-success);
-    font-size: var(--text-md);
-    margin-top: 0.5rem;
+  .about-links a:hover {
+    color: var(--color-primary);
+    text-decoration: underline;
   }
 
-  .linkblog-field {
-    margin-bottom: 0.875rem;
-  }
-
-  .linkblog-field label {
-    display: block;
-    font-size: var(--text-md);
-    margin-bottom: 0.375rem;
-    color: var(--color-text-secondary);
-  }
-
-  .linkblog-field input,
-  .linkblog-field select,
-  .linkblog-field textarea {
-    width: 100%;
-    padding: 0.5rem 0.625rem;
-    border: 1px solid var(--color-border);
-    border-radius: 6px;
-    background: var(--color-bg);
-    color: var(--color-text);
-    font: inherit;
-    box-sizing: border-box;
-  }
-
-  .linkblog-field textarea {
-    resize: vertical;
+  @media (prefers-reduced-motion: reduce) {
+    .section-nav a,
+    .font-option,
+    .size-step,
+    .segment,
+    .limit-bar-fill {
+      transition: none;
+    }
   }
 </style>

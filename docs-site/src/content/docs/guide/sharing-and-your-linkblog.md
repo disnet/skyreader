@@ -21,11 +21,11 @@ Your linkblog is a publication stored in your PDS, which means it's yours in a c
 
 Every linkblog gets a public page at `linkblogs.skyreader.app/your-handle`, with its own RSS feed, so anyone can follow it, in Skyreader or in any feed reader.
 
-If you already publish on the Atmosphere, you can point sharing at a standard.site publication you own (in Leaflet or similar) instead of the Skyreader-made one (**Settings → Shared links**). An optional toggle keeps a page of just your links on linkblogs.skyreader.app.
+If you already publish on the Atmosphere, you can point sharing at a standard.site publication you own (in Leaflet or similar) instead of the Skyreader-made one (**Settings → Linkblog**). An optional toggle keeps a page of just your links on linkblogs.skyreader.app.
 
 ## How your posts read
 
-Your link posts are Atmosphere records, so other apps can render them too. On a connected publication they sit beside that site's own writing. **Settings → Shared links** shapes how a post reads:
+Your link posts are Atmosphere records, so other apps can render them too. On a connected publication they sit beside that site's own writing. **Settings → Linkblog** shapes how a post reads:
 
 ![The "How your posts read" settings: a post title select, a link card position select, and the "Posted from Skyreader" offer toggle](../../../assets/screenshots/linkblog-post-settings.png)
 

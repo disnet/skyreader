@@ -430,7 +430,7 @@
   }
 
   .sync-error {
-    color: var(--color-danger);
+    color: var(--color-error);
     font-size: var(--text-md);
     margin-top: 0.5rem;
   }

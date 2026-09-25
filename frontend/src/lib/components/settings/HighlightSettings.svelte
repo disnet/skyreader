@@ -18,6 +18,7 @@
     type HighlightReviewCount,
   } from '$lib/stores/preferences.svelte';
   import { maybeImportMarginHighlights } from '$lib/services/marginHighlightImport';
+  import SettingToggle from './SettingToggle.svelte';
 
   interface Props {
     returnUrl?: string;
@@ -141,16 +142,16 @@
 {/if}
 
 {#if loaded}
-  <label class="toggle-setting">
-    <input
-      type="checkbox"
+  <div class="toggle-wrap" class:after-deck={showDeckSize}>
+    <SettingToggle
+      label="Bring in highlights from Margin"
       checked={preferences.marginHighlightImport}
       disabled={marginScopes === 'missing' || importing}
-      onchange={(e) => toggleImport(e.currentTarget.checked)}
-    />
-    <span>Bring in highlights from Margin</span>
-  </label>
-  <p class="setting-description">Highlights you've made in Margin join your review deck here.</p>
+      onchange={toggleImport}
+    >
+      Highlights you've made in Margin join your review deck here.
+    </SettingToggle>
+  </div>
   {#if marginScopes === 'missing'}
     <p class="setting-description">
       This needs permission to read and write your Margin notes.
@@ -199,16 +200,8 @@
     font: inherit;
   }
 
-  .toggle-setting {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
+  .toggle-wrap.after-deck {
     margin-top: 1rem;
-    cursor: pointer;
-  }
-
-  .toggle-setting input:disabled {
-    cursor: default;
   }
 
   .setting-description {

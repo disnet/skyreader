@@ -20,19 +20,19 @@ The short version: **your reading is private to you by default.** A few things a
 
 ## Subscriptions and Atmospheric sync
 
-Your feed list is private, stored on Skyreader. Turning on **Atmospheric sync** (**Settings → Subscriptions**) also stores it on your PDS, where it's backed up, portable to any Atmospheric app, and **publicly visible**. That last part is the tradeoff to weigh: sync makes your subscription list something anyone can look up.
+Your feed list is private, stored on Skyreader. Turning on **Atmospheric sync** (**Settings → Library & privacy → Subscriptions**) also stores it on your PDS, where it's backed up, portable to any Atmospheric app, and **publicly visible**. That last part is the tradeoff to weigh: sync makes your subscription list something anyone can look up.
 
-![The Subscriptions settings card: marked Private, with the Atmospheric sync switch and its public-visibility note](../../assets/screenshots/atmospheric-sync.png)
+![The Subscriptions settings panel: marked Private, with the Atmospheric sync switch, its public-visibility note, and import and export](../../assets/screenshots/atmospheric-sync.png)
 
 Sync covers subscriptions. It does not touch your saves, highlights, or read state.
 
-Either way, you can walk away with your list at any time: **Settings → Import / Export → Export OPML**.
+Either way, you can walk away with your list at any time: **Settings → Library & privacy → Export OPML**.
 
 ## Saved articles
 
 Saves live on Skyreader, private to you. They are **not** stored on your PDS.
 
-The one way a save becomes public is choosing it: backing your Saved list with **Semble or Margin** (**Settings → Saved articles**) turns the list into a public collection in that app.
+The one way a save becomes public is choosing it: backing your Saved list with **Semble or Margin** (**Settings → Library & privacy → Saved articles**) turns the list into a public collection in that app.
 
 ## Highlights and notes
 
@@ -54,7 +54,7 @@ If you turn on [From your follows](/guide/from-your-follows/), Skyreader reads y
 
 ## Seeing for yourself
 
-The Atmosphere is inspectable. **Settings → Privacy & sharing** links to a viewer showing everything in your public PDS data, so you can verify what's there rather than take this page's word for it.
+The Atmosphere is inspectable. **Settings → Library & privacy** links to a viewer showing everything in your public PDS data, so you can verify what's there rather than take this page's word for it.
 
 ## Guests
 

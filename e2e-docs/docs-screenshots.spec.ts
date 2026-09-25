@@ -89,15 +89,11 @@ test.describe('Sharing and your linkblog', () => {
     await stubLinkblogApi(authedPage);
     await authedPage.goto('/settings');
 
-    const heading = authedPage.getByRole('heading', { name: 'How your posts read' });
-    await expect(heading).toBeVisible({ timeout: 15_000 });
-    // The section's last element: the attribution toggle's description.
-    const tail = authedPage.locator('.setting-description', {
-      hasText: 'Adds a checkbox to the composer',
+    const panel = authedPage.locator('.panel', {
+      has: authedPage.getByRole('heading', { name: 'How your posts read' }),
     });
-    await expect(tail).toBeVisible();
-
-    await shootRegion(authedPage, heading, tail, 'linkblog-post-settings.png');
+    await expect(panel).toBeVisible({ timeout: 15_000 });
+    await shootElement(authedPage, panel, 'linkblog-post-settings.png');
   });
 
   test('composer: quote, link card, attribution', async ({ authedPage, testUser }) => {
@@ -511,9 +507,7 @@ test.describe('Your data', () => {
   test('settings: subscriptions and Atmospheric sync', async ({ authedPage }) => {
     await stubLinkblogApi(authedPage);
     await authedPage.goto('/settings');
-    const card = authedPage.locator('section.card', {
-      has: authedPage.getByRole('heading', { name: 'Subscriptions', exact: true }),
-    });
+    const card = authedPage.locator('#subscriptions');
     await expect(card).toBeVisible({ timeout: 15_000 });
     await shootElement(authedPage, card, 'atmospheric-sync.png');
   });

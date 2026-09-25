@@ -409,7 +409,7 @@ function createPreferencesStore() {
       return !!did && state.linkblogDisabledDids.includes(did);
     },
     // Default OFF: the checkbox is a feature you opt into, not one that greets
-    // every draft. Turned on in Settings → Shared links.
+    // every draft. Turned on in Settings → Linkblog.
     get linkblogAttributionOffered() {
       const did = auth.user?.did;
       return !!did && state.linkblogAttributionOfferedDids.includes(did);

@@ -22,7 +22,7 @@ Use the **+** button and choose **Add RSS Feed**. Paste any page URL, or just a 
 
 ## Import and export
 
-**Settings → Import / Export** takes an OPML file, or a plain text file with one feed URL per line. You pick which feeds to bring in; duplicates are skipped automatically. **Export OPML** hands your whole subscription list back at any time. Your feeds are never locked in.
+**Settings → Library & privacy → Import Feeds** takes an OPML file, or a plain text file with one feed URL per line. You pick which feeds to bring in; duplicates are skipped automatically. **Export OPML** hands your whole subscription list back at any time. Your feeds are never locked in.
 
 ## Save and subscribe from anywhere
 

@@ -82,10 +82,8 @@
   }
 </script>
 
-<section class="card">
-  <h2>Diagnostics</h2>
-  <p>What this device is running. Useful to include when something looks wrong.</p>
-
+<!-- Framed by the host (Settings → About), which carries the heading. -->
+<div class="diagnostics">
   <dl>
     {#each rows as row (row.label)}
       <div class="row">
@@ -95,12 +93,12 @@
     {/each}
   </dl>
 
-  <button class="btn btn-secondary" onclick={copy}>{copied ? 'Copied' : 'Copy'}</button>
-</section>
+  <button class="btn btn-secondary" onclick={copy}>{copied ? 'Copied' : 'Copy details'}</button>
+</div>
 
 <style>
   dl {
-    margin: 0 0 1rem;
+    margin: 0 0 0.75rem;
   }
 
   .row {
