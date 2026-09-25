@@ -151,6 +151,13 @@ describe('grantsScopes', () => {
     expect(grantedFeatures(`${GRANULAR_SCOPES} ${FOLLOWS_LINKS_SCOPES[0]}`)).toEqual(['follows']);
   });
 
+  it("reads rsky's permission set expansion (repo:?collection=…)", () => {
+    const rsky =
+      'atproto repo:?collection=app.skyreader.feed.subscription&collection=app.skyreader.social.follow&collection=app.skyreader.reading.readAlong repo:site.standard.graph.subscription repo:dev.at-intent.usage rpc:app.bsky.feed.getTimeline?aud=*';
+    expect(hasRequiredScopes(rsky, FOLLOWS_LINKS_ACCESS_SCOPES)).toBe(true);
+    expect(grantedFeatures(rsky)).toEqual(['follows']);
+  });
+
   it('fails closed without scope tracking', () => {
     expect(grantsScopes(undefined, ['atproto'])).toBe(false);
     expect(hasRequiredScopes('')).toBe(false);
