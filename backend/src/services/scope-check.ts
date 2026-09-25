@@ -27,8 +27,18 @@ const LOCAL_PERMISSION_SETS: Record<string, unknown> = {
   ...Object.fromEntries(EXTERNAL_PERMISSION_SETS.map((set) => [set.id, set.main])),
 };
 
+/**
+ * rsky (Blacksky's PDS) writes a permission set's expansion with an empty
+ * positional part, `repo:?collection=…`, where the reference PDS writes
+ * `repo?collection=…`. The parser only reads the latter, so without this every
+ * scope an rsky session got through `include:` counts as missing.
+ */
+function normalizeEmptyPositional(scope: string): string {
+  return scope.replace(/^([a-z]+):\?/, '$1?');
+}
+
 function expandLocalIncludes(scopes: string[]): string[] {
-  return scopes.flatMap((scope) => {
+  return scopes.map(normalizeEmptyPositional).flatMap((scope) => {
     const include = IncludeScope.fromString(scope);
     if (!include) return [scope];
     const set = LOCAL_PERMISSION_SETS[include.nsid];
