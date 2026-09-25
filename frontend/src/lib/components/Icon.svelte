@@ -1,6 +1,7 @@
 <script lang="ts">
   export type IconName =
     | 'inbox'
+    | 'mail'
     | 'bookmark'
     | 'share'
     | 'search'
@@ -95,6 +96,9 @@
     <path
       d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"
     />
+  {:else if name === 'mail'}
+    <rect width="20" height="16" x="2" y="4" rx="2" />
+    <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
   {:else if name === 'bookmark'}
     <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" />
   {:else if name === 'share'}

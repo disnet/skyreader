@@ -1,14 +1,13 @@
 ---
 title: Adding sources
-description: Follow RSS feeds and Atmosphere publications, import OPML, and save from anywhere.
+description: Follow RSS feeds, Atmosphere publications, and email newsletters, import OPML, and save from anywhere.
 ---
 
-Skyreader reads two kinds of sources today:
+Skyreader reads three kinds of sources:
 
 - **RSS and Atom feeds**: any blog, news site, or site that publishes a feed.
 - **standard.site publications**: writing published on the Atmosphere, from apps like Leaflet.
-
-More sources (like email newsletters) are on the roadmap.
+- **Email newsletters** (Supporter): sent to a private address, read in Skyreader.
 
 ## Add a feed
 
@@ -19,6 +18,15 @@ Use the **+** button and choose **Add RSS Feed**. Paste any page URL, or just a 
 ## Follow a person
 
 **Add @handle** follows an Atmosphere account (Bluesky, Blacksky, and others). Search by handle or name, pick the account, and Skyreader finds their standard.site publications for you to subscribe to.
+
+## Email newsletters
+
+Supporters get a private email address for newsletters. Find it in **Settings → Newsletters**, and use it when you sign up for a newsletter, or forward issues to it. Each sender becomes a source under **Manage Sources → Newsletters**, and each issue arrives as an article. A signup confirmation arrives the same way, so you can click its link right in the reader.
+
+- **Keep the address to yourself.** Anything sent to it lands in your reader. If it leaks, **Get a new address** replaces it; newsletters you already have stay, and the old address stops working.
+- **Newsletters stay private.** They aren't shared with anyone, and Atmospheric sync never publishes them.
+- **Removing a newsletter** stops its mail reaching Skyreader, but it doesn't unsubscribe you with the sender. Blocked senders are listed in **Settings → Newsletters**, where you can let one back in.
+- **If you leave the Supporter plan**, the address stops receiving mail. Newsletters you already have stay readable.
 
 ## Import and export
 

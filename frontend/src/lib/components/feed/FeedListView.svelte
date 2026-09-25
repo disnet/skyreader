@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { isArchiveFeedSource } from '$lib/utils/newsletters';
   import { appScrollTo, appScrollBy, appScrollTop, appViewportRect } from '$lib/utils/appScroll';
   import { tick } from 'svelte';
   import ArticleCard from '$lib/components/ArticleCard.svelte';
@@ -246,7 +247,7 @@
     if (!filter || feedViewStore.isSavedView) return undefined;
     const sub = subscriptionsStore.subscriptions.find((s) => s.id === Number(filter));
     if (!sub?.feedUrl) return undefined;
-    if (sub.sourceType && sub.sourceType !== 'rss') return undefined;
+    if (!isArchiveFeedSource(sub.sourceType)) return undefined;
     return sub;
   });
 

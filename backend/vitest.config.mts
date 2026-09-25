@@ -49,6 +49,8 @@ export default defineConfig({
           USERINPUT_API_URL: 'https://userinput.test',
           USERINPUT_SPACE_DID: 'did:plc:skyreaderfeedback',
           USERINPUT_SPACE_RKEY: '3mobgsd6d5n27',
+          // Newsletters on, so the inbound-email and inbox routes are exercised.
+          NEWSLETTER_EMAIL_DOMAIN: 'inbox.test',
         },
       },
     }),

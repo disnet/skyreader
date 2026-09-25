@@ -281,7 +281,8 @@
     user-select: none;
   }
 
-  .feed-item.pill-rss {
+  .feed-item.pill-rss,
+  .feed-item.pill-newsletter {
     --source-accent: #9a6a3a;
   }
 
