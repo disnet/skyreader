@@ -1,12 +1,17 @@
 import { env, createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import worker from '../src/index';
-import { GRANULAR_SCOPES, FOLLOWS_LINKS_SCOPES } from '../src/config/scopes';
+import {
+  GRANULAR_SCOPES,
+  FOLLOWS_LINKS_ACCESS_SCOPES,
+  FOLLOWS_LINKS_SCOPES,
+} from '../src/config/scopes';
 import type { Session } from '../src/types';
 import {
   FIRST_REFRESH_MAX_PAGES,
   FOLLOW_LINKS_GATE_MS,
   FOLLOW_LINKS_RETENTION_MS,
+  FOLLOW_LINKS_SCOPE_DENIED,
   LIKES_STALE_MS,
   MAX_SHARES_PER_REFRESH,
   REFRESH_MAX_PAGES,
@@ -149,6 +154,24 @@ function stubTimeline(pages: Record<string, { feed: unknown[]; cursor?: string }
       status: 200,
       headers: { 'Content-Type': 'application/json' },
     });
+  }) as unknown as typeof fetch;
+  return calls;
+}
+
+/** What rsky answers getTimeline with when the grant names the appview's service id. */
+function stubScopeDenied() {
+  const calls: string[] = [];
+  globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(String(input));
+    calls.push(url.pathname);
+    return new Response(
+      JSON.stringify({
+        error: 'InsufficientScope',
+        message:
+          'Token scope does not permit calling app.bsky.feed.getTimeline on did:web:api.bsky.app',
+      }),
+      { status: 403 }
+    );
   }) as unknown as typeof fetch;
   return calls;
 }
@@ -575,6 +598,43 @@ describe('follow links store', () => {
       expect(secondBody.links.map((l) => l.title)).toEqual(['X']);
       expect(secondBody.sync).toMatchObject({ complete: true, refreshing: false });
       expect(calls).toHaveLength(1);
+    });
+
+    it('asks again for aud=* when the PDS refuses the appview grant', async () => {
+      await seedSession([GRANULAR_SCOPES, ...FOLLOWS_LINKS_ACCESS_SCOPES].join(' '));
+      const calls = stubScopeDenied();
+
+      // The narrow grant passes the gate, so the first visit walks and is refused.
+      const first = await send('/api/v2/following-links');
+      expect(await first.json()).toMatchObject({ scopeRequired: false });
+      expect(calls).toHaveLength(1);
+      expect((await syncRow())?.last_error).toBe(FOLLOW_LINKS_SCOPE_DENIED);
+
+      // Then it's a permission ask, not "try again later", and it stops walking.
+      const second = await send('/api/v2/following-links');
+      expect(await second.json()).toMatchObject({ scopeRequired: true, links: [] });
+      expect(calls).toHaveLength(1);
+    });
+
+    it('retries past the gate once the reader has granted aud=*', async () => {
+      await seedSession(SCOPES);
+      const now = Date.now();
+      // A refusal recorded under the old grant, well inside the refresh gate.
+      await env.DB.prepare(
+        'INSERT INTO follow_link_sync (user_did, last_poll_at, complete, last_error) VALUES (?, ?, 0, ?)'
+      )
+        .bind(DID, now - 2 * 60 * 1000, FOLLOW_LINKS_SCOPE_DENIED)
+        .run();
+      const calls = stubTimeline({
+        '': { feed: [linkItem({ n: 1, at: now - HOUR, url: 'https://a.example/x', title: 'X' })] },
+      });
+
+      const res = await send('/api/v2/following-links');
+      expect(await res.json()).toMatchObject({ scopeRequired: false });
+      expect(calls).toHaveLength(1);
+      const sync = await syncRow();
+      expect(sync?.last_error).toBeNull();
+      expect(sync?.complete).toBe(1);
     });
 
     it('keeps the Everything choice, asked before or after the permission', async () => {

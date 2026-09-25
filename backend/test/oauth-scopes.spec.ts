@@ -4,6 +4,8 @@ import authFull from '../../lexicons/app/skyreader/authFull.json';
 import { EXTERNAL_PERMISSION_SETS } from '../src/config/external-permission-sets';
 import {
   ALL_POSSIBLE_SCOPES,
+  FOLLOWS_LINKS_ACCESS_SCOPES,
+  FOLLOWS_LINKS_SCOPES,
   GRANULAR_SCOPES,
   LINKBLOG_SCOPES,
   SCOPE_FEATURES,
@@ -126,6 +128,27 @@ describe('grantsScopes', () => {
     expect(grantsScopes('blob:*/*', USERINPUT_IMAGE_SCOPES)).toBe(true);
     expect(grantsScopes('blob:image/*', USERINPUT_IMAGE_SCOPES)).toBe(true);
     expect(grantsScopes('blob:image/png', USERINPUT_IMAGE_SCOPES)).toBe(false);
+  });
+
+  it('matches rpc scopes by audience, so aud=* covers the appview grant', () => {
+    expect(grantsScopes(FOLLOWS_LINKS_SCOPES.join(' '), FOLLOWS_LINKS_ACCESS_SCOPES)).toBe(true);
+    expect(grantsScopes(FOLLOWS_LINKS_ACCESS_SCOPES.join(' '), FOLLOWS_LINKS_ACCESS_SCOPES)).toBe(
+      true
+    );
+    // Not the reverse, and not another method.
+    expect(grantsScopes(FOLLOWS_LINKS_ACCESS_SCOPES.join(' '), FOLLOWS_LINKS_SCOPES)).toBe(false);
+    expect(
+      grantsScopes(FOLLOWS_LINKS_SCOPES.join(' '), [
+        'rpc:app.bsky.feed.getAuthorFeed?aud=did:web:api.bsky.app%23bsky_appview',
+      ])
+    ).toBe(false);
+  });
+
+  it('remembers the follows feature under either getTimeline grant', () => {
+    expect(grantedFeatures(`${GRANULAR_SCOPES} ${FOLLOWS_LINKS_ACCESS_SCOPES[0]}`)).toEqual([
+      'follows',
+    ]);
+    expect(grantedFeatures(`${GRANULAR_SCOPES} ${FOLLOWS_LINKS_SCOPES[0]}`)).toEqual(['follows']);
   });
 
   it('fails closed without scope tracking', () => {

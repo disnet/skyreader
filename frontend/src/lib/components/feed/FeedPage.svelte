@@ -712,6 +712,12 @@
               title="Gathering links"
               description="Reading your Following timeline for the links in it. This takes a few seconds the first time."
             />
+          {:else if feedViewStore.showFollowLinks && followLinksStore.error === 'scope_denied' && !followLinksStore.complete}
+            <!-- The reader's server refused even the broad permission: retrying won't help. -->
+            <EmptyState
+              title="Couldn't read your timeline"
+              description="Your account's server won't let Skyreader read your Following timeline yet."
+            />
           {:else if feedViewStore.showFollowLinks && followLinksStore.error && !followLinksStore.complete}
             <EmptyState
               title="Couldn't reach your timeline"

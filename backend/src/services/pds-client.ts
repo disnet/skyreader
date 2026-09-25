@@ -121,7 +121,16 @@ export type PDSResult<T> =
   // `needsReauth` is set when the PDS host was re-resolved after a migration but
   // the existing OAuth tokens were still rejected — the user must re-authenticate
   // against the new PDS's auth server. Callers should surface this, not retry.
-  | { success: false; error: string; retryable: boolean; needsReauth?: boolean };
+  // `status` and `code` (the XRPC `error` name) are set when the PDS answered
+  // with an HTTP error, so a caller can tell a scope denial from an outage.
+  | {
+      success: false;
+      error: string;
+      retryable: boolean;
+      needsReauth?: boolean;
+      status?: number;
+      code?: string;
+    };
 
 /**
  * Optional context that lets a PDSClient self-heal a stale PDS endpoint.
@@ -402,7 +411,16 @@ export class PDSClient {
             response.status === 403 ||
             errorData?.error === 'invalid_token');
 
-        return { result: { success: false, error: errorMessage, retryable }, staleEndpoint };
+        return {
+          result: {
+            success: false,
+            error: errorMessage,
+            retryable,
+            status: response.status,
+            ...(errorData?.error ? { code: errorData.error } : {}),
+          },
+          staleEndpoint,
+        };
       }
 
       const data = (await response.json()) as T;

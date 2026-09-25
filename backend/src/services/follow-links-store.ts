@@ -46,6 +46,23 @@ const SERVE_ROW_LIMIT = 3000;
 /** Articles served per request. The list ends; that is part of the calm. */
 export const SERVE_LINK_LIMIT = 60;
 
+/**
+ * Stored as `last_error` when the PDS refused getTimeline for want of scope,
+ * rather than failing to answer. Retrying won't help; granting again might (see
+ * FOLLOWS_LINKS_SCOPES), so the route turns it into a permission ask.
+ */
+export const FOLLOW_LINKS_SCOPE_DENIED = 'scope_denied';
+
+/** A 403 whose XRPC error (rsky: InsufficientScope; reference: "Missing required scope") names a scope. */
+export function isScopeDenial(res: { status?: number; code?: string; error: string }): boolean {
+  if (res.status !== 403) return false;
+  return (
+    res.code === 'InsufficientScope' ||
+    res.code === 'ScopeMissingError' ||
+    /\bscope\b/i.test(res.error)
+  );
+}
+
 export type FollowLinksWindow = '24h' | '3d' | '7d';
 export const FOLLOW_LINKS_WINDOWS: Record<FollowLinksWindow, number> = {
   '24h': 24 * 60 * 60 * 1000,
@@ -135,6 +152,8 @@ interface WalkResult {
   /** The walk got down to `stopAt` (or the end of the timeline). */
   reachedStop: boolean;
   error?: string;
+  /** The failure was the PDS refusing the call's scope. */
+  scopeDenied?: boolean;
 }
 
 /**
@@ -166,6 +185,7 @@ async function walkTimeline(
     const res = await pds.getTimeline<TimelineItem>(out.cursor, PAGE_SIZE);
     if (!res.success) {
       out.error = res.error;
+      if (isScopeDenial(res)) out.scopeDenied = true;
       break;
     }
     budget.pages--;
@@ -279,6 +299,7 @@ export async function refreshFollowLinks(
   const topStop = Math.max(newestSeen ?? 0, retentionCutoff);
   const top = await walkTimeline(env, pds, did, undefined, topStop, budget, now);
   let error = top.error;
+  let scopeDenied = !!top.scopeDenied;
   if (!error && top.newest !== null) {
     if (!top.reachedStop) {
       gap = { cursor: top.cursor!, stopAt: gap?.stopAt ?? topStop, at: top.oldest };
@@ -304,6 +325,7 @@ export async function refreshFollowLinks(
       // Keep what it covered, whether it ran out or hit an error.
       gap = { cursor: gapWalk.cursor!, stopAt: gap.stopAt, at: gapWalk.oldest ?? gap.at };
       error = gapWalk.error;
+      scopeDenied = !!gapWalk.scopeDenied;
     }
   }
 
@@ -324,7 +346,7 @@ export async function refreshFollowLinks(
       gap?.stopAt ?? null,
       gap?.at ?? null,
       top.error ? 0 : 1,
-      error ?? null,
+      scopeDenied ? FOLLOW_LINKS_SCOPE_DENIED : (error ?? null),
       did
     )
     .run();
@@ -338,7 +360,7 @@ export async function refreshFollowLinks(
   }
 
   if (error) {
-    log.warn('follow_links_refresh_failed', { did, pages, written, error });
+    log.warn('follow_links_refresh_failed', { did, pages, written, error, scopeDenied });
   } else {
     log.info('follow_links_refreshed', {
       did,

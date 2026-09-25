@@ -2,6 +2,7 @@ import {
   BlobPermission,
   IncludeScope,
   RepoPermission,
+  RpcPermission,
   ScopePermissionsTransition,
 } from '@atproto/oauth-scopes';
 import skyreaderAuthFull from '../../../lexicons/app/skyreader/authFull.json';
@@ -64,6 +65,13 @@ export function grantsScopes(granted: string | undefined | null, required: strin
           ? grantedAccepts.includes('*/*') || grantedAccepts.includes(accept)
           : permissions.allowsBlob({ mime: accept })
       );
+    }
+
+    // Covered when every method is allowed on the audience it names, so an
+    // `aud=*` grant covers a requirement naming one service (not the reverse).
+    const rpc = RpcPermission.fromString(scope);
+    if (rpc) {
+      return rpc.lxm.every((lxm) => permissions.allowsRpc({ aud: rpc.aud, lxm }));
     }
 
     return false;
