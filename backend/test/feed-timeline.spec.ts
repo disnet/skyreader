@@ -523,6 +523,70 @@ describe('feed timeline (D1 ingest + serve)', () => {
       expect(await storedBody('huge')).toBeNull();
     });
 
+    it('never serves a body that no longer matches its row', async () => {
+      await ingest(FEED_A, [{ item: item('long', { content: LONG }), contentHash: 'h1' }]);
+      // The row moves on (an edit) while the old object stays under the key.
+      await env.DB.prepare(
+        `UPDATE feed_items SET content_hash = 'h2',
+           item_json = json_remove(item_json, '$.bodyStored') WHERE guid = 'long'`
+      ).run();
+      expect(await storedBody('long')).toBe(LONG);
+      expect((await handleItemBody(bodyRequest(FEED_A, 'long'), env)).status).toBe(404);
+
+      // Marked stored but holding another version's body: still not served.
+      await env.DB.prepare(
+        `UPDATE feed_items SET item_json = json_set(item_json, '$.bodyStored', json('true'))
+           WHERE guid = 'long'`
+      ).run();
+      expect((await handleItemBody(bodyRequest(FEED_A, 'long'), env)).status).toBe(404);
+    });
+
+    it('deletes the old body when an edit cannot be stored', async () => {
+      await ingest(FEED_A, [
+        { item: item('failed', { content: LONG }), contentHash: 'h1' },
+        { item: item('grew', { content: LONG }), contentHash: 'h1' },
+      ]);
+
+      const failingEnv = {
+        ...(env as Env),
+        ITEM_BODIES: {
+          get: (key: string) => env.ITEM_BODIES.get(key),
+          delete: (keys: string | string[]) => env.ITEM_BODIES.delete(keys),
+          put: async () => {
+            throw new Error('R2 unavailable');
+          },
+        } as unknown as R2Bucket,
+      };
+      const res = await handleIngest(
+        ingestRequest({
+          feeds: [{ feedUrl: FEED_A }],
+          items: [
+            {
+              feedUrl: FEED_A,
+              guid: 'failed',
+              item: item('failed', { content: `${LONG}<p>edited</p>` }),
+              firstSeenAt: Date.now(),
+              contentHash: 'h2',
+            },
+          ],
+        }),
+        failingEnv
+      );
+      expect(res.status).toBe(200);
+      await ingest(FEED_A, [
+        {
+          item: item('grew', { content: 'z'.repeat(MAX_STORED_BODY_BYTES + 1) }),
+          contentHash: 'h2',
+        },
+      ]);
+
+      for (const guid of ['failed', 'grew']) {
+        expect((await row(guid)).item.bodyStored).toBeUndefined();
+        expect(await storedBody(guid)).toBeNull();
+        expect((await handleItemBody(bodyRequest(FEED_A, guid), env)).status).toBe(404);
+      }
+    });
+
     it('deletes the bodies of rows the sanity cap trims', async () => {
       await ingest(
         FEED_A,

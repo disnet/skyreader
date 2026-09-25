@@ -238,6 +238,14 @@ once the object is written; an unchanged re-push skips the write, and the sanity
 the bodies of the rows it removes. A failed R2 put is logged, not thrown, so an R2 outage degrades
 to extraction instead of stalling the pusher.
 
+An edit rewrites the object under the same key, so a stored body is only served while it is the
+row's current one: the object carries its `contentHash` in custom metadata, and the body route 404s
+unless the row is `bodyStored` with that same hash. An edit whose new body can't be stored (failed
+put, over the ceiling) also deletes the old object at ingest; the sanity-cap trim deletes by key for
+every truncated row it removes, catching any that delete missed. The reader treats a 404 as final
+for the session (fall back to extraction) but a failed request (offline, 429, 5xx) as unanswered —
+the card stays expandable and asks again on the next expand or when the browser comes back online.
+
 The pusher sizes each request by bytes as well as by item count (`PUSH_BODY_BUDGET_BYTES = 4 MB`
 in `feed-proxy/src/ingest-push.ts`, half the Worker's 8 MB ingest cap). Full-text feeds put
 consecutive seqs of 100+ KB items in the outbox, and a request the Worker refused with a 413 was
