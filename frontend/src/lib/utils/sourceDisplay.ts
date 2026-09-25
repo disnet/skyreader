@@ -74,6 +74,8 @@ export function getSourceDisplay(
         iconName: 'folder',
         pillClass: 'pill-collection',
       };
+    case 'email.newsletter':
+      return { label: 'Newsletter', iconName: 'mail', pillClass: 'pill-newsletter' };
     default:
       return { label: 'RSS', iconName: 'rss', pillClass: 'pill-rss' };
   }

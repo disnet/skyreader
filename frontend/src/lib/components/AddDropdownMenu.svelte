@@ -153,6 +153,16 @@
             <span class="item-icon"><Icon name="users" size={16} /></span>
             Add @handle
           </button>
+          <!-- Newsletters aren't added one by one: they arrive at the reader's
+               address, which lives in Settings (with the Supporter pitch). -->
+          <button
+            class="add-menu-item"
+            onclick={(e) => handleItemClick(() => goto('/settings#newsletters'), e)}
+            role="menuitem"
+          >
+            <span class="item-icon"><Icon name="mail" size={16} /></span>
+            Add newsletter
+          </button>
           <button
             class="add-menu-item"
             onclick={(e) => handleItemClick(() => sidebarStore.openSaveArticleModal(), e)}

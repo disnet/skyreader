@@ -8,6 +8,7 @@
   import { articlesStore } from '$lib/stores/articles.svelte';
   import { profileService } from '$lib/services/profiles';
   import { api, SubscriptionLimitError } from '$lib/services/api';
+  import { isNewsletterSubscription, newsletterSender } from '$lib/utils/newsletters';
   import { getSourceDisplay, isLinkblogPublication } from '$lib/utils/sourceDisplay';
   import { findCrossTypeDuplicates } from '$lib/services/subscriptionDedup';
   import { loadDismissedUnifyHosts, dismissUnifyHost } from '$lib/services/unifyDismiss';
@@ -69,7 +70,7 @@
 
   // -- Scope: which kind of source the list shows. Replaces the per-section
   // collapse toggles: one control, and parked feeds get a place in it. --
-  type Scope = 'all' | 'atmosphere' | 'web' | 'parked';
+  type Scope = 'all' | 'atmosphere' | 'web' | 'newsletters' | 'parked';
   let scope = $state<Scope>('all');
 
   // Checkboxes only appear once the reader asks to select; the everyday list
@@ -204,6 +205,13 @@
       .sort((a, b) => (a.customTitle || a.title).localeCompare(b.customTitle || b.title));
   });
 
+  // -- Newsletters: mail to the reader's private address, one row per sender --
+  let newsletters = $derived(
+    subscriptionsStore.subscriptions
+      .filter(isNewsletterSubscription)
+      .sort((a, b) => (a.customTitle || a.title).localeCompare(b.customTitle || b.title))
+  );
+
   interface WebsiteCategoryGroup {
     name: string;
     websites: Subscription[];
@@ -238,6 +246,18 @@
           );
         })
       : atmosphereRows
+  );
+
+  let filteredNewsletters = $derived(
+    searchQuery
+      ? newsletters.filter((s) => {
+          const q = searchQuery.toLowerCase();
+          return (
+            (s.customTitle || s.title).toLowerCase().includes(q) ||
+            (newsletterSender(s.feedUrl) || '').includes(q)
+          );
+        })
+      : newsletters
   );
 
   let filteredWebsites = $derived(
@@ -284,15 +304,22 @@
       : parkedFeeds
   );
 
-  let hasNoSources = $derived(websites.length === 0 && atmosphereRows.length === 0);
+  let hasNoSources = $derived(
+    websites.length === 0 && atmosphereRows.length === 0 && newsletters.length === 0
+  );
 
   // Only offer the scope control when there's more than one kind to choose from.
   let scopes = $derived(
     (
       [
-        { id: 'all', label: 'All', count: websites.length + atmosphereRows.length },
+        {
+          id: 'all',
+          label: 'All',
+          count: websites.length + atmosphereRows.length + newsletters.length,
+        },
         { id: 'atmosphere', label: 'Atmosphere', count: atmosphereRows.length },
         { id: 'web', label: 'Web', count: websites.length },
+        { id: 'newsletters', label: 'Newsletters', count: newsletters.length },
         { id: 'parked', label: 'Parked', count: parkedFeeds.length },
       ] as { id: Scope; label: string; count: number }[]
     ).filter((s) => s.id === 'all' || s.count > 0)
@@ -305,12 +332,14 @@
 
   let showAtmosphere = $derived(scope === 'all' || scope === 'atmosphere');
   let showWeb = $derived(scope === 'all' || scope === 'web');
+  let showNewsletters = $derived(scope === 'all' || scope === 'newsletters');
   let showParked = $derived(scope === 'all' || scope === 'parked');
 
   let noMatches = $derived(
     !!searchQuery &&
       (!showAtmosphere || filteredAtmosphere.length === 0) &&
       (!showWeb || filteredWebsites.length === 0) &&
+      (!showNewsletters || filteredNewsletters.length === 0) &&
       (!showParked || filteredParked.length === 0)
   );
 
@@ -346,7 +375,12 @@
   }
 
   async function handleRemove(sub: Subscription) {
-    if (sub.id && confirm(`Remove "${sub.customTitle || sub.title}"?`)) {
+    // A newsletter can't be unsubscribed at the source from here, so removing
+    // one blocks its sender (unblock from Settings → Newsletters).
+    const prompt = isNewsletterSubscription(sub)
+      ? `Remove "${sub.customTitle || sub.title}"? Its mail will stop reaching Skyreader.`
+      : `Remove "${sub.customTitle || sub.title}"?`;
+    if (sub.id && confirm(prompt)) {
       await subscriptionsStore.remove(sub.id);
     }
   }
@@ -757,6 +791,32 @@
             No RSS feeds yet. Use <strong>Add source → RSS feed</strong> to follow a blog or site.
           </p>
         {/if}
+      </section>
+    {/if}
+
+    <!-- NEWSLETTERS: created by mail arriving at the reader's address, so
+         there's nothing to add or refresh here. Removing one blocks its sender. -->
+    {#if showNewsletters && newsletters.length > 0 && (!searchQuery || filteredNewsletters.length > 0)}
+      <section class="sources-section">
+        <SourceSectionHeader title="Newsletters" count={newsletters.length} />
+        <SourceList>
+          {#each filteredNewsletters as sub (sub.id)}
+            <SourceRow
+              iconUrl={getFaviconUrl(sub)}
+              title={sub.customTitle || sub.title}
+              subtitle={newsletterSender(sub.feedUrl) ?? ''}
+              subscribed={true}
+              fallbackIcon="mail"
+              onEdit={() => handleEdit(sub)}
+              onPark={() => park(sub)}
+              onRemove={() => handleRemove(sub)}
+            />
+          {/each}
+        </SourceList>
+        <p class="section-note">
+          Your newsletter address is in <a href="/settings#newsletters">Settings</a>. Removing a
+          newsletter here stops its mail reaching Skyreader.
+        </p>
       </section>
     {/if}
   {/if}

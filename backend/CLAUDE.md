@@ -130,6 +130,14 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed documentation.
 | `src/routes/telemetry.ts`     | `/api/telemetry/error` — sampled client error reports     |
 | `src/routes/guest.ts`         | `/api/guest/*` — the unauthenticated reading surface      |
 | `src/routes/feedback.ts`      | `/api/v2/feedback` — userinput.app board read + post      |
+| `src/routes/newsletters.ts`   | `/api/newsletters/*` — newsletter address + blocked list  |
+
+**Email newsletters** (Supporter) arrive through the Worker's `email()` handler, not HTTP:
+Cloudflare Email Routing hands it mail for `NEWSLETTER_EMAIL_DOMAIN`, and each message becomes a
+`feed_items` row under a per-sender, per-reader `newsletter:<inbox_id>/<sender>` feed. Those
+subscriptions are private and local-only — never crawled, never on the PDS, readable only by the
+inbox owner — and every subscription path checks `isNewsletterSubscription`. See
+[`docs/plans/EMAIL_NEWSLETTERS.md`](../docs/plans/EMAIL_NEWSLETTERS.md).
 
 Guest reading mode is the only unauthenticated surface that reads the archive,
 and it is **read-only**. `POST /api/guest/timeline` is a query over
@@ -178,6 +186,8 @@ returns a permission set expanded (`repo?collection=…`), so every check goes t
 | `src/services/subscription-sync.ts` | Sync subscriptions to/from PDS                               |
 | `src/services/rate-limit.ts`        | Per-user per-endpoint rate limiting (D1-backed)              |
 | `src/services/user-tier.ts`         | Tier lookup (free/supporter)                                 |
+| `src/services/newsletters.ts`       | Newsletter inboxes + the `email()` handler (inbound mail)    |
+| `src/services/newsletter-email.ts`  | Parse one newsletter email into a feed item                  |
 
 ### Observability
 

@@ -76,10 +76,11 @@ export function getSourceDid(key: string): string {
 // --- Subscription source key (derive from subscription type) ---
 
 import type { Subscription } from '$lib/types';
+import { isArchiveFeedSource } from '$lib/utils/newsletters';
 
 export function subscriptionSourceKey(sub: Subscription): string | null {
   if (!sub.rkey) return null;
-  if (!sub.sourceType || sub.sourceType === 'rss') {
+  if (isArchiveFeedSource(sub.sourceType)) {
     return rssSourceKey(sub.rkey);
   }
   if (sub.sourceType === 'atproto.documents') {

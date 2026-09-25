@@ -37,10 +37,18 @@ export interface User {
     /** Ceiling on total mirrored rows (active + parked); overflow stays on the PDS. */
     maxMirroredSubscriptions: number;
     maxUrlSavesPerMonth: number;
+    /** A private newsletter email address (Supporter). */
+    newsletterInbox?: boolean;
   };
 }
 
-export type SubscriptionSourceType = 'rss' | 'atproto.documents' | 'atproto.collection';
+export type SubscriptionSourceType =
+  | 'rss'
+  | 'atproto.documents'
+  | 'atproto.collection'
+  // Created server-side from mail to the reader's private address; see
+  // $lib/utils/newsletters.ts.
+  | 'email.newsletter';
 
 export interface Subscription {
   id?: number;

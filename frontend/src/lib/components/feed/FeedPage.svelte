@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { isArchiveFeedSource } from '$lib/utils/newsletters';
   import { appScrollTo } from '$lib/utils/appScroll';
   import { onMount, onDestroy, tick, untrack } from 'svelte';
   import { page } from '$app/stores';
@@ -354,7 +355,7 @@
     // just the slice this device happens to hold — otherwise another device
     // holding older items would still show them unread after this. Only RSS:
     // atproto sources aren't in the archive and reconcile by digest instead.
-    const isRss = !sub.sourceType || sub.sourceType === 'rss';
+    const isRss = isArchiveFeedSource(sub.sourceType);
     await itemLabelsStore.markAllAsRead(
       articlesToMark,
       isRss && sub.feedUrl
