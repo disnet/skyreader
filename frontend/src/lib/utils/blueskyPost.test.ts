@@ -73,6 +73,8 @@ describe('planBlueskyPost', () => {
     expect(plan.trimmed).toBe(true);
     expect(graphemeLength(plan.text)).toBeLessThanOrEqual(BLUESKY_MAX_GRAPHEMES);
     expect(plan.text.endsWith(shortLink(URL))).toBe(true);
+    // The uncut length, so the count ring can show how far over it is.
+    expect(plan.length).toBeGreaterThan(BLUESKY_MAX_GRAPHEMES);
   });
 
   it('without text shots: quotes read inline, in draft order, and no link text', () => {
@@ -83,6 +85,7 @@ describe('planBlueskyPost', () => {
       text: '“A line broken.”\n\nMy take.',
       shots: [],
       trimmed: false,
+      length: 26,
       droppedQuotes: 0,
     });
   });

@@ -66,6 +66,11 @@ export interface BlueskyPostPlan {
   shots: string[];
   /** The text had to be cut to fit. */
   trimmed: boolean;
+  /**
+   * What the text would run to uncut, in graphemes: the composer's count ring
+   * shows this, so writing past the limit reads as over rather than silently cut.
+   */
+  length: number;
   /** Quotes beyond Bluesky's four images, left out. */
   droppedQuotes: number;
 }
@@ -95,6 +100,7 @@ export function planBlueskyPost(
       linkText,
       shots,
       trimmed: body.trimmed,
+      length: graphemeLength(`${commentary}${separator}${linkText}`),
       droppedQuotes: quotes.length - shots.length,
     };
   }
@@ -104,5 +110,11 @@ export function planBlueskyPost(
     .map((b) => (b.kind === 'quote' ? `“${b.text.replace(/\s*\n\s*/g, ' ')}”` : b.text))
     .join('\n\n');
   const body = fitGraphemes(joined, BLUESKY_MAX_GRAPHEMES);
-  return { text: body.text, shots: [], trimmed: body.trimmed, droppedQuotes: 0 };
+  return {
+    text: body.text,
+    shots: [],
+    trimmed: body.trimmed,
+    length: graphemeLength(joined),
+    droppedQuotes: 0,
+  };
 }
