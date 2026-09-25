@@ -21,6 +21,9 @@ import {
   createPushLoop,
   PUSH_BODY_BUDGET_BYTES,
   MAX_PUSHED_CONTENT_BYTES,
+  PUSH_ALERT_AFTER_FAILURES,
+  PUSH_REALERT_MS,
+  type PushStuckAlert,
   type IngestConfig,
   type PushResult,
 } from './ingest-push';
@@ -218,6 +221,8 @@ describe('ingest push', () => {
     failing.restore();
     expect(result.pushed).toBe(0);
     expect(result.error).toContain('500');
+    expect(result.status).toBe(500);
+    expect(result.batch).toMatchObject({ items: 1 });
     expect(countDirtyRows(db)).toBe(1);
 
     const ok = mockIngestEndpoint();
@@ -721,6 +726,8 @@ describe('push loop (drain chaining, backoff, re-entrancy)', () => {
     scheduled: Array<{ fn: () => void; delayMs: number }>;
     backoffCalls: number[];
     clock: { now: number };
+    stuck: PushStuckAlert[];
+    recovered: Array<{ failures: number; failingForMs: number }>;
   }
 
   function harness(): Harness {
@@ -728,6 +735,8 @@ describe('push loop (drain chaining, backoff, re-entrancy)', () => {
     const scheduled: Array<{ fn: () => void; delayMs: number }> = [];
     const backoffCalls: number[] = [];
     const clock = { now: 1_000_000 };
+    const stuck: PushStuckAlert[] = [];
+    const recovered: Array<{ failures: number; failingForMs: number }> = [];
     const runPush = createPushLoop({
       push: () => {
         const d = deferred();
@@ -741,8 +750,10 @@ describe('push loop (drain chaining, backoff, re-entrancy)', () => {
       },
       schedule: (fn, delayMs) => scheduled.push({ fn, delayMs }),
       now: () => clock.now,
+      onStuck: (alert) => stuck.push(alert),
+      onRecovered: (info) => recovered.push(info),
     });
-    return { runPush, pushes, scheduled, backoffCalls, clock };
+    return { runPush, pushes, scheduled, backoffCalls, clock, stuck, recovered };
   }
 
   it('chains with the configured delay while a backlog remains, then stops', async () => {
@@ -854,5 +865,71 @@ describe('push loop (drain chaining, backoff, re-entrancy)', () => {
 
     runPush();
     expect(pushes.length).toBe(2);
+  });
+  // Fail one push (past the backoff) and let the loop settle.
+  async function failOnce(h: Harness, result: Partial<PushResult> = {}): Promise<void> {
+    h.runPush();
+    h.pushes
+      .at(-1)!
+      .resolve({ pushed: 0, hasMore: true, error: 'HTTP 500', status: 500, ...result });
+    await settle();
+    h.clock.now += 30_000;
+  }
+
+  it('reports a stuck push after repeated failures, then reminds on an interval', async () => {
+    const h = harness();
+    const batch = { firstSeq: 10, lastSeq: 109, items: 100, bytes: 5_000_000 };
+
+    for (let i = 1; i < PUSH_ALERT_AFTER_FAILURES; i++) await failOnce(h, { batch });
+    expect(h.stuck).toHaveLength(0);
+
+    await failOnce(h, { batch });
+    expect(h.stuck).toHaveLength(1);
+    expect(h.stuck[0]).toMatchObject({
+      failures: PUSH_ALERT_AFTER_FAILURES,
+      status: 500,
+      batch,
+      failingForMs: 30_000 * (PUSH_ALERT_AFTER_FAILURES - 1),
+    });
+
+    // Still failing inside the re-alert window: no new report per retry.
+    await failOnce(h);
+    expect(h.stuck).toHaveLength(1);
+
+    h.clock.now += PUSH_REALERT_MS;
+    await failOnce(h);
+    expect(h.stuck).toHaveLength(2);
+  });
+
+  it('reports a request the Worker refuses outright on the first failure', async () => {
+    const h = harness();
+    await failOnce(h, { error: 'HTTP 413: Payload too large', status: 413 });
+    expect(h.stuck).toHaveLength(1);
+    expect(h.stuck[0].status).toBe(413);
+  });
+
+  it('treats a 429 like any transient failure', async () => {
+    const h = harness();
+    await failOnce(h, { error: 'HTTP 429', status: 429 });
+    expect(h.stuck).toHaveLength(0);
+  });
+
+  it('reports recovery once, and a fresh streak alerts again', async () => {
+    const h = harness();
+    await failOnce(h, { status: 413 });
+
+    h.runPush();
+    h.pushes.at(-1)!.resolve({ pushed: 1, hasMore: false });
+    await settle();
+    expect(h.recovered).toHaveLength(1);
+
+    // A success with nothing reported before it is not a "recovery".
+    h.runPush();
+    h.pushes.at(-1)!.resolve({ pushed: 1, hasMore: false });
+    await settle();
+    expect(h.recovered).toHaveLength(1);
+
+    await failOnce(h, { status: 413 });
+    expect(h.stuck).toHaveLength(2);
   });
 });

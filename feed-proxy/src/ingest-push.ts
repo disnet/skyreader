@@ -79,7 +79,37 @@ export interface PushResult {
   // True when the log still holds dirty rows beyond this batch.
   hasMore: boolean;
   error?: string;
+  // On a rejected push: the Worker's HTTP status (absent for a network error or
+  // timeout), and what was in the batch — the same rows retry next cycle, so
+  // this is exactly what's stuck.
+  status?: number;
+  batch?: PushBatchSummary;
 }
+
+export interface PushBatchSummary {
+  firstSeq: number;
+  lastSeq: number;
+  items: number;
+  bytes: number;
+}
+
+/** What the loop reports once a push is judged stuck (see createPushLoop). */
+export interface PushStuckAlert {
+  failures: number;
+  failingForMs: number;
+  error: string;
+  status?: number;
+  batch?: PushBatchSummary;
+}
+
+// Consecutive failures before a push is reported as stuck. With the 30s-doubling
+// backoff that's ~3.5 minutes of failing — past a Worker deploy or a blip, well
+// inside the time a stale reader would notice.
+export const PUSH_ALERT_AFTER_FAILURES = 3;
+// While it stays stuck, remind at most this often (same cadence as the backend's
+// firehose-lag alert), so a long outage is one issue with a steady pulse rather
+// than an event per retry.
+export const PUSH_REALERT_MS = 30 * 60 * 1000;
 
 // The dirty-scan walks the WHOLE item log every push cycle, almost always to
 // find nothing. It must stay on idx_feed_items_push (seq, content_hash,
@@ -113,6 +143,14 @@ export interface PushLoopDeps {
   now: () => number;
   /** Unexpected-rejection hook (Sentry in prod). */
   onError?: (error: unknown) => void;
+  /**
+   * A push is failing and won't clear on its own — Sentry in prod. A failed push
+   * acks nothing, so the same batch retries and every feed's items queue behind
+   * it; without this the only trace was a console line.
+   */
+  onStuck?: (alert: PushStuckAlert) => void;
+  /** The first successful push after an `onStuck`. */
+  onRecovered?: (info: { failures: number; failingForMs: number }) => void;
 }
 
 /**
@@ -140,6 +178,8 @@ export function createPushLoop(deps: PushLoopDeps): () => void {
   let running = false;
   let failures = 0;
   let blockedUntil = 0;
+  let failingSince = 0;
+  let lastAlertAt = 0;
 
   const runPush = (): void => {
     if (running || deps.now() < blockedUntil) return;
@@ -148,11 +188,36 @@ export function createPushLoop(deps: PushLoopDeps): () => void {
     deps
       .push()
       .then((result) => {
+        const now = deps.now();
         if (result.error) {
           failures++;
-          blockedUntil = deps.now() + deps.backoff(failures);
+          if (failures === 1) failingSince = now;
+          blockedUntil = now + deps.backoff(failures);
           console.error(`[Proxy] Ingest push failed (${failures}): ${result.error}`);
+          // A 4xx other than 429 is the Worker refusing this exact request (413
+          // too large, 401 secret mismatch, 400 malformed), which a retry of the
+          // same rows can't change — so it's reported on the first failure.
+          const permanent =
+            result.status !== undefined &&
+            result.status >= 400 &&
+            result.status < 500 &&
+            result.status !== 429;
+          const stuck = permanent || failures >= PUSH_ALERT_AFTER_FAILURES;
+          if (stuck && (lastAlertAt === 0 || now - lastAlertAt >= PUSH_REALERT_MS)) {
+            lastAlertAt = now;
+            deps.onStuck?.({
+              failures,
+              failingForMs: now - failingSince,
+              error: result.error,
+              status: result.status,
+              batch: result.batch,
+            });
+          }
           return;
+        }
+        if (lastAlertAt !== 0) {
+          deps.onRecovered?.({ failures, failingForMs: now - failingSince });
+          lastAlertAt = 0;
         }
         failures = 0;
         if (result.pushed > 0) console.log(`[Proxy] Ingest pushed ${result.pushed} item(s)`);
@@ -243,6 +308,19 @@ export async function pushDirtyItems(db: Database, config: IngestConfig): Promis
     imageUrl: meta.image_url,
   }));
 
+  const batch: PushBatchSummary = {
+    firstSeq: sent[0].seq,
+    lastSeq: sent[sent.length - 1].seq,
+    items: sent.length,
+    bytes,
+  };
+  const dropped = items.filter((i) => i.item.contentTruncated).length;
+  if (dropped > 0) {
+    console.log(
+      `[Proxy] Ingest push: dropped ${dropped} body(ies) over ${MAX_PUSHED_CONTENT_BYTES} bytes`
+    );
+  }
+
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (config.secret) headers['X-Proxy-Secret'] = config.secret;
 
@@ -260,6 +338,8 @@ export async function pushDirtyItems(db: Database, config: IngestConfig): Promis
         pushed: 0,
         hasMore: true,
         error: `HTTP ${response.status}${body ? `: ${body.slice(0, 200)}` : ''}`,
+        status: response.status,
+        batch,
       };
     }
 
@@ -270,6 +350,7 @@ export async function pushDirtyItems(db: Database, config: IngestConfig): Promis
       pushed: 0,
       hasMore: true,
       error: error instanceof Error ? error.message : String(error),
+      batch,
     };
   }
 }

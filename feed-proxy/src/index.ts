@@ -1,6 +1,6 @@
 // Must be first: initializes Sentry before any other module loads so its global
 // error handlers and instrumentation are in place when the app boots.
-import { reportError } from './instrument';
+import { reportError, reportMessage } from './instrument';
 import { Database } from 'bun:sqlite';
 import { mkdirSync } from 'fs';
 import { createApp, initDatabase, cleanupCache, HONEST_UA } from './app';
@@ -307,6 +307,27 @@ if (INGEST_ENABLED) {
     schedule: (fn, delayMs) => setTimeout(fn, delayMs),
     now: Date.now,
     onError: (error) => reportError(error, { tags: { source: 'ingest-push' } }),
+    // docs/RUNBOOK.md → `ingest_push_failing`.
+    onStuck: (alert) => {
+      console.error(
+        `[Proxy] Ingest push stuck: ${alert.failures} consecutive failure(s) over ` +
+          `${Math.round(alert.failingForMs / 1000)}s, seqs ${alert.batch?.firstSeq}-${alert.batch?.lastSeq}`
+      );
+      reportMessage('Ingest push failing: items are not reaching D1', {
+        level: 'error',
+        fingerprint: ['ingest-push-failing'],
+        tags: {
+          source: 'ingest-push',
+          check: 'push-failing',
+          status: alert.status !== undefined ? String(alert.status) : 'network',
+        },
+        extra: { ...alert },
+      });
+    },
+    onRecovered: ({ failures, failingForMs }) =>
+      console.log(
+        `[Proxy] Ingest push recovered after ${failures} failure(s) over ${Math.round(failingForMs / 1000)}s`
+      ),
   });
   setInterval(runPush, INGEST_INTERVAL_MS);
 

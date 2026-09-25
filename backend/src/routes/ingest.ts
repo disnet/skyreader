@@ -1,5 +1,6 @@
 import type { Env, FeedItem } from '../types';
 import { timedAll, timedBatch } from '../utils/d1-timing';
+import { log } from '../utils/logger';
 import { STARTER_FEED_URLS } from '../config/starter-feeds';
 import {
   MAX_STORED_BODY_BYTES,
@@ -706,7 +707,16 @@ export async function handleIngest(request: Request, env: Env): Promise<Response
   if (!isAuthorizedProxyRequest(request, env)) return unauthorized();
 
   const declaredLength = Number(request.headers.get('Content-Length') ?? '0');
-  if (declaredLength > MAX_INGEST_BODY_BYTES) return badRequest('Payload too large', 413);
+  if (declaredLength > MAX_INGEST_BODY_BYTES) {
+    // The proxy retries this exact batch until it fits, so the whole push stalls
+    // behind it; its own `ingest-push-failing` alert is the page, this is the
+    // Worker-side trace (docs/RUNBOOK.md → ingest_push_failing).
+    log.warn('ingest_payload_too_large', {
+      bytes: declaredLength,
+      limitBytes: MAX_INGEST_BODY_BYTES,
+    });
+    return badRequest('Payload too large', 413);
+  }
 
   let body: { feeds?: IngestFeed[]; items?: IngestItem[] };
   try {

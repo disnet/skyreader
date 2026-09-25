@@ -1,4 +1,6 @@
 import type { Env } from '../types';
+import { reportMessage } from '../observability/sentry';
+import { log } from '../utils/logger';
 
 /**
  * Out-of-row storage for feed-item bodies over the archive's inline cap.
@@ -34,6 +36,13 @@ export const MAX_STORED_BODY_BYTES = 2 * 1024 * 1024;
 const R2_CONCURRENCY = 6;
 
 const KEY_PREFIX = 'items/v1/';
+
+// At most one Sentry report per isolate per this long while R2 writes fail. An
+// R2 outage fails every ingest request (one per ~15s per proxy), and the issue
+// only needs to exist and stay fresh, not count each one. The structured log
+// line still goes out every time.
+const PUT_FAILURE_REPORT_INTERVAL_MS = 10 * 60 * 1000;
+let lastPutFailureReportAt = 0;
 
 export async function itemBodyKey(feedUrl: string, guid: string): Promise<string> {
   // A newline can't appear in a feed URL, so the pair is unambiguous.
@@ -79,7 +88,8 @@ async function mapLimited<T, R>(
 export async function putItemBodies(env: Env, writes: BodyWrite[]): Promise<boolean[]> {
   const bucket = env.ITEM_BODIES;
   if (!bucket || writes.length === 0) return writes.map(() => false);
-  return mapLimited(writes, R2_CONCURRENCY, async (write) => {
+  let firstError: unknown;
+  const landed = await mapLimited(writes, R2_CONCURRENCY, async (write) => {
     try {
       await bucket.put(await itemBodyKey(write.feedUrl, write.guid), write.content, {
         httpMetadata: { contentType: 'text/html; charset=utf-8' },
@@ -87,10 +97,29 @@ export async function putItemBodies(env: Env, writes: BodyWrite[]): Promise<bool
       });
       return true;
     } catch (error) {
-      console.error(`[item-bodies] R2 put failed for ${write.feedUrl} ${write.guid}:`, error);
+      firstError ??= error;
       return false;
     }
   });
+
+  const failed = landed.filter((ok) => !ok).length;
+  if (failed > 0) {
+    // Silent otherwise: the items still ingest, just without a stored body, so
+    // readers quietly fall back to extraction (docs/RUNBOOK.md → item_body_put_failed).
+    const message = firstError instanceof Error ? firstError.message : String(firstError);
+    log.error('item_body_put_failed', { failed, attempted: writes.length, error: message });
+    const now = Date.now();
+    if (now - lastPutFailureReportAt >= PUT_FAILURE_REPORT_INTERVAL_MS) {
+      lastPutFailureReportAt = now;
+      reportMessage('R2 item-body writes failing: long posts fall back to extraction', {
+        level: 'warning',
+        fingerprint: ['item-body-put-failed'],
+        tags: { source: 'ingest', check: 'item-body-put' },
+        extra: { failed, attempted: writes.length, error: message },
+      });
+    }
+  }
+  return landed;
 }
 
 /** Best-effort delete, for rows the sanity-cap trim removed. */
