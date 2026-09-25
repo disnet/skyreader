@@ -122,6 +122,13 @@
     outline: none;
   }
 
+  /* iOS Safari zooms the viewport when a focused input is smaller than 16px. */
+  @media (hover: none) and (pointer: coarse) {
+    .search-input {
+      font-size: 1rem;
+    }
+  }
+
   .search-input::placeholder {
     color: var(--color-text-secondary);
   }

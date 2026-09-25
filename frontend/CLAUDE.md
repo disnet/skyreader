@@ -319,6 +319,25 @@ page would have no reader stack to receive it and would sit there inert.
    export const nameStore = new NameStore();
    ```
 
+### Adding a Text Field
+
+iOS Safari zooms the page into any focused `input`/`textarea`/`select`/`contenteditable` under 16px
+and never zooms back out. The house pattern is a floor on touch screens:
+
+```css
+/* iOS Safari zooms the viewport when a focused input is smaller than 16px. */
+@media (hover: none) and (pointer: coarse) {
+  .my-input {
+    font-size: 1rem;
+  }
+}
+```
+
+A size derived from a preference (e.g. `calc(var(--article-font-size) * 0.9)`) needs
+`max(1em, 16px)` — it can clear 16px at the default and drop under it at a smaller reading size.
+`e2e/ios-zoom.spec.ts` measures computed sizes on a phone-emulated page: add the field's page to
+`PAGES`, or, for a field behind a tap, a test that opens it and calls `expectNoZoomingFields`.
+
 ### Working with IndexedDB
 
 The app uses Dexie.js for offline storage. Schema is defined in `src/lib/services/db.ts`.
