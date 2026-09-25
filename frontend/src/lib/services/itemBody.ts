@@ -16,11 +16,17 @@ import type { Article } from '$lib/types';
 
 type ArticleRef = Pick<Article, 'id' | 'guid' | 'subscriptionId'>;
 
+// What the archive said. `missing` is a real answer (it holds no copy), so the
+// caller can settle on extraction; `unavailable` means the question went
+// unanswered (offline, rate limit, 5xx) and is worth asking again later.
+export type StoredBodyResult =
+  { status: 'found'; content: string } | { status: 'missing' } | { status: 'unavailable' };
+
 // Per-session memo. A 404 is a stable answer for the session (the archive holds
-// no copy), so it isn't asked again; any other failure (offline, rate limit) is
-// not remembered, so a later open retries.
+// no copy), so it isn't asked again; any other failure is not remembered, so a
+// later open retries.
 const misses = new Set<string>();
-const inflight = new Map<string, Promise<string | null>>();
+const inflight = new Map<string, Promise<StoredBodyResult>>();
 
 function memoKey(feedUrl: string, guid: string): string {
   return `${feedUrl}\n${guid}`;
@@ -44,32 +50,35 @@ async function persist(article: ArticleRef, content: string): Promise<void> {
 }
 
 /**
- * Fetch `article`'s stored body. Resolves to the HTML, or null when the archive
- * has none (or it couldn't be reached) — the caller then falls back to
- * extraction. Never rejects.
+ * Fetch `article`'s stored body. Never rejects: resolves `missing` when the
+ * archive has none (the caller falls back to extraction for good) and
+ * `unavailable` when it couldn't be reached (fall back for now, retry later).
  */
 export function loadStoredBody(
   article: ArticleRef,
   feedUrl: string,
   options: { guest: boolean }
-): Promise<string | null> {
+): Promise<StoredBodyResult> {
   const key = memoKey(feedUrl, article.guid);
-  if (misses.has(key)) return Promise.resolve(null);
+  if (misses.has(key)) return Promise.resolve({ status: 'missing' });
   const pending = inflight.get(key);
   if (pending) return pending;
 
-  const request = (async () => {
+  const request = (async (): Promise<StoredBodyResult> => {
     try {
       const { content } = await api.fetchItemBody(feedUrl, article.guid, options);
       if (!content) {
         misses.add(key);
-        return null;
+        return { status: 'missing' };
       }
       await persist(article, content);
-      return content;
+      return { status: 'found', content };
     } catch (e) {
-      if (e instanceof ApiError && e.status === 404) misses.add(key);
-      return null;
+      if (e instanceof ApiError && e.status === 404) {
+        misses.add(key);
+        return { status: 'missing' };
+      }
+      return { status: 'unavailable' };
     } finally {
       inflight.delete(key);
     }

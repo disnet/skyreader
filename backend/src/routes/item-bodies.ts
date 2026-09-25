@@ -169,10 +169,29 @@ export async function handleItemBody(request: Request, env: Env): Promise<Respon
   const bucket = env.ITEM_BODIES;
   if (!bucket) return json({ error: 'Not found' }, 404);
 
-  const object = await bucket.get(await itemBodyKey(feedUrl, guid));
+  const [object, row] = await Promise.all([
+    bucket.get(await itemBodyKey(feedUrl, guid)),
+    env.DB.prepare(
+      `SELECT content_hash, json_extract(item_json, '$.bodyStored') AS body_stored
+         FROM feed_items WHERE feed_url = ? AND guid = ?`
+    )
+      .bind(feedUrl, guid)
+      .first<{ content_hash: string; body_stored: number | null }>(),
+  ]);
+  // Serve only the body of the row as it stands now. An edit whose new body
+  // never reached R2 (failed put, over the ceiling) leaves the row pointing at
+  // nothing while the old object may still sit under the same key; handing that
+  // out would show — and the reader would cache — the pre-edit text instead of
+  // falling back to extraction.
+  const current =
+    object != null &&
+    row?.body_stored === 1 &&
+    object.customMetadata?.contentHash === row.content_hash;
   // A miss is an ordinary answer (small item, pre-R2 row, oversized body), so
   // it's cacheable briefly too — the client memoizes it per session anyway.
-  if (!object) return json({ error: 'Not found' }, 404, { 'Cache-Control': 'private, max-age=60' });
+  if (!object || !current) {
+    return json({ error: 'Not found' }, 404, { 'Cache-Control': 'private, max-age=60' });
+  }
 
   const content = await object.text();
   return json({ content }, 200, {

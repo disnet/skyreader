@@ -573,8 +573,20 @@
   // Gated on `expanded` rather than `isOpen`: a keyboard cursor moving across the
   // list — or Expand view, where every card is `selected` — shouldn't fire a
   // request per card it passes over.
-  let storedBodyStatus = $state<'idle' | 'loading' | 'found' | 'missing'>('idle');
+  // `unavailable` (offline, 429, 5xx) is not an answer, so it isn't final: the
+  // card stays expandable and asks again on the next expand or when the browser
+  // comes back online — for a guest, who can't extract, that's the only way in.
+  let storedBodyStatus = $state<'idle' | 'loading' | 'found' | 'missing' | 'unavailable'>('idle');
+  let storedBodyRetry = $state(0);
   $effect(() => {
+    const onOnline = () => {
+      if (untrack(() => storedBodyStatus) === 'unavailable') storedBodyRetry++;
+    };
+    window.addEventListener('online', onOnline);
+    return () => window.removeEventListener('online', onOnline);
+  });
+  $effect(() => {
+    void storedBodyRetry;
     if (!expanded || !article?.contentTruncated || !itemUrl) return;
     // Wait for the local read; a body already cached there needs neither fetch.
     if (article.content || lazyContent == null || lazyContent) return;
@@ -588,20 +600,23 @@
         linkPostContentStore.fetch(url);
         return;
       }
-      if (storedBodyStatus !== 'idle') return;
+      if (storedBodyStatus === 'loading' || storedBodyStatus === 'found') return;
+      if (storedBodyStatus === 'unavailable' && hasFetchedOriginal) return;
       storedBodyStatus = 'loading';
       const feedUrl = subscriptionsStore.getById(target.subscriptionId)?.feedUrl;
       const pending = feedUrl
         ? loadStoredBody(target, feedUrl, { guest: !auth.user })
-        : Promise.resolve(null);
-      pending.then((body) => {
-        if (body) {
-          lazyContent = body;
+        : Promise.resolve({ status: 'missing' } as const);
+      pending.then((result) => {
+        if (result.status === 'found') {
+          lazyContent = result.content;
           storedBodyStatus = 'found';
-        } else {
-          storedBodyStatus = 'missing';
-          linkPostContentStore.fetch(url);
+          return;
         }
+        storedBodyStatus = result.status;
+        // Extract meanwhile; after `unavailable` a later expand still asks for
+        // the stored copy unless extraction has already supplied the body.
+        linkPostContentStore.fetch(url);
       });
     });
   });

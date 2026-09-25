@@ -53,9 +53,10 @@ describe('loadStoredBody', () => {
     const a = article();
     fetchItemBody.mockResolvedValueOnce({ content: '<p>full</p>' });
 
-    expect(await loadStoredBody(a, 'https://feed.example/rss', { guest: false })).toBe(
-      '<p>full</p>'
-    );
+    expect(await loadStoredBody(a, 'https://feed.example/rss', { guest: false })).toEqual({
+      status: 'found',
+      content: '<p>full</p>',
+    });
     expect(fetchItemBody).toHaveBeenCalledWith('https://feed.example/rss', a.guid, {
       guest: false,
     });
@@ -66,8 +67,12 @@ describe('loadStoredBody', () => {
     const a = article();
     fetchItemBody.mockRejectedValueOnce(new ApiError('Not found', 404));
 
-    expect(await loadStoredBody(a, 'https://feed.example/rss', { guest: true })).toBeNull();
-    expect(await loadStoredBody(a, 'https://feed.example/rss', { guest: true })).toBeNull();
+    expect(await loadStoredBody(a, 'https://feed.example/rss', { guest: true })).toEqual({
+      status: 'missing',
+    });
+    expect(await loadStoredBody(a, 'https://feed.example/rss', { guest: true })).toEqual({
+      status: 'missing',
+    });
     expect(fetchItemBody).toHaveBeenCalledTimes(1);
     expect(update).not.toHaveBeenCalled();
   });
@@ -77,10 +82,27 @@ describe('loadStoredBody', () => {
     fetchItemBody.mockRejectedValueOnce(new Error('offline'));
     fetchItemBody.mockResolvedValueOnce({ content: '<p>later</p>' });
 
-    expect(await loadStoredBody(a, 'https://feed.example/rss', { guest: false })).toBeNull();
-    expect(await loadStoredBody(a, 'https://feed.example/rss', { guest: false })).toBe(
-      '<p>later</p>'
-    );
+    expect(await loadStoredBody(a, 'https://feed.example/rss', { guest: false })).toEqual({
+      status: 'unavailable',
+    });
+    expect(await loadStoredBody(a, 'https://feed.example/rss', { guest: false })).toEqual({
+      status: 'found',
+      content: '<p>later</p>',
+    });
+  });
+
+  it('reports a server error as unavailable, not missing', async () => {
+    const a = article();
+    fetchItemBody.mockRejectedValueOnce(new ApiError('Too many requests', 429));
+    fetchItemBody.mockResolvedValueOnce({ content: '<p>after</p>' });
+
+    expect(await loadStoredBody(a, 'https://feed.example/rss', { guest: true })).toEqual({
+      status: 'unavailable',
+    });
+    expect(await loadStoredBody(a, 'https://feed.example/rss', { guest: true })).toEqual({
+      status: 'found',
+      content: '<p>after</p>',
+    });
   });
 
   it('shares one request between concurrent callers', async () => {
@@ -91,8 +113,8 @@ describe('loadStoredBody', () => {
       loadStoredBody(a, 'https://feed.example/rss', { guest: false }),
       loadStoredBody(a, 'https://feed.example/rss', { guest: false }),
     ]);
-    expect(first).toBe('<p>once</p>');
-    expect(second).toBe('<p>once</p>');
+    expect(first).toEqual({ status: 'found', content: '<p>once</p>' });
+    expect(second).toEqual(first);
     expect(fetchItemBody).toHaveBeenCalledTimes(1);
   });
 });

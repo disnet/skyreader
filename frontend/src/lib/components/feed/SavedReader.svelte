@@ -335,8 +335,8 @@
               })
             : null;
           if (cancelled) return;
-          if (stored) {
-            lazyArticleContent = stored;
+          if (stored?.status === 'found') {
+            lazyArticleContent = stored.content;
             return;
           }
           // Keep the store's reactive entry map out of this effect's dependency

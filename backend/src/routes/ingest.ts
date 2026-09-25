@@ -208,21 +208,29 @@ export async function computeContentHash(item: FeedItem): Promise<string> {
  * feeds, so without this check every re-push of an unchanged long post would
  * cost an R2 write. "Already holds it" is the row's own record — same content
  * hash and `bodyStored` — so it costs one indexed D1 read per over-cap item.
+ *
+ * An edit whose new body doesn't reach R2 (the put failed, or it's over the
+ * stored ceiling) deletes the old one, so the previous version can't outlive
+ * the row that pointed at it. The serving route checks the hash as well
+ * (routes/item-bodies.ts); this keeps the bucket from holding the stale copy.
  */
 async function storeOversizedBodies(env: Env, entries: IngestItem[]): Promise<FeedItem[]> {
   const capped = entries.map((entry) => capItemContent(entry.item));
-  const candidates: number[] = [];
+  // Every over-cap item is looked up — including ones over the stored ceiling,
+  // which are never written but may be replacing a body that was.
+  const overCap: number[] = [];
+  const storable = new Set<number>();
   const encoder = new TextEncoder();
   for (const [index, item] of capped.entries()) {
     const content = entries[index].item.content;
     if (!item.contentTruncated || !content) continue;
-    if (encoder.encode(content).length > MAX_STORED_BODY_BYTES) continue;
-    candidates.push(index);
+    overCap.push(index);
+    if (encoder.encode(content).length <= MAX_STORED_BODY_BYTES) storable.add(index);
   }
-  if (candidates.length === 0 || !env.ITEM_BODIES) return capped;
+  if (overCap.length === 0 || !env.ITEM_BODIES) return capped;
 
   const existing = new Map<number, { content_hash: string; body_stored: number | null }>();
-  const lookups = candidates.map((index) =>
+  const lookups = overCap.map((index) =>
     env.DB.prepare(
       `SELECT content_hash, json_extract(item_json, '$.bodyStored') AS body_stored
          FROM feed_items WHERE feed_url = ? AND guid = ?`
@@ -236,12 +244,12 @@ async function storeOversizedBodies(env: Env, entries: IngestItem[]): Promise<Fe
     );
     results.forEach((result, offset) => {
       const row = result.results?.[0];
-      if (row) existing.set(candidates[i + offset], row);
+      if (row) existing.set(overCap[i + offset], row);
     });
   }
 
   const toWrite: number[] = [];
-  for (const index of candidates) {
+  for (const index of storable) {
     const row = existing.get(index);
     if (row && row.content_hash === entries[index].contentHash && row.body_stored === 1) {
       capped[index] = { ...capped[index], bodyStored: true };
@@ -260,6 +268,18 @@ async function storeOversizedBodies(env: Env, entries: IngestItem[]): Promise<Fe
   toWrite.forEach((index, i) => {
     if (landed[i]) capped[index] = { ...capped[index], bodyStored: true };
   });
+
+  const stale = overCap
+    .filter((index) => {
+      const row = existing.get(index);
+      return (
+        row?.body_stored === 1 &&
+        row.content_hash !== entries[index].contentHash &&
+        !capped[index].bodyStored
+      );
+    })
+    .map((index) => ({ feedUrl: entries[index].feedUrl, guid: entries[index].guid }));
+  await deleteItemBodies(env, stale);
   return capped;
 }
 
@@ -388,7 +408,9 @@ export async function trimFeedsToSanityCap(
          WHERE feed_url = ?1
            AND seq <= (SELECT seq FROM feed_items WHERE feed_url = ?1
                         ORDER BY seq DESC LIMIT 1 OFFSET ?2)
-         RETURNING feed_url, guid, json_extract(item_json, '$.bodyStored') AS body_stored`
+         RETURNING feed_url, guid,
+                   (json_extract(item_json, '$.bodyStored') IS 1
+                    OR json_extract(item_json, '$.contentTruncated') IS 1) AS may_have_body`
     ).bind(feedUrl, cap)
   );
   const orphaned: Array<{ feedUrl: string; guid: string }> = [];
@@ -398,15 +420,16 @@ export async function trimFeedsToSanityCap(
     const results = await timedBatch<{
       feed_url: string;
       guid: string;
-      body_stored: number | null;
+      may_have_body: number;
     }>('ingest_trim', env.DB, trims.slice(i, i + INGEST_BATCH_SIZE));
     for (const result of results) {
       for (const row of result.results ?? []) {
-        if (row.body_stored === 1) orphaned.push({ feedUrl: row.feed_url, guid: row.guid });
+        if (row.may_have_body === 1) orphaned.push({ feedUrl: row.feed_url, guid: row.guid });
       }
     }
   }
-  // The trimmed rows' R2 bodies go with them.
+  // The trimmed rows' R2 bodies go with them. Any truncated row, not just a
+  // stored one: a body left behind by a failed stale-delete goes here too.
   await deleteItemBodies(env, orphaned);
 }
 
