@@ -82,6 +82,21 @@ export const ATMOSPHERE_SCOPES = ['repo:site.standard.graph.subscription'];
 // standard scope-upgrade re-auth flow.
 export const READING_ROOM_SCOPES = ['repo:app.skyreader.reading.readAlong'];
 
+// Recommends — a one-tap public recommendation writes an
+// app.skyreader.social.recommend record to the user's own repo. Kept out of
+// GRANULAR_SCOPES for the same reason as READING_ROOM_SCOPES: it's covered by the
+// permission set (so live sessions pick it up on refresh), and the granular form
+// is only checked on the recommend endpoint, which 403s a stale session into the
+// standard re-grant flow rather than every route.
+export const RECOMMEND_SCOPES = ['repo:app.skyreader.social.recommend'];
+
+// When the recommended article is itself a standard.site document, a
+// site.standard.graph.recommend record is written alongside, so the author and
+// every standard.site app see it too. Best-effort: a session without this scope
+// still recommends, it just skips the standard.site copy. In the base (like
+// ATMOSPHERE_SCOPES) so new sign-ins carry it without opting into anything.
+export const STANDARD_RECOMMEND_SCOPES = ['repo:site.standard.graph.recommend'];
+
 // AT Intents discovery footprint — lets Skyreader write a dev.at-intent.usage record
 // into the user's OWN repo so other Atmosphere apps/agents can discover that the user
 // uses Skyreader and resolve the capabilities it publishes. Deliberately kept OUT of
@@ -142,6 +157,8 @@ export const ALL_POSSIBLE_SCOPES = [
   ...OFFPRINT_SCOPES,
   ...ATMOSPHERE_SCOPES,
   ...READING_ROOM_SCOPES,
+  ...RECOMMEND_SCOPES,
+  ...STANDARD_RECOMMEND_SCOPES,
   ...AT_INTENT_SCOPES,
   ...USERINPUT_SCOPES,
   ...USERINPUT_VOTE_SCOPES,
@@ -241,6 +258,7 @@ export function usePermissionSets(env: { OAUTH_PERMISSION_SETS?: string }): bool
 export const SKYREADER_REPO_SCOPES = [
   ...GRANULAR_SCOPES.split(' ').filter((s) => s !== 'atproto'),
   ...READING_ROOM_SCOPES,
+  ...RECOMMEND_SCOPES,
 ];
 
 /**
@@ -254,6 +272,7 @@ export function baseScopes(env: { OAUTH_PERMISSION_SETS?: string }): string[] {
     'atproto',
     ...(usePermissionSets(env) ? [SKYREADER_PERMISSION_SET_SCOPE] : SKYREADER_REPO_SCOPES),
     ...ATMOSPHERE_SCOPES,
+    ...STANDARD_RECOMMEND_SCOPES,
     ...AT_INTENT_SCOPES,
   ];
 }

@@ -16,8 +16,9 @@ callback).
 | Scope                                                          | Why it's in the base                                                           |
 | -------------------------------------------------------------- | ------------------------------------------------------------------------------ |
 | `atproto`                                                      | Required                                                                       |
-| `include:app.skyreader.authFull` (or its granular equivalents) | Subscriptions, follows, reading rooms: Skyreader's own collections             |
+| `include:app.skyreader.authFull` (or its granular equivalents) | Subscriptions, follows, reading rooms, recommends: Skyreader's own collections |
 | `repo:site.standard.graph.subscription`                        | The standard.site follow-graph mirror rides Atmospheric sync in the background |
+| `repo:site.standard.graph.recommend`                           | The standard.site copy of a recommend (best-effort; skipped without it)        |
 | `repo:dev.at-intent.usage`                                     | The AT Intents discovery record written at sign-in                             |
 
 **Optional features ask when first used.** Each is a `ScopeFeature` in `SCOPE_FEATURES`:

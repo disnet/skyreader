@@ -38,6 +38,7 @@
   import { myLinkblogStore } from '$lib/stores/myLinkblog.svelte';
   import { shareComposerStore } from '$lib/stores/shareComposer.svelte';
   import { shareDraftsStore } from '$lib/stores/shareDrafts.svelte';
+  import { recommendsStore, isRecommendable } from '$lib/stores/recommends.svelte';
   import { socialContextStore } from '$lib/stores/socialContext.svelte';
   import { profileService } from '$lib/services/profiles';
   import { auth } from '$lib/stores/auth.svelte';
@@ -456,6 +457,27 @@
   // Whether sharing is offered (the Blogs lane's [+]): you're signed in and
   // haven't turned the linkblog off. Same gate in both modes.
   let showShareAction = $derived(Boolean(auth.user) && !preferences.linkblogDisabled);
+
+  // Recommend: account-only (it writes to the reader's repo) and needs a real
+  // link. The URL is the article itself — for a link post, the external article
+  // it points at, not the linkblog entry. A standard.site document (not a link
+  // post) also carries its record, so the recommend reaches its author.
+  let recommendUrl = $derived(itemUrl);
+  let canRecommend = $derived(Boolean(auth.user) && isRecommendable(recommendUrl));
+  let isRecommended = $derived(recommendsStore.isRecommended(recommendUrl));
+  function toggleRecommend() {
+    if (!isRecommendable(recommendUrl)) return;
+    void recommendsStore.toggle({
+      url: recommendUrl,
+      title: itemTitle,
+      documentUri:
+        isDocumentMode &&
+        !isLinkPostMode &&
+        document?.recordUri.includes('/site.standard.document/')
+          ? document.recordUri
+          : undefined,
+    });
+  }
 
   // The URL the share (and its local draft) is keyed by in the current mode.
   let shareUrl = $derived(isDocumentMode ? quoteKey : itemUrl);
@@ -1072,6 +1094,8 @@
   {canExpand}
   {currentlyShared}
   canShare={showShareAction}
+  {canRecommend}
+  {isRecommended}
   {currentNote}
   {hasShareDraft}
   {showActionBarIntegrations}
@@ -1091,6 +1115,7 @@
   onContentTap={handleContentTap}
   onToggleRead={() => onToggleRead?.()}
   onToggleSave={() => onToggleSave?.()}
+  onToggleRecommend={toggleRecommend}
   onOpenUrl={handleOpenUrl}
   onOpenFullscreen={() => onOpenFullscreen?.()}
   {onOpenCollectionPiece}

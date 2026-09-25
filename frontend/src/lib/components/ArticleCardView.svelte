@@ -59,6 +59,8 @@
     canExpand = false,
     currentlyShared = false,
     canShare = false,
+    canRecommend = false,
+    isRecommended = false,
     currentNote,
     hasShareDraft = false,
     showActionBarIntegrations = false,
@@ -80,6 +82,7 @@
     onContentTap,
     onToggleRead,
     onToggleSave,
+    onToggleRecommend,
     onOpenUrl,
     onOpenFullscreen,
     onOpenCollectionPiece,
@@ -531,6 +534,27 @@
             class="action-label">{isSaved ? 'Saved' : 'Save'}</span
           >
         </button>
+        <!-- Recommend: the one-tap, public "worth reading". No composer, no note —
+             that's what Share is for. The title says it's public, since the
+             record lives in the reader's repo where anyone can see it. -->
+        {#if canRecommend}
+          <button
+            class="action-btn recommend-btn"
+            class:saved={isRecommended}
+            aria-pressed={isRecommended}
+            title={isRecommended
+              ? 'You recommended this publicly. Tap to take it back'
+              : 'Recommend publicly. Anyone can see it'}
+            onclick={(e) => {
+              e.stopPropagation();
+              onToggleRecommend?.();
+            }}
+          >
+            <span class="action-icon"><Icon name="thumbs-up" size={16} /></span><span
+              class="action-label">{isRecommended ? 'Recommended' : 'Recommend'}</span
+            >
+          </button>
+        {/if}
         <!-- Share: one button, one destination — the composer. Not yet shared it
              drafts one (a saved draft turns the label into "Draft"); already
              shared it reads "Shared", carries a dot when there's commentary
