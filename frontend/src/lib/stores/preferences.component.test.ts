@@ -82,3 +82,27 @@ describe('linkblog attribution kill-switch', () => {
     expect(preferences.linkblogAttributionOn).toBe(false);
   });
 });
+
+describe('full-article feeds', () => {
+  it('toggles per feed and survives a reload', async () => {
+    let preferences = await freshPreferences();
+    expect(preferences.isFullArticleFeed('3kfeedaaaaaaa')).toBe(false);
+
+    preferences.setFullArticleFeed('3kfeedaaaaaaa', true);
+    preferences = await freshPreferences();
+
+    expect(preferences.isFullArticleFeed('3kfeedaaaaaaa')).toBe(true);
+    expect(preferences.isFullArticleFeed('3kfeedbbbbbbb')).toBe(false);
+    expect(preferences.isFullArticleFeed(undefined)).toBe(false);
+
+    preferences.setFullArticleFeed('3kfeedaaaaaaa', false);
+    expect(preferences.isFullArticleFeed('3kfeedaaaaaaa')).toBe(false);
+  });
+
+  it('ignores a malformed stored list', async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ fullArticleFeeds: [42, 'ok', null] }));
+    const preferences = await freshPreferences();
+
+    expect(preferences.isFullArticleFeed('ok')).toBe(true);
+  });
+});

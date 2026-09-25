@@ -64,6 +64,8 @@
     overflowMenuOpen = false,
     showFetchOriginal = false,
     showFetchOriginalMenu = false,
+    canToggleFullArticleFeed = false,
+    fullArticleFeed = false,
     fetchingOriginal = false,
     hasFetchedOriginal = false,
     canFollowSource = false,
@@ -91,6 +93,7 @@
     onOverflowOpenUrl,
     onFetchOriginal,
     onOverflowFetchOriginal,
+    onToggleFullArticleFeed,
     onOverflowTag,
     onOverflowSemble,
     onOverflowMargin,
@@ -697,6 +700,24 @@
                 >
                   <Icon name="file-text" size={16} />
                   <span>{fetchingOriginal ? 'Fetching full article…' : 'Fetch full article'}</span>
+                </button>
+              {/if}
+              {#if canToggleFullArticleFeed}
+                <!-- Per-feed: for feeds that only send an excerpt, pull the full
+                     article into the feed automatically. -->
+                <button
+                  class="overflow-menu-item"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    onToggleFullArticleFeed?.();
+                  }}
+                >
+                  <Icon name="file-text" size={16} />
+                  <span
+                    >{fullArticleFeed
+                      ? 'Stop fetching full articles'
+                      : 'Always fetch full articles'}</span
+                  >
                 </button>
               {/if}
               {#if showActionBarIntegrations && hasSaveToSemble}

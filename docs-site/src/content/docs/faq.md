@@ -23,7 +23,9 @@ If you notice a live feed that isn't working in Skyreader, please open a [feedba
 
 ## An article came in truncated. Can I get the full text?
 
-Often, yes. The [Chrome extension](https://chromewebstore.google.com/detail/skyreader/kdefpnnpmajcclfepekgdkcdiklfooed) reads the page in your own browser, where you may have access the server doesn't. Open the article on its site, then use the extension's **Save this page**; if you'd saved it before, re-saving upgrades the stored copy with the full text.
+Often, yes. Some feeds only send a summary. Tap **Fetch full article** under it to load the article from its site. If a feed always does this, open the item's **⋯** menu and choose **Always fetch full articles** (also in **Edit Feed**), and that feed's items load in full as you read.
+
+If the site blocks that, the [Chrome extension](https://chromewebstore.google.com/detail/skyreader/kdefpnnpmajcclfepekgdkcdiklfooed) reads the page in your own browser, where you may have access the server doesn't. Open the article on its site, then use the extension's **Save this page**; if you'd saved it before, re-saving upgrades the stored copy with the full text.
 
 ## What works offline?
 

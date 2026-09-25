@@ -108,13 +108,17 @@ interface PreferencesState {
   // Pull the reader's own Margin highlights into Skyreader. Device-local: once
   // one device imports, the highlights sync everywhere as normal label rows.
   marginHighlightImport: boolean;
+  // Feeds (by subscription rkey) whose items should always show the full
+  // article, extracted from the site, instead of the feed's own excerpt. For
+  // feeds that only publish a summary. Device-local like the rest.
+  fullArticleFeeds: string[];
 }
 
 const STORAGE_KEY = 'skyreader-preferences';
 
 // localStorage is user-editable and carries whatever an older build wrote, so a
-// DID list is only trusted once it's actually a list of strings.
-function didList(value: unknown): string[] {
+// DID (or rkey) list is only trusted once it's actually a list of strings.
+function stringList(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((did): did is string => typeof did === 'string') : [];
 }
 
@@ -140,6 +144,7 @@ function createPreferencesStore() {
     communityHighlightsConfigured: false,
     highlightReviewCount: HIGHLIGHT_REVIEW_COUNT_DEFAULT,
     marginHighlightImport: false,
+    fullArticleFeeds: [],
   });
 
   // Restore from localStorage on init
@@ -172,10 +177,10 @@ function createPreferencesStore() {
         // the server on the next publication fetch, and an un-attributable
         // share acknowledgment falls back to showing the warning once more —
         // the safe direction for something that publishes publicly.
-        state.linkblogShareConfirmedDids = didList(parsed.linkblogShareConfirmedDids);
-        state.linkblogDisabledDids = didList(parsed.linkblogDisabledDids);
-        state.linkblogAttributionOfferedDids = didList(parsed.linkblogAttributionOfferedDids);
-        state.linkblogAttributionOnDids = didList(parsed.linkblogAttributionOnDids);
+        state.linkblogShareConfirmedDids = stringList(parsed.linkblogShareConfirmedDids);
+        state.linkblogDisabledDids = stringList(parsed.linkblogDisabledDids);
+        state.linkblogAttributionOfferedDids = stringList(parsed.linkblogAttributionOfferedDids);
+        state.linkblogAttributionOnDids = stringList(parsed.linkblogAttributionOnDids);
         if (
           parsed.defaultView === 'home' ||
           parsed.defaultView === 'feeds' ||
@@ -215,6 +220,7 @@ function createPreferencesStore() {
         if (typeof parsed.marginHighlightImport === 'boolean') {
           state.marginHighlightImport = parsed.marginHighlightImport;
         }
+        state.fullArticleFeeds = stringList(parsed.fullArticleFeeds);
       } catch {
         localStorage.removeItem(STORAGE_KEY);
       }
@@ -379,6 +385,19 @@ function createPreferencesStore() {
     save();
   }
 
+  function setFullArticleFeed(rkey: string, on: boolean) {
+    if (!rkey || on === state.fullArticleFeeds.includes(rkey)) return;
+    state.fullArticleFeeds = on
+      ? [...state.fullArticleFeeds, rkey]
+      : state.fullArticleFeeds.filter((r) => r !== rkey);
+    save();
+  }
+
+  /** Whether the feed with this subscription rkey always shows full articles. */
+  function isFullArticleFeed(rkey: string | undefined): boolean {
+    return !!rkey && state.fullArticleFeeds.includes(rkey);
+  }
+
   return {
     get articleFont() {
       return state.articleFont;
@@ -454,6 +473,8 @@ function createPreferencesStore() {
     },
     setHighlightReviewCount,
     setMarginHighlightImport,
+    isFullArticleFeed,
+    setFullArticleFeed,
     confirmLinkblogShare,
     setLinkblogDisabled,
     setLinkblogAttributionOffered,

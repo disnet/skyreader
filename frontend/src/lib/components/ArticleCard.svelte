@@ -761,6 +761,43 @@
     handleFetchOriginal();
   }
 
+  // Per-feed "Always fetch full articles": for feeds that only publish an
+  // excerpt, show the extracted article in the feed without a tap — the same
+  // extraction a save runs. Keyed by subscription rkey (device-local pref).
+  let subscriptionRkey = $derived(
+    article && !isFollowLink ? subscriptionsStore.byId.get(article.subscriptionId)?.rkey : undefined
+  );
+  let fullArticleFeed = $derived(preferences.isFullArticleFeed(subscriptionRkey));
+  let canToggleFullArticleFeed = $derived(Boolean(auth.user) && Boolean(subscriptionRkey));
+
+  function handleToggleFullArticleFeed() {
+    overflowMenuOpen = false;
+    if (!subscriptionRkey) return;
+    const on = !fullArticleFeed;
+    preferences.setFullArticleFeed(subscriptionRkey, on);
+    // Turning it on is also asking for this article now.
+    if (on && canFetchOriginal) linkPostContentStore.fetch(itemUrl);
+  }
+
+  // Fetch once the card is open and on its way onto the screen: in Expand view
+  // every card is open, so the viewport gate keeps a page load from firing an
+  // extraction per card (they're rate-limited); in List view it's the card you
+  // clicked. Once per card, so a page that won't extract doesn't loop — the
+  // inline button stays to retry.
+  let nearViewport = $state(false);
+  let fullArticleAutoFetched = false;
+  $effect(() => {
+    if (!fullArticleFeed || !isOpen || !nearViewport || !canFetchOriginal) return;
+    if (fullArticleAutoFetched) return;
+    fullArticleAutoFetched = true;
+    untrack(() => linkPostContentStore.fetch(itemUrl));
+  });
+
+  function handleNearViewport() {
+    nearViewport = true;
+    atmosphere.enterViewport();
+  }
+
   let overflowTriggerRef = $state<HTMLButtonElement | undefined>(undefined);
 
   // When the inline tag button is collapsed, the TagMenu anchors to the overflow
@@ -1018,6 +1055,8 @@
   {showFetchOriginalMenu}
   {fetchingOriginal}
   {hasFetchedOriginal}
+  {canToggleFullArticleFeed}
+  {fullArticleFeed}
   {canFollowSource}
   hasSaveToSemble={Boolean(auth.user)}
   hasSaveToMargin={Boolean(auth.user)}
@@ -1042,6 +1081,7 @@
   onOverflowOpenUrl={handleOverflowOpenUrl}
   onFetchOriginal={handleFetchOriginal}
   onOverflowFetchOriginal={handleOverflowFetchOriginal}
+  onToggleFullArticleFeed={handleToggleFullArticleFeed}
   onOverflowTag={handleOverflowTag}
   onOverflowSemble={handleOverflowSemble}
   onOverflowMargin={handleOverflowMargin}
@@ -1050,7 +1090,7 @@
   onFollowSource={handleFollowSource}
   onSelectFilter={atmosphere.setFilter}
   onOpenStream={atmosphere.openStream}
-  onNearViewport={atmosphere.enterViewport}
+  onNearViewport={handleNearViewport}
   onRetryStream={atmosphere.retry}
   onCreateInLane={createInLane}
   onComposeShare={composeShare}

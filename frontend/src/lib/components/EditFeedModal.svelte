@@ -1,5 +1,7 @@
 <script lang="ts">
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
+  import { preferences } from '$lib/stores/preferences.svelte';
+  import { auth } from '$lib/stores/auth.svelte';
   import { getFaviconUrl } from '$lib/utils/favicon';
   import Modal from '$lib/components/common/Modal.svelte';
   import type { Subscription } from '$lib/types';
@@ -14,6 +16,7 @@
 
   let customTitle = $state('');
   let iconUrl = $state('');
+  let fullArticles = $state(false);
   let saving = $state(false);
   let error = $state<string | null>(null);
 
@@ -23,6 +26,7 @@
       // Use customTitle if set, otherwise empty (placeholder shows original title)
       customTitle = subscription.customTitle || '';
       iconUrl = subscription.customIconUrl || '';
+      fullArticles = preferences.isFullArticleFeed(subscription.rkey);
     }
   });
 
@@ -80,6 +84,7 @@
         customTitle: customTitle.trim(),
         customIconUrl: iconUrl.trim(),
       });
+      preferences.setFullArticleFeed(subscription.rkey, fullArticles);
       handleClose();
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to save changes';
@@ -129,6 +134,20 @@
         </div>
         <p class="help-text">Leave empty to use the auto-detected favicon</p>
       </div>
+
+      <!-- Extraction is account-only, and only an RSS feed has an excerpt to
+           replace (publications bring their own full body). -->
+      {#if auth.user && (subscription.sourceType ?? 'rss') === 'rss'}
+        <div class="form-group">
+          <label class="checkbox-row">
+            <input type="checkbox" bind:checked={fullArticles} />
+            <span>Always fetch full articles</span>
+          </label>
+          <p class="help-text">
+            For feeds that only send a summary. Loads the article from its site.
+          </p>
+        </div>
+      {/if}
 
       {#if subscription.feedUrl}
         <div class="info-item">
@@ -252,6 +271,18 @@
   .reset-btn:hover {
     background: var(--color-bg);
     color: var(--color-text);
+  }
+
+  .form-group .checkbox-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+  }
+
+  .form-group .checkbox-row input {
+    padding: 0;
+    margin: 0;
   }
 
   .help-text {

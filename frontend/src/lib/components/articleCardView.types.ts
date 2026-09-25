@@ -247,6 +247,10 @@ export interface ArticleCardViewProps {
   showFetchOriginal?: boolean;
   /** Offer "fetch original article" in the overflow menu (long-body articles). */
   showFetchOriginalMenu?: boolean;
+  /** Offer the per-feed "Always fetch full articles" toggle in the overflow menu. */
+  canToggleFullArticleFeed?: boolean;
+  /** This card's feed is set to always fetch full articles. */
+  fullArticleFeed?: boolean;
   /** The original-article extraction is in flight. */
   fetchingOriginal?: boolean;
   /** The original article has been fetched and is shown inline. */
@@ -285,6 +289,8 @@ export interface ArticleCardViewProps {
   onFetchOriginal?: () => void;
   /** Fetch the full original article from the overflow menu (closes the menu). */
   onOverflowFetchOriginal?: () => void;
+  /** Toggle "Always fetch full articles" for this card's feed (closes the menu). */
+  onToggleFullArticleFeed?: () => void;
   onOverflowTag?: () => void;
   onOverflowSemble?: () => void;
   onOverflowMargin?: () => void;
