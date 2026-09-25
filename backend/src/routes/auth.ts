@@ -284,8 +284,9 @@ interface AuthorizationParams {
 
 type ParResult = { ok: true; requestUri: string } | { ok: false; errorText: string };
 
-// Start an authorization: PKCE + state, then a PAR (confidential client) or a
-// direct authorization URL (localhost public client). Shared by sign-in and by
+// Start an authorization: PKCE + state, then a PAR (authenticated with a client
+// assertion when confidential), or a direct authorization URL when the server
+// has no PAR endpoint. Shared by sign-in and by
 // permission upgrades, which differ only in the scope they ask for and whether
 // the callback retires an existing session.
 async function buildAuthorizationUrl(
@@ -330,8 +331,10 @@ async function buildAuthorizationUrl(
   let authUrl: string;
 
   const parEndpoint = authMeta.pushed_authorization_request_endpoint;
-  if (parEndpoint && !isPublicClient) {
-    // Use PAR (Pushed Authorization Request) - only for confidential clients
+  if (parEndpoint) {
+    // Use PAR (Pushed Authorization Request). The atproto OAuth profile requires
+    // it for every client, and some servers (Blacksky) enforce that even for the
+    // localhost public client. Only confidential clients authenticate the push.
     const pushAuthorizationRequest = async (scope: string): Promise<ParResult> => {
       const post = async () =>
         fetch(parEndpoint, {
@@ -346,9 +349,13 @@ async function buildAuthorizationUrl(
             code_challenge: codeChallenge,
             code_challenge_method: 'S256',
             ...(loginHint ? { login_hint: loginHint } : {}),
-            client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
-            // Create client assertion for confidential client authentication
-            client_assertion: await createClientAssertion(env, authMeta.issuer, clientId),
+            ...(isPublicClient
+              ? {}
+              : {
+                  client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+                  // Create client assertion for confidential client authentication
+                  client_assertion: await createClientAssertion(env, authMeta.issuer, clientId),
+                }),
           }),
         });
 
@@ -384,7 +391,7 @@ async function buildAuthorizationUrl(
     if (!par.ok) throw new Error(`PAR request failed: ${par.errorText}`);
     authUrl = `${authMeta.authorization_endpoint}?client_id=${encodeURIComponent(clientId)}&request_uri=${encodeURIComponent(par.requestUri)}`;
   } else {
-    // Direct authorization request (used for localhost public clients and fallback)
+    // Direct authorization request (fallback for servers without a PAR endpoint)
     const params = new URLSearchParams({
       client_id: clientId,
       redirect_uri: redirectUri,
