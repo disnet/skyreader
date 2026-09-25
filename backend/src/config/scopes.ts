@@ -113,11 +113,21 @@ export const USERINPUT_IMAGE_SCOPES = ['blob:image/*'];
 // From your follows — reading the user's Bluesky Following timeline to collect the
 // links their follows share (docs/plans/FOLLOWS_LINKS_PLAN.md). An `rpc:` scope, not
 // a repo one: getTimeline is an appview method the PDS proxies on the user's
-// behalf, and `aud` names the appview it may be proxied to. Kept OUT of
+// behalf, and `aud` names the service it may be proxied to. Kept OUT of
 // GRANULAR_SCOPES for the usual reason: every live session predates it.
-export const FOLLOWS_LINKS_SCOPES = [
+//
+// What the feature needs is the appview audience (FOLLOWS_LINKS_ACCESS_SCOPES,
+// what the gates check), but what it asks for is `aud=*`. rsky (Blacksky's PDS)
+// checks an rpc grant against the proxy target's bare DID, so a grant naming
+// `did:web:api.bsky.app#bsky_appview` never matches there and the call 403s with
+// InsufficientScope. `aud=*` passes on rsky and on the reference PDS alike, and
+// only for getTimeline, which is read-only. Sessions granted the narrow scope
+// keep working on the reference PDS; on rsky the refresh sees the 403 and asks
+// the reader to grant again (routes/follow-links.ts).
+export const FOLLOWS_LINKS_ACCESS_SCOPES = [
   'rpc:app.bsky.feed.getTimeline?aud=did:web:api.bsky.app%23bsky_appview',
 ];
+export const FOLLOWS_LINKS_SCOPES = ['rpc:app.bsky.feed.getTimeline?aud=*'];
 
 // All possible granular scopes (base + all integrations). Still part of the client
 // metadata so sessions granted before permission sets / progressive requests keep
@@ -137,6 +147,8 @@ export const ALL_POSSIBLE_SCOPES = [
   ...USERINPUT_VOTE_SCOPES,
   ...USERINPUT_IMAGE_SCOPES,
   ...FOLLOWS_LINKS_SCOPES,
+  // Still in the ceiling so sessions granted the narrow form keep refreshing.
+  ...FOLLOWS_LINKS_ACCESS_SCOPES,
 ].join(' ');
 
 // ---------------------------------------------------------------------------
@@ -172,6 +184,8 @@ export const FEATURE_OPT_IN_SCOPES: Record<ScopeFeature, string[]> = {
   ...SCOPE_FEATURES,
   semble: SEMBLE_SCOPES,
   feedback: USERINPUT_SCOPES,
+  // Either form of the getTimeline grant (the `aud=*` one covers it).
+  follows: FOLLOWS_LINKS_ACCESS_SCOPES,
 };
 
 export function isScopeFeature(value: string): value is ScopeFeature {

@@ -10,9 +10,10 @@
 import type { Env, Session } from '../types';
 import { getSessionFromRequest } from '../services/oauth';
 import { createPDSClient } from '../services/pds-client';
-import { FOLLOWS_LINKS_SCOPES } from '../config/scopes';
+import { FOLLOWS_LINKS_ACCESS_SCOPES, FOLLOWS_LINKS_SCOPES } from '../config/scopes';
 import { extractLinkShare, type LinkShare, type TimelineItem } from '../services/follow-links';
 import {
+  FOLLOW_LINKS_SCOPE_DENIED,
   FOLLOW_LINKS_WINDOWS,
   followLinksNeedRefresh,
   readFollowLinkSharers,
@@ -24,10 +25,17 @@ import {
   type FollowLinksWindow,
 } from '../services/follow-links-store';
 import { hasRequiredScopes } from './auth';
+import { grantsScopes } from '../services/scope-check';
 import { normalizeArticleUrl } from '../utils/url-normalize';
 import { log, serializeError } from '../utils/logger';
 
 const PROBE_MAX_PAGES = 5;
+/**
+ * A reader who granted `aud=*` after their PDS refused the narrow grant tries
+ * again at once instead of waiting out the refresh gate, but no more often than
+ * this, in case their PDS refuses that too.
+ */
+const SCOPE_RETRY_MS = 60 * 1000;
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body, null, 2), {
@@ -61,7 +69,7 @@ export async function handleGetFollowLinks(
   // Answered with or without the permission: the first-run question in
   // Everything is asked before it's granted.
   const inEverything = await readFollowLinksInEverything(env, session.did);
-  if (!hasRequiredScopes(session.grantedScopes, FOLLOWS_LINKS_SCOPES)) {
+  if (!hasRequiredScopes(session.grantedScopes, FOLLOWS_LINKS_ACCESS_SCOPES)) {
     return json({ scopeRequired: true, inEverything, links: [], sync: null });
   }
 
@@ -77,10 +85,21 @@ export async function handleGetFollowLinks(
     readFollowLinks(env, session.did, window, now),
   ]);
 
-  const refreshing = followLinksNeedRefresh(sync, now);
+  // The PDS refused the timeline for want of scope. A session holding only the
+  // narrow grant is asked to grant again, which asks for `aud=*` (see
+  // FOLLOWS_LINKS_SCOPES); one that already holds it retries past the gate.
+  let force = false;
+  if (sync?.error === FOLLOW_LINKS_SCOPE_DENIED) {
+    if (!grantsScopes(session.grantedScopes, FOLLOWS_LINKS_SCOPES)) {
+      return json({ scopeRequired: true, inEverything, links: [], sync: null });
+    }
+    force = now - sync.lastPollAt >= SCOPE_RETRY_MS;
+  }
+
+  const refreshing = force || followLinksNeedRefresh(sync, now);
   if (refreshing) {
     ctx.waitUntil(
-      refreshFollowLinks(env, session).catch((error) => {
+      refreshFollowLinks(env, session, { force }).catch((error) => {
         log.error('follow_links_refresh_threw', { did: session.did, ...serializeError(error) });
       })
     );
@@ -114,7 +133,7 @@ export async function handleFollowLinkSharers(
   env: Env,
   session: Session
 ): Promise<Response> {
-  if (!hasRequiredScopes(session.grantedScopes, FOLLOWS_LINKS_SCOPES)) {
+  if (!hasRequiredScopes(session.grantedScopes, FOLLOWS_LINKS_ACCESS_SCOPES)) {
     return json({ scopeRequired: true, sharers: [] });
   }
   const raw = new URL(request.url).searchParams.get('url');
@@ -256,9 +275,10 @@ export async function handleFollowLinksProbe(request: Request, env: Env): Promis
     did: session.did,
     pdsUrl: session.pdsUrl,
     scope: {
-      required: FOLLOWS_LINKS_SCOPES,
+      required: FOLLOWS_LINKS_ACCESS_SCOPES,
+      requested: FOLLOWS_LINKS_SCOPES,
       granted: granted.filter((s) => s.startsWith('rpc:') || s === 'atproto'),
-      hasRequired: FOLLOWS_LINKS_SCOPES.every((s) => granted.includes(s)),
+      hasRequired: grantsScopes(session.grantedScopes, FOLLOWS_LINKS_ACCESS_SCOPES),
     },
     elapsedMs: Date.now() - started,
     pages: pageReports,

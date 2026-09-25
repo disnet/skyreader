@@ -30,7 +30,16 @@ callback).
 | `pckt`     | linkblog + `blog.pckt.document`                            | linkblog + `blog.pckt.document`                    |
 | `offprint` | linkblog + `app.offprint.document.article`                 | linkblog + `app.offprint.document.article`         |
 | `feedback` | `app.userinput.discussion/upvote` + `blob:image/*`         | `include:app.userinput.authBasic` + `blob:image/*` |
-| `follows`  | `rpc:app.bsky.feed.getTimeline?aud=…bsky_appview`          | same (granular)                                    |
+| `follows`  | `rpc:app.bsky.feed.getTimeline?aud=*` (see below)          | same (granular)                                    |
+
+**`follows` asks for `aud=*` but gates on the appview.** The feature only ever proxies
+getTimeline to `did:web:api.bsky.app#bsky_appview`, and gates check that
+(`FOLLOWS_LINKS_ACCESS_SCOPES`). It requests `aud=*` because rsky (Blacksky's PDS) compares an
+`rpc:` grant against the proxy target's bare DID, so the spec-correct `…%23bsky_appview` grant is
+refused there with `403 InsufficientScope`. Sessions holding the narrow grant keep working on the
+reference PDS. On rsky, the refresh stores `last_error = 'scope_denied'` and the route answers
+`scopeRequired: true`, so the reader grants again and gets `aud=*`. Drop back to the narrow scope
+once rsky matches the full `did#service` audience.
 
 A gated route answers `403 { error: 'scope_upgrade_required', feature }`. The frontend offers
 "Allow access", which calls `POST /api/auth/upgrade { features, returnUrl }`. That starts a new
