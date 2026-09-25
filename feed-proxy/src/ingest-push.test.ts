@@ -19,6 +19,8 @@ import {
   MAX_HEALTH_REPORT_FEEDS,
   countDirtyRows,
   createPushLoop,
+  PUSH_BODY_BUDGET_BYTES,
+  MAX_PUSHED_CONTENT_BYTES,
   type IngestConfig,
   type PushResult,
 } from './ingest-push';
@@ -139,6 +141,72 @@ describe('ingest push', () => {
     endpoint.restore();
     expect(second.pushed).toBe(1);
     expect(second.hasMore).toBe(false);
+    expect(countDirtyRows(db)).toBe(0);
+  });
+
+  it('keeps each push under the byte budget, however few items fill it', async () => {
+    // Full-text feeds: three ~3 MB posts would be one ~9 MB request, over the
+    // Worker's 8 MB ingest cap — a 413 that retried the same rows forever and
+    // blocked the whole outbox behind them.
+    const body = `<p>${'x'.repeat(1.5 * 1024 * 1024)}</p>`;
+    writeFeedItems(
+      db,
+      URL_HASH,
+      [item('g3', { content: body }), item('g2', { content: body }), item('g1', { content: body })],
+      Date.now()
+    );
+
+    const endpoint = mockIngestEndpoint();
+    const sizes: number[] = [];
+    const config = { ...CONFIG, batchSize: 100 };
+    let result: PushResult;
+    do {
+      result = await pushDirtyItems(db, config);
+      sizes.push(JSON.stringify(endpoint.calls.at(-1)!.body).length);
+    } while (result.hasMore && result.pushed > 0);
+    endpoint.restore();
+
+    expect(endpoint.calls.length).toBe(2);
+    for (const size of sizes) expect(size).toBeLessThanOrEqual(PUSH_BODY_BUDGET_BYTES);
+    expect(endpoint.calls.flatMap((c) => c.body.items.map((i) => i.guid))).toEqual([
+      'g1',
+      'g2',
+      'g3',
+    ]);
+    expect(countDirtyRows(db)).toBe(0);
+  });
+
+  it('sends a single over-budget item alone rather than never sending it', async () => {
+    const body = `<p>${'x'.repeat(1.5 * 1024 * 1024)}</p>`;
+    writeFeedItems(db, URL_HASH, [item('g2'), item('g1', { content: body })], Date.now());
+
+    const endpoint = mockIngestEndpoint();
+    const first = await pushDirtyItems(db, { ...CONFIG, batchSize: 100, bodyBudgetBytes: 1024 });
+    const second = await pushDirtyItems(db, { ...CONFIG, batchSize: 100, bodyBudgetBytes: 1024 });
+    endpoint.restore();
+
+    expect(first.pushed).toBe(1);
+    expect(first.hasMore).toBe(true);
+    expect(endpoint.calls[0].body.items[0].item.content).toBe(body);
+    expect(second.pushed).toBe(1);
+    expect(countDirtyRows(db)).toBe(0);
+  });
+
+  it('drops a body too large for the archive to store, keeping a summary', async () => {
+    const huge = `<p>Opening line.</p><p>${'y'.repeat(MAX_PUSHED_CONTENT_BYTES)}</p>`;
+    writeFeedItems(db, URL_HASH, [item('g1', { content: huge })], Date.now());
+    const hash = selectDirtyRows(db, 1)[0].content_hash;
+
+    const endpoint = mockIngestEndpoint();
+    await pushDirtyItems(db, { ...CONFIG, batchSize: 100 });
+    endpoint.restore();
+
+    const sent = endpoint.calls[0].body.items[0];
+    expect(sent.item.content).toBeUndefined();
+    expect(sent.item.contentTruncated).toBe(true);
+    expect(sent.item.summary).toContain('Opening line.');
+    // Hash is still the full item's, so edit detection is unchanged.
+    expect(sent.contentHash).toBe(hash);
     expect(countDirtyRows(db)).toBe(0);
   });
 

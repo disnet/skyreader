@@ -238,6 +238,13 @@ once the object is written; an unchanged re-push skips the write, and the sanity
 the bodies of the rows it removes. A failed R2 put is logged, not thrown, so an R2 outage degrades
 to extraction instead of stalling the pusher.
 
+The pusher sizes each request by bytes as well as by item count (`PUSH_BODY_BUDGET_BYTES = 4 MB`
+in `feed-proxy/src/ingest-push.ts`, half the Worker's 8 MB ingest cap). Full-text feeds put
+consecutive seqs of 100+ KB items in the outbox, and a request the Worker refused with a 413 was
+retried with the same lowest dirty seqs forever — stalling ingest for every feed, not just the big
+one. A body over `MAX_PUSHED_CONTENT_BYTES = 2 MB` (the stored ceiling) is dropped before sending
+and marked `contentTruncated`, so no single item can exceed the cap on its own.
+
 Before deploying the Worker with the `ITEM_BODIES` binding, create each environment's bucket (the
 deploy fails against a missing one):
 

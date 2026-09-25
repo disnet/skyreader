@@ -7,6 +7,9 @@ export interface FeedItem {
   summary?: string;
   imageUrl?: string;
   publishedAt: string;
+  // Set only on the pushed copy (ingest-push.ts) when a body too large for the
+  // archive to store was dropped before sending. Never stored in the proxy's log.
+  contentTruncated?: boolean;
 }
 
 export interface ParsedFeed {

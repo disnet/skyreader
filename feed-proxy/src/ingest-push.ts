@@ -1,6 +1,7 @@
 import type { Database } from 'bun:sqlite';
 import type { FeedItem } from './types';
 import { hashUrl, itemContentHash } from './app';
+import { excerptFromContent } from './feed-parser';
 
 /**
  * Ingest push: the proxy stops being a read path and becomes a crawler that
@@ -26,6 +27,8 @@ export interface IngestConfig {
   secret?: string;
   // Items per push request. The Worker's own cap is well above this.
   batchSize?: number;
+  // Byte budget per push request (PUSH_BODY_BUDGET_BYTES); overridable for tests.
+  bodyBudgetBytes?: number;
   timeoutMs?: number;
   // How stale a feed's `last_requested_at` may get before the crawl-set pull
   // rewrites it. See registerCrawlFeeds — this is what keeps the 5-minutely pull
@@ -35,6 +38,21 @@ export interface IngestConfig {
 
 const DEFAULT_BATCH_SIZE = 100;
 const DEFAULT_TIMEOUT_MS = 30_000;
+
+// Byte budget for one push request. The Worker rejects an ingest body over
+// MAX_INGEST_BODY_BYTES (8 MB, backend/src/routes/ingest.ts) with a 413, and a
+// failed push acks nothing — so the next cycle selects the same lowest dirty
+// seqs and fails again, forever, stalling the whole outbox behind them. An item
+// count alone can't prevent that: one full-text feed (a fetch may be up to 10 MB)
+// fills a 100-item batch with consecutive seqs. Half the Worker's cap leaves room
+// for JSON escaping and the feed metadata riding along.
+export const PUSH_BODY_BUDGET_BYTES = 4 * 1024 * 1024;
+
+// Bodies above this are dropped before pushing. Mirrors the Worker's
+// MAX_STORED_BODY_BYTES (backend/src/routes/item-bodies.ts), which would drop
+// them anyway — and without it, one body near the budget could still make a
+// single-item request the Worker refuses, which is the same stall.
+export const MAX_PUSHED_CONTENT_BYTES = 2 * 1024 * 1024;
 
 interface DirtyRow {
   seq: number;
@@ -199,7 +217,24 @@ export async function pushDirtyItems(db: Database, config: IngestConfig): Promis
   const rows = selectDirtyRows(db, batchSize);
   if (rows.length === 0) return { pushed: 0, hasMore: false };
 
-  const urlHashes = [...new Set(rows.map((r) => r.url_hash))];
+  // Fill the request up to the byte budget, in seq order. Rows past it stay dirty
+  // and lead the next batch. The first row always goes, so an item bigger than
+  // the budget on its own still moves (bodies are bounded below by
+  // MAX_PUSHED_CONTENT_BYTES, which keeps it under the Worker's cap).
+  const budget = config.bodyBudgetBytes ?? PUSH_BODY_BUDGET_BYTES;
+  const sent: DirtyRow[] = [];
+  const items: ReturnType<typeof toIngestItem>[] = [];
+  let bytes = 0;
+  for (const row of rows) {
+    const entry = toIngestItem(row);
+    const size = Buffer.byteLength(JSON.stringify(entry));
+    if (sent.length > 0 && bytes + size > budget) break;
+    sent.push(row);
+    items.push(entry);
+    bytes += size;
+  }
+
+  const urlHashes = [...new Set(sent.map((r) => r.url_hash))];
   const feeds = feedMetadata(db, urlHashes).map((meta) => ({
     feedUrl: meta.url,
     title: meta.title,
@@ -207,21 +242,6 @@ export async function pushDirtyItems(db: Database, config: IngestConfig): Promis
     description: meta.description,
     imageUrl: meta.image_url,
   }));
-
-  const items = rows.map((row) => {
-    const item = JSON.parse(row.item_json) as FeedItem;
-    return {
-      // ALWAYS the registered/requested URL (cache.url), never a post-redirect
-      // one: D1 joins subscriptions on this exact string.
-      feedUrl: row.feed_url,
-      guid: row.guid,
-      item,
-      publishedAt: row.published_at,
-      firstSeenAt: row.first_seen_at,
-      // A pre-hash legacy row still needs a hash for D1's NOT NULL column.
-      contentHash: row.content_hash || itemContentHash(item),
-    };
-  });
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (config.secret) headers['X-Proxy-Secret'] = config.secret;
@@ -243,8 +263,8 @@ export async function pushDirtyItems(db: Database, config: IngestConfig): Promis
       };
     }
 
-    ackPushed(db, rows);
-    return { pushed: rows.length, hasMore: rows.length >= batchSize };
+    ackPushed(db, sent);
+    return { pushed: sent.length, hasMore: rows.length >= batchSize || sent.length < rows.length };
   } catch (error) {
     return {
       pushed: 0,
@@ -252,6 +272,36 @@ export async function pushDirtyItems(db: Database, config: IngestConfig): Promis
       error: error instanceof Error ? error.message : String(error),
     };
   }
+}
+
+/** One dirty row as the Worker's ingest endpoint takes it. */
+function toIngestItem(row: DirtyRow) {
+  let item = JSON.parse(row.item_json) as FeedItem;
+  // A pre-hash legacy row still needs a hash for D1's NOT NULL column. Computed
+  // before any trimming below, so it's always the full item's hash — the same
+  // one the proxy compares for edits.
+  const contentHash = row.content_hash || itemContentHash(item);
+  if (item.content && Buffer.byteLength(item.content) > MAX_PUSHED_CONTENT_BYTES) {
+    // Too big for the archive to store (see MAX_PUSHED_CONTENT_BYTES). Drop it
+    // here, flagged exactly as the Worker would, so the reader extracts it on
+    // open. The parser has normally supplied a summary; derive one if not.
+    const { content, ...rest } = item;
+    item = {
+      ...rest,
+      summary: rest.summary || excerptFromContent(content) || undefined,
+      contentTruncated: true,
+    };
+  }
+  return {
+    // ALWAYS the registered/requested URL (cache.url), never a post-redirect
+    // one: D1 joins subscriptions on this exact string.
+    feedUrl: row.feed_url,
+    guid: row.guid,
+    item,
+    publishedAt: row.published_at,
+    firstSeenAt: row.first_seen_at,
+    contentHash,
+  };
 }
 
 export interface RegisterCrawlFeedsResult {
