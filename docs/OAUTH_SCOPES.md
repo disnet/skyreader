@@ -31,6 +31,7 @@ callback).
 | `offprint` | linkblog + `app.offprint.document.article`                 | linkblog + `app.offprint.document.article`         |
 | `feedback` | `app.userinput.discussion/upvote` + `blob:image/*`         | `include:app.userinput.authBasic` + `blob:image/*` |
 | `follows`  | `rpc:app.bsky.feed.getTimeline?aud=*` (see below)          | same (granular)                                    |
+| `bluesky`  | `app.bsky.feed.post` + `blob:image/*`                      | same (granular)                                    |
 
 **`follows` asks for `aud=*` but gates on the appview.** The feature only ever proxies
 getTimeline to `did:web:api.bsky.app#bsky_appview`, and gates check that

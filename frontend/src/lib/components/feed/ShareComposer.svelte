@@ -24,6 +24,8 @@
   import { getFaviconUrl } from '$lib/utils/favicon';
   import { formatQuoteSeed } from '$lib/utils/linkPost';
   import { positionFloating } from '$lib/utils/floating';
+  import { BLUESKY_MAX_GRAPHEMES, graphemeLength, planBlueskyPost } from '$lib/utils/blueskyPost';
+  import { grantPermissions } from '$lib/services/permissions';
 
   const MAX = 3000;
 
@@ -84,6 +86,33 @@
     }
     return composer.blocks.length;
   });
+
+  // ── Also on Bluesky ────────────────────────────────────────────────────────
+  // What the cross-post will actually carry, planned live from the draft so the
+  // reader sees the 300-character cut and the text shots before posting, not after.
+  let showBluesky = $derived(composer.blueskyOffered);
+  let blueskyPlan = $derived(
+    showBluesky && composer.bluesky && article
+      ? planBlueskyPost(composer.blocks, article.url, { textShots: composer.textShots })
+      : null
+  );
+  let draftHasQuotes = $derived(composer.quoteCount > 0);
+  let blueskySummary = $derived.by(() => {
+    if (!blueskyPlan) return '';
+    const parts: string[] = [];
+    const shots = blueskyPlan.shots.length;
+    if (shots > 0) parts.push(`${shots} ${shots === 1 ? 'image' : 'images'}`);
+    else parts.push('Link card');
+    if (blueskyPlan.droppedQuotes > 0) parts.push(`${blueskyPlan.droppedQuotes} more left out`);
+    if (blueskyPlan.trimmed) parts.push('text trimmed to fit');
+    return parts.join(' · ');
+  });
+
+  async function allowBluesky() {
+    // The grant leaves the page; make sure the draft is saved before it goes.
+    await composer.saveNow();
+    grantPermissions(['bluesky'], window.location.pathname + window.location.search);
+  }
 
   // ── Quote picker ────────────────────────────────────────────────────────────
   // Saved highlights on the article, shown in full with their surrounding
@@ -694,6 +723,33 @@
         {/if}
       </div>
 
+      {#if blueskyPlan}
+        <!-- The cross-post, summarized: Bluesky takes 300 characters and one
+             kind of embed, so the reader sees what it will carry before Post. -->
+        <div class="bluesky-strip">
+          <Icon name="bluesky" size={14} />
+          {#if composer.blueskyAccess === 'missing'}
+            <span class="bluesky-summary">Posting to Bluesky needs your permission.</span>
+            <button type="button" class="bluesky-allow" onclick={allowBluesky}>Allow access</button>
+          {:else}
+            <span class="bluesky-summary">{blueskySummary}</span>
+            {#if draftHasQuotes}
+              <label class="bluesky-option">
+                <input
+                  type="checkbox"
+                  checked={composer.textShots}
+                  onchange={(e) => composer.setTextShots(e.currentTarget.checked)}
+                />
+                Quotes as images
+              </label>
+            {/if}
+            <span class="bluesky-count"
+              >{graphemeLength(blueskyPlan.text)}/{BLUESKY_MAX_GRAPHEMES}</span
+            >
+          {/if}
+        </div>
+      {/if}
+
       <footer class="composer-foot">
         <div class="foot-left">
           {#if hasQuoteSources}
@@ -772,6 +828,16 @@
                 onchange={(e) => composer.setAttribution(e.currentTarget.checked)}
               />
               <span class="foot-btn-label">Posted from Skyreader</span>
+            </label>
+          {/if}
+          {#if showBluesky}
+            <label class="attribution-toggle">
+              <input
+                type="checkbox"
+                checked={composer.bluesky}
+                onchange={(e) => composer.setBluesky(e.currentTarget.checked)}
+              />
+              <span class="foot-btn-label">Also on Bluesky</span>
             </label>
           {/if}
           {#if isEdit}
@@ -1193,6 +1259,50 @@
 
   .attribution-toggle input {
     margin: 0;
+    cursor: pointer;
+  }
+
+  /* ── Also on Bluesky ─────────────────────────────────────────────────────── */
+  .bluesky-strip {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.25rem 0.625rem;
+    padding: 0.375rem 1rem;
+    border-top: 1px solid var(--color-border, #e0e0e0);
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
+  }
+
+  .bluesky-summary {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .bluesky-option {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3125rem;
+    cursor: pointer;
+  }
+
+  .bluesky-option input {
+    margin: 0;
+    cursor: pointer;
+  }
+
+  .bluesky-count {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .bluesky-allow {
+    padding: 0.1875rem 0.625rem;
+    border: 1px solid var(--color-primary, #0066cc);
+    border-radius: 6px;
+    background: none;
+    color: var(--color-primary, #0066cc);
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
     cursor: pointer;
   }
 

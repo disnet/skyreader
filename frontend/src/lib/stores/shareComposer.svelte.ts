@@ -7,6 +7,8 @@
 // Edit mode edits the note of an already-posted share; those edits go to the
 // live record on Update and are not drafted.
 
+import { api } from '$lib/services/api';
+import { crossPostToBluesky } from '$lib/services/blueskyCrossPost';
 import { linkblogStore } from '$lib/stores/linkblog.svelte';
 import { preferences } from '$lib/stores/preferences.svelte';
 import { shareDraftsStore } from '$lib/stores/shareDrafts.svelte';
@@ -58,6 +60,15 @@ function createShareComposerStore() {
   // remove the line on an edit (delete and reshare covers it), and the backend
   // preserves whatever the record already has.
   let attribution = $state(false);
+  // "Also post to Bluesky", and whether its quotes go out as images. Seeded
+  // from sticky per-account preferences like `attribution`. Create mode on the
+  // default write path only: an edit has no new post to cross-post, and a host
+  // with its own submit isn't sharing through the linkblog at all.
+  let bluesky = $state(false);
+  let textShots = $state(true);
+  // Whether this session can post to Bluesky, checked when the box is ticked so
+  // the composer can ask for access before Post rather than after.
+  let blueskyAccess = $state<'unknown' | 'granted' | 'missing'>('unknown');
   let draftCreatedAt = 0;
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -108,6 +119,18 @@ function createShareComposerStore() {
     void persistDraft().then(() => shareDraftsStore.flushServer());
   }
 
+  /**
+   * Save the draft everywhere and wait for it: for when the page is about to
+   * go away (the Bluesky permission round-trip), where flush()'s fire-and-forget
+   * could be cut off mid-write.
+   */
+  async function saveNow() {
+    clearTimeout(saveTimer);
+    saveTimer = undefined;
+    await persistDraft();
+    await shareDraftsStore.flushServer();
+  }
+
   function open(options: ComposerOpenOptions) {
     // Drafts hydrate with the app, but guard the race (and hosts that never
     // hydrate): make sure the store is loaded before resuming from it.
@@ -135,6 +158,9 @@ function createShareComposerStore() {
     minimized = false;
     posting = false;
     attribution = mode === 'create' && preferences.linkblogAttributionOn;
+    bluesky = mode === 'create' && !options.submit && preferences.blueskyCrossPost;
+    textShots = preferences.blueskyTextShots;
+    if (bluesky) void checkBlueskyAccess();
 
     if (mode === 'edit') {
       blocks = noteToBlocks(options.initialNote);
@@ -146,6 +172,15 @@ function createShareComposerStore() {
         ? existing.blocks.map((b) => ({ ...b }))
         : [{ kind: 'text', text: '' }];
       if (blocks[blocks.length - 1].kind !== 'text') blocks.push({ kind: 'text', text: '' });
+    }
+  }
+
+  async function checkBlueskyAccess() {
+    try {
+      const status = await api.getIntegrationStatus();
+      blueskyAccess = status.scopeStatus.bluesky ? 'granted' : 'missing';
+    } catch {
+      // Offline or a blip: leave it unknown and let the post itself find out.
     }
   }
 
@@ -228,6 +263,9 @@ function createShareComposerStore() {
     posting = true;
     const noteText = note;
     const { article, repostUri, mode, submit } = session;
+    const crossPost = mode === 'create' && !submit && bluesky;
+    const postedBlocks = blocks.map((b) => ({ ...b }));
+    const shots = textShots;
     try {
       if (submit) {
         await submit(noteText);
@@ -257,6 +295,9 @@ function createShareComposerStore() {
       session = null;
       blocks = [];
       minimized = false;
+      // After the linkblog post, not alongside it: the share is the thing that
+      // must land, and the cross-post reports on its own through a toast.
+      if (crossPost) void crossPostToBluesky(article, postedBlocks, { textShots: shots });
       return true;
     } catch (e) {
       console.error('Failed to post share:', e);
@@ -312,6 +353,30 @@ function createShareComposerStore() {
     },
     get attribution() {
       return attribution;
+    },
+    /** Tick or untick "Also post to Bluesky"; the choice sticks per account. */
+    setBluesky(value: boolean) {
+      bluesky = value;
+      preferences.setBlueskyCrossPost(value);
+      if (value) void checkBlueskyAccess();
+    },
+    saveNow,
+    setTextShots(value: boolean) {
+      textShots = value;
+      preferences.setBlueskyTextShots(value);
+    },
+    /** Whether this draft can offer the Bluesky cross-post at all. */
+    get blueskyOffered() {
+      return Boolean(session && session.mode === 'create' && !session.submit);
+    },
+    get bluesky() {
+      return bluesky;
+    },
+    get textShots() {
+      return textShots;
+    },
+    get blueskyAccess() {
+      return blueskyAccess;
     },
     get session() {
       return session;

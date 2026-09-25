@@ -15,6 +15,18 @@ A post is your commentary plus any **quoted passages** you pull in. The quote pi
 
 You can edit a post's note after publishing, or take a post down.
 
+## Also posting to Bluesky
+
+Tick **Also on Bluesky** in the composer to post the share to Bluesky as well, from your own account. The box stays ticked for your next share until you untick it. The first time, Skyreader asks for permission to post for you.
+
+A Bluesky post holds 300 characters, so the composer shows what yours will carry before you post:
+
+- **Your commentary** becomes the post's text, trimmed to fit if it runs long.
+- **Quoted passages** go out as images (text shots): each quote set in the article's type, signed with the article's title and site. Bluesky takes up to four. The image's description is the quote itself, so it stays readable to screen readers. Untick **Quotes as images** to put the quotes in the text instead.
+- **The link.** Without images, the post carries the article's link card. With them, Bluesky can't show a card too, so the link goes in the text.
+
+The Bluesky post is separate from your linkblog post: editing or removing the share here doesn't change it. Manage it in Bluesky.
+
 ## Where your linkblog lives
 
 Your linkblog is a publication stored in your PDS, which means it's yours in a concrete way: it's readable across the Atmosphere and it outlives Skyreader.

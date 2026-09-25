@@ -42,6 +42,16 @@ vi.mock('$lib/stores/shareDrafts.svelte', () => ({
   },
 }));
 
+// The cross-post runs after the share; the composer's job is only to hand it
+// the right draft. getIntegrationStatus answers the access check on open.
+const crossPostToBluesky = vi.fn();
+vi.mock('$lib/services/blueskyCrossPost', () => ({
+  crossPostToBluesky: (...args: unknown[]) => crossPostToBluesky(...args),
+}));
+vi.mock('$lib/services/api', () => ({
+  api: { getIntegrationStatus: () => Promise.resolve({ scopeStatus: { bluesky: true } }) },
+}));
+
 const ARTICLE = {
   subscriptionId: 0,
   guid: 'https://example.test/post',
@@ -69,6 +79,7 @@ async function openCreate(shareComposer: { open: (o: { article: typeof ARTICLE }
 beforeEach(() => {
   localStorage.clear();
   shareLink.mockReset().mockResolvedValue('shared');
+  crossPostToBluesky.mockReset().mockResolvedValue(true);
 });
 
 describe('share composer attribution', () => {
@@ -110,5 +121,57 @@ describe('share composer attribution', () => {
     await shareComposer.post();
 
     expect(shareLink).toHaveBeenCalledWith(ARTICLE, undefined, undefined, false);
+  });
+});
+
+describe('share composer: also on Bluesky', () => {
+  it('cross-posts the draft after the share when ticked, and remembers the choice', async () => {
+    const { preferences, shareComposer } = await freshStores();
+    await openCreate(shareComposer);
+    shareComposer.appendQuote('A passage.');
+    shareComposer.setBluesky(true);
+    shareComposer.setTextShots(false);
+    expect(preferences.blueskyCrossPost).toBe(true);
+    expect(preferences.blueskyTextShots).toBe(false);
+
+    expect(await shareComposer.post()).toBe(true);
+    expect(shareLink).toHaveBeenCalled();
+    expect(crossPostToBluesky).toHaveBeenCalledWith(
+      ARTICLE,
+      [
+        { kind: 'quote', text: 'A passage.' },
+        { kind: 'text', text: '' },
+      ],
+      { textShots: false }
+    );
+
+    // The next draft starts ticked.
+    await openCreate(shareComposer);
+    expect(shareComposer.bluesky).toBe(true);
+  });
+
+  it('does not cross-post when unticked', async () => {
+    const { shareComposer } = await freshStores();
+    await openCreate(shareComposer);
+    await shareComposer.post();
+    expect(crossPostToBluesky).not.toHaveBeenCalled();
+  });
+
+  it('does not cross-post when the linkblog share fails', async () => {
+    const { shareComposer } = await freshStores();
+    shareLink.mockResolvedValue('failed');
+    await openCreate(shareComposer);
+    shareComposer.setBluesky(true);
+    expect(await shareComposer.post()).toBe(false);
+    expect(crossPostToBluesky).not.toHaveBeenCalled();
+  });
+
+  it('is not offered when editing a posted share', async () => {
+    const { preferences, shareComposer } = await freshStores();
+    preferences.setBlueskyCrossPost(true);
+    shareComposer.open({ article: ARTICLE, mode: 'edit', initialNote: 'hi' } as never);
+    await Promise.resolve();
+    expect(shareComposer.blueskyOffered).toBe(false);
+    expect(shareComposer.bluesky).toBe(false);
   });
 });

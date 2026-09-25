@@ -575,7 +575,7 @@ function imageEntry(value: unknown): { alt: string; image: UnknownRecord } | nul
  * checked before this, but it is the caller's claim about the body, not a bound
  * on it, and a chunked body carries none at all.
  */
-async function readCapped(
+export async function readCapped(
   body: ReadableStream<Uint8Array> | null,
   limit: number
 ): Promise<ArrayBuffer | null> {
