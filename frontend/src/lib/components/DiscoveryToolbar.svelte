@@ -58,6 +58,13 @@
     padding: 0;
   }
 
+  /* iOS Safari zooms the viewport when a focused input is smaller than 16px. */
+  @media (hover: none) and (pointer: coarse) {
+    .search input {
+      font-size: 1rem;
+    }
+  }
+
   .search:focus-within {
     outline: 2px solid var(--color-primary);
     outline-offset: -1px;
