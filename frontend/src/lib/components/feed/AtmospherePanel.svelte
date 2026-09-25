@@ -1822,6 +1822,8 @@
 
   /* Quiet: a label, not a badge. It explains the order, it doesn't rank people. */
   .entry-follows {
+    flex-shrink: 0;
+    white-space: nowrap;
     font-size: var(--text-xs);
     color: var(--color-text-secondary);
     padding: 0 0.3125rem;
@@ -1830,8 +1832,10 @@
     line-height: 1.4;
   }
 
+  /* The name gives way (to its ellipsis) before the label or the meta can
+     wrap; the handle below yields far sooner, so it still goes first. */
   .entry-name {
-    flex-shrink: 0;
+    min-width: 8ch;
     max-width: 24ch;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1842,6 +1846,7 @@
 
   /* The handle identifies; it doesn't lead. It yields its width first. */
   .entry-handle {
+    flex-shrink: 100;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
