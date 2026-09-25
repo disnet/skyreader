@@ -235,6 +235,9 @@ export interface ArticleCardViewProps {
   isOpen: boolean;
   highlighted?: boolean;
   isTruncated?: boolean;
+  /** Whether "More" can expand the card — the clamp overflows, or the body was
+   *  dropped at ingest and expanding will extract it. */
+  canExpand?: boolean;
   currentlyShared?: boolean;
   /** The posted note. Not rendered — it decides whether the Share button shows
    *  its "has commentary" dot, and what its title says. */
