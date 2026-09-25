@@ -87,7 +87,7 @@ export async function openFollowLink(
  * `noopener` would make window.open return null either way, so the opener is
  * cut by hand instead.
  */
-function openOutside(url: string): void {
+export function openOutside(url: string): void {
   const tab = window.open(url, '_blank');
   if (tab) {
     tab.opener = null;

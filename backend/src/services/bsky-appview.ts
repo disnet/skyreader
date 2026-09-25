@@ -112,3 +112,52 @@ export async function fetchProfiles(dids: string[]): Promise<Map<string, BskyPro
 
   return map;
 }
+
+/** A custom feed's card: what Manage Sources and the channel name show. */
+export interface BskyFeedGeneratorLite {
+  uri: string;
+  displayName: string;
+  description?: string;
+  avatar?: string;
+  creatorHandle?: string;
+}
+
+/**
+ * Feed generator cards for a set of at-uris, batched at getFeedGenerators'
+ * limit. A feed that's gone, or a batch that failed, is simply absent.
+ */
+export async function fetchFeedGenerators(
+  uris: string[]
+): Promise<Map<string, BskyFeedGeneratorLite>> {
+  const map = new Map<string, BskyFeedGeneratorLite>();
+  for (let i = 0; i < uris.length; i += 25) {
+    const params = new URLSearchParams();
+    for (const uri of uris.slice(i, i + 25)) params.append('feeds', uri);
+    try {
+      const res = await fetch(`${APPVIEW_BASE}/xrpc/app.bsky.feed.getFeedGenerators?${params}`);
+      if (!res.ok) continue;
+      const data = (await res.json()) as {
+        feeds?: {
+          uri?: string;
+          displayName?: string;
+          description?: string;
+          avatar?: string;
+          creator?: { handle?: string };
+        }[];
+      };
+      for (const f of data.feeds ?? []) {
+        if (!f.uri || !f.displayName) continue;
+        map.set(f.uri, {
+          uri: f.uri,
+          displayName: f.displayName,
+          ...(f.description ? { description: f.description } : {}),
+          ...(f.avatar ? { avatar: f.avatar } : {}),
+          ...(f.creator?.handle ? { creatorHandle: f.creator.handle } : {}),
+        });
+      }
+    } catch (error) {
+      console.error('[bsky-appview] getFeedGenerators error:', error);
+    }
+  }
+  return map;
+}

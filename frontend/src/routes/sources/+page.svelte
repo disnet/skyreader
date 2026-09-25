@@ -27,6 +27,7 @@
     type AuthorPublication,
   } from '$lib/components/sources/SourcesDiscovery.svelte';
   import FollowsSourceRow from '$lib/components/sources/FollowsSourceRow.svelte';
+  import BlueskyFeedsSection from '$lib/components/sources/BlueskyFeedsSection.svelte';
   import LimitNotice from '$lib/components/LimitNotice.svelte';
   import { feedLimitLine } from '$lib/utils/limitCopy';
   import { auth } from '$lib/stores/auth.svelte';
@@ -679,6 +680,9 @@
           <FollowsSourceRow />
         </SourceList>
       </section>
+      <section class="sources-section" id="bluesky">
+        <BlueskyFeedsSection />
+      </section>
     {/if}
   {:else}
     {#if noMatches}
@@ -717,6 +721,13 @@
             No blogs or linkblogs yet. Find people in <strong>Find more</strong> below.
           </p>
         {/if}
+      </section>
+    {/if}
+
+    <!-- BLUESKY FEEDS -->
+    {#if showAtmosphere && !auth.isGuest && !searchQuery}
+      <section class="sources-section" id="bluesky">
+        <BlueskyFeedsSection />
       </section>
     {/if}
 

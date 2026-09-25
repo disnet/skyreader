@@ -156,7 +156,9 @@ function show(view: FilteredView | null) {
 }
 
 function rows() {
-  return feedViewStore.currentItems.map((i) => `${i.type}:${i.item.title}`);
+  return feedViewStore.currentItems.map(
+    (i) => `${i.type}:${'title' in i.item ? i.item.title : ''}`
+  );
 }
 
 describe('follows links in the river', () => {

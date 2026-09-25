@@ -152,8 +152,14 @@ describe('progressive requests', () => {
       const granted = grantedFeatures(buildRequestedScopes(SETS_OFF, [feature]));
       expect(granted).toContain(feature);
       const extra = granted.filter((f) => f !== feature);
-      // pckt / offprint ride on the linkblog.
-      expect(extra).toEqual(feature === 'pckt' || feature === 'offprint' ? ['linkblog'] : []);
+      // pckt / offprint ride on the linkblog; Bluesky feeds include the
+      // timeline read that From your follows is.
+      const prerequisites: Partial<Record<ScopeFeature, ScopeFeature[]>> = {
+        pckt: ['linkblog'],
+        offprint: ['linkblog'],
+        bluesky: ['follows'],
+      };
+      expect(extra).toEqual(prerequisites[feature] ?? []);
     }
   });
 

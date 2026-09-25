@@ -113,6 +113,13 @@ import {
   handleFollowLinksProbe,
   handleGetFollowLinks,
 } from './routes/follow-links';
+import {
+  handleBskyFeedsWrite,
+  handleBskyPost,
+  handleBskySubjectRecord,
+  handleGetBskyFeed,
+  handleGetBskyFeeds,
+} from './routes/bsky';
 import { purgeFollowLinks } from './services/follow-links-store';
 import { handleGetSettings, handleUpdateSettings } from './routes/settings';
 import {
@@ -493,6 +500,36 @@ async function route(
     case url.pathname === '/api/v2/following-links/probe':
       if (!session) return unauthorizedResponse(headers);
       response = await handleFollowLinksProbe(request, env);
+      break;
+    // Bluesky feeds as sources — see docs/plans/BLUESKY_FEEDS_PLAN.md.
+    case url.pathname === '/api/v2/bsky/feeds':
+      if (!session) return unauthorizedResponse(headers);
+      response =
+        request.method === 'GET'
+          ? await handleGetBskyFeeds(request, env, session)
+          : request.method === 'POST' || request.method === 'DELETE'
+            ? await handleBskyFeedsWrite(request, env, session)
+            : new Response('Method not allowed', { status: 405 });
+      break;
+    case url.pathname === '/api/v2/bsky/feed':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleGetBskyFeed(request, env, session);
+      break;
+    case url.pathname === '/api/v2/bsky/like':
+    case url.pathname === '/api/v2/bsky/repost':
+      if (!session) return unauthorizedResponse(headers);
+      response =
+        request.method === 'POST' || request.method === 'DELETE'
+          ? await handleBskySubjectRecord(
+              request,
+              session,
+              url.pathname.endsWith('/like') ? 'like' : 'repost'
+            )
+          : new Response('Method not allowed', { status: 405 });
+      break;
+    case url.pathname === '/api/v2/bsky/post':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleBskyPost(request, session);
       break;
     case url.pathname === '/api/v2/margin-highlights':
       if (!session) return unauthorizedResponse(headers);

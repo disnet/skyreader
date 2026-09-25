@@ -10,6 +10,8 @@ import {
 } from '$lib/stores/feedView.svelte';
 import { toggleSavedLink } from '$lib/utils/saveLink';
 import { markFollowLinkRead } from '$lib/utils/followLinks';
+import { bskyPostLink } from '$lib/utils/bskyPosts';
+import { bskyFeedsStore } from '$lib/stores/bskyFeeds.svelte';
 import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
 import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
 import { linkblogStore } from '$lib/stores/linkblog.svelte';
@@ -81,6 +83,9 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
       url = item.item.canonicalUrl || item.item.path || '';
     } else if (item.type === 'link') {
       url = item.item.url;
+    } else if (item.type === 'post') {
+      // The article it links to, else the post itself on Bluesky.
+      url = bskyPostLink(item.item)?.url ?? item.item.url;
     } else {
       url = item.item.url;
     }
@@ -122,6 +127,9 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
       );
     } else if (item.type === 'link') {
       void toggleSavedLink(item.item.url);
+    } else if (item.type === 'post') {
+      const link = bskyPostLink(item.item);
+      if (link) void toggleSavedLink(link.url);
     }
   }
 
@@ -330,6 +338,20 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
       condition: hasSelected,
     });
 
+    // Bluesky posts
+    keyboardStore.register({
+      key: 'l',
+      description: 'Like Bluesky post',
+      category: 'Article',
+      action: () => {
+        const item = getSelectedItem();
+        if (item?.type !== 'post') return;
+        if (!bskyFeedsStore.canWrite) bskyFeedsStore.askWrite();
+        else void bskyFeedsStore.toggleLike(item.item);
+      },
+      condition: () => getSelectedItem()?.type === 'post',
+    });
+
     // Other shortcuts
     keyboardStore.register({
       key: 'u',
@@ -355,7 +377,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
       category: 'Article',
       action: () => {
         const item = getSelectedItem();
-        if (!item || item.type === 'link') return;
+        if (!item || item.type === 'link' || item.type === 'post') return;
         void setSavedRowArchived(item, !isSavedRowArchived(item));
       },
       condition: () => hasSelected() && !!feedViewStore.savedFilter,
@@ -403,6 +425,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
     keyboardStore.unregister('m');
     keyboardStore.unregister('t');
     keyboardStore.unregister('u');
+    keyboardStore.unregister('l');
     keyboardStore.unregister('A', true);
     keyboardStore.unregister('a');
     keyboardStore.unregister('e');

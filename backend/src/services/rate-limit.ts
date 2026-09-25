@@ -67,6 +67,12 @@ const RATE_LIMITS: Record<string, RateLimitConfig> = {
   '/api/v2/following-links/settings': STANDARD_LIMIT,
   // One indexed query per article opened, like the mention counts.
   '/api/v2/following-links/for': LIGHT_LIMIT,
+  // Bluesky feeds: a page read is one proxied appview call, paged as the reader
+  // scrolls a channel; a like or repost is one tap.
+  '/api/v2/bsky/feed': LIGHT_LIMIT,
+  '/api/v2/bsky/like': STANDARD_LIMIT,
+  '/api/v2/bsky/repost': STANDARD_LIMIT,
+  '/api/v2/bsky/post': { limit: 20, windowMs: 60000 },
 
   // AT Intents service-auth pre-verification. Keyed by client IP (not did) and checked
   // BEFORE the signature, since verifying a service-auth JWT triggers an outbound DID

@@ -16,6 +16,7 @@ The short version: **your reading is private to you by default.** A few things a
 | Shared links (linkblog) | Your PDS                                       | Always public                                   |
 | Reading rooms           | Your PDS (joins); Skyreader's servers (reads)  | Joining is public; reads are an anonymous count |
 | Links from your follows | Skyreader's servers, for a week                | Private                                         |
+| Bluesky feeds you added | Skyreader's servers (the list, not the posts)  | Private; likes, reposts and replies are public  |
 | Guest data              | Your device only                               | Private                                         |
 
 ## Subscriptions and Atmospheric sync
@@ -51,6 +52,10 @@ Joining a room writes a public record to your PDS, so anyone can see you're read
 ## Links from your follows
 
 If you turn on [From your follows](/guide/from-your-follows/), Skyreader reads your Bluesky Following timeline and keeps the links it finds for a week, privately. It never posts anything.
+
+## Bluesky feeds
+
+If you add [Bluesky feeds](/guide/bluesky-feeds/) as sources, Skyreader keeps which feeds you added, privately. It reads the posts from Bluesky each time and doesn't store them. A like, repost or reply you make is a record in your own Bluesky account, public like any other post.
 
 ## Seeing for yourself
 

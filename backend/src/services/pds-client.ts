@@ -562,6 +562,43 @@ export class PDSClient {
   }
 
   /**
+   * Read one custom feed (an app.bsky.feed.generator at-uri) from the Bluesky
+   * appview, proxied through the PDS so a personalized feed sees the reader.
+   * Needs BLUESKY_READ_SCOPES.
+   */
+  async getFeed<T = unknown>(
+    feed: string,
+    cursor?: string,
+    limit = 30
+  ): Promise<PDSResult<{ feed: T[]; cursor?: string }>> {
+    const params = new URLSearchParams({ feed, limit: String(limit) });
+    if (cursor) params.set('cursor', cursor);
+    return this.request<{ feed: T[]; cursor?: string }>(
+      'GET',
+      `app.bsky.feed.getFeed?${params}`,
+      undefined,
+      { proxy: BSKY_APPVIEW_PROXY }
+    );
+  }
+
+  /**
+   * The reader's Bluesky preferences (saved and pinned feeds among them). The PDS
+   * answers this itself, so it isn't proxied.
+   */
+  async getBskyPreferences<T = unknown>(): Promise<PDSResult<{ preferences: T[] }>> {
+    return this.request<{ preferences: T[] }>('GET', 'app.bsky.actor.getPreferences');
+  }
+
+  /** Create a record with a PDS-assigned rkey (a TID), in the reader's own repo. */
+  async createRecord(collection: string, record: unknown): Promise<PDSResult<PutRecordResponse>> {
+    return this.request<PutRecordResponse>('POST', 'com.atproto.repo.createRecord', {
+      repo: this.session.did,
+      collection,
+      record,
+    });
+  }
+
+  /**
    * Delete a record from the PDS
    */
   async deleteRecord(collection: string, rkey: string): Promise<PDSResult<void>> {

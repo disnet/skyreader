@@ -7,7 +7,12 @@
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { goto } from '$app/navigation';
   import { channelPath, FEEDS_PATH } from '$lib/utils/viewNav';
-  import { FOLLOWS_SOURCE_KEY, subscriptionSourceKey } from '$lib/utils/sourceKeys';
+  import {
+    FOLLOWS_SOURCE_KEY,
+    bskyFeedSourceKey,
+    subscriptionSourceKey,
+  } from '$lib/utils/sourceKeys';
+  import { bskyFeedsStore } from '$lib/stores/bskyFeeds.svelte';
   import { FOLLOWS_CHANNEL_NAME } from '$lib/utils/followsChannel';
   import { auth } from '$lib/stores/auth.svelte';
   import { followLinksStore } from '$lib/stores/followLinks.svelte';
@@ -212,6 +217,7 @@
       if (key) map.set(key, sub.customTitle || sub.title);
     }
     map.set(FOLLOWS_SOURCE_KEY, FOLLOWS_CHANNEL_NAME);
+    for (const feed of bskyFeedsStore.feeds) map.set(bskyFeedSourceKey(feed.uri), feed.displayName);
     return map;
   });
 
@@ -675,8 +681,22 @@
                       onchange={() => feedViewStore.toggleToolbarSourceKey(FOLLOWS_SOURCE_KEY)}
                     />
                     <Icon name="share-2" size={16} />
-                    <span class="check-text">People you follow on Bluesky</span>
+                    <span class="check-text">Links from people you follow</span>
                   </label>
+                  <!-- Bluesky feeds you added: like the follows source, never part of
+                       "All sources"; a channel shows a feed only by naming it. -->
+                  {#each bskyFeedsStore.feeds as feed (feed.uri)}
+                    {@const key = bskyFeedSourceKey(feed.uri)}
+                    <label class="check-label">
+                      <input
+                        type="checkbox"
+                        checked={sourceKeySet.has(key)}
+                        onchange={() => feedViewStore.toggleToolbarSourceKey(key)}
+                      />
+                      <Icon name="bluesky" size={16} />
+                      <span class="check-text">{feed.displayName}</span>
+                    </label>
+                  {/each}
                 {/if}
                 {#each filteredSubscriptions as sub}
                   {@const key = subscriptionSourceKey(sub)}

@@ -2,6 +2,8 @@
   import { appScrollTo, appScrollBy, appScrollTop, appViewportRect } from '$lib/utils/appScroll';
   import { tick } from 'svelte';
   import ArticleCard from '$lib/components/ArticleCard.svelte';
+  import BskyPostCard from '$lib/components/feed/BskyPostCard.svelte';
+  import { bskyPostLink, openBskyPost } from '$lib/utils/bskyPosts';
   import SavedReader from '$lib/components/feed/SavedReader.svelte';
   import InfiniteScrollSentinel from '$lib/components/common/InfiniteScrollSentinel.svelte';
   import { feedViewStore, type FeedDisplayItem } from '$lib/stores/feedView.svelte';
@@ -350,6 +352,17 @@
           onSelect={() => handleSelect(index)}
           onExpand={() => handleExpand(index)}
           onOpenFullscreen={() => void openFollowLink(link, reader)}
+        />
+      {:else if displayItem.type === 'post'}
+        {@const post = displayItem.item}
+        {@const postLink = bskyPostLink(post)}
+        <BskyPostCard
+          {post}
+          highlighted={feedViewStore.selectedKey === displayItem.key}
+          isSaved={postLink ? savesStore.isSaved(postLink.url) : false}
+          onSelect={() => handleSelect(index)}
+          onOpenLink={() => void openBskyPost(post, reader)}
+          onToggleSave={() => postLink && void toggleSavedLink(postLink.url)}
         />
       {/if}
     </div>
