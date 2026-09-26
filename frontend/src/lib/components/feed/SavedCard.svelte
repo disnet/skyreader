@@ -19,6 +19,8 @@
   import { preferences } from '$lib/stores/preferences.svelte';
   import { shareComposerStore } from '$lib/stores/shareComposer.svelte';
   import { shareDraftsStore } from '$lib/stores/shareDrafts.svelte';
+  import { recommendsStore, isRecommendable } from '$lib/stores/recommends.svelte';
+  import { getExternalArticleLink } from '$lib/utils/linkPost';
   import type { Article } from '$lib/types';
   import { db } from '$lib/services/db';
   import { decodeEntities } from '$lib/utils/entities';
@@ -482,6 +484,29 @@
     });
   }
 
+  // Recommend: the one-tap public "worth reading". For a link post it's the
+  // external article; a standard.site document (not a link post) also carries
+  // its record, so the recommend reaches its author.
+  let linkPostUrl = $derived(
+    displayItem.type === 'document' ? getExternalArticleLink(displayItem.item) : undefined
+  );
+  let recommendUrl = $derived(linkPostUrl ?? url);
+  let canRecommend = $derived(Boolean(auth.user) && isRecommendable(recommendUrl));
+  let isRecommended = $derived(recommendsStore.isRecommended(recommendUrl));
+  function toggleRecommend() {
+    if (!isRecommendable(recommendUrl)) return;
+    void recommendsStore.toggle({
+      url: recommendUrl,
+      title,
+      documentUri:
+        displayItem.type === 'document' &&
+        !linkPostUrl &&
+        displayItem.item.recordUri.includes('/site.standard.document/')
+          ? displayItem.item.recordUri
+          : undefined,
+    });
+  }
+
   let popoverMenuItems = $derived.by(() => {
     const items: {
       label: string;
@@ -517,6 +542,14 @@
         onclick: () => {
           void toggleShare();
         },
+      });
+    }
+    if (canRecommend) {
+      items.push({
+        label: isRecommended ? 'Take back recommend' : 'Recommend publicly',
+        icon: 'thumbs-up',
+        active: isRecommended,
+        onclick: toggleRecommend,
       });
     }
     if (auth.user) {

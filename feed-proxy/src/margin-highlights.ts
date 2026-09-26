@@ -74,7 +74,9 @@ async function searchMarginIndex(normUrl: string): Promise<MarginHighlightsResul
     for (const raw of data.items) {
       if (!raw || typeof raw !== 'object') continue;
       const item = raw as Record<string, unknown>;
-      if (item.motivation !== 'highlighting') continue;
+      // A highlight with a comment is `commenting`; both anchor to a passage.
+      const motivation = item.motivation;
+      if (motivation !== 'highlighting' && motivation !== 'commenting') continue;
       const target = item.target as Record<string, unknown> | undefined;
       const source = typeof target?.source === 'string' ? target.source : '';
       if (normalizeArticleUrl(source) !== normUrl) continue;
@@ -90,7 +92,7 @@ async function searchMarginIndex(normUrl: string): Promise<MarginHighlightsResul
           optionalString(creator?.displayName, 256) ?? optionalString(creator?.name, 256) ?? null,
         avatar: optionalString(creator?.avatar, 2048) ?? null,
         createdAt: optionalString(item.createdAt, 64) ?? optionalString(item.created, 64) ?? null,
-        motivation: 'highlighting',
+        motivation,
         note: marginBodyText(item.body).trim().slice(0, 2000) || null,
         selector: {
           type: 'TextQuoteSelector',

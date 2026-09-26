@@ -82,6 +82,21 @@ export const ATMOSPHERE_SCOPES = ['repo:site.standard.graph.subscription'];
 // standard scope-upgrade re-auth flow.
 export const READING_ROOM_SCOPES = ['repo:app.skyreader.reading.readAlong'];
 
+// Recommends — a one-tap public recommendation writes an
+// app.skyreader.social.recommend record to the user's own repo. Kept out of
+// GRANULAR_SCOPES for the same reason as READING_ROOM_SCOPES: it's covered by the
+// permission set (so live sessions pick it up on refresh), and the granular form
+// is only checked on the recommend endpoint, which 403s a stale session into the
+// standard re-grant flow rather than every route.
+export const RECOMMEND_SCOPES = ['repo:app.skyreader.social.recommend'];
+
+// When the recommended article is itself a standard.site document, a
+// site.standard.graph.recommend record is written alongside, so the author and
+// every standard.site app see it too. Best-effort: a session without this scope
+// still recommends, it just skips the standard.site copy. In the base (like
+// ATMOSPHERE_SCOPES) so new sign-ins carry it without opting into anything.
+export const STANDARD_RECOMMEND_SCOPES = ['repo:site.standard.graph.recommend'];
+
 // AT Intents discovery footprint — lets Skyreader write a dev.at-intent.usage record
 // into the user's OWN repo so other Atmosphere apps/agents can discover that the user
 // uses Skyreader and resolve the capabilities it publishes. Deliberately kept OUT of
@@ -129,6 +144,14 @@ export const FOLLOWS_LINKS_ACCESS_SCOPES = [
 ];
 export const FOLLOWS_LINKS_SCOPES = ['rpc:app.bsky.feed.getTimeline?aud=*'];
 
+// Also posting to Bluesky — a share can go out as an app.bsky.feed.post in the
+// reader's own repo, with quoted passages attached as images ("text shots").
+// The post is theirs, exactly as if they had written it in a Bluesky client. The
+// blob scope is what lets those images (and a link card's thumbnail) upload.
+// Kept OUT of GRANULAR_SCOPES for the usual reason: every live session predates it.
+export const BLUESKY_POST_SCOPES = ['repo:app.bsky.feed.post'];
+export const BLUESKY_IMAGE_SCOPES = ['blob:image/*'];
+
 // All possible granular scopes (base + all integrations). Still part of the client
 // metadata so sessions granted before permission sets / progressive requests keep
 // refreshing, and so the granular fallback (permission sets disabled) can request them.
@@ -142,6 +165,8 @@ export const ALL_POSSIBLE_SCOPES = [
   ...OFFPRINT_SCOPES,
   ...ATMOSPHERE_SCOPES,
   ...READING_ROOM_SCOPES,
+  ...RECOMMEND_SCOPES,
+  ...STANDARD_RECOMMEND_SCOPES,
   ...AT_INTENT_SCOPES,
   ...USERINPUT_SCOPES,
   ...USERINPUT_VOTE_SCOPES,
@@ -149,6 +174,7 @@ export const ALL_POSSIBLE_SCOPES = [
   ...FOLLOWS_LINKS_SCOPES,
   // Still in the ceiling so sessions granted the narrow form keep refreshing.
   ...FOLLOWS_LINKS_ACCESS_SCOPES,
+  ...BLUESKY_POST_SCOPES,
 ].join(' ');
 
 // ---------------------------------------------------------------------------
@@ -161,7 +187,7 @@ export const ALL_POSSIBLE_SCOPES = [
 // ---------------------------------------------------------------------------
 
 export type ScopeFeature =
-  'semble' | 'margin' | 'linkblog' | 'pckt' | 'offprint' | 'feedback' | 'follows';
+  'semble' | 'margin' | 'linkblog' | 'pckt' | 'offprint' | 'feedback' | 'follows' | 'blueskyPost';
 
 export const SCOPE_FEATURES: Record<ScopeFeature, string[]> = {
   semble: [...SEMBLE_SCOPES, ...SEMBLE_CONNECTION_SCOPES],
@@ -173,6 +199,7 @@ export const SCOPE_FEATURES: Record<ScopeFeature, string[]> = {
   offprint: [...LINKBLOG_SCOPES, ...OFFPRINT_SCOPES],
   feedback: [...USERINPUT_SCOPES, ...USERINPUT_VOTE_SCOPES, ...USERINPUT_IMAGE_SCOPES],
   follows: FOLLOWS_LINKS_SCOPES,
+  blueskyPost: [...BLUESKY_POST_SCOPES, ...BLUESKY_IMAGE_SCOPES],
 };
 
 // The scopes whose presence means a reader opted into a feature, used to
@@ -186,6 +213,8 @@ export const FEATURE_OPT_IN_SCOPES: Record<ScopeFeature, string[]> = {
   feedback: USERINPUT_SCOPES,
   // Either form of the getTimeline grant (the `aud=*` one covers it).
   follows: FOLLOWS_LINKS_ACCESS_SCOPES,
+  // The blob scope is shared with feedback, so it can't say which one was asked for.
+  blueskyPost: BLUESKY_POST_SCOPES,
 };
 
 export function isScopeFeature(value: string): value is ScopeFeature {
@@ -241,6 +270,7 @@ export function usePermissionSets(env: { OAUTH_PERMISSION_SETS?: string }): bool
 export const SKYREADER_REPO_SCOPES = [
   ...GRANULAR_SCOPES.split(' ').filter((s) => s !== 'atproto'),
   ...READING_ROOM_SCOPES,
+  ...RECOMMEND_SCOPES,
 ];
 
 /**
@@ -254,6 +284,7 @@ export function baseScopes(env: { OAUTH_PERMISSION_SETS?: string }): string[] {
     'atproto',
     ...(usePermissionSets(env) ? [SKYREADER_PERMISSION_SET_SCOPE] : SKYREADER_REPO_SCOPES),
     ...ATMOSPHERE_SCOPES,
+    ...STANDARD_RECOMMEND_SCOPES,
     ...AT_INTENT_SCOPES,
   ];
 }

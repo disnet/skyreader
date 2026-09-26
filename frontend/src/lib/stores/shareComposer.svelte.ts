@@ -7,11 +7,14 @@
 // Edit mode edits the note of an already-posted share; those edits go to the
 // live record on Update and are not drafted.
 
+import { api, ScopeUpgradeError } from '$lib/services/api';
+import { grantPermissions } from '$lib/services/permissions';
+import { crossPostToBluesky } from '$lib/services/blueskyCrossPost';
 import { linkblogStore } from '$lib/stores/linkblog.svelte';
 import { preferences } from '$lib/stores/preferences.svelte';
 import { shareDraftsStore } from '$lib/stores/shareDrafts.svelte';
 import { blocksToNote, noteToBlocks, draftHasContent, draftWordCount } from '$lib/utils/shareNote';
-import type { Article, ShareDraft, ShareDraftBlock } from '$lib/types';
+import type { Article, ScopeFeature, ShareDraft, ShareDraftBlock } from '$lib/types';
 
 export interface ComposerOpenOptions {
   article: Article;
@@ -47,6 +50,9 @@ interface ComposerSession {
   remove?: () => Promise<void> | void;
 }
 
+/** Set before leaving for a permission grant: which account, and which draft. */
+const GRANT_DRAFT_KEY = 'skyreader:grant-draft';
+
 function createShareComposerStore() {
   let session = $state<ComposerSession | null>(null);
   let blocks = $state<ShareDraftBlock[]>([]);
@@ -58,6 +64,19 @@ function createShareComposerStore() {
   // remove the line on an edit (delete and reshare covers it), and the backend
   // preserves whatever the record already has.
   let attribution = $state(false);
+  // "Also post to Bluesky", and whether its quotes go out as images. Seeded
+  // from sticky per-account preferences like `attribution`. Create mode on the
+  // default write path only: an edit has no new post to cross-post, and a host
+  // with its own submit isn't sharing through the linkblog at all.
+  let bluesky = $state(false);
+  let textShots = $state(true);
+  // Whether this session can post to Bluesky, checked when the box is ticked so
+  // the composer can ask for access before Post rather than after.
+  let blueskyAccess = $state<'unknown' | 'granted' | 'missing'>('unknown');
+  // The last Post or Update was refused for a missing permission: the feature
+  // to ask for, or null when the sign-in itself needs refreshing. The drawer
+  // asks in place; the app shell's banner is hidden under the reader.
+  let permissionNeeded = $state<{ feature: ScopeFeature | null } | null>(null);
   let draftCreatedAt = 0;
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -108,6 +127,18 @@ function createShareComposerStore() {
     void persistDraft().then(() => shareDraftsStore.flushServer());
   }
 
+  /**
+   * Save the draft everywhere and wait for it: for when the page is about to
+   * go away (the Bluesky permission round-trip), where flush()'s fire-and-forget
+   * could be cut off mid-write.
+   */
+  async function saveNow() {
+    clearTimeout(saveTimer);
+    saveTimer = undefined;
+    await persistDraft();
+    await shareDraftsStore.flushServer();
+  }
+
   function open(options: ComposerOpenOptions) {
     // Drafts hydrate with the app, but guard the race (and hosts that never
     // hydrate): make sure the store is loaded before resuming from it.
@@ -135,6 +166,12 @@ function createShareComposerStore() {
     minimized = false;
     posting = false;
     attribution = mode === 'create' && preferences.linkblogAttributionOn;
+    bluesky = mode === 'create' && !options.submit && preferences.blueskyCrossPost;
+    textShots = preferences.blueskyTextShots;
+    // A new drawer knows nothing yet: an answer about the last one doesn't carry.
+    blueskyAccess = 'unknown';
+    permissionNeeded = null;
+    if (bluesky) void checkBlueskyAccess();
 
     if (mode === 'edit') {
       blocks = noteToBlocks(options.initialNote);
@@ -147,6 +184,54 @@ function createShareComposerStore() {
         : [{ kind: 'text', text: '' }];
       if (blocks[blocks.length - 1].kind !== 'text') blocks.push({ kind: 'text', text: '' });
     }
+  }
+
+  async function checkBlueskyAccess() {
+    const asked = session;
+    try {
+      const status = await api.getIntegrationStatus();
+      // The drawer moved on to another article while this was in flight.
+      if (session !== asked) return;
+      blueskyAccess = status.scopeStatus.blueskyPost ? 'granted' : 'missing';
+    } catch {
+      // Offline or a blip: leave it unknown and let the post itself find out.
+    }
+  }
+
+  /**
+   * "Allow access" from the drawer. The grant leaves the page, so save the
+   * draft first and remember which one it was, so the drawer can reopen on it
+   * when the reader comes back (resumeAfterGrant). An edit has no draft to
+   * save; its words are lost to the grant either way.
+   */
+  async function allowAccess(features: ScopeFeature[], did: string | undefined) {
+    const articleUrl = session?.mode === 'create' ? session.article.url : undefined;
+    await saveNow();
+    if (did && articleUrl) {
+      try {
+        localStorage.setItem(GRANT_DRAFT_KEY, JSON.stringify({ did, articleUrl }));
+      } catch {
+        // Storage blocked: the draft is still saved, just not reopened for them.
+      }
+    }
+    grantPermissions(features, window.location.pathname + window.location.search);
+  }
+
+  /** Back from a grant asked for in the drawer: reopen the draft it was asked from. */
+  async function resumeAfterGrant(did: string) {
+    let pending: { did?: unknown; articleUrl?: unknown } | null = null;
+    try {
+      const raw = localStorage.getItem(GRANT_DRAFT_KEY);
+      if (!raw) return;
+      localStorage.removeItem(GRANT_DRAFT_KEY);
+      pending = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    if (!pending || pending.did !== did || typeof pending.articleUrl !== 'string') return;
+    await shareDraftsStore.load();
+    const draft = shareDraftsStore.get(pending.articleUrl);
+    if (draft && !session) openDraft(draft);
   }
 
   /** Resume a saved draft from the drafts list (no live Article in hand). */
@@ -226,8 +311,12 @@ function createShareComposerStore() {
   async function post(): Promise<boolean> {
     if (!session || posting) return false;
     posting = true;
+    permissionNeeded = null;
     const noteText = note;
     const { article, repostUri, mode, submit } = session;
+    const crossPost = mode === 'create' && !submit && bluesky;
+    const postedBlocks = blocks.map((b) => ({ ...b }));
+    const shots = textShots;
     try {
       if (submit) {
         await submit(noteText);
@@ -257,9 +346,13 @@ function createShareComposerStore() {
       session = null;
       blocks = [];
       minimized = false;
+      // After the linkblog post, not alongside it: the share is the thing that
+      // must land, and the cross-post reports on its own through a toast.
+      if (crossPost) void crossPostToBluesky(article, postedBlocks, { textShots: shots });
       return true;
     } catch (e) {
-      console.error('Failed to post share:', e);
+      if (e instanceof ScopeUpgradeError) permissionNeeded = { feature: e.feature ?? null };
+      else console.error('Failed to post share:', e);
       return false;
     } finally {
       posting = false;
@@ -312,6 +405,40 @@ function createShareComposerStore() {
     },
     get attribution() {
       return attribution;
+    },
+    /** Tick or untick "Also post to Bluesky"; the choice sticks per account. */
+    setBluesky(value: boolean) {
+      bluesky = value;
+      preferences.setBlueskyCrossPost(value);
+      if (value) void checkBlueskyAccess();
+    },
+    allowBluesky: (did: string | undefined) => allowAccess(['blueskyPost'], did),
+    /** Ask for the permission the last Post was refused for. */
+    allowNeededPermission(did: string | undefined) {
+      if (!permissionNeeded) return;
+      const { feature } = permissionNeeded;
+      return allowAccess(feature ? [feature] : [], did);
+    },
+    resumeAfterGrant,
+    get permissionNeeded() {
+      return permissionNeeded;
+    },
+    setTextShots(value: boolean) {
+      textShots = value;
+      preferences.setBlueskyTextShots(value);
+    },
+    /** Whether this draft can offer the Bluesky cross-post at all. */
+    get blueskyOffered() {
+      return Boolean(session && session.mode === 'create' && !session.submit);
+    },
+    get bluesky() {
+      return bluesky;
+    },
+    get textShots() {
+      return textShots;
+    },
+    get blueskyAccess() {
+      return blueskyAccess;
     },
     get session() {
       return session;

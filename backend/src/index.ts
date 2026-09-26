@@ -109,6 +109,7 @@ import {
   handleRoomJoin,
   handleRoomRead,
 } from './routes/rooms';
+import { handleRecommends } from './routes/recommends';
 import {
   handleFollowLinkSharers,
   handleFollowLinksSettings,
@@ -137,6 +138,7 @@ import {
   handleGetMyFeedback,
   handleUploadFeedbackImage,
 } from './routes/feedback';
+import { handleCreateBlueskyPost, handleUploadBlueskyImage } from './routes/bluesky';
 import {
   handleGetMagazines,
   handleUpsertMagazine,
@@ -733,6 +735,12 @@ async function route(
       response = await handleRoomAddItem(request, env);
       break;
 
+    // Recommends — one-tap public recommendations (routes/recommends.ts)
+    case url.pathname === '/api/recommends':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleRecommends(request, env);
+      break;
+
     // Saved routes
     case url.pathname === '/api/saved':
       if (!session) return unauthorizedResponse(headers);
@@ -841,6 +849,17 @@ async function route(
     case url.pathname === '/api/v2/feedback/image':
       if (!session) return unauthorizedResponse(headers);
       response = await handleUploadFeedbackImage(request, env, session);
+      break;
+
+    // Also posting a linkblog share to Bluesky: a text shot's bytes first, then
+    // the app.bsky.feed.post that embeds them (or the article's link card).
+    case url.pathname === '/api/v2/bluesky/image':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleUploadBlueskyImage(request, env, session);
+      break;
+    case url.pathname === '/api/v2/bluesky/post':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleCreateBlueskyPost(request, env, session);
       break;
 
     // Magazine routes (durable, cross-device reading issues)

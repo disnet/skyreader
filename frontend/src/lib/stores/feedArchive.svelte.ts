@@ -75,6 +75,7 @@ function createFeedArchiveStore() {
           publishedAt: item.publishedAt,
           fetchedAt: Date.now(),
           contentTruncated: item.contentTruncated || undefined,
+          contentLead: item.contentLead || undefined,
         });
       }
 

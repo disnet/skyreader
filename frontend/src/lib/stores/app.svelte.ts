@@ -1,6 +1,7 @@
 import { liveDb } from '$lib/services/liveDb.svelte';
 import { itemLabelsStore } from './itemLabels.svelte';
 import { linkblogStore } from './linkblog.svelte';
+import { recommendsStore } from '$lib/stores/recommends.svelte';
 import { shareDraftsStore } from './shareDrafts.svelte';
 import { myLinkblogStore } from './myLinkblog.svelte';
 import { socialStore } from './social.svelte';
@@ -165,6 +166,7 @@ function createAppManager() {
         // Forced each refresh so a share made elsewhere lights up the button here;
         // then reconcile prunes any local share the (complete) pull says is gone.
         ['linkblog', myLinkblogStore.load(true).then(() => linkblogStore.reconcile())],
+        ['recommends', recommendsStore.load()],
       ];
       const storeLoads = Promise.allSettled(loads.map(([, p]) => p));
 

@@ -5,7 +5,7 @@
     "main": {
       "type": "permission-set",
       "title": "Skyreader",
-      "detail": "Save your subscriptions, follows, and reading rooms to your account, where other Atmospheric apps can see them.",
+      "detail": "Save your subscriptions, follows, reading rooms, and recommends to your account, where other Atmospheric apps can see them.",
       "permissions": [
         {
           "type": "permission",
@@ -13,7 +13,8 @@
           "collection": [
             "app.skyreader.feed.subscription",
             "app.skyreader.social.follow",
-            "app.skyreader.reading.readAlong"
+            "app.skyreader.reading.readAlong",
+            "app.skyreader.social.recommend"
           ]
         }
       ]

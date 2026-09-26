@@ -34,6 +34,8 @@
     isSaved = false,
     onShare,
     shareActive = false,
+    onRecommend,
+    recommendActive = false,
     onTag,
     tagCount = 0,
     tagActive = false,
@@ -59,6 +61,10 @@
     onShare?: () => void;
     /** The item is already shared to the linkblog. */
     shareActive?: boolean;
+    /** One-tap public recommend (toggles). */
+    onRecommend?: () => void;
+    /** The reader has recommended this article. */
+    recommendActive?: boolean;
     onTag?: () => void;
     tagCount?: number;
     tagActive?: boolean;
@@ -138,6 +144,21 @@
         title={shareActive ? 'Shared — edit your note' : 'Share to your linkblog'}
       >
         <Icon name="share" size={20} />
+      </button>
+    {/if}
+
+    {#if onRecommend}
+      <button
+        class="bar-btn"
+        class:active={recommendActive}
+        onclick={onRecommend}
+        aria-pressed={recommendActive}
+        aria-label={recommendActive ? 'Recommended — take it back' : 'Recommend publicly'}
+        title={recommendActive
+          ? 'You recommended this publicly. Tap to take it back'
+          : 'Recommend publicly. Anyone can see it'}
+      >
+        <Icon name="thumbs-up" size={20} />
       </button>
     {/if}
 

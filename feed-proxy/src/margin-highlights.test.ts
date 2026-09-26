@@ -142,6 +142,33 @@ describe('getMarginHighlights', () => {
     expect(result.notes[0].selector.exact).toBe('the recovered passage');
   });
 
+  it('keeps commenting notes from Margin search and reports their motivation', async () => {
+    const value = db();
+    const source = 'https://example.com/post';
+    spyOn(globalThis, 'fetch').mockImplementation((async (input: unknown) => {
+      const url = new URL(String(input));
+      if (url.hostname === 'margin.at' && url.pathname === '/api/search') {
+        return Response.json({
+          items: [
+            {
+              motivation: 'commenting',
+              creator: { did: 'did:plc:alice', handle: 'alice.test' },
+              body: { value: 'A thought', format: 'text/plain' },
+              target: { source, selector: { exact: 'the commented passage' } },
+              created: '2026-08-23T01:21:30.058Z',
+            },
+          ],
+        });
+      }
+      throw new Error(`Constellation should not be needed: ${url}`);
+    }) as typeof fetch);
+
+    const result = await getMarginHighlights(value, source);
+    expect(result.notes).toHaveLength(1);
+    expect(result.notes[0].motivation).toBe('commenting');
+    expect(result.notes[0].note).toBe('A thought');
+  });
+
   it('drops bookmarks and malformed notes without passage selectors', async () => {
     const value = db();
     seedDid(value, 'did:plc:alice');

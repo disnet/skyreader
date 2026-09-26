@@ -41,6 +41,7 @@
   import { linkblogStore } from '$lib/stores/linkblog.svelte';
   import { shareComposerStore } from '$lib/stores/shareComposer.svelte';
   import { shareDraftsStore } from '$lib/stores/shareDrafts.svelte';
+  import { recommendsStore, isRecommendable } from '$lib/stores/recommends.svelte';
   import { toastStore } from '$lib/stores/toast.svelte';
   import { shareTargetForDisplayItem } from '$lib/utils/shareTarget';
   import { isSavedItemSaved } from '$lib/utils/readerSave';
@@ -459,6 +460,26 @@
   );
   let sharedNow = $derived(itemUrl ? linkblogStore.isShared(itemUrl) : false);
   let hasShareDraft = $derived(itemUrl ? shareDraftsStore.hasDraft(itemUrl) : false);
+
+  // Recommend: the one-tap public "worth reading", beside Share. For a link post
+  // it's the external article the reader shows; a standard.site document (not a
+  // link post) also carries its record, so the recommend reaches its author.
+  let recommendUrl = $derived(linkPostUrl ?? itemUrl);
+  let canRecommend = $derived(Boolean(auth.user) && isRecommendable(recommendUrl));
+  let isRecommended = $derived(recommendsStore.isRecommended(recommendUrl));
+  function toggleRecommend() {
+    if (!isRecommendable(recommendUrl)) return;
+    void recommendsStore.toggle({
+      url: recommendUrl,
+      title,
+      documentUri:
+        readerItem.type === 'document' &&
+        !linkPostUrl &&
+        readerItem.item.recordUri.includes('/site.standard.document/')
+          ? readerItem.item.recordUri
+          : undefined,
+    });
+  }
 
   function openShareComposer() {
     const target = shareTargetForDisplayItem(
@@ -994,6 +1015,21 @@
           </button>
         {/if}
 
+        {#if canRecommend}
+          <button
+            class="action-btn"
+            class:active={isRecommended}
+            aria-pressed={isRecommended}
+            onclick={toggleRecommend}
+            title={isRecommended
+              ? 'You recommended this publicly. Tap to take it back'
+              : 'Recommend publicly. Anyone can see it'}
+          >
+            <Icon name="thumbs-up" size={16} />
+            <span class="action-label">{isRecommended ? 'Recommended' : 'Recommend'}</span>
+          </button>
+        {/if}
+
         {#if onArchive}
           <button
             class="action-btn"
@@ -1080,6 +1116,8 @@
     {isSaved}
     onShare={canShareLinkblog ? openShareComposer : undefined}
     shareActive={sharedNow}
+    onRecommend={canRecommend ? toggleRecommend : undefined}
+    recommendActive={isRecommended}
     {onMarkRead}
     {markedRead}
     onMore={() => (styleSheetOpen = true)}

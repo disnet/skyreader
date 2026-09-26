@@ -16,21 +16,23 @@ callback).
 | Scope                                                          | Why it's in the base                                                           |
 | -------------------------------------------------------------- | ------------------------------------------------------------------------------ |
 | `atproto`                                                      | Required                                                                       |
-| `include:app.skyreader.authFull` (or its granular equivalents) | Subscriptions, follows, reading rooms: Skyreader's own collections             |
+| `include:app.skyreader.authFull` (or its granular equivalents) | Subscriptions, follows, reading rooms, recommends: Skyreader's own collections |
 | `repo:site.standard.graph.subscription`                        | The standard.site follow-graph mirror rides Atmospheric sync in the background |
+| `repo:site.standard.graph.recommend`                           | The standard.site copy of a recommend (best-effort; skipped without it)        |
 | `repo:dev.at-intent.usage`                                     | The AT Intents discovery record written at sign-in                             |
 
 **Optional features ask when first used.** Each is a `ScopeFeature` in `SCOPE_FEATURES`:
 
-| Feature    | Scopes (granular)                                          | With permission sets on                            |
-| ---------- | ---------------------------------------------------------- | -------------------------------------------------- |
-| `semble`   | `network.cosmik.card/collection/collectionLink/connection` | `include:network.cosmik.authFull` + `connection`   |
-| `margin`   | `at.margin.note/collection/collectionItem`                 | same (granular)                                    |
-| `linkblog` | `site.standard.publication/document`                       | `include:site.standard.authFull`                   |
-| `pckt`     | linkblog + `blog.pckt.document`                            | linkblog + `blog.pckt.document`                    |
-| `offprint` | linkblog + `app.offprint.document.article`                 | linkblog + `app.offprint.document.article`         |
-| `feedback` | `app.userinput.discussion/upvote` + `blob:image/*`         | `include:app.userinput.authBasic` + `blob:image/*` |
-| `follows`  | `rpc:app.bsky.feed.getTimeline?aud=*` (see below)          | same (granular)                                    |
+| Feature       | Scopes (granular)                                          | With permission sets on                            |
+| ------------- | ---------------------------------------------------------- | -------------------------------------------------- |
+| `semble`      | `network.cosmik.card/collection/collectionLink/connection` | `include:network.cosmik.authFull` + `connection`   |
+| `margin`      | `at.margin.note/collection/collectionItem`                 | same (granular)                                    |
+| `linkblog`    | `site.standard.publication/document`                       | `include:site.standard.authFull`                   |
+| `pckt`        | linkblog + `blog.pckt.document`                            | linkblog + `blog.pckt.document`                    |
+| `offprint`    | linkblog + `app.offprint.document.article`                 | linkblog + `app.offprint.document.article`         |
+| `feedback`    | `app.userinput.discussion/upvote` + `blob:image/*`         | `include:app.userinput.authBasic` + `blob:image/*` |
+| `follows`     | `rpc:app.bsky.feed.getTimeline?aud=*` (see below)          | same (granular)                                    |
+| `blueskyPost` | `app.bsky.feed.post` + `blob:image/*`                      | same (granular)                                    |
 
 **`follows` asks for `aud=*` but gates on the appview.** The feature only ever proxies
 getTimeline to `did:web:api.bsky.app#bsky_appview`, and gates check that

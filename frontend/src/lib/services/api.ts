@@ -1491,6 +1491,36 @@ class ApiClient {
     });
   }
 
+  // Also posting a linkblog share to Bluesky. A text shot goes up first, raw
+  // under its own content type, and the post that embeds it is written after.
+  // Both need the 'blueskyPost' permission and throw ScopeUpgradeError without it.
+  async uploadBlueskyImage(image: Blob): Promise<{ blob: FeedbackBlobRef }> {
+    return this.fetch('/api/v2/bluesky/image', {
+      method: 'POST',
+      body: image,
+      headers: { 'Content-Type': image.type },
+    });
+  }
+
+  async createBlueskyPost(input: {
+    text: string;
+    articleUrl: string;
+    /** Where the article's (shortened) link sits in `text`; required with images. */
+    linkText?: string;
+    title?: string;
+    description?: string;
+    imageUrl?: string;
+    /** The post's languages (BCP-47), for Bluesky's feeds and search. */
+    langs?: string[];
+    images?: Array<{
+      image: FeedbackBlobRef;
+      alt: string;
+      aspectRatio: { width: number; height: number };
+    }>;
+  }): Promise<{ uri: string; cid: string; url: string }> {
+    return this.fetch('/api/v2/bluesky/post', { method: 'POST', body: JSON.stringify(input) });
+  }
+
   async createCheckout(productId?: string): Promise<{ url: string }> {
     const qs = productId ? `?products=${encodeURIComponent(productId)}` : '';
     return this.fetch(`/api/billing/checkout${qs}`, { method: 'POST' });
@@ -1822,6 +1852,25 @@ class ApiClient {
       method: 'DELETE',
       body: JSON.stringify({ collectionUri }),
     });
+  }
+
+  // Recommends — one-tap public recommendations (app.skyreader.social.recommend)
+  async getRecommends(): Promise<{
+    recommends: Array<{ url: string; title?: string; documentUri?: string; createdAt: string }>;
+  }> {
+    return this.fetch('/api/recommends');
+  }
+
+  async recommend(data: {
+    url: string;
+    title?: string;
+    documentUri?: string;
+  }): Promise<{ recommended: boolean; uri?: string }> {
+    return this.fetch('/api/recommends', { method: 'POST', body: JSON.stringify(data) });
+  }
+
+  async unrecommend(url: string): Promise<{ recommended: boolean }> {
+    return this.fetch('/api/recommends', { method: 'DELETE', body: JSON.stringify({ url }) });
   }
 
   /** Add an article to a room's collection. Metadata is optional: pass what the

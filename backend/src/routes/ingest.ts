@@ -1,6 +1,7 @@
 import type { Env, FeedItem } from '../types';
 import { timedAll, timedBatch } from '../utils/d1-timing';
 import { log } from '../utils/logger';
+import { htmlLead } from '../utils/html-lead';
 import { STARTER_FEED_URLS } from '../config/starter-feeds';
 import { NEWSLETTER_SOURCE_TYPE } from '../services/newsletters';
 import {
@@ -28,7 +29,8 @@ export const SANITY_CAP = 5000;
 // Inline stored-content cap per item. Unbounded retention makes this mandatory
 // rather than optional: D1 has a hard 10 GB database ceiling, so storage grows
 // with ingest velocity × item size × time. Oversized bodies are dropped from the
-// row at ingest (summary/title/url/image kept), `contentTruncated` is set, and
+// row at ingest (summary/title/url/image kept, plus the body's opening as
+// `contentLead`), `contentTruncated` is set, and
 // the body itself goes to R2 (routes/item-bodies.ts; `bodyStored` marks the row
 // once it has). The reader acts on `contentTruncated`: ArticleCard and
 // SavedReader fetch the stored body when a truncated article is opened, and
@@ -41,6 +43,14 @@ export const SANITY_CAP = 5000;
 // bound response size in rows and are sized against this constant — raising it
 // means re-deriving them.
 export const MAX_ITEM_CONTENT_BYTES = 8 * 1024;
+
+// The opening of an over-cap body kept in the row as `contentLead`, so the feed's
+// collapsed card previews the article itself rather than its <description>
+// (often a one-line subtitle) without a request per card; the full body is
+// fetched from R2 when the card is expanded. Below the inline cap so a row with
+// a lead plus a summary stays within what the timeline's page budgets were sized
+// against. Plenty for the 8-line preview, even through heavy Substack markup.
+export const MAX_CONTENT_LEAD_BYTES = 6 * 1024;
 
 // How long a crawler heartbeat stays "fresh". The proxy pulls the crawl set every
 // 5 minutes whenever INGEST_URL is set, so a stamp older than this means this
@@ -181,7 +191,8 @@ export function capItemContent(item: FeedItem): FeedItem {
   if (bytes <= MAX_ITEM_CONTENT_BYTES) return item;
   const { content: _dropped, ...rest } = item;
   const summary = rest.summary || deriveSummary(content) || undefined;
-  return { ...rest, summary, contentTruncated: true };
+  const contentLead = htmlLead(content, MAX_CONTENT_LEAD_BYTES);
+  return { ...rest, summary, contentTruncated: true, ...(contentLead ? { contentLead } : {}) };
 }
 
 /**
@@ -354,6 +365,9 @@ export async function ingestBatch(
             -- so its seq — and every client's copy — is untouched.
             OR (json_extract(excluded.item_json, '$.bodyStored') = 1
                 AND json_extract(feed_items.item_json, '$.bodyStored') IS NOT 1)
+            -- Same, for a truncated row archived before it kept a lead.
+            OR (json_extract(excluded.item_json, '$.contentLead') IS NOT NULL
+                AND json_extract(feed_items.item_json, '$.contentLead') IS NULL)
          RETURNING seq`
       ).bind(
         entry.feedUrl,

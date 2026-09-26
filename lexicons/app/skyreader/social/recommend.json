@@ -1,0 +1,32 @@
+{
+  "lexicon": 1,
+  "id": "app.skyreader.social.recommend",
+  "defs": {
+    "main": {
+      "type": "record",
+      "description": "A public recommendation of an article. The subject is the article's URL, so any web page can be recommended; when the article is itself an atproto document, `document` points at that record too.",
+      "key": "tid",
+      "record": {
+        "type": "object",
+        "required": ["subject", "createdAt"],
+        "properties": {
+          "subject": {
+            "type": "string",
+            "format": "uri",
+            "maxLength": 2048,
+            "description": "URL of the article being recommended"
+          },
+          "document": {
+            "type": "string",
+            "format": "at-uri",
+            "description": "AT-URI of the document record being recommended, when the article is one (e.g. a site.standard.document)"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "datetime"
+          }
+        }
+      }
+    }
+  }
+}

@@ -3,7 +3,7 @@
  * reader uses it (progressive scopes), rather than at sign-in.
  */
 export type ScopeFeature =
-  'semble' | 'margin' | 'linkblog' | 'pckt' | 'offprint' | 'feedback' | 'follows';
+  'semble' | 'margin' | 'linkblog' | 'pckt' | 'offprint' | 'feedback' | 'follows' | 'blueskyPost';
 
 /** The reader-facing name of a scope feature, for "X needs your permission" copy. */
 export const SCOPE_FEATURE_LABELS: Record<ScopeFeature, string> = {
@@ -14,6 +14,7 @@ export const SCOPE_FEATURE_LABELS: Record<ScopeFeature, string> = {
   offprint: 'Offprint',
   feedback: 'Feedback',
   follows: 'From your follows',
+  blueskyPost: 'Posting to Bluesky',
 };
 
 export interface User {
@@ -87,6 +88,11 @@ export interface Article {
   // cap), so `content` here is absent or just the RSS summary. The reader
   // extracts the full text on demand when the card opens.
   contentTruncated?: boolean;
+  // The opening of a truncated body (a few KB, cut at a safe boundary), kept by
+  // the archive so the collapsed card previews the article itself. Never the
+  // full body: `contentTruncated` still holds, and expanding fetches the rest.
+  // Stripped from the in-memory copy like `content` (see toLightArticle).
+  contentLead?: string;
   // Precomputed body stats. The full `content` HTML is dropped from the
   // in-memory copy of an article (see toLightArticle) to keep the heap small —
   // it stays in IndexedDB and is lazy-loaded on expand. These numbers let the
@@ -1153,6 +1159,8 @@ export interface FeedItem {
   // The stored body exceeded the archive's per-item content cap and was dropped
   // at ingest; the reader falls back to on-demand extraction for full text.
   contentTruncated?: boolean;
+  // The dropped body's opening, for the collapsed card's preview (Article.contentLead).
+  contentLead?: string;
 }
 
 // Combined feed item for unified "all" view
@@ -1421,6 +1429,11 @@ export interface IntegrationStatus {
      * attach. Optional for the same reason as `userinput`.
      */
     userinputImages?: boolean;
+    /**
+     * Also posting a share to Bluesky (the post record + its images). Optional:
+     * a backend older than cross-posting omits it.
+     */
+    blueskyPost?: boolean;
   };
 }
 
