@@ -287,6 +287,60 @@ describe('email newsletters', () => {
   });
 
   describe('API', () => {
+    it('never marks a renamed newsletter as owed to the PDS', async () => {
+      await seedUser(READER, 'supporter');
+      await env.DB.prepare(
+        `INSERT INTO user_settings (user_did, pds_sync_enabled, created_at, updated_at)
+         VALUES (?, 1, unixepoch(), unixepoch())`
+      )
+        .bind(READER)
+        .run();
+      await handleInboundEmail(inbound(await addressFor(READER), rawEmail({})), env);
+      const [sub] = await newsletterSubs(READER);
+      const rkey = sub.record_uri.split('/').pop()!;
+
+      const single = await call(
+        authed(READER, `/api/subscriptions/${rkey}`, {
+          method: 'PATCH',
+          body: { customTitle: 'Matt Levine' },
+        })
+      );
+      expect(single.status).toBe(200);
+      const bulk = await call(
+        authed(READER, '/api/subscriptions/bulk-update', {
+          method: 'POST',
+          body: { rkeys: [rkey], updates: { category: 'Finance' } },
+        })
+      );
+      expect(bulk.status).toBe(200);
+
+      const row = await env.DB.prepare(
+        'SELECT custom_title, category, pds_dirty FROM subscriptions_cache WHERE record_uri = ?'
+      )
+        .bind(sub.record_uri)
+        .first<{ custom_title: string; category: string; pds_dirty: number }>();
+      expect(row).toEqual({ custom_title: 'Matt Levine', category: 'Finance', pds_dirty: 0 });
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    });
+
+    it('imports the real feeds of an OPML that carries a newsletter row', async () => {
+      await seedUser(READER, 'supporter');
+      const res = await call(
+        authed(READER, '/api/subscriptions/bulk', {
+          method: 'POST',
+          body: {
+            subscriptions: [
+              { rkey: 'aaaaaaaaaaaa1', feedUrl: 'https://example.com/feed.xml', title: 'A' },
+              { rkey: 'bbbbbbbbbbbb2', feedUrl: 'newsletter:0011223344556677/x@y.test' },
+            ],
+          },
+        })
+      );
+      expect(res.status).toBe(200);
+      const rows = await newsletterSubs(READER);
+      expect(rows.map((r) => r.feed_url)).toEqual(['https://example.com/feed.xml']);
+    });
+
     it('reports the feature and refuses an address to a free reader', async () => {
       await seedUser(READER, 'free');
       const get = await call(authed(READER, '/api/newsletters'));
