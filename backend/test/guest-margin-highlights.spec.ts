@@ -100,7 +100,11 @@ describe('guest community highlights', () => {
 
   // Per-IP, because an anonymous caller has no DID to key the usual limit on.
   it('rate limits per IP, and one IP does not spend another IP budget', async () => {
-    const { limit } = getRateLimitConfig('/api/guest/margin-highlights');
+    const { limit, windowMs } = getRateLimitConfig('/api/guest/margin-highlights');
+    // The window is fixed, so a slow run could cross its boundary mid-loop and
+    // start a fresh count. Hold the clock at the start of one window.
+    const now = Math.floor(Date.now() / windowMs) * windowMs;
+    vi.spyOn(Date, 'now').mockReturnValue(now);
 
     for (let i = 0; i < limit; i++) {
       const res = await handleGuestMarginHighlights(

@@ -14,7 +14,7 @@
 // undone — elsewhere reconciles in. Local mutations that need an rkey to act on
 // (note edit, un-share) first materialize the overlay entry into the local set.
 
-import { api } from '$lib/services/api';
+import { api, ScopeUpgradeError } from '$lib/services/api';
 import { db } from '$lib/services/db';
 import { safeAdd } from '$lib/services/safeDb.svelte';
 import { generateTid } from '$lib/utils/tid';
@@ -132,6 +132,7 @@ function createLinkblogStore() {
   // document via the backend, and rolls back the optimistic state on failure.
   // Pass `repostUri` (an at:// link post URI) to make this a quote-reshare — the
   // entry still lives in the user's own linkblog, keyed by the article URL.
+  // Rejects only with a ScopeUpgradeError; any other failure resolves 'failed'.
   async function shareLink(
     article: Article,
     note?: string,
@@ -203,9 +204,9 @@ function createLinkblogStore() {
         await db.linkblogShares.delete(stored.id);
       }
       myLinkblogStore.removeByArticleUrl(article.url);
-      // Already handled: optimistic state rolled back, and a scope-upgrade
-      // failure surfaces the global "Allow access" banner via the api client.
-      // Don't rethrow — this runs from an onclick handler; the result says so.
+      // A missing permission goes back to the composer, which asks for it in
+      // place: the app shell's banner sits under the reader, out of sight.
+      if (e instanceof ScopeUpgradeError) throw e;
       return 'failed';
     }
   }
@@ -246,6 +247,8 @@ function createLinkblogStore() {
         }
       }
       if (existing.recordUri) myLinkblogStore.setNote(existing.recordUri, prevNote ?? '');
+      // For the composer to ask for, as in shareLink.
+      if (e instanceof ScopeUpgradeError) throw e;
     }
   }
 

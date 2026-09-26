@@ -85,6 +85,11 @@ interface PreferencesState {
   // tradeoff is that it doesn't follow you to another device.
   linkblogAttributionOfferedDids: string[];
   linkblogAttributionOnDids: string[];
+  // "Also post to Bluesky" in the share composer: whether the box starts
+  // ticked, and whether quotes go out as images (on unless turned off). Sticky
+  // across drafts, per account, for the same reason as the lists above.
+  blueskyCrossPostDids: string[];
+  blueskyTextShotsOffDids: string[];
   // Which surface a cold app load lands on (consumed by the `/` redirector).
   defaultView: DefaultView;
   // Whether the reader actually picked that surface. save() serializes the
@@ -130,6 +135,8 @@ function createPreferencesStore() {
     linkblogDisabledDids: [],
     linkblogAttributionOfferedDids: [],
     linkblogAttributionOnDids: [],
+    blueskyCrossPostDids: [],
+    blueskyTextShotsOffDids: [],
     defaultView: 'home',
     defaultViewConfigured: false,
     cardDensity: 'cozy',
@@ -176,6 +183,8 @@ function createPreferencesStore() {
         state.linkblogDisabledDids = didList(parsed.linkblogDisabledDids);
         state.linkblogAttributionOfferedDids = didList(parsed.linkblogAttributionOfferedDids);
         state.linkblogAttributionOnDids = didList(parsed.linkblogAttributionOnDids);
+        state.blueskyCrossPostDids = didList(parsed.blueskyCrossPostDids);
+        state.blueskyTextShotsOffDids = didList(parsed.blueskyTextShotsOffDids);
         if (
           parsed.defaultView === 'home' ||
           parsed.defaultView === 'feeds' ||
@@ -335,6 +344,22 @@ function createPreferencesStore() {
     save();
   }
 
+  /** Whether "Also post to Bluesky" starts ticked — sticky across drafts, per account. */
+  function setBlueskyCrossPost(on: boolean) {
+    const next = setDidFlag(state.blueskyCrossPostDids, on);
+    if (!next) return;
+    state.blueskyCrossPostDids = next;
+    save();
+  }
+
+  /** Whether a cross-post's quotes go out as images. */
+  function setBlueskyTextShots(on: boolean) {
+    const next = setDidFlag(state.blueskyTextShotsOffDids, !on);
+    if (!next) return;
+    state.blueskyTextShotsOffDids = next;
+    save();
+  }
+
   function setDefaultView(view: DefaultView) {
     state.defaultView = view;
     state.defaultViewConfigured = true;
@@ -425,6 +450,14 @@ function createPreferencesStore() {
         state.linkblogAttributionOnDids.includes(did)
       );
     },
+    get blueskyCrossPost() {
+      const did = auth.user?.did;
+      return !!did && state.blueskyCrossPostDids.includes(did);
+    },
+    get blueskyTextShots() {
+      const did = auth.user?.did;
+      return !did || !state.blueskyTextShotsOffDids.includes(did);
+    },
     get defaultView() {
       return state.defaultView;
     },
@@ -458,6 +491,8 @@ function createPreferencesStore() {
     setLinkblogDisabled,
     setLinkblogAttributionOffered,
     setLinkblogAttributionOn,
+    setBlueskyCrossPost,
+    setBlueskyTextShots,
     setDefaultView,
     setCardDensity,
     setHomeLayout,

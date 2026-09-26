@@ -11,6 +11,8 @@ import {
 } from '../services/integration-membership';
 import { SEMBLE_SCOPES, MARGIN_SCOPES } from './auth';
 import {
+  BLUESKY_IMAGE_SCOPES,
+  BLUESKY_POST_SCOPES,
   SEMBLE_CONNECTION_SCOPES,
   USERINPUT_IMAGE_SCOPES,
   USERINPUT_SCOPES,
@@ -28,7 +30,13 @@ import { resolvePdsUrl } from '../utils/did-resolver';
  * for everyone until they re-authed (see config/scopes.ts).
  */
 export type ScopeGate =
-  'semble' | 'margin' | 'semble-connections' | 'userinput' | 'userinput-votes' | 'userinput-images';
+  | 'semble'
+  | 'margin'
+  | 'semble-connections'
+  | 'userinput'
+  | 'userinput-votes'
+  | 'userinput-images'
+  | 'blueskyPost';
 
 const SCOPE_SETS: Record<ScopeGate, string[]> = {
   semble: SEMBLE_SCOPES,
@@ -39,6 +47,9 @@ const SCOPE_SETS: Record<ScopeGate, string[]> = {
   userinput: USERINPUT_SCOPES,
   'userinput-votes': USERINPUT_VOTE_SCOPES,
   'userinput-images': USERINPUT_IMAGE_SCOPES,
+  // Also posting a share to Bluesky: the post record plus its images, together,
+  // since a text shot that can't upload is a post that can't be written.
+  blueskyPost: [...BLUESKY_POST_SCOPES, ...BLUESKY_IMAGE_SCOPES],
 };
 
 /**
@@ -56,6 +67,7 @@ export const GATE_FEATURE: Record<ScopeGate, ScopeFeature> = {
   userinput: 'feedback',
   'userinput-votes': 'feedback',
   'userinput-images': 'feedback',
+  blueskyPost: 'blueskyPost',
 };
 
 /**
@@ -84,6 +96,9 @@ export async function handleIntegrationStatus(request: Request, env: Env): Promi
         // Attaching a screenshot needs a blob scope the post itself doesn't, so
         // the composer can offer the attach control only when it will work.
         userinputImages: hasIntegrationScopes(session, 'userinput-images'),
+        // The share composer offers "Also post to Bluesky" either way, and asks
+        // for access up front rather than after the linkblog post has gone out.
+        blueskyPost: hasIntegrationScopes(session, 'blueskyPost'),
       },
     }),
     { headers: { 'Content-Type': 'application/json' } }

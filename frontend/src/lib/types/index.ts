@@ -3,7 +3,7 @@
  * reader uses it (progressive scopes), rather than at sign-in.
  */
 export type ScopeFeature =
-  'semble' | 'margin' | 'linkblog' | 'pckt' | 'offprint' | 'feedback' | 'follows';
+  'semble' | 'margin' | 'linkblog' | 'pckt' | 'offprint' | 'feedback' | 'follows' | 'blueskyPost';
 
 /** The reader-facing name of a scope feature, for "X needs your permission" copy. */
 export const SCOPE_FEATURE_LABELS: Record<ScopeFeature, string> = {
@@ -14,6 +14,7 @@ export const SCOPE_FEATURE_LABELS: Record<ScopeFeature, string> = {
   offprint: 'Offprint',
   feedback: 'Feedback',
   follows: 'From your follows',
+  blueskyPost: 'Posting to Bluesky',
 };
 
 export interface User {
@@ -1413,6 +1414,11 @@ export interface IntegrationStatus {
      * attach. Optional for the same reason as `userinput`.
      */
     userinputImages?: boolean;
+    /**
+     * Also posting a share to Bluesky (the post record + its images). Optional:
+     * a backend older than cross-posting omits it.
+     */
+    blueskyPost?: boolean;
   };
 }
 
