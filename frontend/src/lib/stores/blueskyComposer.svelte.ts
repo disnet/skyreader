@@ -46,7 +46,7 @@ function createBlueskyComposerStore() {
   function open(options: BlueskyComposerOpenOptions) {
     session = { source: options.source, quote: options.quote ?? '' };
     text = options.note?.trim() ?? '';
-    // The same sticky choice as the share composer's "Quotes as images".
+    // The same sticky choice as the share composer's "Quotes as" toggle.
     textShots = preferences.blueskyTextShots;
     access = 'unknown';
     void checkAccess();

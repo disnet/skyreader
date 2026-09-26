@@ -26,6 +26,7 @@
   import { positionFloating } from '$lib/utils/floating';
   import { planBlueskyPost } from '$lib/utils/blueskyPost';
   import BlueskyCountRing from './BlueskyCountRing.svelte';
+  import QuoteModeToggle from './QuoteModeToggle.svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import { permissionMessage } from '$lib/services/permissions';
 
@@ -738,14 +739,11 @@
           {:else}
             <span class="bluesky-summary">{blueskySummary}</span>
             {#if draftHasQuotes}
-              <label class="bluesky-option">
-                <input
-                  type="checkbox"
-                  checked={composer.textShots}
-                  onchange={(e) => composer.setTextShots(e.currentTarget.checked)}
-                />
-                Quotes as images
-              </label>
+              <QuoteModeToggle
+                label="Quotes as"
+                textShots={composer.textShots}
+                onchange={(on) => composer.setTextShots(on)}
+              />
             {/if}
             <BlueskyCountRing length={blueskyPlan.length} />
           {/if}
@@ -1292,18 +1290,6 @@
   .bluesky-summary {
     flex: 1 1 auto;
     min-width: 0;
-  }
-
-  .bluesky-option {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.3125rem;
-    cursor: pointer;
-  }
-
-  .bluesky-option input {
-    margin: 0;
-    cursor: pointer;
   }
 
   .bluesky-allow {
