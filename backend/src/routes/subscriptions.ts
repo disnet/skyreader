@@ -20,6 +20,11 @@ import { generateTid } from '../utils/tid';
 import { fetchProfiles } from '../services/bsky-appview';
 import { getUserTierLimits } from '../services/user-tier';
 import {
+  NEWSLETTER_SOURCE_TYPE,
+  blockSenderStatements,
+  isNewsletterSubscription,
+} from '../services/newsletters';
+import {
   getLinkblogTarget,
   getPageHiddenAuthors,
   linkblogBaseUrl,
@@ -60,6 +65,8 @@ async function maybePushToPds(
     console.log('[PDS Sync] Sync disabled, skipping');
     return;
   }
+  // Newsletter subscriptions are private and local-only (services/newsletters.ts).
+  if (isNewsletterSubscription(feedUrl, sourceType)) return;
 
   try {
     console.log('[PDS Sync] Pushing subscription to PDS...');
@@ -421,6 +428,10 @@ async function maybeBulkDeleteFromPds(
   );
 }
 
+// SQL: this row isn't a newsletter. Newsletters are local-only, so nothing may
+// mark one dirty — the push that would settle the flag skips them.
+const NOT_NEWSLETTER_ROW = `(source_type IS NULL OR source_type <> '${NEWSLETTER_SOURCE_TYPE}')`;
+
 interface CreateSubscriptionRequest {
   feedUrl?: string;
   title?: string;
@@ -761,6 +772,19 @@ export async function handleCreateSubscription(
   // Validate rkey format to prevent pattern injection
   if (!isValidRkey(rkey)) {
     return invalidRkeyResponse();
+  }
+
+  // Newsletter subscriptions only come from mail arriving in the reader's own
+  // inbox (services/newsletters.ts). One created here could name someone
+  // else's inbox and read it through the timeline.
+  if (isNewsletterSubscription(feedUrl, sourceType)) {
+    return new Response(
+      JSON.stringify({ error: 'Newsletter subscriptions are created by email' }),
+      {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      }
+    );
   }
 
   const isAtProto = sourceType && sourceType.startsWith('atproto.');
@@ -1158,13 +1182,20 @@ export async function handleDeleteSubscription(
       row?.feed_url
     );
 
-    // Delete from PDS before removing the local cache/returning so the next sync cannot
-    // re-import the record.
-    await deleteFromPdsIfEnabled(session, settings.pdsSyncEnabled, rkey);
+    const newsletter = isNewsletterSubscription(row?.feed_url, row?.source_type);
 
-    await env.DB.prepare('DELETE FROM subscriptions_cache WHERE user_did = ? AND record_uri LIKE ?')
-      .bind(session.did, `%/${rkey}`)
-      .run();
+    // Delete from PDS before removing the local cache/returning so the next sync cannot
+    // re-import the record. A newsletter never had one.
+    if (!newsletter) await deleteFromPdsIfEnabled(session, settings.pdsSyncEnabled, rkey);
+
+    // Unsubscribing from a newsletter here can't unsubscribe at the source, so
+    // its sender is blocked; otherwise the next issue would bring it back.
+    await env.DB.batch([
+      env.DB.prepare(
+        'DELETE FROM subscriptions_cache WHERE user_did = ? AND record_uri LIKE ?'
+      ).bind(session.did, `%/${rkey}`),
+      ...(newsletter ? blockSenderStatements(env, session.did, [row?.feed_url]) : []),
+    ]);
 
     return new Response(JSON.stringify({ success: true }), {
       headers: { 'Content-Type': 'application/json' },
@@ -1276,7 +1307,7 @@ export async function handleUpdateSubscription(
     await env.DB.prepare(
       `UPDATE subscriptions_cache
        SET custom_title = ?, custom_icon_url = ?, category = ?,
-           pds_dirty = CASE WHEN ? THEN 1 ELSE pds_dirty END
+           pds_dirty = CASE WHEN ? AND ${NOT_NEWSLETTER_ROW} THEN 1 ELSE pds_dirty END
        WHERE user_did = ? AND record_uri LIKE ?`
     )
       .bind(
@@ -1353,9 +1384,20 @@ export async function handleBulkCreateSubscriptions(
     });
   }
 
-  const { subscriptions } = body;
+  if (!Array.isArray(body.subscriptions) || body.subscriptions.length === 0) {
+    return new Response(JSON.stringify({ error: 'subscriptions array is required' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  // Newsletter rows (an OPML exported before the exporter skipped them) are
+  // dropped, not rejected: only inbound mail creates one, and refusing the
+  // batch would fail every real feed alongside it.
+  const subscriptions = body.subscriptions.filter(
+    (sub) => !isNewsletterSubscription(sub?.feedUrl, null)
+  );
 
-  if (!Array.isArray(subscriptions) || subscriptions.length === 0) {
+  if (subscriptions.length === 0) {
     return new Response(JSON.stringify({ error: 'subscriptions array is required' }), {
       status: 400,
       headers: { 'Content-Type': 'application/json' },
@@ -1634,7 +1676,8 @@ export async function handleBulkUpdateSubscriptions(
     // marked before the per-row pushes below are scheduled.
     const settings = await getUserSettings(env, session.did);
     if (settings.pdsSyncEnabled) {
-      setClauses.push('pds_dirty = 1');
+      // A newsletter is never pushed, so marking one would leave it owed forever.
+      setClauses.push(`pds_dirty = CASE WHEN ${NOT_NEWSLETTER_ROW} THEN 1 ELSE pds_dirty END`);
     }
 
     const batchStatements = rkeys.map((rkey) =>
@@ -1756,11 +1799,30 @@ export async function handleBulkDeleteSubscriptions(
   }
 
   try {
-    const batchStatements = rkeys.map((rkey) =>
-      env.DB.prepare(
-        'DELETE FROM subscriptions_cache WHERE user_did = ? AND record_uri LIKE ?'
-      ).bind(session.did, `%/${rkey}`)
+    // Newsletters among them: no PDS record to delete (a delete of a missing
+    // record would fail its whole applyWrites batch), and a sender to block.
+    const newsletterRows = await env.DB.prepare(
+      `SELECT record_uri, feed_url FROM subscriptions_cache
+        WHERE user_did = ? AND (source_type = ? OR feed_url LIKE 'newsletter:%')`
+    )
+      .bind(session.did, NEWSLETTER_SOURCE_TYPE)
+      .all<{ record_uri: string; feed_url: string }>();
+    const newsletterByRkey = new Map(
+      newsletterRows.results.map((row) => [row.record_uri.split('/').pop()!, row.feed_url])
     );
+
+    const batchStatements = [
+      ...rkeys.map((rkey) =>
+        env.DB.prepare(
+          'DELETE FROM subscriptions_cache WHERE user_did = ? AND record_uri LIKE ?'
+        ).bind(session.did, `%/${rkey}`)
+      ),
+      ...blockSenderStatements(
+        env,
+        session.did,
+        rkeys.map((rkey) => newsletterByRkey.get(rkey))
+      ),
+    ];
 
     if (batchStatements.length > 0) {
       await env.DB.batch(batchStatements);
@@ -1768,7 +1830,13 @@ export async function handleBulkDeleteSubscriptions(
 
     // Delete from PDS in background if sync is enabled
     const settings = await getUserSettings(env, session.did);
-    ctx.waitUntil(maybeBulkDeleteFromPds(session, settings.pdsSyncEnabled, rkeys));
+    ctx.waitUntil(
+      maybeBulkDeleteFromPds(
+        session,
+        settings.pdsSyncEnabled,
+        rkeys.filter((rkey) => !newsletterByRkey.has(rkey))
+      )
+    );
 
     return new Response(JSON.stringify({ success: true, deleted: rkeys.length }), {
       headers: { 'Content-Type': 'application/json' },

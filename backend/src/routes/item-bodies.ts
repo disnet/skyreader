@@ -1,4 +1,5 @@
 import type { Env } from '../types';
+import { isNewsletterFeedUrl, ownsNewsletterFeed } from '../services/newsletters';
 import { reportMessage } from '../observability/sentry';
 import { log } from '../utils/logger';
 
@@ -158,13 +159,22 @@ function json(value: unknown, status = 200, headers: HeadersInit = {}): Response
  * No subscription check, deliberately: this is the same public feed content the
  * archive already serves to guests over /api/guest/timeline, and it can only
  * return what the crawler stored — nothing here fetches a caller-named URL.
+ * The exception is a newsletter: it arrived in one reader's inbox, so only that
+ * reader (`viewerDid`; null on the guest route) may read it.
  */
-export async function handleItemBody(request: Request, env: Env): Promise<Response> {
+export async function handleItemBody(
+  request: Request,
+  env: Env,
+  viewerDid: string | null = null
+): Promise<Response> {
   if (request.method !== 'GET') return json({ error: 'Method not allowed' }, 405);
   const url = new URL(request.url);
   const feedUrl = url.searchParams.get('feed_url');
   const guid = url.searchParams.get('guid');
   if (!feedUrl || !guid) return json({ error: 'feed_url and guid are required' }, 400);
+  if (isNewsletterFeedUrl(feedUrl) && !(await ownsNewsletterFeed(env, viewerDid, feedUrl))) {
+    return json({ error: 'Not found' }, 404);
+  }
 
   const bucket = env.ITEM_BODIES;
   if (!bucket) return json({ error: 'Not found' }, 404);

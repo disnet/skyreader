@@ -1,3 +1,4 @@
+import { isArchiveFeedSource } from '$lib/utils/newsletters';
 import { api } from '$lib/services/api';
 import { itemLabelsStore } from './itemLabels.svelte';
 import { MAX_ARTICLES_PER_FEED } from '$lib/services/articleMerge';
@@ -46,7 +47,7 @@ function createFeedArchiveStore() {
    */
   async function loadMore(sub: Subscription) {
     if (!sub.id || !sub.feedUrl) return;
-    if (sub.sourceType && sub.sourceType !== 'rss') return;
+    if (!isArchiveFeedSource(sub.sourceType)) return;
     if (loading || exhausted) return;
     if (subscriptionId !== sub.id) reset(sub.id);
 

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { isArchiveFeedSource } from '$lib/utils/newsletters';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { getFaviconUrl } from '$lib/utils/favicon';
@@ -159,7 +160,7 @@
   };
 
   function sourceSortRank(sub: Subscription): number {
-    if (!sub.sourceType || sub.sourceType === 'rss') return 0;
+    if (isArchiveFeedSource(sub.sourceType)) return 0;
     if (sub.sourceType === 'atproto.documents' && sub.feedUrl?.startsWith('at://')) return 2;
     if (sub.sourceType === 'atproto.documents') return 3;
     return 4;
@@ -962,7 +963,8 @@
     border: 1px solid color-mix(in srgb, var(--source-accent) 12%, transparent);
   }
 
-  .source-type-icon.pill-rss {
+  .source-type-icon.pill-rss,
+  .source-type-icon.pill-newsletter {
     --source-accent: #9a6a3a;
   }
 

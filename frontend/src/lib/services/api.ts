@@ -315,6 +315,14 @@ export interface FeedbackBoard {
 }
 
 /** The user's active Polar subscription, summarized for the Settings plan card. */
+export interface NewsletterInbox {
+  enabled: boolean;
+  entitled: boolean;
+  address: string | null;
+  lastReceivedAt: number | null;
+  blockedSenders: Array<{ sender: string; blockedAt: number }>;
+}
+
 export interface BillingSubscription {
   productName: string | null;
   /** Price in cents. */
@@ -1458,6 +1466,28 @@ class ApiClient {
       method: 'POST',
       body: file,
       headers: { 'Content-Type': file.type },
+    });
+  }
+
+  // The reader's newsletter inbox (a Supporter feature). `enabled` is false
+  // where the backend has no inbound mail domain configured.
+  async getNewsletters(): Promise<NewsletterInbox> {
+    return this.fetch('/api/newsletters');
+  }
+
+  // Issue the reader's address, or replace it with a fresh one (`rotate`):
+  // the old address stops accepting mail, received newsletters stay.
+  async issueNewsletterAddress(rotate = false): Promise<{ address: string }> {
+    return this.fetch('/api/newsletters/address', {
+      method: 'POST',
+      body: JSON.stringify({ rotate }),
+    });
+  }
+
+  // Let a sender blocked by removing its newsletter reach the inbox again.
+  async unblockNewsletterSender(sender: string): Promise<{ success: boolean }> {
+    return this.fetch(`/api/newsletters/blocked?sender=${encodeURIComponent(sender)}`, {
+      method: 'DELETE',
     });
   }
 

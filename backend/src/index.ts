@@ -119,6 +119,12 @@ import {
 import { purgeFollowLinks } from './services/follow-links-store';
 import { handleGetSettings, handleUpdateSettings } from './routes/settings';
 import {
+  handleGetNewsletters,
+  handleIssueNewsletterAddress,
+  handleUnblockNewsletterSender,
+} from './routes/newsletters';
+import { handleInboundEmail } from './services/newsletters';
+import {
   handleCreateBillingPortal,
   handleCreateCheckout,
   handleGetBillingSubscription,
@@ -453,7 +459,7 @@ async function route(
     // A long item's body, stored out-of-row in R2 at ingest.
     case url.pathname === '/api/v2/items/body':
       if (!session) return unauthorizedResponse(headers);
-      response = await handleItemBody(request, env);
+      response = await handleItemBody(request, env, session.did);
       break;
 
     // Feed routes (v2 via Fly.io proxy)
@@ -784,6 +790,21 @@ async function route(
       }
       break;
 
+    // Email newsletters (Supporter). Inbound mail arrives through the email()
+    // handler below, not over HTTP.
+    case url.pathname === '/api/newsletters':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleGetNewsletters(env, session);
+      break;
+    case url.pathname === '/api/newsletters/address':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleIssueNewsletterAddress(request, env, session);
+      break;
+    case url.pathname === '/api/newsletters/blocked':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleUnblockNewsletterSender(request, env, session);
+      break;
+
     // Billing (Polar checkout; the webhook is mounted pre-session above)
     case url.pathname === '/api/billing/products':
       response = await handleListBillingProducts(request, env, session);
@@ -1086,6 +1107,21 @@ const handler = {
         }
       }
     );
+  },
+
+  // Cloudflare Email Routing delivers newsletter mail here (services/newsletters.ts).
+  async email(message: ForwardableEmailMessage, env: Env, _ctx: ExecutionContext): Promise<void> {
+    return runWithRequestContext({ requestId: crypto.randomUUID(), route: 'email' }, async () => {
+      try {
+        const outcome = await handleInboundEmail(message, env);
+        log.info('newsletter_email', { outcome, bytes: message.rawSize });
+      } catch (error) {
+        // Rethrown so the sending server gets a temporary failure and retries.
+        log.error('newsletter_email_error', serializeError(error));
+        reportError(error, { tags: { source: 'email' } });
+        throw error;
+      }
+    });
   },
 
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {

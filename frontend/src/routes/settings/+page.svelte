@@ -32,7 +32,12 @@
   import { myLinkblogStore } from '$lib/stores/myLinkblog.svelte';
   import { linkblogStore } from '$lib/stores/linkblog.svelte';
   import { downloadOPML } from '$lib/utils/opml-exporter';
-  import { api, RateLimitError, type BillingSubscription } from '$lib/services/api';
+  import {
+    api,
+    RateLimitError,
+    type BillingSubscription,
+    type NewsletterInbox,
+  } from '$lib/services/api';
   import { syncStore } from '$lib/stores/sync.svelte';
   import Icon from '$lib/components/Icon.svelte';
   import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
@@ -64,11 +69,14 @@
     { id: 'reading', label: 'Reading' },
     { id: 'library', label: 'Library & privacy' },
     { id: 'linkblog', label: 'Linkblog' },
+    { id: 'newsletters', label: 'Newsletters' },
     { id: 'save-anywhere', label: 'Save from anywhere' },
     { id: 'about', label: 'About' },
   ] as const;
   const sections = $derived(
-    auth.user ? allSections : allSections.filter((section) => section.id !== 'account')
+    auth.user
+      ? allSections
+      : allSections.filter((section) => section.id !== 'account' && section.id !== 'newsletters')
   );
 
   // Which group the reader is in, for the nav's current marker: the last one
@@ -297,7 +305,60 @@
     await loadLinkblog();
     // Non-blocking; null for anyone without a Polar subscription.
     void loadBillingSubscription();
+    void loadNewsletters();
   });
+
+  // ── Newsletters ──
+  // The private address mail is sent to. Issued on request, not on load: a
+  // reader who never wants one never has one.
+  let newsletterInbox = $state<NewsletterInbox | null>(null);
+  let newsletterBusy = $state(false);
+  let newsletterError = $state<string | null>(null);
+
+  async function loadNewsletters() {
+    if (!syncStore.isOnline) return;
+    try {
+      newsletterInbox = await api.getNewsletters();
+    } catch (error) {
+      console.error('Failed to load newsletter inbox:', error);
+    }
+  }
+
+  async function issueNewsletterAddress(rotate: boolean) {
+    if (
+      rotate &&
+      !confirm(
+        'Get a new address? The current one stops working, so newsletters sent to it will need your new address.'
+      )
+    ) {
+      return;
+    }
+    newsletterBusy = true;
+    newsletterError = null;
+    try {
+      const { address } = await api.issueNewsletterAddress(rotate);
+      if (newsletterInbox) newsletterInbox = { ...newsletterInbox, address };
+      else await loadNewsletters();
+    } catch (error) {
+      newsletterError = error instanceof Error ? error.message : 'Could not create an address';
+    } finally {
+      newsletterBusy = false;
+    }
+  }
+
+  async function unblockNewsletterSender(sender: string) {
+    try {
+      await api.unblockNewsletterSender(sender);
+      if (newsletterInbox) {
+        newsletterInbox = {
+          ...newsletterInbox,
+          blockedSenders: newsletterInbox.blockedSenders.filter((b) => b.sender !== sender),
+        };
+      }
+    } catch (error) {
+      newsletterError = error instanceof Error ? error.message : 'Could not unblock that sender';
+    }
+  }
 
   // The renewal/end date behind the plan badge, straight from Polar via the
   // backend. Stays null (and renders nothing) offline, for free users, and
@@ -1376,6 +1437,115 @@
       {/if}
     </section>
 
+    <!-- ── Newsletters ─────────────────────────────────────────── -->
+    {#if auth.user}
+      <section class="group" id="newsletters" aria-labelledby="newsletters-title">
+        <h2 id="newsletters-title">Newsletters</h2>
+        <p class="group-lead">
+          Read your email newsletters here, away from the inbox. Each sender becomes a source.
+          {@render docsLink('newsletters')}
+        </p>
+
+        <div class="panel">
+          {#if !newsletterInbox}
+            <div class="row">
+              <p class="loading">{syncStore.isOnline ? 'Loading…' : 'Available when online.'}</p>
+            </div>
+          {:else if !newsletterInbox.enabled}
+            <div class="row">
+              <p class="row-desc">Newsletter delivery isn't available here yet.</p>
+            </div>
+          {:else if newsletterInbox.entitled && newsletterInbox.address}
+            <div class="row stack">
+              <div class="row-text">
+                <span class="row-label">Your newsletter address</span>
+                <p class="row-desc">
+                  Use it when you sign up for a newsletter, or forward issues to it. Keep it to
+                  yourself: anything sent here lands in your reader.
+                </p>
+              </div>
+              <code class="newsletter-address">{newsletterInbox.address}</code>
+              <div class="button-row">
+                <button
+                  class="btn btn-primary"
+                  onclick={() => copyText(newsletterInbox!.address!, 'newsletter')}
+                >
+                  {copiedKey === 'newsletter' ? 'Copied' : 'Copy address'}
+                </button>
+                <button
+                  class="btn btn-secondary"
+                  disabled={newsletterBusy}
+                  onclick={() => issueNewsletterAddress(true)}
+                >
+                  Get a new address
+                </button>
+              </div>
+            </div>
+          {:else if newsletterInbox.entitled}
+            <div class="row stack">
+              <p class="row-desc">
+                Get a private address to sign up with. Your newsletters arrive in your reader, not
+                your inbox.
+              </p>
+              <div class="button-row">
+                <button
+                  class="btn btn-primary"
+                  disabled={newsletterBusy}
+                  onclick={() => issueNewsletterAddress(false)}
+                >
+                  {newsletterBusy ? 'Creating…' : 'Create my address'}
+                </button>
+              </div>
+            </div>
+          {:else}
+            <div class="row stack">
+              {#if newsletterInbox.address}
+                <p class="row-desc">
+                  <code>{newsletterInbox.address}</code> isn't receiving mail while you're off the Supporter
+                  plan. Newsletters you already have stay readable.
+                </p>
+              {:else}
+                <p class="row-desc">
+                  Newsletters by email are part of the Supporter plan: one private address, and
+                  every newsletter you send to it becomes a source in your reader.
+                </p>
+              {/if}
+              <div class="button-row">
+                <a href="/supporter" class="btn btn-primary">Become a Supporter</a>
+              </div>
+            </div>
+          {/if}
+
+          {#if newsletterInbox && newsletterInbox.blockedSenders.length > 0}
+            <div class="row stack">
+              <div class="row-text">
+                <span class="row-label">Blocked senders</span>
+                <p class="row-desc">
+                  Removing a newsletter blocks its sender. Unblock one to let its mail back in.
+                </p>
+              </div>
+              <ul class="blocked-senders">
+                {#each newsletterInbox.blockedSenders as blocked (blocked.sender)}
+                  <li>
+                    <span class="blocked-sender">{blocked.sender}</span>
+                    <button
+                      class="btn btn-secondary"
+                      onclick={() => unblockNewsletterSender(blocked.sender)}
+                    >
+                      Unblock
+                    </button>
+                  </li>
+                {/each}
+              </ul>
+            </div>
+          {/if}
+        </div>
+        {#if newsletterError}
+          <p class="status-error">{newsletterError}</p>
+        {/if}
+      </section>
+    {/if}
+
     <!-- ── Save from anywhere ──────────────────────────────────── -->
     <section class="group" id="save-anywhere" aria-labelledby="save-anywhere-title">
       <h2 id="save-anywhere-title">Save from anywhere</h2>
@@ -1804,6 +1974,39 @@
     display: flex;
     gap: 0.5rem;
     flex-wrap: wrap;
+  }
+
+  .newsletter-address {
+    display: block;
+    padding: 0.5rem 0.625rem;
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    font-size: var(--text-md);
+    overflow-wrap: anywhere;
+    user-select: all;
+  }
+
+  .blocked-senders {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .blocked-senders li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+
+  .blocked-sender {
+    font-size: var(--text-md);
+    color: var(--color-text-secondary);
+    overflow-wrap: anywhere;
+    min-width: 0;
   }
 
   .docs-link {
