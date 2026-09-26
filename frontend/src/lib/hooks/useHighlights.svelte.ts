@@ -1218,9 +1218,10 @@ export function useHighlights(params: HighlightParams) {
     get savePopoverHighlightToMargin() {
       return auth.isGuest ? undefined : savePopoverHighlightToMargin;
     },
-    // A Bluesky post is a record in the reader's own repo, so a guest has none.
+    // A Bluesky post is a record in the reader's own repo, so a guest has none;
+    // and a post needs the article's link to point at.
     get postPopoverHighlightToBluesky() {
-      return auth.isGuest ? undefined : postPopoverHighlightToBluesky;
+      return auth.isGuest || !params.itemUrl?.() ? undefined : postPopoverHighlightToBluesky;
     },
     get popoverHighlightSavedToMargin() {
       return isPopoverHighlightSavedToMargin();

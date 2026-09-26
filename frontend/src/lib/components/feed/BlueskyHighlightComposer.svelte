@@ -4,7 +4,6 @@
   // passage goes out as a text shot with the link in the text, or, with that
   // off, quoted in the text over the article's link card.
   import Modal from '$lib/components/common/Modal.svelte';
-  import Icon from '$lib/components/Icon.svelte';
   import BlueskyCountRing from './BlueskyCountRing.svelte';
   import {
     blueskyHighlightStore as composer,
@@ -92,37 +91,37 @@
         bind:value={composer.text}
         placeholder="Say something about it…"
         aria-label="Post text"
-        rows="3"
+        rows="2"
         autofocus></textarea>
 
-      {#if composer.textShots && shotUrl}
-        <img class="shot" src={shotUrl} alt={session.quote} />
-      {:else}
-        <blockquote class="quote">{session.quote}</blockquote>
-      {/if}
-
-      <div class="strip">
-        <Icon name="bluesky" size={14} />
-        {#if composer.access === 'missing'}
-          <span class="summary">Posting to Bluesky needs your permission.</span>
-          <button type="button" class="allow" onclick={() => composer.allowAccess(auth.user?.did)}
-            >Allow access</button
-          >
+      <figure class="preview">
+        {#if composer.textShots && shotUrl}
+          <img class="shot" src={shotUrl} alt={session.quote} />
         {:else}
-          <span class="summary">{summary}</span>
-          <label class="option">
-            <input
-              type="checkbox"
-              checked={composer.textShots}
-              onchange={(e) => composer.setTextShots(e.currentTarget.checked)}
-            />
-            Quote as image
-          </label>
-          {#if plan}<BlueskyCountRing length={plan.length} />{/if}
+          <blockquote class="quote">{session.quote}</blockquote>
         {/if}
-      </div>
+        <figcaption class="caption">
+          {#if composer.access === 'missing'}
+            <span>Posting to Bluesky needs your permission.</span>
+            <button type="button" class="allow" onclick={() => composer.allowAccess(auth.user?.did)}
+              >Allow access</button
+            >
+          {:else}
+            <span>{summary}</span>
+          {/if}
+        </figcaption>
+      </figure>
 
-      <div class="actions">
+      <div class="footer">
+        <label class="option">
+          <input
+            type="checkbox"
+            checked={composer.textShots}
+            onchange={(e) => composer.setTextShots(e.currentTarget.checked)}
+          />
+          Quote as image
+        </label>
+        {#if plan && composer.access !== 'missing'}<BlueskyCountRing length={plan.length} />{/if}
         <button type="button" class="btn" onclick={composer.close}>Cancel</button>
         <button
           type="button"
@@ -139,29 +138,37 @@
   .body {
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
+    gap: 1rem;
   }
 
+  /* Written like the share composer: the post's own text, not a form field.
+     No frame, no grab handle; it grows with what's typed (field-sizing), up to
+     a cap where it scrolls instead. */
   .post-text {
+    display: block;
     width: 100%;
     box-sizing: border-box;
-    resize: vertical;
-    min-height: 4.5rem;
-    padding: 0.5rem 0.625rem;
-    border: 1px solid var(--color-border);
-    border-radius: 0.5rem;
+    min-height: 2lh;
+    max-height: 12rem;
+    margin: 0;
+    padding: 0;
+    border: none;
+    outline: none;
+    resize: none;
+    overflow-y: auto;
+    field-sizing: content;
+    background: transparent;
+    color: var(--color-text);
     font: inherit;
     /* iOS won't zoom on focus at >=16px. */
-    font-size: 16px;
-    line-height: 1.5;
-    color: var(--color-text);
-    background: var(--color-bg);
+    font-size: max(var(--text-lg), 16px);
+    line-height: var(--leading-normal);
   }
 
-  .post-text:focus {
-    outline: none;
-    border-color: var(--color-primary);
-    box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.18);
+  /* The muted-ink token at full strength keeps the placeholder over the
+     contrast bar. */
+  .post-text::placeholder {
+    color: var(--color-text-secondary);
   }
 
   .shot {
@@ -188,24 +195,46 @@
     white-space: pre-wrap;
   }
 
-  .strip {
+  .preview {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    margin: 0;
+  }
+
+  .caption {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
     gap: 0.25rem 0.625rem;
     color: var(--color-text-secondary);
-    font-size: var(--text-sm);
+    font-size: var(--text-xs);
   }
 
-  .summary {
-    flex: 1 1 auto;
-    min-width: 0;
+  /* One row: the option on the left, the count and the actions on the right. */
+  .footer {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding-top: 0.25rem;
+  }
+
+  .footer :global(.count-ring) {
+    margin-left: auto;
+    margin-right: 0.25rem;
+  }
+
+  /* Without the ring (permission missing), the buttons still sit right. */
+  .footer .option + .btn {
+    margin-left: auto;
   }
 
   .option {
     display: inline-flex;
     align-items: center;
     gap: 0.3125rem;
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
     cursor: pointer;
   }
 
@@ -223,12 +252,6 @@
     font-size: var(--text-sm);
     font-weight: var(--weight-medium);
     cursor: pointer;
-  }
-
-  .actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 0.5rem;
   }
 
   .btn {
