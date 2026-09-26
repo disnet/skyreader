@@ -68,6 +68,10 @@ export interface FeedItem {
   // item's (feed_url, guid). Absent means no stored copy is known — the reader
   // still asks (a row cached before the flag existed may have been backfilled).
   bodyStored?: boolean;
+  // The opening of a dropped body (≤ MAX_CONTENT_LEAD_BYTES, cut at a safe
+  // boundary), kept in the row so the feed's collapsed card can preview the
+  // article itself. Set only alongside `contentTruncated`; never the full body.
+  contentLead?: string;
 }
 
 export interface ParsedFeed {

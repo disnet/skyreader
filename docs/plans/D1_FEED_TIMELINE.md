@@ -238,6 +238,23 @@ once the object is written; an unchanged re-push skips the write, and the sanity
 the bodies of the rows it removes. A failed R2 put is logged, not thrown, so an R2 outage degrades
 to extraction instead of stalling the pusher.
 
+**Previews.** The row also keeps the body's opening as `contentLead` (`MAX_CONTENT_LEAD_BYTES =
+6 KB`, cut at a top-level element, else a closing block, else a word boundary — never inside a tag
+or character reference; `utils/html-lead.ts`), so the feed's collapsed card previews the article
+itself rather than its `<description>` with no request per card. It sits under the inline cap, so a
+row with a lead and a summary stays within what the page budgets were sized against. The lead is
+computed in `capItemContent`, independent of R2, so it survives an R2 outage too.
+
+**Prefetch.** As an open card (every card, in Expand view) comes within 600 px of the screen, the
+reader fetches its stored body ahead of the expand (`prefetchStoredBody` in
+`frontend/src/lib/services/itemBody.ts`) and writes it into IndexedDB; expanding then reads it back
+with no request. The prefetch queue runs two at a time and pauses for a minute after any failure,
+so scrolling past a run of long posts can't burst into the per-user rate limit. It never extracts:
+a 404 is recorded so the expand goes straight to extraction. The collapsed card keeps showing the
+lead rather than the full body, which would mean sanitizing hundreds of KB for eight visible lines;
+only a row cached before leads existed previews the prefetched body itself. Read-time estimates are
+suppressed while a card shows only a lead or summary.
+
 An edit rewrites the object under the same key, so a stored body is only served while it is the
 row's current one: the object carries its `contentHash` in custom metadata, and the body route 404s
 unless the row is `bodyStored` with that same hash. An edit whose new body can't be stored (failed
@@ -264,7 +281,8 @@ npx wrangler r2 bucket create skyreader-item-bodies
 
 **Backfill.** Rows archived before this have no stored body; the reader extracts them as before.
 To give them one, make the proxy re-push its over-cap items — the Worker stores their bodies and
-flips `bodyStored` in place (same seq, so no client re-delivery). Push state is per seq, so on each
+flips `bodyStored` in place, adding a `contentLead` to any truncated row that lacks one (same seq,
+so no client re-delivery: clients that already hold the row get the body by prefetch instead). Push state is per seq, so on each
 environment's proxy volume:
 
 ```sql

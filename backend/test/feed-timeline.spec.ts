@@ -11,6 +11,7 @@ import {
   FEED_HEALTH_REV_KEY,
   TIMELINE_ENABLED_KEY,
   CRAWL_ACTIVE_USER_WINDOW_SECONDS,
+  MAX_CONTENT_LEAD_BYTES,
 } from '../src/routes/ingest';
 import { handleTimeline, readFeedSlice } from '../src/routes/timeline';
 import { handleItemBody, itemBodyKey, MAX_STORED_BODY_BYTES } from '../src/routes/item-bodies';
@@ -415,6 +416,39 @@ describe('feed timeline (D1 ingest + serve)', () => {
       // An inline body never goes to R2.
       expect((await row('short')).item.bodyStored).toBeUndefined();
       expect(await storedBody('short')).toBeNull();
+    });
+
+    it('keeps the opening of an over-cap body in the row as its lead', async () => {
+      const body = `<p>The opening paragraph.</p>${'<p>More of the long post.</p>'.repeat(800)}`;
+      await ingest(FEED_A, [{ item: item('lead', { content: body }), contentHash: 'h1' }]);
+
+      const { item: stored } = await row('lead');
+      expect(stored.content).toBeUndefined();
+      expect(stored.contentTruncated).toBe(true);
+      expect(stored.contentLead?.startsWith('<p>The opening paragraph.</p>')).toBe(true);
+      expect(new TextEncoder().encode(stored.contentLead!).length).toBeLessThanOrEqual(
+        MAX_CONTENT_LEAD_BYTES
+      );
+      expect(body.startsWith(stored.contentLead!)).toBe(true);
+      // The full body still goes to R2.
+      expect(await storedBody('lead')).toBe(body);
+    });
+
+    it('backfills a lead onto a truncated row archived without one', async () => {
+      await ingest(FEED_A, [{ item: item('long', { content: LONG }), contentHash: 'h1' }]);
+      // Strip the lead, as a row ingested before leads existed would lack it.
+      await env.DB.prepare(
+        `UPDATE feed_items SET item_json = json_remove(item_json, '$.contentLead') WHERE guid = ?`
+      )
+        .bind('long')
+        .run();
+      const { seq } = await row('long');
+
+      await ingest(FEED_A, [{ item: item('long', { content: LONG }), contentHash: 'h1' }]);
+      const after = await row('long');
+      expect(after.item.contentLead).toBeTruthy();
+      // Edit-in-place: no re-delivery.
+      expect(after.seq).toBe(seq);
     });
 
     it('serves the stored body as JSON, and 404s when there is none', async () => {

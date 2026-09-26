@@ -33,7 +33,7 @@ vi.mock('./api', () => {
   return { api: { fetchItemBody: (...args: unknown[]) => fetchItemBody(...args) }, ApiError };
 });
 
-const { loadStoredBody } = await import('./itemBody');
+const { loadStoredBody, prefetchStoredBody, resetPrefetchForTests } = await import('./itemBody');
 const { ApiError } = await import('./api');
 
 let n = 0;
@@ -115,6 +115,73 @@ describe('loadStoredBody', () => {
     ]);
     expect(first).toEqual({ status: 'found', content: '<p>once</p>' });
     expect(second).toEqual(first);
+    expect(fetchItemBody).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('prefetchStoredBody', () => {
+  beforeEach(() => {
+    fetchItemBody.mockReset();
+    update.mockClear();
+    resetPrefetchForTests();
+  });
+
+  it('warms the row so the open that follows needs no request', async () => {
+    const a = article();
+    fetchItemBody.mockResolvedValueOnce({ content: '<p>ahead</p>' });
+
+    expect(await prefetchStoredBody(a, 'https://feed.example/rss', { guest: false })).toBe('found');
+    expect(rows.get(a.id!)?.content).toBe('<p>ahead</p>');
+    expect(await loadStoredBody(a, 'https://feed.example/rss', { guest: false })).toEqual({
+      status: 'found',
+      content: '<p>ahead</p>',
+    });
+    expect(fetchItemBody).toHaveBeenCalledTimes(1);
+  });
+
+  it('holds a body with no row to live in until the open', async () => {
+    const orphan = { id: undefined, guid: 'no-row', subscriptionId: 9 };
+    fetchItemBody.mockResolvedValueOnce({ content: '<p>guest</p>' });
+
+    expect(await prefetchStoredBody(orphan, 'https://feed.example/rss', { guest: true })).toBe(
+      'found'
+    );
+    expect(await loadStoredBody(orphan, 'https://feed.example/rss', { guest: true })).toEqual({
+      status: 'found',
+      content: '<p>guest</p>',
+    });
+    expect(fetchItemBody).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs at most two at a time', async () => {
+    let inFlight = 0;
+    let peak = 0;
+    fetchItemBody.mockImplementation(async () => {
+      inFlight++;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      inFlight--;
+      return { content: '<p>x</p>' };
+    });
+
+    const results = await Promise.all(
+      Array.from({ length: 6 }, () =>
+        prefetchStoredBody(article(), 'https://feed.example/rss', { guest: false })
+      )
+    );
+    expect(results).toEqual(Array(6).fill('found'));
+    expect(peak).toBe(2);
+  });
+
+  it('pauses after a failure instead of hammering the endpoint', async () => {
+    fetchItemBody.mockRejectedValueOnce(new ApiError('Too many requests', 429));
+
+    expect(await prefetchStoredBody(article(), 'https://feed.example/rss', { guest: true })).toBe(
+      'unavailable'
+    );
+    expect(await prefetchStoredBody(article(), 'https://feed.example/rss', { guest: true })).toBe(
+      'skipped'
+    );
     expect(fetchItemBody).toHaveBeenCalledTimes(1);
   });
 });
