@@ -1,14 +1,15 @@
 <script lang="ts">
-  // Posting one highlight to Bluesky. Planned live like the share composer's
-  // cross-post: the note becomes the post's text (trimmed to 300), and the
-  // passage goes out as a text shot with the link in the text, or, with that
-  // off, quoted in the text over the article's link card.
+  // Posting to Bluesky from inside the app. Planned live like the share
+  // composer's cross-post: the note becomes the post's text (trimmed to 300),
+  // and a highlight's passage goes out as a text shot with the link in the
+  // text, or, with that off, quoted in the text over the article's link card.
+  // Without a passage (the discussion's "Add yours") it's a plain link post.
   import Modal from '$lib/components/common/Modal.svelte';
   import BlueskyCountRing from './BlueskyCountRing.svelte';
   import {
-    blueskyHighlightStore as composer,
-    highlightPostBlocks,
-  } from '$lib/stores/blueskyHighlight.svelte';
+    blueskyComposerStore as composer,
+    blueskyPostBlocks,
+  } from '$lib/stores/blueskyComposer.svelte';
   import { domainOf } from '$lib/services/blueskyCrossPost';
   import { planBlueskyPost } from '$lib/utils/blueskyPost';
   import { renderTextShot } from '$lib/utils/textShot';
@@ -18,7 +19,7 @@
 
   let plan = $derived(
     session
-      ? planBlueskyPost(highlightPostBlocks(session.quote, composer.text), session.source.url, {
+      ? planBlueskyPost(blueskyPostBlocks(session.quote, composer.text), session.source.url, {
           textShots: composer.textShots,
         })
       : null
@@ -31,13 +32,13 @@
     return parts.join(' · ');
   });
 
-  // The text shot itself, drawn once per highlight so the reader sees the image
+  // The text shot itself, drawn once per passage so the reader sees the image
   // that will go out. A failed draw just leaves the preview off; posting falls
   // back to the link card on its own.
   let shotUrl = $state<string | null>(null);
   $effect(() => {
     const current = session;
-    if (!current) return;
+    if (!current?.quote) return;
     let url: string | null = null;
     let cancelled = false;
     renderTextShot(current.quote, {
@@ -95,7 +96,20 @@
         autofocus></textarea>
 
       <figure class="preview">
-        {#if composer.textShots && shotUrl}
+        {#if !session.quote}
+          <!-- What Bluesky will draw under the post: the article's link card. -->
+          <div class="link-card">
+            {#if session.source.imageUrl}
+              <img class="link-card-image" src={session.source.imageUrl} alt="" />
+            {/if}
+            <div class="link-card-text">
+              {#if session.source.title}
+                <span class="link-card-title">{session.source.title}</span>
+              {/if}
+              <span class="link-card-domain">{domainOf(session.source.url)}</span>
+            </div>
+          </div>
+        {:else if composer.textShots && shotUrl}
           <img class="shot" src={shotUrl} alt={session.quote} />
         {:else}
           <blockquote class="quote">{session.quote}</blockquote>
@@ -113,14 +127,16 @@
       </figure>
 
       <div class="footer">
-        <label class="option">
-          <input
-            type="checkbox"
-            checked={composer.textShots}
-            onchange={(e) => composer.setTextShots(e.currentTarget.checked)}
-          />
-          Quote as image
-        </label>
+        {#if session.quote}
+          <label class="option">
+            <input
+              type="checkbox"
+              checked={composer.textShots}
+              onchange={(e) => composer.setTextShots(e.currentTarget.checked)}
+            />
+            Quote as image
+          </label>
+        {/if}
         {#if plan && composer.access !== 'missing'}<BlueskyCountRing length={plan.length} />{/if}
         <button type="button" class="btn" onclick={composer.close}>Cancel</button>
         <button
@@ -215,18 +231,51 @@
   .footer {
     display: flex;
     align-items: center;
+    justify-content: flex-end;
     gap: 0.5rem;
     padding-top: 0.25rem;
   }
 
+  .footer .option {
+    margin-right: auto;
+  }
+
   .footer :global(.count-ring) {
-    margin-left: auto;
     margin-right: 0.25rem;
   }
 
-  /* Without the ring (permission missing), the buttons still sit right. */
-  .footer .option + .btn {
-    margin-left: auto;
+  .link-card {
+    overflow: hidden;
+    border: 1px solid var(--color-border);
+    border-radius: 0.5rem;
+  }
+
+  .link-card-image {
+    display: block;
+    width: 100%;
+    aspect-ratio: 1.91 / 1;
+    max-height: 10rem;
+    object-fit: cover;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .link-card-text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
+    padding: 0.625rem 0.75rem;
+  }
+
+  .link-card-title {
+    color: var(--color-text);
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+    line-height: var(--leading-snug);
+  }
+
+  .link-card-domain {
+    color: var(--color-text-secondary);
+    font-size: var(--text-xs);
   }
 
   .option {

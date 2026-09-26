@@ -9,7 +9,7 @@ import {
 } from '$lib/utils/textSelector';
 import { toastStore } from '$lib/stores/toast.svelte';
 import { auth } from '$lib/stores/auth.svelte';
-import { blueskyHighlightStore } from '$lib/stores/blueskyHighlight.svelte';
+import { blueskyComposerStore } from '$lib/stores/blueskyComposer.svelte';
 import {
   saveHighlightToMargin as saveToMargin,
   removeHighlightFromMargin,
@@ -1062,7 +1062,7 @@ export function useHighlights(params: HighlightParams) {
     const url = params.itemUrl?.() ?? hl?.sourceUrl;
     popoverState = null;
     if (!hl || !url) return;
-    blueskyHighlightStore.open({
+    blueskyComposerStore.open({
       source: { url, title: params.itemTitle?.() ?? hl.sourceTitle },
       quote: hl.selector.exact,
       note: hl.note,

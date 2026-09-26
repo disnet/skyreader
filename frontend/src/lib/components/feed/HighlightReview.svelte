@@ -18,7 +18,7 @@
   import HighlightPopover from '$lib/components/feed/HighlightPopover.svelte';
   import RemoveHighlightModal from '$lib/components/feed/RemoveHighlightModal.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
-  import { blueskyHighlightStore } from '$lib/stores/blueskyHighlight.svelte';
+  import { blueskyComposerStore } from '$lib/stores/blueskyComposer.svelte';
   import { highlightReviewStore } from '$lib/stores/highlightReview.svelte';
   import { articlesStore } from '$lib/stores/articles.svelte';
   import { socialStore } from '$lib/stores/social.svelte';
@@ -805,7 +805,7 @@
     const target = source;
     if (!target?.url || !live) return;
     interacted = true;
-    blueskyHighlightStore.open({
+    blueskyComposerStore.open({
       source: { url: target.url, title: target.title },
       quote: live.selector.exact,
       note: live.note,

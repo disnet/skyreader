@@ -55,7 +55,7 @@ Joining a room writes a public record to your PDS, so anyone can see you're read
 
 ## Links from your follows
 
-If you turn on [From your follows](/guide/from-your-follows/), Skyreader reads your Bluesky Following timeline and keeps the links it finds for a week, privately. Reading your follows never posts anything; Skyreader posts to Bluesky only when you tick **Also on Bluesky** on a share or post a highlight there.
+If you turn on [From your follows](/guide/from-your-follows/), Skyreader reads your Bluesky Following timeline and keeps the links it finds for a week, privately. Reading your follows never posts anything; Skyreader posts to Bluesky only when you tick **Also on Bluesky** on a share, post a highlight there, or post from an article's **Discussion**.
 
 ## Seeing for yourself
 

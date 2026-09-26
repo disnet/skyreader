@@ -42,6 +42,7 @@
   import { socialContextStore } from '$lib/stores/socialContext.svelte';
   import { profileService } from '$lib/services/profiles';
   import { auth } from '$lib/stores/auth.svelte';
+  import { blueskyComposerStore } from '$lib/stores/blueskyComposer.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
   import { integrationSaveStore } from '$lib/stores/integrationSave.svelte';
   import { sembleConnectionStore } from '$lib/stores/sembleConnection.svelte';
@@ -400,7 +401,7 @@
   });
 
   // Contribute to a lane: linkblog → the share composer, Margin/Semble → their
-  // save handlers, Bluesky → a compose intent in a new tab.
+  // save handlers, Bluesky → the in-app post dialog (a compose intent for a guest).
   function createInLane(id: LaneId) {
     switch (id) {
       case 'linkblog':
@@ -415,11 +416,17 @@
         saveToMargin();
         break;
       case 'bluesky':
-        window.open(
-          `https://bsky.app/intent/compose?text=${encodeURIComponent(itemUrl)}`,
-          '_blank',
-          'noopener'
-        );
+        // Signed in, post from here; a guest has no account to post from, so
+        // Bluesky's own composer takes the link.
+        if (auth.user && itemUrl) {
+          blueskyComposerStore.open({ source: article ?? { url: itemUrl, title: itemTitle } });
+        } else {
+          window.open(
+            `https://bsky.app/intent/compose?text=${encodeURIComponent(itemUrl)}`,
+            '_blank',
+            'noopener'
+          );
+        }
         break;
     }
   }

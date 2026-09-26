@@ -1,8 +1,9 @@
 // Named `.component.test.ts` so it runs in the project that compiles runes.
 //
-// Posting a highlight to Bluesky: the dialog hands the cross-post the note as
-// text and the passage as a quote, remembers the post across a permission
-// grant, and reopens it only for the account that asked.
+// Posting to Bluesky: for a highlight the dialog hands the cross-post the note
+// as text and the passage as a quote; without one it's text over the link
+// card. It remembers the post across a permission grant, and reopens it only
+// for the account that asked.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const grantPermissions = vi.fn();
@@ -28,11 +29,11 @@ vi.mock('$lib/stores/preferences.svelte', () => ({
   },
 }));
 
-const { blueskyHighlightStore: store } = await import('./blueskyHighlight.svelte');
+const { blueskyComposerStore: store } = await import('./blueskyComposer.svelte');
 
 const source = { url: 'https://example.com/post', title: 'A Post' };
 
-describe('blueskyHighlightStore', () => {
+describe('blueskyComposerStore', () => {
   beforeEach(() => {
     store.close();
     localStorage.clear();
@@ -58,6 +59,21 @@ describe('blueskyHighlightStore', () => {
         { kind: 'quote', text: 'The passage.' },
       ],
       expect.objectContaining({ textShots: store.textShots })
+    );
+  });
+
+  it('posts just the text, for the link card, when there is no passage', async () => {
+    store.open({ source });
+    expect(store.session).toEqual({ source, quote: '' });
+    await vi.waitFor(() => expect(store.access).toBe('granted'));
+
+    store.text = 'Worth reading';
+    store.post();
+
+    expect(crossPostToBluesky).toHaveBeenCalledWith(
+      source,
+      [{ kind: 'text', text: 'Worth reading' }],
+      expect.anything()
     );
   });
 

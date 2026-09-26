@@ -15,7 +15,7 @@
   import BottomSheet from '$lib/components/common/BottomSheet.svelte';
   import NotificationList from '$lib/components/NotificationList.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
-  import { blueskyHighlightStore } from '$lib/stores/blueskyHighlight.svelte';
+  import { blueskyComposerStore } from '$lib/stores/blueskyComposer.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { articlesStore } from '$lib/stores/articles.svelte';
   import { socialStore } from '$lib/stores/social.svelte';
@@ -198,7 +198,7 @@
 
   function handlePostToBluesky(group: HighlightGroup, row: HighlightRow) {
     if (!group.url) return;
-    blueskyHighlightStore.open({
+    blueskyComposerStore.open({
       source: { url: group.url, title: group.title },
       quote: row.text,
       note: row.note,

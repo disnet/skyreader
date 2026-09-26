@@ -21,14 +21,14 @@
   import { feedPath, FEEDS_PATH, SAVED_PATH } from '$lib/utils/viewNav';
   import { completeFollowsGrant } from '$lib/utils/followsChannel';
   import { shareComposerStore } from '$lib/stores/shareComposer.svelte';
-  import { blueskyHighlightStore } from '$lib/stores/blueskyHighlight.svelte';
+  import { blueskyComposerStore } from '$lib/stores/blueskyComposer.svelte';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import { APP_SCROLL_ID, appScrollElement, SHELL_FRAME_QUERY } from '$lib/utils/appScroll';
   import { SHELL_TOOLBAR_ID } from '$lib/actions/shell-toolbar';
   import KeyboardShortcutsModal from '$lib/components/KeyboardShortcutsModal.svelte';
   import RefreshProgressBar from '$lib/components/RefreshProgressBar.svelte';
   import ShareComposer from '$lib/components/feed/ShareComposer.svelte';
-  import BlueskyHighlightComposer from '$lib/components/feed/BlueskyHighlightComposer.svelte';
+  import BlueskyComposer from '$lib/components/feed/BlueskyComposer.svelte';
   import IntegrationSaveDialog from '$lib/components/feed/IntegrationSaveDialog.svelte';
   import SembleConnectionDialog from '$lib/components/feed/SembleConnectionDialog.svelte';
   import SyncLimitBanner from '$lib/components/SyncLimitBanner.svelte';
@@ -127,7 +127,7 @@
     if (shareGrantChecked || !did || auth.isGuest) return;
     shareGrantChecked = true;
     void shareComposerStore.resumeAfterGrant(did).catch(() => {});
-    blueskyHighlightStore.resumeAfterGrant(did);
+    blueskyComposerStore.resumeAfterGrant(did);
   });
 
   // Register global keyboard shortcuts on mount. keyboardStore.register() keys by
@@ -447,7 +447,7 @@
 <KeyboardShortcutsModal />
 <RefreshProgressBar />
 <ShareComposer />
-<BlueskyHighlightComposer />
+<BlueskyComposer />
 <IntegrationSaveDialog />
 <SembleConnectionDialog />
 

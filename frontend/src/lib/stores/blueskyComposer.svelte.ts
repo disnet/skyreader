@@ -1,8 +1,9 @@
-// Posting one highlight to Bluesky: the passage as a text shot (or quoted in
-// the text), the reader's note on it as the post's words, and the article's
-// link. One global dialog, mounted once in AppShell, opened from a highlight's
-// toolbar or the highlights list. The post itself goes out through the same
-// path as a share's "Also on Bluesky" cross-post.
+// Posting to Bluesky from inside the app. For a highlight: the passage as a
+// text shot (or quoted in the text), the reader's note on it as the post's
+// words, and the article's link. Without one (the discussion's "Add yours"),
+// it's the reader's words over the article's link card. One global dialog,
+// mounted once in AppShell. The post itself goes out through the same path as
+// a share's "Also on Bluesky" cross-post.
 
 import { api } from '$lib/services/api';
 import { grantPermissions } from '$lib/services/permissions';
@@ -10,30 +11,31 @@ import { crossPostToBluesky, type BlueskySource } from '$lib/services/blueskyCro
 import { preferences } from '$lib/stores/preferences.svelte';
 import type { ShareDraftBlock } from '$lib/types';
 
-export interface BlueskyHighlightOpenOptions {
+export interface BlueskyComposerOpenOptions {
   source: BlueskySource;
-  /** The highlighted passage. */
-  quote: string;
+  /** The highlighted passage; absent for a plain link post. */
+  quote?: string;
   /** The reader's note on it, seeded as the post's text. */
   note?: string;
 }
 
 interface Session {
   source: BlueskySource;
+  /** '' for a plain link post. */
   quote: string;
 }
 
 /** Set before leaving for a permission grant: which account, and what post. */
+// The key keeps its old name so a grant in flight across a deploy still resumes.
 const GRANT_KEY = 'skyreader:grant-bluesky-highlight';
 
-export function highlightPostBlocks(quote: string, text: string): ShareDraftBlock[] {
-  return [
-    { kind: 'text', text },
-    { kind: 'quote', text: quote },
-  ];
+export function blueskyPostBlocks(quote: string, text: string): ShareDraftBlock[] {
+  const blocks: ShareDraftBlock[] = [{ kind: 'text', text }];
+  if (quote) blocks.push({ kind: 'quote', text: quote });
+  return blocks;
 }
 
-function createBlueskyHighlightStore() {
+function createBlueskyComposerStore() {
   let session = $state<Session | null>(null);
   let text = $state('');
   let textShots = $state(true);
@@ -41,8 +43,8 @@ function createBlueskyHighlightStore() {
   // ask for access before Post rather than after.
   let access = $state<'unknown' | 'granted' | 'missing'>('unknown');
 
-  function open(options: BlueskyHighlightOpenOptions) {
-    session = { source: options.source, quote: options.quote };
+  function open(options: BlueskyComposerOpenOptions) {
+    session = { source: options.source, quote: options.quote ?? '' };
     text = options.note?.trim() ?? '';
     // The same sticky choice as the share composer's "Quotes as images".
     textShots = preferences.blueskyTextShots;
@@ -59,7 +61,7 @@ function createBlueskyHighlightStore() {
     const asked = session;
     try {
       const status = await api.getIntegrationStatus();
-      // Closed, or opened on another highlight, while this was in flight.
+      // Closed, or opened on another post, while this was in flight.
       if (session !== asked) return;
       access = status.scopeStatus.blueskyPost ? 'granted' : 'missing';
     } catch {
@@ -71,7 +73,7 @@ function createBlueskyHighlightStore() {
   function post() {
     if (!session) return;
     const { source, quote } = session;
-    const blocks = highlightPostBlocks(quote, text);
+    const blocks = blueskyPostBlocks(quote, text);
     const shots = textShots;
     close();
     void crossPostToBluesky(source, blocks, {
@@ -153,4 +155,4 @@ function createBlueskyHighlightStore() {
   };
 }
 
-export const blueskyHighlightStore = createBlueskyHighlightStore();
+export const blueskyComposerStore = createBlueskyComposerStore();
