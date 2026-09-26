@@ -138,6 +138,20 @@ describe('parseMarginHighlightNote — the at.margin.note shape we consume', () 
     expect(bare?.note).toBe('legacy note');
   });
 
+  it('accepts a commenting note — a highlight that carries a comment', () => {
+    const parsed = parseMarginHighlightNote(uri, {
+      $type: 'at.margin.note',
+      motivation: 'commenting',
+      target: {
+        source: 'https://example.com/a',
+        selector: { type: 'TextQuoteSelector', exact: 'A passage' },
+      },
+      body: { value: 'a thought', format: 'text/plain' },
+    });
+    expect(parsed?.selector.exact).toBe('A passage');
+    expect(parsed?.note).toBe('a thought');
+  });
+
   it('skips bookmarking notes — those are saves, not highlights', () => {
     expect(
       parseMarginHighlightNote(uri, {
@@ -341,6 +355,18 @@ describe('Margin highlight records', () => {
 
     expect(record.target.source).toBe('https://chinaunread.substack.com/p/a-post');
   });
+
+  // Margin's own rule: a bare highlight is `highlighting`, one carrying a
+  // comment is `commenting`. Writing `highlighting` with a body made Margin
+  // show the reader's annotation as a plain highlight.
+  it('marks a highlight with a note as commenting, and a bare one as highlighting', () => {
+    const base = { source: 'https://example.com/a', exact: 'A passage' };
+    expect(buildMarginNoteRecord({ ...base, note: 'a thought' }, 'now').motivation).toBe(
+      'commenting'
+    );
+    expect(buildMarginNoteRecord(base, 'now').motivation).toBe('highlighting');
+    expect(buildMarginNoteRecord({ ...base, note: '   ' }, 'now').motivation).toBe('highlighting');
+  });
 });
 
 // A note edit reuses the rkey and putRecord replaces the whole record. Now that
@@ -416,6 +442,29 @@ describe('mergeMarginNoteUpdate', () => {
     );
     expect(merged).not.toHaveProperty('body');
     expect(merged.marginOnlyField).toBe('keep me');
+  });
+
+  it('turns a highlight into a comment when a note is added', () => {
+    const merged = mergeMarginNoteUpdate(marginNative(), edit, '2026-08-25T00:00:00.000Z');
+    expect(merged.motivation).toBe('commenting');
+  });
+
+  it('turns a comment back into a highlight when its note is cleared', () => {
+    const merged = mergeMarginNoteUpdate(
+      marginNative({ motivation: 'commenting', body: { value: 'old', format: 'text/plain' } }),
+      { source: edit.source, exact: edit.exact },
+      '2026-08-25T00:00:00.000Z'
+    );
+    expect(merged.motivation).toBe('highlighting');
+  });
+
+  it('leaves a motivation outside highlighting/commenting alone', () => {
+    const merged = mergeMarginNoteUpdate(
+      marginNative({ motivation: 'questioning' }),
+      edit,
+      '2026-08-25T00:00:00.000Z'
+    );
+    expect(merged.motivation).toBe('questioning');
   });
 
   it('falls back to building the record when there is nothing to merge onto', () => {
