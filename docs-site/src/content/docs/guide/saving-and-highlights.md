@@ -45,7 +45,7 @@ Highlights are private to Skyreader and sync across your devices. Two optional M
 
 Choose the Bluesky button on a highlight (in the reader, the **Highlights** page, or the review deck) to post it from your own account. The first time, Skyreader asks for permission to post for you.
 
-The passage goes out as an image (a text shot): the quote set in the article's type, signed with the article's title and site, with the quote itself as the image's description. Your note becomes the post's text, which you can edit before posting; the article's link rides in the text. Untick **Quote as image** to quote the passage in the text instead, with the article's link card. Either way the post holds 300 characters, and the ring shows how much you have left.
+The passage goes out as an image (a text shot): the quote set in the article's type, signed with the article's title and site, with the quote itself as the image's description. Your note becomes the post's text, which you can edit before posting; the article's link rides in the text. Switch **Quote as** to **Text** to quote the passage in the text instead, with the article's link card. Either way the post holds 300 characters; a ring appears as you near the limit.
 
 Once posted, it's a public Bluesky post like any other: manage it in Bluesky.
 
