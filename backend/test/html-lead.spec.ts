@@ -63,6 +63,13 @@ describe('htmlLead', () => {
     expect(lead.endsWith('</p>') || lead.endsWith('</figure>')).toBe(true);
   });
 
+  it('reads a bare < as text, not the start of a tag', () => {
+    const html = `<p>If x <3 then it's fine, and a < b too.</p>${'<p>More text here.</p>'.repeat(600)}`;
+    const lead = htmlLead(html, 1024)!;
+    expect(lead.startsWith("<p>If x <3 then it's fine, and a < b too.</p>")).toBe(true);
+    expect(bytes(lead)).toBeGreaterThan(512);
+  });
+
   it('returns undefined when the prefix has no visible text', () => {
     const html = `<img src="${'x'.repeat(5000)}">`;
     expect(htmlLead(html, 1024)).toBeUndefined();

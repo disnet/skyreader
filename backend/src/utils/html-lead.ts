@@ -117,7 +117,11 @@ export function htmlLead(html: string, maxBytes: number): string | undefined {
   let fits = true;
   while (i < html.length) {
     const ch = html[i];
-    if (ch === '<') {
+    // Markup only where a browser would read it as such: `<` then a letter, `/`,
+    // `!` or `?`. A bare `<` (`x <3`, `a < b`, unescaped in plenty of feeds) is
+    // text, and scanning it as a tag would run on to the next `>` — or, past an
+    // apostrophe, to the end of the body — collapsing the lead to a few words.
+    if (ch === '<' && /[a-zA-Z/!?]/.test(html[i + 1] ?? '')) {
       anywhere = [i, bytes];
       let end: number;
       let name = '';
