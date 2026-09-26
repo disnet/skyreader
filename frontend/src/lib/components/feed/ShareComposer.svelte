@@ -26,6 +26,7 @@
   import { positionFloating } from '$lib/utils/floating';
   import { BLUESKY_MAX_GRAPHEMES, planBlueskyPost } from '$lib/utils/blueskyPost';
   import { auth } from '$lib/stores/auth.svelte';
+  import { permissionMessage } from '$lib/services/permissions';
 
   const MAX = 3000;
 
@@ -115,6 +116,10 @@
 
   function allowBluesky() {
     void composer.allowBluesky(auth.user?.did);
+  }
+
+  function allowNeededPermission() {
+    void composer.allowNeededPermission(auth.user?.did);
   }
 
   // ── Quote picker ────────────────────────────────────────────────────────────
@@ -781,6 +786,19 @@
         </div>
       {/if}
 
+      {#if composer.permissionNeeded}
+        <!-- Its own row: the footer has no room, and the app shell's banner is
+             hidden under the reader. -->
+        <div class="bluesky-strip" role="alert">
+          <span class="bluesky-summary"
+            >{permissionMessage(composer.permissionNeeded.feature)} to post.</span
+          >
+          <button type="button" class="bluesky-allow" onclick={allowNeededPermission}
+            >Allow access</button
+          >
+        </div>
+      {/if}
+
       <footer class="composer-foot">
         <div class="foot-left">
           {#if hasQuoteSources}
@@ -900,7 +918,7 @@
         </div>
 
         <div class="foot-right">
-          {#if postError}
+          {#if postError && !composer.permissionNeeded}
             <span class="post-error" role="alert">Couldn’t post. Try again.</span>
           {:else if nearLimit}
             <span class="counter" class:over={overLimit}>{MAX - noteLength}</span>

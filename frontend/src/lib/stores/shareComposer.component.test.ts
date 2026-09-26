@@ -55,8 +55,17 @@ const crossPostToBluesky = vi.fn();
 vi.mock('$lib/services/blueskyCrossPost', () => ({
   crossPostToBluesky: (...args: unknown[]) => crossPostToBluesky(...args),
 }));
+class ScopeUpgradeError extends Error {
+  constructor(
+    message: string,
+    public feature?: string
+  ) {
+    super(message);
+  }
+}
 vi.mock('$lib/services/api', () => ({
   api: { getIntegrationStatus: () => Promise.resolve({ scopeStatus: { blueskyPost: true } }) },
+  ScopeUpgradeError,
 }));
 
 const ARTICLE = {
@@ -203,14 +212,14 @@ describe('share composer: also on Bluesky', () => {
           }
         : undefined
     );
-    await back.resumeAfterBlueskyGrant(DID);
+    await back.resumeAfterGrant(DID);
     await Promise.resolve();
     expect(back.session?.article.url).toBe(ARTICLE.url);
 
     // Once only: a later load doesn't reopen it again.
     back.close();
     const { shareComposer: later } = await freshStores();
-    await later.resumeAfterBlueskyGrant(DID);
+    await later.resumeAfterGrant(DID);
     await Promise.resolve();
     expect(later.session).toBeNull();
   });
@@ -221,8 +230,38 @@ describe('share composer: also on Bluesky', () => {
     shareComposer.appendQuote('A passage.');
     await shareComposer.allowBluesky('did:plc:someone-else');
     const { shareComposer: back } = await freshStores();
-    await back.resumeAfterBlueskyGrant(DID);
+    await back.resumeAfterGrant(DID);
     await Promise.resolve();
     expect(back.session).toBeNull();
+  });
+});
+
+describe('share composer missing permission', () => {
+  it('asks for the linkblog permission in the drawer and keeps the draft', async () => {
+    const { shareComposer } = await freshStores();
+    shareLink.mockRejectedValue(new ScopeUpgradeError('needs permission', 'linkblog'));
+    await openCreate(shareComposer);
+    shareComposer.appendQuote('A passage.');
+
+    expect(await shareComposer.post()).toBe(false);
+    expect(shareComposer.session?.article.url).toBe(ARTICLE.url);
+    expect(shareComposer.permissionNeeded).toEqual({ feature: 'linkblog' });
+
+    await shareComposer.allowNeededPermission(DID);
+    expect(grantPermissions).toHaveBeenCalledWith(['linkblog'], expect.any(String));
+    expect(JSON.parse(localStorage.getItem('skyreader:grant-draft') ?? 'null')).toEqual({
+      did: DID,
+      articleUrl: ARTICLE.url,
+    });
+  });
+
+  it('clears the ask when the drawer moves to another article', async () => {
+    const { shareComposer } = await freshStores();
+    shareLink.mockRejectedValue(new ScopeUpgradeError('needs permission', 'linkblog'));
+    await openCreate(shareComposer);
+    await shareComposer.post();
+    shareComposer.open({ article: { ...ARTICLE, url: 'https://example.test/other' } });
+    await Promise.resolve();
+    expect(shareComposer.permissionNeeded).toBeNull();
   });
 });

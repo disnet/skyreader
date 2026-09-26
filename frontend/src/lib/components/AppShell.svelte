@@ -117,13 +117,13 @@
     void completeFollowsGrant().catch(() => {});
   });
 
-  // Back from granting "Also on Bluesky" from the share drawer: reopen the draft.
-  let blueskyGrantChecked = false;
+  // Back from a permission grant asked for in the share drawer: reopen the draft.
+  let shareGrantChecked = false;
   $effect(() => {
     const did = auth.user?.did;
-    if (blueskyGrantChecked || !did || auth.isGuest) return;
-    blueskyGrantChecked = true;
-    void shareComposerStore.resumeAfterBlueskyGrant(did).catch(() => {});
+    if (shareGrantChecked || !did || auth.isGuest) return;
+    shareGrantChecked = true;
+    void shareComposerStore.resumeAfterGrant(did).catch(() => {});
   });
 
   // Register global keyboard shortcuts on mount. keyboardStore.register() keys by
