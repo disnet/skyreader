@@ -708,16 +708,33 @@ interface MarginNoteBody {
 }
 
 /**
+ * The two W3C motivations a passage-anchored note moves between. Margin writes
+ * a bare highlight as `highlighting` and one carrying a comment as
+ * `commenting`, and flips it when the comment is added or removed — so a note
+ * Skyreader writes has to follow the same rule, or Margin shows the reader's
+ * annotation as a plain highlight.
+ */
+const PASSAGE_MOTIVATIONS = new Set(['highlighting', 'commenting']);
+
+export function isPassageMotivation(motivation: unknown): boolean {
+  return typeof motivation === 'string' && PASSAGE_MOTIVATIONS.has(motivation);
+}
+
+function passageMotivation(note: string | undefined): 'highlighting' | 'commenting' {
+  return note ? 'commenting' : 'highlighting';
+}
+
+/**
  * Build an at.margin.note record. When a `note` is present it's carried as the
  * annotation's comment body — Margin expects a `{ value, format }` shape — so
- * the note stays portable across the Atmosphere.
+ * the note stays portable across the Atmosphere, and the motivation says so.
  */
 export function buildMarginNoteRecord(body: MarginNoteBody, createdAt: string) {
   const note = body.note?.trim();
   const source = normalizeArticleUrl(body.source) ?? body.source.trim();
   return {
     $type: 'at.margin.note',
-    motivation: 'highlighting',
+    motivation: passageMotivation(note),
     target: {
       source,
       ...(body.title ? { title: body.title } : {}),
@@ -774,6 +791,9 @@ export function mergeMarginNoteUpdate(
 
   const note = body.note?.trim();
   const next = { ...record };
+  // Adding or clearing the comment moves the note between highlighting and
+  // commenting. Any other motivation is Margin's own call and stays as it is.
+  if (isPassageMotivation(record.motivation)) next.motivation = passageMotivation(note);
   if (!note) {
     // Clearing the note drops the body; everything else the record carries stays.
     delete next.body;
@@ -1040,7 +1060,7 @@ export function parseMarginHighlightNote(
 ): Omit<MarginHighlightNote, 'match'> | null {
   if (!value || typeof value !== 'object') return null;
   const record = value as Record<string, unknown>;
-  if (record.motivation !== 'highlighting') return null;
+  if (!isPassageMotivation(record.motivation)) return null;
 
   const target = record.target;
   if (!target || typeof target !== 'object') return null;
