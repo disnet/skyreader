@@ -109,6 +109,7 @@ import {
   handleRoomJoin,
   handleRoomRead,
 } from './routes/rooms';
+import { handleRecommends } from './routes/recommends';
 import {
   handleFollowLinkSharers,
   handleFollowLinksSettings,
@@ -726,6 +727,12 @@ async function route(
     case url.pathname === '/api/rooms/items':
       if (!session) return unauthorizedResponse(headers);
       response = await handleRoomAddItem(request, env);
+      break;
+
+    // Recommends — one-tap public recommendations (routes/recommends.ts)
+    case url.pathname === '/api/recommends':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleRecommends(request, env);
       break;
 
     // Saved routes

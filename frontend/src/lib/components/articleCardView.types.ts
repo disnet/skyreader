@@ -239,6 +239,10 @@ export interface ArticleCardViewProps {
    *  dropped at ingest and expanding will extract it. */
   canExpand?: boolean;
   currentlyShared?: boolean;
+  /** Offer the one-tap Recommend control (signed in, and the item has a URL). */
+  canRecommend?: boolean;
+  /** The reader has publicly recommended this article. */
+  isRecommended?: boolean;
   /** The posted note. Not rendered — it decides whether the Share button shows
    *  its "has commentary" dot, and what its title says. */
   currentNote?: string;
@@ -269,6 +273,7 @@ export interface ArticleCardViewProps {
   onContentTap?: () => void;
   onToggleRead?: () => void;
   onToggleSave?: () => void;
+  onToggleRecommend?: () => void;
   onOpenUrl?: () => void;
   onOpenFullscreen?: () => void;
   /** Open a curated edition piece in the in-app reader (CollectionReader). */

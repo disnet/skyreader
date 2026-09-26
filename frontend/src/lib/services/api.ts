@@ -1824,6 +1824,25 @@ class ApiClient {
     });
   }
 
+  // Recommends — one-tap public recommendations (app.skyreader.social.recommend)
+  async getRecommends(): Promise<{
+    recommends: Array<{ url: string; title?: string; documentUri?: string; createdAt: string }>;
+  }> {
+    return this.fetch('/api/recommends');
+  }
+
+  async recommend(data: {
+    url: string;
+    title?: string;
+    documentUri?: string;
+  }): Promise<{ recommended: boolean; uri?: string }> {
+    return this.fetch('/api/recommends', { method: 'POST', body: JSON.stringify(data) });
+  }
+
+  async unrecommend(url: string): Promise<{ recommended: boolean }> {
+    return this.fetch('/api/recommends', { method: 'DELETE', body: JSON.stringify({ url }) });
+  }
+
   /** Add an article to a room's collection. Metadata is optional: pass what the
    *  library already knows, and the backend extracts a title for a bare URL. */
   async addRoomItem(

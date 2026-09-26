@@ -5,6 +5,14 @@ description: Post links with commentary to a public linkblog that's portable acr
 
 Sharing in Skyreader means posting a link, with your commentary, to your **linkblog**: a public publication that anyone can read, follow, or subscribe to by RSS.
 
+## Recommending
+
+**Recommend** is the quick version: one tap, no note. It says "this is worth reading" and nothing more. Tap it again to take it back.
+
+A recommend is a public record in your PDS, so anyone can see it, and other Atmospheric apps can read it. When the article is itself published on standard.site (in Leaflet, for example), the recommend also reaches its author through standard.site.
+
+Recommends don't appear on your linkblog. When you have something to say about an article, share it instead.
+
 ## The composer
 
 **Share** on any article opens the composer, a card docked at the bottom of the screen. The article stays readable behind it, so you can draft on one side and gather quotes with the other, and you can minimize the composer to a slim bar while you read.
@@ -50,6 +58,6 @@ If you'd like your posts to say where they came from, turn on **Offer a "Posted 
 
 ## What's public
 
-Shared links are **always public**. That's the one part of Skyreader that is public by design; everything else you do while reading is private by default (see [Your data](/your-data/)).
+Shared links and recommends are **always public**. They're the parts of Skyreader that are public by design; everything else you do while reading is private by default (see [Your data](/your-data/)).
 
 Deleting your linkblog removes every link post from your PDS. You can restore the linkblog afterward to start sharing again, but deleted posts don't come back.

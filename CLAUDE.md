@@ -263,6 +263,7 @@ network with `goat lex publish` from the repo root; see `docs/OAUTH_SCOPES.md`.
 
 - `feed/subscription.json` - RSS/atproto subscription record
 - `social/follow.json` - In-app follow relationship
+- `social/recommend.json` - One-tap public recommendation of an article (any URL)
 - `reading/readAlong.json` - Reading-room join record
 - `authFull.json` - OAuth permission set covering Skyreader's own collections (see `docs/OAUTH_SCOPES.md`)
 

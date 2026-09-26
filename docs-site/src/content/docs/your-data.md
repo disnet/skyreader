@@ -14,6 +14,7 @@ The short version: **your reading is private to you by default.** A few things a
 | Saved articles          | Skyreader's servers + your devices             | Private; public if backed by Semble or Margin   |
 | Highlights and notes    | Skyreader's servers + your devices             | Private; a highlight you publish is public      |
 | Shared links (linkblog) | Your PDS                                       | Always public                                   |
+| Recommends              | Your PDS                                       | Always public                                   |
 | Reading rooms           | Your PDS (joins); Skyreader's servers (reads)  | Joining is public; reads are an anonymous count |
 | Links from your follows | Skyreader's servers, for a week                | Private                                         |
 | Guest data              | Your device only                               | Private                                         |
@@ -43,6 +44,10 @@ If you'd like to share a highlight publicly, you can share an individual highlig
 ## Your linkblog
 
 Shared links are always public. That's their point: a linkblog is a publication in your PDS, readable across the Atmosphere, with a public page and RSS feed. See [Sharing](/guide/sharing-and-your-linkblog/).
+
+## Recommends
+
+Recommending an article writes a public record to your PDS, so anyone can see what you've recommended. Take a recommend back and the record is deleted. See [Recommending](/guide/sharing-and-your-linkblog/#recommending).
 
 ## Reading rooms
 

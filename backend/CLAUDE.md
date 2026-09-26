@@ -121,6 +121,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed documentation.
 | `src/routes/reading.ts`       | Article + document read positions (forward delta)         |
 | `src/routes/labels.ts`        | Unified item labels (read/starred/archived/tags)          |
 | `src/routes/saved.ts`         | Saved articles CRUD                                       |
+| `src/routes/recommends.ts`    | One-tap public recommends (+ standard.site copy)          |
 | `src/routes/integrations.ts`  | Semble/Margin writes to the user's PDS                    |
 | `src/routes/settings.ts`      | User settings                                             |
 | `src/routes/sync.ts`          | PDS full sync, subscription sync, sync status             |
