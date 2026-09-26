@@ -428,6 +428,10 @@ async function maybeBulkDeleteFromPds(
   );
 }
 
+// SQL: this row isn't a newsletter. Newsletters are local-only, so nothing may
+// mark one dirty — the push that would settle the flag skips them.
+const NOT_NEWSLETTER_ROW = `(source_type IS NULL OR source_type <> '${NEWSLETTER_SOURCE_TYPE}')`;
+
 interface CreateSubscriptionRequest {
   feedUrl?: string;
   title?: string;
@@ -1303,7 +1307,7 @@ export async function handleUpdateSubscription(
     await env.DB.prepare(
       `UPDATE subscriptions_cache
        SET custom_title = ?, custom_icon_url = ?, category = ?,
-           pds_dirty = CASE WHEN ? THEN 1 ELSE pds_dirty END
+           pds_dirty = CASE WHEN ? AND ${NOT_NEWSLETTER_ROW} THEN 1 ELSE pds_dirty END
        WHERE user_did = ? AND record_uri LIKE ?`
     )
       .bind(
@@ -1380,9 +1384,20 @@ export async function handleBulkCreateSubscriptions(
     });
   }
 
-  const { subscriptions } = body;
+  if (!Array.isArray(body.subscriptions) || body.subscriptions.length === 0) {
+    return new Response(JSON.stringify({ error: 'subscriptions array is required' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  // Newsletter rows (an OPML exported before the exporter skipped them) are
+  // dropped, not rejected: only inbound mail creates one, and refusing the
+  // batch would fail every real feed alongside it.
+  const subscriptions = body.subscriptions.filter(
+    (sub) => !isNewsletterSubscription(sub?.feedUrl, null)
+  );
 
-  if (!Array.isArray(subscriptions) || subscriptions.length === 0) {
+  if (subscriptions.length === 0) {
     return new Response(JSON.stringify({ error: 'subscriptions array is required' }), {
       status: 400,
       headers: { 'Content-Type': 'application/json' },
@@ -1410,7 +1425,7 @@ export async function handleBulkCreateSubscriptions(
         headers: { 'Content-Type': 'application/json' },
       });
     }
-    if (!isValidUrl(sub.feedUrl) || isNewsletterSubscription(sub.feedUrl, null)) {
+    if (!isValidUrl(sub.feedUrl)) {
       return new Response(JSON.stringify({ error: `Invalid feedUrl: ${sub.feedUrl}` }), {
         status: 400,
         headers: { 'Content-Type': 'application/json' },
@@ -1661,7 +1676,8 @@ export async function handleBulkUpdateSubscriptions(
     // marked before the per-row pushes below are scheduled.
     const settings = await getUserSettings(env, session.did);
     if (settings.pdsSyncEnabled) {
-      setClauses.push('pds_dirty = 1');
+      // A newsletter is never pushed, so marking one would leave it owed forever.
+      setClauses.push(`pds_dirty = CASE WHEN ${NOT_NEWSLETTER_ROW} THEN 1 ELSE pds_dirty END`);
     }
 
     const batchStatements = rkeys.map((rkey) =>
