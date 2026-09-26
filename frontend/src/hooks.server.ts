@@ -9,7 +9,7 @@ const devCsp = [
   "script-src 'self' 'unsafe-inline'", // unsafe-inline OK for local dev
   // fonts.googleapis.com: collections-publication typography stylesheets (magazine view).
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-  "img-src 'self' https: data:",
+  "img-src 'self' https: data: blob:",
   "media-src 'self' https: data: blob:",
   "connect-src 'self' http://127.0.0.1:8787 ws://127.0.0.1:5173 https:",
   // fonts.gstatic.com: the actual web-font files for the magazine view.

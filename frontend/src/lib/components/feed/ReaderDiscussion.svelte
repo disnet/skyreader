@@ -11,6 +11,7 @@
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
   import { integrationSaveStore } from '$lib/stores/integrationSave.svelte';
+  import { blueskyComposerStore } from '$lib/stores/blueskyComposer.svelte';
   import { sembleConnectionStore } from '$lib/stores/sembleConnection.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
   import { useAtmosphere } from '$lib/hooks/useAtmosphere.svelte';
@@ -172,11 +173,17 @@
     } else if (id === 'margin') {
       integrationSaveStore.openPicker('margin', extractMarginMetadata(readerItem));
     } else if (id === 'bluesky') {
-      window.open(
-        `https://bsky.app/intent/compose?text=${encodeURIComponent(itemUrl)}`,
-        '_blank',
-        'noopener'
-      );
+      // Signed in, post from here; a guest has no account to post from, so
+      // Bluesky's own composer takes the link.
+      if (auth.user && itemUrl) {
+        blueskyComposerStore.open({ source: shareTarget?.article ?? { url: itemUrl, title } });
+      } else {
+        window.open(
+          `https://bsky.app/intent/compose?text=${encodeURIComponent(itemUrl)}`,
+          '_blank',
+          'noopener'
+        );
+      }
     }
   }
 </script>

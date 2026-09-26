@@ -1,6 +1,7 @@
-// Also posting a linkblog share to Bluesky. Runs after the linkblog post has
-// landed, in the background with its own toast, so the drawer closes on the
-// share that matters and a Bluesky hiccup can't take the draft down with it.
+// Posting to Bluesky: a linkblog share's cross-post, or a single highlight.
+// Runs in the background with its own toast — for a share, after the linkblog
+// post has landed, so the drawer closes on the share that matters and a Bluesky
+// hiccup can't take the draft down with it.
 import { api, ScopeUpgradeError } from '$lib/services/api';
 import { permissionToast } from '$lib/services/permissions';
 import { toastStore } from '$lib/stores/toast.svelte';
@@ -11,7 +12,11 @@ import type { Article, ShareDraftBlock } from '$lib/types';
 
 const ALT_MAX = 2000;
 
-function domainOf(url: string): string {
+/** What a Bluesky post points at: the article, as much of it as the caller has. */
+export type BlueskySource = Pick<Article, 'url'> &
+  Partial<Pick<Article, 'title' | 'summary' | 'imageUrl'>>;
+
+export function domainOf(url: string): string {
   try {
     return new URL(url).hostname.replace(/^www\./, '');
   } catch {
@@ -34,7 +39,7 @@ function postLangs(): string[] | undefined {
   return lang ? [lang] : undefined;
 }
 
-async function uploadShots(plan: BlueskyPostPlan, article: Article) {
+async function uploadShots(plan: BlueskyPostPlan, article: BlueskySource) {
   const source = { title: article.title, domain: domainOf(article.url) };
   const images = [];
   for (const quote of plan.shots) {
@@ -50,9 +55,13 @@ async function uploadShots(plan: BlueskyPostPlan, article: Article) {
 }
 
 export async function crossPostToBluesky(
-  article: Article,
+  article: BlueskySource,
   blocks: ShareDraftBlock[],
-  options: { textShots: boolean }
+  options: {
+    textShots: boolean;
+    /** The toast for a failed post; a share's says its linkblog post still landed. */
+    failureMessage?: string;
+  }
 ): Promise<boolean> {
   const toastId = toastStore.add('Posting to Bluesky…');
   try {
@@ -93,7 +102,11 @@ export async function crossPostToBluesky(
       toastStore.update(toastId, 'error', message, action);
     } else {
       console.error('Failed to post to Bluesky:', error);
-      toastStore.update(toastId, 'error', 'Shared to your linkblog, but couldn’t post to Bluesky');
+      toastStore.update(
+        toastId,
+        'error',
+        options.failureMessage ?? 'Shared to your linkblog, but couldn’t post to Bluesky'
+      );
     }
     return false;
   }

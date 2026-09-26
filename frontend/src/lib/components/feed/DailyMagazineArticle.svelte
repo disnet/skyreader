@@ -259,6 +259,7 @@
     onHighlightToMargin={highlightsHook.createHighlightFromPopoverToMargin}
     onRemove={highlightsHook.removeHighlightFromPopover}
     onSaveToMargin={highlightsHook.savePopoverHighlightToMargin}
+    onPostToBluesky={highlightsHook.postPopoverHighlightToBluesky}
     onSaveNote={highlightsHook.saveNoteFromPopover}
     existingNote={highlightsHook.popoverHighlightNote}
     marginSaved={highlightsHook.popoverHighlightSavedToMargin}

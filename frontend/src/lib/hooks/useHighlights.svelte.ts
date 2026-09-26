@@ -9,6 +9,7 @@ import {
 } from '$lib/utils/textSelector';
 import { toastStore } from '$lib/stores/toast.svelte';
 import { auth } from '$lib/stores/auth.svelte';
+import { blueskyComposerStore } from '$lib/stores/blueskyComposer.svelte';
 import {
   saveHighlightToMargin as saveToMargin,
   removeHighlightFromMargin,
@@ -1052,6 +1053,22 @@ export function useHighlights(params: HighlightParams) {
     if (hl) void saveHighlightToMargin(hl);
   }
 
+  /** Post the popover's highlight to Bluesky: opens the post dialog on it. */
+  function postPopoverHighlightToBluesky() {
+    if (!popoverState?.highlightId) return;
+    const hl = itemLabelsStore
+      .getHighlights(params.itemKey())
+      .find((h) => h.id === popoverState!.highlightId);
+    const url = params.itemUrl?.() ?? hl?.sourceUrl;
+    popoverState = null;
+    if (!hl || !url) return;
+    blueskyComposerStore.open({
+      source: { url, title: params.itemTitle?.() ?? hl.sourceTitle },
+      quote: hl.selector.exact,
+      note: hl.note,
+    });
+  }
+
   /** Toggle highlight on the paragraph at the given index (for keyboard shortcut) */
   function toggleParagraphHighlight(paragraphIndex: number) {
     const container = params.contentEl();
@@ -1200,6 +1217,11 @@ export function useHighlights(params: HighlightParams) {
     toggleParagraphHighlight,
     get savePopoverHighlightToMargin() {
       return auth.isGuest ? undefined : savePopoverHighlightToMargin;
+    },
+    // A Bluesky post is a record in the reader's own repo, so a guest has none;
+    // and a post needs the article's link to point at.
+    get postPopoverHighlightToBluesky() {
+      return auth.isGuest || !params.itemUrl?.() ? undefined : postPopoverHighlightToBluesky;
     },
     get popoverHighlightSavedToMargin() {
       return isPopoverHighlightSavedToMargin();

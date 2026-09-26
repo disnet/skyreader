@@ -21,12 +21,14 @@
   import { feedPath, FEEDS_PATH, SAVED_PATH } from '$lib/utils/viewNav';
   import { completeFollowsGrant } from '$lib/utils/followsChannel';
   import { shareComposerStore } from '$lib/stores/shareComposer.svelte';
+  import { blueskyComposerStore } from '$lib/stores/blueskyComposer.svelte';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import { APP_SCROLL_ID, appScrollElement, SHELL_FRAME_QUERY } from '$lib/utils/appScroll';
   import { SHELL_TOOLBAR_ID } from '$lib/actions/shell-toolbar';
   import KeyboardShortcutsModal from '$lib/components/KeyboardShortcutsModal.svelte';
   import RefreshProgressBar from '$lib/components/RefreshProgressBar.svelte';
   import ShareComposer from '$lib/components/feed/ShareComposer.svelte';
+  import BlueskyComposer from '$lib/components/feed/BlueskyComposer.svelte';
   import IntegrationSaveDialog from '$lib/components/feed/IntegrationSaveDialog.svelte';
   import SembleConnectionDialog from '$lib/components/feed/SembleConnectionDialog.svelte';
   import SyncLimitBanner from '$lib/components/SyncLimitBanner.svelte';
@@ -117,13 +119,15 @@
     void completeFollowsGrant().catch(() => {});
   });
 
-  // Back from a permission grant asked for in the share drawer: reopen the draft.
+  // Back from a permission grant asked for in the share drawer or the highlight
+  // post dialog: reopen what was being written.
   let shareGrantChecked = false;
   $effect(() => {
     const did = auth.user?.did;
     if (shareGrantChecked || !did || auth.isGuest) return;
     shareGrantChecked = true;
     void shareComposerStore.resumeAfterGrant(did).catch(() => {});
+    blueskyComposerStore.resumeAfterGrant(did);
   });
 
   // Register global keyboard shortcuts on mount. keyboardStore.register() keys by
@@ -443,6 +447,7 @@
 <KeyboardShortcutsModal />
 <RefreshProgressBar />
 <ShareComposer />
+<BlueskyComposer />
 <IntegrationSaveDialog />
 <SembleConnectionDialog />
 

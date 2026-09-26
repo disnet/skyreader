@@ -32,7 +32,7 @@ export const onRequest: PagesFunction = async (context) => {
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
     // fonts.googleapis.com: collections-publication typography stylesheets (magazine view).
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-    "img-src 'self' https: data:",
+    "img-src 'self' https: data: blob:",
     "media-src 'self' https: data: blob:",
     "connect-src 'self' https://*.skyreader.app https:",
     // fonts.gstatic.com: the actual web-font files for the magazine view.

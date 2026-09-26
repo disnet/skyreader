@@ -38,6 +38,8 @@ leaving content out. Members-only sections stay on their publication.
 
 Articles carry a **Discussion** section at the end that gathers what people across the Atmosphere have written about that link: linkblog notes, Leaflet comments, Bluesky posts, Margin annotations, Semble connections, merged into one stream.
 
+To add yours, use the buttons under **Add yours**. **Bluesky** writes a post from your own account, with the article's link card under your words; it's public like any Bluesky post.
+
 ## The daily magazine
 
 **Daily** builds a magazine issue from your saved articles. Pick an issue length in minutes and an ordering, then **Generate issue**. An issue is a snapshot: new saves don't reshuffle it, and it resumes where you left off on any device. When you finish, archive the issue or generate a new one from the current pile.
