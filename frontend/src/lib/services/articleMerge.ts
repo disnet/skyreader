@@ -50,9 +50,9 @@ export function computeContentStats(
  */
 export function toLightArticle(a: Article): Article {
   const { contentLength, wordCount } = computeContentStats(a.content, a.summary);
-  // Explicitly drop `content` rather than spread-and-overwrite so the large
-  // string isn't retained by the new object.
-  const { content: _content, ...rest } = a;
+  // Explicitly drop `content` (and a truncated body's `contentLead`) rather than
+  // spread-and-overwrite so the strings aren't retained by the new object.
+  const { content: _content, contentLead: _lead, ...rest } = a;
   return { ...rest, contentLength, wordCount };
 }
 
@@ -95,6 +95,7 @@ export function selectNewArticles(
         // Carried through so the reader knows to extract the full text on open
         // (the archive dropped an oversized body at ingest).
         contentTruncated: item.contentTruncated || undefined,
+        contentLead: item.contentLead || undefined,
       });
     }
   }

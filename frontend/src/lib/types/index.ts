@@ -79,6 +79,11 @@ export interface Article {
   // cap), so `content` here is absent or just the RSS summary. The reader
   // extracts the full text on demand when the card opens.
   contentTruncated?: boolean;
+  // The opening of a truncated body (a few KB, cut at a safe boundary), kept by
+  // the archive so the collapsed card previews the article itself. Never the
+  // full body: `contentTruncated` still holds, and expanding fetches the rest.
+  // Stripped from the in-memory copy like `content` (see toLightArticle).
+  contentLead?: string;
   // Precomputed body stats. The full `content` HTML is dropped from the
   // in-memory copy of an article (see toLightArticle) to keep the heap small —
   // it stays in IndexedDB and is lazy-loaded on expand. These numbers let the
@@ -1145,6 +1150,8 @@ export interface FeedItem {
   // The stored body exceeded the archive's per-item content cap and was dropped
   // at ingest; the reader falls back to on-demand extraction for full text.
   contentTruncated?: boolean;
+  // The dropped body's opening, for the collapsed card's preview (Article.contentLead).
+  contentLead?: string;
 }
 
 // Combined feed item for unified "all" view

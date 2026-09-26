@@ -56,7 +56,7 @@
   import { isInputFocused } from '$lib/stores/keyboard.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
-  import { loadStoredBody } from '$lib/services/itemBody';
+  import { loadStoredBody, prefetchStoredBody } from '$lib/services/itemBody';
   import { useParagraphTracking } from '$lib/hooks/useParagraphTracking.svelte';
   import { useLinkInterception } from '$lib/hooks/useLinkInterception.svelte';
   import { useHighlights } from '$lib/hooks/useHighlights.svelte';
@@ -248,6 +248,10 @@
   // in-memory article carries only metadata (the body is stripped to keep the
   // heap small), so we fetch it on demand rather than holding every body live.
   let lazyContent = $state<string | null>(null);
+  // An archive-truncated article's opening (`contentLead`), read back alongside
+  // lazyContent: what the collapsed card previews in place of the <description>
+  // until the full body is loaded.
+  let lazyLead = $state<string | null>(null);
 
   // A document's flat text, lazy-loaded on open. Only used for documents whose
   // content format isn't recognized by the structured renderers below (the
@@ -273,6 +277,8 @@
     // IndexedDB on expand. Summary is the fallback/preview shown meanwhile.
     if (article?.content) return article.content;
     if (lazyContent) return lazyContent;
+    if (article?.contentLead) return article.contentLead;
+    if (lazyLead) return lazyLead;
     if (article?.summary) return article.summary;
     if (localArticle?.content) return localArticle.content;
     if (localArticle?.summary) return localArticle.summary;
@@ -552,7 +558,10 @@
             .filter((a) => a.subscriptionId === subscriptionId)
             .first();
         }
-        if (!cancelled) lazyContent = row?.content ?? '';
+        if (!cancelled) {
+          lazyLead = row?.contentLead ?? null;
+          lazyContent = row?.content ?? '';
+        }
       } catch {
         if (!cancelled) lazyContent = '';
       }
@@ -621,6 +630,46 @@
     });
   });
 
+  // Prefetch the stored body as an open card nears the screen (Expand view opens
+  // every card), so expanding it is instant and needs no network afterwards. It
+  // only warms the cache — the effect above picks the body up on expand — so a
+  // collapsed card keeps previewing the lead and never sanitizes a 300 KB body
+  // for eight visible lines. The exception is a row cached before the archive
+  // kept leads: with nothing better than a one-line <description> to show, it
+  // previews the body itself. A prefetch never extracts; `missing` is recorded
+  // so the expand goes straight to extraction.
+  let reachedViewport = $state(false);
+  let prefetchStarted = false;
+  function handleNearViewport() {
+    reachedViewport = true;
+    atmosphere.enterViewport();
+  }
+  $effect(() => {
+    if (!isOpen || expanded || !reachedViewport || !article?.contentTruncated) return;
+    // Wait for the local read; a body already cached there needs no fetch.
+    if (article.content || lazyContent == null || lazyContent) return;
+    const target = article;
+    const hasLead = Boolean(article.contentLead || lazyLead);
+    untrack(() => {
+      if (prefetchStarted || storedBodyStatus !== 'idle') return;
+      const feedUrl = subscriptionsStore.getById(target.subscriptionId)?.feedUrl;
+      if (!feedUrl) return;
+      prefetchStarted = true;
+      void prefetchStoredBody(target, feedUrl, { guest: !auth.user }).then(async (status) => {
+        if (status === 'missing') {
+          if (storedBodyStatus === 'idle') storedBodyStatus = 'missing';
+        } else if (status === 'found' && !hasLead && !lazyContent) {
+          // Cached by now, so this resolves without the network.
+          const result = await loadStoredBody(target, feedUrl, { guest: !auth.user });
+          if (result.status === 'found' && !lazyContent) lazyContent = result.content;
+        } else if (status !== 'found') {
+          // Skipped or unanswered: let a later pass (or the expand) ask again.
+          prefetchStarted = false;
+        }
+      });
+    });
+  });
+
   // Same lazy-load for a document's flat text (stripped from memory). Only
   // fetched when the document carries no in-memory textContent — i.e. a
   // stripped social-feed doc — and read back by recordUri.
@@ -652,9 +701,17 @@
   });
 
   // Estimate read time from content (~200 words/min). A follows link's body is
-  // its card blurb until the page is fetched, so it gets no estimate before then.
+  // its card blurb until the page is fetched, so it gets no estimate before then;
+  // nor does an archive-truncated article showing only its lead or summary,
+  // which would count a few KB of a long post as the whole of it.
+  let showingPartialBody = $derived(
+    Boolean(article?.contentTruncated) &&
+      !article?.content &&
+      !lazyContent &&
+      !linkPostContentStore.get(itemUrl)?.content
+  );
   let readTimeMinutes = $derived(
-    isFollowLink && !linkPostContentStore.get(itemUrl)?.content
+    (isFollowLink && !linkPostContentStore.get(itemUrl)?.content) || showingPartialBody
       ? 0
       : bodyWordCount > 0
         ? Math.max(1, Math.round(bodyWordCount / 200))
@@ -1112,7 +1169,7 @@
   onFollowSource={handleFollowSource}
   onSelectFilter={atmosphere.setFilter}
   onOpenStream={atmosphere.openStream}
-  onNearViewport={atmosphere.enterViewport}
+  onNearViewport={handleNearViewport}
   onRetryStream={atmosphere.retry}
   onCreateInLane={createInLane}
   onComposeShare={composeShare}
