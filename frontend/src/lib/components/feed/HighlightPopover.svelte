@@ -23,6 +23,8 @@
     /** Present while a share draft is open for this article: add the selected
      *  passage (or this highlight) to the draft as a quote block. */
     onQuoteToShare?: () => void;
+    /** Post this highlight to Bluesky (opens the post dialog). */
+    onPostToBluesky?: () => void;
     existingNote?: string;
     marginSaved?: boolean;
     // Which sub-view to open into: 'toolbar' (action buttons, the default) or
@@ -48,6 +50,7 @@
     onSaveToMargin,
     onSaveNote,
     onQuoteToShare,
+    onPostToBluesky,
     existingNote = '',
     marginSaved = false,
     initialView = 'toolbar',
@@ -349,7 +352,20 @@
         </button>
       {/if}
     {/if}
-    {#if onSaveNote || onQuoteToShare || onSaveToMargin}
+    {#if onPostToBluesky}
+      <button
+        class="popover-btn icon-only"
+        use:tooltip={'Post to Bluesky'}
+        aria-label="Post to Bluesky"
+        onclick={() => {
+          onPostToBluesky?.();
+          onClose();
+        }}
+      >
+        <Icon name="bluesky" size={20} />
+      </button>
+    {/if}
+    {#if onSaveNote || onQuoteToShare || onSaveToMargin || onPostToBluesky}
       <span class="divider" aria-hidden="true"></span>
     {/if}
     <!-- Trash, not ✕: an ✕ on a floating bar reads as "close this bar". -->

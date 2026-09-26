@@ -15,6 +15,7 @@
   import BottomSheet from '$lib/components/common/BottomSheet.svelte';
   import NotificationList from '$lib/components/NotificationList.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
+  import { blueskyHighlightStore } from '$lib/stores/blueskyHighlight.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { articlesStore } from '$lib/stores/articles.svelte';
   import { socialStore } from '$lib/stores/social.svelte';
@@ -195,6 +196,15 @@
     void saveHighlightToMargin(group.itemKey, row.highlight, group.url, group.title);
   }
 
+  function handlePostToBluesky(group: HighlightGroup, row: HighlightRow) {
+    if (!group.url) return;
+    blueskyHighlightStore.open({
+      source: { url: group.url, title: group.title },
+      quote: row.text,
+      note: row.note,
+    });
+  }
+
   // Frequency tuning happens in the review deck, one card at a time. The list
   // is where you can see what you've set and get back out of 'never', which is
   // the only setting that hides a highlight from the deck entirely. Clearing it
@@ -352,6 +362,18 @@
                           aria-label="Publish highlight"
                         >
                           <Icon name="margin" size={15} />
+                        </button>
+                      {/if}
+                      <!-- Posted from the reader's own account: needs one, and a
+                           link for the post to point at. -->
+                      {#if group.url && !auth.isGuest}
+                        <button
+                          class="action-btn"
+                          onclick={() => handlePostToBluesky(group, row)}
+                          title="Post to Bluesky"
+                          aria-label="Post to Bluesky"
+                        >
+                          <Icon name="bluesky" size={15} />
                         </button>
                       {/if}
                       <button

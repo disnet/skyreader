@@ -1242,6 +1242,7 @@
       onHighlightToMargin={highlights.createHighlightFromPopoverToMargin}
       onRemove={highlights.removeHighlightFromPopover}
       onSaveToMargin={highlights.savePopoverHighlightToMargin}
+      onPostToBluesky={highlights.postPopoverHighlightToBluesky}
       onSaveNote={highlights.saveNoteFromPopover}
       onQuoteToShare={composerOpenHere ? quoteSelectionToShare : undefined}
       existingNote={highlights.popoverHighlightNote}

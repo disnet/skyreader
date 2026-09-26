@@ -1379,6 +1379,7 @@
     onHighlightToMargin={highlightsHook.createHighlightFromPopoverToMargin}
     onRemove={highlightsHook.removePopoverHighlightWithUndo}
     onSaveToMargin={highlightsHook.savePopoverHighlightToMargin}
+    onPostToBluesky={highlightsHook.postPopoverHighlightToBluesky}
     onSaveNote={highlightsHook.saveNoteFromPopover}
     onNote={highlightsHook.noteFromPopover}
     onQuoteToShare={composerOpenHere ? quoteSelectionToShare : undefined}
