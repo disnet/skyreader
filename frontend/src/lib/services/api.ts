@@ -33,6 +33,7 @@ import type {
   FollowLinksWindow,
   FollowLinkSharersResponse,
   User,
+  SavedItem,
 } from '$lib/types';
 import { getLinkPostTitle, isLinkPost } from '$lib/utils/linkPost';
 
@@ -1957,6 +1958,7 @@ class ApiClient {
       savedAt: string;
       source?: 'url' | 'feed' | 'document';
       itemGuid?: string;
+      updatedAt?: string | null;
     }>;
     // Keyset cursor for the next (older) page; null at the end of the list.
     cursor: string | null;
@@ -1975,6 +1977,18 @@ class ApiClient {
     if (opts?.sinceDigest) params.set('since_digest', opts.sinceDigest);
     const qs = params.toString();
     return this.fetch(`/api/saved${qs ? `?${qs}` : ''}`);
+  }
+
+  // Saves edited in place after `since` (ms, server clock) — metadata only, oldest
+  // edit first. The newest-first list refresh stops at the first cached rkey, so
+  // it can't see an older save whose body changed (an extension re-save); this
+  // can. Store `next` and pass it back as `since`; `more` means another page.
+  async getSavedUpdates(since: number): Promise<{
+    articles: SavedItem[];
+    next: number;
+    more: boolean;
+  }> {
+    return this.fetch(`/api/saved/updates?since=${encodeURIComponent(String(since))}`);
   }
 
   // Hydrate article bodies for the given rkeys. Returns a map rkey → body (null

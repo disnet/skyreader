@@ -13,6 +13,9 @@ import type { ExtractedArticle } from './feed-proxy-client';
  * `setArticleType: true` to hard-set `content_type = 'article'` (backed enrichment, where
  * the stub had no real type); omit it to leave the row's existing type intact — a URL
  * save stays 'webpage'.
+ *
+ * Stamps `updated_at` so a client that already cached the empty row picks up the
+ * body through GET /api/saved/updates.
  */
 export async function fillExtractedContent(
   env: Env,
@@ -33,7 +36,8 @@ export async function fillExtractedContent(
          description = COALESCE(description, ?),
          image = COALESCE(image, ?),
          domain = COALESCE(domain, ?),
-         published_at = COALESCE(published_at, ?)${contentTypeClause}
+         published_at = COALESCE(published_at, ?),
+         updated_at = ?${contentTypeClause}
        WHERE ${whereClause} AND content IS NULL`
   )
     .bind(
@@ -45,6 +49,7 @@ export async function fillExtractedContent(
       article.image ?? null,
       article.domain ?? null,
       article.published ? new Date(article.published).getTime() : null,
+      Date.now(),
       ...whereBinds
     )
     .run();

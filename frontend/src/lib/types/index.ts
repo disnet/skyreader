@@ -1250,6 +1250,10 @@ export interface SavedItem {
   savedAt: string;
   source?: 'url' | 'feed' | 'document';
   itemGuid?: string;
+  // Server stamp of the last in-place edit (e.g. an extension re-save that
+  // upgraded the body); null/absent when never edited since the save. A cached
+  // body whose updatedAt differs from the server's is stale.
+  updatedAt?: string | null;
 }
 
 // From your follows: the links people you follow share on Bluesky, grouped by

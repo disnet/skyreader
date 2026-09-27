@@ -118,6 +118,10 @@ function createSavesStore() {
   // Digest of the last external-backed snapshot applied to the cache (Dexie
   // metadata key); echoed to /api/saved so an unchanged snapshot isn't re-shipped.
   const SNAPSHOT_DIGEST_KEY = 'savedSnapshotDigest';
+  // Server-clock high-water mark for GET /api/saved/updates (Dexie metadata key).
+  const UPDATES_SINCE_KEY = 'savedUpdatesSince';
+  // Safety valve on update paging (each page is up to 200 edits).
+  const MAX_UPDATE_PAGES = 10;
 
   // The list endpoint returns metadata only (the body is the bulk of a row and
   // we already cache it). Fill each item's `content` in place: reuse the cached
@@ -131,8 +135,12 @@ function createSavesStore() {
     const hydrated: SavedItem[] = [];
     for (const it of items) {
       if (it.content != null) continue;
-      const cachedBody = cachedByRkey.get(it.rkey)?.content;
-      if (cachedBody != null) {
+      const cached = cachedByRkey.get(it.rkey);
+      const cachedBody = cached?.content;
+      // A body edited in place since we cached it (an extension re-save) is
+      // stale — the server's updatedAt no longer matches the cached one.
+      const stale = (cached?.updatedAt ?? null) !== (it.updatedAt ?? null);
+      if (cachedBody != null && !stale) {
         it.content = cachedBody;
       } else {
         needFetch.push(it.rkey);
@@ -149,12 +157,49 @@ function createSavesStore() {
           const it = byRkey.get(rkey);
           if (it && body != null) {
             it.content = body;
+            // Drop any in-memory copy the reader cached — it may be the stale body.
+            contentCache.delete(rkey);
             hydrated.push(it);
           }
         }
       } catch (err) {
         console.warn('Failed to hydrate saved bodies:', err);
       }
+    }
+    return hydrated;
+  }
+
+  // Older saves edited in place (an extension re-save upgrading the body, a
+  // background extraction filling a stub). The incremental refresh below can't
+  // see them — they don't move saved_at — so ask for rows changed since the last
+  // high-water mark and re-hydrate the ones whose local copy is out of date.
+  // Returns the refreshed full rows; the caller swaps them into the list.
+  async function pullUpdates(localByRkey: Map<string, SavedItem>): Promise<SavedItem[]> {
+    let since = (await getMetadata<number>(UPDATES_SINCE_KEY)) ?? 0;
+    const changed = new Map<string, SavedItem>();
+    let complete = false;
+    for (let pageNo = 0; pageNo < MAX_UPDATE_PAGES; pageNo++) {
+      const page = await api.getSavedUpdates(since);
+      for (const u of page.articles) {
+        const local = localByRkey.get(u.rkey);
+        // Unknown rkeys are left to the list refresh (a local delete may be
+        // queued); an unchanged stamp means we already hold this edit.
+        if (!local || (local.updatedAt ?? null) === (u.updatedAt ?? null)) continue;
+        changed.set(u.rkey, { ...local, ...u, content: null });
+      }
+      since = page.next;
+      if (!page.more) {
+        complete = true;
+        break;
+      }
+    }
+
+    const items = [...changed.values()];
+    const hydrated = items.length > 0 ? await hydrateBodies(items, new Map()) : [];
+    // Only advance the mark once every changed row has its new body; otherwise
+    // the next refresh would skip the ones that failed.
+    if (complete && hydrated.length === items.length) {
+      await setMetadata(UPDATES_SINCE_KEY, since);
     }
     return hydrated;
   }
@@ -281,13 +326,33 @@ function createSavesStore() {
         ...fresh.map(toLightSaved),
         ...cached.filter((c) => !freshKeys.has(c.rkey)).map(toLightSaved),
       ].sort(compareSavedNewestFirst);
-      articles = merged;
+
+      // Pick up in-place edits to saves older than the fresh page. Best effort:
+      // a failure keeps the merged list and retries on the next refresh.
+      let updated: SavedItem[] = [];
+      try {
+        const localByRkey = new Map<string, SavedItem>([
+          ...cached.map((c) => [c.rkey, c] as const),
+          ...fresh.map((f) => [f.rkey, f] as const),
+        ]);
+        updated = await pullUpdates(localByRkey);
+      } catch (err) {
+        console.warn('Failed to fetch saved updates:', err);
+      }
+      backfilled.push(...backfillWordCounts(updated));
+      const updatedByRkey = new Map(updated.map((u) => [u.rkey, u]));
+
+      articles = merged.map((a) => {
+        const u = updatedByRkey.get(a.rkey);
+        return u ? toLightSaved(u) : a;
+      });
       rebuildMaps();
 
-      // Upsert only the fresh rows (full bodies) — no clear(), so the rest of
-      // the cache is left untouched.
-      if (fresh.length > 0) {
-        await safeBulkPut(db.saved, fresh);
+      // Upsert only the fresh and updated rows (full bodies) — no clear(), so the
+      // rest of the cache is left untouched.
+      const toPersist = [...fresh.filter((f) => !updatedByRkey.has(f.rkey)), ...updated];
+      if (toPersist.length > 0) {
+        await safeBulkPut(db.saved, toPersist);
         savedSearchStore.invalidate();
       }
 
