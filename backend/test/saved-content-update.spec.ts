@@ -224,9 +224,15 @@ describe('GET /api/saved/updates — in-place edits the list refresh cannot see'
     expect(item.updatedAt).toBe(new Date(row.updated_at).toISOString());
     expect(item).not.toHaveProperty('content');
 
-    // Caught up: nothing newer than the returned mark.
+    // The mark trails the clock by a safety margin, so a just-made edit is
+    // offered again (the client skips it by updatedAt) rather than risked.
+    expect(after.body.next).toBeLessThan(row.updated_at);
     const again = await call(getUpdates(after.body.next));
-    expect(again.body.articles).toEqual([]);
+    expect(again.body.articles.map((a: any) => a.rkey)).toEqual(['aaaaaaaaaaaaa']);
+
+    // Once the edit is older than the margin it drops out.
+    const later = await call(getUpdates(row.updated_at));
+    expect(later.body.articles).toEqual([]);
   });
 
   it('exposes updatedAt on the list endpoint', async () => {

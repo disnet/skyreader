@@ -24,6 +24,9 @@ import { chunkArray } from './reading';
 
 const COLLECTION = 'app.skyreader.feed.saved';
 
+// How far GET /api/saved/updates' returned mark trails the clock (see there).
+const UPDATES_SAFETY_MARGIN_MS = 60_000;
+
 // Conservative cap on bound parameters per D1 statement (see reading.ts).
 const BODIES_SQL_PARAMS = 90;
 
@@ -917,10 +920,12 @@ export async function handleGetSavedUpdates(request: Request, env: Env): Promise
   const since = Number.isFinite(rawSince) && rawSince > 0 ? Math.floor(rawSince) : 0;
 
   try {
-    // Read the clock before the query: an edit landing in between is returned
-    // now and again next time (harmless — the client applies by updatedAt),
-    // never skipped.
-    const asOf = Date.now();
+    // Writers stamp updated_at from their own clock before their UPDATE commits,
+    // so an edit stamped just before this read can still be invisible to the
+    // query below. Hand back a mark that trails the clock by a margin: the
+    // client re-sees recent rows (harmless — it applies by updatedAt) instead of
+    // skipping one forever.
+    const asOf = Date.now() - UPDATES_SAFETY_MARGIN_MS;
     const result = await env.DB.prepare(
       `SELECT id, rkey, record_uri, url, title, author, description, content_type, domain, image,
               word_count, published_at, saved_at, created_at, source, item_guid, updated_at
@@ -935,7 +940,7 @@ export async function handleGetSavedUpdates(request: Request, env: Env): Promise
     const more = rows.length === LIMIT;
     // A full page resumes from its last row's stamp (rows sharing that exact
     // millisecond get re-sent, which is idempotent); otherwise we're caught up.
-    const next = more ? rows[rows.length - 1].updated_at! - 1 : asOf;
+    const next = more ? rows[rows.length - 1].updated_at! - 1 : Math.max(since, asOf);
 
     return new Response(JSON.stringify({ articles: rows.map(rowToListItem), next, more }), {
       headers: { 'Content-Type': 'application/json' },

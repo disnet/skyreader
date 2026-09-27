@@ -173,35 +173,52 @@ function createSavesStore() {
   // background extraction filling a stub). The incremental refresh below can't
   // see them — they don't move saved_at — so ask for rows changed since the last
   // high-water mark and re-hydrate the ones whose local copy is out of date.
-  // Returns the refreshed full rows; the caller swaps them into the list.
-  async function pullUpdates(localByRkey: Map<string, SavedItem>): Promise<SavedItem[]> {
+  // Each page is applied (via `apply`) and only then is the mark advanced past
+  // it, so a long backlog makes progress across refreshes and a page whose
+  // bodies didn't all load is retried from where it started.
+  async function pullUpdates(
+    localByRkey: Map<string, SavedItem>,
+    apply: (rows: SavedItem[]) => Promise<void>
+  ): Promise<void> {
     let since = (await getMetadata<number>(UPDATES_SINCE_KEY)) ?? 0;
-    const changed = new Map<string, SavedItem>();
-    let complete = false;
     for (let pageNo = 0; pageNo < MAX_UPDATE_PAGES; pageNo++) {
       const page = await api.getSavedUpdates(since);
+      const changed: SavedItem[] = [];
       for (const u of page.articles) {
         const local = localByRkey.get(u.rkey);
         // Unknown rkeys are left to the list refresh (a local delete may be
         // queued); an unchanged stamp means we already hold this edit.
         if (!local || (local.updatedAt ?? null) === (u.updatedAt ?? null)) continue;
-        changed.set(u.rkey, { ...local, ...u, content: null });
+        changed.push({ ...local, ...u, content: null });
       }
+      const hydrated = changed.length > 0 ? await hydrateBodies(changed, new Map()) : [];
+      if (hydrated.length > 0) await apply(hydrated);
+      // A body that failed to load keeps the mark here, so the next refresh
+      // asks for this page again.
+      if (hydrated.length !== changed.length) return;
       since = page.next;
-      if (!page.more) {
-        complete = true;
-        break;
-      }
-    }
-
-    const items = [...changed.values()];
-    const hydrated = items.length > 0 ? await hydrateBodies(items, new Map()) : [];
-    // Only advance the mark once every changed row has its new body; otherwise
-    // the next refresh would skip the ones that failed.
-    if (complete && hydrated.length === items.length) {
       await setMetadata(UPDATES_SINCE_KEY, since);
+      if (!page.more) return;
     }
-    return hydrated;
+  }
+
+  // Swap edited rows into the list as it stands NOW — not the snapshot load()
+  // started from, since a save or unsave may have landed while the updates
+  // were in flight. A row no longer in the list was removed meanwhile and must
+  // not be written back.
+  async function applyUpdated(rows: SavedItem[]) {
+    const present = new Set(articles.map((a) => a.rkey));
+    const live = rows.filter((r) => present.has(r.rkey));
+    if (live.length === 0) return;
+    pushWordCountBackfills(backfillWordCounts(live));
+    const byRkey = new Map(live.map((r) => [r.rkey, r]));
+    articles = articles.map((a) => {
+      const u = byRkey.get(a.rkey);
+      return u ? toLightSaved(u) : a;
+    });
+    rebuildMaps();
+    await safeBulkPut(db.saved, live);
+    savedSearchStore.invalidate();
   }
 
   async function load() {
@@ -327,36 +344,29 @@ function createSavesStore() {
         ...cached.filter((c) => !freshKeys.has(c.rkey)).map(toLightSaved),
       ].sort(compareSavedNewestFirst);
 
+      articles = merged;
+      rebuildMaps();
+
+      // Upsert only the fresh rows (full bodies) — no clear(), so the rest of
+      // the cache is left untouched.
+      if (fresh.length > 0) {
+        await safeBulkPut(db.saved, fresh);
+        savedSearchStore.invalidate();
+      }
+
+      pushWordCountBackfills(backfilled);
+
       // Pick up in-place edits to saves older than the fresh page. Best effort:
-      // a failure keeps the merged list and retries on the next refresh.
-      let updated: SavedItem[] = [];
+      // a failure keeps the list as merged and retries on the next refresh.
       try {
         const localByRkey = new Map<string, SavedItem>([
           ...cached.map((c) => [c.rkey, c] as const),
           ...fresh.map((f) => [f.rkey, f] as const),
         ]);
-        updated = await pullUpdates(localByRkey);
+        await pullUpdates(localByRkey, applyUpdated);
       } catch (err) {
         console.warn('Failed to fetch saved updates:', err);
       }
-      backfilled.push(...backfillWordCounts(updated));
-      const updatedByRkey = new Map(updated.map((u) => [u.rkey, u]));
-
-      articles = merged.map((a) => {
-        const u = updatedByRkey.get(a.rkey);
-        return u ? toLightSaved(u) : a;
-      });
-      rebuildMaps();
-
-      // Upsert only the fresh and updated rows (full bodies) — no clear(), so the
-      // rest of the cache is left untouched.
-      const toPersist = [...fresh.filter((f) => !updatedByRkey.has(f.rkey)), ...updated];
-      if (toPersist.length > 0) {
-        await safeBulkPut(db.saved, toPersist);
-        savedSearchStore.invalidate();
-      }
-
-      pushWordCountBackfills(backfilled);
     } catch (err) {
       console.error('Failed to load saved items:', err);
       // Keep cached data if backend fails

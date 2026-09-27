@@ -43,6 +43,7 @@ const api = {
   getSaved: vi.fn(),
   getSavedBodies: vi.fn(async () => ({ bodies: {} })),
   getSavedUpdates: vi.fn(),
+  deleteSaved: vi.fn(async () => ({})),
   updateSaved: vi.fn(async () => ({ success: true })),
 };
 vi.mock('$lib/services/api', () => ({ api }));
@@ -153,5 +154,49 @@ describe('in-place edits to an already-cached save', () => {
 
     expect(api.getSavedBodies).toHaveBeenCalledWith(['older']);
     expect(savedRows.get('older')?.content).toBe('new body');
+  });
+
+  it('advances the mark page by page through a long backlog', async () => {
+    savedRows.set('second', save('second', '2026-01-02T00:00:00Z'));
+    api.getSaved.mockResolvedValue({
+      full: false,
+      cursor: null,
+      articles: [meta(savedRows.get('second')!), meta(savedRows.get('older')!)],
+    });
+    api.getSavedUpdates
+      .mockResolvedValueOnce({
+        articles: [meta(save('older', '2026-01-01T00:00:00Z', { updatedAt: EDITED_AT }))],
+        next: 500,
+        more: true,
+      })
+      .mockResolvedValueOnce({
+        articles: [meta(save('second', '2026-01-02T00:00:00Z', { updatedAt: EDITED_AT }))],
+        next: 900,
+        more: false,
+      });
+    api.getSavedBodies
+      .mockResolvedValueOnce({ bodies: { older: 'new body' } })
+      .mockRejectedValueOnce(new Error('offline'));
+
+    await savesStore.load();
+
+    // Page one landed and its mark stuck; page two's body failed, so the next
+    // refresh resumes from page two rather than from the start.
+    expect(savedRows.get('older')?.content).toBe('new body');
+    expect(savedRows.get('second')?.content).toBe('old body');
+    expect(metadataRows.get('savedUpdatesSince')).toBe(500);
+  });
+
+  it('does not resurrect a save removed while updates were in flight', async () => {
+    api.getSavedBodies.mockImplementation(async () => {
+      // The user unsaves it while its new body is downloading.
+      await savesStore.remove('older');
+      return { bodies: { older: 'new body' } };
+    });
+
+    await savesStore.load();
+
+    expect(savesStore.articles.map((a) => a.rkey)).not.toContain('older');
+    expect(savedRows.has('older')).toBe(false);
   });
 });
