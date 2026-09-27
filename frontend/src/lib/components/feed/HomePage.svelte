@@ -409,26 +409,43 @@
   // that, an empty Home asks for it (HomeFollowsStart), since it's the one
   // thing a new account can read with no setup. The store no-ops for a guest.
   // See docs/plans/FOLLOWS_LINKS_PLAN.md.
-  onMount(() => void followLinksStore.load());
+  //
+  // Asked again on coming back to the tab too: Home is the PWA's start page and
+  // stays mounted for days, so a mount-only load would freeze the lane at the
+  // morning's answer while the channel moved on. The store's own staleness gate
+  // keeps this to one request per few minutes.
+  onMount(() => {
+    void followLinksStore.load();
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void followLinksStore.load();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  });
 
   const FOLLOW_LANE_CAP = 8;
   let followLinkByKey = $derived(
     new Map(followLinksStore.links.map((l) => [followLinkReadKey(l), l]))
   );
-  let followItems = $derived.by((): LaneCardVM[] =>
-    followLinksStore.scopeRequired
-      ? []
-      : followLinksStore.links.slice(0, FOLLOW_LANE_CAP).map((l) => ({
-          key: followLinkReadKey(l),
-          title: followLinkTitle(l),
-          domain: l.site,
-          image: l.thumb,
-          faviconUrl: getFaviconUrl(l.url),
-          metaLabel: sharedByShort(l.sharers),
-          progress: null,
-          read: itemLabelsStore.isRead(followLinkReadKey(l)),
-        }))
-  );
+  // Unread before read, the server's ranking kept within each: the week's
+  // most-shared links barely change hour to hour, so without this the lane
+  // held the same links you'd already read while new ones waited below the cap.
+  let followItems = $derived.by((): LaneCardVM[] => {
+    if (followLinksStore.scopeRequired) return [];
+    const links = followLinksStore.links;
+    const unread = links.filter((l) => !itemLabelsStore.isRead(followLinkReadKey(l)));
+    const read = links.filter((l) => itemLabelsStore.isRead(followLinkReadKey(l)));
+    return [...unread, ...read].slice(0, FOLLOW_LANE_CAP).map((l) => ({
+      key: followLinkReadKey(l),
+      title: followLinkTitle(l),
+      domain: l.site,
+      image: l.thumb,
+      faviconUrl: getFaviconUrl(l.url),
+      metaLabel: sharedByShort(l.sharers),
+      progress: null,
+      read: itemLabelsStore.isRead(followLinkReadKey(l)),
+    }));
+  });
 
   // Lanes drawn from the reader's own library (saves, rooms, channels), as
   // opposed to the follows lane, which a new account can have on day one.
