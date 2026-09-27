@@ -23,7 +23,8 @@
     /** Present while a share draft is open for this article: add the selected
      *  passage (or this highlight) to the draft as a quote block. */
     onQuoteToShare?: () => void;
-    /** Post this highlight to Bluesky (opens the post dialog). */
+    /** Post this passage — the selection or the highlight — to Bluesky
+     *  (opens the post dialog). */
     onPostToBluesky?: () => void;
     existingNote?: string;
     marginSaved?: boolean;
@@ -280,6 +281,19 @@
         }}
       >
         <Icon name="margin" size={20} />
+      </button>
+    {/if}
+    {#if onPostToBluesky}
+      <button
+        class="popover-btn icon-only"
+        use:tooltip={'Post to Bluesky'}
+        aria-label="Post to Bluesky"
+        onclick={() => {
+          onPostToBluesky?.();
+          onClose();
+        }}
+      >
+        <Icon name="bluesky" size={20} />
       </button>
     {/if}
   {:else if mode === 'view'}
