@@ -1053,12 +1053,28 @@ export function useHighlights(params: HighlightParams) {
     if (hl) void saveHighlightToMargin(hl);
   }
 
-  /** Post the popover's highlight to Bluesky: opens the post dialog on it. */
+  /**
+   * Post the popover's passage to Bluesky: opens the post dialog on it. On a
+   * fresh selection that's the selected text — posting doesn't also save it
+   * as a highlight; on an existing highlight it's the highlight and its note.
+   */
   function postPopoverHighlightToBluesky() {
-    if (!popoverState?.highlightId) return;
+    const state = popoverState;
+    if (!state) return;
+    if (state.mode === 'create') {
+      const url = params.itemUrl?.();
+      const quote = state.pendingSelector?.exact;
+      pendingTouchSelector = null;
+      window.getSelection()?.removeAllRanges();
+      popoverState = null;
+      if (!url || !quote) return;
+      blueskyComposerStore.open({ source: { url, title: params.itemTitle?.() }, quote });
+      return;
+    }
+    if (!state.highlightId) return;
     const hl = itemLabelsStore
       .getHighlights(params.itemKey())
-      .find((h) => h.id === popoverState!.highlightId);
+      .find((h) => h.id === state.highlightId);
     const url = params.itemUrl?.() ?? hl?.sourceUrl;
     popoverState = null;
     if (!hl || !url) return;
