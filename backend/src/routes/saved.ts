@@ -24,6 +24,9 @@ import { chunkArray } from './reading';
 
 const COLLECTION = 'app.skyreader.feed.saved';
 
+// How far GET /api/saved/updates' returned mark trails the clock (see there).
+const UPDATES_SAFETY_MARGIN_MS = 60_000;
+
 // Conservative cap on bound parameters per D1 statement (see reading.ts).
 const BODIES_SQL_PARAMS = 90;
 
@@ -46,6 +49,7 @@ interface SavedRow {
   created_at: number;
   source: string;
   item_guid: string | null;
+  updated_at: number | null;
 }
 
 interface CreateSavedBody {
@@ -328,7 +332,8 @@ async function handleContentUpdate(
        domain = COALESCE(?, domain),
        image = COALESCE(?, image),
        word_count = COALESCE(?, word_count),
-       published_at = COALESCE(?, published_at)
+       published_at = COALESCE(?, published_at),
+       updated_at = ?
      WHERE id = ? AND user_did = ?`
   )
     .bind(
@@ -340,6 +345,7 @@ async function handleContentUpdate(
       body.image || null,
       body.wordCount || null,
       publishedAt,
+      Date.now(),
       existing.id,
       session.did
     )
@@ -485,6 +491,9 @@ async function handleBackedSave(
          published_at = COALESCE(excluded.published_at, published_at),
          source = excluded.source,
          item_guid = COALESCE(excluded.item_guid, item_guid),
+         -- A body landing on an existing row is an in-place edit the client's
+         -- cached copy doesn't have (excluded.saved_at is this request's now).
+         updated_at = CASE WHEN excluded.content IS NOT NULL THEN excluded.saved_at ELSE updated_at END,
          saved_at = excluded.saved_at`
     ).bind(
       session.did,
@@ -837,28 +846,13 @@ export async function handleGetSaved(
     // already has bodies cached. Fresh rkeys are hydrated via /api/saved/bodies.
     const result = await env.DB.prepare(
       `SELECT id, rkey, record_uri, url, title, author, description, content_type, domain, image,
-              word_count, published_at, saved_at, created_at, source, item_guid
+              word_count, published_at, saved_at, created_at, source, item_guid, updated_at
        FROM saved_articles WHERE ${where} ORDER BY saved_at DESC, id DESC LIMIT ?`
     )
       .bind(...bindings)
       .all<SavedRow>();
 
-    const articles = result.results.map((row) => ({
-      rkey: row.rkey,
-      uri: row.record_uri,
-      url: row.url,
-      title: row.title,
-      author: row.author,
-      description: row.description,
-      contentType: row.content_type || 'webpage',
-      domain: row.domain,
-      image: row.image,
-      wordCount: row.word_count,
-      publishedAt: row.published_at ? new Date(row.published_at).toISOString() : null,
-      savedAt: new Date(row.saved_at).toISOString(),
-      source: row.source || 'url',
-      itemGuid: row.item_guid,
-    }));
+    const articles = result.results.map(rowToListItem);
 
     // A full page means there may be more — hand back a cursor pointing past the
     // last row. A short page is the end of the list (cursor null).
@@ -871,6 +865,89 @@ export async function handleGetSaved(
   } catch (error) {
     console.error('Failed to get saved items:', error);
     return new Response(JSON.stringify({ error: 'Failed to get saved items' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+// Metadata-only list shape shared by GET /api/saved and GET /api/saved/updates.
+// `updatedAt` lets the client tell a changed body from the one it cached.
+function rowToListItem(row: Omit<SavedRow, 'content' | 'user_did'>) {
+  return {
+    rkey: row.rkey,
+    uri: row.record_uri,
+    url: row.url,
+    title: row.title,
+    author: row.author,
+    description: row.description,
+    contentType: row.content_type || 'webpage',
+    domain: row.domain,
+    image: row.image,
+    wordCount: row.word_count,
+    publishedAt: row.published_at ? new Date(row.published_at).toISOString() : null,
+    savedAt: new Date(row.saved_at).toISOString(),
+    source: row.source || 'url',
+    itemGuid: row.item_guid,
+    updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : null,
+  };
+}
+
+// GET /api/saved/updates?since=<ms> — saved items edited in place after `since`.
+// The list refresh is incremental over saved_at and stops at the first cached
+// rkey, so an older save whose content changed (an extension re-save upgrading
+// a paywall stub, a background extraction filling an empty body) would never be
+// re-sent. This returns just those rows (metadata only; the client re-hydrates
+// their bodies via /api/saved/bodies), oldest change first, paged by `next`.
+export async function handleGetSavedUpdates(request: Request, env: Env): Promise<Response> {
+  if (request.method !== 'GET') {
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+      status: 405,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const session = await getSessionFromRequest(request, env);
+  if (!session) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const LIMIT = 200;
+  const rawSince = Number(new URL(request.url).searchParams.get('since') ?? 0);
+  const since = Number.isFinite(rawSince) && rawSince > 0 ? Math.floor(rawSince) : 0;
+
+  try {
+    // Writers stamp updated_at from their own clock before their UPDATE commits,
+    // so an edit stamped just before this read can still be invisible to the
+    // query below. Hand back a mark that trails the clock by a margin: the
+    // client re-sees recent rows (harmless — it applies by updatedAt) instead of
+    // skipping one forever.
+    const asOf = Date.now() - UPDATES_SAFETY_MARGIN_MS;
+    const result = await env.DB.prepare(
+      `SELECT id, rkey, record_uri, url, title, author, description, content_type, domain, image,
+              word_count, published_at, saved_at, created_at, source, item_guid, updated_at
+       FROM saved_articles
+       WHERE user_did = ? AND updated_at IS NOT NULL AND updated_at > ?
+       ORDER BY updated_at ASC, id ASC LIMIT ?`
+    )
+      .bind(session.did, since, LIMIT)
+      .all<SavedRow>();
+
+    const rows = result.results;
+    const more = rows.length === LIMIT;
+    // A full page resumes from its last row's stamp (rows sharing that exact
+    // millisecond get re-sent, which is idempotent); otherwise we're caught up.
+    const next = more ? rows[rows.length - 1].updated_at! - 1 : Math.max(since, asOf);
+
+    return new Response(JSON.stringify({ articles: rows.map(rowToListItem), next, more }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (error) {
+    console.error('Failed to get saved updates:', error);
+    return new Response(JSON.stringify({ error: 'Failed to get saved updates' }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
     });

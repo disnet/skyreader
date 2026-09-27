@@ -321,6 +321,7 @@ export interface SavedArticleView {
   savedAt: string;
   source: string;
   itemGuid: string | null;
+  updatedAt: string | null;
 }
 
 interface JoinedRow {
@@ -342,6 +343,7 @@ interface JoinedRow {
   saved_at: number | null;
   source: string | null;
   item_guid: string | null;
+  updated_at: number | null;
 }
 
 function rowToView(row: JoinedRow): SavedArticleView {
@@ -372,6 +374,7 @@ function rowToView(row: JoinedRow): SavedArticleView {
     savedAt: new Date(row.saved_at ?? Date.now()).toISOString(),
     source: row.source || 'url',
     itemGuid: row.item_guid ?? meta.canonicalAtUri ?? null,
+    updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : null,
   };
 }
 
@@ -395,7 +398,7 @@ export async function listBackedSaved(
     `SELECT m.url AS m_url, m.metadata AS m_metadata, m.external_item_uri,
             s.rkey, s.record_uri, s.url, s.title, s.author, s.description, NULL AS content,
             s.content_type, s.domain, s.image, s.word_count, s.published_at, s.saved_at,
-            s.source, s.item_guid
+            s.source, s.item_guid, s.updated_at
      FROM backed_collection_members m
      LEFT JOIN saved_articles s
        ON s.user_did = m.user_did AND s.url_normalized = m.url_normalized
@@ -408,7 +411,7 @@ export async function listBackedSaved(
     `SELECT NULL AS m_url, NULL AS m_metadata, NULL AS external_item_uri,
             s.rkey, s.record_uri, s.url, s.title, s.author, s.description, NULL AS content,
             s.content_type, s.domain, s.image, s.word_count, s.published_at, s.saved_at,
-            s.source, s.item_guid
+            s.source, s.item_guid, s.updated_at
      FROM saved_articles s
      WHERE s.user_did = ?
        AND (s.url_normalized IS NULL OR NOT EXISTS (

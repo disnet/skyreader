@@ -96,6 +96,7 @@ import {
   handleGetSaved,
   handleSavedStatus,
   handleGetSavedBodies,
+  handleGetSavedUpdates,
   handleUpdateSaved,
   handleDeleteSaved,
   handleDeleteSavedByGuid,
@@ -764,6 +765,10 @@ async function route(
     case url.pathname === '/api/saved/bodies':
       if (!session) return unauthorizedResponse(headers);
       response = await handleGetSavedBodies(request, env);
+      break;
+    case url.pathname === '/api/saved/updates':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleGetSavedUpdates(request, env);
       break;
     case url.pathname.startsWith('/api/saved/'):
       if (!session) return unauthorizedResponse(headers);

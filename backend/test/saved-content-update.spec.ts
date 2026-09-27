@@ -184,3 +184,67 @@ describe('POST /api/saved — updateContent upgrade of an existing save', () => 
     expect(upgrade.body.updated).toBe(true);
   });
 });
+
+describe('GET /api/saved/updates — in-place edits the list refresh cannot see', () => {
+  beforeEach(() => reset());
+
+  function getUpdates(since: number) {
+    return new IncomingRequest(`http://localhost/api/saved/updates?since=${since}`, {
+      headers: { Cookie: `session_id=${SESSION}`, Origin: env.FRONTEND_URL },
+    });
+  }
+
+  it('stamps updated_at on a content upgrade and returns the row after it', async () => {
+    await call(post({ url: URL, rkey: 'aaaaaaaaaaaaa', content: '<p>Stub</p>' }));
+    expect((await getRow()).updated_at).toBeNull();
+
+    const before = await call(getUpdates(0));
+    expect(before.status).toBe(200);
+    expect(before.body.articles).toEqual([]);
+    const mark = before.body.next as number;
+
+    await call(
+      post({
+        url: URL,
+        rkey: 'bbbbbbbbbbbbb',
+        updateContent: true,
+        title: 'Full',
+        content: '<p>Full</p>',
+      })
+    );
+    const row = await getRow();
+    expect(row.updated_at).toBeGreaterThanOrEqual(mark);
+
+    const after = await call(getUpdates(mark - 1));
+    expect(after.body.more).toBe(false);
+    expect(after.body.articles).toHaveLength(1);
+    const item = after.body.articles[0];
+    expect(item.rkey).toBe('aaaaaaaaaaaaa');
+    expect(item.title).toBe('Full');
+    expect(item.updatedAt).toBe(new Date(row.updated_at).toISOString());
+    expect(item).not.toHaveProperty('content');
+
+    // The mark trails the clock by a safety margin, so a just-made edit is
+    // offered again (the client skips it by updatedAt) rather than risked.
+    expect(after.body.next).toBeLessThan(row.updated_at);
+    const again = await call(getUpdates(after.body.next));
+    expect(again.body.articles.map((a: any) => a.rkey)).toEqual(['aaaaaaaaaaaaa']);
+
+    // Once the edit is older than the margin it drops out.
+    const later = await call(getUpdates(row.updated_at));
+    expect(later.body.articles).toEqual([]);
+  });
+
+  it('exposes updatedAt on the list endpoint', async () => {
+    await call(post({ url: URL, rkey: 'aaaaaaaaaaaaa', content: '<p>Stub</p>' }));
+    await call(
+      post({ url: URL, rkey: 'bbbbbbbbbbbbb', updateContent: true, content: '<p>Full</p>' })
+    );
+    const res = await call(
+      new IncomingRequest('http://localhost/api/saved', {
+        headers: { Cookie: `session_id=${SESSION}`, Origin: env.FRONTEND_URL },
+      })
+    );
+    expect(res.body.articles[0].updatedAt).toEqual(expect.any(String));
+  });
+});
