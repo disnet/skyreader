@@ -564,7 +564,7 @@
   }
 
   function handleOpenUrl() {
-    window.open(itemUrl, '_blank', 'noopener');
+    if (itemUrl) window.open(itemUrl, '_blank', 'noopener');
   }
 
   let isOpen = $derived(selected || expanded);
@@ -842,7 +842,7 @@
 
   function handleOverflowOpenUrl() {
     overflowMenuOpen = false;
-    window.open(itemUrl, '_blank', 'noopener');
+    if (itemUrl) window.open(itemUrl, '_blank', 'noopener');
   }
 
   // "Fetch original article" — pull the full article body via the feed-proxy
@@ -1174,8 +1174,8 @@
   {fetchingOriginal}
   {hasFetchedOriginal}
   {canFollowSource}
-  hasSaveToSemble={Boolean(auth.user)}
-  hasSaveToMargin={Boolean(auth.user)}
+  hasSaveToSemble={Boolean(auth.user) && Boolean(itemUrl)}
+  hasSaveToMargin={Boolean(auth.user) && Boolean(itemUrl)}
   hasOpenFullscreen={Boolean(onOpenFullscreen)}
   bind:bodyEl
   bind:tagBtnRef

@@ -262,7 +262,7 @@
             <img src={faviconUrl} alt="" class="favicon" />
           {/if}
           <span class="article-title">
-            {#if isOpen}
+            {#if isOpen && itemUrl}
               <a
                 href={safeHref(itemUrl)}
                 target="_blank"
@@ -628,18 +628,21 @@
           </button>
         {/if}
         <!-- Inline open — visible when there's space, hidden when narrow.
-             Read & Tag live in the overflow menu instead (always). -->
-        <button
-          class="action-btn collapsible"
-          onclick={(e) => {
-            e.stopPropagation();
-            onOpenUrl?.();
-          }}
-        >
-          <span class="action-icon"><Icon name="external-link" size={16} /></span><span
-            class="action-label">Open</span
+             Read & Tag live in the overflow menu instead (always). An emailed
+             newsletter with no web copy has no URL, so nothing to open. -->
+        {#if itemUrl}
+          <button
+            class="action-btn collapsible"
+            onclick={(e) => {
+              e.stopPropagation();
+              onOpenUrl?.();
+            }}
           >
-        </button>
+            <span class="action-icon"><Icon name="external-link" size={16} /></span><span
+              class="action-label">Open</span
+            >
+          </button>
+        {/if}
         {#if showActionBarIntegrations && hasSaveToSemble}
           <button
             class="action-btn collapsible-always"
@@ -698,16 +701,18 @@
                     ({itemTagCount}){/if}</span
                 >
               </button>
-              <button
-                class="overflow-menu-item narrow-only"
-                onclick={(e) => {
-                  e.stopPropagation();
-                  onOverflowOpenUrl?.();
-                }}
-              >
-                <Icon name="external-link" size={16} />
-                <span>Open in browser</span>
-              </button>
+              {#if itemUrl}
+                <button
+                  class="overflow-menu-item narrow-only"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    onOverflowOpenUrl?.();
+                  }}
+                >
+                  <Icon name="external-link" size={16} />
+                  <span>Open in browser</span>
+                </button>
+              {/if}
               {#if showFetchOriginalMenu}
                 <!-- Long-body / full-content articles get the fetch action here
                      rather than the prominent end-of-body nudge reserved for
