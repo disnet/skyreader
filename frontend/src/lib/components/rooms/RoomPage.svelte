@@ -57,7 +57,7 @@
   import { roomsStore } from '$lib/stores/rooms.svelte';
   import { toastStore } from '$lib/stores/toast.svelte';
   import { generateTid } from '$lib/utils/tid';
-  import { extractRoomArticle, sortRoomItems } from '$lib/utils/roomArticle';
+  import { roomArticleForReader, sortRoomItems } from '$lib/utils/roomArticle';
   import { getFaviconUrl } from '$lib/utils/favicon';
   import { docsUrl } from '$lib/constants/docs';
   import type { BlueskyProfile, RoomInfo, RoomItem } from '$lib/types';
@@ -359,18 +359,15 @@
 
   // Open an article in the reader without saving it: extract the body and hand
   // the reader a synthetic SavedItem (rkey '' skips the store's lazy body
-  // fetch). Opening does NOT count as a read — the reader's "Mark as read"
+  // fetch). A page that can't be fetched opens as a note linking it, never as a
+  // browser tab. Opening does NOT count as a read — the reader's "Mark as read"
   // button (markRead below) is the user's explicit done signal.
   async function openArticle(item: RoomItem) {
     if (!uri || openingUrl) return;
     openingUrl = item.url;
 
     try {
-      const saved = await extractRoomArticle(item);
-      if (!saved) {
-        window.open(item.url, '_blank', 'noopener');
-        return;
-      }
+      const saved = await roomArticleForReader(item);
       reader.openReader({ type: 'saved', item: saved, key: item.url });
     } finally {
       openingUrl = null;

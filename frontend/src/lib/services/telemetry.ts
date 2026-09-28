@@ -34,7 +34,12 @@ const MAX_MESSAGE_CHARS = 300;
 const MAX_STACK_CHARS = 2000;
 
 export type ClientErrorKind =
-  'render' | 'uncaught' | 'rejection' | 'preload_recovery_failed' | 'unread_count_drift';
+  | 'render'
+  | 'uncaught'
+  | 'rejection'
+  | 'preload_recovery_failed'
+  | 'unread_count_drift'
+  | 'article_open_failed';
 
 /**
  * Kinds that bypass sampling: the app told us it tried to recover from a bad

@@ -466,12 +466,13 @@ Reports are **sampled at 10%** in the client, so treat counts as a tenth of
 reality (`sampleRate` rides along on every event for exactly this reason). The
 `kind` tag says which channel caught it:
 
-| `kind`                    | Caught by                            | What it usually means                              |
-| ------------------------- | ------------------------------------ | -------------------------------------------------- |
-| `render`                  | SvelteKit `handleError`              | A route failed to load or render.                  |
-| `uncaught`                | `window.onerror`                     | An exception outside a framework boundary.         |
-| `rejection`               | `unhandledrejection`                 | A promise nobody caught — often a failed API call. |
-| `preload_recovery_failed` | The stale-chunk guard, tripped twice | **The deploy bricked the PWA.** See below.         |
+| `kind`                    | Caught by                            | What it usually means                                                                             |
+| ------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------- |
+| `render`                  | SvelteKit `handleError`              | A route failed to load or render.                                                                 |
+| `uncaught`                | `window.onerror`                     | An exception outside a framework boundary.                                                        |
+| `rejection`               | `unhandledrejection`                 | A promise nobody caught — often a failed API call.                                                |
+| `preload_recovery_failed` | The stale-chunk guard, tripped twice | **The deploy bricked the PWA.** See below.                                                        |
+| `article_open_failed`     | Opening an unsaved article (rooms)   | `/api/extract` failing for reasons other than a site's block: the proxy, a timeout, a rate limit. |
 
 **A cluster of `preload_recovery_failed` events is the one to page on.** It means
 clients asked for a chunk from their own build, didn't get it, reloaded once to

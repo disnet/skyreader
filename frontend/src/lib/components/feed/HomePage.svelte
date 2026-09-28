@@ -51,7 +51,7 @@
     sharedByShort,
   } from '$lib/utils/followLinks';
   import { FOLLOWING_PATH } from '$lib/utils/followsChannel';
-  import { extractRoomArticle, sortRoomItems } from '$lib/utils/roomArticle';
+  import { roomArticleForReader, sortRoomItems } from '$lib/utils/roomArticle';
   import { magazineStore } from '$lib/stores/magazine.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { appManager } from '$lib/stores/app.svelte';
@@ -380,11 +380,7 @@
     if (openingRoomUrl) return;
     openingRoomUrl = item.url;
     try {
-      const saved = await extractRoomArticle(item);
-      if (!saved) {
-        window.open(item.url, '_blank', 'noopener');
-        return;
-      }
+      const saved = await roomArticleForReader(item);
       reader.openReader({ type: 'saved', item: saved, key: item.url });
     } finally {
       openingRoomUrl = null;
