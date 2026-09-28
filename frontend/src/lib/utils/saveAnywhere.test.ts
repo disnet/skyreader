@@ -15,6 +15,7 @@ import {
   saveAnywhereLabel,
   saveAnywhereUrl,
   failedSaveBody,
+  isFailedSaveBody,
 } from './saveAnywhere';
 
 const CHROME_USER_AGENT =
@@ -108,5 +109,14 @@ describe('failedSaveBody', () => {
 
   it('does not blame a bot filter for a generic failure', () => {
     expect(failedSaveBody('https://example.com/a', 'failed')).not.toContain('automated');
+  });
+});
+
+describe('isFailedSaveBody', () => {
+  it('recognizes the note and nothing else', () => {
+    expect(isFailedSaveBody(failedSaveBody('https://example.com/a', 'blocked'))).toBe(true);
+    expect(isFailedSaveBody(failedSaveBody('https://example.com/a', 'failed'))).toBe(true);
+    expect(isFailedSaveBody('<p>Skyreader couldn&#039;t fetch this article.</p>')).toBe(false);
+    expect(isFailedSaveBody(null)).toBe(false);
   });
 });

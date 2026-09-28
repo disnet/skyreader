@@ -91,6 +91,18 @@ export function blockedSaveAction(): BlockedSaveAction {
 export type SaveFetchFailure = 'blocked' | 'failed';
 
 /**
+ * Marks a body as the note from failedSaveBody rather than article text, so it
+ * is never counted as words (a read time for a page nobody fetched) and a later
+ * save that does fetch the article knows it may replace it.
+ */
+const FAILED_SAVE_MARKER = 'data-skyreader-note="fetch-failed"';
+
+/** Whether `html` is the note a link-only save stores in place of the article. */
+export function isFailedSaveBody(html: string | null | undefined): boolean {
+  return Boolean(html?.includes(FAILED_SAVE_MARKER));
+}
+
+/**
  * The body of a save whose article couldn't be fetched. The link is still worth
  * keeping, so the save goes through with this note in place of the text: what
  * happened, a way to the page itself, and the way through (the extension reads
@@ -111,7 +123,7 @@ export function failedSaveBody(url: string, reason: SaveFetchFailure): string {
   const link = (href: string, text: string) =>
     `<a href="${escapeHtml(href)}">${escapeHtml(text)}</a>`;
   return [
-    `<p>${why} The link is saved, so it's here when you want it.</p>`,
+    `<p ${FAILED_SAVE_MARKER}>${why} The link is saved, so it's here when you want it.</p>`,
     `<p>${link(url, `Read it on ${host}`)}</p>`,
     '<p>The browser extension can still save the full text. Open the article, then use ' +
       '<strong>Save this page</strong>; it replaces this note.</p>',

@@ -8,7 +8,7 @@ import { syncQueue, type SavedPayload } from '$lib/services/sync-queue';
 import { syncStore } from './sync.svelte';
 import { auth } from './auth.svelte';
 import { extractArticle } from '$lib/services/extract';
-import { failedSaveBody, type SaveFetchFailure } from '$lib/utils/saveAnywhere';
+import { failedSaveBody, isFailedSaveBody, type SaveFetchFailure } from '$lib/utils/saveAnywhere';
 import { computeContentStats } from '$lib/services/articleMerge';
 import { savedSearchStore } from './savedSearch.svelte';
 import { compareSavedNewestFirst } from '$lib/utils/savedPile';
@@ -34,6 +34,8 @@ function canReachBackend(): boolean {
 // didn't supply one.
 function wordCountFrom(...texts: (string | null | undefined)[]): number | null {
   const body = texts.find((t) => t && t.trim().length > 0) || undefined;
+  // A link-only save's note isn't the article: no words to read, no read time.
+  if (isFailedSaveBody(body)) return null;
   return computeContentStats(body).wordCount || null;
 }
 
@@ -394,6 +396,11 @@ function createSavesStore() {
    * goes through with the link (and `hint.title` when the caller knows one) and
    * a note in place of the text pointing at the extension, which can re-save it
    * with the full text. `fetchFailed` on the result tells the caller which.
+   *
+   * Saving a URL that is already saved as such a note tries the fetch again and,
+   * if it works this time, replaces the note with the article in place (same
+   * save, same rkey). Any other existing save is left to the server's 409: a
+   * fresh server extraction must not overwrite text the extension saved.
    */
   async function saveFromUrl(
     url: string,
@@ -403,6 +410,14 @@ function createSavesStore() {
     error = null;
     try {
       const rkey = generateTid();
+      // The existing save when it is a link-only note this save may replace.
+      // In memory saves are light (no body), so the note is read from Dexie.
+      const existing = getByUrl(url);
+      const noteSave =
+        existing &&
+        isFailedSaveBody((await db.saved.get(existing.rkey).catch(() => undefined))?.content)
+          ? existing
+          : null;
 
       // Fetch HTML via proxy and extract content client-side
       let extracted: ExtractedArticle;
@@ -438,7 +453,15 @@ function createSavesStore() {
         ? null
         : extracted.wordCount || wordCountFrom(extracted.content);
 
-      const result = await api.saveFromUrl(url, rkey, {
+      // Still can't fetch it: the note already saved says everything this one
+      // would, so leave that save as it is and report the same outcome.
+      if (noteSave && fetchFailed) return { ...noteSave, fetchFailed };
+
+      // An upgrade posts the stored URL: getByUrl also matches a normalized
+      // spelling, but the server finds the save to replace by exact URL.
+      const saveUrl = noteSave?.url ?? url;
+      const result = await api.saveFromUrl(saveUrl, rkey, {
+        ...(noteSave ? { updateContent: true } : {}),
         title: extracted.title || undefined,
         author: extracted.author || undefined,
         description: extracted.description || undefined,
@@ -450,10 +473,13 @@ function createSavesStore() {
       });
 
       const savedItem: SavedItem = {
-        rkey,
+        // An upgrade is the same save: keep what it had, like the server's
+        // COALESCE does, where the extraction has nothing better.
+        ...(noteSave ?? {}),
+        rkey: noteSave?.rkey ?? rkey,
         uri: result.uri,
-        url,
-        title: extracted.title,
+        url: saveUrl,
+        title: extracted.title ?? noteSave?.title ?? null,
         author: extracted.author,
         description: extracted.description,
         content: extracted.content,
@@ -462,13 +488,20 @@ function createSavesStore() {
         image: extracted.image,
         wordCount,
         publishedAt: extracted.published,
-        savedAt: result.savedAt,
+        // An upgrade keeps its place in the list: it was saved back then.
+        savedAt: noteSave?.savedAt ?? result.savedAt,
         source: 'url',
       };
 
       // Insert a light copy into memory immediately, then persist the full row
       // (with body) to IndexedDB — getContent reads it back on reader open.
-      articles = [toLightSaved(savedItem), ...articles];
+      if (noteSave) {
+        articles = articles.map((a) => (a.rkey === noteSave.rkey ? toLightSaved(savedItem) : a));
+        // The reader may have cached the note.
+        contentCache.delete(noteSave.rkey);
+      } else {
+        articles = [toLightSaved(savedItem), ...articles];
+      }
       rebuildMaps();
       await safePut(db.saved, savedItem);
       savedSearchStore.upsert(savedItem);
