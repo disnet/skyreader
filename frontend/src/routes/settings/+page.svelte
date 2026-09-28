@@ -1935,6 +1935,12 @@
     flex: 1 1 16rem;
   }
 
+  /* The 16rem basis is a width in an inline row; in a stacked (column) row
+     it would become a height and leave a tall empty gap under the text. */
+  .row.stack > .row-text {
+    flex: none;
+  }
+
   .row-label {
     font-size: var(--text-lg);
     font-weight: var(--weight-medium);
