@@ -35,7 +35,7 @@ Joining is what puts your avatar on the room page and adds the room to **Home** 
 
 ## Reading in a room
 
-Open an article from the room to read it like any other article. When you finish, **Mark as read** at the end of the article will share your read status with everyone.
+Open an article from the room to read it like any other article. When you finish, **Mark as read** at the end of the article will share your read status with everyone. If Skyreader can't fetch an article, it opens with a link to the page instead.
 
 ## Adding articles
 

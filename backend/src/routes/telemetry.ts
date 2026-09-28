@@ -50,6 +50,12 @@ const KINDS = new Set([
   // noticing two devices showing different numbers and filing a report; this is
   // what makes the next occurrence visible to us first.
   'unread_count_drift',
+  // Opening an unsaved article in the reader (a reading room, the Home room
+  // lanes) got no text back for a reason other than the site blocking our
+  // fetcher. The reader shows a note linking the page, so nothing throws; this
+  // is how a broken extract path gets noticed before a reader reports tabs
+  // opening where the reader should.
+  'article_open_failed',
 ]);
 
 interface ClientErrorReport {
