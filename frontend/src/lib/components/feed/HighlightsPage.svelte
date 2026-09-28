@@ -353,8 +353,9 @@
                         <Icon name="message-circle" size={15} />
                       </button>
                       <!-- A Margin note is a record in the reader's own atproto
-                           repo, so it needs an account. -->
-                      {#if !row.isMargin && !auth.isGuest}
+                           repo, anchored on the article's link, so it needs an
+                           account and a URL. -->
+                      {#if !row.isMargin && group.url && !auth.isGuest}
                         <button
                           class="action-btn"
                           onclick={() => handleSaveToMargin(group, row)}
