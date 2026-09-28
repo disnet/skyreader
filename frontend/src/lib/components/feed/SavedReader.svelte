@@ -81,8 +81,6 @@
   // Saving out to Semble / Margin. The picker is global (mounted in AppShell),
   // so the reader offers these wherever it is hosted rather than only on the
   // pages that used to own the picker's state.
-  let canSaveToIntegration = $derived(Boolean(auth.user));
-
   function saveToSemble() {
     integrationSaveStore.openPicker('semble', extractSembleMetadata(readerItem));
   }
@@ -224,6 +222,9 @@
   let normalized = $derived(normalizeDisplayItem(readerItem, sub));
   let title = $derived(normalized.title);
   let itemUrl = $derived(normalized.url);
+  // Semble and Margin both key on the URL, so an emailed newsletter with no web
+  // copy has nothing to save there (or open in a browser).
+  let canSaveToIntegration = $derived(Boolean(auth.user) && Boolean(itemUrl));
   let publishedAt = $derived(normalized.publishedAt);
   let faviconUrl = $derived(normalized.faviconUrl);
 
@@ -664,11 +665,13 @@
       });
     }
 
-    items.push({
-      label: 'Open in browser',
-      icon: 'external-link',
-      onclick: handleOpenUrl,
-    });
+    if (itemUrl) {
+      items.push({
+        label: 'Open in browser',
+        icon: 'external-link',
+        onclick: handleOpenUrl,
+      });
+    }
 
     items.push({
       label: 'Copy link',
@@ -1200,16 +1203,18 @@
                   <span>Connect on Semble</span>
                 </button>
               {/if}
-              <button
-                class="sheet-action-btn"
-                onclick={() => {
-                  handleOpenUrl();
-                  styleSheetOpen = false;
-                }}
-              >
-                <Icon name="external-link" size={18} />
-                <span>Open in browser</span>
-              </button>
+              {#if itemUrl}
+                <button
+                  class="sheet-action-btn"
+                  onclick={() => {
+                    handleOpenUrl();
+                    styleSheetOpen = false;
+                  }}
+                >
+                  <Icon name="external-link" size={18} />
+                  <span>Open in browser</span>
+                </button>
+              {/if}
               {#if onRemove}
                 <button
                   class="sheet-action-btn danger"
