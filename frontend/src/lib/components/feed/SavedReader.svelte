@@ -44,6 +44,7 @@
   import { recommendsStore, isRecommendable } from '$lib/stores/recommends.svelte';
   import { toastStore } from '$lib/stores/toast.svelte';
   import { shareTargetForDisplayItem } from '$lib/utils/shareTarget';
+  import { isNewsletterSubscription } from '$lib/utils/newsletters';
   import { isSavedItemSaved } from '$lib/utils/readerSave';
   import HighlightPopover from '$lib/components/feed/HighlightPopover.svelte';
   import HighlightHandles from '$lib/components/feed/HighlightHandles.svelte';
@@ -457,8 +458,13 @@
   // reach at any scroll position — and on any page in paged mode — instead of
   // only at the end of the article. It opens the same composer drawer the
   // Discussion rail uses; drafting docks under the article.
+  // A newsletter is private mail with no public page behind it, so it isn't
+  // offered for the linkblog even when the email carried a web link.
   let canShareLinkblog = $derived(
-    Boolean(auth.user) && !preferences.linkblogDisabled && Boolean(itemUrl)
+    Boolean(auth.user) &&
+      !preferences.linkblogDisabled &&
+      Boolean(itemUrl) &&
+      !(sub && isNewsletterSubscription(sub))
   );
   let sharedNow = $derived(itemUrl ? linkblogStore.isShared(itemUrl) : false);
   let hasShareDraft = $derived(itemUrl ? shareDraftsStore.hasDraft(itemUrl) : false);

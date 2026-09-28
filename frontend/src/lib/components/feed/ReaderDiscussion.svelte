@@ -17,6 +17,7 @@
   import { useAtmosphere } from '$lib/hooks/useAtmosphere.svelte';
   import { getExternalArticleLink } from '$lib/utils/linkPost';
   import { shareTargetForDisplayItem } from '$lib/utils/shareTarget';
+  import { isNewsletterSubscription } from '$lib/utils/newsletters';
   import {
     normalizeDisplayItem,
     extractSembleMetadata,
@@ -60,7 +61,10 @@
   );
   let sharedNow = $derived(linkblogStore.isShared(itemUrl));
   let currentShareNote = $derived(linkblogStore.getNote(itemUrl));
-  let canShareLinkblog = $derived(Boolean(auth.user) && !preferences.linkblogDisabled);
+  // Newsletters are private mail, never offered for the linkblog.
+  let canShareLinkblog = $derived(
+    Boolean(auth.user) && !preferences.linkblogDisabled && !(sub && isNewsletterSubscription(sub))
+  );
   let hasShareDraft = $derived(itemUrl ? shareDraftsStore.hasDraft(itemUrl) : false);
   let hasShareNote = $derived(Boolean(currentShareNote?.trim()));
 

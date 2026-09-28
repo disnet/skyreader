@@ -47,6 +47,7 @@
   import { integrationSaveStore } from '$lib/stores/integrationSave.svelte';
   import { sembleConnectionStore } from '$lib/stores/sembleConnection.svelte';
   import { toggleSavedLink } from '$lib/utils/saveLink';
+  import { isNewsletterSubscription } from '$lib/utils/newsletters';
   import { preferences } from '$lib/stores/preferences.svelte';
   import ArticleCardView from './ArticleCardView.svelte';
   import { useAtmosphere } from '$lib/hooks/useAtmosphere.svelte';
@@ -468,8 +469,16 @@
   });
 
   // Whether sharing is offered (the Blogs lane's [+]): you're signed in and
-  // haven't turned the linkblog off. Same gate in both modes.
-  let showShareAction = $derived(Boolean(auth.user) && !preferences.linkblogDisabled);
+  // haven't turned the linkblog off. Same gate in both modes. A newsletter is
+  // private mail with no public page behind it, so it's never offered.
+  let isNewsletterItem = $derived.by(() => {
+    if (!article) return false;
+    const sub = subscriptionsStore.getById(article.subscriptionId);
+    return Boolean(sub && isNewsletterSubscription(sub));
+  });
+  let showShareAction = $derived(
+    Boolean(auth.user) && !preferences.linkblogDisabled && Boolean(itemUrl) && !isNewsletterItem
+  );
 
   // Recommend: account-only (it writes to the reader's repo) and needs a real
   // link. The URL is the article itself — for a link post, the external article
