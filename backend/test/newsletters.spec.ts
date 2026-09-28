@@ -245,7 +245,8 @@ describe('email newsletters', () => {
       expect(parsed!.senderName).toBe('Money Stuff');
       expect(parsed!.siteUrl).toBe('https://news.example.com');
       expect(parsed!.item.title).toBe('The big one');
-      expect(parsed!.item.publishedAt).toBe('2026-09-22T08:00:00.000Z');
+      // Dated by the forward (the outer Date), not the quoted 8:00 AM original.
+      expect(parsed!.item.publishedAt).toBe('2026-09-22T12:00:00.000Z');
       expect(parsed!.item.content).toBe('<p>Hello readers.</p>');
     });
 
@@ -281,12 +282,58 @@ describe('email newsletters', () => {
       expect(apple!.item.title).toBe('Weekly');
     });
 
+    it('drops an Apple Mail forward’s quote and header block from the body', async () => {
+      const row = (label: string, value: string) =>
+        `<div style="margin: 0px;"><span style="font-family: -webkit-system-font;"><b>${label}: </b></span>` +
+        `<span style="font-family: -webkit-system-font;">${value}<br></span></div>`;
+      const parsed = await parseNewsletterEmail(
+        rawEmail({
+          from: 'reader@icloud.example',
+          subject: 'Fwd: Weekly',
+          html:
+            '<html><body><br id="lineBreakAtBeginningOfMessage"><div><br><blockquote type="cite">' +
+            '<div>Begin forwarded message:</div><br class="Apple-interchange-newline">' +
+            row('From', 'Weekly Digest &lt;digest@weekly.example.org&gt;') +
+            row('Subject', '<b>Weekly</b>') +
+            row('Date', 'September 25, 2026 at 11:48:26 AM PDT') +
+            row('To', 'reader@icloud.example') +
+            row('Reply-To', 'no-reply@weekly.example.org') +
+            '<br><div><h1>Weekly</h1><p>Body: the issue.</p></div></blockquote></div></body></html>',
+        }),
+        Date.now()
+      );
+      const content = parsed!.item.content!;
+      expect(content.startsWith('<br><div><h1>Weekly</h1>')).toBe(true);
+      expect(content).toContain('<p>Body: the issue.</p>');
+      expect(content).not.toMatch(/forwarded message|<blockquote|From: |Reply-To/i);
+    });
+
+    it('drops a Gmail HTML forward’s note and attribution from the body', async () => {
+      const parsed = await parseNewsletterEmail(
+        rawEmail({
+          from: 'Reader <reader@gmail.example>',
+          subject: 'Fwd: The big one',
+          html:
+            '<div dir="ltr">Saving this.<br><br><div class="gmail_quote"><div dir="ltr" class="gmail_attr">' +
+            '---------- Forwarded message ---------<br>From: <strong>Money Stuff</strong> ' +
+            '<span dir="auto">&lt;moneystuff@news.example.com&gt;</span><br>Date: Tue, Sep 22, 2026 at 8:00 AM<br>' +
+            'Subject: The big one<br>To: &lt;reader@gmail.example&gt;<br></div><br><br><p>Hello readers.</p></div></div>',
+        }),
+        Date.now()
+      );
+      expect(parsed!.sender).toBe('moneystuff@news.example.com');
+      const content = parsed!.item.content!;
+      expect(content).toContain('<p>Hello readers.</p>');
+      expect(content).not.toMatch(/Saving this|Forwarded message|Subject:/);
+    });
+
     it('files a forward-as-attachment under the attached message’s sender', async () => {
       const inner = rawEmail({ html: '<p>Inside.</p>', messageId: 'orig@news.example.com' });
       const raw = [
         'From: Reader <reader@gmail.example>',
         `To: reader@${DOMAIN}`,
         'Subject: Fwd: The big one',
+        'Date: Mon, 28 Sep 2026 09:30:00 +0000',
         'MIME-Version: 1.0',
         'Content-Type: multipart/mixed; boundary=BOUND',
         '',
@@ -306,6 +353,7 @@ describe('email newsletters', () => {
       expect(parsed!.sender).toBe('moneystuff@news.example.com');
       expect(parsed!.item.guid).toBe('orig@news.example.com');
       expect(parsed!.item.content).toBe('<p>Inside.</p>');
+      expect(parsed!.item.publishedAt).toBe('2026-09-28T09:30:00.000Z');
     });
 
     it('keys an unrecognizable forward on its own From', async () => {

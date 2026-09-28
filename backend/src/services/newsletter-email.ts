@@ -57,11 +57,16 @@ export async function parseNewsletterEmail(
   // every forwarded issue into one source named after them — and deleting that
   // source would block their own address. So a forward is filed under the
   // sender of the message it carries.
+  //
+  // It is dated by the forward, though, not the original send: forwarding is
+  // the reader putting an issue in front of themselves now, and the original
+  // date would file it days down the river where it reads as never arriving.
   if (FORWARD_SUBJECT.test(email.subject ?? '')) {
+    const forwardedAt = new Date(sentAt(email.date, receivedAtMs)).toISOString();
     const attached = email.attachments.find((a) => a.mimeType === 'message/rfc822');
     if (attached) {
       const inner = await parseNewsletterEmail(attached.content, receivedAtMs);
-      if (inner) return inner;
+      if (inner) return { ...inner, item: { ...inner.item, publishedAt: forwardedAt } };
     }
     const inline = await parseInlineForward(email, receivedAtMs);
     if (inline) return inline;
@@ -93,7 +98,6 @@ interface ForwardedHeaders {
   sender: string;
   senderName: string | null;
   subject: string | null;
-  date: string | null;
   /** The forward as lines, and where the original message's body starts. */
   lines: string[];
   bodyStart: number;
@@ -125,7 +129,6 @@ function findForwardedHeaders(text: string): ForwardedHeaders | null {
   return {
     ...mailbox,
     subject: fields.subject || null,
-    date: fields.date || fields.sent || null,
     lines,
     bodyStart: i,
   };
@@ -139,15 +142,7 @@ async function parseInlineForward(
   if (!forwarded) return null;
   const { sender, senderName } = forwarded;
   const bodyText = forwarded.lines.slice(forwarded.bodyStart).map(unquote).join('\n').trim();
-  // The HTML keeps the whole forward; only the attribution block the big
-  // clients mark up (Gmail's gmail_attr, Outlook's divRplyFwdMsg) is removed.
-  const html = email.html
-    ? cleanEmailHtml(
-        removeElements(email.html, /^div$/i, (tag) =>
-          /\bclass\s*=\s*["'][^"']*\bgmail_attr\b|\bid\s*=\s*["']?divRplyFwdMsg\b/i.test(tag)
-        )
-      )
-    : '';
+  const html = email.html ? forwardedHtml(email.html) : '';
   const content = html || (bodyText ? textToHtml(bodyText) : '');
   const title =
     forwarded.subject?.trim() ||
@@ -161,13 +156,76 @@ async function parseInlineForward(
     author: senderName ?? undefined,
     content: content || undefined,
     summary: summarize(bodyText || stripTags(html)) || undefined,
-    publishedAt: new Date(
-      sentAt(forwarded.date?.replace(/\s+at\s+/i, ' ') ?? email.date, receivedAtMs)
-    ).toISOString(),
+    publishedAt: new Date(sentAt(email.date, receivedAtMs)).toISOString(),
   };
   // The forward's own List-* headers belong to the reader's mail, not the
   // newsletter, so the site is the original sender's domain.
   return { sender, senderName, siteUrl: `https://${sender.split('@')[1]}`, item };
+}
+
+/**
+ * The forwarded message's HTML without the forward around it. Everything up to
+ * the end of the quoted header block goes: the reader's note, the client's
+ * marker line, the From/Subject/Date rows, and the opening of the quote the
+ * client wraps it all in (Apple Mail's <blockquote type="cite">), so the issue
+ * reads as itself rather than as a quotation. The wrapper's close tags are left
+ * at the end, where the sanitizer drops them as strays.
+ *
+ * When no marker shows in the HTML (Outlook sets its header block off with an
+ * <hr>, not a text rule), only the attribution block the client marks up
+ * (Gmail's gmail_attr, Outlook's divRplyFwdMsg) is removed.
+ */
+function forwardedHtml(raw: string): string {
+  const html = cleanEmailHtml(raw);
+  const cut = forwardPreambleEnd(html);
+  if (cut !== null) return html.slice(cut).trim();
+  return cleanEmailHtml(
+    removeElements(raw, /^div$/i, (tag) =>
+      /\bclass\s*=\s*["'][^"']*\bgmail_attr\b|\bid\s*=\s*["']?divRplyFwdMsg\b/i.test(tag)
+    )
+  );
+}
+
+// Tags that start a new line of text, open or close.
+const LINE_BREAK_TAG = /^(?:br|div|p|tr|li|blockquote|h[1-6]|hr|table)$/i;
+
+// A row of a forward's quoted header block. Named fields only: a body's first
+// line may well contain a colon.
+const FORWARD_HEADER_FIELD = /^(?:from|to|cc|bcc|date|sent|subject|reply-to)\s*:/i;
+
+/**
+ * The offset in `html` just past the forward's quoted header block, or null
+ * when there is no marker line followed by a header block naming a From.
+ */
+function forwardPreambleEnd(html: string): number | null {
+  // Split the HTML into lines of text, each remembering where in the HTML it ends.
+  const lines: Array<{ text: string; end: number }> = [];
+  const tag = new RegExp(TAG.source, 'gi');
+  let text = '';
+  let last = 0;
+  let match: RegExpExecArray | null;
+  while ((match = tag.exec(html))) {
+    text += html.slice(last, match.index);
+    last = tag.lastIndex;
+    if (LINE_BREAK_TAG.test(match[2])) {
+      lines.push({ text: decodeEntities(text).replace(/\s+/g, ' ').trim(), end: last });
+      text = '';
+    }
+  }
+
+  const markerAt = lines.findIndex((line) => FORWARD_MARKER.test(line.text));
+  if (markerAt < 0) return null;
+  let end: number | null = null;
+  let sawFrom = false;
+  for (const line of lines.slice(markerAt + 1)) {
+    if (!line.text) continue;
+    if (!FORWARD_HEADER_FIELD.test(line.text)) break;
+    sawFrom ||= /^from\s*:/i.test(line.text);
+    end = line.end;
+  }
+  if (!sawFrom || end === null) return null;
+  // Past the last row's own close tags too, so the body doesn't open on strays.
+  return end + (html.slice(end).match(/^(?:\s*<\/[a-z][a-z0-9]*\s*>)*/i)?.[0].length ?? 0);
 }
 
 function unquote(line: string): string {

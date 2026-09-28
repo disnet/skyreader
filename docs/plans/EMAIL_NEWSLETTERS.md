@@ -28,7 +28,9 @@ sender ──SMTP──▶ Cloudflare Email Routing (catch-all on the domain)
   `Fwd:`/`FW:`…) is keyed on the message it carries — an attached `message/rfc822`, or the
   `From:` in the client's quoted header block — not on its own From, which is the reader: keying
   on that would pile every forward into one source, and deleting it would block the reader's own
-  address. A forward with no recognizable header block falls back to its own From.
+  address. A forward with no recognizable header block falls back to its own From. A forward is
+  dated by when it was forwarded, not the original send: the original date would file it days
+  down the river, where it reads as never having arrived.
 - **Item identity.** `guid` is the Message-ID, so a redelivery is an idempotent re-ingest. The
   body is the email's HTML with head/style/script, the hidden preheader and 1×1 tracking pixels
   removed; the reader's sanitizer is still the safety boundary. `url` is the newsletter's own
