@@ -625,17 +625,22 @@
   });
   $effect(() => {
     void storedBodyRetry;
-    if (!expanded || !article?.contentTruncated || !itemUrl) return;
+    // No itemUrl gate: a stored body is keyed by feed + guid, and an emailed
+    // newsletter often has no web copy. Only the extraction fallback needs a URL.
+    if (!expanded || !article?.contentTruncated) return;
     // Wait for the local read; a body already cached there needs neither fetch.
     if (article.content || lazyContent == null || lazyContent) return;
     const target = article;
     const url = itemUrl;
+    const extract = () => {
+      if (url) linkPostContentStore.fetch(url);
+    };
     // Everything below reads and writes state the effect must not depend on: the
     // status guard, and `fetch`'s reactive entry map — tracking a failed extract's
     // deleted entry would turn an error (or offline mode) into a retry loop.
     untrack(() => {
       if (storedBodyStatus === 'missing') {
-        linkPostContentStore.fetch(url);
+        extract();
         return;
       }
       if (storedBodyStatus === 'loading' || storedBodyStatus === 'found') return;
@@ -654,7 +659,7 @@
         storedBodyStatus = result.status;
         // Extract meanwhile; after `unavailable` a later expand still asks for
         // the stored copy unless extraction has already supplied the body.
-        linkPostContentStore.fetch(url);
+        extract();
       });
     });
   });
