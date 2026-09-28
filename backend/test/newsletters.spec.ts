@@ -201,6 +201,121 @@ describe('email newsletters', () => {
       );
     });
 
+    it('removes a hidden block with nested markup or quoted styles whole', () => {
+      expect(
+        cleanEmailHtml(
+          '<div style="display:none"><div>pre</div><div>view</div></div><div><p>kept</p></div>'
+        )
+      ).toBe('<div><p>kept</p></div>');
+      expect(
+        cleanEmailHtml(
+          `<div style="font-family:'Arial',sans-serif;display:none;max-height:0">pre</div><p>kept</p>`
+        )
+      ).toBe('<p>kept</p>');
+      expect(
+        cleanEmailHtml(
+          `<td style='display: none; font-family: "Helvetica"'><span>pre</span></td><p>kept</p>`
+        )
+      ).toBe('<p>kept</p>');
+      // An unclosed hidden element is left alone rather than eating the rest.
+      expect(cleanEmailHtml('<div style="display:none">pre<p>kept</p>')).toContain('kept');
+    });
+
+    it('files a Gmail inline forward under the original sender', async () => {
+      const parsed = await parseNewsletterEmail(
+        rawEmail({
+          from: 'Reader <reader@gmail.example>',
+          subject: 'Fwd: The big one',
+          text: [
+            'Thought I would save this.',
+            '',
+            '---------- Forwarded message ---------',
+            'From: Money Stuff <moneystuff@news.example.com>',
+            'Date: Tue, Sep 22, 2026 at 8:00 AM',
+            'Subject: The big one',
+            'To: <reader@gmail.example>',
+            '',
+            '',
+            'Hello readers.',
+          ].join('\r\n'),
+        }),
+        Date.now()
+      );
+      expect(parsed!.sender).toBe('moneystuff@news.example.com');
+      expect(parsed!.senderName).toBe('Money Stuff');
+      expect(parsed!.siteUrl).toBe('https://news.example.com');
+      expect(parsed!.item.title).toBe('The big one');
+      expect(parsed!.item.publishedAt).toBe('2026-09-22T08:00:00.000Z');
+      expect(parsed!.item.content).toBe('<p>Hello readers.</p>');
+    });
+
+    it('files an Outlook or Apple Mail forward under the original sender', async () => {
+      const outlook = await parseNewsletterEmail(
+        rawEmail({
+          from: 'reader@outlook.example',
+          subject: 'FW: Weekly',
+          text: [
+            '________________________________',
+            'From: Weekly Digest [mailto:digest@weekly.example.org]',
+            'Sent: Tuesday, September 22, 2026 12:00 PM',
+            'To: Reader',
+            'Subject: Weekly',
+            '',
+            'Body.',
+          ].join('\r\n'),
+        }),
+        Date.now()
+      );
+      expect(outlook!.sender).toBe('digest@weekly.example.org');
+      expect(outlook!.senderName).toBe('Weekly Digest');
+
+      const apple = await parseNewsletterEmail(
+        rawEmail({
+          from: 'reader@icloud.example',
+          subject: 'Fwd: Weekly',
+          html: `<div>Begin forwarded message:</div><br><div><b>From: </b>Weekly Digest &lt;digest@weekly.example.org&gt;</div><div><b>Subject: </b>Weekly</div><br><p>Body.</p>`,
+        }),
+        Date.now()
+      );
+      expect(apple!.sender).toBe('digest@weekly.example.org');
+      expect(apple!.item.title).toBe('Weekly');
+    });
+
+    it('files a forward-as-attachment under the attached message’s sender', async () => {
+      const inner = rawEmail({ html: '<p>Inside.</p>', messageId: 'orig@news.example.com' });
+      const raw = [
+        'From: Reader <reader@gmail.example>',
+        `To: reader@${DOMAIN}`,
+        'Subject: Fwd: The big one',
+        'MIME-Version: 1.0',
+        'Content-Type: multipart/mixed; boundary=BOUND',
+        '',
+        '--BOUND',
+        'Content-Type: text/plain',
+        '',
+        'See attached.',
+        '--BOUND',
+        'Content-Type: message/rfc822',
+        'Content-Disposition: attachment; filename="issue.eml"',
+        '',
+        inner,
+        '--BOUND--',
+        '',
+      ].join('\r\n');
+      const parsed = await parseNewsletterEmail(raw, Date.now());
+      expect(parsed!.sender).toBe('moneystuff@news.example.com');
+      expect(parsed!.item.guid).toBe('orig@news.example.com');
+      expect(parsed!.item.content).toBe('<p>Inside.</p>');
+    });
+
+    it('keys an unrecognizable forward on its own From', async () => {
+      const parsed = await parseNewsletterEmail(
+        rawEmail({ from: 'reader@gmail.example', subject: 'Fwd: hi', text: 'no headers here' }),
+        Date.now()
+      );
+      expect(parsed!.sender).toBe('reader@gmail.example');
+    });
+
     it('reads the token out of a plus-addressed recipient', () => {
       expect(tokenFromRecipient('AbC123+substack@Inbox.Test', DOMAIN)).toBe('abc123');
       expect(tokenFromRecipient('abc123@elsewhere.test', DOMAIN)).toBeNull();

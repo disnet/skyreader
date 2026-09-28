@@ -24,7 +24,11 @@ sender ──SMTP──▶ Cloudflare Email Routing (catch-all on the domain)
 
 - **Feed identity.** `feed_url` is `newsletter:<inbox_id>/<sender address>`. `inbox_id` is random
   and never changes; the address token is separate, so rotating the address (Settings → Get a new
-  address) kills the old one without orphaning anything already received.
+  address) kills the old one without orphaning anything already received. A forward (subject
+  `Fwd:`/`FW:`…) is keyed on the message it carries — an attached `message/rfc822`, or the
+  `From:` in the client's quoted header block — not on its own From, which is the reader: keying
+  on that would pile every forward into one source, and deleting it would block the reader's own
+  address. A forward with no recognizable header block falls back to its own From.
 - **Item identity.** `guid` is the Message-ID, so a redelivery is an idempotent re-ingest. The
   body is the email's HTML with head/style/script, the hidden preheader and 1×1 tracking pixels
   removed; the reader's sanitizer is still the safety boundary. `url` is the newsletter's own

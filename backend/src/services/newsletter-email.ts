@@ -1,4 +1,4 @@
-import PostalMime, { type Email, type RawEmail } from 'postal-mime';
+import PostalMime, { addressParser, type Email, type RawEmail } from 'postal-mime';
 import type { FeedItem } from '../types';
 
 /**
@@ -36,11 +36,37 @@ const MAX_FUTURE_SKEW_MS = 60 * 60 * 1000;
 const WEB_VERSION_TEXT =
   /\b(?:view|read|open|see)\b[^<]{0,40}?\b(?:browser|online|on the web|web version|website)\b|\bweb version\b/i;
 
+// Subject prefixes mail clients add when the reader hits Forward: Fwd/Fw, and
+// the common localized ones (WG, TR, RV, Enc, VS, Doorst).
+const FORWARD_SUBJECT = /^\s*(?:fwd?|wg|tr|rv|enc|vs|doorst)\s*:\s*/i;
+
+// The line a client puts above the original message's headers in an inline
+// forward: Gmail's "---------- Forwarded message ---------", Thunderbird's
+// "-------- Forwarded Message --------", Outlook's "-----Original Message-----"
+// or a rule of underscores, Apple Mail's "Begin forwarded message:".
+const FORWARD_MARKER =
+  /^[ \t>]*(?:-{2,}\s*(?:forwarded message|original message)\s*-{2,}|begin forwarded message:|_{10,})[ \t]*$/im;
+
 export async function parseNewsletterEmail(
   raw: RawEmail,
   receivedAtMs: number
 ): Promise<ParsedNewsletter | null> {
   const email = await PostalMime.parse(raw);
+
+  // A forward's From is the reader, not the newsletter. Keying on it would pile
+  // every forwarded issue into one source named after them — and deleting that
+  // source would block their own address. So a forward is filed under the
+  // sender of the message it carries.
+  if (FORWARD_SUBJECT.test(email.subject ?? '')) {
+    const attached = email.attachments.find((a) => a.mimeType === 'message/rfc822');
+    if (attached) {
+      const inner = await parseNewsletterEmail(attached.content, receivedAtMs);
+      if (inner) return inner;
+    }
+    const inline = await parseInlineForward(email, receivedAtMs);
+    if (inline) return inline;
+  }
+
   const from = email.from && 'address' in email.from ? email.from : null;
   const sender = from?.address?.trim().toLowerCase();
   if (!sender || !sender.includes('@')) return null;
@@ -57,10 +83,120 @@ export async function parseNewsletterEmail(
     author: senderName ?? undefined,
     content: content || undefined,
     summary: summary || undefined,
-    publishedAt: new Date(sentAt(email, receivedAtMs)).toISOString(),
+    publishedAt: new Date(sentAt(email.date, receivedAtMs)).toISOString(),
   };
 
   return { sender, senderName, siteUrl: siteUrlFor(email, sender), item };
+}
+
+interface ForwardedHeaders {
+  sender: string;
+  senderName: string | null;
+  subject: string | null;
+  date: string | null;
+  /** The forward as lines, and where the original message's body starts. */
+  lines: string[];
+  bodyStart: number;
+}
+
+/**
+ * The original sender, subject and date out of an inline forward's quoted
+ * header block ("From: … / Date: … / Subject: …" under the client's marker).
+ * Null when there is no such block or it names no sender address.
+ */
+function findForwardedHeaders(text: string): ForwardedHeaders | null {
+  const lines = text.split(/\r?\n/);
+  const markerAt = lines.findIndex((line) => FORWARD_MARKER.test(line));
+  if (markerAt < 0) return null;
+
+  const fields: Record<string, string> = {};
+  let i = markerAt + 1;
+  while (i < lines.length && !unquote(lines[i])) i++; // Apple Mail leaves a gap
+  for (; i < lines.length; i++) {
+    const line = unquote(lines[i]);
+    const field = line.match(/^([a-z][a-z -]*?)\s*:\s*(.*)$/i);
+    if (!field) break;
+    fields[field[1].toLowerCase()] ??= field[2].trim();
+  }
+  if (!fields.from) return null;
+
+  const mailbox = parseMailbox(fields.from);
+  if (!mailbox) return null;
+  return {
+    ...mailbox,
+    subject: fields.subject || null,
+    date: fields.date || fields.sent || null,
+    lines,
+    bodyStart: i,
+  };
+}
+
+async function parseInlineForward(
+  email: Email,
+  receivedAtMs: number
+): Promise<ParsedNewsletter | null> {
+  const forwarded = findForwardedHeaders(email.text ?? (email.html ? htmlToText(email.html) : ''));
+  if (!forwarded) return null;
+  const { sender, senderName } = forwarded;
+  const bodyText = forwarded.lines.slice(forwarded.bodyStart).map(unquote).join('\n').trim();
+  // The HTML keeps the whole forward; only the attribution block the big
+  // clients mark up (Gmail's gmail_attr, Outlook's divRplyFwdMsg) is removed.
+  const html = email.html
+    ? cleanEmailHtml(
+        removeElements(email.html, /^div$/i, (tag) =>
+          /\bclass\s*=\s*["'][^"']*\bgmail_attr\b|\bid\s*=\s*["']?divRplyFwdMsg\b/i.test(tag)
+        )
+      )
+    : '';
+  const content = html || (bodyText ? textToHtml(bodyText) : '');
+  const title =
+    forwarded.subject?.trim() ||
+    email.subject?.replace(FORWARD_SUBJECT, '').trim() ||
+    '(no subject)';
+
+  const item: FeedItem = {
+    guid: await messageGuid(email, sender),
+    url: findWebVersionUrl(email.html ?? '') ?? '',
+    title,
+    author: senderName ?? undefined,
+    content: content || undefined,
+    summary: summarize(bodyText || stripTags(html)) || undefined,
+    publishedAt: new Date(
+      sentAt(forwarded.date?.replace(/\s+at\s+/i, ' ') ?? email.date, receivedAtMs)
+    ).toISOString(),
+  };
+  // The forward's own List-* headers belong to the reader's mail, not the
+  // newsletter, so the site is the original sender's domain.
+  return { sender, senderName, siteUrl: `https://${sender.split('@')[1]}`, item };
+}
+
+function unquote(line: string): string {
+  return line.replace(/^(?:\s*>)+/, '').trim();
+}
+
+/** `Name <a@b>`, `a@b`, and Outlook's `Name [mailto:a@b]` → its parts. */
+function parseMailbox(value: string): { sender: string; senderName: string | null } | null {
+  const normalized = value.replace(/\[mailto:([^\]]+)\]/i, '<$1>').replace(/<mailto:/i, '<');
+  const parsed = addressParser(normalized)[0];
+  const address =
+    parsed && 'address' in parsed && parsed.address
+      ? parsed.address
+      : normalized.match(/[^\s<>"'\[\]]+@[^\s<>"'\[\]]+\.[a-z]{2,}/i)?.[0];
+  const sender = address?.trim().toLowerCase();
+  if (!sender || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(sender)) return null;
+  const name = parsed?.name?.trim().replace(/^["']|["']$/g, '');
+  return { sender, senderName: name || null };
+}
+
+/** HTML to plain lines, keeping the block breaks a header block is laid out with. */
+function htmlToText(html: string): string {
+  return decodeEntities(
+    html
+      .replace(/<(style|script|head)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, '')
+      .replace(/<br\b[^>]*>|<\/(?:p|div|tr|li|blockquote|h[1-6])\s*>/gi, '\n')
+      .replace(/<[^>]*>/g, '')
+      .replace(/[ \t]+/g, ' ')
+  );
 }
 
 /**
@@ -77,8 +213,8 @@ async function messageGuid(email: Email, sender: string): Promise<string> {
   return `email-${hex.slice(0, 32)}`;
 }
 
-function sentAt(email: Email, receivedAtMs: number): number {
-  const parsed = email.date ? new Date(email.date).getTime() : NaN;
+function sentAt(date: string | null | undefined, receivedAtMs: number): number {
+  const parsed = date ? new Date(date).getTime() : NaN;
   if (Number.isNaN(parsed) || parsed > receivedAtMs + MAX_FUTURE_SKEW_MS) return receivedAtMs;
   return parsed;
 }
@@ -125,16 +261,57 @@ export function cleanEmailHtml(html: string): string {
     .replace(/<!--[\s\S]*?-->/g, '')
     .replace(/<(head|style|script|title|noscript)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, '')
     .replace(/<(?:meta|link|base)\b[^>]*>/gi, '')
-    // Preheaders: the inbox-preview text newsletters hide with display:none.
-    // Innermost-first so a hidden wrapper around ordinary markup still goes.
-    .replace(
-      /<(div|span|p|td|table)\b[^>]*style\s*=\s*(["'])[^"']*display\s*:\s*none[^"']*\2[^>]*>(?:(?!<\1\b)[\s\S])*?<\/\1>/gi,
-      ''
-    )
     // Tracking pixels: an <img> sized 0 or 1 in either dimension.
     .replace(/<img\b(?=[^>]*\b(?:width|height)\s*=\s*["']?[01](?:px)?["'\s/>])[^>]*>/gi, '')
     .replace(/<img\b(?=[^>]*style\s*=\s*["'][^"']*\b(?:width|height)\s*:\s*[01]px)[^>]*>/gi, '');
+  // Preheaders: the inbox-preview text newsletters hide with display:none.
+  out = removeElements(out, /^(?:div|span|p|td|table|center)$/i, (tag) =>
+    /display\s*:\s*none/i.test(styleOf(tag))
+  );
   return out.trim();
+}
+
+// One tag, open or close; quoted attribute values may hold `>` or the other quote.
+const TAG = /<(\/?)([a-z][a-z0-9]*)\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi;
+
+function styleOf(tag: string): string {
+  const style = tag.match(/\sstyle\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
+  return style ? (style[1] ?? style[2] ?? style[3]) : '';
+}
+
+/**
+ * Remove every element whose name matches `names` and whose opening tag passes
+ * `test`, along with everything inside it. The close is found by counting
+ * nesting, so a hidden <div> holding more <div>s goes whole and the markup
+ * after it stays. One forward pass; an element never closed stops it, leaving
+ * that element and everything after it as they were.
+ */
+function removeElements(html: string, names: RegExp, test: (openTag: string) => boolean): string {
+  const tag = new RegExp(TAG.source, 'gi');
+  let out = '';
+  let kept = 0;
+  let open: RegExpExecArray | null;
+  while ((open = tag.exec(html))) {
+    if (open[1] || !names.test(open[2]) || !test(open[0])) continue;
+    const end = matchingCloseEnd(html, open[2].toLowerCase(), tag.lastIndex);
+    if (end < 0) break;
+    out += html.slice(kept, open.index);
+    kept = tag.lastIndex = end;
+  }
+  return out + html.slice(kept);
+}
+
+function matchingCloseEnd(html: string, name: string, from: number): number {
+  const tag = new RegExp(TAG.source, 'gi');
+  tag.lastIndex = from;
+  let depth = 1;
+  let match: RegExpExecArray | null;
+  while ((match = tag.exec(html))) {
+    if (match[2].toLowerCase() !== name || match[0].endsWith('/>')) continue;
+    depth += match[1] ? -1 : 1;
+    if (depth === 0) return tag.lastIndex;
+  }
+  return -1;
 }
 
 function textToHtml(text: string): string {
