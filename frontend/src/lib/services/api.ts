@@ -1914,6 +1914,8 @@ class ApiClient {
       publishedAt?: string;
       domain?: string;
       wordCount?: number;
+      // Replace an existing save of this URL's content instead of a 409.
+      updateContent?: boolean;
     }
   ): Promise<{
     rkey: string;

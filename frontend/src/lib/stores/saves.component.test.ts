@@ -76,7 +76,16 @@ const api = {
   deleteSaved: vi.fn(),
   deleteSavedByGuid: vi.fn(),
 };
-vi.mock('$lib/services/api', () => ({ api }));
+class ApiError extends Error {
+  constructor(
+    message: string,
+    public status: number
+  ) {
+    super(message);
+  }
+}
+class ExtractionBlockedError extends Error {}
+vi.mock('$lib/services/api', () => ({ api, ApiError, ExtractionBlockedError }));
 
 const extractArticle = vi.fn();
 vi.mock('$lib/services/extract', () => ({ extractArticle }));
@@ -234,5 +243,122 @@ describe('savesStore in guest mode', () => {
     // there is no server copy either. The answer is null, not a 401.
     expect(await savesStore.getContent(saved.rkey)).toBeNull();
     expect(api.getSavedBodies).not.toHaveBeenCalled();
+  });
+});
+
+describe('savesStore.saveFromUrl when the article cannot be fetched', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    savedRows.clear();
+    authState.isGuest = false;
+    syncState.isOnline = true;
+    api.saveFromUrl.mockImplementation(async (_url: string, rkey: string) => ({
+      uri: `at://did:plc:me/app.skyreader.feed.saved/${rkey}`,
+      savedAt: '2026-09-28T00:00:00.000Z',
+    }));
+  });
+
+  it('saves the link, the hinted title and a note instead of failing on a blocked site', async () => {
+    extractArticle.mockRejectedValueOnce(new ExtractionBlockedError());
+
+    const saved = await savesStore.saveFromUrl('https://www.example.com/story', {
+      title: 'A Story',
+    });
+
+    expect(saved.fetchFailed).toBe('blocked');
+    const [url, , meta] = api.saveFromUrl.mock.calls[0];
+    expect(url).toBe('https://www.example.com/story');
+    expect(meta.title).toBe('A Story');
+    expect(meta.domain).toBe('example.com');
+    expect(meta.wordCount).toBeUndefined();
+    expect(meta.content).toContain('blocks automated readers');
+    expect(meta.content).toContain('Chrome extension');
+    expect(meta.content).toContain('href="https://www.example.com/story"');
+    // The note is the body the reader opens on, so it's stored like any other.
+    expect(savedRows.get(saved.rkey)?.content).toBe(meta.content);
+    expect(savedRows.get(saved.rkey)).not.toHaveProperty('fetchFailed');
+  });
+
+  it('falls back the same way when extraction fails server-side', async () => {
+    extractArticle.mockRejectedValueOnce(new ApiError('Failed to extract article', 502));
+
+    const saved = await savesStore.saveFromUrl('https://example.com/broken');
+
+    expect(saved.fetchFailed).toBe('failed');
+    expect(saved.title).toBeNull();
+    expect(api.saveFromUrl.mock.calls[0][2].content).not.toContain('blocks automated readers');
+  });
+
+  it('replaces its own note in place once the article can be fetched', async () => {
+    extractArticle.mockRejectedValueOnce(new ExtractionBlockedError());
+    const note = await savesStore.saveFromUrl('https://example.com/later', { title: 'Later' });
+    const count = savesStore.articles.length;
+    api.saveFromUrl.mockClear();
+
+    extractArticle.mockResolvedValueOnce({
+      title: null,
+      author: 'A. Writer',
+      description: null,
+      content: '<p>the real article text at last</p>',
+      domain: 'example.com',
+      image: null,
+      published: null,
+      wordCount: 6,
+    });
+    const upgraded = await savesStore.saveFromUrl('https://example.com/later');
+
+    expect(upgraded.fetchFailed).toBeUndefined();
+    const [url, , meta] = api.saveFromUrl.mock.calls[0];
+    expect(url).toBe('https://example.com/later');
+    expect(meta.updateContent).toBe(true);
+    // Same save: same rkey, same place in the list, the note's title kept.
+    expect(upgraded.rkey).toBe(note.rkey);
+    expect(upgraded.savedAt).toBe(note.savedAt);
+    expect(upgraded.title).toBe('Later');
+    expect(upgraded.wordCount).toBe(6);
+    expect(savesStore.articles).toHaveLength(count);
+    expect(savedRows.get(note.rkey)?.content).toBe('<p>the real article text at last</p>');
+  });
+
+  it('leaves the note alone when the article still cannot be fetched', async () => {
+    extractArticle.mockRejectedValueOnce(new ExtractionBlockedError());
+    const note = await savesStore.saveFromUrl('https://example.com/still');
+    api.saveFromUrl.mockClear();
+
+    extractArticle.mockRejectedValueOnce(new ExtractionBlockedError());
+    const again = await savesStore.saveFromUrl('https://example.com/still');
+
+    expect(again.fetchFailed).toBe('blocked');
+    expect(again.rkey).toBe(note.rkey);
+    expect(api.saveFromUrl).not.toHaveBeenCalled();
+  });
+
+  it('never asks to replace a save that holds real text', async () => {
+    extractArticle.mockResolvedValue({
+      title: 'Real',
+      author: null,
+      description: null,
+      content: '<p>real text</p>',
+      domain: 'example.com',
+      image: null,
+      published: null,
+      wordCount: 2,
+    });
+    await savesStore.saveFromUrl('https://example.com/real');
+    api.saveFromUrl.mockClear();
+    api.saveFromUrl.mockRejectedValueOnce(new Error('Article already saved'));
+
+    await expect(savesStore.saveFromUrl('https://example.com/real')).rejects.toThrow(
+      'Article already saved'
+    );
+    expect(api.saveFromUrl.mock.calls[0][2].updateContent).toBeUndefined();
+    extractArticle.mockReset();
+  });
+
+  it('still fails when the problem is not the page (e.g. a 4xx or offline)', async () => {
+    extractArticle.mockRejectedValueOnce(new ApiError('Unauthorized', 401));
+
+    await expect(savesStore.saveFromUrl('https://example.com/x')).rejects.toThrow('Unauthorized');
+    expect(api.saveFromUrl).not.toHaveBeenCalled();
   });
 });

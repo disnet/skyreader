@@ -7,16 +7,26 @@
 // anything; a toast for the happy path would be noise on a reading surface.
 import { savesStore } from '$lib/stores/saves.svelte';
 import { toastStore } from '$lib/stores/toast.svelte';
-import { UrlSaveLimitError, ExtractionBlockedError } from '$lib/services/api';
+import { UrlSaveLimitError } from '$lib/services/api';
 import { saveLimitLine } from '$lib/utils/limitCopy';
-import { BLOCKED_SAVE_LINE, blockedSaveAction } from '$lib/utils/saveAnywhere';
+import { failedSaveLine, blockedSaveAction } from '$lib/utils/saveAnywhere';
 
 /** Toggle `url` in and out of Saved. Resolves once the list reflects the change. */
-export async function toggleSavedLink(url: string): Promise<void> {
+export async function toggleSavedLink(url: string, title?: string): Promise<void> {
   const existing = savesStore.getByUrl(url);
   try {
-    if (existing) await savesStore.remove(existing.rkey);
-    else await savesStore.saveFromUrl(url);
+    if (existing) {
+      await savesStore.remove(existing.rkey);
+      return;
+    }
+    const saved = await savesStore.saveFromUrl(url, { title });
+    // The article couldn't be fetched, so only the link was kept. That is
+    // worth a word — the bookmark filling alone would promise the full text —
+    // and the way to get the text is the same one a blocked save always offered.
+    if (saved.fetchFailed) {
+      const id = toastStore.add(failedSaveLine(saved.fetchFailed));
+      toastStore.update(id, 'success', undefined, blockedSaveAction());
+    }
   } catch (err) {
     // The monthly save cap is a different kind of failure from "that didn't
     // work": it has a reason, a reset date, and something the reader can do
@@ -27,13 +37,6 @@ export async function toggleSavedLink(url: string): Promise<void> {
         label: 'Become a Supporter',
         href: '/supporter',
       });
-      return;
-    }
-    // Same shape as the cap above: a refusal the reader can actually get past
-    // says so, and says how, instead of hiding behind "could not save that".
-    if (err instanceof ExtractionBlockedError) {
-      const id = toastStore.add(BLOCKED_SAVE_LINE);
-      toastStore.update(id, 'error', undefined, blockedSaveAction());
       return;
     }
     const id = toastStore.add(existing ? 'Could not remove that save' : 'Could not save that');

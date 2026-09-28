@@ -13,6 +13,7 @@ export const docsPages = {
   saveFromAnywhere: '/guide/adding-sources/#save-and-subscribe-from-anywhere',
   reading: '/guide/reading/',
   savingAndHighlights: '/guide/saving-and-highlights/',
+  siteBlocksSaving: '/guide/saving-and-highlights/#when-a-site-wont-let-skyreader-read-it',
   saveBacking: '/guide/saving-and-highlights/#backing-your-saves-with-semble-or-margin',
   highlights: '/guide/saving-and-highlights/#highlights',
   sharingAndLinkblog: '/guide/sharing-and-your-linkblog/',

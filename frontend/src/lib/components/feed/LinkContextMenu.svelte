@@ -4,9 +4,9 @@
   import { auth } from '$lib/stores/auth.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
   import { toastStore } from '$lib/stores/toast.svelte';
-  import { UrlSaveLimitError, ExtractionBlockedError } from '$lib/services/api';
+  import { UrlSaveLimitError } from '$lib/services/api';
   import { saveLimitLine } from '$lib/utils/limitCopy';
-  import { BLOCKED_SAVE_LINE, blockedSaveAction } from '$lib/utils/saveAnywhere';
+  import { failedSaveLine, blockedSaveAction } from '$lib/utils/saveAnywhere';
 
   interface Props {
     url: string;
@@ -25,13 +25,33 @@
     onClose();
   }
 
+  // Link text makes a fallback title for a save whose page can't be fetched,
+  // but only when it reads like one: not a bare URL, not "here" or "this".
+  function titleHint(text: string): string | undefined {
+    const t = text.trim();
+    if (t.length < 12 || /^(https?:\/\/|www\.)/i.test(t)) return undefined;
+    return t;
+  }
+
   function handleSave() {
     const saveUrl = url;
     const toastId = toastStore.add('Saving article...');
     onClose();
     savesStore
-      .saveFromUrl(saveUrl)
-      .then(() => toastStore.update(toastId, 'success', 'Article saved'))
+      .saveFromUrl(saveUrl, { title: titleHint(linkText) })
+      .then((saved) => {
+        // Only the link was kept: say so, and offer the way to the full text.
+        if (saved.fetchFailed) {
+          toastStore.update(
+            toastId,
+            'success',
+            failedSaveLine(saved.fetchFailed),
+            blockedSaveAction()
+          );
+          return;
+        }
+        toastStore.update(toastId, 'success', 'Article saved');
+      })
       .catch((err) => {
         // The monthly save cap has a reason and a way out, so it says so
         // instead of hiding behind a generic failure.
@@ -40,10 +60,6 @@
             label: 'Become a Supporter',
             href: '/supporter',
           });
-          return;
-        }
-        if (err instanceof ExtractionBlockedError) {
-          toastStore.update(toastId, 'error', BLOCKED_SAVE_LINE, blockedSaveAction());
           return;
         }
         toastStore.update(toastId, 'error', 'Failed to save article');

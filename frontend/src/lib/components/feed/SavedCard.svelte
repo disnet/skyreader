@@ -28,6 +28,7 @@
   import Icon from '$lib/components/Icon.svelte';
   import PopoverMenu from '$lib/components/PopoverMenu.svelte';
   import TagMenu from '$lib/components/feed/TagMenu.svelte';
+  import { isFailedSaveBody } from '$lib/utils/saveAnywhere';
 
   let {
     displayItem,
@@ -135,7 +136,8 @@
       } catch {
         // Best effort — leave the count unknown and hide the chip.
       }
-      if (cancelled) return;
+      // A link-only save's note isn't the article: no read time to show.
+      if (cancelled || isFailedSaveBody(body)) return;
       const text = body.replace(/<[^>]*>/g, '');
       const count = text.split(/\s+/).filter(Boolean).length;
       lazyWordCount = count || null;
