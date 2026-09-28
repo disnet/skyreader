@@ -13,7 +13,7 @@ Saves are **private to Skyreader** by default. Nothing is published.
 
 ### When a site won't let Skyreader read it
 
-Some sites refuse automated readers, so Skyreader's servers can't fetch the article even though it opens fine in your browser. Skyreader will say so and point you at the extension, which reads the page you already have open. That gets you the full text where a plain URL save can't.
+Some sites refuse automated readers, so Skyreader's servers can't fetch the article even though it opens fine in your browser. The save still goes through: you get the link (and its title, when Skyreader knows it) with a note in place of the text. To get the full text, open the article and save it with the [Chrome](https://chromewebstore.google.com/detail/skyreader/kdefpnnpmajcclfepekgdkcdiklfooed) or [Firefox](https://addons.mozilla.org/firefox/addon/skyreader/) extension, which reads the page you already have open. That replaces the note.
 
 ### Backing your saves with Semble or Margin
 

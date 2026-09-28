@@ -1,12 +1,14 @@
 import { db, getMetadata, setMetadata } from '$lib/services/db';
 import { safePut, safeBulkPut } from '$lib/services/safeDb.svelte';
-import { api } from '$lib/services/api';
+import { api, ApiError, ExtractionBlockedError } from '$lib/services/api';
+import type { ExtractedArticle } from '$lib/services/api';
 import { generateTid } from '$lib/utils/tid';
 import { urlKey } from '$lib/utils/urlKey';
 import { syncQueue, type SavedPayload } from '$lib/services/sync-queue';
 import { syncStore } from './sync.svelte';
 import { auth } from './auth.svelte';
 import { extractArticle } from '$lib/services/extract';
+import { failedSaveBody, type SaveFetchFailure } from '$lib/utils/saveAnywhere';
 import { computeContentStats } from '$lib/services/articleMerge';
 import { savedSearchStore } from './savedSearch.svelte';
 import { compareSavedNewestFirst } from '$lib/utils/savedPile';
@@ -375,19 +377,66 @@ function createSavesStore() {
     }
   }
 
-  async function saveFromUrl(url: string): Promise<SavedItem> {
+  /**
+   * Why fetching the article failed, when that failure should still save the
+   * link: the site refusing our fetcher, or the extract route itself failing
+   * (a 5xx — the proxy couldn't fetch or parse the page). Anything else (offline,
+   * signed out, rate limited) is a reason not to save at all, so it's rethrown.
+   */
+  function saveFetchFailure(err: unknown): SaveFetchFailure | null {
+    if (err instanceof ExtractionBlockedError) return 'blocked';
+    if (err instanceof ApiError && err.status >= 500) return 'failed';
+    return null;
+  }
+
+  /**
+   * Save a web URL. When the article itself can't be fetched, the save still
+   * goes through with the link (and `hint.title` when the caller knows one) and
+   * a note in place of the text pointing at the extension, which can re-save it
+   * with the full text. `fetchFailed` on the result tells the caller which.
+   */
+  async function saveFromUrl(
+    url: string,
+    hint: { title?: string } = {}
+  ): Promise<SavedItem & { fetchFailed?: SaveFetchFailure }> {
     saving = true;
     error = null;
     try {
       const rkey = generateTid();
 
       // Fetch HTML via proxy and extract content client-side
-      const extracted = await extractArticle(url);
+      let extracted: ExtractedArticle;
+      let fetchFailed: SaveFetchFailure | undefined;
+      try {
+        extracted = await extractArticle(url);
+      } catch (err) {
+        const failure = saveFetchFailure(err);
+        if (!failure) throw err;
+        fetchFailed = failure;
+        let domain: string | null = null;
+        try {
+          domain = new URL(url).hostname.replace(/^www\./, '');
+        } catch {
+          // Unreachable for a URL the extract route accepted; leave it unset.
+        }
+        extracted = {
+          title: hint.title?.trim() || null,
+          author: null,
+          description: null,
+          content: failedSaveBody(url, failure),
+          domain,
+          image: null,
+          published: null,
+          wordCount: 0,
+        };
+      }
 
       // Prefer the extractor's word count, but never leave it null when a body
       // exists — count locally so the read time is right even if the proxy
       // omitted it.
-      const wordCount = extracted.wordCount || wordCountFrom(extracted.content);
+      const wordCount = fetchFailed
+        ? null
+        : extracted.wordCount || wordCountFrom(extracted.content);
 
       const result = await api.saveFromUrl(url, rkey, {
         title: extracted.title || undefined,
@@ -424,7 +473,7 @@ function createSavesStore() {
       await safePut(db.saved, savedItem);
       savedSearchStore.upsert(savedItem);
 
-      return savedItem;
+      return fetchFailed ? { ...savedItem, fetchFailed } : savedItem;
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to save bookmark';
       error = msg;

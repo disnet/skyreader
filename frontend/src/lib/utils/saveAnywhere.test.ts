@@ -1,4 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('$lib/constants/docs', () => ({
+  docsUrl: (page: string) =>
+    page === 'siteBlocksSaving'
+      ? 'https://docs.skyreader.app/guide/saving-and-highlights/#when-a-site-wont-let-skyreader-read-it'
+      : 'https://docs.skyreader.app/',
+}));
 import {
   CHROME_EXTENSION_URL,
   FIREFOX_EXTENSION_URL,
@@ -7,6 +14,7 @@ import {
   saveAnywhereHint,
   saveAnywhereLabel,
   saveAnywhereUrl,
+  failedSaveBody,
 } from './saveAnywhere';
 
 const CHROME_USER_AGENT =
@@ -73,5 +81,21 @@ describe('saveAnywhereHint', () => {
   ])('drops the extension promise where the link goes to the instructions', (userAgent) => {
     expect(saveAnywhereUrl(userAgent)).toBe(SAVE_ANYWHERE_SETTINGS_URL);
     expect(saveAnywhereHint(userAgent)).not.toContain('extension');
+  });
+});
+
+describe('failedSaveBody', () => {
+  it('links the page, both extensions and the docs, escaping the URL', () => {
+    const body = failedSaveBody('https://www.example.com/a?b=1&c="2"', 'blocked');
+    expect(body).toContain('blocks automated readers');
+    expect(body).toContain('href="https://www.example.com/a?b=1&amp;c=&quot;2&quot;"');
+    expect(body).toContain('Read it on example.com');
+    expect(body).toContain(`href="${CHROME_EXTENSION_URL}"`);
+    expect(body).toContain(`href="${FIREFOX_EXTENSION_URL}"`);
+    expect(body).toContain('#when-a-site-wont-let-skyreader-read-it');
+  });
+
+  it('does not blame a bot filter for a generic failure', () => {
+    expect(failedSaveBody('https://example.com/a', 'failed')).not.toContain('automated');
   });
 });

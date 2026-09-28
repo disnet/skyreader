@@ -1,3 +1,6 @@
+import { docsUrl } from '$lib/constants/docs';
+import { escapeHtml } from '$lib/utils/html';
+
 export const CHROME_EXTENSION_URL =
   'https://chromewebstore.google.com/detail/skyreader/kdefpnnpmajcclfepekgdkcdiklfooed';
 export const FIREFOX_EXTENSION_URL = 'https://addons.mozilla.org/firefox/addon/skyreader/';
@@ -71,4 +74,49 @@ export interface BlockedSaveAction {
 export function blockedSaveAction(): BlockedSaveAction {
   const ua = window.navigator.userAgent;
   return { label: saveAnywhereLabel(ua), href: saveAnywhereUrl(ua), hint: saveAnywhereHint(ua) };
+}
+
+/**
+ * Why a URL save came back without the article. `blocked` is the site refusing
+ * the server's fetcher; `failed` is anything else that went wrong fetching or
+ * extracting the page (a timeout, a broken page, the proxy itself).
+ */
+export type SaveFetchFailure = 'blocked' | 'failed';
+
+/**
+ * The body of a save whose article couldn't be fetched. The link is still worth
+ * keeping, so the save goes through with this note in place of the text: what
+ * happened, a way to the page itself, and the way through (the extension reads
+ * the page from the reader's own browser, and re-saving from it replaces this
+ * note with the full text).
+ */
+export function failedSaveBody(url: string, reason: SaveFetchFailure): string {
+  let host = url;
+  try {
+    host = new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    // Keep the raw URL as the link text.
+  }
+  const why =
+    reason === 'blocked'
+      ? "Skyreader couldn't fetch this article: the site blocks automated readers."
+      : "Skyreader couldn't fetch this article.";
+  const link = (href: string, text: string) =>
+    `<a href="${escapeHtml(href)}">${escapeHtml(text)}</a>`;
+  return [
+    `<p>${why} The link is saved, so it's here when you want it.</p>`,
+    `<p>${link(url, `Read it on ${host}`)}</p>`,
+    '<p>The browser extension can still save the full text. Open the article, then use ' +
+      '<strong>Save this page</strong>; it replaces this note.</p>',
+    `<p>${link(CHROME_EXTENSION_URL, 'Chrome extension')} · ` +
+      `${link(FIREFOX_EXTENSION_URL, 'Firefox extension')} · ` +
+      `${link(docsUrl('siteBlocksSaving'), "When a site won't let Skyreader read it")}</p>`,
+  ].join('\n');
+}
+
+/** The line a caller shows once a save kept only the link. */
+export function failedSaveLine(reason: SaveFetchFailure): string {
+  return reason === 'blocked'
+    ? `Saved the link only. ${BLOCKED_SAVE_LINE}`
+    : "Saved the link only. Skyreader couldn't fetch the article.";
 }

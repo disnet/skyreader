@@ -5,14 +5,15 @@
   import { auth } from '$lib/stores/auth.svelte';
   import { permissionMessage } from '$lib/services/permissions';
   import { savesStore } from '$lib/stores/saves.svelte';
-  import { ScopeUpgradeError, UrlSaveLimitError, ExtractionBlockedError } from '$lib/services/api';
+  import { ScopeUpgradeError, UrlSaveLimitError } from '$lib/services/api';
   import Logo from '$lib/assets/logo.svg';
   import LimitNotice from '$lib/components/LimitNotice.svelte';
   import { saveLimitLine } from '$lib/utils/limitCopy';
   import {
-    BLOCKED_SAVE_LINE,
     blockedSaveAction,
+    failedSaveLine,
     type BlockedSaveAction,
+    type SaveFetchFailure,
   } from '$lib/utils/saveAnywhere';
   import type { SavedItem, ScopeFeature } from '$lib/types';
 
@@ -22,7 +23,7 @@
   // and this page runs the same save flow the in-app modal uses, reusing the
   // browser's existing session cookie — no token or API key needed.
 
-  type Status = 'working' | 'success' | 'invalid' | 'limit' | 'scope' | 'blocked' | 'error';
+  type Status = 'working' | 'success' | 'invalid' | 'limit' | 'scope' | 'error';
 
   let status = $state<Status>('working');
   // The feature a 'scope' failure asked permission for; undefined = core.
@@ -30,6 +31,9 @@
   let saved = $state<SavedItem | null>(null);
   let errorMessage = $state<string | null>(null);
   let limitInfo = $state<{ limit: number; resetsAt: string } | null>(null);
+  // Set when the save kept only the link (the article couldn't be fetched):
+  // the success screen then says so and offers the extension.
+  let fetchFailed = $state<SaveFetchFailure | null>(null);
   let blockedAction = $state<BlockedSaveAction | null>(null);
 
   // Pull a clean http(s) URL out of a shared string. A Shortcut/bookmarklet
@@ -87,7 +91,12 @@
     }
 
     try {
-      saved = await savesStore.saveFromUrl(url);
+      const result = await savesStore.saveFromUrl(url);
+      saved = result;
+      if (result.fetchFailed) {
+        fetchFailed = result.fetchFailed;
+        blockedAction = blockedSaveAction();
+      }
       status = 'success';
     } catch (err) {
       if (err instanceof ScopeUpgradeError) {
@@ -96,9 +105,6 @@
       } else if (err instanceof UrlSaveLimitError) {
         limitInfo = { limit: err.limit, resetsAt: err.resetsAt };
         status = 'limit';
-      } else if (err instanceof ExtractionBlockedError) {
-        blockedAction = blockedSaveAction();
-        status = 'blocked';
       } else {
         errorMessage = err instanceof Error ? err.message : 'Failed to save article';
         status = 'error';
@@ -117,6 +123,7 @@
   function retry() {
     status = 'working';
     errorMessage = null;
+    fetchFailed = null;
     blockedAction = null;
     run();
   }
@@ -142,7 +149,23 @@
       {#if saved?.title}
         <p class="sub">{saved.title}</p>
       {/if}
-      <button class="btn-primary" onclick={openInApp}>Open in Skyreader</button>
+      {#if fetchFailed}
+        <p class="sub">
+          {failedSaveLine(fetchFailed)}
+          {blockedAction?.hint ?? ''}
+        </p>
+        {#if blockedAction}
+          <a
+            class="btn-primary"
+            href={blockedAction.href}
+            target={blockedAction.href.startsWith('/') ? null : '_blank'}
+            rel="noopener">{blockedAction.label}</a
+          >
+        {/if}
+        <button class="btn-secondary" onclick={openInApp}>Open in Skyreader</button>
+      {:else}
+        <button class="btn-primary" onclick={openInApp}>Open in Skyreader</button>
+      {/if}
       <p class="hint">You can close this tab and return to your browser.</p>
     {:else if status === 'invalid'}
       <p class="title">No article to save</p>
@@ -155,21 +178,6 @@
           <p>{saveLimitLine(limitInfo?.limit ?? 0, limitInfo?.resetsAt)}</p>
         </LimitNotice>
       </div>
-      <a class="btn-secondary" href="/">Go to Skyreader</a>
-    {:else if status === 'blocked'}
-      <p class="title">Couldn't save that</p>
-      <p class="sub">
-        {BLOCKED_SAVE_LINE}
-        {blockedAction?.hint ?? ''}
-      </p>
-      {#if blockedAction}
-        <a
-          class="btn-primary"
-          href={blockedAction.href}
-          target={blockedAction.href.startsWith('/') ? null : '_blank'}
-          rel="noopener">{blockedAction.label}</a
-        >
-      {/if}
       <a class="btn-secondary" href="/">Go to Skyreader</a>
     {:else if status === 'scope'}
       <p class="title">{permissionMessage(scopeFeature)}</p>

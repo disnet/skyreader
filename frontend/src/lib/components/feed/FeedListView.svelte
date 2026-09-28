@@ -344,7 +344,8 @@
           selected={preferences.expandAllItems || feedViewStore.selectedKey === displayItem.key}
           expanded={feedViewStore.expandedKey === displayItem.key}
           highlighted={feedViewStore.selectedKey === displayItem.key}
-          onToggleSave={() => void toggleSavedLink(link.url)}
+          onToggleSave={() =>
+            void toggleSavedLink(link.url, link.title ? linkArticle.title : undefined)}
           onToggleRead={() => handleToggleFollowLinkRead(link, displayItem.key)}
           onUnshare={() => onUnshare(link.url)}
           onSelect={() => handleSelect(index)}
