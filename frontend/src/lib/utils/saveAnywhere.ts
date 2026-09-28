@@ -7,6 +7,10 @@ export const FIREFOX_EXTENSION_URL = 'https://addons.mozilla.org/firefox/addon/s
 export const SAVE_ANYWHERE_SETTINGS_URL = '/settings#save-anywhere';
 export const SAVE_ANYWHERE_LABEL = 'Save from anywhere';
 
+function isMobile(userAgent: string): boolean {
+  return /Android|iPhone|iPad|iPod|Mobile/i.test(userAgent);
+}
+
 /**
  * Send supported desktop browsers straight to their extension. Mobile browsers
  * use the settings instructions instead: Chrome and Firefox both identify
@@ -14,8 +18,7 @@ export const SAVE_ANYWHERE_LABEL = 'Save from anywhere';
  * extension listings there.
  */
 export function saveAnywhereUrl(userAgent: string): string {
-  const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(userAgent);
-  if (isMobile) return SAVE_ANYWHERE_SETTINGS_URL;
+  if (isMobile(userAgent)) return SAVE_ANYWHERE_SETTINGS_URL;
 
   if (/Firefox\//i.test(userAgent)) return FIREFOX_EXTENSION_URL;
   if (/Chrome\//i.test(userAgent) && !/Edg\/|OPR\//i.test(userAgent)) {
@@ -52,11 +55,15 @@ export const BLOCKED_SAVE_LINE = 'That site blocks automated readers.';
 
 /**
  * The sentence that follows BLOCKED_SAVE_LINE. It has to match where the action
- * actually points: on mobile, and on desktop browsers with no listing of ours,
- * there is no extension to install, so promising one there would send the reader
- * looking for something that isn't here.
+ * actually points. On a phone there is no extension to install here, but the
+ * extensions are still the way to the full text, so the hint names them and
+ * where they run (the settings the action opens link both). Desktop browsers with
+ * no listing of ours get no extension promise.
  */
 export function saveAnywhereHint(userAgent: string): string {
+  if (isMobile(userAgent)) {
+    return 'On a computer, the Chrome or Firefox extension can save it from the page itself.';
+  }
   if (saveAnywhereUrl(userAgent) === SAVE_ANYWHERE_SETTINGS_URL) {
     return "Saving it from the page you're on still works.";
   }

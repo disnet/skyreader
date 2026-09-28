@@ -73,14 +73,25 @@ describe('saveAnywhereHint', () => {
     }
   );
 
-  // The sentence and the link have to agree: these readers are sent to the
-  // instructions, where no extension is on offer.
+  // Phones can't install the extension, but it's still the way to the full
+  // text, so the hint names both and says they run on a computer.
   it.each([
     'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/140.0.0.0 Safari/537.36 Edg/140.0.0.0',
-  ])('drops the extension promise where the link goes to the instructions', (userAgent) => {
+    'Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 Chrome/140.0.0.0 Mobile Safari/537.36',
+  ])('still points phones at the extensions', (userAgent) => {
     expect(saveAnywhereUrl(userAgent)).toBe(SAVE_ANYWHERE_SETTINGS_URL);
-    expect(saveAnywhereHint(userAgent)).not.toContain('extension');
+    const hint = saveAnywhereHint(userAgent);
+    expect(hint).toContain('Chrome or Firefox extension');
+    expect(hint).toContain('computer');
+  });
+
+  // Desktop browsers with no listing of ours are sent to the instructions, and
+  // the sentence must not promise an extension they can install.
+  it('drops the extension promise on desktop browsers without a listing', () => {
+    const edge =
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/140.0.0.0 Safari/537.36 Edg/140.0.0.0';
+    expect(saveAnywhereUrl(edge)).toBe(SAVE_ANYWHERE_SETTINGS_URL);
+    expect(saveAnywhereHint(edge)).not.toContain('extension');
   });
 });
 
