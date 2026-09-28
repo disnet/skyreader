@@ -71,18 +71,25 @@ any other (parked over the active cap, dropped over the mirror cap).
 
 ## Enabling
 
-Off until `NEWSLETTER_EMAIL_DOMAIN` is set (empty in `wrangler.toml` for both environments). With
-it empty, Settings says delivery isn't available and the handler rejects everything.
+Off until `NEWSLETTER_EMAIL_DOMAIN` is set. With it empty, Settings says delivery isn't available
+and the handler rejects everything.
 
-1. Pick a domain per environment, e.g. `inbox.skyreader.app` (prod) and
-   `inbox-staging.skyreader.app` (staging). Separate domains keep the two isolated.
-2. Cloudflare dashboard → the zone → **Email → Email Routing**: enable it for the subdomain (it adds
-   the MX/TXT records), then **Routing rules → Catch-all → Send to a Worker** →
-   `skyreader-api` (prod) / `skyreader-api-staging` (staging).
-3. Set the var (`[vars]` for prod, the `[env.staging]` inline table for staging) and deploy.
-4. Verify: as a Supporter, Settings → Newsletters → Create my address; send a message to it from any
+The domain must be a zone apex: Cloudflare only allows catch-all rules on the apex, and each
+reader's address is a random token, so literal rules can't cover them. It also can't share a zone
+whose mail goes elsewhere (enabling Email Routing replaces the zone's MX records), which rules out
+`skyreader.app` — its mail goes to Fastmail. Inbound newsletters use their own zone,
+`skyreadermail.com`. A zone has one catch-all, so it routes to one Worker at a time.
+
+1. Cloudflare dashboard → the `skyreadermail.com` zone → **Email → Email Routing**: enable it (it
+   adds the MX/SPF/DKIM records), then **Routing rules → Catch-all → Send to a Worker** →
+   `skyreader-api-staging` or `skyreader-api`. The picker appears to list only Workers whose
+   deployed code has an `email()` handler, so production shows up once a release carrying it ships.
+2. Set the var to `skyreadermail.com` in the environment the catch-all points at (`[vars]` for
+   prod, the `[env.staging]` inline table for staging), clear it in the other, and deploy.
+3. Verify: as a Supporter, Settings → Newsletters → Create my address; send a message to it from any
    mailbox; it appears under Manage Sources → Newsletters within seconds. Logs: `newsletter_email`
    carries the outcome of every message.
 
-The Supporter page and docs already list the perk, so enable production routing before the release
-that carries this ships.
+Rollout: test on staging first, then release (production gains the handler with the var still
+empty, which is harmless), switch the catch-all to `skyreader-api`, move the var to `[vars]` and
+release again. Addresses issued on staging stop working at the switch.
