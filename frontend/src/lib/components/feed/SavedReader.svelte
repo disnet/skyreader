@@ -325,10 +325,11 @@
         }
         const cachedContent = row?.content ?? '';
         if (!cancelled) lazyArticleContent = cachedContent;
-        if (!cancelled && !cachedContent && contentTruncated && url) {
+        if (!cancelled && !cachedContent && contentTruncated) {
           // The archive dropped the body from the row but may hold it out-of-row
           // (see services/itemBody.ts). Prefer that stored copy — the feed's own
-          // body — and extract the page only when there isn't one.
+          // body — and extract the page only when there isn't one (and there is
+          // a page: an emailed newsletter may have no web copy).
           const feedUrl = subscriptionsStore.getById(subscriptionId)?.feedUrl;
           const stored = feedUrl
             ? await loadStoredBody({ id: row?.id ?? id, guid, subscriptionId }, feedUrl, {
@@ -343,7 +344,7 @@
           // Keep the store's reactive entry map out of this effect's dependency
           // graph. Failed extracts delete their entry so a later open can retry;
           // tracking that deletion here would create an immediate retry loop.
-          untrack(() => linkPostContentStore.fetch(url));
+          if (url) untrack(() => linkPostContentStore.fetch(url));
         }
       } catch {
         if (!cancelled) lazyArticleContent = '';
