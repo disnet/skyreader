@@ -47,7 +47,6 @@
   import { integrationSaveStore } from '$lib/stores/integrationSave.svelte';
   import { sembleConnectionStore } from '$lib/stores/sembleConnection.svelte';
   import { toggleSavedLink } from '$lib/utils/saveLink';
-  import { isNewsletterSubscription } from '$lib/utils/newsletters';
   import { preferences } from '$lib/stores/preferences.svelte';
   import ArticleCardView from './ArticleCardView.svelte';
   import { useAtmosphere } from '$lib/hooks/useAtmosphere.svelte';
@@ -468,16 +467,11 @@
     return shareNote;
   });
 
-  // Whether sharing is offered (the Blogs lane's [+]): you're signed in and
-  // haven't turned the linkblog off. Same gate in both modes. A newsletter is
-  // private mail with no public page behind it, so it's never offered.
-  let isNewsletterItem = $derived.by(() => {
-    if (!article) return false;
-    const sub = subscriptionsStore.getById(article.subscriptionId);
-    return Boolean(sub && isNewsletterSubscription(sub));
-  });
+  // Whether sharing is offered (the Blogs lane's [+]): you're signed in,
+  // haven't turned the linkblog off, and there's a URL to share (an emailed
+  // newsletter with no web copy has none). Same gate in both modes.
   let showShareAction = $derived(
-    Boolean(auth.user) && !preferences.linkblogDisabled && Boolean(itemUrl) && !isNewsletterItem
+    Boolean(auth.user) && !preferences.linkblogDisabled && Boolean(itemUrl)
   );
 
   // Recommend: account-only (it writes to the reader's repo) and needs a real

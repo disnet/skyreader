@@ -9,7 +9,6 @@ import {
   type RiverItem,
 } from '$lib/stores/feedView.svelte';
 import { toggleSavedLink } from '$lib/utils/saveLink';
-import { isNewsletterSubscription } from '$lib/utils/newsletters';
 import { markFollowLinkRead } from '$lib/utils/followLinks';
 import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
 import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
@@ -148,9 +147,8 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
     if (!selected) return;
 
     const { article } = selected;
-    // Newsletters are private mail with no public page: nothing to share.
-    const sub = subscriptionsStore.getById(article.subscriptionId);
-    if (!article.url || (sub && isNewsletterSubscription(sub))) return;
+    // An emailed newsletter with no web copy has no URL: nothing to share.
+    if (!article.url) return;
     if (linkblogStore.isShared(article.url)) {
       linkblogStore.unshare(article.url);
     } else {
