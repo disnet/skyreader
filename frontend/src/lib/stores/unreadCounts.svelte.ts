@@ -1,3 +1,4 @@
+import { isArchiveFeedSource } from '$lib/utils/newsletters';
 import { articlesStore } from './articles.svelte';
 import { subscriptionsStore } from './subscriptions.svelte';
 import { socialStore } from './social.svelte';
@@ -71,7 +72,7 @@ function createUnreadCountsStore() {
     for (const sub of subscriptionsStore.subscriptions) {
       if (!sub.id) continue;
 
-      if (!sub.sourceType || sub.sourceType === 'rss') {
+      if (isArchiveFeedSource(sub.sourceType)) {
         const fromServer = sub.feedUrl ? serverCounts?.[sub.feedUrl] : undefined;
         counts.set(
           sub.id,
@@ -119,7 +120,7 @@ function createUnreadCountsStore() {
       let total = 0;
       for (const sub of subscriptionsStore.subscriptions) {
         if (!sub.id) continue;
-        if (sub.sourceType && sub.sourceType !== 'rss') continue;
+        if (!isArchiveFeedSource(sub.sourceType)) continue;
         total += feedCounts.get(sub.id) ?? 0;
       }
       return total;
@@ -335,7 +336,7 @@ function createUnreadCountsStore() {
     const drifted: string[] = [];
     for (const sub of subscriptionsStore.subscriptions) {
       if (!sub.id || !sub.feedUrl) continue;
-      if (sub.sourceType && sub.sourceType !== 'rss') continue;
+      if (!isArchiveFeedSource(sub.sourceType)) continue;
       const server = counts[sub.feedUrl];
       if (server === undefined) continue;
       if (server !== articlesStore.getUnreadCount(sub.id)) drifted.push(sub.feedUrl);

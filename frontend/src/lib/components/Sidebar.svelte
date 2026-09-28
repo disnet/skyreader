@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { isArchiveFeedSource } from '$lib/utils/newsletters';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
   import { channelPath, feedPath, categoryPath, FEEDS_PATH, SAVED_PATH } from '$lib/utils/viewNav';
@@ -209,7 +210,7 @@
   }
 
   function sourceSortRank(sub: Subscription): number {
-    if (!sub.sourceType || sub.sourceType === 'rss') return 0;
+    if (isArchiveFeedSource(sub.sourceType)) return 0;
     if (sub.sourceType === 'atproto.documents' && sub.feedUrl?.startsWith('at://')) return 2;
     if (sub.sourceType === 'atproto.documents') return 3;
     return 4;

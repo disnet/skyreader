@@ -10,14 +10,26 @@ export interface TierLimits {
    */
   maxMirroredSubscriptions: number;
   maxUrlSavesPerMonth: number;
+  /**
+   * A private email address whose mail lands in the reader as newsletter
+   * subscriptions (services/newsletters.ts). Checked when the address is issued
+   * and again on every inbound message, so a lapsed plan stops ingesting.
+   */
+  newsletterInbox: boolean;
 }
 
 const TIER_MAP: Record<string, TierLimits> = {
-  free: { maxSubscriptions: 100, maxMirroredSubscriptions: 1000, maxUrlSavesPerMonth: 100 },
+  free: {
+    maxSubscriptions: 100,
+    maxMirroredSubscriptions: 1000,
+    maxUrlSavesPerMonth: 100,
+    newsletterInbox: false,
+  },
   supporter: {
     maxSubscriptions: 1000,
     maxMirroredSubscriptions: 5000,
     maxUrlSavesPerMonth: 1000,
+    newsletterInbox: true,
   },
 };
 

@@ -3,6 +3,7 @@
  * Extracted from stores so they can be unit-tested without Svelte reactivity.
  */
 
+import { isArchiveFeedSource, isNewsletterSubscription } from '$lib/utils/newsletters';
 import type {
   Subscription,
   Article,
@@ -113,7 +114,7 @@ export function computeSourceKeys(
       for (const sub of subscriptions) {
         if (!sub.rkey) continue;
         if (sub.category?.trim().toLowerCase() === rule.value.toLowerCase()) {
-          if (!sub.sourceType || sub.sourceType === 'rss') {
+          if (isArchiveFeedSource(sub.sourceType)) {
             keys.push(rssSourceKey(sub.rkey));
           } else if (sub.sourceType === 'atproto.documents' && sub.subjectDid) {
             keys.push(documentsSourceKey(sub.rkey));
@@ -127,7 +128,7 @@ export function computeSourceKeys(
       for (const sub of subscriptions) {
         if (!sub.rkey) continue;
         if (sub.tags.some((t) => t.trim().toLowerCase() === tagLower)) {
-          if (!sub.sourceType || sub.sourceType === 'rss') {
+          if (isArchiveFeedSource(sub.sourceType)) {
             keys.push(rssSourceKey(sub.rkey));
           } else if (sub.sourceType === 'atproto.documents' && sub.subjectDid) {
             keys.push(documentsSourceKey(sub.rkey));
@@ -139,17 +140,8 @@ export function computeSourceKeys(
     case 'domain': {
       for (const sub of subscriptions) {
         if (!sub.rkey) continue;
-        if (sub.sourceType && sub.sourceType !== 'rss') continue;
-        const url = sub.feedUrl || sub.siteUrl;
-        if (!url) continue;
-        try {
-          const hostname = new URL(url).hostname;
-          if (rule.patterns.some((p) => hostname.includes(p))) {
-            keys.push(rssSourceKey(sub.rkey));
-          }
-        } catch {
-          continue;
-        }
+        if (!isArchiveFeedSource(sub.sourceType)) continue;
+        if (matchesDomainPatterns(sub, rule.patterns)) keys.push(rssSourceKey(sub.rkey));
       }
       break;
     }
@@ -166,7 +158,7 @@ export function computeSourceKeys(
       const stats = getArticleFrequencyByFeed(articles);
       for (const sub of subscriptions) {
         if (!sub.rkey || sub.id == null) continue;
-        if (sub.sourceType && sub.sourceType !== 'rss') continue;
+        if (!isArchiveFeedSource(sub.sourceType)) continue;
         const perDay = stats.get(sub.id) ?? 0;
         if (rule.threshold === 'high' && perDay >= 2) {
           keys.push(rssSourceKey(sub.rkey));
@@ -180,7 +172,7 @@ export function computeSourceKeys(
       const lengths = getAvgContentLengthByFeed(articles);
       for (const sub of subscriptions) {
         if (!sub.rkey || sub.id == null) continue;
-        if (sub.sourceType && sub.sourceType !== 'rss') continue;
+        if (!isArchiveFeedSource(sub.sourceType)) continue;
         const avgLen = lengths.get(sub.id) ?? 0;
         if (avgLen >= rule.minLength) {
           keys.push(rssSourceKey(sub.rkey));
@@ -194,7 +186,7 @@ export function computeSourceKeys(
         if (!sub.rkey) continue;
         const created = new Date(sub.createdAt).getTime();
         if (created >= cutoff) {
-          if (!sub.sourceType || sub.sourceType === 'rss') {
+          if (isArchiveFeedSource(sub.sourceType)) {
             keys.push(rssSourceKey(sub.rkey));
           } else if (sub.sourceType === 'atproto.documents' && sub.subjectDid) {
             keys.push(documentsSourceKey(sub.rkey));
@@ -292,7 +284,7 @@ export function getTypeSuggestions(ctx: SuggestionContext): ChannelSuggestion[] 
   const suggestions: ChannelSuggestion[] = [];
   const subs = ctx.subscriptions;
 
-  const rssSubs = subs.filter((s) => !s.sourceType || s.sourceType === 'rss');
+  const rssSubs = subs.filter((s) => isArchiveFeedSource(s.sourceType));
   const docSubs = subs.filter((s) => s.sourceType === 'atproto.documents');
 
   if (rssSubs.length >= 2 && docSubs.length >= 2) {
@@ -382,6 +374,31 @@ export function getPeopleSuggestion(ctx: SuggestionContext): ChannelSuggestion[]
   ];
 }
 
+// In a domain rule's patterns, stands for "every email newsletter": a newsletter
+// has no feed host to match, and whatever platform it's sent from, it belongs
+// in the Newsletters channel.
+export const NEWSLETTER_EMAIL_PATTERN = 'newsletter:';
+
+/**
+ * Does this subscription belong to a domain cluster? A feed matches on its feed
+ * (or site) host; an email newsletter on its sender's site, or on the
+ * newsletter pattern itself.
+ */
+function matchesDomainPatterns(sub: Subscription, patterns: readonly string[]): boolean {
+  const newsletter = isNewsletterSubscription(sub);
+  if (newsletter && patterns.includes(NEWSLETTER_EMAIL_PATTERN)) return true;
+  const url = newsletter ? sub.siteUrl : sub.feedUrl || sub.siteUrl;
+  if (!url) return false;
+  try {
+    const hostname = new URL(url).hostname;
+    return (
+      !!hostname && patterns.some((p) => p !== NEWSLETTER_EMAIL_PATTERN && hostname.includes(p))
+    );
+  } catch {
+    return false;
+  }
+}
+
 // Known domain patterns for clustering
 export const DOMAIN_CLUSTERS = [
   {
@@ -396,6 +413,7 @@ export const DOMAIN_CLUSTERS = [
       'beehiiv.com',
       'ghost.io',
       'convertkit.com',
+      NEWSLETTER_EMAIL_PATTERN,
     ],
   },
   {
@@ -429,21 +447,12 @@ export const DOMAIN_CLUSTERS = [
 
 export function getDomainSuggestions(ctx: SuggestionContext): ChannelSuggestion[] {
   const suggestions: ChannelSuggestion[] = [];
-  const subs = ctx.subscriptions.filter((s) => (!s.sourceType || s.sourceType === 'rss') && s.rkey);
+  const subs = ctx.subscriptions.filter((s) => isArchiveFeedSource(s.sourceType) && s.rkey);
 
   for (const cluster of DOMAIN_CLUSTERS) {
     const matchingRkeys: string[] = [];
     for (const sub of subs) {
-      const url = sub.feedUrl || sub.siteUrl;
-      if (!url) continue;
-      try {
-        const hostname = new URL(url).hostname;
-        if (cluster.patterns.some((p) => hostname.includes(p))) {
-          matchingRkeys.push(sub.rkey);
-        }
-      } catch {
-        continue;
-      }
+      if (matchesDomainPatterns(sub, cluster.patterns)) matchingRkeys.push(sub.rkey);
     }
     if (matchingRkeys.length < MIN_SOURCES_FOR_SUGGESTION) continue;
     const sourceKeys = matchingRkeys.map(rssSourceKey);
@@ -464,7 +473,7 @@ export function getDomainSuggestions(ctx: SuggestionContext): ChannelSuggestion[
 export function getFrequencySuggestions(ctx: SuggestionContext): ChannelSuggestion[] {
   const suggestions: ChannelSuggestion[] = [];
   const subs = ctx.subscriptions.filter(
-    (s) => (!s.sourceType || s.sourceType === 'rss') && s.rkey && s.id != null
+    (s) => isArchiveFeedSource(s.sourceType) && s.rkey && s.id != null
   );
   if (subs.length < 4) return [];
 
@@ -524,7 +533,7 @@ export function getFrequencySuggestions(ctx: SuggestionContext): ChannelSuggesti
 export function getLongReadsSuggestion(ctx: SuggestionContext): ChannelSuggestion[] {
   const MIN_AVG_LENGTH = 5000;
   const subs = ctx.subscriptions.filter(
-    (s) => (!s.sourceType || s.sourceType === 'rss') && s.rkey && s.id != null
+    (s) => isArchiveFeedSource(s.sourceType) && s.rkey && s.id != null
   );
 
   const totals = new Map<number, { sum: number; count: number }>();
@@ -575,7 +584,7 @@ export function getRecentSuggestion(
     if (!sub.rkey) continue;
     const created = new Date(sub.createdAt).getTime();
     if (created < cutoff) continue;
-    if (!sub.sourceType || sub.sourceType === 'rss') {
+    if (isArchiveFeedSource(sub.sourceType)) {
       recentKeys.push(rssSourceKey(sub.rkey));
     } else if (sub.sourceType === 'atproto.documents' && sub.subjectDid) {
       recentKeys.push(documentsSourceKey(sub.rkey));

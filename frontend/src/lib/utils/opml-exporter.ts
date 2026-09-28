@@ -1,4 +1,5 @@
 import type { Subscription } from '$lib/types';
+import { isNewsletterSubscription } from '$lib/utils/newsletters';
 
 /**
  * Generate OPML XML from a list of subscriptions.
@@ -10,6 +11,9 @@ export function generateOPML(subscriptions: Subscription[]): string {
   // Group subscriptions by category
   const byCategory = new Map<string | undefined, Subscription[]>();
   for (const sub of subscriptions) {
+    // A newsletter's `newsletter:` URL isn't a feed any reader can fetch, and
+    // importing it back would be refused: it arrives by email, not OPML.
+    if (isNewsletterSubscription(sub)) continue;
     const category = sub.category || undefined;
     if (!byCategory.has(category)) {
       byCategory.set(category, []);

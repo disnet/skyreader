@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { isArchiveFeedSource } from '$lib/utils/newsletters';
   import Icon from '$lib/components/Icon.svelte';
   import AppearanceToolbar from './AppearanceToolbar.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
@@ -148,7 +149,7 @@
     [
       ...new Set(
         subscriptionsStore.subscriptions
-          .filter((s) => !s.sourceType || s.sourceType === 'rss')
+          .filter((s) => isArchiveFeedSource(s.sourceType))
           .flatMap((s) => {
             const urls = [s.feedUrl, s.siteUrl].filter(Boolean);
             return urls

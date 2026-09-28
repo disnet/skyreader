@@ -1,3 +1,5 @@
+import { NEWSLETTER_SOURCE_TYPE, isNewsletterSubscription } from './newsletters';
+
 export interface FirehoseSubscriptionRecord {
   feedUrl?: string;
   title?: string;
@@ -36,6 +38,10 @@ export async function upsertSubscriptionFromFirehose(
   rkey: string,
   record: FirehoseSubscriptionRecord
 ): Promise<void> {
+  // Newsletters are local-only and never come from a PDS; a record naming one
+  // could point at another reader's inbox (services/newsletters.ts).
+  if (isNewsletterSubscription(record.feedUrl, record.sourceType)) return;
+
   const recordUri = `at://${did}/app.skyreader.feed.subscription/${rkey}`;
   const createdAt = record.createdAt
     ? Math.floor(new Date(record.createdAt).getTime() / 1000)
@@ -62,7 +68,8 @@ export async function upsertSubscriptionFromFirehose(
        SET feed_url = ?, title = ?, created_at = ?, source_type = ?, subject_did = ?,
            custom_title = ?, custom_icon_url = ?, category = ?,
            site_url = COALESCE(?, site_url), pds_dirty = 0
-       WHERE record_uri = ?`
+       WHERE record_uri = ?
+         AND (source_type IS NULL OR source_type <> '${NEWSLETTER_SOURCE_TYPE}')`
     )
     .bind(...values, recordUri)
     .run();

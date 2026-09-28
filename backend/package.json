@@ -21,7 +21,8 @@
     "@polar-sh/sdk": "^0.49.0",
     "@scure/base": "^2.3.0",
     "@sentry/cloudflare": "^10.71.0",
-    "fast-xml-parser": "^5.11.0"
+    "fast-xml-parser": "^5.11.0",
+    "postal-mime": "^3.0.1"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.22.0",

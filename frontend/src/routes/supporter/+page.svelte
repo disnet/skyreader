@@ -250,6 +250,10 @@ directly, no concept tournament.
       <span class="benefit-figure">{supporterLimits.mirrored} mirrored subscriptions</span>
       <span class="benefit-desc">Headroom for everything Atmospheric sync brings along.</span>
     </li>
+    <li class="benefit">
+      <span class="benefit-figure">Newsletters by email</span>
+      <span class="benefit-desc">A private address; each newsletter becomes a source.</span>
+    </li>
   </ul>
 {/snippet}
 
@@ -344,6 +348,13 @@ directly, no concept tournament.
             <span class="feature-text">
               {supporterLimits.mirrored} mirrored subscriptions
               <span class="feature-sub">headroom for everything Atmospheric sync brings</span>
+            </span>
+          </li>
+          <li>
+            <span class="feature-check"><Icon name="check" size={16} strokeWidth={2.5} /></span>
+            <span class="feature-text">
+              Newsletters by email
+              <span class="feature-sub">a private address; read them here, not in your inbox</span>
             </span>
           </li>
           <li>

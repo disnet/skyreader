@@ -13,6 +13,7 @@ describe('Tier Limits Config', () => {
         maxSubscriptions: 100,
         maxMirroredSubscriptions: 1000,
         maxUrlSavesPerMonth: 100,
+        newsletterInbox: false,
       });
     });
 
@@ -22,6 +23,7 @@ describe('Tier Limits Config', () => {
         maxSubscriptions: 1000,
         maxMirroredSubscriptions: 5000,
         maxUrlSavesPerMonth: 1000,
+        newsletterInbox: true,
       });
     });
 
@@ -31,6 +33,7 @@ describe('Tier Limits Config', () => {
         maxSubscriptions: 100,
         maxMirroredSubscriptions: 1000,
         maxUrlSavesPerMonth: 100,
+        newsletterInbox: false,
       });
     });
 
@@ -40,6 +43,7 @@ describe('Tier Limits Config', () => {
         maxSubscriptions: 100,
         maxMirroredSubscriptions: 1000,
         maxUrlSavesPerMonth: 100,
+        newsletterInbox: false,
       });
     });
   });
@@ -81,10 +85,12 @@ describe('Tier Limits Config', () => {
     it('raises every free limit, so no advertised benefit is hollow', () => {
       const free = getLimitsForTier('free');
       const supporter = getLimitsForTier('supporter');
+      // A feature flag counts too: on for supporters, off for free (true > false).
       for (const key of Object.keys(free) as Array<keyof typeof free>) {
-        expect(supporter[key], `supporter.${key} should exceed free.${key}`).toBeGreaterThan(
-          free[key]
-        );
+        expect(
+          Number(supporter[key]),
+          `supporter.${key} should exceed free.${key}`
+        ).toBeGreaterThan(Number(free[key]));
       }
     });
 
@@ -200,6 +206,7 @@ describe('User Tier Service', () => {
         maxSubscriptions: 100,
         maxMirroredSubscriptions: 1000,
         maxUrlSavesPerMonth: 100,
+        newsletterInbox: false,
       });
     });
 
@@ -215,6 +222,7 @@ describe('User Tier Service', () => {
         maxSubscriptions: 1000,
         maxMirroredSubscriptions: 5000,
         maxUrlSavesPerMonth: 1000,
+        newsletterInbox: true,
       });
     });
 
@@ -224,6 +232,7 @@ describe('User Tier Service', () => {
         maxSubscriptions: 100,
         maxMirroredSubscriptions: 1000,
         maxUrlSavesPerMonth: 100,
+        newsletterInbox: false,
       });
     });
   });

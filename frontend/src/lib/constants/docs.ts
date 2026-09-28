@@ -11,6 +11,7 @@ export const docsPages = {
   gettingStarted: '/getting-started/',
   addingSources: '/guide/adding-sources/',
   saveFromAnywhere: '/guide/adding-sources/#save-and-subscribe-from-anywhere',
+  newsletters: '/guide/adding-sources/#email-newsletters',
   reading: '/guide/reading/',
   savingAndHighlights: '/guide/saving-and-highlights/',
   siteBlocksSaving: '/guide/saving-and-highlights/#when-a-site-wont-let-skyreader-read-it',
