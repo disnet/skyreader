@@ -188,27 +188,31 @@
   }
 </script>
 
-<section class="reader-discussion" aria-label="Discussion" use:loadWhenNear>
-  <div class="reader-discussion-divider"></div>
-  <AtmospherePanel
-    laneRow={atmosphere.laneRow}
-    filters={atmosphere.filters}
-    activeFilter={atmosphere.activeFilter}
-    stream={atmosphere.stream}
-    sembleContext={atmosphere.sembleContext}
-    lanesOpen={true}
-    {panelId}
-    {itemUrl}
-    onSelectFilter={atmosphere.setFilter}
-    onRetry={atmosphere.retry}
-    onCreateInLane={createInLane}
-    onOpenAuthor={(did) => sidebarStore.openAddFeedModalForDid(did)}
-    onSaveConnection={auth.user ? toggleSavedLink : undefined}
-    onCreateConnection={auth.user && itemUrl ? createConnection : undefined}
-    isConnectionSaved={(url) => savesStore.isSaved(url)}
-    composeLead={canShareLinkblog ? shareControl : undefined}
-  />
-</section>
+<!-- Everything here is keyed on the URL: an emailed newsletter with no web copy
+     has nothing to discuss, share or save out, so the section stays away. -->
+{#if itemUrl}
+  <section class="reader-discussion" aria-label="Discussion" use:loadWhenNear>
+    <div class="reader-discussion-divider"></div>
+    <AtmospherePanel
+      laneRow={atmosphere.laneRow}
+      filters={atmosphere.filters}
+      activeFilter={atmosphere.activeFilter}
+      stream={atmosphere.stream}
+      sembleContext={atmosphere.sembleContext}
+      lanesOpen={true}
+      {panelId}
+      {itemUrl}
+      onSelectFilter={atmosphere.setFilter}
+      onRetry={atmosphere.retry}
+      onCreateInLane={createInLane}
+      onOpenAuthor={(did) => sidebarStore.openAddFeedModalForDid(did)}
+      onSaveConnection={auth.user ? toggleSavedLink : undefined}
+      onCreateConnection={auth.user && itemUrl ? createConnection : undefined}
+      isConnectionSaved={(url) => savesStore.isSaved(url)}
+      composeLead={canShareLinkblog ? shareControl : undefined}
+    />
+  </section>
+{/if}
 
 <!-- One control for the linkblog, in both states: it says where the article
      stands and opens the composer on it. It leads the "Add yours" row because

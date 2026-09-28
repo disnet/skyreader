@@ -152,8 +152,10 @@ export function useAtmosphere(opts: UseAtmosphereOptions): AtmosphereApi {
   // The lanes to render. Bluesky — whose compose intent is always available —
   // always appears, guaranteeing at least one lane (so the Discussion affordance
   // is a first-class control everywhere). Other lanes show only with a count or a
-  // working create affordance.
+  // working create affordance. Every lane is keyed on the URL, so an item without
+  // one (an emailed newsletter with no web copy) has no discussion at all.
   const laneRow = $derived.by<LaneRowVM[]>(() => {
+    if (!opts.itemUrl()) return [];
     const shared = opts.isShared();
     const rows: LaneRowVM[] = [];
     for (const id of LANE_ORDER) {
