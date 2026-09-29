@@ -29,6 +29,8 @@ public enum SkyreaderError: Error, Equatable, Sendable, LocalizedError {
   /// Any other non-2xx. `message` is the backend's `{ "error": … }` when present.
   case http(status: Int, message: String?)
   case invalidResponse
+  /// The server predates native app sign-in (`routes/native-auth.ts`).
+  case nativeSignInUnsupported
 
   public var errorDescription: String? {
     switch self {
@@ -38,6 +40,7 @@ public enum SkyreaderError: Error, Equatable, Sendable, LocalizedError {
     case .http(_, let message?): message
     case .http(let status, nil): "Skyreader returned an error (\(status))."
     case .invalidResponse: "Skyreader sent a response the app couldn't read."
+    case .nativeSignInUnsupported: "This Skyreader server doesn't support signing in from the app yet."
     }
   }
 }

@@ -13,6 +13,9 @@ struct SignInView: View {
   #endif
 
   var body: some View {
+    #if DEBUG
+      @Bindable var session = session
+    #endif
     VStack(spacing: 20) {
       VStack(spacing: 8) {
         Text("Skyreader")
@@ -57,6 +60,11 @@ struct SignInView: View {
       }
 
       #if DEBUG
+        Picker("Server", selection: $session.server) {
+          ForEach(Server.allCases) { Text($0.label).tag($0) }
+        }
+        .font(.footnote)
+
         DisclosureGroup("Developer sign-in", isExpanded: $showsSessionField) {
           TextField("Session ID from `skyreader login`", text: $sessionID)
             .textFieldStyle(.roundedBorder)

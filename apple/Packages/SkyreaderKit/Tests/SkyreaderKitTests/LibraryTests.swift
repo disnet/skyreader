@@ -293,6 +293,26 @@ final class LibraryTests: XCTestCase {
     XCTAssertTrue(body["category"] is NSNull)
   }
 
+  func testNativeLoginRequiresServerSupport() async throws {
+    let client = SkyreaderClient(sessionID: nil, transport: backend)
+    backend.on("/api/auth/login") { _, query, _ in
+      XCTAssertEqual(query["native_challenge"], "c")
+      return (200, ["authUrl": "https://bsky.social/oauth/authorize?x=1"])
+    }
+    do {
+      _ = try await client.nativeLoginURL(handle: "me.test", challenge: "c")
+      XCTFail("an old server must be refused")
+    } catch {
+      XCTAssertEqual(error as? SkyreaderError, .nativeSignInUnsupported)
+    }
+
+    backend.on("/api/auth/login") { _, _, _ in
+      (200, ["authUrl": "https://bsky.social/oauth/authorize?x=1", "native": true])
+    }
+    let url = try await client.nativeLoginURL(handle: "me.test", challenge: "c")
+    XCTAssertEqual(url.host, "bsky.social")
+  }
+
   func testNativeCallbackParsing() {
     XCTAssertEqual(
       NativeSignIn.parseCallback(URL(string: "skyreader://auth/callback?code=abc")!), .code("abc"))

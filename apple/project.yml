@@ -26,6 +26,17 @@ targets:
     sources: [App]
     dependencies:
       - package: SkyreaderKit
+    info:
+      path: Config/Info-iOS.plist
+      properties: &infoProperties
+        # XcodeGen otherwise writes literal 1.0 / 1 here, overriding the
+        # build settings.
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        # Debug builds can point at `./scripts/dev-local.sh` over plain HTTP
+        # on 127.0.0.1; everything else stays HTTPS-only.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
     settings:
       base:
         TARGETED_DEVICE_FAMILY: '1,2'
@@ -39,6 +50,9 @@ targets:
     sources: [App]
     dependencies:
       - package: SkyreaderKit
+    info:
+      path: Config/Info-macOS.plist
+      properties: *infoProperties
     settings:
       base:
         CODE_SIGN_ENTITLEMENTS: Config/Skyreader-macOS.entitlements

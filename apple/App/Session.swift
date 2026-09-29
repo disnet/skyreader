@@ -3,17 +3,54 @@ import Foundation
 import Observation
 import SkyreaderKit
 
+/// Which Skyreader backend the app talks to. Release builds always use
+/// production; debug builds can pick, to test a branch before it deploys.
+enum Server: String, CaseIterable, Identifiable {
+  case production, staging, local
+
+  var id: String { rawValue }
+
+  var url: URL {
+    switch self {
+    case .production: SkyreaderClient.production
+    case .staging: URL(string: "https://api-staging.skyreader.app")!
+    // `./scripts/dev-local.sh` (the iOS Simulator shares the Mac's loopback).
+    case .local: URL(string: "http://127.0.0.1:8787")!
+    }
+  }
+
+  var label: String {
+    switch self {
+    case .production: "Production"
+    case .staging: "Staging"
+    case .local: "Local (127.0.0.1:8787)"
+    }
+  }
+}
+
 /// Who's signed in, and their library.
 @MainActor
 @Observable
 final class Session {
   private(set) var library: Library?
 
+  /// The backend for the next sign-in and everything after it. Stored, so a
+  /// debug build stays on the server it signed in to.
+  var server: Server {
+    didSet { UserDefaults.standard.set(server.rawValue, forKey: Self.serverKey) }
+  }
+  private static let serverKey = "server"
+
   /// The secret behind the in-flight sign-in's challenge. Never leaves the
   /// device except in the exchange call (see backend routes/native-auth.ts).
   @ObservationIgnored private var pendingVerifier: String?
 
   init() {
+    #if DEBUG
+      server = UserDefaults.standard.string(forKey: Self.serverKey).flatMap(Server.init) ?? .production
+    #else
+      server = .production
+    #endif
     if let sessionID = Keychain.sessionID { start(sessionID: sessionID) }
   }
 
@@ -25,7 +62,7 @@ final class Session {
 
   private func start(sessionID: String) {
     let library = Library(
-      client: SkyreaderClient(sessionID: sessionID), storeURL: Self.storeURL)
+      client: SkyreaderClient(baseURL: server.url, sessionID: sessionID), storeURL: Self.storeURL)
     library.onUnauthorized = { [weak self] in self?.endSession() }
     self.library = library
   }
@@ -36,7 +73,7 @@ final class Session {
   func beginSignIn(handle: String) async throws -> URL {
     let verifier = Self.randomVerifier()
     pendingVerifier = verifier
-    let client = SkyreaderClient(sessionID: nil)
+    let client = SkyreaderClient(baseURL: server.url, sessionID: nil)
     return try await client.nativeLoginURL(
       handle: Self.normalizedHandle(handle), challenge: Self.challenge(for: verifier))
   }
@@ -47,7 +84,7 @@ final class Session {
     pendingVerifier = nil
     switch NativeSignIn.parseCallback(callback) {
     case .code(let code):
-      let sessionID = try await SkyreaderClient(sessionID: nil)
+      let sessionID = try await SkyreaderClient(baseURL: server.url, sessionID: nil)
         .exchangeNativeCode(code, verifier: verifier)
       Keychain.sessionID = sessionID
       start(sessionID: sessionID)

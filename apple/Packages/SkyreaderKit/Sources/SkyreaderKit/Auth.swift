@@ -38,13 +38,19 @@ extension SkyreaderClient {
   /// in a web authentication session. `challenge` is base64url(SHA-256(verifier));
   /// the verifier stays on the device until `exchangeNativeCode`.
   public func nativeLoginURL(handle: String, challenge: String) async throws -> URL {
-    struct Response: Decodable { var authUrl: String }
+    struct Response: Decodable {
+      var authUrl: String
+      var native: Bool?
+    }
     let response: Response = try await send(
       .get, "/api/auth/login",
       query: [
         URLQueryItem(name: "handle", value: handle),
         URLQueryItem(name: "native_challenge", value: challenge),
       ])
+    // A server without native sign-in ignores the challenge and would finish
+    // the flow in the web app, stranding the reader in the sheet.
+    guard response.native == true else { throw SkyreaderError.nativeSignInUnsupported }
     guard let url = URL(string: response.authUrl) else { throw SkyreaderError.invalidResponse }
     return url
   }

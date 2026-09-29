@@ -539,7 +539,10 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
       nativeChallenge,
     });
 
-    return new Response(JSON.stringify({ authUrl }), {
+    // `native: true` tells the app this server understood native_challenge. An
+    // older server ignores the param and would finish in the web app instead,
+    // so the app refuses to start without it.
+    return new Response(JSON.stringify(nativeChallenge ? { authUrl, native: true } : { authUrl }), {
       headers: { 'Content-Type': 'application/json' },
     });
   } catch (error) {

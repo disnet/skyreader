@@ -19,6 +19,9 @@ struct SettingsView: View {
               LabeledContent("Plan", value: tier.capitalized)
             }
           }
+          #if DEBUG
+            LabeledContent("Server", value: session.server.label)
+          #endif
           Button("Sign Out", role: .destructive) { confirmsSignOut = true }
         }
 
