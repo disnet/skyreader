@@ -519,12 +519,33 @@
   </div>
 {/snippet}
 
-<Modal
-  {open}
-  {onclose}
-  maxWidth="520px"
-  title={isEdit ? `Saved to ${integrationName}` : `Save to ${integrationName}`}
->
+<Modal {open} {onclose} maxWidth="520px" bodyPadding="0.75rem 1.5rem 1rem">
+  {#snippet header()}
+    <!--
+      One line: what this is, and where the article already stands. The status
+      used to be a sentence of its own under a full-size title; together they
+      spent a fifth of the modal before the first collection.
+    -->
+    <div class="picker-head">
+      <span class="head-mark" aria-hidden="true"><Icon name={integration} size={18} /></span>
+      <h2 class="head-title">
+        {isEdit ? `Saved to ${integrationName}` : `Save to ${integrationName}`}
+      </h2>
+      <span class="head-status" aria-live="polite">
+        {#if membershipsLoading}
+          <span class="pulse-dot" aria-hidden="true"></span>Checking existing saves…
+        {:else if isEdit}
+          {initialUris.size === 0
+            ? 'No collection yet'
+            : `In ${initialUris.size} collection${initialUris.size === 1 ? '' : 's'}`}
+        {/if}
+      </span>
+      <button class="head-close" onclick={onclose} aria-label="Close" type="button">
+        <Icon name="x" size={18} />
+      </button>
+    </div>
+  {/snippet}
+
   <div class="picker-body">
     {#if !noListing && (isLoading || membershipsLoading) && list.length === 0}
       <div class="skeleton-list" aria-hidden="true">
@@ -560,28 +581,11 @@
         </p>
       {/if}
 
-      {#if membershipsLoading}
-        <p class="notice notice-quiet" aria-live="polite">
-          <span class="pulse-dot" aria-hidden="true"></span>
-          Checking existing saves…
-        </p>
-      {:else if isEdit}
-        <p class="notice notice-quiet">
-          <span class="notice-icon notice-icon-ok" aria-hidden="true">
-            <Icon name="check" size={14} />
-          </span>
-          <span>
-            {#if initialUris.size === 0}
-              Saved without a collection. Pick where it should live.
-            {:else}
-              Already in {initialUris.size} collection{initialUris.size === 1 ? '' : 's'}. Changes
-              apply on update.
-            {/if}
-            {#if memberships?.truncated}
-              <span class="notice-soft">Some older saves may not be shown.</span>
-            {/if}
-          </span>
-        </p>
+      {#if isEdit && memberships?.truncated}
+        <p class="notice notice-quiet">Some older saves may not be shown.</p>
+      {/if}
+      {#if membershipsLoading || isEdit}
+        <!-- the status lives in the header -->
       {:else if lookupIncomplete}
         <p class="notice notice-warn">
           <span class="notice-icon" aria-hidden="true"><Icon name="alert-circle" size={15} /></span>
@@ -803,7 +807,65 @@
 
   .notice-quiet {
     padding: 0 0.125rem 0.625rem;
+    font-size: var(--text-sm);
+  }
+
+  /* ── Header ──────────────────────────────────────────────── */
+  .picker-head {
+    display: flex;
     align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+    padding: 0.75rem 0.625rem 0 1.5rem;
+  }
+
+  .head-mark {
+    display: flex;
+    flex-shrink: 0;
+    color: var(--color-text-secondary);
+  }
+
+  .head-title {
+    margin: 0;
+    flex-shrink: 0;
+    font-size: var(--text-lg);
+    font-weight: var(--weight-semibold);
+    color: var(--color-text);
+  }
+
+  .head-status {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .head-close {
+    flex-shrink: 0;
+    display: grid;
+    place-items: center;
+    width: 2rem;
+    height: 2rem;
+    border: none;
+    border-radius: 6px;
+    background: none;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+  }
+
+  .head-close:hover {
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+  }
+
+  .head-close:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: -2px;
   }
 
   .notice-warn,
@@ -824,16 +886,6 @@
 
   .notice-error .notice-icon {
     color: var(--color-error);
-  }
-
-  .notice-icon-ok {
-    margin-top: 0;
-    color: var(--color-primary);
-  }
-
-  .notice-soft {
-    display: block;
-    font-size: var(--text-sm);
   }
 
   .pulse-dot {
