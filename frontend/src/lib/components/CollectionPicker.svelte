@@ -19,6 +19,8 @@
   // field narrows it as you type — Enter takes the top match, so a keyboard save
   // is "type, Enter, type, Enter, ⌘Enter".
   import Modal from '$lib/components/common/Modal.svelte';
+  import BottomSheet from '$lib/components/common/BottomSheet.svelte';
+  import { tick } from 'svelte';
   import Icon from '$lib/components/Icon.svelte';
   import {
     collectionsStore,
@@ -230,11 +232,51 @@
     measureScroll();
   });
 
-  // A new filter starts from the top of its results, not wherever the full list
-  // had been scrolled to.
+  // A pick made from the list joins the end of the chip row; on a phone that row
+  // scrolls sideways, so bring the new chip into view as confirmation.
+  let quickEl = $state<HTMLDivElement | null>(null);
   $effect(() => {
-    void query;
-    if (listEl) listEl.scrollTop = 0;
+    if (keptUris.size === 0) return;
+    tick().then(() => {
+      if (quickEl) quickEl.scrollLeft = quickEl.scrollWidth;
+    });
+  });
+
+  // Phones get the picker as a bottom sheet with the filter at the bottom (see
+  // the markup). Width, not pointer type: a narrow window is a narrow window.
+  let sheetMode = $state(false);
+  $effect(() => {
+    if (typeof matchMedia !== 'function') return;
+    const mql = matchMedia('(max-width: 640px)');
+    sheetMode = mql.matches;
+    const onChange = (e: MediaQueryListEvent) => (sheetMode = e.matches);
+    mql.addEventListener('change', onChange);
+    return () => mql.removeEventListener('change', onChange);
+  });
+
+  // In the sheet the filter sits under the list, so matches read upward from it:
+  // the best one is the row nearest the field. Browsing stays A→Z top-down.
+  let shownList = $derived(sheetMode && searching ? [...filtered].reverse() : filtered);
+
+  /** What actually scrolls: the list in the modal, the sheet's body in the sheet. */
+  function scroller(): HTMLElement | null {
+    let el: HTMLElement | null = listEl;
+    while (el && el !== document.body) {
+      if (el.scrollHeight > el.clientHeight && /auto|scroll/.test(getComputedStyle(el).overflowY))
+        return el;
+      el = el.parentElement;
+    }
+    return null;
+  }
+
+  // A new filter starts from its best match — the top of the modal's list, the
+  // bottom of the sheet's — not wherever the full list had been scrolled to.
+  $effect(() => {
+    const atEnd = sheetMode && query.length > 0;
+    tick().then(() => {
+      const el = scroller();
+      if (el) el.scrollTop = atEnd ? el.scrollHeight : 0;
+    });
   });
 
   // Straight into the filter on a keyboard-and-mouse device. Not on touch: an
@@ -411,11 +453,13 @@
       toggleCollection(top.uri);
       // Clear for the next name: filing into three collections is three words.
       searchQuery = '';
-    } else if (e.key === 'ArrowDown') {
-      const first = rows()[0];
-      if (first) {
+    } else if (e.key === (sheetMode ? 'ArrowUp' : 'ArrowDown')) {
+      // Into the list, from whichever end the field sits at.
+      const all = rows();
+      const next = sheetMode ? all[all.length - 1] : all[0];
+      if (next) {
         e.preventDefault();
-        first.focus();
+        next.focus();
       }
     }
   }
@@ -429,8 +473,9 @@
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
       const next = at + (e.key === 'ArrowDown' ? 1 : -1);
-      if (next < 0) searchEl?.focus();
-      else all[Math.min(next, all.length - 1)]?.focus();
+      // Stepping off the end nearest the field goes back into it.
+      if (sheetMode ? next >= all.length : next < 0) searchEl?.focus();
+      else all[Math.max(0, Math.min(next, all.length - 1))]?.focus();
     } else if (e.key.length === 1 && e.key !== ' ' && !e.metaKey && !e.ctrlKey && !e.altKey) {
       // Focus moves before the key lands, so the character types into the filter.
       searchEl?.focus();
@@ -519,261 +564,316 @@
   </div>
 {/snippet}
 
-<Modal {open} {onclose} maxWidth="520px" bodyPadding="0.75rem 1.5rem 1rem">
-  {#snippet header()}
-    <!--
-      One line: what this is, and where the article already stands. The status
-      used to be a sentence of its own under a full-size title; together they
-      spent a fifth of the modal before the first collection.
-    -->
-    <div class="picker-head">
-      <span class="head-mark" aria-hidden="true"><Icon name={integration} size={18} /></span>
-      <h2 class="head-title">
-        {isEdit ? `Saved to ${integrationName}` : `Save to ${integrationName}`}
-      </h2>
-      <span class="head-status" aria-live="polite">
-        {#if membershipsLoading}
-          <span class="pulse-dot" aria-hidden="true"></span>Checking existing saves…
-        {:else if isEdit}
-          {initialUris.size === 0
-            ? 'No collection yet'
-            : `In ${initialUris.size} collection${initialUris.size === 1 ? '' : 's'}`}
-        {/if}
-      </span>
-      <button class="head-close" onclick={onclose} aria-label="Close" type="button">
-        <Icon name="x" size={18} />
-      </button>
-    </div>
-  {/snippet}
+{#snippet headerRow()}
+  <!--
+    One line: what this is, and where the article already stands. The status
+    used to be a sentence of its own under a full-size title; together they
+    spent a fifth of the modal before the first collection.
+  -->
+  <div class="picker-head" class:in-sheet={sheetMode}>
+    <span class="head-mark" aria-hidden="true"><Icon name={integration} size={18} /></span>
+    <h2 class="head-title">
+      {isEdit ? `Saved to ${integrationName}` : `Save to ${integrationName}`}
+    </h2>
+    <span class="head-status" aria-live="polite">
+      {#if membershipsLoading}
+        <span class="pulse-dot" aria-hidden="true"></span>Checking existing saves…
+      {:else if isEdit}
+        {initialUris.size === 0
+          ? 'No collection yet'
+          : `In ${initialUris.size} collection${initialUris.size === 1 ? '' : 's'}`}
+      {/if}
+    </span>
+    <button class="head-close" onclick={onclose} aria-label="Close" type="button">
+      <Icon name="x" size={18} />
+    </button>
+  </div>
+{/snippet}
 
-  <div class="picker-body">
-    {#if !noListing && (isLoading || membershipsLoading) && list.length === 0}
-      <div class="skeleton-list" aria-hidden="true">
-        {#each [0, 1, 2, 3] as i (i)}
-          <div class="skeleton-row" style:--skeleton-delay="{i * 90}ms">
-            <span class="skeleton-tile"></span>
-            <span class="skeleton-bars">
-              <span class="skeleton-bar" style:width="{58 - i * 9}%"></span>
-              <span class="skeleton-bar skeleton-bar-sub" style:width="{38 + i * 7}%"></span>
-            </span>
-          </div>
-        {/each}
+{#snippet skeletonRows()}
+  <div class="skeleton-list" aria-hidden="true">
+    {#each [0, 1, 2, 3] as i (i)}
+      <div class="skeleton-row" style:--skeleton-delay="{i * 90}ms">
+        <span class="skeleton-tile"></span>
+        <span class="skeleton-bars">
+          <span class="skeleton-bar" style:width="{58 - i * 9}%"></span>
+          <span class="skeleton-bar skeleton-bar-sub" style:width="{38 + i * 7}%"></span>
+        </span>
       </div>
-      <p class="sr-only" aria-live="polite">Loading collections</p>
-    {:else}
-      {#if noListing && isOffline}
-        <p class="notice notice-warn">
-          <span class="notice-icon" aria-hidden="true"><Icon name="alert-circle" size={15} /></span>
-          <span>
-            You're offline and no collections are cached. You can still save without a collection
-            and it will go out when you're back.
-          </span>
-        </p>
-      {:else if noListing}
-        <p class="notice notice-error">
-          <span class="notice-icon" aria-hidden="true"><Icon name="alert-circle" size={15} /></span>
-          <span>{loadError}</span>
-        </p>
-      {:else if isOffline}
-        <p class="notice notice-warn">
-          <span class="notice-icon" aria-hidden="true"><Icon name="alert-circle" size={15} /></span>
-          <span>Offline, showing cached collections. Your save will go out when you're back.</span>
-        </p>
-      {/if}
+    {/each}
+  </div>
+  <p class="sr-only" aria-live="polite">Loading collections</p>
+{/snippet}
 
-      {#if isEdit && memberships?.truncated}
-        <p class="notice notice-quiet">Some older saves may not be shown.</p>
-      {/if}
-      {#if membershipsLoading || isEdit}
-        <!-- the status lives in the header -->
-      {:else if lookupIncomplete}
-        <p class="notice notice-warn">
-          <span class="notice-icon" aria-hidden="true"><Icon name="alert-circle" size={15} /></span>
-          <span>
-            Couldn't check all older saves. Saving may create another {integrationName} item.
-          </span>
-        </p>
-      {:else if membershipsFailed}
-        <p class="notice notice-warn">
-          <span class="notice-icon" aria-hidden="true"><Icon name="alert-circle" size={15} /></span>
-          <span>Couldn't check existing saves, so saving will create a new one.</span>
-        </p>
-      {/if}
+{#snippet notices()}
+  {#if noListing && isOffline}
+    <p class="notice notice-warn">
+      <span class="notice-icon" aria-hidden="true"><Icon name="alert-circle" size={15} /></span>
+      <span>
+        You're offline and no collections are cached. You can still save without a collection and it
+        will go out when you're back.
+      </span>
+    </p>
+  {:else if noListing}
+    <p class="notice notice-error">
+      <span class="notice-icon" aria-hidden="true"><Icon name="alert-circle" size={15} /></span>
+      <span>{loadError}</span>
+    </p>
+  {:else if isOffline}
+    <p class="notice notice-warn">
+      <span class="notice-icon" aria-hidden="true"><Icon name="alert-circle" size={15} /></span>
+      <span>Offline, showing cached collections. Your save will go out when you're back.</span>
+    </p>
+  {/if}
 
-      {#if list.length > 0}
-        <div class="search-row">
-          <span class="search-icon" aria-hidden="true"><Icon name="search" size={16} /></span>
-          <input
-            bind:this={searchEl}
-            type="text"
-            placeholder={list.length > 1
-              ? `Filter ${list.length} collections`
-              : 'Filter collections'}
-            bind:value={searchQuery}
-            onkeydown={handleSearchKeydown}
-            class="search-input"
-            aria-label="Filter collections"
-            autocomplete="off"
-            spellcheck="false"
-          />
-          {#if searchQuery}
-            <button
-              class="search-clear"
-              onclick={() => {
-                searchQuery = '';
-                searchEl?.focus();
-              }}
-              aria-label="Clear filter"
-              type="button"
-            >
-              <Icon name="x" size={14} />
-            </button>
-          {:else if isRefreshing}
-            <span class="refreshing-badge" aria-live="polite">Refreshing…</span>
-          {/if}
-        </div>
-      {/if}
+  {#if isEdit && memberships?.truncated}
+    <p class="notice notice-quiet">Some older saves may not be shown.</p>
+  {/if}
+  {#if membershipsLoading || isEdit}
+    <!-- the status lives in the header -->
+  {:else if lookupIncomplete}
+    <p class="notice notice-warn">
+      <span class="notice-icon" aria-hidden="true"><Icon name="alert-circle" size={15} /></span>
+      <span>
+        Couldn't check all older saves. Saving may create another {integrationName} item.
+      </span>
+    </p>
+  {:else if membershipsFailed}
+    <p class="notice notice-warn">
+      <span class="notice-icon" aria-hidden="true"><Icon name="alert-circle" size={15} /></span>
+      <span>Couldn't check existing saves, so saving will create a new one.</span>
+    </p>
+  {/if}
+{/snippet}
 
-      {#if !searching && list.length > 0}
-        {#if quickPicks.length > 0}
-          <div class="quick" role="group" aria-label="Quick picks">
-            {#each quickPicks as collection (collection.uri)}
-              {@const checked = selectedUris.has(collection.uri)}
-              {@const fav = isFavorite(collection.uri)}
-              <button
-                class="chip"
-                class:on={checked}
-                aria-pressed={checked}
-                title={fav
-                  ? 'Favorite'
-                  : collection.lastUsedAt
-                    ? `Used ${formatRelativeTime(collection.lastUsedAt)}`
-                    : undefined}
-                onclick={() => toggleCollection(collection.uri)}
-                disabled={!saveBackingStore.loaded}
-                type="button"
-              >
-                {#if checked}
-                  <span class="chip-glyph"><Icon name="check" size={13} strokeWidth={2.25} /></span>
-                {:else if fav}
-                  <span class="chip-glyph">{@render star(true, 12)}</span>
-                {:else}
-                  <span class="chip-glyph chip-glyph-recent">
-                    <Icon name="clock" size={12} strokeWidth={2} />
-                  </span>
-                {/if}
-                <span class="chip-label">{collectionName(collection)}</span>
-              </button>
-            {/each}
-          </div>
-        {/if}
-        {#if !hasFavorites && list.length >= 6}
-          <p class="quick-hint">
-            Star the collections you file into most and they'll wait up here.
-          </p>
-        {/if}
-      {/if}
-
-      <!--
-        Create mode this is a checkbox ("No collection", on or off). Edit mode it
-        is a one-shot action ("Remove from all collections") that clears the
-        selection and never sets noCollection, so it keeps plain button
-        semantics — a checkbox permanently announcing "not checked" would report
-        a state that never changes.
-      -->
-      {#if !searching}
+{#snippet searchField()}
+  {#if list.length > 0}
+    <div class="search-row">
+      <span class="search-icon" aria-hidden="true"><Icon name="search" size={16} /></span>
+      <input
+        bind:this={searchEl}
+        type="text"
+        placeholder={list.length > 1 ? `Filter ${list.length} collections` : 'Filter collections'}
+        bind:value={searchQuery}
+        onkeydown={handleSearchKeydown}
+        class="search-input"
+        aria-label="Filter collections"
+        autocomplete="off"
+        spellcheck="false"
+      />
+      {#if searchQuery}
         <button
-          class="no-collection"
-          class:selected={!isEdit && noCollection}
-          role={isEdit ? undefined : 'checkbox'}
-          aria-checked={isEdit ? undefined : noCollection}
-          onclick={toggleNoCollection}
-          disabled={!saveBackingStore.loaded}
+          class="search-clear"
+          onclick={() => {
+            searchQuery = '';
+            searchEl?.focus();
+          }}
+          aria-label="Clear filter"
           type="button"
         >
-          <span class="tile tile-none" aria-hidden="true">
-            {#if !isEdit && noCollection}
-              <span class="tile-check"><Icon name="check" size={14} /></span>
-            {:else}
-              <Icon name="minus" size={13} />
-            {/if}
-          </span>
-          <span class="no-collection-label">
-            {isEdit && initialUris.size > 0 ? 'Remove from all collections' : 'No collection'}
-          </span>
+          <Icon name="x" size={14} />
         </button>
+      {:else if isRefreshing}
+        <span class="refreshing-badge" aria-live="polite">Refreshing…</span>
       {/if}
+    </div>
+  {/if}
+{/snippet}
 
-      {#if !noListing}
-        <div class="list-head">
-          <span class="band-label">{searching ? 'Matches' : 'All collections'}</span>
-          <span class="list-count" aria-live="polite">
-            {searching ? `${filtered.length} of ${list.length}` : list.length}
-          </span>
-        </div>
-
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div
-          class="collections-list"
-          class:more-above={moreAbove}
-          class:more-below={moreBelow}
-          bind:this={listEl}
-          onscroll={measureScroll}
-          onkeydown={handleListKeydown}
-        >
-          {#if filtered.length === 0}
-            <div class="empty-state">
-              {#if searching}
-                <p class="empty-title">No collection matches “{searchQuery.trim()}”</p>
-                <p class="empty-hint">
-                  {#if listingShort}
-                    It may be past the ones Skyreader could load. Make or find it in {integrationName}.
-                  {:else}
-                    Try a shorter word, or save without a collection.
-                  {/if}
-                </p>
-              {:else}
-                <p class="empty-title">No collections in {integrationName} yet</p>
-                <p class="empty-hint">Make one there and it will show up here.</p>
-              {/if}
-            </div>
-          {:else}
-            {#each filtered as collection (collection.uri)}
-              {@render collectionRow(collection)}
-            {/each}
-            {#if listingShort && !searching}
-              <p class="list-foot">
-                Showing the first {list.length.toLocaleString()} collections from {integrationName}.
-              </p>
+{#snippet quickRow()}
+  {#if !searching && list.length > 0}
+    {#if quickPicks.length > 0}
+      <div class="quick" role="group" aria-label="Quick picks" bind:this={quickEl}>
+        {#each quickPicks as collection (collection.uri)}
+          {@const checked = selectedUris.has(collection.uri)}
+          {@const fav = isFavorite(collection.uri)}
+          <button
+            class="chip"
+            class:on={checked}
+            aria-pressed={checked}
+            title={fav
+              ? 'Favorite'
+              : collection.lastUsedAt
+                ? `Used ${formatRelativeTime(collection.lastUsedAt)}`
+                : undefined}
+            onclick={() => toggleCollection(collection.uri)}
+            disabled={!saveBackingStore.loaded}
+            type="button"
+          >
+            {#if checked}
+              <span class="chip-glyph"><Icon name="check" size={13} strokeWidth={2.25} /></span>
+            {:else if fav}
+              <span class="chip-glyph">{@render star(true, 12)}</span>
+            {:else}
+              <span class="chip-glyph chip-glyph-recent">
+                <Icon name="clock" size={12} strokeWidth={2} />
+              </span>
             {/if}
+            <span class="chip-label">{collectionName(collection)}</span>
+          </button>
+        {/each}
+      </div>
+    {/if}
+    {#if !hasFavorites && list.length >= 6 && !sheetMode}
+      <p class="quick-hint">Star the collections you file into most and they'll wait up here.</p>
+    {/if}
+  {/if}
+{/snippet}
+
+{#snippet noCollectionButton()}
+  <!--
+    Create mode this is a checkbox ("No collection", on or off). Edit mode it
+    is a one-shot action ("Remove from all collections") that clears the
+    selection and never sets noCollection, so it keeps plain button
+    semantics — a checkbox permanently announcing "not checked" would report
+    a state that never changes.
+  -->
+  {#if !searching}
+    <button
+      class="no-collection"
+      class:selected={!isEdit && noCollection}
+      role={isEdit ? undefined : 'checkbox'}
+      aria-checked={isEdit ? undefined : noCollection}
+      onclick={toggleNoCollection}
+      disabled={!saveBackingStore.loaded}
+      type="button"
+    >
+      <span class="tile tile-none" aria-hidden="true">
+        {#if !isEdit && noCollection}
+          <span class="tile-check"><Icon name="check" size={14} /></span>
+        {:else}
+          <Icon name="minus" size={13} />
+        {/if}
+      </span>
+      <span class="no-collection-label">
+        {isEdit && initialUris.size > 0 ? 'Remove from all collections' : 'No collection'}
+      </span>
+    </button>
+  {/if}
+{/snippet}
+
+{#snippet listSection()}
+  {#if !noListing}
+    <div class="list-head">
+      <span class="band-label">{searching ? 'Matches' : 'All collections'}</span>
+      <span class="list-count" aria-live="polite">
+        {searching ? `${filtered.length} of ${list.length}` : list.length}
+      </span>
+    </div>
+
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="collections-list"
+      class:more-above={moreAbove}
+      class:more-below={moreBelow}
+      bind:this={listEl}
+      onscroll={measureScroll}
+      onkeydown={handleListKeydown}
+    >
+      {#if filtered.length === 0}
+        <div class="empty-state">
+          {#if searching}
+            <p class="empty-title">No collection matches “{searchQuery.trim()}”</p>
+            <p class="empty-hint">
+              {#if listingShort}
+                It may be past the ones Skyreader could load. Make or find it in {integrationName}.
+              {:else}
+                Try a shorter word, or save without a collection.
+              {/if}
+            </p>
+          {:else}
+            <p class="empty-title">No collections in {integrationName} yet</p>
+            <p class="empty-hint">Make one there and it will show up here.</p>
           {/if}
         </div>
-        {#if searching && filtered.length > 0}
-          <p class="kbd-hint" aria-hidden="true">
-            <kbd>↵</kbd> adds the top match · <kbd>↓</kbd> to browse · <kbd>{modKey}</kbd><kbd
-              >↵</kbd
-            > saves
+      {:else}
+        {#each shownList as collection (collection.uri)}
+          {@render collectionRow(collection)}
+        {/each}
+        {#if listingShort && !searching}
+          <p class="list-foot">
+            Showing the first {list.length.toLocaleString()} collections from {integrationName}.
           </p>
         {/if}
       {/if}
+    </div>
+    {#if searching && filtered.length > 0}
+      <p class="kbd-hint" aria-hidden="true">
+        <kbd>↵</kbd> adds the top match · <kbd>↓</kbd> to browse · <kbd>{modKey}</kbd><kbd>↵</kbd> saves
+      </p>
     {/if}
-  </div>
+  {/if}
+{/snippet}
 
-  {#snippet footer()}
-    <!-- always present so the live region can announce a change into it -->
-    <span class="footer-summary" aria-live="polite">{summary}</span>
-    <button class="btn btn-secondary" onclick={onclose} type="button">Cancel</button>
-    <button
-      class="btn btn-primary"
-      onclick={handleSave}
-      disabled={!canSave}
-      type="button"
-      title={`${saveLabel} (${modKey}+Enter)`}
-    >
-      {saveLabel}
-    </button>
-  {/snippet}
-</Modal>
+{#if sheetMode}
+  <!--
+    Phone: a bottom sheet, turned upside down from the modal. The filter, the
+    quick picks and Save sit at the bottom under the thumb, and ride above the
+    keyboard with the sheet's footer; matches fill in upward from the field,
+    best one nearest it. Cancel is the ×, the backdrop, or a swipe down.
+  -->
+  <BottomSheet
+    {open}
+    {onclose}
+    title={isEdit ? `Saved to ${integrationName}` : `Save to ${integrationName}`}
+    maxHeight="85vh"
+  >
+    {#snippet header()}
+      {@render headerRow()}
+    {/snippet}
+    <div class="picker-body in-sheet">
+      {#if !noListing && (isLoading || membershipsLoading) && list.length === 0}
+        {@render skeletonRows()}
+      {:else}
+        {@render notices()}
+        {@render noCollectionButton()}
+        {@render listSection()}
+      {/if}
+    </div>
+    {#snippet footer()}
+      <div class="sheet-foot">
+        {@render quickRow()}
+        <div class="sheet-search-row">
+          {@render searchField()}
+          <button class="btn btn-primary" onclick={handleSave} disabled={!canSave} type="button">
+            {saveLabel}
+          </button>
+        </div>
+      </div>
+    {/snippet}
+  </BottomSheet>
+{:else}
+  <Modal {open} {onclose} maxWidth="520px" bodyPadding="0.75rem 1.5rem 1rem">
+    {#snippet header()}
+      {@render headerRow()}
+    {/snippet}
+    <div class="picker-body">
+      {#if !noListing && (isLoading || membershipsLoading) && list.length === 0}
+        {@render skeletonRows()}
+      {:else}
+        {@render notices()}
+        {@render searchField()}
+        {@render quickRow()}
+        {@render noCollectionButton()}
+        {@render listSection()}
+      {/if}
+    </div>
+    {#snippet footer()}
+      <!-- always present so the live region can announce a change into it -->
+      <span class="footer-summary" aria-live="polite">{summary}</span>
+      <button class="btn btn-secondary" onclick={onclose} type="button">Cancel</button>
+      <button
+        class="btn btn-primary"
+        onclick={handleSave}
+        disabled={!canSave}
+        type="button"
+        title={`${saveLabel} (${modKey}+Enter)`}
+      >
+        {saveLabel}
+      </button>
+    {/snippet}
+  </Modal>
+{/if}
 
 <style>
   .picker-body {
@@ -810,7 +910,75 @@
     font-size: var(--text-sm);
   }
 
+  /* ── Sheet (phones) ─────────────────────────────────────────
+     The sheet scrolls its own body, so the list gives up its inner
+     scroller and edge masks there. */
+  .picker-body.in-sheet {
+    padding: 0.25rem 1rem 0.5rem;
+  }
+
+  .in-sheet .collections-list {
+    max-height: none;
+    overflow: visible;
+    mask-image: none;
+  }
+
+  .in-sheet .no-collection {
+    margin-top: 0.25rem;
+  }
+
+  .in-sheet .list-head {
+    margin-top: 0.5rem;
+  }
+
+  .sheet-foot {
+    padding: 0.625rem 1rem 0.75rem;
+  }
+
+  /* One swipeable line of chips, bled to the sheet's edges so the cut
+     reads as "more" rather than as a wrapped block eating the list. */
+  .sheet-foot .quick {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+    margin: 0 -1rem 0.625rem;
+    padding: 0 1rem;
+  }
+
+  .sheet-foot .quick::-webkit-scrollbar {
+    display: none;
+  }
+
+  .sheet-foot .chip {
+    flex-shrink: 0;
+  }
+
+  .sheet-foot .quick-hint {
+    margin: 0 0 0.625rem;
+  }
+
+  .sheet-search-row {
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  .sheet-search-row .search-row {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .sheet-search-row .btn {
+    height: 2.5rem;
+  }
+
   /* ── Header ──────────────────────────────────────────────── */
+  /* In the sheet it sits in the drag-handle area, which has its own padding. */
+  .picker-head.in-sheet {
+    padding: 0 0 0 0.25rem;
+    text-align: left;
+  }
+
   .picker-head {
     display: flex;
     align-items: center;
@@ -1563,26 +1731,6 @@
   @media (max-width: 640px) {
     .collection-name {
       font-size: var(--text-base);
-    }
-
-    /* One swipeable line of chips rather than a wrapped block that pushes the
-       list below the fold. Bleeds to the modal edge so the cut reads as "more". */
-    .quick {
-      flex-wrap: nowrap;
-      overflow-x: auto;
-      overscroll-behavior-x: contain;
-      scrollbar-width: none;
-      margin-inline: -1.5rem;
-      padding-inline: 1.5rem;
-      scroll-padding-inline: 1.5rem;
-    }
-
-    .quick::-webkit-scrollbar {
-      display: none;
-    }
-
-    .chip {
-      flex-shrink: 0;
     }
 
     .collections-list {

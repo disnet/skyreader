@@ -19,10 +19,27 @@
      * the feed switcher, which rebuilds a nav tree over the whole library.
      */
     keepMounted?: boolean;
+    /** Replaces the centered title under the drag handle. */
+    header?: Snippet;
+    /**
+     * Pinned below the scrolling content, so it rides above the on-screen
+     * keyboard with the rest of the sheet — the place for a search field and
+     * the sheet's actions.
+     */
+    footer?: Snippet;
     children: Snippet;
   }
 
-  let { open, onclose, title, maxHeight = '75vh', keepMounted = false, children }: Props = $props();
+  let {
+    open,
+    onclose,
+    title,
+    maxHeight = '75vh',
+    keepMounted = false,
+    header,
+    footer,
+    children,
+  }: Props = $props();
 
   let sheetEl = $state<HTMLDivElement | null>(null);
   let dragStartY = $state(0);
@@ -217,13 +234,20 @@
         }}
       >
         <div class="drag-handle"></div>
-        {#if title}
+        {#if header}
+          {@render header()}
+        {:else if title}
           <div class="sheet-title">{title}</div>
         {/if}
       </div>
       <div class="sheet-content">
         {@render children()}
       </div>
+      {#if footer}
+        <div class="sheet-footer">
+          {@render footer()}
+        </div>
+      {/if}
     </div>
   </div>
 {/if}
@@ -317,6 +341,11 @@
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
     overscroll-behavior: contain;
+  }
+
+  .sheet-footer {
+    flex-shrink: 0;
+    border-top: 1px solid var(--color-border);
   }
 
   @media (prefers-color-scheme: dark) {
