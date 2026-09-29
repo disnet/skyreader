@@ -467,9 +467,12 @@
     return shareNote;
   });
 
-  // Whether sharing is offered (the Blogs lane's [+]): you're signed in and
-  // haven't turned the linkblog off. Same gate in both modes.
-  let showShareAction = $derived(Boolean(auth.user) && !preferences.linkblogDisabled);
+  // Whether sharing is offered (the Blogs lane's [+]): you're signed in,
+  // haven't turned the linkblog off, and there's a URL to share (an emailed
+  // newsletter with no web copy has none). Same gate in both modes.
+  let showShareAction = $derived(
+    Boolean(auth.user) && !preferences.linkblogDisabled && Boolean(itemUrl)
+  );
 
   // Recommend: account-only (it writes to the reader's repo) and needs a real
   // link. The URL is the article itself — for a link post, the external article

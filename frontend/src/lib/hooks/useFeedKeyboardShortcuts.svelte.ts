@@ -147,6 +147,8 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
     if (!selected) return;
 
     const { article } = selected;
+    // An emailed newsletter with no web copy has no URL: nothing to share.
+    if (!article.url) return;
     if (linkblogStore.isShared(article.url)) {
       linkblogStore.unshare(article.url);
     } else {

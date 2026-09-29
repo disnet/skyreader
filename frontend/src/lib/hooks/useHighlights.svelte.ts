@@ -1231,8 +1231,10 @@ export function useHighlights(params: HighlightParams) {
     },
     closePopover,
     toggleParagraphHighlight,
+    // A Margin note is a record in the reader's own repo, anchored on the
+    // article's link, so it needs both an account and a URL.
     get savePopoverHighlightToMargin() {
-      return auth.isGuest ? undefined : savePopoverHighlightToMargin;
+      return auth.isGuest || !params.itemUrl?.() ? undefined : savePopoverHighlightToMargin;
     },
     // A Bluesky post is a record in the reader's own repo, so a guest has none;
     // and a post needs the article's link to point at.
