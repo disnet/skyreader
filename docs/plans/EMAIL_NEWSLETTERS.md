@@ -92,6 +92,7 @@ whose mail goes elsewhere (enabling Email Routing replaces the zone's MX records
    mailbox; it appears under Manage Sources → Newsletters within seconds. Logs: `newsletter_email`
    carries the outcome of every message.
 
-Rollout: test on staging first, then release (production gains the handler with the var still
-empty, which is harmless), switch the catch-all to `skyreader-api`, move the var to `[vars]` and
-release again. Addresses issued on staging stop working at the switch.
+Rollout: tested on staging, then the var moved to `[vars]` and was cleared in `[env.staging]` in
+one release, since production had never shipped the handler. After that release deploys, switch the
+catch-all to `skyreader-api` (step 1) and verify (step 3). Between the deploy and the switch, mail
+still reaches staging, which now rejects it. Addresses issued on staging stop working at the switch.
