@@ -4,6 +4,7 @@
   // ../+layout.ts).
   import FilterPopover from '$lib/components/feed/FilterPopover.svelte';
   import HighlightPopover from '$lib/components/feed/HighlightPopover.svelte';
+  import LinkContextMenu from '$lib/components/feed/LinkContextMenu.svelte';
   import ShareComposer from '$lib/components/feed/ShareComposer.svelte';
   import WelcomePage from '$lib/components/feed/WelcomePage.svelte';
   import { shareComposerStore } from '$lib/stores/shareComposer.svelte';
@@ -29,6 +30,13 @@
   let highlight = $state<{ mode: 'create' | 'remove'; rect: DOMRect } | null>(null);
   function openHighlight(e: MouseEvent, mode: 'create' | 'remove') {
     highlight = { mode, rect: (e.currentTarget as HTMLElement).getBoundingClientRect() };
+  }
+
+  // The link tap menu anchors to the tapped link's rect, as it does in the reader.
+  let linkMenu = $state<{ url: string; text: string; rect: DOMRect } | null>(null);
+  function openLinkMenu(e: MouseEvent, url: string) {
+    const el = e.currentTarget as HTMLElement;
+    linkMenu = { url, text: el.textContent?.trim() ?? '', rect: el.getBoundingClientRect() };
   }
 </script>
 
@@ -97,6 +105,37 @@
       onRemove={() => (highlight = null)}
       onClose={() => (highlight = null)}
     />
+  {/if}
+
+  <Case
+    name="LinkContextMenu"
+    note="Tap a link in an article: open, copy, save, or add it to a Semble / Margin collection."
+    frame
+    pad
+  >
+    <p class="prose">
+      The essay leans on
+      <button
+        class="passage"
+        onclick={(e) => openLinkMenu(e, 'https://www.example.com/essays/library')}
+        >The Library as an Argument</button
+      >
+      and a
+      <button class="passage" onclick={(e) => openLinkMenu(e, 'mailto:editor@example.com')}
+        >mailto link</button
+      >.
+    </p>
+  </Case>
+
+  {#if linkMenu}
+    {#key linkMenu.url + linkMenu.rect.top}
+      <LinkContextMenu
+        url={linkMenu.url}
+        linkText={linkMenu.text}
+        anchorRect={linkMenu.rect}
+        onClose={() => (linkMenu = null)}
+      />
+    {/key}
   {/if}
 
   <Case

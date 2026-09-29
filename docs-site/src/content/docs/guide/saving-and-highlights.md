@@ -11,6 +11,10 @@ Save an article from its card or from the reader, or from outside Skyreader enti
 
 Saves are **private to Skyreader** by default. Nothing is published.
 
+### Saving a link from inside an article
+
+Tap a link in an article to see where it goes before you leave. From there you can open it, copy it, save it to Skyreader, or add it to a [Semble](https://semble.so) or [Margin](https://margin.at) collection. Semble and Margin collections are public.
+
 ### When a site won't let Skyreader read it
 
 Some sites refuse automated readers, so Skyreader's servers can't fetch the article even though it opens fine in your browser. The save still goes through: you get the link (and its title, when Skyreader knows it) with a note in place of the text. To get the full text, open the article and save it with the [Chrome](https://chromewebstore.google.com/detail/skyreader/kdefpnnpmajcclfepekgdkcdiklfooed) or [Firefox](https://addons.mozilla.org/firefox/addon/skyreader/) extension, which reads the page you already have open. That replaces the note.
