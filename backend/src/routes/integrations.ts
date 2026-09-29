@@ -22,6 +22,7 @@ import {
 import { grantsScopes } from '../services/scope-check';
 import { listAllRecordsPublic } from '../services/backing/read';
 import { resolvePdsUrl } from '../utils/did-resolver';
+import { isScopeDenial } from '../services/follow-links-store';
 
 /**
  * The scope sets a request can be gated on. `semble-connections` is a *separate*
@@ -109,22 +110,41 @@ export async function handleIntegrationStatus(request: Request, env: Env): Promi
  * Check session has required scopes for an integration
  */
 function checkIntegrationScopes(session: Session, integration: ScopeGate): Response | null {
-  if (!hasIntegrationScopes(session, integration)) {
-    // The body still names the *integration* the reader recognizes, not the
-    // internal gate — the frontend keys its re-login banner off this shape.
-    const name = integration === 'semble-connections' ? 'semble' : integration;
-    return new Response(
-      JSON.stringify({
-        error: 'scope_upgrade_required',
-        message: `Additional permissions are needed for ${name}.`,
-        integration: name,
-        feature: GATE_FEATURE[integration],
-      }),
-      { status: 403, headers: { 'Content-Type': 'application/json' } }
-    );
-  }
+  return hasIntegrationScopes(session, integration) ? null : scopeUpgradeResponse(integration);
+}
 
-  return null;
+function scopeUpgradeResponse(integration: ScopeGate): Response {
+  // The body still names the *integration* the reader recognizes, not the
+  // internal gate — the frontend keys its re-login banner off this shape.
+  const name = integration === 'semble-connections' ? 'semble' : integration;
+  return new Response(
+    JSON.stringify({
+      error: 'scope_upgrade_required',
+      message: `Additional permissions are needed for ${name}.`,
+      integration: name,
+      feature: GATE_FEATURE[integration],
+    }),
+    { status: 403, headers: { 'Content-Type': 'application/json' } }
+  );
+}
+
+/**
+ * The response for a PDS write that failed. The session's recorded scopes can
+ * pass checkIntegrationScopes while the PDS still refuses the write (a grant it
+ * no longer honours, a permission set that resolved narrower than we assumed),
+ * so a scope denial from the PDS gets the same permission ask as a missing
+ * scope. A retryable failure answers 503 so the client knows queueing it can
+ * help; anything else is 502, which retrying won't fix.
+ */
+function pdsWriteFailure(
+  result: { error: string; retryable: boolean; status?: number; code?: string },
+  integration: ScopeGate
+): Response {
+  if (isScopeDenial(result)) return scopeUpgradeResponse(integration);
+  return new Response(JSON.stringify({ error: result.error }), {
+    status: result.retryable ? 503 : 502,
+    headers: { 'Content-Type': 'application/json' },
+  });
 }
 
 // rkeys come from utils/tid's generateTid — the real spec TID (monotonic within a
@@ -199,12 +219,7 @@ export async function handleCreateSembleCard(request: Request, env: Env): Promis
   const pdsClient = createPDSClient(session);
   const result = await pdsClient.putRecord('network.cosmik.card', rkey, record);
 
-  if (!result.success) {
-    return new Response(JSON.stringify({ error: result.error }), {
-      status: 502,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
+  if (!result.success) return pdsWriteFailure(result, 'semble');
 
   // For each selected collection, create a collectionLink record.
   const collectionResults: { uri: string; error?: string }[] = [];
@@ -678,12 +693,7 @@ export async function handleCreateMarginBookmark(request: Request, env: Env): Pr
   const pdsClient = createPDSClient(session);
   const result = await pdsClient.putRecord('at.margin.note', rkey, record);
 
-  if (!result.success) {
-    return new Response(JSON.stringify({ error: result.error }), {
-      status: 502,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
+  if (!result.success) return pdsWriteFailure(result, 'margin');
 
   // For each selected collection, create a collectionItem record.
   const collectionResults: { uri: string; error?: string }[] = [];
@@ -862,12 +872,7 @@ export async function handleCreateMarginNote(request: Request, env: Env): Promis
   const pdsClient = createPDSClient(session);
   const result = await pdsClient.putRecord('at.margin.note', rkey, record);
 
-  if (!result.success) {
-    return new Response(JSON.stringify({ error: result.error }), {
-      status: 502,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
+  if (!result.success) return pdsWriteFailure(result, 'margin');
 
   return new Response(JSON.stringify({ uri: result.data.uri, cid: result.data.cid, rkey }), {
     status: 201,
@@ -937,12 +942,7 @@ export async function handleUpdateMarginNote(request: Request, env: Env): Promis
 
   const result = await pdsClient.putRecord('at.margin.note', rkey, record);
 
-  if (!result.success) {
-    return new Response(JSON.stringify({ error: result.error }), {
-      status: 502,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
+  if (!result.success) return pdsWriteFailure(result, 'margin');
 
   return new Response(JSON.stringify({ uri: result.data.uri, cid: result.data.cid, rkey }), {
     headers: { 'Content-Type': 'application/json' },

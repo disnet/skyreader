@@ -14,7 +14,14 @@
 // and deleted links. Editing is online-only (a diff against stale state would
 // delete the wrong links), so there's no queueing on that path; the create path
 // keeps its offline queue untouched.
-import { api, ScopeUpgradeError } from '$lib/services/api';
+import {
+  api,
+  ApiError,
+  OfflineError,
+  RateLimitError,
+  ScopeUpgradeError,
+  SessionRefreshError,
+} from '$lib/services/api';
 import { permissionToast } from '$lib/services/permissions';
 import { syncQueue, type IntegrationPayload } from '$lib/services/sync-queue';
 import { syncStore } from '$lib/stores/sync.svelte';
@@ -113,22 +120,31 @@ function createIntegrationSaveStore() {
 
     const id = toastStore.add(`Saving to ${label}...`);
     try {
-      if (isMargin) {
-        await api.createMarginBookmark({
-          url: data.url,
-          title: data.title,
-          description: data.description,
-          collectionUris: collections.map((c) => c.uri),
-        });
-      } else {
-        await api.createSembleCard({
-          url: data.url,
-          title: data.title,
-          description: data.description,
-          author: data.author,
-          publishedAt: data.publishedAt,
-          collections,
-        });
+      const res = isMargin
+        ? await api.createMarginBookmark({
+            url: data.url,
+            title: data.title,
+            description: data.description,
+            collectionUris: collections.map((c) => c.uri),
+          })
+        : await api.createSembleCard({
+            url: data.url,
+            title: data.title,
+            description: data.description,
+            author: data.author,
+            publishedAt: data.publishedAt,
+            collections,
+          });
+      // The card/bookmark landed, but a collection link can still be refused on
+      // its own — say so rather than claiming a collection it isn't in.
+      const failed = (res?.collectionResults ?? []).filter((r) => r.error).length;
+      if (failed > 0) {
+        toastStore.update(
+          id,
+          'error',
+          `Saved to ${label}, but ${failed} collection${failed === 1 ? '' : 's'} couldn't be added`
+        );
+        return;
       }
       toastStore.update(id, 'success', `Saved to ${label}${savedSuffix}`);
     } catch (err) {
@@ -137,10 +153,30 @@ function createIntegrationSaveStore() {
         toastStore.update(id, 'error', prompt.message, prompt.action);
         return;
       }
+      // Only a failure a retry can fix is worth queueing: no answer at all, or
+      // the server saying try again. A refusal (4xx, or 502 — the PDS said no)
+      // would fail the same way on every drain, and a "Queued" toast for it is
+      // a save that silently never happens.
+      if (!isRetryable(err)) {
+        console.error(`Failed to save to ${label}:`, err);
+        toastStore.update(id, 'error', `Couldn't save to ${label}`);
+        return;
+      }
       console.error(`Failed to save to ${label}, queueing:`, err);
       await syncQueue.enqueue('create', 'integration', data.url, payload);
       toastStore.update(id, 'success', `Queued save to ${label}`);
     }
+  }
+
+  function isRetryable(err: unknown): boolean {
+    if (err instanceof ApiError) return err.status >= 500 && err.status !== 502;
+    // fetch() itself rejecting (TypeError) means the request never got an answer.
+    return (
+      err instanceof TypeError ||
+      err instanceof OfflineError ||
+      err instanceof RateLimitError ||
+      err instanceof SessionRefreshError
+    );
   }
 
   /**
