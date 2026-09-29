@@ -1694,7 +1694,7 @@ class ApiClient {
     });
   }
 
-  async listSembleCollections(): Promise<{ collections: SembleCollection[] }> {
+  async listSembleCollections(): Promise<{ collections: SembleCollection[]; truncated?: boolean }> {
     return this.fetch('/api/integrations/semble/collections');
   }
 
@@ -1714,7 +1714,7 @@ class ApiClient {
     });
   }
 
-  async listMarginCollections(): Promise<{ collections: MarginCollection[] }> {
+  async listMarginCollections(): Promise<{ collections: MarginCollection[]; truncated?: boolean }> {
     return this.fetch('/api/integrations/margin/collections');
   }
 

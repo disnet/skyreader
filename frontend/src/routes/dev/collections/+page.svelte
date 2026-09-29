@@ -43,7 +43,53 @@
   };
 
   type Scenario =
-    'recent' | 'fresh' | 'edit' | 'truncated' | 'loading' | 'empty' | 'error' | 'longnames';
+    | 'recent'
+    | 'fresh'
+    | 'edit'
+    | 'truncated'
+    | 'many'
+    | 'loading'
+    | 'empty'
+    | 'error'
+    | 'longnames';
+
+  // A heavy user's catalog: a few hundred collections, most of them topical.
+  const TOPICS = ['Notes on', 'Reading:', 'Research —', 'Ideas for', 'Clippings:', 'Archive /'];
+  const SUBJECTS = [
+    'city planning',
+    'language models',
+    'bread',
+    'typography',
+    'climate',
+    'jazz',
+    'compilers',
+    'gardening',
+    'history of maps',
+    'protocols',
+    'essays',
+    'photography',
+    'urban cycling',
+    'sleep',
+    'design systems',
+    'poetry',
+    'chess',
+    'rust',
+    'knitting',
+    'economics',
+  ];
+  const MANY = [
+    ...CATALOG,
+    ...TOPICS.flatMap((t, i) =>
+      SUBJECTS.flatMap((subject, j) =>
+        [0, 1].map((k) => ({
+          rkey: `m${i}-${j}-${k}`,
+          name: `${t} ${subject}${k ? ' (old)' : ''}`,
+          description: k ? undefined : `Things about ${subject}`,
+        }))
+      )
+    ),
+  ];
+  const FAVORITES_KEY = 'skyreader-collection-favorites';
 
   let open = $state(false);
   let scenario = $state<Scenario>('recent');
@@ -128,6 +174,18 @@
           truncated: false,
         });
         break;
+      case 'many':
+        entries = MANY;
+        // Starred before the store reads them, the way a returning reader has them.
+        localStorage.setItem(
+          FAVORITES_KEY,
+          JSON.stringify({ [uri('reading')]: 1, [uri('m2-1-0')]: 2, [uri('type')]: 3 })
+        );
+        client.listSembleCollections = async () => ({
+          collections: MANY.map((c) => ({ uri: uri(c.rkey), cid: `bafy${c.rkey}`, ...c })),
+          truncated: true,
+        });
+        break;
       case 'truncated':
         client.getIntegrationMemberships = async () => ({
           items: [],
@@ -161,6 +219,7 @@
     { id: 'fresh', label: 'No history', note: 'alphabetical, no bands' },
     { id: 'edit', label: 'Edit mode', note: 'pre-checked, diff in the footer' },
     { id: 'truncated', label: 'Truncated lookup', note: 'warning notice' },
+    { id: 'many', label: 'Large catalog', note: '250 collections, favorites, capped listing' },
     { id: 'longnames', label: 'Long names', note: 'truncation + description' },
     { id: 'loading', label: 'Loading', note: 'skeleton rows' },
     { id: 'empty', label: 'No collections', note: 'teaching empty state' },

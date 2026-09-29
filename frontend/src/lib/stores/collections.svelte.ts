@@ -25,6 +25,31 @@ function newerStamp(a: number | undefined, b: number | undefined): number | unde
   return Math.max(a, b);
 }
 
+/**
+ * Favorites are the reader's own standing picks — the collections they file into
+ * often enough to want them one tap away, whatever they used last. Device-local,
+ * like `lastUsedAt`, and kept apart from the Dexie cache so neither a refresh nor
+ * an `invalidate()` (disconnect, sign-out) quietly forgets them. Keyed by
+ * collection at-uri, which already carries the owner's DID and the provider's
+ * NSID, so a second account or the other integration can never collide.
+ */
+const FAVORITES_KEY = 'skyreader-collection-favorites';
+
+function readFavorites(): Record<string, number> {
+  try {
+    const raw = localStorage.getItem(FAVORITES_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : null;
+    if (!parsed || typeof parsed !== 'object') return {};
+    const out: Record<string, number> = {};
+    for (const [uri, at] of Object.entries(parsed)) {
+      if (typeof at === 'number') out[uri] = at;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 function createCollectionsStore() {
   const collections = $state<Record<IntegrationKind, CollectionEntry[]>>({
     semble: [],
@@ -42,6 +67,27 @@ function createCollectionsStore() {
     semble: null,
     margin: null,
   });
+  // The server's listing stopped on its page cap: some collections aren't shown.
+  const truncated = $state<Record<IntegrationKind, boolean>>({
+    semble: false,
+    margin: false,
+  });
+  let favorites = $state<Record<string, number>>(
+    typeof localStorage === 'undefined' ? {} : readFavorites()
+  );
+
+  function toggleFavorite(uri: string): void {
+    const next = { ...favorites };
+    if (uri in next) delete next[uri];
+    else next[uri] = Date.now();
+    favorites = next;
+    try {
+      localStorage.setItem(FAVORITES_KEY, JSON.stringify(next));
+    } catch (err) {
+      // A convenience, like recency: losing it costs a tap, never a save.
+      console.error('Failed to store favorite collections:', err);
+    }
+  }
 
   async function readCache(integration: IntegrationKind): Promise<CollectionEntry[]> {
     const rows = await db.integrationCollections.where('integration').equals(integration).toArray();
@@ -85,14 +131,14 @@ function createCollectionsStore() {
     });
   }
 
-  async function fetchFromApi(integration: IntegrationKind): Promise<CollectionEntry[]> {
-    if (integration === 'semble') {
-      const res = await api.listSembleCollections();
-      return res.collections;
-    } else {
-      const res = await api.listMarginCollections();
-      return res.collections;
-    }
+  async function fetchFromApi(
+    integration: IntegrationKind
+  ): Promise<{ collections: CollectionEntry[]; truncated: boolean }> {
+    const res =
+      integration === 'semble'
+        ? await api.listSembleCollections()
+        : await api.listMarginCollections();
+    return { collections: res.collections, truncated: res.truncated === true };
   }
 
   /**
@@ -101,6 +147,8 @@ function createCollectionsStore() {
    */
   async function loadAndRefresh(integration: IntegrationKind): Promise<void> {
     error[integration] = null;
+    // Another tab may have starred something since this one started.
+    if (typeof localStorage !== 'undefined') favorites = readFavorites();
 
     let cached: CollectionEntry[] = [];
     try {
@@ -131,7 +179,8 @@ function createCollectionsStore() {
     }
 
     try {
-      const fresh = await fetchFromApi(integration);
+      const { collections: fresh, truncated: short } = await fetchFromApi(integration);
+      truncated[integration] = short;
       // The API answer carries no lastUsedAt; carry it over from what we cached
       // so the list doesn't lose its recency ordering mid-refresh. `cached` is a
       // pre-fetch snapshot, so fold live state over it too: the user can confirm
@@ -164,6 +213,7 @@ function createCollectionsStore() {
       loading[k] = false;
       refreshing[k] = false;
       error[k] = null;
+      truncated[k] = false;
     }
     if (integration) {
       await db.integrationCollections.where('integration').equals(integration).delete();
@@ -210,6 +260,14 @@ function createCollectionsStore() {
     get error() {
       return error;
     },
+    get truncated() {
+      return truncated;
+    },
+    /** collection at-uri → when it was starred */
+    get favorites() {
+      return favorites;
+    },
+    toggleFavorite,
     loadAndRefresh,
     markUsed,
     invalidate,
