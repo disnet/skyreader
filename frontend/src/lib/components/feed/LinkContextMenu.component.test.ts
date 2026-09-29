@@ -68,6 +68,12 @@ describe('LinkContextMenu', () => {
     expect(document.querySelector('.link-label')?.textContent).toBe('Why reading adds up');
   });
 
+  it('shows the raw path when it cannot be decoded', () => {
+    open('https://example.com/100%-off', '');
+    expect(document.querySelector('.link-label')?.textContent).toBe('/100%-off');
+    expect(item('Open in new tab')).toBeDefined();
+  });
+
   it('opens the collection picker for Semble and Margin with the link', () => {
     const onClose = open('https://example.com/post/1');
 

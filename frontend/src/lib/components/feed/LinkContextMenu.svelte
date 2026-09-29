@@ -43,7 +43,14 @@
     if (t && !/^(https?:\/\/|www\.)/i.test(t)) return t;
     if (!webUrl) return url;
     const path = webUrl.pathname + webUrl.search;
-    return path === '/' ? '' : decodeURIComponent(path);
+    if (path === '/') return '';
+    // A stray `%` (e.g. /100%-off) or a non-UTF-8 escape passes URL parsing
+    // but makes decodeURIComponent throw; show the raw path instead.
+    try {
+      return decodeURIComponent(path);
+    } catch {
+      return path;
+    }
   });
 
   let canSave = $derived(!!webUrl && !auth.isGuest);
