@@ -117,12 +117,13 @@
     }
   });
 
-  // Keep the sheet inside the visual viewport while the on-screen keyboard is up.
-  // iOS Safari doesn't shrink the layout viewport for the keyboard, so a fixed
-  // `bottom: 0` sheet stays anchored behind it — capping the height alone just
-  // leaves a shorter sheet (search field included) under the keys. Lift the
-  // sheet by however much of the layout viewport the visual viewport no longer
-  // covers, counting the pan iOS applies when it scrolls a focused input into view.
+  // Keep the sheet's content above the on-screen keyboard. iOS Safari doesn't
+  // shrink the layout viewport for the keyboard, so a fixed `bottom: 0` sheet
+  // sits partly behind it. Moving the sheet up leaves a strip of dimmed page
+  // between the sheet and the keys, so the sheet stays anchored and runs on under
+  // the keyboard, like a native sheet. Only its content moves: it's padded up by
+  // however much of the layout viewport the visual viewport no longer covers,
+  // including the pan iOS applies to scroll a focused input into view.
   let keyboardInset = $state(0);
   $effect(() => {
     if (!open || !sheetEl) return;
@@ -132,12 +133,14 @@
 
     function update() {
       if (!sheetEl || !viewport) return;
-      const availableHeight = viewport.height * VIEWPORT_HEIGHT_RATIO;
-      sheetEl.style.maxHeight = `${availableHeight}px`;
-      keyboardInset = Math.max(
+      // Local first: reading the state back here would make it a dependency
+      // of the effect that writes it.
+      const inset = Math.max(
         0,
         Math.round(window.innerHeight - viewport.height - viewport.offsetTop)
       );
+      keyboardInset = inset;
+      sheetEl.style.maxHeight = `${viewport.height * VIEWPORT_HEIGHT_RATIO + inset}px`;
     }
 
     update();
@@ -196,9 +199,8 @@
       role="dialog"
       aria-modal="true"
       aria-label={title || 'Bottom sheet'}
-      class:keyboard-open={keyboardInset > 0}
       style:max-height={maxHeight}
-      style:bottom={keyboardInset > 0 ? `${keyboardInset}px` : undefined}
+      style:padding-bottom={keyboardInset > 0 ? `${keyboardInset}px` : undefined}
       style:transform={open && dragCurrentY > 0 ? `translateY(${dragCurrentY}px)` : undefined}
       style:transition={isDragging ? 'none' : undefined}
     >
@@ -274,12 +276,6 @@
     transform: translateY(100%);
     transition: transform 0.25s ease;
     padding-bottom: env(safe-area-inset-bottom, 0px);
-  }
-
-  /* The home indicator is covered by the keyboard, so its inset would only
-     leave a gap between the sheet and the keys. */
-  .sheet.keyboard-open {
-    padding-bottom: 0;
   }
 
   .bottom-sheet-portal.shown .sheet {
