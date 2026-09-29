@@ -115,7 +115,7 @@ struct SidebarView: View {
       Button("Rename…", systemImage: "pencil") { renaming = subscription }
       Button("Move to Folder…", systemImage: "folder") { moving = subscription }
       if let site = (subscription.siteUrl ?? library.feedMeta[subscription.feedUrl]?.siteUrl)
-        .flatMap { URL(string: $0) }
+        .flatMap({ URL(string: $0) })
       {
         Button("Open Website", systemImage: "safari") { openExternally(site) }
       }

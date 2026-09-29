@@ -3,6 +3,7 @@ import WebKit
 
 /// Renders reader HTML. JavaScript is off and every link opens in the
 /// reader's browser, so untrusted feed markup can only style itself.
+@MainActor
 struct ArticleWebView {
   let html: String
   let baseURL: URL?
