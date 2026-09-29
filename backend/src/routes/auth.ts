@@ -22,6 +22,7 @@ import {
 } from '../services/oauth';
 import { getClientJWKS, createClientAssertion } from '../services/client-auth';
 import { buildLocalhostClientId } from '../services/oauth';
+import { isValidNativeChallenge, nativeErrorRedirect, nativeSuccessRedirect } from './native-auth';
 import {
   GRANULAR_SCOPES,
   SEMBLE_SCOPES,
@@ -279,6 +280,7 @@ interface AuthorizationParams {
   returnUrl: string;
   frontendUrl: string;
   cliPort?: number;
+  nativeChallenge?: string;
   replaceSessionId?: string;
 }
 
@@ -304,6 +306,7 @@ async function buildAuthorizationUrl(
     returnUrl,
     frontendUrl,
     cliPort,
+    nativeChallenge,
     replaceSessionId,
   } = params;
 
@@ -416,6 +419,7 @@ async function buildAuthorizationUrl(
     returnUrl,
     frontendUrl,
     cliPort,
+    nativeChallenge,
     scope: requestedScopes,
     replaceSessionId,
   });
@@ -441,6 +445,15 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
   // CLI mode: capture the local callback port
   const cliPortParam = url.searchParams.get('cli_port');
   const cliPort = cliPortParam ? parseInt(cliPortParam, 10) : undefined;
+
+  // Native app mode: the challenge the one-time handoff code is bound to.
+  const nativeChallenge = url.searchParams.get('native_challenge') || undefined;
+  if (nativeChallenge !== undefined && !isValidNativeChallenge(nativeChallenge)) {
+    return new Response(JSON.stringify({ error: 'Invalid native_challenge' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
 
   const requestedFeatures = parseFeatures(url.searchParams.get('features'));
   if (!requestedFeatures) {
@@ -523,6 +536,7 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
       returnUrl,
       frontendUrl,
       cliPort,
+      nativeChallenge,
     });
 
     return new Response(JSON.stringify({ authUrl }), {
@@ -645,6 +659,10 @@ export async function handleAuthCallback(
       }
       if (oauthState?.did) {
         await invalidatePdsCache(oauthState.did, env);
+      }
+      if (oauthState?.nativeChallenge) {
+        await deleteOAuthState(env, state).catch(() => {});
+        return nativeErrorRedirect(errorDescription);
       }
     }
     return Response.redirect(
@@ -987,6 +1005,11 @@ export async function handleAuthCallback(
       domain: cookieDomain,
       path: '/',
     });
+
+    // Native app mode: a one-time code on the app's URL scheme, never the session.
+    if (oauthState.nativeChallenge) {
+      return nativeSuccessRedirect(env, sessionId, oauthState.nativeChallenge);
+    }
 
     // CLI mode: redirect to local CLI server instead of frontend
     if (oauthState.cliPort) {
