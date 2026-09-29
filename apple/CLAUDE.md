@@ -1,8 +1,8 @@
 # Skyreader for macOS & iOS
 
-Native SwiftUI app for macOS 14+ and iOS 17+. Early scaffold: it signs in with a
-pasted session ID (debug builds only), cold-starts the timeline, and shows
-articles as plain text.
+Native SwiftUI app for macOS 14+ and iOS 17+: sign in with an Atmosphere account,
+read the timeline (offline too), keep read state in sync with the web app,
+save articles, and manage feeds and folders.
 
 ## Layout
 
@@ -13,12 +13,18 @@ articles as plain text.
   UI — those edits are lost on the next generate.
 - `App/` — SwiftUI sources, shared by both targets (`Skyreader-iOS`,
   `Skyreader-macOS`). Guard platform-only API with `#if os(iOS)` / `#if os(macOS)`.
+  - `Session.swift` — sign-in/out, keychain, one `Library` per signed-in account.
+  - `MainView.swift` — the three-column split view, menu commands and shortcuts.
+  - `SidebarView` / `ArticleListView` / `ReaderView` — the three columns.
+  - `ArticleWebView.swift` — the reader's `WKWebView`. **JavaScript is off** and
+    links open in the browser: feed HTML is untrusted, and this is the whole
+    sanitization story. Keep it that way.
 - `Config/` — entitlements (the macOS target is sandboxed with outbound
   network only).
-- `Packages/SkyreaderKit/` — Swift package holding the API client and wire
-  models. **Foundation only**: no SwiftUI, Security, or other Apple-only
-  frameworks, so `swift test` runs on Linux. Anything testable without a UI
-  belongs here, not in `App/`.
+- `Packages/SkyreaderKit/` — Swift package with the API client, wire models and
+  `Library` (all sync, persistence and actions). **Foundation + Observation
+  only**: no SwiftUI, Security, CryptoKit or other Apple-only frameworks, so
+  `swift test` runs on Linux. Anything testable without a UI belongs here.
 
 ## Commands
 
@@ -34,22 +40,39 @@ cd Packages/SkyreaderKit && swift test   # kit tests (macOS or Linux)
 Linux, then unsigned `xcodebuild` builds of both targets on `macos-15`. From a
 Linux environment (e.g. a cloud Claude Code session) that macOS job is the only
 proof the app compiles — install the Linux Swift toolchain to run the kit tests
-locally, and keep `App/` code conservative.
+locally, `swiftc -parse App/*.swift` for a syntax check, and keep `App/` code
+conservative.
 
-## Backend contract
+## How it talks to the backend
 
-- Auth: `Authorization: Bearer <session_id>`, the same session the web app keeps
-  in its `session_id` cookie. Native OAuth isn't built yet — the backend's
-  login flow redirects to the web frontend or the CLI's localhost callback
-  (`cli/src/commands/login.ts`); the app will need its own redirect
-  (`ASWebAuthenticationSession` + a custom scheme or universal link).
-- Timeline: `GET /api/v2/timeline` (`backend/src/routes/timeline.ts`). The
-  models in `Timeline.swift` mirror its response; keep optional fields optional
-  so backend additions never break decoding. Only cold start is used so far;
-  incremental polling (`since_seq` + `generation`) comes with local persistence.
+- **Sign-in** is native: the app sends `native_challenge` (base64url SHA-256 of
+  a secret it keeps) to `GET /api/auth/login`, opens the returned auth URL in a
+  web authentication session, and receives `skyreader://auth/callback?code=…`.
+  It trades code + secret at `POST /api/auth/native/exchange` for the session id,
+  which goes in the keychain. See `backend/src/routes/native-auth.ts`.
+- **Auth** on every call: `Authorization: Bearer <session_id>`. 401 signs out;
+  503 `session_refresh_pending` is retried (never a sign-out).
+- **Library** mirrors the web client's model (`frontend/src/lib/services/feedFetcher.ts`,
+  `stores/itemLabels.svelte.ts`):
+  - Timeline: one global cursor (`since_seq` + `generation`) into
+    `GET /api/v2/timeline`. A cold start is paged, and its cursor is committed
+    only after the last page. Each feed keeps its newest 100 items (= backend
+    `ARTICLE_WINDOW_PER_FEED`); saved items are exempt.
+  - Read state: a set of guids. Local reads/un-reads go to a persisted outbox,
+    flushed (debounced) to `mark-read-bulk` / `mark-unread` with the action time
+    as `updatedAt` (the backend's last-write-wins key). Other devices' changes
+    arrive via `GET /api/reading/positions`; a pending local change wins.
+  - Bodies: the item's content, else `GET /api/v2/items/body` for truncated
+    items, else `POST /api/extract`.
+  - Subscriptions: `GET /api/records/list?collection=app.skyreader.feed.subscription`;
+    folders are just the `category` string.
+  - Saves live only in D1 (`/api/saved`); see the root CLAUDE.md accuracy note.
+  - Everything is cached in `Application Support/Skyreader/library.json`.
+- Not yet: standard.site documents (`/api/v2/documents/batch`), highlights and
+  notes, linkblog sharing, channels, newsletters inbox settings, OPML import.
 
 ## Design
 
 Follow `PRODUCT.md` and `DESIGN.md` at the repo root: calm, reading-first, the
-text is the product. One Blue (`#0066cc`) is the app tint; prefer system
-typography and flat surfaces.
+text is the product. One Blue (`#0066cc`, `#4da6ff` at night) is the app tint;
+the reader uses the article serif at 1.125rem / 1.8 on a true-white page.

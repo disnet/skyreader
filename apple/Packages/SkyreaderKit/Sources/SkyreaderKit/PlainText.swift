@@ -12,7 +12,7 @@ extension TimelineItem {
   }
 }
 
-enum PlainText {
+public enum PlainText {
   private static let entities: [(String, String)] = [
     ("&nbsp;", " "), ("&lt;", "<"), ("&gt;", ">"), ("&quot;", "\""), ("&#39;", "'"),
     ("&apos;", "'"), ("&amp;", "&"),
@@ -20,7 +20,7 @@ enum PlainText {
 
   /// Strips tags and decodes the common entities. Block-level closers become
   /// paragraph breaks so the text keeps its shape.
-  static func from(html: String) -> String {
+  public static func from(html: String) -> String {
     var text = html.replacingOccurrences(
       of: "(?i)<br\\s*/?>|</(p|div|li|h[1-6]|blockquote)>", with: "\n\n",
       options: .regularExpression)
