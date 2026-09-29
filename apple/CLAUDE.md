@@ -80,6 +80,10 @@ conservative.
     flushed (debounced) to `mark-read-bulk` / `mark-unread` with the action time
     as `updatedAt` (the backend's last-write-wins key). Other devices' changes
     arrive via `GET /api/reading/positions`; a pending local change wins.
+  - Backfill: a followed feed with no local items (followed on another device,
+    so already below the cursor, or not yet crawled) gets a one-off
+    `GET /api/v2/feeds/fetch`, 10 per sync, rotating; an empty success is
+    remembered, failures retry. Port of the web's `backfillMissingSubscriptions`.
   - Bodies: the item's content, else `GET /api/v2/items/body` for truncated
     items, else `POST /api/extract`.
   - Subscriptions: `GET /api/records/list?collection=app.skyreader.feed.subscription`;

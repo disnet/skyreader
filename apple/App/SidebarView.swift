@@ -100,6 +100,14 @@ struct SidebarView: View {
       FeedIcon(subscription: subscription)
       Text(subscription.displayTitle)
         .lineLimit(1)
+        .foregroundStyle(subscription.isInTimeline ? HierarchicalShapeStyle.primary : .secondary)
+      if !subscription.isInTimeline {
+        Image(systemName: "globe")
+          .foregroundStyle(.secondary)
+          .imageScale(.small)
+          .help("Posts from Atmosphere publications aren't in the app yet. Read them on the web.")
+          .accessibilityLabel("Not in the app yet")
+      }
       if library.feedHealth[subscription.feedUrl] != nil {
         Image(systemName: "exclamationmark.triangle")
           .foregroundStyle(.secondary)

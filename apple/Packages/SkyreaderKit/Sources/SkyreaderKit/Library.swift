@@ -51,6 +51,10 @@ public final class Library {
   private var timelineHead: Int?
   private var readSince: String?
   private var outbox: [PendingRead] = []
+  /// Feeds already given their one-off backfill (see `backfillEmptyFeeds`).
+  private var backfilled: Set<String> = []
+  /// Where the next backfill round starts, so a failing feed can't hog the budget.
+  private var backfillCursor: String?
   @ObservationIgnored private var bodyCache: [String: String] = [:]
   @ObservationIgnored private var flushTask: Task<Void, Never>?
   @ObservationIgnored private var persistTask: Task<Void, Never>?
@@ -61,6 +65,9 @@ public final class Library {
   /// Items kept per feed. Must match the backend's `ARTICLE_WINDOW_PER_FEED`
   /// (and the web client's `MAX_ARTICLES_PER_FEED`).
   public static let articlesPerFeed = 100
+
+  /// Per-sync cap on one-off feed backfills (web: `MAX_BACKFILLS_PER_SYNC`).
+  static let backfillsPerSync = 10
 
   public init(client: SkyreaderClient, storeURL: URL?) {
     self.client = client
@@ -155,6 +162,7 @@ public final class Library {
       if account == nil { account = try? await client.me() }
       try await syncSubscriptions()
       try await syncTimeline()
+      try await backfillEmptyFeeds()
       try await syncReadPositions()
       saved = try await client.allSaved()
       trim()
@@ -196,6 +204,41 @@ public final class Library {
         guard page.hasMore, round < 5 else { return }
       }
     }
+  }
+
+  /// Fetches recent items for followed feeds that hold none locally.
+  ///
+  /// The timeline cursor only delivers items ingested after it, so a feed
+  /// followed on another device (already below the cursor), or one the server
+  /// hadn't crawled yet, would otherwise stay empty forever. `feeds/fetch` also
+  /// pulls an uncrawled feed through the crawler. Port of the web client's
+  /// `backfillMissingSubscriptions` (frontend/src/lib/services/feedFetcher.ts):
+  /// a success — even an empty one — is remembered; failures stay eligible.
+  private func backfillEmptyFeeds() async throws {
+    let feeds = subscriptions.filter(\.isInTimeline).map(\.feedUrl)
+    backfilled.formIntersection(feeds)
+    guard !feeds.isEmpty else { return }
+    let withArticles = Set(articles.values.map(\.feedUrl))
+
+    let start = backfillCursor.flatMap { feeds.firstIndex(of: $0) }.map { ($0 + 1) % feeds.count } ?? 0
+    var targets: [String] = []
+    for offset in 0..<feeds.count where targets.count < Self.backfillsPerSync {
+      let feed = feeds[(start + offset) % feeds.count]
+      if !backfilled.contains(feed), !withArticles.contains(feed) { targets.append(feed) }
+    }
+    guard let last = targets.last else { return }
+
+    for feed in targets {
+      do {
+        merge(try await client.fetchFeed(url: feed))
+        backfilled.insert(feed)
+      } catch SkyreaderError.unauthorized {
+        throw SkyreaderError.unauthorized
+      } catch {
+        // Broken or unreachable feed: try again on a later sync.
+      }
+    }
+    backfillCursor = last
   }
 
   private func syncReadPositions() async throws {
@@ -469,7 +512,10 @@ public final class Library {
       rkey: TID.generate(), feedUrl: feedUrl, title: siteHost, siteUrl: nil,
       category: category?.nilIfEmpty)
     try await syncSubscriptions()
-    if let items = try? await client.fetchFeed(url: feedUrl) { merge(items) }
+    if let items = try? await client.fetchFeed(url: feedUrl) {
+      merge(items)
+      backfilled.insert(feedUrl)
+    }
     trim()
     schedulePersist()
   }
@@ -556,6 +602,8 @@ public final class Library {
     var outbox: [PendingRead]
     var account: Account?
     var lastSynced: Date?
+    var backfilled: [String]?
+    var backfillCursor: String?
   }
 
   private func loadSnapshot() {
@@ -574,6 +622,8 @@ public final class Library {
     outbox = snapshot.outbox
     account = snapshot.account
     lastSynced = snapshot.lastSynced
+    backfilled = Set(snapshot.backfilled ?? [])
+    backfillCursor = snapshot.backfillCursor
     rebuildOrder()
   }
 
@@ -595,7 +645,7 @@ public final class Library {
       articles: Array(articles.values), subscriptions: subscriptions, saved: saved,
       feedMeta: feedMeta, readGuids: Array(readGuids), timelineCursor: timelineCursor,
       timelineHead: timelineHead, readSince: readSince, outbox: outbox, account: account,
-      lastSynced: lastSynced)
+      lastSynced: lastSynced, backfilled: Array(backfilled), backfillCursor: backfillCursor)
     await Task.detached(priority: .utility) {
       guard let data = try? JSONEncoder().encode(snapshot) else { return }
       try? FileManager.default.createDirectory(
@@ -621,6 +671,8 @@ public final class Library {
     outbox = []
     account = nil
     lastSynced = nil
+    backfilled = []
+    backfillCursor = nil
     bodyCache = [:]
     if let storeURL { try? FileManager.default.removeItem(at: storeURL) }
   }

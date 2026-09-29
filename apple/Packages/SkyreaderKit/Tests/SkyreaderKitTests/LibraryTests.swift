@@ -259,6 +259,68 @@ final class LibraryTests: XCTestCase {
     XCTAssertEqual(library.articles(in: .all).map(\.guid), ["a"])
   }
 
+  func testBackfillsFeedsTheTimelineMissed() async {
+    // The timeline only knows feed A; feed B (followed elsewhere, or not yet
+    // crawled) must be filled per-feed.
+    backend.on("/api/v2/timeline") { _, _, _ in
+      (200, timelinePage([item("a1", day: 1, seq: 1)], cursor: 1, coldStart: true))
+    }
+    var fetches: [String] = []
+    backend.on("/api/v2/feeds/fetch") { _, query, _ in
+      fetches.append(query["url"] ?? "")
+      return (200, ["items": [item("b1", feed: "https://b.example/feed", day: 2, seq: 0)]])
+    }
+    let library = makeLibrary()
+    await library.refresh()
+    XCTAssertEqual(fetches, ["https://b.example/feed"])
+    XCTAssertEqual(library.articles(in: .feed("https://b.example/feed")).map(\.guid), ["b1"])
+
+    // Done once: B now has articles, and A never needed it.
+    await library.refresh()
+    XCTAssertEqual(fetches.count, 1)
+  }
+
+  func testBackfillRemembersEmptySuccessesButRetriesFailures() async {
+    backend.on("/api/v2/timeline") { _, _, _ in
+      (200, timelinePage([], cursor: 0, coldStart: true))
+    }
+    var calls: [String: Int] = [:]
+    backend.on("/api/v2/feeds/fetch") { _, query, _ in
+      let url = query["url"] ?? ""
+      calls[url, default: 0] += 1
+      // A is empty but fine; B is broken.
+      return url.contains("a.example") ? (200, ["items": []]) : (502, ["error": "upstream"])
+    }
+    let library = makeLibrary()
+    await library.refresh()
+    await library.refresh()
+    XCTAssertEqual(calls["https://a.example/feed"], 1)
+    XCTAssertEqual(calls["https://b.example/feed"], 2)
+    XCTAssertNil(library.lastError)
+  }
+
+  func testBackfillIsCappedPerSyncAndRotates() async {
+    let many: [[String: Any]] = (0..<15).map { i in
+      [
+        "uri": "at://did:plc:me/app.skyreader.feed.subscription/3kaaaaaaaab\(String(format: "%02d", i))",
+        "value": ["feedUrl": "https://f\(i).example/feed"],
+      ]
+    }
+    backend.on("/api/records/list") { _, _, _ in (200, ["records": many]) }
+    backend.on("/api/v2/timeline") { _, _, _ in (200, timelinePage([], cursor: 0, coldStart: true)) }
+    var fetched: [String] = []
+    backend.on("/api/v2/feeds/fetch") { _, query, _ in
+      fetched.append(query["url"] ?? "")
+      return (502, ["error": "down"])
+    }
+    let library = makeLibrary()
+    await library.refresh()
+    XCTAssertEqual(fetched.count, Library.backfillsPerSync)
+    await library.refresh()
+    // The second round starts where the first stopped, so all 15 get a turn.
+    XCTAssertEqual(Set(fetched).count, 15)
+  }
+
   func testUnauthorizedSignsOut() async {
     backend.on("/api/records/list") { _, _, _ in (401, ["error": "Unauthorized"]) }
     let library = makeLibrary()
