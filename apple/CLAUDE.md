@@ -52,6 +52,13 @@ iPhone can't. Plain HTTP to loopback is allowed by `NSAllowsLocalNetworking`
 (`nativeSignInUnsupported`), rather than finishing in the web app inside the
 sheet. Signing out and back in is how you switch servers.
 
+Each server is its own database: a local backend starts empty, so your
+production feeds aren't there. To read real data before native sign-in reaches
+production, pick **Production** and use **Developer sign-in** with a session id
+from the CLI (`cd cli && npx tsx src/index.ts login --handle you.bsky.social`,
+then `sessionId` in `~/.config/skyreader/config.json`). Debug builds label a
+non-production server at the bottom of the sidebar.
+
 ## CI
 
 `.github/workflows/apple-ci.yml` runs on PRs touching `apple/**`: kit tests on

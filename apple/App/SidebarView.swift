@@ -3,6 +3,7 @@ import SwiftUI
 
 struct SidebarView: View {
   @Environment(Library.self) private var library
+  @Environment(Session.self) private var session
   @Binding var scope: LibraryScope?
   @State private var showsAddFeed = false
   @State private var showsSaveURL = false
@@ -45,6 +46,20 @@ struct SidebarView: View {
     .navigationTitle("Skyreader")
     #if os(macOS)
       .listStyle(.sidebar)
+    #endif
+    #if DEBUG
+      // A different server is a different database: say so, or its feeds
+      // look like missing data.
+      .safeAreaInset(edge: .bottom) {
+        if session.server != .production {
+          Label("\(session.server.label) server", systemImage: "server.rack")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal)
+            .padding(.vertical, 8)
+        }
+      }
     #endif
     .overlay {
       if library.subscriptions.isEmpty, !library.isSyncing, library.lastSynced != nil {

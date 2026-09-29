@@ -61,7 +61,8 @@ extension SkyreaderClient {
       var value: Value
     }
     struct Value: Decodable {
-      var feedUrl: String
+      // Null for some source types; such a record has nothing to read here.
+      var feedUrl: String?
       var title: String?
       var siteUrl: String?
       var sourceType: String?
@@ -69,16 +70,19 @@ extension SkyreaderClient {
       var customIconUrl: String?
       var category: String?
     }
-    struct Response: Decodable { var records: [Record] }
+    // One odd record must not cost the reader every other subscription.
+    struct Response: Decodable { var records: [Lossy<Record>] }
     let response: Response = try await send(
       .get, "/api/records/list",
       query: [URLQueryItem(name: "collection", value: "app.skyreader.feed.subscription")])
-    return response.records.compactMap { record in
+    return response.records.compactMap { entry in
       // at://<did>/app.skyreader.feed.subscription/<rkey>
-      guard let rkey = record.uri.split(separator: "/").last.map(String.init) else { return nil }
+      guard let record = entry.value, let feedUrl = record.value.feedUrl, !feedUrl.isEmpty,
+        let rkey = record.uri.split(separator: "/").last.map(String.init)
+      else { return nil }
       let v = record.value
       return Subscription(
-        rkey: rkey, feedUrl: v.feedUrl, title: v.title, siteUrl: v.siteUrl,
+        rkey: rkey, feedUrl: feedUrl, title: v.title, siteUrl: v.siteUrl,
         sourceType: v.sourceType, customTitle: v.customTitle, customIconUrl: v.customIconUrl,
         category: v.category)
     }
@@ -167,5 +171,14 @@ extension SkyreaderClient {
         feedUrl: feedUrl, read: $0.read ?? false, contentTruncated: $0.contentTruncated,
         bodyStored: $0.bodyStored, contentLead: $0.contentLead)
     }
+  }
+}
+
+/// Decodes an element, or nil if it doesn't fit, instead of failing its array.
+struct Lossy<T: Decodable>: Decodable {
+  var value: T?
+
+  init(from decoder: any Decoder) throws {
+    value = try? T(from: decoder)
   }
 }

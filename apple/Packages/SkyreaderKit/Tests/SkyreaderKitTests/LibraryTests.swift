@@ -321,6 +321,24 @@ final class LibraryTests: XCTestCase {
     XCTAssertEqual(Set(fetched).count, 15)
   }
 
+  func testOddSubscriptionRecordsDontHideTheRest() async throws {
+    backend.on("/api/records/list") { _, _, _ in
+      (
+        200,
+        [
+          "records": [
+            ["uri": "at://did:plc:me/app.skyreader.feed.subscription/3kaaaaaaaaaa2", "value": ["feedUrl": "https://a.example/feed"]],
+            ["uri": "at://did:plc:me/app.skyreader.feed.subscription/3kaaaaaaaaaa3", "value": ["feedUrl": NSNull(), "sourceType": "atproto.collection"]],
+            ["uri": "at://did:plc:me/app.skyreader.feed.subscription/3kaaaaaaaaaa4", "value": ["title": 42]],
+            ["value": ["feedUrl": "https://no-uri.example/feed"]],
+            ["uri": "at://did:plc:me/app.skyreader.feed.subscription/3kaaaaaaaaaa5", "value": ["feedUrl": "https://c.example/feed", "title": NSNull()]],
+          ]
+        ])
+    }
+    let subscriptions = try await SkyreaderClient(sessionID: "s", transport: backend).subscriptions()
+    XCTAssertEqual(subscriptions.map(\.feedUrl), ["https://a.example/feed", "https://c.example/feed"])
+  }
+
   func testUnauthorizedSignsOut() async {
     backend.on("/api/records/list") { _, _, _ in (401, ["error": "Unauthorized"]) }
     let library = makeLibrary()
