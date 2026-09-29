@@ -127,4 +127,55 @@ describe('BottomSheet', () => {
     sheet.setOpen(false);
     expect(sheet.portal()).toBeNull();
   });
+
+  // iOS Safari doesn't shrink the layout viewport for the on-screen keyboard,
+  // so a `bottom: 0` sheet — and the switcher's search field in it — sat under
+  // the keys. The sheet stays anchored (no gap of page above the keys); its
+  // content is padded up to the top of the visual viewport's bottom edge.
+  describe('with the on-screen keyboard up', () => {
+    const original = Object.getOwnPropertyDescriptor(window, 'visualViewport');
+
+    function fakeViewport(height: number, offsetTop: number) {
+      const target = new EventTarget();
+      const viewport = Object.assign(target, { height, offsetTop });
+      Object.defineProperty(window, 'visualViewport', { configurable: true, value: viewport });
+      return viewport;
+    }
+
+    afterEach(() => {
+      if (original) Object.defineProperty(window, 'visualViewport', original);
+      else delete (window as { visualViewport?: unknown }).visualViewport;
+    });
+
+    const sheetEl = () => document.querySelector<HTMLElement>('.sheet');
+
+    it('pads the sheet content above the keyboard, following the visual viewport', () => {
+      vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(800);
+      const viewport = fakeViewport(800, 0);
+      const sheet = render({ open: true });
+      expect(sheetEl()?.style.paddingBottom).toBe('');
+
+      // Keyboard opens (visual viewport shrinks), then iOS pans to the input.
+      viewport.height = 450;
+      viewport.dispatchEvent(new Event('resize'));
+      flushSync();
+      expect(sheetEl()?.style.paddingBottom).toBe('350px');
+      expect(sheetEl()?.style.bottom).toBe('');
+
+      viewport.offsetTop = 100;
+      viewport.dispatchEvent(new Event('scroll'));
+      flushSync();
+      expect(sheetEl()?.style.paddingBottom).toBe('250px');
+
+      // Keyboard dismissed.
+      viewport.height = 800;
+      viewport.offsetTop = 0;
+      viewport.dispatchEvent(new Event('resize'));
+      flushSync();
+      expect(sheetEl()?.style.paddingBottom).toBe('');
+
+      sheet.setOpen(false);
+      vi.restoreAllMocks();
+    });
+  });
 });

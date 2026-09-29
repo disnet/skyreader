@@ -117,24 +117,40 @@
     }
   });
 
-  // Visual Viewport API for keyboard adjustment
+  // Keep the sheet's content above the on-screen keyboard. iOS Safari doesn't
+  // shrink the layout viewport for the keyboard, so a fixed `bottom: 0` sheet
+  // sits partly behind it. Moving the sheet up leaves a strip of dimmed page
+  // between the sheet and the keys, so the sheet stays anchored and runs on under
+  // the keyboard, like a native sheet. Only its content moves: it's padded up by
+  // however much of the layout viewport the visual viewport no longer covers,
+  // including the pan iOS applies to scroll a focused input into view.
+  let keyboardInset = $state(0);
   $effect(() => {
     if (!open || !sheetEl) return;
 
     const viewport = window.visualViewport;
     if (!viewport) return;
 
-    function updateHeight() {
+    function update() {
       if (!sheetEl || !viewport) return;
-      const availableHeight = viewport.height * VIEWPORT_HEIGHT_RATIO;
-      sheetEl.style.maxHeight = `${availableHeight}px`;
+      // Local first: reading the state back here would make it a dependency
+      // of the effect that writes it.
+      const inset = Math.max(
+        0,
+        Math.round(window.innerHeight - viewport.height - viewport.offsetTop)
+      );
+      keyboardInset = inset;
+      sheetEl.style.maxHeight = `${viewport.height * VIEWPORT_HEIGHT_RATIO + inset}px`;
     }
 
-    updateHeight();
-    viewport.addEventListener('resize', updateHeight);
+    update();
+    viewport.addEventListener('resize', update);
+    viewport.addEventListener('scroll', update);
 
     return () => {
-      viewport.removeEventListener('resize', updateHeight);
+      viewport.removeEventListener('resize', update);
+      viewport.removeEventListener('scroll', update);
+      keyboardInset = 0;
     };
   });
 
@@ -184,6 +200,7 @@
       aria-modal="true"
       aria-label={title || 'Bottom sheet'}
       style:max-height={maxHeight}
+      style:padding-bottom={keyboardInset > 0 ? `${keyboardInset}px` : undefined}
       style:transform={open && dragCurrentY > 0 ? `translateY(${dragCurrentY}px)` : undefined}
       style:transition={isDragging ? 'none' : undefined}
     >
