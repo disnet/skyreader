@@ -450,7 +450,9 @@
       if (!searching || !saveBackingStore.loaded) return;
       const top = filtered.find((c) => c.uri !== lockedUri);
       if (!top) return;
-      toggleCollection(top.uri);
+      // Enter only ever adds: in edit mode the current collections start checked,
+      // so a toggle would silently unfile the article from the one just typed.
+      if (!selectedUris.has(top.uri)) toggleCollection(top.uri);
       // Clear for the next name: filing into three collections is three words.
       searchQuery = '';
     } else if (e.key === (sheetMode ? 'ArrowUp' : 'ArrowDown')) {

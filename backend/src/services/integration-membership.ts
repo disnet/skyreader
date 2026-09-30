@@ -20,7 +20,10 @@
  * newest-first, so it holds exactly the recent records the index may not have
  * caught up on yet, and the index reaches the old tail the scan never gets to.
  * The index is only ever a pointer: every record it names is re-read from the
- * user's own PDS and re-checked before it counts.
+ * user's own PDS and re-checked before it counts. A complete index answer clears
+ * the membership side's truncation (it's queried by exact item at-uri), but never
+ * the item side's: by URL it can only match the spellings we ask for, not every
+ * variant normalizeArticleUrl treats as the same article.
  *
  * Record shapes (identical to the ones routes/integrations.ts and backing/write.ts
  * write):
@@ -208,12 +211,14 @@ export async function findMemberships(
     if (item) items.push(item);
   }
 
-  // The scan stopped on its cap: the rest of the repo is answered by the index.
-  let itemsTruncated = itemsRes.truncated === true;
+  // The scan stopped on its cap: the index fills in what it can past it. It only
+  // matches exact strings, and we can ask it for a few spellings of the URL but
+  // not every one normalizeArticleUrl folds together (tracking params, fragment,
+  // host case, param order), so its answer never proves no older save exists —
+  // the items side stays truncated.
+  const itemsTruncated = itemsRes.truncated === true;
   if (itemsTruncated && did) {
-    const found = await itemsFromIndex(pds, provider, did, url, target, items, index);
-    items.push(...found.items);
-    if (found.complete) itemsTruncated = false;
+    items.push(...(await itemsFromIndex(pds, provider, did, url, target, items, index)));
   }
   items.sort(byNewest);
 
@@ -314,12 +319,11 @@ async function itemsFromIndex(
   target: string,
   known: MembershipItem[],
   index: BacklinkIndex
-): Promise<{ items: MembershipItem[]; complete: boolean }> {
+): Promise<MembershipItem[]> {
   const lookups = urlSpellings(url, target).flatMap((subject) =>
     itemSources(provider).map((source) => index.backlinks(subject, source, did))
   );
   const answers = await Promise.all(lookups);
-  let complete = answers.every((a) => a.complete);
 
   const seen = new Set(known.map((i) => i.rkey));
   const rkeys = [...new Set(answers.flatMap((a) => a.rkeys))].filter((r) => !seen.has(r));
@@ -327,13 +331,12 @@ async function itemsFromIndex(
   await Promise.all(
     rkeys.map(async (rkey) => {
       const rec = await readBack(pds, itemCollection(provider), rkey);
-      if (rec === undefined) complete = false;
       if (!rec) return;
       const item = matchItem(provider, target, rec);
       if (item) items.push(item);
     })
   );
-  return { items, complete };
+  return items;
 }
 
 async function membershipsFromIndex(

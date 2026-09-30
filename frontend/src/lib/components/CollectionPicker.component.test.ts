@@ -208,4 +208,48 @@ describe('CollectionPicker membership requests', () => {
       collections: [{ uri: 'at://did:plc:test/network.cosmik.collection/ai', cid: 'bafyai' }],
     });
   });
+
+  it('never unchecks a current collection on Enter in edit mode', async () => {
+    deferSettings = false;
+    const onconfirm = vi.fn();
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    component = mount(CollectionPickerHost, { target, props: { onconfirm } });
+    flushSync();
+    pending[0].resolve({
+      items: [{ uri: 'at://did:plc:test/network.cosmik.card/item', cid: 'bafyitem' }],
+      memberships: [
+        {
+          collectionUri: 'at://did:plc:test/network.cosmik.collection/ai',
+          linkUri: 'at://did:plc:test/network.cosmik.collectionLink/ai-link',
+        },
+      ],
+      truncated: false,
+    });
+    await vi.waitFor(() => {
+      flushSync();
+      expect(document.body.querySelector('.search-input')).not.toBeNull();
+      expect(document.body.textContent).not.toContain('Checking existing saves');
+    });
+
+    const input = document.body.querySelector('.search-input') as HTMLInputElement;
+    const enter = (query: string) => {
+      input.value = query;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      flushSync();
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      flushSync();
+    };
+    // Already in "AI safety": Enter must leave it checked, not remove it.
+    enter('safe');
+    enter('research');
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true }));
+    flushSync();
+    expect(onconfirm).toHaveBeenCalledWith({
+      mode: 'edit',
+      add: [{ uri: 'at://did:plc:test/network.cosmik.collection/research', cid: 'bafyresearch' }],
+      remove: [],
+    });
+  });
 });

@@ -194,10 +194,23 @@ describe('findMemberships — Semble', () => {
     if (!res.success) throw new Error('expected success');
     expect(res.data.items.map((i) => i.rkey)).toEqual(['c1', 'c-old']);
     expect(res.data.memberships.map((m) => m.collectionUri).sort()).toEqual([COL_A, COL_B]);
-    expect(res.data.truncated).toBe(false);
+    // The URL index can't see saves spelled differently (utm params, fragment…),
+    // so a capped card scan stays truncated even when the index says complete.
+    expect(res.data.truncated).toBe(true);
     // The index only ever points: c1 and l1 came from the scan and aren't re-read.
     const reread = (pds.getRecord as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[1]);
     expect(reread.sort()).toEqual(['c-gone', 'c-old', 'c-other', 'l-old']);
+  });
+
+  it('clears truncation when only the link scan capped and the index is complete', async () => {
+    const pds = fakeClient({ [CARD]: [card('c1', URL_A)], [LINK]: [link('l1', 'c1', COL_A)] }, {}, [
+      LINK,
+    ]);
+    const index = { backlinks: vi.fn(async () => ({ rkeys: ['l1'], complete: true })) };
+    const res = await findMemberships(pds, 'semble', URL_A, { did: DID, index });
+    if (!res.success) throw new Error('expected success');
+    expect(res.data.memberships.map((m) => m.collectionUri)).toEqual([COL_A]);
+    expect(res.data.truncated).toBe(false);
   });
 
   it('stays truncated when the index cannot give a complete answer', async () => {
