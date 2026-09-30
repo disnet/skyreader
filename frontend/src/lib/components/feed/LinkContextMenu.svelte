@@ -104,9 +104,12 @@
 
   // Hand the link to the one app-wide collection picker, which reads the URL's
   // existing memberships, so a link already in a collection opens as an edit.
+  // Read the props before closing: the host clears its menu state on close, and
+  // these props read through to it, so afterwards they throw instead of answering.
   function handleCollect(kind: IntegrationKind) {
+    const target = { url, title: titleHint(linkText) };
     onClose();
-    integrationSaveStore.openPicker(kind, { url, title: titleHint(linkText) });
+    integrationSaveStore.openPicker(kind, target);
   }
 
   async function handleCopy() {

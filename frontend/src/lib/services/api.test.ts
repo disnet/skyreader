@@ -69,7 +69,10 @@ describe('api transient 503 (session_refresh_pending)', () => {
   it('does not retry a non-retryable 503 (treats it as a normal error)', async () => {
     fetchMock.mockResolvedValueOnce(json(503, { error: 'service unavailable' }));
 
-    await expect(api.getMe()).rejects.toThrow();
+    const err = await api.getMe().catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(503);
+    expect((err as ApiError).message).toBe('service unavailable');
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(onUnauthorized).not.toHaveBeenCalled();
   });

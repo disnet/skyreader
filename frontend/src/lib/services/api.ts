@@ -501,7 +501,9 @@ class ApiClient {
           // Exhausted retries — keep the user logged in and let the caller decide.
           throw new SessionRefreshError();
         }
-        throw new Error(body?.error || `HTTP ${response.status}`);
+        // Any other 503 is the server saying "try again later" (e.g. a PDS write
+        // that timed out), so keep the status for callers that decide on it.
+        throw new ApiError(body?.error || `HTTP ${response.status}`, 503);
       }
 
       // Handle 401. During deploys, an open tab can occasionally see one stale/racy
