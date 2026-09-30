@@ -451,4 +451,50 @@ describe('savesStore.saveArticle body choice', () => {
     );
     expect(saved.content).toBe(full);
   });
+
+  it('shows the save before the out-of-row body arrives', async () => {
+    const full = words(3000);
+    articleRows.push({
+      id: 6,
+      guid: 'nl-3',
+      subscriptionId: 7,
+      content: null,
+      contentTruncated: true,
+    });
+    let release!: (v: unknown) => void;
+    loadStoredBody.mockReturnValueOnce(new Promise((r) => (release = r)));
+    extractArticle.mockResolvedValueOnce({ content: words(100), wordCount: 100, domain: 'x.com' });
+
+    const pending = savesStore.saveArticle({
+      url: 'https://news.example/p/slow',
+      guid: 'nl-3',
+      subscriptionId: 7,
+    });
+
+    await vi.waitFor(() => expect(savesStore.isSaved('nl-3')).toBe(true));
+    expect(api.saveFromUrl).not.toHaveBeenCalled();
+
+    release({ status: 'found', content: full });
+    expect((await pending).content).toBe(full);
+  });
+
+  it('does not reach for the stored body when saving offline', async () => {
+    syncState.isOnline = false;
+    articleRows.push({
+      id: 7,
+      guid: 'nl-4',
+      subscriptionId: 7,
+      content: null,
+      contentTruncated: true,
+    });
+
+    await savesStore.saveArticle({
+      url: 'https://news.example/p/off',
+      guid: 'nl-4',
+      subscriptionId: 7,
+    });
+
+    expect(loadStoredBody).not.toHaveBeenCalled();
+    expect(enqueue).toHaveBeenCalled();
+  });
 });
