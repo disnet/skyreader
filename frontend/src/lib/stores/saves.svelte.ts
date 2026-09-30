@@ -8,6 +8,9 @@ import { syncQueue, type SavedPayload } from '$lib/services/sync-queue';
 import { syncStore } from './sync.svelte';
 import { auth } from './auth.svelte';
 import { extractArticle } from '$lib/services/extract';
+import { loadStoredBody } from '$lib/services/itemBody';
+import { subscriptionsStore } from './subscriptions.svelte';
+import { preferExtractedBody } from '$lib/utils/saveBody';
 import { failedSaveBody, isFailedSaveBody, type SaveFetchFailure } from '$lib/utils/saveAnywhere';
 import { computeContentStats } from '$lib/services/articleMerge';
 import { savedSearchStore } from './savedSearch.svelte';
@@ -545,7 +548,20 @@ function createSavesStore() {
             .equals(article.guid)
             .filter((r) => r.subscriptionId === article.subscriptionId)
             .first();
-          rssBody = row?.content ?? null;
+          rssBody = row?.content || null;
+          // A long body (a newsletter, a long-form post) rides out-of-row: the
+          // archive keeps it in R2 and the row only says `contentTruncated`.
+          // Recover it so the save carries the feed's full text — without it
+          // the only candidate left is the web page, which may be paywalled.
+          const feedUrl = subscriptionsStore.getById(article.subscriptionId)?.feedUrl;
+          if (!rssBody && row?.contentTruncated && feedUrl) {
+            const stored = await loadStoredBody(
+              { id: row.id, guid: article.guid, subscriptionId: article.subscriptionId },
+              feedUrl,
+              { guest: auth.isGuest }
+            );
+            if (stored.status === 'found') rssBody = stored.content;
+          }
         } catch {
           // Best effort — fall back to no stored body.
         }
@@ -584,14 +600,15 @@ function createSavesStore() {
       if (canReachBackend()) {
         try {
           // Prefer a clean, full-text extraction of the article (same source as
-          // URL saves) over the RSS body. Fall back to the RSS body if
-          // extraction fails or returns nothing.
+          // URL saves) over the RSS body. Keep the RSS body when extraction
+          // fails, returns nothing, or comes back much shorter than the feed's
+          // own text — a paywall or sign-up teaser (see utils/saveBody.ts).
           let content = rssBody;
           let wordCount: number | null = null;
           let domain: string | null = null;
           try {
             const extracted = await extractArticle(article.url);
-            if (extracted.content) {
+            if (preferExtractedBody(rssBody, extracted.content)) {
               content = extracted.content;
               wordCount = extracted.wordCount || null;
               domain = extracted.domain || null;

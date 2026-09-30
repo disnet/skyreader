@@ -15,7 +15,13 @@ import type { SavedItem } from '$lib/types';
 // each call lands on.
 
 const savedRows = new Map<string, SavedItem>();
-const articleRows: Array<{ guid: string; subscriptionId: number; content: string | null }> = [];
+const articleRows: Array<{
+  id?: number;
+  guid: string;
+  subscriptionId: number;
+  content: string | null;
+  contentTruncated?: boolean;
+}> = [];
 
 function whereEquals(rows: () => Record<string, unknown>[], field: string, val: unknown) {
   return {
@@ -89,6 +95,15 @@ vi.mock('$lib/services/api', () => ({ api, ApiError, ExtractionBlockedError }));
 
 const extractArticle = vi.fn();
 vi.mock('$lib/services/extract', () => ({ extractArticle }));
+
+const loadStoredBody = vi.fn();
+vi.mock('$lib/services/itemBody', () => ({ loadStoredBody }));
+
+vi.mock('./subscriptions.svelte', () => ({
+  subscriptionsStore: {
+    getById: (id: number) => (id === 7 ? { id, feedUrl: 'https://news.example/feed' } : undefined),
+  },
+}));
 
 const enqueue = vi.fn(async () => {});
 vi.mock('$lib/services/sync-queue', () => ({ syncQueue: { enqueue } }));
@@ -360,5 +375,80 @@ describe('savesStore.saveFromUrl when the article cannot be fetched', () => {
 
     await expect(savesStore.saveFromUrl('https://example.com/x')).rejects.toThrow('Unauthorized');
     expect(api.saveFromUrl).not.toHaveBeenCalled();
+  });
+});
+
+describe('savesStore.saveArticle body choice', () => {
+  const words = (n: number) => `<p>${Array.from({ length: n }, (_, i) => `w${i}`).join(' ')}</p>`;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    savedRows.clear();
+    articleRows.length = 0;
+    authState.isGuest = false;
+    syncState.isOnline = true;
+    api.saveFromUrl.mockImplementation(async (_url: string, rkey: string) => ({
+      uri: `at://did:plc:me/app.skyreader.feed.saved/${rkey}`,
+      rkey,
+    }));
+  });
+
+  it('keeps a full feed body when the web page is a paywall teaser', async () => {
+    const full = words(1200);
+    articleRows.push({ guid: 'nl-1', subscriptionId: 7, content: full });
+    extractArticle.mockResolvedValueOnce({ content: words(80), wordCount: 80, domain: 'x.com' });
+
+    const saved = await savesStore.saveArticle({
+      url: 'https://news.example/p/issue',
+      guid: 'nl-1',
+      subscriptionId: 7,
+    });
+
+    expect(saved.content).toBe(full);
+    expect(api.saveFromUrl).toHaveBeenCalledWith(
+      'https://news.example/p/issue',
+      expect.any(String),
+      expect.objectContaining({ content: full })
+    );
+  });
+
+  it('still upgrades an excerpt to the extracted full text', async () => {
+    articleRows.push({ guid: 'post-1', subscriptionId: 7, content: words(30) });
+    const extracted = words(900);
+    extractArticle.mockResolvedValueOnce({ content: extracted, wordCount: 900, domain: 'x.com' });
+
+    const saved = await savesStore.saveArticle({
+      url: 'https://news.example/p/post',
+      guid: 'post-1',
+      subscriptionId: 7,
+    });
+
+    expect(saved.content).toBe(extracted);
+  });
+
+  it('recovers an out-of-row body before choosing', async () => {
+    const full = words(3000);
+    articleRows.push({
+      id: 5,
+      guid: 'nl-2',
+      subscriptionId: 7,
+      content: null,
+      contentTruncated: true,
+    });
+    loadStoredBody.mockResolvedValueOnce({ status: 'found', content: full });
+    extractArticle.mockResolvedValueOnce({ content: words(100), wordCount: 100, domain: 'x.com' });
+
+    const saved = await savesStore.saveArticle({
+      url: 'https://news.example/p/long',
+      guid: 'nl-2',
+      subscriptionId: 7,
+    });
+
+    expect(loadStoredBody).toHaveBeenCalledWith(
+      { id: 5, guid: 'nl-2', subscriptionId: 7 },
+      'https://news.example/feed',
+      { guest: false }
+    );
+    expect(saved.content).toBe(full);
   });
 });
