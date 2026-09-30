@@ -238,8 +238,25 @@ export function sanitizeHtml(html: string, baseUrl?: string): string {
     // inline style= to overlay/hide the app shell (clickjacking / content spoofing,
     // since the prod CSP allows 'unsafe-inline' styles). We rely on our own classes
     // for layout, never on styles carried in feed HTML.
-    FORBID_TAGS: ['style'],
-    FORBID_ATTR: ['style'],
+    //
+    // The same goes for HTML's pre-CSS presentational markup, which email
+    // templates still lean on: <font size="1"> alone shrinks a newsletter to
+    // 10px, and face/color/bgcolor override the reading typeface and break
+    // dark mode. The wrappers are unwrapped (DOMPurify keeps their text), so
+    // the body falls back to the reader's own type.
+    FORBID_TAGS: ['style', 'font', 'basefont', 'big'],
+    FORBID_ATTR: [
+      'style',
+      'size',
+      'face',
+      'color',
+      'bgcolor',
+      'background',
+      'text',
+      'link',
+      'vlink',
+      'alink',
+    ],
   });
 
   // Remove hooks to avoid affecting other calls

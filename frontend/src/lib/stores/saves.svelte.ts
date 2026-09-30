@@ -8,11 +8,14 @@ import { syncQueue, type SavedPayload } from '$lib/services/sync-queue';
 import { syncStore } from './sync.svelte';
 import { auth } from './auth.svelte';
 import { extractArticle } from '$lib/services/extract';
+import { loadStoredBody } from '$lib/services/itemBody';
+import { subscriptionsStore } from './subscriptions.svelte';
+import { preferExtractedBody } from '$lib/utils/saveBody';
 import { failedSaveBody, isFailedSaveBody, type SaveFetchFailure } from '$lib/utils/saveAnywhere';
 import { computeContentStats } from '$lib/services/articleMerge';
 import { savedSearchStore } from './savedSearch.svelte';
 import { compareSavedNewestFirst } from '$lib/utils/savedPile';
-import type { SavedItem } from '$lib/types';
+import type { Article, SavedItem } from '$lib/types';
 
 /**
  * Whether save writes/reads can reach the backend at all.
@@ -23,6 +26,8 @@ import type { SavedItem } from '$lib/types';
  * ordinary sync run, the same way itemLabels migrates read state. Guest saves
  * keep the RSS body (extraction is session-gated), matching an offline save.
  */
+type StoredBodyRef = Pick<Article, 'id' | 'guid' | 'subscriptionId'>;
+
 function canReachBackend(): boolean {
   return syncStore.isOnline && !auth.isGuest;
 }
@@ -538,6 +543,12 @@ function createSavesStore() {
       // still holds the full row. The RSS body is often just an excerpt, so when
       // online we replace it below with a clean full-text extraction.
       let rssBody: string | null = null;
+      // A long body (a newsletter, a long-form post) rides out-of-row: the
+      // archive keeps it in R2 and the row only says `contentTruncated`. It's
+      // recovered below, once the save is already on screen, so the full text
+      // is what extraction has to beat — not an empty body a paywall wins by
+      // default.
+      let storedBodyRef: { ref: StoredBodyRef; feedUrl: string } | null = null;
       if (article.subscriptionId != null) {
         try {
           const row = await db.articles
@@ -545,7 +556,14 @@ function createSavesStore() {
             .equals(article.guid)
             .filter((r) => r.subscriptionId === article.subscriptionId)
             .first();
-          rssBody = row?.content ?? null;
+          rssBody = row?.content || null;
+          const feedUrl = subscriptionsStore.getById(article.subscriptionId)?.feedUrl;
+          if (!rssBody && row?.contentTruncated && feedUrl) {
+            storedBodyRef = {
+              ref: { id: row.id, guid: article.guid, subscriptionId: article.subscriptionId },
+              feedUrl,
+            };
+          }
         } catch {
           // Best effort — fall back to no stored body.
         }
@@ -584,14 +602,29 @@ function createSavesStore() {
       if (canReachBackend()) {
         try {
           // Prefer a clean, full-text extraction of the article (same source as
-          // URL saves) over the RSS body. Fall back to the RSS body if
-          // extraction fails or returns nothing.
+          // URL saves) over the RSS body. Keep the RSS body when extraction
+          // fails, returns nothing, or comes back much shorter than the feed's
+          // own text — a paywall or sign-up teaser (see utils/saveBody.ts).
+          // The stored-body read runs alongside extraction; either failing
+          // leaves the other (or the row's own body) to save.
+          const [stored, extraction] = await Promise.allSettled([
+            storedBodyRef
+              ? loadStoredBody(storedBodyRef.ref, storedBodyRef.feedUrl, {
+                  guest: auth.isGuest,
+                })
+              : Promise.resolve(null),
+            extractArticle(article.url),
+          ]);
+          if (stored.status === 'fulfilled' && stored.value?.status === 'found') {
+            rssBody = stored.value.content;
+          }
           let content = rssBody;
           let wordCount: number | null = null;
           let domain: string | null = null;
           try {
-            const extracted = await extractArticle(article.url);
-            if (extracted.content) {
+            if (extraction.status === 'rejected') throw extraction.reason;
+            const extracted = extraction.value;
+            if (preferExtractedBody(rssBody, extracted.content)) {
               content = extracted.content;
               wordCount = extracted.wordCount || null;
               domain = extracted.domain || null;
