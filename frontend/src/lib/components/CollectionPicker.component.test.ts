@@ -40,12 +40,27 @@ vi.mock('$lib/stores/collections.svelte', () => ({
           cid: 'bafycollection',
           name: 'Saved',
         },
+        { uri: 'at://did:plc:test/network.cosmik.collection/ai', cid: 'bafyai', name: 'AI safety' },
+        {
+          uri: 'at://did:plc:test/network.cosmik.collection/reading',
+          cid: 'bafyreading',
+          name: 'Reading queue',
+          lastUsedAt: 1_700_000_000_000,
+        },
+        {
+          uri: 'at://did:plc:test/network.cosmik.collection/research',
+          cid: 'bafyresearch',
+          name: 'Research',
+        },
       ],
       margin: [],
     },
     loading: { semble: false, margin: false },
     refreshing: { semble: false, margin: false },
     error: { semble: null, margin: null },
+    truncated: { semble: false, margin: false },
+    favorites: { 'at://did:plc:test/network.cosmik.collection/research': 1 },
+    toggleFavorite: vi.fn(),
     loadAndRefresh: vi.fn(),
   },
 }));
@@ -139,5 +154,102 @@ describe('CollectionPicker membership requests', () => {
     (document.body.querySelector('.no-collection') as HTMLButtonElement).click();
     flushSync();
     expect(document.body.querySelector('.btn-primary')?.hasAttribute('disabled')).toBe(false);
+  });
+
+  it('offers favorites then recents as quick picks, and names the choice', async () => {
+    deferSettings = false;
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    component = mount(CollectionPickerHost, { target });
+    flushSync();
+    pending[0].resolve({ items: [], memberships: [], truncated: false });
+    await vi.waitFor(() => {
+      flushSync();
+      expect(document.body.querySelectorAll('.chip').length).toBe(2);
+      expect(document.body.textContent).not.toContain('Checking existing saves');
+    });
+
+    const chips = [...document.body.querySelectorAll<HTMLButtonElement>('.chip')];
+    expect(chips.map((c) => c.textContent?.trim())).toEqual(['Research', 'Reading queue']);
+    chips[1].click();
+    flushSync();
+    expect(chips[1].getAttribute('aria-pressed')).toBe('true');
+    expect(document.body.querySelector('.footer-summary')?.textContent).toBe('Reading queue');
+  });
+
+  it('adds the top filter match on Enter and saves on Ctrl+Enter', async () => {
+    deferSettings = false;
+    const onconfirm = vi.fn();
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    component = mount(CollectionPickerHost, { target, props: { onconfirm } });
+    flushSync();
+    pending[0].resolve({ items: [], memberships: [], truncated: false });
+    await vi.waitFor(() => {
+      flushSync();
+      expect(document.body.querySelector('.search-input')).not.toBeNull();
+      expect(document.body.textContent).not.toContain('Checking existing saves');
+    });
+
+    const input = document.body.querySelector('.search-input') as HTMLInputElement;
+    input.value = 'safe';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    flushSync();
+    expect(document.body.querySelector('.list-count')?.textContent?.trim()).toBe('1 of 4');
+
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    flushSync();
+    expect(input.value).toBe('');
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true }));
+    flushSync();
+    expect(onconfirm).toHaveBeenCalledWith({
+      mode: 'create',
+      collections: [{ uri: 'at://did:plc:test/network.cosmik.collection/ai', cid: 'bafyai' }],
+    });
+  });
+
+  it('never unchecks a current collection on Enter in edit mode', async () => {
+    deferSettings = false;
+    const onconfirm = vi.fn();
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    component = mount(CollectionPickerHost, { target, props: { onconfirm } });
+    flushSync();
+    pending[0].resolve({
+      items: [{ uri: 'at://did:plc:test/network.cosmik.card/item', cid: 'bafyitem' }],
+      memberships: [
+        {
+          collectionUri: 'at://did:plc:test/network.cosmik.collection/ai',
+          linkUri: 'at://did:plc:test/network.cosmik.collectionLink/ai-link',
+        },
+      ],
+      truncated: false,
+    });
+    await vi.waitFor(() => {
+      flushSync();
+      expect(document.body.querySelector('.search-input')).not.toBeNull();
+      expect(document.body.textContent).not.toContain('Checking existing saves');
+    });
+
+    const input = document.body.querySelector('.search-input') as HTMLInputElement;
+    const enter = (query: string) => {
+      input.value = query;
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      flushSync();
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      flushSync();
+    };
+    // Already in "AI safety": Enter must leave it checked, not remove it.
+    enter('safe');
+    enter('research');
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true }));
+    flushSync();
+    expect(onconfirm).toHaveBeenCalledWith({
+      mode: 'edit',
+      add: [{ uri: 'at://did:plc:test/network.cosmik.collection/research', cid: 'bafyresearch' }],
+      remove: [],
+    });
   });
 });

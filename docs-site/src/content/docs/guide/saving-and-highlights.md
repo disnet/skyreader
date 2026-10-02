@@ -15,6 +15,12 @@ Saves are **private to Skyreader** by default. Nothing is published.
 
 Tap a link in an article to see where it goes before you leave. From there you can open it, copy it, save it to Skyreader, or add it to a [Semble](https://semble.so) or [Margin](https://margin.at) collection. Semble and Margin collections are public.
 
+### Filing into Semble and Margin collections
+
+The collections you use most sit at the top of the picker. Star a collection to keep it there; the ones you used most recently join it. To find any other collection, type part of its name. Press Enter to add the top match, and ⌘ Enter (Ctrl Enter on Windows and Linux) to save.
+
+If the article is already in Semble or Margin, the picker opens on the collections it's in, so you can move it rather than save it twice.
+
 ### When a site won't let Skyreader read it
 
 Some sites refuse automated readers, so Skyreader's servers can't fetch the article even though it opens fine in your browser. The save still goes through: you get the link (and its title, when Skyreader knows it) with a note in place of the text. To get the full text, open the article and save it with the [Chrome](https://chromewebstore.google.com/detail/skyreader/kdefpnnpmajcclfepekgdkcdiklfooed) or [Firefox](https://addons.mozilla.org/firefox/addon/skyreader/) extension, which reads the page you already have open. That replaces the note.

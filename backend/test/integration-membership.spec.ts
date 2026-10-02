@@ -152,6 +152,83 @@ describe('findMemberships — Semble', () => {
     expect(res.data.truncated).toBe(true);
   });
 
+  it('fills in past a capped scan from the backlink index, verified against the repo', async () => {
+    // The scan hit its cap and never saw c-old; the index names it (plus a stale
+    // rkey and a card for another URL, neither of which may count).
+    const oldCard = card('c-old', URL_A, '2024-01-01T00:00:00.000Z');
+    const otherCard = card('c-other', 'https://example.test/elsewhere');
+    const oldLink = link('l-old', 'c-old', COL_B);
+    const repo: Record<string, ReturnType<typeof card> | ReturnType<typeof link>> = {
+      'c-old': oldCard,
+      'c-other': otherCard,
+      'l-old': oldLink,
+    };
+    const pds = fakeClient(
+      {
+        [CARD]: [card('c1', URL_A, '2026-05-01T00:00:00.000Z')],
+        [LINK]: [link('l1', 'c1', COL_A)],
+      },
+      {
+        getRecord: vi.fn(async (_collection: string, rkey: string) =>
+          repo[rkey]
+            ? { success: true, data: repo[rkey] }
+            : { success: false, error: 'RecordNotFound: Could not locate record' }
+        ),
+      },
+      [CARD, LINK]
+    );
+    const index = {
+      backlinks: vi.fn(async (subject: string, source: string, did: string) => {
+        expect(did).toBe(DID);
+        if (source === `${LINK}:card.uri`) {
+          return {
+            rkeys: subject.endsWith('/c-old') ? ['l-old'] : ['l1'],
+            complete: true,
+          };
+        }
+        return { rkeys: ['c1', 'c-old', 'c-gone', 'c-other'], complete: true };
+      }),
+    };
+
+    const res = await findMemberships(pds, 'semble', URL_A, { did: DID, index });
+    if (!res.success) throw new Error('expected success');
+    expect(res.data.items.map((i) => i.rkey)).toEqual(['c1', 'c-old']);
+    expect(res.data.memberships.map((m) => m.collectionUri).sort()).toEqual([COL_A, COL_B]);
+    // The URL index can't see saves spelled differently (utm params, fragment…),
+    // so a capped card scan stays truncated even when the index says complete.
+    expect(res.data.truncated).toBe(true);
+    // The index only ever points: c1 and l1 came from the scan and aren't re-read.
+    const reread = (pds.getRecord as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[1]);
+    expect(reread.sort()).toEqual(['c-gone', 'c-old', 'c-other', 'l-old']);
+  });
+
+  it('clears truncation when only the link scan capped and the index is complete', async () => {
+    const pds = fakeClient({ [CARD]: [card('c1', URL_A)], [LINK]: [link('l1', 'c1', COL_A)] }, {}, [
+      LINK,
+    ]);
+    const index = { backlinks: vi.fn(async () => ({ rkeys: ['l1'], complete: true })) };
+    const res = await findMemberships(pds, 'semble', URL_A, { did: DID, index });
+    if (!res.success) throw new Error('expected success');
+    expect(res.data.memberships.map((m) => m.collectionUri)).toEqual([COL_A]);
+    expect(res.data.truncated).toBe(false);
+  });
+
+  it('stays truncated when the index cannot give a complete answer', async () => {
+    const pds = fakeClient({ [CARD]: [] }, {}, [CARD]);
+    const index = { backlinks: vi.fn(async () => ({ rkeys: [], complete: false })) };
+    const res = await findMemberships(pds, 'semble', URL_A, { did: DID, index });
+    if (!res.success) throw new Error('expected success');
+    expect(res.data.truncated).toBe(true);
+  });
+
+  it('does not consult the index when the scan was complete', async () => {
+    const index = { backlinks: vi.fn() };
+    const pds = fakeClient({ [CARD]: [card('c1', URL_A)], [LINK]: [] });
+    const res = await findMemberships(pds, 'semble', URL_A, { did: DID, index });
+    if (!res.success) throw new Error('expected success');
+    expect(index.backlinks).not.toHaveBeenCalled();
+  });
+
   it('rejects a URL that cannot be normalized', async () => {
     const res = await findMemberships(fakeClient({}), 'semble', 'not-a-url');
     expect(res).toEqual({ success: false, error: expect.stringContaining('url') });

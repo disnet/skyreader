@@ -8,6 +8,8 @@
     title?: string;
     maxWidth?: string;
     zIndex?: number;
+    /** Override the body's padding (a compact header may want the body tucked up). */
+    bodyPadding?: string;
     children: Snippet;
     header?: Snippet;
     footer?: Snippet;
@@ -19,6 +21,7 @@
     title,
     maxWidth = '480px',
     zIndex = 100,
+    bodyPadding,
     children,
     header,
     footer,
@@ -96,6 +99,7 @@
     tabindex="-1"
     style:--modal-max-width={maxWidth}
     style:--modal-z-index={zIndex}
+    style:--modal-body-padding={bodyPadding}
   >
     <div class="modal">
       {#if header}
@@ -171,7 +175,7 @@
   }
 
   .modal-body {
-    padding: 1.5rem;
+    padding: var(--modal-body-padding, 1.5rem);
     overflow-y: auto;
     flex: 1;
   }

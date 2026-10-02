@@ -308,6 +308,11 @@ export async function handleListSembleCards(request: Request, env: Env): Promise
   });
 }
 
+// The picker lists every collection a reader has, and a heavy Semble/Margin user
+// can have hundreds. 20 pages x 100 is well past any real catalog; `truncated`
+// lets the picker say so instead of silently hiding the tail.
+const COLLECTION_LIST_PAGES = 20;
+
 /**
  * GET /api/integrations/semble/collections — list user's network.cosmik.collection records
  */
@@ -328,7 +333,7 @@ export async function handleListSembleCollections(request: Request, env: Env): P
     name?: string;
     description?: string;
     createdAt?: string;
-  }>('network.cosmik.collection', { maxPages: 5 });
+  }>('network.cosmik.collection', { maxPages: COLLECTION_LIST_PAGES });
 
   if (!result.success) {
     return new Response(JSON.stringify({ error: result.error }), {
@@ -345,7 +350,7 @@ export async function handleListSembleCollections(request: Request, env: Env): P
     createdAt: r.value.createdAt,
   }));
 
-  return new Response(JSON.stringify({ collections }), {
+  return new Response(JSON.stringify({ collections, truncated: result.truncated ?? false }), {
     headers: { 'Content-Type': 'application/json' },
   });
 }
@@ -528,7 +533,7 @@ export async function handleGetIntegrationMemberships(
   }
 
   const pdsClient = createPDSClient(session);
-  const result = await findMemberships(pdsClient, provider, url);
+  const result = await findMemberships(pdsClient, provider, url, { did: session.did });
   if (!result.success) {
     return new Response(JSON.stringify({ error: result.error }), {
       status: 502,
@@ -1007,7 +1012,7 @@ export async function handleListMarginCollections(request: Request, env: Env): P
     name?: string;
     description?: string;
     createdAt?: string;
-  }>('at.margin.collection', { maxPages: 5 });
+  }>('at.margin.collection', { maxPages: COLLECTION_LIST_PAGES });
 
   if (!result.success) {
     return new Response(JSON.stringify({ error: result.error }), {
@@ -1024,7 +1029,7 @@ export async function handleListMarginCollections(request: Request, env: Env): P
     createdAt: r.value.createdAt,
   }));
 
-  return new Response(JSON.stringify({ collections }), {
+  return new Response(JSON.stringify({ collections, truncated: result.truncated ?? false }), {
     headers: { 'Content-Type': 'application/json' },
   });
 }

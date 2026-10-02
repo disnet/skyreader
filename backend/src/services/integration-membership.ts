@@ -12,6 +12,19 @@
  * normalizeArticleUrl, then list membership records pointing at those items. That
  * mirrors `backing/read.ts`'s snapshot, scoped to one URL and to the user's own repo.
  *
+ * The repo listings are page-capped, and a long-time Semble/Margin user has more
+ * cards than the cap — so on its own the scan would tell them "couldn't check all
+ * older saves" on nearly every open. When a listing stops on the cap, the rest is
+ * answered by a backlink index (Constellation) queried by URL and by item, filtered
+ * to the user's DID. The two halves cover each other's blind spots: the scan reads
+ * newest-first, so it holds exactly the recent records the index may not have
+ * caught up on yet, and the index reaches the old tail the scan never gets to.
+ * The index is only ever a pointer: every record it names is re-read from the
+ * user's own PDS and re-checked before it counts. A complete index answer clears
+ * the membership side's truncation (it's queried by exact item at-uri), but never
+ * the item side's: by URL it can only match the spellings we ask for, not every
+ * variant normalizeArticleUrl treats as the same article.
+ *
  * Record shapes (identical to the ones routes/integrations.ts and backing/write.ts
  * write):
  *  - Semble: network.cosmik.card + network.cosmik.collectionLink (nested strongRefs
@@ -74,6 +87,86 @@ export interface MembershipLookup {
 // collection listings already use; `truncated` tells the client when it bit.
 const MAX_PAGES = 5;
 
+/**
+ * "Which records in `did`'s repo point at `subject` through `source`?" — the one
+ * question the capped scans can't afford to answer by listing. `source` is
+ * Constellation's `collection:path` form. `complete` is false when the answer may
+ * be short (the index failed, timed out, or had more pages than we walk).
+ */
+export interface BacklinkIndex {
+  backlinks(
+    subject: string,
+    source: string,
+    did: string
+  ): Promise<{ rkeys: string[]; complete: boolean }>;
+}
+
+const CONSTELLATION_BACKLINKS =
+  'https://constellation.microcosm.blue/xrpc/blue.microcosm.links.getBacklinks';
+/** A URL one person saved more than 300 times is not a case worth paging for. */
+const INDEX_PAGES = 3;
+const INDEX_TIMEOUT_MS = 4000;
+
+export const constellationIndex: BacklinkIndex = {
+  async backlinks(subject, source, did) {
+    const collection = source.split(':')[0];
+    const rkeys: string[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < INDEX_PAGES; page++) {
+      const u = new URL(CONSTELLATION_BACKLINKS);
+      u.searchParams.set('subject', subject);
+      u.searchParams.set('source', source);
+      u.searchParams.set('did', did);
+      u.searchParams.set('limit', '100');
+      if (cursor) u.searchParams.set('cursor', cursor);
+      let data: {
+        records?: Array<{ did?: string; collection?: string; rkey?: string }>;
+        cursor?: string | null;
+      };
+      try {
+        const res = await fetch(u.toString(), { signal: AbortSignal.timeout(INDEX_TIMEOUT_MS) });
+        if (!res.ok) throw new Error(`constellation getBacklinks -> ${res.status}`);
+        data = (await res.json()) as typeof data;
+      } catch (err) {
+        console.error('[memberships] backlink index lookup failed:', err);
+        return { rkeys, complete: false };
+      }
+      for (const r of data.records ?? []) {
+        // The did filter is the index's; re-check it anyway — a record from another
+        // repo must never be read back as one of ours.
+        if (r.did === did && r.collection === collection && r.rkey) rkeys.push(r.rkey);
+      }
+      cursor = data.cursor ?? undefined;
+      if (!cursor || (data.records ?? []).length === 0) return { rkeys, complete: true };
+    }
+    return { rkeys, complete: false };
+  },
+};
+
+/** Where each provider's item records keep the URL, as index sources. */
+function itemSources(provider: IntegrationProvider): string[] {
+  return provider === 'semble'
+    ? [`${SEMBLE_CARD}:content.url`, `${SEMBLE_CARD}:url`]
+    : [`${MARGIN_NOTE}:target.source`];
+}
+
+/** Where each provider's membership records point at their item. */
+function membershipSource(provider: IntegrationProvider): string {
+  return provider === 'semble' ? `${SEMBLE_LINK}:card.uri` : `${MARGIN_ITEM}:annotation`;
+}
+
+/**
+ * The index matches the exact string a record holds, not our normalized form, so
+ * ask for the spellings a save of this URL most plausibly carries: as given, as
+ * normalized, and the normalized form with its trailing slash back.
+ */
+function urlSpellings(url: string, normalized: string): string[] {
+  const spellings = new Set([url.trim(), normalized]);
+  const parsed = new URL(normalized);
+  if (parsed.pathname.length > 1 && !parsed.search) spellings.add(`${normalized}/`);
+  return [...spellings];
+}
+
 /** A delete that 404s is a success: the link is gone, which is what was asked. */
 function isRecordNotFound(error: string): boolean {
   return /recordnotfound|could not locate record/i.test(error);
@@ -98,10 +191,13 @@ function byNewest(a: MembershipItem, b: MembershipItem): number {
 export async function findMemberships(
   pds: PDSClient,
   provider: IntegrationProvider,
-  url: string
+  url: string,
+  options: { did?: string; index?: BacklinkIndex } = {}
 ): Promise<{ success: true; data: MembershipLookup } | { success: false; error: string }> {
   const target = normalizeArticleUrl(url);
   if (!target) return { success: false, error: 'url is not a usable http(s) URL' };
+  const { did } = options;
+  const index = options.index ?? constellationIndex;
 
   const itemsRes = await pds.listAllRecords<{ motivation?: string; createdAt?: string }>(
     itemCollection(provider),
@@ -111,62 +207,165 @@ export async function findMemberships(
 
   const items: MembershipItem[] = [];
   for (const rec of itemsRes.data) {
-    // Margin uses one lexicon for bookmarks AND highlights; only `motivation`
-    // separates them, and a highlight on the same article must not read as a save.
-    if (provider === 'margin' && rec.value.motivation !== 'bookmarking') continue;
-    // listRecords only returns this collection, so stamping $type is safe and lets
-    // extractUrlFromRecord pick the right URL field for the shape.
-    const recordUrl = extractUrlFromRecord({ ...rec.value, $type: itemCollection(provider) });
-    if (!recordUrl || normalizeArticleUrl(recordUrl) !== target) continue;
-    items.push({
-      uri: rec.uri,
-      cid: rec.cid,
-      rkey: rkeyOf(rec.uri),
-      createdAt: typeof rec.value.createdAt === 'string' ? rec.value.createdAt : undefined,
-    });
+    const item = matchItem(provider, target, rec);
+    if (item) items.push(item);
+  }
+
+  // The scan stopped on its cap: the index fills in what it can past it. It only
+  // matches exact strings, and we can ask it for a few spellings of the URL but
+  // not every one normalizeArticleUrl folds together (tracking params, fragment,
+  // host case, param order), so its answer never proves no older save exists —
+  // the items side stays truncated.
+  const itemsTruncated = itemsRes.truncated === true;
+  if (itemsTruncated && did) {
+    items.push(...(await itemsFromIndex(pds, provider, did, url, target, items, index)));
   }
   items.sort(byNewest);
-
-  let truncated = itemsRes.truncated === true;
 
   // No item for this URL means no membership can point at one — skip the second
   // listing entirely (the common "never saved" case costs one round trip).
   if (items.length === 0) {
-    return { success: true, data: { items, memberships: [], truncated } };
+    return { success: true, data: { items, memberships: [], truncated: itemsTruncated } };
   }
 
   const itemUris = new Set(items.map((i) => i.uri));
   const memberships: Membership[] = [];
 
-  if (provider === 'semble') {
-    const links = await pds.listAllRecords<{
-      card?: { uri?: string };
-      collection?: { uri?: string };
-    }>(SEMBLE_LINK, { maxPages: MAX_PAGES });
-    if (!links.success) return { success: false, error: links.error };
-    truncated = truncated || links.truncated === true;
-    for (const link of links.data) {
-      const cardUri = link.value.card?.uri;
-      const collectionUri = link.value.collection?.uri;
-      if (!cardUri || !collectionUri || !itemUris.has(cardUri)) continue;
-      memberships.push({ collectionUri, linkUri: link.uri, itemUri: cardUri });
-    }
-  } else {
-    const links = await pds.listAllRecords<{ annotation?: string; collection?: string }>(
-      MARGIN_ITEM,
-      { maxPages: MAX_PAGES }
-    );
-    if (!links.success) return { success: false, error: links.error };
-    truncated = truncated || links.truncated === true;
-    for (const link of links.data) {
-      const noteUri = link.value.annotation;
-      const collectionUri = link.value.collection;
-      if (!noteUri || !collectionUri || !itemUris.has(noteUri)) continue;
-      memberships.push({ collectionUri, linkUri: link.uri, itemUri: noteUri });
-    }
+  const links = await pds.listAllRecords<Record<string, unknown>>(membershipCollection(provider), {
+    maxPages: MAX_PAGES,
+  });
+  if (!links.success) return { success: false, error: links.error };
+  for (const link of links.data) {
+    const m = matchMembership(provider, itemUris, link.uri, link.value);
+    if (m) memberships.push(m);
   }
 
-  return { success: true, data: { items, memberships, truncated } };
+  let linksTruncated = links.truncated === true;
+  if (linksTruncated && did) {
+    const found = await membershipsFromIndex(pds, provider, did, items, memberships, index);
+    memberships.push(...found.memberships);
+    if (found.complete) linksTruncated = false;
+  }
+
+  return {
+    success: true,
+    data: { items, memberships, truncated: itemsTruncated || linksTruncated },
+  };
+}
+
+type ListedRecord = { uri: string; cid: string; value: Record<string, unknown> };
+
+/** An item record, if it is a save of `target` (the normalized URL). */
+function matchItem(
+  provider: IntegrationProvider,
+  target: string,
+  rec: { uri: string; cid: string; value: unknown }
+): MembershipItem | null {
+  const value = (rec.value ?? {}) as { motivation?: string; createdAt?: unknown };
+  // Margin uses one lexicon for bookmarks AND highlights; only `motivation`
+  // separates them, and a highlight on the same article must not read as a save.
+  if (provider === 'margin' && value.motivation !== 'bookmarking') return null;
+  // listRecords only returns this collection, so stamping $type is safe and lets
+  // extractUrlFromRecord pick the right URL field for the shape.
+  const recordUrl = extractUrlFromRecord({ ...value, $type: itemCollection(provider) });
+  if (!recordUrl || normalizeArticleUrl(recordUrl) !== target) return null;
+  return {
+    uri: rec.uri,
+    cid: rec.cid,
+    rkey: rkeyOf(rec.uri),
+    createdAt: typeof value.createdAt === 'string' ? value.createdAt : undefined,
+  };
+}
+
+/** A membership record, if it links one of `itemUris` into a collection. */
+function matchMembership(
+  provider: IntegrationProvider,
+  itemUris: ReadonlySet<string>,
+  linkUri: string,
+  value: Record<string, unknown>
+): Membership | null {
+  let itemUri: string | undefined;
+  let collectionUri: string | undefined;
+  if (provider === 'semble') {
+    itemUri = (value.card as { uri?: string } | undefined)?.uri;
+    collectionUri = (value.collection as { uri?: string } | undefined)?.uri;
+  } else {
+    itemUri = typeof value.annotation === 'string' ? value.annotation : undefined;
+    collectionUri = typeof value.collection === 'string' ? value.collection : undefined;
+  }
+  if (!itemUri || !collectionUri || !itemUris.has(itemUri)) return null;
+  return { collectionUri, linkUri, itemUri };
+}
+
+/**
+ * Read one record the index named back from the user's own repo. `null` = it's
+ * gone (the index was stale, which is fine); `undefined` = couldn't tell.
+ */
+async function readBack(
+  pds: PDSClient,
+  collection: string,
+  rkey: string
+): Promise<ListedRecord | null | undefined> {
+  const res = await pds.getRecord<Record<string, unknown>>(collection, rkey);
+  if (res.success) return res.data;
+  return isRecordNotFound(res.error) ? null : undefined;
+}
+
+async function itemsFromIndex(
+  pds: PDSClient,
+  provider: IntegrationProvider,
+  did: string,
+  url: string,
+  target: string,
+  known: MembershipItem[],
+  index: BacklinkIndex
+): Promise<MembershipItem[]> {
+  const lookups = urlSpellings(url, target).flatMap((subject) =>
+    itemSources(provider).map((source) => index.backlinks(subject, source, did))
+  );
+  const answers = await Promise.all(lookups);
+
+  const seen = new Set(known.map((i) => i.rkey));
+  const rkeys = [...new Set(answers.flatMap((a) => a.rkeys))].filter((r) => !seen.has(r));
+  const items: MembershipItem[] = [];
+  await Promise.all(
+    rkeys.map(async (rkey) => {
+      const rec = await readBack(pds, itemCollection(provider), rkey);
+      if (!rec) return;
+      const item = matchItem(provider, target, rec);
+      if (item) items.push(item);
+    })
+  );
+  return items;
+}
+
+async function membershipsFromIndex(
+  pds: PDSClient,
+  provider: IntegrationProvider,
+  did: string,
+  items: MembershipItem[],
+  known: Membership[],
+  index: BacklinkIndex
+): Promise<{ memberships: Membership[]; complete: boolean }> {
+  const answers = await Promise.all(
+    items.map((item) => index.backlinks(item.uri, membershipSource(provider), did))
+  );
+  let complete = answers.every((a) => a.complete);
+
+  const seen = new Set(known.map((m) => rkeyOf(m.linkUri)));
+  const rkeys = [...new Set(answers.flatMap((a) => a.rkeys))].filter((r) => !seen.has(r));
+  const itemUris = new Set(items.map((i) => i.uri));
+  const memberships: Membership[] = [];
+  await Promise.all(
+    rkeys.map(async (rkey) => {
+      const rec = await readBack(pds, membershipCollection(provider), rkey);
+      if (rec === undefined) complete = false;
+      if (!rec) return;
+      const m = matchMembership(provider, itemUris, rec.uri, rec.value);
+      if (m) memberships.push(m);
+    })
+  );
+  return { memberships, complete };
 }
 
 export interface MembershipEditInput {
@@ -282,7 +481,7 @@ export async function editMemberships(
   // NSID validation alone is insufficient: otherwise a caller could name a link
   // belonging to another article in their own repo. Do this once, before any
   // writes, and reuse the same snapshot for duplicate-add protection below.
-  const lookup = await findMemberships(pds, provider, input.url);
+  const lookup = await findMemberships(pds, provider, input.url, { did });
   if (!lookup.success) throw new MembershipEditError(lookup.error, 502);
   const allowedRemovals = new Set(lookup.data.memberships.map((m) => m.linkUri));
   const alreadyRemoved = new Set<string>();
