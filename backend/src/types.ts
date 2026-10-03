@@ -42,6 +42,8 @@ export interface OAuthState {
   returnUrl?: string;
   frontendUrl: string;
   cliPort?: number;
+  // Native app sign-in: base64url SHA-256 challenge (routes/native-auth.ts).
+  nativeChallenge?: string;
   // The scope string this authorization requested.
   scope?: string;
   // Set by a permission upgrade: the session the new one replaces.
