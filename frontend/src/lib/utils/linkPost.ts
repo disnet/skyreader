@@ -132,6 +132,8 @@ export function getLinkPostNote(doc: SocialDocument): string | undefined {
   if (isLeafletContent(doc.content)) {
     const content = doc.content as LeafletContent;
     for (const page of content.pages ?? []) {
+      // A link post is written as a linear document; a canvas holds no note.
+      if (page.$type === 'pub.leaflet.pages.canvas') continue;
       const note = reconstructLinkPostNote(page.blocks ?? [], {
         hasAttribution: doc.skyreaderAttribution,
       }).note;
@@ -311,6 +313,7 @@ export function getLinkPostNoteMentions(doc: SocialDocument): MentionFacet[] {
   if (!doc.content || !isLeafletContent(doc.content)) return [];
   const content = doc.content as LeafletContent;
   for (const page of content.pages ?? []) {
+    if (page.$type === 'pub.leaflet.pages.canvas') continue;
     const result = reconstructLinkPostNote(page.blocks ?? [], {
       hasAttribution: doc.skyreaderAttribution,
     });

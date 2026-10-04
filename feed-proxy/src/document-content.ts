@@ -85,8 +85,13 @@ function firstTextInBlocks(blocks: unknown, depth: number, quotes: 'skip' | 'tak
       const text = block.plaintext?.trim();
       if (text && !isAttributionText(text)) return text;
     }
-    // Descend into container blocks (blockquote / list item / table cell).
-    const nested = firstTextInBlocks(block.content, depth + 1, quotes);
+    // Descend into container blocks (blockquote / list item / table cell), and into a
+    // linear document placed whole on a Leaflet canvas, which lists its own `blocks`.
+    const children =
+      block.$type === 'pub.leaflet.pages.linearDocument'
+        ? (block as { blocks?: unknown }).blocks
+        : block.content;
+    const nested = firstTextInBlocks(children, depth + 1, quotes);
     if (nested) return nested;
   }
   return null;

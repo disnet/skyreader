@@ -90,9 +90,10 @@ function truncateLeafletPages(
   for (const page of pages) {
     const blocks = (page as { blocks?: unknown }).blocks;
     if (!Array.isArray(blocks)) {
-      // A page with no block list (`pub.leaflet.pages.canvas`) can't be cut in half,
-      // so it is kept whole or not at all. Skipping it outright is how the earlier
-      // version turned a canvas page into a silent stop signal for everything after it.
+      // A page with no block list (malformed, or a page type we don't know) can't be
+      // cut in half, so it is kept whole or not at all. Skipping it outright is how an
+      // earlier version turned such a page into a silent stop signal for everything
+      // after it.
       const cost = jsonBytes(page) + 1;
       if (cost > remaining) break;
       remaining -= cost;
