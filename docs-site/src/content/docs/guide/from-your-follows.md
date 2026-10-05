@@ -37,6 +37,10 @@ When people you follow share an article that's already in your feeds, you see it
 
 Open any article, from a feed, your saves, or anywhere else, and if people you follow shared it, they lead its **Discussion**, marked **You follow**, with what they said. **People you follow** narrows the discussion to just them.
 
+## Every link, or the most shared
+
+By default you get the week's most-shared links, up to 60. If you follow a lot of people, links only one person shared can get crowded out. To see every link, newest first, go to **Manage Sources** and check **Show every link, not just the most shared** under **Links from people you follow**. **Home** still shows the most shared either way.
+
 ## Everything and other channels
 
 Your follows' links show in **Everything** only if you said yes to that. Change it any time with **Links from people you follow** in Everything's **Sources** filter, or **Show them in Everything too** on **Manage Sources**. They never add to your unread counts.

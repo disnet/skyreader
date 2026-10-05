@@ -32,6 +32,7 @@ function createFollowLinksStore() {
   let loading = $state(false);
   let scopeRequired = $state(false);
   let inEverything = $state<boolean | null>(null);
+  let allLinks = $state(false);
   let complete = $state(false);
   let refreshing = $state(false);
   let error = $state<string | null>(null);
@@ -69,6 +70,7 @@ function createFollowLinksStore() {
 
     scopeRequired = res.scopeRequired;
     inEverything = res.inEverything ?? null;
+    allLinks = res.allLinks ?? false;
     links = res.links;
     loaded = true;
     complete = res.sync?.complete ?? false;
@@ -105,6 +107,7 @@ function createFollowLinksStore() {
       loaded = false;
       scopeRequired = false;
       inEverything = null;
+      allLinks = false;
       complete = false;
       refreshing = false;
       error = null;
@@ -145,11 +148,25 @@ function createFollowLinksStore() {
     const prior = inEverything;
     inEverything = on;
     try {
-      await api.setFollowLinksInEverything(on);
+      await api.setFollowLinksSettings({ inEverything: on });
     } catch (err) {
       inEverything = prior;
       throw err;
     }
+  }
+
+  /** Every link your follows shared, newest first, or (the default) the week's
+   *  most shared. Saved for the account; the list is asked for again at once. */
+  async function setAllLinks(on: boolean): Promise<void> {
+    const prior = allLinks;
+    allLinks = on;
+    try {
+      await api.setFollowLinksSettings({ allLinks: on });
+    } catch (err) {
+      allLinks = prior;
+      throw err;
+    }
+    await load(true);
   }
 
   /** The link your follows shared at this URL, if any, in whatever form. */
@@ -177,6 +194,10 @@ function createFollowLinksStore() {
     get inEverything() {
       return inEverything;
     },
+    /** Every link, newest first, rather than the week's most shared. */
+    get allLinks() {
+      return allLinks;
+    },
     /** A first refresh is still walking the timeline. */
     get gathering() {
       return !scopeRequired && !complete && (refreshing || loading);
@@ -192,6 +213,7 @@ function createFollowLinksStore() {
     },
     load,
     setInEverything,
+    setAllLinks,
     forUrl,
   };
 }

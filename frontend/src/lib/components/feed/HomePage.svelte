@@ -423,12 +423,16 @@
   let followLinkByKey = $derived(
     new Map(followLinksStore.links.map((l) => [followLinkReadKey(l), l]))
   );
-  // Unread before read, the server's ranking kept within each: the week's
-  // most-shared links barely change hour to hour, so without this the lane
-  // held the same links you'd already read while new ones waited below the cap.
+  // Unread before read, most shared first within each: the week's most-shared
+  // links barely change hour to hour, so without this the lane held the same
+  // links you'd already read while new ones waited below the cap. Ranked here
+  // rather than trusting the server's order, which is newest first for a reader
+  // who asked for every link; the lane stays "most shared" either way.
   let followItems = $derived.by((): LaneCardVM[] => {
     if (followLinksStore.scopeRequired) return [];
-    const links = followLinksStore.links;
+    const links = [...followLinksStore.links].sort(
+      (a, b) => b.sharerCount - a.sharerCount || b.lastSharedAt - a.lastSharedAt
+    );
     const unread = links.filter((l) => !itemLabelsStore.isRead(followLinkReadKey(l)));
     const read = links.filter((l) => itemLabelsStore.isRead(followLinkReadKey(l)));
     return [...unread, ...read].slice(0, FOLLOW_LANE_CAP).map((l) => ({

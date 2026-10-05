@@ -1909,11 +1909,15 @@ class ApiClient {
     return this.fetch(`/api/v2/following-links?window=${window}`);
   }
 
-  /** Whether follows links show in Everything. No permission needed. */
-  async setFollowLinksInEverything(inEverything: boolean): Promise<{ ok: boolean }> {
+  /** Whether follows links show in Everything, and whether every link comes back
+   *  or just the most shared. Either or both. No permission needed. */
+  async setFollowLinksSettings(settings: {
+    inEverything?: boolean;
+    allLinks?: boolean;
+  }): Promise<{ ok: boolean }> {
     return this.fetch('/api/v2/following-links/settings', {
       method: 'POST',
-      body: JSON.stringify({ inEverything }),
+      body: JSON.stringify(settings),
     });
   }
 

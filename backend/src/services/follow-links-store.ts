@@ -45,6 +45,11 @@ export const LIKES_STALE_MS = 60 * 60 * 1000;
 const SERVE_ROW_LIMIT = 3000;
 /** Articles served per request. The list ends; that is part of the calm. */
 export const SERVE_LINK_LIMIT = 60;
+/**
+ * Articles served when the reader asked for every link, not just the most
+ * shared. Newest first, so this only trims the far end of a very heavy week.
+ */
+export const SERVE_ALL_LINK_LIMIT = 500;
 
 /**
  * Stored as `last_error` when the PDS refused getTimeline for want of scope,
@@ -89,24 +94,40 @@ export interface FollowLinksSync {
   error: string | null;
 }
 
-/** Whether the reader wants follows links in Everything; null = never asked. */
-export async function readFollowLinksInEverything(env: Env, did: string): Promise<boolean | null> {
-  const row = await env.DB.prepare('SELECT in_everything FROM follow_link_sync WHERE user_did = ?')
-    .bind(did)
-    .first<{ in_everything: number | null }>();
-  return row?.in_everything == null ? null : row.in_everything === 1;
+export interface FollowLinksSettings {
+  /** Whether follows links show in Everything; null = never asked. */
+  inEverything: boolean | null;
+  /** Every link, newest first, instead of the week's most-shared. */
+  allLinks: boolean;
 }
 
-export async function setFollowLinksInEverything(
+export async function readFollowLinksSettings(env: Env, did: string): Promise<FollowLinksSettings> {
+  const row = await env.DB.prepare(
+    'SELECT in_everything, all_links FROM follow_link_sync WHERE user_did = ?'
+  )
+    .bind(did)
+    .first<{ in_everything: number | null; all_links: number | null }>();
+  return {
+    inEverything: row?.in_everything == null ? null : row.in_everything === 1,
+    allLinks: row?.all_links === 1,
+  };
+}
+
+/** Saves whichever settings are given; the others keep their value. */
+export async function setFollowLinksSettings(
   env: Env,
   did: string,
-  on: boolean
+  settings: { inEverything?: boolean; allLinks?: boolean }
 ): Promise<void> {
+  const inEverything = settings.inEverything === undefined ? null : settings.inEverything ? 1 : 0;
+  const allLinks = settings.allLinks === undefined ? null : settings.allLinks ? 1 : 0;
   await env.DB.prepare(
-    `INSERT INTO follow_link_sync (user_did, in_everything) VALUES (?1, ?2)
-     ON CONFLICT(user_did) DO UPDATE SET in_everything = excluded.in_everything`
+    `INSERT INTO follow_link_sync (user_did, in_everything, all_links) VALUES (?1, ?2, ?3)
+     ON CONFLICT(user_did) DO UPDATE SET
+       in_everything = COALESCE(?2, in_everything),
+       all_links = COALESCE(?3, all_links)`
   )
-    .bind(did, on ? 1 : 0)
+    .bind(did, inEverything, allLinks)
     .run();
 }
 
@@ -507,13 +528,18 @@ function hostOf(url: string): string {
 
 /**
  * Group rows (newest first) into one entry per article, ranked by how many
- * distinct people shared it, then by the latest share. Pure, for testing.
+ * distinct people shared it, then by the latest share; or, with `byRecency`, by
+ * first share, newest first, the order the river shows them in. Pure, for testing.
  *
  * Each sharer appears once per article, at their latest share of it. The card
  * is the freshest share that has one, since a bare-facet share has none and
  * another follow's post of the same link usually does.
  */
-export function groupFollowLinks(rows: ShareRow[], limit = SERVE_LINK_LIMIT): FollowLink[] {
+export function groupFollowLinks(
+  rows: ShareRow[],
+  limit = SERVE_LINK_LIMIT,
+  byRecency = false
+): FollowLink[] {
   const byUrl = new Map<string, { rows: ShareRow[]; sharers: Map<string, ShareRow> }>();
   for (const row of rows) {
     let group = byUrl.get(row.url_normalized);
@@ -557,7 +583,11 @@ export function groupFollowLinks(rows: ShareRow[], limit = SERVE_LINK_LIMIT): Fo
     });
   }
 
-  links.sort((a, b) => b.sharerCount - a.sharerCount || b.lastSharedAt - a.lastSharedAt);
+  links.sort(
+    byRecency
+      ? (a, b) => b.firstSharedAt - a.firstSharedAt
+      : (a, b) => b.sharerCount - a.sharerCount || b.lastSharedAt - a.lastSharedAt
+  );
   return links.slice(0, limit);
 }
 
@@ -565,7 +595,8 @@ export async function readFollowLinks(
   env: Env,
   did: string,
   window: FollowLinksWindow,
-  now = Date.now()
+  now = Date.now(),
+  allLinks = false
 ): Promise<FollowLink[]> {
   const since = now - FOLLOW_LINKS_WINDOWS[window];
   const rows = await env.DB.prepare(
@@ -578,7 +609,9 @@ export async function readFollowLinks(
   )
     .bind(did, since, SERVE_ROW_LIMIT)
     .all<ShareRow>();
-  return groupFollowLinks(rows.results);
+  return allLinks
+    ? groupFollowLinks(rows.results, SERVE_ALL_LINK_LIMIT, true)
+    : groupFollowLinks(rows.results);
 }
 
 /**

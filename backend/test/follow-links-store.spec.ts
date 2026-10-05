@@ -15,6 +15,7 @@ import {
   LIKES_STALE_MS,
   MAX_SHARES_PER_REFRESH,
   REFRESH_MAX_PAGES,
+  SERVE_LINK_LIMIT,
   groupFollowLinks,
   purgeFollowLinks,
   readFollowLinks,
@@ -547,6 +548,21 @@ describe('follow links store', () => {
       ).toBe(300);
     });
 
+    it('orders by first share, newest first, when asked for every link', () => {
+      const rows = [
+        row({ url: 'https://solo.example/new', sharer: 'did:a', at: 900 }),
+        // A late reshare doesn't lift an older link: it's dated by its first share.
+        row({ url: 'https://pair.example', sharer: 'did:a', at: 800 }),
+        row({ url: 'https://pair.example', sharer: 'did:b', at: 100 }),
+        row({ url: 'https://solo.example/old', sharer: 'did:d', at: 500 }),
+      ];
+      const links = groupFollowLinks(rows, 2, true);
+      expect(links.map((l: FollowLink) => [l.urlNormalized, l.sharerCount])).toEqual([
+        ['https://solo.example/new', 1],
+        ['https://solo.example/old', 1],
+      ]);
+    });
+
     it('borrows the card from another sharer when the freshest share was a bare link', () => {
       const [link] = groupFollowLinks([
         row({ url: 'https://a.example', sharer: 'did:a', at: 900 }),
@@ -670,6 +686,67 @@ describe('follow links store', () => {
         body: { inEverything: 'yes' },
       });
       expect(bad.status).toBe(400);
+    });
+
+    it('serves every link, newest first, once the reader asks for them all', async () => {
+      await seedSession(SCOPES);
+      stubTimeline({ '': { feed: [] } });
+      // A fresh sync row, so the read serves from D1 without walking the timeline.
+      await env.DB.prepare(
+        'INSERT INTO follow_link_sync (user_did, last_poll_at, complete) VALUES (?, ?, 1)'
+      )
+        .bind(DID, Date.now())
+        .run();
+      const now = Date.now();
+      const insert = (url: string, sharer: string, at: number) =>
+        env.DB.prepare(
+          `INSERT INTO follow_link_shares
+             (user_did, post_uri, sharer_did, kind, url, url_normalized, shared_at)
+           VALUES (?, ?, ?, 'post', ?, ?, ?)`
+        )
+          .bind(DID, `at://${sharer}/p/${url}`, sharer, url, url, at)
+          .run();
+      // One link two follows shared, then more shared once than the default cap holds.
+      await insert('https://pair.example/', 'did:a', now - 5000);
+      await insert('https://pair.example/', 'did:b', now - 5000);
+      for (let i = 0; i < SERVE_LINK_LIMIT; i++) {
+        await insert(`https://solo.example/${i}`, 'did:c', now - 1000 - i);
+      }
+      const read = async () =>
+        (await (await send('/api/v2/following-links?window=7d')).json()) as {
+          allLinks: boolean;
+          links: FollowLink[];
+        };
+
+      // Default: most shared first, capped, so the oldest solo share is crowded out.
+      let res = await read();
+      expect(res.allLinks).toBe(false);
+      expect(res.links).toHaveLength(SERVE_LINK_LIMIT);
+      expect(res.links[0].urlNormalized).toBe('https://pair.example/');
+
+      const set = await send('/api/v2/following-links/settings', {
+        method: 'POST',
+        body: { allLinks: true },
+      });
+      expect(set.status).toBe(200);
+      res = await read();
+      expect(res.allLinks).toBe(true);
+      expect(res.links).toHaveLength(SERVE_LINK_LIMIT + 1);
+      expect(res.links[0].urlNormalized).toBe('https://solo.example/0');
+      expect(res.links.at(-1)?.urlNormalized).toBe('https://pair.example/');
+
+      // Setting one leaves the other as it was.
+      await send('/api/v2/following-links/settings', {
+        method: 'POST',
+        body: { inEverything: true },
+      });
+      res = await read();
+      expect(res.allLinks).toBe(true);
+
+      for (const body of [{ allLinks: 'yes' }, {}]) {
+        const bad = await send('/api/v2/following-links/settings', { method: 'POST', body });
+        expect(bad.status).toBe(400);
+      }
     });
 
     it('rejects an unknown window', async () => {

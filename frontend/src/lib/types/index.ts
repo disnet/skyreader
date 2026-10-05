@@ -1311,6 +1311,8 @@ export interface FollowLinksResponse {
   scopeRequired: boolean;
   /** Whether the reader wants these in Everything; null until they've been asked. */
   inEverything?: boolean | null;
+  /** Every link, newest first, instead of the week's most-shared (capped). */
+  allLinks?: boolean;
   window?: FollowLinksWindow;
   links: FollowLink[];
   sync: {

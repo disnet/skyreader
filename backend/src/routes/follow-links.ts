@@ -4,7 +4,7 @@
 //   GET  /api/v2/following-links?window=24h|3d|7d   serve from D1, refresh behind
 //        (200 { scopeRequired: true } until the reader grants getTimeline)
 //   GET  /api/v2/following-links/for?url=           who you follow shared one URL
-//   POST /api/v2/following-links/settings           { inEverything } (no scope needed)
+//   POST /api/v2/following-links/settings           { inEverything?, allLinks? } (no scope needed)
 //   GET  /api/v2/following-links/probe              local-dev diagnostic (Phase 0)
 
 import type { Env, Session } from '../types';
@@ -18,10 +18,10 @@ import {
   followLinksNeedRefresh,
   readFollowLinkSharers,
   readFollowLinks,
-  readFollowLinksInEverything,
+  readFollowLinksSettings,
   readFollowLinksSync,
   refreshFollowLinks,
-  setFollowLinksInEverything,
+  setFollowLinksSettings,
   type FollowLinksWindow,
 } from '../services/follow-links-store';
 import { hasRequiredScopes } from './auth';
@@ -68,9 +68,9 @@ export async function handleGetFollowLinks(
   // on every load of the page for anyone who hasn't opted in.
   // Answered with or without the permission: the first-run question in
   // Everything is asked before it's granted.
-  const inEverything = await readFollowLinksInEverything(env, session.did);
+  const { inEverything, allLinks } = await readFollowLinksSettings(env, session.did);
   if (!hasRequiredScopes(session.grantedScopes, FOLLOWS_LINKS_ACCESS_SCOPES)) {
-    return json({ scopeRequired: true, inEverything, links: [], sync: null });
+    return json({ scopeRequired: true, inEverything, allLinks, links: [], sync: null });
   }
 
   const param = new URL(request.url).searchParams.get('window') ?? '24h';
@@ -82,7 +82,7 @@ export async function handleGetFollowLinks(
   const now = Date.now();
   const [sync, links] = await Promise.all([
     readFollowLinksSync(env, session.did),
-    readFollowLinks(env, session.did, window, now),
+    readFollowLinks(env, session.did, window, now, allLinks),
   ]);
 
   // The PDS refused the timeline for want of scope. A session holding only the
@@ -91,7 +91,7 @@ export async function handleGetFollowLinks(
   let force = false;
   if (sync?.error === FOLLOW_LINKS_SCOPE_DENIED) {
     if (!grantsScopes(session.grantedScopes, FOLLOWS_LINKS_SCOPES)) {
-      return json({ scopeRequired: true, inEverything, links: [], sync: null });
+      return json({ scopeRequired: true, inEverything, allLinks, links: [], sync: null });
     }
     force = now - sync.lastPollAt >= SCOPE_RETRY_MS;
   }
@@ -108,6 +108,7 @@ export async function handleGetFollowLinks(
   return json({
     scopeRequired: false,
     inEverything,
+    allLinks,
     window,
     links,
     sync: {
@@ -144,11 +145,13 @@ export async function handleFollowLinkSharers(
 }
 
 /**
- * POST /api/v2/following-links/settings  { inEverything: boolean }
+ * POST /api/v2/following-links/settings  { inEverything?: boolean, allLinks?: boolean }
  *
- * Whether follows links show in Everything. Needs no permission: "not now" is
- * an answer someone gives before granting it, and "yes" is saved before the
- * sign-in that grants it, so it's already on when they come back.
+ * Whether follows links show in Everything, and whether the reader gets every
+ * link (newest first) or the week's most-shared. Either or both; one left out
+ * keeps its value. Needs no permission: "not now" is an answer someone gives
+ * before granting it, and "yes" is saved before the sign-in that grants it, so
+ * it's already on when they come back.
  */
 export async function handleFollowLinksSettings(
   request: Request,
@@ -156,17 +159,24 @@ export async function handleFollowLinksSettings(
   session: Session
 ): Promise<Response> {
   if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
-  let body: { inEverything?: unknown };
+  let body: { inEverything?: unknown; allLinks?: unknown };
   try {
     body = await request.json();
   } catch {
     return json({ error: 'Invalid JSON' }, 400);
   }
-  if (typeof body.inEverything !== 'boolean') {
+  const { inEverything, allLinks } = body ?? {};
+  if (inEverything !== undefined && typeof inEverything !== 'boolean') {
     return json({ error: 'inEverything must be a boolean' }, 400);
   }
-  await setFollowLinksInEverything(env, session.did, body.inEverything);
-  return json({ ok: true, inEverything: body.inEverything });
+  if (allLinks !== undefined && typeof allLinks !== 'boolean') {
+    return json({ error: 'allLinks must be a boolean' }, 400);
+  }
+  if (inEverything === undefined && allLinks === undefined) {
+    return json({ error: 'Nothing to set: send inEverything or allLinks' }, 400);
+  }
+  await setFollowLinksSettings(env, session.did, { inEverything, allLinks });
+  return json({ ok: true, ...(await readFollowLinksSettings(env, session.did)) });
 }
 
 // Local dev is the one place FRONTEND_URL is a loopback address (.dev.vars).

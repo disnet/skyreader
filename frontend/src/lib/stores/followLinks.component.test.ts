@@ -15,9 +15,11 @@ const auth = vi.hoisted(() => ({
   isGuest: false,
 }));
 const getFollowLinks = vi.fn();
+const setFollowLinksSettings = vi.fn();
 vi.mock('$lib/services/api', () => ({
   api: {
     getFollowLinks: (...a: unknown[]) => getFollowLinks(...a),
+    setFollowLinksSettings: (...a: unknown[]) => setFollowLinksSettings(...a),
   },
 }));
 vi.mock('./auth.svelte', () => ({ auth }));
@@ -62,6 +64,7 @@ async function freshStore() {
 
 beforeEach(() => {
   getFollowLinks.mockReset();
+  setFollowLinksSettings.mockReset();
   auth.user = { did: 'did:plc:me' };
   vi.useFakeTimers();
 });
@@ -160,6 +163,32 @@ describe('followLinksStore', () => {
     other.resolve(answer(['https://a.example/x']));
     await load;
     expect(store.links.map((l) => l.url)).toEqual(['https://a.example/x']);
+  });
+
+  it('asks for every link at once when switched on, and puts it back if saving fails', async () => {
+    const store = await freshStore();
+    getFollowLinks.mockResolvedValueOnce(answer(['https://a.example/top']));
+    await store.load();
+    expect(store.allLinks).toBe(false);
+
+    setFollowLinksSettings.mockResolvedValueOnce({ ok: true });
+    getFollowLinks.mockResolvedValueOnce(
+      answer(['https://a.example/new', 'https://a.example/top'], { allLinks: true })
+    );
+    await store.setAllLinks(true);
+    expect(setFollowLinksSettings).toHaveBeenCalledWith({ allLinks: true });
+    // Asked again straight away, past the staleness window.
+    expect(getFollowLinks).toHaveBeenCalledTimes(2);
+    expect(store.allLinks).toBe(true);
+    expect(store.links.map((l) => l.url)).toEqual([
+      'https://a.example/new',
+      'https://a.example/top',
+    ]);
+
+    setFollowLinksSettings.mockRejectedValueOnce(new Error('offline'));
+    await expect(store.setAllLinks(false)).rejects.toThrow('offline');
+    expect(store.allLinks).toBe(true);
+    expect(getFollowLinks).toHaveBeenCalledTimes(2);
   });
 
   it('finds a link by the posted URL, the normalized one, or another form of either', async () => {
