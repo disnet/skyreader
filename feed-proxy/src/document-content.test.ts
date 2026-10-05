@@ -42,6 +42,26 @@ describe('extractContentText', () => {
     expect(extractContentText(content)).toBe('on the board');
   });
 
+  it('reads a leaflet canvas in reading order, not creation order', () => {
+    const text = (plaintext: string) => ({
+      block: { $type: 'pub.leaflet.blocks.text', plaintext },
+    });
+    const content = {
+      $type: 'pub.leaflet.content',
+      pages: [
+        {
+          $type: 'pub.leaflet.pages.canvas',
+          blocks: [
+            { x: 0, y: 900, width: 400, ...text('caption at the bottom') },
+            { x: 300, y: 10, width: 200, ...text('right of the title') },
+            { x: 0, y: 0, width: 200, ...text('title at the top') },
+          ],
+        },
+      ],
+    };
+    expect(extractContentText(content)).toBe('title at the top');
+  });
+
   it('reads the leading text block of pckt content (flat items)', () => {
     const content = {
       $type: 'blog.pckt.content',

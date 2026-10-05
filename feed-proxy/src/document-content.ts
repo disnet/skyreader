@@ -97,6 +97,41 @@ function firstTextInBlocks(blocks: unknown, depth: number, quotes: 'skip' | 'tak
   return null;
 }
 
+const coord = (value: unknown): number => {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+};
+
+// A Leaflet canvas page's blocks in the order the reader shows them: top to bottom,
+// then left to right, with tops within `CANVAS_ROW_TOLERANCE` px read as one row.
+// Stored order is creation order, so without this the snippet could come from a
+// block the reader puts last. Keep in sync with `canvasReadingOrder` in the
+// frontend's leaflet-renderer.
+const CANVAS_ROW_TOLERANCE = 24;
+
+type CanvasEntry = { x?: unknown; y?: unknown };
+
+function canvasReadingOrder(blocks: unknown): unknown {
+  if (!Array.isArray(blocks)) return blocks;
+  const byTop = (
+    blocks.filter((entry) => entry && typeof entry === 'object') as CanvasEntry[]
+  ).sort((a, b) => coord(a.y) - coord(b.y) || coord(a.x) - coord(b.x));
+  const byLeft = (a: CanvasEntry, b: CanvasEntry) => coord(a.x) - coord(b.x);
+  const ordered: CanvasEntry[] = [];
+  let row: CanvasEntry[] = [];
+  let rowTop = 0;
+  for (const entry of byTop) {
+    if (row.length > 0 && coord(entry.y) - rowTop > CANVAS_ROW_TOLERANCE) {
+      ordered.push(...row.sort(byLeft));
+      row = [];
+    }
+    if (row.length === 0) rowTop = coord(entry.y);
+    row.push(entry);
+  }
+  ordered.push(...row.sort(byLeft));
+  return ordered;
+}
+
 // The linker's own prose if the note has any, otherwise whatever they quoted.
 function firstSnippetInBlocks(blocks: unknown): string | null {
   return firstTextInBlocks(blocks, 0, 'skip') ?? firstTextInBlocks(blocks, 0, 'take');
@@ -130,7 +165,8 @@ export function extractContentText(content: unknown): string | null {
 
   switch (type) {
     case 'pub.leaflet.content': {
-      const pages = (content as { pages?: Array<{ blocks?: unknown }> }).pages ?? [];
+      const pages =
+        (content as { pages?: Array<{ $type?: string; blocks?: unknown }> }).pages ?? [];
       // A long Leaflet post offloads its pages to a `blobPages` blob and leaves this
       // array empty or a stub, so there is nothing here to snip. Deliberately not
       // inflated on this path: the blob is a per-document fetch against the author's
@@ -145,7 +181,11 @@ export function extractContentText(content: unknown): string | null {
       // skip pass runs across every page before the take pass does.
       for (const quotes of ['skip', 'take'] as const) {
         for (const page of pages) {
-          const text = firstTextInBlocks(page?.blocks, 0, quotes);
+          const blocks =
+            page?.$type === 'pub.leaflet.pages.canvas'
+              ? canvasReadingOrder(page.blocks)
+              : page?.blocks;
+          const text = firstTextInBlocks(blocks, 0, quotes);
           if (text) return text;
         }
       }
