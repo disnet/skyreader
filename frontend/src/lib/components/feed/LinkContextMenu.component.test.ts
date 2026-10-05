@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import LinkContextMenu from './LinkContextMenu.svelte';
+import { savesStore } from '$lib/stores/saves.svelte';
+import { toastStore } from '$lib/stores/toast.svelte';
 
 const authState = { isGuest: false };
 const savedUrls = new Set<string>();
@@ -89,6 +91,42 @@ describe('LinkContextMenu', () => {
       url: 'https://example.com/post/1',
       title: 'A long enough link title',
     });
+  });
+
+  // The hosts pass props that read through to their menu state, which closing
+  // clears, so a prop read after onClose throws.
+  it('saves the link even though its props throw once the menu closes', async () => {
+    let menu: { url: string; linkText: string } | null = {
+      url: 'https://example.com/post/1',
+      linkText: 'A long enough link title',
+    };
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    component = mount(LinkContextMenu, {
+      target,
+      props: {
+        get url() {
+          return menu!.url;
+        },
+        get linkText() {
+          return menu!.linkText;
+        },
+        anchorRect: new DOMRect(10, 10, 100, 20),
+        onClose: () => {
+          menu = null;
+        },
+      },
+    });
+    flushSync();
+
+    item('Save to Skyreader')!.click();
+    await Promise.resolve();
+    expect(savesStore.saveFromUrl).toHaveBeenLastCalledWith('https://example.com/post/1', {
+      title: 'A long enough link title',
+    });
+    await vi.waitFor(() =>
+      expect(toastStore.update).toHaveBeenLastCalledWith('toast', 'success', 'Article saved')
+    );
   });
 
   it('shows an already-saved link as saved', () => {

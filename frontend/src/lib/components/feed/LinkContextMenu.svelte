@@ -69,12 +69,15 @@
     return t;
   }
 
+  // Read the props before closing, as in handleCollect: after onClose they
+  // throw, which would strand the "Saving article..." toast forever.
   function handleSave() {
     const saveUrl = url;
+    const title = titleHint(linkText);
     const toastId = toastStore.add('Saving article...');
     onClose();
     savesStore
-      .saveFromUrl(saveUrl, { title: titleHint(linkText) })
+      .saveFromUrl(saveUrl, { title })
       .then((saved) => {
         // Only the link was kept: say so, and offer the way to the full text.
         if (saved.fetchFailed) {
