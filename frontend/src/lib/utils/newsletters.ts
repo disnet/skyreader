@@ -39,17 +39,34 @@ export function newsletterSender(feedUrl: string | undefined): string | null {
  * article structure (<h1> as a 12px footer, <small> for whole sections,
  * layout tables several deep), so stripping attributes alone keeps leaking
  * odd sizes into the reader. The wrapper lets app.css reset every element in
- * the body to the reader's own size instead of enumerating the tricks.
+ * the body to the reader's own size instead of enumerating the tricks; a
+ * heading tag still steps up a little (it can't be told from a real one).
+ *
+ * The backend wraps newsletter bodies at ingest (newsletter-email.ts); this
+ * covers rows archived before it did, and saves made from them.
  */
 export const EMAIL_BODY_CLASS = 'email-body';
 
 const EMAIL_BODY_OPEN = `<div class="${EMAIL_BODY_CLASS}">`;
+
+// An opening wrapper however it was serialized: leading whitespace or a BOM,
+// either quote style, other attributes or classes beside it (a DOM round-trip
+// through the sanitizer, or the backend's ingest wrap).
+const EMAIL_BODY_START = new RegExp(
+  `^[\\s\\uFEFF]*<div\\b[^>]*\\bclass\\s*=\\s*["']?[^"'>]*\\b${EMAIL_BODY_CLASS}\\b[^>]*>`,
+  'i'
+);
+
+/** Whether `html` is already wrapped in the email-body scope. */
+export function isEmailBody(html: string | null | undefined): boolean {
+  return !!html && EMAIL_BODY_START.test(html);
+}
 
 /** Wrap a newsletter body in the email-body scope; idempotent. */
 export function wrapEmailBody(html: string): string;
 export function wrapEmailBody(html: string | null): string | null;
 export function wrapEmailBody(html: string | null | undefined): string | null | undefined;
 export function wrapEmailBody(html: string | null | undefined): string | null | undefined {
-  if (!html || html.startsWith(EMAIL_BODY_OPEN)) return html;
+  if (!html || isEmailBody(html)) return html;
   return `${EMAIL_BODY_OPEN}${html}</div>`;
 }

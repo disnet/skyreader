@@ -86,7 +86,7 @@ export async function parseNewsletterEmail(
     url: findWebVersionUrl(email.html ?? '') ?? '',
     title: email.subject?.trim() || '(no subject)',
     author: senderName ?? undefined,
-    content: content || undefined,
+    content: wrapEmailBody(content) || undefined,
     summary: summary || undefined,
     publishedAt: new Date(sentAt(email.date, receivedAtMs)).toISOString(),
   };
@@ -154,7 +154,7 @@ async function parseInlineForward(
     url: findWebVersionUrl(email.html ?? '') ?? '',
     title,
     author: senderName ?? undefined,
-    content: content || undefined,
+    content: wrapEmailBody(content) || undefined,
     summary: summarize(bodyText || stripTags(html)) || undefined,
     publishedAt: new Date(sentAt(email.date, receivedAtMs)).toISOString(),
   };
@@ -303,6 +303,21 @@ export function findWebVersionUrl(html: string): string | null {
     if (WEB_VERSION_TEXT.test(text) && isHttpUrl(href)) return href;
   }
   return null;
+}
+
+/**
+ * The class the reader keys its newsletter type reset on (frontend app.css,
+ * `.email-body`; frontend/src/lib/utils/newsletters.ts wraps legacy rows the
+ * same way). Email templates size text through markup the sanitizer can't tell
+ * from article structure — an <h1> as a 12px footer, <small> around whole
+ * sections — so the body carries a scope that resets it, and every surface
+ * that renders the body (card, reader, save, magazine, offline copy) gets it.
+ */
+const EMAIL_BODY_OPEN = '<div class="email-body">';
+
+export function wrapEmailBody(html: string): string {
+  if (!html || /^\s*<div\b[^>]*\bclass\s*=\s*["']?[^"'>]*\bemail-body\b/i.test(html)) return html;
+  return `${EMAIL_BODY_OPEN}${html}</div>`;
 }
 
 /**

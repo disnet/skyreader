@@ -18,7 +18,12 @@
   import { formatRelativeDate } from '$lib/utils/date';
   import { getFaviconUrl } from '$lib/utils/favicon';
   import { sanitizeHtml } from '$lib/utils/sanitize';
-  import { isNewsletterSubscription, wrapEmailBody } from '$lib/utils/newsletters';
+  import { wrapEmailBody } from '$lib/utils/newsletters';
+  import {
+    isNewsletterFeedItem,
+    resolveIsNewsletterFeedItem,
+    resolveSubscription,
+  } from '$lib/utils/newsletterArticle';
   import { decodeEntities } from '$lib/utils/entities';
   import { marked } from 'marked';
   import { getDisplayContent } from '$lib/utils/displayItem';
@@ -261,14 +266,10 @@
   // common case renders structured `content` and never touches this).
   let lazyDocText = $state<string | null>(null);
 
-  // An emailed newsletter (see utils/newsletters.ts): its body is the whole
-  // article, so it's never swapped for a web extraction, and it renders in the
-  // email-body scope that resets the template's type sizes.
-  let isNewsletterArticle = $derived.by(() => {
-    if (article?.subscriptionId == null) return false;
-    const sub = subscriptionsStore.getById(article.subscriptionId);
-    return sub ? isNewsletterSubscription(sub) : false;
-  });
+  // An emailed newsletter (see utils/newsletterArticle.ts): its body is the
+  // whole article, so it's never swapped for a web extraction, and it renders in
+  // the email-body scope that resets the template's type sizes.
+  let isNewsletterArticle = $derived(isNewsletterFeedItem(article?.subscriptionId));
 
   // Content handling - article has priority, then share content, then localArticle, then document
   let displayContent = $derived.by(() => {
@@ -280,8 +281,6 @@
     // If the reader explicitly fetched the original article, that full extraction
     // wins over the feed body — RSS entries are often just an excerpt. Keyed on
     // the article URL via the shared extract cache (same path link posts use).
-    const fetchedOriginal =
-      article && !isNewsletterArticle ? linkPostContentStore.get(itemUrl) : undefined;
     if (fetchedOriginal?.content) return fetchedOriginal.content;
 
     // For articles, use existing logic. The in-memory article is "light" (its
@@ -629,6 +628,20 @@
   // card stays expandable and asks again on the next expand or when the browser
   // comes back online — for a guest, who can't extract, that's the only way in.
   let storedBodyStatus = $state<'idle' | 'loading' | 'found' | 'missing' | 'unavailable'>('idle');
+  // Whether a web extraction may stand in for this article's body. Never for an
+  // emailed newsletter — the mail is the article, and its web link is at best
+  // the same text and often a paywalled or free-tier cut of it — except when the
+  // archive confirms the mail itself is gone; then the reader may still ask for
+  // the web copy ("Fetch full article"), though nothing fetches it unasked.
+  let webCopyAllowed = $derived(!isNewsletterArticle || storedBodyStatus === 'missing');
+  // The extraction that stands in for the feed body, if one was fetched. Keyed
+  // on the article URL via the shared extract cache (same path link posts use).
+  // Everything that asks "was the original fetched?" reads this, so a cached
+  // extraction of a newsletter's link (a followed user shared the issue) never
+  // counts as its body.
+  let fetchedOriginal = $derived(
+    article && webCopyAllowed ? linkPostContentStore.get(itemUrl) : undefined
+  );
   let storedBodyRetry = $state(0);
   $effect(() => {
     const onOnline = () => {
@@ -646,8 +659,14 @@
     if (article.content || lazyContent == null || lazyContent) return;
     const target = article;
     const url = itemUrl;
+    // Never automatic for a newsletter. Resolved rather than read off the
+    // derived: before the subscriptions store hydrates, that says "not a
+    // newsletter" for every card.
     const extract = () => {
-      if (url && !isNewsletterArticle) linkPostContentStore.fetch(url);
+      if (!url) return;
+      void resolveIsNewsletterFeedItem(target.subscriptionId).then((newsletter) => {
+        if (!newsletter) linkPostContentStore.fetch(url);
+      });
     };
     // Everything below reads and writes state the effect must not depend on: the
     // status guard, and `fetch`'s reactive entry map — tracking a failed extract's
@@ -660,10 +679,11 @@
       if (storedBodyStatus === 'loading' || storedBodyStatus === 'found') return;
       if (storedBodyStatus === 'unavailable' && hasFetchedOriginal) return;
       storedBodyStatus = 'loading';
-      const feedUrl = subscriptionsStore.getById(target.subscriptionId)?.feedUrl;
-      const pending = feedUrl
-        ? loadStoredBody(target, feedUrl, { guest: !auth.user })
-        : Promise.resolve({ status: 'missing' } as const);
+      const pending = resolveSubscription(target.subscriptionId).then((sub) =>
+        sub?.feedUrl
+          ? loadStoredBody(target, sub.feedUrl, { guest: !auth.user })
+          : ({ status: 'missing' } as const)
+      );
       pending.then((result) => {
         if (result.status === 'found') {
           lazyContent = result.content;
@@ -734,9 +754,15 @@
   });
 
   let hasContent = $derived(Boolean(displayContent));
-  // Newsletter bodies render inside the email-body scope (see wrapEmailBody).
+  // Newsletter bodies render inside the email-body scope (see wrapEmailBody) —
+  // the mail's, that is, not a web copy the reader explicitly fetched.
   let sanitizedContent = $derived(
-    sanitizeHtml(isNewsletterArticle ? wrapEmailBody(displayContent) : displayContent, itemUrl)
+    sanitizeHtml(
+      isNewsletterArticle && !fetchedOriginal?.content
+        ? wrapEmailBody(displayContent)
+        : displayContent,
+      itemUrl
+    )
   );
 
   // Pre-resolved date string for the view (so the view imports no utils).
@@ -759,7 +785,7 @@
     Boolean(article?.contentTruncated) &&
       !article?.content &&
       !lazyContent &&
-      !linkPostContentStore.get(itemUrl)?.content
+      !fetchedOriginal?.content
   );
   let readTimeMinutes = $derived(
     (isFollowLink && !linkPostContentStore.get(itemUrl)?.content) || showingPartialBody
@@ -872,17 +898,16 @@
   //     feed isn't nagged but the reader can still force a clean re-extraction.
   const SHORT_ARTICLE_WORDS = 200;
   let fetchingOriginal = $derived(Boolean(article) && linkPostContentStore.isFetching(itemUrl));
-  let hasFetchedOriginal = $derived(Boolean(article) && Boolean(linkPostContentStore.get(itemUrl)));
+  let hasFetchedOriginal = $derived(Boolean(fetchedOriginal));
   // Account-only, like the store it drives (extraction needs a session). Hidden
   // rather than offered and refused: a guest's feed is full of truncated RSS
   // bodies, so a dead "Fetch full article" would sit under most of them.
-  // Never for an emailed newsletter: the mail is the article, and its web link
-  // is at best the same text and often a paywalled or free-tier cut of it.
+  // Not for an emailed newsletter (see webCopyAllowed) unless its mail is gone.
   let canFetchOriginal = $derived(
     Boolean(auth.user) &&
       Boolean(article) &&
       Boolean(itemUrl) &&
-      !isNewsletterArticle &&
+      webCopyAllowed &&
       !hasFetchedOriginal
   );
 

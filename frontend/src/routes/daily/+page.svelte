@@ -25,6 +25,7 @@
   import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
   import { decodeEntities } from '$lib/utils/entities';
   import { sanitizeHtml } from '$lib/utils/sanitize';
+  import { savedBodyWithEmailScope } from '$lib/utils/newsletterArticle';
   import {
     formatMagazineDate,
     magazineIssueSummary,
@@ -224,13 +225,17 @@
       selected.map(({ snap }) => [snap.key, { status: 'loading', html: '' } as BodyState])
     );
     for (const { snap, item } of selected) {
-      savesStore.getContent(item.rkey).then((content) => {
-        if (cancelled) return;
-        const html = content?.trim() ? sanitizeHtml(content, item.url) : '';
-        const next = new Map(bodies);
-        next.set(snap.key, html ? { status: 'ready', html } : { status: 'missing', html: '' });
-        bodies = next;
-      });
+      // A newsletter save renders in the email-body scope (see newsletterArticle.ts).
+      savesStore
+        .getContent(item.rkey)
+        .then((content) => savedBodyWithEmailScope(item, content))
+        .then((content) => {
+          if (cancelled) return;
+          const html = content?.trim() ? sanitizeHtml(content, item.url) : '';
+          const next = new Map(bodies);
+          next.set(snap.key, html ? { status: 'ready', html } : { status: 'missing', html: '' });
+          bodies = next;
+        });
     }
     return () => {
       cancelled = true;

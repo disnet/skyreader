@@ -11,7 +11,8 @@ import { extractArticle } from '$lib/services/extract';
 import { loadStoredBody } from '$lib/services/itemBody';
 import { subscriptionsStore } from './subscriptions.svelte';
 import { preferExtractedBody } from '$lib/utils/saveBody';
-import { isNewsletterSubscription, wrapEmailBody } from '$lib/utils/newsletters';
+import { isEmailBody, isNewsletterSubscription, wrapEmailBody } from '$lib/utils/newsletters';
+import { resolveSubscription } from '$lib/utils/newsletterArticle';
 import { failedSaveBody, isFailedSaveBody, type SaveFetchFailure } from '$lib/utils/saveAnywhere';
 import { computeContentStats } from '$lib/services/articleMerge';
 import { savedSearchStore } from './savedSearch.svelte';
@@ -531,6 +532,9 @@ function createSavesStore() {
     summary?: string;
     imageUrl?: string;
     publishedAt?: string;
+    // A body the caller already holds — the undo of an Unsave in the saved
+    // reader (utils/readerSave.ts). Used when the archive no longer has one.
+    content?: string;
   }): Promise<SavedItem> {
     saving = true;
     error = null;
@@ -554,11 +558,19 @@ function createSavesStore() {
       // canonical copy, and its web link (if any) is a teaser, a paywall or a
       // different free/paid cut. So it never goes to the extractor — no length
       // heuristic can tell those apart from a cleanup.
-      const subscription =
-        article.subscriptionId != null
-          ? subscriptionsStore.getById(article.subscriptionId)
-          : undefined;
-      const isNewsletter = subscription ? isNewsletterSubscription(subscription) : false;
+      // Resolved from IndexedDB when the store hasn't hydrated yet (a save from
+      // a cold `?read=` deep link), where an in-memory miss would read as "not
+      // a newsletter" and send the issue to the extractor. A held body already
+      // in the email-body scope is a newsletter's whatever the lookup says.
+      const subscription = await resolveSubscription(article.subscriptionId);
+      const isNewsletter =
+        (subscription ? isNewsletterSubscription(subscription) : false) ||
+        isEmailBody(article.content);
+      // A newsletter with no body to save keeps what it does have (the archive's
+      // lead, else the summary) rather than none: a save with no body is one the
+      // backend fills by extracting the web copy (backed saves'
+      // extractMissingBackedContent), which is exactly what a newsletter never is.
+      let newsletterLead: string | null = null;
       if (article.subscriptionId != null) {
         try {
           const row = await db.articles
@@ -567,6 +579,7 @@ function createSavesStore() {
             .filter((r) => r.subscriptionId === article.subscriptionId)
             .first();
           rssBody = row?.content || null;
+          newsletterLead = row?.contentLead || null;
           const feedUrl = subscription?.feedUrl;
           if (!rssBody && row?.contentTruncated && feedUrl) {
             storedBodyRef = {
@@ -578,9 +591,15 @@ function createSavesStore() {
           // Best effort — fall back to no stored body.
         }
       }
+      if (!rssBody && article.content) rssBody = article.content;
       // Saved newsletters keep the email-body scope so every surface that
       // renders the saved copy (reader, daily magazine) resets its type sizes.
-      if (isNewsletter) rssBody = wrapEmailBody(rssBody);
+      // The out-of-row body, when there is one, replaces the lead below. (A
+      // summary is feed HTML like the body — every surface renders it as such.)
+      if (isNewsletter) {
+        rssBody ||= newsletterLead || (article.summary ? `<p>${article.summary}</p>` : null);
+        rssBody = wrapEmailBody(rssBody);
+      }
 
       // Optimistically add to local state with the RSS body so the save appears
       // immediately and stays readable offline; the extracted body upgrades it

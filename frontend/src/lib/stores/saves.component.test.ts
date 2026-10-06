@@ -20,8 +20,11 @@ const articleRows: Array<{
   guid: string;
   subscriptionId: number;
   content: string | null;
+  contentLead?: string;
   contentTruncated?: boolean;
 }> = [];
+// Subscriptions only IndexedDB has — the store hasn't hydrated them yet.
+const dbOnlySubscriptions = new Map<number, Record<string, unknown>>();
 
 function whereEquals(rows: () => Record<string, unknown>[], field: string, val: unknown) {
   return {
@@ -62,6 +65,9 @@ vi.mock('$lib/services/db', () => ({
         equals: (val: unknown) =>
           whereEquals(() => articleRows as unknown as Record<string, unknown>[], field, val),
       }),
+    },
+    subscriptions: {
+      get: async (id: number) => dbOnlySubscriptions.get(id),
     },
   },
 }));
@@ -548,5 +554,68 @@ describe('savesStore.saveArticle body choice', () => {
 
     expect(extractArticle).not.toHaveBeenCalled();
     expect(saved.content).toBe(`<div class="email-body">${mail}</div>`);
+  });
+
+  it('treats a newsletter as one before the subscriptions store has hydrated', async () => {
+    // A save from a cold `?read=` deep link: only IndexedDB knows the source.
+    dbOnlySubscriptions.set(9, {
+      id: 9,
+      feedUrl: 'newsletter:inbox1/late@letter.example',
+      sourceType: 'email.newsletter',
+    });
+    const mail = words(300);
+    articleRows.push({ guid: 'mail-3', subscriptionId: 9, content: mail });
+
+    const saved = await savesStore.saveArticle({
+      url: 'https://letter.example/p/cold',
+      guid: 'mail-3',
+      subscriptionId: 9,
+    });
+
+    expect(extractArticle).not.toHaveBeenCalled();
+    expect(saved.content).toBe(`<div class="email-body">${mail}</div>`);
+    dbOnlySubscriptions.clear();
+  });
+
+  it("saves a newsletter's lead, never no body, when its mail is unavailable", async () => {
+    // A save with no body is one a backed (Semble/Margin) account's backend
+    // fills by extracting the web copy.
+    articleRows.push({
+      id: 10,
+      guid: 'mail-4',
+      subscriptionId: 8,
+      content: null,
+      contentLead: '<p>The opening.</p>',
+      contentTruncated: true,
+    });
+    loadStoredBody.mockResolvedValueOnce({ status: 'unavailable' });
+
+    const saved = await savesStore.saveArticle({
+      url: 'https://letter.example/p/gone',
+      guid: 'mail-4',
+      subscriptionId: 8,
+    });
+
+    expect(extractArticle).not.toHaveBeenCalled();
+    expect(saved.content).toBe('<div class="email-body"><p>The opening.</p></div>');
+    expect(api.saveFromUrl).toHaveBeenCalledWith(
+      'https://letter.example/p/gone',
+      expect.any(String),
+      expect.objectContaining({ content: '<div class="email-body"><p>The opening.</p></div>' })
+    );
+  });
+
+  it('re-saves a held newsletter body without extracting (undo of an Unsave)', async () => {
+    // The feed row is gone; the body the reader held is all there is.
+    const held = `<div class="email-body">${words(500)}</div>`;
+
+    const saved = await savesStore.saveArticle({
+      url: 'https://letter.example/p/undo',
+      guid: 'mail-5',
+      content: held,
+    });
+
+    expect(extractArticle).not.toHaveBeenCalled();
+    expect(saved.content).toBe(held);
   });
 });

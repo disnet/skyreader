@@ -499,9 +499,12 @@ body.sidebar-open-mobile {
    Email templates size text with whatever markup survives the sanitizer: an
    <h1> or <h6> as a styling hook, <small> around whole sections, layout tables
    nested five deep. Rather than chase each trick, every element in the body
-   takes the reader's size, and only real headings step up from it. A
-   surface's own scoped rules (a reader's heading scale, <pre>) are more
-   specific and still apply. */
+   takes the reader's size, and headings step up from it by a fixed, modest
+   ratio — the sanitizer can't tell a real section heading from an <h1> used as
+   a styling hook, so both read as a small heading, never the template's size
+   or the browser's 2em. Surfaces size only <pre> themselves (scoped, more
+   specific, so it still applies); none sets a heading scale, and one that did
+   would override these steps for newsletters too. */
 .email-body * {
   font-size: inherit;
 }

@@ -13,6 +13,8 @@
 // lookup maps don't index — asking `savesStore.isSaved` about it answers "not
 // saved" for an item that plainly is.
 import { savesStore } from '$lib/stores/saves.svelte';
+import { db } from '$lib/services/db';
+import { isEmailBody } from '$lib/utils/newsletters';
 import type { SavedItem } from '$lib/types';
 
 /**
@@ -31,8 +33,9 @@ export function isSavedItemSaved(save: SavedItem): boolean {
 
 // The body of the last save unsaved through here. A document save stores its
 // rendered body and has no URL to re-extract from, so undoing a mis-tapped
-// Unsave would otherwise bring the item back empty. One slot: only the undo of
-// the thing you just did needs it.
+// Unsave would otherwise bring the item back empty. A newsletter save's body is
+// the mail, which its URL would re-extract as the web copy. One slot: only the
+// undo of the thing you just did needs it.
 let lastUnsavedBody: { guid: string; content: string | null } | null = null;
 
 /**
@@ -45,7 +48,8 @@ export async function toggleSavedItemSave(save: SavedItem): Promise<void> {
   const live = liveSave(save);
   if (live) {
     const guid = live.itemGuid || live.url;
-    const content = live.source === 'document' ? await savesStore.getContent(live.rkey) : null;
+    const body = await savesStore.getContent(live.rkey);
+    const content = live.source === 'document' || isEmailBody(body) ? body : null;
     await savesStore.remove(live.rkey);
     lastUnsavedBody = { guid, content };
     return;
@@ -68,15 +72,27 @@ export async function toggleSavedItemSave(save: SavedItem): Promise<void> {
     return;
   }
 
+  // A feed save re-saves as one from its feed, so a newsletter issue keeps its
+  // mail instead of going to the extractor (savesStore.saveArticle).
+  const guid = save.itemGuid || save.url;
+  let subscriptionId: number | undefined;
+  try {
+    subscriptionId = (await db.articles.where('guid').equals(guid).first())?.subscriptionId;
+  } catch {
+    // Best effort — re-save as a plain URL save.
+  }
+  const held = lastUnsavedBody?.guid === guid ? lastUnsavedBody.content : null;
   await savesStore.saveArticle({
     url: save.url,
     // Re-save under the same guid the original carried, so the feed article it
     // came from lights up as saved again (the list matches on guid).
-    guid: save.itemGuid || save.url,
+    guid,
+    subscriptionId,
     title: save.title ?? undefined,
     author: save.author ?? undefined,
     summary: save.description ?? undefined,
     imageUrl: save.image ?? undefined,
     publishedAt: save.publishedAt ?? undefined,
+    content: held ?? undefined,
   });
 }

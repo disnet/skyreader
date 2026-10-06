@@ -19,7 +19,13 @@
   import { sanitizeHtml } from '$lib/utils/sanitize';
   import { formatRelativeDate } from '$lib/utils/date';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
-  import { isNewsletterSubscription, wrapEmailBody } from '$lib/utils/newsletters';
+  import { wrapEmailBody } from '$lib/utils/newsletters';
+  import {
+    isNewsletterFeedItem,
+    resolveIsNewsletterFeedItem,
+    resolveSubscription,
+    savedBodyWithEmailScope,
+  } from '$lib/utils/newsletterArticle';
   import { loadStoredBody } from '$lib/services/itemBody';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { profileService } from '$lib/services/profiles';
@@ -267,11 +273,16 @@
   $effect(() => {
     lazySavedContent = null;
     if (readerItem.type !== 'saved' || !readerItem.item.rkey) return;
-    const rkey = readerItem.item.rkey;
+    const save = readerItem.item;
     let cancelled = false;
-    savesStore.getContent(rkey).then((c) => {
-      if (!cancelled) lazySavedContent = c;
-    });
+    // A newsletter save renders in the email-body scope, including one saved
+    // before saves carried the wrapper (see newsletterArticle.ts).
+    savesStore
+      .getContent(save.rkey)
+      .then((c) => savedBodyWithEmailScope(save, c))
+      .then((c) => {
+        if (!cancelled) lazySavedContent = c;
+      });
     return () => {
       cancelled = true;
     };
@@ -287,9 +298,14 @@
   // Whether that body is the user's own saved snapshot rather than the feed's —
   // the display ladder below treats the two differently.
   let lazyArticleIsSavedCopy = $state(false);
+  // An emailed newsletter whose mail the archive confirms is gone (no row body,
+  // no stored copy). Only then may an extraction the reader explicitly asked for
+  // stand in for it — nothing here fetches one unasked.
+  let newsletterMailMissing = $state(false);
   $effect(() => {
     lazyArticleContent = null;
     lazyArticleIsSavedCopy = false;
+    newsletterMailMissing = false;
     if (readerItem.type !== 'article') return;
     const {
       id,
@@ -299,9 +315,14 @@
       contentTruncated,
       url,
     } = readerItem.item;
-    // An emailed newsletter's body is the article — never extract its web link.
-    const isNewsletter = untrack(() => isNewsletterArticle);
     let cancelled = false;
+    // An emailed newsletter's body is the article — never extract its web link.
+    // Resolved, not read off `isNewsletterArticle`: on a cold `?read=` deep link
+    // the subscriptions store may not have hydrated yet, and that says "no".
+    const extract = async () => {
+      if (!url || (await resolveIsNewsletterFeedItem(subscriptionId))) return;
+      if (!cancelled) untrack(() => linkPostContentStore.fetch(url));
+    };
     (async () => {
       try {
         const saved = savesStore.getByGuid(guid);
@@ -334,7 +355,7 @@
           // (see services/itemBody.ts). Prefer that stored copy — the feed's own
           // body — and extract the page only when there isn't one (and there is
           // a page: an emailed newsletter may have no web copy).
-          const feedUrl = subscriptionsStore.getById(subscriptionId)?.feedUrl;
+          const feedUrl = (await resolveSubscription(subscriptionId))?.feedUrl;
           const stored = feedUrl
             ? await loadStoredBody({ id: row?.id ?? id, guid, subscriptionId }, feedUrl, {
                 guest: !auth.user,
@@ -345,16 +366,15 @@
             lazyArticleContent = stored.content;
             return;
           }
+          if (stored?.status === 'missing') newsletterMailMissing = true;
           // Keep the store's reactive entry map out of this effect's dependency
           // graph. Failed extracts delete their entry so a later open can retry;
           // tracking that deletion here would create an immediate retry loop.
-          if (url && !isNewsletter) untrack(() => linkPostContentStore.fetch(url));
+          await extract();
         }
       } catch {
         if (!cancelled) lazyArticleContent = '';
-        if (!cancelled && contentTruncated && url && !isNewsletter) {
-          untrack(() => linkPostContentStore.fetch(url));
-        }
+        if (!cancelled && contentTruncated) await extract();
       }
     })();
     return () => {
@@ -378,13 +398,20 @@
     };
   });
 
-  // An emailed newsletter (see utils/newsletters.ts): its body is the whole
-  // article, so a web extraction never replaces it.
-  let isNewsletterArticle = $derived.by(() => {
-    if (readerItem.type !== 'article' || readerItem.item.subscriptionId == null) return false;
-    const sub = subscriptionsStore.getById(readerItem.item.subscriptionId);
-    return sub ? isNewsletterSubscription(sub) : false;
-  });
+  // An emailed newsletter (see utils/newsletterArticle.ts): its body is the
+  // whole article, so a web extraction never replaces it — unless the mail is
+  // gone and the reader asked for the web copy (see newsletterMailMissing).
+  let isNewsletterArticle = $derived(
+    readerItem.type === 'article' && isNewsletterFeedItem(readerItem.item.subscriptionId)
+  );
+
+  // An extract of the article's own URL standing in for its feed body (see the
+  // display ladder below). Never a newsletter's, unless its mail is gone.
+  let extractedArticle = $derived(
+    readerItem.type === 'article' && (!isNewsletterArticle || newsletterMailMissing)
+      ? linkPostContentStore.get(readerItem.item.url)
+      : undefined
+  );
 
   let displayContent = $derived.by(() => {
     // In the reader we show the external article itself — not the sharer's note.
@@ -400,10 +427,6 @@
     // ArticleCard: the entry only exists because something asked for it (Shift+F,
     // the ⋯ menu, the truncated-article nudge), and an RSS body is often just an
     // excerpt. It's also how an oversized body — dropped at ingest — gets here.
-    const extractedArticle =
-      readerItem.type === 'article' && !isNewsletterArticle
-        ? linkPostContentStore.get(readerItem.item.url)
-        : undefined;
     if (extractedArticle?.content) return extractedArticle.content;
     // Else the feed body for an article rendered via the 'article' path — it was
     // stripped from memory and is read back from IndexedDB above.
@@ -536,10 +559,18 @@
     if (text) shareComposerStore.appendQuote(text);
   }
 
-  // Newsletter bodies render inside the email-body scope (see wrapEmailBody).
-  // A save of one already carries the wrapper; wrapping is idempotent.
+  // Newsletter bodies render inside the email-body scope (see wrapEmailBody);
+  // wrapping is idempotent, so a body that already carries it is unchanged. A
+  // 'saved' item's body is wrapped as it loads (lazySavedContent above). Not a
+  // web copy the reader fetched in place of missing mail.
   let sanitizedContent = $derived(
-    sanitizeHtml(isNewsletterArticle ? wrapEmailBody(displayContent) : displayContent, itemUrl)
+    sanitizeHtml(
+      isNewsletterArticle &&
+        !(extractedArticle?.content && displayContent === extractedArticle.content)
+        ? wrapEmailBody(displayContent)
+        : displayContent,
+      itemUrl
+    )
   );
 
   // Kindle-style paged reading. When on, the article flows into columns turned a
