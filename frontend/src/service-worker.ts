@@ -10,6 +10,7 @@
 // the version-skew that caused blank screens / "Something went wrong" on iOS.
 
 import {
+  addPlugins,
   precacheAndRoute,
   cleanupOutdatedCaches,
   createHandlerBoundToURL,
@@ -17,7 +18,7 @@ import {
 } from 'workbox-precaching';
 import { NavigationRoute, registerRoute } from 'workbox-routing';
 import { NetworkFirst } from 'workbox-strategies';
-import { clientsClaim } from 'workbox-core';
+import { cacheNames, clientsClaim } from 'workbox-core';
 // SvelteKit build version — identical to `$app/environment`'s `version` in the app
 // bundle for a given build, and different across builds. The layout compares the
 // controlling worker's version against the running app's to tell a genuine deploy
@@ -46,6 +47,63 @@ const LAST_REFRESH_KEY = 'lastRefreshAt';
 // anyway (retention expired/skipped), the 404 → vite:preloadError → one-shot
 // reload in hooks.client.ts recovers the page.
 cleanupOutdatedCaches();
+
+// Never precache an HTML page under a script/stylesheet URL. Cloudflare Pages
+// answers a path it doesn't have with the SPA shell — `200 text/html` — so an
+// install that races a deploy's edge propagation (or a hosting blip) would
+// otherwise store index.html as a chunk. Hashed chunks have revision: null and
+// install skips keys already cached, so that poisoned entry outlives every later
+// deploy until the chunk's hash changes: each load hits "'text/html' is not a
+// valid JavaScript MIME type", SvelteKit shows a 500, and the preload reload
+// guard can't help because the reload is served from the same cache. Rejecting
+// it here fails the install instead, and the old worker keeps serving.
+//
+// A custom cacheWillUpdate replaces Workbox's default cacheability check, so the
+// status check is repeated here.
+//
+// Precache fetches also bypass the browser's HTTP cache. Workbox already does
+// that for revisioned entries, but hashed chunks (revision: null) go out with
+// cache: 'default' — and the fallback HTML arrives with the
+// /_app/immutable/* rule's year-long immutable Cache-Control, so a device that
+// fetched it once would be handed the same HTML on every retry and never
+// install or heal.
+const ASSET_PATH = /\.(?:js|css)$/;
+
+function isHtmlUnderAssetUrl(url: string, response: Response): boolean {
+  return (
+    ASSET_PATH.test(new URL(url).pathname) &&
+    (response.headers.get('content-type') ?? '').includes('text/html')
+  );
+}
+
+addPlugins([
+  {
+    requestWillFetch: async ({ request }) => new Request(request, { cache: 'reload' }),
+    cacheWillUpdate: async ({ request, response }) => {
+      if (!response || response.status >= 400) return null;
+      if (isHtmlUnderAssetUrl(request.url, response)) return null;
+      return response;
+    },
+  },
+]);
+
+// Heal workers that installed before the check above: drop any HTML stored under
+// an asset URL. The precache route then misses and falls back to the network
+// (bypassing the HTTP cache, per requestWillFetch above), and the next install
+// re-caches the real file.
+self.addEventListener('activate', (event) => {
+  event.waitUntil(
+    (async () => {
+      const cache = await caches.open(cacheNames.precache);
+      for (const request of await cache.keys()) {
+        const response = await cache.match(request);
+        if (response && isHtmlUnderAssetUrl(request.url, response)) {
+          await cache.delete(request);
+        }
+      }
+    })()
+  );
+});
 
 // Precache + serve every build asset cache-first. If any asset fails to fetch
 // during install, the install fails and the OLD worker keeps serving its complete
