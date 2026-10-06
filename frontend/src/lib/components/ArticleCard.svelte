@@ -18,6 +18,7 @@
   import { formatRelativeDate } from '$lib/utils/date';
   import { getFaviconUrl } from '$lib/utils/favicon';
   import { sanitizeHtml } from '$lib/utils/sanitize';
+  import { isNewsletterSubscription, wrapEmailBody } from '$lib/utils/newsletters';
   import { decodeEntities } from '$lib/utils/entities';
   import { marked } from 'marked';
   import { getDisplayContent } from '$lib/utils/displayItem';
@@ -260,6 +261,15 @@
   // common case renders structured `content` and never touches this).
   let lazyDocText = $state<string | null>(null);
 
+  // An emailed newsletter (see utils/newsletters.ts): its body is the whole
+  // article, so it's never swapped for a web extraction, and it renders in the
+  // email-body scope that resets the template's type sizes.
+  let isNewsletterArticle = $derived.by(() => {
+    if (article?.subscriptionId == null) return false;
+    const sub = subscriptionsStore.getById(article.subscriptionId);
+    return sub ? isNewsletterSubscription(sub) : false;
+  });
+
   // Content handling - article has priority, then share content, then localArticle, then document
   let displayContent = $derived.by(() => {
     // Link posts don't inline the full article (that bounces through the
@@ -270,7 +280,8 @@
     // If the reader explicitly fetched the original article, that full extraction
     // wins over the feed body — RSS entries are often just an excerpt. Keyed on
     // the article URL via the shared extract cache (same path link posts use).
-    const fetchedOriginal = article ? linkPostContentStore.get(itemUrl) : undefined;
+    const fetchedOriginal =
+      article && !isNewsletterArticle ? linkPostContentStore.get(itemUrl) : undefined;
     if (fetchedOriginal?.content) return fetchedOriginal.content;
 
     // For articles, use existing logic. The in-memory article is "light" (its
@@ -636,7 +647,7 @@
     const target = article;
     const url = itemUrl;
     const extract = () => {
-      if (url) linkPostContentStore.fetch(url);
+      if (url && !isNewsletterArticle) linkPostContentStore.fetch(url);
     };
     // Everything below reads and writes state the effect must not depend on: the
     // status guard, and `fetch`'s reactive entry map — tracking a failed extract's
@@ -723,7 +734,10 @@
   });
 
   let hasContent = $derived(Boolean(displayContent));
-  let sanitizedContent = $derived(sanitizeHtml(displayContent, itemUrl));
+  // Newsletter bodies render inside the email-body scope (see wrapEmailBody).
+  let sanitizedContent = $derived(
+    sanitizeHtml(isNewsletterArticle ? wrapEmailBody(displayContent) : displayContent, itemUrl)
+  );
 
   // Pre-resolved date string for the view (so the view imports no utils).
   let relativeDate = $derived(formatRelativeDate(itemPublishedAt));
@@ -862,8 +876,14 @@
   // Account-only, like the store it drives (extraction needs a session). Hidden
   // rather than offered and refused: a guest's feed is full of truncated RSS
   // bodies, so a dead "Fetch full article" would sit under most of them.
+  // Never for an emailed newsletter: the mail is the article, and its web link
+  // is at best the same text and often a paywalled or free-tier cut of it.
   let canFetchOriginal = $derived(
-    Boolean(auth.user) && Boolean(article) && Boolean(itemUrl) && !hasFetchedOriginal
+    Boolean(auth.user) &&
+      Boolean(article) &&
+      Boolean(itemUrl) &&
+      !isNewsletterArticle &&
+      !hasFetchedOriginal
   );
 
   // Whether "More" / a content tap can expand the card. Usually that's the

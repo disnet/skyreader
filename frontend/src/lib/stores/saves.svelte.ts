@@ -11,6 +11,7 @@ import { extractArticle } from '$lib/services/extract';
 import { loadStoredBody } from '$lib/services/itemBody';
 import { subscriptionsStore } from './subscriptions.svelte';
 import { preferExtractedBody } from '$lib/utils/saveBody';
+import { isNewsletterSubscription, wrapEmailBody } from '$lib/utils/newsletters';
 import { failedSaveBody, isFailedSaveBody, type SaveFetchFailure } from '$lib/utils/saveAnywhere';
 import { computeContentStats } from '$lib/services/articleMerge';
 import { savedSearchStore } from './savedSearch.svelte';
@@ -549,6 +550,15 @@ function createSavesStore() {
       // is what extraction has to beat — not an empty body a paywall wins by
       // default.
       let storedBodyRef: { ref: StoredBodyRef; feedUrl: string } | null = null;
+      // An emailed newsletter's feed body *is* the article: the mail is the
+      // canonical copy, and its web link (if any) is a teaser, a paywall or a
+      // different free/paid cut. So it never goes to the extractor — no length
+      // heuristic can tell those apart from a cleanup.
+      const subscription =
+        article.subscriptionId != null
+          ? subscriptionsStore.getById(article.subscriptionId)
+          : undefined;
+      const isNewsletter = subscription ? isNewsletterSubscription(subscription) : false;
       if (article.subscriptionId != null) {
         try {
           const row = await db.articles
@@ -557,7 +567,7 @@ function createSavesStore() {
             .filter((r) => r.subscriptionId === article.subscriptionId)
             .first();
           rssBody = row?.content || null;
-          const feedUrl = subscriptionsStore.getById(article.subscriptionId)?.feedUrl;
+          const feedUrl = subscription?.feedUrl;
           if (!rssBody && row?.contentTruncated && feedUrl) {
             storedBodyRef = {
               ref: { id: row.id, guid: article.guid, subscriptionId: article.subscriptionId },
@@ -568,6 +578,9 @@ function createSavesStore() {
           // Best effort — fall back to no stored body.
         }
       }
+      // Saved newsletters keep the email-body scope so every surface that
+      // renders the saved copy (reader, daily magazine) resets its type sizes.
+      if (isNewsletter) rssBody = wrapEmailBody(rssBody);
 
       // Optimistically add to local state with the RSS body so the save appears
       // immediately and stays readable offline; the extracted body upgrades it
@@ -613,10 +626,10 @@ function createSavesStore() {
                   guest: auth.isGuest,
                 })
               : Promise.resolve(null),
-            extractArticle(article.url),
+            isNewsletter ? Promise.resolve(null) : extractArticle(article.url),
           ]);
           if (stored.status === 'fulfilled' && stored.value?.status === 'found') {
-            rssBody = stored.value.content;
+            rssBody = isNewsletter ? wrapEmailBody(stored.value.content) : stored.value.content;
           }
           let content = rssBody;
           let wordCount: number | null = null;
@@ -624,7 +637,7 @@ function createSavesStore() {
           try {
             if (extraction.status === 'rejected') throw extraction.reason;
             const extracted = extraction.value;
-            if (preferExtractedBody(rssBody, extracted.content)) {
+            if (extracted && preferExtractedBody(rssBody, extracted.content)) {
               content = extracted.content;
               wordCount = extracted.wordCount || null;
               domain = extracted.domain || null;

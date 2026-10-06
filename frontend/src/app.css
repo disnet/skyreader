@@ -495,6 +495,34 @@ body.sidebar-open-mobile {
    px value on the document root by AppShell (see preferences store), so there
    are no discrete size selectors here. */
 
+/* Emailed newsletters (wrapped by wrapEmailBody in lib/utils/newsletters.ts).
+   Email templates size text with whatever markup survives the sanitizer: an
+   <h1> or <h6> as a styling hook, <small> around whole sections, layout tables
+   nested five deep. Rather than chase each trick, every element in the body
+   takes the reader's size, and only real headings step up from it. A
+   surface's own scoped rules (a reader's heading scale, <pre>) are more
+   specific and still apply. */
+.email-body * {
+  font-size: inherit;
+}
+
+.email-body h1 {
+  font-size: 1.5em;
+}
+
+.email-body h2 {
+  font-size: 1.3em;
+}
+
+.email-body h3 {
+  font-size: 1.15em;
+}
+
+.email-body sub,
+.email-body sup {
+  font-size: 0.75em;
+}
+
 /* Leaflet footnotes — a numbered reference in the text and the bodies in a
    hairline-ruled list at the end (see lib/utils/leaflet-renderer.ts). Rendered
    into four surfaces now (the saved reader, article cards, the daily magazine,

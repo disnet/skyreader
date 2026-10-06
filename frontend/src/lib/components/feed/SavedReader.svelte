@@ -19,6 +19,7 @@
   import { sanitizeHtml } from '$lib/utils/sanitize';
   import { formatRelativeDate } from '$lib/utils/date';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
+  import { isNewsletterSubscription, wrapEmailBody } from '$lib/utils/newsletters';
   import { loadStoredBody } from '$lib/services/itemBody';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { profileService } from '$lib/services/profiles';
@@ -298,6 +299,8 @@
       contentTruncated,
       url,
     } = readerItem.item;
+    // An emailed newsletter's body is the article — never extract its web link.
+    const isNewsletter = untrack(() => isNewsletterArticle);
     let cancelled = false;
     (async () => {
       try {
@@ -345,11 +348,11 @@
           // Keep the store's reactive entry map out of this effect's dependency
           // graph. Failed extracts delete their entry so a later open can retry;
           // tracking that deletion here would create an immediate retry loop.
-          if (url) untrack(() => linkPostContentStore.fetch(url));
+          if (url && !isNewsletter) untrack(() => linkPostContentStore.fetch(url));
         }
       } catch {
         if (!cancelled) lazyArticleContent = '';
-        if (!cancelled && contentTruncated && url) {
+        if (!cancelled && contentTruncated && url && !isNewsletter) {
           untrack(() => linkPostContentStore.fetch(url));
         }
       }
@@ -375,6 +378,14 @@
     };
   });
 
+  // An emailed newsletter (see utils/newsletters.ts): its body is the whole
+  // article, so a web extraction never replaces it.
+  let isNewsletterArticle = $derived.by(() => {
+    if (readerItem.type !== 'article' || readerItem.item.subscriptionId == null) return false;
+    const sub = subscriptionsStore.getById(readerItem.item.subscriptionId);
+    return sub ? isNewsletterSubscription(sub) : false;
+  });
+
   let displayContent = $derived.by(() => {
     // In the reader we show the external article itself — not the sharer's note.
     if (linkPostArticle?.content) return linkPostArticle.content;
@@ -390,7 +401,9 @@
     // the ⋯ menu, the truncated-article nudge), and an RSS body is often just an
     // excerpt. It's also how an oversized body — dropped at ingest — gets here.
     const extractedArticle =
-      readerItem.type === 'article' ? linkPostContentStore.get(readerItem.item.url) : undefined;
+      readerItem.type === 'article' && !isNewsletterArticle
+        ? linkPostContentStore.get(readerItem.item.url)
+        : undefined;
     if (extractedArticle?.content) return extractedArticle.content;
     // Else the feed body for an article rendered via the 'article' path — it was
     // stripped from memory and is read back from IndexedDB above.
@@ -523,7 +536,11 @@
     if (text) shareComposerStore.appendQuote(text);
   }
 
-  let sanitizedContent = $derived(sanitizeHtml(displayContent, itemUrl));
+  // Newsletter bodies render inside the email-body scope (see wrapEmailBody).
+  // A save of one already carries the wrapper; wrapping is idempotent.
+  let sanitizedContent = $derived(
+    sanitizeHtml(isNewsletterArticle ? wrapEmailBody(displayContent) : displayContent, itemUrl)
+  );
 
   // Kindle-style paged reading. When on, the article flows into columns turned a
   // page at a time instead of scrolling; the scroll-driven paragraph highlight and

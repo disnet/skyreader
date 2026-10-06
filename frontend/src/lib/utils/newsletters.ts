@@ -32,3 +32,24 @@ export function newsletterSender(feedUrl: string | undefined): string | null {
   const slash = feedUrl.indexOf('/');
   return slash > 0 ? feedUrl.slice(slash + 1) || null : null;
 }
+
+/**
+ * Class on the wrapper that marks a body as emailed newsletter HTML. Email
+ * templates size their type through markup the sanitizer can't tell from
+ * article structure (<h1> as a 12px footer, <small> for whole sections,
+ * layout tables several deep), so stripping attributes alone keeps leaking
+ * odd sizes into the reader. The wrapper lets app.css reset every element in
+ * the body to the reader's own size instead of enumerating the tricks.
+ */
+export const EMAIL_BODY_CLASS = 'email-body';
+
+const EMAIL_BODY_OPEN = `<div class="${EMAIL_BODY_CLASS}">`;
+
+/** Wrap a newsletter body in the email-body scope; idempotent. */
+export function wrapEmailBody(html: string): string;
+export function wrapEmailBody(html: string | null): string | null;
+export function wrapEmailBody(html: string | null | undefined): string | null | undefined;
+export function wrapEmailBody(html: string | null | undefined): string | null | undefined {
+  if (!html || html.startsWith(EMAIL_BODY_OPEN)) return html;
+  return `${EMAIL_BODY_OPEN}${html}</div>`;
+}

@@ -11,6 +11,7 @@ import {
 import { toggleSavedLink } from '$lib/utils/saveLink';
 import { markFollowLinkRead } from '$lib/utils/followLinks';
 import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
+import { isNewsletterSubscription } from '$lib/utils/newsletters';
 import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
 import { linkblogStore } from '$lib/stores/linkblog.svelte';
 import { linkPostContentStore } from '$lib/stores/linkPostContent.svelte';
@@ -131,6 +132,11 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
   function fetchSelectedOriginal() {
     const item = getSelectedItem();
     if (!item || (item.type !== 'article' && item.type !== 'link') || !item.item.url) return;
+    // An emailed newsletter's body is the article; its web link is never fetched.
+    if (item.type === 'article' && item.item.subscriptionId != null) {
+      const sub = subscriptionsStore.getById(item.item.subscriptionId);
+      if (sub && isNewsletterSubscription(sub)) return;
+    }
     linkPostContentStore.fetch(item.item.url);
     // Expand so the fetched (longer) body shows rather than the clamped excerpt.
     if (feedViewStore.expandedKey !== item.key) {

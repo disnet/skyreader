@@ -101,7 +101,16 @@ vi.mock('$lib/services/itemBody', () => ({ loadStoredBody }));
 
 vi.mock('./subscriptions.svelte', () => ({
   subscriptionsStore: {
-    getById: (id: number) => (id === 7 ? { id, feedUrl: 'https://news.example/feed' } : undefined),
+    getById: (id: number) =>
+      id === 7
+        ? { id, feedUrl: 'https://news.example/feed' }
+        : id === 8
+          ? {
+              id,
+              feedUrl: 'newsletter:inbox1/editor@letter.example',
+              sourceType: 'email.newsletter',
+            }
+          : undefined,
   },
 }));
 
@@ -496,5 +505,48 @@ describe('savesStore.saveArticle body choice', () => {
 
     expect(loadStoredBody).not.toHaveBeenCalled();
     expect(enqueue).toHaveBeenCalled();
+  });
+
+  it('never extracts an emailed newsletter, even when the web copy is longer', async () => {
+    // A free/paid split: the web page is a different (longer) cut, so a length
+    // test would pick it. The mail is the article.
+    const mail = words(400);
+    articleRows.push({ guid: 'mail-1', subscriptionId: 8, content: mail });
+    extractArticle.mockResolvedValueOnce({ content: words(900), wordCount: 900, domain: 'x.com' });
+
+    const saved = await savesStore.saveArticle({
+      url: 'https://letter.example/p/issue',
+      guid: 'mail-1',
+      subscriptionId: 8,
+    });
+
+    expect(extractArticle).not.toHaveBeenCalled();
+    expect(saved.content).toBe(`<div class="email-body">${mail}</div>`);
+    expect(api.saveFromUrl).toHaveBeenCalledWith(
+      'https://letter.example/p/issue',
+      expect.any(String),
+      expect.objectContaining({ content: `<div class="email-body">${mail}</div>` })
+    );
+  });
+
+  it("saves a newsletter's out-of-row body without extracting", async () => {
+    const mail = words(3000);
+    articleRows.push({
+      id: 9,
+      guid: 'mail-2',
+      subscriptionId: 8,
+      content: null,
+      contentTruncated: true,
+    });
+    loadStoredBody.mockResolvedValueOnce({ status: 'found', content: mail });
+
+    const saved = await savesStore.saveArticle({
+      url: 'https://letter.example/p/long',
+      guid: 'mail-2',
+      subscriptionId: 8,
+    });
+
+    expect(extractArticle).not.toHaveBeenCalled();
+    expect(saved.content).toBe(`<div class="email-body">${mail}</div>`);
   });
 });
