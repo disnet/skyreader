@@ -527,11 +527,11 @@ describe('savesStore.saveArticle body choice', () => {
     });
 
     expect(extractArticle).not.toHaveBeenCalled();
-    expect(saved.content).toBe(`<div class="email-body">${mail}</div>`);
+    expect(saved.content).toBe(`<div class="sr-email-body">${mail}</div>`);
     expect(api.saveFromUrl).toHaveBeenCalledWith(
       'https://letter.example/p/issue',
       expect.any(String),
-      expect.objectContaining({ content: `<div class="email-body">${mail}</div>` })
+      expect.objectContaining({ content: `<div class="sr-email-body">${mail}</div>` })
     );
   });
 
@@ -553,7 +553,7 @@ describe('savesStore.saveArticle body choice', () => {
     });
 
     expect(extractArticle).not.toHaveBeenCalled();
-    expect(saved.content).toBe(`<div class="email-body">${mail}</div>`);
+    expect(saved.content).toBe(`<div class="sr-email-body">${mail}</div>`);
   });
 
   it('treats a newsletter as one before the subscriptions store has hydrated', async () => {
@@ -573,7 +573,7 @@ describe('savesStore.saveArticle body choice', () => {
     });
 
     expect(extractArticle).not.toHaveBeenCalled();
-    expect(saved.content).toBe(`<div class="email-body">${mail}</div>`);
+    expect(saved.content).toBe(`<div class="sr-email-body">${mail}</div>`);
     dbOnlySubscriptions.clear();
   });
 
@@ -597,17 +597,53 @@ describe('savesStore.saveArticle body choice', () => {
     });
 
     expect(extractArticle).not.toHaveBeenCalled();
-    expect(saved.content).toBe('<div class="email-body"><p>The opening.</p></div>');
+    const lead = '<div class="sr-email-body sr-email-lead"><p>The opening.</p></div>';
+    expect(saved.content).toBe(lead);
     expect(api.saveFromUrl).toHaveBeenCalledWith(
       'https://letter.example/p/gone',
       expect.any(String),
-      expect.objectContaining({ content: '<div class="email-body"><p>The opening.</p></div>' })
+      expect.objectContaining({ content: lead })
     );
+  });
+
+  it("recovers a lead-only newsletter save's mail when the reader opens it", async () => {
+    const mail = words(3000);
+    articleRows.push({
+      id: 11,
+      guid: 'mail-6',
+      subscriptionId: 8,
+      content: null,
+      contentLead: '<p>The opening.</p>',
+      contentTruncated: true,
+    });
+    loadStoredBody.mockResolvedValueOnce({ status: 'unavailable' });
+    const saved = await savesStore.saveArticle({
+      url: 'https://letter.example/p/later',
+      guid: 'mail-6',
+      subscriptionId: 8,
+    });
+    api.saveFromUrl.mockClear();
+
+    // Still unreachable: the lead stays, and isn't cached against a retry.
+    loadStoredBody.mockResolvedValueOnce({ status: 'unavailable' });
+    expect(await savesStore.getContent(saved.rkey)).toBe(saved.content);
+
+    loadStoredBody.mockResolvedValueOnce({ status: 'found', content: mail });
+    const body = `<div class="sr-email-body">${mail}</div>`;
+    expect(await savesStore.getContent(saved.rkey)).toBe(body);
+    expect(savedRows.get(saved.rkey)?.content).toBe(body);
+    expect(savedRows.get(saved.rkey)?.wordCount).toBeGreaterThan(2900);
+    expect(api.saveFromUrl).toHaveBeenCalledWith(
+      'https://letter.example/p/later',
+      saved.rkey,
+      expect.objectContaining({ content: body, itemGuid: 'mail-6', updateContent: true })
+    );
+    expect(extractArticle).not.toHaveBeenCalled();
   });
 
   it('re-saves a held newsletter body without extracting (undo of an Unsave)', async () => {
     // The feed row is gone; the body the reader held is all there is.
-    const held = `<div class="email-body">${words(500)}</div>`;
+    const held = `<div class="sr-email-body">${words(500)}</div>`;
 
     const saved = await savesStore.saveArticle({
       url: 'https://letter.example/p/undo',
@@ -616,6 +652,23 @@ describe('savesStore.saveArticle body choice', () => {
     });
 
     expect(extractArticle).not.toHaveBeenCalled();
+    expect(saved.content).toBe(held);
+  });
+
+  it('restores a held body as it was, even one from before newsletters were marked', async () => {
+    // An older newsletter save carries no wrapper and its feed row is gone, so
+    // nothing says it's a newsletter; the undo still mustn't swap in the web copy.
+    const held = words(500);
+    extractArticle.mockResolvedValueOnce({ content: words(900), wordCount: 900, domain: 'x.com' });
+
+    const saved = await savesStore.saveArticle({
+      url: 'https://letter.example/p/old',
+      guid: 'mail-7',
+      content: held,
+    });
+
+    expect(extractArticle).not.toHaveBeenCalled();
+    expect(loadStoredBody).not.toHaveBeenCalled();
     expect(saved.content).toBe(held);
   });
 });

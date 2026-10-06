@@ -247,4 +247,36 @@ describe('GET /api/saved/updates — in-place edits the list refresh cannot see'
     );
     expect(res.body.articles[0].updatedAt).toEqual(expect.any(String));
   });
+
+  it("upgrades a feed save's body in place, matched by its item guid", async () => {
+    // A newsletter saved while its mail was out of reach holds only the lead
+    // until the client recovers the mail and sends it back.
+    const lead = '<div class="sr-email-body sr-email-lead"><p>The opening.</p></div>';
+    const mail = '<div class="sr-email-body"><p>The whole issue.</p></div>';
+    await call(
+      post({ url: URL, rkey: 'aaaaaaaaaaaaa', fromFeed: true, itemGuid: 'g-1', content: lead })
+    );
+
+    const dup = await call(
+      post({ url: URL, rkey: 'aaaaaaaaaaaaa', fromFeed: true, itemGuid: 'g-1', content: mail })
+    );
+    expect(dup.status).toBe(409);
+
+    const { status, body } = await call(
+      post({
+        url: URL,
+        rkey: 'aaaaaaaaaaaaa',
+        fromFeed: true,
+        itemGuid: 'g-1',
+        content: mail,
+        wordCount: 3,
+        updateContent: true,
+      })
+    );
+    expect(status).toBe(200);
+    expect(body.rkey).toBe('aaaaaaaaaaaaa');
+    const row = await getRow();
+    expect(row.content).toBe(mail);
+    expect(row.word_count).toBe(3);
+  });
 });

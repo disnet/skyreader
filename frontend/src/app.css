@@ -505,24 +505,24 @@ body.sidebar-open-mobile {
    or the browser's 2em. Surfaces size only <pre> themselves (scoped, more
    specific, so it still applies); none sets a heading scale, and one that did
    would override these steps for newsletters too. */
-.email-body * {
+.sr-email-body * {
   font-size: inherit;
 }
 
-.email-body h1 {
+.sr-email-body h1 {
   font-size: 1.5em;
 }
 
-.email-body h2 {
+.sr-email-body h2 {
   font-size: 1.3em;
 }
 
-.email-body h3 {
+.sr-email-body h3 {
   font-size: 1.15em;
 }
 
-.email-body sub,
-.email-body sup {
+.sr-email-body sub,
+.sr-email-body sup {
   font-size: 0.75em;
 }
 

@@ -33,6 +33,9 @@ vi.mock('$lib/stores/saves.svelte', () => ({
     }),
     // Bodies are stripped from the in-memory copies; the full row lives in Dexie.
     getContent: vi.fn(async (rkey: string) => (rkey === '3kaaaaaaaaaaa' ? '<p>A body</p>' : null)),
+    getLocalContent: vi.fn(async (rkey: string) =>
+      rkey === '3kaaaaaaaaaaa' ? '<p>A body</p>' : null
+    ),
   },
 }));
 
@@ -101,6 +104,19 @@ describe('toggleSavedItemSave', () => {
       expect.objectContaining({ url: item.url, guid: 'guid-1', title: 'A Piece' })
     );
     expect(isSavedItemSaved(item)).toBe(true);
+  });
+
+  it("undoes a feed save's Unsave with the body it had, read only from the device", async () => {
+    const item = save();
+    saves.push(item);
+
+    await toggleSavedItemSave(item); // unsave
+    expect(savesStore.getContent).not.toHaveBeenCalled();
+    await toggleSavedItemSave(item); // undo
+
+    expect(savesStore.saveArticle).toHaveBeenCalledWith(
+      expect.objectContaining({ guid: 'guid-1', content: '<p>A body</p>' })
+    );
   });
 
   it('re-saves a document save as a document, body and all', async () => {

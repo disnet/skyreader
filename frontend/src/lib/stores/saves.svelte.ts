@@ -11,7 +11,13 @@ import { extractArticle } from '$lib/services/extract';
 import { loadStoredBody } from '$lib/services/itemBody';
 import { subscriptionsStore } from './subscriptions.svelte';
 import { preferExtractedBody } from '$lib/utils/saveBody';
-import { isEmailBody, isNewsletterSubscription, wrapEmailBody } from '$lib/utils/newsletters';
+import {
+  isEmailBody,
+  isEmailLead,
+  isNewsletterSubscription,
+  wrapEmailBody,
+  wrapEmailLead,
+} from '$lib/utils/newsletters';
 import { resolveSubscription } from '$lib/utils/newsletterArticle';
 import { failedSaveBody, isFailedSaveBody, type SaveFetchFailure } from '$lib/utils/saveAnywhere';
 import { computeContentStats } from '$lib/services/articleMerge';
@@ -532,8 +538,9 @@ function createSavesStore() {
     summary?: string;
     imageUrl?: string;
     publishedAt?: string;
-    // A body the caller already holds — the undo of an Unsave in the saved
-    // reader (utils/readerSave.ts). Used when the archive no longer has one.
+    // The body of the save being restored — the undo of an Unsave in the saved
+    // reader (utils/readerSave.ts). The undo brings back the copy the user had,
+    // as it was: no archive read, no extraction.
     content?: string;
   }): Promise<SavedItem> {
     saving = true;
@@ -571,7 +578,9 @@ function createSavesStore() {
       // backend fills by extracting the web copy (backed saves'
       // extractMissingBackedContent), which is exactly what a newsletter never is.
       let newsletterLead: string | null = null;
-      if (article.subscriptionId != null) {
+      if (article.content) {
+        rssBody = article.content;
+      } else if (article.subscriptionId != null) {
         try {
           const row = await db.articles
             .where('guid')
@@ -591,13 +600,17 @@ function createSavesStore() {
           // Best effort — fall back to no stored body.
         }
       }
-      if (!rssBody && article.content) rssBody = article.content;
       // Saved newsletters keep the email-body scope so every surface that
       // renders the saved copy (reader, daily magazine) resets its type sizes.
-      // The out-of-row body, when there is one, replaces the lead below. (A
-      // summary is feed HTML like the body — every surface renders it as such.)
+      // The out-of-row body, when there is one, replaces the lead below; a lead
+      // still standing after that is marked as one, so getContent swaps in the
+      // mail once the archive answers. (A summary is feed HTML like the body —
+      // every surface renders it as such.)
       if (isNewsletter) {
-        rssBody ||= newsletterLead || (article.summary ? `<p>${article.summary}</p>` : null);
+        if (!rssBody) {
+          const lead = newsletterLead || (article.summary ? `<p>${article.summary}</p>` : null);
+          rssBody = lead ? wrapEmailLead(lead) : null;
+        }
         rssBody = wrapEmailBody(rssBody);
       }
 
@@ -645,7 +658,7 @@ function createSavesStore() {
                   guest: auth.isGuest,
                 })
               : Promise.resolve(null),
-            isNewsletter ? Promise.resolve(null) : extractArticle(article.url),
+            isNewsletter || article.content ? Promise.resolve(null) : extractArticle(article.url),
           ]);
           if (stored.status === 'fulfilled' && stored.value?.status === 'found') {
             rssBody = isNewsletter ? wrapEmailBody(stored.value.content) : stored.value.content;
@@ -960,7 +973,8 @@ function createSavesStore() {
     if (!rkey || contentCache.has(rkey)) return;
     try {
       const row = await db.saved.get(rkey);
-      if (row?.content) contentCache.set(rkey, row.content);
+      // A newsletter lead stays uncached so getContent tries to recover the mail.
+      if (row?.content && !isEmailLead(row.content)) contentCache.set(rkey, row.content);
     } catch {
       // Non-fatal: getContent falls back to a fresh read on open.
     }
@@ -974,6 +988,7 @@ function createSavesStore() {
     try {
       const row = await db.saved.get(rkey);
       if (row?.content != null) {
+        if (isEmailLead(row.content)) return (await recoverNewsletterBody(row)) ?? row.content;
         contentCache.set(rkey, row.content);
         return row.content;
       }
@@ -992,8 +1007,74 @@ function createSavesStore() {
         await safePut(db.saved, filled);
         savedSearchStore.upsert(filled);
       }
+      if (body != null && row && isEmailLead(body)) {
+        return (await recoverNewsletterBody({ ...row, content: body })) ?? body;
+      }
       if (body != null) contentCache.set(rkey, body);
       return body;
+    } catch {
+      return null;
+    }
+  }
+
+  // A saved body already on this device (memory or IndexedDB) — never the
+  // network. For callers that only want the body if it's at hand.
+  async function getLocalContent(rkey: string): Promise<string | null> {
+    const cached = contentCache.get(rkey);
+    if (cached != null) return cached;
+    try {
+      return (await db.saved.get(rkey))?.content ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  // A newsletter saved while its out-of-row mail was out of reach (archive
+  // unreachable, or saved offline) holds only the lead (see wrapEmailLead in
+  // saveArticle). Recover the mail from the archive now and make it the save's
+  // body, here and on the server. Null when it still can't be had: the lead
+  // stays, uncached, so the next open tries again.
+  async function recoverNewsletterBody(row: SavedItem): Promise<string | null> {
+    if (!row.itemGuid || !syncStore.isOnline) return null;
+    try {
+      const guid = row.itemGuid;
+      const source = await db.articles
+        .where('guid')
+        .equals(guid)
+        .filter((a) => !!a.contentTruncated)
+        .first();
+      if (!source) return null;
+      const subscription = await resolveSubscription(source.subscriptionId);
+      if (!subscription?.feedUrl || !isNewsletterSubscription(subscription)) return null;
+      const stored = await loadStoredBody(
+        { id: source.id, guid, subscriptionId: source.subscriptionId },
+        subscription.feedUrl,
+        { guest: auth.isGuest }
+      );
+      if (stored.status !== 'found') return null;
+
+      const content = wrapEmailBody(stored.content);
+      const wordCount = wordCountFrom(content);
+      const filled: SavedItem = { ...row, content, wordCount };
+      contentCache.set(row.rkey, content);
+      await safePut(db.saved, filled);
+      articles = articles.map((a) => (a.rkey === row.rkey ? toLightSaved(filled) : a));
+      rebuildMaps();
+      savedSearchStore.upsert(filled);
+      if (canReachBackend()) {
+        // Best effort: a failure leaves the server on the lead, and another
+        // device recovers the mail the same way.
+        api
+          .saveFromUrl(row.url, row.rkey, {
+            fromFeed: true,
+            itemGuid: guid,
+            content,
+            wordCount: wordCount ?? undefined,
+            updateContent: true,
+          })
+          .catch((err) => console.warn('Failed to upgrade saved newsletter body:', err));
+      }
+      return content;
     } catch {
       return null;
     }
@@ -1030,6 +1111,7 @@ function createSavesStore() {
     getByUrl,
     getByGuid,
     getContent,
+    getLocalContent,
     prefetchContent,
   };
 }

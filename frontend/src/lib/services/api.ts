@@ -1946,7 +1946,8 @@ class ApiClient {
       publishedAt?: string;
       domain?: string;
       wordCount?: number;
-      // Replace an existing save of this URL's content instead of a 409.
+      // Replace an existing save's content instead of a 409 (matched by URL,
+      // or by itemGuid for a feed save).
       updateContent?: boolean;
     }
   ): Promise<{

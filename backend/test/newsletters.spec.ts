@@ -179,11 +179,15 @@ describe('email newsletters', () => {
         rawEmail({ html: '<body><h1>Fine print</h1></body>' }),
         Date.now()
       );
-      expect(parsed!.item.content).toBe('<div class="email-body"><h1>Fine print</h1></div>');
+      expect(parsed!.item.content).toBe('<div class="sr-email-body"><h1>Fine print</h1></div>');
       // Idempotent, however the wrapper was serialized.
       expect(wrapEmailBody(parsed!.item.content!)).toBe(parsed!.item.content);
-      expect(wrapEmailBody(" \n<div class='email-body x'><p>a</p></div>")).toBe(
-        " \n<div class='email-body x'><p>a</p></div>"
+      expect(wrapEmailBody(" \n<div class='sr-email-body x'><p>a</p></div>")).toBe(
+        " \n<div class='sr-email-body x'><p>a</p></div>"
+      );
+      // A template's own hyphenated class is not the wrapper.
+      expect(wrapEmailBody('<div class="sr-email-body-wrapper"><p>a</p></div>')).toBe(
+        '<div class="sr-email-body"><div class="sr-email-body-wrapper"><p>a</p></div></div>'
       );
     });
 
@@ -193,7 +197,7 @@ describe('email newsletters', () => {
         Date.now()
       );
       expect(parsed!.item.content).toBe(
-        '<div class="email-body"><p>Hello &lt;friends&gt;.</p>\n<p>Read <a href="https://example.com/post">https://example.com/post</a> today.</p></div>'
+        '<div class="sr-email-body"><p>Hello &lt;friends&gt;.</p>\n<p>Read <a href="https://example.com/post">https://example.com/post</a> today.</p></div>'
       );
       expect(parsed!.item.summary).toBe('Hello &lt;friends&gt;. Read today.');
       expect(parsed!.siteUrl).toBe('https://news.example.com');
@@ -264,7 +268,7 @@ describe('email newsletters', () => {
       expect(parsed!.item.title).toBe('The big one');
       // Dated by the forward (the outer Date), not the quoted 8:00 AM original.
       expect(parsed!.item.publishedAt).toBe('2026-09-22T12:00:00.000Z');
-      expect(parsed!.item.content).toBe('<div class="email-body"><p>Hello readers.</p></div>');
+      expect(parsed!.item.content).toBe('<div class="sr-email-body"><p>Hello readers.</p></div>');
     });
 
     it('files an Outlook or Apple Mail forward under the original sender', async () => {
@@ -320,7 +324,7 @@ describe('email newsletters', () => {
         Date.now()
       );
       const content = parsed!.item.content!;
-      expect(content.startsWith('<div class="email-body"><br><div><h1>Weekly</h1>')).toBe(true);
+      expect(content.startsWith('<div class="sr-email-body"><br><div><h1>Weekly</h1>')).toBe(true);
       expect(content).toContain('<p>Body: the issue.</p>');
       expect(content).not.toMatch(/forwarded message|<blockquote|From: |Reply-To/i);
     });
@@ -369,7 +373,7 @@ describe('email newsletters', () => {
       const parsed = await parseNewsletterEmail(raw, Date.now());
       expect(parsed!.sender).toBe('moneystuff@news.example.com');
       expect(parsed!.item.guid).toBe('orig@news.example.com');
-      expect(parsed!.item.content).toBe('<div class="email-body"><p>Inside.</p></div>');
+      expect(parsed!.item.content).toBe('<div class="sr-email-body"><p>Inside.</p></div>');
       expect(parsed!.item.publishedAt).toBe('2026-09-28T09:30:00.000Z');
     });
 

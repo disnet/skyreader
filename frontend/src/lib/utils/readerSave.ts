@@ -14,7 +14,6 @@
 // saved" for an item that plainly is.
 import { savesStore } from '$lib/stores/saves.svelte';
 import { db } from '$lib/services/db';
-import { isEmailBody } from '$lib/utils/newsletters';
 import type { SavedItem } from '$lib/types';
 
 /**
@@ -31,11 +30,12 @@ export function isSavedItemSaved(save: SavedItem): boolean {
   return liveSave(save) !== undefined;
 }
 
-// The body of the last save unsaved through here. A document save stores its
-// rendered body and has no URL to re-extract from, so undoing a mis-tapped
-// Unsave would otherwise bring the item back empty. A newsletter save's body is
-// the mail, which its URL would re-extract as the web copy. One slot: only the
-// undo of the thing you just did needs it.
+// The body of the last save unsaved through here, so undoing a mis-tapped
+// Unsave brings back the copy you had rather than a fresh one. A document save
+// has no URL to re-extract from, so it would come back empty; a newsletter
+// save's body is the mail, which its URL would re-extract as the web copy (and
+// a save from before newsletters were marked can't be told from any other).
+// One slot: only the undo of the thing you just did needs it.
 let lastUnsavedBody: { guid: string; content: string | null } | null = null;
 
 /**
@@ -48,8 +48,13 @@ export async function toggleSavedItemSave(save: SavedItem): Promise<void> {
   const live = liveSave(save);
   if (live) {
     const guid = live.itemGuid || live.url;
-    const body = await savesStore.getContent(live.rkey);
-    const content = live.source === 'document' || isEmailBody(body) ? body : null;
+    // A document's body is worth a network read (nothing else can restore it);
+    // anything else holds what's on this device, so Unsave never waits on the
+    // network.
+    const content =
+      live.source === 'document'
+        ? await savesStore.getContent(live.rkey)
+        : await savesStore.getLocalContent(live.rkey);
     await savesStore.remove(live.rkey);
     lastUnsavedBody = { guid, content };
     return;

@@ -142,12 +142,18 @@ export async function handleCreateSaved(
   // Check for duplicate — by item_guid for feed/share/document saves, by URL otherwise
   if ((body.fromFeed || source === 'share' || source === 'document') && body.itemGuid) {
     const existing = await env.DB.prepare(
-      'SELECT id FROM saved_articles WHERE user_did = ? AND item_guid = ?'
+      'SELECT id, rkey, record_uri FROM saved_articles WHERE user_did = ? AND item_guid = ?'
     )
       .bind(session.did, body.itemGuid)
-      .first();
+      .first<Pick<SavedRow, 'id' | 'rkey' | 'record_uri'>>();
 
     if (existing) {
+      // Content upgrade of a feed save: a newsletter saved while its full body
+      // was out of reach holds only the lead until the client recovers the mail
+      // (frontend savesStore.getContent).
+      if (body.updateContent && body.content) {
+        return await handleContentUpdate(env, session, body, existing);
+      }
       return new Response(JSON.stringify({ error: 'Article already saved' }), {
         status: 409,
         headers: { 'Content-Type': 'application/json' },
