@@ -11,6 +11,11 @@ export const river = $state({
   read: [] as string[],
   /** followLinksStore.inEverything: null until the reader's been asked. */
   inEverything: null as boolean | null,
+  /** followLinksStore.moreRiverLinks: another page of every link waits. */
+  moreLinks: false,
+  /** followLinksStore.loadMoreLinks calls, and the page each one brings. */
+  loadMoreCalls: 0,
+  nextPage: [] as FollowLink[],
 });
 
 export function resetRiver() {
@@ -20,4 +25,7 @@ export function resetRiver() {
   river.links = [];
   river.read = [];
   river.inEverything = null;
+  river.moreLinks = false;
+  river.loadMoreCalls = 0;
+  river.nextPage = [];
 }

@@ -30,6 +30,7 @@ import type {
   RoomInfo,
   RoomItem,
   FollowLinksResponse,
+  AllFollowLinksPage,
   FollowLinksWindow,
   FollowLinkSharersResponse,
   User,
@@ -1907,6 +1908,12 @@ class ApiClient {
   // re-login banner; Manage Sources asks instead.
   async getFollowLinks(window: FollowLinksWindow = '24h'): Promise<FollowLinksResponse> {
     return this.fetch(`/api/v2/following-links?window=${window}`);
+  }
+
+  /** One page of every link your follows shared, newest by first share. */
+  async getAllFollowLinks(cursor?: string | null): Promise<AllFollowLinksPage> {
+    const q = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
+    return this.fetch(`/api/v2/following-links/all?window=7d${q}`);
   }
 
   /** Whether follows links show in Everything, and whether every link comes back

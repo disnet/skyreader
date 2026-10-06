@@ -39,7 +39,7 @@ Open any article, from a feed, your saves, or anywhere else, and if people you f
 
 ## Every link, or the most shared
 
-By default you get the week's most-shared links, up to 60. If you follow a lot of people, links only one person shared can get crowded out. To see every link, newest first, go to **Manage Sources** and check **Show every link, not just the most shared** under **Links from people you follow**. **Home** still shows the most shared either way.
+By default you get the week's most-shared links, up to 60. If you follow a lot of people, links only one person shared can get crowded out. To see every link, newest first, go to **Manage Sources** and check **Show every link, not just the most shared** under **Links from people you follow**. More load as you scroll. **Home** still shows the most shared either way.
 
 ## Everything and other channels
 

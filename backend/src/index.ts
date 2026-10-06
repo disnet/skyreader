@@ -113,6 +113,7 @@ import {
 import { handleRecommends } from './routes/recommends';
 import {
   handleFollowLinkSharers,
+  handleGetAllFollowLinks,
   handleFollowLinksSettings,
   handleFollowLinksProbe,
   handleGetFollowLinks,
@@ -500,6 +501,10 @@ async function route(
     case url.pathname === '/api/v2/following-links':
       if (!session) return unauthorizedResponse(headers);
       response = await handleGetFollowLinks(request, env, ctx, session);
+      break;
+    case url.pathname === '/api/v2/following-links/all':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleGetAllFollowLinks(request, env, session);
       break;
     case url.pathname === '/api/v2/following-links/for':
       if (!session) return unauthorizedResponse(headers);

@@ -815,8 +815,9 @@ function createFeedViewStore() {
     // Exact matches first, against every article in the view whatever its age: a
     // link whose read key is an article's guid (feeds that use the permalink as
     // the guid) would otherwise share that row's key and read state.
+    const riverLinks = followLinksStore.riverLinks;
     const linkStrings = new Set<string>();
-    for (const l of followLinksStore.links) {
+    for (const l of riverLinks) {
       linkStrings.add(l.url);
       linkStrings.add(followLinkReadKey(l));
     }
@@ -842,7 +843,7 @@ function createFeedViewStore() {
       if (key) shown.add(key);
     }
 
-    let links = followLinksStore.links.filter((l) => {
+    let links = riverLinks.filter((l) => {
       if (shownExact.has(l.url) || shownExact.has(followLinkReadKey(l))) return false;
       const key = urlKey(l.url);
       const normalizedKey = urlKey(l.urlNormalized);
@@ -864,6 +865,23 @@ function createFeedViewStore() {
         : b.firstSharedAt - a.firstSharedAt
     );
   });
+
+  // Every follows link, when the reader turned that on, arrives a page at a time,
+  // newest by first share. Newest-first, the river stops at the oldest link
+  // loaded until the next page comes: an article older than it would otherwise
+  // sit above links still to load, and they'd appear above where you'd read.
+  // Oldest-first or most-shared-first can't be paged that way; they wait for
+  // every page (FeedPage asks, see needsEveryFollowLink).
+  let followLinksPaged = $derived(showFollowLinks && followLinksStore.moreRiverLinks);
+  let followLinksByDate = $derived(
+    effectiveFilters.sortOrder !== 'oldest' &&
+      !(effectiveFilters.sortOrder === 'popular' && canSortByPopularity)
+  );
+  let followLinkFloor = $derived.by((): number | null => {
+    if (!followLinksPaged || !followLinksByDate) return null;
+    return followLinksStore.riverLinks.at(-1)?.firstSharedAt ?? null;
+  });
+  let needsEveryFollowLink = $derived(followLinksPaged && !followLinksByDate);
 
   // Derived: full combined view (articles + documents merged by date),
   // pre-pagination. Merging the complete sets and sorting once means the
@@ -907,6 +925,11 @@ function createFeedViewStore() {
       const diff = new Date(b.date).getTime() - new Date(a.date).getTime();
       return sortOrder === 'oldest' ? -diff : diff;
     });
+    const floor = followLinkFloor;
+    if (floor !== null) {
+      const end = combined.findIndex((c) => new Date(c.date).getTime() < floor);
+      if (end !== -1) return combined.slice(0, end);
+    }
     return combined;
   });
 
@@ -1327,7 +1350,9 @@ function createFeedViewStore() {
   let hasMore = $derived.by(() => {
     const mode = viewMode;
     if (isSavedView) return loadedArticleCount < savedItemsAll.length;
-    if (mode === 'combined') return loadedArticleCount < combinedAll.length;
+    if (mode === 'combined') {
+      return loadedArticleCount < combinedAll.length || followLinkFloor !== null;
+    }
     // 'shares' mode shows documents, which aren't cursor-paginated.
     if (mode === 'shares') return false;
     return loadedArticleCount < filteredArticles.length;
@@ -1335,7 +1360,9 @@ function createFeedViewStore() {
 
   let isLoadingMore = $derived.by(() => {
     const mode = viewMode;
-    if (mode === 'combined' || mode === 'shares') return socialStore.isLoading;
+    if (mode === 'combined' || mode === 'shares') {
+      return socialStore.isLoading || (mode === 'combined' && followLinksStore.loadingMore);
+    }
     return false;
   });
 
@@ -1356,6 +1383,11 @@ function createFeedViewStore() {
     if (mode === 'combined') {
       if (loadedArticleCount < combinedAll.length) {
         loadedArticleCount += DEFAULT_PAGE_SIZE;
+      }
+      // Near the oldest follows link loaded: fetch the next page, which lets
+      // the river run on past it.
+      if (followLinkFloor !== null && loadedArticleCount >= combinedAll.length) {
+        await followLinksStore.loadMoreLinks();
       }
       return;
     }
@@ -1667,6 +1699,10 @@ function createFeedViewStore() {
     },
     get hasMore() {
       return hasMore;
+    },
+    /** The river can't order follows links until every page has loaded. */
+    get needsEveryFollowLink() {
+      return needsEveryFollowLink;
     },
     get isLoadingMore() {
       return isLoadingMore;

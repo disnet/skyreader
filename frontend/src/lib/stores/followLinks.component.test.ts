@@ -16,10 +16,12 @@ const auth = vi.hoisted(() => ({
 }));
 const getFollowLinks = vi.fn();
 const setFollowLinksSettings = vi.fn();
+const getAllFollowLinks = vi.fn();
 vi.mock('$lib/services/api', () => ({
   api: {
     getFollowLinks: (...a: unknown[]) => getFollowLinks(...a),
     setFollowLinksSettings: (...a: unknown[]) => setFollowLinksSettings(...a),
+    getAllFollowLinks: (...a: unknown[]) => getAllFollowLinks(...a),
   },
 }));
 vi.mock('./auth.svelte', () => ({ auth }));
@@ -65,6 +67,7 @@ async function freshStore() {
 beforeEach(() => {
   getFollowLinks.mockReset();
   setFollowLinksSettings.mockReset();
+  getAllFollowLinks.mockReset();
   auth.user = { did: 'did:plc:me' };
   vi.useFakeTimers();
 });
@@ -165,30 +168,112 @@ describe('followLinksStore', () => {
     expect(store.links.map((l) => l.url)).toEqual(['https://a.example/x']);
   });
 
-  it('asks for every link at once when switched on, and puts it back if saving fails', async () => {
+  it('pages every link for the river once switched on, leaving the ranked list alone', async () => {
     const store = await freshStore();
-    getFollowLinks.mockResolvedValueOnce(answer(['https://a.example/top']));
+    getFollowLinks.mockResolvedValue(answer(['https://a.example/top']));
     await store.load();
     expect(store.allLinks).toBe(false);
+    expect(store.riverLinks.map((l) => l.url)).toEqual(['https://a.example/top']);
 
     setFollowLinksSettings.mockResolvedValueOnce({ ok: true });
-    getFollowLinks.mockResolvedValueOnce(
-      answer(['https://a.example/new', 'https://a.example/top'], { allLinks: true })
-    );
+    getFollowLinks.mockResolvedValue(answer(['https://a.example/top'], { allLinks: true }));
+    getAllFollowLinks.mockResolvedValueOnce({
+      scopeRequired: false,
+      links: [link('https://a.example/new'), link('https://a.example/top')],
+      nextCursor: 'c1',
+    });
     await store.setAllLinks(true);
     expect(setFollowLinksSettings).toHaveBeenCalledWith({ allLinks: true });
-    // Asked again straight away, past the staleness window.
-    expect(getFollowLinks).toHaveBeenCalledTimes(2);
     expect(store.allLinks).toBe(true);
-    expect(store.links.map((l) => l.url)).toEqual([
+    // Home's list stays the ranked one; the river gets every link.
+    expect(store.links.map((l) => l.url)).toEqual(['https://a.example/top']);
+    expect(store.riverLinks.map((l) => l.url)).toEqual([
       'https://a.example/new',
       'https://a.example/top',
     ]);
+    expect(store.moreRiverLinks).toBe(true);
+    // A link only in the paged list still marks its article's river card.
+    expect(store.forUrl('https://a.example/new')?.url).toBe('https://a.example/new');
+
+    getAllFollowLinks.mockResolvedValueOnce({
+      scopeRequired: false,
+      links: [link('https://a.example/top'), link('https://a.example/old')],
+      nextCursor: null,
+    });
+    await store.loadMoreLinks();
+    expect(getAllFollowLinks).toHaveBeenLastCalledWith('c1');
+    expect(store.riverLinks.map((l) => l.url)).toEqual([
+      'https://a.example/new',
+      'https://a.example/top',
+      'https://a.example/old',
+    ]);
+    expect(store.moreRiverLinks).toBe(false);
 
     setFollowLinksSettings.mockRejectedValueOnce(new Error('offline'));
     await expect(store.setAllLinks(false)).rejects.toThrow('offline');
     expect(store.allLinks).toBe(true);
-    expect(getFollowLinks).toHaveBeenCalledTimes(2);
+    expect(store.riverLinks).toHaveLength(3);
+  });
+
+  it('keeps a river scrolled deep when a refresh brings a new first page', async () => {
+    const store = await freshStore();
+    const at = (url: string, t: number) => ({ ...link(url), firstSharedAt: t });
+    getFollowLinks.mockResolvedValue(answer([], { allLinks: true }));
+    getAllFollowLinks.mockResolvedValueOnce({
+      scopeRequired: false,
+      links: [at('https://a.example/3', 3)],
+      nextCursor: 'c1',
+    });
+    await store.load();
+    // First page, unknown to want every link: asked for after the ranked answer.
+    expect(store.riverLinks.map((l) => l.url)).toEqual(['https://a.example/3']);
+    getAllFollowLinks.mockResolvedValueOnce({
+      scopeRequired: false,
+      links: [at('https://a.example/2', 2), at('https://a.example/1', 1)],
+      nextCursor: 'c2',
+    });
+    await store.loadMoreLinks();
+
+    getAllFollowLinks.mockResolvedValueOnce({
+      scopeRequired: false,
+      links: [at('https://a.example/4', 4)],
+      nextCursor: 'fresh',
+    });
+    await store.load(true);
+    expect(store.riverLinks.map((l) => l.url)).toEqual([
+      'https://a.example/4',
+      'https://a.example/3',
+      'https://a.example/2',
+      'https://a.example/1',
+    ]);
+    // Still continues where the deep page left off.
+    getAllFollowLinks.mockResolvedValueOnce({ scopeRequired: false, links: [], nextCursor: null });
+    await store.loadEveryLink();
+    expect(getAllFollowLinks).toHaveBeenLastCalledWith('c2');
+    expect(store.moreRiverLinks).toBe(false);
+  });
+
+  it('ignores the setting in an answer asked for before it changed', async () => {
+    const store = await freshStore();
+    getFollowLinks.mockResolvedValueOnce(answer([]));
+    await store.load();
+
+    // A refresh in flight when the reader checks the box answers the old value.
+    const stale = deferred<FollowLinksResponse>();
+    getFollowLinks.mockReturnValueOnce(stale.promise);
+    const inFlight = store.load(true);
+    const saved = deferred<{ ok: boolean }>();
+    setFollowLinksSettings.mockReturnValueOnce(saved.promise);
+    const toggled = store.setAllLinks(true);
+    stale.resolve(answer([], { allLinks: false }));
+    await inFlight;
+    expect(store.allLinks).toBe(true);
+
+    getFollowLinks.mockResolvedValue(answer([], { allLinks: true }));
+    getAllFollowLinks.mockResolvedValue({ scopeRequired: false, links: [], nextCursor: null });
+    saved.resolve({ ok: true });
+    await toggled;
+    expect(store.allLinks).toBe(true);
   });
 
   it('finds a link by the posted URL, the normalized one, or another form of either', async () => {

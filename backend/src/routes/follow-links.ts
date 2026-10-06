@@ -3,6 +3,7 @@
 //
 //   GET  /api/v2/following-links?window=24h|3d|7d   serve from D1, refresh behind
 //        (200 { scopeRequired: true } until the reader grants getTimeline)
+//   GET  /api/v2/following-links/all?window=&cursor=&limit=   every link, newest first, paged
 //   GET  /api/v2/following-links/for?url=           who you follow shared one URL
 //   POST /api/v2/following-links/settings           { inEverything?, allLinks? } (no scope needed)
 //   GET  /api/v2/following-links/probe              local-dev diagnostic (Phase 0)
@@ -16,6 +17,8 @@ import {
   FOLLOW_LINKS_SCOPE_DENIED,
   FOLLOW_LINKS_WINDOWS,
   followLinksNeedRefresh,
+  decodeAllLinksCursor,
+  readAllFollowLinks,
   readFollowLinkSharers,
   readFollowLinks,
   readFollowLinksSettings,
@@ -82,7 +85,7 @@ export async function handleGetFollowLinks(
   const now = Date.now();
   const [sync, links] = await Promise.all([
     readFollowLinksSync(env, session.did),
-    readFollowLinks(env, session.did, window, now, allLinks),
+    readFollowLinks(env, session.did, window, now),
   ]);
 
   // The PDS refused the timeline for want of scope. A session holding only the
@@ -121,6 +124,43 @@ export async function handleGetFollowLinks(
 }
 
 /**
+ * GET /api/v2/following-links/all?window=7d&cursor=&limit=
+ *
+ * Every link in the window, newest by first share, a page at a time, for the
+ * river when the reader turned on every link. The ranked list above stays the
+ * most shared whatever the setting, so Home never re-sorts. Serves from D1
+ * only: the ranked request the client sends alongside starts any refresh.
+ */
+export async function handleGetAllFollowLinks(
+  request: Request,
+  env: Env,
+  session: Session
+): Promise<Response> {
+  if (!hasRequiredScopes(session.grantedScopes, FOLLOWS_LINKS_ACCESS_SCOPES)) {
+    return json({ scopeRequired: true, links: [], nextCursor: null });
+  }
+  const params = new URL(request.url).searchParams;
+  const param = params.get('window') ?? '7d';
+  if (!Object.hasOwn(FOLLOW_LINKS_WINDOWS, param)) {
+    return json({ error: 'window must be one of 24h, 3d, 7d' }, 400);
+  }
+  const rawCursor = params.get('cursor');
+  const cursor = rawCursor ? decodeAllLinksCursor(rawCursor) : null;
+  if (rawCursor && !cursor) return json({ error: 'Invalid cursor' }, 400);
+  const rawLimit = params.get('limit');
+  const limit = rawLimit === null ? undefined : Number(rawLimit);
+  if (limit !== undefined && !Number.isInteger(limit)) {
+    return json({ error: 'limit must be an integer' }, 400);
+  }
+
+  const page = await readAllFollowLinks(env, session.did, param as FollowLinksWindow, {
+    cursor,
+    limit,
+  });
+  return json({ scopeRequired: false, ...page });
+}
+
+/**
  * GET /api/v2/following-links/for?url=
  *
  * The people you follow who shared this article, for the reader's Discussion
@@ -147,8 +187,8 @@ export async function handleFollowLinkSharers(
 /**
  * POST /api/v2/following-links/settings  { inEverything?: boolean, allLinks?: boolean }
  *
- * Whether follows links show in Everything, and whether the reader gets every
- * link (newest first) or the week's most-shared. Either or both; one left out
+ * Whether follows links show in Everything, and whether the river shows every
+ * link (newest first, from /all) or the week's most-shared. Either or both; one left out
  * keeps its value. Needs no permission: "not now" is an answer someone gives
  * before granting it, and "yes" is saved before the sign-in that grants it, so
  * it's already on when they come back.
@@ -175,8 +215,8 @@ export async function handleFollowLinksSettings(
   if (inEverything === undefined && allLinks === undefined) {
     return json({ error: 'Nothing to set: send inEverything or allLinks' }, 400);
   }
-  await setFollowLinksSettings(env, session.did, { inEverything, allLinks });
-  return json({ ok: true, ...(await readFollowLinksSettings(env, session.did)) });
+  const saved = await setFollowLinksSettings(env, session.did, { inEverything, allLinks });
+  return json({ ok: true, ...saved });
 }
 
 // Local dev is the one place FRONTEND_URL is a loopback address (.dev.vars).

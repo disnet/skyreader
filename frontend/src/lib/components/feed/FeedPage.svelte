@@ -365,6 +365,8 @@
   }
 
   async function markAllAsReadInCurrentView() {
+    // Every follows link, not just the pages the river has loaded so far.
+    if (feedViewStore.showFollowLinks) await followLinksStore.loadEveryLink();
     // Use all filtered items (not just paginated/displayed) for articles
     const allArticles = feedViewStore.filteredArticles;
     const allDocuments = feedViewStore.displayedDocuments;
@@ -515,6 +517,12 @@
   $effect(() => {
     if (mode === 'linkblog' || !auth.isAuthenticated || auth.isGuest) return;
     untrack(() => void followLinksStore.load());
+  });
+
+  // Every link, sorted oldest first or most shared first: no page can be placed
+  // until all of them are in.
+  $effect(() => {
+    if (feedViewStore.needsEveryFollowLink) untrack(() => void followLinksStore.loadEveryLink());
   });
 
   // Everything: the river with no channel, feed, category or saved filter on it.

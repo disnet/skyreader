@@ -688,7 +688,7 @@ describe('follow links store', () => {
       expect(bad.status).toBe(400);
     });
 
-    it('serves every link, newest first, once the reader asks for them all', async () => {
+    it('pages every link, newest first, while the ranked list stays most shared', async () => {
       await seedSession(SCOPES);
       stubTimeline({ '': { feed: [] } });
       // A fresh sync row, so the read serves from D1 without walking the timeline.
@@ -706,47 +706,74 @@ describe('follow links store', () => {
         )
           .bind(DID, `at://${sharer}/p/${url}`, sharer, url, url, at)
           .run();
-      // One link two follows shared, then more shared once than the default cap holds.
+      // One link two follows shared (the second share late, which doesn't lift
+      // it), then more shared once than the ranked cap holds, two at one instant.
       await insert('https://pair.example/', 'did:a', now - 5000);
-      await insert('https://pair.example/', 'did:b', now - 5000);
+      await insert('https://pair.example/', 'did:b', now - 10);
       for (let i = 0; i < SERVE_LINK_LIMIT; i++) {
         await insert(`https://solo.example/${i}`, 'did:c', now - 1000 - i);
       }
-      const read = async () =>
-        (await (await send('/api/v2/following-links?window=7d')).json()) as {
-          allLinks: boolean;
-          links: FollowLink[];
-        };
-
-      // Default: most shared first, capped, so the oldest solo share is crowded out.
-      let res = await read();
-      expect(res.allLinks).toBe(false);
-      expect(res.links).toHaveLength(SERVE_LINK_LIMIT);
-      expect(res.links[0].urlNormalized).toBe('https://pair.example/');
+      await insert('https://tie.example/a', 'did:d', now - 1000);
 
       const set = await send('/api/v2/following-links/settings', {
         method: 'POST',
         body: { allLinks: true },
       });
-      expect(set.status).toBe(200);
-      res = await read();
-      expect(res.allLinks).toBe(true);
-      expect(res.links).toHaveLength(SERVE_LINK_LIMIT + 1);
-      expect(res.links[0].urlNormalized).toBe('https://solo.example/0');
-      expect(res.links.at(-1)?.urlNormalized).toBe('https://pair.example/');
+      expect(await set.json()).toEqual({ ok: true, inEverything: null, allLinks: true });
+
+      // The ranked list ignores the setting: most shared first, capped.
+      const ranked = (await (await send('/api/v2/following-links?window=7d')).json()) as {
+        allLinks: boolean;
+        links: FollowLink[];
+      };
+      expect(ranked.allLinks).toBe(true);
+      expect(ranked.links).toHaveLength(SERVE_LINK_LIMIT);
+      expect(ranked.links[0].urlNormalized).toBe('https://pair.example/');
+
+      // Walk every page; each link once, by first share, URL breaking the tie.
+      const seen: FollowLink[] = [];
+      let cursor: string | null = null;
+      let pages = 0;
+      do {
+        const q: string = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
+        const res = await send(`/api/v2/following-links/all?window=7d&limit=25${q}`);
+        const page = (await res.json()) as { links: FollowLink[]; nextCursor: string | null };
+        expect(page.links.length).toBeLessThanOrEqual(25);
+        seen.push(...page.links);
+        cursor = page.nextCursor;
+        pages++;
+      } while (cursor && pages < 10);
+      expect(pages).toBe(3);
+      expect(seen).toHaveLength(SERVE_LINK_LIMIT + 2);
+      expect(new Set(seen.map((l) => l.urlNormalized)).size).toBe(seen.length);
+      expect(seen.slice(0, 2).map((l) => l.urlNormalized)).toEqual([
+        'https://tie.example/a',
+        'https://solo.example/0',
+      ]);
+      const pair = seen.at(-1)!;
+      expect(pair.urlNormalized).toBe('https://pair.example/');
+      expect(pair.sharerCount).toBe(2);
 
       // Setting one leaves the other as it was.
-      await send('/api/v2/following-links/settings', {
+      const other = await send('/api/v2/following-links/settings', {
         method: 'POST',
         body: { inEverything: true },
       });
-      res = await read();
-      expect(res.allLinks).toBe(true);
+      expect(await other.json()).toEqual({ ok: true, inEverything: true, allLinks: true });
 
       for (const body of [{ allLinks: 'yes' }, {}]) {
         const bad = await send('/api/v2/following-links/settings', { method: 'POST', body });
         expect(bad.status).toBe(400);
       }
+      for (const q of ['cursor=nope', 'limit=abc', 'window=1y']) {
+        expect((await send(`/api/v2/following-links/all?${q}`)).status).toBe(400);
+      }
+    });
+
+    it('asks for the permission before paging every link', async () => {
+      await seedSession(GRANULAR_SCOPES);
+      const res = await send('/api/v2/following-links/all');
+      expect(await res.json()).toEqual({ scopeRequired: true, links: [], nextCursor: null });
     });
 
     it('rejects an unknown window', async () => {
