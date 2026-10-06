@@ -1,5 +1,5 @@
 import { db, getMetadata, setMetadata } from '$lib/services/db';
-import { safePut, safeBulkPut } from '$lib/services/safeDb.svelte';
+import { safePut, safeBulkPut, safeUpdate } from '$lib/services/safeDb.svelte';
 import { api, ApiError, ExtractionBlockedError } from '$lib/services/api';
 import type { ExtractedArticle } from '$lib/services/api';
 import { generateTid } from '$lib/utils/tid';
@@ -333,6 +333,7 @@ function createSavesStore() {
         const kept = [...unsent, ...snapshot].sort(compareSavedNewestFirst);
         articles = kept.map(toLightSaved);
         rebuildMaps();
+        removalEpoch++;
         await db.saved.clear();
         if (kept.length > 0) {
           await safeBulkPut(db.saved, kept);
@@ -892,6 +893,8 @@ function createSavesStore() {
     // Optimistically remove from local state
     articles = articles.filter((a) => a.itemGuid !== guid);
     rebuildMaps();
+    removalEpoch++;
+    contentCache.delete(item.rkey);
     savedSearchStore.remove(item.rkey, guid);
     await db.saved.where('itemGuid').equals(guid).delete();
 
@@ -921,6 +924,7 @@ function createSavesStore() {
     // Optimistically remove from local state
     articles = articles.filter((a) => a.rkey !== rkey);
     rebuildMaps();
+    removalEpoch++;
     contentCache.delete(rkey);
     savedSearchStore.remove(rkey, item?.itemGuid);
     await db.saved.delete(rkey);
@@ -984,19 +988,23 @@ function createSavesStore() {
   // missing body can later be backfilled, so nulls always re-read. Bounded by the
   // handful of tiles a user can hover; entries are dropped on item removal.
   const contentCache = new Map<string, string>();
+  // Bumped whenever saves are removed. A body load that started before a
+  // removal doesn't cache what it read: the save it belonged to may be gone.
+  let removalEpoch = 0;
 
   // Warm the cache for a saved item ahead of an open (hover prefetch). Cheap and
   // idempotent; failures are non-fatal since getContent re-reads on open.
   async function prefetchContent(rkey: string): Promise<void> {
     if (!rkey || contentCache.has(rkey)) return;
+    const epoch = removalEpoch;
     try {
       const row = await db.saved.get(rkey);
-      // Only a body getContent would hand back as is: a newsletter lead (which
-      // getContent tries to recover) and a feed save that may need the email-body
-      // scope (see withEmailScope) are left for getContent.
-      if (row?.content && (isEmailBody(row.content) || !isFeedSave(row))) {
-        if (!isEmailLead(row.content)) contentCache.set(rkey, row.content);
-      }
+      // A newsletter lead is left for getContent, which tries to recover the
+      // mail. Everything else is cached as getContent would hand it back: a
+      // feed save goes through the same local email-body scope check.
+      if (!row?.content || isEmailLead(row.content)) return;
+      const body = await withEmailScope(row);
+      if (epoch === removalEpoch) contentCache.set(rkey, body);
     } catch {
       // Non-fatal: getContent falls back to a fresh read on open.
     }
@@ -1019,6 +1027,10 @@ function createSavesStore() {
   }
 
   async function loadContent(rkey: string): Promise<string | null> {
+    const epoch = removalEpoch;
+    const cache = (body: string) => {
+      if (epoch === removalEpoch) contentCache.set(rkey, body);
+    };
     try {
       const row = await db.saved.get(rkey);
       let body = row?.content ?? null;
@@ -1034,14 +1046,13 @@ function createSavesStore() {
         const { bodies } = await api.getSavedBodies([rkey]);
         body = bodies[rkey] ?? null;
         if (body == null) return null;
-        if (row) {
-          const filled = { ...row, content: body };
-          await safePut(db.saved, filled);
-          savedSearchStore.upsert(filled);
+        // An update, not a put: a save removed while the fetch was out stays removed.
+        if (row && (await safeUpdate(db.saved, rkey, { content: body }))) {
+          savedSearchStore.upsert({ ...row, content: body });
         }
       }
       if (!row) {
-        contentCache.set(rkey, body);
+        cache(body);
         return body;
       }
 
@@ -1050,12 +1061,12 @@ function createSavesStore() {
         if (recovered.content != null) return recovered.content;
         // Nothing more to be had (no archive row, or the mail is gone): settle on
         // the lead for this session rather than asking again on every render.
-        if (recovered.final) contentCache.set(rkey, body);
+        if (recovered.final) cache(body);
         return body;
       }
 
       body = await withEmailScope({ ...row, content: body });
-      contentCache.set(rkey, body);
+      cache(body);
       return body;
     } catch {
       return null;
@@ -1085,7 +1096,7 @@ function createSavesStore() {
       const subscription = source ? await resolveSubscription(source.subscriptionId) : undefined;
       if (!subscription || !isNewsletterSubscription(subscription)) return body;
       const wrapped = wrapEmailBody(body);
-      await safePut(db.saved, { ...row, content: wrapped });
+      await safeUpdate(db.saved, row.rkey, { content: wrapped });
       return wrapped;
     } catch {
       // Best effort — render the body as stored.
@@ -1123,6 +1134,7 @@ function createSavesStore() {
     const last = recoveryAttemptAt.get(row.rkey);
     if (last != null && Date.now() - last < RECOVERY_RETRY_MS) return retry;
     recoveryAttemptAt.set(row.rkey, Date.now());
+    const epoch = removalEpoch;
     try {
       const guid = row.itemGuid;
       const source = await sourceArticle(row);
@@ -1148,9 +1160,17 @@ function createSavesStore() {
       const content = wrapEmailBody(mail);
       const wordCount = wordCountFrom(content);
       const filled: SavedItem = { ...row, content, wordCount };
-      contentCache.set(row.rkey, content);
       recoveryAttemptAt.delete(row.rkey);
-      await safePut(db.saved, filled);
+      // The save may have been removed (here or on another device) while the
+      // archive was read. Update only: a removed save is never written back,
+      // locally or on the server.
+      if (
+        epoch !== removalEpoch ||
+        !(await safeUpdate(db.saved, row.rkey, { content, wordCount }))
+      ) {
+        return { content: null, final: true };
+      }
+      contentCache.set(row.rkey, content);
       articles = articles.map((a) => (a.rkey === row.rkey ? toLightSaved(filled) : a));
       rebuildMaps();
       savedSearchStore.upsert(filled);
@@ -1158,6 +1178,9 @@ function createSavesStore() {
         // Best effort: a failure leaves the server on the lead, and another
         // device recovers the mail the same way. A newsletter with no web
         // version upgrades with url '' (the backend matches it by guid).
+        // upgradeOnly: when the server has no such save (its create is still
+        // queued, or it was removed elsewhere) nothing is created from these
+        // sparse fields — the queued create carries the full metadata.
         api
           .saveFromUrl(row.url, row.rkey, {
             fromFeed: true,
@@ -1165,6 +1188,7 @@ function createSavesStore() {
             content,
             wordCount: wordCount ?? undefined,
             updateContent: true,
+            upgradeOnly: true,
           })
           .catch((err) => console.warn('Failed to upgrade saved newsletter body:', err));
       }

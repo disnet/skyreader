@@ -71,6 +71,10 @@ interface CreateSavedBody {
   // extension, whose live-DOM extraction can see paywalled/JS-rendered content
   // the server-side extractor can't.
   updateContent?: boolean;
+  // With updateContent: upgrade an existing save only. When there is none, 404
+  // instead of creating a save from the request's (often sparse) fields — the
+  // client's own create, if still queued, carries the full metadata.
+  upgradeOnly?: boolean;
 }
 
 // POST /api/saved — save an item from a URL or feed article
@@ -164,7 +168,9 @@ export async function handleCreateSaved(
         headers: { 'Content-Type': 'application/json' },
       });
     }
-  } else {
+  } else if (body.url !== '') {
+    // No URL dedupe for an empty url: '' would match any other url-less save
+    // (shares, documents) and, with updateContent, overwrite its body.
     const existing = await env.DB.prepare(
       'SELECT id, rkey, record_uri FROM saved_articles WHERE user_did = ? AND url = ?'
     )
@@ -184,6 +190,13 @@ export async function handleCreateSaved(
         headers: { 'Content-Type': 'application/json' },
       });
     }
+  }
+
+  if (body.updateContent && body.upgradeOnly) {
+    return new Response(JSON.stringify({ error: 'Saved item not found' }), {
+      status: 404,
+      headers: { 'Content-Type': 'application/json' },
+    });
   }
 
   // Check monthly URL save limit for URL saves

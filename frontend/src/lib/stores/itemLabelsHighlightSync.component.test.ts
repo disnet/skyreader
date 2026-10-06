@@ -41,6 +41,7 @@ vi.mock('$lib/services/db', () => ({
 vi.mock('$lib/services/safeDb.svelte', () => ({
   safePut: async () => {},
   safeBulkPut: async () => {},
+  safeUpdate: async () => 0,
 }));
 
 const authState = { isGuest: true };

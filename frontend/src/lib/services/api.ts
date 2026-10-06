@@ -1949,6 +1949,9 @@ class ApiClient {
       // Replace an existing save's content instead of a 409 (matched by URL,
       // or by itemGuid for a feed save).
       updateContent?: boolean;
+      // With updateContent: only upgrade an existing save — 404 instead of
+      // creating one when there's nothing to upgrade.
+      upgradeOnly?: boolean;
     }
   ): Promise<{
     rkey: string;

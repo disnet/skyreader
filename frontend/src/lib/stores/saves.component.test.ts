@@ -50,6 +50,12 @@ vi.mock('$lib/services/db', () => ({
       orderBy: () => ({ reverse: () => ({ toArray: async () => [...savedRows.values()] }) }),
       get: async (rkey: string) => savedRows.get(rkey),
       put: async (item: SavedItem) => void savedRows.set(item.rkey, item),
+      update: async (rkey: string, changes: Partial<SavedItem>) => {
+        const row = savedRows.get(rkey);
+        if (!row) return 0;
+        savedRows.set(rkey, { ...row, ...changes });
+        return 1;
+      },
       delete: async (rkey: string) => void savedRows.delete(rkey),
       clear: async () => savedRows.clear(),
       where: (field: string) => ({
@@ -79,6 +85,11 @@ vi.mock('$lib/services/safeDb.svelte', () => ({
   safeBulkPut: async (table: { put: (v: unknown) => Promise<void> }, values: unknown[]) => {
     for (const v of values) await table.put(v);
   },
+  safeUpdate: async (
+    table: { update: (k: unknown, c: unknown) => Promise<number> },
+    key: unknown,
+    changes: unknown
+  ) => table.update(key, changes),
 }));
 
 const api = {
@@ -724,9 +735,62 @@ describe('savesStore.saveArticle body choice', () => {
     expect(api.saveFromUrl).toHaveBeenCalledWith(
       'https://letter.example/p/later',
       saved.rkey,
-      expect.objectContaining({ content: body, itemGuid: 'mail-6', updateContent: true })
+      expect.objectContaining({
+        content: body,
+        itemGuid: 'mail-6',
+        updateContent: true,
+        upgradeOnly: true,
+      })
     );
     expect(extractArticle).not.toHaveBeenCalled();
+  });
+
+  it('never brings back a newsletter save removed while its mail was being recovered', async () => {
+    articleRows.push({
+      id: 12,
+      guid: 'mail-8',
+      subscriptionId: 8,
+      content: null,
+      contentLead: '<p>The opening.</p>',
+      contentTruncated: true,
+    });
+    loadStoredBody.mockResolvedValueOnce({ status: 'unavailable' });
+    const saved = await savesStore.saveArticle({
+      url: 'https://letter.example/p/removed',
+      guid: 'mail-8',
+      subscriptionId: 8,
+    });
+    api.saveFromUrl.mockClear();
+
+    let resolveMail!: (v: unknown) => void;
+    loadStoredBody.mockReturnValueOnce(new Promise((r) => (resolveMail = r)));
+    const opening = savesStore.getContent(saved.rkey);
+    await vi.waitFor(() => expect(loadStoredBody).toHaveBeenCalledTimes(2));
+
+    await savesStore.remove(saved.rkey);
+    resolveMail({ status: 'found', content: words(3000) });
+    await opening;
+
+    expect(savedRows.has(saved.rkey)).toBe(false);
+    expect(api.saveFromUrl).not.toHaveBeenCalled();
+    expect(savesStore.articles.some((a) => a.rkey === saved.rkey)).toBe(false);
+  });
+
+  it('prefetch warms the cache for an ordinary feed save', async () => {
+    savedRows.set('3kplainnnnnnn', {
+      rkey: '3kplainnnnnnn',
+      uri: 'at://did:plc:me/app.skyreader.feed.saved/3kplainnnnnnn',
+      url: 'https://news.example/p/plain',
+      source: 'feed',
+      itemGuid: 'plain-1',
+      content: '<p>Plain.</p>',
+    } as SavedItem);
+    articleRows.push({ guid: 'plain-1', subscriptionId: 7, content: '<p>Plain.</p>' });
+
+    await savesStore.prefetchContent('3kplainnnnnnn');
+    savedRows.delete('3kplainnnnnnn');
+    // Served from memory: the row is gone from IndexedDB.
+    expect(await savesStore.getContent('3kplainnnnnnn')).toBe('<p>Plain.</p>');
   });
 
   it('re-saves a held newsletter body without extracting (undo of an Unsave)', async () => {

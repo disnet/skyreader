@@ -334,4 +334,47 @@ describe('GET /api/saved/updates — in-place edits the list refresh cannot see'
       .first<{ content: string }>();
     expect(row!.content).toBe('orig');
   });
+  it('an upgradeOnly upgrade with nothing to upgrade creates no save', async () => {
+    const { status } = await call(
+      post({
+        url: '',
+        rkey: 'eeeeeeeeeeeee',
+        fromFeed: true,
+        itemGuid: 'g-none',
+        content: '<div class="sr-email-body"><p>Mail.</p></div>',
+        updateContent: true,
+        upgradeOnly: true,
+      })
+    );
+    expect(status).toBe(404);
+    const row = await env.DB.prepare(
+      'SELECT id FROM saved_articles WHERE user_did = ? AND rkey = ?'
+    )
+      .bind(DID, 'eeeeeeeeeeeee')
+      .first();
+    expect(row).toBeNull();
+  });
+
+  it("an empty-url feed upgrade without fromFeed never matches another save's empty url", async () => {
+    const doc = 'at://did:plc:author/site.standard.document/xyz';
+    await call(
+      post({ url: '', rkey: 'fffffffffffff', source: 'document', itemGuid: doc, content: 'orig' })
+    );
+    await call(
+      post({
+        url: '',
+        rkey: 'ggggggggggggg',
+        source: 'feed',
+        itemGuid: 'g-3',
+        content: 'replaced',
+        updateContent: true,
+      })
+    );
+    const row = await env.DB.prepare(
+      'SELECT content FROM saved_articles WHERE user_did = ? AND item_guid = ?'
+    )
+      .bind(DID, doc)
+      .first<{ content: string }>();
+    expect(row!.content).toBe('orig');
+  });
 });

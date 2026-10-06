@@ -85,7 +85,15 @@ export async function toggleSavedItemSave(save: SavedItem): Promise<void> {
   const guid = save.itemGuid || save.url;
   let subscriptionId: number | undefined;
   try {
-    subscriptionId = (await db.articles.where('guid').equals(guid).first())?.subscriptionId;
+    // Match the link too (as savesStore's sourceArticle does), so a guid two
+    // feeds share can't pick the other feed's article.
+    subscriptionId = (
+      await db.articles
+        .where('guid')
+        .equals(guid)
+        .filter((a) => !save.url || !a.url || a.url === save.url)
+        .first()
+    )?.subscriptionId;
   } catch {
     // Best effort — re-save as a plain URL save.
   }
