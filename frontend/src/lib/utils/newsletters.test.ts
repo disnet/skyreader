@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
-import { isEmailBody, isEmailLead, wrapEmailBody, wrapEmailLead } from './newsletters';
+import {
+  EMAIL_BODY_CLASS,
+  isEmailBody,
+  isEmailLead,
+  wrapEmailBody,
+  wrapEmailLead,
+} from './newsletters';
+import * as backendEmailBody from '../../../../backend/src/services/email-body';
 import { sanitizeHtml } from './sanitize';
 
 describe('wrapEmailBody', () => {
@@ -57,5 +64,29 @@ describe('wrapEmailBody', () => {
   it('leaves an empty body empty', () => {
     expect(wrapEmailBody('')).toBe('');
     expect(wrapEmailBody(null)).toBeNull();
+  });
+});
+
+// The backend wraps newsletter bodies at ingest with its own copy of the
+// wrapper and its detection regex; the two must agree byte for byte, or bodies
+// get wrapped twice and leads go unrecognized.
+describe('email-body wrapper parity with the backend', () => {
+  const samples = [
+    '<p>a</p>',
+    '<div class="sr-email-body"><p>a</p></div>',
+    " \n<div class='sr-email-body x'><p>a</p></div>",
+    '﻿<div id="m" class=sr-email-body><p>a</p></div>',
+    '<div class="sr-email-body-wrapper"><p>a</p></div>',
+    '<div class="sr-email-body sr-email-lead"><p>lead</p></div>',
+    '<section class="sr-email-body"><p>a</p></section>',
+  ];
+
+  it('uses the same class', () => {
+    expect(backendEmailBody.EMAIL_BODY_CLASS).toBe(EMAIL_BODY_CLASS);
+  });
+
+  it.each(samples)('detects and wraps %j identically', (html) => {
+    expect(backendEmailBody.isEmailBody(html)).toBe(isEmailBody(html));
+    expect(backendEmailBody.wrapEmailBody(html)).toBe(wrapEmailBody(html));
   });
 });

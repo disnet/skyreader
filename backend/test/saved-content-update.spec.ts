@@ -279,4 +279,59 @@ describe('GET /api/saved/updates — in-place edits the list refresh cannot see'
     expect(row.content).toBe(mail);
     expect(row.word_count).toBe(3);
   });
+
+  it('saves and upgrades a newsletter with no web version (url "")', async () => {
+    const lead = '<div class="sr-email-body sr-email-lead"><p>The opening.</p></div>';
+    const mail = '<div class="sr-email-body"><p>The whole issue.</p></div>';
+    const first = await call(
+      post({ url: '', rkey: 'bbbbbbbbbbbbb', fromFeed: true, itemGuid: 'g-2', content: lead })
+    );
+    expect(first.status).toBe(200);
+
+    const { status } = await call(
+      post({
+        url: '',
+        rkey: 'bbbbbbbbbbbbb',
+        fromFeed: true,
+        itemGuid: 'g-2',
+        content: mail,
+        updateContent: true,
+      })
+    );
+    expect(status).toBe(200);
+    const row = await env.DB.prepare(
+      'SELECT content FROM saved_articles WHERE user_did = ? AND item_guid = ?'
+    )
+      .bind(DID, 'g-2')
+      .first<{ content: string }>();
+    expect(row!.content).toBe(mail);
+
+    // A URL save still needs a URL.
+    const bare = await call(post({ url: '', rkey: 'ccccccccccccc' }));
+    expect(bare.status).toBe(400);
+  });
+
+  it('never replaces a share or document save body through the guid upgrade', async () => {
+    const doc = 'at://did:plc:author/site.standard.document/abc';
+    await call(
+      post({ url: '', rkey: 'ddddddddddddd', source: 'document', itemGuid: doc, content: 'orig' })
+    );
+    const { status } = await call(
+      post({
+        url: '',
+        rkey: 'ddddddddddddd',
+        source: 'document',
+        itemGuid: doc,
+        content: 'replaced',
+        updateContent: true,
+      })
+    );
+    expect(status).toBe(409);
+    const row = await env.DB.prepare(
+      'SELECT content FROM saved_articles WHERE user_did = ? AND item_guid = ?'
+    )
+      .bind(DID, doc)
+      .first<{ content: string }>();
+    expect(row!.content).toBe('orig');
+  });
 });

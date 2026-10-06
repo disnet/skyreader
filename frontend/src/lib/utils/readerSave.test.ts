@@ -119,6 +119,34 @@ describe('toggleSavedItemSave', () => {
     );
   });
 
+  it("undoes a URL save's Unsave by re-extracting, holding no body", async () => {
+    const item = save({ source: 'url' });
+    saves.push(item);
+
+    await toggleSavedItemSave(item); // unsave
+    await toggleSavedItemSave(item); // undo
+
+    expect(savesStore.getLocalContent).not.toHaveBeenCalled();
+    expect(savesStore.saveArticle).toHaveBeenCalledWith(
+      expect.objectContaining({ guid: 'guid-1', content: undefined })
+    );
+  });
+
+  it('never brings back a "couldn\'t fetch" note as the article', async () => {
+    const item = save({ source: 'feed' });
+    saves.push(item);
+    vi.mocked(savesStore.getLocalContent).mockResolvedValueOnce(
+      `<p data-skyreader-note="fetch-failed">Skyreader couldn't fetch this article.</p>`
+    );
+
+    await toggleSavedItemSave(item); // unsave
+    await toggleSavedItemSave(item); // undo
+
+    expect(savesStore.saveArticle).toHaveBeenCalledWith(
+      expect.objectContaining({ guid: 'guid-1', content: undefined })
+    );
+  });
+
   it('re-saves a document save as a document, body and all', async () => {
     const item = save({
       source: 'document',

@@ -14,6 +14,7 @@
 // saved" for an item that plainly is.
 import { savesStore } from '$lib/stores/saves.svelte';
 import { db } from '$lib/services/db';
+import { isFailedSaveBody } from '$lib/utils/saveAnywhere';
 import type { SavedItem } from '$lib/types';
 
 /**
@@ -49,12 +50,14 @@ export async function toggleSavedItemSave(save: SavedItem): Promise<void> {
   if (live) {
     const guid = live.itemGuid || live.url;
     // A document's body is worth a network read (nothing else can restore it);
-    // anything else holds what's on this device, so Unsave never waits on the
-    // network.
-    const content =
-      live.source === 'document'
-        ? await savesStore.getContent(live.rkey)
-        : await savesStore.getLocalContent(live.rkey);
+    // a feed save holds what's on this device, so Unsave never waits on the
+    // network. A URL save holds nothing: its undo re-extracts the page, as it
+    // always has — and a held "couldn't fetch this article" note would come
+    // back as the article.
+    let content: string | null = null;
+    if (live.source === 'document') content = await savesStore.getContent(live.rkey);
+    else if (live.source !== 'url') content = await savesStore.getLocalContent(live.rkey);
+    if (isFailedSaveBody(content)) content = null;
     await savesStore.remove(live.rkey);
     lastUnsavedBody = { guid, content };
     return;

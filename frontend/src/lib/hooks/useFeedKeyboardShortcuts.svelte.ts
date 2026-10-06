@@ -11,7 +11,7 @@ import {
 import { toggleSavedLink } from '$lib/utils/saveLink';
 import { markFollowLinkRead } from '$lib/utils/followLinks';
 import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
-import { isNewsletterFeedItem } from '$lib/utils/newsletterArticle';
+import { fetchArticleWebCopy } from '$lib/utils/newsletterArticle';
 import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
 import { linkblogStore } from '$lib/stores/linkblog.svelte';
 import { linkPostContentStore } from '$lib/stores/linkPostContent.svelte';
@@ -132,14 +132,23 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
   function fetchSelectedOriginal() {
     const item = getSelectedItem();
     if (!item || (item.type !== 'article' && item.type !== 'link') || !item.item.url) return;
-    // An emailed newsletter's body is the article; its web link is never fetched.
-    if (item.type === 'article' && isNewsletterFeedItem(item.item.subscriptionId)) return;
-    linkPostContentStore.fetch(item.item.url);
     // Expand so the fetched (longer) body shows rather than the clamped excerpt.
-    if (feedViewStore.expandedKey !== item.key) {
-      const idx = feedViewStore.currentItems.findIndex((i) => i.key === item.key);
-      if (idx >= 0) feedViewStore.expand(idx);
+    const expand = () => {
+      if (feedViewStore.expandedKey !== item.key) {
+        const idx = feedViewStore.currentItems.findIndex((i) => i.key === item.key);
+        if (idx >= 0) feedViewStore.expand(idx);
+      }
+    };
+    if (item.type === 'link') {
+      linkPostContentStore.fetch(item.item.url);
+      expand();
+      return;
     }
+    // Same gate as the card's "Fetch full article": an emailed newsletter's web
+    // link is fetched only once its mail is confirmed gone.
+    void fetchArticleWebCopy(item.item, { asked: true }).then((started) => {
+      if (started) expand();
+    });
   }
 
   // Share/unshare selected item to the linkblog (article items only). Sharing

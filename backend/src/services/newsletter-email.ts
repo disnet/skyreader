@@ -1,5 +1,6 @@
 import PostalMime, { addressParser, type Email, type RawEmail } from 'postal-mime';
 import type { FeedItem } from '../types';
+import { wrapEmailBody } from './email-body';
 
 /**
  * Turn one inbound newsletter email into a feed item.
@@ -305,25 +306,8 @@ export function findWebVersionUrl(html: string): string | null {
   return null;
 }
 
-/**
- * The class the reader keys its newsletter type reset on (frontend app.css,
- * `.sr-email-body`; frontend/src/lib/utils/newsletters.ts wraps legacy rows the
- * same way). Email templates size text through markup the sanitizer can't tell
- * from article structure — an <h1> as a 12px footer, <small> around whole
- * sections — so the body carries a scope that resets it, and every surface
- * that renders the body (card, reader, save, magazine, offline copy) gets it.
- */
-const EMAIL_BODY_OPEN = '<div class="sr-email-body">';
-
-// Already wrapped: the class as a whole token (`sr-email-body-wrapper` is a
-// template's own), quoted either way or not at all.
-const EMAIL_BODY_START =
-  /^[\s\uFEFF]*<div\b[^>]*\sclass\s*=\s*(?:(["'])(?:[^"']*\s)?sr-email-body(?:\s[^"']*)?\1|sr-email-body(?=[\s>]))[^>]*>/i;
-
-export function wrapEmailBody(html: string): string {
-  if (!html || EMAIL_BODY_START.test(html)) return html;
-  return `${EMAIL_BODY_OPEN}${html}</div>`;
-}
+// Newsletter bodies are stored in the email-body scope (see email-body.ts).
+export { wrapEmailBody };
 
 /**
  * Reduce an email's HTML document to the part a reader shows: the body's inner

@@ -20,9 +20,11 @@
   import { sanitizeHtml } from '$lib/utils/sanitize';
   import { wrapEmailBody } from '$lib/utils/newsletters';
   import {
+    fetchArticleWebCopy,
     isNewsletterFeedItem,
-    resolveIsNewsletterFeedItem,
+    markNewsletterMailMissing,
     resolveSubscription,
+    webCopyAllowed as newsletterWebCopyAllowed,
   } from '$lib/utils/newsletterArticle';
   import { decodeEntities } from '$lib/utils/entities';
   import { marked } from 'marked';
@@ -632,8 +634,14 @@
   // emailed newsletter — the mail is the article, and its web link is at best
   // the same text and often a paywalled or free-tier cut of it — except when the
   // archive confirms the mail itself is gone; then the reader may still ask for
-  // the web copy ("Fetch full article"), though nothing fetches it unasked.
-  let webCopyAllowed = $derived(!isNewsletterArticle || storedBodyStatus === 'missing');
+  // the web copy ("Fetch full article", Shift+F), though nothing fetches it
+  // unasked. Not yet while the subscription is still being looked up, so a
+  // cached web copy never flashes in before the store hydrates.
+  let webCopyAllowed = $derived(Boolean(article) && newsletterWebCopyAllowed(article!));
+  // Record a confirmed-missing body where Shift+F and the reader can see it.
+  $effect(() => {
+    if (storedBodyStatus === 'missing' && article) markNewsletterMailMissing(article.guid);
+  });
   // The extraction that stands in for the feed body, if one was fetched. Keyed
   // on the article URL via the shared extract cache (same path link posts use).
   // Everything that asks "was the original fetched?" reads this, so a cached
@@ -659,14 +667,9 @@
     if (article.content || lazyContent == null || lazyContent) return;
     const target = article;
     const url = itemUrl;
-    // Never automatic for a newsletter. Resolved rather than read off the
-    // derived: before the subscriptions store hydrates, that says "not a
-    // newsletter" for every card.
+    // Never automatic for a newsletter (see fetchArticleWebCopy).
     const extract = () => {
-      if (!url) return;
-      void resolveIsNewsletterFeedItem(target.subscriptionId).then((newsletter) => {
-        if (!newsletter) linkPostContentStore.fetch(url);
-      });
+      void fetchArticleWebCopy({ ...target, url }, { asked: false });
     };
     // Everything below reads and writes state the effect must not depend on: the
     // status guard, and `fetch`'s reactive entry map — tracking a failed extract's
@@ -938,7 +941,8 @@
 
   function handleFetchOriginal() {
     if (!itemUrl) return;
-    linkPostContentStore.fetch(itemUrl);
+    if (article) void fetchArticleWebCopy({ ...article, url: itemUrl }, { asked: true });
+    else linkPostContentStore.fetch(itemUrl);
     // The excerpt is short so it shows fully when selected; the fetched body is
     // longer, so expand to keep it all visible. onExpand toggles — only fire it
     // when not already expanded.

@@ -111,9 +111,13 @@ export async function handleCreateSaved(
   // Determine source
   const source: string = body.source || (body.fromFeed ? 'feed' : 'url');
 
-  // For share/document sources, allow empty URL
-  if (source === 'share' || source === 'document') {
-    if (body.url === undefined || body.url === null) body.url = '';
+  // For share/document sources, allow empty URL. Likewise a feed save keyed by
+  // its item guid: an emailed newsletter often has no web version, and its
+  // save (and the later content upgrade of it) carries url ''.
+  const urlOptional =
+    source === 'share' || source === 'document' || (source === 'feed' && !!body.itemGuid);
+  if (urlOptional && (body.url === undefined || body.url === null || body.url === '')) {
+    body.url = '';
   } else {
     if (!body.url || typeof body.url !== 'string') {
       return new Response(JSON.stringify({ error: 'Missing url field' }), {
@@ -127,8 +131,8 @@ export async function handleCreateSaved(
     return invalidRkeyResponse();
   }
 
-  // Validate URL only for url/feed sources
-  if (source !== 'share' && source !== 'document') {
+  // Validate URL only for url/feed sources (and only when there is one)
+  if (source !== 'share' && source !== 'document' && body.url !== '') {
     try {
       new URL(body.url);
     } catch {
@@ -150,8 +154,9 @@ export async function handleCreateSaved(
     if (existing) {
       // Content upgrade of a feed save: a newsletter saved while its full body
       // was out of reach holds only the lead until the client recovers the mail
-      // (frontend savesStore.getContent).
-      if (body.updateContent && body.content) {
+      // (frontend savesStore.getContent). Feed saves only — a share or document
+      // save's stored body is never replaced through here.
+      if (source === 'feed' && body.updateContent && body.content) {
         return await handleContentUpdate(env, session, body, existing);
       }
       return new Response(JSON.stringify({ error: 'Article already saved' }), {

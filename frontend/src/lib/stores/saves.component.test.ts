@@ -22,6 +22,7 @@ const articleRows: Array<{
   content: string | null;
   contentLead?: string;
   contentTruncated?: boolean;
+  url?: string;
 }> = [];
 // Subscriptions only IndexedDB has — the store hasn't hydrated them yet.
 const dbOnlySubscriptions = new Map<number, Record<string, unknown>>();
@@ -577,6 +578,77 @@ describe('savesStore.saveArticle body choice', () => {
     dbOnlySubscriptions.clear();
   });
 
+  it('escapes a plain-text summary standing in for a newsletter body', async () => {
+    articleRows.push({
+      id: 12,
+      guid: 'mail-7',
+      subscriptionId: 8,
+      content: null,
+      contentTruncated: false,
+    });
+
+    const saved = await savesStore.saveArticle({
+      url: 'https://letter.example/p/rates',
+      guid: 'mail-7',
+      subscriptionId: 8,
+      summary: 'Rates < 5% & rising',
+    });
+
+    expect(saved.content).toBe(
+      '<div class="sr-email-body sr-email-lead"><p>Rates &lt; 5% &amp; rising</p></div>'
+    );
+  });
+
+  it('wraps a newsletter save from before saves carried the scope, once', async () => {
+    articleRows.push({
+      guid: 'mail-8',
+      subscriptionId: 8,
+      url: 'https://letter.example/p/old',
+      content: '<p>Old issue.</p>',
+    } as (typeof articleRows)[number]);
+    // Another feed's item under the same guid: not this save's source.
+    articleRows.push({
+      guid: 'shared-guid',
+      subscriptionId: 8,
+      url: 'https://letter.example/p/other',
+      content: '<p>x</p>',
+    } as (typeof articleRows)[number]);
+    const base = {
+      uri: '',
+      title: null,
+      author: null,
+      description: null,
+      contentType: 'article',
+      domain: null,
+      image: null,
+      wordCount: null,
+      publishedAt: null,
+      savedAt: '2026-08-01T00:00:00.000Z',
+      source: 'feed',
+    } as const;
+    savedRows.set('3kolddddddddd', {
+      ...base,
+      rkey: '3kolddddddddd',
+      url: 'https://letter.example/p/old',
+      content: '<p>Old issue.</p>',
+      itemGuid: 'mail-8',
+    });
+    savedRows.set('3kblogggggggg', {
+      ...base,
+      rkey: '3kblogggggggg',
+      url: 'https://blog.example/post',
+      content: '<p>A post.</p>',
+      itemGuid: 'shared-guid',
+    });
+
+    const wrapped = '<div class="sr-email-body"><p>Old issue.</p></div>';
+    expect(await savesStore.getContent('3kolddddddddd')).toBe(wrapped);
+    // Written back, so the lookup isn't repeated.
+    expect(savedRows.get('3kolddddddddd')?.content).toBe(wrapped);
+    // A guid match on a different link isn't this save's source.
+    expect(await savesStore.getContent('3kblogggggggg')).toBe('<p>A post.</p>');
+  });
+
   it("saves a newsletter's lead, never no body, when its mail is unavailable", async () => {
     // A save with no body is one a backed (Semble/Margin) account's backend
     // fills by extracting the web copy.
@@ -625,12 +697,28 @@ describe('savesStore.saveArticle body choice', () => {
     api.saveFromUrl.mockClear();
 
     // Still unreachable: the lead stays, and isn't cached against a retry.
+    // Callers asking at once (reader + daily page) share the one attempt.
+    loadStoredBody.mockClear();
     loadStoredBody.mockResolvedValueOnce({ status: 'unavailable' });
-    expect(await savesStore.getContent(saved.rkey)).toBe(saved.content);
+    const [a, b] = await Promise.all([
+      savesStore.getContent(saved.rkey),
+      savesStore.getContent(saved.rkey),
+    ]);
+    expect(a).toBe(saved.content);
+    expect(b).toBe(saved.content);
+    expect(loadStoredBody).toHaveBeenCalledTimes(1);
 
+    // Renders in the meantime don't each go back to the archive.
+    expect(await savesStore.getContent(saved.rkey)).toBe(saved.content);
+    expect(loadStoredBody).toHaveBeenCalledTimes(1);
+
+    // After the cooldown it asks again.
+    const now = Date.now();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now + 6 * 60_000);
     loadStoredBody.mockResolvedValueOnce({ status: 'found', content: mail });
     const body = `<div class="sr-email-body">${mail}</div>`;
     expect(await savesStore.getContent(saved.rkey)).toBe(body);
+    clock.mockRestore();
     expect(savedRows.get(saved.rkey)?.content).toBe(body);
     expect(savedRows.get(saved.rkey)?.wordCount).toBeGreaterThan(2900);
     expect(api.saveFromUrl).toHaveBeenCalledWith(

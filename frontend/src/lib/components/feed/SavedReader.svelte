@@ -21,10 +21,11 @@
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { wrapEmailBody } from '$lib/utils/newsletters';
   import {
+    fetchArticleWebCopy,
     isNewsletterFeedItem,
-    resolveIsNewsletterFeedItem,
+    markNewsletterMailMissing,
     resolveSubscription,
-    savedBodyWithEmailScope,
+    webCopyAllowed,
   } from '$lib/utils/newsletterArticle';
   import { loadStoredBody } from '$lib/services/itemBody';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
@@ -273,16 +274,13 @@
   $effect(() => {
     lazySavedContent = null;
     if (readerItem.type !== 'saved' || !readerItem.item.rkey) return;
-    const save = readerItem.item;
+    const rkey = readerItem.item.rkey;
     let cancelled = false;
-    // A newsletter save renders in the email-body scope, including one saved
-    // before saves carried the wrapper (see newsletterArticle.ts).
-    savesStore
-      .getContent(save.rkey)
-      .then((c) => savedBodyWithEmailScope(save, c))
-      .then((c) => {
-        if (!cancelled) lazySavedContent = c;
-      });
+    // A newsletter save comes back in the email-body scope, including one saved
+    // before saves carried the wrapper (see savesStore.getContent).
+    savesStore.getContent(rkey).then((c) => {
+      if (!cancelled) lazySavedContent = c;
+    });
     return () => {
       cancelled = true;
     };
@@ -298,14 +296,9 @@
   // Whether that body is the user's own saved snapshot rather than the feed's —
   // the display ladder below treats the two differently.
   let lazyArticleIsSavedCopy = $state(false);
-  // An emailed newsletter whose mail the archive confirms is gone (no row body,
-  // no stored copy). Only then may an extraction the reader explicitly asked for
-  // stand in for it — nothing here fetches one unasked.
-  let newsletterMailMissing = $state(false);
   $effect(() => {
     lazyArticleContent = null;
     lazyArticleIsSavedCopy = false;
-    newsletterMailMissing = false;
     if (readerItem.type !== 'article') return;
     const {
       id,
@@ -316,12 +309,9 @@
       url,
     } = readerItem.item;
     let cancelled = false;
-    // An emailed newsletter's body is the article — never extract its web link.
-    // Resolved, not read off `isNewsletterArticle`: on a cold `?read=` deep link
-    // the subscriptions store may not have hydrated yet, and that says "no".
+    // Never automatic for an emailed newsletter (see fetchArticleWebCopy).
     const extract = async () => {
-      if (!url || (await resolveIsNewsletterFeedItem(subscriptionId))) return;
-      if (!cancelled) untrack(() => linkPostContentStore.fetch(url));
+      if (!cancelled) await fetchArticleWebCopy({ url, guid, subscriptionId }, { asked: false });
     };
     (async () => {
       try {
@@ -366,7 +356,9 @@
             lazyArticleContent = stored.content;
             return;
           }
-          if (stored?.status === 'missing') newsletterMailMissing = true;
+          // The mail is gone: an extraction the reader asks for (Shift+F) may
+          // now stand in for a newsletter's body.
+          if (stored?.status === 'missing') markNewsletterMailMissing(guid);
           // Keep the store's reactive entry map out of this effect's dependency
           // graph. Failed extracts delete their entry so a later open can retry;
           // tracking that deletion here would create an immediate retry loop.
@@ -400,15 +392,15 @@
 
   // An emailed newsletter (see utils/newsletterArticle.ts): its body is the
   // whole article, so a web extraction never replaces it — unless the mail is
-  // gone and the reader asked for the web copy (see newsletterMailMissing).
+  // gone and the reader asked for the web copy.
   let isNewsletterArticle = $derived(
     readerItem.type === 'article' && isNewsletterFeedItem(readerItem.item.subscriptionId)
   );
 
   // An extract of the article's own URL standing in for its feed body (see the
-  // display ladder below). Never a newsletter's, unless its mail is gone.
+  // display ladder below). Not while it's unknown whether this is a newsletter.
   let extractedArticle = $derived(
-    readerItem.type === 'article' && (!isNewsletterArticle || newsletterMailMissing)
+    readerItem.type === 'article' && webCopyAllowed(readerItem.item)
       ? linkPostContentStore.get(readerItem.item.url)
       : undefined
   );

@@ -57,6 +57,23 @@ function wordCountFrom(...texts: (string | null | undefined)[]): number | null {
 // uses the stored `wordCount`). Drop it from the in-memory list so the store
 // doesn't hold every body at once — the full text stays in IndexedDB and is
 // pulled back per-item by getContent() when the reader opens.
+// A save made from a feed article — the only kind that can be a newsletter's.
+// Rows cached before saves carried a source count as one.
+function isFeedSave(save: Pick<SavedItem, 'source'>): boolean {
+  return !save.source || save.source === 'feed';
+}
+
+// A summary used as a newsletter save's stand-in body. Feed summaries are HTML;
+// a save's description (the undo of an Unsave passes it back) may be plain text
+// like "Rates < 5% & rising", which would be mangled read as markup.
+function summaryHtml(summary: string): string {
+  if (/<[a-z!/]/i.test(summary)) return summary;
+  return summary
+    .replace(/&(?!#?\w+;)/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
 function toLightSaved(item: SavedItem): SavedItem {
   if (item.content == null) return item;
   const { content: _content, ...rest } = item;
@@ -608,7 +625,8 @@ function createSavesStore() {
       // every surface renders it as such.)
       if (isNewsletter) {
         if (!rssBody) {
-          const lead = newsletterLead || (article.summary ? `<p>${article.summary}</p>` : null);
+          const lead =
+            newsletterLead || (article.summary ? `<p>${summaryHtml(article.summary)}</p>` : null);
           rssBody = lead ? wrapEmailLead(lead) : null;
         }
         rssBody = wrapEmailBody(rssBody);
@@ -973,8 +991,12 @@ function createSavesStore() {
     if (!rkey || contentCache.has(rkey)) return;
     try {
       const row = await db.saved.get(rkey);
-      // A newsletter lead stays uncached so getContent tries to recover the mail.
-      if (row?.content && !isEmailLead(row.content)) contentCache.set(rkey, row.content);
+      // Only a body getContent would hand back as is: a newsletter lead (which
+      // getContent tries to recover) and a feed save that may need the email-body
+      // scope (see withEmailScope) are left for getContent.
+      if (row?.content && (isEmailBody(row.content) || !isFeedSave(row))) {
+        if (!isEmailLead(row.content)) contentCache.set(rkey, row.content);
+      }
     } catch {
       // Non-fatal: getContent falls back to a fresh read on open.
     }
@@ -982,16 +1004,24 @@ function createSavesStore() {
 
   // Read a saved item's full body back from IndexedDB by rkey. The in-memory
   // list drops bodies (see toLightSaved); the reader calls this on open.
-  async function getContent(rkey: string): Promise<string | null> {
+  // Concurrent callers (the reader and the daily page opening the same save)
+  // share one load.
+  const contentLoads = new Map<string, Promise<string | null>>();
+  function getContent(rkey: string): Promise<string | null> {
     const cached = contentCache.get(rkey);
-    if (cached != null) return cached;
+    if (cached != null) return Promise.resolve(cached);
+    let pending = contentLoads.get(rkey);
+    if (!pending) {
+      pending = loadContent(rkey).finally(() => contentLoads.delete(rkey));
+      contentLoads.set(rkey, pending);
+    }
+    return pending;
+  }
+
+  async function loadContent(rkey: string): Promise<string | null> {
     try {
       const row = await db.saved.get(rkey);
-      if (row?.content != null) {
-        if (isEmailLead(row.content)) return (await recoverNewsletterBody(row)) ?? row.content;
-        contentCache.set(rkey, row.content);
-        return row.content;
-      }
+      let body = row?.content ?? null;
 
       // The list is metadata-only and bodies are hydrated for fresh items in
       // load(); if that hydration was skipped or failed (offline at sync time, a
@@ -999,21 +1029,67 @@ function createSavesStore() {
       // the incremental refresh won't revisit an already-cached row. Fetch it on
       // demand here as a self-healing fallback, and cache it so the next open is local.
       // A guest's saves have no server copy to fall back to.
-      if (!canReachBackend()) return null;
-      const { bodies } = await api.getSavedBodies([rkey]);
-      const body = bodies[rkey] ?? null;
-      if (body != null && row) {
-        const filled = { ...row, content: body };
-        await safePut(db.saved, filled);
-        savedSearchStore.upsert(filled);
+      if (body == null) {
+        if (!canReachBackend()) return null;
+        const { bodies } = await api.getSavedBodies([rkey]);
+        body = bodies[rkey] ?? null;
+        if (body == null) return null;
+        if (row) {
+          const filled = { ...row, content: body };
+          await safePut(db.saved, filled);
+          savedSearchStore.upsert(filled);
+        }
       }
-      if (body != null && row && isEmailLead(body)) {
-        return (await recoverNewsletterBody({ ...row, content: body })) ?? body;
+      if (!row) {
+        contentCache.set(rkey, body);
+        return body;
       }
-      if (body != null) contentCache.set(rkey, body);
+
+      if (isEmailLead(body)) {
+        const recovered = await recoverNewsletterBody({ ...row, content: body });
+        if (recovered.content != null) return recovered.content;
+        // Nothing more to be had (no archive row, or the mail is gone): settle on
+        // the lead for this session rather than asking again on every render.
+        if (recovered.final) contentCache.set(rkey, body);
+        return body;
+      }
+
+      body = await withEmailScope({ ...row, content: body });
+      contentCache.set(rkey, body);
       return body;
     } catch {
       return null;
+    }
+  }
+
+  // The archive row a feed save was made from: same guid and — when the save
+  // has one — the same link, so a guid two feeds happen to share can't match
+  // the wrong issue.
+  async function sourceArticle(save: SavedItem) {
+    if (!save.itemGuid) return undefined;
+    return db.articles
+      .where('guid')
+      .equals(save.itemGuid)
+      .filter((a) => !save.url || !a.url || a.url === save.url)
+      .first();
+  }
+
+  // A newsletter save made before saves carried the email-body scope: wrap it
+  // now, and write the wrap back so the lookup runs once per save, not per open.
+  // Only feed saves can be newsletters; any other body comes back untouched.
+  async function withEmailScope(row: SavedItem): Promise<string> {
+    const body = row.content ?? '';
+    if (!body || isEmailBody(body) || !isFeedSave(row) || !row.itemGuid) return body;
+    try {
+      const source = await sourceArticle(row);
+      const subscription = source ? await resolveSubscription(source.subscriptionId) : undefined;
+      if (!subscription || !isNewsletterSubscription(subscription)) return body;
+      const wrapped = wrapEmailBody(body);
+      await safePut(db.saved, { ...row, content: wrapped });
+      return wrapped;
+    } catch {
+      // Best effort — render the body as stored.
+      return body;
     }
   }
 
@@ -1032,38 +1108,56 @@ function createSavesStore() {
   // A newsletter saved while its out-of-row mail was out of reach (archive
   // unreachable, or saved offline) holds only the lead (see wrapEmailLead in
   // saveArticle). Recover the mail from the archive now and make it the save's
-  // body, here and on the server. Null when it still can't be had: the lead
-  // stays, uncached, so the next open tries again.
-  async function recoverNewsletterBody(row: SavedItem): Promise<string | null> {
-    if (!row.itemGuid || !syncStore.isOnline) return null;
+  // body, here and on the server. `final` when it never will be (no archive row
+  // to recover from, or the archive says the mail is gone); otherwise a failed
+  // attempt waits RECOVERY_RETRY_MS before the next one, so renders that ask for
+  // the body in the meantime don't each hit the archive.
+  const RECOVERY_RETRY_MS = 5 * 60_000;
+  const recoveryAttemptAt = new Map<string, number>();
+  async function recoverNewsletterBody(
+    row: SavedItem
+  ): Promise<{ content: string | null; final: boolean }> {
+    const retry = { content: null, final: false };
+    if (!row.itemGuid) return { content: null, final: true };
+    if (!syncStore.isOnline) return retry;
+    const last = recoveryAttemptAt.get(row.rkey);
+    if (last != null && Date.now() - last < RECOVERY_RETRY_MS) return retry;
+    recoveryAttemptAt.set(row.rkey, Date.now());
     try {
       const guid = row.itemGuid;
-      const source = await db.articles
-        .where('guid')
-        .equals(guid)
-        .filter((a) => !!a.contentTruncated)
-        .first();
-      if (!source) return null;
-      const subscription = await resolveSubscription(source.subscriptionId);
-      if (!subscription?.feedUrl || !isNewsletterSubscription(subscription)) return null;
-      const stored = await loadStoredBody(
-        { id: source.id, guid, subscriptionId: source.subscriptionId },
-        subscription.feedUrl,
-        { guest: auth.isGuest }
-      );
-      if (stored.status !== 'found') return null;
+      const source = await sourceArticle(row);
+      const subscription = source ? await resolveSubscription(source.subscriptionId) : undefined;
+      if (!source || !subscription || !isNewsletterSubscription(subscription)) {
+        return { content: null, final: true };
+      }
+      // The row may hold the body itself by now (cached since the save).
+      let mail = source.content || null;
+      if (!mail) {
+        if (!source.contentTruncated || !subscription.feedUrl)
+          return { content: null, final: true };
+        const stored = await loadStoredBody(
+          { id: source.id, guid, subscriptionId: source.subscriptionId },
+          subscription.feedUrl,
+          { guest: auth.isGuest }
+        );
+        if (stored.status === 'missing') return { content: null, final: true };
+        if (stored.status !== 'found') return retry;
+        mail = stored.content;
+      }
 
-      const content = wrapEmailBody(stored.content);
+      const content = wrapEmailBody(mail);
       const wordCount = wordCountFrom(content);
       const filled: SavedItem = { ...row, content, wordCount };
       contentCache.set(row.rkey, content);
+      recoveryAttemptAt.delete(row.rkey);
       await safePut(db.saved, filled);
       articles = articles.map((a) => (a.rkey === row.rkey ? toLightSaved(filled) : a));
       rebuildMaps();
       savedSearchStore.upsert(filled);
       if (canReachBackend()) {
         // Best effort: a failure leaves the server on the lead, and another
-        // device recovers the mail the same way.
+        // device recovers the mail the same way. A newsletter with no web
+        // version upgrades with url '' (the backend matches it by guid).
         api
           .saveFromUrl(row.url, row.rkey, {
             fromFeed: true,
@@ -1074,9 +1168,9 @@ function createSavesStore() {
           })
           .catch((err) => console.warn('Failed to upgrade saved newsletter body:', err));
       }
-      return content;
+      return { content, final: true };
     } catch {
-      return null;
+      return retry;
     }
   }
 
