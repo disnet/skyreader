@@ -78,6 +78,12 @@ async function bootstrapFromLiveServiceWorker() {
 async function download(assetPath) {
   const res = await fetch(`${origin}/${assetPath}`, { redirect: 'follow' });
   if (!res.ok) throw new Error(`${res.status}`);
+  // A path Pages doesn't have can come back as an HTML page with a 200 (the SPA
+  // shell, before _app/immutable/404.html existed). Writing that under a .js name
+  // would redeploy it as a "chunk" for MAX_AGE_DAYS.
+  if ((res.headers.get('content-type') ?? '').includes('text/html')) {
+    throw new Error('served HTML, not the asset');
+  }
   const dest = path.join(buildDir, assetPath);
   await mkdir(path.dirname(dest), { recursive: true });
   await writeFile(dest, Buffer.from(await res.arrayBuffer()));
