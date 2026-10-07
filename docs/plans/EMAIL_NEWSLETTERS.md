@@ -33,8 +33,11 @@ sender ──SMTP──▶ Cloudflare Email Routing (catch-all on the domain)
   down the river, where it reads as never having arrived.
 - **Item identity.** `guid` is the Message-ID, so a redelivery is an idempotent re-ingest. The
   body is the email's HTML with head/style/script, the hidden preheader and 1×1 tracking pixels
-  removed; the reader's sanitizer is still the safety boundary. `url` is the newsletter's own
-  "View in browser" link when one can be found, else empty.
+  removed; the reader's sanitizer is still the safety boundary. `url` is always empty: the
+  email is the article. (Guessing a web copy from "View in browser" links pulled tracking
+  redirects and sign-up walls into the reader, so it was dropped; migration 0088 cleared the
+  archive.) With no URL there is nothing to extract, so reading and saving use the email body.
+  A device that cached an item before the change keeps its old link until the item ages out.
 - **Bounces vs drops.** Unknown address, oversized message (>5 MB) and a lapsed plan are SMTP
   rejections, so a sending platform learns to stop. A blocked sender, the daily cap and an
   unparseable message are accepted and dropped quietly. A D1 failure throws, so the sender gets a

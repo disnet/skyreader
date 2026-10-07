@@ -613,7 +613,8 @@ function createSavesStore() {
                   guest: auth.isGuest,
                 })
               : Promise.resolve(null),
-            extractArticle(article.url),
+            // No URL, nothing to extract: an emailed newsletter is its own article.
+            article.url ? extractArticle(article.url) : Promise.resolve(null),
           ]);
           if (stored.status === 'fulfilled' && stored.value?.status === 'found') {
             rssBody = stored.value.content;
@@ -624,7 +625,7 @@ function createSavesStore() {
           try {
             if (extraction.status === 'rejected') throw extraction.reason;
             const extracted = extraction.value;
-            if (preferExtractedBody(rssBody, extracted.content)) {
+            if (extracted && preferExtractedBody(rssBody, extracted.content)) {
               content = extracted.content;
               wordCount = extracted.wordCount || null;
               domain = extracted.domain || null;

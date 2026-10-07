@@ -111,9 +111,17 @@ export async function handleCreateSaved(
   // Determine source
   const source: string = body.source || (body.fromFeed ? 'feed' : 'url');
 
-  // For share/document sources, allow empty URL
-  if (source === 'share' || source === 'document') {
-    if (body.url === undefined || body.url === null) body.url = '';
+  // Feed/share/document saves are deduped by item guid, not URL (below).
+  const keyedByGuid =
+    (body.fromFeed || source === 'feed' || source === 'share' || source === 'document') &&
+    !!body.itemGuid;
+  // Share/document saves may have no URL, and so may a feed save keyed by its
+  // item guid: an emailed newsletter is its own article, with no web copy. A
+  // URL save always needs its URL, whatever else rides along.
+  const urlOptional =
+    source === 'share' || source === 'document' || (source === 'feed' && keyedByGuid);
+  if (urlOptional) {
+    if (typeof body.url !== 'string') body.url = '';
   } else {
     if (!body.url || typeof body.url !== 'string') {
       return new Response(JSON.stringify({ error: 'Missing url field' }), {
@@ -127,8 +135,8 @@ export async function handleCreateSaved(
     return invalidRkeyResponse();
   }
 
-  // Validate URL only for url/feed sources
-  if (source !== 'share' && source !== 'document') {
+  // Validate URL only for url/feed sources that carry one
+  if (source !== 'share' && source !== 'document' && body.url) {
     try {
       new URL(body.url);
     } catch {
@@ -139,8 +147,10 @@ export async function handleCreateSaved(
     }
   }
 
-  // Check for duplicate — by item_guid for feed/share/document saves, by URL otherwise
-  if ((body.fromFeed || source === 'share' || source === 'document') && body.itemGuid) {
+  // Check for duplicate — by item_guid for feed/share/document saves, by URL
+  // otherwise. A save with no URL has nothing to match on: '' would collide with
+  // every other URL-less save (newsletters, link-less shares).
+  if (keyedByGuid) {
     const existing = await env.DB.prepare(
       'SELECT id FROM saved_articles WHERE user_did = ? AND item_guid = ?'
     )
@@ -153,7 +163,7 @@ export async function handleCreateSaved(
         headers: { 'Content-Type': 'application/json' },
       });
     }
-  } else {
+  } else if (body.url) {
     const existing = await env.DB.prepare(
       'SELECT id, rkey, record_uri FROM saved_articles WHERE user_did = ? AND url = ?'
     )
