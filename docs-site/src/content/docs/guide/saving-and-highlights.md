@@ -29,7 +29,7 @@ Some sites refuse automated readers, so Skyreader's servers can't fetch the arti
 
 If you use [Semble](https://semble.so) or [Margin](https://margin.at), you can back your Saved list with one of them (**Settings → Library & privacy → Saved articles**). Your Saved list becomes a collection there: edit it in either app, or in any Atmospheric app, and the two stay in sync.
 
-One thing to know before turning it on: **backing publishes all of your saves publicly**, because Semble and Margin collections are public.
+One thing to know before turning it on: **backing publishes your saves publicly**, because Semble and Margin collections are public. Saved newsletters are the exception: they have no web link to share, so they stay private to Skyreader.
 
 ## Highlights
 

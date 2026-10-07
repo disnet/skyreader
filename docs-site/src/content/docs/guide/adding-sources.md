@@ -24,7 +24,7 @@ Use the **+** button and choose **Add RSS Feed**. Paste any page URL, or just a 
 Supporters get a private email address for newsletters. Find it in **Settings → Newsletters**, and use it when you sign up for a newsletter, or forward issues to it. Each sender becomes a source under **Manage Sources → Newsletters**, and each issue arrives as an article. A signup confirmation arrives the same way, so you can click its link right in the reader.
 
 - **Keep the address to yourself.** Anything sent to it lands in your reader. If it leaks, **Get a new address** replaces it; newsletters you already have stay, and the old address stops working.
-- **The email is the article.** Skyreader shows the issue as it arrived and never fetches a web copy, so there's no **Fetch full article** for a newsletter. Saving one keeps the email too.
+- **The email is the article.** Skyreader shows the issue as it arrived and never fetches a web copy, so there's no **Fetch full article** for a newsletter. Saving one keeps the email too, and the save stays private to Skyreader even when your saves are backed by Semble or Margin.
 - **Newsletters stay private.** They aren't shared with anyone, and Atmospheric sync never publishes them.
 - **Removing a newsletter** stops its mail reaching Skyreader, but it doesn't unsubscribe you with the sender. Blocked senders are listed in **Settings → Newsletters**, where you can let one back in.
 - **If you leave the Supporter plan**, the address stops receiving mail. Newsletters you already have stay readable.
