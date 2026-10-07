@@ -232,6 +232,16 @@ body {
   overscroll-behavior-y: contain;
 }
 
+/* Mobile Safari's text autosizing inflates type inside any block wider than
+   the screen — exactly what an email newsletter's fixed-width layout table
+   becomes in a card — so some newsletters rendered far above the reader's
+   chosen size. `100%` (not `none`) turns off the inflation but keeps the
+   user's own zoom and accessibility text sizing. */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 /* ── The framed shell is pinned ──────────────────────────────────
    Above the shell breakpoint the app is a fixed frame and all
    scrolling happens inside the content card (#app-scroll, see

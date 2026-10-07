@@ -12,6 +12,8 @@ const ALLOWED_IFRAME_HOSTS = new Set([
   'player.vimeo.com',
 ]);
 
+const LAYOUT_TABLE_TAGS = new Set(['TABLE', 'TD', 'TH', 'TR', 'COL', 'COLGROUP']);
+
 const VIDEO_IFRAME_ALLOW =
   'accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen';
 
@@ -114,6 +116,15 @@ export function sanitizeHtml(html: string, baseUrl?: string): string {
           }
         }
       }
+    }
+
+    // Email newsletters lay out in fixed-width tables (`<table width="600">`).
+    // Drop the layout dimensions so the table reflows to the reading column
+    // instead of overflowing it on a phone, where the wider-than-screen block
+    // also triggers mobile text autosizing.
+    if (LAYOUT_TABLE_TAGS.has(node.tagName)) {
+      node.removeAttribute('width');
+      node.removeAttribute('height');
     }
 
     // Rewrite srcset (only if we have a valid base)
