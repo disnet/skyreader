@@ -76,7 +76,8 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
 
     let url: string;
     if (item.type === 'article') {
-      url = item.item.url;
+      // '' for a newsletter: its email is the article, with no web copy to open.
+      url = subscriptionsStore.webUrlFor(item.item);
     } else if (item.type === 'document') {
       url = item.item.canonicalUrl || item.item.path || '';
     } else if (item.type === 'link') {
@@ -150,12 +151,17 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
     if (!selected) return;
 
     const { article } = selected;
-    // An emailed newsletter with no web copy has no URL: nothing to share.
-    if (!article.url) return;
-    if (linkblogStore.isShared(article.url)) {
-      linkblogStore.unshare(article.url);
+    // An emailed newsletter has no web copy: nothing to share.
+    const url = subscriptionsStore.webUrlFor(article);
+    if (!url) return;
+    if (linkblogStore.isShared(url)) {
+      linkblogStore.unshare(url);
     } else {
-      shareComposerStore.open({ article, itemKey: article.guid, mode: 'create' });
+      shareComposerStore.open({
+        article: { ...article, url },
+        itemKey: article.guid,
+        mode: 'create',
+      });
     }
   }
 
@@ -393,7 +399,11 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
       action: fetchSelectedOriginal,
       condition: () => {
         const item = getSelectedItem();
-        return auth.isAuthenticated && item?.type === 'article' && !!item.item.url;
+        return (
+          auth.isAuthenticated &&
+          item?.type === 'article' &&
+          !!subscriptionsStore.webUrlFor(item.item)
+        );
       },
     });
   }

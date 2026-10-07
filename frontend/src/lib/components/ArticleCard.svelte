@@ -32,6 +32,7 @@
   import { api } from '$lib/services/api';
   import { linkPostContentStore } from '$lib/stores/linkPostContent.svelte';
   import { db } from '$lib/services/db';
+  import { liveDb } from '$lib/services/liveDb.svelte';
   import { saveCollectionPiece, isCollectionPieceSaved } from '$lib/utils/collectionPiece';
   import { socialStore } from '$lib/stores/social.svelte';
   import { linkblogStore } from '$lib/stores/linkblog.svelte';
@@ -180,10 +181,9 @@
   // external article is what we open/link to — not the linkblog permalink.
   // A newsletter article has no URL: its email is the article, so nothing
   // extracts, opens, shares, recommends or backs up a web copy of it. That
-  // holds for an item cached before the server stopped guessing one (its stale
-  // "View in browser" link is often a subscriber-tracking redirect), and an
-  // article's URL stays empty until subscriptions load and say which it is.
-  let articleUrl = $derived(article ? (subscriptionsStore.webUrlFor(article) ?? '') : '');
+  // holds even for an item that somehow still carries a guessed "View in
+  // browser" link (often a subscriber-tracking redirect).
+  let articleUrl = $derived(article ? subscriptionsStore.webUrlFor(article) : '');
   let itemUrl = $derived(
     articleUrl || linkPostUrl || document?.canonicalUrl || document?.path || ''
   );
@@ -643,6 +643,11 @@
     if (article.content || lazyContent == null || lazyContent) return;
     const target = article;
     const url = itemUrl;
+    // Tracked: a card expanded before subscriptions load waits for them rather
+    // than calling the body missing — a newsletter has no extraction to fall
+    // back on, and its URL never changes to re-run this.
+    const feedUrl = subscriptionsStore.getById(target.subscriptionId)?.feedUrl;
+    if (!feedUrl && !liveDb.subscriptionsLoaded) return;
     const extract = () => {
       if (url) linkPostContentStore.fetch(url);
     };
@@ -657,7 +662,6 @@
       if (storedBodyStatus === 'loading' || storedBodyStatus === 'found') return;
       if (storedBodyStatus === 'unavailable' && hasFetchedOriginal) return;
       storedBodyStatus = 'loading';
-      const feedUrl = subscriptionsStore.getById(target.subscriptionId)?.feedUrl;
       const pending = feedUrl
         ? loadStoredBody(target, feedUrl, { guest: !auth.user })
         : Promise.resolve({ status: 'missing' } as const);
@@ -695,10 +699,12 @@
     if (article.content || lazyContent == null || lazyContent) return;
     const target = article;
     const hasLead = Boolean(article.contentLead || lazyLead);
+    // Tracked, so a card that reached the viewport before subscriptions loaded
+    // prefetches once they do.
+    const feedUrl = subscriptionsStore.getById(target.subscriptionId)?.feedUrl;
+    if (!feedUrl) return;
     untrack(() => {
       if (prefetchStarted || storedBodyStatus !== 'idle') return;
-      const feedUrl = subscriptionsStore.getById(target.subscriptionId)?.feedUrl;
-      if (!feedUrl) return;
       prefetchStarted = true;
       void prefetchStoredBody(target, feedUrl, { guest: !auth.user }).then(async (status) => {
         if (status === 'missing') {

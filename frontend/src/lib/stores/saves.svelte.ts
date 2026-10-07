@@ -545,14 +545,22 @@ function createSavesStore() {
       // still holds the full row. The RSS body is often just an excerpt, so when
       // online we replace it below with a clean full-text extraction. A caller
       // without the subscription (re-saving from a save row, e.g. undoing an
-      // unsave) finds the feed row by guid alone, which also says whose it is.
+      // unsave) finds the feed row by guid, which also says whose it is. Two
+      // feeds can carry one guid (often the article URL), so a guid shared
+      // across feeds is settled by the URL, and left unmatched — no feed body,
+      // no feed — rather than guessed when that doesn't single one out.
       const rowLookup = db.articles
         .where('guid')
         .equals(article.guid)
         .filter(
           (r) => article.subscriptionId == null || r.subscriptionId === article.subscriptionId
         )
-        .first()
+        .toArray()
+        .then((rows) => {
+          if (rows.length <= 1) return rows[0];
+          const byUrl = rows.filter((r) => r.url === article.url);
+          return byUrl.length === 1 ? byUrl[0] : undefined;
+        })
         .catch(() => undefined);
       // The URL this save carries, everywhere: '' for a newsletter, whose email
       // is the article. An older item's guessed "View in browser" link must

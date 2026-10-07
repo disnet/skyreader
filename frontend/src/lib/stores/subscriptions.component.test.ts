@@ -66,6 +66,7 @@ vi.mock('./auth.svelte', () => ({
 }));
 
 const { subscriptionsStore, GuestAddBlockedError } = await import('./subscriptions.svelte');
+const { db } = await import('$lib/services/db');
 
 const FEED = { feedUrl: 'https://example.com/feed.xml', title: 'Example' };
 
@@ -138,9 +139,14 @@ describe('a feed article’s web URL', () => {
     expect(subscriptionsStore.webUrlFor({ url: webCopy, subscriptionId: 2 })).toBe('');
   });
 
-  it('is unknown (null) until subscriptions load — never the guessed URL', () => {
+  it('keeps an RSS article’s URL while subscriptions load', () => {
+    // The cache holds no newsletter URL to leak (Dexie v41 cleared them), so
+    // an RSS card isn't stripped of its link for the length of a cold start.
     liveDb.subscriptionsLoaded = false;
-    expect(subscriptionsStore.webUrlFor({ url: webCopy, subscriptionId: 2 })).toBeNull();
+    rows.length = 0;
+    expect(subscriptionsStore.webUrlFor({ url: 'https://a.example/1', subscriptionId: 1 })).toBe(
+      'https://a.example/1'
+    );
   });
 
   it('resolveWebUrl reads IndexedDB when subscriptions have not loaded', async () => {
@@ -151,5 +157,14 @@ describe('a feed article’s web URL', () => {
     expect(
       await subscriptionsStore.resolveWebUrl({ url: 'https://a.example/1', subscriptionId: 1 })
     ).toBe('https://a.example/1');
+  });
+
+  it('resolveWebUrl fails rather than guessing when the IndexedDB read fails', async () => {
+    liveDb.subscriptionsLoaded = false;
+    const get = vi.spyOn(db.subscriptions, 'get').mockRejectedValueOnce(new Error('idb'));
+    await expect(
+      subscriptionsStore.resolveWebUrl({ url: webCopy, subscriptionId: 2 })
+    ).rejects.toThrow('idb');
+    get.mockRestore();
   });
 });

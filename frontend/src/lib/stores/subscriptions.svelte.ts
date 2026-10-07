@@ -523,34 +523,33 @@ function createSubscriptionsStore() {
   }
 
   /**
-   * The web URL a feed article may be extracted or saved from. A newsletter has
-   * none: its email is the article, so nothing fetches it from the web — not on
-   * open, not on save, not on "fetch full article". (Items cached before the
-   * server stopped guessing one may still carry a "View in browser" link; this
-   * is what keeps it from becoming a body source.)
+   * The web URL a feed article may be opened, shared, extracted or saved from.
+   * A newsletter has none: its email is the article, so nothing fetches it from
+   * the web — not on open, not on save, not on "fetch full article".
    *
-   * `null` while subscriptions are still loading: whether the item is a
-   * newsletter isn't known yet, so callers that would extract must wait (this
-   * is reactive and settles once they load). Saves use `resolveWebUrl`.
+   * Never withheld while subscriptions load: an RSS card keeps its link from
+   * the first paint. That's safe because cached newsletter items carry no URL
+   * to leak — the server stopped guessing one, and the Dexie v41 upgrade
+   * cleared the ones cached before it. Once subscriptions load, this is the
+   * backstop for anything that still slips a URL onto a newsletter item.
    */
-  function webUrlFor(article: WebUrlSource): string | null {
-    if (!article.url) return '';
-    if (article.subscriptionId == null) return article.url;
-    if (!liveDb.subscriptionsLoaded) return null;
-    return urlUnlessNewsletter(article, newsletterIds.has(article.subscriptionId));
+  function webUrlFor(article: WebUrlSource): string {
+    if (!article.url || article.subscriptionId == null) return article.url ?? '';
+    return newsletterIds.has(article.subscriptionId) ? '' : article.url;
   }
 
-  /** `webUrlFor`, reading the subscription from IndexedDB if it hasn't loaded yet. */
+  /**
+   * `webUrlFor` for a save, reading the subscription from IndexedDB if they
+   * haven't loaded yet. A failed read rejects rather than guessing: a save sent
+   * with the wrong URL can be published (Semble/Margin backing); one that
+   * fails can be retried.
+   */
   async function resolveWebUrl(article: WebUrlSource): Promise<string> {
-    const known = webUrlFor(article);
-    if (known != null) return known;
-    const sub = await db.subscriptions.get(article.subscriptionId!).catch(() => undefined);
-    return urlUnlessNewsletter(article, !!sub && isNewsletterSubscription(sub));
-  }
-
-  // The one rule both lookups share: a newsletter item has no web URL.
-  function urlUnlessNewsletter(article: WebUrlSource, isNewsletter: boolean): string {
-    return isNewsletter ? '' : article.url;
+    if (!article.url || article.subscriptionId == null || liveDb.subscriptionsLoaded) {
+      return webUrlFor(article);
+    }
+    const sub = await db.subscriptions.get(article.subscriptionId);
+    return sub && isNewsletterSubscription(sub) ? '' : article.url;
   }
 
   /**

@@ -19,6 +19,7 @@ const articleRows: Array<{
   id?: number;
   guid: string;
   subscriptionId: number;
+  url?: string;
   content: string | null;
   contentTruncated?: boolean;
 }> = [];
@@ -31,6 +32,10 @@ function whereEquals(rows: () => Record<string, unknown>[], field: string, val: 
         rows()
           .filter((r) => r[field] === val)
           .find(fn),
+      toArray: async () =>
+        rows()
+          .filter((r) => r[field] === val)
+          .filter(fn),
     }),
     delete: async () => {
       for (const [key, row] of [...savedRows]) {
@@ -532,6 +537,28 @@ describe('savesStore.saveArticle body choice', () => {
     expect(extractArticle).not.toHaveBeenCalled();
     expect(saved.url).toBe('');
     expect(saved.content).toBe(body);
+  });
+
+  it('does not guess between two feeds that share a guid', async () => {
+    // Re-saving without a subscription: the guid alone can't say which feed's
+    // row (and stored body) this is, so the URL settles it — or nothing does.
+    articleRows.push(
+      { guid: 'https://a.example/1', subscriptionId: 7, url: 'https://a.example/1', content: 'A' },
+      { guid: 'https://a.example/1', subscriptionId: 9, url: 'https://b.example/1', content: 'B' }
+    );
+    const matched = await savesStore.saveArticle({
+      url: 'https://b.example/1',
+      guid: 'https://a.example/1',
+    });
+    expect(matched.content).toBe('B');
+
+    articleRows.length = 0;
+    articleRows.push(
+      { guid: 'g', subscriptionId: 7, url: 'https://a.example/1', content: 'A' },
+      { guid: 'g', subscriptionId: 9, url: 'https://a.example/1', content: 'B' }
+    );
+    const ambiguous = await savesStore.saveArticle({ url: 'https://a.example/1', guid: 'g' });
+    expect(ambiguous.content).toBeNull();
   });
 
   it('keeps a body handed in when there is no feed row to read', async () => {

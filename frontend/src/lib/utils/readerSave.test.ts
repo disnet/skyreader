@@ -136,6 +136,15 @@ describe('toggleSavedItemSave', () => {
     );
   });
 
+  it('does not read the body back when unsaving a feed save that has a URL', async () => {
+    const item = save({ source: 'feed' });
+    saves.push(item);
+
+    await toggleSavedItemSave(item);
+
+    expect(savesStore.getContent).not.toHaveBeenCalled();
+  });
+
   it('targets the live rkey across a save → unsave → save → unsave round trip', async () => {
     const item = save();
     saves.push(item);

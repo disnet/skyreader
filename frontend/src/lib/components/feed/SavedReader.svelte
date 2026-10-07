@@ -298,9 +298,10 @@
       contentTruncated,
     } = readerItem.item;
     // A newsletter's email is the article: never fall back to a web extraction.
-    // webUrlFor only tracks whether subscriptions have loaded and which are
-    // newsletters, so an unrelated subscription update doesn't re-run this.
-    const url = subscriptionsStore.webUrlFor(readerItem.item) ?? '';
+    // Untracked: this effect resets the body it shows, so re-running it when
+    // subscriptions finish loading would blank and reload a body already up.
+    const item = readerItem.item;
+    const url = untrack(() => subscriptionsStore.webUrlFor(item));
     let cancelled = false;
     (async () => {
       try {
@@ -394,7 +395,7 @@
     // excerpt. It's also how an oversized body — dropped at ingest — gets here.
     // Never for a newsletter, whose email is the article.
     const extractUrl =
-      readerItem.type === 'article' ? subscriptionsStore.webUrlFor(readerItem.item) : null;
+      readerItem.type === 'article' ? subscriptionsStore.webUrlFor(readerItem.item) : '';
     const extractedArticle = extractUrl ? linkPostContentStore.get(extractUrl) : undefined;
     if (extractedArticle?.content) return extractedArticle.content;
     // Else the feed body for an article rendered via the 'article' path — it was

@@ -13,6 +13,7 @@ import type {
   ShareDraft,
   RoomInfo,
 } from '$lib/types';
+import { isNewsletterSubscription } from '$lib/utils/newsletters';
 
 // Sync queue for offline operations
 export interface SyncQueueEntry {
@@ -519,6 +520,40 @@ class SkyreaderDatabase extends Dexie {
     this.version(40).stores({
       roomSnapshots: '[did+subject], did, cachedAt',
     });
+
+    // A newsletter item has no web URL: the email is the article. Items (and
+    // saves of them) cached before the server stopped guessing one still carry
+    // its "View in browser" link — often a subscriber-tracking redirect. The
+    // server cleared its copy (migrations 0088/0089) without re-delivering the
+    // items, so clear ours once here, before anything reads the cache. Every
+    // consumer of `article.url` then sees the same URL-less item new mail
+    // produces.
+    this.version(41)
+      .stores({})
+      .upgrade(async (tx) => {
+        const subs = await tx.table('subscriptions').toArray();
+        const newsletterIds = subs
+          .filter((s: Subscription) => isNewsletterSubscription(s))
+          .map((s: Subscription) => s.id)
+          .filter((id): id is number => id != null);
+        if (newsletterIds.length === 0) return;
+        const guids = new Set<string>();
+        await tx
+          .table('articles')
+          .where('subscriptionId')
+          .anyOf(newsletterIds)
+          .modify((a: Article) => {
+            guids.add(a.guid);
+            if (a.url) a.url = '';
+          });
+        if (guids.size === 0) return;
+        await tx
+          .table('saved')
+          .filter((s: SavedItem) => !!s.url && !!s.itemGuid && guids.has(s.itemGuid))
+          .modify((s: SavedItem) => {
+            s.url = '';
+          });
+      });
   }
 }
 

@@ -46,9 +46,11 @@ export async function toggleSavedItemSave(save: SavedItem): Promise<void> {
   const live = liveSave(save);
   if (live) {
     const guid = live.itemGuid || live.url;
-    // A URL save re-extracts on undo; only feed and document saves need their body kept.
+    // A save with a URL re-extracts on undo. Only one with nothing to extract
+    // from — a document, or a feed save with no URL (a newsletter) — needs its
+    // body kept, and only it pays for the read (possibly a network fetch).
     const content =
-      live.source === 'document' || live.source === 'feed'
+      live.source === 'document' || (live.source === 'feed' && !live.url)
         ? await savesStore.getContent(live.rkey)
         : null;
     await savesStore.remove(live.rkey);
