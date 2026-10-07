@@ -18,6 +18,15 @@ describe('sanitizeHtml presentational markup', () => {
     expect(out).toContain('align="center"');
   });
 
+  it('drops fixed layout widths from email tables but keeps image dimensions', () => {
+    const out = sanitizeHtml(
+      '<table width="600" height="100%"><tbody><tr height="20"><td width="560">x<img src="https://e.com/a.png" width="560" height="200"></td></tr></tbody></table>'
+    );
+    expect(out).toBe(
+      '<table><tbody><tr><td>x<img src="https://e.com/a.png" width="560" height="200" loading="lazy" decoding="async"></td></tr></tbody></table>'
+    );
+  });
+
   it('keeps <small> and structural markup', () => {
     expect(sanitizeHtml('<p><small>caption</small></p>')).toBe('<p><small>caption</small></p>');
   });
