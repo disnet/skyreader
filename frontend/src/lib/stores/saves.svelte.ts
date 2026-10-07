@@ -55,6 +55,29 @@ function toLightSaved(item: SavedItem): SavedItem {
   return { ...rest, content: null };
 }
 
+/**
+ * The feed row a save is made from. With the subscription known it's that
+ * feed's row; without it (a re-save from a save row) a guid can be shared by
+ * more than one feed (a cross-posted item), so take the row whose URL matches,
+ * or the guid's only feed — never an arbitrary other feed's row, whose body and
+ * newsletter-ness would then ride on the save.
+ */
+function pickFeedRow<R extends { subscriptionId: number; url: string }>(
+  rows: R[],
+  article: { url: string; subscriptionId?: number }
+): R | undefined {
+  if (article.subscriptionId != null) {
+    return rows.find((r) => r.subscriptionId === article.subscriptionId);
+  }
+  if (article.url) {
+    const byUrl = rows.find((r) => r.url === article.url);
+    if (byUrl) return byUrl;
+  }
+  return rows.length > 0 && rows.every((r) => r.subscriptionId === rows[0].subscriptionId)
+    ? rows[0]
+    : undefined;
+}
+
 function createSavesStore() {
   let articles = $state<SavedItem[]>([]);
   let loading = $state(false);
@@ -530,7 +553,7 @@ function createSavesStore() {
     summary?: string;
     imageUrl?: string;
     publishedAt?: string;
-    /** A body already in hand (an undone unsave), used when the feed row has none. */
+    /** A body already in hand (an undone unsave's full text), preferred over the feed row's. */
     content?: string;
   }): Promise<SavedItem> {
     saving = true;
@@ -545,14 +568,10 @@ function createSavesStore() {
       // still holds the full row. The RSS body is often just an excerpt, so when
       // online we replace it below with a clean full-text extraction. A caller
       // without the subscription (re-saving from a save row, e.g. undoing an
-      // unsave) finds the feed row by guid alone, which also says whose it is.
-      const rowLookup = db.articles
-        .where('guid')
-        .equals(article.guid)
-        .filter(
-          (r) => article.subscriptionId == null || r.subscriptionId === article.subscriptionId
-        )
-        .first()
+      // unsave) finds the feed row by guid, which also says whose it is.
+      const rowLookup = Promise.resolve()
+        .then(() => db.articles.where('guid').equals(article.guid).toArray())
+        .then((rows) => pickFeedRow(rows, article))
         .catch(() => undefined);
       // The URL this save carries, everywhere: '' for a newsletter, whose email
       // is the article. An older item's guessed "View in browser" link must
@@ -571,7 +590,9 @@ function createSavesStore() {
       const [row, url] = await Promise.all([rowLookup, urlLookup]);
       const subscriptionId = article.subscriptionId ?? row?.subscriptionId;
 
-      let rssBody: string | null = row?.content || article.content || null;
+      // A body passed in (an undone unsave's saved or extracted full text) beats
+      // the feed row's, which is often just an RSS excerpt.
+      let rssBody: string | null = article.content || row?.content || null;
       // A long body (a newsletter, a long-form post) rides out-of-row: the
       // archive keeps it in R2 and the row only says `contentTruncated`. It's
       // recovered below, once the save is already on screen, so the full text
@@ -985,6 +1006,17 @@ function createSavesStore() {
     }
   }
 
+  /** `getContent` without the network fallback: only a body already on this device. */
+  async function getLocalContent(rkey: string): Promise<string | null> {
+    const cached = contentCache.get(rkey);
+    if (cached != null) return cached;
+    try {
+      return (await db.saved.get(rkey))?.content ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   return {
     get articles() {
       return articles;
@@ -1016,6 +1048,7 @@ function createSavesStore() {
     getByUrl,
     getByGuid,
     getContent,
+    getLocalContent,
     prefetchContent,
   };
 }

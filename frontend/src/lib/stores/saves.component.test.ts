@@ -21,11 +21,13 @@ const articleRows: Array<{
   subscriptionId: number;
   content: string | null;
   contentTruncated?: boolean;
+  url?: string;
 }> = [];
 
 function whereEquals(rows: () => Record<string, unknown>[], field: string, val: unknown) {
   return {
     first: async () => rows().find((r) => r[field] === val),
+    toArray: async () => rows().filter((r) => r[field] === val),
     filter: (fn: (r: unknown) => boolean) => ({
       first: async () =>
         rows()
@@ -540,6 +542,37 @@ describe('savesStore.saveArticle body choice', () => {
     const saved = await savesStore.saveArticle({ url: '', guid: 'nl-8', content: body });
 
     expect(extractArticle).not.toHaveBeenCalled();
+    expect(saved.content).toBe(body);
+  });
+
+  it("prefers a body handed in over the feed row's excerpt", async () => {
+    // Undoing an unsave offline: the saved full text beats the RSS excerpt.
+    syncState.isOnline = false;
+    const full = words(900);
+    articleRows.push({ guid: 'rss-1', subscriptionId: 7, content: words(40) });
+
+    const saved = await savesStore.saveArticle({
+      url: 'https://news.example/p/long',
+      guid: 'rss-1',
+      content: full,
+    });
+
+    expect(saved.content).toBe(full);
+  });
+
+  it('takes the feed row whose URL matches when a guid is shared', async () => {
+    // A cross-posted item: the same guid in a newsletter and a plain feed. The
+    // re-save is the plain feed's, so it keeps its URL and its body.
+    syncState.isOnline = false;
+    const body = words(40);
+    articleRows.push(
+      { guid: 'shared-1', subscriptionId: 8, url: 'https://news.example/view', content: words(5) },
+      { guid: 'shared-1', subscriptionId: 7, url: 'https://blog.example/p', content: body }
+    );
+
+    const saved = await savesStore.saveArticle({ url: 'https://blog.example/p', guid: 'shared-1' });
+
+    expect(saved.url).toBe('https://blog.example/p');
     expect(saved.content).toBe(body);
   });
 

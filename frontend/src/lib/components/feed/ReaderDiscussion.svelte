@@ -41,7 +41,20 @@
         )
       : undefined
   );
-  let normalized = $derived(normalizeDisplayItem(readerItem, sub));
+  // A newsletter article has no web URL: its email is the article. Everything
+  // below that reads the item's URL (open in browser, share, recommend, Bluesky,
+  // Semble/Margin) goes through this copy, so an item cached with the old
+  // guessed "View in browser" link (often a subscriber-tracking redirect)
+  // never reaches any of them.
+  let linkItem = $derived<FeedDisplayItem>(
+    readerItem.type === 'article'
+      ? {
+          ...readerItem,
+          item: { ...readerItem.item, url: subscriptionsStore.webUrlFor(readerItem.item) ?? '' },
+        }
+      : readerItem
+  );
+  let normalized = $derived(normalizeDisplayItem(linkItem, sub));
   let itemUrl = $derived(normalized.url);
   let title = $derived(normalized.title);
   let publishedAt = $derived(normalized.publishedAt);
@@ -66,7 +79,7 @@
 
   let shareTarget = $derived.by((): { article: Article; repostUri?: string } | null =>
     shareTargetForDisplayItem(
-      readerItem,
+      linkItem,
       { url: itemUrl, title, publishedAt },
       linkPostArticle?.author ?? undefined
     )
@@ -157,7 +170,7 @@
   // A session without the connection scope still gets the dialog — it says so up
   // front rather than hiding a capability the reader can have by logging in again.
   function createConnection() {
-    const data = extractSembleMetadata(readerItem);
+    const data = extractSembleMetadata(linkItem);
     sembleConnectionStore.openFor({
       url: data.url,
       title: data.title,
@@ -169,9 +182,9 @@
 
   function createInLane(id: LaneId) {
     if (id === 'semble') {
-      integrationSaveStore.openPicker('semble', extractSembleMetadata(readerItem));
+      integrationSaveStore.openPicker('semble', extractSembleMetadata(linkItem));
     } else if (id === 'margin') {
-      integrationSaveStore.openPicker('margin', extractMarginMetadata(readerItem));
+      integrationSaveStore.openPicker('margin', extractMarginMetadata(linkItem));
     } else if (id === 'bluesky') {
       // Signed in, post from here; a guest has no account to post from, so
       // Bluesky's own composer takes the link.

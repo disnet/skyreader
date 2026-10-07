@@ -76,7 +76,8 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
 
     let url: string;
     if (item.type === 'article') {
-      url = item.item.url;
+      // A newsletter's email is the article; it has no web copy to open.
+      url = subscriptionsStore.webUrlFor(item.item) ?? '';
     } else if (item.type === 'document') {
       url = item.item.canonicalUrl || item.item.path || '';
     } else if (item.type === 'link') {
@@ -393,7 +394,11 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
       action: fetchSelectedOriginal,
       condition: () => {
         const item = getSelectedItem();
-        return auth.isAuthenticated && item?.type === 'article' && !!item.item.url;
+        return (
+          auth.isAuthenticated &&
+          item?.type === 'article' &&
+          !!subscriptionsStore.webUrlFor(item.item)
+        );
       },
     });
   }

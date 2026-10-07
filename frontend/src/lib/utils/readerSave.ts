@@ -46,11 +46,16 @@ export async function toggleSavedItemSave(save: SavedItem): Promise<void> {
   const live = liveSave(save);
   if (live) {
     const guid = live.itemGuid || live.url;
-    // A URL save re-extracts on undo; only feed and document saves need their body kept.
+    // A URL save re-extracts on undo; only feed and document saves need their body
+    // kept. A feed save keeps only a body already on this device: unsaving
+    // shouldn't wait on a fetch, and an RSS undo re-extracts anyway (a newsletter
+    // body is local once its reader has opened it).
     const content =
-      live.source === 'document' || live.source === 'feed'
+      live.source === 'document'
         ? await savesStore.getContent(live.rkey)
-        : null;
+        : live.source === 'feed'
+          ? await savesStore.getLocalContent(live.rkey)
+          : null;
     await savesStore.remove(live.rkey);
     lastUnsavedBody = { guid, content };
     return;

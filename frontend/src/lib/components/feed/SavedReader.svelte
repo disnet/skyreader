@@ -82,11 +82,11 @@
   // so the reader offers these wherever it is hosted rather than only on the
   // pages that used to own the picker's state.
   function saveToSemble() {
-    integrationSaveStore.openPicker('semble', extractSembleMetadata(readerItem));
+    integrationSaveStore.openPicker('semble', extractSembleMetadata(linkItem));
   }
 
   function saveToMargin() {
-    integrationSaveStore.openPicker('margin', extractMarginMetadata(readerItem));
+    integrationSaveStore.openPicker('margin', extractMarginMetadata(linkItem));
   }
 
   // Drawing an edge from what you just read. The discussion at the end of the
@@ -95,7 +95,7 @@
   // So it also sits in the reader's own menus, where it never depends on what
   // the Atmosphere happened to return.
   function connectOnSemble() {
-    const data = extractSembleMetadata(readerItem);
+    const data = extractSembleMetadata(linkItem);
     sembleConnectionStore.openFor({
       url: data.url,
       title: data.title,
@@ -219,7 +219,20 @@
   let feedTitle = $derived(sub?.customTitle || sub?.title || '');
 
   // Normalize data from different item types using shared utility
-  let normalized = $derived(normalizeDisplayItem(readerItem, sub));
+  // A newsletter article has no web URL: its email is the article. Everything
+  // below that reads the item's URL (open in browser, share, recommend, Bluesky,
+  // Semble/Margin) goes through this copy, so an item cached with the old
+  // guessed "View in browser" link (often a subscriber-tracking redirect)
+  // never reaches any of them.
+  let linkItem = $derived<FeedDisplayItem>(
+    readerItem.type === 'article'
+      ? {
+          ...readerItem,
+          item: { ...readerItem.item, url: subscriptionsStore.webUrlFor(readerItem.item) ?? '' },
+        }
+      : readerItem
+  );
+  let normalized = $derived(normalizeDisplayItem(linkItem, sub));
   let title = $derived(normalized.title);
   let itemUrl = $derived(normalized.url);
   // Semble and Margin both key on the URL, so an emailed newsletter with no web
@@ -490,7 +503,7 @@
 
   function openShareComposer() {
     const target = shareTargetForDisplayItem(
-      readerItem,
+      linkItem,
       { url: itemUrl, title, publishedAt },
       linkPostArticle?.author ?? undefined
     );

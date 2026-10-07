@@ -67,17 +67,22 @@ function createSubscriptionsStore() {
     return map;
   });
 
-  // Derived: ids of newsletter subscriptions, for `webUrlFor`. Keyed through a
-  // string so an unrelated subscription update (fetch status, last fetched)
-  // yields an equal key and leaves the set — and every card and reader effect
-  // that asks `webUrlFor` — untouched.
-  let newsletterIdKey = $derived(
-    subscriptions
-      .filter(isNewsletterSubscription)
-      .map((sub) => sub.id)
-      .join(',')
-  );
-  let newsletterIds = $derived(new Set(newsletterIdKey.split(',').filter(Boolean).map(Number)));
+  // Derived: ids of newsletter subscriptions, for `webUrlFor`. An unrelated
+  // subscription update (fetch status, last fetched) rebuilds an equal set, so
+  // the previous instance is handed back: a derived that returns the same value
+  // doesn't re-run what depends on it — every card and reader effect that asks
+  // `webUrlFor`.
+  let lastNewsletterIds = new Set<number>();
+  let newsletterIds = $derived.by(() => {
+    const next = new Set<number>();
+    for (const sub of subscriptions) {
+      if (sub.id != null && isNewsletterSubscription(sub)) next.add(sub.id);
+    }
+    const same =
+      next.size === lastNewsletterIds.size && [...next].every((id) => lastNewsletterIds.has(id));
+    if (!same) lastNewsletterIds = next;
+    return lastNewsletterIds;
+  });
 
   // Derived: author DID → that author's atproto.documents subscriptions, in
   // subscription order. Same reason as `byId`: resolving a document card's
