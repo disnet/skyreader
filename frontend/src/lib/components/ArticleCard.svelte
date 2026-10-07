@@ -178,13 +178,15 @@
 
   // Normalize data for article and document modes. For a link post the
   // external article is what we open/link to — not the linkblog permalink.
+  // A newsletter article has no URL: its email is the article, so nothing
+  // extracts, opens, shares, recommends or backs up a web copy of it. That
+  // holds for an item cached before the server stopped guessing one (its stale
+  // "View in browser" link is often a subscriber-tracking redirect), and an
+  // article's URL stays empty until subscriptions load and say which it is.
+  let articleUrl = $derived(article ? (subscriptionsStore.webUrlFor(article) ?? '') : '');
   let itemUrl = $derived(
-    article?.url || linkPostUrl || document?.canonicalUrl || document?.path || ''
+    articleUrl || linkPostUrl || document?.canonicalUrl || document?.path || ''
   );
-  // What the extractor may fetch: the item's URL, except for a newsletter —
-  // its email is the article, and a web copy would only be a teaser or a wall.
-  // Empty until subscriptions load and say which it is.
-  let extractUrl = $derived(article ? (subscriptionsStore.webUrlFor(article) ?? '') : itemUrl);
   let itemTitle = $derived(
     decodeEntities(article?.title) || decodeEntities(document?.title) || itemUrl
   );
@@ -274,7 +276,7 @@
     // If the reader explicitly fetched the original article, that full extraction
     // wins over the feed body — RSS entries are often just an excerpt. Keyed on
     // the article URL via the shared extract cache (same path link posts use).
-    const fetchedOriginal = article ? linkPostContentStore.get(extractUrl) : undefined;
+    const fetchedOriginal = article ? linkPostContentStore.get(itemUrl) : undefined;
     if (fetchedOriginal?.content) return fetchedOriginal.content;
 
     // For articles, use existing logic. The in-memory article is "light" (its
@@ -423,7 +425,9 @@
         // Signed in, post from here; a guest has no account to post from, so
         // Bluesky's own composer takes the link.
         if (auth.user && itemUrl) {
-          blueskyComposerStore.open({ source: article ?? { url: itemUrl, title: itemTitle } });
+          blueskyComposerStore.open({
+            source: article ? { ...article, url: itemUrl } : { url: itemUrl, title: itemTitle },
+          });
         } else {
           window.open(
             `https://bsky.app/intent/compose?text=${encodeURIComponent(itemUrl)}`,
@@ -638,7 +642,7 @@
     // Wait for the local read; a body already cached there needs neither fetch.
     if (article.content || lazyContent == null || lazyContent) return;
     const target = article;
-    const url = extractUrl;
+    const url = itemUrl;
     const extract = () => {
       if (url) linkPostContentStore.fetch(url);
     };
@@ -749,10 +753,10 @@
     Boolean(article?.contentTruncated) &&
       !article?.content &&
       !lazyContent &&
-      !linkPostContentStore.get(extractUrl)?.content
+      !linkPostContentStore.get(itemUrl)?.content
   );
   let readTimeMinutes = $derived(
-    (isFollowLink && !linkPostContentStore.get(extractUrl)?.content) || showingPartialBody
+    (isFollowLink && !linkPostContentStore.get(itemUrl)?.content) || showingPartialBody
       ? 0
       : bodyWordCount > 0
         ? Math.max(1, Math.round(bodyWordCount / 200))
@@ -765,7 +769,7 @@
   let followLinkCardVM = $derived.by(() => {
     // Once the page is fetched it's an article like any other; a fetch that came
     // back empty leaves the card, which still says what the row is.
-    if (!followLink || linkPostContentStore.get(extractUrl)?.content) return undefined;
+    if (!followLink || linkPostContentStore.get(itemUrl)?.content) return undefined;
     let domain = followLink.site;
     try {
       domain = new URL(followLink.url).hostname.replace(/^www\./, '');
@@ -861,15 +865,13 @@
   //   - long body: a quieter entry in the ⋯ overflow menu, so a full-content
   //     feed isn't nagged but the reader can still force a clean re-extraction.
   const SHORT_ARTICLE_WORDS = 200;
-  let fetchingOriginal = $derived(Boolean(article) && linkPostContentStore.isFetching(extractUrl));
-  let hasFetchedOriginal = $derived(
-    Boolean(article) && Boolean(linkPostContentStore.get(extractUrl))
-  );
+  let fetchingOriginal = $derived(Boolean(article) && linkPostContentStore.isFetching(itemUrl));
+  let hasFetchedOriginal = $derived(Boolean(article) && Boolean(linkPostContentStore.get(itemUrl)));
   // Account-only, like the store it drives (extraction needs a session). Hidden
   // rather than offered and refused: a guest's feed is full of truncated RSS
   // bodies, so a dead "Fetch full article" would sit under most of them.
   let canFetchOriginal = $derived(
-    Boolean(auth.user) && Boolean(article) && Boolean(extractUrl) && !hasFetchedOriginal
+    Boolean(auth.user) && Boolean(article) && Boolean(itemUrl) && !hasFetchedOriginal
   );
 
   // Whether "More" / a content tap can expand the card. Usually that's the
@@ -898,8 +900,8 @@
   let showFetchOriginalMenu = $derived(canFetchOriginal && !showFetchOriginal);
 
   function handleFetchOriginal() {
-    if (!extractUrl) return;
-    linkPostContentStore.fetch(extractUrl);
+    if (!itemUrl) return;
+    linkPostContentStore.fetch(itemUrl);
     // The excerpt is short so it shows fully when selected; the fetched body is
     // longer, so expand to keep it all visible. onExpand toggles — only fire it
     // when not already expanded.
@@ -914,7 +916,7 @@
   $effect(() => {
     if (!isFollowLink || !expanded || autoFetched || !canFetchOriginal) return;
     autoFetched = true;
-    untrack(() => linkPostContentStore.fetch(extractUrl));
+    untrack(() => linkPostContentStore.fetch(itemUrl));
   });
 
   function handleOverflowFetchOriginal() {

@@ -67,6 +67,18 @@ function createSubscriptionsStore() {
     return map;
   });
 
+  // Derived: ids of newsletter subscriptions, for `webUrlFor`. Keyed through a
+  // string so an unrelated subscription update (fetch status, last fetched)
+  // yields an equal key and leaves the set — and every card and reader effect
+  // that asks `webUrlFor` — untouched.
+  let newsletterIdKey = $derived(
+    subscriptions
+      .filter(isNewsletterSubscription)
+      .map((sub) => sub.id)
+      .join(',')
+  );
+  let newsletterIds = $derived(new Set(newsletterIdKey.split(',').filter(Boolean).map(Number)));
+
   // Derived: author DID → that author's atproto.documents subscriptions, in
   // subscription order. Same reason as `byId`: resolving a document card's
   // publication used to filter the whole list per card.
@@ -525,16 +537,20 @@ function createSubscriptionsStore() {
     if (!article.url) return '';
     if (article.subscriptionId == null) return article.url;
     if (!liveDb.subscriptionsLoaded) return null;
-    const sub = getById(article.subscriptionId);
-    return sub && isNewsletterSubscription(sub) ? '' : article.url;
+    return urlUnlessNewsletter(article, newsletterIds.has(article.subscriptionId));
   }
 
   /** `webUrlFor`, reading the subscription from IndexedDB if it hasn't loaded yet. */
   async function resolveWebUrl(article: WebUrlSource): Promise<string> {
     const known = webUrlFor(article);
-    if (known != null || article.subscriptionId == null) return known ?? article.url;
-    const sub = await db.subscriptions.get(article.subscriptionId).catch(() => undefined);
-    return sub && isNewsletterSubscription(sub) ? '' : article.url;
+    if (known != null) return known;
+    const sub = await db.subscriptions.get(article.subscriptionId!).catch(() => undefined);
+    return urlUnlessNewsletter(article, !!sub && isNewsletterSubscription(sub));
+  }
+
+  // The one rule both lookups share: a newsletter item has no web URL.
+  function urlUnlessNewsletter(article: WebUrlSource, isNewsletter: boolean): string {
+    return isNewsletter ? '' : article.url;
   }
 
   /**

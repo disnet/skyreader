@@ -518,6 +518,31 @@ describe('savesStore.saveArticle body choice', () => {
     expect(saved.uri).toMatch(/^at:\/\//);
   });
 
+  it('knows a newsletter by its feed row when re-saved without a subscription', async () => {
+    // Undoing an unsave re-saves from the save row, which has no subscriptionId.
+    // An older newsletter save still carries its guessed web copy.
+    const body = words(40);
+    articleRows.push({ guid: 'nl-7', subscriptionId: 8, content: body });
+
+    const saved = await savesStore.saveArticle({
+      url: 'https://news.example/p/web-copy',
+      guid: 'nl-7',
+    });
+
+    expect(extractArticle).not.toHaveBeenCalled();
+    expect(saved.url).toBe('');
+    expect(saved.content).toBe(body);
+  });
+
+  it('keeps a body handed in when there is no feed row to read', async () => {
+    const body = words(40);
+
+    const saved = await savesStore.saveArticle({ url: '', guid: 'nl-8', content: body });
+
+    expect(extractArticle).not.toHaveBeenCalled();
+    expect(saved.content).toBe(body);
+  });
+
   it('does not reach for the stored body when saving offline', async () => {
     syncState.isOnline = false;
     articleRows.push({

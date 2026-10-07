@@ -530,48 +530,61 @@ function createSavesStore() {
     summary?: string;
     imageUrl?: string;
     publishedAt?: string;
+    /** A body already in hand (an undone unsave), used when the feed row has none. */
+    content?: string;
   }): Promise<SavedItem> {
     saving = true;
     error = null;
     try {
       const rkey = generateTid();
       const now = new Date().toISOString();
-      // The URL this save carries, everywhere: '' for a newsletter, whose email
-      // is the article. An older item's guessed "View in browser" link must
-      // neither be extracted nor sent — with Semble/Margin backing on, the
-      // save would publish that (often subscriber-tracking) link publicly.
-      const url = await subscriptionsStore.resolveWebUrl(article);
 
       // Instant/offline fallback body: pull the RSS body back from IndexedDB.
       // The in-memory feed list is kept "light" (content stripped — see
       // toLightArticle), so the body isn't on the article passed in; db.articles
       // still holds the full row. The RSS body is often just an excerpt, so when
-      // online we replace it below with a clean full-text extraction.
-      let rssBody: string | null = null;
+      // online we replace it below with a clean full-text extraction. A caller
+      // without the subscription (re-saving from a save row, e.g. undoing an
+      // unsave) finds the feed row by guid alone, which also says whose it is.
+      const rowLookup = db.articles
+        .where('guid')
+        .equals(article.guid)
+        .filter(
+          (r) => article.subscriptionId == null || r.subscriptionId === article.subscriptionId
+        )
+        .first()
+        .catch(() => undefined);
+      // The URL this save carries, everywhere: '' for a newsletter, whose email
+      // is the article. An older item's guessed "View in browser" link must
+      // neither be extracted nor sent — with Semble/Margin backing on, the
+      // save would publish that (often subscriber-tracking) link publicly.
+      // Resolved alongside the row read when the subscription is known.
+      const urlLookup =
+        article.subscriptionId != null
+          ? subscriptionsStore.resolveWebUrl(article)
+          : rowLookup.then((row) =>
+              subscriptionsStore.resolveWebUrl({
+                url: article.url,
+                subscriptionId: row?.subscriptionId,
+              })
+            );
+      const [row, url] = await Promise.all([rowLookup, urlLookup]);
+      const subscriptionId = article.subscriptionId ?? row?.subscriptionId;
+
+      let rssBody: string | null = row?.content || article.content || null;
       // A long body (a newsletter, a long-form post) rides out-of-row: the
       // archive keeps it in R2 and the row only says `contentTruncated`. It's
       // recovered below, once the save is already on screen, so the full text
       // is what extraction has to beat — not an empty body a paywall wins by
       // default.
       let storedBodyRef: { ref: StoredBodyRef; feedUrl: string } | null = null;
-      if (article.subscriptionId != null) {
-        try {
-          const row = await db.articles
-            .where('guid')
-            .equals(article.guid)
-            .filter((r) => r.subscriptionId === article.subscriptionId)
-            .first();
-          rssBody = row?.content || null;
-          const feedUrl = subscriptionsStore.getById(article.subscriptionId)?.feedUrl;
-          if (!rssBody && row?.contentTruncated && feedUrl) {
-            storedBodyRef = {
-              ref: { id: row.id, guid: article.guid, subscriptionId: article.subscriptionId },
-              feedUrl,
-            };
-          }
-        } catch {
-          // Best effort — fall back to no stored body.
-        }
+      const feedUrl =
+        subscriptionId != null ? subscriptionsStore.getById(subscriptionId)?.feedUrl : undefined;
+      if (!rssBody && row?.contentTruncated && feedUrl && subscriptionId != null) {
+        storedBodyRef = {
+          ref: { id: row.id, guid: article.guid, subscriptionId },
+          feedUrl,
+        };
       }
 
       // Optimistically add to local state with the RSS body so the save appears

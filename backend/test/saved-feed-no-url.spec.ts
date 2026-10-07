@@ -115,4 +115,36 @@ describe('POST /api/saved — feed item without a URL', () => {
     expect(status).toBe(200);
     expect(body.url).toBe('');
   });
+
+  it("still requires a URL for source:'url', even with fromFeed and a guid", async () => {
+    const { status, body } = await call(
+      post({ url: '', rkey: 'aaaaaaaaaaaaa', source: 'url', fromFeed: true, itemGuid: 'g-5' })
+    );
+    expect(status).toBe(400);
+    expect(body.error).toBe('Missing url field');
+  });
+
+  it('does not dedupe a URL-less save against another one by url', async () => {
+    // A newsletter save (url '') must not swallow a later link-less share.
+    const newsletter = await call(
+      post({ url: '', rkey: 'aaaaaaaaaaaaa', fromFeed: true, itemGuid: 'issue-c@x' })
+    );
+    expect(newsletter.status).toBe(200);
+    const share = await call(
+      post({
+        url: '',
+        rkey: 'bbbbbbbbbbbbb',
+        source: 'share',
+        content: '<p>a note</p>',
+        updateContent: true,
+      })
+    );
+    expect(share.status).toBe(200);
+    const row = await env.DB.prepare(
+      'SELECT content FROM saved_articles WHERE user_did = ? AND item_guid = ?'
+    )
+      .bind(DID, 'issue-c@x')
+      .first<{ content: string | null }>();
+    expect(row?.content ?? null).toBeNull();
+  });
 });

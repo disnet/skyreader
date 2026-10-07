@@ -298,6 +298,8 @@
       contentTruncated,
     } = readerItem.item;
     // A newsletter's email is the article: never fall back to a web extraction.
+    // webUrlFor only tracks whether subscriptions have loaded and which are
+    // newsletters, so an unrelated subscription update doesn't re-run this.
     const url = subscriptionsStore.webUrlFor(readerItem.item) ?? '';
     let cancelled = false;
     (async () => {

@@ -124,6 +124,18 @@ describe('toggleSavedItemSave', () => {
     );
   });
 
+  it('re-saves a URL-less newsletter save with the body it had', async () => {
+    const item = save({ source: 'feed', url: '', itemGuid: 'issue-1@news.example' });
+    saves.push(item);
+
+    await toggleSavedItemSave(item); // unsave — the email body goes with the row
+    await toggleSavedItemSave(item); // undo: no URL to re-extract from
+
+    expect(savesStore.saveArticle).toHaveBeenCalledWith(
+      expect.objectContaining({ url: '', guid: 'issue-1@news.example', content: '<p>A body</p>' })
+    );
+  });
+
   it('targets the live rkey across a save → unsave → save → unsave round trip', async () => {
     const item = save();
     saves.push(item);

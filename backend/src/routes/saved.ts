@@ -116,8 +116,10 @@ export async function handleCreateSaved(
     (body.fromFeed || source === 'feed' || source === 'share' || source === 'document') &&
     !!body.itemGuid;
   // Share/document saves may have no URL, and so may a feed save keyed by its
-  // item guid: an emailed newsletter is its own article, with no web copy.
-  const urlOptional = source === 'share' || source === 'document' || keyedByGuid;
+  // item guid: an emailed newsletter is its own article, with no web copy. A
+  // URL save always needs its URL, whatever else rides along.
+  const urlOptional =
+    source === 'share' || source === 'document' || (source === 'feed' && keyedByGuid);
   if (urlOptional) {
     if (typeof body.url !== 'string') body.url = '';
   } else {
@@ -145,7 +147,9 @@ export async function handleCreateSaved(
     }
   }
 
-  // Check for duplicate — by item_guid for feed/share/document saves, by URL otherwise
+  // Check for duplicate — by item_guid for feed/share/document saves, by URL
+  // otherwise. A save with no URL has nothing to match on: '' would collide with
+  // every other URL-less save (newsletters, link-less shares).
   if (keyedByGuid) {
     const existing = await env.DB.prepare(
       'SELECT id FROM saved_articles WHERE user_did = ? AND item_guid = ?'
@@ -159,7 +163,7 @@ export async function handleCreateSaved(
         headers: { 'Content-Type': 'application/json' },
       });
     }
-  } else {
+  } else if (body.url) {
     const existing = await env.DB.prepare(
       'SELECT id, rkey, record_uri FROM saved_articles WHERE user_did = ? AND url = ?'
     )
