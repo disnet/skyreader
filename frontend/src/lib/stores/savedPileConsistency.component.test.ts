@@ -80,7 +80,12 @@ vi.mock('./social.svelte', () => ({
 
 vi.mock('./myLinkblog.svelte', () => ({ myLinkblogStore: { documents: [] } }));
 vi.mock('./subscriptions.svelte', () => ({
-  subscriptionsStore: { subscriptions: [], getById: () => undefined, getByRkey: () => undefined },
+  subscriptionsStore: {
+    subscriptions: [],
+    getById: () => undefined,
+    getByRkey: () => undefined,
+    isNewsletterItem: () => false,
+  },
 }));
 vi.mock('./filteredViews.svelte', () => ({
   filteredViewsStore: {

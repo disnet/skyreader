@@ -296,8 +296,9 @@
       subscriptionId,
       content: inMemoryContent,
       contentTruncated,
-      url,
     } = readerItem.item;
+    // A newsletter's email is the article: never fall back to a web extraction.
+    const url = subscriptionsStore.isNewsletterItem(subscriptionId) ? '' : readerItem.item.url;
     let cancelled = false;
     (async () => {
       try {
@@ -330,7 +331,7 @@
           // The archive dropped the body from the row but may hold it out-of-row
           // (see services/itemBody.ts). Prefer that stored copy — the feed's own
           // body — and extract the page only when there isn't one (and there is
-          // a page: an emailed newsletter may have no web copy).
+          // a page: never for an emailed newsletter).
           const feedUrl = subscriptionsStore.getById(subscriptionId)?.feedUrl;
           const stored = feedUrl
             ? await loadStoredBody({ id: row?.id ?? id, guid, subscriptionId }, feedUrl, {
@@ -389,8 +390,12 @@
     // ArticleCard: the entry only exists because something asked for it (Shift+F,
     // the ⋯ menu, the truncated-article nudge), and an RSS body is often just an
     // excerpt. It's also how an oversized body — dropped at ingest — gets here.
+    // Never for a newsletter, whose email is the article.
     const extractedArticle =
-      readerItem.type === 'article' ? linkPostContentStore.get(readerItem.item.url) : undefined;
+      readerItem.type === 'article' &&
+      !subscriptionsStore.isNewsletterItem(readerItem.item.subscriptionId)
+        ? linkPostContentStore.get(readerItem.item.url)
+        : undefined;
     if (extractedArticle?.content) return extractedArticle.content;
     // Else the feed body for an article rendered via the 'article' path — it was
     // stripped from memory and is read back from IndexedDB above.

@@ -4,6 +4,7 @@ import { api, SubscriptionLimitError } from '$lib/services/api';
 import { auth } from './auth.svelte';
 import { subscriptionDedupKey, createInFlightGuard } from '$lib/services/subscriptionDedup';
 import { generateTid } from '$lib/utils/tid';
+import { isNewsletterSubscription } from '$lib/utils/newsletters';
 import type { Subscription, SubscriptionSourceType } from '$lib/types';
 
 /**
@@ -506,6 +507,18 @@ function createSubscriptionsStore() {
   }
 
   /**
+   * Whether a feed article came from a newsletter. Its email is the article, so
+   * nothing extracts it from the web — not on open, not on save, not on "fetch
+   * full article". (Older items may carry a guessed "View in browser" URL; it's
+   * only a link out, never a body source.)
+   */
+  function isNewsletterItem(subscriptionId: number | undefined): boolean {
+    if (subscriptionId == null) return false;
+    const sub = getById(subscriptionId);
+    return !!sub && isNewsletterSubscription(sub);
+  }
+
+  /**
    * Get a subscription by rkey
    */
   function getByRkey(rkey: string): Subscription | undefined {
@@ -558,6 +571,7 @@ function createSubscriptionsStore() {
 
     // Lookups
     getById,
+    isNewsletterItem,
     getByRkey,
     getByUrl,
   };

@@ -102,6 +102,8 @@ vi.mock('$lib/services/itemBody', () => ({ loadStoredBody }));
 vi.mock('./subscriptions.svelte', () => ({
   subscriptionsStore: {
     getById: (id: number) => (id === 7 ? { id, feedUrl: 'https://news.example/feed' } : undefined),
+    // Subscription 8 is a newsletter.
+    isNewsletterItem: (id: number | undefined) => id === 8,
   },
 }));
 
@@ -476,6 +478,35 @@ describe('savesStore.saveArticle body choice', () => {
 
     release({ status: 'found', content: full });
     expect((await pending).content).toBe(full);
+  });
+
+  it('never extracts a newsletter: the email is the article', async () => {
+    const body = words(40);
+    articleRows.push({ guid: 'nl-5', subscriptionId: 8, content: body });
+
+    const saved = await savesStore.saveArticle({
+      url: 'https://news.example/p/web-copy',
+      guid: 'nl-5',
+      subscriptionId: 8,
+    });
+
+    expect(extractArticle).not.toHaveBeenCalled();
+    expect(saved.content).toBe(body);
+  });
+
+  it('saves a newsletter with no web URL by its guid', async () => {
+    const body = words(40);
+    articleRows.push({ guid: 'nl-6', subscriptionId: 8, content: body });
+
+    const saved = await savesStore.saveArticle({ url: '', guid: 'nl-6', subscriptionId: 8 });
+
+    expect(extractArticle).not.toHaveBeenCalled();
+    expect(api.saveFromUrl).toHaveBeenCalledWith(
+      '',
+      expect.any(String),
+      expect.objectContaining({ fromFeed: true, itemGuid: 'nl-6', content: body })
+    );
+    expect(saved.uri).toMatch(/^at:\/\//);
   });
 
   it('does not reach for the stored body when saving offline', async () => {

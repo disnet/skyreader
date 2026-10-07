@@ -111,8 +111,11 @@ export async function handleCreateSaved(
   // Determine source
   const source: string = body.source || (body.fromFeed ? 'feed' : 'url');
 
-  // For share/document sources, allow empty URL
-  if (source === 'share' || source === 'document') {
+  // Share/document saves may have no URL, and so may a feed save keyed by its
+  // item guid: an emailed newsletter is its own article, with no web copy.
+  const urlOptional =
+    source === 'share' || source === 'document' || (source === 'feed' && !!body.itemGuid);
+  if (urlOptional) {
     if (body.url === undefined || body.url === null) body.url = '';
   } else {
     if (!body.url || typeof body.url !== 'string') {
@@ -127,8 +130,8 @@ export async function handleCreateSaved(
     return invalidRkeyResponse();
   }
 
-  // Validate URL only for url/feed sources
-  if (source !== 'share' && source !== 'document') {
+  // Validate URL only for url/feed sources that carry one
+  if (source !== 'share' && source !== 'document' && body.url) {
     try {
       new URL(body.url);
     } catch {

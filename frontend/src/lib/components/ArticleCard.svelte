@@ -181,6 +181,11 @@
   let itemUrl = $derived(
     article?.url || linkPostUrl || document?.canonicalUrl || document?.path || ''
   );
+  // What the extractor may fetch: the item's URL, except for a newsletter —
+  // its email is the article, and a web copy would only be a teaser or a wall.
+  let extractUrl = $derived(
+    article && subscriptionsStore.isNewsletterItem(article.subscriptionId) ? '' : itemUrl
+  );
   let itemTitle = $derived(
     decodeEntities(article?.title) || decodeEntities(document?.title) || itemUrl
   );
@@ -270,7 +275,7 @@
     // If the reader explicitly fetched the original article, that full extraction
     // wins over the feed body — RSS entries are often just an excerpt. Keyed on
     // the article URL via the shared extract cache (same path link posts use).
-    const fetchedOriginal = article ? linkPostContentStore.get(itemUrl) : undefined;
+    const fetchedOriginal = article ? linkPostContentStore.get(extractUrl) : undefined;
     if (fetchedOriginal?.content) return fetchedOriginal.content;
 
     // For articles, use existing logic. The in-memory article is "light" (its
@@ -628,13 +633,13 @@
   });
   $effect(() => {
     void storedBodyRetry;
-    // No itemUrl gate: a stored body is keyed by feed + guid, and an emailed
-    // newsletter often has no web copy. Only the extraction fallback needs a URL.
+    // No URL gate: a stored body is keyed by feed + guid, and an emailed
+    // newsletter has no web copy. Only the extraction fallback needs a URL.
     if (!expanded || !article?.contentTruncated) return;
     // Wait for the local read; a body already cached there needs neither fetch.
     if (article.content || lazyContent == null || lazyContent) return;
     const target = article;
-    const url = itemUrl;
+    const url = extractUrl;
     const extract = () => {
       if (url) linkPostContentStore.fetch(url);
     };
@@ -745,10 +750,10 @@
     Boolean(article?.contentTruncated) &&
       !article?.content &&
       !lazyContent &&
-      !linkPostContentStore.get(itemUrl)?.content
+      !linkPostContentStore.get(extractUrl)?.content
   );
   let readTimeMinutes = $derived(
-    (isFollowLink && !linkPostContentStore.get(itemUrl)?.content) || showingPartialBody
+    (isFollowLink && !linkPostContentStore.get(extractUrl)?.content) || showingPartialBody
       ? 0
       : bodyWordCount > 0
         ? Math.max(1, Math.round(bodyWordCount / 200))
@@ -761,7 +766,7 @@
   let followLinkCardVM = $derived.by(() => {
     // Once the page is fetched it's an article like any other; a fetch that came
     // back empty leaves the card, which still says what the row is.
-    if (!followLink || linkPostContentStore.get(itemUrl)?.content) return undefined;
+    if (!followLink || linkPostContentStore.get(extractUrl)?.content) return undefined;
     let domain = followLink.site;
     try {
       domain = new URL(followLink.url).hostname.replace(/^www\./, '');
@@ -857,13 +862,15 @@
   //   - long body: a quieter entry in the ⋯ overflow menu, so a full-content
   //     feed isn't nagged but the reader can still force a clean re-extraction.
   const SHORT_ARTICLE_WORDS = 200;
-  let fetchingOriginal = $derived(Boolean(article) && linkPostContentStore.isFetching(itemUrl));
-  let hasFetchedOriginal = $derived(Boolean(article) && Boolean(linkPostContentStore.get(itemUrl)));
+  let fetchingOriginal = $derived(Boolean(article) && linkPostContentStore.isFetching(extractUrl));
+  let hasFetchedOriginal = $derived(
+    Boolean(article) && Boolean(linkPostContentStore.get(extractUrl))
+  );
   // Account-only, like the store it drives (extraction needs a session). Hidden
   // rather than offered and refused: a guest's feed is full of truncated RSS
   // bodies, so a dead "Fetch full article" would sit under most of them.
   let canFetchOriginal = $derived(
-    Boolean(auth.user) && Boolean(article) && Boolean(itemUrl) && !hasFetchedOriginal
+    Boolean(auth.user) && Boolean(article) && Boolean(extractUrl) && !hasFetchedOriginal
   );
 
   // Whether "More" / a content tap can expand the card. Usually that's the
@@ -892,8 +899,8 @@
   let showFetchOriginalMenu = $derived(canFetchOriginal && !showFetchOriginal);
 
   function handleFetchOriginal() {
-    if (!itemUrl) return;
-    linkPostContentStore.fetch(itemUrl);
+    if (!extractUrl) return;
+    linkPostContentStore.fetch(extractUrl);
     // The excerpt is short so it shows fully when selected; the fetched body is
     // longer, so expand to keep it all visible. onExpand toggles — only fire it
     // when not already expanded.
@@ -908,7 +915,7 @@
   $effect(() => {
     if (!isFollowLink || !expanded || autoFetched || !canFetchOriginal) return;
     autoFetched = true;
-    untrack(() => linkPostContentStore.fetch(itemUrl));
+    untrack(() => linkPostContentStore.fetch(extractUrl));
   });
 
   function handleOverflowFetchOriginal() {

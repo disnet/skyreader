@@ -131,6 +131,9 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
   function fetchSelectedOriginal() {
     const item = getSelectedItem();
     if (!item || (item.type !== 'article' && item.type !== 'link') || !item.item.url) return;
+    // A newsletter's email is the article; there's no original to fetch.
+    if (item.type === 'article' && subscriptionsStore.isNewsletterItem(item.item.subscriptionId))
+      return;
     linkPostContentStore.fetch(item.item.url);
     // Expand so the fetched (longer) body shows rather than the clamped excerpt.
     if (feedViewStore.expandedKey !== item.key) {

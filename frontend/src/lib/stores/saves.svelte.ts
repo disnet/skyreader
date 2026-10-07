@@ -607,13 +607,16 @@ function createSavesStore() {
           // own text — a paywall or sign-up teaser (see utils/saveBody.ts).
           // The stored-body read runs alongside extraction; either failing
           // leaves the other (or the row's own body) to save.
+          // A newsletter's email is the article: never swap it for a web copy.
+          const extractable =
+            !!article.url && !subscriptionsStore.isNewsletterItem(article.subscriptionId);
           const [stored, extraction] = await Promise.allSettled([
             storedBodyRef
               ? loadStoredBody(storedBodyRef.ref, storedBodyRef.feedUrl, {
                   guest: auth.isGuest,
                 })
               : Promise.resolve(null),
-            extractArticle(article.url),
+            extractable ? extractArticle(article.url) : Promise.resolve(null),
           ]);
           if (stored.status === 'fulfilled' && stored.value?.status === 'found') {
             rssBody = stored.value.content;
@@ -624,7 +627,7 @@ function createSavesStore() {
           try {
             if (extraction.status === 'rejected') throw extraction.reason;
             const extracted = extraction.value;
-            if (preferExtractedBody(rssBody, extracted.content)) {
+            if (extracted && preferExtractedBody(rssBody, extracted.content)) {
               content = extracted.content;
               wordCount = extracted.wordCount || null;
               domain = extracted.domain || null;
