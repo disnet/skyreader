@@ -1,10 +1,9 @@
 import { env } from 'cloudflare:test';
 import { describe, it, expect, beforeEach } from 'vitest';
 
-// Migration 0088 clears the guessed "View in browser" URL newsletter items and
-// newsletter saves carried before the email became the article. A save already
-// in a Semble/Margin collection keeps its URL: url_normalized is what joins it
-// to its membership and what unsaving it deletes by.
+// Migration 0088 clears the guessed "View in browser" URL newsletter items
+// carried before the email became the article. Saves keep the URL they were
+// made with.
 
 // Load the real migration so the test tracks the shipped SQL, not a copy.
 const MIGRATION_0088 = Object.values(
@@ -58,10 +57,10 @@ async function itemUrl(feedUrl: string, guid: string) {
 
 async function save(rkey: string) {
   return env.DB.prepare(
-    'SELECT url, url_normalized, updated_at FROM saved_articles WHERE user_did = ? AND rkey = ?'
+    'SELECT url, url_normalized FROM saved_articles WHERE user_did = ? AND rkey = ?'
   )
     .bind(DID, rkey)
-    .first<{ url: string; url_normalized: string | null; updated_at: number | null }>();
+    .first<{ url: string; url_normalized: string | null }>();
 }
 
 describe('migration 0088: newsletter items have no web URL', () => {
@@ -69,7 +68,6 @@ describe('migration 0088: newsletter items have no web URL', () => {
     await env.DB.batch([
       env.DB.prepare('DELETE FROM feed_items WHERE feed_url IN (?, ?)').bind(NL_FEED, RSS_FEED),
       env.DB.prepare('DELETE FROM saved_articles WHERE user_did = ?').bind(DID),
-      env.DB.prepare('DELETE FROM backed_collection_members WHERE user_did = ?').bind(DID),
     ]);
   });
 
@@ -83,39 +81,15 @@ describe('migration 0088: newsletter items have no web URL', () => {
     expect(await itemUrl(RSS_FEED, 'rss-1')).toBe('https://blog.example/p/1');
   });
 
-  it('clears an unbacked newsletter save and stamps it for the client refresh', async () => {
+  it('leaves saves alone', async () => {
     await seedItem(NL_FEED, 'nl-2@news', WEB_COPY);
     await seedSave('3kaaaaaaaaaa1', 'nl-2@news', WEB_COPY, 'news.example/view?sub=123');
-    await seedItem(RSS_FEED, 'rss-2', 'https://blog.example/p/2');
-    await seedSave('3kaaaaaaaaaa2', 'rss-2', 'https://blog.example/p/2', null);
 
     await runMigration();
 
-    const nl = await save('3kaaaaaaaaaa1');
-    expect(nl?.url).toBe('');
-    expect(nl?.url_normalized).toBeNull();
-    expect(nl?.updated_at).toBeGreaterThan(0);
-    expect((await save('3kaaaaaaaaaa2'))?.url).toBe('https://blog.example/p/2');
-  });
-
-  it('leaves a newsletter save that is already in a backing collection', async () => {
-    const normalized = 'news.example/view?sub=123';
-    await seedItem(NL_FEED, 'nl-3@news', WEB_COPY);
-    await seedSave('3kaaaaaaaaaa3', 'nl-3@news', WEB_COPY, normalized);
-    await env.DB.prepare(
-      `INSERT INTO backed_collection_members
-         (user_did, external_collection, url_normalized, url, external_provider,
-          external_item_uri, external_link_uri)
-       VALUES (?, 'at://c', ?, ?, 'semble', 'at://card', 'at://link')`
-    )
-      .bind(DID, normalized, WEB_COPY)
-      .run();
-
-    await runMigration();
-
-    expect(await save('3kaaaaaaaaaa3')).toMatchObject({
+    expect(await save('3kaaaaaaaaaa1')).toMatchObject({
       url: WEB_COPY,
-      url_normalized: normalized,
+      url_normalized: 'news.example/view?sub=123',
     });
   });
 });

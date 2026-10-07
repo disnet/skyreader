@@ -55,29 +55,6 @@ function toLightSaved(item: SavedItem): SavedItem {
   return { ...rest, content: null };
 }
 
-/**
- * The feed row a save is made from. With the subscription known it's that
- * feed's row; without it (a re-save from a save row) a guid can be shared by
- * more than one feed (a cross-posted item), so take the row whose URL matches,
- * or the guid's only feed — never an arbitrary other feed's row, whose body and
- * newsletter-ness would then ride on the save.
- */
-function pickFeedRow<R extends { subscriptionId: number; url: string }>(
-  rows: R[],
-  article: { url: string; subscriptionId?: number }
-): R | undefined {
-  if (article.subscriptionId != null) {
-    return rows.find((r) => r.subscriptionId === article.subscriptionId);
-  }
-  if (article.url) {
-    const byUrl = rows.find((r) => r.url === article.url);
-    if (byUrl) return byUrl;
-  }
-  return rows.length > 0 && rows.every((r) => r.subscriptionId === rows[0].subscriptionId)
-    ? rows[0]
-    : undefined;
-}
-
 function createSavesStore() {
   let articles = $state<SavedItem[]>([]);
   let loading = $state(false);
@@ -553,8 +530,6 @@ function createSavesStore() {
     summary?: string;
     imageUrl?: string;
     publishedAt?: string;
-    /** A body already in hand (an undone unsave's full text), preferred over the feed row's. */
-    content?: string;
   }): Promise<SavedItem> {
     saving = true;
     error = null;
@@ -566,46 +541,32 @@ function createSavesStore() {
       // The in-memory feed list is kept "light" (content stripped — see
       // toLightArticle), so the body isn't on the article passed in; db.articles
       // still holds the full row. The RSS body is often just an excerpt, so when
-      // online we replace it below with a clean full-text extraction. A caller
-      // without the subscription (re-saving from a save row, e.g. undoing an
-      // unsave) finds the feed row by guid, which also says whose it is.
-      const rowLookup = Promise.resolve()
-        .then(() => db.articles.where('guid').equals(article.guid).toArray())
-        .then((rows) => pickFeedRow(rows, article))
-        .catch(() => undefined);
-      // The URL this save carries, everywhere: '' for a newsletter, whose email
-      // is the article. An older item's guessed "View in browser" link must
-      // neither be extracted nor sent — with Semble/Margin backing on, the
-      // save would publish that (often subscriber-tracking) link publicly.
-      // Resolved alongside the row read when the subscription is known.
-      const urlLookup =
-        article.subscriptionId != null
-          ? subscriptionsStore.resolveWebUrl(article)
-          : rowLookup.then((row) =>
-              subscriptionsStore.resolveWebUrl({
-                url: article.url,
-                subscriptionId: row?.subscriptionId,
-              })
-            );
-      const [row, url] = await Promise.all([rowLookup, urlLookup]);
-      const subscriptionId = article.subscriptionId ?? row?.subscriptionId;
-
-      // A body passed in (an undone unsave's saved or extracted full text) beats
-      // the feed row's, which is often just an RSS excerpt.
-      let rssBody: string | null = article.content || row?.content || null;
+      // online we replace it below with a clean full-text extraction.
+      let rssBody: string | null = null;
       // A long body (a newsletter, a long-form post) rides out-of-row: the
       // archive keeps it in R2 and the row only says `contentTruncated`. It's
       // recovered below, once the save is already on screen, so the full text
       // is what extraction has to beat — not an empty body a paywall wins by
       // default.
       let storedBodyRef: { ref: StoredBodyRef; feedUrl: string } | null = null;
-      const feedUrl =
-        subscriptionId != null ? subscriptionsStore.getById(subscriptionId)?.feedUrl : undefined;
-      if (!rssBody && row?.contentTruncated && feedUrl && subscriptionId != null) {
-        storedBodyRef = {
-          ref: { id: row.id, guid: article.guid, subscriptionId },
-          feedUrl,
-        };
+      if (article.subscriptionId != null) {
+        try {
+          const row = await db.articles
+            .where('guid')
+            .equals(article.guid)
+            .filter((r) => r.subscriptionId === article.subscriptionId)
+            .first();
+          rssBody = row?.content || null;
+          const feedUrl = subscriptionsStore.getById(article.subscriptionId)?.feedUrl;
+          if (!rssBody && row?.contentTruncated && feedUrl) {
+            storedBodyRef = {
+              ref: { id: row.id, guid: article.guid, subscriptionId: article.subscriptionId },
+              feedUrl,
+            };
+          }
+        } catch {
+          // Best effort — fall back to no stored body.
+        }
       }
 
       // Optimistically add to local state with the RSS body so the save appears
@@ -615,7 +576,7 @@ function createSavesStore() {
       const savedItem: SavedItem = {
         rkey,
         uri: '', // Will be set by backend
-        url,
+        url: article.url,
         title: article.title || null,
         author: article.author || null,
         description: article.summary || null,
@@ -652,7 +613,8 @@ function createSavesStore() {
                   guest: auth.isGuest,
                 })
               : Promise.resolve(null),
-            url ? extractArticle(url) : Promise.resolve(null),
+            // No URL, nothing to extract: an emailed newsletter is its own article.
+            article.url ? extractArticle(article.url) : Promise.resolve(null),
           ]);
           if (stored.status === 'fulfilled' && stored.value?.status === 'found') {
             rssBody = stored.value.content;
@@ -677,7 +639,7 @@ function createSavesStore() {
           // count. Count whatever body we ended up with.
           if (wordCount == null) wordCount = wordCountFrom(content);
 
-          const result = await api.saveFromUrl(url, rkey, {
+          const result = await api.saveFromUrl(article.url, rkey, {
             fromFeed: true,
             itemGuid: article.guid,
             title: article.title,
@@ -713,7 +675,7 @@ function createSavesStore() {
           console.error('Failed to save article to backend, queueing:', err);
           await syncQueue.enqueue('create', 'saved', article.guid, {
             rkey,
-            url,
+            url: article.url,
             fromFeed: true,
             itemGuid: article.guid,
             title: article.title,
@@ -733,7 +695,7 @@ function createSavesStore() {
         // body rather than the extracted one.
         await syncQueue.enqueue('create', 'saved', article.guid, {
           rkey,
-          url,
+          url: article.url,
           fromFeed: true,
           itemGuid: article.guid,
           title: article.title,
@@ -1006,17 +968,6 @@ function createSavesStore() {
     }
   }
 
-  /** `getContent` without the network fallback: only a body already on this device. */
-  async function getLocalContent(rkey: string): Promise<string | null> {
-    const cached = contentCache.get(rkey);
-    if (cached != null) return cached;
-    try {
-      return (await db.saved.get(rkey))?.content ?? null;
-    } catch {
-      return null;
-    }
-  }
-
   return {
     get articles() {
       return articles;
@@ -1048,7 +999,6 @@ function createSavesStore() {
     getByUrl,
     getByGuid,
     getContent,
-    getLocalContent,
     prefetchContent,
   };
 }

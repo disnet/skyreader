@@ -82,11 +82,11 @@
   // so the reader offers these wherever it is hosted rather than only on the
   // pages that used to own the picker's state.
   function saveToSemble() {
-    integrationSaveStore.openPicker('semble', extractSembleMetadata(linkItem));
+    integrationSaveStore.openPicker('semble', extractSembleMetadata(readerItem));
   }
 
   function saveToMargin() {
-    integrationSaveStore.openPicker('margin', extractMarginMetadata(linkItem));
+    integrationSaveStore.openPicker('margin', extractMarginMetadata(readerItem));
   }
 
   // Drawing an edge from what you just read. The discussion at the end of the
@@ -95,7 +95,7 @@
   // So it also sits in the reader's own menus, where it never depends on what
   // the Atmosphere happened to return.
   function connectOnSemble() {
-    const data = extractSembleMetadata(linkItem);
+    const data = extractSembleMetadata(readerItem);
     sembleConnectionStore.openFor({
       url: data.url,
       title: data.title,
@@ -219,20 +219,7 @@
   let feedTitle = $derived(sub?.customTitle || sub?.title || '');
 
   // Normalize data from different item types using shared utility
-  // A newsletter article has no web URL: its email is the article. Everything
-  // below that reads the item's URL (open in browser, share, recommend, Bluesky,
-  // Semble/Margin) goes through this copy, so an item cached with the old
-  // guessed "View in browser" link (often a subscriber-tracking redirect)
-  // never reaches any of them.
-  let linkItem = $derived<FeedDisplayItem>(
-    readerItem.type === 'article'
-      ? {
-          ...readerItem,
-          item: { ...readerItem.item, url: subscriptionsStore.webUrlFor(readerItem.item) ?? '' },
-        }
-      : readerItem
-  );
-  let normalized = $derived(normalizeDisplayItem(linkItem, sub));
+  let normalized = $derived(normalizeDisplayItem(readerItem, sub));
   let title = $derived(normalized.title);
   let itemUrl = $derived(normalized.url);
   // Semble and Margin both key on the URL, so an emailed newsletter with no web
@@ -309,11 +296,8 @@
       subscriptionId,
       content: inMemoryContent,
       contentTruncated,
+      url,
     } = readerItem.item;
-    // A newsletter's email is the article: never fall back to a web extraction.
-    // webUrlFor only tracks whether subscriptions have loaded and which are
-    // newsletters, so an unrelated subscription update doesn't re-run this.
-    const url = subscriptionsStore.webUrlFor(readerItem.item) ?? '';
     let cancelled = false;
     (async () => {
       try {
@@ -346,7 +330,7 @@
           // The archive dropped the body from the row but may hold it out-of-row
           // (see services/itemBody.ts). Prefer that stored copy — the feed's own
           // body — and extract the page only when there isn't one (and there is
-          // a page: never for an emailed newsletter).
+          // a page: an emailed newsletter may have no web copy).
           const feedUrl = subscriptionsStore.getById(subscriptionId)?.feedUrl;
           const stored = feedUrl
             ? await loadStoredBody({ id: row?.id ?? id, guid, subscriptionId }, feedUrl, {
@@ -405,10 +389,8 @@
     // ArticleCard: the entry only exists because something asked for it (Shift+F,
     // the ⋯ menu, the truncated-article nudge), and an RSS body is often just an
     // excerpt. It's also how an oversized body — dropped at ingest — gets here.
-    // Never for a newsletter, whose email is the article.
-    const extractUrl =
-      readerItem.type === 'article' ? subscriptionsStore.webUrlFor(readerItem.item) : null;
-    const extractedArticle = extractUrl ? linkPostContentStore.get(extractUrl) : undefined;
+    const extractedArticle =
+      readerItem.type === 'article' ? linkPostContentStore.get(readerItem.item.url) : undefined;
     if (extractedArticle?.content) return extractedArticle.content;
     // Else the feed body for an article rendered via the 'article' path — it was
     // stripped from memory and is read back from IndexedDB above.
@@ -503,7 +485,7 @@
 
   function openShareComposer() {
     const target = shareTargetForDisplayItem(
-      linkItem,
+      readerItem,
       { url: itemUrl, title, publishedAt },
       linkPostArticle?.author ?? undefined
     );

@@ -76,8 +76,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
 
     let url: string;
     if (item.type === 'article') {
-      // A newsletter's email is the article; it has no web copy to open.
-      url = subscriptionsStore.webUrlFor(item.item) ?? '';
+      url = item.item.url;
     } else if (item.type === 'document') {
       url = item.item.canonicalUrl || item.item.path || '';
     } else if (item.type === 'link') {
@@ -131,11 +130,8 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
   // Article items only; the extract cache dedupes/caches per URL.
   function fetchSelectedOriginal() {
     const item = getSelectedItem();
-    if (!item || (item.type !== 'article' && item.type !== 'link')) return;
-    // A newsletter's email is the article; there's no original to fetch.
-    const url = item.type === 'article' ? subscriptionsStore.webUrlFor(item.item) : item.item.url;
-    if (!url) return;
-    linkPostContentStore.fetch(url);
+    if (!item || (item.type !== 'article' && item.type !== 'link') || !item.item.url) return;
+    linkPostContentStore.fetch(item.item.url);
     // Expand so the fetched (longer) body shows rather than the clamped excerpt.
     if (feedViewStore.expandedKey !== item.key) {
       const idx = feedViewStore.currentItems.findIndex((i) => i.key === item.key);
@@ -394,11 +390,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
       action: fetchSelectedOriginal,
       condition: () => {
         const item = getSelectedItem();
-        return (
-          auth.isAuthenticated &&
-          item?.type === 'article' &&
-          !!subscriptionsStore.webUrlFor(item.item)
-        );
+        return auth.isAuthenticated && item?.type === 'article' && !!item.item.url;
       },
     });
   }

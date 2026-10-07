@@ -49,10 +49,6 @@ class LiveDatabase {
       return this._subscriptions;
     } catch (e) {
       console.error('Failed to load subscriptions from IndexedDB:', e);
-      // The load is over, even though the cache couldn't be read: what waits on
-      // it (the newsletter URL gate, for one) must not wait all session. The
-      // backend sync fills the list in.
-      this._subscriptionsLoaded = true;
       return [];
     }
   }
@@ -223,15 +219,9 @@ class LiveDatabase {
    * Replace all subscriptions (used during sync from backend)
    */
   async replaceSubscriptions(subscriptions: Subscription[]): Promise<void> {
-    try {
-      await db.subscriptions.clear();
-      if (subscriptions.length > 0) {
-        await safeBulkAdd(db.subscriptions, subscriptions);
-      }
-    } catch (e) {
-      // An unwritable cache (private mode, quota) still gets the synced list in
-      // memory; it's just not persisted for the next start.
-      console.error('Failed to cache subscriptions in IndexedDB:', e);
+    await db.subscriptions.clear();
+    if (subscriptions.length > 0) {
+      await safeBulkAdd(db.subscriptions, subscriptions);
     }
     this._subscriptions = subscriptions;
     this._subscriptionsLoaded = true;

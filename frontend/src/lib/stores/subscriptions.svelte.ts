@@ -4,12 +4,7 @@ import { api, SubscriptionLimitError } from '$lib/services/api';
 import { auth } from './auth.svelte';
 import { subscriptionDedupKey, createInFlightGuard } from '$lib/services/subscriptionDedup';
 import { generateTid } from '$lib/utils/tid';
-import { isNewsletterSubscription } from '$lib/utils/newsletters';
-import { db } from '$lib/services/db';
 import type { Subscription, SubscriptionSourceType } from '$lib/types';
-
-/** A feed article, as far as deciding its web URL goes. */
-type WebUrlSource = { url: string; subscriptionId?: number };
 
 /**
  * Subscriptions Store - CRUD operations for feed subscriptions
@@ -65,23 +60,6 @@ function createSubscriptionsStore() {
       if (sub.id != null) map.set(sub.id, sub);
     }
     return map;
-  });
-
-  // Derived: ids of newsletter subscriptions, for `webUrlFor`. An unrelated
-  // subscription update (fetch status, last fetched) rebuilds an equal set, so
-  // the previous instance is handed back: a derived that returns the same value
-  // doesn't re-run what depends on it — every card and reader effect that asks
-  // `webUrlFor`.
-  let lastNewsletterIds = new Set<number>();
-  let newsletterIds = $derived.by(() => {
-    const next = new Set<number>();
-    for (const sub of subscriptions) {
-      if (sub.id != null && isNewsletterSubscription(sub)) next.add(sub.id);
-    }
-    const same =
-      next.size === lastNewsletterIds.size && [...next].every((id) => lastNewsletterIds.has(id));
-    if (!same) lastNewsletterIds = next;
-    return lastNewsletterIds;
   });
 
   // Derived: author DID → that author's atproto.documents subscriptions, in
@@ -528,37 +506,6 @@ function createSubscriptionsStore() {
   }
 
   /**
-   * The web URL a feed article may be extracted or saved from. A newsletter has
-   * none: its email is the article, so nothing fetches it from the web — not on
-   * open, not on save, not on "fetch full article". (Items cached before the
-   * server stopped guessing one may still carry a "View in browser" link; this
-   * is what keeps it from becoming a body source.)
-   *
-   * `null` while subscriptions are still loading: whether the item is a
-   * newsletter isn't known yet, so callers that would extract must wait (this
-   * is reactive and settles once they load). Saves use `resolveWebUrl`.
-   */
-  function webUrlFor(article: WebUrlSource): string | null {
-    if (!article.url) return '';
-    if (article.subscriptionId == null) return article.url;
-    if (!liveDb.subscriptionsLoaded) return null;
-    return urlUnlessNewsletter(article, newsletterIds.has(article.subscriptionId));
-  }
-
-  /** `webUrlFor`, reading the subscription from IndexedDB if it hasn't loaded yet. */
-  async function resolveWebUrl(article: WebUrlSource): Promise<string> {
-    const known = webUrlFor(article);
-    if (known != null) return known;
-    const sub = await db.subscriptions.get(article.subscriptionId!).catch(() => undefined);
-    return urlUnlessNewsletter(article, !!sub && isNewsletterSubscription(sub));
-  }
-
-  // The one rule both lookups share: a newsletter item has no web URL.
-  function urlUnlessNewsletter(article: WebUrlSource, isNewsletter: boolean): string {
-    return isNewsletter ? '' : article.url;
-  }
-
-  /**
    * Get a subscription by rkey
    */
   function getByRkey(rkey: string): Subscription | undefined {
@@ -611,8 +558,6 @@ function createSubscriptionsStore() {
 
     // Lookups
     getById,
-    webUrlFor,
-    resolveWebUrl,
     getByRkey,
     getByUrl,
   };

@@ -21,13 +21,11 @@ const articleRows: Array<{
   subscriptionId: number;
   content: string | null;
   contentTruncated?: boolean;
-  url?: string;
 }> = [];
 
 function whereEquals(rows: () => Record<string, unknown>[], field: string, val: unknown) {
   return {
     first: async () => rows().find((r) => r[field] === val),
-    toArray: async () => rows().filter((r) => r[field] === val),
     filter: (fn: (r: unknown) => boolean) => ({
       first: async () =>
         rows()
@@ -104,9 +102,6 @@ vi.mock('$lib/services/itemBody', () => ({ loadStoredBody }));
 vi.mock('./subscriptions.svelte', () => ({
   subscriptionsStore: {
     getById: (id: number) => (id === 7 ? { id, feedUrl: 'https://news.example/feed' } : undefined),
-    // Subscription 8 is a newsletter: it has no web URL.
-    resolveWebUrl: async (a: { url: string; subscriptionId?: number }) =>
-      a.subscriptionId === 8 ? '' : a.url,
   },
 }));
 
@@ -483,33 +478,11 @@ describe('savesStore.saveArticle body choice', () => {
     expect((await pending).content).toBe(full);
   });
 
-  it('never extracts a newsletter: the email is the article', async () => {
+  it('saves a newsletter with no web URL by its guid, without extracting', async () => {
     const body = words(40);
-    articleRows.push({ guid: 'nl-5', subscriptionId: 8, content: body });
+    articleRows.push({ guid: 'nl-6', subscriptionId: 7, content: body });
 
-    const saved = await savesStore.saveArticle({
-      url: 'https://news.example/p/web-copy',
-      guid: 'nl-5',
-      subscriptionId: 8,
-    });
-
-    expect(extractArticle).not.toHaveBeenCalled();
-    expect(saved.content).toBe(body);
-    // Nor is its guessed web copy sent: with Semble/Margin backing on it would
-    // become a public card for a (often subscriber-tracking) link.
-    expect(saved.url).toBe('');
-    expect(api.saveFromUrl).toHaveBeenCalledWith(
-      '',
-      expect.any(String),
-      expect.objectContaining({ fromFeed: true, itemGuid: 'nl-5' })
-    );
-  });
-
-  it('saves a newsletter with no web URL by its guid', async () => {
-    const body = words(40);
-    articleRows.push({ guid: 'nl-6', subscriptionId: 8, content: body });
-
-    const saved = await savesStore.saveArticle({ url: '', guid: 'nl-6', subscriptionId: 8 });
+    const saved = await savesStore.saveArticle({ url: '', guid: 'nl-6', subscriptionId: 7 });
 
     expect(extractArticle).not.toHaveBeenCalled();
     expect(api.saveFromUrl).toHaveBeenCalledWith(
@@ -518,62 +491,6 @@ describe('savesStore.saveArticle body choice', () => {
       expect.objectContaining({ fromFeed: true, itemGuid: 'nl-6', content: body })
     );
     expect(saved.uri).toMatch(/^at:\/\//);
-  });
-
-  it('knows a newsletter by its feed row when re-saved without a subscription', async () => {
-    // Undoing an unsave re-saves from the save row, which has no subscriptionId.
-    // An older newsletter save still carries its guessed web copy.
-    const body = words(40);
-    articleRows.push({ guid: 'nl-7', subscriptionId: 8, content: body });
-
-    const saved = await savesStore.saveArticle({
-      url: 'https://news.example/p/web-copy',
-      guid: 'nl-7',
-    });
-
-    expect(extractArticle).not.toHaveBeenCalled();
-    expect(saved.url).toBe('');
-    expect(saved.content).toBe(body);
-  });
-
-  it('keeps a body handed in when there is no feed row to read', async () => {
-    const body = words(40);
-
-    const saved = await savesStore.saveArticle({ url: '', guid: 'nl-8', content: body });
-
-    expect(extractArticle).not.toHaveBeenCalled();
-    expect(saved.content).toBe(body);
-  });
-
-  it("prefers a body handed in over the feed row's excerpt", async () => {
-    // Undoing an unsave offline: the saved full text beats the RSS excerpt.
-    syncState.isOnline = false;
-    const full = words(900);
-    articleRows.push({ guid: 'rss-1', subscriptionId: 7, content: words(40) });
-
-    const saved = await savesStore.saveArticle({
-      url: 'https://news.example/p/long',
-      guid: 'rss-1',
-      content: full,
-    });
-
-    expect(saved.content).toBe(full);
-  });
-
-  it('takes the feed row whose URL matches when a guid is shared', async () => {
-    // A cross-posted item: the same guid in a newsletter and a plain feed. The
-    // re-save is the plain feed's, so it keeps its URL and its body.
-    syncState.isOnline = false;
-    const body = words(40);
-    articleRows.push(
-      { guid: 'shared-1', subscriptionId: 8, url: 'https://news.example/view', content: words(5) },
-      { guid: 'shared-1', subscriptionId: 7, url: 'https://blog.example/p', content: body }
-    );
-
-    const saved = await savesStore.saveArticle({ url: 'https://blog.example/p', guid: 'shared-1' });
-
-    expect(saved.url).toBe('https://blog.example/p');
-    expect(saved.content).toBe(body);
   });
 
   it('does not reach for the stored body when saving offline', async () => {

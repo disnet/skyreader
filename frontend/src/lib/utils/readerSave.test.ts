@@ -33,9 +33,6 @@ vi.mock('$lib/stores/saves.svelte', () => ({
     }),
     // Bodies are stripped from the in-memory copies; the full row lives in Dexie.
     getContent: vi.fn(async (rkey: string) => (rkey === '3kaaaaaaaaaaa' ? '<p>A body</p>' : null)),
-    getLocalContent: vi.fn(async (rkey: string) =>
-      rkey === '3kaaaaaaaaaaa' ? '<p>A body</p>' : null
-    ),
   },
 }));
 
@@ -125,20 +122,6 @@ describe('toggleSavedItemSave', () => {
         content: '<p>A body</p>',
       })
     );
-  });
-
-  it('re-saves a URL-less newsletter save with the body it had', async () => {
-    const item = save({ source: 'feed', url: '', itemGuid: 'issue-1@news.example' });
-    saves.push(item);
-
-    await toggleSavedItemSave(item); // unsave — the email body goes with the row
-    await toggleSavedItemSave(item); // undo: no URL to re-extract from
-
-    expect(savesStore.saveArticle).toHaveBeenCalledWith(
-      expect.objectContaining({ url: '', guid: 'issue-1@news.example', content: '<p>A body</p>' })
-    );
-    // Unsaving a feed save keeps only a local body; it never waits on a fetch.
-    expect(savesStore.getContent).not.toHaveBeenCalled();
   });
 
   it('targets the live rkey across a save → unsave → save → unsave round trip', async () => {

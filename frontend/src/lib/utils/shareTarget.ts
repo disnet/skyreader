@@ -20,9 +20,7 @@ export function shareTargetForDisplayItem(
 ): ShareTarget | null {
   const itemUrl = normalized.url;
   if (!itemUrl) return null;
-  // The article as shared carries the URL the caller resolved (a newsletter's is
-  // gated to '' and returns above), not whatever its cached row holds.
-  if (readerItem.type === 'article') return { article: { ...readerItem.item, url: itemUrl } };
+  if (readerItem.type === 'article') return { article: readerItem.item };
   if (readerItem.type === 'saved') {
     const saved = readerItem.item;
     return {

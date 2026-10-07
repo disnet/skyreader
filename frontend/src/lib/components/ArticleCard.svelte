@@ -178,14 +178,8 @@
 
   // Normalize data for article and document modes. For a link post the
   // external article is what we open/link to — not the linkblog permalink.
-  // A newsletter article has no URL: its email is the article, so nothing
-  // extracts, opens, shares, recommends or backs up a web copy of it. That
-  // holds for an item cached before the server stopped guessing one (its stale
-  // "View in browser" link is often a subscriber-tracking redirect), and an
-  // article's URL stays empty until subscriptions load and say which it is.
-  let articleUrl = $derived(article ? (subscriptionsStore.webUrlFor(article) ?? '') : '');
   let itemUrl = $derived(
-    articleUrl || linkPostUrl || document?.canonicalUrl || document?.path || ''
+    article?.url || linkPostUrl || document?.canonicalUrl || document?.path || ''
   );
   let itemTitle = $derived(
     decodeEntities(article?.title) || decodeEntities(document?.title) || itemUrl
@@ -425,9 +419,7 @@
         // Signed in, post from here; a guest has no account to post from, so
         // Bluesky's own composer takes the link.
         if (auth.user && itemUrl) {
-          blueskyComposerStore.open({
-            source: article ? { ...article, url: itemUrl } : { url: itemUrl, title: itemTitle },
-          });
+          blueskyComposerStore.open({ source: article ?? { url: itemUrl, title: itemTitle } });
         } else {
           window.open(
             `https://bsky.app/intent/compose?text=${encodeURIComponent(itemUrl)}`,
@@ -636,8 +628,8 @@
   });
   $effect(() => {
     void storedBodyRetry;
-    // No URL gate: a stored body is keyed by feed + guid, and an emailed
-    // newsletter has no web copy. Only the extraction fallback needs a URL.
+    // No itemUrl gate: a stored body is keyed by feed + guid, and an emailed
+    // newsletter often has no web copy. Only the extraction fallback needs a URL.
     if (!expanded || !article?.contentTruncated) return;
     // Wait for the local read; a body already cached there needs neither fetch.
     if (article.content || lazyContent == null || lazyContent) return;
