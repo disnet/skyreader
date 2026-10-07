@@ -102,8 +102,9 @@ vi.mock('$lib/services/itemBody', () => ({ loadStoredBody }));
 vi.mock('./subscriptions.svelte', () => ({
   subscriptionsStore: {
     getById: (id: number) => (id === 7 ? { id, feedUrl: 'https://news.example/feed' } : undefined),
-    // Subscription 8 is a newsletter.
-    isNewsletterItem: (id: number | undefined) => id === 8,
+    // Subscription 8 is a newsletter: it has no web URL.
+    resolveWebUrl: async (a: { url: string; subscriptionId?: number }) =>
+      a.subscriptionId === 8 ? '' : a.url,
   },
 }));
 
@@ -492,6 +493,14 @@ describe('savesStore.saveArticle body choice', () => {
 
     expect(extractArticle).not.toHaveBeenCalled();
     expect(saved.content).toBe(body);
+    // Nor is its guessed web copy sent: with Semble/Margin backing on it would
+    // become a public card for a (often subscriber-tracking) link.
+    expect(saved.url).toBe('');
+    expect(api.saveFromUrl).toHaveBeenCalledWith(
+      '',
+      expect.any(String),
+      expect.objectContaining({ fromFeed: true, itemGuid: 'nl-5' })
+    );
   });
 
   it('saves a newsletter with no web URL by its guid', async () => {

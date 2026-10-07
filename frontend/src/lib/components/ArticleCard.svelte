@@ -183,9 +183,8 @@
   );
   // What the extractor may fetch: the item's URL, except for a newsletter —
   // its email is the article, and a web copy would only be a teaser or a wall.
-  let extractUrl = $derived(
-    article && subscriptionsStore.isNewsletterItem(article.subscriptionId) ? '' : itemUrl
-  );
+  // Empty until subscriptions load and say which it is.
+  let extractUrl = $derived(article ? (subscriptionsStore.webUrlFor(article) ?? '') : itemUrl);
   let itemTitle = $derived(
     decodeEntities(article?.title) || decodeEntities(document?.title) || itemUrl
   );

@@ -298,7 +298,7 @@
       contentTruncated,
     } = readerItem.item;
     // A newsletter's email is the article: never fall back to a web extraction.
-    const url = subscriptionsStore.isNewsletterItem(subscriptionId) ? '' : readerItem.item.url;
+    const url = subscriptionsStore.webUrlFor(readerItem.item) ?? '';
     let cancelled = false;
     (async () => {
       try {
@@ -391,11 +391,9 @@
     // the ⋯ menu, the truncated-article nudge), and an RSS body is often just an
     // excerpt. It's also how an oversized body — dropped at ingest — gets here.
     // Never for a newsletter, whose email is the article.
-    const extractedArticle =
-      readerItem.type === 'article' &&
-      !subscriptionsStore.isNewsletterItem(readerItem.item.subscriptionId)
-        ? linkPostContentStore.get(readerItem.item.url)
-        : undefined;
+    const extractUrl =
+      readerItem.type === 'article' ? subscriptionsStore.webUrlFor(readerItem.item) : null;
+    const extractedArticle = extractUrl ? linkPostContentStore.get(extractUrl) : undefined;
     if (extractedArticle?.content) return extractedArticle.content;
     // Else the feed body for an article rendered via the 'article' path — it was
     // stripped from memory and is read back from IndexedDB above.

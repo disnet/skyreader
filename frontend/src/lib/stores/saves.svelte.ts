@@ -536,6 +536,11 @@ function createSavesStore() {
     try {
       const rkey = generateTid();
       const now = new Date().toISOString();
+      // The URL this save carries, everywhere: '' for a newsletter, whose email
+      // is the article. An older item's guessed "View in browser" link must
+      // neither be extracted nor sent — with Semble/Margin backing on, the
+      // save would publish that (often subscriber-tracking) link publicly.
+      const url = await subscriptionsStore.resolveWebUrl(article);
 
       // Instant/offline fallback body: pull the RSS body back from IndexedDB.
       // The in-memory feed list is kept "light" (content stripped — see
@@ -576,7 +581,7 @@ function createSavesStore() {
       const savedItem: SavedItem = {
         rkey,
         uri: '', // Will be set by backend
-        url: article.url,
+        url,
         title: article.title || null,
         author: article.author || null,
         description: article.summary || null,
@@ -607,16 +612,13 @@ function createSavesStore() {
           // own text — a paywall or sign-up teaser (see utils/saveBody.ts).
           // The stored-body read runs alongside extraction; either failing
           // leaves the other (or the row's own body) to save.
-          // A newsletter's email is the article: never swap it for a web copy.
-          const extractable =
-            !!article.url && !subscriptionsStore.isNewsletterItem(article.subscriptionId);
           const [stored, extraction] = await Promise.allSettled([
             storedBodyRef
               ? loadStoredBody(storedBodyRef.ref, storedBodyRef.feedUrl, {
                   guest: auth.isGuest,
                 })
               : Promise.resolve(null),
-            extractable ? extractArticle(article.url) : Promise.resolve(null),
+            url ? extractArticle(url) : Promise.resolve(null),
           ]);
           if (stored.status === 'fulfilled' && stored.value?.status === 'found') {
             rssBody = stored.value.content;
@@ -641,7 +643,7 @@ function createSavesStore() {
           // count. Count whatever body we ended up with.
           if (wordCount == null) wordCount = wordCountFrom(content);
 
-          const result = await api.saveFromUrl(article.url, rkey, {
+          const result = await api.saveFromUrl(url, rkey, {
             fromFeed: true,
             itemGuid: article.guid,
             title: article.title,
@@ -677,7 +679,7 @@ function createSavesStore() {
           console.error('Failed to save article to backend, queueing:', err);
           await syncQueue.enqueue('create', 'saved', article.guid, {
             rkey,
-            url: article.url,
+            url,
             fromFeed: true,
             itemGuid: article.guid,
             title: article.title,
@@ -697,7 +699,7 @@ function createSavesStore() {
         // body rather than the extracted one.
         await syncQueue.enqueue('create', 'saved', article.guid, {
           rkey,
-          url: article.url,
+          url,
           fromFeed: true,
           itemGuid: article.guid,
           title: article.title,

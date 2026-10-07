@@ -15,6 +15,7 @@ let nextId = 1;
 
 const liveDb = {
   subscriptionsVersion: 0,
+  subscriptionsLoaded: true,
   get subscriptions() {
     return rows;
   },
@@ -33,6 +34,11 @@ const liveDb = {
   clearAllSubscriptions: vi.fn(async () => {}),
 };
 vi.mock('$lib/services/liveDb.svelte', () => ({ liveDb }));
+
+const dbSubscriptions = new Map<number, Subscription>();
+vi.mock('$lib/services/db', () => ({
+  db: { subscriptions: { get: async (id: number) => dbSubscriptions.get(id) } },
+}));
 
 const api = {
   createSubscription: vi.fn(async ({ rkey }: { rkey: string }) => ({ rkey })),
@@ -107,5 +113,43 @@ describe('adding a subscription is account-only', () => {
     authState.isGuest = false;
     await subscriptionsStore.addBulk([FEED], undefined, { source: 'opml' });
     expect(api.bulkCreateSubscriptions).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('a feed article’s web URL', () => {
+  const RSS = { id: 1, feedUrl: 'https://example.com/feed.xml' } as Subscription;
+  const NEWSLETTER = { id: 2, feedUrl: 'newsletter:inbox/x@news.example' } as Subscription;
+  const webCopy = 'https://news.example/p/x?subscriber_token=abc';
+
+  beforeEach(() => {
+    rows.length = 0;
+    rows.push(RSS, NEWSLETTER);
+    dbSubscriptions.clear();
+    liveDb.subscriptionsLoaded = true;
+  });
+
+  it('is the item URL for an RSS article', () => {
+    expect(subscriptionsStore.webUrlFor({ url: 'https://a.example/1', subscriptionId: 1 })).toBe(
+      'https://a.example/1'
+    );
+  });
+
+  it('is empty for a newsletter, even one carrying a guessed web copy', () => {
+    expect(subscriptionsStore.webUrlFor({ url: webCopy, subscriptionId: 2 })).toBe('');
+  });
+
+  it('is unknown (null) until subscriptions load — never the guessed URL', () => {
+    liveDb.subscriptionsLoaded = false;
+    expect(subscriptionsStore.webUrlFor({ url: webCopy, subscriptionId: 2 })).toBeNull();
+  });
+
+  it('resolveWebUrl reads IndexedDB when subscriptions have not loaded', async () => {
+    liveDb.subscriptionsLoaded = false;
+    dbSubscriptions.set(2, NEWSLETTER);
+    dbSubscriptions.set(1, RSS);
+    expect(await subscriptionsStore.resolveWebUrl({ url: webCopy, subscriptionId: 2 })).toBe('');
+    expect(
+      await subscriptionsStore.resolveWebUrl({ url: 'https://a.example/1', subscriptionId: 1 })
+    ).toBe('https://a.example/1');
   });
 });

@@ -84,7 +84,7 @@ vi.mock('./subscriptions.svelte', () => ({
     subscriptions: [],
     getById: () => undefined,
     getByRkey: () => undefined,
-    isNewsletterItem: () => false,
+    resolveWebUrl: async (a: { url: string }) => a.url,
   },
 }));
 vi.mock('./filteredViews.svelte', () => ({

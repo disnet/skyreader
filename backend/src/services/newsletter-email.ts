@@ -31,11 +31,6 @@ const SUMMARY_MAX_CHARS = 400;
 // scheduled post; it would pin the item to the top of the reader until then.
 const MAX_FUTURE_SKEW_MS = 60 * 60 * 1000;
 
-// A newsletter item has no web URL: the email is the article. Guessing one from
-// a "View in browser" link brought tracking redirects and sign-up walls into the
-// reader (and its saves) in place of the issue the reader already had.
-const NO_WEB_URL = '';
-
 // Subject prefixes mail clients add when the reader hits Forward: Fwd/Fw, and
 // the common localized ones (WG, TR, RV, Enc, VS, Doorst).
 const FORWARD_SUBJECT = /^\s*(?:fwd?|wg|tr|rv|enc|vs|doorst)\s*:\s*/i;
@@ -83,7 +78,10 @@ export async function parseNewsletterEmail(
 
   const item: FeedItem = {
     guid: await messageGuid(email, sender),
-    url: NO_WEB_URL,
+    // No web URL: the email is the article. Guessing one from a "View in
+    // browser" link brought tracking redirects and sign-up walls into the reader
+    // (and its saves) in place of the issue the reader already had.
+    url: '',
     title: email.subject?.trim() || '(no subject)',
     author: senderName ?? undefined,
     content: content || undefined,
@@ -151,7 +149,7 @@ async function parseInlineForward(
 
   const item: FeedItem = {
     guid: await messageGuid(email, sender),
-    url: NO_WEB_URL,
+    url: '', // the email is the article (see parseNewsletterEmail)
     title,
     author: senderName ?? undefined,
     content: content || undefined,

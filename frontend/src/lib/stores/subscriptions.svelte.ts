@@ -5,7 +5,11 @@ import { auth } from './auth.svelte';
 import { subscriptionDedupKey, createInFlightGuard } from '$lib/services/subscriptionDedup';
 import { generateTid } from '$lib/utils/tid';
 import { isNewsletterSubscription } from '$lib/utils/newsletters';
+import { db } from '$lib/services/db';
 import type { Subscription, SubscriptionSourceType } from '$lib/types';
+
+/** A feed article, as far as deciding its web URL goes. */
+type WebUrlSource = { url: string; subscriptionId?: number };
 
 /**
  * Subscriptions Store - CRUD operations for feed subscriptions
@@ -507,15 +511,30 @@ function createSubscriptionsStore() {
   }
 
   /**
-   * Whether a feed article came from a newsletter. Its email is the article, so
-   * nothing extracts it from the web — not on open, not on save, not on "fetch
-   * full article". (Older items may carry a guessed "View in browser" URL; it's
-   * only a link out, never a body source.)
+   * The web URL a feed article may be extracted or saved from. A newsletter has
+   * none: its email is the article, so nothing fetches it from the web — not on
+   * open, not on save, not on "fetch full article". (Items cached before the
+   * server stopped guessing one may still carry a "View in browser" link; this
+   * is what keeps it from becoming a body source.)
+   *
+   * `null` while subscriptions are still loading: whether the item is a
+   * newsletter isn't known yet, so callers that would extract must wait (this
+   * is reactive and settles once they load). Saves use `resolveWebUrl`.
    */
-  function isNewsletterItem(subscriptionId: number | undefined): boolean {
-    if (subscriptionId == null) return false;
-    const sub = getById(subscriptionId);
-    return !!sub && isNewsletterSubscription(sub);
+  function webUrlFor(article: WebUrlSource): string | null {
+    if (!article.url) return '';
+    if (article.subscriptionId == null) return article.url;
+    if (!liveDb.subscriptionsLoaded) return null;
+    const sub = getById(article.subscriptionId);
+    return sub && isNewsletterSubscription(sub) ? '' : article.url;
+  }
+
+  /** `webUrlFor`, reading the subscription from IndexedDB if it hasn't loaded yet. */
+  async function resolveWebUrl(article: WebUrlSource): Promise<string> {
+    const known = webUrlFor(article);
+    if (known != null || article.subscriptionId == null) return known ?? article.url;
+    const sub = await db.subscriptions.get(article.subscriptionId).catch(() => undefined);
+    return sub && isNewsletterSubscription(sub) ? '' : article.url;
   }
 
   /**
@@ -571,7 +590,8 @@ function createSubscriptionsStore() {
 
     // Lookups
     getById,
-    isNewsletterItem,
+    webUrlFor,
+    resolveWebUrl,
     getByRkey,
     getByUrl,
   };

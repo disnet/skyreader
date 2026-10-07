@@ -95,4 +95,24 @@ describe('POST /api/saved — feed item without a URL', () => {
     );
     expect(status).toBe(400);
   });
+
+  it("dedupes source:'feed' by guid even without fromFeed", async () => {
+    // An earlier URL-less save of a different item must not collide on url = ''.
+    const first = await call(
+      post({ url: '', rkey: 'aaaaaaaaaaaaa', source: 'feed', itemGuid: 'issue-a@x' })
+    );
+    expect(first.status).toBe(200);
+    const second = await call(
+      post({ url: '', rkey: 'bbbbbbbbbbbbb', source: 'feed', itemGuid: 'issue-b@x' })
+    );
+    expect(second.status).toBe(200);
+  });
+
+  it('stores a non-string url on a guid-keyed save as empty', async () => {
+    const { status, body } = await call(
+      post({ url: false, rkey: 'aaaaaaaaaaaaa', fromFeed: true, itemGuid: 'g-4' })
+    );
+    expect(status).toBe(200);
+    expect(body.url).toBe('');
+  });
 });

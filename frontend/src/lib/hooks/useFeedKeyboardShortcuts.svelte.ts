@@ -130,11 +130,11 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
   // Article items only; the extract cache dedupes/caches per URL.
   function fetchSelectedOriginal() {
     const item = getSelectedItem();
-    if (!item || (item.type !== 'article' && item.type !== 'link') || !item.item.url) return;
+    if (!item || (item.type !== 'article' && item.type !== 'link')) return;
     // A newsletter's email is the article; there's no original to fetch.
-    if (item.type === 'article' && subscriptionsStore.isNewsletterItem(item.item.subscriptionId))
-      return;
-    linkPostContentStore.fetch(item.item.url);
+    const url = item.type === 'article' ? subscriptionsStore.webUrlFor(item.item) : item.item.url;
+    if (!url) return;
+    linkPostContentStore.fetch(url);
     // Expand so the fetched (longer) body shows rather than the clamped excerpt.
     if (feedViewStore.expandedKey !== item.key) {
       const idx = feedViewStore.currentItems.findIndex((i) => i.key === item.key);
