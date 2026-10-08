@@ -179,6 +179,12 @@ e2e/
 - **Valid TIDs:** Seeded subscription rkeys must match `/^[a-z0-9]{13,}$/` (AT Protocol TID format).
 - **Async PATCH:** The frontend fires subscription PATCH requests in the background. Use `page.waitForResponse()` to ensure D1 is updated before reloading.
 - **Cleanup:** Each test's `testUser` fixture automatically deletes its seeded data after the test.
+- **Sharded in CI:** `e2e.yml` splits the suite per test across 4 runners (one worker each — several
+  workers against one dev stack flake), so a test must never depend on another having run first.
+  The `Playwright E2E` job gates on all shards and merges their reports.
+- **Merge queue:** every PR-check workflow also triggers on `merge_group`, and its concurrency group
+  is `${{ github.head_ref || github.ref }}` (`head_ref` is empty in the queue). A new check workflow
+  needs both, or a required check never reports and the queue stalls.
 
 ### PWA / Service Worker Tests (root)
 

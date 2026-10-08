@@ -16,6 +16,7 @@ on:
   pull_request:
     branches: [main]
     paths: ['feed-proxy/**', '.github/workflows/feed-proxy-deploy.yml']
+  merge_group:
   release:
     types: [published]
 

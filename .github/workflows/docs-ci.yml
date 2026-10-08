@@ -9,9 +9,10 @@ on:
     # The workflow file is in the filter on purpose: a PR that only edits this
     # file still has to run it.
     paths: ['docs-site/**', '.github/workflows/docs-ci.yml']
+  merge_group:
 
 concurrency:
-  group: docs-ci-${{ github.head_ref }}
+  group: docs-ci-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 defaults:
