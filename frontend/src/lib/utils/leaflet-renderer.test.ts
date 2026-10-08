@@ -539,111 +539,41 @@ describe('documents with nothing renderable', () => {
     };
     expect(renderLeafletContent(stub, AUTHOR_DID)).toBe('');
   });
-
-  it('returns nothing for a canvas with no blocks on it', () => {
-    const canvas = {
-      $type: 'pub.leaflet.content',
-      pages: [{ $type: 'pub.leaflet.pages.canvas', id: 'board', blocks: [] }],
-    } as unknown as LeafletContent;
-    expect(renderLeafletContent(canvas, AUTHOR_DID)).toBe('');
-  });
 });
 
 describe('canvas pages', () => {
-  const placed = (plaintext: string, x: number, y: number) => ({
+  const POST_URL = 'https://example.leaflet.pub/3kcanvas';
+  const placed = (plaintext: string) => ({
     block: { $type: 'pub.leaflet.blocks.text', plaintext },
-    x,
-    y,
+    x: 0,
+    y: 0,
     width: 300,
   });
 
-  function canvasDoc(blocks: unknown[], extraPages: unknown[] = []): LeafletContent {
-    return {
+  it('shows a canvas post as a notice linking to the original, not its blocks', () => {
+    const content = {
       $type: 'pub.leaflet.content',
-      pages: [{ $type: 'pub.leaflet.pages.canvas', id: 'board', blocks }, ...extraPages],
+      pages: [{ $type: 'pub.leaflet.pages.canvas', id: 'board', blocks: [placed('Scattered')] }],
     } as unknown as LeafletContent;
-  }
-
-  it('lays a canvas out in reading order: rows top to bottom, each left to right', () => {
-    const html = renderLeafletContent(
-      canvasDoc([
-        placed('Bottom', 0, 600),
-        placed('Right', 400, 10),
-        placed('Left', 0, 0),
-        placed('Middle', 200, 300),
-      ]),
-      AUTHOR_DID
-    );
-    const order = ['Left', 'Right', 'Middle', 'Bottom'].map((word) => html.indexOf(word));
-    expect(order.every((index) => index >= 0)).toBe(true);
-    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    const html = renderLeafletContent(content, AUTHOR_DID, POST_URL);
+    expect(html).toContain('This is a canvas');
+    expect(html).toContain(`<a href="${POST_URL}">View original</a>`);
+    expect(sanitizeHtml(html)).toContain(`href="${POST_URL}"`);
+    expect(html).not.toContain('Scattered');
     expect(html).not.toContain('Some content');
   });
 
-  it('renders a linear document placed on a canvas in its own order', () => {
-    const html = renderLeafletContent(
-      canvasDoc([
-        {
-          block: {
-            $type: 'pub.leaflet.pages.linearDocument',
-            blocks: [text('First'), text('Second')],
-          },
-          x: 0,
-          y: 0,
-          width: 400,
-        },
-      ]),
-      AUTHOR_DID
-    );
-    expect(html.indexOf('First')).toBeGreaterThanOrEqual(0);
-    expect(html.indexOf('First')).toBeLessThan(html.indexOf('Second'));
+  it('keeps the notice without a link when there is no web address', () => {
+    const content = {
+      $type: 'pub.leaflet.content',
+      pages: [{ $type: 'pub.leaflet.pages.canvas', blocks: [] }],
+    } as unknown as LeafletContent;
+    const html = renderLeafletContent(content, AUTHOR_DID, 'at://did:plc:example/x/y');
+    expect(html).toContain('This is a canvas');
+    expect(html).not.toContain('<a');
   });
 
-  it('carries a placed block’s alignment', () => {
-    const html = renderLeafletContent(
-      canvasDoc([
-        {
-          ...placed('Centered', 0, 0),
-          alignment: 'lex:pub.leaflet.pages.linearDocument#textAlignCenter',
-        },
-      ]),
-      AUTHOR_DID
-    );
-    expect(html).toContain('op-align-center');
-  });
-
-  it('flags a drawing it can’t show', () => {
-    const html = renderLeafletContent(
-      canvasDoc([
-        placed('Words', 0, 0),
-        { block: { $type: 'pub.leaflet.blocks.drawing' }, x: 0, y: 200, width: 100 },
-      ]),
-      AUTHOR_DID
-    );
-    expect(html).toContain('Words');
-    expect(html).toContain('Some content can’t be shown');
-  });
-
-  it('stops at a members-only delimiter on a canvas', () => {
-    const html = renderLeafletContent(
-      canvasDoc([
-        placed('Free', 0, 0),
-        {
-          block: { $type: 'pub.leaflet.blocks.membersOnlyDelimiter', audience: 'paid' },
-          x: 0,
-          y: 100,
-          width: 300,
-        },
-        placed('Paid', 0, 200),
-      ]),
-      AUTHOR_DID
-    );
-    expect(html).toContain('Free');
-    expect(html).not.toContain('Paid');
-    expect(html).toContain('The rest is for members');
-  });
-
-  it('renders an embedded canvas where it is referenced', () => {
+  it('marks an embedded canvas in place and keeps the text around it', () => {
     const content = {
       $type: 'pub.leaflet.content',
       pages: [
@@ -655,54 +585,31 @@ describe('canvas pages', () => {
             text('After'),
           ],
         },
-        {
-          $type: 'pub.leaflet.pages.canvas',
-          id: 'sketch',
-          width: 600,
-          height: 400,
-          blocks: [placed('On the canvas', 10, 10)],
-        },
+        { $type: 'pub.leaflet.pages.canvas', id: 'sketch', blocks: [placed('Hidden')] },
       ],
     } as unknown as LeafletContent;
-    const html = renderLeafletContent(content, AUTHOR_DID);
-    const before = html.indexOf('Before');
-    const inside = html.indexOf('On the canvas');
-    const after = html.indexOf('After');
-    expect(before).toBeLessThan(inside);
-    expect(inside).toBeLessThan(after);
-    expect(html).toContain('lf-page-reference');
-    // Reached through its reference, so it isn't an orphan.
-    expect(html).not.toContain('Some content');
+    const html = renderLeafletContent(content, AUTHOR_DID, POST_URL);
+    const notice = html.indexOf('This is a canvas');
+    expect(html.indexOf('Before')).toBeLessThan(notice);
+    expect(notice).toBeLessThan(html.indexOf('After'));
+    expect(html).not.toContain('Hidden');
   });
 
-  it('falls back to an embedded canvas’s alt text when it can’t be resolved', () => {
-    const html = renderLeafletContent(
-      doc(text('Intro'), {
-        block: {
-          $type: 'pub.leaflet.blocks.embeddedCanvas',
-          id: 'missing',
-          alt: 'A sketch of the plan',
-        },
-      } as LeafletBlockWrapper),
-      AUTHOR_DID
-    );
-    expect(html).toContain('A sketch of the plan');
-    expect(html).toContain('Some content can’t be shown');
-  });
-
-  it('expands a sub-page reference that points at a canvas', () => {
+  it('marks a sub-page that is a canvas in place', () => {
     const content = {
       $type: 'pub.leaflet.content',
       pages: [
         {
           $type: 'pub.leaflet.pages.linearDocument',
-          blocks: [{ block: { $type: 'pub.leaflet.blocks.page', id: 'board' } }],
+          blocks: [text('Intro'), { block: { $type: 'pub.leaflet.blocks.page', id: 'board' } }],
         },
-        { $type: 'pub.leaflet.pages.canvas', id: 'board', blocks: [placed('Board text', 0, 0)] },
+        { $type: 'pub.leaflet.pages.canvas', id: 'board', blocks: [placed('Hidden')] },
       ],
     } as unknown as LeafletContent;
-    const html = renderLeafletContent(content, AUTHOR_DID);
-    expect(html).toContain('Board text');
+    const html = renderLeafletContent(content, AUTHOR_DID, POST_URL);
+    expect(html).toContain('Intro');
+    expect(html).toContain('This is a canvas');
+    expect(html).not.toContain('Hidden');
     expect(html).not.toContain('Some content');
   });
 });

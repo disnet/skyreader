@@ -17,31 +17,6 @@ describe('extractContentText', () => {
     expect(extractContentText(content)).toBe('my leaflet take');
   });
 
-  it('reads text from a linear document placed on a leaflet canvas', () => {
-    const content = {
-      $type: 'pub.leaflet.content',
-      pages: [
-        {
-          $type: 'pub.leaflet.pages.canvas',
-          blocks: [
-            {
-              x: 0,
-              y: 0,
-              width: 400,
-              block: {
-                $type: 'pub.leaflet.pages.linearDocument',
-                blocks: [
-                  { block: { $type: 'pub.leaflet.blocks.text', plaintext: 'on the board' } },
-                ],
-              },
-            },
-          ],
-        },
-      ],
-    };
-    expect(extractContentText(content)).toBe('on the board');
-  });
-
   it('reads the leading text block of pckt content (flat items)', () => {
     const content = {
       $type: 'blog.pckt.content',

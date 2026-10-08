@@ -84,7 +84,7 @@ export function getDisplayContent(item: FeedDisplayItem): string {
       // An unexpanded page stub renders empty; fall back to the plaintext fields,
       // rendered as plaintext like the no-structured-content path below.
       return (
-        renderLeafletContent(doc.content as LeafletContent, doc.authorDid) ||
+        renderLeafletContent(doc.content as LeafletContent, doc.authorDid, doc.canonicalUrl) ||
         renderPlaintextBody(doc.textContent ?? '') ||
         renderPlaintextBody(doc.description ?? '')
       );

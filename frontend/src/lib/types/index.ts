@@ -258,13 +258,6 @@ export interface LeafletPageBlock {
   display?: 'full' | 'compact';
 }
 
-/** A fixed-size canvas shown inline; `id` names a `pub.leaflet.pages.canvas` in `pages`. */
-export interface LeafletEmbeddedCanvasBlock {
-  $type: 'pub.leaflet.blocks.embeddedCanvas';
-  id: string;
-  alt?: string;
-}
-
 export interface LeafletGenericBlock {
   $type:
     | 'pub.leaflet.blocks.math'
@@ -275,6 +268,7 @@ export interface LeafletGenericBlock {
     | 'pub.leaflet.blocks.standardSitePost'
     | 'pub.leaflet.blocks.standardSitePublication'
     | 'pub.leaflet.blocks.membersOnlyDelimiter'
+    | 'pub.leaflet.blocks.embeddedCanvas'
     | 'pub.leaflet.blocks.poll'
     | 'pub.leaflet.blocks.postsList'
     | 'pub.leaflet.blocks.signup';
@@ -302,7 +296,6 @@ export type LeafletBlock =
   | LeafletWebsiteBlock
   | LeafletBskyPostBlock
   | LeafletPageBlock
-  | LeafletEmbeddedCanvasBlock
   | LeafletGenericBlock;
 
 export interface LeafletBlockWrapper {
@@ -316,35 +309,9 @@ export interface LeafletLinearDocument {
   blocks: LeafletBlockWrapper[];
 }
 
-/**
- * One block placed on a canvas. `block` is a single block or a whole linear
- * document positioned as one; x/y/width/height are canvas px.
- */
-export interface LeafletCanvasBlock {
-  block: LeafletBlock | LeafletLinearDocument;
-  x: number;
-  y: number;
-  width: number;
-  height?: number;
-  rotation?: number;
-  stackOrder?: string;
-  alignment?: string;
-}
-
-/** A freeform page: blocks placed on an x/y surface rather than in reading order. */
-export interface LeafletCanvasPage {
-  $type: 'pub.leaflet.pages.canvas';
-  id?: string;
-  blocks: LeafletCanvasBlock[];
-  width?: number;
-  height?: number;
-}
-
-export type LeafletPage = LeafletLinearDocument | LeafletCanvasPage;
-
 export interface LeafletContent {
   $type: 'pub.leaflet.content';
-  pages: LeafletPage[];
+  pages: LeafletLinearDocument[];
   blobPages?: unknown;
   truncated?: boolean;
 }

@@ -23,11 +23,7 @@ import type {
   LeafletWebsiteBlock,
   LeafletBskyPostBlock,
   LeafletPageBlock,
-  LeafletEmbeddedCanvasBlock,
   LeafletBlockWrapper,
-  LeafletCanvasBlock,
-  LeafletCanvasPage,
-  LeafletPage,
 } from '$lib/types';
 import { escapeHtml } from '$lib/utils/html';
 
@@ -147,6 +143,8 @@ interface RenderContext {
   degraded: boolean;
   /** The members-only notice, once the delimiter is reached. Stops the render. */
   gate: string | null;
+  /** The post's own web address, for the notices that send a reader to it. */
+  originalUrl: string | null;
 }
 
 /**
@@ -558,29 +556,6 @@ function renderPageBlock(
 }
 
 /**
- * An embedded canvas: a canvas page shown in full where it is referenced. Resolved
- * and guarded like a sub-page reference; the author's alt text stands in when the
- * canvas carries nothing this reader can show.
- */
-function renderEmbeddedCanvasBlock(
-  block: LeafletEmbeddedCanvasBlock,
-  ctx: RenderContext,
-  visited: Set<string>,
-  depth: number
-): string {
-  const pageId = block.id;
-  const page = pageId ? ctx.content.pages?.find((candidate) => candidate.id === pageId) : null;
-  const alt = typeof block.alt === 'string' ? block.alt.trim() : '';
-  if (!page || visited.has(pageId) || depth >= MAX_PAGE_DEPTH) {
-    ctx.degraded = true;
-    return alt ? `<p><em>${escapeHtml(alt)}</em></p>` : '';
-  }
-  const inner = renderPage(page, ctx, new Set(visited).add(pageId), depth + 1);
-  if (!inner) return alt ? `<p><em>${escapeHtml(alt)}</em></p>` : '';
-  return `<section class="lf-page-reference">${inner}</section>`;
-}
-
-/**
  * Blocks this reader knows about but deliberately doesn't render: site widgets that
  * mean nothing outside the publication. They count as a loss so the footer says so.
  */
@@ -691,7 +666,7 @@ function renderBlock(
     case 'pub.leaflet.blocks.page':
       return renderPageBlock(block as LeafletPageBlock, ctx, visited, depth);
     case 'pub.leaflet.blocks.embeddedCanvas':
-      return renderEmbeddedCanvasBlock(block as LeafletEmbeddedCanvasBlock, ctx, visited, depth);
+      return canvasNotice(ctx);
     default: {
       // Unsupported block type - try to extract plaintext if available
       const unknownBlock = block as unknown as { plaintext?: string };
@@ -721,6 +696,17 @@ function renderWrappedBlock(
   return blockHtml && alignment ? `<div class="${alignment}">${blockHtml}</div>` : blockHtml;
 }
 
+/**
+ * A `pub.leaflet.pages.canvas` places its blocks freely on a board; the arrangement
+ * is the content, and a single column can't carry it. Rather than show a scrambled
+ * version, point the reader at the original.
+ */
+function canvasNotice(ctx: RenderContext): string {
+  const href = webHref(ctx.originalUrl ?? undefined);
+  const link = href ? `<a href="${escapeHtml(href)}">View original</a>` : 'View original';
+  return `<p class="op-degraded">This is a canvas, best seen where it was made · ${link}</p>`;
+}
+
 /** Everything after the delimiter is the author's gated content; say so and stop. */
 function membersOnlyNotice(audience?: string): string {
   // `subscribers` gates on following the publication, not on paying for it — calling
@@ -730,19 +716,29 @@ function membersOnlyNotice(audience?: string): string {
 }
 
 /**
- * A block list in reading order, stopping at a members-only delimiter.
+ * One page's blocks, in order, stopping at a members-only delimiter.
  */
-function renderBlockList(
-  wrappers: LeafletBlockWrapper[],
+function renderPage(
+  page: LeafletContent['pages'][number],
   ctx: RenderContext,
   visited: Set<string>,
   depth: number
 ): string {
+  if ((page.$type as string) === 'pub.leaflet.pages.canvas') {
+    // Reached through a sub-page reference: say what it is where it sits.
+    if (page.id) ctx.reached.add(page.id);
+    return canvasNotice(ctx);
+  }
+  if (page.$type !== 'pub.leaflet.pages.linearDocument' || !Array.isArray(page.blocks)) {
+    ctx.degraded = true;
+    return '';
+  }
+  if (page.id) ctx.reached.add(page.id);
+
   const parts: string[] = [];
-  for (const wrapper of wrappers) {
+  for (const wrapper of page.blocks) {
     if (ctx.gate) break;
-    const block = wrapper?.block as { $type?: string; audience?: string } | undefined;
-    if (!block) continue;
+    const block = wrapper.block as { $type?: string; audience?: string };
     if (block.$type === 'pub.leaflet.blocks.membersOnlyDelimiter') {
       // Set on the shared context, not broken out of one loop: the gate applies to
       // the document, and the pages after this one are past it too.
@@ -755,100 +751,6 @@ function renderBlockList(
   return parts.join('\n');
 }
 
-const coord = (value: unknown): number => {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : 0;
-};
-
-/**
- * A canvas's blocks in the order a reader would meet them: top to bottom, then left
- * to right. Two blocks whose top edges sit within `ROW_TOLERANCE` canvas px of each
- * other count as one row, so a hand-placed row that is a few px out of line still
- * reads left to right.
- */
-const ROW_TOLERANCE = 24;
-
-function canvasReadingOrder(blocks: LeafletCanvasBlock[]): LeafletCanvasBlock[] {
-  const byTop = blocks
-    .filter((entry) => entry && typeof entry === 'object' && entry.block)
-    .sort((a, b) => coord(a.y) - coord(b.y) || coord(a.x) - coord(b.x));
-  const ordered: LeafletCanvasBlock[] = [];
-  let row: LeafletCanvasBlock[] = [];
-  let rowTop = 0;
-  for (const entry of byTop) {
-    if (row.length > 0 && coord(entry.y) - rowTop > ROW_TOLERANCE) {
-      ordered.push(...row.sort((a, b) => coord(a.x) - coord(b.x)));
-      row = [];
-    }
-    if (row.length === 0) rowTop = coord(entry.y);
-    row.push(entry);
-  }
-  ordered.push(...row.sort((a, b) => coord(a.x) - coord(b.x)));
-  return ordered;
-}
-
-/**
- * A `pub.leaflet.pages.canvas` page. Its blocks sit on a freeform x/y surface, which
- * the reader's single column (and the sanitizer, which strips the inline styles
- * absolute positioning would need) can't reproduce — so they are laid out in reading
- * order instead. The words survive; the arrangement, rotation and background don't.
- *
- * A placed entry is either one block or a whole linear document positioned as one;
- * the latter renders its own blocks in their own order.
- */
-function renderCanvasPage(
-  page: LeafletCanvasPage,
-  ctx: RenderContext,
-  visited: Set<string>,
-  depth: number
-): string {
-  const parts: string[] = [];
-  for (const entry of canvasReadingOrder(page.blocks)) {
-    if (ctx.gate) break;
-    const inner = entry.block as LeafletBlock | LeafletPage;
-    let html: string;
-    if (inner.$type === 'pub.leaflet.pages.linearDocument') {
-      html = Array.isArray(inner.blocks) ? renderBlockList(inner.blocks, ctx, visited, depth) : '';
-    } else {
-      html = renderBlockList(
-        [{ block: inner as LeafletBlock, alignment: entry.alignment }],
-        ctx,
-        visited,
-        depth
-      );
-    }
-    if (html) parts.push(html);
-  }
-  return parts.join('\n');
-}
-
-/**
- * One page's blocks, in reading order, stopping at a members-only delimiter.
- */
-function renderPage(
-  page: LeafletPage,
-  ctx: RenderContext,
-  visited: Set<string>,
-  depth: number
-): string {
-  if (!page || !Array.isArray(page.blocks)) {
-    // No block list to walk — a malformed page, or a page type this build has never
-    // heard of. Either way it's content we dropped.
-    ctx.degraded = true;
-    return '';
-  }
-  if (page.$type === 'pub.leaflet.pages.canvas') {
-    if (page.id) ctx.reached.add(page.id);
-    return renderCanvasPage(page, ctx, visited, depth);
-  }
-  if (page.$type !== 'pub.leaflet.pages.linearDocument') {
-    ctx.degraded = true;
-    return '';
-  }
-  if (page.id) ctx.reached.add(page.id);
-  return renderBlockList(page.blocks, ctx, visited, depth);
-}
-
 /**
  * Main entry point: render Leaflet content to HTML.
  *
@@ -857,8 +759,14 @@ function renderPage(
  * `pub.leaflet.blocks.page` block, so the rest of the array is pulled in at the point
  * it is referenced — walking the array as well emitted each sub-page twice, once
  * inline and once appended after the document.
+ *
+ * `originalUrl` is the post's permalink, linked from the notice a canvas gets.
  */
-export function renderLeafletContent(content: LeafletContent, authorDid: string): string {
+export function renderLeafletContent(
+  content: LeafletContent,
+  authorDid: string,
+  originalUrl?: string
+): string {
   const pages = content.pages || [];
   if (pages.length === 0) {
     return '';
@@ -874,12 +782,18 @@ export function renderLeafletContent(content: LeafletContent, authorDid: string)
     // rendered.
     degraded: Boolean(content.truncated || content.blobPages),
     gate: null,
+    originalUrl: originalUrl ?? null,
   };
 
   const root = pages[0];
+  // A canvas post is the board, not a document with a board in it: the notice is the
+  // whole body, and it is returned rather than the empty string so the caller doesn't
+  // fall back to the record's text, which is the same board with its layout lost.
+  if ((root.$type as string) === 'pub.leaflet.pages.canvas') return canvasNotice(ctx);
+
   const htmlParts: string[] = [];
   const body = renderPage(root, ctx, new Set(root.id ? [root.id] : []), 0);
-  // Nothing rendered at all — an un-inflated `blobPages` stub, an empty canvas.
+  // Nothing rendered at all — an un-inflated `blobPages` stub.
   // Returning the empty string rather than a bare degradation notice is what lets the
   // callers fall back to the document's own `textContent`, which is more use to a
   // reader than a footer with no article above it.
