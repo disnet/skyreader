@@ -1479,6 +1479,14 @@
     overflow: hidden;
   }
 
+  /* line-clamp only counts lines in block flow; it can't reach text inside table
+     cells. Email newsletters lay out entirely in nested tables, so the clamp
+     never bites and the whole issue renders in the preview. Cap the height
+     instead — about a masthead image plus a few lines, like an image-led post. */
+  .article-body.truncated:has(:global(table)) {
+    max-height: 24em;
+  }
+
   .article-body :global(video) {
     max-width: 100%;
     height: auto;
