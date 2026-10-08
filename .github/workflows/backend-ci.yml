@@ -7,9 +7,10 @@ on:
   pull_request:
     branches: [main]
     paths: ['backend/**', 'lexicons/**']
+  merge_group:
 
 concurrency:
-  group: backend-ci-${{ github.head_ref }}
+  group: backend-ci-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 defaults:
