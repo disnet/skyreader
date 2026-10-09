@@ -648,9 +648,24 @@ async function handleBackedSave(
     canonicalAtUri,
   });
 
+  // A native save of this URL (record_uri set) may already be mirrored into the
+  // space under its own rkey. The upsert below turns the row into a backed save,
+  // which is never mirrored, and may re-key it — so retract that record now or it
+  // would be stranded in the space with no row left to delete it.
+  const priorNative = await env.DB.prepare(
+    `SELECT rkey FROM saved_articles
+     WHERE user_did = ? AND url_normalized = ? AND record_uri IS NOT NULL`
+  )
+    .bind(session.did, urlNormalized)
+    .first<{ rkey: string }>();
+  if (priorNative) {
+    ctx.waitUntil(mirrorDeleteFromSpace(env, session, priorNative.rkey));
+  }
+
   // Upsert enrichment (merge onto any stub a poll left) + membership, and clear any
   // tombstone for this URL (a re-save of something just unsaved). record_uri is NULL:
-  // a backed save has no app.skyreader.feed.saved export.
+  // a backed save has no app.skyreader.feed.saved export — including a native row
+  // this re-save converts, whose old URI would name an rkey the row no longer has.
   const batchResults = await env.DB.batch([
     // The upsert moves an existing row to this save's rkey; its snapshots (and
     // their pictures) move with it.
@@ -671,6 +686,7 @@ async function handleBackedSave(
        VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(user_did, url_normalized) DO UPDATE SET
          rkey = excluded.rkey,
+         record_uri = NULL,
          title = ${unlessEdited('title', 'COALESCE(excluded.title, title)')},
          author = ${unlessEdited('author', 'COALESCE(excluded.author, author)')},
          description = ${unlessEdited('description', 'COALESCE(excluded.description, description)')},
