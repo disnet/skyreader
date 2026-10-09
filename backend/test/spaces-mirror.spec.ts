@@ -157,8 +157,11 @@ describe('spaces mirror — best effort with the flag on', () => {
       { SPACES_SAVES_ENABLED: 'true' }
     );
 
-    expect(res.status).toBe(503);
-    expect(res.body.error).toBe('spaces_unavailable');
+    // The seeded session can't reach the PDS, so the probe fails rather than
+    // answering "no space" — and the route says so instead of claiming absence.
+    expect(res.status).toBe(502);
+    expect(res.body.error).toBe('space_probe_failed');
+    expect(res.body.status).toBe('failed');
   });
 
   it('creates and caches the personal space when the probe returns SpaceNotFound', async () => {
@@ -263,6 +266,91 @@ describe('spaces mirror — best effort with the flag on', () => {
     await mirror.ensureSavedSpace(probeSession, new SpacesClient(rejected));
     expect(calls).toBe(2);
     expect(spacesWarnings(warn).some((a) => String(a[0]).includes('does not support'))).toBe(false);
+  });
+
+  it('reports why the space is unavailable, separating absence from failure', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const missing: XrpcCall = async () => {
+      throw new SpaceXrpcError('No such space', 'SpaceNotFound', 400);
+    };
+    expect(
+      await mirror.resolveSavedSpace(probeSession, new SpacesClient(missing), { create: false })
+    ).toEqual({ space: null, status: 'missing' });
+
+    const outage: XrpcCall = async () => {
+      throw new SpaceXrpcError('Bad gateway', 'HTTP502', 502);
+    };
+    expect(await mirror.resolveSavedSpace(probeSession, new SpacesClient(outage))).toEqual({
+      space: null,
+      status: 'failed',
+    });
+  });
+
+  it('drops a stale "space exists" verdict and recreates the space on SpaceNotFound', async () => {
+    await call(saveRequest(FEED_SAVE));
+    const flagOn = { ...env, SPACES_SAVES_ENABLED: 'true' } as typeof env;
+    let spaceExists = true;
+    const endpoints: string[] = [];
+    const pds: XrpcCall = async <T>(_method, endpoint) => {
+      endpoints.push(endpoint.split('?')[0]);
+      if (endpoint.startsWith('com.atproto.simplespace.getSpace')) {
+        if (spaceExists) return {} as T;
+        throw new SpaceXrpcError('No such space', 'SpaceNotFound', 400);
+      }
+      if (endpoint === 'com.atproto.simplespace.createSpace') {
+        spaceExists = true;
+        return { uri: SPACE } as T;
+      }
+      if (endpoint === 'com.atproto.space.putRecord') {
+        if (!spaceExists) throw new SpaceXrpcError('No such space', 'SpaceNotFound', 400);
+        return { uri: 'x', cid: 'y' } as T;
+      }
+      throw new Error(`Unexpected endpoint: ${endpoint}`);
+    };
+
+    // Warm the cache, then delete the space behind its back.
+    await mirror.mirrorSaveToSpace(flagOn, probeSession, FEED_SAVE.rkey, new SpacesClient(pds));
+    spaceExists = false;
+    endpoints.length = 0;
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await mirror.mirrorSaveToSpace(flagOn, probeSession, FEED_SAVE.rkey, new SpacesClient(pds));
+    expect(endpoints).toEqual([
+      'com.atproto.space.putRecord',
+      'com.atproto.simplespace.getSpace',
+      'com.atproto.simplespace.createSpace',
+      'com.atproto.space.putRecord',
+    ]);
+    expect(spacesWarnings(warn)).toEqual([]);
+  });
+
+  it('retracts every rkey with one probe, and never creates a space to delete from', async () => {
+    const flagOn = { ...env, SPACES_SAVES_ENABLED: 'true' } as typeof env;
+    const endpoints: string[] = [];
+    const missing: XrpcCall = async (_method, endpoint) => {
+      endpoints.push(endpoint.split('?')[0]);
+      throw new SpaceXrpcError('No such space', 'SpaceNotFound', 400);
+    };
+    await mirror.mirrorDeleteFromSpace(flagOn, probeSession, ['a', 'b'], new SpacesClient(missing));
+    expect(endpoints).toEqual(['com.atproto.simplespace.getSpace']);
+
+    endpoints.length = 0;
+    const present: XrpcCall = async <T>(_method, endpoint) => {
+      endpoints.push(endpoint.split('?')[0]);
+      return {} as T;
+    };
+    await mirror.mirrorDeleteFromSpace(
+      flagOn,
+      probeSession,
+      ['a', 'b', 'c'],
+      new SpacesClient(present)
+    );
+    expect(endpoints).toEqual([
+      'com.atproto.simplespace.getSpace',
+      'com.atproto.space.deleteRecord',
+      'com.atproto.space.deleteRecord',
+      'com.atproto.space.deleteRecord',
+    ]);
   });
 
   it('never creates the space when called as a read-only probe', async () => {
