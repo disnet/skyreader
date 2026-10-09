@@ -178,4 +178,18 @@ describe('diffSavedRecords', () => {
 
     expect(diff.mismatched).toEqual([{ rkey: 'a', field: 'wordCount', d1: 900, space: 100 }]);
   });
+
+  it('reports a field D1 has cleared but the space still carries', () => {
+    const r = row({ rkey: 'a', image: null });
+    const stale = savedRowToSpaceRecord(row({ rkey: 'a', image: 'https://example.com/i.png' }));
+
+    const diff = diffSavedRecords(
+      [r],
+      [{ rkey: 'a', value: stale as unknown as Record<string, unknown> }]
+    );
+
+    expect(diff.mismatched).toEqual([
+      { rkey: 'a', field: 'image', d1: undefined, space: 'https://example.com/i.png' },
+    ]);
+  });
 });

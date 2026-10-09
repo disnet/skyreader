@@ -211,4 +211,69 @@ describe('spaces mirror — best effort with the flag on', () => {
     expect(await mirror.ensureSavedSpace(session, new SpacesClient(unsupported))).toBeNull();
     expect(calls).toBe(1);
   });
+  const probeSession = {
+    did: DID,
+    handle: 'sm.bsky.social',
+    pdsUrl: 'https://pds.test',
+    accessToken: 'tok',
+    refreshToken: 'rtok',
+    dpopPrivateKey: JSON.stringify({ kty: 'EC' }),
+    expiresAt: Date.now() + 3_600_000,
+  };
+  const SPACE = `at://${DID}/space/app.skyreader.space.saved/self`;
+
+  it('treats SpaceAlreadyExists from a concurrent create as success', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const racing: XrpcCall = async (_method, endpoint) => {
+      if (endpoint.startsWith('com.atproto.simplespace.getSpace')) {
+        throw new SpaceXrpcError('No such space', 'SpaceNotFound', 400);
+      }
+      throw new SpaceXrpcError('already exists', 'SpaceAlreadyExists', 400);
+    };
+    expect(await mirror.ensureSavedSpace(probeSession, new SpacesClient(racing))).toBe(SPACE);
+  });
+
+  it('caches a scope rejection instead of re-probing on every save', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let calls = 0;
+    const noScope: XrpcCall = async () => {
+      calls++;
+      throw new SpaceXrpcError('Missing scope', 'InsufficientScope', 403);
+    };
+    expect(await mirror.ensureSavedSpace(probeSession, new SpacesClient(noScope))).toBeNull();
+    expect(await mirror.ensureSavedSpace(probeSession, new SpacesClient(noScope))).toBeNull();
+    expect(calls).toBe(1);
+  });
+
+  it('caches an ambiguous InvalidRequest only briefly, without calling it unsupported', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const now = vi.spyOn(Date, 'now');
+    const t0 = 1_000_000_000_000;
+    now.mockReturnValue(t0);
+    let calls = 0;
+    const rejected: XrpcCall = async () => {
+      calls++;
+      throw new SpaceXrpcError('bad space ref', 'InvalidRequest', 400);
+    };
+    expect(await mirror.ensureSavedSpace(probeSession, new SpacesClient(rejected))).toBeNull();
+    expect(await mirror.ensureSavedSpace(probeSession, new SpacesClient(rejected))).toBeNull();
+    expect(calls).toBe(1);
+
+    now.mockReturnValue(t0 + 2 * 60 * 1000);
+    await mirror.ensureSavedSpace(probeSession, new SpacesClient(rejected));
+    expect(calls).toBe(2);
+    expect(spacesWarnings(warn).some((a) => String(a[0]).includes('does not support'))).toBe(false);
+  });
+
+  it('never creates the space when called as a read-only probe', async () => {
+    const endpoints: string[] = [];
+    const missing: XrpcCall = async (_method, endpoint) => {
+      endpoints.push(endpoint);
+      throw new SpaceXrpcError('No such space', 'SpaceNotFound', 400);
+    };
+    expect(
+      await mirror.ensureSavedSpace(probeSession, new SpacesClient(missing), { create: false })
+    ).toBeNull();
+    expect(endpoints.every((e) => e.startsWith('com.atproto.simplespace.getSpace'))).toBe(true);
+  });
 });
