@@ -5,6 +5,7 @@ import { GRANULAR_SCOPES } from '../src/config/scopes';
 import * as mirror from '../src/services/spaces/mirror';
 import { SpacesClient, type XrpcCall } from '../src/services/spaces/client';
 import { SpaceXrpcError } from '../src/services/spaces/transport';
+import * as write from '../src/services/backing/write';
 
 // Verification criteria 5 and 6 of the atproto Spaces spike:
 //   - with SPACES_SAVES_ENABLED unset, no spaces code runs at all;
@@ -363,5 +364,86 @@ describe('spaces mirror — best effort with the flag on', () => {
       await mirror.ensureSavedSpace(probeSession, new SpacesClient(missing), { create: false })
     ).toBeNull();
     expect(endpoints.every((e) => e.startsWith('com.atproto.simplespace.getSpace'))).toBe(true);
+  });
+});
+
+describe('spaces mirror — backed saves stay out of the space', () => {
+  const COLLECTION = `at://${DID}/network.cosmik.collection/col1`;
+  const NATIVE_RKEY = '3lspacesnativ';
+
+  beforeEach(async () => {
+    await reset();
+    await env.DB.prepare('DELETE FROM backed_collection_members WHERE user_did = ?')
+      .bind(DID)
+      .run();
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  async function seedNativeSave(url: string, urlNormalized: string) {
+    await env.DB.prepare(
+      `INSERT INTO saved_articles
+         (user_did, rkey, record_uri, url, url_normalized, title, content_type, saved_at, created_at, source)
+       VALUES (?, ?, ?, ?, ?, 'Native', 'article', ?, ?, 'feed')`
+    )
+      .bind(
+        DID,
+        NATIVE_RKEY,
+        `at://${DID}/app.skyreader.feed.saved/${NATIVE_RKEY}`,
+        url,
+        urlNormalized,
+        Date.now(),
+        Date.now()
+      )
+      .run();
+  }
+
+  it('leaves backed rows (record_uri NULL) out of the diff rows', async () => {
+    await seedNativeSave('https://example.com/native', 'https://example.com/native');
+    await env.DB.prepare(
+      `INSERT INTO saved_articles
+         (user_did, rkey, record_uri, url, url_normalized, content_type, saved_at, created_at, source)
+       VALUES (?, '3lspacesbacke', NULL, 'https://example.com/backed', 'https://example.com/backed', 'article', ?, ?, 'feed')`
+    )
+      .bind(DID, Date.now(), Date.now())
+      .run();
+
+    const rows = await mirror.readSavedRowsForSpace(env, DID);
+    expect(rows.map((r) => r.rkey)).toEqual([NATIVE_RKEY]);
+  });
+
+  it('retracts the mirrored record when a backed re-save converts a native row', async () => {
+    await seedNativeSave('https://example.com/converted', 'https://example.com/converted');
+    await env.DB.prepare(
+      `INSERT INTO user_settings (user_did, backing) VALUES (?, ?)
+       ON CONFLICT(user_did) DO UPDATE SET backing = excluded.backing`
+    )
+      .bind(DID, `semble:${COLLECTION}`)
+      .run();
+    vi.spyOn(write, 'createMember').mockResolvedValue({
+      itemUri: `at://${DID}/network.cosmik.card/c1`,
+      linkUri: `at://${DID}/network.cosmik.collectionLink/l1`,
+    });
+    const deletes = vi.spyOn(mirror, 'mirrorDeleteFromSpace');
+    const retract = vi.spyOn(mirror, 'mirrorDeleteFromSpace').mockResolvedValue();
+
+    // Differs raw (trailing slash) but normalizes to the native row's key, so it
+    // reaches the backed upsert's conflict path rather than the raw-url 409.
+    const { status } = await call(
+      saveRequest({ ...FEED_SAVE, url: 'https://example.com/converted/', itemGuid: 'guid-conv' }),
+      { SPACES_SAVES_ENABLED: 'true' }
+    );
+    expect(status).toBe(200);
+
+    const row = await env.DB.prepare(
+      'SELECT rkey, record_uri FROM saved_articles WHERE user_did = ?'
+    )
+      .bind(DID)
+      .first<{ rkey: string; record_uri: string | null }>();
+    expect(row).toEqual({ rkey: FEED_SAVE.rkey, record_uri: null });
+    expect(await mirror.readSavedRowsForSpace(env, DID)).toEqual([]);
+
+    // The old rkey's space record is retracted; the new backed rkey is never mirrored.
+    expect(retract).toHaveBeenCalledTimes(1);
+    expect(retract.mock.calls[0][2]).toBe(NATIVE_RKEY);
   });
 });

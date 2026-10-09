@@ -297,10 +297,15 @@ export async function mirrorDeleteFromSpace(
   }
 }
 
-/** Read every save row for a user, in the shape the record mapping wants. */
+/**
+ * Read every mirrored save row for a user, in the shape the record mapping wants.
+ * Backed saves (record_uri NULL) are never mirrored, so counting them would report
+ * drift no mirror path can ever close.
+ */
 export async function readSavedRowsForSpace(env: Env, did: string): Promise<SavedRowForSpace[]> {
   const result = await env.DB.prepare(
-    `SELECT ${SAVED_ROW_COLUMNS} FROM saved_articles WHERE user_did = ? ORDER BY saved_at DESC`
+    `SELECT ${SAVED_ROW_COLUMNS} FROM saved_articles
+     WHERE user_did = ? AND record_uri IS NOT NULL ORDER BY saved_at DESC`
   )
     .bind(did)
     .all<SavedRowForSpace>();
