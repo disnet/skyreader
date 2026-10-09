@@ -54,8 +54,8 @@ Node ≥ 22.18 (type stripping on by default). Node prints a
 ## `--fake` is a harness test, not a protocol result
 
 `fake-pds.mjs` is our own reading of the alpha's behaviour. It verifies real
-ES256 DPoP proofs (including the `cnf.jkt` binding and the "no `ath` when
-obtaining a credential" rule) and enforces the member list, so a green run means
+`atproto-space` HTTP message signatures (the `keyid` → `cnf.kid` binding, and
+the repo DID as audience on credential reads) and enforces the member list, so a green run means
 the client code, the credential flow, and the script's assertions all work. It
 says nothing about what the real implementation does. Never quote a `--fake` run
 as a finding.

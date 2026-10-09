@@ -4,14 +4,16 @@
  *   1. `com.atproto.space.getDelegationToken` on the *user's* PDS, with ordinary
  *      session auth  →  a short-lived, single-use delegation JWT (60s).
  *   2. `com.atproto.space.getSpaceCredential` on the *authority's* PDS, presenting
- *      that delegation as a Bearer token plus a DPoP proof from a fresh ES256 key
- *      →  a credential JWT bound to that key through `cnf.jkt` (2h).
- *   3. every subsequent space call: `Authorization: DPoP <credential>` and a proof
- *      whose `ath` hashes the credential.
+ *      that delegation as a Bearer token plus an HTTP message signature naming a
+ *      fresh P-256 `did:key` as `keyid`  →  a credential JWT bound to that key
+ *      through `cnf.kid` (10 min).
+ *   3. every subsequent space call: `Authorization: Atproto-Space <credential>`,
+ *      an `atproto-space-audience` DID, and a signature over both.
  *
- * TTLs are from `@atproto/space@0.0.0-spaces-alpha-20260818163953`
- * (`dist/credential.d.ts`, `SPACE_TOKEN_TYPES`): delegation 60s/single-use,
- * credential 7200s/reusable, client attestation 60s/single-use.
+ * TTLs are from `@atproto/space@0.0.0-spaces-alpha-20261001173819`
+ * (`dist/credential.js`, `SPACE_TOKEN_TYPES`): delegation 60s/single-use,
+ * credential 600s/reusable (verifiers cap it at 3600s), client attestation
+ * 60s/single-use. Until that release the credential was DPoP-bound and lived 2h.
  *
  * Writing to your OWN repo inside a space does not need any of this — the
  * reference app posts `com.atproto.space.createRecord` to its own PDS with plain
@@ -20,19 +22,23 @@
  * is exactly the portability claim this spike is testing.
  */
 
-import { createSpaceDpopProof, generateSpaceDpopKey, jwtExpirySeconds } from './dpop';
-import type { SpaceDpopKey } from './dpop';
+import {
+  createSpaceSignatureHeaders,
+  generateSpaceSigningKey,
+  jwtExpirySeconds,
+} from './http-signature';
+import type { SpaceSigningKey } from './http-signature';
 
 /** Documented alpha lifetimes; we re-read `exp` from the token rather than assume. */
 export const DELEGATION_TOKEN_TTL_SEC = 60;
-export const SPACE_CREDENTIAL_TTL_SEC = 7200;
+export const SPACE_CREDENTIAL_TTL_SEC = 600;
 
 /** Refresh this long before `exp` so an in-flight request can't expire mid-call. */
 const EXPIRY_MARGIN_SEC = 60;
 
 export class SpaceCredential {
   readonly token: string;
-  readonly key: SpaceDpopKey;
+  readonly key: SpaceSigningKey;
   /** Epoch ms. */
   readonly expiresAt: number;
 
@@ -40,7 +46,7 @@ export class SpaceCredential {
   // modules are imported directly by the Node experiment in
   // `experiments/spaces-saves/`, which runs them through Node's type stripping,
   // and that only accepts erasable TypeScript syntax.
-  constructor(token: string, key: SpaceDpopKey, expiresAt: number) {
+  constructor(token: string, key: SpaceSigningKey, expiresAt: number) {
     this.token = token;
     this.key = key;
     this.expiresAt = expiresAt;
@@ -50,16 +56,17 @@ export class SpaceCredential {
     return this.expiresAt - EXPIRY_MARGIN_SEC * 1000 > now;
   }
 
-  /** Authorize an arbitrary request against any host serving this space. */
-  async authorize(method: string, url: string): Promise<Record<string, string>> {
-    return {
-      Authorization: `DPoP ${this.token}`,
-      DPoP: await createSpaceDpopProof(this.key, {
-        htm: method,
-        htu: url,
-        credential: this.token,
-      }),
-    };
+  /**
+   * Headers for one request to any host serving this space. `audience` is the DID
+   * the request is addressed to: the repo DID for record reads, the space
+   * authority for space-host methods. Nothing about the URL is signed, so the
+   * headers are only as specific as that audience.
+   */
+  authorize(audience: string): Promise<Record<string, string>> {
+    return createSpaceSignatureHeaders(this.key, {
+      authorization: `Atproto-Space ${this.token}`,
+      audience,
+    });
   }
 }
 
@@ -83,24 +90,24 @@ export interface ExchangeCredentialInput {
   /** `at://…/space/…` reference. */
   space: string;
   /** The key the credential gets bound to. */
-  key: SpaceDpopKey;
+  key: SpaceSigningKey;
   fetchImpl?: typeof fetch;
 }
 
 /** Leg 2. Returns the raw credential JWT. */
 export async function exchangeSpaceCredential(input: ExchangeCredentialInput): Promise<string> {
   const url = `${input.authorityPdsUrl.replace(/\/$/, '')}/xrpc/com.atproto.space.getSpaceCredential`;
-  const proof = await createSpaceDpopProof(input.key, { htm: 'POST', htu: url });
 
   const response = await (input.fetchImpl ?? fetch)(url, {
     method: 'POST',
     headers: {
       accept: 'application/json',
       'content-type': 'application/json',
-      // Note: Bearer, not DPoP — the delegation token is not itself key-bound;
-      // the proof on this leg is what the credential's `cnf.jkt` will name.
-      authorization: `Bearer ${input.delegationToken}`,
-      dpop: proof,
+      // The delegation token is not itself key-bound: this leg's signature
+      // carries `keyid`, and that is what the credential's `cnf.kid` will name.
+      ...(await createSpaceSignatureHeaders(input.key, {
+        authorization: `Bearer ${input.delegationToken}`,
+      })),
     },
     body: JSON.stringify({ space: input.space }),
   });
@@ -130,7 +137,7 @@ export interface MintCredentialInput {
 /** Legs 1 + 2. */
 export async function mintSpaceCredential(input: MintCredentialInput): Promise<SpaceCredential> {
   const delegationToken = await input.getDelegationToken(input.space);
-  const key = await generateSpaceDpopKey();
+  const key = await generateSpaceSigningKey();
   const token = await exchangeSpaceCredential({
     authorityPdsUrl: input.authorityPdsUrl,
     delegationToken,
@@ -148,7 +155,7 @@ export async function mintSpaceCredential(input: MintCredentialInput): Promise<S
  *
  * In memory only, and deliberately so: a credential is worthless without the
  * private key it is bound to, and persisting that key to D1 would turn a
- * two-hour token into durable stored key material for an alpha protocol. The
+ * short-lived token into durable stored key material for an alpha protocol. The
  * cost is a re-mint (two round trips) on a cold isolate; the alternative is
  * writing private keys to the database for a spike.
  */
