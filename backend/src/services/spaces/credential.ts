@@ -174,6 +174,11 @@ export async function getOrMintSpaceCredential(
   if (cached?.isFresh()) return cached;
 
   const credential = await mintSpaceCredential(input);
+  // Entries hold a private CryptoKey; sweep expired ones so the map doesn't grow
+  // for the isolate's lifetime with credentials nobody will reuse.
+  for (const [k, c] of credentialCache) {
+    if (!c.isFresh()) credentialCache.delete(k);
+  }
   credentialCache.set(key, credential);
   return credential;
 }

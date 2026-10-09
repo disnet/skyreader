@@ -104,6 +104,23 @@ export function savedRowToSpaceRecord(row: SavedRowForSpace): SavedSpaceRecord {
   return record;
 }
 
+/** Every key `savedRowToSpaceRecord` may emit; the diff compares all of them. */
+const MAPPED_FIELDS = [
+  '$type',
+  'savedAt',
+  'url',
+  'title',
+  'author',
+  'description',
+  'contentType',
+  'domain',
+  'image',
+  'source',
+  'itemGuid',
+  'wordCount',
+  'publishedAt',
+] as const satisfies readonly (keyof SavedSpaceRecord)[];
+
 export interface SavedDiff {
   /** rkeys present in D1 with no record in the space. */
   onlyInD1: string[];
@@ -116,9 +133,10 @@ export interface SavedDiff {
 /**
  * The spike's truth meter: does the mirror actually reflect D1?
  *
- * Only the fields the mapping produces are compared, and only for rkeys present
- * on both sides — a field the space record carries but the mapping never emits
- * would be someone else's write, which is out of scope for a drift check.
+ * Every field the mapping *can* produce is compared, and only for rkeys present
+ * on both sides — including fields the mapping omits for this row, so a value D1
+ * has since cleared but the space still holds is caught. A field the mapping
+ * never emits would be someone else's write, which is out of scope here.
  */
 export function diffSavedRecords(
   rows: SavedRowForSpace[],
@@ -134,7 +152,7 @@ export function diffSavedRecords(
       continue;
     }
     const expected = savedRowToSpaceRecord(row) as unknown as Record<string, unknown>;
-    for (const field of Object.keys(expected)) {
+    for (const field of MAPPED_FIELDS) {
       if (expected[field] !== remote[field]) {
         diff.mismatched.push({ rkey: row.rkey, field, d1: expected[field], space: remote[field] });
       }

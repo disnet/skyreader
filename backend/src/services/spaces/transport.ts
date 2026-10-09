@@ -132,15 +132,32 @@ export function isSpaceNotFound(error: unknown): boolean {
   return code === 'SpaceNotFound' || code === 'SpaceDeleted';
 }
 
-/** True when the error means "you are not allowed into this space". */
+/** True when `createSpace` lost a race to another request creating the same space. */
+export function isSpaceAlreadyExists(error: unknown): boolean {
+  return errorCode(error) === 'SpaceAlreadyExists';
+}
+
+/**
+ * True when the error means "you are not allowed into this space" — including
+ * an ordinary OAuth session whose token carries no space scope. That is a
+ * stable answer for the session's lifetime, so callers may cache it.
+ */
 export function isSpaceAccessDenied(error: unknown): boolean {
   const code = errorCode(error);
-  return (
+  if (
     code === 'UserNotAuthorized' ||
     code === 'AppNotAuthorized' ||
     code === 'NotAuthorized' ||
-    code === 'RepoNotFound'
-  );
+    code === 'RepoNotFound' ||
+    code === 'InsufficientScope' ||
+    code === 'ScopeMissing' ||
+    code === 'MissingScope' ||
+    code === 'Forbidden'
+  ) {
+    return true;
+  }
+  // A bare 403 with no recognised code is still a refusal, not an outage.
+  return errorStatus(error) === 403;
 }
 
 /**
@@ -148,10 +165,24 @@ export function isSpaceAccessDenied(error: unknown): boolean {
  * The probe has to be cheap and silent for those, so this is checked first.
  */
 export function isSpacesUnsupported(error: unknown): boolean {
-  const code = errorCode(error);
-  if (code === 'MethodNotImplemented' || code === 'InvalidRequest') return true;
-  const status = (error as { status?: unknown })?.status;
+  if (errorCode(error) === 'MethodNotImplemented') return true;
+  const status = errorStatus(error);
   return status === 404 || status === 501;
+}
+
+/**
+ * True when the host rejected the probe's parameters. Ambiguous: an ordinary PDS
+ * may answer an unknown method this way, but so may a Spaces PDS whose space-ref
+ * format moved between alpha releases. Callers should cache it only briefly and
+ * say which it might be, rather than calling it "unsupported".
+ */
+export function isSpaceRequestRejected(error: unknown): boolean {
+  return errorCode(error) === 'InvalidRequest';
+}
+
+function errorStatus(error: unknown): number | undefined {
+  const status = (error as { status?: unknown })?.status;
+  return typeof status === 'number' ? status : undefined;
 }
 
 function errorCode(error: unknown): string | undefined {

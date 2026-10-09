@@ -11,8 +11,7 @@
  * path doesn't resolve at all.
  */
 
-import type { Env } from '../types';
-import { getSessionFromRequest } from '../services/oauth';
+import type { Env, Session } from '../types';
 import { diffSavedRecords } from '../services/spaces/record';
 import { SAVED_COLLECTION } from '../services/spaces/refs';
 import {
@@ -29,24 +28,22 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
-export async function handleSpacesSavedDiff(request: Request, env: Env): Promise<Response> {
+export async function handleSpacesSavedDiff(env: Env, session: Session): Promise<Response> {
   if (!spacesSavesEnabled(env)) {
     return json({ error: 'Not found' }, 404);
   }
 
-  const session = await getSessionFromRequest(request, env);
-  if (!session) {
-    return json({ error: 'Unauthorized' }, 401);
-  }
-
-  const space = await ensureSavedSpace(session);
+  // A GET only reads: probe for the space, never create it.
+  const client = spacesClientForSession(session);
+  const space = await ensureSavedSpace(session, client, { create: false });
   if (!space) {
     // The honest answer for every production PDS today, and the one a developer
     // pointed at bsky.social should see rather than an empty diff that looks fine.
     return json(
       {
         error: 'spaces_unavailable',
-        message: "This session's PDS does not host a Skyreader saved-space.",
+        message:
+          "This session's PDS does not host a Skyreader saved-space (or none has been created yet — save an article first).",
       },
       503
     );
@@ -56,7 +53,7 @@ export async function handleSpacesSavedDiff(request: Request, env: Env): Promise
 
   let listing;
   try {
-    listing = await spacesClientForSession(session).listAllRecords({
+    listing = await client.listAllRecords({
       space,
       repo: session.did,
       collection: SAVED_COLLECTION,
