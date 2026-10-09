@@ -272,5 +272,11 @@ network with `goat lex publish` from the repo root; see `docs/OAUTH_SCOPES.md`.
 - `social/recommend.json` - One-tap public recommendation of an article (any URL)
 - `reading/readAlong.json` - Reading-room join record
 - `authFull.json` - OAuth permission set covering Skyreader's own collections (see `docs/OAUTH_SCOPES.md`)
+- `feed/saved.json` - Saved article record — **metadata only, and not part of the live PDS
+  sync.** It exists for the flag-gated atproto Spaces spike, where it is written into a user's
+  personal _permissioned_ space (never the public repo). Nothing writes it in production; the
+  "saves live only in D1" rule above still holds. See
+  [the spike memo](docs/plans/SPACES_SAVES_SPIKE.md)
+- `space/savedAccess.json` - Permission set for that space (spike; not requested by OAuth)
 
 Records are synced bidirectionally between the app and user's PDS.

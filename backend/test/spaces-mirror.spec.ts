@@ -1,0 +1,449 @@
+import { env, createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import worker from '../src/index';
+import { GRANULAR_SCOPES } from '../src/config/scopes';
+import * as mirror from '../src/services/spaces/mirror';
+import { SpacesClient, type XrpcCall } from '../src/services/spaces/client';
+import { SpaceXrpcError } from '../src/services/spaces/transport';
+import * as write from '../src/services/backing/write';
+
+// Verification criteria 5 and 6 of the atproto Spaces spike:
+//   - with SPACES_SAVES_ENABLED unset, no spaces code runs at all;
+//   - with it set but the space unreachable, a save still succeeds and D1 still
+//     holds the row (the mirror is best-effort, D1 is canonical).
+
+const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
+
+const DID = 'did:plc:spacesmirror';
+const SESSION = 'sess-spaces-mirror';
+
+async function reset() {
+  await env.DB.prepare('DELETE FROM saved_articles WHERE user_did = ?').bind(DID).run();
+  await env.DB.prepare('DELETE FROM sessions WHERE did = ?').bind(DID).run();
+  await env.DB.prepare('DELETE FROM user_settings WHERE user_did = ?').bind(DID).run();
+  await env.DB.prepare('DELETE FROM users WHERE did = ?').bind(DID).run();
+  await env.DB.prepare(
+    `INSERT INTO users (did, handle, pds_url, tier, created_at) VALUES (?, 'sm.bsky.social', 'https://pds.test', 'free', unixepoch())`
+  )
+    .bind(DID)
+    .run();
+  await env.DB.prepare(
+    `INSERT INTO sessions (session_id, did, handle, pds_url, access_token, refresh_token, dpop_private_key, expires_at, granted_scopes)
+     VALUES (?, ?, 'sm.bsky.social', 'https://pds.test', 'tok', 'rtok', ?, ?, ?)`
+  )
+    .bind(SESSION, DID, JSON.stringify({ kty: 'EC' }), Date.now() + 3_600_000, GRANULAR_SCOPES)
+    .run();
+  mirror.clearSpaceCapabilityCache();
+}
+
+function saveRequest(body: unknown) {
+  return new IncomingRequest('http://localhost/api/saved', {
+    method: 'POST',
+    headers: {
+      Cookie: `session_id=${SESSION}`,
+      Origin: env.FRONTEND_URL,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+}
+
+async function call(req: Request, overrides: Record<string, string> = {}) {
+  const ctx = createExecutionContext();
+  const res = await worker.fetch(req, { ...env, ...overrides } as typeof env, ctx);
+  await waitOnExecutionContext(ctx);
+  const text = await res.text();
+  return { status: res.status, body: text ? JSON.parse(text) : null };
+}
+
+function spacesWarnings(warn: { mock: { calls: unknown[][] } }): unknown[][] {
+  return warn.mock.calls.filter((args) => String(args[0]).startsWith('[spaces]'));
+}
+
+const FEED_SAVE = {
+  url: 'https://example.com/spaces-article',
+  rkey: '3lspacesaaaaa',
+  source: 'feed',
+  itemGuid: 'guid-spaces-1',
+  title: 'Spaces article',
+  wordCount: 400,
+};
+
+describe('spaces mirror — flag gate', () => {
+  beforeEach(() => reset());
+  afterEach(() => vi.restoreAllMocks());
+
+  it('does not touch the space path at all when the flag is unset', async () => {
+    // env from wrangler.toml has no SPACES_SAVES_ENABLED, which is the
+    // production shape: the var exists only in .dev.vars.
+    expect((env as { SPACES_SAVES_ENABLED?: string }).SPACES_SAVES_ENABLED).toBeUndefined();
+    expect(mirror.spacesSavesEnabled(env)).toBe(false);
+
+    // The mirror's only observable trace is its own warning, so the absence of
+    // one is the assertion. (Spying on the module's exports wouldn't prove
+    // anything: saved.ts holds a direct binding to mirrorSaveToSpace.)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { status } = await call(saveRequest(FEED_SAVE));
+
+    expect(status).toBe(200);
+    expect(spacesWarnings(warn)).toEqual([]);
+
+    const row = await env.DB.prepare('SELECT rkey FROM saved_articles WHERE user_did = ?')
+      .bind(DID)
+      .first<{ rkey: string }>();
+    expect(row?.rkey).toBe(FEED_SAVE.rkey);
+  });
+
+  it('does reach the space path once the flag is on (the control for the test above)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await call(saveRequest(FEED_SAVE), { SPACES_SAVES_ENABLED: 'true' });
+    expect(spacesWarnings(warn).length).toBeGreaterThan(0);
+  });
+
+  it('leaves the dev read-back route unmounted when the flag is unset', async () => {
+    const res = await call(
+      new IncomingRequest('http://localhost/api/dev/spaces/saved-diff', {
+        headers: { Cookie: `session_id=${SESSION}`, Origin: env.FRONTEND_URL },
+      })
+    );
+    expect(res.status).toBe(404);
+  });
+});
+
+describe('spaces mirror — best effort with the flag on', () => {
+  beforeEach(() => reset());
+  afterEach(() => vi.restoreAllMocks());
+
+  it('still saves, and keeps the D1 row, when the space is unreachable', async () => {
+    // The seeded session carries a placeholder DPoP key, so every PDS call fails
+    // closed — the same shape as a PDS that has never heard of Spaces.
+    const { status, body } = await call(saveRequest(FEED_SAVE), {
+      SPACES_SAVES_ENABLED: 'true',
+    });
+
+    expect(status).toBe(200);
+    expect(body.rkey).toBe(FEED_SAVE.rkey);
+
+    const row = await env.DB.prepare(
+      'SELECT rkey, title FROM saved_articles WHERE user_did = ? AND rkey = ?'
+    )
+      .bind(DID, FEED_SAVE.rkey)
+      .first<{ rkey: string; title: string }>();
+    expect(row?.title).toBe('Spaces article');
+  });
+
+  it('still deletes, and removes the D1 row, when the space is unreachable', async () => {
+    await call(saveRequest(FEED_SAVE), { SPACES_SAVES_ENABLED: 'true' });
+
+    const res = await call(
+      new IncomingRequest(`http://localhost/api/saved/${FEED_SAVE.rkey}`, {
+        method: 'DELETE',
+        headers: { Cookie: `session_id=${SESSION}`, Origin: env.FRONTEND_URL },
+      }),
+      { SPACES_SAVES_ENABLED: 'true' }
+    );
+
+    expect(res.status).toBe(200);
+    const row = await env.DB.prepare('SELECT rkey FROM saved_articles WHERE user_did = ?')
+      .bind(DID)
+      .first();
+    expect(row).toBeNull();
+  });
+
+  it('reports spaces_unavailable from the diff route rather than a clean empty diff', async () => {
+    const res = await call(
+      new IncomingRequest('http://localhost/api/dev/spaces/saved-diff', {
+        headers: { Cookie: `session_id=${SESSION}`, Origin: env.FRONTEND_URL },
+      }),
+      { SPACES_SAVES_ENABLED: 'true' }
+    );
+
+    // The seeded session can't reach the PDS, so the probe fails rather than
+    // answering "no space" — and the route says so instead of claiming absence.
+    expect(res.status).toBe(502);
+    expect(res.body.error).toBe('space_probe_failed');
+    expect(res.body.status).toBe('failed');
+  });
+
+  it('creates and caches the personal space when the probe returns SpaceNotFound', async () => {
+    const endpoints: string[] = [];
+    const call: XrpcCall = async <T>(_method, endpoint) => {
+      endpoints.push(endpoint);
+      if (endpoint.startsWith('com.atproto.simplespace.getSpace')) {
+        throw new SpaceXrpcError('No such space', 'SpaceNotFound', 400);
+      }
+      if (endpoint === 'com.atproto.simplespace.createSpace') {
+        return { uri: `at://${DID}/space/app.skyreader.space.saved/self` } as T;
+      }
+      throw new Error(`Unexpected endpoint: ${endpoint}`);
+    };
+    const session = {
+      did: DID,
+      handle: 'sm.bsky.social',
+      pdsUrl: 'https://pds.test',
+      accessToken: 'tok',
+      refreshToken: 'rtok',
+      dpopPrivateKey: JSON.stringify({ kty: 'EC' }),
+      expiresAt: Date.now() + 3_600_000,
+    };
+
+    const expected = `at://${DID}/space/app.skyreader.space.saved/self`;
+    expect(await mirror.ensureSavedSpace(session, new SpacesClient(call))).toBe(expected);
+    expect(endpoints).toHaveLength(2);
+
+    expect(await mirror.ensureSavedSpace(session, new SpacesClient(call))).toBe(expected);
+    expect(endpoints).toHaveLength(2);
+  });
+
+  it('caches the capability verdict so an ordinary PDS is probed once, not per save', async () => {
+    const session = {
+      did: DID,
+      handle: 'sm.bsky.social',
+      pdsUrl: 'https://pds.test',
+      accessToken: 'tok',
+      refreshToken: 'rtok',
+      dpopPrivateKey: JSON.stringify({ kty: 'EC' }),
+      expiresAt: Date.now() + 3_600_000,
+    };
+
+    let calls = 0;
+    const unsupported: XrpcCall = async () => {
+      calls++;
+      throw new SpaceXrpcError('Unknown method', 'MethodNotImplemented', 501);
+    };
+    expect(await mirror.ensureSavedSpace(session, new SpacesClient(unsupported))).toBeNull();
+    expect(await mirror.ensureSavedSpace(session, new SpacesClient(unsupported))).toBeNull();
+    expect(calls).toBe(1);
+  });
+  const probeSession = {
+    did: DID,
+    handle: 'sm.bsky.social',
+    pdsUrl: 'https://pds.test',
+    accessToken: 'tok',
+    refreshToken: 'rtok',
+    dpopPrivateKey: JSON.stringify({ kty: 'EC' }),
+    expiresAt: Date.now() + 3_600_000,
+  };
+  const SPACE = `at://${DID}/space/app.skyreader.space.saved/self`;
+
+  it('treats SpaceAlreadyExists from a concurrent create as success', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const racing: XrpcCall = async (_method, endpoint) => {
+      if (endpoint.startsWith('com.atproto.simplespace.getSpace')) {
+        throw new SpaceXrpcError('No such space', 'SpaceNotFound', 400);
+      }
+      throw new SpaceXrpcError('already exists', 'SpaceAlreadyExists', 400);
+    };
+    expect(await mirror.ensureSavedSpace(probeSession, new SpacesClient(racing))).toBe(SPACE);
+  });
+
+  it('caches a scope rejection instead of re-probing on every save', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let calls = 0;
+    const noScope: XrpcCall = async () => {
+      calls++;
+      throw new SpaceXrpcError('Missing scope', 'InsufficientScope', 403);
+    };
+    expect(await mirror.ensureSavedSpace(probeSession, new SpacesClient(noScope))).toBeNull();
+    expect(await mirror.ensureSavedSpace(probeSession, new SpacesClient(noScope))).toBeNull();
+    expect(calls).toBe(1);
+  });
+
+  it('caches an ambiguous InvalidRequest only briefly, without calling it unsupported', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const now = vi.spyOn(Date, 'now');
+    const t0 = 1_000_000_000_000;
+    now.mockReturnValue(t0);
+    let calls = 0;
+    const rejected: XrpcCall = async () => {
+      calls++;
+      throw new SpaceXrpcError('bad space ref', 'InvalidRequest', 400);
+    };
+    expect(await mirror.ensureSavedSpace(probeSession, new SpacesClient(rejected))).toBeNull();
+    expect(await mirror.ensureSavedSpace(probeSession, new SpacesClient(rejected))).toBeNull();
+    expect(calls).toBe(1);
+
+    now.mockReturnValue(t0 + 2 * 60 * 1000);
+    await mirror.ensureSavedSpace(probeSession, new SpacesClient(rejected));
+    expect(calls).toBe(2);
+    expect(spacesWarnings(warn).some((a) => String(a[0]).includes('does not support'))).toBe(false);
+  });
+
+  it('reports why the space is unavailable, separating absence from failure', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const missing: XrpcCall = async () => {
+      throw new SpaceXrpcError('No such space', 'SpaceNotFound', 400);
+    };
+    expect(
+      await mirror.resolveSavedSpace(probeSession, new SpacesClient(missing), { create: false })
+    ).toEqual({ space: null, status: 'missing' });
+
+    const outage: XrpcCall = async () => {
+      throw new SpaceXrpcError('Bad gateway', 'HTTP502', 502);
+    };
+    expect(await mirror.resolveSavedSpace(probeSession, new SpacesClient(outage))).toEqual({
+      space: null,
+      status: 'failed',
+    });
+  });
+
+  it('drops a stale "space exists" verdict and recreates the space on SpaceNotFound', async () => {
+    await call(saveRequest(FEED_SAVE));
+    const flagOn = { ...env, SPACES_SAVES_ENABLED: 'true' } as typeof env;
+    let spaceExists = true;
+    const endpoints: string[] = [];
+    const pds: XrpcCall = async <T>(_method, endpoint) => {
+      endpoints.push(endpoint.split('?')[0]);
+      if (endpoint.startsWith('com.atproto.simplespace.getSpace')) {
+        if (spaceExists) return {} as T;
+        throw new SpaceXrpcError('No such space', 'SpaceNotFound', 400);
+      }
+      if (endpoint === 'com.atproto.simplespace.createSpace') {
+        spaceExists = true;
+        return { uri: SPACE } as T;
+      }
+      if (endpoint === 'com.atproto.space.putRecord') {
+        if (!spaceExists) throw new SpaceXrpcError('No such space', 'SpaceNotFound', 400);
+        return { uri: 'x', cid: 'y' } as T;
+      }
+      throw new Error(`Unexpected endpoint: ${endpoint}`);
+    };
+
+    // Warm the cache, then delete the space behind its back.
+    await mirror.mirrorSaveToSpace(flagOn, probeSession, FEED_SAVE.rkey, new SpacesClient(pds));
+    spaceExists = false;
+    endpoints.length = 0;
+
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await mirror.mirrorSaveToSpace(flagOn, probeSession, FEED_SAVE.rkey, new SpacesClient(pds));
+    expect(endpoints).toEqual([
+      'com.atproto.space.putRecord',
+      'com.atproto.simplespace.getSpace',
+      'com.atproto.simplespace.createSpace',
+      'com.atproto.space.putRecord',
+    ]);
+    expect(spacesWarnings(warn)).toEqual([]);
+  });
+
+  it('retracts every rkey with one probe, and never creates a space to delete from', async () => {
+    const flagOn = { ...env, SPACES_SAVES_ENABLED: 'true' } as typeof env;
+    const endpoints: string[] = [];
+    const missing: XrpcCall = async (_method, endpoint) => {
+      endpoints.push(endpoint.split('?')[0]);
+      throw new SpaceXrpcError('No such space', 'SpaceNotFound', 400);
+    };
+    await mirror.mirrorDeleteFromSpace(flagOn, probeSession, ['a', 'b'], new SpacesClient(missing));
+    expect(endpoints).toEqual(['com.atproto.simplespace.getSpace']);
+
+    endpoints.length = 0;
+    const present: XrpcCall = async <T>(_method, endpoint) => {
+      endpoints.push(endpoint.split('?')[0]);
+      return {} as T;
+    };
+    await mirror.mirrorDeleteFromSpace(
+      flagOn,
+      probeSession,
+      ['a', 'b', 'c'],
+      new SpacesClient(present)
+    );
+    expect(endpoints).toEqual([
+      'com.atproto.simplespace.getSpace',
+      'com.atproto.space.deleteRecord',
+      'com.atproto.space.deleteRecord',
+      'com.atproto.space.deleteRecord',
+    ]);
+  });
+
+  it('never creates the space when called as a read-only probe', async () => {
+    const endpoints: string[] = [];
+    const missing: XrpcCall = async (_method, endpoint) => {
+      endpoints.push(endpoint);
+      throw new SpaceXrpcError('No such space', 'SpaceNotFound', 400);
+    };
+    expect(
+      await mirror.ensureSavedSpace(probeSession, new SpacesClient(missing), { create: false })
+    ).toBeNull();
+    expect(endpoints.every((e) => e.startsWith('com.atproto.simplespace.getSpace'))).toBe(true);
+  });
+});
+
+describe('spaces mirror — backed saves stay out of the space', () => {
+  const COLLECTION = `at://${DID}/network.cosmik.collection/col1`;
+  const NATIVE_RKEY = '3lspacesnativ';
+
+  beforeEach(async () => {
+    await reset();
+    await env.DB.prepare('DELETE FROM backed_collection_members WHERE user_did = ?')
+      .bind(DID)
+      .run();
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  async function seedNativeSave(url: string, urlNormalized: string) {
+    await env.DB.prepare(
+      `INSERT INTO saved_articles
+         (user_did, rkey, record_uri, url, url_normalized, title, content_type, saved_at, created_at, source)
+       VALUES (?, ?, ?, ?, ?, 'Native', 'article', ?, ?, 'feed')`
+    )
+      .bind(
+        DID,
+        NATIVE_RKEY,
+        `at://${DID}/app.skyreader.feed.saved/${NATIVE_RKEY}`,
+        url,
+        urlNormalized,
+        Date.now(),
+        Date.now()
+      )
+      .run();
+  }
+
+  it('leaves backed rows (record_uri NULL) out of the diff rows', async () => {
+    await seedNativeSave('https://example.com/native', 'https://example.com/native');
+    await env.DB.prepare(
+      `INSERT INTO saved_articles
+         (user_did, rkey, record_uri, url, url_normalized, content_type, saved_at, created_at, source)
+       VALUES (?, '3lspacesbacke', NULL, 'https://example.com/backed', 'https://example.com/backed', 'article', ?, ?, 'feed')`
+    )
+      .bind(DID, Date.now(), Date.now())
+      .run();
+
+    const rows = await mirror.readSavedRowsForSpace(env, DID);
+    expect(rows.map((r) => r.rkey)).toEqual([NATIVE_RKEY]);
+  });
+
+  it('retracts the mirrored record when a backed re-save converts a native row', async () => {
+    await seedNativeSave('https://example.com/converted', 'https://example.com/converted');
+    await env.DB.prepare(
+      `INSERT INTO user_settings (user_did, backing) VALUES (?, ?)
+       ON CONFLICT(user_did) DO UPDATE SET backing = excluded.backing`
+    )
+      .bind(DID, `semble:${COLLECTION}`)
+      .run();
+    vi.spyOn(write, 'createMember').mockResolvedValue({
+      itemUri: `at://${DID}/network.cosmik.card/c1`,
+      linkUri: `at://${DID}/network.cosmik.collectionLink/l1`,
+    });
+    const deletes = vi.spyOn(mirror, 'mirrorDeleteFromSpace');
+    const retract = vi.spyOn(mirror, 'mirrorDeleteFromSpace').mockResolvedValue();
+
+    // Differs raw (trailing slash) but normalizes to the native row's key, so it
+    // reaches the backed upsert's conflict path rather than the raw-url 409.
+    const { status } = await call(
+      saveRequest({ ...FEED_SAVE, url: 'https://example.com/converted/', itemGuid: 'guid-conv' }),
+      { SPACES_SAVES_ENABLED: 'true' }
+    );
+    expect(status).toBe(200);
+
+    const row = await env.DB.prepare(
+      'SELECT rkey, record_uri FROM saved_articles WHERE user_did = ?'
+    )
+      .bind(DID)
+      .first<{ rkey: string; record_uri: string | null }>();
+    expect(row).toEqual({ rkey: FEED_SAVE.rkey, record_uri: null });
+    expect(await mirror.readSavedRowsForSpace(env, DID)).toEqual([]);
+
+    // The old rkey's space record is retracted; the new backed rkey is never mirrored.
+    expect(retract).toHaveBeenCalledTimes(1);
+    expect(retract.mock.calls[0][2]).toBe(NATIVE_RKEY);
+  });
+});

@@ -21,6 +21,7 @@ import {
 import { hasIntegrationScopes } from './integrations';
 import { normalizeArticleUrl } from '../utils/url-normalize';
 import { chunkArray } from './reading';
+import { mirrorDeleteFromSpace, mirrorSaveToSpace } from '../services/spaces/mirror';
 
 const COLLECTION = 'app.skyreader.feed.saved';
 
@@ -222,7 +223,7 @@ export async function handleCreateSaved(
     // on) falls through to the native, D1-only path below.
     const settings = await getUserSettings(env, session.did);
     if (settings.backing.provider !== 'skyreader' && normalizeArticleUrl(body.url)) {
-      return await handleBackedSave(env, session, body, source, settings.backing);
+      return await handleBackedSave(env, ctx, session, body, source, settings.backing);
     }
 
     if (source === 'feed' || source === 'share' || source === 'document') {
@@ -252,7 +253,7 @@ export async function handleCreateSaved(
 async function handleMetadataSave(
   _request: Request,
   env: Env,
-  _ctx: ExecutionContext,
+  ctx: ExecutionContext,
   session: Session,
   body: CreateSavedBody,
   source: string
@@ -298,6 +299,10 @@ async function handleMetadataSave(
     )
     .run();
 
+  // Spike: project the save into the user's personal atproto Space. Flag-gated
+  // (SPACES_SAVES_ENABLED), best-effort, never awaited — D1 above is the save.
+  ctx.waitUntil(mirrorSaveToSpace(env, session, body.rkey));
+
   return new Response(
     JSON.stringify({
       rkey: body.rkey,
@@ -325,6 +330,12 @@ async function handleMetadataSave(
 // COALESCE shape as the backed-save upsert — so a sparse extraction never
 // blanks existing metadata. The rkey and record_uri are unchanged: this is the
 // same save, with better content.
+//
+// No space mirror here (nor in handleUpdateSaved): the space record is metadata
+// only, and what a content upgrade actually changes is the body plus a word
+// count. The drift it leaves is a stale wordCount/title, which the dev
+// saved-diff route reports as `mismatched` — see the spike memo's list of what a
+// real ship would need (a reconciliation pass, not more write hooks).
 async function handleContentUpdate(
   env: Env,
   session: Session,
@@ -412,6 +423,9 @@ async function handleUrlSave(
     )
     .run();
 
+  // Spike: same best-effort space mirror as the metadata path. See mirror.ts.
+  ctx.waitUntil(mirrorSaveToSpace(env, session, body.rkey));
+
   return new Response(
     JSON.stringify({
       uri: recordUri,
@@ -426,9 +440,16 @@ async function handleUrlSave(
  * collection and record it in the two stores. No app.skyreader.feed.saved export —
  * membership in the collection IS the save. The enrichment row stays canonical for
  * reading work (content, word count); the membership row holds the foreign handles.
+ *
+ * Deliberately OUT of the atproto Spaces spike: backing already makes the save
+ * portable (publicly, as a Semble/Margin collection member), so layering a private
+ * space mirror on top is a product question — "which store is the save?" — not a
+ * protocol one. A tester with backing on will therefore see an empty space; start
+ * from an account with backing off. See docs/plans/SPACES_SAVES_SPIKE.md.
  */
 async function handleBackedSave(
   env: Env,
+  ctx: ExecutionContext,
   session: Session,
   body: CreateSavedBody,
   source: string,
@@ -479,9 +500,24 @@ async function handleBackedSave(
     canonicalAtUri,
   });
 
+  // A native save of this URL (record_uri set) may already be mirrored into the
+  // space under its own rkey. The upsert below turns the row into a backed save,
+  // which is never mirrored, and may re-key it — so retract that record now or it
+  // would be stranded in the space with no row left to delete it.
+  const priorNative = await env.DB.prepare(
+    `SELECT rkey FROM saved_articles
+     WHERE user_did = ? AND url_normalized = ? AND record_uri IS NOT NULL`
+  )
+    .bind(session.did, urlNormalized)
+    .first<{ rkey: string }>();
+  if (priorNative) {
+    ctx.waitUntil(mirrorDeleteFromSpace(env, session, priorNative.rkey));
+  }
+
   // Upsert enrichment (merge onto any stub a poll left) + membership, and clear any
   // tombstone for this URL (a re-save of something just unsaved). record_uri is NULL:
-  // a backed save has no app.skyreader.feed.saved export.
+  // a backed save has no app.skyreader.feed.saved export — including a native row
+  // this re-save converts, whose old URI would name an rkey the row no longer has.
   await env.DB.batch([
     env.DB.prepare(
       `INSERT INTO saved_articles
@@ -490,6 +526,7 @@ async function handleBackedSave(
        VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(user_did, url_normalized) DO UPDATE SET
          rkey = excluded.rkey,
+         record_uri = NULL,
          title = COALESCE(excluded.title, title),
          author = COALESCE(excluded.author, author),
          description = COALESCE(excluded.description, description),
@@ -1201,6 +1238,9 @@ export async function handleDeleteSaved(
       .bind(session.did, rkey)
       .run();
 
+    // Spike: retract the mirrored space record. Flag-gated, best-effort.
+    ctx.waitUntil(mirrorDeleteFromSpace(env, session, rkey));
+
     const settings = await getUserSettings(env, session.did);
     if (settings.backing.provider !== 'skyreader' && row.url_normalized) {
       // Backed: remove the membership from the foreign collection (+ tombstone).
@@ -1253,16 +1293,20 @@ export async function handleDeleteSavedByGuid(
   }
 
   try {
-    const row = await env.DB.prepare(
+    // item_guid isn't unique per user, so the DELETE below can remove several
+    // saves. Read them all in one query: the first is the guard row, and (spike)
+    // every rkey is needed so each mirrored space record is retracted.
+    const { results: rows } = await env.DB.prepare(
       'SELECT rkey, record_uri, item_guid, url_normalized FROM saved_articles WHERE user_did = ? AND item_guid = ?'
     )
       .bind(session.did, guid)
-      .first<{
+      .all<{
         rkey: string;
         record_uri: string | null;
         item_guid: string | null;
         url_normalized: string | null;
       }>();
+    const row = rows[0];
 
     if (!row) {
       return new Response(JSON.stringify({ error: 'Not found' }), {
@@ -1275,6 +1319,16 @@ export async function handleDeleteSavedByGuid(
     await env.DB.prepare('DELETE FROM saved_articles WHERE user_did = ? AND item_guid = ?')
       .bind(session.did, guid)
       .run();
+
+    // Spike: retract the mirrored space records (keyed by the rows' rkeys, which
+    // are the space records' rkeys too) in one task. Flag-gated, best-effort.
+    ctx.waitUntil(
+      mirrorDeleteFromSpace(
+        env,
+        session,
+        rows.map((r) => r.rkey)
+      )
+    );
 
     const settings = await getUserSettings(env, session.did);
     if (settings.backing.provider !== 'skyreader' && row.url_normalized) {
