@@ -106,8 +106,7 @@ export async function exchangeSpaceCredential(input: ExchangeCredentialInput): P
   });
 
   const body = (await response.json().catch(() => undefined)) as
-    | { credential?: unknown; error?: unknown; message?: unknown }
-    | undefined;
+    { credential?: unknown; error?: unknown; message?: unknown } | undefined;
 
   if (!response.ok) {
     const code = typeof body?.error === 'string' ? body.error : `HTTP${response.status}`;
