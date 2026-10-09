@@ -91,7 +91,7 @@ design, so the space would look broken).
 
 1. Run a spaces PDS: `docker run -p 2583:2583 ghcr.io/bluesky-social/atproto:pds-spaces-alpha`.
 2. `cd experiments/spaces-saves && SPACES_PDS_URL=http://localhost:2583 npm run lifecycle`
-   — 11/11 is the gate. If the outsider is _not_ denied, stop the spike.
+   — 12/12 is the gate. If the outsider is _not_ denied, stop the spike.
 3. Add `SPACES_SAVES_ENABLED=true` to `backend/.dev.vars`, point a session at the
    spaces PDS, and `./scripts/dev-local.sh`.
 4. Save an article in the reader; delete another.
