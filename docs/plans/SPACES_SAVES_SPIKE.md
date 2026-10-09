@@ -45,15 +45,15 @@ One personal space per user, owned by the user:
 
 ## What was built
 
-| Piece                                                                                     | Where                                                                          |
-| ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| Protocol lifecycle experiment (11 checks, incl. outsider-denial and the portability read) | `experiments/spaces-saves/`                                                    |
-| Record lexicon (metadata-only) + the OAuth permission set                                 | `backend/lexicons/app/skyreader/feed/saved.json`, `.../space/savedAccess.json` |
-| Space refs, record mapping, DPoP, credential flow, XRPC client, transports                | `backend/src/services/spaces/`                                                 |
-| Flag gate, capability probe, mirror hooks                                                 | `backend/src/services/spaces/mirror.ts`                                        |
-| Dual-write on save/delete                                                                 | `backend/src/routes/saved.ts`                                                  |
-| Dev read-back diff                                                                        | `GET /api/dev/spaces/saved-diff` (`backend/src/routes/dev-spaces.ts`)          |
-| Tests                                                                                     | `backend/test/spaces-{record,protocol,mirror}.spec.ts`                         |
+| Piece                                                                                     | Where                                                                  |
+| ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| Protocol lifecycle experiment (11 checks, incl. outsider-denial and the portability read) | `experiments/spaces-saves/`                                            |
+| Record lexicon (metadata-only) + the OAuth permission set                                 | `lexicons/app/skyreader/feed/saved.json`, `.../space/savedAccess.json` |
+| Space refs, record mapping, DPoP, credential flow, XRPC client, transports                | `backend/src/services/spaces/`                                         |
+| Flag gate, capability probe, mirror hooks                                                 | `backend/src/services/spaces/mirror.ts`                                |
+| Dual-write on save/delete                                                                 | `backend/src/routes/saved.ts`                                          |
+| Dev read-back diff                                                                        | `GET /api/dev/spaces/saved-diff` (`backend/src/routes/dev-spaces.ts`)  |
+| Tests                                                                                     | `backend/test/spaces-{record,protocol,mirror}.spec.ts`                 |
 
 The backend takes no `@atproto/*` dependency: the alpha SDK assumes Node, and the
 Worker already hand-rolls its XRPC. The Node experiment imports the _same_
