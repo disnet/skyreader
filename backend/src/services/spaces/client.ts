@@ -8,7 +8,7 @@
  *                                 delegation/credential exchange.
  *
  * Method names, parameter names and error codes were read off the published alpha
- * SDK (`@atproto/api@0.0.0-spaces-alpha-20260818163953`,
+ * SDK (`@atproto/api@0.0.0-spaces-alpha-20261001173819`,
  * `dist/client/types/com/atproto/{simplespace,space}/*.d.ts`) rather than taken
  * from proposal 0016 — see `experiments/spaces-saves/FINDINGS.md` for the diffs
  * that matters.
@@ -39,8 +39,15 @@ export type SpaceAppAccess =
 
 export interface SpaceView {
   uri: string;
-  policy: { $type: string };
+  readPolicy: { $type: string };
+  writePolicy: { $type: string };
   appAccess: { $type: string };
+}
+
+export interface SpaceMember {
+  did: string;
+  read: boolean;
+  write: boolean;
 }
 
 export interface SpaceRecordRef {
@@ -78,11 +85,17 @@ export class SpacesClient {
    * Create the space. `skey` is optional in the lexicon (a TID is generated when
    * omitted); we always pass one so the space ref is derivable from the DID and
    * no lookup table is needed.
+   *
+   * `readPolicy` gates who may read the space. `writePolicy` is not a gate on
+   * writing to your own repo — it decides whose write notifications the authority
+   * tracks and forwards to syncers. (Both replaced a single `policy`, and `type`
+   * became `spaceType`, across the Sep–Oct alpha releases.)
    */
   createSpace(input: {
-    type: string;
+    spaceType: string;
     skey?: string;
-    policy: SpacePolicy;
+    readPolicy: SpacePolicy;
+    writePolicy: SpacePolicy;
     appAccess: SpaceAppAccess;
   }): Promise<{ uri: string }> {
     return this.call<{ uri: string }>('POST', 'com.atproto.simplespace.createSpace', input);
@@ -93,15 +106,16 @@ export class SpacesClient {
     return this.call<SpaceView>('GET', `com.atproto.simplespace.getSpace?${params}`);
   }
 
-  addMember(space: string, did: string): Promise<void> {
-    return this.call<void>('POST', 'com.atproto.simplespace.addMember', { space, did });
+  /** Upsert a member. Replaced `addMember` in the September alpha. */
+  putMember(space: string, member: SpaceMember): Promise<void> {
+    return this.call<void>('POST', 'com.atproto.simplespace.putMember', { space, ...member });
   }
 
   removeMember(space: string, did: string): Promise<void> {
     return this.call<void>('POST', 'com.atproto.simplespace.removeMember', { space, did });
   }
 
-  listMembers(space: string, limit = 100): Promise<{ members: Array<{ did: string }> }> {
+  listMembers(space: string, limit = 100): Promise<{ members: SpaceMember[] }> {
     const params = new URLSearchParams({ space, limit: String(limit) });
     return this.call('GET', `com.atproto.simplespace.listMembers?${params}`);
   }
@@ -187,8 +201,9 @@ export class SpacesClient {
 }
 
 /**
- * The policy the spike creates a personal saved-space with: member-list (so it
- * starts private to its owner) and open app access.
+ * The policy the spike creates a personal saved-space with: member-list for both
+ * reads and write tracking (so it starts private to its owner) and open app
+ * access.
  *
  * `#open` is a spike choice, not a recommendation. It means any app holding the
  * user's authorization can read the space; `#allowList` (pinned to Skyreader's

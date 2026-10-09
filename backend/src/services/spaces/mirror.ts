@@ -83,9 +83,10 @@ export async function ensureSavedSpace(
     if (isSpaceNotFound(error)) {
       try {
         const created = await client.createSpace({
-          type: SAVED_SPACE_TYPE,
+          spaceType: SAVED_SPACE_TYPE,
           skey: SAVED_SPACE_SKEY,
-          policy: PERSONAL_SPACE_POLICY,
+          readPolicy: PERSONAL_SPACE_POLICY,
+          writePolicy: PERSONAL_SPACE_POLICY,
           appAccess: PERSONAL_SPACE_APP_ACCESS,
         });
         verdict = created.uri || space;
