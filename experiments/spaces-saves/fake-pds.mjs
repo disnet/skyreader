@@ -4,85 +4,101 @@
  * READ THIS BEFORE TRUSTING A GREEN RUN: this is our own reading of the alpha,
  * so a passing `--fake` run says nothing about how the real implementation
  * behaves. What it *does* prove is that the harness works — the client's request
- * shapes, the three-leg credential flow, the DPoP proofs (verified here with
- * WebCrypto, against the key the credential's `cnf.jkt` names), the record
+ * shapes, the three-leg credential flow, the HTTP message signatures (verified
+ * here with WebCrypto, against the did:key the credential's `cnf.kid` names), the record
  * mapping, and the fact that the script's privacy assertions actually fire. It
  * turns the live run against a real PDS into a protocol question rather than a
  * "does my script work" question.
  *
  * Implements only what the lifecycle touches:
  *   com.atproto.server.{createAccount,createSession}
- *   com.atproto.simplespace.{createSpace,getSpace}
+ *   com.atproto.simplespace.{createSpace,getSpace}  (spaceType + read/write policies)
  *   com.atproto.space.{getDelegationToken,getSpaceCredential,
  *                      createRecord,getRecord,listRecords,deleteRecord}
  */
 
 const enc = new TextEncoder();
 
-function b64url(bytes) {
-  return Buffer.from(bytes).toString('base64url');
-}
 function b64urlJson(value) {
   return Buffer.from(JSON.stringify(value)).toString('base64url');
 }
-function decodeJwt(jwt) {
-  const [header, payload] = jwt.split('.');
-  return {
-    header: JSON.parse(Buffer.from(header, 'base64url').toString()),
-    payload: JSON.parse(Buffer.from(payload, 'base64url').toString()),
-  };
-}
 
-async function sha256b64url(input) {
-  return b64url(new Uint8Array(await crypto.subtle.digest('SHA-256', enc.encode(input))));
-}
+const BASE58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 
-/** RFC 7638 thumbprint of an EC public JWK. */
-async function jkt(jwk) {
-  const canonical = JSON.stringify({ crv: jwk.crv, kty: jwk.kty, x: jwk.x, y: jwk.y });
-  return b64url(new Uint8Array(await crypto.subtle.digest('SHA-256', enc.encode(canonical))));
-}
-
-/** Verify a DPoP proof the way the alpha's `verifyDpopProof` does. */
-async function verifyDpopProof(proof, { htm, htu, credential, expectedJkt }) {
-  const [header, payload, signature] = proof.split('.');
-  const { header: h, payload: p } = decodeJwt(proof);
-  if (h.typ !== 'dpop+jwt' || h.alg !== 'ES256') throw error('BadDpopProof', 'bad proof header');
-
-  const key = await crypto.subtle.importKey(
-    'jwk',
-    { ...h.jwk, ext: true },
+/** P-256 `did:key` → WebCrypto verify key (Node imports compressed points as 'raw'). */
+async function importDidKey(did) {
+  if (typeof did !== 'string' || !did.startsWith('did:key:z')) {
+    throw error('BadSpaceSignature', 'signature key must be a P-256 did:key');
+  }
+  let n = 0n;
+  for (const c of did.slice('did:key:z'.length)) {
+    const i = BASE58.indexOf(c);
+    if (i < 0) throw error('BadSpaceSignature', 'bad did:key');
+    n = n * 58n + BigInt(i);
+  }
+  const bytes = [];
+  while (n > 0n) {
+    bytes.unshift(Number(n & 0xffn));
+    n >>= 8n;
+  }
+  if (bytes[0] !== 0x80 || bytes[1] !== 0x24 || bytes.length !== 35) {
+    throw error('BadSpaceSignature', 'signature key must be a P-256 did:key');
+  }
+  return crypto.subtle.importKey(
+    'raw',
+    Uint8Array.from(bytes.slice(2)),
     { name: 'ECDSA', namedCurve: 'P-256' },
-    true,
+    false,
     ['verify']
   );
-  const valid = await crypto.subtle.verify(
-    { name: 'ECDSA', hash: 'SHA-256' },
-    key,
-    Buffer.from(signature, 'base64url'),
-    enc.encode(`${header}.${payload}`)
-  );
-  if (!valid) throw error('BadDpopProofSignature', 'proof signature does not verify');
-  if (p.htm !== htm) throw error('BadDpopProof', 'htm mismatch');
+}
 
-  const normalized = new URL(htu);
-  if (p.htu !== normalized.origin + normalized.pathname) {
-    throw error('BadDpopProof', `htu mismatch: ${p.htu}`);
+/**
+ * Verify an `atproto-space` HTTP message signature the way the alpha's
+ * `verifySpaceSignature` does (@atproto/space 0.0.0-spaces-alpha-20261001173819).
+ * Without `keyId` (obtaining a credential) the signature must cover exactly
+ * `("authorization")` and name its key as `keyid`; with one (presenting a
+ * credential) it must cover `("authorization" "atproto-space-audience")` and
+ * verify under the credential's `cnf.kid`. Returns the signing key's did:key.
+ */
+async function verifySpaceSignature(headers, keyId) {
+  const input = /^atproto-space=(\([^)]*\))(.*)$/.exec(headers.get('signature-input') ?? '');
+  const signature = /^atproto-space=:([A-Za-z0-9+/=]+):$/.exec(headers.get('signature') ?? '');
+  if (!input || !signature) {
+    throw error('BadSpaceSignature', 'missing or malformed atproto-space signature');
   }
-  if (Math.abs(Math.floor(Date.now() / 1000) - p.iat) > 60) {
-    throw error('DpopProofExpired', 'iat outside the 60s window');
+  const [, components, params] = input;
+  const expected =
+    keyId === undefined ? '("authorization")' : '("authorization" "atproto-space-audience")';
+  if (components !== expected) {
+    throw error('BadSpaceSignature', `signature must cover exactly ${expected}`);
   }
-  if (credential === undefined) {
-    if (p.ath !== undefined) throw error('BadDpopProof', 'ath must be omitted when obtaining');
-  } else if (p.ath !== (await sha256b64url(credential))) {
-    throw error('BadDpopProof', 'ath does not match the credential');
+  const keyid = /;keyid="([^"]+)"/.exec(params)?.[1];
+  const signingKey = keyId ?? keyid;
+  if (keyId !== undefined && keyid !== undefined && keyid !== keyId) {
+    throw error('BadSpaceSignature', 'signature keyid does not match the credential key');
   }
 
-  const thumbprint = await jkt(h.jwk);
-  if (expectedJkt !== undefined && thumbprint !== expectedJkt) {
-    throw error('DpopKeyMismatch', 'proof is not signed by the bound key');
+  const authorization = headers.get('authorization') ?? '';
+  const lines = [`"authorization": ${authorization.trim()}`];
+  if (keyId !== undefined) {
+    const audience = headers.get('atproto-space-audience');
+    if (!audience) throw error('BadSpaceSignature', 'missing atproto-space-audience');
+    lines.push(`"atproto-space-audience": ${audience.trim()}`);
   }
-  return thumbprint;
+  lines.push(`"@signature-params": ${components}${params}`);
+
+  const bytes = Buffer.from(signature[1], 'base64');
+  const valid =
+    bytes.length === 64 &&
+    (await crypto.subtle.verify(
+      { name: 'ECDSA', hash: 'SHA-256' },
+      await importDidKey(signingKey),
+      bytes,
+      enc.encode(lines.join('\n'))
+    ));
+  if (!valid) throw error('BadSpaceSignature', 'invalid HTTP message signature');
+  return signingKey;
 }
 
 function error(code, message) {
@@ -94,10 +110,10 @@ function error(code, message) {
 export function createFakePds(origin = 'https://fake-spaces-pds.test') {
   const accounts = new Map(); // handle -> {did, password, accessJwt}
   const sessions = new Map(); // accessJwt -> did
-  const spaces = new Map(); // spaceUri -> {authority, policy, appAccess, members:Set}
+  const spaces = new Map(); // spaceUri -> {authority, readPolicy, writePolicy, appAccess, members:Set}
   const repos = new Map(); // `${space}|${did}|${collection}` -> Map<rkey, value>
   const delegations = new Map(); // token -> {did, space, used}
-  const credentials = new Map(); // credential -> {did, space, jkt, exp}
+  const credentials = new Map(); // credential -> {did, space, kid, exp}
 
   let counter = 0;
   const next = () => `${++counter}`;
@@ -119,24 +135,27 @@ export function createFakePds(origin = 'https://fake-spaces-pds.test') {
     if (!space.members.has(did)) throw error('UserNotAuthorized', 'not a member of this space');
   }
 
-  /** Space access via either a session (own repo) or a space credential. */
-  async function authorize(request, url, spaceUri) {
+  /**
+   * Space access via either a session (own repo) or a space credential. A
+   * credential read must be addressed to the repo being read (`audience`), as
+   * the alpha's `assertCredentialSpace` requires.
+   */
+  async function authorize(request, url, spaceUri, repo) {
     const auth = request.headers.get('authorization') ?? '';
     const space = requireSpace(spaceUri);
 
-    if (auth.startsWith('DPoP ')) {
-      const token = auth.slice(5);
+    if (/^atproto-space /i.test(auth)) {
+      const token = auth.slice('Atproto-Space '.length);
       const record = credentials.get(token);
       if (!record) throw error('InvalidCredential', 'unknown credential');
-      if (record.space !== spaceUri)
-        throw error('NotAuthorized', 'credential is for another space');
-      if (record.exp * 1000 < Date.now()) throw error('InvalidCredential', 'credential expired');
-      await verifyDpopProof(request.headers.get('dpop') ?? '', {
-        htm: request.method,
-        htu: url.toString(),
-        credential: token,
-        expectedJkt: record.jkt,
-      });
+      if (record.exp * 1000 < Date.now()) throw error('ExpiredToken', 'credential expired');
+      await verifySpaceSignature(request.headers, record.kid);
+      if (request.headers.get('atproto-space-audience') !== (repo ?? space.authority)) {
+        throw error('BadSpaceAudience', 'space audience does not match the request');
+      }
+      if (record.space !== spaceUri) {
+        throw error('InvalidCredential', 'Credential is not scoped to this space');
+      }
       assertMember(space, record.did);
       return record.did;
     }
@@ -166,11 +185,15 @@ export function createFakePds(origin = 'https://fake-spaces-pds.test') {
 
     'com.atproto.simplespace.createSpace': async (req, _url, body) => {
       const did = requireSession(req.headers);
-      const uri = `at://${did}/space/${body.type}/${body.skey ?? next()}`;
+      if (!body.spaceType || !body.readPolicy || !body.writePolicy || !body.appAccess) {
+        throw error('InvalidRequest', 'spaceType, readPolicy, writePolicy, appAccess required');
+      }
+      const uri = `at://${did}/space/${body.spaceType}/${body.skey ?? next()}`;
       if (spaces.has(uri)) throw error('SpaceAlreadyExists', 'already exists');
       spaces.set(uri, {
         authority: did,
-        policy: body.policy,
+        readPolicy: body.readPolicy,
+        writePolicy: body.writePolicy,
         appAccess: body.appAccess,
         // The owner of a personal space is a member by construction.
         members: new Set([did]),
@@ -182,7 +205,12 @@ export function createFakePds(origin = 'https://fake-spaces-pds.test') {
       requireSession(req.headers);
       const uri = url.searchParams.get('space');
       const space = requireSpace(uri);
-      return { uri, policy: space.policy, appAccess: space.appAccess };
+      return {
+        uri,
+        readPolicy: space.readPolicy,
+        writePolicy: space.writePolicy,
+        appAccess: space.appAccess,
+      };
     },
 
     'com.atproto.space.getDelegationToken': async (req, url) => {
@@ -212,20 +240,17 @@ export function createFakePds(origin = 'https://fake-spaces-pds.test') {
       const space = requireSpace(body.space);
       assertMember(space, delegation.did);
 
-      const thumbprint = await verifyDpopProof(req.headers.get('dpop') ?? '', {
-        htm: 'POST',
-        htu: url.toString(),
-      });
-      const exp = Math.floor(Date.now() / 1000) + 7200;
+      const kid = await verifySpaceSignature(req.headers);
+      const exp = Math.floor(Date.now() / 1000) + 600;
       const credential = `${b64urlJson({ typ: 'atproto-space-credential+jwt', alg: 'ES256' })}.${b64urlJson(
-        { iss: space.authority, sub: delegation.did, exp, cnf: { jkt: thumbprint } }
+        { iss: space.authority, sub: body.space, exp, jti: next(), cnf: { kid } }
       )}.sig`;
-      credentials.set(credential, { did: delegation.did, space: body.space, jkt: thumbprint, exp });
+      credentials.set(credential, { did: delegation.did, space: body.space, kid, exp });
       return { credential };
     },
 
     'com.atproto.space.createRecord': async (req, url, body) => {
-      const did = await authorize(req, url, body.space);
+      const did = await authorize(req, url, body.space, body.repo);
       if (did !== body.repo) throw error('NotAuthorized', 'can only write your own repo');
       const key = `${body.space}|${body.repo}|${body.collection}`;
       const collection = repos.get(key) ?? new Map();
@@ -242,7 +267,7 @@ export function createFakePds(origin = 'https://fake-spaces-pds.test') {
 
     'com.atproto.space.getRecord': async (req, url) => {
       const space = url.searchParams.get('space');
-      await authorize(req, url, space);
+      await authorize(req, url, space, url.searchParams.get('repo'));
       const collection = repos.get(
         `${space}|${url.searchParams.get('repo')}|${url.searchParams.get('collection')}`
       );
@@ -257,7 +282,7 @@ export function createFakePds(origin = 'https://fake-spaces-pds.test') {
 
     'com.atproto.space.listRecords': async (req, url) => {
       const space = url.searchParams.get('space');
-      await authorize(req, url, space);
+      await authorize(req, url, space, url.searchParams.get('repo'));
       const collectionName = url.searchParams.get('collection');
       const collection = repos.get(`${space}|${url.searchParams.get('repo')}|${collectionName}`);
       return {
@@ -271,7 +296,7 @@ export function createFakePds(origin = 'https://fake-spaces-pds.test') {
     },
 
     'com.atproto.space.deleteRecord': async (req, url, body) => {
-      const did = await authorize(req, url, body.space);
+      const did = await authorize(req, url, body.space, body.repo);
       if (did !== body.repo) throw error('NotAuthorized', 'can only write your own repo');
       repos.get(`${body.space}|${body.repo}|${body.collection}`)?.delete(body.rkey);
       return {};

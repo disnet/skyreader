@@ -11,7 +11,7 @@
           "type": "permission",
           "resource": "space",
           "spaceType": "app.skyreader.space.saved",
-          "authority": "*",
+          "authority": "self",
           "skey": "self",
           "collection": ["app.skyreader.feed.saved"],
           "action": ["read", "create", "update", "delete"],

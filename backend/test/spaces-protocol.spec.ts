@@ -1,10 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
+import { p256 } from '@noble/curves/nist.js';
 import {
-  createSpaceDpopProof,
-  generateSpaceDpopKey,
+  createSpaceSignatureHeaders,
+  generateSpaceSigningKey,
   jwtExpirySeconds,
-  normalizeHtu,
-} from '../src/services/spaces/dpop';
+  p256DidKey,
+} from '../src/services/spaces/http-signature';
 import {
   exchangeSpaceCredential,
   mintSpaceCredential,
@@ -28,70 +29,88 @@ import {
 } from '../src/services/spaces/transport';
 import { SAVED_SPACE_SKEY, SAVED_SPACE_TYPE, savedSpaceRef } from '../src/services/spaces/refs';
 
-// Wire-level coverage of the Spaces client: the DPoP proofs, the credential
-// exchange, and the exact request shapes we send. Method and parameter names are
-// pinned against @atproto/api@0.0.0-spaces-alpha-20260818163953 — if the alpha
-// renames something, these assertions are what notices.
+// Wire-level coverage of the Spaces client: the HTTP message signatures, the
+// credential exchange, and the exact request shapes we send. Method and parameter
+// names are pinned against @atproto/api@0.0.0-spaces-alpha-20261001173819 — if the
+// alpha renames something, these assertions are what notices.
 
 const DID = 'did:plc:spaceproto';
 const SPACE = savedSpaceRef(DID);
 
-function decodeJwtPart(part: string): Record<string, unknown> {
-  const padded = part.replace(/-/g, '+').replace(/_/g, '/');
-  return JSON.parse(atob(padded + '='.repeat((4 - (padded.length % 4)) % 4)));
+const BASE58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+
+/** Compressed P-256 public key out of a `did:key`, decoded independently of the encoder. */
+function didKeyPublicKey(did: string): Uint8Array {
+  expect(did.startsWith('did:key:z')).toBe(true);
+  let n = 0n;
+  for (const c of did.slice('did:key:z'.length)) n = n * 58n + BigInt(BASE58.indexOf(c));
+  const bytes: number[] = [];
+  while (n > 0n) {
+    bytes.unshift(Number(n & 0xffn));
+    n >>= 8n;
+  }
+  // multicodec p256-pub (0x1200) varint, then the 33-byte compressed point.
+  expect(bytes.slice(0, 2)).toEqual([0x80, 0x24]);
+  return Uint8Array.from(bytes.slice(2));
 }
 
-describe('space DPoP proofs', () => {
-  it('signs an ES256 proof carrying the bare public JWK', async () => {
-    const key = await generateSpaceDpopKey();
-    const proof = await createSpaceDpopProof(key, {
-      htm: 'POST',
-      htu: 'https://pds.test/xrpc/com.atproto.space.createRecord',
-    });
+/**
+ * The verifier side of `@atproto/space` `verifySpaceSignature`, enough to prove a
+ * signature checks out under the key it names.
+ */
+function verifySignatureHeaders(headers: Record<string, string>, keyDid: string): boolean {
+  const input = headers['signature-input'].replace(/^atproto-space=/, '');
+  const signature = /^atproto-space=:(.+):$/.exec(headers.signature)![1];
+  const lines = [`"authorization": ${headers.authorization}`];
+  if (headers['atproto-space-audience'] !== undefined) {
+    lines.push(`"atproto-space-audience": ${headers['atproto-space-audience']}`);
+  }
+  lines.push(`"@signature-params": ${input}`);
+  const sigBytes = Uint8Array.from(atob(signature), (c) => c.charCodeAt(0));
+  expect(sigBytes.length).toBe(64);
+  return p256.verify(
+    sigBytes,
+    new TextEncoder().encode(lines.join('\n')),
+    didKeyPublicKey(keyDid),
+    { lowS: false }
+  );
+}
 
-    const [header, payload, signature] = proof.split('.');
-    expect(signature).toBeTruthy();
-
-    const decodedHeader = decodeJwtPart(header) as { typ: string; alg: string; jwk: JsonWebKey };
-    expect(decodedHeader.typ).toBe('dpop+jwt');
-    expect(decodedHeader.alg).toBe('ES256');
-    expect(Object.keys(decodedHeader.jwk).sort()).toEqual(['crv', 'kty', 'x', 'y']);
-    // The private half must never ride along in the proof header.
-    expect((decodedHeader.jwk as Record<string, unknown>).d).toBeUndefined();
-
-    const decodedPayload = decodeJwtPart(payload);
-    expect(decodedPayload.htm).toBe('POST');
-    expect(decodedPayload.jti).toEqual(expect.any(String));
-    expect(decodedPayload.iat).toEqual(expect.any(Number));
+describe('space HTTP message signatures', () => {
+  it('names a fresh P-256 did:key', async () => {
+    const key = await generateSpaceSigningKey();
+    // `zDn` is the base58btc prefix every P-256 did:key shares.
+    expect(key.did).toMatch(/^did:key:zDn[1-9A-HJ-NP-Za-km-z]+$/);
+    expect(() => p256.Point.fromBytes(didKeyPublicKey(key.did))).not.toThrow();
+    expect(() => p256DidKey(new Uint8Array(33))).toThrow();
   });
 
-  it('strips query and fragment from htu (RFC 9449 §4.2)', async () => {
-    expect(normalizeHtu('https://pds.test/xrpc/com.atproto.space.listRecords?space=a&repo=b')).toBe(
-      'https://pds.test/xrpc/com.atproto.space.listRecords'
-    );
+  it('signs only the authorization header, with keyid, when obtaining a credential', async () => {
+    const key = await generateSpaceSigningKey();
+    const headers = await createSpaceSignatureHeaders(key, { authorization: 'Bearer deleg-1' });
 
-    const key = await generateSpaceDpopKey();
-    const proof = await createSpaceDpopProof(key, {
-      htm: 'GET',
-      htu: 'https://pds.test/xrpc/com.atproto.space.listRecords?space=a#frag',
-    });
-    expect(decodeJwtPart(proof.split('.')[1]).htu).toBe(
-      'https://pds.test/xrpc/com.atproto.space.listRecords'
-    );
+    expect(headers.authorization).toBe('Bearer deleg-1');
+    expect(headers['atproto-space-audience']).toBeUndefined();
+    expect(headers['signature-input']).toBe(`atproto-space=("authorization");keyid="${key.did}"`);
+    expect(verifySignatureHeaders(headers, key.did)).toBe(true);
   });
 
-  it('omits ath when obtaining a credential and includes it when presenting one', async () => {
-    const key = await generateSpaceDpopKey();
-
-    const obtaining = await createSpaceDpopProof(key, { htm: 'POST', htu: 'https://pds.test/x' });
-    expect(decodeJwtPart(obtaining.split('.')[1]).ath).toBeUndefined();
-
-    const presenting = await createSpaceDpopProof(key, {
-      htm: 'POST',
-      htu: 'https://pds.test/x',
-      credential: 'cred-abc',
+  it('signs authorization and audience, without keyid, when presenting one', async () => {
+    const key = await generateSpaceSigningKey();
+    const headers = await createSpaceSignatureHeaders(key, {
+      authorization: 'Atproto-Space cred-1',
+      audience: DID,
     });
-    expect(decodeJwtPart(presenting.split('.')[1]).ath).toEqual(expect.any(String));
+
+    expect(headers['atproto-space-audience']).toBe(DID);
+    expect(headers['signature-input']).toBe(
+      'atproto-space=("authorization" "atproto-space-audience")'
+    );
+    expect(verifySignatureHeaders(headers, key.did)).toBe(true);
+    // The audience is covered: retargeting the request breaks the signature.
+    expect(
+      verifySignatureHeaders({ ...headers, 'atproto-space-audience': 'did:plc:other' }, key.did)
+    ).toBe(false);
   });
 
   it('reads exp out of a credential without verifying it', () => {
@@ -105,8 +124,8 @@ describe('space DPoP proofs', () => {
 });
 
 describe('space credential exchange', () => {
-  it('presents the delegation token as Bearer with an ath-less DPoP proof', async () => {
-    const key = await generateSpaceDpopKey();
+  it('presents the delegation token as Bearer with a keyid-carrying signature', async () => {
+    const key = await generateSpaceSigningKey();
     const seen: { url?: string; init?: RequestInit } = {};
     const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       seen.url = String(url);
@@ -126,7 +145,9 @@ describe('space credential exchange', () => {
     expect(seen.url).toBe('https://pds.test/xrpc/com.atproto.space.getSpaceCredential');
     const headers = seen.init!.headers as Record<string, string>;
     expect(headers.authorization).toBe('Bearer deleg-1');
-    expect(decodeJwtPart(headers.dpop.split('.')[1]).ath).toBeUndefined();
+    expect(headers['signature-input']).toContain(`keyid="${key.did}"`);
+    expect(verifySignatureHeaders(headers, key.did)).toBe(true);
+    expect(headers.dpop).toBeUndefined();
     expect(JSON.parse(seen.init!.body as string)).toEqual({ space: SPACE });
   });
 
@@ -140,7 +161,7 @@ describe('space credential exchange', () => {
       authorityPdsUrl: 'https://pds.test',
       delegationToken: 'deleg-1',
       space: SPACE,
-      key: await generateSpaceDpopKey(),
+      key: await generateSpaceSigningKey(),
       fetchImpl,
     }).catch((e) => e);
 
@@ -151,7 +172,7 @@ describe('space credential exchange', () => {
 
   it('mints through both legs and caches until close to expiry', async () => {
     clearCredentialCache();
-    const exp = Math.floor(Date.now() / 1000) + 7200;
+    const exp = Math.floor(Date.now() / 1000) + 600;
     const token = `x.${btoa(JSON.stringify({ exp }))
       .replace(/\+/g, '-')
       .replace(/\//g, '_')
@@ -175,8 +196,8 @@ describe('space credential exchange', () => {
     expect(second).toBe(first);
     expect(getDelegationToken).toHaveBeenCalledTimes(1);
     expect(first.isFresh()).toBe(true);
-    // 2h TTL, read off the token rather than assumed.
-    expect(Math.round((first.expiresAt - Date.now()) / 1000)).toBeGreaterThan(7000);
+    // 10 min TTL, read off the token rather than assumed.
+    expect(Math.round((first.expiresAt - Date.now()) / 1000)).toBeGreaterThan(590);
   });
 
   it('re-mints once the cached credential is inside the expiry margin', async () => {
@@ -193,7 +214,7 @@ describe('space credential exchange', () => {
       issued++;
       return new Response(
         JSON.stringify({
-          credential: token(issued === 1 ? nearlyExpired : Math.floor(Date.now() / 1000) + 7200),
+          credential: token(issued === 1 ? nearlyExpired : Math.floor(Date.now() / 1000) + 600),
         }),
         { status: 200 }
       );
@@ -212,7 +233,7 @@ describe('space credential exchange', () => {
     expect(issued).toBe(2);
   });
 
-  it('mints a usable credential that authorizes a request with a bound proof', async () => {
+  it('mints a usable credential that authorizes a request with a bound signature', async () => {
     const token = 'cred-xyz';
     const fetchImpl = (async () =>
       new Response(JSON.stringify({ credential: token }), {
@@ -226,9 +247,10 @@ describe('space credential exchange', () => {
       fetchImpl,
     });
 
-    const headers = await credential.authorize('GET', 'https://pds.test/xrpc/x?y=1');
-    expect(headers.Authorization).toBe(`DPoP ${token}`);
-    expect(decodeJwtPart(headers.DPoP.split('.')[1]).ath).toEqual(expect.any(String));
+    const headers = await credential.authorize(DID);
+    expect(headers.authorization).toBe(`Atproto-Space ${token}`);
+    expect(headers['atproto-space-audience']).toBe(DID);
+    expect(verifySignatureHeaders(headers, credential.key.did)).toBe(true);
   });
 });
 
@@ -245,9 +267,10 @@ describe('SpacesClient request shapes', () => {
   it('creates a personal space that is member-list private with open app access', async () => {
     const { calls, client } = recording();
     await client.createSpace({
-      type: SAVED_SPACE_TYPE,
+      spaceType: SAVED_SPACE_TYPE,
       skey: SAVED_SPACE_SKEY,
-      policy: PERSONAL_SPACE_POLICY,
+      readPolicy: PERSONAL_SPACE_POLICY,
+      writePolicy: PERSONAL_SPACE_POLICY,
       appAccess: PERSONAL_SPACE_APP_ACCESS,
     });
 
@@ -255,9 +278,10 @@ describe('SpacesClient request shapes', () => {
       method: 'POST',
       endpoint: 'com.atproto.simplespace.createSpace',
       body: {
-        type: 'app.skyreader.space.saved',
+        spaceType: 'app.skyreader.space.saved',
         skey: 'self',
-        policy: { $type: 'com.atproto.simplespace.defs#memberListPolicy' },
+        readPolicy: { $type: 'com.atproto.simplespace.defs#memberListPolicy' },
+        writePolicy: { $type: 'com.atproto.simplespace.defs#memberListPolicy' },
         appAccess: { $type: 'com.atproto.simplespace.defs#open' },
       },
     });
@@ -348,10 +372,10 @@ describe('transports', () => {
     expect(isSpaceNotFound(error)).toBe(true);
   });
 
-  it('presents the credential as DPoP on every credential-authed call', async () => {
+  it('presents the credential as Atproto-Space, addressed to the audience', async () => {
     const credential = new SpaceCredential(
       'cred-1',
-      await generateSpaceDpopKey(),
+      await generateSpaceSigningKey(),
       Date.now() + 60_000
     );
     let seenHeaders: Record<string, string> = {};
@@ -361,11 +385,12 @@ describe('transports', () => {
       return new Response(JSON.stringify({ records: [] }), { status: 200 });
     }) as unknown as typeof fetch;
 
-    const call = credentialCall('https://host.test/', credential, fetchImpl);
+    const call = credentialCall('https://host.test/', credential, DID, fetchImpl);
     await call('GET', 'com.atproto.space.listRecords?space=x');
 
-    expect(seenHeaders.Authorization).toBe('DPoP cred-1');
-    expect(seenHeaders.DPoP).toEqual(expect.any(String));
+    expect(seenHeaders.authorization).toBe('Atproto-Space cred-1');
+    expect(seenHeaders['atproto-space-audience']).toBe(DID);
+    expect(verifySignatureHeaders(seenHeaders, credential.key.did)).toBe(true);
   });
 
   it('classifies the alpha error codes the spike branches on', async () => {
@@ -380,13 +405,14 @@ describe('transports', () => {
 
     const credential = new SpaceCredential(
       'cred-1',
-      await generateSpaceDpopKey(),
+      await generateSpaceSigningKey(),
       Date.now() + 60_000
     );
 
     const deniedError = await credentialCall(
       'https://host.test',
       credential,
+      DID,
       denied
     )('GET', 'com.atproto.space.listRecords?space=x').catch((e) => e);
     expect(isSpaceAccessDenied(deniedError)).toBe(true);
@@ -395,6 +421,7 @@ describe('transports', () => {
     const missingError = await credentialCall(
       'https://host.test',
       credential,
+      DID,
       missing
     )('GET', 'com.atproto.simplespace.getSpace?space=x').catch((e) => e);
     expect(isSpaceNotFound(missingError)).toBe(true);
