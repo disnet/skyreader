@@ -7,9 +7,9 @@
  *                     Enough to create a personal space and to write records into
  *                     your own repo inside it (the reference app does exactly
  *                     this), so the D1 mirror needs nothing more.
- *   credentialCall  — a DPoP-bound space credential, presented to any host serving
- *                     the space. What a *second* client needs to read the space —
- *                     i.e. the portability claim.
+ *   credentialCall  — a key-bound space credential (HTTP message signature),
+ *                     presented to any host serving the space. What a *second*
+ *                     client needs to read the space — i.e. the portability claim.
  *
  * Kept free of Workers/Env imports so `experiments/spaces-saves/` can run the
  * identical code on Node against a live spaces PDS.
@@ -58,16 +58,19 @@ export function sessionCall(client: SessionXrpcClient): XrpcCall {
 }
 
 /**
- * Space-credential auth against one host. The credential is re-authorized per
- * request because the DPoP proof binds method + URL (and carries a fresh `jti`),
- * so it cannot be built once and reused.
+ * Space-credential auth against one host, addressed to one `audience` DID: the
+ * repo being read for record methods, or the space authority for space-host
+ * methods (listRepos, registerNotify, …). The PDS rejects a mismatch with
+ * `BadSpaceAudience`, so a client reading several members' repos needs one call
+ * per repo.
  */
 export function credentialCall(
   host: string,
   credential: SpaceCredential,
+  audience: string,
   fetchImpl: typeof fetch = fetch
 ): XrpcCall {
-  return httpCall(host, (method, url) => credential.authorize(method, url), fetchImpl);
+  return httpCall(host, () => credential.authorize(audience), fetchImpl);
 }
 
 /**

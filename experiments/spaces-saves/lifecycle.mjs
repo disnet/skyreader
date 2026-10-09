@@ -160,9 +160,10 @@ async function main() {
   let s = step('createSpace (member-list policy, open app access)');
   try {
     const created = await ownerClient.createSpace({
-      type: SAVED_SPACE_TYPE,
+      spaceType: SAVED_SPACE_TYPE,
       skey: SAVED_SPACE_SKEY,
-      policy: PERSONAL_SPACE_POLICY,
+      readPolicy: PERSONAL_SPACE_POLICY,
+      writePolicy: PERSONAL_SPACE_POLICY,
       appAccess: PERSONAL_SPACE_APP_ACCESS,
     });
     s.ok(created.uri);
@@ -177,7 +178,9 @@ async function main() {
   s = step('getSpace');
   try {
     const view = await ownerClient.getSpace(space);
-    s.ok(`${view.policy?.$type} / ${view.appAccess?.$type}`);
+    s.ok(
+      `read ${view.readPolicy?.$type} / write ${view.writePolicy?.$type} / ${view.appAccess?.$type}`
+    );
   } catch (error) {
     s.fail(error);
   }
@@ -257,7 +260,7 @@ async function main() {
 
   console.log('\nportability (the point of the spike)');
 
-  s = step('owner mints a space credential (delegation -> credential -> DPoP)');
+  s = step('owner mints a space credential (delegation -> credential -> HTTP signature)');
   let credential;
   try {
     const startedAt = Date.now();
@@ -276,8 +279,9 @@ async function main() {
   try {
     if (!credential) throw new Error('no credential');
     // Nothing of the owner's session is in play here — just the credential and
-    // the key it is bound to. This is the portability claim, executed.
-    const independent = new SpacesClient(credentialCall(PDS_URL, credential));
+    // the key it is bound to. This is the portability claim, executed. The
+    // audience is the repo being read (the owner's), not the PDS.
+    const independent = new SpacesClient(credentialCall(PDS_URL, credential, owner.did));
     const fetched = await independent.getRecord({
       space,
       repo: owner.did,

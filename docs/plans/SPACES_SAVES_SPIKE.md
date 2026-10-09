@@ -49,7 +49,7 @@ One personal space per user, owned by the user:
 | ----------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
 | Protocol lifecycle experiment (11 checks, incl. outsider-denial and the portability read) | `experiments/spaces-saves/`                                            |
 | Record lexicon (metadata-only) + the OAuth permission set                                 | `lexicons/app/skyreader/feed/saved.json`, `.../space/savedAccess.json` |
-| Space refs, record mapping, DPoP, credential flow, XRPC client, transports                | `backend/src/services/spaces/`                                         |
+| Space refs, record mapping, HTTP signatures, credential flow, XRPC client, transports     | `backend/src/services/spaces/`                                         |
 | Flag gate, capability probe, mirror hooks                                                 | `backend/src/services/spaces/mirror.ts`                                |
 | Dual-write on save/delete                                                                 | `backend/src/routes/saved.ts`                                          |
 | Dev read-back diff                                                                        | `GET /api/dev/spaces/saved-diff` (`backend/src/routes/dev-spaces.ts`)  |
@@ -66,15 +66,23 @@ Three findings changed the plan (details and citations in FINDINGS.md):
 
 1. **Writing to your own repo in a space needs no space credential** — plain
    session auth against your own PDS. So the mirror is an ordinary authenticated
-   XRPC POST. The credential flow (delegation → credential → DPoP, 2 round trips,
-   2h reusable credential) is needed only for reading a space from somewhere that
-   isn't the author's session — which is precisely the portability proof.
-2. **There is no `space:` OAuth scope.** Access is requested as
-   `include:<nsid>` naming a **permission-set lexicon**. Ours is committed as
-   `app.skyreader.space.savedAccess`, and is deliberately _not_ requested by the
-   live OAuth flow.
-3. **`createSpace` takes no member list** — policy and app access only, membership
-   afterwards. A personal space needs no `addMember` call.
+   XRPC POST. The credential flow (delegation → credential → HTTP message
+   signature, 2 round trips, 10-minute reusable credential) is needed only for
+   reading a space from somewhere that isn't the author's session — which is
+   precisely the portability proof.
+2. **Space access is requested through a permission set.** As
+   `include:<nsid>` naming a **permission-set lexicon** — the reference app's
+   shape, though a bare `space:` scope also parses. Ours is committed as
+   `app.skyreader.space.savedAccess` (`authority: self`), and is deliberately
+   _not_ requested by the live OAuth flow.
+3. **`createSpace` takes no member list** — read/write policies and app access
+   only, membership afterwards. A personal space needs no `putMember` call.
+
+The alpha has broken the wire format twice since the spike was written (read/write
+policies and `putMember` in September; `spaceType`, and HTTP message signatures
+replacing DPoP for credentials, in October). The client tracks
+`0.0.0-spaces-alpha-20261001173819`; FINDINGS.md lists each change. That churn is
+itself evidence for the recommendation below.
 
 ## Demo checklist
 
