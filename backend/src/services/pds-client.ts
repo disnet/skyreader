@@ -150,6 +150,12 @@ interface RequestOptions {
    * getTimeline can be read on the user's behalf. Needs a matching `rpc:` scope.
    */
   proxy?: string;
+  /**
+   * Accept a 2xx with an empty body as success (`{}`), rather than failing the
+   * JSON parse. Void XRPC procedures may answer that way; the typed helpers
+   * don't need it, so it's opt-in.
+   */
+  allowEmptyBody?: boolean;
 }
 
 /** The Bluesky appview, as a service-proxy target. */
@@ -423,7 +429,13 @@ export class PDSClient {
         };
       }
 
-      const data = (await response.json()) as T;
+      let data: T;
+      if (opts.allowEmptyBody) {
+        const text = await response.text();
+        data = (text ? JSON.parse(text) : {}) as T;
+      } else {
+        data = (await response.json()) as T;
+      }
       console.log(`[PDSClient] ${method} ${endpoint} succeeded`);
       return { result: { success: true, data }, staleEndpoint: false };
     } catch (error) {
@@ -455,7 +467,7 @@ export class PDSClient {
     endpoint: string,
     body?: unknown
   ): Promise<PDSResult<T>> {
-    return this.request<T>(method, endpoint, body);
+    return this.request<T>(method, endpoint, body, { allowEmptyBody: true });
   }
 
   /**

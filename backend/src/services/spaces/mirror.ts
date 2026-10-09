@@ -23,7 +23,9 @@ import { savedRowToSpaceRecord, type SavedRowForSpace } from './record';
 import { SAVED_COLLECTION, SAVED_SPACE_SKEY, SAVED_SPACE_TYPE, savedSpaceRef } from './refs';
 import {
   isSpaceAccessDenied,
+  isSpaceAlreadyExists,
   isSpaceNotFound,
+  isSpaceRequestRejected,
   isSpacesUnsupported,
   sessionCall,
 } from './transport';
@@ -42,9 +44,12 @@ interface CapabilityVerdict {
   /** The space ref, or null when this PDS can't host one. */
   space: string | null;
   checkedAt: number;
+  ttlMs: number;
 }
 
 const CAPABILITY_TTL_MS = 10 * 60 * 1000;
+/** For verdicts we can't fully trust (an ambiguous `InvalidRequest`). */
+const SHORT_CAPABILITY_TTL_MS = 60 * 1000;
 const capabilityCache = new Map<string, CapabilityVerdict>();
 
 /** Test seam. */
@@ -62,25 +67,33 @@ export function clearSpaceCapabilityCache(): void {
  *
  * Returns null for "not available", which covers both "this PDS doesn't do
  * Spaces" and "the call failed" — the caller treats them identically.
+ *
+ * `create: false` makes this a pure probe (for read-only callers like the diff
+ * route): a missing space returns null, uncached, instead of being created.
  */
 export async function ensureSavedSpace(
   session: Session,
-  client: SpacesClient = spacesClientForSession(session)
+  client: SpacesClient = spacesClientForSession(session),
+  { create = true }: { create?: boolean } = {}
 ): Promise<string | null> {
   const cached = capabilityCache.get(session.did);
-  if (cached && Date.now() - cached.checkedAt < CAPABILITY_TTL_MS) {
+  if (cached && Date.now() - cached.checkedAt < cached.ttlMs) {
     return cached.space;
   }
 
   const space = savedSpaceRef(session.did);
   let verdict: string | null = null;
   let cacheVerdict = true;
+  let ttlMs = CAPABILITY_TTL_MS;
 
   try {
     await client.getSpace(space);
     verdict = space;
   } catch (error) {
-    if (isSpaceNotFound(error)) {
+    if (isSpaceNotFound(error) && !create) {
+      // Read-only probe: nothing to report yet, and nothing worth caching.
+      cacheVerdict = false;
+    } else if (isSpaceNotFound(error)) {
       try {
         const created = await client.createSpace({
           spaceType: SAVED_SPACE_TYPE,
@@ -91,17 +104,29 @@ export async function ensureSavedSpace(
         });
         verdict = created.uri || space;
       } catch (createError) {
-        // Creation may have failed after the capability probe succeeded. Let a
-        // later save retry instead of turning that outage into a negative TTL.
-        cacheVerdict = false;
-        console.warn('[spaces] createSpace failed', describe(createError));
+        if (isSpaceAlreadyExists(createError)) {
+          // A concurrent save created it between our probe and our create.
+          verdict = space;
+        } else {
+          // Creation may have failed after the capability probe succeeded. Let a
+          // later save retry instead of turning that outage into a negative TTL.
+          cacheVerdict = false;
+          console.warn('[spaces] createSpace failed', describe(createError));
+        }
       }
     } else if (isSpacesUnsupported(error)) {
       // Expected for ordinary PDSes. Cache this so a developer with the spike
       // enabled pays for the capability probe only once per TTL.
       console.warn('[spaces] PDS does not support Spaces', describe(error));
     } else if (isSpaceAccessDenied(error)) {
+      // Includes an OAuth session with no space scope — stable for the TTL.
       console.warn('[spaces] getSpace unavailable', describe(error));
+    } else if (isSpaceRequestRejected(error)) {
+      // Either an ordinary PDS refusing an unknown method, or a Spaces PDS
+      // rejecting our parameters (e.g. a space-ref format change between alpha
+      // releases). Don't claim which; cache briefly so neither case floods.
+      ttlMs = SHORT_CAPABILITY_TTL_MS;
+      console.warn('[spaces] getSpace rejected the request', describe(error));
     } else {
       // A network or server failure says nothing about capability. Do not turn
       // it into a ten-minute negative verdict; the next save should retry.
@@ -110,7 +135,9 @@ export async function ensureSavedSpace(
     }
   }
 
-  if (cacheVerdict) capabilityCache.set(session.did, { space: verdict, checkedAt: Date.now() });
+  if (cacheVerdict) {
+    capabilityCache.set(session.did, { space: verdict, checkedAt: Date.now(), ttlMs });
+  }
   return verdict;
 }
 
@@ -133,11 +160,14 @@ export async function mirrorSaveToSpace(env: Env, session: Session, rkey: string
 
     if (!row) return;
 
-    const space = await ensureSavedSpace(session);
+    // One client for the probe and the write, so the DPoP nonce learned on the
+    // first call is reused instead of re-challenged.
+    const client = spacesClientForSession(session);
+    const space = await ensureSavedSpace(session, client);
     if (!space) return;
 
     const record = savedRowToSpaceRecord(row);
-    await spacesClientForSession(session).putRecord({
+    await client.putRecord({
       space,
       repo: session.did,
       collection: SAVED_COLLECTION,
@@ -146,6 +176,18 @@ export async function mirrorSaveToSpace(env: Env, session: Session, rkey: string
       rkey: row.rkey,
       record: record as unknown as Record<string, unknown>,
     });
+
+    // Mirror writes and deletes run as unordered waitUntil tasks, so an unsave
+    // can finish its deleteRecord before this put lands. Re-check D1 and retract
+    // the record if the save is already gone — D1 is canonical.
+    const stillSaved = await env.DB.prepare(
+      'SELECT 1 FROM saved_articles WHERE user_did = ? AND rkey = ?'
+    )
+      .bind(session.did, rkey)
+      .first();
+    if (!stillSaved) {
+      await client.deleteRecord({ space, repo: session.did, collection: SAVED_COLLECTION, rkey });
+    }
   } catch (error) {
     console.warn('[spaces] mirrorSaveToSpace failed', { rkey, error: describe(error) });
   }
@@ -160,10 +202,11 @@ export async function mirrorDeleteFromSpace(
   if (!spacesSavesEnabled(env)) return;
 
   try {
-    const space = await ensureSavedSpace(session);
+    const client = spacesClientForSession(session);
+    const space = await ensureSavedSpace(session, client);
     if (!space) return;
 
-    await spacesClientForSession(session).deleteRecord({
+    await client.deleteRecord({
       space,
       repo: session.did,
       collection: SAVED_COLLECTION,

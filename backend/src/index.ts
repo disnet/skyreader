@@ -749,7 +749,8 @@ async function route(
     case url.pathname === '/api/dev/spaces/saved-diff' &&
       env.SPACES_SAVES_ENABLED === 'true' &&
       request.method === 'GET':
-      response = await handleSpacesSavedDiff(request, env);
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleSpacesSavedDiff(env, session);
       break;
 
     // Saved routes
