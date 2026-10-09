@@ -14,7 +14,7 @@
  *   com.atproto.server.{createAccount,createSession}
  *   com.atproto.simplespace.{createSpace,getSpace}  (spaceType + read/write policies)
  *   com.atproto.space.{getDelegationToken,getSpaceCredential,
- *                      createRecord,getRecord,listRecords,deleteRecord}
+ *                      createRecord,putRecord,getRecord,listRecords,deleteRecord}
  */
 
 const enc = new TextEncoder();
@@ -260,6 +260,23 @@ export function createFakePds(origin = 'https://fake-spaces-pds.test') {
       repos.set(key, collection);
       return {
         uri: `${body.space}/${body.repo}/${body.collection}/${rkey}`,
+        cid: `cid-${next()}`,
+        validationStatus: 'unknown',
+      };
+    },
+
+    // What the backend mirror actually writes with: an upsert at a caller-chosen
+    // rkey, so a replayed save is idempotent rather than RecordAlreadyExists.
+    'com.atproto.space.putRecord': async (req, url, body) => {
+      const did = await authorize(req, url, body.space, body.repo);
+      if (did !== body.repo) throw error('NotAuthorized', 'can only write your own repo');
+      if (!body.rkey) throw error('InvalidRequest', 'rkey required');
+      const key = `${body.space}|${body.repo}|${body.collection}`;
+      const collection = repos.get(key) ?? new Map();
+      collection.set(body.rkey, body.record);
+      repos.set(key, collection);
+      return {
+        uri: `${body.space}/${body.repo}/${body.collection}/${body.rkey}`,
         cid: `cid-${next()}`,
         validationStatus: 'unknown',
       };

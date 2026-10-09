@@ -9,7 +9,7 @@ app's client code — at the pinned versions in the next section. Everything mar
 _unverified_ needs a run of `npm run lifecycle` against a real spaces PDS, which
 has not happened yet: this environment has no Docker and no BPS invite, and
 `@atproto/pds@alpha` will not resolve here. The harness is written and green
-against an in-process fake (`npm run lifecycle:fake`, 11/11), so the live run is
+against an in-process fake (`npm run lifecycle:fake`, 12/12 — it writes with `putRecord`, the call the backend mirror uses), so the live run is
 a protocol question, not a "does the script work" question.
 
 ## Pinned versions
