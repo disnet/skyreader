@@ -48,12 +48,40 @@ function toIso(epochMs: number | null | undefined): string | undefined {
   return date.toISOString();
 }
 
-/** Empty strings are as absent as nulls, and an absent field is left off entirely. */
-function text(value: string | null | undefined, max: number): string | undefined {
+const utf8 = new TextEncoder();
+
+/**
+ * Empty strings are as absent as nulls, and an absent field is left off entirely.
+ *
+ * Lexicon `maxLength` counts UTF-8 bytes, not UTF-16 code units, so the cap is
+ * applied in bytes — and only at a code point boundary, so a cut never leaves
+ * half a surrogate pair behind.
+ */
+function text(value: string | null | undefined, maxBytes: number): string | undefined {
   if (typeof value !== 'string') return undefined;
   const trimmed = value.trim();
   if (!trimmed) return undefined;
-  return trimmed.length > max ? trimmed.slice(0, max) : trimmed;
+  if (utf8.encode(trimmed).length <= maxBytes) return trimmed;
+
+  let out = '';
+  let bytes = 0;
+  for (const char of trimmed) {
+    const size = utf8.encode(char).length;
+    if (bytes + size > maxBytes) break;
+    out += char;
+    bytes += size;
+  }
+  return out;
+}
+
+/**
+ * A URI is either whole or absent: a truncated URL is a different, broken link
+ * that the diff would then report as "in sync". Over the cap, leave it off.
+ */
+function uri(value: string | null | undefined, maxBytes: number): string | undefined {
+  const trimmed = text(value, Number.MAX_SAFE_INTEGER);
+  if (!trimmed) return undefined;
+  return utf8.encode(trimmed).length <= maxBytes ? trimmed : undefined;
 }
 
 /**
@@ -71,7 +99,7 @@ export function savedRowToSpaceRecord(row: SavedRowForSpace): SavedSpaceRecord {
     savedAt: toIso(row.saved_at) ?? new Date().toISOString(),
   };
 
-  const url = text(row.url, 2048);
+  const url = uri(row.url, 2048);
   if (url) record.url = url;
   const title = text(row.title, 1024);
   if (title) record.title = title;
@@ -83,7 +111,7 @@ export function savedRowToSpaceRecord(row: SavedRowForSpace): SavedSpaceRecord {
   if (contentType) record.contentType = contentType;
   const domain = text(row.domain, 512);
   if (domain) record.domain = domain;
-  const image = text(row.image, 2048);
+  const image = uri(row.image, 2048);
   if (image) record.image = image;
   const source = text(row.source, 64);
   if (source) record.source = source;

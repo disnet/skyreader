@@ -15,8 +15,8 @@ import type { Env, Session } from '../types';
 import { diffSavedRecords } from '../services/spaces/record';
 import { SAVED_COLLECTION } from '../services/spaces/refs';
 import {
-  ensureSavedSpace,
   readSavedRowsForSpace,
+  resolveSavedSpace,
   spacesClientForSession,
   spacesSavesEnabled,
 } from '../services/spaces/mirror';
@@ -35,17 +35,25 @@ export async function handleSpacesSavedDiff(env: Env, session: Session): Promise
 
   // A GET only reads: probe for the space, never create it.
   const client = spacesClientForSession(session);
-  const space = await ensureSavedSpace(session, client, { create: false });
+  const { space, status } = await resolveSavedSpace(session, client, { create: false });
   if (!space) {
     // The honest answer for every production PDS today, and the one a developer
     // pointed at bsky.social should see rather than an empty diff that looks fine.
+    // A failed probe says nothing about the space, so it isn't reported as absent.
+    const message: Record<Exclude<typeof status, 'available'>, string> = {
+      missing: 'No Skyreader saved-space exists yet — save an article first.',
+      unsupported: "This session's PDS does not support atproto Spaces.",
+      denied: "This session isn't authorized for the saved-space (missing space scope?).",
+      rejected: 'The PDS rejected the space probe (a Spaces alpha wire-format change?).',
+      failed: 'The space probe failed (network or PDS error); try again.',
+    };
     return json(
       {
-        error: 'spaces_unavailable',
-        message:
-          "This session's PDS does not host a Skyreader saved-space (or none has been created yet — save an article first).",
+        error: status === 'failed' ? 'space_probe_failed' : 'spaces_unavailable',
+        status,
+        message: message[status as Exclude<typeof status, 'available'>],
       },
-      503
+      status === 'failed' ? 502 : 503
     );
   }
 

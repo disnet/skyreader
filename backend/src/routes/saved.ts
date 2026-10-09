@@ -21,11 +21,7 @@ import {
 import { hasIntegrationScopes } from './integrations';
 import { normalizeArticleUrl } from '../utils/url-normalize';
 import { chunkArray } from './reading';
-import {
-  mirrorDeleteFromSpace,
-  mirrorSaveToSpace,
-  spacesSavesEnabled,
-} from '../services/spaces/mirror';
+import { mirrorDeleteFromSpace, mirrorSaveToSpace } from '../services/spaces/mirror';
 
 const COLLECTION = 'app.skyreader.feed.saved';
 
@@ -1280,16 +1276,20 @@ export async function handleDeleteSavedByGuid(
   }
 
   try {
-    const row = await env.DB.prepare(
+    // item_guid isn't unique per user, so the DELETE below can remove several
+    // saves. Read them all in one query: the first is the guard row, and (spike)
+    // every rkey is needed so each mirrored space record is retracted.
+    const { results: rows } = await env.DB.prepare(
       'SELECT rkey, record_uri, item_guid, url_normalized FROM saved_articles WHERE user_did = ? AND item_guid = ?'
     )
       .bind(session.did, guid)
-      .first<{
+      .all<{
         rkey: string;
         record_uri: string | null;
         item_guid: string | null;
         url_normalized: string | null;
       }>();
+    const row = rows[0];
 
     if (!row) {
       return new Response(JSON.stringify({ error: 'Not found' }), {
@@ -1298,29 +1298,20 @@ export async function handleDeleteSavedByGuid(
       });
     }
 
-    // item_guid isn't unique per user, so the DELETE below can remove several
-    // saves. Spike: collect every rkey first so each mirrored space record is
-    // retracted, not just the first row's. Skipped entirely with the flag off.
-    const mirroredRkeys = spacesSavesEnabled(env)
-      ? (
-          await env.DB.prepare(
-            'SELECT rkey FROM saved_articles WHERE user_did = ? AND item_guid = ?'
-          )
-            .bind(session.did, guid)
-            .all<{ rkey: string }>()
-        ).results.map((r) => r.rkey)
-      : [];
-
     // Delete the enrichment row from D1
     await env.DB.prepare('DELETE FROM saved_articles WHERE user_did = ? AND item_guid = ?')
       .bind(session.did, guid)
       .run();
 
     // Spike: retract the mirrored space records (keyed by the rows' rkeys, which
-    // are the space records' rkeys too). Flag-gated, best-effort.
-    for (const rkey of mirroredRkeys) {
-      ctx.waitUntil(mirrorDeleteFromSpace(env, session, rkey));
-    }
+    // are the space records' rkeys too) in one task. Flag-gated, best-effort.
+    ctx.waitUntil(
+      mirrorDeleteFromSpace(
+        env,
+        session,
+        rows.map((r) => r.rkey)
+      )
+    );
 
     const settings = await getUserSettings(env, session.did);
     if (settings.backing.provider !== 'skyreader' && row.url_normalized) {

@@ -187,16 +187,31 @@ async function main() {
 
   const record = savedRowToSpaceRecord(sampleRow(rkey));
 
-  s = step('createRecord (session auth, own repo)');
+  // putRecord, not createRecord: it is what the backend mirror writes with.
+  s = step('putRecord (session auth, own repo)');
   try {
-    const created = await ownerClient.createRecord({
+    const put = await ownerClient.putRecord({
       space,
       repo: owner.did,
       collection: SAVED_COLLECTION,
       rkey,
       record,
     });
-    s.ok(`${created.uri} (validation: ${created.validationStatus ?? 'n/a'})`);
+    s.ok(`${put.uri} (validation: ${put.validationStatus ?? 'n/a'})`);
+  } catch (error) {
+    s.fail(error);
+  }
+
+  s = step('putRecord replay is an idempotent upsert');
+  try {
+    await ownerClient.putRecord({
+      space,
+      repo: owner.did,
+      collection: SAVED_COLLECTION,
+      rkey,
+      record,
+    });
+    s.ok('second put at the same rkey accepted');
   } catch (error) {
     s.fail(error);
   }

@@ -104,6 +104,26 @@ describe('savedRowToSpaceRecord', () => {
     expect(record.savedAt).toBeTruthy();
   });
 
+  it('caps text in UTF-8 bytes, as lexicon maxLength counts them', () => {
+    // 1000 CJK chars: under a 1024 code-unit cap, but 3000 UTF-8 bytes.
+    const record = savedRowToSpaceRecord(row({ title: '字'.repeat(1000) }));
+    const bytes = new TextEncoder().encode(record.title).length;
+    expect(bytes).toBeLessThanOrEqual(1024);
+    expect(record.title).toBe('字'.repeat(341));
+  });
+
+  it('never splits a surrogate pair when capping', () => {
+    const record = savedRowToSpaceRecord(row({ title: 'a' + '😀'.repeat(400) }));
+    expect(record.title).toBe('a' + '😀'.repeat(255));
+  });
+
+  it('drops an over-long URL instead of storing a truncated, broken one', () => {
+    const long = 'https://example.com/' + 'a'.repeat(2100);
+    const record = savedRowToSpaceRecord(row({ url: long, image: long }));
+    expect(record.url).toBeUndefined();
+    expect(record.image).toBeUndefined();
+  });
+
   it('rounds a fractional word count and drops a negative one', () => {
     expect(savedRowToSpaceRecord(row({ word_count: 10.6 })).wordCount).toBe(11);
     expect('wordCount' in savedRowToSpaceRecord(row({ word_count: -1 }))).toBe(false);
