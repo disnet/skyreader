@@ -55,7 +55,11 @@ import {
 } from '../services/jobs';
 import { log, serializeError } from '../utils/logger';
 import { reportError } from '../observability/sentry';
-import { mirrorDeleteFromSpace, mirrorSaveToSpace } from '../services/spaces/mirror';
+import {
+  mirrorDeleteFromSpace,
+  mirrorSaveToSpace,
+  spacesSavesEnabled,
+} from '../services/spaces/mirror';
 
 const COLLECTION = 'app.skyreader.feed.saved';
 
@@ -1577,6 +1581,19 @@ export async function handleDeleteSavedByGuid(
       });
     }
 
+    // item_guid isn't unique per user, so the DELETE below can remove several
+    // saves. Spike: collect every rkey first so each mirrored space record is
+    // retracted, not just the first row's. Skipped entirely with the flag off.
+    const mirroredRkeys = spacesSavesEnabled(env)
+      ? (
+          await env.DB.prepare(
+            'SELECT rkey FROM saved_articles WHERE user_did = ? AND item_guid = ?'
+          )
+            .bind(session.did, guid)
+            .all<{ rkey: string }>()
+        ).results.map((r) => r.rkey)
+      : [];
+
     // Delete the enrichment row from D1
     await env.DB.prepare('DELETE FROM saved_articles WHERE user_did = ? AND item_guid = ?')
       .bind(session.did, guid)
@@ -1593,9 +1610,11 @@ export async function handleDeleteSavedByGuid(
       { session, ctx }
     );
 
-    // Spike: retract the mirrored space record (keyed by the row's rkey, which is
-    // the space record's rkey too). Flag-gated, best-effort.
-    ctx.waitUntil(mirrorDeleteFromSpace(env, session, row.rkey));
+    // Spike: retract the mirrored space records (keyed by the rows' rkeys, which
+    // are the space records' rkeys too). Flag-gated, best-effort.
+    for (const rkey of mirroredRkeys) {
+      ctx.waitUntil(mirrorDeleteFromSpace(env, session, rkey));
+    }
 
     const settings = await getUserSettings(env, session.did);
     if (settings.backing.provider !== 'skyreader' && row.url_normalized) {
