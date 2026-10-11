@@ -16,6 +16,12 @@ export interface TierLimits {
    * and again on every inbound message, so a lapsed plan stops ingesting.
    */
   newsletterInbox: boolean;
+  /**
+   * Full-text search over everything the reader has read, saved or highlighted
+   * (durable-objects/search-index.ts). Checked on every search and before any
+   * write nudges the index, so a lapsed plan stops both.
+   */
+  fullTextSearch: boolean;
 }
 
 const TIER_MAP: Record<string, TierLimits> = {
@@ -24,12 +30,14 @@ const TIER_MAP: Record<string, TierLimits> = {
     maxMirroredSubscriptions: 1000,
     maxUrlSavesPerMonth: 100,
     newsletterInbox: false,
+    fullTextSearch: false,
   },
   supporter: {
     maxSubscriptions: 1000,
     maxMirroredSubscriptions: 5000,
     maxUrlSavesPerMonth: 1000,
     newsletterInbox: true,
+    fullTextSearch: true,
   },
 };
 

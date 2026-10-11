@@ -14,6 +14,7 @@ describe('Tier Limits Config', () => {
         maxMirroredSubscriptions: 1000,
         maxUrlSavesPerMonth: 100,
         newsletterInbox: false,
+        fullTextSearch: false,
       });
     });
 
@@ -24,6 +25,7 @@ describe('Tier Limits Config', () => {
         maxMirroredSubscriptions: 5000,
         maxUrlSavesPerMonth: 1000,
         newsletterInbox: true,
+        fullTextSearch: true,
       });
     });
 
@@ -34,6 +36,7 @@ describe('Tier Limits Config', () => {
         maxMirroredSubscriptions: 1000,
         maxUrlSavesPerMonth: 100,
         newsletterInbox: false,
+        fullTextSearch: false,
       });
     });
 
@@ -44,6 +47,7 @@ describe('Tier Limits Config', () => {
         maxMirroredSubscriptions: 1000,
         maxUrlSavesPerMonth: 100,
         newsletterInbox: false,
+        fullTextSearch: false,
       });
     });
   });
@@ -207,6 +211,7 @@ describe('User Tier Service', () => {
         maxMirroredSubscriptions: 1000,
         maxUrlSavesPerMonth: 100,
         newsletterInbox: false,
+        fullTextSearch: false,
       });
     });
 
@@ -223,6 +228,7 @@ describe('User Tier Service', () => {
         maxMirroredSubscriptions: 5000,
         maxUrlSavesPerMonth: 1000,
         newsletterInbox: true,
+        fullTextSearch: true,
       });
     });
 
@@ -233,6 +239,7 @@ describe('User Tier Service', () => {
         maxMirroredSubscriptions: 1000,
         maxUrlSavesPerMonth: 100,
         newsletterInbox: false,
+        fullTextSearch: false,
       });
     });
   });
