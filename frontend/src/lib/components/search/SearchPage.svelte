@@ -56,8 +56,8 @@
     searchStore.setSurfaceActive(true);
     const q = page.url.searchParams.get('q') ?? '';
     const kind = page.url.searchParams.get('kind') as SearchKind | null;
-    if (kind && KINDS.some((k) => k.value === kind)) searchStore.setKind(kind);
-    if (q && q !== searchStore.query) {
+    if (available && kind && KINDS.some((k) => k.value === kind)) searchStore.setKind(kind);
+    if (available && q && q !== searchStore.query) {
       searchStore.setQuery(q);
       searchStore.submit();
     }

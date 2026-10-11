@@ -75,7 +75,8 @@ function createSearchStore() {
       const response = await api.search({
         q,
         kinds: kind ? [kind] : undefined,
-        limit: PAGE_SIZE,
+        // A poll re-asks for everything already shown, so "More results" survives it.
+        limit: opts.poll ? Math.min(Math.max(PAGE_SIZE, results.length), 50) : PAGE_SIZE,
         signal: controller.signal,
       });
       if (mine !== ticket) return;
