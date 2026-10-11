@@ -139,7 +139,12 @@ function blueskyPostRef(url: string): { actor: string; rkey: string } | null {
   if (parsed.hostname !== 'bsky.app' && parsed.hostname !== 'www.bsky.app') return null;
   const parts = parsed.pathname.split('/').filter(Boolean);
   if (parts.length !== 4 || parts[0] !== 'profile' || parts[2] !== 'post') return null;
-  return { actor: decodeURIComponent(parts[1]), rkey: parts[3] };
+  try {
+    return { actor: decodeURIComponent(parts[1]), rkey: parts[3] };
+  } catch {
+    // Malformed percent-encoding: treat as a non-post link rather than throw.
+    return null;
+  }
 }
 
 async function resolveActorDid(actor: string): Promise<string | null> {

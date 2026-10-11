@@ -206,4 +206,13 @@ describe('Bluesky post links', () => {
     expect(extract).toHaveBeenCalled();
     expect(item.content).toBe('<p>Profile</p>');
   });
+
+  it('falls through to extraction on malformed percent-encoding', async () => {
+    extract.mockResolvedValueOnce({ content: '<p>Page</p>' });
+
+    const item = await articleForReader({ url: 'https://bsky.app/profile/%E0%A4%A/post/3mabc' });
+
+    expect(extract).toHaveBeenCalled();
+    expect(item.content).toBe('<p>Page</p>');
+  });
 });
