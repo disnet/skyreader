@@ -1033,6 +1033,41 @@ part that is easy to get wrong.
 What to watch: `guest_timeline` log volume and its `d1Ms` / `d1RowsRead`, its
 429 rate, and the crawl-set size delta (~+9 for the starter channels).
 
+## 4g. Full-text search index
+
+Each Supporter's search index is their own `SearchIndex` Durable Object
+(`backend/src/durable-objects/search-index.ts`). The index is derived data: it
+pulls from D1 by cursor and can always be rebuilt. See
+[`docs/plans/FULL_TEXT_SEARCH.md`](plans/FULL_TEXT_SEARCH.md).
+
+| Switch (`sync_state`) | Default               | Governs                                                                                                                     |
+| --------------------- | --------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `search_enabled`      | off (only `'1'` = on) | `GET /api/search` (404 when off) and every write nudge. Off stops new indexing work; existing indexes are left as they are. |
+
+```bash
+npx wrangler d1 execute skyreader --remote --command \
+  "INSERT INTO sync_state (key, value, updated_at) VALUES ('search_enabled','1',unixepoch())
+   ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
+```
+
+Log events:
+
+| Event                           | Level | Meaning                                                                                      |
+| ------------------------------- | ----- | -------------------------------------------------------------------------------------------- |
+| `search_index_synced`           | info  | One sync. Fields: rounds, upserts, deletes, `more`, `indexedItems`.                          |
+| `search_index_sync_failed`      | error | An alarm's sync threw. It retries in 60 s, and the next search or nudge retries sooner.      |
+| `search_index_nudge_failed`     | warn  | A write's nudge didn't reach the DO. Harmless: the next sync's cursors still see the change. |
+| `search_index_body_read_failed` | warn  | An R2 body read failed. The item was indexed from its lead instead.                          |
+
+**A reader says search is missing something.**
+
+1. Check whether the index is still building: a search response with
+   `index.building: true` means a backlog remains. The first build of a large history
+   takes a few minutes.
+2. If it isn't building, rebuild that reader's index: `SearchIndex.reset()` on
+   their DO (`idFromName(did)`). There's no admin button for this yet. A rebuild
+   re-pulls everything from zero and costs about 5 billed rows written per item.
+
 ---
 
 ## 5. Post-deploy smoke checks

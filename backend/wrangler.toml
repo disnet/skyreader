@@ -20,7 +20,9 @@ enabled = true
 # Durable Objects
 [durable_objects]
 bindings = [
-  { name = "JETSTREAM_POLLER", class_name = "JetstreamPoller" }
+  { name = "JETSTREAM_POLLER", class_name = "JetstreamPoller" },
+  # One per reader: their full-text search index (src/durable-objects/search-index.ts).
+  { name = "SEARCH_INDEX", class_name = "SearchIndex" }
 ]
 
 [[migrations]]
@@ -46,6 +48,10 @@ deleted_classes = ["RealtimeHub"]
 [[migrations]]
 tag = "v6"
 deleted_classes = ["FeedRefresher"]
+
+[[migrations]]
+tag = "v7"
+new_sqlite_classes = ["SearchIndex"]
 
 # D1 Database
 [[d1_databases]]
@@ -150,7 +156,8 @@ mode = "smart"
 
 [env.staging.durable_objects]
 bindings = [
-  { name = "JETSTREAM_POLLER", class_name = "JetstreamPoller" }
+  { name = "JETSTREAM_POLLER", class_name = "JetstreamPoller" },
+  { name = "SEARCH_INDEX", class_name = "SearchIndex" }
 ]
 
 [[env.staging.d1_databases]]

@@ -131,6 +131,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed documentation.
 | `src/routes/guest.ts`         | `/api/guest/*` — the unauthenticated reading surface      |
 | `src/routes/feedback.ts`      | `/api/v2/feedback` — userinput.app board read + post      |
 | `src/routes/newsletters.ts`   | `/api/newsletters/*` — newsletter address + blocked list  |
+| `src/routes/search.ts`        | `GET /api/search` — full-text search (Supporter)          |
 
 **Email newsletters** (Supporter) arrive through the Worker's `email()` handler, not HTTP:
 Cloudflare Email Routing hands it mail for `NEWSLETTER_EMAIL_DOMAIN`, and each message becomes a
@@ -186,6 +187,8 @@ returns a permission set expanded (`repo?collection=…`), so every check goes t
 | `src/services/subscription-sync.ts` | Sync subscriptions to/from PDS                               |
 | `src/services/rate-limit.ts`        | Per-user per-endpoint rate limiting (D1-backed)              |
 | `src/services/user-tier.ts`         | Tier lookup (free/supporter)                                 |
+| `src/services/search-index.ts`      | Search index change feed + document builder (reads D1/R2)    |
+| `src/services/search-query.ts`      | Reader query → safe FTS5 MATCH expression                    |
 | `src/services/newsletters.ts`       | Newsletter inboxes + the `email()` handler (inbound mail)    |
 | `src/services/newsletter-email.ts`  | Parse one newsletter email into a feed item                  |
 
@@ -238,6 +241,15 @@ procedures: [`docs/RUNBOOK.md`](../docs/RUNBOOK.md).
 | File                                      | Purpose                                                            |
 | ----------------------------------------- | ------------------------------------------------------------------ |
 | `src/durable-objects/jetstream-poller.ts` | Two Jetstream streams (subscriptions, documents) drained per alarm |
+| `src/durable-objects/search-index.ts`     | One per reader: FTS5 index over what they read, saved, highlighted |
+
+**Full-text search** (Supporter, behind `sync_state.search_enabled`) is a per-reader DO, not D1:
+D1 can't export a database holding an FTS5 table, and per-user indexes outgrow its 10 GB. The
+index _pulls_ — cursors over `item_labels_cache` (`read`, `highlights`) and `saved_articles`, each
+changed key rebuilt from scratch by `buildIndexDocs` (`src/services/search-index.ts`) — so a write
+only nudges it (after the response, from the one hook at the end of `serveRequest`), a search
+catches up first, and the first sync from zero is the backfill. Saves are hard-deleted, so a saved
+DELETE triggers a diff of the index's saved set. See `docs/plans/FULL_TEXT_SEARCH.md`.
 
 ### Storage
 

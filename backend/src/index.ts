@@ -125,6 +125,8 @@ import {
   handleIssueNewsletterAddress,
   handleUnblockNewsletterSender,
 } from './routes/newsletters';
+import { handleSearch } from './routes/search';
+import { nudgeSearchIndex, searchNudgeFor } from './services/search-index';
 import { handleInboundEmail } from './services/newsletters';
 import {
   handleCreateBillingPortal,
@@ -189,6 +191,7 @@ import { d1Summary } from './utils/d1-timing';
 import { classifyRoute, runWithRequestContext, setContextDid } from './utils/request-context';
 
 export { JetstreamPoller } from './durable-objects/jetstream-poller';
+export { SearchIndex } from './durable-objects/search-index';
 
 function corsHeaders(origin: string | null, env: Env): HeadersInit {
   const allowedOrigins = env.ALLOWED_ORIGINS
@@ -800,6 +803,12 @@ async function route(
       }
       break;
 
+    // Full-text search (Supporter) — durable-objects/search-index.ts
+    case url.pathname === '/api/search':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleSearch(request, env, session);
+      break;
+
     // Email newsletters (Supporter). Inbound mail arrives through the email()
     // handler below, not over HTTP.
     case url.pathname === '/api/newsletters':
@@ -1059,6 +1068,14 @@ async function route(
         status: 404,
         headers: { 'Content-Type': 'application/json' },
       });
+  }
+
+  // A successful write that can change what the reader has read, saved or
+  // highlighted nudges their search index. After the response, and harmless if
+  // it's lost: the index pulls by cursor, so the next sync sees the change anyway.
+  if (session && response.ok) {
+    const nudge = searchNudgeFor(request.method, url.pathname);
+    if (nudge) ctx.waitUntil(nudgeSearchIndex(env, session.did, nudge));
   }
 
   return withCors(response, headers);

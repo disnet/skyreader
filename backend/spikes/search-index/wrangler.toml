@@ -1,0 +1,18 @@
+# Spike worker only - never deployed. See README.md.
+name = "skyreader-search-index-spike"
+main = "worker.ts"
+compatibility_date = "2025-09-27"
+
+[durable_objects]
+bindings = [{ name = "SEARCH_INDEX", class_name = "SearchIndex" }]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["SearchIndex"]
+
+# A D1 database used only to check whether `wrangler d1 export` handles an FTS5
+# virtual table (see run.sh).
+[[d1_databases]]
+binding = "DB"
+database_name = "search-spike"
+database_id = "00000000-0000-0000-0000-000000000000"

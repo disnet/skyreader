@@ -39,6 +39,8 @@ export interface User {
     maxUrlSavesPerMonth: number;
     /** A private newsletter email address (Supporter). */
     newsletterInbox?: boolean;
+    /** Full-text search over everything read, saved and highlighted (Supporter). */
+    fullTextSearch?: boolean;
   };
 }
 
