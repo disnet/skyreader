@@ -28,6 +28,8 @@
   let isPaidSupporter = $derived(isPaidTier(auth.user));
   let grantedSupporter = $derived(isGrantedSupporter(auth.user));
   let keepsGrantIfCancelled = $derived(hasGrantFallback(auth.user));
+  // Offered as a benefit only once full-text search is live in this environment.
+  let searchLive = $derived(Boolean(auth.user?.searchEnabled));
 
   // Plans mirrored from the Polar dashboard. The flow never depends on this
   // fetch: 'failed' falls back to a plain button that uses the backend's
@@ -236,6 +238,8 @@ directly, no concept tournament.
   <StaticPageChrome title="Supporter" />
 {/if}
 
+<!-- Search is shown once it's live in this environment (the operator switch
+     /api/auth/me reports), never ahead of it. -->
 {#snippet benefitsLedger()}
   <ul class="benefits">
     <li class="benefit">
@@ -254,6 +258,13 @@ directly, no concept tournament.
       <span class="benefit-figure">Newsletters by email</span>
       <span class="benefit-desc">A private address; each newsletter becomes a source.</span>
     </li>
+    {#if searchLive}
+      <li class="benefit">
+        <span class="benefit-figure">Search everything you’ve read</span>
+        <span class="benefit-desc">Find a passage by its words, across reads, saves and notes.</span
+        >
+      </li>
+    {/if}
   </ul>
 {/snippet}
 
@@ -357,6 +368,15 @@ directly, no concept tournament.
               <span class="feature-sub">a private address; read them here, not in your inbox</span>
             </span>
           </li>
+          {#if searchLive}
+            <li>
+              <span class="feature-check"><Icon name="check" size={16} strokeWidth={2.5} /></span>
+              <span class="feature-text">
+                Search everything you’ve read
+                <span class="feature-sub">reads, saves, highlights and your notes</span>
+              </span>
+            </li>
+          {/if}
           <li>
             <span class="feature-check"><Icon name="check" size={16} strokeWidth={2.5} /></span>
             <span class="feature-text">

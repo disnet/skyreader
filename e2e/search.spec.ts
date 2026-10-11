@@ -4,6 +4,7 @@ import {
   cleanupFeedItems,
   disableSearch,
   enableSearchFor,
+  enableSearchSwitch,
   seedFeedItems,
   seedItemLabel,
   seedSavedArticle,
@@ -107,5 +108,17 @@ test.describe('Full-text search', () => {
     await authedPage.goto('/search');
     await expect(authedPage.getByText('Find anything you’ve read')).toBeVisible();
     await expect(searchInput(authedPage)).toHaveCount(0);
+  });
+
+  test('the Supporter page lists search only once it is live here', async ({ authedPage }) => {
+    const benefit = authedPage.getByText('Search everything you’ve read').first();
+
+    await authedPage.goto('/supporter');
+    await expect(authedPage.getByText('Newsletters by email').first()).toBeVisible();
+    await expect(benefit).toHaveCount(0);
+
+    await enableSearchSwitch();
+    await authedPage.reload();
+    await expect(benefit).toBeVisible({ timeout: 15_000 });
   });
 });
