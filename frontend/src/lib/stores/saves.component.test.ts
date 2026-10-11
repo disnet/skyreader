@@ -478,6 +478,21 @@ describe('savesStore.saveArticle body choice', () => {
     expect((await pending).content).toBe(full);
   });
 
+  it('saves a newsletter with no web URL by its guid, without extracting', async () => {
+    const body = words(40);
+    articleRows.push({ guid: 'nl-6', subscriptionId: 7, content: body });
+
+    const saved = await savesStore.saveArticle({ url: '', guid: 'nl-6', subscriptionId: 7 });
+
+    expect(extractArticle).not.toHaveBeenCalled();
+    expect(api.saveFromUrl).toHaveBeenCalledWith(
+      '',
+      expect.any(String),
+      expect.objectContaining({ fromFeed: true, itemGuid: 'nl-6', content: body })
+    );
+    expect(saved.uri).toMatch(/^at:\/\//);
+  });
+
   it('does not reach for the stored body when saving offline', async () => {
     syncState.isOnline = false;
     articleRows.push({

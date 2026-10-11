@@ -7,9 +7,10 @@ on:
   pull_request:
     branches: [main]
     paths: ['frontend/**']
+  merge_group:
 
 concurrency:
-  group: frontend-ci-${{ github.head_ref }}
+  group: frontend-ci-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 defaults:

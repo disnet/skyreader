@@ -1,0 +1,17 @@
+<!doctype html>
+<!--
+  Cloudflare Pages serves the nearest 404.html up the directory tree, and only
+  falls back to the SPA shell (index.html, status 200) when there's no top-level
+  one. This file makes a missing hashed chunk a real 404 instead of an HTML page
+  answered as JavaScript, while page routes keep the SPA fallback. See the
+  precache plugin in src/service-worker.ts for what the HTML fallback broke.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Not found</title>
+  </head>
+  <body>
+    Not found
+  </body>
+</html>

@@ -17,12 +17,19 @@ function feedProxySecret(): string {
 
 export default defineConfig({
   testDir: './e2e',
-  fullyParallel: false,
+  // One worker: every test drives the same backend + frontend dev servers, and
+  // running several at once against them makes tests flake. CI gets its speed
+  // from sharding across runners instead (.github/workflows/e2e.yml), each with
+  // its own servers. fullyParallel lets a shard take individual tests rather
+  // than whole files, so one long file (highlight-review) can't set the pace.
+  // Tests must not depend on each other's order — each seeds its own user.
+  fullyParallel: true,
   workers: 1,
   // A retry on CI turns a rare flake into a warning instead of a red build, and
   // it's what makes `trace: 'on-first-retry'` produce anything at all.
   retries: process.env.CI ? 2 : 0,
-  reporter: 'html',
+  // CI shards write blob reports that the e2e workflow merges into one HTML report.
+  reporter: process.env.CI ? [['blob'], ['list']] : 'html',
   timeout: 30_000,
 
   globalSetup: './e2e/global-setup.ts',

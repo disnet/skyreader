@@ -15,15 +15,25 @@ on:
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/pwa.yml'
+  # The merge queue has no paths filter: every queued change runs this.
+  merge_group:
 
 concurrency:
-  group: pwa-${{ github.head_ref }}
+  # head_ref is empty on merge_group; its ref is unique per queue entry.
+  group: pwa-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 jobs:
   pwa:
     name: Service Worker / Offline E2E
     runs-on: ubuntu-latest
+    # Playwright's image ships chromium, webkit and the OS libraries webkit needs.
+    # Installing those libraries on the bare runner (`--with-deps`) ran apt over
+    # every package source: usually ~1 min, sometimes 5+, and it failed outright
+    # whenever the runner's Google Chrome apt repo served a bad index. Keep the
+    # tag on the @playwright/test version in package-lock.json.
+    container:
+      image: mcr.microsoft.com/playwright:v1.62.1-noble
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -44,19 +54,12 @@ jobs:
         run: npm ci
         working-directory: frontend
 
-      # webkit is the closest iOS Safari engine proxy; --with-deps pulls the OS
-      # libraries it needs on Ubuntu. The config builds the frontend + serves preview.
-      #
-      # The runner image ships Google's Chrome apt source, and --with-deps runs
-      # `apt-get update` over every source it finds. When that repo serves a
-      # Packages.gz whose hash disagrees with its InRelease, apt exits 100 and
-      # takes the browser install down with it. Nothing here needs Chrome, so the
-      # source goes before apt runs.
+      # webkit is the closest iOS Safari engine proxy. With the image tag matching
+      # package-lock.json this finds both browsers already installed and does
+      # nothing; after a Playwright bump that outpaces the tag it downloads the
+      # new builds instead of failing, so the tag can be bumped at leisure.
       - name: Install Playwright browsers
-        run: |
-          sudo rm -f /etc/apt/sources.list.d/google-chrome*.list \
-                     /etc/apt/sources.list.d/google-chrome*.sources
-          npx playwright install --with-deps chromium webkit
+        run: npx playwright install chromium webkit
 
       - name: Run PWA tests
         run: npm run test:pwa

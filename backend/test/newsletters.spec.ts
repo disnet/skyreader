@@ -146,7 +146,7 @@ describe('email newsletters', () => {
   });
 
   describe('parsing', () => {
-    it('keeps the body, drops head/style/preheader/pixels, finds the web copy', async () => {
+    it('keeps the body, drops head/style/preheader/pixels, keeps no web URL', async () => {
       const html = `<!doctype html><html><head><style>p{color:red}</style><title>x</title></head>
         <body><div style="display:none;max-height:0">Preview text here</div>
         <p>First <b>paragraph</b>.</p>
@@ -159,7 +159,8 @@ describe('email newsletters', () => {
       expect(parsed!.senderName).toBe('Money Stuff');
       expect(parsed!.item.guid).toBe('issue-1@news.example.com');
       expect(parsed!.item.title).toBe('The big one');
-      expect(parsed!.item.url).toBe('https://news.example.com/p/the-big-one?utm=1&x=2');
+      // The email is the article: a "View in browser" link is not its URL.
+      expect(parsed!.item.url).toBe('');
       expect(parsed!.item.publishedAt).toBe('2026-09-22T12:00:00.000Z');
       const content = parsed!.item.content!;
       expect(content).toContain('<p>First <b>paragraph</b>.</p>');

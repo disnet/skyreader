@@ -31,11 +31,6 @@ const SUMMARY_MAX_CHARS = 400;
 // scheduled post; it would pin the item to the top of the reader until then.
 const MAX_FUTURE_SKEW_MS = 60 * 60 * 1000;
 
-// Anchor text that marks a newsletter's own web copy: "View in browser", "Read
-// online", "View this email in your browser", "Web version", …
-const WEB_VERSION_TEXT =
-  /\b(?:view|read|open|see)\b[^<]{0,40}?\b(?:browser|online|on the web|web version|website)\b|\bweb version\b/i;
-
 // Subject prefixes mail clients add when the reader hits Forward: Fwd/Fw, and
 // the common localized ones (WG, TR, RV, Enc, VS, Doorst).
 const FORWARD_SUBJECT = /^\s*(?:fwd?|wg|tr|rv|enc|vs|doorst)\s*:\s*/i;
@@ -83,7 +78,10 @@ export async function parseNewsletterEmail(
 
   const item: FeedItem = {
     guid: await messageGuid(email, sender),
-    url: findWebVersionUrl(email.html ?? '') ?? '',
+    // No web URL: the email is the article. Guessing one from a "View in
+    // browser" link brought tracking redirects and sign-up walls into the reader
+    // (and its saves) in place of the issue the reader already had.
+    url: '',
     title: email.subject?.trim() || '(no subject)',
     author: senderName ?? undefined,
     content: content || undefined,
@@ -151,7 +149,7 @@ async function parseInlineForward(
 
   const item: FeedItem = {
     guid: await messageGuid(email, sender),
-    url: findWebVersionUrl(email.html ?? '') ?? '',
+    url: '', // the email is the article (see parseNewsletterEmail)
     title,
     author: senderName ?? undefined,
     content: content || undefined,
@@ -293,16 +291,6 @@ function siteUrlFor(email: Email, sender: string): string | null {
   }
   const domain = sender.split('@')[1];
   return domain ? `https://${domain}` : null;
-}
-
-export function findWebVersionUrl(html: string): string | null {
-  const anchor = /<a\b[^>]*?\bhref\s*=\s*(["'])(.*?)\1[^>]*>([\s\S]*?)<\/a>/gi;
-  for (const match of html.matchAll(anchor)) {
-    const href = decodeEntities(match[2].trim());
-    const text = stripTags(match[3]);
-    if (WEB_VERSION_TEXT.test(text) && isHttpUrl(href)) return href;
-  }
-  return null;
 }
 
 /**
