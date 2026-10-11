@@ -1306,11 +1306,21 @@ export interface FollowLinkSharersResponse {
   sharers: FollowLinkSharer[];
 }
 
+/** GET /api/v2/following-links/all: one page of every link, newest by first share. */
+export interface AllFollowLinksPage {
+  scopeRequired: boolean;
+  links: FollowLink[];
+  /** Pass back for the next page; null on the last. */
+  nextCursor: string | null;
+}
+
 export interface FollowLinksResponse {
   /** True until the reader grants the getTimeline permission (a fresh sign-in). */
   scopeRequired: boolean;
   /** Whether the reader wants these in Everything; null until they've been asked. */
   inEverything?: boolean | null;
+  /** The river shows every link (GET /all), not just these, the week's most shared. */
+  allLinks?: boolean;
   window?: FollowLinksWindow;
   links: FollowLink[];
   sync: {

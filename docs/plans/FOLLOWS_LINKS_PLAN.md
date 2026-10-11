@@ -359,6 +359,26 @@ follows became one more **source** in it.
 Not built: a **Most shared** sort for channels that include the source (the server already ranks and
 caps at 60/week, which picks the links; the river orders them by time).
 
+- **Every link** (follow-up): the ranked list caps at 60/week, so for a heavy-follow reader links
+  only one person shared never reach the river. `follow_link_sync.all_links` (migration 0089) opts
+  the river into every link. `GET /following-links` stays the ranked 60 whatever the setting (Home's
+  lane and the empty-Home list read it as is) and returns `allLinks`; the river instead pages
+  `GET /following-links/all?window=7d&cursor=&limit=` (`readAllFollowLinks`): 50 per page (100 max),
+  newest by first share, the page picked in SQL (`GROUP BY url_normalized`, keyset cursor on first
+  share then URL, so new links at the top don't shift later pages) and only its rows read and grouped.
+  The cursor also carries the window start the first page used: recomputed per page, a link whose
+  oldest share aged out mid-walk would jump above the cursor and be skipped. The URL tie-break is
+  code point order on both sides (SQLite's BINARY collation; JS `<` on UTF-16 differs past U+FFFF).
+  It serves from D1 only; the ranked request beside it starts any refresh. In the river, newest-first,
+  items older than the oldest loaded link wait for the next page (fetched as the scroll reaches it);
+  oldest-first, most-shared-first and mark-all-read load every page first, 100 at a time. A failed
+  page backs off (1s doubling to 60s; the river reads as loading meanwhile, so the scroll sentinel
+  doesn't hammer); loading every page retries through it and, if it gives up, starts again on the
+  next fresh first page. Mark-all-read says so when links stayed unread. A refresh re-reads a river
+  scrolled deep down to the depth it reached, so a link that landed between pages isn't skipped.
+  Toggle on Manage Sources;
+  `POST /following-links/settings` takes `inEverything`, `allLinks` or both.
+
 ### Later, only if the hypothesis holds
 
 - **Magazine source.** Feed top links into the daily edition. Needs word counts at generate time

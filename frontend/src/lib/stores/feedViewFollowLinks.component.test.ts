@@ -27,6 +27,18 @@ vi.mock('./followLinks.svelte', () => ({
     get links() {
       return river.links;
     },
+    get riverLinks() {
+      return river.links;
+    },
+    get moreRiverLinks() {
+      return river.moreLinks;
+    },
+    loadingMore: false,
+    loadMoreLinks: async () => {
+      river.loadMoreCalls++;
+      river.links = [...river.links, ...river.nextPage];
+      river.moreLinks = false;
+    },
     get inEverything() {
       return river.inEverything;
     },
@@ -215,6 +227,23 @@ describe('follows links in the river', () => {
     river.articles = [article('b', 3)];
     show(channel([FOLLOWS_SOURCE_KEY, 'rss~feedaaaaaaaaa']));
     expect(rows()).toEqual(['link:a', 'article:b', 'link:c']);
+  });
+
+  it('holds older articles back until the next page of every link arrives', async () => {
+    // Every link, paged: only the newest loaded so far, more to come.
+    river.links = [link('a', 1), link('c', 5)];
+    river.moreLinks = true;
+    river.nextPage = [link('e', 9)];
+    river.articles = [article('b', 3), article('d', 7), article('f', 11)];
+    show(channel([FOLLOWS_SOURCE_KEY, 'rss~feedaaaaaaaaa']));
+    // Nothing older than the oldest link loaded, or 'e' would land above where you'd read.
+    expect(rows()).toEqual(['link:a', 'article:b', 'link:c']);
+    expect(feedViewStore.hasMore).toBe(true);
+
+    await feedViewStore.loadMore();
+    expect(river.loadMoreCalls).toBe(1);
+    expect(rows()).toEqual(['link:a', 'article:b', 'link:c', 'article:d', 'link:e', 'article:f']);
+    expect(feedViewStore.hasMore).toBe(false);
   });
 
   it('drops a link the river already shows as an article, whatever form its URL takes', () => {

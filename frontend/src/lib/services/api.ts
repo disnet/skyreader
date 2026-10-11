@@ -30,6 +30,7 @@ import type {
   RoomInfo,
   RoomItem,
   FollowLinksResponse,
+  AllFollowLinksPage,
   FollowLinksWindow,
   FollowLinkSharersResponse,
   User,
@@ -1909,11 +1910,22 @@ class ApiClient {
     return this.fetch(`/api/v2/following-links?window=${window}`);
   }
 
-  /** Whether follows links show in Everything. No permission needed. */
-  async setFollowLinksInEverything(inEverything: boolean): Promise<{ ok: boolean }> {
+  /** One page of every link your follows shared, newest by first share. */
+  async getAllFollowLinks(cursor?: string | null, limit?: number): Promise<AllFollowLinksPage> {
+    const q =
+      (cursor ? `&cursor=${encodeURIComponent(cursor)}` : '') + (limit ? `&limit=${limit}` : '');
+    return this.fetch(`/api/v2/following-links/all?window=7d${q}`);
+  }
+
+  /** Whether follows links show in Everything, and whether every link comes back
+   *  or just the most shared. Either or both. No permission needed. */
+  async setFollowLinksSettings(settings: {
+    inEverything?: boolean;
+    allLinks?: boolean;
+  }): Promise<{ ok: boolean }> {
     return this.fetch('/api/v2/following-links/settings', {
       method: 'POST',
-      body: JSON.stringify({ inEverything }),
+      body: JSON.stringify(settings),
     });
   }
 

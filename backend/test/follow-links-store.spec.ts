@@ -15,8 +15,13 @@ import {
   LIKES_STALE_MS,
   MAX_SHARES_PER_REFRESH,
   REFRESH_MAX_PAGES,
+  FOLLOW_LINKS_WINDOWS,
+  SERVE_LINK_LIMIT,
+  compareCodePoints,
+  decodeAllLinksCursor,
   groupFollowLinks,
   purgeFollowLinks,
+  readAllFollowLinks,
   readFollowLinks,
   refreshFollowLinks,
   type FollowLink,
@@ -547,6 +552,21 @@ describe('follow links store', () => {
       ).toBe(300);
     });
 
+    it('orders by first share, newest first, when asked for every link', () => {
+      const rows = [
+        row({ url: 'https://solo.example/new', sharer: 'did:a', at: 900 }),
+        // A late reshare doesn't lift an older link: it's dated by its first share.
+        row({ url: 'https://pair.example', sharer: 'did:a', at: 800 }),
+        row({ url: 'https://pair.example', sharer: 'did:b', at: 100 }),
+        row({ url: 'https://solo.example/old', sharer: 'did:d', at: 500 }),
+      ];
+      const links = groupFollowLinks(rows, 2, true);
+      expect(links.map((l: FollowLink) => [l.urlNormalized, l.sharerCount])).toEqual([
+        ['https://solo.example/new', 1],
+        ['https://solo.example/old', 1],
+      ]);
+    });
+
     it('borrows the card from another sharer when the freshest share was a bare link', () => {
       const [link] = groupFollowLinks([
         row({ url: 'https://a.example', sharer: 'did:a', at: 900 }),
@@ -558,6 +578,69 @@ describe('follow links store', () => {
         firstSharedAt: 100,
         lastSharedAt: 900,
       });
+    });
+  });
+
+  describe('readAllFollowLinks', () => {
+    const insert = (url: string, sharer: string, at: number) =>
+      env.DB.prepare(
+        `INSERT INTO follow_link_shares
+           (user_did, post_uri, sharer_did, kind, url, url_normalized, shared_at)
+         VALUES (?, ?, ?, 'post', ?, ?, ?)`
+      )
+        .bind(DID, `at://${sharer}/p/${url}`, sharer, url, url, at)
+        .run();
+
+    it('keeps the window the first page started from, so a link aging out of it is not skipped', async () => {
+      const t0 = Date.now();
+      const week = FOLLOW_LINKS_WINDOWS['7d'];
+      // X's first share sits a minute inside the window; a late reshare keeps it
+      // in the window after that first one ages out.
+      await insert('https://x.example/', 'did:a', t0 - week + 60_000);
+      await insert('https://x.example/', 'did:b', t0 - 2 * 60 * 60 * 1000);
+      for (let i = 0; i < 3; i++) await insert(`https://n.example/${i}`, 'did:c', t0 - 1000 - i);
+
+      const first = await readAllFollowLinks(env, DID, '7d', { limit: 2, now: t0 });
+      expect(first.links.map((l) => l.urlNormalized)).toEqual([
+        'https://n.example/0',
+        'https://n.example/1',
+      ]);
+      const cursor = decodeAllLinksCursor(first.nextCursor!);
+      expect(cursor?.since).toBe(t0 - week);
+
+      // Ten minutes on: X's first share has left a freshly computed window.
+      const second = await readAllFollowLinks(env, DID, '7d', {
+        cursor,
+        limit: 2,
+        now: t0 + 10 * 60_000,
+      });
+      expect(second.links.map((l) => l.urlNormalized)).toEqual([
+        'https://n.example/2',
+        'https://x.example/',
+      ]);
+      expect(second.nextCursor).toBeNull();
+    });
+
+    it('breaks a tie in the order SQLite pages by, past U+FFFF too', async () => {
+      const at = Date.now() - 1000;
+      // UTF-16 units put the astral character (a surrogate pair) first; code
+      // points, and so SQLite, put it after U+FF5E.
+      const astral = 'https://t.example/\u{1F600}';
+      const bmp = 'https://t.example/\uFF5E';
+      expect(compareCodePoints(astral, bmp)).toBeGreaterThan(0);
+      expect(compareCodePoints(bmp, bmp)).toBe(0);
+      expect(compareCodePoints('https://a', 'https://ab')).toBeLessThan(0);
+      await insert(astral, 'did:a', at);
+      await insert(bmp, 'did:b', at);
+
+      const one = await readAllFollowLinks(env, DID, '7d', { limit: 1 });
+      const two = await readAllFollowLinks(env, DID, '7d', {
+        cursor: decodeAllLinksCursor(one.nextCursor!),
+        limit: 1,
+      });
+      const both = await readAllFollowLinks(env, DID, '7d', { limit: 2 });
+      expect([...one.links, ...two.links].map((l) => l.urlNormalized)).toEqual([astral, bmp]);
+      expect(both.links.map((l) => l.urlNormalized)).toEqual([astral, bmp]);
     });
   });
 
@@ -670,6 +753,94 @@ describe('follow links store', () => {
         body: { inEverything: 'yes' },
       });
       expect(bad.status).toBe(400);
+    });
+
+    it('pages every link, newest first, while the ranked list stays most shared', async () => {
+      await seedSession(SCOPES);
+      stubTimeline({ '': { feed: [] } });
+      // A fresh sync row, so the read serves from D1 without walking the timeline.
+      await env.DB.prepare(
+        'INSERT INTO follow_link_sync (user_did, last_poll_at, complete) VALUES (?, ?, 1)'
+      )
+        .bind(DID, Date.now())
+        .run();
+      const now = Date.now();
+      const insert = (url: string, sharer: string, at: number) =>
+        env.DB.prepare(
+          `INSERT INTO follow_link_shares
+             (user_did, post_uri, sharer_did, kind, url, url_normalized, shared_at)
+           VALUES (?, ?, ?, 'post', ?, ?, ?)`
+        )
+          .bind(DID, `at://${sharer}/p/${url}`, sharer, url, url, at)
+          .run();
+      // One link two follows shared (the second share late, which doesn't lift
+      // it), then more shared once than the ranked cap holds, two at one instant.
+      await insert('https://pair.example/', 'did:a', now - 5000);
+      await insert('https://pair.example/', 'did:b', now - 10);
+      for (let i = 0; i < SERVE_LINK_LIMIT; i++) {
+        await insert(`https://solo.example/${i}`, 'did:c', now - 1000 - i);
+      }
+      await insert('https://tie.example/a', 'did:d', now - 1000);
+
+      const set = await send('/api/v2/following-links/settings', {
+        method: 'POST',
+        body: { allLinks: true },
+      });
+      expect(await set.json()).toEqual({ ok: true, inEverything: null, allLinks: true });
+
+      // The ranked list ignores the setting: most shared first, capped.
+      const ranked = (await (await send('/api/v2/following-links?window=7d')).json()) as {
+        allLinks: boolean;
+        links: FollowLink[];
+      };
+      expect(ranked.allLinks).toBe(true);
+      expect(ranked.links).toHaveLength(SERVE_LINK_LIMIT);
+      expect(ranked.links[0].urlNormalized).toBe('https://pair.example/');
+
+      // Walk every page; each link once, by first share, URL breaking the tie.
+      const seen: FollowLink[] = [];
+      let cursor: string | null = null;
+      let pages = 0;
+      do {
+        const q: string = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
+        const res = await send(`/api/v2/following-links/all?window=7d&limit=25${q}`);
+        const page = (await res.json()) as { links: FollowLink[]; nextCursor: string | null };
+        expect(page.links.length).toBeLessThanOrEqual(25);
+        seen.push(...page.links);
+        cursor = page.nextCursor;
+        pages++;
+      } while (cursor && pages < 10);
+      expect(pages).toBe(3);
+      expect(seen).toHaveLength(SERVE_LINK_LIMIT + 2);
+      expect(new Set(seen.map((l) => l.urlNormalized)).size).toBe(seen.length);
+      expect(seen.slice(0, 2).map((l) => l.urlNormalized)).toEqual([
+        'https://tie.example/a',
+        'https://solo.example/0',
+      ]);
+      const pair = seen.at(-1)!;
+      expect(pair.urlNormalized).toBe('https://pair.example/');
+      expect(pair.sharerCount).toBe(2);
+
+      // Setting one leaves the other as it was.
+      const other = await send('/api/v2/following-links/settings', {
+        method: 'POST',
+        body: { inEverything: true },
+      });
+      expect(await other.json()).toEqual({ ok: true, inEverything: true, allLinks: true });
+
+      for (const body of [{ allLinks: 'yes' }, {}]) {
+        const bad = await send('/api/v2/following-links/settings', { method: 'POST', body });
+        expect(bad.status).toBe(400);
+      }
+      for (const q of ['cursor=nope', 'limit=abc', 'window=1y']) {
+        expect((await send(`/api/v2/following-links/all?${q}`)).status).toBe(400);
+      }
+    });
+
+    it('asks for the permission before paging every link', async () => {
+      await seedSession(GRANULAR_SCOPES);
+      const res = await send('/api/v2/following-links/all');
+      expect(await res.json()).toEqual({ scopeRequired: true, links: [], nextCursor: null });
     });
 
     it('rejects an unknown window', async () => {

@@ -15,10 +15,10 @@
   let granted = $derived(followLinksStore.loaded && !followLinksStore.scopeRequired);
   let saving = $state(false);
 
-  async function toggleEverything(on: boolean) {
+  async function save(change: () => Promise<void>) {
     saving = true;
     try {
-      await followLinksStore.setInEverything(on);
+      await change();
     } catch {
       // The store puts the old value back; the checkbox follows it.
     } finally {
@@ -41,9 +41,24 @@
           type="checkbox"
           checked={followLinksStore.inEverything === true}
           disabled={saving}
-          onchange={(e) => toggleEverything(e.currentTarget.checked)}
+          onchange={(e) => {
+            const on = e.currentTarget.checked;
+            void save(() => followLinksStore.setInEverything(on));
+          }}
         />
         Show them in Everything too
+      </label>
+      <label class="follows-toggle">
+        <input
+          type="checkbox"
+          checked={followLinksStore.allLinks}
+          disabled={saving}
+          onchange={(e) => {
+            const on = e.currentTarget.checked;
+            void save(() => followLinksStore.setAllLinks(on));
+          }}
+        />
+        Show every link, not just the most shared
       </label>
     {:else}
       <span class="follows-meta">

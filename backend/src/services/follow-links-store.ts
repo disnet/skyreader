@@ -45,6 +45,9 @@ export const LIKES_STALE_MS = 60 * 60 * 1000;
 const SERVE_ROW_LIMIT = 3000;
 /** Articles served per request. The list ends; that is part of the calm. */
 export const SERVE_LINK_LIMIT = 60;
+/** Articles per page of every link (readAllFollowLinks), and the most one page may ask for. */
+export const ALL_LINKS_PAGE_SIZE = 50;
+export const ALL_LINKS_MAX_PAGE_SIZE = 100;
 
 /**
  * Stored as `last_error` when the PDS refused getTimeline for want of scope,
@@ -89,25 +92,49 @@ export interface FollowLinksSync {
   error: string | null;
 }
 
-/** Whether the reader wants follows links in Everything; null = never asked. */
-export async function readFollowLinksInEverything(env: Env, did: string): Promise<boolean | null> {
-  const row = await env.DB.prepare('SELECT in_everything FROM follow_link_sync WHERE user_did = ?')
-    .bind(did)
-    .first<{ in_everything: number | null }>();
-  return row?.in_everything == null ? null : row.in_everything === 1;
+export interface FollowLinksSettings {
+  /** Whether follows links show in Everything; null = never asked. */
+  inEverything: boolean | null;
+  /** The river shows every link, newest first, instead of the week's most-shared. */
+  allLinks: boolean;
 }
 
-export async function setFollowLinksInEverything(
+export async function readFollowLinksSettings(env: Env, did: string): Promise<FollowLinksSettings> {
+  const row = await env.DB.prepare(
+    'SELECT in_everything, all_links FROM follow_link_sync WHERE user_did = ?'
+  )
+    .bind(did)
+    .first<{ in_everything: number | null; all_links: number | null }>();
+  return toSettings(row);
+}
+
+function toSettings(
+  row: { in_everything: number | null; all_links: number | null } | null
+): FollowLinksSettings {
+  return {
+    inEverything: row?.in_everything == null ? null : row.in_everything === 1,
+    allLinks: row?.all_links === 1,
+  };
+}
+
+/** Saves whichever settings are given; the others keep their value. Returns both as saved. */
+export async function setFollowLinksSettings(
   env: Env,
   did: string,
-  on: boolean
-): Promise<void> {
-  await env.DB.prepare(
-    `INSERT INTO follow_link_sync (user_did, in_everything) VALUES (?1, ?2)
-     ON CONFLICT(user_did) DO UPDATE SET in_everything = excluded.in_everything`
+  settings: { inEverything?: boolean; allLinks?: boolean }
+): Promise<FollowLinksSettings> {
+  const inEverything = settings.inEverything === undefined ? null : settings.inEverything ? 1 : 0;
+  const allLinks = settings.allLinks === undefined ? null : settings.allLinks ? 1 : 0;
+  const row = await env.DB.prepare(
+    `INSERT INTO follow_link_sync (user_did, in_everything, all_links) VALUES (?1, ?2, ?3)
+     ON CONFLICT(user_did) DO UPDATE SET
+       in_everything = COALESCE(?2, in_everything),
+       all_links = COALESCE(?3, all_links)
+     RETURNING in_everything, all_links`
   )
-    .bind(did, on ? 1 : 0)
-    .run();
+    .bind(did, inEverything, allLinks)
+    .first<{ in_everything: number | null; all_links: number | null }>();
+  return toSettings(row);
 }
 
 export async function readFollowLinksSync(env: Env, did: string): Promise<FollowLinksSync | null> {
@@ -507,13 +534,18 @@ function hostOf(url: string): string {
 
 /**
  * Group rows (newest first) into one entry per article, ranked by how many
- * distinct people shared it, then by the latest share. Pure, for testing.
+ * distinct people shared it, then by the latest share; or, with `byRecency`, by
+ * first share, newest first, the order the river shows them in. Pure, for testing.
  *
  * Each sharer appears once per article, at their latest share of it. The card
  * is the freshest share that has one, since a bare-facet share has none and
  * another follow's post of the same link usually does.
  */
-export function groupFollowLinks(rows: ShareRow[], limit = SERVE_LINK_LIMIT): FollowLink[] {
+export function groupFollowLinks(
+  rows: ShareRow[],
+  limit = SERVE_LINK_LIMIT,
+  byRecency = false
+): FollowLink[] {
   const byUrl = new Map<string, { rows: ShareRow[]; sharers: Map<string, ShareRow> }>();
   for (const row of rows) {
     let group = byUrl.get(row.url_normalized);
@@ -557,10 +589,15 @@ export function groupFollowLinks(rows: ShareRow[], limit = SERVE_LINK_LIMIT): Fo
     });
   }
 
-  links.sort((a, b) => b.sharerCount - a.sharerCount || b.lastSharedAt - a.lastSharedAt);
+  links.sort(
+    byRecency
+      ? (a, b) => compareByFirstShare(b, a)
+      : (a, b) => b.sharerCount - a.sharerCount || b.lastSharedAt - a.lastSharedAt
+  );
   return links.slice(0, limit);
 }
 
+/** The week's most-shared links, capped: Home's lane and the default river. */
 export async function readFollowLinks(
   env: Env,
   did: string,
@@ -579,6 +616,119 @@ export async function readFollowLinks(
     .bind(did, since, SERVE_ROW_LIMIT)
     .all<ShareRow>();
   return groupFollowLinks(rows.results);
+}
+
+/** Oldest-to-newest by first share, the URL breaking a tie: the order pages walk in reverse. */
+function compareByFirstShare(
+  a: { firstSharedAt: number; urlNormalized: string },
+  b: { firstSharedAt: number; urlNormalized: string }
+): number {
+  return a.firstSharedAt - b.firstSharedAt || compareCodePoints(a.urlNormalized, b.urlNormalized);
+}
+
+/**
+ * Strings in code point order, which is UTF-8 byte order: what SQLite's BINARY
+ * collation sorts the keyset by. JS `<` compares UTF-16 units, which disagrees
+ * once a string holds a character past U+FFFF.
+ */
+export function compareCodePoints(a: string, b: string): number {
+  const n = Math.min(a.length, b.length);
+  for (let i = 0; i < n; i++) {
+    const x = a.charCodeAt(i);
+    const y = b.charCodeAt(i);
+    if (x !== y) return codePointRank(x) - codePointRank(y);
+  }
+  return a.length - b.length;
+}
+
+/** Surrogates (U+D800–DFFF) above the rest of the BMP, as their code points sort. */
+function codePointRank(unit: number): number {
+  return unit < 0xd800 ? unit : unit < 0xe000 ? unit + 0x2000 : unit - 0x800;
+}
+
+/**
+ * Where a page of every link ends: the last link's first share and URL, and
+ * where the walk's window starts. Opaque to the client. The window start is
+ * fixed by the first page and carried along: recomputed per request, a link
+ * whose oldest share aged out between pages would jump to a later first share,
+ * above the cursor, and never be served.
+ */
+export interface AllLinksCursor {
+  since: number;
+  firstSharedAt: number;
+  urlNormalized: string;
+}
+
+export function encodeAllLinksCursor(c: AllLinksCursor): string {
+  return `${c.since}~${c.firstSharedAt}~${c.urlNormalized}`;
+}
+
+export function decodeAllLinksCursor(raw: string): AllLinksCursor | null {
+  const m = /^(\d+)~(\d+)~(.+)$/s.exec(raw);
+  if (!m) return null;
+  const since = Number(m[1]);
+  const firstSharedAt = Number(m[2]);
+  if (!Number.isSafeInteger(since) || !Number.isSafeInteger(firstSharedAt)) return null;
+  return { since, firstSharedAt, urlNormalized: m[3] };
+}
+
+/**
+ * Every link in the window, newest by first share, a page at a time. The page
+ * is picked in SQL (one row per URL, keyset on first share then URL, so new
+ * links arriving at the top don't shift later pages), then only its rows are
+ * read and grouped. `nextCursor` is null on the last page.
+ */
+export async function readAllFollowLinks(
+  env: Env,
+  did: string,
+  window: FollowLinksWindow,
+  options: { cursor?: AllLinksCursor | null; limit?: number; now?: number } = {}
+): Promise<{ links: FollowLink[]; nextCursor: string | null }> {
+  const now = options.now ?? Date.now();
+  const limit = Math.min(
+    Math.max(options.limit ?? ALL_LINKS_PAGE_SIZE, 1),
+    ALL_LINKS_MAX_PAGE_SIZE
+  );
+  const cursor = options.cursor ?? null;
+  const since = cursor?.since ?? now - FOLLOW_LINKS_WINDOWS[window];
+
+  // One more than the page, to know whether another follows.
+  const page = await env.DB.prepare(
+    `SELECT url_normalized, MIN(shared_at) AS first_shared_at
+       FROM follow_link_shares
+      WHERE user_did = ?1 AND shared_at >= ?2
+      GROUP BY url_normalized
+     HAVING ?3 IS NULL OR first_shared_at < ?3 OR (first_shared_at = ?3 AND url_normalized < ?4)
+      ORDER BY first_shared_at DESC, url_normalized DESC
+      LIMIT ?5`
+  )
+    .bind(did, since, cursor?.firstSharedAt ?? null, cursor?.urlNormalized ?? null, limit + 1)
+    .all<{ url_normalized: string; first_shared_at: number }>();
+  const picked = page.results.slice(0, limit);
+  if (picked.length === 0) return { links: [], nextCursor: null };
+
+  const rows = await env.DB.prepare(
+    `SELECT post_uri, sharer_did, kind, url, url_normalized, post_text, card_title,
+            card_description, card_thumb, sharer_handle, sharer_name, sharer_avatar, shared_at, like_count
+       FROM follow_link_shares
+      WHERE user_did = ?1 AND shared_at >= ?2
+        AND url_normalized IN (SELECT value FROM json_each(?3))
+      ORDER BY shared_at DESC`
+  )
+    .bind(did, since, JSON.stringify(picked.map((p) => p.url_normalized)))
+    .all<ShareRow>();
+  const links = groupFollowLinks(rows.results, limit, true);
+
+  const last = picked[picked.length - 1];
+  const nextCursor =
+    page.results.length > limit
+      ? encodeAllLinksCursor({
+          since,
+          firstSharedAt: last.first_shared_at,
+          urlNormalized: last.url_normalized,
+        })
+      : null;
+  return { links, nextCursor };
 }
 
 /**
