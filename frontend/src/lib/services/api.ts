@@ -1911,8 +1911,9 @@ class ApiClient {
   }
 
   /** One page of every link your follows shared, newest by first share. */
-  async getAllFollowLinks(cursor?: string | null): Promise<AllFollowLinksPage> {
-    const q = cursor ? `&cursor=${encodeURIComponent(cursor)}` : '';
+  async getAllFollowLinks(cursor?: string | null, limit?: number): Promise<AllFollowLinksPage> {
+    const q =
+      (cursor ? `&cursor=${encodeURIComponent(cursor)}` : '') + (limit ? `&limit=${limit}` : '');
     return this.fetch(`/api/v2/following-links/all?window=7d${q}`);
   }
 

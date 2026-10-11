@@ -365,8 +365,16 @@
   }
 
   async function markAllAsReadInCurrentView() {
-    // Every follows link, not just the pages the river has loaded so far.
-    if (feedViewStore.showFollowLinks) await followLinksStore.loadEveryLink();
+    // Every follows link, not just the pages the river has loaded so far. Two
+    // tries: the reader is waiting on this.
+    if (feedViewStore.showFollowLinks && !(await followLinksStore.loadEveryLink(1))) {
+      const id = toastStore.add('');
+      toastStore.update(
+        id,
+        'error',
+        "Some links from your follows didn't load, so they're still unread."
+      );
+    }
     // Use all filtered items (not just paginated/displayed) for articles
     const allArticles = feedViewStore.filteredArticles;
     const allDocuments = feedViewStore.displayedDocuments;
@@ -520,8 +528,10 @@
   });
 
   // Every link, sorted oldest first or most shared first: no page can be placed
-  // until all of them are in.
+  // until all of them are in. A walk that gave up starts again on the next fresh
+  // first page (riverEpoch).
   $effect(() => {
+    void followLinksStore.riverEpoch;
     if (feedViewStore.needsEveryFollowLink) untrack(() => void followLinksStore.loadEveryLink());
   });
 

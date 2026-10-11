@@ -623,27 +623,53 @@ function compareByFirstShare(
   a: { firstSharedAt: number; urlNormalized: string },
   b: { firstSharedAt: number; urlNormalized: string }
 ): number {
-  return (
-    a.firstSharedAt - b.firstSharedAt ||
-    (a.urlNormalized < b.urlNormalized ? -1 : a.urlNormalized > b.urlNormalized ? 1 : 0)
-  );
+  return a.firstSharedAt - b.firstSharedAt || compareCodePoints(a.urlNormalized, b.urlNormalized);
 }
 
-/** Where a page of every link ends: the last link's first share and URL. Opaque to the client. */
+/**
+ * Strings in code point order, which is UTF-8 byte order: what SQLite's BINARY
+ * collation sorts the keyset by. JS `<` compares UTF-16 units, which disagrees
+ * once a string holds a character past U+FFFF.
+ */
+export function compareCodePoints(a: string, b: string): number {
+  const n = Math.min(a.length, b.length);
+  for (let i = 0; i < n; i++) {
+    const x = a.charCodeAt(i);
+    const y = b.charCodeAt(i);
+    if (x !== y) return codePointRank(x) - codePointRank(y);
+  }
+  return a.length - b.length;
+}
+
+/** Surrogates (U+D800–DFFF) above the rest of the BMP, as their code points sort. */
+function codePointRank(unit: number): number {
+  return unit < 0xd800 ? unit : unit < 0xe000 ? unit + 0x2000 : unit - 0x800;
+}
+
+/**
+ * Where a page of every link ends: the last link's first share and URL, and
+ * where the walk's window starts. Opaque to the client. The window start is
+ * fixed by the first page and carried along: recomputed per request, a link
+ * whose oldest share aged out between pages would jump to a later first share,
+ * above the cursor, and never be served.
+ */
 export interface AllLinksCursor {
+  since: number;
   firstSharedAt: number;
   urlNormalized: string;
 }
 
 export function encodeAllLinksCursor(c: AllLinksCursor): string {
-  return `${c.firstSharedAt}~${c.urlNormalized}`;
+  return `${c.since}~${c.firstSharedAt}~${c.urlNormalized}`;
 }
 
 export function decodeAllLinksCursor(raw: string): AllLinksCursor | null {
-  const m = /^(\d+)~(.+)$/s.exec(raw);
+  const m = /^(\d+)~(\d+)~(.+)$/s.exec(raw);
   if (!m) return null;
-  const firstSharedAt = Number(m[1]);
-  return Number.isSafeInteger(firstSharedAt) ? { firstSharedAt, urlNormalized: m[2] } : null;
+  const since = Number(m[1]);
+  const firstSharedAt = Number(m[2]);
+  if (!Number.isSafeInteger(since) || !Number.isSafeInteger(firstSharedAt)) return null;
+  return { since, firstSharedAt, urlNormalized: m[3] };
 }
 
 /**
@@ -663,8 +689,8 @@ export async function readAllFollowLinks(
     Math.max(options.limit ?? ALL_LINKS_PAGE_SIZE, 1),
     ALL_LINKS_MAX_PAGE_SIZE
   );
-  const since = now - FOLLOW_LINKS_WINDOWS[window];
   const cursor = options.cursor ?? null;
+  const since = cursor?.since ?? now - FOLLOW_LINKS_WINDOWS[window];
 
   // One more than the page, to know whether another follows.
   const page = await env.DB.prepare(
@@ -697,6 +723,7 @@ export async function readAllFollowLinks(
   const nextCursor =
     page.results.length > limit
       ? encodeAllLinksCursor({
+          since,
           firstSharedAt: last.first_shared_at,
           urlNormalized: last.url_normalized,
         })

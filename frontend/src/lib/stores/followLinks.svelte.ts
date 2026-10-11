@@ -1,5 +1,6 @@
 import { api } from '$lib/services/api';
 import { urlKey } from '$lib/utils/urlKey';
+import { compareCodePoints } from '$lib/utils/compareCodePoints';
 import { auth } from './auth.svelte';
 import type { AllFollowLinksPage, FollowLink } from '$lib/types';
 
@@ -29,6 +30,13 @@ const MAX_FOLLOW_UPS = 6;
  *  PWA stays open for days; the server's own 10-minute gate decides whether
  *  asking also refreshes from the timeline, so this only bounds staleness. */
 const STALE_MS = 5 * 60 * 1000;
+/** The most one /all page may hold: what walks over every page ask for. */
+const MAX_PAGE = 100;
+/** A failed page waits this long before the next try, doubling to the cap. */
+const RETRY_BASE_MS = 1000;
+const RETRY_MAX_MS = 60 * 1000;
+/** Failed pages in a row before a walk over every page gives up for now. */
+const EVERY_LINK_PATIENCE = 4;
 
 function createFollowLinksStore() {
   let links = $state<FollowLink[]>([]);
@@ -46,8 +54,21 @@ function createFollowLinksStore() {
   let nextCursor = $state<string | null>(null);
   let loadingMore = $state(false);
   let moreInFlight: Promise<void> | null = null;
-  /** Bumped by a settings change; an answer asked for before it says the old values. */
+  // After a page fails, the next waits out a backoff: the infinite-scroll
+  // sentinel asks again as soon as loading ends, so without one an outage would
+  // be a tight loop of failing requests. The river reads it as still loading.
+  let moreFailures = 0;
+  let backingOff = $state(false);
+  let backoffTimer: ReturnType<typeof setTimeout> | null = null;
+  let backoffDone: Promise<void> | null = null;
+  let endBackoff: (() => void) | null = null;
+  /** Bumped by every fresh first page, so a walk over every page that gave up starts again. */
+  let riverEpoch = $state(0);
+  /** Bumped when a settings change starts and when it settles; an answer asked
+   *  for before either says the old values. */
   let settingsEpoch = 0;
+  /** Settings changes not yet saved; no answer overrides one meanwhile. */
+  let settingsInFlight = 0;
   let loadedAt = 0;
   let loadedDid: string | null = null;
   /** Bumped by every load; a response or follow-up from an older one is dropped. */
@@ -75,27 +96,65 @@ function createFollowLinksStore() {
     followUp = null;
   }
 
-  /** a came before b, in the order /all pages: older by first share, then lower URL. */
+  /** Ends a backoff now, releasing anything waiting on it. */
+  function clearBackoff() {
+    if (backoffTimer) clearTimeout(backoffTimer);
+    backoffTimer = null;
+    endBackoff?.();
+    moreFailures = 0;
+  }
+
+  function startBackoff() {
+    moreFailures++;
+    const ms = Math.min(RETRY_BASE_MS * 2 ** (moreFailures - 1), RETRY_MAX_MS);
+    backingOff = true;
+    backoffDone = new Promise((resolve) => {
+      endBackoff = () => {
+        endBackoff = null;
+        backoffDone = null;
+        backingOff = false;
+        resolve();
+      };
+    });
+    backoffTimer = setTimeout(() => {
+      backoffTimer = null;
+      endBackoff?.();
+    }, ms);
+  }
+
+  /** a came before b, in the order /all pages: older by first share, then lower
+   *  URL in code point order (SQLite's, which `<` on UTF-16 isn't). */
   function olderThan(a: FollowLink, b: FollowLink): boolean {
     return (
       a.firstSharedAt < b.firstSharedAt ||
-      (a.firstSharedAt === b.firstSharedAt && a.urlNormalized < b.urlNormalized)
+      (a.firstSharedAt === b.firstSharedAt &&
+        compareCodePoints(a.urlNormalized, b.urlNormalized) < 0)
     );
   }
 
-  /** A fresh first page. Pages already loaded past it are kept, with their cursor,
-   *  so a refresh doesn't snap a river scrolled deep back to page one. */
-  function takeFirstPage(page: AllFollowLinksPage) {
-    const prior = allPages;
-    const last = page.links.at(-1);
-    if (prior && last && page.nextCursor && prior.length > page.links.length) {
-      const fresh = new Set(page.links.map((l) => l.urlNormalized));
-      const older = prior.filter((l) => !fresh.has(l.urlNormalized) && olderThan(l, last));
-      allPages = [...page.links, ...older];
-    } else {
-      allPages = page.links;
-      nextCursor = page.nextCursor;
+  function appendNew(list: FollowLink[], more: FollowLink[]): FollowLink[] {
+    const have = new Set(list.map((l) => l.urlNormalized));
+    return [...list, ...more.filter((l) => !have.has(l.urlNormalized))];
+  }
+
+  /** A fresh first page. A river already scrolled past it is re-read down to the
+   *  depth it reached, so a refresh doesn't snap it back to page one, and a link
+   *  that landed between pages (a backdated share) isn't skipped. If a page of
+   *  that fails, the river keeps what was re-read and pages the rest in on scroll. */
+  async function takeFirstPage(page: AllFollowLinksPage, token: number, did: string) {
+    const deepest = allPages && allPages.length > page.links.length ? allPages.at(-1) : undefined;
+    let list = page.links;
+    let cursor = page.nextCursor;
+    while (deepest && cursor && list.length > 0 && olderThan(deepest, list[list.length - 1])) {
+      const next = await api.getAllFollowLinks(cursor, MAX_PAGE).catch(() => null);
+      if (token !== seq || auth.user?.did !== did || !allLinks) return;
+      if (!next || next.scopeRequired) break;
+      list = appendNew(list, next.links);
+      cursor = next.nextCursor;
     }
+    allPages = list;
+    nextCursor = cursor;
+    riverEpoch++;
   }
 
   async function fetchOnce(token: number, did: string): Promise<void> {
@@ -109,8 +168,9 @@ function createFollowLinksStore() {
     if (token !== seq || auth.user?.did !== did) return;
 
     scopeRequired = res.scopeRequired;
-    // A setting changed while this was in flight; this answer predates it.
-    if (epoch === settingsEpoch) {
+    // A setting changed while this was in flight, or is still saving: this
+    // answer may predate it.
+    if (epoch === settingsEpoch && settingsInFlight === 0) {
       inEverything = res.inEverything ?? null;
       allLinks = res.allLinks ?? false;
     }
@@ -140,28 +200,30 @@ function createFollowLinksStore() {
     // Couldn't get it (or didn't know to ask): the river shows the ranked list meanwhile.
     const page = firstPage ?? (await api.getAllFollowLinks().catch(() => null));
     if (token !== seq || auth.user?.did !== did || !allLinks) return;
-    if (page && !page.scopeRequired) takeFirstPage(page);
+    if (page && !page.scopeRequired) await takeFirstPage(page, token, did);
   }
 
   /** The river's next page of every link. One at a time; a failure leaves the
-   *  cursor, so the next scroll asks again. */
-  function loadMoreLinks(): Promise<void> {
+   *  cursor and backs off, and the next scroll after that asks again. */
+  function loadMoreLinks(limit?: number): Promise<void> {
     if (moreInFlight) return moreInFlight;
     const cursor = nextCursor;
-    if (!allLinks || !allPages || !cursor) return Promise.resolve();
+    if (!allLinks || !allPages || !cursor || backingOff) return Promise.resolve();
     const token = seq;
     const did = loadedDid;
     loadingMore = true;
     moreInFlight = (async () => {
       try {
-        const page = await api.getAllFollowLinks(cursor);
+        const page = await api.getAllFollowLinks(cursor, limit);
         // Superseded by a load, or a fresh first page replaced what this extends.
         if (token !== seq || auth.user?.did !== did || nextCursor !== cursor || !allPages) return;
-        const have = new Set(allPages.map((l) => l.urlNormalized));
-        allPages = [...allPages, ...page.links.filter((l) => !have.has(l.urlNormalized))];
+        allPages = appendNew(allPages, page.links);
         nextCursor = page.nextCursor;
+        moreFailures = 0;
       } catch {
-        // Kept the cursor; asked again on the next scroll.
+        // Kept the cursor. Backing off before loadingMore drops keeps the river
+        // reading as loading, so the sentinel doesn't ask again straight away.
+        if (token === seq && auth.user?.did === did) startBackoff();
       } finally {
         loadingMore = false;
         moreInFlight = null;
@@ -171,13 +233,30 @@ function createFollowLinksStore() {
   }
 
   /** Every page, for a river that can't show any until it has all of them
-   *  (oldest first, most shared first) or that marks them all read. */
-  async function loadEveryLink(): Promise<void> {
+   *  (oldest first, most shared first) or that marks them all read. A failed
+   *  page is retried after its backoff, and a load that replaced the list is
+   *  waited for, up to `patience` tries in a row without progress. Resolves
+   *  whether every link is in (true when the river isn't showing every link). */
+  async function loadEveryLink(patience = EVERY_LINK_PATIENCE): Promise<boolean> {
+    // Asked for now (a new first page, or a reader marking all read): a backoff
+    // left by an earlier scroll would hold this up to a minute.
+    if (backingOff) clearBackoff();
+    let stalls = 0;
     while (allLinks && allPages && nextCursor) {
-      const before = nextCursor;
-      await loadMoreLinks();
-      if (nextCursor === before) return; // Failed; don't spin.
+      if (backingOff && backoffDone) await backoffDone;
+      const beforeCursor = nextCursor;
+      const beforePages = allPages;
+      await loadMoreLinks(MAX_PAGE);
+      if (nextCursor !== beforeCursor || allPages !== beforePages) {
+        stalls = 0;
+        continue;
+      }
+      if (++stalls > patience) break;
+      // Failed (the next try waits out the backoff, above), or dropped because
+      // a load superseded it: wait for that load's first page.
+      if (!backingOff && latestLoad) await latestLoad;
     }
+    return !allLinks || (allPages !== null && nextCursor === null);
   }
 
   /** Load for the signed-in account. An answer is reused for a few minutes
@@ -200,6 +279,7 @@ function createFollowLinksStore() {
       allLinks = false;
       allPages = null;
       nextCursor = null;
+      clearBackoff();
       complete = false;
       refreshing = false;
       error = null;
@@ -237,14 +317,26 @@ function createFollowLinksStore() {
   /** Show follows links in Everything, or not. Applied at once; saved for the
    *  account, so the first-run question is asked once, not once per device. */
   async function setInEverything(on: boolean): Promise<void> {
-    settingsEpoch++;
     const prior = inEverything;
     inEverything = on;
     try {
-      await api.setFollowLinksSettings({ inEverything: on });
+      await saveSettings({ inEverything: on });
     } catch (err) {
       inEverything = prior;
       throw err;
+    }
+  }
+
+  /** Saves a settings change. While it's in flight, and for any answer asked
+   *  for before it settled, a load leaves the settings as set here. */
+  async function saveSettings(settings: { inEverything?: boolean; allLinks?: boolean }) {
+    settingsEpoch++;
+    settingsInFlight++;
+    try {
+      await api.setFollowLinksSettings(settings);
+    } finally {
+      settingsInFlight--;
+      settingsEpoch++;
     }
   }
 
@@ -252,11 +344,10 @@ function createFollowLinksStore() {
    *  (the default) the week's most shared. Saved for the account; the lists are
    *  asked for again at once. Home's lane is the most shared either way. */
   async function setAllLinks(on: boolean): Promise<void> {
-    settingsEpoch++;
     const prior = allLinks;
     allLinks = on;
     try {
-      await api.setFollowLinksSettings({ allLinks: on });
+      await saveSettings({ allLinks: on });
     } catch (err) {
       allLinks = prior;
       throw err;
@@ -289,8 +380,13 @@ function createFollowLinksStore() {
     get moreRiverLinks() {
       return allLinks && allPages !== null && nextCursor !== null;
     },
+    /** A page is on its way, or the next waits out a failure's backoff. */
     get loadingMore() {
-      return loadingMore;
+      return loadingMore || backingOff;
+    },
+    /** Changes with every fresh first page of every link. */
+    get riverEpoch() {
+      return riverEpoch;
     },
     /** An answer has arrived for this account (with or without the permission). */
     get loaded() {

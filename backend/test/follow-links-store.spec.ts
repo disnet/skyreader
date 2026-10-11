@@ -15,9 +15,13 @@ import {
   LIKES_STALE_MS,
   MAX_SHARES_PER_REFRESH,
   REFRESH_MAX_PAGES,
+  FOLLOW_LINKS_WINDOWS,
   SERVE_LINK_LIMIT,
+  compareCodePoints,
+  decodeAllLinksCursor,
   groupFollowLinks,
   purgeFollowLinks,
+  readAllFollowLinks,
   readFollowLinks,
   refreshFollowLinks,
   type FollowLink,
@@ -574,6 +578,69 @@ describe('follow links store', () => {
         firstSharedAt: 100,
         lastSharedAt: 900,
       });
+    });
+  });
+
+  describe('readAllFollowLinks', () => {
+    const insert = (url: string, sharer: string, at: number) =>
+      env.DB.prepare(
+        `INSERT INTO follow_link_shares
+           (user_did, post_uri, sharer_did, kind, url, url_normalized, shared_at)
+         VALUES (?, ?, ?, 'post', ?, ?, ?)`
+      )
+        .bind(DID, `at://${sharer}/p/${url}`, sharer, url, url, at)
+        .run();
+
+    it('keeps the window the first page started from, so a link aging out of it is not skipped', async () => {
+      const t0 = Date.now();
+      const week = FOLLOW_LINKS_WINDOWS['7d'];
+      // X's first share sits a minute inside the window; a late reshare keeps it
+      // in the window after that first one ages out.
+      await insert('https://x.example/', 'did:a', t0 - week + 60_000);
+      await insert('https://x.example/', 'did:b', t0 - 2 * 60 * 60 * 1000);
+      for (let i = 0; i < 3; i++) await insert(`https://n.example/${i}`, 'did:c', t0 - 1000 - i);
+
+      const first = await readAllFollowLinks(env, DID, '7d', { limit: 2, now: t0 });
+      expect(first.links.map((l) => l.urlNormalized)).toEqual([
+        'https://n.example/0',
+        'https://n.example/1',
+      ]);
+      const cursor = decodeAllLinksCursor(first.nextCursor!);
+      expect(cursor?.since).toBe(t0 - week);
+
+      // Ten minutes on: X's first share has left a freshly computed window.
+      const second = await readAllFollowLinks(env, DID, '7d', {
+        cursor,
+        limit: 2,
+        now: t0 + 10 * 60_000,
+      });
+      expect(second.links.map((l) => l.urlNormalized)).toEqual([
+        'https://n.example/2',
+        'https://x.example/',
+      ]);
+      expect(second.nextCursor).toBeNull();
+    });
+
+    it('breaks a tie in the order SQLite pages by, past U+FFFF too', async () => {
+      const at = Date.now() - 1000;
+      // UTF-16 units put the astral character (a surrogate pair) first; code
+      // points, and so SQLite, put it after U+FF5E.
+      const astral = 'https://t.example/\u{1F600}';
+      const bmp = 'https://t.example/\uFF5E';
+      expect(compareCodePoints(astral, bmp)).toBeGreaterThan(0);
+      expect(compareCodePoints(bmp, bmp)).toBe(0);
+      expect(compareCodePoints('https://a', 'https://ab')).toBeLessThan(0);
+      await insert(astral, 'did:a', at);
+      await insert(bmp, 'did:b', at);
+
+      const one = await readAllFollowLinks(env, DID, '7d', { limit: 1 });
+      const two = await readAllFollowLinks(env, DID, '7d', {
+        cursor: decodeAllLinksCursor(one.nextCursor!),
+        limit: 1,
+      });
+      const both = await readAllFollowLinks(env, DID, '7d', { limit: 2 });
+      expect([...one.links, ...two.links].map((l) => l.urlNormalized)).toEqual([astral, bmp]);
+      expect(both.links.map((l) => l.urlNormalized)).toEqual([astral, bmp]);
     });
   });
 
