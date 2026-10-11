@@ -317,6 +317,43 @@ export interface FeedbackBoard {
 }
 
 /** The user's active Polar subscription, summarized for the Settings plan card. */
+/** Which of the reader's items a search covers; omitted = all of them. */
+export type SearchKind = 'read' | 'saved' | 'highlighted';
+
+export interface SearchSnippetSegment {
+  text: string;
+  /** This run is one of the query's terms. */
+  match: boolean;
+}
+
+export interface SearchHit {
+  /** Same key as `FeedDisplayItem.key`: guid, save uri, or document at:// uri. */
+  itemKey: string;
+  itemType: 'article' | 'document' | 'saved';
+  url: string | null;
+  title: string;
+  feedTitle: string | null;
+  feedUrl: string | null;
+  read: boolean;
+  saved: boolean;
+  highlighted: boolean;
+  /** Unix ms. */
+  readAt: number | null;
+  savedAt: number | null;
+  highlightedAt: number | null;
+  snippet: SearchSnippetSegment[];
+}
+
+export interface SearchResponse {
+  terms: string[];
+  results: SearchHit[];
+  /** Capped at 1,000; `totalCapped` means "more than that". */
+  total: number;
+  totalCapped: boolean;
+  /** `building`: the index is still working through the reader's history. */
+  index: { items: number; building: boolean };
+}
+
 export interface NewsletterInbox {
   enabled: boolean;
   entitled: boolean;
@@ -1505,6 +1542,22 @@ class ApiClient {
 
   // The reader's newsletter inbox (a Supporter feature). `enabled` is false
   // where the backend has no inbound mail domain configured.
+  // Full-text search over what the reader has read, saved and highlighted
+  // (Supporter; backend/src/routes/search.ts).
+  async search(params: {
+    q: string;
+    kinds?: SearchKind[];
+    limit?: number;
+    offset?: number;
+    signal?: AbortSignal;
+  }): Promise<SearchResponse> {
+    const query = new URLSearchParams({ q: params.q });
+    if (params.kinds?.length) query.set('kind', params.kinds.join(','));
+    if (params.limit) query.set('limit', String(params.limit));
+    if (params.offset) query.set('offset', String(params.offset));
+    return this.fetch(`/api/search?${query}`, { signal: params.signal });
+  }
+
   async getNewsletters(): Promise<NewsletterInbox> {
     return this.fetch('/api/newsletters');
   }

@@ -34,6 +34,7 @@ export default defineConfig({
             { slug: 'guide/adding-sources' },
             { slug: 'guide/reading' },
             { slug: 'guide/saving-and-highlights' },
+            { slug: 'guide/search' },
             { slug: 'guide/sharing-and-your-linkblog' },
             { slug: 'guide/reading-rooms' },
             { slug: 'guide/from-your-follows' },

@@ -15,6 +15,7 @@
   import { channelPath, feedPath, categoryPath, FEEDS_PATH, SAVED_PATH } from '$lib/utils/viewNav';
   import { perfBegin, PERF_VIEW_SWITCH } from '$lib/utils/perfMarks';
   import Icon from '$lib/components/Icon.svelte';
+  import { canUseSearch } from '$lib/utils/search';
   import type { Subscription } from '$lib/types';
 
   interface Props {
@@ -235,6 +236,16 @@
               id: 'linkblog',
               label: 'Linkblog',
               icon: 'share' as IconName,
+            } as NavItem,
+          ]
+        : []),
+      ...(canUseSearch(auth.user)
+        ? [
+            {
+              type: 'utility',
+              id: 'search',
+              label: 'Search',
+              icon: 'search' as IconName,
             } as NavItem,
           ]
         : []),

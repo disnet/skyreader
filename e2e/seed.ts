@@ -300,3 +300,21 @@ export async function cleanupTestData(user: TestUser) {
     `DELETE FROM users WHERE did = '${user.did}'`,
   ]);
 }
+
+/**
+ * Give `user` full-text search: the Supporter plan and the environment's
+ * operator switch (`sync_state.search_enabled`). The switch is global, so pair
+ * this with `disableSearch()` in cleanup; other specs' users are free-tier and
+ * never see search either way.
+ */
+export async function enableSearchFor(user: TestUser): Promise<void> {
+  const now = Math.floor(Date.now() / 1000);
+  await execD1([
+    `UPDATE users SET tier = 'supporter' WHERE did = ${sqlString(user.did)}`,
+    `INSERT INTO sync_state (key, value, updated_at) VALUES ('search_enabled', '1', ${now}) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+  ]);
+}
+
+export async function disableSearch(): Promise<void> {
+  await execD1([`DELETE FROM sync_state WHERE key = 'search_enabled'`]);
+}

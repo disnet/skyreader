@@ -15,6 +15,7 @@
   import { channelPath, feedPath, FEEDS_PATH, SAVED_PATH } from '$lib/utils/viewNav';
   import Icon from './Icon.svelte';
   import AddDropdownMenu from './AddDropdownMenu.svelte';
+  import { canUseSearch } from '$lib/utils/search';
 
   interface Props {
     currentTitle: string;
@@ -248,6 +249,9 @@
             },
           ]
         : []),
+      ...(canUseSearch(auth.user)
+        ? [{ type: 'utility' as const, id: 'search', label: 'Search', icon: 'search' as const }]
+        : []),
       { type: 'utility', id: 'highlights', label: 'Highlights', icon: 'highlighter' },
       // Review is its own destination; the count is today's deck, and it goes
       // quiet once the deck is done. Hidden until there's a corpus to review.
@@ -417,6 +421,7 @@
     if (pathname === '/daily') return { type: 'icon', name: 'newspaper' };
     if (pathname === '/linkblog') return { type: 'icon', name: 'share' };
     if (pathname === '/highlights') return { type: 'icon', name: 'highlighter' };
+    if (pathname === '/search') return { type: 'icon', name: 'search' };
     if (pathname === '/discover') return { type: 'icon', name: 'users' };
     if (pathname === '/sources') return { type: 'icon', name: 'rss' };
     if (pathname === '/settings') return { type: 'icon', name: 'settings' };

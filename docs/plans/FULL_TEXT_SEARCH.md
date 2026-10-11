@@ -97,7 +97,9 @@ Details that matter:
 2. **Staging measurement.** Seed a reader with 100k items. Check p95 including a cold DO, and the
    billed rows written per item; locally it is 5, while the cost estimate budgets up to 25.
 3. **The `/` search surface in the frontend**, with an offline fallback to the client-side Saved
-   search, and a docs-site page.
+   search, and a docs-site page (`docs-site/src/content/docs/guide/search.md`). Shipped behind the
+   same switch: `GET /api/auth/me` reports `searchEnabled`, and the client offers search only when
+   that and `limits.fullTextSearch` are both true.
 4. **Admin.** Index size and backlog on the ops panel, and a per-user rebuild action
    (`SearchIndex.reset`).
 
