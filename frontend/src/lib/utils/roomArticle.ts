@@ -81,6 +81,10 @@ function readerItemFor(
  *  caller should fall back to opening the URL directly. The follows-links
  *  surface opens articles this way, without saving them. */
 export async function extractArticle(ref: ArticleRef): Promise<SavedItem | null> {
+  const postBody = await blueskyPostBody(ref.url);
+  // The link's own image is bsky.app's generic card (the butterfly); the post
+  // brings its own images.
+  if (postBody) return readerItemFor({ ...ref, image: null }, postBody);
   const extracted = await api.extract(ref.url).catch(() => null);
   if (!extracted?.content) return null;
   return readerItemFor(ref, extracted.content, extracted);
@@ -124,6 +128,56 @@ export function articleOpenFailedBody(url: string, reason: ArticleOpenFailure): 
   ].join('\n');
 }
 
+/** A bsky.app post link's parts: `/profile/<handle-or-did>/post/<rkey>`. */
+function blueskyPostRef(url: string): { actor: string; rkey: string } | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  if (parsed.hostname !== 'bsky.app' && parsed.hostname !== 'www.bsky.app') return null;
+  const parts = parsed.pathname.split('/').filter(Boolean);
+  if (parts.length !== 4 || parts[0] !== 'profile' || parts[2] !== 'post') return null;
+  try {
+    return { actor: decodeURIComponent(parts[1]), rkey: parts[3] };
+  } catch {
+    // Malformed percent-encoding: treat as a non-post link rather than throw.
+    return null;
+  }
+}
+
+async function resolveActorDid(actor: string): Promise<string | null> {
+  if (actor.startsWith('did:')) return actor;
+  try {
+    const res = await fetch(
+      `https://public.api.bsky.app/xrpc/com.atproto.identity.resolveHandle?handle=${encodeURIComponent(actor)}`
+    );
+    if (!res.ok) return null;
+    const data = (await res.json()) as { did?: unknown };
+    return typeof data.did === 'string' ? data.did : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The reader body for a Bluesky post: the placeholder the reader's bskyEmbed
+ * action hydrates into the post itself, plus a link out. bsky.app is a client
+ * app with no article to extract — scraping it yields the butterfly logo and
+ * nothing else — so a post saved to a collection is read off the AppView
+ * instead. Null when the link isn't a post.
+ */
+export async function blueskyPostBody(url: string): Promise<string | null> {
+  const ref = blueskyPostRef(url);
+  if (!ref) return null;
+  const link = `<p><a href="${escapeHtml(url)}">Open on Bluesky</a></p>`;
+  const did = await resolveActorDid(ref.actor);
+  if (!did) return link;
+  const uri = `at://${did}/app.bsky.feed.post/${ref.rkey}`;
+  return `<div class="bsky-post-embed" data-uri="${escapeHtml(uri)}"></div>\n${link}`;
+}
+
 /**
  * A reader item for a link, always. When extraction fails the reader still
  * opens, on the metadata the surface already holds plus a note linking the page,
@@ -133,6 +187,10 @@ export function articleOpenFailedBody(url: string, reason: ArticleOpenFailure): 
  * Sentry rather than as tabs nobody asked for.
  */
 export async function articleForReader(ref: ArticleRef): Promise<SavedItem> {
+  const postBody = await blueskyPostBody(ref.url);
+  // The link's own image is bsky.app's generic card (the butterfly); the post
+  // brings its own images.
+  if (postBody) return readerItemFor({ ...ref, image: null }, postBody);
   let failure: ArticleOpenFailure;
   try {
     const extracted = await api.extract(ref.url);
