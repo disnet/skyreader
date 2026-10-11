@@ -51,6 +51,7 @@ for (const variant of VARIANTS) {
   console.log(`\n== ${variant} (SQLite ${before.sqliteVersion})`);
   let seedMs = 0;
   let textBytes = 0;
+  let rowsWritten = 0;
   if (before.docs < N) {
     for (let start = before.docs; start < N; start += BATCH) {
       const { body } = await get('/seed', {
@@ -61,6 +62,7 @@ for (const variant of VARIANTS) {
       });
       seedMs += body.ms;
       textBytes += body.textBytes;
+      rowsWritten += body.rowsWritten;
       if ((start / BATCH) % 10 === 0) process.stdout.write(`  seeded ${start + BATCH}\r`);
     }
   }
@@ -69,7 +71,8 @@ for (const variant of VARIANTS) {
   console.log(
     `  docs ${seeded.docs}, text ${mb(textBytes)} MB, db ${mb(seeded.databaseSize)} MB, ` +
       `after optimize ${mb(opt.databaseSize)} MB (optimize ${opt.ms.toFixed(0)} ms), ` +
-      `seed ${(seedMs / 1000).toFixed(1)} s (${((N / seedMs) * 1000).toFixed(0)} docs/s)`
+      `seed ${(seedMs / 1000).toFixed(1)} s (${((N / seedMs) * 1000).toFixed(0)} docs/s), ` +
+      `billed rows written ${(rowsWritten / Math.max(1, N - before.docs)).toFixed(1)}/doc`
   );
   const v = {
     textMB: textBytes / 1048576,
@@ -81,6 +84,7 @@ for (const variant of VARIANTS) {
     const inner = [];
     const rtts = [];
     let matches = 0;
+    let rowsRead = 0;
     let err = null;
     for (let i = 0; i < RUNS; i++) {
       try {
@@ -95,6 +99,7 @@ for (const variant of VARIANTS) {
         inner.push(body.ms);
         rtts.push(rtt);
         matches = body.matches;
+        rowsRead = body.rowsRead;
       } catch (e) {
         err = String(e.message).slice(0, 80);
         break;
@@ -105,14 +110,22 @@ for (const variant of VARIANTS) {
       v.queries[qd.name] = { error: err };
       continue;
     }
-    const row = { matches, p50: pct(inner, 50), p95: pct(inner, 95), rttP95: pct(rtts, 95) };
+    const row = {
+      matches,
+      rowsRead,
+      p50: pct(inner, 50),
+      p95: pct(inner, 95),
+      rttP95: pct(rtts, 95),
+    };
     v.queries[qd.name] = row;
     console.log(
-      `  ${qd.name.padEnd(24)} ${String(matches).padStart(6)} hits  p50 ${row.p50.toFixed(1).padStart(6)} ms  p95 ${row.p95.toFixed(1).padStart(6)} ms  rtt p95 ${row.rttP95.toFixed(1).padStart(6)} ms`
+      `  ${qd.name.padEnd(24)} ${String(matches).padStart(6)} hits  p50 ${row.p50.toFixed(1).padStart(6)} ms  p95 ${row.p95.toFixed(1).padStart(6)} ms  rtt p95 ${row.rttP95.toFixed(1).padStart(6)} ms  rows read ${rowsRead}`
     );
   }
   const m = (await get('/mutate', { user, variant })).body;
-  console.log(`  delete check: fts rows left for deleted id = ${m.ftsRowsLeft}`);
+  console.log(
+    `  delete check: fts rows left for deleted id = ${m.ftsRowsLeft}, delete cost ${JSON.stringify(m.deleteCost)}`
+  );
   v.deleteOk = m.ftsRowsLeft === 0;
   report.variants[variant] = v;
 }

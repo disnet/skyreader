@@ -141,11 +141,32 @@ function makeDoc(i: number): Doc {
 // --- the index DO -------------------------------------------------------------
 
 export class SearchIndex extends DurableObject<Env> {
-  private sql: SqlStorage;
+  private sql: Pick<SqlStorage, 'exec'>;
+  // Every cursor opened since the last tally(), so a method can report the
+  // billed SQLite rows read/written (including FTS5's shadow tables).
+  private cursors: SqlStorageCursor<Record<string, SqlStorageValue>>[] = [];
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    this.sql = ctx.storage.sql;
+    const raw = ctx.storage.sql;
+    this.sql = {
+      exec: (query, ...bindings) => {
+        const c = raw.exec(query, ...bindings);
+        this.cursors.push(c);
+        return c;
+      },
+    } as Pick<SqlStorage, 'exec'>;
+  }
+
+  private tally() {
+    let rowsRead = 0;
+    let rowsWritten = 0;
+    for (const c of this.cursors) {
+      rowsRead += c.rowsRead;
+      rowsWritten += c.rowsWritten;
+    }
+    this.cursors = [];
+    return { rowsRead, rowsWritten };
   }
 
   private setup(variant: Variant) {
@@ -198,6 +219,7 @@ export class SearchIndex extends DurableObject<Env> {
 
   seed(variant: Variant, start: number, count: number) {
     this.setup(variant);
+    this.tally();
     const t0 = performance.now();
     let textBytes = 0;
     for (let i = start; i < start + count; i++) {
@@ -234,18 +256,24 @@ export class SearchIndex extends DurableObject<Env> {
         d.notes
       );
     }
-    return { inserted: count, textBytes, ms: performance.now() - t0 };
+    return { inserted: count, textBytes, ms: performance.now() - t0, ...this.tally() };
   }
 
   optimize() {
+    this.tally();
     const t0 = performance.now();
     this.sql.exec(`INSERT INTO fts (fts) VALUES ('optimize')`);
-    return { ms: performance.now() - t0, databaseSize: this.ctx.storage.sql.databaseSize };
+    return {
+      ms: performance.now() - t0,
+      databaseSize: this.ctx.storage.sql.databaseSize,
+      ...this.tally(),
+    };
   }
 
   // One update and one delete, to check the write paths the real index needs
   // (unsave -> re-tier, label tombstone -> delete) work for the variant.
   mutate(variant: Variant) {
+    this.tally();
     const row = this.sql.exec(`SELECT id FROM docs ORDER BY id DESC LIMIT 1`).one();
     const id = row.id as number;
     if (variant === 'less') {
@@ -264,13 +292,15 @@ export class SearchIndex extends DurableObject<Env> {
       this.sql.exec(`DELETE FROM docs_text WHERE id = ?`, id);
     }
     this.sql.exec(`DELETE FROM docs WHERE id = ?`, id);
+    const cost = this.tally();
     const left = this.sql.exec(`SELECT count(*) AS n FROM fts WHERE rowid = ?`, id).one().n;
-    return { deletedId: id, ftsRowsLeft: left };
+    return { deletedId: id, ftsRowsLeft: left, deleteCost: cost };
   }
 
   // Ranked query: bm25 with column weights (title, author, feed, body, notes),
   // plus a boost for saved/highlighted. Optional kind filter and date floor.
   query(variant: Variant, match: string, kindMask: number, since: number, limit: number) {
+    this.tally();
     const t0 = performance.now();
     // Two phases: rank every match without snippet(), then compute snippets
     // for just the page. Putting snippet() in the ranked SELECT makes SQLite
@@ -315,7 +345,13 @@ export class SearchIndex extends DurableObject<Env> {
     const total = this.sql
       .exec(`SELECT count(*) AS n FROM (SELECT 1 FROM fts WHERE fts MATCH ? LIMIT 1001)`, match)
       .one().n as number;
-    return { ms: performance.now() - t0, rankedMs, matches: total, top: rows.slice(0, 3) };
+    return {
+      ms: performance.now() - t0,
+      rankedMs,
+      matches: total,
+      top: rows.slice(0, 3),
+      ...this.tally(),
+    };
   }
 }
 

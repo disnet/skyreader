@@ -117,3 +117,66 @@ needs for an unsave (re-tier) and a label tombstone (remove).
   work, so run the backfill as alarm-driven batches of about 1–2k docs, not one invocation.
 - Real text compresses and stems differently from pseudo-words. The porter tokenizer's effect on
   recall should be checked against a real corpus, such as the dev archive.
+
+## Cost estimate
+
+### Prices and measured usage
+
+Durable Objects pricing on Workers Paid, as of Oct 2026:
+
+| Item                | Rate          | Included per month, account-wide |
+| ------------------- | ------------- | -------------------------------- |
+| SQLite storage      | $0.20/GB-mo   | 5 GB                             |
+| SQLite rows written | $1.00/M       | 50M                              |
+| SQLite rows read    | $0.001/M      | 25B                              |
+| Requests            | $0.15/M       | 1M                               |
+| Duration            | $12.50/M GB-s | 400k GB-s, at 128 MB per object  |
+
+Usage measured with the DO cursor's `rowsRead` and `rowsWritten`, on the `ext` variant:
+
+| Measurement                           | Result                                       |
+| ------------------------------------- | -------------------------------------------- |
+| Rows written per indexed item         | 5 (contentless: 4), flat from 0 to 50k items |
+| Rows written per delete               | 3                                            |
+| Rows written per `optimize`           | 1                                            |
+| Rows read per query, rare term        | about 500                                    |
+| Rows read per query, mid term         | about 3k                                     |
+| Rows read per query, common term      | about 33k                                    |
+| Rows read per query, very common term | about 150k                                   |
+| Rows read per query, 3-letter prefix  | about 63k                                    |
+| Storage per indexed item              | about 8.6 KB (contentless: 2.5 KB)           |
+
+**Caveat on rows written:** local workerd reports 5 rows per item and 1 for an `optimize` that
+rewrites the whole index. That suggests it counts the statement's own rows, not FTS5's
+shadow-table segment writes. Until a staging DO's metrics confirm it, budget an upper bound of
+5× (25 rows per item).
+
+### Per Pro user per month (external content)
+
+The two profiles assume:
+
+- **Typical:** 20k items indexed, 3k new items a month, 300 searches a month.
+- **Heavy:** 100k items indexed, 4.2k new items a month, 1,500 searches a month.
+
+| Profile | Storage | Writes (upper)  | Reads  | Requests + duration | Total (upper)      |
+| ------- | ------- | --------------- | ------ | ------------------- | ------------------ |
+| Typical | $0.034  | $0.015 ($0.075) | $0.009 | < $0.001            | **~$0.06 ($0.12)** |
+| Heavy   | $0.17   | $0.021 ($0.105) | $0.045 | < $0.001            | **~$0.24 ($0.32)** |
+
+- **Backfill:** a one-time cost when search is enabled. It's about $0.10 for a typical history
+  and about $0.50 for a heavy one. Upper bounds are $0.50 and $2.50.
+- **Contentless:** storage drops by about 70%, but snippets have to be built another way.
+- **Duration stays negligible** only if the Worker fetches item bodies (D1, R2) and passes text
+  to the DO. A DO that awaits that I/O itself is billed for the wait.
+
+### Fleet
+
+500 Pro users averaging 30k items:
+
+- Storage: about 130 GB, or about $25 a month. It grows by about $2.60 a month as histories
+  accumulate, since nothing is pruned.
+- Writes, reads and requests: mostly inside the included allowances, about $0.15 a month beyond
+  them.
+
+Storage is effectively the whole bill. Capping indexed history, for example to read-only items
+from the last two years, is the lever to pull if storage cost matters.
