@@ -13,7 +13,6 @@
     type CrossTypeDuplicate,
   } from '$lib/services/subscriptionDedup';
   import { dismissUnifyHost } from '$lib/services/unifyDismiss';
-  import Modal from '$lib/components/common/Modal.svelte';
   import UnifyNotice from '$lib/components/UnifyNotice.svelte';
   import LimitNotice from '$lib/components/LimitNotice.svelte';
   import { feedLimitLine } from '$lib/utils/limitCopy';
@@ -31,12 +30,14 @@
   }
 
   interface Props {
-    open: boolean;
+    /** Called once the panel is done (an add landed and navigated, or sign-in). */
     onclose: () => void;
     initialValue?: string;
+    /** The field holds an @handle: hand it to the Atmosphere tab instead. */
+    onHandle?: (handle: string) => void;
   }
 
-  let { open, onclose, initialValue = '' }: Props = $props();
+  let { onclose, initialValue = '', onHandle }: Props = $props();
   let error = $state<string | null>(null);
 
   let inputValue = $state('');
@@ -56,11 +57,9 @@
     subscriptionsStore.subscriptions.length >= subscriptionsStore.maxSubscriptions
   );
 
-  // Pre-fill input when modal opens with an initial value
+  // Pre-fill from whatever opened the panel (a pasted URL, a /subscribe link).
   $effect(() => {
-    if (open && initialValue) {
-      inputValue = initialValue;
-    }
+    if (initialValue) inputValue = initialValue;
   });
 
   function resetAll() {
@@ -83,6 +82,12 @@
   async function handleSubmit() {
     const trimmed = inputValue.trim();
     if (!trimmed) return;
+
+    // A handle is an Atmosphere account, not a site: it has its own tab.
+    if (onHandle && trimmed.startsWith('@')) {
+      onHandle(trimmed.slice(1));
+      return;
+    }
 
     if (!syncStore.isOnline) {
       error = 'You are offline. Connect to the internet to add feeds.';
@@ -256,7 +261,7 @@
   }
 </script>
 
-<Modal {open} onclose={handleClose} title="Add RSS Feed">
+<div class="panel">
   {#if step === 'unify'}
     <div class="modal-content">
       {#each unifyPairs as pair (`${pair.host}:${pair.rss.id}:${pair.standard.id}`)}
@@ -285,7 +290,9 @@
     </div>
   {:else if step === 'input'}
     <div class="modal-content">
-      <p class="modal-desc">Enter an RSS/Atom feed URL or a website URL to discover feeds.</p>
+      <p class="modal-desc">
+        Paste a website or its feed. Skyreader finds the RSS, Atom, or standard.site publication.
+      </p>
       <form
         onsubmit={(e) => {
           e.preventDefault();
@@ -296,7 +303,8 @@
           <input
             type="text"
             class="search-input"
-            placeholder="https://example.com/feed.xml"
+            placeholder="example.com or a feed URL"
+            aria-label="Website or feed URL"
             bind:value={inputValue}
             disabled={isDiscovering}
             autofocus
@@ -351,7 +359,7 @@
   {#if error}
     <p class="error-message">{error}</p>
   {/if}
-</Modal>
+</div>
 
 <style>
   .modal-content {
@@ -374,6 +382,7 @@
 
   .search-input {
     flex: 1;
+    min-width: 0;
     padding: 0.625rem 0.75rem;
     border: 1px solid var(--color-border);
     border-radius: 8px;
@@ -385,14 +394,14 @@
   }
 
   .search-input:focus {
-    border-color: var(--color-accent, #0085ff);
+    border-color: var(--color-primary, #0066cc);
   }
 
   .add-btn {
     padding: 0.625rem 1rem;
     border: none;
     border-radius: 8px;
-    background: var(--color-accent, #0085ff);
+    background: var(--color-primary, #0066cc);
     color: white;
     font-size: var(--text-md);
     font-weight: var(--weight-medium);
@@ -465,13 +474,13 @@
   }
 
   .standard-btn {
-    border: 1px solid var(--color-accent, #0085ff);
+    border: 1px solid var(--color-primary, #0066cc);
     border-radius: 8px;
-    background: color-mix(in srgb, var(--color-accent, #0085ff) 8%, transparent);
+    background: color-mix(in srgb, var(--color-primary, #0066cc) 8%, transparent);
   }
 
   .standard-btn:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--color-accent, #0085ff) 14%, transparent);
+    background: color-mix(in srgb, var(--color-primary, #0066cc) 14%, transparent);
   }
 
   .result-icon {
@@ -489,7 +498,7 @@
     margin-left: 0.4rem;
     padding: 0.05rem 0.4rem;
     border-radius: 999px;
-    background: var(--color-accent, #0085ff);
+    background: var(--color-primary, #0066cc);
     color: white;
     font-size: var(--text-2xs);
     font-weight: var(--weight-semibold);

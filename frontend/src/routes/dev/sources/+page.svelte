@@ -22,13 +22,13 @@
   title="Sources"
   description="The feed-management surface. Rows show their hover actions on pointer-over; the bulk bar floats at the bottom of the viewport when toggled on."
 >
-  <Case name="SourcesToolbar" note="Controlled search + an Add-source dropdown." pad frame>
-    <SourcesToolbar
-      searchQuery={search}
-      onSearchChange={(v) => (search = v)}
-      onAddRss={() => {}}
-      onAddHandle={() => {}}
-    />
+  <Case
+    name="SourcesToolbar"
+    note="Controlled search + the Add-source button (opens the Add modal)."
+    pad
+    frame
+  >
+    <SourcesToolbar searchQuery={search} onSearchChange={(v) => (search = v)} onAdd={() => {}} />
     <p class="echo">searchQuery = {JSON.stringify(search)}</p>
   </Case>
 

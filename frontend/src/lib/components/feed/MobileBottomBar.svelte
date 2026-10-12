@@ -1,6 +1,4 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { goto } from '$app/navigation';
   import Icon from '$lib/components/Icon.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { notificationsStore } from '$lib/stores/notifications.svelte';
@@ -10,17 +8,6 @@
   import { appManager } from '$lib/stores/app.svelte';
   import { bottomRail } from '$lib/stores/bottomRail.svelte';
   import { bottomBarInset } from '$lib/stores/bottomBarInset.svelte';
-  import {
-    openSaveAnywhere,
-    SAVE_ANYWHERE_LABEL,
-    saveAnywhereLabel,
-  } from '$lib/utils/saveAnywhere';
-
-  let saveAnywhereActionLabel = $state(SAVE_ANYWHERE_LABEL);
-
-  onMount(() => {
-    saveAnywhereActionLabel = saveAnywhereLabel(window.navigator.userAgent);
-  });
 
   interface Props {
     controlsVisible: boolean;
@@ -56,9 +43,6 @@
   // Full-text search rides the bar on every page that has one, so it's a thumb
   // away wherever you are — the phone has no `/` key.
   let fullTextSearch = $derived(canUseSearch(auth.user));
-
-  let addMenuOpen = $state(false);
-  let addMenuRef = $state<HTMLDivElement | null>(null);
 
   // Refresh activity rides the bar's top rail, the way reading progress rides the
   // reader bar's — the edge facing the content says what that content is doing.
@@ -98,29 +82,6 @@
     if (!controlsVisible || barHeight === 0) return;
     return bottomBarInset.claim(barHeight);
   });
-
-  // A scroll that hides the bar has to take the menu with it. The menu stands
-  // taller than the bar's own travel, so it would be left hanging over the list —
-  // visible, untappable — and a touch scroll fires no click for the outside-click
-  // handler below to catch.
-  $effect(() => {
-    if (!controlsVisible) addMenuOpen = false;
-  });
-
-  function handleAddMenuClickOutside(e: MouseEvent) {
-    if (addMenuOpen && addMenuRef && !addMenuRef.contains(e.target as Node)) {
-      addMenuOpen = false;
-    }
-  }
-
-  $effect(() => {
-    if (addMenuOpen) {
-      document.addEventListener('click', handleAddMenuClickOutside, true);
-      return () => {
-        document.removeEventListener('click', handleAddMenuClickOutside, true);
-      };
-    }
-  });
 </script>
 
 <div class="mobile-bottom-bar" class:hidden={!controlsVisible} bind:clientHeight={barHeight}>
@@ -135,77 +96,18 @@
     </button>
 
     <div class="bar-actions">
-      <div class="add-menu-wrapper" bind:this={addMenuRef}>
-        <button
-          class="bar-btn"
-          class:active={addMenuOpen}
-          onclick={() => (addMenuOpen = !addMenuOpen)}
-          aria-label="Add"
-          title="Add"
-        >
-          <Icon name="plus" size={20} />
-          <Icon name="chevron-down" size={12} />
-        </button>
-        {#if addMenuOpen}
-          <div class="add-menu">
-            {#if auth.isGuest}
-              <!-- Everything this menu adds is account-only: a guest reads the
-                   curated starter channels, which the crawler keeps current. -->
-              <button
-                class="add-menu-item"
-                onclick={() => {
-                  addMenuOpen = false;
-                  goto('/auth/login?returnUrl=/feeds');
-                }}
-              >
-                <Icon name="user" size={16} />
-                <span>Sign in to add feeds</span>
-              </button>
-            {:else}
-              <button
-                class="add-menu-item"
-                onclick={() => {
-                  addMenuOpen = false;
-                  sidebarStore.openAddFeedModal();
-                }}
-              >
-                <Icon name="rss" size={16} />
-                <span>Add RSS Feed</span>
-              </button>
-              <button
-                class="add-menu-item"
-                onclick={() => {
-                  addMenuOpen = false;
-                  sidebarStore.openAddHandleModal();
-                }}
-              >
-                <Icon name="users" size={16} />
-                <span>Add @handle</span>
-              </button>
-              <button
-                class="add-menu-item"
-                onclick={() => {
-                  addMenuOpen = false;
-                  sidebarStore.openSaveArticleModal();
-                }}
-              >
-                <Icon name="bookmark" size={16} />
-                <span>Save URL</span>
-              </button>
-              <button
-                class="add-menu-item"
-                onclick={() => {
-                  addMenuOpen = false;
-                  openSaveAnywhere();
-                }}
-              >
-                <Icon name="share" size={16} />
-                <span>{saveAnywhereActionLabel}</span>
-              </button>
-            {/if}
-          </div>
-        {/if}
-      </div>
+      <!-- Opens the Add modal (add/AddModal.svelte), which the sidebar renders
+           once for the whole app — guests get its sign-in view. -->
+      <button
+        class="bar-btn"
+        class:active={sidebarStore.addModalTab !== null}
+        onclick={() => sidebarStore.openAddModal()}
+        aria-haspopup="dialog"
+        aria-label="Add"
+        title="Add"
+      >
+        <Icon name="plus" size={20} />
+      </button>
       {#if !auth.isGuest}
         <button
           class="bar-btn"
@@ -453,65 +355,6 @@
     text-align: center;
   }
 
-  /* Add menu */
-  .add-menu-wrapper {
-    display: flex;
-  }
-
-  /* Anchored to .bar-actions (not the wrapper) so the menu rises aligned to the
-     row's right edge. The add button is the leftmost action, so anchoring to it
-     would push the 200px menu off the left edge on narrow phones. */
-  .add-menu {
-    position: absolute;
-    bottom: calc(100% + 0.5rem);
-    right: 0;
-    min-width: 200px;
-    background: var(--color-bg, #fff);
-    border: 1px solid var(--color-border);
-    border-radius: 12px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-    overflow: hidden;
-    animation: menuSlideUp 0.15s ease;
-  }
-
-  .add-menu-item {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    width: 100%;
-    padding: 0.75rem 1rem;
-    background: none;
-    border: none;
-    color: var(--color-text);
-    font-size: var(--text-lg);
-    text-align: left;
-    transition: background 0.1s;
-  }
-
-  .add-menu-item:active {
-    background: var(--color-bg-secondary, #f5f5f5);
-  }
-
-  .add-menu-item + .add-menu-item {
-    border-top: 1px solid var(--color-border);
-  }
-
-  .add-menu-item :global(.icon) {
-    color: var(--color-text-secondary);
-    flex-shrink: 0;
-  }
-
-  @keyframes menuSlideUp {
-    from {
-      opacity: 0;
-      transform: translateY(4px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-
   /* Small phones: four or five fixed 44px actions leave the view name almost no room, so
      narrow the actions (they keep full height) and buy the title back ~20px. */
   @media (max-width: 360px) {
@@ -526,9 +369,7 @@
 
   @media (prefers-reduced-motion: reduce) {
     .mobile-bottom-bar,
-    .bar-btn,
-    .add-menu,
-    .add-menu-item {
+    .bar-btn {
       transition: none;
       animation: none;
     }
@@ -545,17 +386,6 @@
 
     .bar-rail.completing .bar-rail-sweep {
       opacity: 0;
-    }
-  }
-
-  @media (prefers-color-scheme: dark) {
-    .add-menu {
-      background: var(--color-bg, #1a1a1a);
-      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
-    }
-
-    .add-menu-item:active {
-      background: rgba(255, 255, 255, 0.1);
     }
   }
 

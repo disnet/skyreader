@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount, untrack } from 'svelte';
   import { goto } from '$app/navigation';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { socialStore } from '$lib/stores/social.svelte';
@@ -10,7 +11,6 @@
   import { profileService } from '$lib/services/profiles';
   import { syncStore } from '$lib/stores/sync.svelte';
   import { getFaviconUrl } from '$lib/utils/favicon';
-  import Modal from '$lib/components/common/Modal.svelte';
   import Icon from '$lib/components/Icon.svelte';
   import LimitNotice from '$lib/components/LimitNotice.svelte';
   import { feedLimitLine } from '$lib/utils/limitCopy';
@@ -26,12 +26,12 @@
   type Step = 'search' | 'select-content';
 
   interface Props {
-    open: boolean;
+    /** Called once the panel is done (subscriptions updated and navigated). */
     onclose: () => void;
     initialValue?: string;
   }
 
-  let { open, onclose, initialValue = '' }: Props = $props();
+  let { onclose, initialValue = '' }: Props = $props();
   let error = $state<string | null>(null);
   // Set when a subscribe run stops at the active-feed cap. Kept apart from
   // `error` so the limit renders as a notice with a way forward, not as a red
@@ -137,10 +137,12 @@
     failedIcons = new Set(failedIcons).add(uri);
   }
 
-  // Pre-fill input when modal opens with an initial value
+  // Pre-fill from whatever opened the panel (a handle typed elsewhere), and
+  // search for it straight away rather than waiting for a keystroke.
   $effect(() => {
-    if (open && initialValue) {
+    if (initialValue) {
       inputValue = initialValue;
+      untrack(handleInput);
     }
   });
 
@@ -420,28 +422,26 @@
     }
   }
 
-  $effect(() => {
-    if (open) {
-      loadStandardSubscriptions();
-      const initialDid = sidebarStore.addFeedModalInitialDid;
-      if (initialDid) {
-        selectAccount({
-          did: initialDid,
-          handle: initialDid,
-          displayName: undefined,
-          avatar: undefined,
-        });
-        profileService.getProfile(initialDid).then((profile) => {
-          if (profile && selectedAccount?.did === initialDid) {
-            selectedAccount = {
-              ...selectedAccount,
-              handle: profile.handle || selectedAccount.handle,
-              displayName: profile.displayName,
-              avatar: profile.avatar,
-            };
-          }
-        });
-      }
+  onMount(() => {
+    loadStandardSubscriptions();
+    const initialDid = sidebarStore.addFeedModalInitialDid;
+    if (initialDid) {
+      selectAccount({
+        did: initialDid,
+        handle: initialDid,
+        displayName: undefined,
+        avatar: undefined,
+      });
+      profileService.getProfile(initialDid).then((profile) => {
+        if (profile && selectedAccount?.did === initialDid) {
+          selectedAccount = {
+            ...selectedAccount,
+            handle: profile.handle || selectedAccount.handle,
+            displayName: profile.displayName,
+            avatar: profile.avatar,
+          };
+        }
+      });
     }
   });
 
@@ -570,7 +570,7 @@
   {/if}
 {/snippet}
 
-<Modal {open} onclose={handleClose}>
+<div class="panel">
   {#if step === 'search'}
     <div class="modal-content">
       <p class="modal-desc">
@@ -730,7 +730,7 @@
   {#if error}
     <p class="error-message">{error}</p>
   {/if}
-</Modal>
+</div>
 
 <style>
   .modal-content {
@@ -753,6 +753,7 @@
 
   .search-input {
     flex: 1;
+    min-width: 0;
     padding: 0.625rem 0.75rem;
     border: 1px solid var(--color-border);
     border-radius: 8px;
@@ -764,7 +765,7 @@
   }
 
   .search-input:focus {
-    border-color: var(--color-accent, #0085ff);
+    border-color: var(--color-primary, #0066cc);
   }
 
   .search-status {
@@ -918,7 +919,7 @@
 
   .bsky-profile-link:hover {
     background: var(--color-bg);
-    color: #0085ff;
+    color: var(--color-primary, #0066cc);
   }
 
   .bsky-icon {
@@ -941,7 +942,7 @@
     width: 1rem;
     height: 1rem;
     border: 2px solid var(--color-border);
-    border-top-color: var(--color-accent, #0085ff);
+    border-top-color: var(--color-primary, #0066cc);
     border-radius: 50%;
     animation: spin 0.6s linear infinite;
   }
@@ -1008,8 +1009,8 @@
   }
 
   .checkbox.checked {
-    background: var(--color-accent, #0085ff);
-    border-color: var(--color-accent, #0085ff);
+    background: var(--color-primary, #0066cc);
+    border-color: var(--color-primary, #0066cc);
     color: white;
   }
 
@@ -1087,7 +1088,7 @@
     padding: 0.625rem;
     border: none;
     border-radius: 8px;
-    background: var(--color-accent, #0085ff);
+    background: var(--color-primary, #0066cc);
     color: white;
     font-size: var(--text-md);
     font-weight: var(--weight-medium);
@@ -1165,7 +1166,7 @@
     padding: 0.25rem 0.75rem;
     border: none;
     border-radius: 6px;
-    background: var(--color-accent, #0085ff);
+    background: var(--color-primary, #0066cc);
     color: white;
     font-size: var(--text-sm);
     font-weight: var(--weight-medium);

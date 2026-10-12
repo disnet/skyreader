@@ -13,13 +13,14 @@ function clampRailWidth(px: number): number {
   return Math.round(Math.min(RAIL_MAX_WIDTH, Math.max(RAIL_MIN_WIDTH, px)));
 }
 
+/* The tabs of the "+" Add modal (AddModal): one place for every way something
+   comes into the reader. */
+export type AddTab = 'web' | 'atmosphere' | 'newsletters' | 'save';
+
 interface SidebarState {
   isOpen: boolean; // For mobile overlay
-  addFeedModalOpen: boolean;
-  addHandleModalOpen: boolean; // For add @handle modal
-  saveArticleModalOpen: boolean; // For save article by URL modal
+  addModalTab: AddTab | null; // The Add modal's open tab, or null when closed
   navigationDropdownOpen: boolean; // For navigation dropdown
-  addMenuOpen: boolean; // For the "+" add menu (Add feed / @handle / Save URL / …)
   expandedSections: {
     shared: boolean;
     feeds: boolean;
@@ -41,11 +42,8 @@ interface SidebarState {
 function createSidebarStore() {
   let state = $state<SidebarState>({
     isOpen: false,
-    addFeedModalOpen: false,
-    addHandleModalOpen: false,
-    saveArticleModalOpen: false,
+    addModalTab: null,
     navigationDropdownOpen: false,
-    addMenuOpen: false,
     expandedSections: {
       shared: false,
       feeds: false,
@@ -160,40 +158,51 @@ function createSidebarStore() {
   let editingChannelId = $state<number | null>(null);
   let initialChannelType = $state<'feed' | 'saved' | null>(null);
 
-  function openAddFeedModal() {
-    state.addFeedModalOpen = true;
+  // The tab the Add modal last showed, so "+" reopens where the reader was.
+  let lastAddTab: AddTab = 'web';
+
+  function openAddModal(tab: AddTab = lastAddTab, initialValue = '') {
+    // Opened over the navigation dropdown, the modal must be what's on top.
+    state.navigationDropdownOpen = false;
+    addSourceInitialValue = initialValue;
+    lastAddTab = tab;
+    state.addModalTab = tab;
   }
 
-  function openAddFeedModalForDid(did: string) {
-    addFeedModalInitialDid = did;
-    state.addHandleModalOpen = true;
+  function setAddModalTab(tab: AddTab, initialValue = '') {
+    addSourceInitialValue = initialValue;
+    addFeedModalInitialDid = null;
+    lastAddTab = tab;
+    state.addModalTab = tab;
   }
 
-  function closeAddFeedModal() {
-    state.addFeedModalOpen = false;
-    addSourceInitialValue = '';
-  }
-
-  function openAddHandleModal() {
-    state.addHandleModalOpen = true;
-  }
-
-  function closeAddHandleModal() {
-    state.addHandleModalOpen = false;
+  function closeAddModal() {
+    state.addModalTab = null;
     addFeedModalInitialDid = null;
     addSourceInitialValue = '';
   }
 
-  function setAddSourceInitialValue(value: string) {
-    addSourceInitialValue = value;
+  function toggleAddModal() {
+    if (state.addModalTab) closeAddModal();
+    else openAddModal();
+  }
+
+  // Entry points that already know what is being added open straight to its tab.
+  function openAddFeedModal(initialValue = '') {
+    openAddModal('web', initialValue);
+  }
+
+  function openAddHandleModal(initialValue = '') {
+    openAddModal('atmosphere', initialValue);
+  }
+
+  function openAddFeedModalForDid(did: string) {
+    openAddModal('atmosphere');
+    addFeedModalInitialDid = did;
   }
 
   function openSaveArticleModal() {
-    state.saveArticleModalOpen = true;
-  }
-
-  function closeSaveArticleModal() {
-    state.saveArticleModalOpen = false;
+    openAddModal('save');
   }
 
   function openChannelModal(
@@ -217,15 +226,6 @@ function createSidebarStore() {
     state.navigationDropdownOpen = false;
   }
 
-  // The sidebar "+" add source menu (AddSourceInput).
-  function toggleAddMenu() {
-    state.addMenuOpen = !state.addMenuOpen;
-  }
-
-  function closeAddMenu() {
-    state.addMenuOpen = false;
-  }
-
   function setSortedFeedIds(ids: number[]) {
     state.sortedFeedIds = ids;
   }
@@ -234,11 +234,8 @@ function createSidebarStore() {
     get isOpen() {
       return state.isOpen;
     },
-    get addFeedModalOpen() {
-      return state.addFeedModalOpen;
-    },
-    get addHandleModalOpen() {
-      return state.addHandleModalOpen;
+    get addModalTab() {
+      return state.addModalTab;
     },
     get addFeedModalInitialDid() {
       return addFeedModalInitialDid;
@@ -246,14 +243,8 @@ function createSidebarStore() {
     get addSourceInitialValue() {
       return addSourceInitialValue;
     },
-    get saveArticleModalOpen() {
-      return state.saveArticleModalOpen;
-    },
     get navigationDropdownOpen() {
       return state.navigationDropdownOpen;
-    },
-    get addMenuOpen() {
-      return state.addMenuOpen;
     },
     get expandedSections() {
       return state.expandedSections;
@@ -285,18 +276,16 @@ function createSidebarStore() {
     toggleCategory,
     isCategoryExpanded,
     toggleShowOnlyUnread,
+    openAddModal,
+    setAddModalTab,
+    closeAddModal,
+    toggleAddModal,
     openAddFeedModal,
-    setAddSourceInitialValue,
     openAddFeedModalForDid,
-    closeAddFeedModal,
     openAddHandleModal,
-    closeAddHandleModal,
     openSaveArticleModal,
-    closeSaveArticleModal,
     toggleNavigationDropdown,
     closeNavigationDropdown,
-    toggleAddMenu,
-    closeAddMenu,
     setSortedFeedIds,
     setRailWidth,
     commitRailWidth,

@@ -1,6 +1,6 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import Modal from '$lib/components/common/Modal.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
   import { ScopeUpgradeError, UrlSaveLimitError } from '$lib/services/api';
   import { grantPermissions, permissionMessage } from '$lib/services/permissions';
@@ -9,11 +9,12 @@
   import { saveLimitLine } from '$lib/utils/limitCopy';
 
   interface Props {
-    open: boolean;
+    /** Called once the save landed, just before the panel navigates to it. */
     onclose: () => void;
+    initialValue?: string;
   }
 
-  let { open, onclose }: Props = $props();
+  let { onclose, initialValue = '' }: Props = $props();
 
   let urlValue = $state('');
   let error = $state<string | null>(null);
@@ -24,15 +25,11 @@
   // so it renders as a notice with a way forward rather than a red line.
   let limitInfo = $state<{ limit: number; resetsAt: string } | null>(null);
 
-  // Auto-focus input when modal opens
-  $effect(() => {
-    if (open) {
-      urlValue = '';
-      error = null;
-      showScopeUpgrade = false;
-      limitInfo = null;
-      requestAnimationFrame(() => inputEl?.focus());
-    }
+  // The panel mounts fresh each time its tab is shown, so state starts clean;
+  // just carry over a URL handed in and put the caret in the field.
+  onMount(() => {
+    urlValue = initialValue;
+    requestAnimationFrame(() => inputEl?.focus());
   });
 
   async function handleSave() {
@@ -80,7 +77,7 @@
   }
 </script>
 
-<Modal {open} {onclose} title="Save URL">
+<div class="panel">
   {#if limitInfo}
     <div class="limit-wrap">
       <LimitNotice kind="saves">
@@ -103,11 +100,13 @@
     </div>
   {:else}
     <div class="form">
+      <p class="modal-desc">Paste a link to keep the article in Saved, ready to read.</p>
       <input
         bind:this={inputEl}
         bind:value={urlValue}
         type="url"
-        placeholder="Paste article URL..."
+        placeholder="Paste an article URL"
+        aria-label="Article URL"
         class="url-input"
         onkeydown={handleKeydown}
         disabled={savesStore.saving}
@@ -128,7 +127,7 @@
       </button>
     </div>
   {/if}
-</Modal>
+</div>
 
 <style>
   .limit-wrap {
@@ -136,6 +135,12 @@
   }
 
   .limit-aside {
+    color: var(--color-text-secondary);
+  }
+
+  .modal-desc {
+    margin: 0;
+    font-size: var(--text-md);
     color: var(--color-text-secondary);
   }
 
@@ -158,8 +163,8 @@
   }
 
   .url-input:focus {
-    border-color: var(--color-primary, #2563eb);
-    box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1);
+    border-color: var(--color-primary, #0066cc);
+    box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.1);
   }
 
   .url-input:disabled {
@@ -169,7 +174,7 @@
   .save-btn {
     align-self: flex-end;
     padding: 0.5rem 1.25rem;
-    background: var(--color-primary, #2563eb);
+    background: var(--color-primary, #0066cc);
     color: white;
     border: none;
     border-radius: 6px;
@@ -209,7 +214,7 @@
 
   .scope-upgrade-btn {
     padding: 0.375rem 0.75rem;
-    background: var(--color-primary, #2563eb);
+    background: var(--color-primary, #0066cc);
     color: white;
     border: none;
     border-radius: 6px;

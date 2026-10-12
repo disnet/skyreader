@@ -320,8 +320,8 @@ semantic signals. The point of the restraint is that when color appears, it mean
 **The One Blue Rule.** There is exactly one interaction blue: `#0066cc` (`--color-primary`). The
 values `#2563eb` (21 uses), `#0085ff` (19 uses), and `#3b82f6` (4 uses) currently present across
 twelve components are **drift, not palette**, and are scheduled for consolidation into
-`--color-primary`. The `#0085ff` cluster is concentrated in `AddHandleModal`, `AddFeedModal`, and
-`SidebarAddFeed`; `#3b82f6` survives as a stale fallback in `Sidebar.svelte`. Never introduce a new
+`--color-primary`. The `#0085ff` cluster (the add-source panels in `add/` have since been moved to One Blue)
+survives in `SidebarAddFeed`; `#3b82f6` survives as a stale fallback in `Sidebar.svelte`. Never introduce a new
 blue. If a surface needs a blue, it is this blue or a documented tint of it.
 
 **The Lifted-Primary Rule.** The primary is the one non-neutral token that changes value by theme.

@@ -14,7 +14,7 @@
   import { preferences } from '$lib/stores/preferences.svelte';
   import { channelPath, feedPath, FEEDS_PATH, SAVED_PATH } from '$lib/utils/viewNav';
   import Icon from './Icon.svelte';
-  import AddDropdownMenu from './AddDropdownMenu.svelte';
+  import AddButton from './AddButton.svelte';
   import { canUseSearch } from '$lib/utils/search';
   import { searchStore } from '$lib/stores/search.svelte';
 
@@ -705,7 +705,7 @@
           placeholder="Quick switch..."
           bind:value={searchQuery}
         />
-        <AddDropdownMenu />
+        <AddButton />
       </div>
       <div class="items-container">
         {#each filteredItems as { section, icon, onSectionClick, items }, sectionIndex}
@@ -846,7 +846,7 @@
           placeholder="Quick switch..."
           bind:value={searchQuery}
         />
-        <AddDropdownMenu />
+        <AddButton />
         <button class="mobile-close-btn" onclick={close} aria-label="Close">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
             <path

@@ -3,23 +3,15 @@ import { seedSubscription } from './seed';
 
 test.describe('Feed Management', () => {
   test('add feed by URL via sidebar add trigger', async ({ authedPage }) => {
-    // Open the AddSourceInput popover from the sidebar
-    await authedPage.locator('button.add-trigger[aria-label="Add source"]').click();
+    // The sidebar "+" opens the Add modal on its Website tab
+    await authedPage.locator('button.add-trigger[aria-label="Add"]:visible').first().click();
 
-    const addFeedInput = authedPage.getByPlaceholder('Paste URL or @handle...');
-    // The popover's open effect clears the field and then focuses it. Wait for
-    // that focus before filling: it proves the reset already ran, so the effect
-    // can't wipe our value afterward and leave the Enter handler with an empty
-    // input (which no-ops, so the modal never opens — the flaky failure).
-    await expect(addFeedInput).toBeFocused({ timeout: 15_000 });
-
+    await authedPage.getByRole('tab', { name: 'Website' }).click();
+    const addFeedInput = authedPage.getByRole('textbox', { name: 'Website or feed URL' });
+    await expect(addFeedInput).toBeVisible({ timeout: 15_000 });
     await addFeedInput.fill('https://xkcd.com/atom.xml');
     await expect(addFeedInput).toHaveValue('https://xkcd.com/atom.xml');
-    await addFeedInput.press('Enter');
 
-    // AddFeedModal opens with the URL prefilled — click Add to submit
-    const modalInput = authedPage.locator('.modal-content input.search-input');
-    await expect(modalInput).toBeVisible({ timeout: 5_000 });
     await authedPage.locator('.modal-content button.add-btn', { hasText: 'Add' }).click();
 
     // Navigate to the sources page via SPA navigation (preserves store state)
@@ -54,21 +46,14 @@ test.describe('Feed Management', () => {
   });
 
   test('articles load after adding feed', async ({ authedPage }) => {
-    await authedPage.locator('button.add-trigger[aria-label="Add source"]').click();
+    await authedPage.locator('button.add-trigger[aria-label="Add"]:visible').first().click();
 
-    const addFeedInput = authedPage.getByPlaceholder('Paste URL or @handle...');
-    // The popover's open effect clears the field and then focuses it. Wait for
-    // that focus before filling: it proves the reset already ran, so the effect
-    // can't wipe our value afterward and leave the Enter handler with an empty
-    // input (which no-ops, so the modal never opens — the flaky failure).
-    await expect(addFeedInput).toBeFocused({ timeout: 15_000 });
-
+    await authedPage.getByRole('tab', { name: 'Website' }).click();
+    const addFeedInput = authedPage.getByRole('textbox', { name: 'Website or feed URL' });
+    await expect(addFeedInput).toBeVisible({ timeout: 15_000 });
     await addFeedInput.fill('https://xkcd.com/atom.xml');
     await expect(addFeedInput).toHaveValue('https://xkcd.com/atom.xml');
-    await addFeedInput.press('Enter');
 
-    const modalInput = authedPage.locator('.modal-content input.search-input');
-    await expect(modalInput).toBeVisible({ timeout: 5_000 });
     await authedPage.locator('.modal-content button.add-btn', { hasText: 'Add' }).click();
 
     // Already on the main feed — articles should load as the feed is fetched

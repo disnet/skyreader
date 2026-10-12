@@ -140,7 +140,7 @@ already account-gated by its opt-in preference, which lives in account-only Sett
 those ride the crawl set, so everything a guest can read is already crawler-maintained — there is no
 unauthenticated path that puts a feed into the archive. `subscriptionsStore.add()` throws
 `GuestAddBlockedError` for a guest and `addBulk()` refuses unless called with `{ starterSeed: true }`
-(only "Start Reading" does); each add surface — the sidebar and mobile add menus, `AddFeedModal`
+(only "Start Reading" does); each add surface — the Add modal (`add/AddModal.svelte`, behind every "+"), `AddFeedPanel`
 (the backstop every entry point funnels through), `LibraryEmptyState`, `/subscribe` — offers sign-in
 instead. Renaming, recategorizing and removing a feed stay local and allowed.
 

@@ -14,13 +14,11 @@
   import { highlightReviewStore } from '$lib/stores/highlightReview.svelte';
   import { syncAutoRuleChannels } from '$lib/stores/channelAutoUpdate.svelte';
   import { onMount, onDestroy } from 'svelte';
-  import AddFeedModal from './AddFeedModal.svelte';
   import EditFeedModal from './EditFeedModal.svelte';
   import type { Subscription } from '$lib/types';
-  import AddHandleModal from './AddHandleModal.svelte';
-  import SaveArticleModal from './SaveArticleModal.svelte';
   import FilteredViewModal from './FilteredViewModal.svelte';
-  import AddSourceInput from './AddSourceInput.svelte';
+  import AddButton from './AddButton.svelte';
+  import AddModal from './add/AddModal.svelte';
   import NavSection from './sidebar/NavSection.svelte';
   import ViewItem from './sidebar/ViewItem.svelte';
   import ContextMenu from './sidebar/ContextMenu.svelte';
@@ -318,7 +316,7 @@
          bell floated into the middle of the row. -->
     <div class="header-actions">
       {#if !auth.isGuest}<NotificationBell />{/if}
-      <AddSourceInput />
+      <AddButton />
     </div>
   </div>
 
@@ -735,22 +733,7 @@
   </nav>
 </aside>
 
-<AddFeedModal
-  open={sidebarStore.addFeedModalOpen}
-  onclose={() => sidebarStore.closeAddFeedModal()}
-  initialValue={sidebarStore.addSourceInitialValue}
-/>
-
-<AddHandleModal
-  open={sidebarStore.addHandleModalOpen}
-  onclose={() => sidebarStore.closeAddHandleModal()}
-  initialValue={sidebarStore.addSourceInitialValue}
-/>
-
-<SaveArticleModal
-  open={sidebarStore.saveArticleModalOpen}
-  onclose={() => sidebarStore.closeSaveArticleModal()}
-/>
+<AddModal />
 
 <FilteredViewModal
   open={channelModalOpen}
