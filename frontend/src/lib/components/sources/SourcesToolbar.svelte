@@ -1,39 +1,14 @@
 <script lang="ts">
   import Icon from '$lib/components/Icon.svelte';
-  import { auth } from '$lib/stores/auth.svelte';
 
   interface Props {
     searchQuery: string;
     onSearchChange: (value: string) => void;
-    onAddRss: () => void;
-    onAddHandle: () => void;
+    /** Opens the Add modal (which handles the guest sign-in case itself). */
+    onAdd: () => void;
   }
 
-  let { searchQuery, onSearchChange, onAddRss, onAddHandle }: Props = $props();
-
-  let menuOpen = $state(false);
-  let wrapperRef = $state<HTMLDivElement | null>(null);
-
-  function pick(action: () => void) {
-    menuOpen = false;
-    action();
-  }
-
-  $effect(() => {
-    if (!menuOpen) return;
-    function onClick(e: MouseEvent) {
-      if (wrapperRef && !wrapperRef.contains(e.target as Node)) menuOpen = false;
-    }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') menuOpen = false;
-    }
-    document.addEventListener('click', onClick, true);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('click', onClick, true);
-      document.removeEventListener('keydown', onKey);
-    };
-  });
+  let { searchQuery, onSearchChange, onAdd }: Props = $props();
 </script>
 
 <div class="sources-toolbar">
@@ -48,48 +23,10 @@
     />
   </div>
 
-  <div class="add-wrapper" bind:this={wrapperRef}>
-    <button
-      class="add-btn"
-      onclick={() => (menuOpen = !menuOpen)}
-      aria-haspopup="menu"
-      aria-expanded={menuOpen}
-    >
-      <Icon name="plus" size={16} />
-      <span class="add-label">Add source</span>
-      <Icon name="chevron-down" size={14} />
-    </button>
-    {#if menuOpen}
-      <div class="add-menu" role="menu">
-        {#if auth.isGuest}
-          <!-- Adding a source is account-only; a guest reads the curated
-               starter channels. -->
-          <a class="add-item" role="menuitem" href="/auth/login?returnUrl=/sources">
-            <Icon name="user" size={16} />
-            <span class="item-text">
-              <span class="item-label">Sign in to add feeds</span>
-              <span class="item-hint">Your reading comes with you</span>
-            </span>
-          </a>
-        {:else}
-          <button class="add-item" role="menuitem" onclick={() => pick(onAddRss)}>
-            <Icon name="rss" size={16} />
-            <span class="item-text">
-              <span class="item-label">RSS feed</span>
-              <span class="item-hint">A blog or site URL</span>
-            </span>
-          </button>
-          <button class="add-item" role="menuitem" onclick={() => pick(onAddHandle)}>
-            <Icon name="at-sign" size={16} />
-            <span class="item-text">
-              <span class="item-label">Atmosphere account</span>
-              <span class="item-hint">A @handle's blogs &amp; links</span>
-            </span>
-          </button>
-        {/if}
-      </div>
-    {/if}
-  </div>
+  <button class="add-btn" onclick={onAdd} aria-haspopup="dialog" aria-label="Add source">
+    <Icon name="plus" size={16} />
+    <span class="add-label">Add source</span>
+  </button>
 </div>
 
 <style>
@@ -133,11 +70,6 @@
     color: var(--color-text-secondary);
   }
 
-  .add-wrapper {
-    position: relative;
-    flex-shrink: 0;
-  }
-
   .add-btn {
     display: flex;
     align-items: center;
@@ -151,68 +83,12 @@
     font-size: var(--text-sm);
     font-weight: var(--weight-medium);
     white-space: nowrap;
+    flex-shrink: 0;
     transition: background-color 0.2s;
   }
 
   .add-btn:hover {
     background: var(--color-primary-dark, #0052a3);
-  }
-
-  .add-menu {
-    position: absolute;
-    top: calc(100% + 0.375rem);
-    right: 0;
-    z-index: 100;
-    min-width: 240px;
-    background: var(--color-bg);
-    border: 1px solid var(--color-border);
-    border-radius: 10px;
-    padding: 0.25rem;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
-  }
-
-  .add-item {
-    display: flex;
-    align-items: center;
-    gap: 0.625rem;
-    width: 100%;
-    padding: 0.5rem 0.625rem;
-    border: none;
-    background: none;
-    border-radius: 6px;
-    cursor: pointer;
-    text-align: left;
-    color: var(--color-text);
-  }
-
-  /* The guest branch renders this as a link, not a button. */
-  a.add-item {
-    text-decoration: none;
-  }
-
-  .add-item:hover {
-    background: var(--color-bg-secondary, rgba(0, 0, 0, 0.04));
-  }
-
-  .add-item > :global(svg) {
-    flex-shrink: 0;
-    color: var(--color-text-secondary);
-  }
-
-  .item-text {
-    display: flex;
-    flex-direction: column;
-    line-height: var(--leading-tight);
-  }
-
-  .item-label {
-    font-size: var(--text-md);
-    font-weight: var(--weight-medium);
-  }
-
-  .item-hint {
-    font-size: var(--text-xs);
-    color: var(--color-text-secondary);
   }
 
   @media (max-width: 640px) {
@@ -223,14 +99,6 @@
 
   @media (prefers-color-scheme: dark) {
     .search-wrapper {
-      background: var(--color-bg-secondary, rgba(255, 255, 255, 0.06));
-    }
-
-    .add-menu {
-      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-    }
-
-    .add-item:hover {
       background: var(--color-bg-secondary, rgba(255, 255, 255, 0.06));
     }
   }

@@ -39,10 +39,10 @@ async function setPlan(
   await page.reload();
 }
 
-/** Open the Add RSS Feed modal via the sidebar's "Add source" control. */
+/** Open the Add modal's Website tab via the sidebar's "+" control. */
 async function openAddFeedModal(page: Page) {
-  await page.getByRole('button', { name: 'Add source' }).click();
-  await page.locator('.menu-item', { hasText: 'Add RSS Feed' }).click();
+  await page.locator('button.add-trigger[aria-label="Add"]:visible').first().click();
+  await page.getByRole('tab', { name: 'Website' }).click();
 }
 
 test.describe('Limit notice', () => {

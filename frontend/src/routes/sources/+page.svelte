@@ -16,8 +16,6 @@
   import UnifyNotice from '$lib/components/UnifyNotice.svelte';
   import StaticPageChrome from '$lib/components/feed/StaticPageChrome.svelte';
   import EditFeedModal from '$lib/components/EditFeedModal.svelte';
-  import AddFeedModal from '$lib/components/AddFeedModal.svelte';
-  import AddHandleModal from '$lib/components/AddHandleModal.svelte';
   import SourceRow from '$lib/components/sources/SourceRow.svelte';
   import SourceList from '$lib/components/sources/SourceList.svelte';
   import ScopeTabs from '$lib/components/sources/ScopeTabs.svelte';
@@ -641,8 +639,7 @@
   <SourcesToolbar
     {searchQuery}
     onSearchChange={(v) => (searchQuery = v)}
-    onAddRss={() => sidebarStore.openAddFeedModal()}
-    onAddHandle={() => sidebarStore.openAddHandleModal()}
+    onAdd={() => sidebarStore.openAddFeedModal()}
   />
 
   {#if !hasNoSources && (scopes.length > 2 || websites.length > 0)}
@@ -870,16 +867,6 @@
     <SourcesDiscovery {authorPublications} />
   {/if}
 </div>
-
-<AddFeedModal
-  open={sidebarStore.addFeedModalOpen}
-  onclose={() => sidebarStore.closeAddFeedModal()}
-/>
-
-<AddHandleModal
-  open={sidebarStore.addHandleModalOpen}
-  onclose={() => sidebarStore.closeAddHandleModal()}
-/>
 
 <EditFeedModal open={editModalOpen} subscription={editingSubscription} onclose={closeEditModal} />
 

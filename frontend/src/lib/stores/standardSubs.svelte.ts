@@ -8,7 +8,7 @@ import { subscriptionsStore } from './subscriptions.svelte';
  * pull them into Skyreader in one tap. Read-only discovery: no backend, fails
  * silently (they're suggestions, never load-bearing).
  *
- * Mirrors the loader that lived inside AddHandleModal, lifted here so the
+ * Mirrors the loader that lived inside AddHandlePanel, lifted here so the
  * Sources page can render the same suggestions inline.
  */
 export interface StandardSub {

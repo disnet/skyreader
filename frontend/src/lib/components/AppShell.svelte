@@ -240,12 +240,12 @@
       condition: () => auth.isInApp,
     });
 
-    // Add menu shortcut (Add feed / @handle / Save URL / …)
+    // Add modal shortcut (website, Atmosphere account, newsletter, save a link)
     keyboardStore.register({
       key: 'a',
-      description: 'Toggle add menu',
+      description: 'Add a source or save a link',
       category: 'Other',
-      action: () => sidebarStore.toggleAddMenu(),
+      action: () => sidebarStore.toggleAddModal(),
       condition: () => auth.isInApp,
     });
 
