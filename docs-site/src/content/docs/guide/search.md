@@ -9,7 +9,7 @@ Search is part of the [Supporter plan](/supporter/).
 
 ## Searching
 
-Press `/` anywhere in Skyreader, or choose **Search** from the sidebar or the view switcher. Start typing; results appear as you go, best matches first. Choose a result to open it in the reader.
+Press `/` anywhere in Skyreader, choose **Search** from the sidebar or the view switcher, or on your phone tap the search button in the bar at the bottom of the screen. Search opens over whatever you're reading, so closing it puts you back where you were. Start typing; results appear as you go, best matches first. Choose a result to open it in the reader, and close the reader to get back to your results.
 
 Use the buttons under the search box to narrow it to what you **Saved**, **Highlighted** or **Read**.
 
@@ -38,7 +38,7 @@ Your search index is private to you. It's kept on Skyreader's servers and built 
 
 ## Offline
 
-Search needs a connection. Offline, you can still search your saved articles, which are kept on your device: the search page offers this when you're offline, or open **Saved** and press the search button.
+Search needs a connection. Offline, you can still search your saved articles, which are kept on your device: search offers this when you're offline, or open **Saved** and press the search button.
 
 ## Shortcuts
 
@@ -47,5 +47,5 @@ Search needs a connection. Offline, you can still search your saved articles, wh
 | `/`       | open search            |
 | `↓` / `↑` | move through results   |
 | `Enter`   | open a result          |
-| `Esc`     | clear the search       |
+| `Esc`     | clear, then close      |
 | `g`       | open the view switcher |

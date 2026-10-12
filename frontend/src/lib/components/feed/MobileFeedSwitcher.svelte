@@ -16,6 +16,7 @@
   import { perfBegin, PERF_VIEW_SWITCH } from '$lib/utils/perfMarks';
   import Icon from '$lib/components/Icon.svelte';
   import { canUseSearch } from '$lib/utils/search';
+  import { searchStore } from '$lib/stores/search.svelte';
   import type { Subscription } from '$lib/types';
 
   interface Props {
@@ -505,6 +506,12 @@
   }
 
   function selectItem(item: NavItem) {
+    // Search is an overlay over the page you're on, not somewhere to go.
+    if (item.type === 'utility' && item.id === 'search') {
+      onclose();
+      searchStore.open();
+      return;
+    }
     let url = FEEDS_PATH;
     if (item.type === 'view') {
       if (item.id === 'home') url = '/home';

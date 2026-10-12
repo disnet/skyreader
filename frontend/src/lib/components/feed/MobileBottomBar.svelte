@@ -5,6 +5,8 @@
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { notificationsStore } from '$lib/stores/notifications.svelte';
   import { auth } from '$lib/stores/auth.svelte';
+  import { searchStore } from '$lib/stores/search.svelte';
+  import { canUseSearch } from '$lib/utils/search';
   import { appManager } from '$lib/stores/app.svelte';
   import { bottomRail } from '$lib/stores/bottomRail.svelte';
   import { bottomBarInset } from '$lib/stores/bottomBarInset.svelte';
@@ -29,7 +31,11 @@
     onOpenNotifications: () => void;
     hasActiveFilters: boolean;
     hideFilterButton?: boolean;
-    /** Saved views only: the header's search button isn't reachable down here. */
+    /**
+     * Saved views only: the header's search button isn't reachable down here.
+     * Stands in for the full-text search button when that isn't available —
+     * where it is, search covers Saved (and hands off to this offline).
+     */
     onOpenSearch?: () => void;
     searchActive?: boolean;
   }
@@ -46,6 +52,10 @@
     onOpenSearch,
     searchActive = false,
   }: Props = $props();
+
+  // Full-text search rides the bar on every page that has one, so it's a thumb
+  // away wherever you are — the phone has no `/` key.
+  let fullTextSearch = $derived(canUseSearch(auth.user));
 
   let addMenuOpen = $state(false);
   let addMenuRef = $state<HTMLDivElement | null>(null);
@@ -213,7 +223,17 @@
           {/if}
         </button>
       {/if}
-      {#if onOpenSearch}
+      {#if fullTextSearch}
+        <button
+          class="bar-btn"
+          class:active={searchStore.isOpen}
+          onclick={() => searchStore.open()}
+          aria-label="Search"
+          title="Search"
+        >
+          <Icon name="search" size={20} />
+        </button>
+      {:else if onOpenSearch}
         <button
           class="bar-btn"
           class:has-filters={searchActive}
@@ -492,7 +512,7 @@
     }
   }
 
-  /* Small phones: four fixed 44px actions leave the view name almost no room, so
+  /* Small phones: four or five fixed 44px actions leave the view name almost no room, so
      narrow the actions (they keep full height) and buy the title back ~20px. */
   @media (max-width: 360px) {
     .bar-btn {

@@ -34,6 +34,21 @@ function createKeyboardStore() {
     isHelpOpen: false,
     shortcuts: new Map(),
   });
+  // Surfaces that sit over the page (the search overlay) hold this while
+  // they're up, so the page's own shortcuts (j/k, s, …) don't act on a list
+  // nobody can see.
+  let suspensions = 0;
+
+  /** Stand the registered shortcuts down; call the returned function to release. */
+  function suspend(): () => void {
+    suspensions++;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      suspensions--;
+    };
+  }
 
   function getShortcutKey(key: string, shift?: boolean): string {
     return shift ? `Shift+${key}` : key;
@@ -63,6 +78,8 @@ function createKeyboardStore() {
 
     // Ignore if typing in an input (except for help toggle)
     if (isInputFocused()) return;
+
+    if (suspensions > 0) return;
 
     // Ignore if Cmd/Ctrl/Alt are held (browser shortcuts like Cmd+1 to switch tabs)
     if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -125,6 +142,7 @@ function createKeyboardStore() {
     },
     register,
     unregister,
+    suspend,
     handleKeydown,
     toggleHelp,
     closeHelp,

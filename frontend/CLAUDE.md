@@ -194,7 +194,7 @@ See [`docs/RUNBOOK.md`](../docs/RUNBOOK.md) for sampling and recovery details.
 | `/discover`          | Discover new feeds                              |
 | `/highlights`        | Every highlight, grouped by source article      |
 | `/highlights/review` | Review deck — a few highlights, one at a time   |
-| `/search`            | Full-text search over everything read (`/` key) |
+| `/search`            | Legacy link: opens the search overlay           |
 | `/settings`          | Account and sync status                         |
 | `/feedback`          | The userinput.app board, read and posted in-app |
 | `/auth/login`        | Bluesky handle input                            |
@@ -202,14 +202,21 @@ See [`docs/RUNBOOK.md`](../docs/RUNBOOK.md) for sampling and recovery details.
 
 ### Search
 
-`/search` (Supporter, `utils/search.ts`'s `canUseSearch`: the plan flag _and_ `user.searchEnabled`,
+Search (Supporter, `utils/search.ts`'s `canUseSearch`: the plan flag _and_ `user.searchEnabled`,
 the backend's operator switch) queries the reader's server-side index — see
-`docs/plans/FULL_TEXT_SEARCH.md`. `/` opens it from anywhere; without search `/` keeps its old
-meaning (Saved search on `/saved`, else the switcher), and `g` is the switcher for everyone. A hit
-opens through the same reader stack (`?read=`) via `resolveSearchHit`: the local copy when this
+`docs/plans/FULL_TEXT_SEARCH.md`. It is an **overlay, not a route**: `SearchOverlay` is mounted by
+`AppShell` while `searchStore.isOpen`, which is `page.state.searchOpen` on a shallow history entry
+(`searchStore.open()`), so Back closes it and the page underneath never unmounts. `/`, the sidebar,
+both view switchers and a search button on `MobileBottomBar` (every page that has the bar) open it;
+the old `/search` route just lands on the default view and opens it with `?q=`/`?kind=`. Without
+search `/` keeps its old meaning (Saved search on `/saved`, else the switcher), the bottom bar keeps
+the Saved-search button on Saved views, and `g` is the switcher for everyone. While it's up,
+`keyboardStore.suspend()` stands the page's shortcuts down. A hit opens in the overlay's own reader
+stack (`useReaderStack({ searchOverlay: true })`, `?read=` as usual; page stacks ignore the param
+while `searchOpen` is set) via `resolveSearchHit`: the local copy when this
 device has it, else a `contentTruncated` stub article for a feed the reader still follows (the
 reader then fetches the archive's stored body), else the external URL. Search needs a connection;
-offline the page hands the query to Saved search. The signed-in user is cached in localStorage, so
+offline the overlay hands the query to Saved search. The signed-in user is cached in localStorage, so
 `AppShell` refreshes `/api/auth/me` once per boot — otherwise a plan change or a newly switched-on
 feature would only reach an open session via Settings.
 
