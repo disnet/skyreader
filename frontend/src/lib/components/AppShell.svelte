@@ -34,6 +34,7 @@
   import IntegrationSaveDialog from '$lib/components/feed/IntegrationSaveDialog.svelte';
   import SembleConnectionDialog from '$lib/components/feed/SembleConnectionDialog.svelte';
   import SyncLimitBanner from '$lib/components/SyncLimitBanner.svelte';
+  import SearchOverlay from '$lib/components/search/SearchOverlay.svelte';
 
   let { children }: { children: Snippet } = $props();
 
@@ -249,7 +250,7 @@
     });
 
     // `/` is search. With full-text search (utils/search.ts) it opens the search
-    // page from anywhere, focused — or refocuses it if it's already open. Without
+    // overlay from anywhere, focused — or refocuses it if it's already open. Without
     // it, `/` keeps its older meaning: search the saved list when the saved page
     // is mounted, else the navigation switcher. Registered once here rather than
     // re-registered per page, because the store keys shortcuts by key: a second
@@ -262,8 +263,7 @@
       category: 'Navigation',
       action: () => {
         if (canUseSearch(auth.user)) {
-          searchStore.requestFocus();
-          if ($page.url.pathname !== '/search') void goto('/search');
+          searchStore.open();
         } else if (savedSearchStore.available) {
           savedSearchStore.openSearch();
         } else {
@@ -474,6 +474,10 @@
 <BlueskyComposer />
 <IntegrationSaveDialog />
 <SembleConnectionDialog />
+
+{#if searchStore.isOpen}
+  <SearchOverlay />
+{/if}
 
 <div class="app-shell">
   {#if auth.scopeUpgradeRequired}

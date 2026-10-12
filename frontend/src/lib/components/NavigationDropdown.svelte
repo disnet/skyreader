@@ -16,6 +16,7 @@
   import Icon from './Icon.svelte';
   import AddDropdownMenu from './AddDropdownMenu.svelte';
   import { canUseSearch } from '$lib/utils/search';
+  import { searchStore } from '$lib/stores/search.svelte';
 
   interface Props {
     currentTitle: string;
@@ -421,7 +422,6 @@
     if (pathname === '/daily') return { type: 'icon', name: 'newspaper' };
     if (pathname === '/linkblog') return { type: 'icon', name: 'share' };
     if (pathname === '/highlights') return { type: 'icon', name: 'highlighter' };
-    if (pathname === '/search') return { type: 'icon', name: 'search' };
     if (pathname === '/discover') return { type: 'icon', name: 'users' };
     if (pathname === '/sources') return { type: 'icon', name: 'rss' };
     if (pathname === '/settings') return { type: 'icon', name: 'settings' };
@@ -535,6 +535,12 @@
             feedViewStore.setSourcePopoverOpen(true);
           });
       }
+      return;
+    }
+    // Search is an overlay over the page you're on, not somewhere to go.
+    if (item.type === 'utility' && item.id === 'search') {
+      close();
+      searchStore.open();
       return;
     }
     let url = FEEDS_PATH;

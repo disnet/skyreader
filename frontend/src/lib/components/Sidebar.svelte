@@ -31,6 +31,7 @@
   import { fetchSingleFeed } from '$lib/services/feedFetcher';
   import { preferences } from '$lib/stores/preferences.svelte';
   import { canUseSearch } from '$lib/utils/search';
+  import { searchStore } from '$lib/stores/search.svelte';
 
   function handleFeedContextMenu(e: MouseEvent, feedId: number) {
     e.preventDefault();
@@ -502,17 +503,20 @@
     {/if}
 
     <!-- Search: the server-side index over everything read (Supporter, and
-         only where the operator switch is on — see utils/search.ts). -->
+         only where the operator switch is on — see utils/search.ts). An
+         overlay over the current page, not a route. -->
     {#if canUseSearch(auth.user)}
-      <a
-        href="/search"
+      <button
         class="nav-item nav-link"
-        class:active={$page.url.pathname === '/search'}
-        onclick={() => sidebarStore.closeMobile()}
+        class:active={searchStore.isOpen}
+        onclick={() => {
+          sidebarStore.closeMobile();
+          searchStore.open();
+        }}
       >
         <span class="nav-icon"><Icon name="search" /></span>
         <span class="nav-label">Search</span>
-      </a>
+      </button>
     {/if}
 
     <a

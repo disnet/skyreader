@@ -1,10 +1,19 @@
+import { pushState } from '$app/navigation';
+import { page } from '$app/state';
 import { api, ApiError, type SearchHit, type SearchKind } from '$lib/services/api';
+import { readerUrl } from '$lib/utils/readerLink';
 
 // Full-text search over everything the reader has read, saved and highlighted
 // (Supporter). The index lives on the server, one per reader — see
 // docs/plans/FULL_TEXT_SEARCH.md — so unlike Saved search (savedSearch.svelte.ts,
-// fully local) this needs a connection; offline, the page hands the query to
+// fully local) this needs a connection; offline, the overlay hands the query to
 // Saved search instead.
+//
+// Search is an overlay over whatever page you're on (SearchOverlay, mounted by
+// AppShell), not a page of its own. Open is a shallow history entry tagged
+// `page.state.searchOpen`, so Back (or the phone's back gesture) closes it and
+// the page underneath never unmounts. The query outlives a close, so reopening
+// picks up where you left off.
 
 const DEBOUNCE_MS = 250;
 const PAGE_SIZE = 20;
@@ -27,9 +36,9 @@ function createSearchStore() {
   let error = $state<string | null>(null);
   /** The query the shown results answer, so the page can tell "no hits" from "not asked yet". */
   let answeredQuery = $state('');
-  /** Bumped to ask the input to take focus (opening via `/`). */
+  /** Bumped to ask the input to take focus (every `open`, including while open). */
   let focusRequest = $state(0);
-  /** The search page is mounted; polling stops when it isn't. */
+  /** The search overlay is mounted; polling stops when it isn't. */
   let surfaceActive = false;
 
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -157,6 +166,33 @@ function createSearchStore() {
     get hasMore() {
       return results.length > 0 && results.length < total;
     },
+    get isOpen() {
+      return Boolean(page.state.searchOpen);
+    },
+
+    /**
+     * Open the overlay over the current page (or refocus it if it's up). The
+     * entry drops any `?read=`: a reader open underneath closes, and Back
+     * reopens it.
+     */
+    open(opts: { query?: string; kind?: SearchKind | null } = {}) {
+      if (opts.kind !== undefined && opts.kind !== kind) {
+        kind = opts.kind;
+        if (!opts.query) this.submit();
+      }
+      if (opts.query) {
+        query = opts.query;
+        this.submit();
+      }
+      if (!page.state.searchOpen) {
+        pushState(readerUrl(new URL(location.href), null), { searchOpen: true });
+      }
+      focusRequest++;
+    },
+
+    close() {
+      if (page.state.searchOpen) history.back();
+    },
 
     /** Debounced: typing fires one request once the reader pauses. */
     setQuery(next: string) {
@@ -202,10 +238,6 @@ function createSearchStore() {
       } finally {
         loadingMore = false;
       }
-    },
-
-    requestFocus() {
-      focusRequest++;
     },
 
     setSurfaceActive(active: boolean) {

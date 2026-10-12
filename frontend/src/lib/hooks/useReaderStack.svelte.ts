@@ -21,6 +21,13 @@
 // Call once at the top of a component's <script> (during init, so the internal
 // $effect binds to that component's lifecycle). Read `readerItem` in markup; it's
 // reactive. Selection-driven opens read `feedViewStore`, which both views share.
+//
+// **The search overlay** hosts a stack of its own (`searchOverlay: true`) over
+// whatever page is up. Its entries carry `page.state.searchOpen` so the overlay
+// stays mounted beneath the reader, and while that flag is set every page stack
+// leaves the `read` param alone — it belongs to the overlay's reader. The
+// overlay's stack never restores from the URL: a reload drops the overlay (no
+// state survives it), so the page's stack picks the `read` param up instead.
 import { pushState, replaceState } from '$app/navigation';
 import { page } from '$app/state';
 import { appManager } from '$lib/stores/app.svelte';
@@ -42,7 +49,9 @@ import {
 import type { ReaderCollectionItem } from '$lib/types';
 import { appScrollTo, appScrollTop } from '$lib/utils/appScroll';
 
-export function useReaderStack(config: { onReaderChange?: (open: boolean) => void } = {}) {
+export function useReaderStack(
+  config: { onReaderChange?: (open: boolean) => void; searchOverlay?: boolean } = {}
+) {
   let readerStack = $state<FeedDisplayItem[]>([]);
   let savedScrollY = 0;
   let readerItem = $derived(readerStack.length ? readerStack[readerStack.length - 1] : null);
@@ -97,6 +106,7 @@ export function useReaderStack(config: { onReaderChange?: (open: boolean) => voi
     // still carrying the param the address bar no longer shows, so reading it
     // here would reopen a reader the user just closed.
     const depth = page.state.readerDepth ?? 0;
+    if (config.searchOverlay || page.state.searchOpen) return;
     const key = currentUrl().searchParams.get(READ_PARAM);
     if (!key || key === abandonedKey || key === resolvingKey) return;
 
@@ -167,7 +177,10 @@ export function useReaderStack(config: { onReaderChange?: (open: boolean) => voi
     if (readerStack.length === 0) savedScrollY = appScrollTop();
     const url = readerUrl(currentUrl(), item.key);
     readerStack = [...readerStack, item];
-    pushState(url, { readerDepth: readerStack.length });
+    pushState(url, {
+      readerDepth: readerStack.length,
+      ...(config.searchOverlay ? { searchOpen: true } : {}),
+    });
     config.onReaderChange?.(true);
   }
 

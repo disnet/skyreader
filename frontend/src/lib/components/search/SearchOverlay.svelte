@@ -1,31 +1,25 @@
 <script lang="ts">
+  // Full-text search as an overlay over whatever page is up — mounted by
+  // AppShell while `searchStore.isOpen`. A centered panel on wide screens, the
+  // whole screen on a phone. A hit opens in this overlay's own reader stack, so
+  // closing the reader lands back on the results, scrolled where they were.
   import { onMount } from 'svelte';
-  import { goto, replaceState } from '$app/navigation';
-  import { page } from '$app/state';
-  import { shellToolbar } from '$lib/actions/shell-toolbar';
-  import { appScrollTo } from '$lib/utils/appScroll';
-  import NavigationDropdown from '$lib/components/NavigationDropdown.svelte';
+  import { goto } from '$app/navigation';
   import Icon from '$lib/components/Icon.svelte';
   import SavedReader from '$lib/components/feed/SavedReader.svelte';
-  import MobileBottomBar from '$lib/components/feed/MobileBottomBar.svelte';
-  import MobileFeedSwitcher from '$lib/components/feed/MobileFeedSwitcher.svelte';
-  import BottomSheet from '$lib/components/common/BottomSheet.svelte';
-  import NotificationList from '$lib/components/NotificationList.svelte';
   import { searchStore } from '$lib/stores/search.svelte';
   import { savedSearchStore } from '$lib/stores/savedSearch.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
   import { articlesStore } from '$lib/stores/articles.svelte';
   import { socialStore } from '$lib/stores/social.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
-  import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { syncStore } from '$lib/stores/sync.svelte';
   import { auth } from '$lib/stores/auth.svelte';
-  import { notificationsStore } from '$lib/stores/notifications.svelte';
-  import { mobileStore } from '$lib/stores/mediaQuery.svelte';
-  import { useScrollDirection } from '$lib/hooks/useScrollDirection.svelte';
+  import { keyboardStore } from '$lib/stores/keyboard.svelte';
   import { useReaderStack } from '$lib/hooks/useReaderStack.svelte';
   import { formatRelativeTime } from '$lib/utils/date';
   import { domainFromUrl } from '$lib/utils/highlightSource';
+  import { SAVED_PATH } from '$lib/utils/viewNav';
   import {
     canUseSearch,
     formatResultCount,
@@ -47,43 +41,29 @@
   let inputEl = $state<HTMLInputElement | null>(null);
   let listEl = $state<HTMLOListElement | null>(null);
 
-  const reader = useReaderStack();
+  const reader = useReaderStack({ searchOverlay: true });
   let readerItem = $derived(reader.readerItem);
 
-  // The query lives in the URL (?q=, ?kind=) so a search is reloadable and Back
-  // returns to it. Restored once on mount; written back as the reader types.
   onMount(() => {
+    const returnFocus = document.activeElement as HTMLElement | null;
     searchStore.setSurfaceActive(true);
-    const q = page.url.searchParams.get('q') ?? '';
-    const kind = page.url.searchParams.get('kind') as SearchKind | null;
-    if (kind && KINDS.some((k) => k.value === kind)) searchStore.setKind(kind);
-    if (q && q !== searchStore.query) {
-      searchStore.setQuery(q);
-      searchStore.submit();
-    }
+    // The page underneath keeps its shortcuts registered; they stand down while
+    // this is up so j/k don't walk a list nobody can see.
+    const release = keyboardStore.suspend();
     inputEl?.focus();
-    return () => searchStore.setSurfaceActive(false);
+    return () => {
+      release();
+      searchStore.setSurfaceActive(false);
+      returnFocus?.focus?.({ preventScroll: true });
+    };
   });
 
-  // `/` from anywhere bumps focusRequest; take focus on each bump.
+  // `/` (or a search button) while already open bumps focusRequest; take focus
+  // on each bump.
   $effect(() => {
     const _ = searchStore.focusRequest;
     inputEl?.focus();
     inputEl?.select();
-  });
-
-  $effect(() => {
-    const q = searchStore.query.trim();
-    const kind = searchStore.kind;
-    // Leave the URL alone while the reader is open: it owns `?read=` and the
-    // history entries above this one.
-    if (readerItem) return;
-    const url = new URL(page.url);
-    if (q) url.searchParams.set('q', q);
-    else url.searchParams.delete('q');
-    if (kind) url.searchParams.set('kind', kind);
-    else url.searchParams.delete('kind');
-    if (url.search !== page.url.search) replaceState(url, page.state);
   });
 
   function openHit(hit: SearchHit) {
@@ -99,9 +79,11 @@
   }
 
   // Offline the server index is out of reach; Saved search runs on this device.
+  // A real navigation drops the overlay's state, so replacing its entry closes it
+  // and Back from Saved returns to the page search was opened over.
   async function searchSavedOnDevice() {
     const q = searchStore.query;
-    await goto('/saved');
+    await goto(SAVED_PATH, { replaceState: true });
     savedSearchStore.setQuery(q);
     savedSearchStore.openSearch();
   }
@@ -117,8 +99,16 @@
       e.preventDefault();
       e.stopPropagation();
       if (searchStore.query) searchStore.clear();
-      else inputEl?.blur();
+      else searchStore.close();
     }
+  }
+
+  // Esc from anywhere else in the panel closes it. The reader, while it's up,
+  // owns Esc (its own capture-phase handler), so this stands aside.
+  function handleWindowKeydown(e: KeyboardEvent) {
+    if (e.key !== 'Escape' || readerItem || e.defaultPrevented) return;
+    e.preventDefault();
+    searchStore.close();
   }
 
   // Arrow keys walk the results; ArrowUp from the first goes back to the input.
@@ -161,79 +151,59 @@
       searchStore.answeredQuery === searchStore.query.trim() &&
       searchStore.results.length === 0
   );
-
-  // --- Mobile chrome (floating bottom bar + sheets), matching the feed page ---
-  const scrollDirection = useScrollDirection();
-  let feedSwitcherOpen = $state(false);
-  let notifSheetOpen = $state(false);
-
-  function scrollToTop() {
-    appScrollTo({ top: 0, behavior: 'smooth' });
-  }
-
-  function handleCreateChannel(type: 'feed' | 'saved' = 'feed') {
-    feedSwitcherOpen = false;
-    sidebarStore.openChannelModal(null, type);
-  }
-
-  function handleEditChannel(id: number) {
-    feedSwitcherOpen = false;
-    sidebarStore.openChannelModal(id);
-  }
 </script>
 
-<div class="search-page">
-  <header class="search-header" use:shellToolbar>
-    <div class="header-inner">
-      <NavigationDropdown currentTitle="Search" />
-    </div>
-  </header>
+<svelte:window onkeydown={handleWindowKeydown} />
 
-  <div class="search-body">
-    {#if !available}
-      <section class="notice">
-        <h2>Find anything you’ve read</h2>
-        <p>
-          Search everything you’ve read, saved and highlighted, and your notes. It’s part of
-          Supporter.
-        </p>
-        <p class="notice-actions">
-          <a class="text-link" href="/supporter">About Supporter</a>
-          <span class="dot">·</span>
-          <button class="text-link" onclick={searchSavedOnDevice}>Search your saved items</button>
-        </p>
-      </section>
-    {:else}
+<!-- Kept rendered (not unmounted) under an open reader so the results keep
+     their scroll position for the trip back. -->
+<div class="search-overlay" class:behind={readerItem} data-testid="search-overlay">
+  <button class="scrim" tabindex="-1" aria-label="Close search" onclick={() => searchStore.close()}
+  ></button>
+
+  <div class="panel" role="dialog" aria-modal="true" aria-label="Search">
+    <div class="panel-head">
       <div class="search-field">
         <Icon name="search" size={18} />
-        <input
-          bind:this={inputEl}
-          type="search"
-          class="search-input"
-          value={searchStore.query}
-          oninput={(e) => searchStore.setQuery(e.currentTarget.value)}
-          onkeydown={handleInputKeydown}
-          placeholder="Search everything you’ve read"
-          aria-label="Search everything you’ve read, saved and highlighted"
-          autocomplete="off"
-          spellcheck="false"
-          data-testid="search-input"
-        />
-        {#if searchStore.query}
-          <button
-            class="clear-btn"
-            onclick={() => {
-              searchStore.clear();
-              inputEl?.focus();
-            }}
-            aria-label="Clear search"
-            title="Clear search"
-          >
-            <Icon name="x" size={14} />
-          </button>
+        {#if available}
+          <input
+            bind:this={inputEl}
+            type="search"
+            class="search-input"
+            value={searchStore.query}
+            oninput={(e) => searchStore.setQuery(e.currentTarget.value)}
+            onkeydown={handleInputKeydown}
+            placeholder="Search everything you’ve read"
+            aria-label="Search everything you’ve read, saved and highlighted"
+            autocomplete="off"
+            spellcheck="false"
+            enterkeyhint="search"
+            data-testid="search-input"
+          />
+          {#if searchStore.query}
+            <button
+              class="clear-btn"
+              onclick={() => {
+                searchStore.clear();
+                inputEl?.focus();
+              }}
+              aria-label="Clear search"
+              title="Clear search"
+            >
+              <Icon name="x" size={14} />
+            </button>
+          {/if}
+        {:else}
+          <span class="search-title">Search</span>
         {/if}
       </div>
+      <button class="close-btn" onclick={() => searchStore.close()}>
+        <span class="close-label">Cancel</span>
+        <kbd class="close-key" aria-label="Close search">Esc</kbd>
+      </button>
+    </div>
 
+    {#if available}
       <div class="kinds" role="radiogroup" aria-label="Search in">
         {#each KINDS as k (k.label)}
           <button
@@ -247,126 +217,103 @@
           </button>
         {/each}
       </div>
+    {/if}
 
-      {#if !online}
-        <p class="status">
-          Search needs a connection.
-          <button class="text-link" onclick={searchSavedOnDevice}>
-            Search saved items on this device
-          </button>
-        </p>
-      {:else if searchStore.error}
-        <p class="status">{searchStore.error}</p>
-      {:else if !searchStore.query.trim()}
-        <div class="hint">
-          <p>Everything you’ve read, saved or highlighted, and your notes.</p>
-          <ul>
-            <li><code>"exact phrase"</code> for a phrase</li>
-            <li><code>climat*</code> for words starting with “climat”</li>
-            <li><code>-word</code> to leave a word out</li>
-          </ul>
-        </div>
-      {/if}
-
-      {#if showResults}
-        <p class="status" aria-live="polite">
-          {#if searchStore.loading && searchStore.answeredQuery !== searchStore.query.trim()}
-            Searching…
-          {:else if searchStore.answeredQuery}
-            {formatResultCount(searchStore.total, searchStore.totalCapped)}
-          {/if}
-          {#if searchStore.building}
-            <span class="building">· Still indexing your history. Results will fill in.</span>
-          {/if}
-        </p>
-
-        {#if noHits}
-          <p class="empty">
-            Nothing matches “{searchStore.answeredQuery}”{searchStore.kind
-              ? ` in ${KINDS.find((k) => k.value === searchStore.kind)?.label.toLowerCase()}`
-              : ''}.
+    <div class="panel-body">
+      {#if !available}
+        <section class="notice">
+          <h2>Find anything you’ve read</h2>
+          <p>
+            Search everything you’ve read, saved and highlighted, and your notes. It’s part of
+            Supporter.
           </p>
-        {:else}
-          <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-          <ol class="hits" bind:this={listEl} onkeydown={handleListKeydown}>
-            {#each searchStore.results as hit (hit.itemKey)}
-              <li class="hit">
-                <button class="hit-open" onclick={() => openHit(hit)}>
-                  <span class="hit-title">{hit.title || domainFromUrl(hit.url) || 'Untitled'}</span>
-                  {#if showSnippet(hit)}
-                    <span class="hit-snippet"
-                      >{#each hit.snippet as seg, i (i)}{#if seg.match}<mark>{seg.text}</mark
-                          >{:else}{seg.text}{/if}{/each}</span
-                    >
-                  {/if}
-                  <span class="hit-meta">
-                    <span class="meta-text">{hitMeta(hit)}</span>
-                    {#if hit.highlighted}
-                      <span class="tag"><Icon name="highlighter" size={12} />Highlighted</span>
-                    {:else if hit.saved}
-                      <span class="tag"><Icon name="bookmark" size={12} />Saved</span>
-                    {/if}
-                  </span>
-                </button>
-              </li>
-            {/each}
-          </ol>
-
-          {#if searchStore.hasMore}
-            <button
-              class="more-btn"
-              onclick={() => searchStore.loadMore()}
-              disabled={searchStore.loadingMore}
-            >
-              {searchStore.loadingMore ? 'Loading…' : 'More results'}
+          <p class="notice-actions">
+            <a class="text-link" href="/supporter">About Supporter</a>
+            <span class="dot">·</span>
+            <button class="text-link" onclick={searchSavedOnDevice}>Search your saved items</button>
+          </p>
+        </section>
+      {:else}
+        {#if !online}
+          <p class="status">
+            Search needs a connection.
+            <button class="text-link" onclick={searchSavedOnDevice}>
+              Search saved items on this device
             </button>
+          </p>
+        {:else if searchStore.error}
+          <p class="status">{searchStore.error}</p>
+        {:else if !searchStore.query.trim()}
+          <div class="hint">
+            <p>Everything you’ve read, saved or highlighted, and your notes.</p>
+            <ul>
+              <li><code>"exact phrase"</code> for a phrase</li>
+              <li><code>climat*</code> for words starting with “climat”</li>
+              <li><code>-word</code> to leave a word out</li>
+            </ul>
+          </div>
+        {/if}
+
+        {#if showResults}
+          <p class="status" aria-live="polite">
+            {#if searchStore.loading && searchStore.answeredQuery !== searchStore.query.trim()}
+              Searching…
+            {:else if searchStore.answeredQuery}
+              {formatResultCount(searchStore.total, searchStore.totalCapped)}
+            {/if}
+            {#if searchStore.building}
+              <span class="building">· Still indexing your history. Results will fill in.</span>
+            {/if}
+          </p>
+
+          {#if noHits}
+            <p class="empty">
+              Nothing matches “{searchStore.answeredQuery}”{searchStore.kind
+                ? ` in ${KINDS.find((k) => k.value === searchStore.kind)?.label.toLowerCase()}`
+                : ''}.
+            </p>
+          {:else}
+            <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+            <ol class="hits" bind:this={listEl} onkeydown={handleListKeydown}>
+              {#each searchStore.results as hit (hit.itemKey)}
+                <li class="hit">
+                  <button class="hit-open" onclick={() => openHit(hit)}>
+                    <span class="hit-title"
+                      >{hit.title || domainFromUrl(hit.url) || 'Untitled'}</span
+                    >
+                    {#if showSnippet(hit)}
+                      <span class="hit-snippet"
+                        >{#each hit.snippet as seg, i (i)}{#if seg.match}<mark>{seg.text}</mark
+                            >{:else}{seg.text}{/if}{/each}</span
+                      >
+                    {/if}
+                    <span class="hit-meta">
+                      <span class="meta-text">{hitMeta(hit)}</span>
+                      {#if hit.highlighted}
+                        <span class="tag"><Icon name="highlighter" size={12} />Highlighted</span>
+                      {:else if hit.saved}
+                        <span class="tag"><Icon name="bookmark" size={12} />Saved</span>
+                      {/if}
+                    </span>
+                  </button>
+                </li>
+              {/each}
+            </ol>
+
+            {#if searchStore.hasMore}
+              <button
+                class="more-btn"
+                onclick={() => searchStore.loadMore()}
+                disabled={searchStore.loadingMore}
+              >
+                {searchStore.loadingMore ? 'Loading…' : 'More results'}
+              </button>
+            {/if}
           {/if}
         {/if}
       {/if}
-    {/if}
+    </div>
   </div>
-
-  {#if mobileStore.isMobile && !readerItem}
-    <MobileBottomBar
-      controlsVisible={scrollDirection.controlsVisible}
-      currentTitle="Search"
-      onScrollToTop={scrollToTop}
-      onOpenFeedSwitcher={() => (feedSwitcherOpen = true)}
-      onOpenNotifications={() => {
-        notifSheetOpen = true;
-        void notificationsStore.load();
-      }}
-      onOpenFilterSheet={() => {}}
-      hasActiveFilters={false}
-      hideFilterButton={true}
-    />
-
-    <BottomSheet
-      open={feedSwitcherOpen}
-      onclose={() => (feedSwitcherOpen = false)}
-      title="Switch Feed"
-      keepMounted
-    >
-      <MobileFeedSwitcher
-        open={feedSwitcherOpen}
-        onclose={() => (feedSwitcherOpen = false)}
-        currentTitle="Search"
-        onEditChannel={handleEditChannel}
-        onCreateChannel={handleCreateChannel}
-      />
-    </BottomSheet>
-
-    <BottomSheet
-      open={notifSheetOpen}
-      onclose={() => {
-        notifSheetOpen = false;
-        void notificationsStore.markAllSeen();
-      }}
-      title="Notifications"
-    >
-      <NotificationList onItemClick={() => (notifSheetOpen = false)} />
-    </BottomSheet>
-  {/if}
 </div>
 
 {#if readerItem}
@@ -374,40 +321,164 @@
 {/if}
 
 <style>
-  .search-page {
-    width: 100%;
+  /* Above the page, its rail and its bottom bar; below the reader (100) a hit
+     opens into, and the sheets (1100) that reader can raise. */
+  .search-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 90;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    padding: 10vh 1rem 1rem;
   }
 
-  .search-header {
-    background: transparent;
+  .search-overlay.behind {
+    visibility: hidden;
   }
 
+  .scrim {
+    position: absolute;
+    inset: 0;
+    border: none;
+    padding: 0;
+    background: rgba(0, 0, 0, 0.5);
+    cursor: default;
+  }
+
+  /* It floats over the page, so it takes the Dialog shadow — the one place
+     search isn't flat. */
+  .panel {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    width: min(720px, 100%);
+    max-height: 80vh;
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+    overflow: hidden;
+    animation: panelIn 0.15s ease;
+  }
+
+  .panel-head {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 0.75rem 0;
+  }
+
+  .panel-head .search-field {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .search-title {
+    flex: 1;
+    padding: 0.75rem 0;
+    color: var(--color-text);
+    font-size: var(--text-md);
+    font-weight: var(--weight-medium);
+  }
+
+  .close-btn {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    min-height: 2.25rem;
+    padding: 0 0.5rem;
+    border: none;
+    border-radius: 6px;
+    background: none;
+    color: var(--color-text-secondary);
+    font: inherit;
+    font-size: var(--text-sm);
+    cursor: pointer;
+  }
+
+  .close-btn:hover {
+    color: var(--color-text);
+  }
+
+  .close-label {
+    display: none;
+  }
+
+  .close-key {
+    padding: 0.125rem 0.375rem;
+    border: 1px solid var(--color-border);
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: var(--text-xs);
+  }
+
+  .panel-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 0 0.75rem 0.75rem;
+  }
+
+  @keyframes panelIn {
+    from {
+      opacity: 0;
+      transform: translateY(-4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  /* Phones and narrow tablets: the whole screen, no scrim, with a Cancel the
+     thumb can find. Same breakpoint as the bottom bar that opens it. */
   @media (max-width: 1000px) {
-    .search-header {
+    .search-overlay {
+      padding: 0;
+    }
+
+    .scrim {
       display: none;
     }
 
-    .search-page {
-      padding-top: 0.5rem;
-      padding-bottom: calc(var(--bottom-bar-height) + var(--safe-area-bottom) + 1rem);
+    .panel {
+      width: 100%;
+      height: 100%;
+      max-height: none;
+      border: none;
+      border-radius: 0;
+      box-shadow: none;
+      animation: none;
+    }
+
+    .panel-head {
+      padding-top: calc(0.5rem + env(safe-area-inset-top, 0px));
+    }
+
+    .close-label {
+      display: inline;
+      color: var(--color-primary);
+      font-size: var(--text-md);
+    }
+
+    .close-key {
+      display: none;
+    }
+
+    .panel-body {
+      padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
     }
   }
 
-  .header-inner {
-    min-height: var(--shell-bar-height);
-    padding: 0.25rem var(--shell-bar-inset);
-    display: flex;
-    align-items: center;
+  @media (prefers-reduced-motion: reduce) {
+    .panel {
+      animation: none;
+    }
   }
 
-  .search-body {
-    max-width: 800px;
-    margin: 0 auto;
-    padding: 0.75rem 1rem 2rem;
-  }
-
-  /* The page's one control that matters: a quiet, full-width field. Flat — it
-     sits in the page, it doesn't float over it. */
+  /* The one control that matters: a quiet, full-width field. */
   .search-field {
     display: flex;
     align-items: center;
@@ -469,7 +540,7 @@
     display: flex;
     flex-wrap: wrap;
     gap: 0.375rem;
-    margin: 0.75rem 0 0.25rem;
+    padding: 0.75rem 0.75rem 0.25rem;
   }
 
   .kind {
@@ -678,6 +749,10 @@
   }
 
   @media (prefers-color-scheme: dark) {
+    .panel {
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+    }
+
     .hit-open:hover,
     .hit-open:focus-visible {
       background-color: var(--color-bg-hover, rgba(255, 255, 255, 0.03));

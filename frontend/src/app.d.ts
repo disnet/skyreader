@@ -14,6 +14,10 @@ declare global {
       // cold load (where no state exists) can restore the same reader from the URL
       // alone. See `useReaderStack` for the full contract.
       readerDepth?: number;
+      // The full-text search overlay is up (see `searchStore.open`). A shallow
+      // entry over the current page, so Back closes it. While it's set, the
+      // page's own reader stack stands down: the overlay hosts its own.
+      searchOpen?: boolean;
     }
     // interface Platform {}
   }
