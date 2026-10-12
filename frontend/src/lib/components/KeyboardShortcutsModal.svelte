@@ -2,13 +2,18 @@
   import { keyboardStore } from '$lib/stores/keyboard.svelte';
   import Modal from '$lib/components/common/Modal.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
+  import { auth } from '$lib/stores/auth.svelte';
+  import { canUseSearch } from '$lib/utils/search';
 
   // Derived, not a const: the modal is mounted once for the app's lifetime, so a
   // plain array would be built before `linkblogDisabled` is hydrated from the
   // server and would keep listing linkblog keys for a deleted one.
   const shortcuts = $derived([
     // Navigation
-    { category: 'Navigation', key: '/', description: 'Open switcher' },
+    ...(canUseSearch(auth.user)
+      ? [{ category: 'Navigation', key: '/', description: 'Search everything' }]
+      : [{ category: 'Navigation', key: '/', description: 'Search saved / open switcher' }]),
+    { category: 'Navigation', key: 'g', description: 'Open switcher' },
     { category: 'Navigation', key: 'j', description: 'Next item' },
     { category: 'Navigation', key: 'k', description: 'Previous item' },
     { category: 'Navigation', key: 'Enter', description: 'Toggle expand' },

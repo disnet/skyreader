@@ -30,6 +30,7 @@
   import { feedStatusStore } from '$lib/stores/feedStatus.svelte';
   import { fetchSingleFeed } from '$lib/services/feedFetcher';
   import { preferences } from '$lib/stores/preferences.svelte';
+  import { canUseSearch } from '$lib/utils/search';
 
   function handleFeedContextMenu(e: MouseEvent, feedId: number) {
     e.preventDefault();
@@ -497,6 +498,20 @@
       >
         <span class="nav-icon"><Icon name="share" /></span>
         <span class="nav-label">Linkblog</span>
+      </a>
+    {/if}
+
+    <!-- Search: the server-side index over everything read (Supporter, and
+         only where the operator switch is on — see utils/search.ts). -->
+    {#if canUseSearch(auth.user)}
+      <a
+        href="/search"
+        class="nav-item nav-link"
+        class:active={$page.url.pathname === '/search'}
+        onclick={() => sidebarStore.closeMobile()}
+      >
+        <span class="nav-icon"><Icon name="search" /></span>
+        <span class="nav-label">Search</span>
       </a>
     {/if}
 

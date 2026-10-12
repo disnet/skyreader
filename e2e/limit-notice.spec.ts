@@ -6,16 +6,21 @@ import type { Page } from '@playwright/test';
 // /supporter, and it says "park", never "remove" — over-limit feeds are kept,
 // not destroyed, and copy that says otherwise tells readers to throw away data.
 //
-// The limit is forced through the client-side pre-check (auth.user.limits in
-// localStorage) rather than by editing backend config, so the suite never
-// depends on a temporary edit to tier-limits.ts being reverted.
+// The limit is forced through the client-side pre-check (auth.user.limits, in
+// localStorage and in a stubbed /api/auth/me) rather than by editing backend
+// config, so the suite never depends on a temporary edit to tier-limits.ts
+// being reverted.
 
-/** Rewrite the stored plan so the app believes this reader is at/over a cap. */
+/**
+ * Rewrite the plan so the app believes this reader is at/over a cap: in the
+ * cached user, and in `/api/auth/me`, which the app shell re-reads on every
+ * boot so a real plan change reaches an open session.
+ */
 async function setPlan(
   page: Page,
   plan: { tier?: string; maxSubscriptions?: number; maxUrlSavesPerMonth?: number }
 ) {
-  await page.evaluate((p) => {
+  const user = await page.evaluate((p) => {
     const raw = localStorage.getItem('skyreader-auth');
     const parsed = raw ? JSON.parse(raw) : { user: {} };
     parsed.user = {
@@ -28,7 +33,9 @@ async function setPlan(
       },
     };
     localStorage.setItem('skyreader-auth', JSON.stringify(parsed));
+    return parsed.user;
   }, plan);
+  await page.route('**/api/auth/me', (route) => route.fulfill({ json: user }));
   await page.reload();
 }
 

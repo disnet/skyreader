@@ -42,6 +42,11 @@ export interface User {
     /** Full-text search over everything read, saved and highlighted (Supporter). */
     fullTextSearch?: boolean;
   };
+  /**
+   * The operator switch for full-text search in this environment. Search is
+   * offered only when this and `limits.fullTextSearch` are both true.
+   */
+  searchEnabled?: boolean;
 }
 
 export type SubscriptionSourceType =

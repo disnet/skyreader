@@ -121,6 +121,19 @@ export async function getSearchAccess(env: Env, did: string): Promise<SearchAcce
   };
 }
 
+/** Just the operator switch, for clients deciding whether to offer search at all. */
+export async function isSearchEnabled(env: Env): Promise<boolean> {
+  try {
+    const row = await env.DB.prepare(`SELECT value FROM sync_state WHERE key = ?`)
+      .bind(SEARCH_ENABLED_KEY)
+      .first<{ value: string }>();
+    return row?.value === '1';
+  } catch {
+    // A failed read hides search; it never breaks sign-in.
+    return false;
+  }
+}
+
 /** The search index's stub for one reader: one Durable Object per DID. */
 export function searchIndexStub(env: Env, did: string) {
   return env.SEARCH_INDEX.get(env.SEARCH_INDEX.idFromName(did));

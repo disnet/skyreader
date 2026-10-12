@@ -557,3 +557,20 @@ describe('GET /api/search', () => {
     expect((await search(user, 'coral')).total).toBe(1);
   });
 });
+
+describe('GET /api/auth/me searchEnabled', () => {
+  it('reports the operator switch alongside the plan flag', async () => {
+    const user = await createUser();
+    await setSearchSwitch('1');
+    const on = (await (await call(user, '/api/auth/me')).json()) as {
+      searchEnabled: boolean;
+      limits: { fullTextSearch: boolean };
+    };
+    expect(on.searchEnabled).toBe(true);
+    expect(on.limits.fullTextSearch).toBe(true);
+
+    await setSearchSwitch('0');
+    const off = (await (await call(user, '/api/auth/me')).json()) as { searchEnabled: boolean };
+    expect(off.searchEnabled).toBe(false);
+  });
+});

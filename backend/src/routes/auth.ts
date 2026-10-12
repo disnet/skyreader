@@ -39,6 +39,7 @@ import { grantsScopes, grantedFeatures } from '../services/scope-check';
 import { getUserTier, getUserTierInfo } from '../services/user-tier';
 import { writeUsageRecord } from '../services/at-intent-usage';
 import { getLimitsForTier } from '../config/tier-limits';
+import { isSearchEnabled } from '../services/search-index';
 import {
   buildSetCookieHeader,
   buildClearCookieHeader,
@@ -1033,7 +1034,10 @@ export async function handleAuthMe(request: Request, env: Env): Promise<Response
   // tierSource/grantedTier let the client tell a paid plan from a hand-granted
   // one: only a paid supporter has a Polar customer to send to the billing
   // portal, and only a granted one is told their access is a keep-it thank-you.
-  const { tier, tierSource, grantedTier } = await getUserTierInfo(env, session.did);
+  const [{ tier, tierSource, grantedTier }, searchEnabled] = await Promise.all([
+    getUserTierInfo(env, session.did),
+    isSearchEnabled(env),
+  ]);
   const limits = getLimitsForTier(tier);
 
   return new Response(
@@ -1047,6 +1051,10 @@ export async function handleAuthMe(request: Request, env: Env): Promise<Response
       tierSource,
       grantedTier,
       limits,
+      // The operator switch for full-text search; `limits.fullTextSearch` says
+      // whether this reader's plan includes it. The client offers search only
+      // when both are true.
+      searchEnabled,
     }),
     {
       headers: { 'Content-Type': 'application/json' },

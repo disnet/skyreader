@@ -17,6 +17,8 @@
   import { keyboardStore } from '$lib/stores/keyboard.svelte';
   import { highlightReviewStore } from '$lib/stores/highlightReview.svelte';
   import { savedSearchStore } from '$lib/stores/savedSearch.svelte';
+  import { searchStore } from '$lib/stores/search.svelte';
+  import { canUseSearch } from '$lib/utils/search';
   import { notificationsStore } from '$lib/stores/notifications.svelte';
   import { feedPath, FEEDS_PATH, SAVED_PATH } from '$lib/utils/viewNav';
   import { completeFollowsGrant } from '$lib/utils/followsChannel';
@@ -138,6 +140,13 @@
   // management; the rest stay on `isAuthenticated` so a guest's keypress
   // doesn't jump at an account surface.
   onMount(() => {
+    // The signed-in user (tier, limits, `searchEnabled`) is cached in
+    // localStorage at sign-in, so without this a plan change or a newly
+    // switched-on feature wouldn't reach an open session until the reader
+    // visited Settings. One background refresh per boot; verifySession only
+    // signs out on a confirmed 401, never on a network blip.
+    if (auth.isAuthenticated && !auth.isGuest) void auth.verifySession();
+
     // View switching shortcuts
     keyboardStore.register({
       key: '0',
@@ -239,22 +248,37 @@
       condition: () => auth.isInApp,
     });
 
-    // Navigation switcher shortcut. In a saved view "/" means what it means
-    // everywhere else — search this list — and falls back to the switcher
-    // otherwise. Registered once here rather than re-registered per page,
-    // because the store keys shortcuts by key: a second '/' registration would
-    // clobber this one and take the switcher with it when it unregistered.
+    // `/` is search. With full-text search (utils/search.ts) it opens the search
+    // page from anywhere, focused — or refocuses it if it's already open. Without
+    // it, `/` keeps its older meaning: search the saved list when the saved page
+    // is mounted, else the navigation switcher. Registered once here rather than
+    // re-registered per page, because the store keys shortcuts by key: a second
+    // '/' registration would clobber this one and take the fallbacks with it.
     // Gated on `available` (the saved page is mounted *now*) rather than on the
-    // view filters, which keep their last value after that page unmounts and
-    // would leave the switcher dead on every route after one Saved visit.
+    // view filters, which keep their last value after that page unmounts.
     keyboardStore.register({
       key: '/',
-      description: 'Search saved / open switcher',
+      description: 'Search',
       category: 'Navigation',
       action: () => {
-        if (savedSearchStore.available) savedSearchStore.openSearch();
-        else sidebarStore.toggleNavigationDropdown();
+        if (canUseSearch(auth.user)) {
+          searchStore.requestFocus();
+          if ($page.url.pathname !== '/search') void goto('/search');
+        } else if (savedSearchStore.available) {
+          savedSearchStore.openSearch();
+        } else {
+          sidebarStore.toggleNavigationDropdown();
+        }
       },
+      condition: () => auth.isInApp,
+    });
+
+    // The navigation switcher ("go to"), now that `/` is search.
+    keyboardStore.register({
+      key: 'g',
+      description: 'Open switcher',
+      category: 'Navigation',
+      action: () => sidebarStore.toggleNavigationDropdown(),
       condition: () => auth.isInApp,
     });
 

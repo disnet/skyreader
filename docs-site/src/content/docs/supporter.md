@@ -13,10 +13,11 @@ Skyreader is independent software: no ads, no growth team, no investors to satis
 | URL saves per month    | 100   | 1,000     |
 | Mirrored subscriptions | 1,000 | 5,000     |
 | Newsletters by email   | —     | ✓         |
+| Search everything read | —     | ✓         |
 
 Mirrored subscriptions are the headroom for what Atmospheric sync brings along from your PDS.
 
-Supporters also get a private address for [email newsletters](/guide/adding-sources/#email-newsletters).
+Supporters also get a private address for [email newsletters](/guide/adding-sources/#email-newsletters), and [search](/guide/search/) across everything they've read, saved and highlighted.
 
 Everything else, the reader, highlights, the daily magazine, the linkblog, offline support, is the same on every plan.
 
