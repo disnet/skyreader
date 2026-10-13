@@ -346,7 +346,11 @@ async function handleContentUpdate(
        image = COALESCE(?, image),
        word_count = COALESCE(?, word_count),
        published_at = COALESCE(?, published_at),
-       content_type = COALESCE(?, content_type),
+       content_type = CASE
+         WHEN ? = 'pdf' THEN 'pdf'
+         WHEN ? IS NOT NULL AND content_type = 'pdf' THEN 'webpage'
+         ELSE content_type
+       END,
        updated_at = ?
      WHERE id = ? AND user_did = ?`
   )
@@ -359,8 +363,10 @@ async function handleContentUpdate(
       body.image || null,
       body.wordCount || null,
       publishedAt,
-      // Only a PDF re-types the save; any other upgrade keeps the type it had.
+      // A PDF body re-types the save as 'pdf'. A non-PDF body replacing a PDF's
+      // is a web page again; any other upgrade keeps the type it had.
       body.contentType === 'pdf' ? 'pdf' : null,
+      body.content || null,
       Date.now(),
       existing.id,
       session.did

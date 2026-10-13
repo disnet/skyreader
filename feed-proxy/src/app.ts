@@ -30,7 +30,7 @@ import { safeFetch } from './ssrf-guard';
 import type { RobotsPolicy } from './robots';
 import { signRequestHeaders, signedDirectory, type WebBotAuth } from './web-bot-auth';
 import { reportError, VERSION } from './instrument';
-import { extractPdfInWorker, isPdf } from './pdf-extract';
+import { extractPdfInWorker, isDeclaredPdf, isPdf, PdfUnreadableError } from './pdf-extract';
 
 export interface AppConfig {
   proxySecret?: string;
@@ -595,9 +595,10 @@ async function extractArticle(html: string, url: string): Promise<ExtractedArtic
 // on load, and a quiet retry would read more of the document.
 async function extractPdfArticle(
   bytes: Uint8Array,
-  url: string
+  url: string,
+  opts: { transfer?: boolean } = {}
 ): Promise<{ article: ExtractedArticle; cacheable: boolean }> {
-  const pdf = await extractPdfInWorker(bytes);
+  const pdf = await extractPdfInWorker(bytes, opts);
   const article: ExtractedArticle = {
     title: pdf.title,
     author: pdf.author,
@@ -613,7 +614,12 @@ async function extractPdfArticle(
 }
 
 export class ResponseTooLargeError extends Error {
-  constructor(size: number, limit: number) {
+  constructor(
+    size: number,
+    limit: number,
+    /** The body's first bytes, when any were read (absent on a Content-Length reject). */
+    readonly head?: Uint8Array
+  ) {
     super(`Response size ${size} exceeds limit of ${limit} bytes`);
     this.name = 'ResponseTooLargeError';
   }
@@ -633,10 +639,34 @@ class FetchHtmlError extends Error {
 }
 
 async function readResponseWithLimit(response: Response, maxBytes: number): Promise<string> {
-  return new TextDecoder().decode(await readBytesWithLimit(response, maxBytes));
+  // Decode as the chunks arrive rather than buffering them: this is the crawl's
+  // hot path, and a joined copy would hold the body in memory twice over.
+  const decoder = new TextDecoder();
+  let out = '';
+  await streamWithLimit(response, maxBytes, (chunk) => {
+    out += decoder.decode(chunk, { stream: true });
+  });
+  return out + decoder.decode();
 }
 
 async function readBytesWithLimit(response: Response, maxBytes: number): Promise<Uint8Array> {
+  const chunks: Uint8Array[] = [];
+  const total = await streamWithLimit(response, maxBytes, (chunk) => chunks.push(chunk));
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
+}
+
+// Feeds the body to `onChunk` a chunk at a time and returns its length.
+async function streamWithLimit(
+  response: Response,
+  maxBytes: number,
+  onChunk: (chunk: Uint8Array) => void
+): Promise<number> {
   // Content-Length is only a fast-reject hint: when the body is gzip/deflate-encoded
   // it reports the COMPRESSED size, so a tiny compressed body can still expand to
   // gigabytes (a decompression / "gzip bomb" OOM vector). We therefore also bound
@@ -651,34 +681,29 @@ async function readBytesWithLimit(response: Response, maxBytes: number): Promise
   }
 
   const body = response.body;
-  if (!body) return new Uint8Array(0);
+  if (!body) return 0;
 
   // fetch transparently decompresses gzip/deflate, so the reader yields decompressed
   // bytes — counting them here catches a bomb after ~maxBytes, not after full expansion.
   const reader = body.getReader();
-  const chunks: Uint8Array[] = [];
   let total = 0;
+  let head: Uint8Array | undefined;
   try {
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
+      head ??= value.subarray(0, 1024);
       total += value.byteLength;
       if (total > maxBytes) {
-        throw new ResponseTooLargeError(total, maxBytes);
+        throw new ResponseTooLargeError(total, maxBytes, head);
       }
-      chunks.push(value);
+      onChunk(value);
     }
   } finally {
     // Release the connection promptly whether we finished or bailed early.
     reader.cancel().catch(() => {});
   }
-  const out = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    out.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return out;
+  return total;
 }
 
 export function calculateBackoff(errorCount: number): number {
@@ -2718,8 +2743,14 @@ export function createApp(db: Database, config: AppConfig) {
             bytes = await readBytesWithLimit(response, MAX_RESPONSE_SIZE_BYTES);
           } catch (err) {
             // Name the limit in words a reader can act on; the byte counts are
-            // still in the log line below via the original message.
-            if (err instanceof ResponseTooLargeError && /pdf/i.test(contentType ?? '')) {
+            // still in the log line below via the original message. A PDF is
+            // recognised by its type, its first bytes (when any were read) or its path.
+            if (
+              err instanceof ResponseTooLargeError &&
+              (/pdf/i.test(contentType ?? '') ||
+                (err.head && isPdf(err.head, contentType)) ||
+                /\.pdf$/i.test(new URL(url).pathname))
+            ) {
               console.warn(`[Proxy] /extract ${url}: ${err.message}`);
               throw new Error(
                 `This PDF is larger than ${MAX_RESPONSE_SIZE_BYTES / (1024 * 1024)} MB, the most Skyreader can save`
@@ -2731,8 +2762,20 @@ export function createApp(db: Database, config: AppConfig) {
           // application/octet-stream, and a PDF decoded as text is mojibake.
           let extracted: ExtractedArticle;
           let cacheable = true;
-          if (isPdf(bytes, contentType)) {
+          if (isDeclaredPdf(contentType)) {
             ({ article: extracted, cacheable } = await extractPdfArticle(bytes, url));
+          } else if (isPdf(bytes, contentType)) {
+            // Only the sniff said PDF, and `%PDF-` can turn up near the top of a
+            // page that isn't one. Keep the bytes (the worker gets a copy) so a
+            // body pdf.js can't open still gets the article extractor.
+            try {
+              ({ article: extracted, cacheable } = await extractPdfArticle(bytes, url, {
+                transfer: false,
+              }));
+            } catch (err) {
+              if (!(err instanceof PdfUnreadableError)) throw err;
+              extracted = await extractArticle(new TextDecoder().decode(bytes), url);
+            }
           } else {
             extracted = await extractArticle(new TextDecoder().decode(bytes), url);
           }

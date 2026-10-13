@@ -124,6 +124,49 @@ describe('extractPdf', () => {
     expect(out.content).not.toContain('data-pdf-page="2"');
   });
 
+  it('folds a paragraph across a page left empty by an earlier fold', async () => {
+    const out = await extractPdf(
+      makePdf([
+        para(700, ['The sentence starts on the first page and']),
+        para(700, ['carries on over the whole second page and']),
+        para(700, ['only ends on the third.']),
+      ])
+    );
+    expect(out.content).toContain(
+      '<p>The sentence starts on the first page and carries on over the whole second page and only ends on the third.</p>'
+    );
+  });
+
+  it('keeps a closing word made of roman-numeral letters, drops a roman page number', async () => {
+    const pages = [
+      ['Alpha', 'civil'],
+      ['Beta', 'I'],
+      ['Gamma', 'iv'],
+    ].map(([opening, last]): Placed[] => [
+      ...para(700, [`${opening} opens this page, and`, 'the last word is']),
+      [72, 676, 10, last],
+    ]);
+    const out = await extractPdf(makePdf(pages));
+    expect(out.content).toContain('the last word is civil');
+    expect(out.content).toContain('the last word is I');
+    expect(out.content).not.toContain('the last word is iv');
+  });
+
+  it('ends a body-size numbered subsection at a heading-sized gap', async () => {
+    const out = await extractPdf(
+      makePdf([
+        [
+          ...para(700, ['Some opening text that sets the body size for the page.']),
+          [72, 670, 10, '3.1 Encoder Stacks'],
+          // 1.5 lines below the heading: under a paragraph gap, over a heading's.
+          ...para(652, ['The encoder is a stack of identical layers, each with two', 'parts.']),
+        ],
+      ])
+    );
+    expect(out.content).toContain('<h4>3.1 Encoder Stacks</h4>');
+    expect(out.content).toContain('<p>The encoder is a stack');
+  });
+
   it('drops a running header repeated on every page', async () => {
     const pages = [1, 2, 3, 4].map((n): Placed[] => [
       [72, 760, 8, `Journal of Reading, Vol. ${n}`],
@@ -155,11 +198,45 @@ describe('extractPdf', () => {
 
   it('stops at the size cap on a page boundary', async () => {
     const pages = threePages();
-    const out = await extractPdf(makePdf(pages), { maxChars: 250 });
+    const out = await extractPdf(makePdf(pages), { maxBytes: 250 });
     expect(out.pagesKept).toBe(2);
     expect(out.content).toContain('Second page ends.');
     expect(out.content).not.toContain('Third page ends.');
     expect(out.content).toContain('first 2 of 3 pages');
+  });
+
+  it('measures the size cap in UTF-8 bytes, not characters', async () => {
+    // Each "€" reads back as a non-ASCII character, three bytes in UTF-8.
+    const accented = (word: string) =>
+      para(700, [`${word} begins.`, ...Array(4).fill('€'.repeat(30)), `${word} ends.`]);
+    const one = await extractPdf(makePdf([accented('First')]));
+    const section = one.content!;
+    const chars = section.length;
+    const bytes = Buffer.byteLength(section);
+    expect(bytes).toBeGreaterThan(chars * 1.5);
+    // Room for two pages by character count, but only one by bytes.
+    const out = await extractPdf(makePdf([accented('First'), accented('Second')]), {
+      maxBytes: Math.floor(chars * 2.2),
+    });
+    expect(out.pagesKept).toBe(1);
+    expect(out.content).toContain('first 1 of 2 pages');
+  });
+
+  it('cuts a first page that is over the size cap on its own', async () => {
+    const out = await extractPdf(
+      makePdf([
+        [
+          ...para(700, ['An opening paragraph that fits.']),
+          ...para(600, ['A second paragraph that does not fit in what is left.']),
+        ],
+        para(700, ['Second page.']),
+      ]),
+      { maxBytes: 120 }
+    );
+    expect(Buffer.byteLength(out.content!.split('\n<p><em>')[0])).toBeLessThanOrEqual(120);
+    expect(out.content).toContain('An opening paragraph that fits.');
+    expect(out.content).not.toContain('Second page.');
+    expect(out.content).toContain('part of page 1 of 2');
   });
 
   it('stops when the time budget runs out, keeping what it read', async () => {
@@ -174,7 +251,7 @@ describe('extractPdf', () => {
   });
 
   it('does not flag a size-capped parse as over budget', async () => {
-    const out = await extractPdf(makePdf(threePages()), { maxChars: 250 });
+    const out = await extractPdf(makePdf(threePages()), { maxBytes: 250 });
     expect(out.budgetExceeded).toBe(false);
   });
 
@@ -275,6 +352,24 @@ describe('extractPdfInWorker', () => {
     ).rejects.toMatchObject({
       name: 'TimeoutError',
     });
+  });
+
+  it('reuses a worker after a parse, and replaces one that timed out', async () => {
+    const pdf = makePdf(threePages());
+    const first = await extractPdfInWorker(makePdf(threePages()));
+    await expect(
+      extractPdfInWorker(makePdf(threePages()), { hardTimeoutMs: 1 })
+    ).rejects.toMatchObject({ name: 'TimeoutError' });
+    expect(await extractPdfInWorker(makePdf(threePages()))).toEqual(first);
+    // Without transfer, the caller's bytes stay usable.
+    await extractPdfInWorker(pdf, { transfer: false });
+    expect(pdf.byteLength).toBeGreaterThan(0);
+  });
+
+  it('reports bytes pdf.js cannot open as unreadable', async () => {
+    await expect(
+      extractPdfInWorker(new TextEncoder().encode('%PDF-1.4 nothing else'))
+    ).rejects.toMatchObject({ name: 'PdfUnreadableError' });
   });
 
   it('reports a parse error from the worker', async () => {

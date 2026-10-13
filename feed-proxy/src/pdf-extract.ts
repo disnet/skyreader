@@ -19,9 +19,10 @@ import { getDocumentProxy } from 'unpdf';
 export const PDF_PARSE_BUDGET_MS = 10 * 1000;
 export const PDF_PARSE_HARD_TIMEOUT_MS = 15 * 1000;
 export const MAX_PDF_PAGES = 300;
-// Reflowed HTML is stored inline on the save's D1 row, whose values cap at 2 MB.
-// Stop at whole pages well under it; 1M characters is a long book's worth.
-export const MAX_PDF_CONTENT_CHARS = 1_000_000;
+// Reflowed HTML is stored inline on the save's D1 row, whose values cap at 2 MB
+// of bytes, not characters: CJK or Cyrillic text runs 2-3 bytes a character.
+// Stop at whole pages well under it; 1 MB is a long book's worth.
+export const MAX_PDF_CONTENT_BYTES = 1_000_000;
 
 export interface PdfExtraction {
   title: string | null;
@@ -48,13 +49,26 @@ export class PdfPasswordError extends Error {
   }
 }
 
+/** pdf.js could not open the bytes as a PDF at all. */
+export class PdfUnreadableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PdfUnreadableError';
+  }
+}
+
+/** The response says it is a PDF. */
+export function isDeclaredPdf(contentType: string | null): boolean {
+  return !!contentType && /^application\/(x-)?pdf\b/i.test(contentType);
+}
+
 /**
  * True when the response is a PDF. A PDF type is trusted; a text type is too,
  * the other way (an article about PDFs can mention `%PDF-` near its top). Only
  * a missing or generic type (octet-stream and friends) is settled by sniffing.
  */
 export function isPdf(bytes: Uint8Array, contentType: string | null): boolean {
-  if (contentType && /^application\/(x-)?pdf\b/i.test(contentType)) return true;
+  if (isDeclaredPdf(contentType)) return true;
   if (contentType && /^text\/|html|xml|json/i.test(contentType)) return false;
   // The header may follow a little junk; the spec lets readers look in the first 1 KB.
   const head = new TextDecoder('latin1').decode(bytes.subarray(0, 1024));
@@ -137,6 +151,18 @@ function linesOf(items: unknown[]): Line[] {
   return lines;
 }
 
+// A well-formed roman numeral, for front-matter page numbers ("iv").
+const ROMAN = /^m{0,3}(cm|cd|d?c{0,3})(xc|xl|l?x{0,3})(ix|iv|v?i{0,3})$/;
+
+function isPageNumber(text: string): boolean {
+  if (/^(page\s*)?\d+(\s*(of|\/)\s*\d+)?$/i.test(text) || /^[-–—]\s*\d+\s*[-–—]$/.test(text))
+    return true;
+  // Roman numbers are set lowercase; requiring that and a well-formed numeral
+  // keeps a closing "I" or a word like "civil" or "ill".
+  const m = text.match(/^(?:page\s*)?([ivxlcdm]+)$/i);
+  return !!m && m[1] === m[1].toLowerCase() && ROMAN.test(m[1]);
+}
+
 // Running headers/footers and page numbers: a first or last line that recurs
 // (digits ignored) across most pages, or a bare page number on any page.
 function boilerplateFilter(pages: Line[][]): (line: Line, i: number, page: Line[]) => boolean {
@@ -149,13 +175,11 @@ function boilerplateFilter(pages: Line[][]): (line: Line, i: number, page: Line[
     for (const e of edges) counts.set(e, (counts.get(e) ?? 0) + 1);
   }
   const threshold = Math.max(3, Math.ceil(pages.length * 0.5));
-  const pageNumber = /^(page\s*)?[#ivxlc]+(\s*(of|\/)\s*#)?$/i;
   return (line, i, page) => {
     const isEdge = i === 0 || i === page.length - 1;
     if (!isEdge) return true;
-    const n = norm(line.text);
-    if (pageNumber.test(n) || /^[-–—]\s*#\s*[-–—]$/.test(n)) return false;
-    return (counts.get(n) ?? 0) < threshold;
+    if (isPageNumber(line.text)) return false;
+    return (counts.get(norm(line.text)) ?? 0) < threshold;
   };
 }
 
@@ -184,9 +208,15 @@ function joinLine(text: string, next: string): string {
 
 const SENTENCE_END = /[.?!:;"”’)\]]$/;
 
+// A short numbered line in body type ("3.1 Encoder Stacks"): a subsection a
+// paper set in bold, not larger.
+function isNumberedSubsection(text: string): boolean {
+  return text.length <= 80 && /^\d+(\.\d+)+\.?\s+\p{Lu}/u.test(text) && !/[.:,;]$/.test(text);
+}
+
 function blocksOf(lines: Line[], bodySize: number): Block[] {
   const blocks: Block[] = [];
-  let cur: (Block & { last: Line; maxEndX: number; minX: number }) | null = null;
+  let cur: (Block & { last: Line; maxEndX: number; minX: number; heading: boolean }) | null = null;
   const kindFor = (size: number, text: string): Block['kind'] => {
     if (text.length > 200) return 'p';
     if (size >= bodySize * 1.5) return 'h2';
@@ -204,7 +234,9 @@ function blocksOf(lines: Line[], bodySize: number): Block[] {
       const indentBreak =
         drop > 0 && line.x > cur.minX + lineHeight * 0.8 && line.x - prev.x > lineHeight * 0.8;
       const shortEnd = SENTENCE_END.test(prev.text) && prev.endX < cur.maxEndX - lineHeight * 3;
-      const headingEnds = cur.kind !== 'p';
+      // `kind` is only settled once the block is complete, so judge a heading
+      // by the line that opened the block.
+      const headingEnds = cur.heading;
       if (
         sizeChanged ||
         gapBreak ||
@@ -224,6 +256,7 @@ function blocksOf(lines: Line[], bodySize: number): Block[] {
         last: line,
         maxEndX: line.endX,
         minX: line.x,
+        heading: line.size >= bodySize * 1.15 || isNumberedSubsection(line.text),
       };
     } else {
       // A new column restarts the left edge and line width the indent and
@@ -245,6 +278,34 @@ function escapeHtml(s: string): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+// The leading blocks whose markup fits in `budget` bytes. When not even the first
+// fits, it is cut to fit, at a word where there is one.
+function fitBlocks(blocks: Block[], budget: number): Block[] {
+  const blockBytes = (b: Block) =>
+    Buffer.byteLength(`<${b.kind}>${escapeHtml(b.text)}</${b.kind}>\n`);
+  const kept: Block[] = [];
+  let used = 0;
+  for (const b of blocks) {
+    const n = blockBytes(b);
+    if (used + n > budget) break;
+    kept.push(b);
+    used += n;
+  }
+  if (kept.length || !blocks.length) return kept;
+  const first = { ...blocks[0] };
+  // Escaping can grow the text, so cut by the overshoot until it fits.
+  for (let over = blockBytes(first) - budget; over > 0; over = blockBytes(first) - budget) {
+    const raw = Buffer.from(first.text);
+    first.text = raw
+      .subarray(0, Math.max(0, raw.length - over))
+      .toString()
+      .replace(/\uFFFD$/, '')
+      .replace(/\s+\S*$/, '');
+    if (!first.text) return [];
+  }
+  return [first];
 }
 
 // A metadata title that is really a filename or an authoring-tool default.
@@ -275,21 +336,31 @@ export function parsePdfDate(value: unknown): string | null {
 
 export async function extractPdf(
   bytes: Uint8Array,
-  opts: { budgetMs?: number; maxPages?: number; maxChars?: number; now?: () => number } = {}
+  opts: {
+    budgetMs?: number;
+    maxPages?: number;
+    maxBytes?: number;
+    now?: () => number;
+    /** The caller is done with `bytes`; pdf.js may have them without a copy. */
+    ownsBytes?: boolean;
+  } = {}
 ): Promise<PdfExtraction> {
   const budgetMs = opts.budgetMs ?? PDF_PARSE_BUDGET_MS;
   const maxPages = opts.maxPages ?? MAX_PDF_PAGES;
-  const maxChars = opts.maxChars ?? MAX_PDF_CONTENT_CHARS;
+  const maxBytes = opts.maxBytes ?? MAX_PDF_CONTENT_BYTES;
   const now = opts.now ?? Date.now;
   const started = now();
 
   let pdf: Awaited<ReturnType<typeof getDocumentProxy>>;
   try {
-    // pdf.js may detach the buffer it is given; hand it a copy.
-    pdf = await getDocumentProxy(new Uint8Array(bytes), { verbosity: 0 });
+    // pdf.js may detach the buffer it is given; unless the caller is done with
+    // it, hand it a copy.
+    pdf = await getDocumentProxy(opts.ownsBytes ? bytes : new Uint8Array(bytes), {
+      verbosity: 0,
+    });
   } catch (err) {
     if (err instanceof Error && err.name === 'PasswordException') throw new PdfPasswordError();
-    throw err;
+    throw new PdfUnreadableError(err instanceof Error ? err.message : String(err));
   }
 
   try {
@@ -316,27 +387,23 @@ export async function extractPdf(
     const pageBlocks = pages.map((lines) => blocksOf(lines, bodySize));
 
     // Heading cleanup that needs the whole document: large type that repeats is
-    // figure labelling, not structure; a short numbered line in body type
-    // ("3.1 Encoder Stacks") is a subsection a paper set in bold, not larger.
+    // figure labelling, not structure; a numbered subsection in body type is a
+    // heading all the same.
     const headingCounts = new Map<string, number>();
     for (const b of pageBlocks.flat())
       if (b.kind !== 'p') headingCounts.set(b.text, (headingCounts.get(b.text) ?? 0) + 1);
     for (const b of pageBlocks.flat()) {
       if (b.kind !== 'p' && (headingCounts.get(b.text) ?? 0) > 2) b.kind = 'p';
-      else if (
-        b.kind === 'p' &&
-        b.text.length <= 80 &&
-        /^\d+(\.\d+)+\.?\s+\p{Lu}/u.test(b.text) &&
-        !/[.:,;]$/.test(b.text)
-      )
-        b.kind = 'h4';
+      else if (b.kind === 'p' && isNumberedSubsection(b.text)) b.kind = 'h4';
     }
 
     // A paragraph cut by a page break continues on the next page: fold the
-    // continuation back so the sentence isn't split in two.
+    // continuation back so the sentence isn't split in two. The tail is the last
+    // block on any earlier page, so a paragraph runs on past a page left empty
+    // (blank, or wholly folded into the one before). The joined paragraph keeps
+    // the page it started on.
+    let tail = pageBlocks[0]?.[pageBlocks[0].length - 1];
     for (let i = 1; i < pageBlocks.length; i++) {
-      const prevPage = pageBlocks[i - 1];
-      const tail = prevPage[prevPage.length - 1];
       const head = pageBlocks[i][0];
       if (
         tail?.kind === 'p' &&
@@ -347,6 +414,7 @@ export async function extractPdf(
         tail.text = joinLine(tail.text, head.text);
         pageBlocks[i].shift();
       }
+      if (pageBlocks[i].length) tail = pageBlocks[i][pageBlocks[i].length - 1];
     }
 
     // Title: the metadata's when it is real, else the largest type on page one.
@@ -380,24 +448,41 @@ export async function extractPdf(
       description = description.slice(0, 297).replace(/\s+\S*$/, '') + '…';
     }
 
-    // Whole pages until the size cap; the save is one D1 row, which has a hard limit.
+    // Whole pages until the size cap; the save is one D1 row, which has a hard
+    // limit in bytes. The first page with text, if over the cap alone, keeps the
+    // blocks that fit.
+    const render = (i: number, blocks: Block[]) =>
+      `<section data-pdf-page="${i + 1}">\n${blocks
+        .map((b) => `<${b.kind}>${escapeHtml(b.text)}</${b.kind}>`)
+        .join('\n')}\n</section>`;
     const sections: string[] = [];
     let size = 0;
     let pagesKept = 0;
+    let firstPageCut = false;
     let wordCount = 0;
     for (const [i, blocks] of pageBlocks.entries()) {
-      const body = blocks.map((b) => `<${b.kind}>${escapeHtml(b.text)}</${b.kind}>`).join('\n');
-      const section = blocks.length
-        ? `<section data-pdf-page="${i + 1}">\n${body}\n</section>`
-        : '';
-      if (pagesKept > 0 && size + section.length > maxChars) break;
+      let kept = blocks;
+      let section = blocks.length ? render(i, blocks) : '';
+      let bytes = Buffer.byteLength(section);
+      if (size + bytes > maxBytes) {
+        if (sections.length) break;
+        kept = fitBlocks(blocks, maxBytes - Buffer.byteLength(render(i, [])));
+        firstPageCut = true;
+        section = kept.length ? render(i, kept) : '';
+        bytes = Buffer.byteLength(section);
+      }
       if (section) sections.push(section);
-      size += section.length;
+      size += bytes;
       pagesKept = i + 1;
-      for (const b of blocks) wordCount += b.text.split(/\s+/).filter(Boolean).length;
+      for (const b of kept) wordCount += b.text.split(/\s+/).filter(Boolean).length;
+      if (firstPageCut) break;
     }
 
-    if (pagesKept < pageCount) {
+    if (firstPageCut) {
+      sections.push(
+        `<p><em>Text from part of page ${pagesKept} of ${pageCount}. Open the original PDF for the rest.</em></p>`
+      );
+    } else if (pagesKept < pageCount) {
       sections.push(
         `<p><em>Text from the first ${pagesKept} of ${pageCount} pages. Open the original PDF for the rest.</em></p>`
       );
@@ -425,41 +510,82 @@ export async function extractPdf(
   }
 }
 
+// Workers are reused: each one loads the pdf.js bundle once, not once per PDF.
+// A worker that timed out, crashed or failed is never reused, and one that has
+// parsed PDF_WORKER_MAX_USES documents is retired, so a leak in pdf.js can't
+// build up. Only a few idle ones are kept; a burst beyond that starts more.
+const MAX_IDLE_PDF_WORKERS = 2;
+const PDF_WORKER_MAX_USES = 50;
+const idleWorkers: Worker[] = [];
+const workerUses = new WeakMap<Worker, number>();
+// The in-flight request's reject, so a worker that exits mid-parse fails it now.
+const workerPending = new WeakMap<Worker, (err: Error) => void>();
+
+function acquireWorker(): Worker {
+  const idle = idleWorkers.pop();
+  if (idle) return idle;
+  const worker = new Worker(new URL('./pdf-worker.ts', import.meta.url).href);
+  // An idle worker must not keep the process alive.
+  (worker as Worker & { unref(): void }).unref(); // Bun's Worker; the DOM type lacks it
+  worker.addEventListener('close', () => {
+    const i = idleWorkers.indexOf(worker);
+    if (i >= 0) idleWorkers.splice(i, 1);
+    // Killed (out of memory, say) without a message or an error event.
+    workerPending.get(worker)?.(new Error('PDF worker exited during the parse'));
+  });
+  return worker;
+}
+
+function releaseWorker(worker: Worker, reusable: boolean): void {
+  workerPending.delete(worker);
+  worker.onmessage = null;
+  worker.onerror = null;
+  const uses = (workerUses.get(worker) ?? 0) + 1;
+  workerUses.set(worker, uses);
+  if (reusable && uses < PDF_WORKER_MAX_USES && idleWorkers.length < MAX_IDLE_PDF_WORKERS)
+    idleWorkers.push(worker);
+  else worker.terminate();
+}
+
 /**
  * extractPdf on a worker thread. pdf.js parses synchronously on whatever thread
  * it runs on, and on the proxy's one thread a parse would stall every crawl,
  * batch and health check until it finished. A worker also gives the budget a
  * hard edge: one slow page can overrun PDF_PARSE_BUDGET_MS, but past
  * PDF_PARSE_HARD_TIMEOUT_MS the worker is terminated and this rejects with a
- * TimeoutError. Takes ownership of `bytes` (its buffer is transferred).
+ * TimeoutError. Takes ownership of `bytes` (its buffer is transferred) unless
+ * `transfer` is false, when the worker gets a copy.
  */
 export function extractPdfInWorker(
   bytes: Uint8Array,
-  opts: { budgetMs?: number; hardTimeoutMs?: number } = {}
+  opts: { budgetMs?: number; hardTimeoutMs?: number; transfer?: boolean } = {}
 ): Promise<PdfExtraction> {
   const hardTimeoutMs = opts.hardTimeoutMs ?? PDF_PARSE_HARD_TIMEOUT_MS;
-  const worker = new Worker(new URL('./pdf-worker.ts', import.meta.url).href);
+  const worker = acquireWorker();
   let timer: ReturnType<typeof setTimeout> | undefined;
+  // Reuse only a worker that answered: anything else may have left it wedged.
+  let answered = false;
   return new Promise<PdfExtraction>((resolve, reject) => {
+    workerPending.set(worker, reject);
     timer = setTimeout(() => {
       const err = new Error(`PDF parse exceeded ${hardTimeoutMs}ms`);
       err.name = 'TimeoutError';
       reject(err);
     }, hardTimeoutMs);
     worker.onmessage = (event: MessageEvent<PdfWorkerReply>) => {
+      answered = true;
       const reply = event.data;
       if (reply.ok) resolve(reply.result);
-      else
-        reject(
-          reply.name === 'PdfPasswordError' ? new PdfPasswordError() : new Error(reply.message)
-        );
+      else if (reply.name === 'PdfPasswordError') reject(new PdfPasswordError());
+      else if (reply.name === 'PdfUnreadableError') reject(new PdfUnreadableError(reply.message));
+      else reject(new Error(reply.message));
     };
     worker.onerror = (event) => reject(new Error(event.message || 'PDF worker failed'));
     const request: PdfWorkerRequest = { bytes, budgetMs: opts.budgetMs };
-    worker.postMessage(request, [bytes.buffer]);
+    worker.postMessage(request, opts.transfer === false ? [] : [bytes.buffer]);
   }).finally(() => {
     clearTimeout(timer);
-    worker.terminate();
+    releaseWorker(worker, answered);
   });
 }
 

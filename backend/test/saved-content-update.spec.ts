@@ -286,4 +286,19 @@ describe('POST /api/saved — content type of a URL save', () => {
     );
     expect((await getRow()).content_type).toBe('pdf');
   });
+
+  it("re-types a 'pdf' save as a web page when an HTML body replaces it", async () => {
+    await call(
+      post({ url: URL, rkey: 'aaaaaaaaaaaaa', contentType: 'pdf', content: '<p>PDF text</p>' })
+    );
+
+    // A metadata-only upgrade leaves the PDF's body, and its type, alone.
+    await call(post({ url: URL, rkey: 'bbbbbbbbbbbbb', updateContent: true, title: 'Paper' }));
+    expect((await getRow()).content_type).toBe('pdf');
+
+    await call(
+      post({ url: URL, rkey: 'ccccccccccccc', updateContent: true, content: '<p>Landing</p>' })
+    );
+    expect((await getRow()).content_type).toBe('webpage');
+  });
 });

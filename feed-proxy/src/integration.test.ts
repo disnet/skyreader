@@ -3682,6 +3682,40 @@ describe('POST /extract', () => {
     db.close();
   });
 
+  it('names the size limit for an oversized PDF served as octet-stream', async () => {
+    const { db, app } = createTestApp();
+    const big = new Uint8Array(11 * 1024 * 1024);
+    big.set(new TextEncoder().encode('%PDF-1.7\n'));
+    fetchMock = mockFetch(
+      () => new Response(big, { headers: { 'Content-Type': 'application/octet-stream' } })
+    );
+
+    const res = await extract(app, 'https://example.com/download?id=1');
+    const json = await res.json();
+
+    expect(json.error).toBe('This PDF is larger than 10 MB, the most Skyreader can save');
+
+    db.close();
+  });
+
+  // Only sniffed, not declared: a page that merely mentions the header near
+  // its top still gets the article extractor when pdf.js can't open it.
+  it('falls back to the article extractor when a sniffed PDF is not one', async () => {
+    const { db, app } = createTestApp();
+    const html = `<!doctype html><html><head><title>The PDF Format</title></head><body><article><h1>The PDF Format</h1><p>Every file starts with %PDF-1.7 and a version number. ${'This sentence pads the article out so the extractor keeps it. '.repeat(10)}</p></article></body></html>`;
+    // A byte body, so the response carries no Content-Type and the sniff decides.
+    fetchMock = mockFetch(() => new Response(new TextEncoder().encode(html)));
+
+    const res = await extract(app, 'https://example.com/pdf-format');
+    const json = await res.json();
+
+    expect(json.error).toBeUndefined();
+    expect(json.contentType).toBeUndefined();
+    expect(json.content).toContain('Every file starts with');
+
+    db.close();
+  });
+
   // Auth runs before the route determines anything, so it keeps its own status.
   it('still answers 401 without the shared secret', async () => {
     const { db, app } = createTestApp();
