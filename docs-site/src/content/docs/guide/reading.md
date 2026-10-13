@@ -7,6 +7,8 @@ description: The library, channels, the reader, paged mode, the daily magazine, 
 
 **Feeds** shows everything you follow in one chronological stream. The sidebar lists your sources and channels; **channels** are saved views over the library, filtered by source, content type, or read state, so "Newsletters" or "Slow reads" is one click away.
 
+The **Type** filter splits what you follow by kind: **RSS Feeds**, **Newsletters** (if you have any), and **Standard.site Documents**. Check only RSS Feeds to keep email newsletters out of a view.
+
 ![The Feeds view: sources and channels in the sidebar, newest articles first in the stream](../../../assets/screenshots/library.png)
 
 Items you scroll past can be marked read automatically (a toggle in **Settings → Reading**).
