@@ -133,6 +133,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed documentation.
 | `src/routes/newsletters.ts`   | `/api/newsletters/*` — newsletter address + blocked list   |
 | `src/routes/search.ts`        | `GET /api/search` — full-text search (Supporter)           |
 | `src/routes/bsky-sources.ts`  | `/api/v2/bluesky-sources` — Bluesky likes/bookmarks on/off |
+| `src/routes/channel-items.ts` | `GET /api/channels/:uuid/items` — saved-search matches     |
 
 **Email newsletters** (Supporter) arrive through the Worker's `email()` handler, not HTTP:
 Cloudflare Email Routing hands it mail for `NEWSLETTER_EMAIL_DOMAIN`, and each message becomes a
@@ -199,6 +200,7 @@ returns a permission set expanded (`repo?collection=…`), so every check goes t
 | `src/services/user-tier.ts`          | Tier lookup (free/supporter)                                 |
 | `src/services/search-index.ts`       | Search index change feed + document builder (reads D1/R2)    |
 | `src/services/search-query.ts`       | Reader query → safe FTS5 MATCH expression                    |
+| `src/services/saved-search.ts`       | Saved queries from channels, their scopes, new-item streams  |
 | `src/services/newsletters.ts`        | Newsletter inboxes + the `email()` handler (inbound mail)    |
 | `src/services/newsletter-email.ts`   | Parse one newsletter email into a feed item                  |
 | `src/services/bsky-sources.ts`       | Bluesky likes/bookmarks as private sources (walk + ingest)   |
@@ -254,6 +256,7 @@ procedures: [`docs/RUNBOOK.md`](../docs/RUNBOOK.md).
 | ----------------------------------------- | ------------------------------------------------------------------ |
 | `src/durable-objects/jetstream-poller.ts` | Two Jetstream streams (subscriptions, documents) drained per alarm |
 | `src/durable-objects/search-index.ts`     | One per reader: FTS5 index over what they read, saved, highlighted |
+| `src/durable-objects/percolator.ts`       | Saved-search matcher: new items × saved queries, via scratch FTS5  |
 
 **Full-text search** (Supporter, behind `sync_state.search_enabled`) is a per-reader DO, not D1:
 D1 can't export a database holding an FTS5 table, and per-user indexes outgrow its 10 GB. The
@@ -262,6 +265,20 @@ changed key rebuilt from scratch by `buildIndexDocs` (`src/services/search-index
 only nudges it (after the response, from the one hook at the end of `serveRequest`), a search
 catches up first, and the first sync from zero is the backfill. Saves are hard-deleted, so a saved
 DELETE triggers a diff of the index's saved set. See `docs/plans/FULL_TEXT_SEARCH.md`.
+
+**Saved searches** (Supporter, behind `sync_state.saved_search_enabled`) do NOT use that index: it
+only holds what a reader already touched, and alerts are for what they haven't.
+
+- **Channel writes.** A channel config carrying `query` is mirrored into `saved_queries` on every
+  channel write (`syncSavedQueries`, which reads the rows back from D1).
+- **Matching.** The `Percolator` DO pulls new `feed_items` (by `seq`) and `documents_v2` rows (by
+  `indexed_at`). It loads full bodies (R2 included) only for items some entitled query covers, and
+  indexes the batch into a scratch FTS5 table with the search tokenizer. It writes hits to
+  `channel_matches`, one per normalized URL per channel.
+- **Edits.** Inserts are guarded on the query's `updated_at`, so an edit mid-pass can't get stale
+  hits written back.
+- **Scheduling.** The minute cron nudges the DO, and new or edited queries backfill 30 days. See
+  `docs/plans/SAVED_SEARCH_CHANNELS.md`.
 
 ### Storage
 
@@ -308,6 +325,8 @@ Key tables:
   the `documents_apply_cap` override
 - `system_status` - Cron-written health board (cron liveness, poller lag, proxy stats)
 - `metrics_snapshots` - Hourly trend points behind the admin's sparklines (90-day retention)
+- `saved_queries` - Saved-search channels mirrored from channel configs (query, sources, backfill)
+- `channel_matches` - What each saved search matched, one row per story (90-day retention)
 
 ## Common Tasks
 
