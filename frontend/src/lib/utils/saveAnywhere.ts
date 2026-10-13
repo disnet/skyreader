@@ -85,10 +85,21 @@ export function blockedSaveAction(): BlockedSaveAction {
 
 /**
  * Why a URL save came back without the article. `blocked` is the site refusing
- * the server's fetcher; `failed` is anything else that went wrong fetching or
- * extracting the page (a timeout, a broken page, the proxy itself).
+ * the server's fetcher; `pdf` is a PDF the server couldn't turn into text (too
+ * large, password-protected, a failed parse); `failed` is anything else that
+ * went wrong fetching or extracting the page (a timeout, a broken page, the
+ * proxy itself).
  */
-export type SaveFetchFailure = 'blocked' | 'failed';
+export type SaveFetchFailure = 'blocked' | 'pdf' | 'failed';
+
+/**
+ * Whether the browser extension is a way to the full text. It reads a web page
+ * from the reader's own browser, but a PDF tab can't be scripted, so it sends
+ * a PDF through the same server extraction that just failed.
+ */
+export function extensionCanHelp(reason: SaveFetchFailure): boolean {
+  return reason !== 'pdf';
+}
 
 /**
  * Marks a body as the note from failedSaveBody rather than article text, so it
@@ -119,9 +130,17 @@ export function failedSaveBody(url: string, reason: SaveFetchFailure): string {
   const why =
     reason === 'blocked'
       ? "Skyreader couldn't fetch this article: the site blocks automated readers."
-      : "Skyreader couldn't fetch this article.";
+      : reason === 'pdf'
+        ? "Skyreader couldn't read the text of this PDF."
+        : "Skyreader couldn't fetch this article.";
   const link = (href: string, text: string) =>
     `<a href="${escapeHtml(href)}">${escapeHtml(text)}</a>`;
+  if (!extensionCanHelp(reason)) {
+    return [
+      `<p ${FAILED_SAVE_MARKER}>${why} The link is saved, so it's here when you want it.</p>`,
+      `<p>${link(url, `Open it on ${host}`)}</p>`,
+    ].join('\n');
+  }
   return [
     `<p ${FAILED_SAVE_MARKER}>${why} The link is saved, so it's here when you want it.</p>`,
     `<p>${link(url, `Read it on ${host}`)}</p>`,
@@ -135,7 +154,7 @@ export function failedSaveBody(url: string, reason: SaveFetchFailure): string {
 
 /** The line a caller shows once a save kept only the link. */
 export function failedSaveLine(reason: SaveFetchFailure): string {
-  return reason === 'blocked'
-    ? `Saved the link only. ${BLOCKED_SAVE_LINE}`
-    : "Saved the link only. Skyreader couldn't fetch the article.";
+  if (reason === 'blocked') return `Saved the link only. ${BLOCKED_SAVE_LINE}`;
+  if (reason === 'pdf') return "Saved the link only. Skyreader couldn't read this PDF.";
+  return "Saved the link only. Skyreader couldn't fetch the article.";
 }

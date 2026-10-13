@@ -513,7 +513,11 @@ async function handleBackedSave(
          author = COALESCE(excluded.author, author),
          description = COALESCE(excluded.description, description),
          content = COALESCE(excluded.content, content),
-         content_type = excluded.content_type,
+         -- The type describes the body: when the body above is the one already
+         -- stored (this save brought no text, e.g. a failed PDF extraction), so
+         -- is the type. A stub with no body yet takes this save's type.
+         content_type = CASE WHEN excluded.content IS NULL AND content IS NOT NULL
+           THEN content_type ELSE excluded.content_type END,
          domain = COALESCE(excluded.domain, domain),
          image = COALESCE(excluded.image, image),
          word_count = COALESCE(excluded.word_count, word_count),

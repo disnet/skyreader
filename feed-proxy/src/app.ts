@@ -589,6 +589,17 @@ async function extractArticle(html: string, url: string): Promise<ExtractedArtic
   };
 }
 
+// A PDF the proxy recognised but couldn't turn into text: too large, password-
+// protected, a parse that timed out or crashed. Reported with `pdf: true` so the
+// reader isn't sent to the extension, which extracts a PDF tab through this same
+// route and would fail the same way.
+class PdfExtractError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PdfExtractError';
+  }
+}
+
 // A PDF reflowed into reader HTML (see pdf-extract.ts), in the same shape a web
 // page's extraction has. Its domain comes from the URL; a PDF has no lead image.
 // `cacheable` is false when the time budget cut the parse short: that depends
@@ -598,7 +609,15 @@ async function extractPdfArticle(
   url: string,
   opts: { transfer?: boolean } = {}
 ): Promise<{ article: ExtractedArticle; cacheable: boolean }> {
-  const pdf = await extractPdfInWorker(bytes, opts);
+  let pdf: Awaited<ReturnType<typeof extractPdfInWorker>>;
+  try {
+    pdf = await extractPdfInWorker(bytes, opts);
+  } catch (err) {
+    // Unreadable stays as it is: on the sniff-only path it means "not a PDF
+    // after all", and the caller falls back to the article extractor.
+    if (err instanceof PdfUnreadableError) throw err;
+    throw new PdfExtractError(err instanceof Error ? err.message : String(err));
+  }
   const article: ExtractedArticle = {
     title: pdf.title,
     author: pdf.author,
@@ -2752,7 +2771,7 @@ export function createApp(db: Database, config: AppConfig) {
                 /\.pdf$/i.test(new URL(url).pathname))
             ) {
               console.warn(`[Proxy] /extract ${url}: ${err.message}`);
-              throw new Error(
+              throw new PdfExtractError(
                 `This PDF is larger than ${MAX_RESPONSE_SIZE_BYTES / (1024 * 1024)} MB, the most Skyreader can save`
               );
             }
@@ -2818,6 +2837,10 @@ export function createApp(db: Database, config: AppConfig) {
       if (error instanceof FetchHtmlError) {
         console.error(`[Proxy] /extract ${url}: ${error.message} (${elapsed}ms)`);
         return c.json({ error: error.message, blocked: error.blocked }, 200);
+      }
+      if (error instanceof PdfExtractError || error instanceof PdfUnreadableError) {
+        console.error(`[Proxy] /extract ${url}: ${error.message} (${elapsed}ms)`);
+        return c.json({ error: error.message, blocked: false, pdf: true }, 200);
       }
       const isTimeout = error instanceof Error && error.name === 'TimeoutError';
       const isTooLarge = error instanceof ResponseTooLargeError;

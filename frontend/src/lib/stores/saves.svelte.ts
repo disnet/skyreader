@@ -1,6 +1,6 @@
 import { db, getMetadata, setMetadata } from '$lib/services/db';
 import { safePut, safeBulkPut } from '$lib/services/safeDb.svelte';
-import { api, ApiError, ExtractionBlockedError } from '$lib/services/api';
+import { api, ApiError, ExtractionBlockedError, PdfExtractionError } from '$lib/services/api';
 import type { ExtractedArticle } from '$lib/services/api';
 import { generateTid } from '$lib/utils/tid';
 import { urlKey } from '$lib/utils/urlKey';
@@ -389,9 +389,11 @@ function createSavesStore() {
    * link: the site refusing our fetcher, or the extract route itself failing
    * (a 5xx — the proxy couldn't fetch or parse the page). Anything else (offline,
    * signed out, rate limited) is a reason not to save at all, so it's rethrown.
+   * A PDF the proxy couldn't read is its own reason: the extension can't help.
    */
   function saveFetchFailure(err: unknown): SaveFetchFailure | null {
     if (err instanceof ExtractionBlockedError) return 'blocked';
+    if (err instanceof PdfExtractionError) return 'pdf';
     if (err instanceof ApiError && err.status >= 500) return 'failed';
     return null;
   }

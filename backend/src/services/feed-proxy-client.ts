@@ -51,6 +51,10 @@ export class FeedProxyError extends Error {
   // True when the failure is the target site refusing our automated fetcher
   // (e.g. a bot filter / CDN 403), as opposed to our proxy being unavailable.
   blocked?: boolean;
+  // True when the target is a PDF the proxy couldn't turn into text (too large,
+  // password-protected, a failed parse). The extension extracts a PDF tab through
+  // the same proxy, so unlike `blocked` there is no way through to offer.
+  pdf?: boolean;
   /**
    * HTTP status of the proxy response, when the failure came with one. Kept as a
    * field rather than only interpolated into the message so a log line can be
@@ -816,7 +820,11 @@ export class FeedProxyClient {
     // large (see the status contract on its /extract route). A 5xx body does not
     // survive the hop from Fly to here, so a non-2xx means the app never
     // answered at all and the body is the edge's, not ours.
-    type ExtractBody = Partial<ExtractedArticle> & { error?: string; blocked?: boolean };
+    type ExtractBody = Partial<ExtractedArticle> & {
+      error?: string;
+      blocked?: boolean;
+      pdf?: boolean;
+    };
     const text = await response.text();
     let body: ExtractBody | null;
     try {
@@ -843,7 +851,9 @@ export class FeedProxyClient {
       throw new FeedProxyError('Failed to extract article: the feed service sent no JSON');
     }
     if (body.error) {
-      throw new FeedProxyError(body.error, undefined, undefined, body.blocked);
+      const err = new FeedProxyError(body.error, undefined, undefined, body.blocked);
+      err.pdf = body.pdf === true;
+      throw err;
     }
 
     return body as ExtractedArticle;

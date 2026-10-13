@@ -8,7 +8,7 @@
   import type { IntegrationKind } from '$lib/stores/collections.svelte';
   import { UrlSaveLimitError } from '$lib/services/api';
   import { saveLimitLine } from '$lib/utils/limitCopy';
-  import { failedSaveLine, blockedSaveAction } from '$lib/utils/saveAnywhere';
+  import { failedSaveLine, blockedSaveAction, extensionCanHelp } from '$lib/utils/saveAnywhere';
 
   interface Props {
     url: string;
@@ -85,7 +85,7 @@
             toastId,
             'success',
             failedSaveLine(saved.fetchFailed),
-            blockedSaveAction()
+            extensionCanHelp(saved.fetchFailed) ? blockedSaveAction() : undefined
           );
           return;
         }

@@ -11,6 +11,7 @@
   import { saveLimitLine } from '$lib/utils/limitCopy';
   import {
     blockedSaveAction,
+    extensionCanHelp,
     failedSaveLine,
     type BlockedSaveAction,
     type SaveFetchFailure,
@@ -95,7 +96,7 @@
       saved = result;
       if (result.fetchFailed) {
         fetchFailed = result.fetchFailed;
-        blockedAction = blockedSaveAction();
+        blockedAction = extensionCanHelp(result.fetchFailed) ? blockedSaveAction() : null;
       }
       status = 'success';
     } catch (err) {
@@ -162,7 +163,9 @@
             rel="noopener">{blockedAction.label}</a
           >
         {/if}
-        <button class="btn-secondary" onclick={openInApp}>Open in Skyreader</button>
+        <button class={blockedAction ? 'btn-secondary' : 'btn-primary'} onclick={openInApp}
+          >Open in Skyreader</button
+        >
       {:else}
         <button class="btn-primary" onclick={openInApp}>Open in Skyreader</button>
       {/if}

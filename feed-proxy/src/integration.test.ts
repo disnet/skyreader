@@ -3656,6 +3656,9 @@ describe('POST /extract', () => {
     expect(res.status).toBe(200);
     expect(json.error).toBeTruthy();
     expect(json.blocked).toBe(false);
+    // Marked as a PDF failure: the extension can't do better, so the reader
+    // isn't sent to it.
+    expect(json.pdf).toBe(true);
 
     db.close();
   });
@@ -3678,6 +3681,7 @@ describe('POST /extract', () => {
     expect(res.status).toBe(200);
     expect(json.error).toBe('This PDF is larger than 10 MB, the most Skyreader can save');
     expect(json.blocked).toBe(false);
+    expect(json.pdf).toBe(true);
 
     db.close();
   });
@@ -3694,6 +3698,7 @@ describe('POST /extract', () => {
     const json = await res.json();
 
     expect(json.error).toBe('This PDF is larger than 10 MB, the most Skyreader can save');
+    expect(json.pdf).toBe(true);
 
     db.close();
   });

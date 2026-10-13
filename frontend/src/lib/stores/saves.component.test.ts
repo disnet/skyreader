@@ -91,7 +91,8 @@ class ApiError extends Error {
   }
 }
 class ExtractionBlockedError extends Error {}
-vi.mock('$lib/services/api', () => ({ api, ApiError, ExtractionBlockedError }));
+class PdfExtractionError extends Error {}
+vi.mock('$lib/services/api', () => ({ api, ApiError, ExtractionBlockedError, PdfExtractionError }));
 
 const extractArticle = vi.fn();
 vi.mock('$lib/services/extract', () => ({ extractArticle }));
@@ -302,6 +303,19 @@ describe('savesStore.saveFromUrl when the article cannot be fetched', () => {
     expect(saved.fetchFailed).toBe('failed');
     expect(saved.title).toBeNull();
     expect(api.saveFromUrl.mock.calls[0][2].content).not.toContain('blocks automated readers');
+  });
+
+  it('saves a PDF it could not read without pointing at the extension', async () => {
+    extractArticle.mockRejectedValueOnce(
+      new PdfExtractionError('This PDF is larger than 10 MB, the most Skyreader can save')
+    );
+
+    const saved = await savesStore.saveFromUrl('https://example.com/huge.pdf');
+
+    expect(saved.fetchFailed).toBe('pdf');
+    const content = api.saveFromUrl.mock.calls[0][2].content;
+    expect(content).toContain('this PDF');
+    expect(content).not.toContain('extension');
   });
 
   it('replaces its own note in place once the article can be fetched', async () => {

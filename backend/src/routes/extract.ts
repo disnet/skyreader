@@ -61,6 +61,8 @@ export async function handleExtract(request: Request, env: Env): Promise<Respons
       JSON.stringify({
         error: error instanceof Error ? error.message : 'Failed to extract article',
         blocked: error instanceof FeedProxyError && error.blocked === true,
+        // A PDF the proxy couldn't read: the extension would hit the same wall.
+        pdf: error instanceof FeedProxyError && error.pdf === true,
       }),
       {
         status: 502,
