@@ -25,7 +25,7 @@ If the article is already in Semble or Margin, the picker opens on the collectio
 
 Save a link to a PDF (a paper, a report) the same way you save an article. Skyreader keeps its text, set as ordinary paragraphs, so you can read, highlight, and search it like anything else you save.
 
-Only the text comes through. Figures, tables, and equations stay in the original, so open the PDF for those. A scanned PDF has no text to keep, and a password-protected one can't be read. A very long PDF keeps the text of its first pages, and says so at the end.
+Only the text comes through. Figures, tables, and equations stay in the original, so open the PDF for those. A scanned PDF has no text to keep, and a password-protected one can't be read. A very long PDF keeps the text of its first pages, and says so at the end. A PDF larger than 10 MB is too big to save as text: Skyreader keeps the link instead, so you can still open it from your Saved list.
 
 ### When a site won't let Skyreader read it
 

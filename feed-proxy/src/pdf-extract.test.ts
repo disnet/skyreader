@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { extractPdf, isPdf, parsePdfDate } from './pdf-extract';
+import { extractPdf, extractPdfInWorker, isPdf, parsePdfDate } from './pdf-extract';
 import { makePdf, type Placed } from './pdf-fixture';
 
 // Body text at 10pt on a 12pt leading, flowing down from `top`.
@@ -16,13 +16,14 @@ describe('isPdf', () => {
     expect(isPdf(new TextEncoder().encode('%PDF-1.7\n...'), 'application/octet-stream')).toBe(true);
   });
 
-  it('leaves HTML alone', () => {
+  it('leaves HTML alone, even HTML that mentions a PDF header', () => {
     expect(
-      isPdf(
-        new TextEncoder().encode('<!doctype html><p>%PDF- is a header</p>'.slice(0, 20)),
-        'text/html'
-      )
+      isPdf(new TextEncoder().encode('<!doctype html><p>%PDF- is a header</p>'), 'text/html')
     ).toBe(false);
+  });
+
+  it('sniffs when there is no content type', () => {
+    expect(isPdf(new TextEncoder().encode('%PDF-1.7\n...'), null)).toBe(true);
   });
 });
 
@@ -169,6 +170,12 @@ describe('extractPdf', () => {
     const out = await extractPdf(makePdf(pages), { now: () => (t += 6000) - 6000 });
     expect(out.pagesKept).toBeLessThan(3);
     expect(out.content).toContain('First page ends.');
+    expect(out.budgetExceeded).toBe(true);
+  });
+
+  it('does not flag a size-capped parse as over budget', async () => {
+    const out = await extractPdf(makePdf(threePages()), { maxChars: 250 });
+    expect(out.budgetExceeded).toBe(false);
   });
 
   it('returns no content for a PDF with no text layer', async () => {
@@ -179,5 +186,100 @@ describe('extractPdf', () => {
 
   it('rejects bytes that are not a parseable PDF', async () => {
     await expect(extractPdf(new TextEncoder().encode('%PDF-1.4 nothing else'))).rejects.toThrow();
+  });
+});
+
+// A raw single-page PDF, for text matrices makePdf can't express (it only Td's).
+function rawPdf(stream: string): Uint8Array {
+  const objs = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [4 0 R] /Count 1 >>',
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 5 0 R /Resources << /Font << /F1 3 0 R >> >> >>',
+    `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`,
+  ];
+  let out = '%PDF-1.4\n';
+  const offsets: number[] = [];
+  objs.forEach((body, i) => {
+    offsets.push(out.length);
+    out += `${i + 1} 0 obj\n${body}\nendobj\n`;
+  });
+  const xref = out.length;
+  out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n`;
+  for (const o of offsets) out += `${String(o).padStart(10, '0')} 00000 n \n`;
+  out += `trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return new TextEncoder().encode(out);
+}
+
+describe('rotated and slanted text', () => {
+  it('keeps a synthetic italic (a slanted, not rotated, matrix)', async () => {
+    const out = await extractPdf(
+      rawPdf(
+        [
+          'BT /F1 10 Tf 1 0 0 1 72 700 Tm (The quick brown fox) Tj ET',
+          'BT /F1 10 Tf 1 0 0.2 1 170 700 Tm (jumped) Tj ET',
+          'BT /F1 10 Tf 1 0 0 1 206 700 Tm (over the lazy dog.) Tj ET',
+        ].join('\n')
+      )
+    );
+    expect(out.content).toContain('fox jumped over');
+  });
+
+  it('drops text rotated off the baseline', async () => {
+    const out = await extractPdf(
+      rawPdf(
+        [
+          'BT /F1 10 Tf 1 0 0 1 72 700 Tm (Body text stays in the reader.) Tj ET',
+          'BT /F1 10 Tf 0 1 -1 0 20 400 Tm (arXiv:1706.03762v7) Tj ET',
+        ].join('\n')
+      )
+    );
+    expect(out.content).toContain('Body text stays');
+    expect(out.content).not.toContain('arXiv');
+  });
+});
+
+describe('fallback title', () => {
+  it('never takes a paragraph set in large type', async () => {
+    const blurb = 'An opening paragraph set large on the cover, much longer than any title. ';
+    const body: Placed[] = Array.from({ length: 30 }, (_, i) => [
+      72,
+      560 - i * 12,
+      10,
+      'Body text that sets the size most of this document is written in, line after line.',
+    ]);
+    const out = await extractPdf(
+      makePdf([
+        [
+          ...[0, 1, 2, 3, 4].map((i): Placed => [72, 740 - i * 16, 14, blurb]),
+          [72, 640, 13, 'The Real Title'],
+          ...body,
+        ],
+      ])
+    );
+    expect(out.title).toBe('The Real Title');
+  });
+});
+
+describe('extractPdfInWorker', () => {
+  it('parses off the main thread with the same result', async () => {
+    const pdf = makePdf(threePages());
+    const direct = await extractPdf(pdf);
+    const viaWorker = await extractPdfInWorker(makePdf(threePages()));
+    expect(viaWorker).toEqual(direct);
+  });
+
+  it('fails a parse that outlasts the hard timeout', async () => {
+    await expect(
+      extractPdfInWorker(makePdf(threePages()), { hardTimeoutMs: 1 })
+    ).rejects.toMatchObject({
+      name: 'TimeoutError',
+    });
+  });
+
+  it('reports a parse error from the worker', async () => {
+    await expect(
+      extractPdfInWorker(new TextEncoder().encode('%PDF-1.4 nothing else'))
+    ).rejects.toThrow();
   });
 });

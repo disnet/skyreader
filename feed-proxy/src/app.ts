@@ -30,7 +30,7 @@ import { safeFetch } from './ssrf-guard';
 import type { RobotsPolicy } from './robots';
 import { signRequestHeaders, signedDirectory, type WebBotAuth } from './web-bot-auth';
 import { reportError, VERSION } from './instrument';
-import { extractPdf, isPdf } from './pdf-extract';
+import { extractPdfInWorker, isPdf } from './pdf-extract';
 
 export interface AppConfig {
   proxySecret?: string;
@@ -384,7 +384,8 @@ const FETCH_TIMEOUT_MS = 30 * 1000; // 30 seconds
 // Tighter budget for /extract's upstream fetch. The route is interactive (a
 // reader is watching a save spin) and its worst case has to fit under the
 // server's idleTimeout with room for the parse: permit wait + this fetch +
-// Defuddle. Raising it means raising idleTimeout in index.ts first.
+// Defuddle or the PDF parse (PDF_PARSE_HARD_TIMEOUT_MS). Raising it means
+// raising idleTimeout in index.ts first.
 const EXTRACT_FETCH_TIMEOUT_MS = 20 * 1000; // 20 seconds
 // How long an /extract may wait for a permit before it is shed. The semaphore's
 // queue bounds how MANY callers wait, not how long — without a deadline, a caller
@@ -590,9 +591,14 @@ async function extractArticle(html: string, url: string): Promise<ExtractedArtic
 
 // A PDF reflowed into reader HTML (see pdf-extract.ts), in the same shape a web
 // page's extraction has. Its domain comes from the URL; a PDF has no lead image.
-async function extractPdfArticle(bytes: Uint8Array, url: string): Promise<ExtractedArticle> {
-  const pdf = await extractPdf(bytes);
-  return {
+// `cacheable` is false when the time budget cut the parse short: that depends
+// on load, and a quiet retry would read more of the document.
+async function extractPdfArticle(
+  bytes: Uint8Array,
+  url: string
+): Promise<{ article: ExtractedArticle; cacheable: boolean }> {
+  const pdf = await extractPdfInWorker(bytes);
+  const article: ExtractedArticle = {
     title: pdf.title,
     author: pdf.author,
     description: pdf.description,
@@ -603,6 +609,7 @@ async function extractPdfArticle(bytes: Uint8Array, url: string): Promise<Extrac
     wordCount: pdf.wordCount,
     contentType: 'pdf',
   };
+  return { article, cacheable: !pdf.budgetExceeded };
 }
 
 export class ResponseTooLargeError extends Error {
@@ -2705,17 +2712,37 @@ export function createApp(db: Database, config: AppConfig) {
             throw new FetchHtmlError(error, 502, blocked);
           }
 
-          const bytes = await readBytesWithLimit(response, MAX_RESPONSE_SIZE_BYTES);
+          const contentType = response.headers.get('Content-Type');
+          let bytes: Uint8Array;
+          try {
+            bytes = await readBytesWithLimit(response, MAX_RESPONSE_SIZE_BYTES);
+          } catch (err) {
+            // Name the limit in words a reader can act on; the byte counts are
+            // still in the log line below via the original message.
+            if (err instanceof ResponseTooLargeError && /pdf/i.test(contentType ?? '')) {
+              console.warn(`[Proxy] /extract ${url}: ${err.message}`);
+              throw new Error(
+                `This PDF is larger than ${MAX_RESPONSE_SIZE_BYTES / (1024 * 1024)} MB, the most Skyreader can save`
+              );
+            }
+            throw err;
+          }
           // Sniff as well as trust the header: plenty of servers send a PDF as
           // application/octet-stream, and a PDF decoded as text is mojibake.
-          const extracted = isPdf(bytes, response.headers.get('Content-Type'))
-            ? await extractPdfArticle(bytes, url)
-            : await extractArticle(new TextDecoder().decode(bytes), url);
+          let extracted: ExtractedArticle;
+          let cacheable = true;
+          if (isPdf(bytes, contentType)) {
+            ({ article: extracted, cacheable } = await extractPdfArticle(bytes, url));
+          } else {
+            extracted = await extractArticle(new TextDecoder().decode(bytes), url);
+          }
 
-          db.run(
-            'INSERT OR REPLACE INTO extract_cache (url_hash, url, extracted_json, cached_at, extractor_version) VALUES (?, ?, ?, ?, ?)',
-            [urlHash, url, JSON.stringify(extracted), Date.now(), EXTRACTOR_VERSION]
-          );
+          if (cacheable) {
+            db.run(
+              'INSERT OR REPLACE INTO extract_cache (url_hash, url, extracted_json, cached_at, extractor_version) VALUES (?, ?, ?, ?, ?)',
+              [urlHash, url, JSON.stringify(extracted), Date.now(), EXTRACTOR_VERSION]
+            );
+          }
 
           return extracted;
         } finally {

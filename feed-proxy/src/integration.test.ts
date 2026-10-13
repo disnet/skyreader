@@ -3660,6 +3660,28 @@ describe('POST /extract', () => {
     db.close();
   });
 
+  it('names the size limit when a PDF is too large to save', async () => {
+    const { db, app } = createTestApp();
+    fetchMock = mockFetch(
+      () =>
+        new Response('%PDF-1.7', {
+          headers: {
+            'Content-Type': 'application/pdf',
+            'Content-Length': String(11 * 1024 * 1024),
+          },
+        })
+    );
+
+    const res = await extract(app, 'https://example.com/huge.pdf');
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.error).toBe('This PDF is larger than 10 MB, the most Skyreader can save');
+    expect(json.blocked).toBe(false);
+
+    db.close();
+  });
+
   // Auth runs before the route determines anything, so it keeps its own status.
   it('still answers 401 without the shared secret', async () => {
     const { db, app } = createTestApp();

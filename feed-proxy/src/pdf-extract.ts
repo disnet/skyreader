@@ -12,9 +12,12 @@ import { getDocumentProxy } from 'unpdf';
 // citations and for a later page-faithful viewer.
 
 // Parsing runs inside /extract's budget (see idleTimeout in index.ts): permit
-// wait + fetch + this must stay under it. Both caps end the parse early and keep
-// what was read rather than failing the save.
+// wait + fetch + this must stay under it. The budget and the caps end the parse
+// early and keep what was read rather than failing the save. The budget is only
+// checked between pages, so PDF_PARSE_HARD_TIMEOUT_MS backs it: past that, the
+// worker running the parse is terminated and the extraction fails as a timeout.
 export const PDF_PARSE_BUDGET_MS = 10 * 1000;
+export const PDF_PARSE_HARD_TIMEOUT_MS = 15 * 1000;
 export const MAX_PDF_PAGES = 300;
 // Reflowed HTML is stored inline on the save's D1 row, whose values cap at 2 MB.
 // Stop at whole pages well under it; 1M characters is a long book's worth.
@@ -30,6 +33,12 @@ export interface PdfExtraction {
   pageCount: number;
   /** Pages in `content`; less than pageCount when a cap cut it short. */
   pagesKept: number;
+  /**
+   * The time budget, not a page or size cap, cut the parse short. Unlike the
+   * caps this depends on how busy the machine was, so the result is not the
+   * PDF's answer and must not be cached as one.
+   */
+  budgetExceeded: boolean;
 }
 
 export class PdfPasswordError extends Error {
@@ -39,9 +48,14 @@ export class PdfPasswordError extends Error {
   }
 }
 
-/** True when the bytes are a PDF, whatever the server called them. */
+/**
+ * True when the response is a PDF. A PDF type is trusted; a text type is too,
+ * the other way (an article about PDFs can mention `%PDF-` near its top). Only
+ * a missing or generic type (octet-stream and friends) is settled by sniffing.
+ */
 export function isPdf(bytes: Uint8Array, contentType: string | null): boolean {
   if (contentType && /^application\/(x-)?pdf\b/i.test(contentType)) return true;
+  if (contentType && /^text\/|html|xml|json/i.test(contentType)) return false;
   // The header may follow a little junk; the spec lets readers look in the first 1 KB.
   const head = new TextDecoder('latin1').decode(bytes.subarray(0, 1024));
   return head.includes('%PDF-');
@@ -91,8 +105,10 @@ function linesOf(items: unknown[]): Line[] {
     if (!isTextRun(item)) continue;
     // Rotated text is margin furniture (arXiv's sidebar stamp, a watermark),
     // never the body; left in, it would also win the largest-type title guess.
-    const [a, b, c, d] = item.transform;
-    if (Math.abs(b) > Math.abs(a) * 0.05 || Math.abs(c) > Math.abs(d) * 0.05) {
+    // Rotation tilts the baseline (b); a slant alone (c) is a synthetic italic,
+    // which is body text and stays.
+    const [a, b] = item.transform;
+    if (Math.abs(b) > Math.abs(a) * 0.05) {
       if (item.hasEOL) flush();
       continue;
     }
@@ -282,8 +298,12 @@ export async function extractPdf(
 
     const pageCount = pdf.numPages;
     const pageLines: Line[][] = [];
+    let budgetExceeded = false;
     for (let n = 1; n <= Math.min(pageCount, maxPages); n++) {
-      if (n > 1 && now() - started > budgetMs) break;
+      if (n > 1 && now() - started > budgetMs) {
+        budgetExceeded = true;
+        break;
+      }
       const page = await pdf.getPage(n);
       const text = await page.getTextContent();
       pageLines.push(linesOf(text.items));
@@ -332,12 +352,14 @@ export async function extractPdf(
     // Title: the metadata's when it is real, else the largest type on page one.
     let title = usableTitle(info.Title);
     if (!title && pageBlocks[0]?.length) {
-      const first = pageBlocks[0];
-      const largest = first.reduce(
-        (a, b) => (b.size > a.size && b.text.length <= 300 ? b : a),
-        first[0]
+      // A block longer than a title could be is a paragraph, however large its type.
+      const candidates = pageBlocks[0].filter((b) => b.text.length <= 300);
+      const largest = candidates.reduce<Block | null>(
+        (a, b) => (!a || b.size > a.size ? b : a),
+        null
       );
-      if (largest.size > bodySize * 1.15 && largest.text.length >= 4) title = largest.text;
+      if (largest && largest.size > bodySize * 1.15 && largest.text.length >= 4)
+        title = largest.text;
     }
     // The reader shows the title above the body; don't repeat it as a heading.
     if (title && pageBlocks[0]) {
@@ -394,6 +416,7 @@ export async function extractPdf(
       wordCount,
       pageCount,
       pagesKept,
+      budgetExceeded,
     };
   } finally {
     // Release the parsed document. This pdf.js build has no PDFDocumentProxy.destroy();
@@ -401,3 +424,49 @@ export async function extractPdf(
     await pdf.loadingTask.destroy().catch(() => {});
   }
 }
+
+/**
+ * extractPdf on a worker thread. pdf.js parses synchronously on whatever thread
+ * it runs on, and on the proxy's one thread a parse would stall every crawl,
+ * batch and health check until it finished. A worker also gives the budget a
+ * hard edge: one slow page can overrun PDF_PARSE_BUDGET_MS, but past
+ * PDF_PARSE_HARD_TIMEOUT_MS the worker is terminated and this rejects with a
+ * TimeoutError. Takes ownership of `bytes` (its buffer is transferred).
+ */
+export function extractPdfInWorker(
+  bytes: Uint8Array,
+  opts: { budgetMs?: number; hardTimeoutMs?: number } = {}
+): Promise<PdfExtraction> {
+  const hardTimeoutMs = opts.hardTimeoutMs ?? PDF_PARSE_HARD_TIMEOUT_MS;
+  const worker = new Worker(new URL('./pdf-worker.ts', import.meta.url).href);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return new Promise<PdfExtraction>((resolve, reject) => {
+    timer = setTimeout(() => {
+      const err = new Error(`PDF parse exceeded ${hardTimeoutMs}ms`);
+      err.name = 'TimeoutError';
+      reject(err);
+    }, hardTimeoutMs);
+    worker.onmessage = (event: MessageEvent<PdfWorkerReply>) => {
+      const reply = event.data;
+      if (reply.ok) resolve(reply.result);
+      else
+        reject(
+          reply.name === 'PdfPasswordError' ? new PdfPasswordError() : new Error(reply.message)
+        );
+    };
+    worker.onerror = (event) => reject(new Error(event.message || 'PDF worker failed'));
+    const request: PdfWorkerRequest = { bytes, budgetMs: opts.budgetMs };
+    worker.postMessage(request, [bytes.buffer]);
+  }).finally(() => {
+    clearTimeout(timer);
+    worker.terminate();
+  });
+}
+
+export interface PdfWorkerRequest {
+  bytes: Uint8Array;
+  budgetMs?: number;
+}
+
+export type PdfWorkerReply =
+  { ok: true; result: PdfExtraction } | { ok: false; name: string; message: string };

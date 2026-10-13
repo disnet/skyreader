@@ -408,7 +408,8 @@ export default {
   // being cut off underneath. /extract is the slowest, and its budget is the sum
   // of every stage that can block, not just the fetch: waiting for a concurrency
   // permit (EXTRACT_QUEUE_WAIT_MS, 5s) + the upstream fetch
-  // (EXTRACT_FETCH_TIMEOUT_MS, 20s) + a synchronous Defuddle parse. Every
+  // (EXTRACT_FETCH_TIMEOUT_MS, 20s) + a synchronous Defuddle parse, or a PDF
+  // parse (PDF_PARSE_HARD_TIMEOUT_MS, 15s, enforced by killing its worker). Every
   // one of those is capped, which is what makes the sum meaningful — an uncapped
   // stage would put the route back under this ceiling no matter how high it goes.
   // Raise this before raising any of them, never after.
