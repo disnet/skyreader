@@ -25,6 +25,8 @@
     formatResultCount,
     lastTouched,
     resolveSearchHit,
+    searchHitTitle,
+    type SearchHitSources,
   } from '$lib/utils/search';
   import type { SearchHit, SearchKind } from '$lib/services/api';
 
@@ -66,14 +68,18 @@
     inputEl?.select();
   });
 
-  function openHit(hit: SearchHit) {
-    const item = resolveSearchHit(hit, {
+  function hitSources(): SearchHitSources {
+    return {
       saves: savesStore.articles,
       getArticle: (guid) => articlesStore.getByGuid(guid),
       documents: socialStore.documents,
       subscriptionIdFor: (feedUrl) =>
         subscriptionsStore.subscriptions.find((s) => s.feedUrl === feedUrl)?.id,
-    });
+    };
+  }
+
+  function openHit(hit: SearchHit) {
+    const item = resolveSearchHit(hit, hitSources());
     if (item) reader.openReader(item);
     else if (hit.url) window.open(hit.url, '_blank', 'noopener,noreferrer');
   }
@@ -278,9 +284,7 @@
               {#each searchStore.results as hit (hit.itemKey)}
                 <li class="hit">
                   <button class="hit-open" onclick={() => openHit(hit)}>
-                    <span class="hit-title"
-                      >{hit.title || domainFromUrl(hit.url) || 'Untitled'}</span
-                    >
+                    <span class="hit-title">{searchHitTitle(hit, hitSources())}</span>
                     {#if showSnippet(hit)}
                       <span class="hit-snippet"
                         >{#each hit.snippet as seg, i (i)}{#if seg.match}<mark>{seg.text}</mark
