@@ -112,3 +112,35 @@ export async function fetchProfiles(dids: string[]): Promise<Map<string, BskyPro
 
   return map;
 }
+
+/**
+ * Full post views for a set of post at-uris, batched at getPosts' 25-uri limit,
+ * as uri → view. Posts that are gone or withheld from logged-out viewers are
+ * simply absent; `complete` is false when a batch failed, so a caller walking a
+ * high-water mark can hold it rather than skip what the failed batch held.
+ */
+export async function fetchPosts<T extends { uri?: string }>(
+  uris: string[]
+): Promise<{ posts: Map<string, T>; complete: boolean }> {
+  const posts = new Map<string, T>();
+  let complete = true;
+  for (let i = 0; i < uris.length; i += 25) {
+    const params = new URLSearchParams();
+    for (const uri of uris.slice(i, i + 25)) params.append('uris', uri);
+    try {
+      const res = await fetch(`${APPVIEW_BASE}/xrpc/app.bsky.feed.getPosts?${params}`);
+      if (!res.ok) {
+        complete = false;
+        continue;
+      }
+      const data = (await res.json()) as { posts?: T[] };
+      for (const p of data.posts ?? []) {
+        if (p.uri) posts.set(p.uri, p);
+      }
+    } catch (error) {
+      complete = false;
+      console.error('[bsky-appview] getPosts error:', error);
+    }
+  }
+  return { posts, complete };
+}

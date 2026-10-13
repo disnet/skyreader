@@ -1,5 +1,6 @@
 import type { Env, FeedItem, Session } from '../types';
 import { isNewsletterFeedUrl, ownsNewsletterFeed } from '../services/newsletters';
+import { isBskySourceFeedUrl, ownsBskySourceFeed } from '../services/bsky-sources';
 import { FeedProxyClient, FeedProxyError } from '../services/feed-proxy-client';
 import type {
   ProxyDocumentEntry,
@@ -173,8 +174,14 @@ export async function handleV2FeedFetch(
 
   // A newsletter is one reader's mail, not a public feed: only the inbox's owner
   // reads it, and there is nothing to pull through — email is its only source.
+  // Bluesky likes/bookmarks likewise: one reader's, gathered from Bluesky, never
+  // pulled through the crawler.
   const newsletter = isNewsletterFeedUrl(feedUrl);
-  if (newsletter && !(await ownsNewsletterFeed(env, session.did, feedUrl))) {
+  const bskySource = isBskySourceFeedUrl(feedUrl);
+  if (
+    (newsletter && !(await ownsNewsletterFeed(env, session.did, feedUrl))) ||
+    (bskySource && !ownsBskySourceFeed(session.did, feedUrl))
+  ) {
     return new Response(JSON.stringify({ error: 'Not found' }), {
       status: 404,
       headers: { 'Content-Type': 'application/json' },
@@ -203,7 +210,8 @@ export async function handleV2FeedFetch(
     archiveEmpty = items.length === 0;
     // An offset read is a walk down an archive we know exists; an empty page is
     // its bottom, not a feed nobody has ever crawled.
-    const wantsPullThrough = !newsletter && offset === 0 && (archiveEmpty || forceRefresh);
+    const wantsPullThrough =
+      !newsletter && !bskySource && offset === 0 && (archiveEmpty || forceRefresh);
     if (wantsPullThrough && (await callerSubscribes(env, session.did, feedUrl))) {
       try {
         const client = new FeedProxyClient(env);

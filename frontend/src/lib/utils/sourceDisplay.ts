@@ -76,6 +76,10 @@ export function getSourceDisplay(
       };
     case 'email.newsletter':
       return { label: 'Newsletter', iconName: 'mail', pillClass: 'pill-newsletter' };
+    case 'bsky.likes':
+      return { label: 'Bluesky likes', iconName: 'heart', pillClass: 'pill-bluesky' };
+    case 'bsky.bookmarks':
+      return { label: 'Bluesky bookmarks', iconName: 'bookmark', pillClass: 'pill-bluesky' };
     default:
       return { label: 'RSS', iconName: 'rss', pillClass: 'pill-rss' };
   }

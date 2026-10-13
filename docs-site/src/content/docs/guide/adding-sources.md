@@ -31,6 +31,16 @@ Supporters get a private email address for newsletters. Find it on the **+** but
 - **Removing a newsletter** stops its mail reaching Skyreader, but it doesn't unsubscribe you with the sender. Blocked senders are listed in **Settings → Newsletters**, where you can let one back in.
 - **If you leave the Supporter plan**, the address stops receiving mail. Newsletters you already have stay readable.
 
+## Your Bluesky likes and bookmarks
+
+Like or bookmark a post on Bluesky, and the article it links to can be waiting in your reader. Go to **Manage Sources**, find **Your Bluesky likes** or **Your Bluesky bookmarks** under **The Atmosphere**, and choose **Add**. Bookmarks are private on Bluesky, so the first time Skyreader asks for permission to read them: choose **Allow** and confirm on your account provider's page.
+
+- **Only posts with a link.** A post that links somewhere becomes an article: the linked page, with the post's words above it. Posts without a link are left out, and so are links back to Bluesky.
+- **Newest first, by when you liked or bookmarked it.** New ones arrive within a few minutes while you read.
+- **Read it, save it.** Open one to read the full article. Save it like any other article.
+- **Un-liking leaves it here.** Remove the article by marking it read, or remove the source to clear them all.
+- **They stay private.** Skyreader never posts anything with them, and Atmospheric sync never publishes them.
+
 ## Import and export
 
 **Import OPML** on the **+** button's **Website** tab (also in **Settings → Library & privacy → Import Feeds**) takes an OPML file, or a plain text file with one feed URL per line. You pick which feeds to bring in; duplicates are skipped automatically. **Export OPML** hands your whole subscription list back at any time. Your feeds are never locked in.

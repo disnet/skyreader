@@ -37,6 +37,7 @@ import type {
   SavedItem,
 } from '$lib/types';
 import { getLinkPostTitle, isLinkPost } from '$lib/utils/linkPost';
+import type { BskySourceKind } from '$lib/utils/bskySources';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
 
@@ -353,6 +354,17 @@ export interface SearchResponse {
   /** `building`: the index is still working through the reader's history. */
   index: { items: number; building: boolean };
 }
+
+/** One Bluesky likes / bookmarks source, as GET /api/v2/bluesky-sources reports it. */
+export interface BlueskySourceStatus {
+  enabled: boolean;
+  /** Needs a permission this sign-in doesn't hold (bookmarks only). */
+  scopeRequired: boolean;
+  lastPollAt: number | null;
+  error: string | null;
+}
+
+export type BlueskySourcesStatus = Record<BskySourceKind, BlueskySourceStatus>;
 
 export interface NewsletterInbox {
   enabled: boolean;
@@ -1979,6 +1991,20 @@ class ApiClient {
     return this.fetch('/api/v2/following-links/settings', {
       method: 'POST',
       body: JSON.stringify(settings),
+    });
+  }
+
+  /** Whether the reader's Bluesky likes / bookmarks sources are on. */
+  async getBlueskySources(): Promise<BlueskySourcesStatus> {
+    return this.fetch('/api/v2/bluesky-sources');
+  }
+
+  /** Turn a Bluesky likes / bookmarks source on or off. Turning one on also
+   *  gathers its first items before answering. */
+  async setBlueskySource(kind: BskySourceKind, enabled: boolean): Promise<BlueskySourcesStatus> {
+    return this.fetch('/api/v2/bluesky-sources', {
+      method: 'POST',
+      body: JSON.stringify({ kind, enabled }),
     });
   }
 

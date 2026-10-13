@@ -19,11 +19,9 @@ import { isValidRkey, invalidRkeyResponse } from '../utils/validation';
 import { generateTid } from '../utils/tid';
 import { fetchProfiles } from '../services/bsky-appview';
 import { getUserTierLimits } from '../services/user-tier';
-import {
-  NEWSLETTER_SOURCE_TYPE,
-  blockSenderStatements,
-  isNewsletterSubscription,
-} from '../services/newsletters';
+import { blockSenderStatements, isNewsletterSubscription } from '../services/newsletters';
+import { bskySourceDeleteStatements, isBskySourceSubscription } from '../services/bsky-sources';
+import { isLocalOnlySubscription, notLocalOnlySql } from '../services/local-only-sources';
 import {
   getLinkblogTarget,
   getPageHiddenAuthors,
@@ -65,8 +63,9 @@ async function maybePushToPds(
     console.log('[PDS Sync] Sync disabled, skipping');
     return;
   }
-  // Newsletter subscriptions are private and local-only (services/newsletters.ts).
-  if (isNewsletterSubscription(feedUrl, sourceType)) return;
+  // Newsletters and Bluesky likes/bookmarks are private and local-only
+  // (services/local-only-sources.ts).
+  if (isLocalOnlySubscription(feedUrl, sourceType)) return;
 
   try {
     console.log('[PDS Sync] Pushing subscription to PDS...');
@@ -428,9 +427,10 @@ async function maybeBulkDeleteFromPds(
   );
 }
 
-// SQL: this row isn't a newsletter. Newsletters are local-only, so nothing may
-// mark one dirty — the push that would settle the flag skips them.
-const NOT_NEWSLETTER_ROW = `(source_type IS NULL OR source_type <> '${NEWSLETTER_SOURCE_TYPE}')`;
+// SQL: this row isn't a local-only source (a newsletter, Bluesky likes or
+// bookmarks). Nothing may mark one dirty — the push that would settle the flag
+// skips them.
+const NOT_NEWSLETTER_ROW = notLocalOnlySql();
 
 interface CreateSubscriptionRequest {
   feedUrl?: string;
@@ -780,6 +780,17 @@ export async function handleCreateSubscription(
   if (isNewsletterSubscription(feedUrl, sourceType)) {
     return new Response(
       JSON.stringify({ error: 'Newsletter subscriptions are created by email' }),
+      {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      }
+    );
+  }
+  // Likewise Bluesky likes/bookmarks: only POST /api/v2/bluesky-sources makes
+  // one, for the caller's own account.
+  if (isBskySourceSubscription(feedUrl, sourceType)) {
+    return new Response(
+      JSON.stringify({ error: 'Bluesky sources are turned on from Manage Sources' }),
       {
         status: 400,
         headers: { 'Content-Type': 'application/json' },
@@ -1185,8 +1196,10 @@ export async function handleDeleteSubscription(
     const newsletter = isNewsletterSubscription(row?.feed_url, row?.source_type);
 
     // Delete from PDS before removing the local cache/returning so the next sync cannot
-    // re-import the record. A newsletter never had one.
-    if (!newsletter) await deleteFromPdsIfEnabled(session, settings.pdsSyncEnabled, rkey);
+    // re-import the record. A local-only source never had one.
+    if (!isLocalOnlySubscription(row?.feed_url, row?.source_type)) {
+      await deleteFromPdsIfEnabled(session, settings.pdsSyncEnabled, rkey);
+    }
 
     // Unsubscribing from a newsletter here can't unsubscribe at the source, so
     // its sender is blocked; otherwise the next issue would bring it back.
@@ -1195,6 +1208,8 @@ export async function handleDeleteSubscription(
         'DELETE FROM subscriptions_cache WHERE user_did = ? AND record_uri LIKE ?'
       ).bind(session.did, `%/${rkey}`),
       ...(newsletter ? blockSenderStatements(env, session.did, [row?.feed_url]) : []),
+      // A Bluesky source's walk and the items it gathered go with it.
+      ...bskySourceDeleteStatements(env, session.did, row?.feed_url),
     ]);
 
     return new Response(JSON.stringify({ success: true }), {
@@ -1394,7 +1409,7 @@ export async function handleBulkCreateSubscriptions(
   // dropped, not rejected: only inbound mail creates one, and refusing the
   // batch would fail every real feed alongside it.
   const subscriptions = body.subscriptions.filter(
-    (sub) => !isNewsletterSubscription(sub?.feedUrl, null)
+    (sub) => !isLocalOnlySubscription(sub?.feedUrl, null)
   );
 
   if (subscriptions.length === 0) {
@@ -1799,16 +1814,22 @@ export async function handleBulkDeleteSubscriptions(
   }
 
   try {
-    // Newsletters among them: no PDS record to delete (a delete of a missing
-    // record would fail its whole applyWrites batch), and a sender to block.
-    const newsletterRows = await env.DB.prepare(
+    // Local-only sources among them: no PDS record to delete (a delete of a
+    // missing record would fail its whole applyWrites batch). A newsletter also
+    // has a sender to block; a Bluesky source, a walk and items to forget.
+    const localOnlyRows = await env.DB.prepare(
       `SELECT record_uri, feed_url FROM subscriptions_cache
-        WHERE user_did = ? AND (source_type = ? OR feed_url LIKE 'newsletter:%')`
+        WHERE user_did = ?
+          AND (NOT ${notLocalOnlySql()} OR feed_url LIKE 'newsletter:%'
+               OR feed_url LIKE 'bsky-likes:%' OR feed_url LIKE 'bsky-bookmarks:%')`
     )
-      .bind(session.did, NEWSLETTER_SOURCE_TYPE)
+      .bind(session.did)
       .all<{ record_uri: string; feed_url: string }>();
+    const localOnlyByRkey = new Map(
+      localOnlyRows.results.map((row) => [row.record_uri.split('/').pop()!, row.feed_url])
+    );
     const newsletterByRkey = new Map(
-      newsletterRows.results.map((row) => [row.record_uri.split('/').pop()!, row.feed_url])
+      [...localOnlyByRkey].filter(([, feedUrl]) => !isBskySourceSubscription(feedUrl, null))
     );
 
     const batchStatements = [
@@ -1822,6 +1843,9 @@ export async function handleBulkDeleteSubscriptions(
         session.did,
         rkeys.map((rkey) => newsletterByRkey.get(rkey))
       ),
+      ...rkeys.flatMap((rkey) =>
+        bskySourceDeleteStatements(env, session.did, localOnlyByRkey.get(rkey))
+      ),
     ];
 
     if (batchStatements.length > 0) {
@@ -1834,7 +1858,7 @@ export async function handleBulkDeleteSubscriptions(
       maybeBulkDeleteFromPds(
         session,
         settings.pdsSyncEnabled,
-        rkeys.filter((rkey) => !newsletterByRkey.has(rkey))
+        rkeys.filter((rkey) => !localOnlyByRkey.has(rkey))
       )
     );
 

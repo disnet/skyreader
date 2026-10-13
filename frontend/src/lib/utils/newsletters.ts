@@ -1,4 +1,5 @@
 import type { Subscription } from '$lib/types';
+import { isBskySource } from '$lib/utils/bskySources';
 
 /**
  * Email newsletters (a Supporter feature). Mail sent to the reader's private
@@ -21,9 +22,17 @@ export function isNewsletterSubscription(
   return isNewsletterSource(sub.sourceType) || !!sub.feedUrl?.startsWith('newsletter:');
 }
 
-/** Sources whose items live in the D1 feed archive: RSS (the default) and newsletters. */
+/**
+ * Sources whose items live in the D1 feed archive: RSS (the default),
+ * newsletters, and Bluesky likes / bookmarks ($lib/utils/bskySources.ts).
+ */
 export function isArchiveFeedSource(sourceType: string | undefined): boolean {
-  return !sourceType || sourceType === 'rss' || sourceType === NEWSLETTER_SOURCE_TYPE;
+  return (
+    !sourceType ||
+    sourceType === 'rss' ||
+    sourceType === NEWSLETTER_SOURCE_TYPE ||
+    isBskySource(sourceType)
+  );
 }
 
 /** The sender address a newsletter subscription collects mail from. */

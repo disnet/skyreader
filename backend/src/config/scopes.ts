@@ -144,6 +144,12 @@ export const FOLLOWS_LINKS_ACCESS_SCOPES = [
 ];
 export const FOLLOWS_LINKS_SCOPES = ['rpc:app.bsky.feed.getTimeline?aud=*'];
 
+// Bluesky bookmarks as a source (services/bsky-sources.ts): bookmarks are private,
+// so the only way to read them is getBookmarks on the reader's behalf. `aud=*` for
+// the same rsky reason as FOLLOWS_LINKS_SCOPES, and read-only. Likes need nothing:
+// they're public records in the reader's own repo. Kept OUT of GRANULAR_SCOPES.
+export const BSKY_BOOKMARKS_SCOPES = ['rpc:app.bsky.bookmark.getBookmarks?aud=*'];
+
 // Also posting to Bluesky — a share can go out as an app.bsky.feed.post in the
 // reader's own repo, with quoted passages attached as images ("text shots").
 // The post is theirs, exactly as if they had written it in a Bluesky client. The
@@ -174,6 +180,7 @@ export const ALL_POSSIBLE_SCOPES = [
   ...FOLLOWS_LINKS_SCOPES,
   // Still in the ceiling so sessions granted the narrow form keep refreshing.
   ...FOLLOWS_LINKS_ACCESS_SCOPES,
+  ...BSKY_BOOKMARKS_SCOPES,
   ...BLUESKY_POST_SCOPES,
 ].join(' ');
 
@@ -187,7 +194,15 @@ export const ALL_POSSIBLE_SCOPES = [
 // ---------------------------------------------------------------------------
 
 export type ScopeFeature =
-  'semble' | 'margin' | 'linkblog' | 'pckt' | 'offprint' | 'feedback' | 'follows' | 'blueskyPost';
+  | 'semble'
+  | 'margin'
+  | 'linkblog'
+  | 'pckt'
+  | 'offprint'
+  | 'feedback'
+  | 'follows'
+  | 'bskyBookmarks'
+  | 'blueskyPost';
 
 export const SCOPE_FEATURES: Record<ScopeFeature, string[]> = {
   semble: [...SEMBLE_SCOPES, ...SEMBLE_CONNECTION_SCOPES],
@@ -199,6 +214,7 @@ export const SCOPE_FEATURES: Record<ScopeFeature, string[]> = {
   offprint: [...LINKBLOG_SCOPES, ...OFFPRINT_SCOPES],
   feedback: [...USERINPUT_SCOPES, ...USERINPUT_VOTE_SCOPES, ...USERINPUT_IMAGE_SCOPES],
   follows: FOLLOWS_LINKS_SCOPES,
+  bskyBookmarks: BSKY_BOOKMARKS_SCOPES,
   blueskyPost: [...BLUESKY_POST_SCOPES, ...BLUESKY_IMAGE_SCOPES],
 };
 

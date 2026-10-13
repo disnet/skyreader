@@ -3,7 +3,7 @@ import { timedAll, timedBatch } from '../utils/d1-timing';
 import { log } from '../utils/logger';
 import { htmlLead } from '../utils/html-lead';
 import { STARTER_FEED_URLS } from '../config/starter-feeds';
-import { NEWSLETTER_SOURCE_TYPE } from '../services/newsletters';
+import { notLocalOnlySql } from '../services/local-only-sources';
 import {
   MAX_STORED_BODY_BYTES,
   deleteItemBodies,
@@ -835,8 +835,9 @@ export async function handleCrawlSet(request: Request, env: Env): Promise<Respon
         WHERE sc.active = 1
           AND sc.feed_url IS NOT NULL AND sc.feed_url <> ''
           AND ${rssSubscriptionPredicate('sc')}
-          -- Newsletters arrive by email; a newsletter: URL isn't fetchable.
-          AND (sc.source_type IS NULL OR sc.source_type <> '${NEWSLETTER_SOURCE_TYPE}')
+          -- Newsletters arrive by email and Bluesky likes/bookmarks are pulled
+          -- per reader; neither feed URL is fetchable.
+          AND ${notLocalOnlySql('sc')}
           AND (u.last_active_at >= unixepoch() - ${CRAWL_ACTIVE_USER_WINDOW_SECONDS}
                OR u.created_at >= unixepoch() - ${CRAWL_ACTIVE_USER_WINDOW_SECONDS})
         GROUP BY sc.feed_url`
