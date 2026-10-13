@@ -11,7 +11,7 @@
 //   - it is never written to the PDS (what you bookmark is private, and the
 //     record would be meaningless to any other app), and a PDS record or API
 //     call naming one is ignored or refused;
-//   - only its owner reads it (feeds-v2, item-bodies check `ownsBskySourceFeed`).
+//   - only its owner reads it (feeds-v2, item-bodies ask `ownsLocalOnlyFeed`).
 //
 // Items are pulled on read: after a timeline request, under waitUntil, at most
 // once per BSKY_SOURCE_GATE_MS per source (`refreshBskySourcesIfDue`). Likes are
@@ -32,6 +32,7 @@ import { createPDSClient, type PDSClient } from './pds-client';
 import { grantsScopes } from './scope-check';
 import { getUserTierLimits } from './user-tier';
 import { generateTid } from '../utils/tid';
+import { escapeHtml } from '../utils/html-text';
 import { log, serializeError } from '../utils/logger';
 
 export type BskySourceKind = 'likes' | 'bookmarks';
@@ -121,7 +122,14 @@ export function ownsBskySourceFeed(viewerDid: string | null, feedUrl: string): b
   return !!viewerDid && !!parsed && parsed.did === viewerDid;
 }
 
-/** Statements that forget a source's walk and the items it gathered. */
+/**
+ * Statements that forget a source's walk, the items it gathered and its feeds
+ * row — but only while no subscription holds it, so batch them AFTER the
+ * subscription's own delete. The guard is what makes them safe to race: a
+ * second "turn on" (whose subscription insert is a no-op) forgets nothing, and
+ * a refresh that finishes after the source was removed can sweep up what it
+ * just ingested.
+ */
 export function bskySourceDeleteStatements(
   env: Env,
   userDid: string,
@@ -129,12 +137,20 @@ export function bskySourceDeleteStatements(
 ): D1PreparedStatement[] {
   const parsed = parseBskySourceFeedUrl(feedUrl);
   if (!parsed || parsed.did !== userDid) return [];
+  const unsubscribed =
+    'NOT EXISTS (SELECT 1 FROM subscriptions_cache WHERE user_did = ?1 AND feed_url = ?2)';
   return [
-    env.DB.prepare('DELETE FROM bsky_source_sync WHERE user_did = ? AND kind = ?').bind(
+    env.DB.prepare(
+      `DELETE FROM bsky_source_sync WHERE user_did = ?1 AND kind = ?3 AND ${unsubscribed}`
+    ).bind(userDid, feedUrl, parsed.kind),
+    env.DB.prepare(`DELETE FROM feed_items WHERE feed_url = ?2 AND ${unsubscribed}`).bind(
       userDid,
-      parsed.kind
+      feedUrl
     ),
-    env.DB.prepare('DELETE FROM feed_items WHERE feed_url = ?').bind(feedUrl),
+    env.DB.prepare(`DELETE FROM feeds WHERE feed_url = ?2 AND ${unsubscribed}`).bind(
+      userDid,
+      feedUrl
+    ),
   ];
 }
 
@@ -146,14 +162,6 @@ export function bskySourceDeleteStatements(
 export type BskyPostView = NonNullable<TimelineItem['post']> & {
   record?: { createdAt?: string };
 };
-
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
 
 function firstLine(text: string, max: number): string {
   const line =
@@ -269,6 +277,9 @@ async function walkLikes(
   maxPages: number
 ): Promise<WalkResult> {
   const likes: { rkey: string; subject: string; keptAt: string }[] = [];
+  // Over every like walked, not just likes of posts: a run of liked feeds or
+  // lists must still move the mark past itself.
+  let newest: string | null = null;
   let cursor = startCursor;
   let reachedStop = false;
   let pages = 0;
@@ -282,6 +293,7 @@ async function walkLikes(
         reachedStop = true;
         break;
       }
+      if (!newest || rkey > newest) newest = rkey;
       const subject = record.value?.subject?.uri;
       if (!subject?.includes('/app.bsky.feed.post/')) continue;
       likes.push({ rkey, subject, keptAt: record.value.createdAt ?? new Date().toISOString() });
@@ -291,10 +303,6 @@ async function walkLikes(
     if (reachedStop) break;
   }
 
-  const newest = likes.reduce<string | null>(
-    (max, l) => (!max || l.rkey > max ? l.rkey : max),
-    null
-  );
   const next = reachedStop ? null : (cursor ?? null);
   if (likes.length === 0) {
     return { kept: [], newest, cursor: next, reachedStop, pages, error: null };
@@ -511,14 +519,22 @@ export async function refreshBskySource(
     );
   }
 
-  await env.DB.prepare(
+  // Still ours only if nobody re-claimed or removed the source mid-walk.
+  const settled = await env.DB.prepare(
     `UPDATE bsky_source_sync
         SET newest_seen = COALESCE(?, newest_seen), last_error = NULL,
             gap_cursor = ?, gap_stop = ?
-      WHERE user_did = ? AND kind = ?`
+      WHERE user_did = ? AND kind = ? AND last_poll_at = ?`
   )
-    .bind(top.newest, gap?.cursor ?? null, gap?.stop ?? null, did, kind)
+    .bind(top.newest, gap?.cursor ?? null, gap?.stop ?? null, did, kind, now)
     .run();
+  if (!settled.meta.changes) {
+    // Removed while we walked: sweep up what we just put back (the guard keeps
+    // it all if the source was turned on again meanwhile).
+    await env.DB.batch(bskySourceDeleteStatements(env, did, feedUrl));
+    log.info('bsky_source_refresh_superseded', { did, kind });
+    return { refreshed: false, reason: 'locked' };
+  }
   log.info('bsky_source_refreshed', {
     did,
     kind,
@@ -529,12 +545,32 @@ export async function refreshBskySource(
   return { refreshed: true, ingested: entries.length };
 }
 
+// Readers this isolate has seen with neither source, until when (ms). Nearly
+// every reader has neither, so this spares their timeline polls the lookup.
+// Turning a source on runs its first walk itself, so a stale entry elsewhere
+// only delays that source's next refresh by up to one gate.
+const NO_SOURCES_TTL_MS = BSKY_SOURCE_GATE_MS;
+const NO_SOURCES_MAX = 10_000;
+const noSourcesUntil = new Map<string, number>();
+
+/** Test hook: forget the isolate's negative cache. */
+export function resetBskySourceCache(): void {
+  noSourcesUntil.clear();
+}
+
 /**
  * After a timeline request: refresh whichever of the reader's Bluesky sources
- * are subscribed, active and past the gate. One indexed read for everyone who
- * has neither, which is nearly everyone.
+ * are subscribed, active and past the gate. One indexed read for a reader with
+ * neither, at most once per gate per isolate.
  */
 export async function refreshBskySourcesIfDue(env: Env, session: Session): Promise<void> {
+  const now = Date.now();
+  const cachedUntil = noSourcesUntil.get(session.did);
+  if (cachedUntil !== undefined) {
+    if (cachedUntil > now) return;
+    noSourcesUntil.delete(session.did);
+  }
+
   const rows = await env.DB.prepare(
     `SELECT sc.feed_url, s.last_poll_at
        FROM subscriptions_cache sc
@@ -550,7 +586,11 @@ export async function refreshBskySourcesIfDue(env: Env, session: Session): Promi
     )
     .all<{ feed_url: string; last_poll_at: number | null }>();
 
-  const now = Date.now();
+  if ((rows.results ?? []).length === 0) {
+    if (noSourcesUntil.size >= NO_SOURCES_MAX) noSourcesUntil.clear();
+    noSourcesUntil.set(session.did, now + NO_SOURCES_TTL_MS);
+    return;
+  }
   for (const row of rows.results ?? []) {
     if (row.last_poll_at !== null && now - row.last_poll_at < BSKY_SOURCE_GATE_MS) continue;
     const parsed = parseBskySourceFeedUrl(row.feed_url);
@@ -573,6 +613,8 @@ export async function refreshBskySourcesIfDue(env: Env, session: Session): Promi
 
 export interface BskySourceStatus {
   enabled: boolean;
+  /** On, but parked by the plan's limit on active sources: nothing is gathered. */
+  parked: boolean;
   /** The source needs a permission this session doesn't hold (bookmarks only). */
   scopeRequired: boolean;
   lastPollAt: number | null;
@@ -585,27 +627,29 @@ export async function readBskySourceStatus(
 ): Promise<Record<BskySourceKind, BskySourceStatus>> {
   const [subs, syncs] = await Promise.all([
     env.DB.prepare(
-      'SELECT feed_url FROM subscriptions_cache WHERE user_did = ? AND feed_url IN (?, ?)'
+      'SELECT feed_url, active FROM subscriptions_cache WHERE user_did = ? AND feed_url IN (?, ?)'
     )
       .bind(
         session.did,
         bskySourceFeedUrl('likes', session.did),
         bskySourceFeedUrl('bookmarks', session.did)
       )
-      .all<{ feed_url: string }>(),
+      .all<{ feed_url: string; active: number }>(),
     env.DB.prepare('SELECT kind, last_poll_at, last_error FROM bsky_source_sync WHERE user_did = ?')
       .bind(session.did)
       .all<{ kind: string; last_poll_at: number; last_error: string | null }>(),
   ]);
-  const subscribed = new Set((subs.results ?? []).map((r) => r.feed_url));
+  const subscribed = new Map((subs.results ?? []).map((r) => [r.feed_url, r.active === 1]));
   const sync = new Map((syncs.results ?? []).map((r) => [r.kind, r]));
   const hasBookmarkScope = grantsScopes(session.grantedScopes, BSKY_BOOKMARKS_SCOPES);
 
   const status = {} as Record<BskySourceKind, BskySourceStatus>;
   for (const kind of BSKY_SOURCE_KINDS) {
     const row = sync.get(kind);
+    const active = subscribed.get(bskySourceFeedUrl(kind, session.did));
     status[kind] = {
-      enabled: subscribed.has(bskySourceFeedUrl(kind, session.did)),
+      enabled: active !== undefined,
+      parked: active === false,
       scopeRequired:
         kind === 'bookmarks' && (!hasBookmarkScope || row?.last_error === BSKY_SOURCE_SCOPE_DENIED),
       lastPollAt: row?.last_poll_at || null,
@@ -620,7 +664,9 @@ export type EnableResult = 'enabled' | 'already' | 'over_mirror_cap' | 'scope_re
 /**
  * Subscribe the reader to one of their Bluesky sources and run its first walk,
  * so the client's next read finds it populated. Over the plan's active cap the
- * row is created parked, like any other overflow.
+ * row is created parked, like any other overflow, and the status says so.
+ * Already on: walk again now, which is how a newly granted permission clears a
+ * refusal without waiting out the gate.
  */
 export async function enableBskySource(
   env: Env,
@@ -633,11 +679,14 @@ export async function enableBskySource(
   const did = session.did;
   const feedUrl = bskySourceFeedUrl(kind, did);
   const existing = await env.DB.prepare(
-    'SELECT 1 AS ok FROM subscriptions_cache WHERE user_did = ? AND feed_url = ? LIMIT 1'
+    'SELECT active FROM subscriptions_cache WHERE user_did = ? AND feed_url = ? LIMIT 1'
   )
     .bind(did, feedUrl)
-    .first<{ ok: number }>();
-  if (existing) return 'already';
+    .first<{ active: number }>();
+  if (existing) {
+    if (existing.active) await walkNow(env, session, kind);
+    return 'already';
+  }
 
   const limits = await getUserTierLimits(env, did);
   const counts = await env.DB.prepare(
@@ -663,15 +712,22 @@ export async function enableBskySource(
     ).bind(did, recordUri, feedUrl, TITLE[kind], SITE_URL, SOURCE_TYPE[kind], active),
   ]);
 
-  if (active) {
-    try {
-      await refreshBskySource(env, session, kind, { force: true });
-    } catch (error) {
-      // The row is in; the next timeline read retries the walk.
-      log.error('bsky_source_first_walk_threw', { did, kind, ...serializeError(error) });
-    }
-  }
+  noSourcesUntil.delete(did);
+  if (active) await walkNow(env, session, kind);
   return 'enabled';
+}
+
+async function walkNow(env: Env, session: Session, kind: BskySourceKind): Promise<void> {
+  try {
+    await refreshBskySource(env, session, kind, { force: true });
+  } catch (error) {
+    // The row is in; the next timeline read retries the walk.
+    log.error('bsky_source_first_walk_threw', {
+      did: session.did,
+      kind,
+      ...serializeError(error),
+    });
+  }
 }
 
 /** Unsubscribe the reader from one of their Bluesky sources and drop its items. */

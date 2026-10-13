@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { isNewsletterSubscription } from '$lib/utils/newsletters';
   import Icon from '$lib/components/Icon.svelte';
   import FilterPopover from './FilterPopover.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
@@ -49,9 +48,7 @@
 
   let activeTypeFilter = $derived(feedViewStore.toolbarTypeFilter);
   let activeTypeSet = $derived(new Set(activeTypeFilter));
-  let typeOptions = $derived(
-    typeOptionsFor(subscriptionsStore.subscriptions.some(isNewsletterSubscription), activeTypeSet)
-  );
+  let typeOptions = $derived(typeOptionsFor(subscriptionsStore.subscriptions, activeTypeSet));
   let typeFilterLabel = $derived(
     activeTypeFilter.length === 0 ? 'Type' : `Type (${activeTypeFilter.length})`
   );
@@ -207,6 +204,8 @@
   const TYPE_SHORT_LABELS: Record<string, string> = {
     rss: 'Feeds',
     'email.newsletter': 'Newsletters',
+    'bsky.likes': 'Likes',
+    'bsky.bookmarks': 'Bookmarks',
     'atproto.documents': 'Documents',
   };
 

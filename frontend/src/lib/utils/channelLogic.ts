@@ -4,6 +4,7 @@
  */
 
 import { isArchiveFeedSource, isNewsletterSubscription } from '$lib/utils/newsletters';
+import { isBskySourceSubscription } from '$lib/utils/bskySources';
 import type {
   Subscription,
   Article,
@@ -284,9 +285,13 @@ export function getTypeSuggestions(ctx: SuggestionContext): ChannelSuggestion[] 
   const suggestions: ChannelSuggestion[] = [];
   const subs = ctx.subscriptions;
 
-  // The Articles suggestion filters to 'rss', which leaves newsletters out.
+  // The Articles suggestion filters to 'rss', which leaves newsletters and
+  // Bluesky likes/bookmarks out.
   const rssSubs = subs.filter(
-    (s) => isArchiveFeedSource(s.sourceType) && !isNewsletterSubscription(s)
+    (s) =>
+      isArchiveFeedSource(s.sourceType) &&
+      !isNewsletterSubscription(s) &&
+      !isBskySourceSubscription(s)
   );
   const docSubs = subs.filter((s) => s.sourceType === 'atproto.documents');
 

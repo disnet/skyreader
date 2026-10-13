@@ -85,3 +85,12 @@ export function truncateText(text: string, maxChars: number): string {
   const lastSpace = cut.search(/\s\S*$/);
   return lastSpace > maxChars * 0.8 ? cut.slice(0, lastSpace) : cut;
 }
+
+/** Text → safe to place in HTML text or a double-quoted attribute. */
+export function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}

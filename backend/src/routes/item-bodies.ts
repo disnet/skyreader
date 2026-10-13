@@ -1,6 +1,5 @@
 import type { Env } from '../types';
-import { isNewsletterFeedUrl, ownsNewsletterFeed } from '../services/newsletters';
-import { isBskySourceFeedUrl, ownsBskySourceFeed } from '../services/bsky-sources';
+import { isLocalOnlyFeedUrl, ownsLocalOnlyFeed } from '../services/local-only-sources';
 import { reportMessage } from '../observability/sentry';
 import { log } from '../utils/logger';
 
@@ -173,10 +172,7 @@ export async function handleItemBody(
   const feedUrl = url.searchParams.get('feed_url');
   const guid = url.searchParams.get('guid');
   if (!feedUrl || !guid) return json({ error: 'feed_url and guid are required' }, 400);
-  if (isNewsletterFeedUrl(feedUrl) && !(await ownsNewsletterFeed(env, viewerDid, feedUrl))) {
-    return json({ error: 'Not found' }, 404);
-  }
-  if (isBskySourceFeedUrl(feedUrl) && !ownsBskySourceFeed(viewerDid, feedUrl)) {
+  if (isLocalOnlyFeedUrl(feedUrl) && !(await ownsLocalOnlyFeed(env, viewerDid, feedUrl))) {
     return json({ error: 'Not found' }, 404);
   }
 

@@ -358,6 +358,8 @@ export interface SearchResponse {
 /** One Bluesky likes / bookmarks source, as GET /api/v2/bluesky-sources reports it. */
 export interface BlueskySourceStatus {
   enabled: boolean;
+  /** On, but parked by the plan's active-source limit: nothing is gathered. */
+  parked: boolean;
   /** Needs a permission this sign-in doesn't hold (bookmarks only). */
   scopeRequired: boolean;
   lastPollAt: number | null;

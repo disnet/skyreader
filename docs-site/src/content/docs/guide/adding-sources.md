@@ -40,6 +40,7 @@ Like or bookmark a post on Bluesky, and the article it links to can be waiting i
 - **Read it, save it.** Open one to read the full article. Save it like any other article.
 - **Un-liking leaves it here.** Remove the article by marking it read, or remove the source to clear them all.
 - **They stay private.** Skyreader never posts anything with them, and Atmospheric sync never publishes them.
+- **They count toward your plan's active sources.** At the limit, a new one is added parked and gathers nothing until you make room.
 
 ## Import and export
 

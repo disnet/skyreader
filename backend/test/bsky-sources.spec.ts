@@ -11,10 +11,17 @@ import {
   WALK_MAX_PAGES,
   bskyPostItem,
   bskySourceFeedUrl,
+  disableBskySource,
   refreshBskySource,
+  resetBskySourceCache,
   type BskyPostView,
 } from '../src/services/bsky-sources';
-import { LOCAL_ONLY_SOURCE_TYPES, notLocalOnlySql } from '../src/services/local-only-sources';
+import {
+  LOCAL_ONLY_FEED_URL_PREFIXES,
+  LOCAL_ONLY_SOURCE_TYPES,
+  localOnlySql,
+  notLocalOnlySql,
+} from '../src/services/local-only-sources';
 import { NEWSLETTER_SOURCE_TYPE } from '../src/services/newsletters';
 import { handleCrawlSet } from '../src/routes/ingest';
 import { upsertSubscriptionFromFirehose } from '../src/services/firehose-subscription';
@@ -101,6 +108,12 @@ interface Stub {
   posts?: ReturnType<typeof linkPost | typeof textPost>[];
   bookmarks?: unknown[];
   bookmarksStatus?: number;
+  /** getPosts answers this status for every batch. */
+  postsStatus?: number;
+  /** getPosts answers 400 for any batch naming this uri. */
+  rejectUri?: string;
+  /** Runs inside getPosts, before it answers: something happening mid-walk. */
+  duringPosts?: () => Promise<void>;
 }
 
 let calls: { path: string; proxy: string | null; params: URLSearchParams }[] = [];
@@ -128,6 +141,11 @@ function stub(data: Stub) {
     }
     if (url.pathname.endsWith('/xrpc/app.bsky.feed.getPosts')) {
       const uris = new Set(url.searchParams.getAll('uris'));
+      if (data.duringPosts) await data.duringPosts();
+      if (data.postsStatus) return new Response('{}', { status: data.postsStatus });
+      if (data.rejectUri && uris.has(data.rejectUri)) {
+        return new Response(JSON.stringify({ error: 'InvalidRequest' }), { status: 400 });
+      }
       return ok({ posts: (data.posts ?? []).filter((p) => uris.has(p.uri)) });
     }
     if (url.pathname.endsWith('/xrpc/app.bsky.bookmark.getBookmarks')) {
@@ -202,6 +220,7 @@ describe('Bluesky likes and bookmarks as sources', () => {
 
   beforeEach(async () => {
     originalFetch = globalThis.fetch;
+    resetBskySourceCache();
     for (const did of [DID, OTHER]) {
       for (const [table, column] of [
         ['subscriptions_cache', 'user_did'],
@@ -399,6 +418,125 @@ describe('Bluesky likes and bookmarks as sources', () => {
       expect(urls.size).toBe(601);
     });
 
+    it('skips a like the appview rejects, and keeps the rest', async () => {
+      const bad = linkPost(2).uri;
+      stub({
+        likes: [like(1), like(2), like(3)],
+        posts: [linkPost(1), linkPost(2), linkPost(3)],
+        rejectUri: bad,
+      });
+      await send('/api/v2/bluesky-sources', {
+        method: 'POST',
+        body: { kind: 'likes', enabled: true },
+      });
+      expect((await items('likes')).map((i) => i.url)).toEqual([
+        'https://site1.example/article-1',
+        'https://site3.example/article-3',
+      ]);
+      const sync = await env.DB.prepare(
+        'SELECT newest_seen, last_error FROM bsky_source_sync WHERE user_did = ?'
+      )
+        .bind(DID)
+        .first<{ newest_seen: string; last_error: string | null }>();
+      expect(sync).toEqual({ newest_seen: like(3).uri.split('/').pop(), last_error: null });
+    });
+
+    it('holds the mark when the appview is down, so nothing is skipped', async () => {
+      stub({ likes: [like(1)], posts: [linkPost(1)], postsStatus: 503 });
+      await send('/api/v2/bluesky-sources', {
+        method: 'POST',
+        body: { kind: 'likes', enabled: true },
+      });
+      expect(await items('likes')).toHaveLength(0);
+      const sync = await env.DB.prepare(
+        'SELECT newest_seen, last_error FROM bsky_source_sync WHERE user_did = ?'
+      )
+        .bind(DID)
+        .first<{ newest_seen: string | null; last_error: string | null }>();
+      expect(sync?.newest_seen).toBeNull();
+      expect(sync?.last_error).toBeTruthy();
+    });
+
+    it('moves the mark past likes of things that are not posts', async () => {
+      const s = session(BASE_SCOPES);
+      stub({ likes: [like(1)], posts: [linkPost(1)] });
+      await send('/api/v2/bluesky-sources', {
+        method: 'POST',
+        body: { kind: 'likes', enabled: true },
+      });
+      // 250 liked feed generators: more than the top walk's pages, none a post.
+      const feedLikes = Array.from({ length: 250 }, (_, i) => {
+        const l = like(i + 2);
+        return {
+          ...l,
+          value: { ...l.value, subject: { uri: `at://did:plc:gen/app.bsky.feed.generator/g${i}` } },
+        };
+      });
+      stub({ likes: [like(1), ...feedLikes] });
+      await refreshBskySource(env, s, 'likes', { now: Date.now() + BSKY_SOURCE_GATE_MS + 1000 });
+      const sync = await env.DB.prepare(
+        'SELECT newest_seen FROM bsky_source_sync WHERE user_did = ?'
+      )
+        .bind(DID)
+        .first<{ newest_seen: string }>();
+      expect(sync?.newest_seen).toBe(like(251).uri.split('/').pop());
+    });
+
+    it('a refresh that finishes after the source was removed leaves nothing behind', async () => {
+      const s = session(BASE_SCOPES);
+      stub({ likes: [like(1)], posts: [linkPost(1)] });
+      await send('/api/v2/bluesky-sources', {
+        method: 'POST',
+        body: { kind: 'likes', enabled: true },
+      });
+      stub({
+        likes: [like(1), like(2)],
+        posts: [linkPost(1), linkPost(2)],
+        duringPosts: () => disableBskySource(env, s, 'likes'),
+      });
+      const outcome = await refreshBskySource(env, s, 'likes', {
+        now: Date.now() + BSKY_SOURCE_GATE_MS + 1000,
+      });
+      expect(outcome).toEqual({ refreshed: false, reason: 'locked' });
+      expect(await items('likes')).toHaveLength(0);
+      const feed = await env.DB.prepare('SELECT 1 FROM feeds WHERE feed_url = ?')
+        .bind(bskySourceFeedUrl('likes', DID))
+        .first();
+      expect(feed).toBeNull();
+    });
+
+    it('a second "turn on" keeps what the first gathered', async () => {
+      stub({ likes: [like(1)], posts: [linkPost(1)] });
+      const turnOn = () =>
+        send('/api/v2/bluesky-sources', { method: 'POST', body: { kind: 'likes', enabled: true } });
+      await turnOn();
+      stub({ likes: [like(1)], posts: [linkPost(1)], postsStatus: 503 });
+      await turnOn();
+      expect(await items('likes')).toHaveLength(1);
+    });
+
+    it('says so when the plan has no active slot, and parks it', async () => {
+      const stmts = Array.from({ length: 100 }, (_, i) =>
+        env.DB.prepare(
+          `INSERT INTO subscriptions_cache (user_did, record_uri, feed_url, title, created_at, active)
+           VALUES (?, ?, ?, 'Feed', unixepoch(), 1)`
+        ).bind(
+          DID,
+          `at://${DID}/app.skyreader.feed.subscription/3kfill${String(i).padStart(7, '0')}`,
+          `https://fill${i}.example/feed.xml`
+        )
+      );
+      await env.DB.batch(stmts);
+      stub({ likes: [like(1)], posts: [linkPost(1)] });
+      const res = await send('/api/v2/bluesky-sources', {
+        method: 'POST',
+        body: { kind: 'likes', enabled: true },
+      });
+      const status = (await res.json()) as Record<string, { enabled: boolean; parked: boolean }>;
+      expect(status.likes).toMatchObject({ enabled: true, parked: true });
+      expect(await items('likes')).toHaveLength(0);
+    });
+
     it('is refreshed after a timeline read once past the gate', async () => {
       stub({ likes: [like(1)], posts: [linkPost(1)] });
       await send('/api/v2/bluesky-sources', {
@@ -524,6 +662,18 @@ describe('Bluesky likes and bookmarks as sources', () => {
         { scopeRequired: boolean; error: string | null }
       >;
       expect(status.bookmarks).toMatchObject({ scopeRequired: true, error: 'scope_denied' });
+
+      // Granted again: turning it on again walks now and clears the refusal.
+      stub({ bookmarks: [] });
+      const again = await send('/api/v2/bluesky-sources', {
+        method: 'POST',
+        body: { kind: 'bookmarks', enabled: true },
+      });
+      const after = (await again.json()) as Record<
+        string,
+        { scopeRequired: boolean; error: string | null }
+      >;
+      expect(after.bookmarks).toMatchObject({ scopeRequired: false, error: null });
     });
   });
 
@@ -533,6 +683,13 @@ describe('Bluesky likes and bookmarks as sources', () => {
         [NEWSLETTER_SOURCE_TYPE, BSKY_LIKES_SOURCE_TYPE, BSKY_BOOKMARKS_SOURCE_TYPE].sort()
       );
       expect(notLocalOnlySql('sc')).toContain(`'${BSKY_BOOKMARKS_SOURCE_TYPE}'`);
+      const prefixes = [
+        bskySourceFeedUrl('likes', DID),
+        bskySourceFeedUrl('bookmarks', DID),
+        'newsletter:abc/a@b.test',
+      ].map((u) => LOCAL_ONLY_FEED_URL_PREFIXES.find((p) => u.startsWith(p)));
+      expect(prefixes.every(Boolean)).toBe(true);
+      expect(localOnlySql()).toContain("feed_url LIKE 'bsky-likes:%'");
     });
 
     it('refuses to create one through the generic subscription route', async () => {

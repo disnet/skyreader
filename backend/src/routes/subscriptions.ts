@@ -21,7 +21,11 @@ import { fetchProfiles } from '../services/bsky-appview';
 import { getUserTierLimits } from '../services/user-tier';
 import { blockSenderStatements, isNewsletterSubscription } from '../services/newsletters';
 import { bskySourceDeleteStatements, isBskySourceSubscription } from '../services/bsky-sources';
-import { isLocalOnlySubscription, notLocalOnlySql } from '../services/local-only-sources';
+import {
+  isLocalOnlySubscription,
+  localOnlySql,
+  notLocalOnlySql,
+} from '../services/local-only-sources';
 import {
   getLinkblogTarget,
   getPageHiddenAuthors,
@@ -430,7 +434,7 @@ async function maybeBulkDeleteFromPds(
 // SQL: this row isn't a local-only source (a newsletter, Bluesky likes or
 // bookmarks). Nothing may mark one dirty — the push that would settle the flag
 // skips them.
-const NOT_NEWSLETTER_ROW = notLocalOnlySql();
+const NOT_LOCAL_ONLY_ROW = notLocalOnlySql();
 
 interface CreateSubscriptionRequest {
   feedUrl?: string;
@@ -1322,7 +1326,7 @@ export async function handleUpdateSubscription(
     await env.DB.prepare(
       `UPDATE subscriptions_cache
        SET custom_title = ?, custom_icon_url = ?, category = ?,
-           pds_dirty = CASE WHEN ? AND ${NOT_NEWSLETTER_ROW} THEN 1 ELSE pds_dirty END
+           pds_dirty = CASE WHEN ? AND ${NOT_LOCAL_ONLY_ROW} THEN 1 ELSE pds_dirty END
        WHERE user_did = ? AND record_uri LIKE ?`
     )
       .bind(
@@ -1692,7 +1696,7 @@ export async function handleBulkUpdateSubscriptions(
     const settings = await getUserSettings(env, session.did);
     if (settings.pdsSyncEnabled) {
       // A newsletter is never pushed, so marking one would leave it owed forever.
-      setClauses.push(`pds_dirty = CASE WHEN ${NOT_NEWSLETTER_ROW} THEN 1 ELSE pds_dirty END`);
+      setClauses.push(`pds_dirty = CASE WHEN ${NOT_LOCAL_ONLY_ROW} THEN 1 ELSE pds_dirty END`);
     }
 
     const batchStatements = rkeys.map((rkey) =>
@@ -1819,9 +1823,7 @@ export async function handleBulkDeleteSubscriptions(
     // has a sender to block; a Bluesky source, a walk and items to forget.
     const localOnlyRows = await env.DB.prepare(
       `SELECT record_uri, feed_url FROM subscriptions_cache
-        WHERE user_did = ?
-          AND (NOT ${notLocalOnlySql()} OR feed_url LIKE 'newsletter:%'
-               OR feed_url LIKE 'bsky-likes:%' OR feed_url LIKE 'bsky-bookmarks:%')`
+        WHERE user_did = ? AND ${localOnlySql()}`
     )
       .bind(session.did)
       .all<{ record_uri: string; feed_url: string }>();

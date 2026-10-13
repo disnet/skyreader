@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { isArchiveFeedSource, isNewsletterSubscription } from '$lib/utils/newsletters';
+  import { isArchiveFeedSource } from '$lib/utils/newsletters';
   import Icon from '$lib/components/Icon.svelte';
   import AppearanceToolbar from './AppearanceToolbar.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
@@ -120,9 +120,7 @@
   let chSourceMode = $state<'all' | 'include' | 'exclude'>('all');
   let chSourceKeys = $state<Set<string>>(new Set());
   let chTypeFilter = $state<Set<SubscriptionSourceType>>(new Set());
-  let typeOptions = $derived(
-    typeOptionsFor(subscriptionsStore.subscriptions.some(isNewsletterSubscription), chTypeFilter)
-  );
+  let typeOptions = $derived(typeOptionsFor(subscriptionsStore.subscriptions, chTypeFilter));
   let chSaving = $state(false);
   let chError = $state<string | null>(null);
   let chNameManuallyEdited = $state(false);

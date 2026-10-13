@@ -54,7 +54,10 @@
       if (url.searchParams.get(GRANT_PARAM) === 'bookmarks') {
         url.searchParams.delete(GRANT_PARAM);
         history.replaceState(history.state, '', url);
-        if (!status.bookmarks.enabled && !status.bookmarks.scopeRequired) {
+        // Turn it on, or, when it was already on but refused for want of the
+        // permission, ask again so its next walk runs with the new grant.
+        const b = status.bookmarks;
+        if (b.enabled ? b.error === 'scope_denied' : !b.scopeRequired) {
           await setEnabled('bookmarks', true);
         }
       }
@@ -65,6 +68,14 @@
     busy = kind;
     try {
       status = await api.setBlueskySource(kind, enabled);
+      // Turned on past the plan's active limit: it's in, but parked.
+      if (enabled && status[kind].parked) {
+        toastStore.update(
+          toastStore.add(''),
+          'error',
+          feedLimitLine(subscriptionsStore.maxSubscriptions, { onSources: true })
+        );
+      }
       // The subscription was made (or removed) server-side; pull it into the
       // reader, and fetch a new one's first items straight away.
       await appManager.syncSubscriptions();
@@ -95,9 +106,23 @@
 
     <div class="bluesky-info">
       <span class="bluesky-title">{row.title}</span>
-      <span class="bluesky-meta">{row.meta}</span>
+      <span class="bluesky-meta">
+        {s?.parked ? 'Parked. Nothing new arrives until it’s active again.' : row.meta}
+      </span>
     </div>
 
+    <!-- Permission first: an enabled source without it (granted on another
+         device, or refused by the PDS) gathers nothing until it's allowed. -->
+    {#if s?.scopeRequired}
+      <button
+        type="button"
+        class="bluesky-action primary"
+        disabled={auth.grantingPermissions}
+        onclick={() => auth.grantPermissions(['bskyBookmarks'], GRANT_RETURN)}
+      >
+        Allow
+      </button>
+    {/if}
     {#if s?.enabled}
       <button
         type="button"
@@ -107,16 +132,7 @@
       >
         Remove
       </button>
-    {:else if s?.scopeRequired}
-      <button
-        type="button"
-        class="bluesky-action primary"
-        disabled={auth.grantingPermissions}
-        onclick={() => auth.grantPermissions(['bskyBookmarks'], GRANT_RETURN)}
-      >
-        Allow
-      </button>
-    {:else if s}
+    {:else if s && !s.scopeRequired}
       <button
         type="button"
         class="bluesky-action primary"
