@@ -30,6 +30,7 @@ leaving content out. Members-only sections stay on their publication.
 
 - **Style customization** : change the font style and size.
 - **Paged mode**: a toggle in the reader switches from scrolling to page turns, one page at a time, or two columns side by side on a wide screen.
+- **Light and dark**: Skyreader follows your device's setting. To keep it light or dark regardless, pick a theme in **Settings → Reading → Appearance**.
 - **Highlighting**: double-click a paragraph or select text. See [Saving and highlights](/guide/saving-and-highlights/).
 
 ![Paged mode: the same article flowed into two side-by-side columns, turned a page at a time](../../../assets/screenshots/paged-reader.png)

@@ -359,6 +359,16 @@ A size derived from a preference (e.g. `calc(var(--article-font-size) * 0.9)`) n
 `e2e/ios-zoom.spec.ts` measures computed sizes on a phone-emulated page: add the field's page to
 `PAGES`, or, for a field behind a tap, a test that opens it and calls `expectNoZoomingFields`.
 
+### Dark styles
+
+Write dark styles the plain way, `@media (prefers-color-scheme: dark) { … }`, in app.css or a
+component. The Settings theme (System / Light / Dark, `preferences.colorScheme`) pins a scheme with
+`<html data-theme>`, and `postcss.color-scheme.js` compiles every such block into an OS-dark copy
+guarded by `:not([data-theme='light'])` plus a pinned-dark copy, at unchanged specificity and source
+order. Two things it can't reach: CSS built at runtime (emit both halves by hand, as
+`utils/marginaliaInk.ts` does) and JS that asks `matchMedia('(prefers-color-scheme: dark)')` — read
+the `data-theme` attribute first. app.html applies the stored choice before first paint.
+
 ### Working with IndexedDB
 
 The app uses Dexie.js for offline storage. Schema is defined in `src/lib/services/db.ts`.

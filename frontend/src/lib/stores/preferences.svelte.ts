@@ -5,6 +5,7 @@ import {
   HIGHLIGHT_REVIEW_COUNT_OPTIONS,
   type HighlightReviewCount,
 } from '$lib/utils/highlightReview';
+import { applyColorScheme, coerceColorScheme, type ColorScheme } from '$lib/utils/colorScheme';
 import { coerceHomeLayout, EMPTY_HOME_LAYOUT, type HomeLayout } from '$lib/utils/homeLayout';
 
 export { HIGHLIGHT_REVIEW_COUNT_OPTIONS, type HighlightReviewCount };
@@ -113,6 +114,9 @@ interface PreferencesState {
   // Pull the reader's own Margin highlights into Skyreader. Device-local: once
   // one device imports, the highlights sync everywhere as normal label rows.
   marginHighlightImport: boolean;
+  // Light/dark: follow the OS, or pin one. Device-local, and read by app.html's
+  // pre-paint script straight out of this blob — keep the key name.
+  colorScheme: ColorScheme;
 }
 
 const STORAGE_KEY = 'skyreader-preferences';
@@ -147,6 +151,7 @@ function createPreferencesStore() {
     communityHighlightsConfigured: false,
     highlightReviewCount: HIGHLIGHT_REVIEW_COUNT_DEFAULT,
     marginHighlightImport: false,
+    colorScheme: 'system',
   });
 
   // Restore from localStorage on init
@@ -224,10 +229,14 @@ function createPreferencesStore() {
         if (typeof parsed.marginHighlightImport === 'boolean') {
           state.marginHighlightImport = parsed.marginHighlightImport;
         }
+        state.colorScheme = coerceColorScheme(parsed.colorScheme);
       } catch {
         localStorage.removeItem(STORAGE_KEY);
       }
     }
+    // app.html already did this before first paint; repeat it so the DOM and
+    // the store agree even if that script was blocked.
+    applyColorScheme(state.colorScheme);
   }
 
   function save() {
@@ -404,6 +413,12 @@ function createPreferencesStore() {
     save();
   }
 
+  function setColorScheme(scheme: ColorScheme) {
+    state.colorScheme = coerceColorScheme(scheme);
+    applyColorScheme(state.colorScheme);
+    save();
+  }
+
   return {
     get articleFont() {
       return state.articleFont;
@@ -485,6 +500,10 @@ function createPreferencesStore() {
     get marginHighlightImport() {
       return state.marginHighlightImport;
     },
+    get colorScheme() {
+      return state.colorScheme;
+    },
+    setColorScheme,
     setHighlightReviewCount,
     setMarginHighlightImport,
     confirmLinkblogShare,
