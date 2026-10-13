@@ -30,6 +30,7 @@ import { safeFetch } from './ssrf-guard';
 import type { RobotsPolicy } from './robots';
 import { signRequestHeaders, signedDirectory, type WebBotAuth } from './web-bot-auth';
 import { reportError, VERSION } from './instrument';
+import { extractPdf, isPdf } from './pdf-extract';
 
 export interface AppConfig {
   proxySecret?: string;
@@ -438,7 +439,9 @@ export const FEED_PARSER_VERSION = 2;
 // post-processing — can change the output for an unchanged source URL.
 //   1: pre-MathML
 //   2: restoreCollapsedMathML added
-export const EXTRACTOR_VERSION = 2;
+//   3: PDFs extracted as text (previously decoded as UTF-8 and fed to Defuddle,
+//      which cached mojibake for every PDF URL)
+export const EXTRACTOR_VERSION = 3;
 
 function hostOf(url: string): string | null {
   try {
@@ -504,6 +507,8 @@ export interface ExtractedArticle {
   image: string | null;
   published: string | null;
   wordCount: number;
+  /** Set when the source was a PDF; absent for a web page. */
+  contentType?: 'pdf';
 }
 
 // Coerce a Defuddle date string to a valid ISO timestamp, rejecting obviously
@@ -583,6 +588,23 @@ async function extractArticle(html: string, url: string): Promise<ExtractedArtic
   };
 }
 
+// A PDF reflowed into reader HTML (see pdf-extract.ts), in the same shape a web
+// page's extraction has. Its domain comes from the URL; a PDF has no lead image.
+async function extractPdfArticle(bytes: Uint8Array, url: string): Promise<ExtractedArticle> {
+  const pdf = await extractPdf(bytes);
+  return {
+    title: pdf.title,
+    author: pdf.author,
+    description: pdf.description,
+    content: pdf.content,
+    domain: hostOf(url)?.replace(/^www\./, '') ?? null,
+    image: null,
+    published: pdf.published,
+    wordCount: pdf.wordCount,
+    contentType: 'pdf',
+  };
+}
+
 export class ResponseTooLargeError extends Error {
   constructor(size: number, limit: number) {
     super(`Response size ${size} exceeds limit of ${limit} bytes`);
@@ -604,6 +626,10 @@ class FetchHtmlError extends Error {
 }
 
 async function readResponseWithLimit(response: Response, maxBytes: number): Promise<string> {
+  return new TextDecoder().decode(await readBytesWithLimit(response, maxBytes));
+}
+
+async function readBytesWithLimit(response: Response, maxBytes: number): Promise<Uint8Array> {
   // Content-Length is only a fast-reject hint: when the body is gzip/deflate-encoded
   // it reports the COMPRESSED size, so a tiny compressed body can still expand to
   // gigabytes (a decompression / "gzip bomb" OOM vector). We therefore also bound
@@ -618,14 +644,13 @@ async function readResponseWithLimit(response: Response, maxBytes: number): Prom
   }
 
   const body = response.body;
-  if (!body) return '';
+  if (!body) return new Uint8Array(0);
 
   // fetch transparently decompresses gzip/deflate, so the reader yields decompressed
   // bytes — counting them here catches a bomb after ~maxBytes, not after full expansion.
   const reader = body.getReader();
-  const decoder = new TextDecoder();
+  const chunks: Uint8Array[] = [];
   let total = 0;
-  let out = '';
   try {
     for (;;) {
       const { done, value } = await reader.read();
@@ -634,13 +659,18 @@ async function readResponseWithLimit(response: Response, maxBytes: number): Prom
       if (total > maxBytes) {
         throw new ResponseTooLargeError(total, maxBytes);
       }
-      out += decoder.decode(value, { stream: true });
+      chunks.push(value);
     }
   } finally {
     // Release the connection promptly whether we finished or bailed early.
     reader.cancel().catch(() => {});
   }
-  out += decoder.decode();
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
   return out;
 }
 
@@ -2666,7 +2696,7 @@ export function createApp(db: Database, config: AppConfig) {
           // the extension (the honest way to save a page a site won't serve us).
           const response = await fetchUpstream(
             url,
-            { ...FETCH_HEADERS, Accept: 'text/html, application/xhtml+xml, */*' },
+            { ...FETCH_HEADERS, Accept: 'text/html, application/xhtml+xml, application/pdf, */*' },
             { fetchTimeoutMs: EXTRACT_FETCH_TIMEOUT_MS }
           );
 
@@ -2675,8 +2705,12 @@ export function createApp(db: Database, config: AppConfig) {
             throw new FetchHtmlError(error, 502, blocked);
           }
 
-          const html = await readResponseWithLimit(response, MAX_RESPONSE_SIZE_BYTES);
-          const extracted = await extractArticle(html, url);
+          const bytes = await readBytesWithLimit(response, MAX_RESPONSE_SIZE_BYTES);
+          // Sniff as well as trust the header: plenty of servers send a PDF as
+          // application/octet-stream, and a PDF decoded as text is mojibake.
+          const extracted = isPdf(bytes, response.headers.get('Content-Type'))
+            ? await extractPdfArticle(bytes, url)
+            : await extractArticle(new TextDecoder().decode(bytes), url);
 
           db.run(
             'INSERT OR REPLACE INTO extract_cache (url_hash, url, extracted_json, cached_at, extractor_version) VALUES (?, ?, ?, ?, ?)',

@@ -475,6 +475,7 @@ function createSavesStore() {
         image: extracted.image || undefined,
         publishedAt: extracted.published || undefined,
         wordCount: wordCount || undefined,
+        contentType: extracted.contentType,
       });
 
       const savedItem: SavedItem = {
@@ -488,7 +489,7 @@ function createSavesStore() {
         author: extracted.author,
         description: extracted.description,
         content: extracted.content,
-        contentType: 'webpage',
+        contentType: extracted.contentType ?? 'webpage',
         domain: extracted.domain,
         image: extracted.image,
         wordCount,

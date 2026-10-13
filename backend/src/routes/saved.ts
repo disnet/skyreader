@@ -66,6 +66,9 @@ interface CreateSavedBody {
   publishedAt?: string;
   domain?: string;
   wordCount?: number;
+  // 'pdf' when the extraction came from a PDF (the proxy's ExtractedArticle says
+  // so). Any other value is ignored: a URL save is otherwise a 'webpage'.
+  contentType?: 'pdf';
   // When the URL is already saved, upgrade the existing item's content/metadata
   // with this request's fields instead of returning 409. Used by the browser
   // extension, whose live-DOM extraction can see paywalled/JS-rendered content
@@ -343,6 +346,7 @@ async function handleContentUpdate(
        image = COALESCE(?, image),
        word_count = COALESCE(?, word_count),
        published_at = COALESCE(?, published_at),
+       content_type = COALESCE(?, content_type),
        updated_at = ?
      WHERE id = ? AND user_did = ?`
   )
@@ -355,6 +359,8 @@ async function handleContentUpdate(
       body.image || null,
       body.wordCount || null,
       publishedAt,
+      // Only a PDF re-types the save; any other upgrade keeps the type it had.
+      body.contentType === 'pdf' ? 'pdf' : null,
       Date.now(),
       existing.id,
       session.did
@@ -369,6 +375,12 @@ async function handleContentUpdate(
     }),
     { headers: { 'Content-Type': 'application/json' } }
   );
+}
+
+// The stored type of a URL save. Only 'pdf' is accepted from the client; the
+// field is otherwise untrusted input and everything else is a web page.
+function urlSaveContentType(body: CreateSavedBody): 'pdf' | 'webpage' {
+  return body.contentType === 'pdf' ? 'pdf' : 'webpage';
 }
 
 async function handleUrlSave(
@@ -401,7 +413,7 @@ async function handleUrlSave(
       body.author || null,
       body.description || null,
       body.content || null,
-      'webpage',
+      urlSaveContentType(body),
       body.domain || null,
       body.image || null,
       body.wordCount || null,
@@ -439,7 +451,8 @@ async function handleBackedSave(
   const url = body.url;
   const urlNormalized = normalizeArticleUrl(url)!; // guaranteed by the caller's guard
   const publishedAt = body.publishedAt || null;
-  const contentType = source === 'feed' ? 'article' : source === 'url' ? 'webpage' : source;
+  const contentType =
+    source === 'feed' ? 'article' : source === 'url' ? urlSaveContentType(body) : source;
   // For a document save the member URL is the resolved blogs URL (already in body.url)
   // and the doc's recordUri (itemGuid) is the canonical atproto peer reference.
   const canonicalAtUri = source === 'document' ? body.itemGuid || undefined : undefined;

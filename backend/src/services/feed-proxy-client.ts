@@ -79,6 +79,8 @@ export interface ExtractedArticle {
   image: string | null;
   published: string | null;
   wordCount: number;
+  /** 'pdf' when the URL served a PDF (its text, reflowed); absent for a web page. */
+  contentType?: 'pdf';
 }
 
 export interface ProxyFeedResponse {

@@ -202,7 +202,8 @@ export async function handleXrpcSave(
 // Background fill for an XRPC URL save (see handleXrpcSave): extract the article body and
 // write it onto the saved row. Runs under ctx.waitUntil so the caller isn't blocked on
 // the extraction. The UPDATE itself (content-IS-NULL guard, COALESCE metadata) lives in
-// fillExtractedContent — here we leave content_type alone so a URL save stays 'webpage'.
+// fillExtractedContent — here we leave content_type alone so a URL save stays 'webpage'
+// (or becomes 'pdf' when the URL served one).
 // Best-effort — an un-extractable URL just keeps its title and an empty body.
 async function extractAndStoreSavedContent(
   env: Env,

@@ -15,6 +15,7 @@ import {
   type AppConfig,
   type CacheRow,
 } from './app';
+import { makePdf } from './pdf-fixture';
 
 // Sample RSS feed for mocking
 const SAMPLE_RSS = `<?xml version="1.0" encoding="UTF-8"?>
@@ -3610,6 +3611,51 @@ describe('POST /extract', () => {
     expect(res.status).toBe(200);
     expect(json.blocked).toBe(false);
     expect(json.error).toContain('Timeout after');
+
+    db.close();
+  });
+
+  // A PDF used to be decoded as UTF-8 and handed to Defuddle, saving mojibake.
+  // Servers often mislabel PDFs, so the bytes are sniffed, not just the header.
+  it('extracts a PDF as text, even when served as octet-stream', async () => {
+    const { db, app } = createTestApp();
+    const pdf = makePdf([
+      [
+        [72, 700, 20, 'Notes on Margins'],
+        [72, 660, 10, 'Readers who write in the margins remember more of what'],
+        [72, 648, 10, 'they read than readers who do not.'],
+      ],
+    ]);
+    fetchMock = mockFetch(
+      () => new Response(pdf, { headers: { 'Content-Type': 'application/octet-stream' } })
+    );
+
+    const res = await extract(app, 'https://www.example.com/paper.pdf');
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.contentType).toBe('pdf');
+    expect(json.title).toBe('Notes on Margins');
+    expect(json.domain).toBe('example.com');
+    expect(json.content).toContain(
+      '<p>Readers who write in the margins remember more of what they read than readers who do not.</p>'
+    );
+
+    db.close();
+  });
+
+  it('reports an unreadable PDF as an error, not a garbled save', async () => {
+    const { db, app } = createTestApp();
+    fetchMock = mockFetchOnce('%PDF-1.4 truncated', {
+      headers: { 'Content-Type': 'application/pdf' },
+    });
+
+    const res = await extract(app, 'https://example.com/broken.pdf');
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.error).toBeTruthy();
+    expect(json.blocked).toBe(false);
 
     db.close();
   });

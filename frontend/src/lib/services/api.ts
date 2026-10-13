@@ -436,6 +436,8 @@ export interface ExtractedArticle {
   image: string | null;
   published: string | null;
   wordCount: number;
+  /** 'pdf' when the URL served a PDF (its text, reflowed); absent for a web page. */
+  contentType?: 'pdf';
 }
 
 // How many times a single request transparently retries a transient
@@ -2011,6 +2013,7 @@ class ApiClient {
       publishedAt?: string;
       domain?: string;
       wordCount?: number;
+      contentType?: 'pdf';
       // Replace an existing save of this URL's content instead of a 409.
       updateContent?: boolean;
     }
