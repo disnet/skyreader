@@ -1,3 +1,4 @@
+import { isSavedSearchEnabled } from '../services/saved-search';
 import type { Env, Session } from '../types';
 import {
   generateRandomString,
@@ -1034,9 +1035,10 @@ export async function handleAuthMe(request: Request, env: Env): Promise<Response
   // tierSource/grantedTier let the client tell a paid plan from a hand-granted
   // one: only a paid supporter has a Polar customer to send to the billing
   // portal, and only a granted one is told their access is a keep-it thank-you.
-  const [{ tier, tierSource, grantedTier }, searchEnabled] = await Promise.all([
+  const [{ tier, tierSource, grantedTier }, searchEnabled, savedSearchEnabled] = await Promise.all([
     getUserTierInfo(env, session.did),
     isSearchEnabled(env),
+    isSavedSearchEnabled(env),
   ]);
   const limits = getLimitsForTier(tier);
 
@@ -1055,6 +1057,9 @@ export async function handleAuthMe(request: Request, env: Env): Promise<Response
       // whether this reader's plan includes it. The client offers search only
       // when both are true.
       searchEnabled,
+      // Same shape for saved searches: the switch here, the count in
+      // `limits.maxSavedSearches`.
+      savedSearchEnabled,
     }),
     {
       headers: { 'Content-Type': 'application/json' },

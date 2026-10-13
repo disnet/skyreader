@@ -61,32 +61,24 @@ The channel config gains one field, `query: string`, in the same syntax as `/api
 - **The server reads one field.** When `PUT /api/channels` writes a config that carries `query`, the
   backend parses it and upserts a `saved_queries` row. The rest of the blob stays opaque.
 
-```sql
-CREATE TABLE saved_queries (
-  user_did TEXT NOT NULL,
-  channel_uuid TEXT NOT NULL,
-  query TEXT NOT NULL,           -- as typed
-  fts_query TEXT NOT NULL,       -- parseSearchQuery output, ready for MATCH
-  source_mode TEXT NOT NULL,     -- 'all' | 'include' | 'exclude'
-  source_keys TEXT NOT NULL,     -- JSON array, same keys as the channel
-  digest TEXT NOT NULL DEFAULT 'off',  -- 'off' | 'daily'
-  created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
-  PRIMARY KEY (user_did, channel_uuid)
-);
+The schema is `backend/migrations/0098_saved_searches.sql`:
 
-CREATE TABLE channel_matches (
-  user_did TEXT NOT NULL,
-  channel_uuid TEXT NOT NULL,
-  url_normalized TEXT NOT NULL,  -- one match per story per channel (see dedup)
-  item_key TEXT NOT NULL,        -- the key read state already uses
-  source_kind TEXT NOT NULL,     -- 'rss' | 'newsletter' | 'document' | 'follows'
-  source_ref TEXT NOT NULL,      -- feed_url, document URI or post URI
-  matched_at INTEGER NOT NULL,
-  published_at INTEGER,
-  PRIMARY KEY (user_did, channel_uuid, url_normalized)
-);
-```
+- **`saved_queries`**, one row per query channel. It holds:
+  - the query as typed, and its `fts_query` (the `parseSearchQuery` output);
+  - `source_mode` and `source_keys`, copied from the channel;
+  - `digest`;
+  - the backfill state and cursors (below).
+
+  `updated_at` doubles as the row's version.
+
+- **`channel_matches`**, one row per story per channel, keyed `(user_did, channel_uuid, dedup_key)`.
+  - `dedup_key` is the normalized URL, else `item:<item_key>`.
+  - The row also carries `item_key` (what read state is filed under), `source_kind` (`feed` or
+    `document`) and `source_ref` (feed URL or author DID).
+  - It stores `feed_seq` for joining back to the item.
+  - The **snippet** is stored at match time, taken from the scratch index, which already has the
+    body tokenized.
+  - `published_at` (falling back to match time) and `matched_at`.
 
 Notes on the schema:
 
@@ -94,8 +86,12 @@ Notes on the schema:
   `{rkey}~documents`, `bsky~follows`). The matcher resolves them against `subscriptions_cache` at
   match time. A renamed or recategorised subscription, or an `autoRule` recompute, needs no rewrite
   beyond the channel PUT the client already sends.
-- **Deleting a channel** (soft delete) deletes its `saved_queries` row. Its matches age out with
-  retention.
+- **Deleting a channel** (soft delete) deletes its `saved_queries` row and its matches.
+- **Sync reads back from D1.** `syncSavedQueries` reconciles from the `channels` rows after the
+  write, not from the request body. A PUT that loses to a tombstone therefore never resurrects a
+  query.
+- **What an edit resets.** A change to the query or the source selection clears the channel's
+  matches and restarts its backfill. A change to the digest alone keeps them.
 
 ### Every source kind, from v1
 
@@ -105,7 +101,7 @@ Each source kind has a different place it keeps text. The matcher reads the **fu
 | ------------------------------ | ------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
 | RSS and Atom                   | `feed_items`, by `seq`               | `item_json` content (≤ 8 KB inline), else the R2 body in `ITEM_BODIES` when `bodyStored` (≤ the stored ceiling) |
 | Newsletters                    | `feed_items`, by `seq`               | the same, since intake goes through `ingestBatch`                                                               |
-| standard.site documents        | `documents_v2`, by `indexed_at`      | the inflated `content` in `record_json`, falling back to `textContent`                                          |
+| standard.site documents        | `documents_v2`, by `indexed_at`      | `textContent` in `record_json` (what search indexes), falling back to `description`                             |
 | Follows links (`bsky~follows`) | `follow_link_shares`, by `shared_at` | the linked article, extracted once per URL (below), plus the post text and card                                 |
 
 **Follows links are the expensive one.** A share row holds only the sharer's words and the link
@@ -136,14 +132,23 @@ channel UI should say plainly when a feed only sends excerpts. See open question
 Sources added later (Bluesky lists, feeds and searches; watched pages) plug in as another row in
 this table: somewhere new items appear, plus somewhere their text lives.
 
-### The matcher: a sharded Percolator Durable Object
+### The matcher: a Percolator Durable Object
 
-The matcher is one Durable Object class, sharded by a stable hash of the source (`feed_url`,
-author DID, or `url_normalized`), starting with 4 shards. Each shard keeps its own cursors over the
-four streams and does this per pass:
+The matcher is one Durable Object class (`backend/src/durable-objects/percolator.ts`).
 
-1. **Pull a page of new items** from each stream past its cursor. The cursors use the same
-   lag-behind-now rule as `SearchIndex`, so second-resolution timestamps never skip a row.
+- **One instance today** (`percolator-0`). Each body is read once however many readers watch it, so
+  one instance carries Pro-scale load.
+- **Sharding**, if its CPU stops keeping up, splits the streams by `seq` modulo. Nothing else
+  changes.
+- **Cursors.** The instance keeps a cursor per stream. A fresh instance, or one with no live
+  queries, starts at the streams' heads rather than replaying the archive.
+
+Each pass does this:
+
+1. **Pull a page of new items** from each stream past its cursor.
+   - `feed_items.seq` is a commit-ordered autoincrement.
+   - The `documents_v2` cursor `(indexed_at, record_uri)` stays 2 s behind now. That way a row
+     written in the same millisecond with a smaller URI is never passed.
 2. **Find candidate queries.** Join the page's sources to readers with a `saved_queries` row that
    covers them:
 
@@ -170,11 +175,16 @@ Why this shape:
 - **The scratch table is FTS5 itself**, so matching semantics equal `/` search exactly: stemming,
   phrases, prefixes, exclusions. There is no JS port of the tokenizer to drift.
 - **The work stays off the ingest hot path.** `ingestBatch` is unchanged. The minute cron nudges
-  each shard, and the shard pulls in pages, like `SearchIndex` does. A burst drains over several
+  the matcher, which pulls in pages, like `SearchIndex` does. A burst drains over several
   passes, costing latency rather than errors. Target: a match is visible within 5 minutes of
   ingest.
-- **D1 budget.** A pass spends at most a fixed share of `D1_QUERIES_PER_INVOCATION` and stops,
-  following the documents drain (`DOCUMENTS_TO_D1.md`, "Spike handling").
+- **D1 budget.** A pass spends at most 600 of an alarm's 1,000 subrequests, counting D1
+  statements and R2 reads, and then stops. This follows the documents drain (`DOCUMENTS_TO_D1.md`,
+  "Spike handling"). R2 body reads are capped at 50 a pass; past that, an item matches on its 8 KB
+  inline text.
+- **Edits mid-pass.** Every match insert is guarded on the query's `updated_at` still being the
+  version the pass loaded. An edit made during a pass clears the channel's matches, and hits for
+  the old predicate can't be written back over it. Backfill progress is guarded the same way.
 
 ### Story dedup inside a channel
 
@@ -182,9 +192,9 @@ With every source in v1, one story often arrives several ways: the publication's
 that quotes it, and three follows sharing it. `channel_matches` keys on
 `(channel, url_normalized)`, so a story matches **once per channel**.
 
-- **Order of arrival.** The first source that matches creates the row. Later matches of the same URL
-  are recorded as extra sources on it, in a small `channel_match_sources` side table, and never as
-  new rows.
+- **Order of arrival.** The first source that matches creates the row, and later matches of the same
+  URL never add a row. Recording them as extra sources, in a small `channel_match_sources` side
+  table, lands with follows links (rollout step 2), where it first matters.
 - **Display.** The channel shows one card per story: "from _Feed name_ · shared by Maya and 2
   others".
 
@@ -193,12 +203,18 @@ the later goal _Mute rules and story deduplication_.
 
 ### Reading a query channel
 
-- **API.** `GET /api/channels/:uuid/items?cursor=&limit=` returns the channel's matches, newest
-  first, joined to their items (`feed_items`, `documents_v2`, `follow_link_shares`).
-  - Each result carries the item in the same shape the timeline and the follows surface already
-    serve, plus a snippet: the matched passage, built from the body in the same control-character
-    run format as `/api/search`.
-  - The response also carries the unread count.
+- **API.** `GET /api/channels/:uuid/items?before=&limit=` (`backend/src/routes/channel-items.ts`)
+  returns the channel's matches, newest first, joined to their items.
+  - A feed match carries the item in the timeline's shape. A document match carries its URI, URL,
+    title and description.
+  - Every match carries its stored snippet, as `/api/search`'s `{ text, match }` runs.
+  - The response also carries:
+    - the unread count, capped at 1,000;
+    - `backfilling`;
+    - `status`: `over_limit` past the plan's count;
+    - `nextCursor` (`<publishedAt>:<dedupKey>`).
+  - Status codes: 404 while the switch is off; 403 `upgrade_required` without the plan; 404
+    `not_saved_search` for a channel with no query.
 - **Read state** is the existing labels. A match is unread until its `item_key` carries `read`.
 - **Frontend.**
   - `feedView` routes a channel whose config has `query` to this endpoint instead of filtering the
@@ -213,12 +229,17 @@ the later goal _Mute rules and story deduplication_.
 A new query channel with nothing in it looks broken. On create, and on any edit of `query` or the
 channel's sources:
 
-1. **Seed from search.** Run the query through the reader's `SearchIndex` for items they've already
-   read or saved. This is instant and cheap.
-2. **Run a per-reader backfill pass.** Same pipeline, reader-scoped, over the last 30 days of each
-   covered stream: `feed_items` for their feeds, `documents_v2` for their authors, and their stored
-   follows shares (7 days). It runs on the shard alarms with its own cursor, and the channel shows
-   "Still looking back through the last 30 days" until it finishes.
+- **Same pipeline, reader-scoped.** It covers the last 30 days of each covered stream:
+  - the most recent 50 items of each of the query's feeds, through
+    `idx_feed_items_feed_published_seq`;
+  - the same for each of its document authors;
+  - later, their stored follows shares (7 days).
+- **Pacing.** Each pass moves up to 4 pending queries forward by 10 sources each. Progress is two
+  cursors on the row (`backfill_feed_after`, `backfill_doc_after`). The channel shows "Still looking
+  back through the last 30 days" while `backfilling` is true.
+- **No seeding from `SearchIndex` yet.** Anything read in the last 30 days is in the backfill
+  already. Seeding older read and saved items from search is a small follow-up if the empty-start
+  case shows up.
 
 An edit replaces the channel's matches. Clearing and re-running is simpler than diffing old and new
 predicates, and the backfill bounds the cost.
@@ -244,19 +265,28 @@ Never push by default (PRODUCT.md, plan principle "Calm stays true").
 
 ### Gating
 
-- **The flag.** Add `savedSearches: boolean` and `maxSavedSearches: number` (start at 25) to
-  `TierLimits` (`backend/src/config/tier-limits.ts`), checked through `getUserTierLimits`.
+- **The limit.** `maxSavedSearches` in `TierLimits` (`backend/src/config/tier-limits.ts`): 0 on
+  free, 25 on Supporter. The repricing goal will move it to Pro.
 - **The switch.** The feature sits behind an operator switch, `sync_state.saved_search_enabled`,
-  following `search_enabled`.
-- **Downgrade.** A reader who loses the tier keeps their channels as ordinary source channels. The
-  `saved_queries` rows are disabled, not deleted, so re-subscribing resumes matching. The backfill
-  makes up any gap of up to 30 days.
+  following `search_enabled`. `GET /api/auth/me` reports it as `savedSearchEnabled`.
+- **Downgrade.**
+  - **Losing the plan.** The reader's queries stay in `saved_queries` but stop matching, since the
+    matcher only loads queries on entitled tiers. Re-subscribing resumes matching.
+  - **Over the count.** Past the plan's count, the oldest queries keep matching and the newer ones
+    wait.
+  - **The gap.** No match fills in the time a query wasn't matching; an edit re-runs the 30-day
+    backfill.
 
 ## Rollout
 
-1. **Matcher and storage behind the switch.** Ship `saved_queries`, `channel_matches`, the
-   Percolator shards, RSS/newsletter and documents streams, and backfill. Verify on staging with
-   seeded queries, comparing every match against `/api/search` over the same items.
+1. **Matcher and storage behind the switch.** _Built:_
+   - `saved_queries`, `channel_matches` and the Percolator;
+   - the RSS/newsletter and documents streams, and backfill;
+   - the items endpoint, the tier limit and the `/api/auth/me` flag.
+
+   _Next:_ verify on staging. Seed queries, then compare their matches against `/api/search` over
+   the same items.
+
 2. **Follows links.** Background refresh for opted-in readers, shared extraction cache in R2, the
    per-reader budget, then the follows stream.
 3. **Frontend.** The query field in the channel editor with its live preview, the query-channel

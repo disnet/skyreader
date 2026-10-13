@@ -21,6 +21,7 @@ describe('Tier Limits Config', () => {
         maxPdfUploadsPerMonth: 0,
         maxPdfStorageBytes: 0,
         snapshotImages: false,
+        maxSavedSearches: 0,
       });
     });
 
@@ -38,6 +39,7 @@ describe('Tier Limits Config', () => {
         maxPdfUploadsPerMonth: 200,
         maxPdfStorageBytes: 2048 * 1024 * 1024,
         snapshotImages: true,
+        maxSavedSearches: 25,
       });
     });
 
@@ -55,6 +57,7 @@ describe('Tier Limits Config', () => {
         maxPdfUploadsPerMonth: 0,
         maxPdfStorageBytes: 0,
         snapshotImages: false,
+        maxSavedSearches: 0,
       });
     });
 
@@ -72,6 +75,7 @@ describe('Tier Limits Config', () => {
         maxPdfUploadsPerMonth: 0,
         maxPdfStorageBytes: 0,
         snapshotImages: false,
+        maxSavedSearches: 0,
       });
     });
   });
@@ -242,6 +246,7 @@ describe('User Tier Service', () => {
         maxPdfUploadsPerMonth: 0,
         maxPdfStorageBytes: 0,
         snapshotImages: false,
+        maxSavedSearches: 0,
       });
     });
 
@@ -265,6 +270,7 @@ describe('User Tier Service', () => {
         maxPdfUploadsPerMonth: 200,
         maxPdfStorageBytes: 2048 * 1024 * 1024,
         snapshotImages: true,
+        maxSavedSearches: 25,
       });
     });
 
@@ -282,6 +288,7 @@ describe('User Tier Service', () => {
         maxPdfUploadsPerMonth: 0,
         maxPdfStorageBytes: 0,
         snapshotImages: false,
+        maxSavedSearches: 0,
       });
     });
   });

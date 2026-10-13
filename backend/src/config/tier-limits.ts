@@ -46,6 +46,12 @@ export interface TierLimits {
    * captures no new ones; text snapshots are on every plan.
    */
   snapshotImages: boolean;
+  /**
+   * Saved searches: channels whose query is matched against every new item
+   * (durable-objects/percolator.ts). 0 = not in the plan. Past the cap, the
+   * oldest queries keep matching and the newer ones wait.
+   */
+  maxSavedSearches: number;
 }
 
 const MB = 1024 * 1024;
@@ -63,6 +69,7 @@ const TIER_MAP: Record<string, TierLimits> = {
     maxPdfUploadsPerMonth: 0,
     maxPdfStorageBytes: 0,
     snapshotImages: false,
+    maxSavedSearches: 0,
   },
   supporter: {
     maxSubscriptions: 1000,
@@ -77,6 +84,7 @@ const TIER_MAP: Record<string, TierLimits> = {
     maxPdfUploadsPerMonth: 200,
     maxPdfStorageBytes: 2048 * MB,
     snapshotImages: true,
+    maxSavedSearches: 25,
   },
 };
 
