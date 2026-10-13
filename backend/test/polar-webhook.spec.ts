@@ -1,6 +1,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { signWebhook } from './helpers/polar-webhook';
+import { verifyPolarWebhook } from '../src/services/polar';
 
 // The Polar webhook is the only writer of Polar-sourced tier state. These pin
 // the boundary: signature verification (real standard-webhooks HMAC, not a
@@ -344,5 +345,46 @@ describe('POST /api/webhook/polar', () => {
     });
     expect(response.status).toBe(200);
     expect((await userRow())?.tier).toBe('free');
+  });
+});
+
+// Which key Polar signs with depends on when the endpoint's secret was
+// generated (see verifyPolarWebhook), so both must verify against one secret.
+describe('verifyPolarWebhook signing schemes', () => {
+  // A whsec_ secret whose remainder is valid base64, as Polar now issues them.
+  const WHSEC = 'whsec_' + btoa('0123456789abcdef0123456789abcdef');
+  const body = JSON.stringify({ type: 'order.paid', data: {} });
+
+  const verify = async (headers: Record<string, string>, secret: string) =>
+    verifyPolarWebhook(
+      body,
+      {
+        id: headers['webhook-id'],
+        timestamp: headers['webhook-timestamp'],
+        signature: headers['webhook-signature'],
+      },
+      secret
+    );
+
+  it('accepts a Polar HMAC signature (pre-2026-09-08 secret)', async () => {
+    const headers = await signWebhook(body, WHSEC, 'msg_polar', undefined, 'polar');
+    expect((await verify(headers, WHSEC)).ok).toBe(true);
+  });
+
+  it('accepts a Standard Webhooks signature (regenerated secret)', async () => {
+    const headers = await signWebhook(body, WHSEC, 'msg_std', undefined, 'standard');
+    expect((await verify(headers, WHSEC)).ok).toBe(true);
+  });
+
+  it('rejects a Standard Webhooks signature made with a different secret', async () => {
+    const other = 'whsec_' + btoa('fedcba9876543210fedcba9876543210');
+    const headers = await signWebhook(body, other, 'msg_other', undefined, 'standard');
+    expect(await verify(headers, WHSEC)).toEqual({ ok: false, reason: 'signature' });
+  });
+
+  it('falls back to Polar HMAC alone when the secret is not base64 after whsec_', async () => {
+    const odd = 'whsec_not*base64!';
+    const headers = await signWebhook(body, odd, 'msg_odd', undefined, 'polar');
+    expect((await verify(headers, odd)).ok).toBe(true);
   });
 });
