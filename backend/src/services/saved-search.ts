@@ -235,9 +235,11 @@ export async function syncSavedQueries(env: Env, did: string, uuids: string[]): 
       } else if (have.digest !== want.digest || have.query !== want.query) {
         statements.push(
           env.DB.prepare(
-            `UPDATE saved_queries SET query = ?, digest = ?, updated_at = ?
+            // updated_at is the matcher's version guard; leaving it alone keeps an
+            // in-flight pass's hits, which a digest-only edit doesn't invalidate.
+            `UPDATE saved_queries SET query = ?, digest = ?
               WHERE user_did = ? AND channel_uuid = ?`
-          ).bind(want.query, want.digest, now, did, uuid)
+          ).bind(want.query, want.digest, did, uuid)
         );
       }
     }
