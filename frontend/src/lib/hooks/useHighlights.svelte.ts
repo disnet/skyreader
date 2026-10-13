@@ -64,13 +64,27 @@ function generateId(): string {
   return Date.now().toString(36) + Math.random().toString(36).substring(2, 8);
 }
 
-function makeHighlight(selector: TextQuoteSelector, note?: string): Highlight {
+/**
+ * A new highlight carries its article's title and URL: the label is all the
+ * search index sees of an item that was only highlighted — never saved, from a
+ * feed since left, or a document it can't look up — and without them the hit
+ * reads "Untitled".
+ */
+function makeHighlight(
+  selector: TextQuoteSelector,
+  source: { url?: string; title?: string },
+  note?: string
+): Highlight {
   const trimmed = note?.trim();
+  const url = source.url && /^https?:\/\//i.test(source.url) ? source.url : undefined;
+  const title = source.title?.trim();
   return {
     id: generateId(),
     selector,
     createdAt: Date.now(),
     ...(trimmed ? { note: trimmed } : {}),
+    ...(url ? { sourceUrl: url } : {}),
+    ...(title ? { sourceTitle: title } : {}),
   };
 }
 
@@ -87,6 +101,10 @@ interface HighlightParams {
 }
 
 export function useHighlights(params: HighlightParams) {
+  function highlightSource() {
+    return { url: params.itemUrl?.(), title: params.itemTitle?.() };
+  }
+
   // State exposed for the component to render the popover. `view` mode is the
   // read-first surface for a highlight's note (note text + Edit/Remove), opened
   // by clicking the inline note marker; `create`/`remove` are the selection and
@@ -363,7 +381,7 @@ export function useHighlights(params: HighlightParams) {
       return true;
     }
     const selector = createSelectorForElement(blockEl, container);
-    const highlight = makeHighlight(selector);
+    const highlight = makeHighlight(selector, highlightSource());
     itemLabelsStore.addHighlight(params.itemKey(), params.itemType(), highlight);
     freshId = highlight.id;
     requestAnimationFrame(applyHighlights);
@@ -509,7 +527,7 @@ export function useHighlights(params: HighlightParams) {
     }
     const selector = pendingTouchSelector;
     pendingTouchSelector = null;
-    const highlight = makeHighlight(selector);
+    const highlight = makeHighlight(selector, highlightSource());
     itemLabelsStore.addHighlight(params.itemKey(), params.itemType(), highlight);
     freshId = highlight.id;
     requestAnimationFrame(applyHighlights);
@@ -688,7 +706,7 @@ export function useHighlights(params: HighlightParams) {
   function createHighlightFromPopover(note?: string, toMargin = false, applyNow = false) {
     if (!popoverState?.pendingSelector) return;
 
-    const highlight = makeHighlight(popoverState.pendingSelector, note);
+    const highlight = makeHighlight(popoverState.pendingSelector, highlightSource(), note);
     itemLabelsStore.addHighlight(params.itemKey(), params.itemType(), highlight);
     pendingTouchSelector = null;
     window.getSelection()?.removeAllRanges();
@@ -1103,7 +1121,11 @@ export function useHighlights(params: HighlightParams) {
       itemLabelsStore.removeHighlight(params.itemKey(), existingHighlight.id);
     } else {
       const selector = createSelectorForElement(para, container);
-      itemLabelsStore.addHighlight(params.itemKey(), params.itemType(), makeHighlight(selector));
+      itemLabelsStore.addHighlight(
+        params.itemKey(),
+        params.itemType(),
+        makeHighlight(selector, highlightSource())
+      );
     }
     requestAnimationFrame(applyHighlights);
   }

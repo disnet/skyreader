@@ -9,6 +9,8 @@
 import type { SearchHit } from '$lib/services/api';
 import type { FeedDisplayItem } from '$lib/stores/feedView.svelte';
 import type { Article, User } from '$lib/types';
+import { decodeEntities } from './entities';
+import { domainFromUrl } from './highlightSource';
 import { resolveReaderItem, type ReaderKeySources } from './readerLink';
 
 /** Search is offered when the plan includes it and this environment has it on. */
@@ -52,6 +54,25 @@ export function resolveSearchHit(
     contentTruncated: true,
   };
   return { type: 'article', item: article, key: article.guid };
+}
+
+/**
+ * The title a hit shows. The index can come up empty for an item it only knows
+ * through a highlight — an older highlight carries no source title, and the
+ * item's feed or document may be out of the index's reach — so the copy on
+ * this device fills in before the hit falls back to its domain.
+ */
+export function searchHitTitle(hit: SearchHit, sources: ReaderKeySources): string {
+  if (hit.title) return hit.title;
+  const local = resolveReaderItem(hit.itemKey, sources);
+  const localTitle = decodeEntities(local?.item.title);
+  if (localTitle) return localTitle;
+  const localUrl = local
+    ? local.type === 'document'
+      ? local.item.canonicalUrl
+      : local.item.url
+    : null;
+  return domainFromUrl(hit.url) || domainFromUrl(localUrl) || 'Untitled';
 }
 
 /** "3 results", "1,000+ results". */

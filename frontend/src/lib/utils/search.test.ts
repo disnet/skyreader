@@ -4,6 +4,7 @@ import {
   formatResultCount,
   lastTouched,
   resolveSearchHit,
+  searchHitTitle,
   type SearchHitSources,
 } from './search';
 import type { SearchHit } from '$lib/services/api';
@@ -108,6 +109,27 @@ describe('resolveSearchHit', () => {
         sources({ subscriptionIdFor: () => 1 })
       )
     ).toBeNull();
+  });
+});
+
+describe('searchHitTitle', () => {
+  it("uses the index's title when it has one", () => {
+    expect(searchHitTitle(hit(), sources())).toBe('A post');
+  });
+
+  it('falls back to the local copy for an untitled hit', () => {
+    const local = { guid: 'guid-1', title: 'Local &amp; title' } as Article;
+    expect(
+      searchHitTitle(
+        hit({ title: '' }),
+        sources({ getArticle: (g) => (g === 'guid-1' ? local : undefined) })
+      )
+    ).toBe('Local & title');
+  });
+
+  it("falls back to the domain, then 'Untitled'", () => {
+    expect(searchHitTitle(hit({ title: '' }), sources())).toBe('blog.example');
+    expect(searchHitTitle(hit({ title: '', url: null }), sources())).toBe('Untitled');
   });
 });
 

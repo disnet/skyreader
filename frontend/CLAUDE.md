@@ -227,8 +227,9 @@ id across alias rows (`utils/highlightAliases.ts`). Three things ride that array
 itself: `lastReviewedAt` (the review deck's repeat-avoidance, synced for free), `reviewIntent`
 (`soon`/`later`/`someday`/`never` — the deck's frequency tuning; `later` is the neutral default, and
 even `never` only stops the highlight being dealt, it stays in the list and on Margin), and
-`sourceUrl`/`sourceTitle` (source metadata for highlights imported from Margin whose article isn't
-in any local cache). Because the whole array is written to `item_labels_cache.props` as opaque JSON,
+`sourceUrl`/`sourceTitle` (source metadata: stamped on every new highlight from its article, and set
+on highlights imported from Margin whose article isn't in any local cache — the search index's only
+title for an item that was just highlighted). Because the whole array is written to `item_labels_cache.props` as opaque JSON,
 any new per-highlight field reaches D1 and syncs across devices with no migration. `utils/highlightSource.ts` is the shared resolver both the list and the deck use so
 they degrade identically. See [`docs/plans/HIGHLIGHT_REVIEW.md`](../docs/plans/HIGHLIGHT_REVIEW.md).
 

@@ -1609,9 +1609,10 @@ export interface Highlight {
   // highlight itself is never touched by this — even 'never' leaves it in the
   // highlights list and on Margin, it just stops being dealt.
   reviewIntent?: ReviewIntent;
-  // Source metadata carried on the highlight itself, for highlights imported
-  // from Margin whose article isn't in any local cache — without these the
-  // highlight has no title or link to show.
+  // Source metadata carried on the highlight itself: stamped on a new highlight
+  // from its article, and set on highlights imported from Margin whose article
+  // isn't in any local cache. The label is all the search index sees of an item
+  // that was only highlighted, so without these it has no title or link to show.
   sourceUrl?: string;
   sourceTitle?: string;
 }
