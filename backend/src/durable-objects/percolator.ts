@@ -240,12 +240,23 @@ export class Percolator extends DurableObject<Env> {
         if (!outcome.more) break;
       }
 
+      let backfillFailed = false;
       const pending = queries.filter((q) => q.backfillState === 'pending');
       for (const query of pending.slice(0, BACKFILL_QUERIES_PER_PASS)) {
         if (Date.now() >= deadline || budget.subrequests < 100) break;
-        await this.backfillStep(query, budget, outcome);
+        try {
+          await this.backfillStep(query, budget, outcome);
+          backfillFailed = false;
+        } catch (error) {
+          // Left pending; the minute cron retries, so a failing step can't spin the alarm.
+          backfillFailed = true;
+          log.error('percolator_backfill_failed', {
+            channelUuid: query.channelUuid,
+            ...serializeError(error),
+          });
+        }
       }
-      if (pending.length > 0) outcome.more = true;
+      if (pending.length > 0 && !backfillFailed) outcome.more = true;
     }
 
     await this.applyRetention();
