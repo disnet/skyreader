@@ -10,6 +10,7 @@ import { filteredViewsStore } from './filteredViews.svelte';
 import { followLinksStore } from './followLinks.svelte';
 import { mobileStore } from './mediaQuery.svelte';
 import { liveDb } from '$lib/services/liveDb.svelte';
+import { archiveTypeFilter, typeFilterShowsArchive } from '$lib/utils/newsletters';
 import type {
   Article,
   SocialDocument,
@@ -574,7 +575,7 @@ function createFeedViewStore() {
   // Derived: whether articles are shown (any RSS source allowed and type filter permits)
   let showArticles = $derived.by((): boolean => {
     const fv = effectiveFilters;
-    if (fv.typeFilter.length > 0 && !fv.typeFilter.includes('rss')) return false;
+    if (!typeFilterShowsArchive(fv.typeFilter)) return false;
     if (fv.sourceMode === 'all') return true;
     // Exclude mode never zeroes out a whole type — the per-item filter drops the
     // excluded sources and everything else stays.
@@ -638,6 +639,14 @@ function createFeedViewStore() {
       const rssAllowed = deriveRssFilter(fv);
       if (rssAllowed !== null) {
         articles = articles.filter((a) => rssAllowed(a.subscriptionId));
+      }
+
+      // Feeds vs newsletters, when the type filter names only one of them
+      const archiveType = archiveTypeFilter(fv.typeFilter);
+      if (archiveType !== null) {
+        articles = articles.filter((a) =>
+          archiveType(subscriptionsStore.getById(a.subscriptionId))
+        );
       }
     }
 

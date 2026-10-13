@@ -284,7 +284,10 @@ export function getTypeSuggestions(ctx: SuggestionContext): ChannelSuggestion[] 
   const suggestions: ChannelSuggestion[] = [];
   const subs = ctx.subscriptions;
 
-  const rssSubs = subs.filter((s) => isArchiveFeedSource(s.sourceType));
+  // The Articles suggestion filters to 'rss', which leaves newsletters out.
+  const rssSubs = subs.filter(
+    (s) => isArchiveFeedSource(s.sourceType) && !isNewsletterSubscription(s)
+  );
   const docSubs = subs.filter((s) => s.sourceType === 'atproto.documents');
 
   if (rssSubs.length >= 2 && docSubs.length >= 2) {

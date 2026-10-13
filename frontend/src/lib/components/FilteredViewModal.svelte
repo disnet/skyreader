@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { isArchiveFeedSource } from '$lib/utils/newsletters';
+  import { isArchiveFeedSource, isNewsletterSubscription } from '$lib/utils/newsletters';
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { articlesStore } from '$lib/stores/articles.svelte';
@@ -21,7 +21,7 @@
   import { computeSourceKeys } from '$lib/utils/channelLogic';
   import DomainPatternInput from '$lib/components/DomainPatternInput.svelte';
   import {
-    TYPE_OPTIONS,
+    typeOptionsFor,
     SAVED_SOURCE_OPTIONS,
     AUTO_RULE_OPTIONS,
     AUTO_RULE_DEFAULT_NAMES as DEFAULT_NAMES,
@@ -71,6 +71,9 @@
   let savedDomainFilter = $state<Set<string>>(new Set());
   let savedTagFilter = $state<Set<string>>(new Set());
   let typeFilter = $state<Set<SubscriptionSourceType>>(new Set());
+  let typeOptions = $derived(
+    typeOptionsFor(subscriptionsStore.subscriptions.some(isNewsletterSubscription), typeFilter)
+  );
   let saving = $state(false);
   let error = $state<string | null>(null);
 
@@ -721,7 +724,7 @@
         <div class="form-group">
           <span class="form-label">Content Types</span>
           <div class="checklist type-checklist">
-            {#each TYPE_OPTIONS as opt}
+            {#each typeOptions as opt}
               <label class="checklist-item">
                 <input
                   type="checkbox"

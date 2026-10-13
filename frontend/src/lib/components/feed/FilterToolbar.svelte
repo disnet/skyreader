@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { isNewsletterSubscription } from '$lib/utils/newsletters';
   import Icon from '$lib/components/Icon.svelte';
   import FilterPopover from './FilterPopover.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
@@ -13,7 +14,7 @@
   import { followLinksStore } from '$lib/stores/followLinks.svelte';
   import { filterSubscriptionsBySearch, subscriptionIconUrl } from '$lib/utils/subscriptionDisplay';
   import {
-    TYPE_OPTIONS,
+    typeOptionsFor,
     SAVED_SOURCE_OPTIONS,
     DATE_PRESET_OPTIONS,
     READING_LENGTH_OPTIONS,
@@ -48,6 +49,9 @@
 
   let activeTypeFilter = $derived(feedViewStore.toolbarTypeFilter);
   let activeTypeSet = $derived(new Set(activeTypeFilter));
+  let typeOptions = $derived(
+    typeOptionsFor(subscriptionsStore.subscriptions.some(isNewsletterSubscription), activeTypeSet)
+  );
   let typeFilterLabel = $derived(
     activeTypeFilter.length === 0 ? 'Type' : `Type (${activeTypeFilter.length})`
   );
@@ -202,6 +206,7 @@
 
   const TYPE_SHORT_LABELS: Record<string, string> = {
     rss: 'Feeds',
+    'email.newsletter': 'Newsletters',
     'atproto.documents': 'Documents',
   };
 
@@ -726,7 +731,7 @@
             {/if}
           </div>
           <div class="popover-list">
-            {#each TYPE_OPTIONS as opt}
+            {#each typeOptions as opt}
               <label class="check-label">
                 <input
                   type="checkbox"

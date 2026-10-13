@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { isArchiveFeedSource } from '$lib/utils/newsletters';
+  import { isArchiveFeedSource, isNewsletterSubscription } from '$lib/utils/newsletters';
   import Icon from '$lib/components/Icon.svelte';
   import AppearanceToolbar from './AppearanceToolbar.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
@@ -23,7 +23,7 @@
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import {
     SAVED_SOURCE_OPTIONS,
-    TYPE_OPTIONS,
+    typeOptionsFor,
     DATE_PRESET_OPTIONS_SHORT as DATE_PRESET_OPTIONS,
     READING_LENGTH_OPTIONS_SHORT as READING_LENGTH_OPTIONS,
     SAVED_SORT_OPTIONS_SHORT as SAVED_SORT_OPTIONS,
@@ -120,6 +120,9 @@
   let chSourceMode = $state<'all' | 'include' | 'exclude'>('all');
   let chSourceKeys = $state<Set<string>>(new Set());
   let chTypeFilter = $state<Set<SubscriptionSourceType>>(new Set());
+  let typeOptions = $derived(
+    typeOptionsFor(subscriptionsStore.subscriptions.some(isNewsletterSubscription), chTypeFilter)
+  );
   let chSaving = $state(false);
   let chError = $state<string | null>(null);
   let chNameManuallyEdited = $state(false);
@@ -1015,7 +1018,7 @@
         <div class="sheet-section">
           <div class="section-label">Content Types</div>
           <div class="source-list">
-            {#each TYPE_OPTIONS as opt}
+            {#each typeOptions as opt}
               <label class="source-item">
                 <input
                   type="checkbox"

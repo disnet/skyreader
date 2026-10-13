@@ -1,4 +1,8 @@
-import { isArchiveFeedSource } from '$lib/utils/newsletters';
+import {
+  archiveTypeFilter,
+  isArchiveFeedSource,
+  typeFilterShowsArchive,
+} from '$lib/utils/newsletters';
 import { articlesStore } from './articles.svelte';
 import { subscriptionsStore } from './subscriptions.svelte';
 import { socialStore } from './social.svelte';
@@ -263,7 +267,7 @@ function createUnreadCountsStore() {
       // Determine which content types this channel shows. Exclude mode always
       // leaves some of every type visible (unless the type filter says otherwise).
       const showRss =
-        (typeFilter.length === 0 || typeFilter.includes('rss')) &&
+        typeFilterShowsArchive(typeFilter) &&
         (sourceMode !== 'include' || sourceKeys.some(isRssSource));
       const showDocs =
         (typeFilter.length === 0 || typeFilter.includes('atproto.documents')) &&
@@ -273,7 +277,9 @@ function createUnreadCountsStore() {
 
       // Count unread articles
       if (showRss) {
-        if (sourceMode === 'all') {
+        // Feeds vs newsletters: a type filter naming only one of them.
+        const archiveType = archiveTypeFilter(typeFilter);
+        if (sourceMode === 'all' && !archiveType) {
           // Reuse already-computed total (deduped by guid)
           count += totalArticles;
         } else {
@@ -286,10 +292,14 @@ function createUnreadCountsStore() {
               })
               .filter((id): id is number => id != null)
           );
-          const isAllowed =
-            sourceMode === 'exclude'
-              ? (id: number) => !listedIds.has(id)
-              : (id: number) => listedIds.has(id);
+          const inSources =
+            sourceMode === 'all'
+              ? () => true
+              : sourceMode === 'exclude'
+                ? (id: number) => !listedIds.has(id)
+                : (id: number) => listedIds.has(id);
+          const isAllowed = (id: number) =>
+            inSources(id) && (!archiveType || archiveType(subscriptionsStore.getById(id)));
           const seen = new Set<string>();
           for (const article of articlesStore.allArticles) {
             if (seen.has(article.guid)) continue;

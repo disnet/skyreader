@@ -32,3 +32,29 @@ export function newsletterSender(feedUrl: string | undefined): string | null {
   const slash = feedUrl.indexOf('/');
   return slash > 0 ? feedUrl.slice(slash + 1) || null : null;
 }
+
+/**
+ * A channel's type filter splits the archive in two: 'rss' is the crawled
+ * feeds, 'email.newsletter' the mail. They share one archive, so without this
+ * an "RSS Feeds" filter let newsletters through. Returns null when the filter
+ * keeps every archive item (no type filter, or both types); a filter naming
+ * neither keeps none, which callers check first with `typeFilterShowsArchive`.
+ */
+export function archiveTypeFilter(
+  typeFilter: readonly string[]
+): ((sub: Pick<Subscription, 'sourceType' | 'feedUrl'> | undefined) => boolean) | null {
+  const rss = typeFilter.length === 0 || typeFilter.includes('rss');
+  const mail = typeFilter.length === 0 || typeFilter.includes(NEWSLETTER_SOURCE_TYPE);
+  if (rss && mail) return null;
+  // An item whose subscription is gone reads as a plain feed.
+  return (sub) => (sub && isNewsletterSubscription(sub) ? mail : rss);
+}
+
+/** Does a type filter let any archive item (feed or newsletter) through? */
+export function typeFilterShowsArchive(typeFilter: readonly string[]): boolean {
+  return (
+    typeFilter.length === 0 ||
+    typeFilter.includes('rss') ||
+    typeFilter.includes(NEWSLETTER_SOURCE_TYPE)
+  );
+}

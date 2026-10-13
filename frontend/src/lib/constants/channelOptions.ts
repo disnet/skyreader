@@ -11,8 +11,21 @@ import type {
 
 export const TYPE_OPTIONS: { value: SubscriptionSourceType; label: string }[] = [
   { value: 'rss', label: 'RSS Feeds' },
+  { value: 'email.newsletter', label: 'Newsletters' },
   { value: 'atproto.documents', label: 'Standard.site Documents' },
 ];
+
+/**
+ * The type options worth offering: Newsletters only to a reader who has some
+ * (or a channel that already names the type), since it's a Supporter feature.
+ */
+export function typeOptionsFor(
+  hasNewsletters: boolean,
+  selected: Iterable<SubscriptionSourceType>
+): typeof TYPE_OPTIONS {
+  if (hasNewsletters || new Set(selected).has('email.newsletter')) return TYPE_OPTIONS;
+  return TYPE_OPTIONS.filter((o) => o.value !== 'email.newsletter');
+}
 
 export const SAVED_SOURCE_OPTIONS: { value: SavedSourceType; label: string }[] = [
   { value: 'url', label: 'URL Saves' },
