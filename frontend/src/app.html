@@ -26,6 +26,26 @@
     <meta name="theme-color" content="#1a1a1a" media="(prefers-color-scheme: dark)" />
     <meta name="theme-color" content="#ffffff" />
 
+    <!--
+      The Settings theme choice, applied before first paint so a pinned scheme
+      never flashes the OS one. A copy of applyColorScheme
+      (src/lib/utils/colorScheme.ts) — keep them in step.
+    -->
+    <script>
+      (function () {
+        try {
+          var prefs = JSON.parse(localStorage.getItem('skyreader-preferences') || '{}');
+          var scheme = prefs && prefs.colorScheme;
+          if (scheme !== 'light' && scheme !== 'dark') return;
+          document.documentElement.setAttribute('data-theme', scheme);
+          document.querySelectorAll('meta[name="theme-color"][media]').forEach(function (tag) {
+            tag.dataset.media = tag.media;
+            tag.media = /dark/.test(tag.media) === (scheme === 'dark') ? 'all' : 'not all';
+          });
+        } catch (e) {}
+      })();
+    </script>
+
     <!-- Open Graph / social sharing -->
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Skyreader" />

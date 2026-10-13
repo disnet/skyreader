@@ -434,9 +434,11 @@
   // same value — the token has already resolved for whichever scheme the
   // browser is in, which is the same scheme it picks the tag by. Reading the
   // live token rather than restating the hex keeps this from drifting off
-  // app.css.
+  // app.css. A theme pinned in Settings re-resolves the token, so it re-syncs
+  // too (applyColorScheme points the tags' media at the pinned scheme).
   $effect(() => {
     if (!browser) return;
+    void preferences.colorScheme;
     const framed = window.matchMedia(SHELL_FRAME_QUERY);
     const scheme = window.matchMedia('(prefers-color-scheme: dark)');
     const tags = [...document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')];

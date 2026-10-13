@@ -246,7 +246,11 @@ function variantRules(): string {
 export function buildInkStylesheet(): string {
   return [
     `:root{${paletteVars(LIGHT)}}`,
-    `@media (prefers-color-scheme: dark){:root{${paletteVars(DARK)}}}`,
+    // Injected at runtime, so postcss.color-scheme.js never sees it: the same
+    // two halves it emits, written out — OS dark unless pinned light, and
+    // pinned dark.
+    `@media (prefers-color-scheme: dark){:root:where(:not([data-theme='light'])){${paletteVars(DARK)}}}`,
+    `:root:where([data-theme='dark']){${paletteVars(DARK)}}`,
     variantRules(),
   ].join('\n');
 }

@@ -36,11 +36,12 @@ describe('marginalia ink', () => {
   it('builds every variant for both themes', () => {
     const css = buildInkStylesheet();
     expect(css).toContain('@media (prefers-color-scheme: dark)');
+    expect(css).toContain(":root:where([data-theme='dark'])");
     for (let v = 0; v < INK_VARIANTS; v++) {
       for (const piece of ['l', 'm', 'r']) {
-        // Once per theme.
-        expect(css.split(`--ink-${v}-rest-${piece}:`).length - 1).toBe(2);
-        expect(css.split(`--ink-${v}-active-${piece}:`).length - 1).toBe(2);
+        // Light, OS dark, and pinned dark.
+        expect(css.split(`--ink-${v}-rest-${piece}:`).length - 1).toBe(3);
+        expect(css.split(`--ink-${v}-active-${piece}:`).length - 1).toBe(3);
       }
       expect(css).toContain(`mark.highlight[data-ink='${v}']`);
     }

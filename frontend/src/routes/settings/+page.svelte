@@ -17,6 +17,7 @@
     ARTICLE_FONT_SIZE_MIN,
     ARTICLE_FONT_SIZE_MAX,
   } from '$lib/stores/preferences.svelte';
+  import { COLOR_SCHEME_OPTIONS } from '$lib/utils/colorScheme';
   import ImportOPMLModal from '$lib/components/ImportOPMLModal.svelte';
   import LimitNotice from '$lib/components/LimitNotice.svelte';
   import { mergeNotices } from '$lib/utils/limitCopy';
@@ -947,6 +948,33 @@
           >
             A quiet place to read deeply and think clearly. Everything you follow, in one calm room.
           </p>
+        </div>
+      </div>
+
+      <!-- Light/dark follows the device unless pinned here. Deliberately not a
+           control in the app chrome: overriding the OS is a rare intent, so it
+           sits in Settings (https://lea.verou.me/blog/2026/dark-mode-toggles-2/). -->
+      <div class="panel">
+        <div class="panel-head">
+          <h3>Appearance</h3>
+        </div>
+        <div class="row inline wrap">
+          <div class="row-text">
+            <span class="row-label" id="color-scheme-label">Theme</span>
+            <span class="row-desc">System matches your device's light or dark setting.</span>
+          </div>
+          <div class="segmented" role="group" aria-labelledby="color-scheme-label">
+            {#each COLOR_SCHEME_OPTIONS as option}
+              <button
+                class="segment"
+                class:selected={preferences.colorScheme === option.value}
+                aria-pressed={preferences.colorScheme === option.value}
+                onclick={() => preferences.setColorScheme(option.value)}
+              >
+                {option.label}
+              </button>
+            {/each}
+          </div>
         </div>
       </div>
 
