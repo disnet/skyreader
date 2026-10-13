@@ -1,0 +1,73 @@
+name: Apple CI
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    branches: [main]
+    # The workflow file is in the filter on purpose: a PR that only edits this
+    # file still has to run it.
+    paths: ['apple/**', '.github/workflows/apple-ci.yml']
+
+concurrency:
+  group: apple-ci-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  # SkyreaderKit is Foundation-only, so its tests run on a Linux runner — the
+  # cheap one — and this also proves it stays platform-neutral.
+  kit:
+    name: SkyreaderKit Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apple/Packages/SkyreaderKit
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Swift version
+        run: swift --version
+
+      - name: Run tests
+        run: swift test
+
+  # Unsigned builds of both app targets. macOS runners bill at ~10x the Linux
+  # rate on private repos, so this is one job building both, not a matrix.
+  build:
+    name: Build macOS & iOS
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: apple
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Xcode version
+        run: xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Build macOS
+        run: >
+          xcodebuild build
+          -project Skyreader.xcodeproj
+          -scheme Skyreader-macOS
+          -destination 'generic/platform=macOS'
+          -derivedDataPath DerivedData
+          CODE_SIGNING_ALLOWED=NO
+
+      - name: Build iOS (Simulator)
+        run: >
+          xcodebuild build
+          -project Skyreader.xcodeproj
+          -scheme Skyreader-iOS
+          -destination 'generic/platform=iOS Simulator'
+          -derivedDataPath DerivedData
+          CODE_SIGNING_ALLOWED=NO

@@ -7,6 +7,7 @@ import {
   handleAuthUpgrade,
   handleClientMetadata,
 } from './routes/auth';
+import { handleNativeExchange } from './routes/native-auth';
 import {
   handleV2FeedFetch,
   handleV2BatchFeedFetch,
@@ -245,6 +246,7 @@ function isPublicPath(pathname: string): boolean {
     pathname === '/api/auth/login' ||
     pathname === '/api/auth/callback' ||
     pathname === '/api/auth/logout' ||
+    pathname === '/api/auth/native/exchange' ||
     pathname.startsWith('/api/guest/')
   );
 }
@@ -427,6 +429,9 @@ async function route(
       break;
     case url.pathname === '/api/auth/logout':
       response = await handleAuthLogout(request, env);
+      break;
+    case url.pathname === '/api/auth/native/exchange':
+      response = await handleNativeExchange(request, env);
       break;
     case url.pathname === '/api/auth/me':
       response = await handleAuthMe(request, env);
@@ -1269,6 +1274,12 @@ async function runScheduled(
           .bind(now)
           .run();
         oauthDeleted = oauthResult.meta?.changes || 0;
+        const handoffResult = await env.DB.prepare(
+          'DELETE FROM native_auth_handoff WHERE expires_at < ?'
+        )
+          .bind(now)
+          .run();
+        oauthDeleted += handoffResult.meta?.changes || 0;
       } catch (error) {
         log.error('cron_phase_failed', { phase: 'oauth-state-cleanup', ...serializeError(error) });
         reportError(error, { tags: { source: 'cron', phase: 'oauth-state-cleanup' } });

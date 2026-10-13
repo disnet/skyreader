@@ -296,6 +296,25 @@ describe('progressive scope requests', () => {
     );
   });
 
+  it('confirms native mode only when the app asked for it', async () => {
+    const web = await call(`/api/auth/login?handle=${TEST_HANDLE}`);
+    expect(await web.json()).not.toHaveProperty('native');
+
+    const challenge = 'A'.repeat(43);
+    const native = await call(
+      `/api/auth/login?handle=${TEST_HANDLE}&native_challenge=${challenge}`
+    );
+    const body = (await native.json()) as { authUrl: string; native?: boolean };
+    expect(body.native).toBe(true);
+    expect(body.authUrl).toBeTruthy();
+    const stored = await env.DB.prepare(
+      'SELECT COUNT(*) AS n FROM oauth_state WHERE native_challenge = ?'
+    )
+      .bind(challenge)
+      .first<{ n: number }>();
+    expect(stored?.n).toBe(1);
+  });
+
   it('rejects an unknown feature', async () => {
     const response = await call(`/api/auth/login?handle=${TEST_HANDLE}&features=everything`);
     expect(response.status).toBe(400);

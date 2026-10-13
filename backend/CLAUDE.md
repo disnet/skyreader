@@ -92,6 +92,16 @@ AT Protocol OAuth has specific requirements:
 
 **Production:** Uses confidential client with `private_key_jwt` authentication. The `client_id` URL (`/.well-known/client-metadata`) must be publicly fetchable.
 
+**Where the session goes after the callback** depends on how login started:
+
+- Web (default): an HttpOnly `session_id` cookie, then a redirect to the frontend.
+- CLI (`cli_port`): `http://127.0.0.1:<port>/callback?session_id=…`.
+- Native macOS/iOS app (`native_challenge`): never the session. The callback stores a
+  one-time code bound to the app's PKCE-style challenge and redirects to
+  `skyreader://auth/callback?code=…`; the app trades code + verifier for the session at
+  `POST /api/auth/native/exchange` (`src/routes/native-auth.ts`). A custom scheme can be
+  claimed by any app on the device, so an intercepted code must be useless on its own.
+
 ## Architecture
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed documentation.
@@ -110,6 +120,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed documentation.
 | File                          | Purpose                                                   |
 | ----------------------------- | --------------------------------------------------------- |
 | `src/routes/auth.ts`          | OAuth flow (login, upgrade, callback, logout, metadata)   |
+| `src/routes/native-auth.ts`   | Native app sign-in handoff (one-time code exchange)       |
 | `src/routes/timeline.ts`      | `GET /api/v2/timeline` — the whole refresh, one query     |
 | `src/routes/ingest.ts`        | Crawler endpoints: item ingest, crawl set, feed health    |
 | `src/routes/documents.ts`     | Document backfill + proxy-vs-D1 shadow compare (internal) |
