@@ -60,7 +60,11 @@ const PAGE_SIZE = 100;
 // The first walk reaches further back so a new source starts with something in
 // it; later walks only need what arrived since the last one.
 export const FIRST_WALK_MAX_PAGES = 3;
+// Later refreshes: the top of the list gets up to WALK_MAX_PAGES, and a gap left
+// by an earlier burst gets what's left of REFRESH_MAX_PAGES. Five pages is about
+// 25 subrequests plus one insert per link post: well inside an invocation.
 export const WALK_MAX_PAGES = 2;
+export const REFRESH_MAX_PAGES = 5;
 
 /** `last_error` when the PDS refused getBookmarks for want of scope. */
 export const BSKY_SOURCE_SCOPE_DENIED = 'scope_denied';
@@ -234,8 +238,17 @@ interface WalkResult {
   kept: Kept[];
   /** The newest mark seen this walk, to store once the items are in. */
   newest: string | null;
+  /** Where to carry on from, when the page budget ran out before `stop`. */
+  cursor: string | null;
+  /** Reached `stop`, or the end of the list: nothing left below. */
+  reachedStop: boolean;
+  pages: number;
   error: string | null;
   scopeDenied?: boolean;
+}
+
+function failed(error: string, scopeDenied = false): WalkResult {
+  return { kept: [], newest: null, cursor: null, reachedStop: false, pages: 0, error, scopeDenied };
 }
 
 interface LikeRecord {
@@ -244,25 +257,29 @@ interface LikeRecord {
 }
 
 /**
- * The reader's likes, newest first, down to the high-water mark (a like's rkey:
- * a TID, so it sorts by time) or the page cap. Like records hold only the post's
- * uri, so the posts are hydrated from the public appview.
+ * The reader's likes, newest first from `cursor` (the top when undefined), down
+ * to `stop` (a like's rkey: a TID, so it sorts by time) or the page budget.
+ * Like records hold only the post's uri, so the posts are hydrated from the
+ * public appview.
  */
 async function walkLikes(
   pds: PDSClient,
-  mark: string | null,
+  startCursor: string | undefined,
+  stop: string | null,
   maxPages: number
 ): Promise<WalkResult> {
   const likes: { rkey: string; subject: string; keptAt: string }[] = [];
-  let cursor: string | undefined;
-  for (let page = 0; page < maxPages; page++) {
+  let cursor = startCursor;
+  let reachedStop = false;
+  let pages = 0;
+  while (pages < maxPages) {
     const res = await pds.listRecords<LikeRecord>('app.bsky.feed.like', cursor, PAGE_SIZE);
-    if (!res.success) return { kept: [], newest: null, error: res.error };
-    let reachedMark = false;
+    if (!res.success) return failed(res.error);
+    pages++;
     for (const record of res.data.records) {
       const rkey = record.uri.split('/').pop() ?? '';
-      if (mark && rkey <= mark) {
-        reachedMark = true;
+      if (stop && rkey <= stop) {
+        reachedStop = true;
         break;
       }
       const subject = record.value?.subject?.uri;
@@ -270,23 +287,27 @@ async function walkLikes(
       likes.push({ rkey, subject, keptAt: record.value.createdAt ?? new Date().toISOString() });
     }
     cursor = res.data.cursor;
-    if (reachedMark || !cursor || res.data.records.length === 0) break;
+    if (!cursor || res.data.records.length === 0) reachedStop = true;
+    if (reachedStop) break;
   }
 
   const newest = likes.reduce<string | null>(
     (max, l) => (!max || l.rkey > max ? l.rkey : max),
     null
   );
-  if (likes.length === 0) return { kept: [], newest, error: null };
+  const next = reachedStop ? null : (cursor ?? null);
+  if (likes.length === 0) {
+    return { kept: [], newest, cursor: next, reachedStop, pages, error: null };
+  }
 
   const { posts, complete } = await fetchPosts<BskyPostView>(likes.map((l) => l.subject));
-  if (!complete) return { kept: [], newest: null, error: 'getPosts failed' };
+  if (!complete) return failed('getPosts failed');
   const kept: Kept[] = [];
   for (const like of likes) {
     const post = posts.get(like.subject);
     if (post) kept.push({ post, keptAt: like.keptAt });
   }
-  return { kept, newest, error: null };
+  return { kept, newest, cursor: next, reachedStop, pages, error: null };
 }
 
 interface BookmarkView {
@@ -303,28 +324,31 @@ function timeOf(iso: string | null | undefined): number {
 }
 
 /**
- * The reader's bookmarks, newest first, down to the high-water mark (the newest
- * bookmark's createdAt) or the page cap. getBookmarks returns hydrated posts.
+ * The reader's bookmarks, newest first from `cursor` (the top when undefined),
+ * down to `stop` (a bookmark's createdAt) or the page budget. getBookmarks
+ * returns hydrated posts.
  */
 async function walkBookmarks(
   pds: PDSClient,
-  mark: string | null,
+  startCursor: string | undefined,
+  stop: string | null,
   maxPages: number
 ): Promise<WalkResult> {
-  const markTime = timeOf(mark);
+  const stopTime = timeOf(stop);
   const kept: Kept[] = [];
   let newest: string | null = null;
-  let cursor: string | undefined;
-  for (let page = 0; page < maxPages; page++) {
+  let cursor = startCursor;
+  let reachedStop = false;
+  let pages = 0;
+  while (pages < maxPages) {
     const res = await pds.getBookmarks<BookmarkView>(cursor, PAGE_SIZE);
-    if (!res.success) {
-      return { kept: [], newest: null, error: res.error, scopeDenied: isScopeDenial(res) };
-    }
-    let reachedMark = false;
-    for (const bookmark of res.data.bookmarks ?? []) {
+    if (!res.success) return failed(res.error, isScopeDenial(res));
+    pages++;
+    const bookmarks = res.data.bookmarks ?? [];
+    for (const bookmark of bookmarks) {
       const keptAt = bookmark.createdAt ?? bookmark.item?.indexedAt ?? null;
-      if (mark && keptAt && timeOf(keptAt) <= markTime) {
-        reachedMark = true;
+      if (stop && keptAt && timeOf(keptAt) <= stopTime) {
+        reachedStop = true;
         break;
       }
       if (keptAt && timeOf(keptAt) > timeOf(newest)) newest = keptAt;
@@ -334,9 +358,17 @@ async function walkBookmarks(
       kept.push({ post: item, keptAt: keptAt ?? new Date().toISOString() });
     }
     cursor = res.data.cursor;
-    if (reachedMark || !cursor || (res.data.bookmarks ?? []).length === 0) break;
+    if (!cursor || bookmarks.length === 0) reachedStop = true;
+    if (reachedStop) break;
   }
-  return { kept, newest, error: null };
+  return {
+    kept,
+    newest,
+    cursor: reachedStop ? null : (cursor ?? null),
+    reachedStop,
+    pages,
+    error: null,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -347,6 +379,8 @@ interface SyncRow {
   last_poll_at: number;
   newest_seen: string | null;
   last_error: string | null;
+  gap_cursor: string | null;
+  gap_stop: string | null;
 }
 
 export type RefreshOutcome =
@@ -357,12 +391,18 @@ export type RefreshOutcome =
  * Pull new link posts from one source into feed_items.
  *
  * Safe from waitUntil and from several requests at once: the claim is a
- * compare-and-set on `last_poll_at`, so only one caller walks. An error leaves
- * the high-water mark where it was, so the next refresh walks the same ground
- * (ingest is idempotent on guid). A walk that hits its page cap before reaching
- * the mark moves the mark to the top anyway: only a burst of hundreds of likes
- * between two refreshes is left unread, and that's the right trade for a walk
- * that stays cheap.
+ * compare-and-set on `last_poll_at`, so only one caller walks.
+ *
+ * The first walk takes the newest FIRST_WALK_MAX_PAGES pages. After that a walk
+ * goes newest-first down to the high-water mark, and nothing above the mark is
+ * ever skipped:
+ *  - An error leaves the mark (and any gap) where it was, so the next refresh
+ *    walks the same ground again (ingest is idempotent on guid).
+ *  - Running out of pages first leaves a gap. Its cursor is saved, the mark
+ *    moves to the top (which is now covered), and later refreshes finish the
+ *    gap once they've caught up on new items. A second gap folds into the
+ *    first: the one saved walk runs from the newer cursor down to the older
+ *    stop, re-walking the covered ground in between.
  */
 export async function refreshBskySource(
   env: Env,
@@ -378,7 +418,8 @@ export async function refreshBskySource(
   }
 
   const existing = await env.DB.prepare(
-    'SELECT last_poll_at, newest_seen, last_error FROM bsky_source_sync WHERE user_did = ? AND kind = ?'
+    `SELECT last_poll_at, newest_seen, last_error, gap_cursor, gap_stop
+       FROM bsky_source_sync WHERE user_did = ? AND kind = ?`
   )
     .bind(did, kind)
     .first<SyncRow>();
@@ -399,38 +440,56 @@ export async function refreshBskySource(
   if (!claim.meta.changes) return { refreshed: false, reason: 'locked' };
 
   const mark = existing?.newest_seen ?? null;
-  const maxPages = mark ? WALK_MAX_PAGES : FIRST_WALK_MAX_PAGES;
+  const savedGap =
+    existing?.gap_cursor && existing.gap_stop
+      ? { cursor: existing.gap_cursor, stop: existing.gap_stop }
+      : null;
   const pds = createPDSClient(session);
+  const walk = (cursor: string | undefined, stop: string | null, maxPages: number) =>
+    (kind === 'likes' ? walkLikes : walkBookmarks)(pds, cursor, stop, maxPages).catch((error) =>
+      failed(error instanceof Error ? error.message : 'walk failed')
+    );
 
-  let walk: WalkResult;
-  try {
-    walk =
-      kind === 'likes'
-        ? await walkLikes(pds, mark, maxPages)
-        : await walkBookmarks(pds, mark, maxPages);
-  } catch (error) {
-    walk = {
-      kept: [],
-      newest: null,
-      error: error instanceof Error ? error.message : 'walk failed',
-    };
-  }
+  // The top of the list, down to the mark.
+  const top = await walk(undefined, mark, mark ? WALK_MAX_PAGES : FIRST_WALK_MAX_PAGES);
 
-  if (walk.error) {
-    const stored = walk.scopeDenied ? BSKY_SOURCE_SCOPE_DENIED : walk.error.slice(0, 200);
+  if (top.error) {
+    const stored = top.scopeDenied ? BSKY_SOURCE_SCOPE_DENIED : top.error.slice(0, 200);
     await env.DB.prepare(
       'UPDATE bsky_source_sync SET last_error = ? WHERE user_did = ? AND kind = ?'
     )
       .bind(stored, did, kind)
       .run();
-    log.warn('bsky_source_refresh_failed', { did, kind, error: walk.error });
+    log.warn('bsky_source_refresh_failed', { did, kind, error: top.error });
     return { refreshed: false, reason: 'error', error: stored };
+  }
+
+  const kept = [...top.kept];
+  let gap = savedGap;
+  if (mark && !top.reachedStop && top.cursor) {
+    // A burst bigger than the budget: remember where the walk stopped. The
+    // first walk has no mark to reach, so it never leaves one.
+    gap = { cursor: top.cursor, stop: savedGap?.stop ?? mark };
+  } else if (top.reachedStop && savedGap) {
+    // Caught up at the top: spend what's left finishing the older gap.
+    const remaining = REFRESH_MAX_PAGES - top.pages;
+    if (remaining > 0) {
+      const older = await walk(savedGap.cursor, savedGap.stop, remaining);
+      if (older.error) {
+        // Keep the gap as it was; the top's items still go in.
+        log.warn('bsky_source_gap_walk_failed', { did, kind, error: older.error });
+      } else {
+        // Oldest last: the ingest loop below reverses, so these go in first.
+        kept.push(...older.kept);
+        gap = older.reachedStop ? null : { cursor: older.cursor!, stop: savedGap.stop };
+      }
+    }
   }
 
   const feedUrl = bskySourceFeedUrl(kind, did);
   const entries: IngestItem[] = [];
   // Oldest first, so the archive's seq order matches the order they were kept.
-  for (const { post, keptAt } of [...walk.kept].reverse()) {
+  for (const { post, keptAt } of [...kept].reverse()) {
     const item = bskyPostItem(post, keptAt);
     if (!item) continue;
     const publishedAt = timeOf(keptAt) || null;
@@ -453,16 +512,19 @@ export async function refreshBskySource(
   }
 
   await env.DB.prepare(
-    `UPDATE bsky_source_sync SET newest_seen = COALESCE(?, newest_seen), last_error = NULL
+    `UPDATE bsky_source_sync
+        SET newest_seen = COALESCE(?, newest_seen), last_error = NULL,
+            gap_cursor = ?, gap_stop = ?
       WHERE user_did = ? AND kind = ?`
   )
-    .bind(walk.newest, did, kind)
+    .bind(top.newest, gap?.cursor ?? null, gap?.stop ?? null, did, kind)
     .run();
   log.info('bsky_source_refreshed', {
     did,
     kind,
-    walked: walk.kept.length,
+    walked: kept.length,
     ingested: entries.length,
+    gap: !!gap,
   });
   return { refreshed: true, ingested: entries.length };
 }

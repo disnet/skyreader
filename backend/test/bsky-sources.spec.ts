@@ -7,6 +7,8 @@ import {
   BSKY_BOOKMARKS_SOURCE_TYPE,
   BSKY_LIKES_SOURCE_TYPE,
   BSKY_SOURCE_GATE_MS,
+  REFRESH_MAX_PAGES,
+  WALK_MAX_PAGES,
   bskyPostItem,
   bskySourceFeedUrl,
   refreshBskySource,
@@ -115,8 +117,14 @@ function stub(data: Stub) {
     });
     const ok = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
     if (url.pathname.endsWith('/xrpc/com.atproto.repo.listRecords')) {
-      // Newest first, like a PDS.
-      return ok({ records: [...(data.likes ?? [])].reverse() });
+      // Newest first, paged by rkey, like a PDS.
+      const limit = Number(url.searchParams.get('limit') ?? 50);
+      const after = url.searchParams.get('cursor');
+      const rkeyOf = (r: { uri: string }) => r.uri.split('/').pop()!;
+      const below = [...(data.likes ?? [])].reverse().filter((r) => !after || rkeyOf(r) < after);
+      const records = below.slice(0, limit);
+      const cursor = below.length > limit ? rkeyOf(records[records.length - 1]) : undefined;
+      return ok({ records, cursor });
     }
     if (url.pathname.endsWith('/xrpc/app.bsky.feed.getPosts')) {
       const uris = new Set(url.searchParams.getAll('uris'));
@@ -328,6 +336,67 @@ describe('Bluesky likes and bookmarks as sources', () => {
       const lookup = calls.find((c) => c.path.endsWith('getPosts'));
       expect(lookup?.params.getAll('uris')).toEqual(['at://did:plc:author2/app.bsky.feed.post/p2']);
       expect(await items('likes')).toHaveLength(2);
+    });
+
+    it('finishes a burst bigger than one refresh can read, on the next ones', async () => {
+      const s = session(BASE_SCOPES);
+      stub({ likes: [like(1)], posts: [linkPost(1)] });
+      await send('/api/v2/bluesky-sources', {
+        method: 'POST',
+        body: { kind: 'likes', enabled: true },
+      });
+
+      // 250 new likes: more than the WALK_MAX_PAGES (2) pages the top gets.
+      expect(WALK_MAX_PAGES * 100).toBeLessThan(250);
+      const n = Array.from({ length: 251 }, (_, i) => i + 1);
+      stub({ likes: n.map(like), posts: n.map((i) => linkPost(i)) });
+      let later = Date.now() + BSKY_SOURCE_GATE_MS + 1000;
+      await refreshBskySource(env, s, 'likes', { now: later });
+      expect(await items('likes')).toHaveLength(1 + WALK_MAX_PAGES * 100);
+      const gap = await env.DB.prepare(
+        'SELECT gap_cursor, gap_stop FROM bsky_source_sync WHERE user_did = ?'
+      )
+        .bind(DID)
+        .first<{ gap_cursor: string | null; gap_stop: string | null }>();
+      expect(gap?.gap_cursor).toBeTruthy();
+      expect(gap?.gap_stop).toBe(like(1).uri.split('/').pop());
+
+      // Nothing new at the top, so the next refresh spends its pages on the gap.
+      later += BSKY_SOURCE_GATE_MS + 1000;
+      await refreshBskySource(env, s, 'likes', { now: later });
+      const urls = new Set((await items('likes')).map((i) => i.url));
+      expect(urls.size).toBe(251);
+      const done = await env.DB.prepare(
+        'SELECT gap_cursor FROM bsky_source_sync WHERE user_did = ?'
+      )
+        .bind(DID)
+        .first<{ gap_cursor: string | null }>();
+      expect(done?.gap_cursor).toBeNull();
+    });
+
+    it('folds a second burst into the first gap, and still loses nothing', async () => {
+      const s = session(BASE_SCOPES);
+      stub({ likes: [like(1)], posts: [linkPost(1)] });
+      await send('/api/v2/bluesky-sources', {
+        method: 'POST',
+        body: { kind: 'likes', enabled: true },
+      });
+
+      let later = Date.now();
+      const refreshWith = async (count: number) => {
+        const n = Array.from({ length: count }, (_, i) => i + 1);
+        stub({ likes: n.map(like), posts: n.map((i) => linkPost(i)) });
+        later += BSKY_SOURCE_GATE_MS + 1000;
+        return refreshBskySource(env, s, 'likes', { now: later });
+      };
+      await refreshWith(301); // leaves a gap
+      await refreshWith(601); // another burst before the gap is finished
+      // Drain: each refresh with nothing new spends REFRESH_MAX_PAGES on the gap.
+      for (let i = 0; i < Math.ceil(600 / (REFRESH_MAX_PAGES * 100)) + 1; i++) {
+        await refreshWith(601);
+      }
+      const urls = new Set((await items('likes')).map((i) => i.url));
+      expect(urls.size).toBe(601);
     });
 
     it('is refreshed after a timeline read once past the gate', async () => {

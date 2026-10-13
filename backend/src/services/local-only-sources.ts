@@ -9,8 +9,9 @@ import { isBskySourceSubscription } from './bsky-sources';
 
 // Spelled out rather than imported: routes/subscriptions.ts builds SQL from this
 // list when its module loads, and both feature modules sit in an import cycle
-// through routes/ingest.ts, so an imported constant can still be undefined then. test/bsky-sources.spec.ts
-// checks it against NEWSLETTER_SOURCE_TYPE and the BSKY_*_SOURCE_TYPEs.
+// through routes/ingest.ts, so an imported constant can still be undefined then.
+// test/bsky-sources.spec.ts checks it against NEWSLETTER_SOURCE_TYPE and the
+// BSKY_*_SOURCE_TYPEs.
 export const LOCAL_ONLY_SOURCE_TYPES = [
   'email.newsletter',
   'bsky.likes',
