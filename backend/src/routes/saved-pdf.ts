@@ -72,8 +72,11 @@ export function titleFromFilename(name: string | null): string | null {
 
 // A PDF starts with `%PDF-`, though the spec lets junk precede it within the
 // first kilobyte (and some generators do).
+// The signature may sit after leading junk, but within this many bytes.
+const PDF_SIGNATURE_WINDOW = 1024;
+
 function looksLikePdf(bytes: ArrayBuffer): boolean {
-  const head = new Uint8Array(bytes, 0, Math.min(bytes.byteLength, 1024));
+  const head = new Uint8Array(bytes, 0, Math.min(bytes.byteLength, PDF_SIGNATURE_WINDOW));
   const sig = [0x25, 0x50, 0x44, 0x46, 0x2d];
   outer: for (let i = 0; i + sig.length <= head.length; i++) {
     for (let j = 0; j < sig.length; j++) {
@@ -82,6 +85,16 @@ function looksLikePdf(bytes: ArrayBuffer): boolean {
     return true;
   }
   return false;
+}
+
+function concatChunks(chunks: Uint8Array[], total: number): ArrayBuffer {
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes.buffer;
 }
 
 async function sha256Hex(bytes: ArrayBuffer): Promise<string> {
@@ -296,8 +309,8 @@ export async function handleUploadPdf(request: Request, env: Env, session: Sessi
 }
 
 // Largest PDF the viewer route will relay for a save made by link. Nothing parses
-// it here (the browser draws it), so it can be bigger than a parse allows; the
-// cap bounds what one request holds in the Worker's memory.
+// it here (the browser draws it), so it can be bigger than a parse allows. It's
+// streamed through, so the cap bounds the transfer, not what the Worker holds.
 const MAX_RELAYED_PDF_BYTES = 30 * 1024 * 1024;
 const RELAY_TIMEOUT_MS = 20_000;
 
@@ -355,9 +368,32 @@ async function relayLinkedPdf(env: Env, session: Session, rkey: string): Promise
     await upstream.body?.cancel().catch(() => {});
     return json({ error: 'This PDF is too large to show.' }, 413);
   }
-  const bytes = await readCapped(upstream.body, MAX_RELAYED_PDF_BYTES);
-  if (bytes === null) return json({ error: 'This PDF is too large to show.' }, 413);
-  if (!looksLikePdf(bytes)) return json({ error: "That link doesn't serve a PDF now." }, 502);
+  if (!upstream.body) return json({ error: "That link doesn't serve a PDF now." }, 502);
+
+  // Hold only the head (enough to find the signature), then stream the rest
+  // through, so one request costs a chunk of memory rather than the whole file.
+  const reader = upstream.body.getReader();
+  const head: Uint8Array[] = [];
+  let headBytes = 0;
+  let ended = false;
+  try {
+    while (headBytes < PDF_SIGNATURE_WINDOW) {
+      const { done, value } = await reader.read();
+      if (done) {
+        ended = true;
+        break;
+      }
+      head.push(value);
+      headBytes += value.byteLength;
+    }
+  } catch {
+    await reader.cancel().catch(() => {});
+    return json({ error: "Couldn't fetch the PDF from its site." }, 502);
+  }
+  if (!looksLikePdf(concatChunks(head, headBytes))) {
+    await reader.cancel().catch(() => {});
+    return json({ error: "That link doesn't serve a PDF now." }, 502);
+  }
 
   let path = new URL(save.url).pathname;
   try {
@@ -366,7 +402,34 @@ async function relayLinkedPdf(env: Env, session: Session, rkey: string): Promise
     // A malformed escape: name it by the raw path.
   }
   const name = cleanFilename(path) || 'document.pdf';
-  return pdfResponse(bytes, /\.pdf$/i.test(name) ? name : `${name}.pdf`, bytes.byteLength);
+  // A body with no (or a lying) Content-Length is still capped: past the limit
+  // the stream errors and the reader gets a truncated file, not a held isolate.
+  let sent = 0;
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of head) controller.enqueue(chunk);
+      sent = headBytes;
+      if (ended) controller.close();
+    },
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) return controller.close();
+        sent += value.byteLength;
+        if (sent > MAX_RELAYED_PDF_BYTES) {
+          await reader.cancel().catch(() => {});
+          return controller.error(new Error('relayed PDF over the size cap'));
+        }
+        controller.enqueue(value);
+      } catch (error) {
+        controller.error(error);
+      }
+    },
+    cancel(reason) {
+      return reader.cancel(reason);
+    },
+  });
+  return pdfResponse(body, /\.pdf$/i.test(name) ? name : `${name}.pdf`);
 }
 
 // GET /api/saved/<rkey>/file — the original, only ever to the reader who saved it:

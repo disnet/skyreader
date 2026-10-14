@@ -109,13 +109,17 @@
         void loadingTask.destroy();
         return;
       }
-      const sizes: { width: number; height: number }[] = [];
-      for (let n = 1; n <= doc.numPages; n++) {
-        const vp = (await doc.getPage(n)).getViewport({ scale: 1 });
-        sizes.push({ width: vp.width, height: vp.height });
-      }
-      pageSizes = sizes;
+      // Show the pages as soon as the first is measured: every page holds the
+      // first one's size until its own arrives, which for most documents is the
+      // same. Measuring them all first was one worker round trip per page.
+      const first = (await doc.getPage(1)).getViewport({ scale: 1 });
+      if (destroyed) return;
+      pageSizes = Array.from({ length: doc.numPages }, () => ({
+        width: first.width,
+        height: first.height,
+      }));
       status = 'ready';
+      void measurePages(doc);
     } catch (err) {
       if (destroyed) return;
       console.error('[PdfViewer] load failed:', err);
@@ -128,6 +132,28 @@
             : "Couldn't open the original PDF.";
       status = 'error';
     }
+  }
+
+  // The rest of the pages' sizes, asked for together. Applied once, and only if
+  // a page differs from the first, so a uniform document never reflows.
+  async function measurePages(pdf: PDFDocumentProxy) {
+    let sizes: { width: number; height: number }[];
+    try {
+      sizes = await Promise.all(
+        Array.from({ length: pdf.numPages }, async (_, i) => {
+          const vp = (await pdf.getPage(i + 1)).getViewport({ scale: 1 });
+          return { width: vp.width, height: vp.height };
+        })
+      );
+    } catch {
+      // A page that won't open keeps the first page's size; drawing it fails quietly.
+      return;
+    }
+    if (destroyed || doc !== pdf) return;
+    const differs = sizes.some(
+      (size, i) => size.width !== pageSizes[i]?.width || size.height !== pageSizes[i]?.height
+    );
+    if (differs) pageSizes = sizes;
   }
 
   function clearPage(n: number) {

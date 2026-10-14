@@ -357,6 +357,24 @@ describe('GET /api/saved/<rkey>/file for a PDF saved by link', () => {
     expect(new Uint8Array(await res.arrayBuffer())).toEqual(PDF);
   });
 
+  it('streams a PDF that arrives in small chunks with no length', async () => {
+    await saveLink();
+    const big = new Uint8Array(5000);
+    big.set(PDF);
+    big.fill(0x20, PDF.length);
+    const chunked = () =>
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          for (let i = 0; i < big.length; i += 100) controller.enqueue(big.slice(i, i + 100));
+          controller.close();
+        },
+      });
+    globalThis.fetch = vi.fn(async () => new Response(chunked())) as unknown as typeof fetch;
+    const { status, res } = await call(request(`/api/saved/${LINK_RKEY}/file`));
+    expect(status).toBe(200);
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(big);
+  });
+
   it('is a Supporter feature', async () => {
     await reset('free');
     await saveLink();
