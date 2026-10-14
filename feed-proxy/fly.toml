@@ -2,7 +2,7 @@ app = "skyreader-feed-proxy"
 primary_region = "sjc"
 
 # KEEP IN SYNC WITH fly.staging.toml. The two files must differ only in `app`, the
-# `INGEST_URL` in [env], and (if ever needed) `[vm]`; everything else is
+# `INGEST_URL` and `PDF_EXTRACTOR_URL` in [env], and (if ever needed) `[vm]`; everything else is
 # deliberately identical so staging soaks what prod will run. As of 2026-08-21
 # the [vm] blocks are identical too (both shared-cpu-2x/1024, see below), so
 # staging genuinely reproduces prod's CPU behaviour again.
@@ -77,6 +77,9 @@ primary_region = "sjc"
   DATA_DIR = "/data"
   # Ingest push into the prod Worker's D1.
   INGEST_URL = "https://api.skyreader.app"
+  # PDFs are parsed by the prod pdf-extractor Worker (pdf-extractor/), which
+  # authenticates the PDF_EXTRACTOR_SECRET Fly secret.
+  PDF_EXTRACTOR_URL = "https://pdf-extractor.skyreader.app"
   # Fresh window. The self-warming loop refreshes active feeds before they reach
   # this age, so user requests stay HITs even at a tight 5-minute freshness.
   CACHE_TTL_SECONDS = "300"

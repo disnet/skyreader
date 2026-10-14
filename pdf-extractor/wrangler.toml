@@ -1,0 +1,23 @@
+name = "skyreader-pdf-extractor"
+main = "src/index.ts"
+compatibility_date = "2025-09-27"
+
+# Production. Called only by the feed proxy, which authenticates with
+# EXTRACT_SECRET (the same value as the proxy's PDF_EXTRACTOR_SECRET Fly secret):
+#   npx wrangler secret put EXTRACT_SECRET
+workers_dev = false
+routes = [{ pattern = "pdf-extractor.skyreader.app", custom_domain = true }]
+
+# A runaway's ceiling, and so the cost ceiling per parse: 4-5x the ~2s of CPU a
+# 100-page paper takes. (30s is the paid plan's default.) The proxy gives up
+# after PDF_EXTRACT_TIMEOUT_MS of wall time regardless.
+[limits]
+cpu_ms = 10000
+
+[observability]
+enabled = true
+
+[env.staging]
+name = "skyreader-pdf-extractor-staging"
+workers_dev = false
+routes = [{ pattern = "pdf-extractor-staging.skyreader.app", custom_domain = true }]

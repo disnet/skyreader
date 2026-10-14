@@ -8,6 +8,7 @@ import { RobotsPolicy } from './robots';
 import { loadWebBotAuth, type WebBotAuth } from './web-bot-auth';
 import { DocumentFirehose } from './jetstream';
 import { pingHeartbeat } from './heartbeat';
+import { remotePdfExtractor } from './pdf-extract';
 import {
   pushDirtyItems,
   pullCrawlSet,
@@ -18,6 +19,17 @@ import {
 
 // Config
 const PROXY_SECRET = process.env.PROXY_SECRET;
+
+// PDFs are parsed by the pdf-extractor Worker, not here (see pdf-extract.ts).
+// Without both, /extract reports every PDF as unsupported: loud, not fatal, since
+// web pages still save.
+const PDF_EXTRACTOR_URL = process.env.PDF_EXTRACTOR_URL;
+const PDF_EXTRACTOR_SECRET = process.env.PDF_EXTRACTOR_SECRET;
+if (!PDF_EXTRACTOR_URL || !PDF_EXTRACTOR_SECRET) {
+  console.warn(
+    '[Proxy] WARNING: PDF_EXTRACTOR_URL / PDF_EXTRACTOR_SECRET not set — PDFs cannot be saved.'
+  );
+}
 
 // Fail closed: every route's auth check is `if (proxySecret && header !== secret)`,
 // so a missing secret silently disables auth and turns this into an open SSRF /
@@ -225,6 +237,10 @@ const { app, warmStaleFeeds, warmStaleDocuments } = createApp(db, {
       isSubscribed: () => false,
     },
   ingestEnabled: INGEST_ENABLED,
+  extractPdf:
+    PDF_EXTRACTOR_URL && PDF_EXTRACTOR_SECRET
+      ? remotePdfExtractor(PDF_EXTRACTOR_URL, PDF_EXTRACTOR_SECRET)
+      : undefined,
   robots,
   webBotAuth,
 });
@@ -408,8 +424,8 @@ export default {
   // being cut off underneath. /extract is the slowest, and its budget is the sum
   // of every stage that can block, not just the fetch: waiting for a concurrency
   // permit (EXTRACT_QUEUE_WAIT_MS, 5s) + the upstream fetch
-  // (EXTRACT_FETCH_TIMEOUT_MS, 20s) + a synchronous Defuddle parse, or a PDF
-  // parse (PDF_PARSE_HARD_TIMEOUT_MS, 15s, enforced by killing its worker). Every
+  // (EXTRACT_FETCH_TIMEOUT_MS, 20s) + a synchronous Defuddle parse, or the PDF
+  // extractor Worker call (PDF_EXTRACT_TIMEOUT_MS, 15s, an abort signal). Every
   // one of those is capped, which is what makes the sum meaningful — an uncapped
   // stage would put the route back under this ceiling no matter how high it goes.
   // Raise this before raising any of them, never after.

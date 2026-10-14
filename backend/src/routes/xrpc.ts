@@ -212,7 +212,7 @@ async function extractAndStoreSavedContent(
   url: string
 ): Promise<void> {
   try {
-    const a = await new FeedProxyClient(env).extract(url);
+    const a = await new FeedProxyClient(env).extract(url, { userDid });
     await fillExtractedContent(env, a, { userDid, rkey });
   } catch (err) {
     console.error('xrpc save: background extraction failed', err);
