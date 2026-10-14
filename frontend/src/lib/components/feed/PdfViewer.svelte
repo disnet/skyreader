@@ -118,6 +118,10 @@
   // is on. Highlights can't be drawn or made until it's in: a selector's
   // context can reach across pages, so it is matched against all of them.
   let model = $state.raw<PdfTextModel | null>(null);
+  // The open document, once its pages are showing; the text read waits on it
+  // and on `highlighting`, which can turn on after the document has loaded.
+  let readyDoc = $state.raw<PDFDocumentProxy | null>(null);
+  let textRequested = false;
   // Which page and run a text-layer span draws (pages 0-based, as the model's).
   const runOf = new WeakMap<Element, { page: number; run: number }>();
 
@@ -168,7 +172,7 @@
       }));
       status = 'ready';
       void measurePages(doc);
-      if (highlighting) void readText(doc);
+      readyDoc = doc;
     } catch (err) {
       if (destroyed) return;
       console.error('[PdfViewer] load failed:', err);
@@ -223,6 +227,12 @@
     }
     model = buildPdfTextModel(pages);
   }
+
+  $effect(() => {
+    if (!highlighting || !readyDoc || textRequested) return;
+    textRequested = true;
+    void readText(readyDoc);
+  });
 
   // Where each highlight falls, grouped by page (0-based).
   let marksByPage = $derived.by(() => {
