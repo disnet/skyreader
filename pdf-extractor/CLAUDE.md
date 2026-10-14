@@ -48,6 +48,9 @@ Parses are billed per CPU-ms, so three things bound them:
   geometry. The page cap (300) and byte cap (1 MB, the save's D1 row) end a parse early and keep
   what was read. There is deliberately no time budget: a Worker's clock doesn't move while it
   computes. Time is bounded by `[limits] cpu_ms` and the proxy's `PDF_EXTRACT_TIMEOUT_MS`.
+  How runs become text (whitespace, `joinLine`'s de-hyphenation, dropping rotated runs) is
+  mirrored by the frontend's `utils/pdfTextModel.ts`, so a highlight made on the original pages
+  finds its passage in this reflow and back. Change one, change the other.
 - `src/pdf-fixture.ts` — builds small PDFs in memory for tests.
 
 Tests run inside workerd (`@cloudflare/vitest-pool-workers`), so they also prove pdf.js works on

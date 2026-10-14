@@ -2,8 +2,13 @@
   // Harness for the original-PDF view (PdfViewer): a multi-page PDF built in
   // memory, drawn by PDF.js with its text layer. `?src=<url>` views another PDF
   // instead (it must allow this origin to fetch it, and the dev CSP's connect-src must allow it). No auth, no backend.
+  //
+  // Highlighting is live but local: selecting text (mouse release, or a touch
+  // selection let go of) highlights it at once, a tap on a highlight removes it,
+  // and the sample opens with one that crosses from page 1 onto page 2.
   import { page } from '$app/state';
   import PdfViewer from '$lib/components/feed/PdfViewer.svelte';
+  import type { Highlight, TextQuoteSelector } from '$lib/types';
   import { makePdf, type Placed } from '../_harness/pdfFixture';
   import { SAMPLE_JPX_BASE64, makeJpxPdf } from '../_harness/jpxPdf';
 
@@ -33,11 +38,40 @@
     : page.url.searchParams.get('sample') === 'jpx'
       ? jpxPdf()
       : samplePdf();
+
+  const make = (selector: TextQuoteSelector): Highlight => ({
+    id: Math.random().toString(36).slice(2),
+    selector,
+    createdAt: Date.now(),
+  });
+  let highlights = $state<Highlight[]>(
+    src
+      ? []
+      : [
+          make({
+            type: 'TextQuoteSelector',
+            exact: 'recurrent or convolutional 1.28 Section 2: A heading',
+          }),
+        ]
+  );
+  const add = (selector: TextQuoteSelector) => {
+    highlights = [...highlights, make(selector)];
+    window.getSelection()?.removeAllRanges();
+  };
 </script>
 
 <div class="harness">
   <h1>PDF viewer</h1>
-  <PdfViewer {src} {data} fallbackHref={src} />
+  <p class="count" data-testid="highlight-count">{highlights.length} highlights</p>
+  <PdfViewer
+    {src}
+    {data}
+    fallbackHref={src}
+    {highlights}
+    onselect={add}
+    oncommit={add}
+    onhighlight={(id) => (highlights = highlights.filter((h) => h.id !== id))}
+  />
 </div>
 
 <style>
@@ -52,6 +86,12 @@
 
   h1 {
     font-size: var(--text-lg);
+    margin: 0 0 0.25rem;
+  }
+
+  .count {
     margin: 0 0 1rem;
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
   }
 </style>

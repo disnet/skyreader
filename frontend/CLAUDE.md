@@ -239,9 +239,8 @@ A saved PDF (`contentType: 'pdf'`) reads as its reflowed text, and `SavedReader`
 **Text / Original** toggle (remembered per device in `localStorage['skyreader-pdf-view']`). Original
 mounts `feed/PdfViewer.svelte` in place of the text body: PDF.js (`pdfjs-dist`, legacy build,
 lazy-imported so it costs nothing until used) draws each page to a canvas near the viewport and drops
-it far away, with PDF.js's text layer on top for selection. Highlights and notes stay in the text
-view (they anchor to the reflow), so the body and its hooks unmount in Original and re-attach on the
-way back; paged mode applies to the text only. The bytes come from `GET /api/saved/<rkey>/file`: the
+it far away, with PDF.js's text layer on top for selection. The text body and its hooks unmount in
+Original and re-attach on the way back; paged mode applies to the text only. The bytes come from `GET /api/saved/<rkey>/file`: the
 original kept in R2, whether the PDF was uploaded or saved by link (the backend keeps a link's
 original at save time, or on first open for an older save; most PDF hosts send no CORS headers). The CSP carries `worker-src 'self' blob:` for PDF.js's worker. PDF.js's image
 decoders (OpenJPEG for JPEG 2000, JBIG2 for scans, QCMS for ICC colour) load by fixed filename from
@@ -249,7 +248,25 @@ its `wasmUrl` option, as WebAssembly or the JS fallback beside it; without `wasm
 simply don't draw. `vite.config.ts`'s `pdfjsDecoders()` copies them to
 `/_app/immutable/pdfjs/<pdfjs version>/` (outside the precache, fetched on demand), and they run in
 the worker, a static asset the Pages middleware's CSP doesn't cover, so no `'wasm-unsafe-eval'` is
-needed. Harness: `/dev/pdf` (`?sample=jpx` for a JPEG 2000 image).
+needed. Harness: `/dev/pdf` (`?sample=jpx` for a JPEG 2000 image; highlighting there is live but local).
+
+**Highlights are shared between the views**, because they are the same `TextQuoteSelector`s.
+`utils/pdfTextModel.ts` reads every page's `getTextContent()` once and joins the runs the way the
+extractor reflowed them (whitespace collapsed, a line-end `[a-z]-` joined to a lowercase
+continuation without its hyphen, rotated runs dropped), keeping each character's offset. A
+selector from either view then locates in the other with `locateQuote` (exact, then
+whitespace-blind), and maps back to slices of runs. pdf.js draws one text-layer span per run
+(`TextLayer.textDivs`), so a slice becomes a `Range`, and its rects become `.pdf-mark` boxes in a
+layer under the text layer (multiplied into the drawing, so text stays selectable and crisp).
+`PdfViewer` only draws and reports: `onselect` (mouse release), `oncommit` (a touch selection let
+go of, mirroring the text view's commit-on-collapse) and `onhighlight` (a tap, found by hit-testing
+the marks, since the text layer is on top). `SavedReader` hands those to `useHighlights`'s
+`offerSelection` / `addHighlight` / `openHighlight`, so the same popover and writes serve both
+views. There is no margin in Original, so the popover edits notes itself (`onNote` is dropped), and
+a noted highlight wears a dot where it ends. Grab handles and double-click-a-paragraph are
+text-view only. Text the extractor dropped (running headers, page numbers) can be highlighted on
+the pages but won't show in the text. If you change how the extractor joins lines, change
+`buildPdfTextModel` to match, or cross-view highlights stop lining up.
 
 #### Selecting and re-bounding in paged mode
 

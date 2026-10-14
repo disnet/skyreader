@@ -45,7 +45,7 @@ test.describe('PDF original view', () => {
     await authedPage.getByText(TITLE).first().click({ timeout: 15_000 });
 
     const reader = authedPage.locator('.reader-body');
-    // Text first: the reflow, where highlights and notes live.
+    // Text first: the reflow.
     const toggle = authedPage.getByRole('group', { name: 'Show this PDF as' });
     await expect(toggle).toBeVisible({ timeout: 15_000 });
     await expect(reader.getByText('Reflowed paragraph 1')).toBeVisible();
@@ -67,6 +67,68 @@ test.describe('PDF original view', () => {
       .click();
     await expect(reader.getByText('Reflowed paragraph 1')).toBeVisible();
     await expect(authedPage.locator('.pdf-page')).toHaveCount(0);
+  });
+
+  test('a highlight made on either view shows on the other', async ({ authedPage, testUser }) => {
+    await makeSupporter(testUser);
+    // The pages carry the reflow's own sentences, as an extracted PDF's would.
+    const sentences = [1, 2, 3, 4].map(
+      (i) => `Sentence ${i} of the paper is about attention and nothing else.`
+    );
+    const rkey = await seedSavedArticle(testUser, {
+      url: '',
+      title: TITLE,
+      source: 'upload',
+      contentType: 'pdf',
+      content: `<section data-pdf-page="1">${sentences.map((t) => `<p>${t}</p>`).join('')}</section>`,
+      wordCount: 50,
+    });
+    const pdf = Buffer.from(makePdf([sentences.map((t, i): Placed => [72, 700 - i * 40, 11, t])]));
+    await authedPage.route(`**/api/saved/${rkey}/file`, (route) =>
+      route.fulfill({ body: pdf, contentType: 'application/pdf' })
+    );
+    await authedPage.evaluate(() => localStorage.setItem('skyreader-pdf-view', 'original'));
+
+    await authedPage.goto('/saved');
+    await authedPage.getByText(TITLE).first().click({ timeout: 15_000 });
+    const toggle = authedPage.getByRole('group', { name: 'Show this PDF as' });
+
+    // On the pages: drag across most of the second sentence, then Highlight.
+    const line = authedPage.locator('.textLayer span', { hasText: 'Sentence 2' });
+    await expect(line).toBeVisible({ timeout: 15_000 });
+    const box = (await line.boundingBox())!;
+    await authedPage.mouse.move(box.x + 2, box.y + box.height / 2);
+    await authedPage.mouse.down();
+    await authedPage.mouse.move(box.x + box.width * 0.6, box.y + box.height / 2, { steps: 8 });
+    await authedPage.mouse.up();
+    await authedPage.getByRole('button', { name: 'Save private highlight' }).click();
+    await expect(authedPage.locator('.pdf-mark')).toHaveCount(1);
+
+    // The same passage is marked in the text.
+    await toggle.getByRole('button', { name: 'Text' }).click();
+    const reader = authedPage.locator('.reader-body');
+    await expect(reader.locator('mark.highlight')).toContainText('Sentence 2 of the paper');
+
+    // And the other way: a paragraph highlighted in the text (double-click)…
+    await reader.getByText('Sentence 4').dblclick();
+    await expect(reader.locator('mark.highlight')).toHaveCount(2);
+
+    // …is marked on the pages, on its own line.
+    await toggle.getByRole('button', { name: 'Original' }).click();
+    await expect(authedPage.locator('.pdf-mark')).toHaveCount(2, { timeout: 15_000 });
+    const sentence4 = (await authedPage
+      .locator('.textLayer span', { hasText: 'Sentence 4' })
+      .boundingBox())!;
+    const marks = await authedPage
+      .locator('.pdf-mark')
+      .evaluateAll((els) => els.map((el) => el.getBoundingClientRect().top));
+    expect(marks.some((top) => Math.abs(top - sentence4.y) < 4)).toBe(true);
+
+    // A tap on a mark opens its toolbar; removing it there clears it from the pages.
+    const first = (await authedPage.locator('.pdf-mark').first().boundingBox())!;
+    await authedPage.mouse.click(first.x + first.width / 2, first.y + first.height / 2);
+    await authedPage.getByRole('button', { name: 'Remove highlight' }).click();
+    await expect(authedPage.locator('.pdf-mark')).toHaveCount(1);
   });
 
   test('a web article has no PDF toggle', async ({ authedPage, testUser }) => {

@@ -134,7 +134,16 @@ export function createSelectorForElement(
   const inside = nodes.filter((n) => element.contains(n.node));
   const start = inside[0]?.start ?? 0;
   const end = inside.at(-1)?.end ?? 0;
-  const exact = text.slice(start, end).slice(0, MAX_EXACT_LENGTH);
+  return selectorFromText(text, start, Math.min(end, start + MAX_EXACT_LENGTH));
+}
+
+/**
+ * The selector for `text.slice(start, end)`, with its context drawn from the
+ * text around it. For surfaces that keep their own model of the article's text
+ * rather than reading it from a DOM (the original PDF's pages).
+ */
+export function selectorFromText(text: string, start: number, end: number): TextQuoteSelector {
+  const exact = text.slice(start, end);
   const prefix = text.slice(Math.max(0, start - MAX_CONTEXT_LENGTH), start);
   const suffix = text.slice(end, end + MAX_CONTEXT_LENGTH);
 
@@ -168,12 +177,24 @@ function findInTextMap(
   text: string,
   nodes: Array<{ node: Text; start: number; end: number }>
 ): Range | null {
-  if (nodes.length === 0 || !selector.exact) return null;
+  if (nodes.length === 0) return null;
+  const hit = locateQuote(selector, text);
+  return hit ? offsetToRange(hit.start, hit.end, nodes) : null;
+}
 
+/**
+ * Where a selector's quote sits in `text`, as offsets: an exact match first,
+ * then the whitespace-blind one (see `locateIgnoringWhitespace`). Null when it
+ * isn't there.
+ */
+export function locateQuote(
+  selector: TextQuoteSelector,
+  text: string
+): { start: number; end: number } | null {
+  if (!selector.exact) return null;
   const exact = locate(text, selector.exact, selector.prefix, selector.suffix);
-  if (exact !== null) return offsetToRange(exact, exact + selector.exact.length, nodes);
-
-  return findIgnoringWhitespace(selector, text, nodes);
+  if (exact !== null) return { start: exact, end: exact + selector.exact.length };
+  return locateIgnoringWhitespace(selector, text);
 }
 
 /**
@@ -192,15 +213,14 @@ function findInTextMap(
  * runs once an exact match has already failed, and prefix/suffix still disambiguate
  * repeats, so the looser match costs nothing when the document is unchanged.
  */
-function findIgnoringWhitespace(
+function locateIgnoringWhitespace(
   selector: TextQuoteSelector,
-  text: string,
-  nodes: Array<{ node: Text; start: number; end: number }>
-): Range | null {
+  text: string
+): { start: number; end: number } | null {
   const needle = stripWhitespace(selector.exact).text;
   if (!needle) return null;
 
-  const { text: bare, offsets } = stripWhitespace(text);
+  const { text: bare, offsets } = strippedDocument(text);
   const hit = locate(
     bare,
     needle,
@@ -211,7 +231,7 @@ function findIgnoringWhitespace(
 
   // `offsets` maps each surviving character back to where it sat in `text`; the
   // match runs to just past the last one it covers.
-  return offsetToRange(offsets[hit], offsets[hit + needle.length - 1] + 1, nodes);
+  return { start: offsets[hit], end: offsets[hit + needle.length - 1] + 1 };
 }
 
 /**
@@ -261,6 +281,16 @@ function locate(
   }
 
   return bestMatch;
+}
+
+// The last document stripped, kept because every highlight on a page is
+// located against the same text: a PDF's whole text runs to a megabyte, and
+// re-stripping it per highlight made each repaint quadratic.
+let lastStripped: { text: string; result: { text: string; offsets: number[] } } | null = null;
+
+function strippedDocument(text: string): { text: string; offsets: number[] } {
+  if (lastStripped?.text !== text) lastStripped = { text, result: stripWhitespace(text) };
+  return lastStripped.result;
 }
 
 /**

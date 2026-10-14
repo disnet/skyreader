@@ -7,13 +7,29 @@
     PDFPageProxy,
     RenderTask,
   } from 'pdfjs-dist';
+  import type { TextItem } from 'pdfjs-dist/types/src/display/api';
   import Icon from '$lib/components/Icon.svelte';
+  import type { Highlight, TextQuoteSelector } from '$lib/types';
+  import {
+    buildPdfTextModel,
+    locateInPdf,
+    selectorForSpan,
+    textOffsetAt,
+    type PdfRunSlice,
+    type PdfTextModel,
+  } from '$lib/utils/pdfTextModel';
 
   /**
    * A saved PDF as it was printed: every page drawn by PDF.js, with its text
-   * layer on top so passages can be selected and copied. It is the companion to
-   * the reflowed text the reader shows by default (where highlights and notes
-   * live) — the place to look at figures, tables, equations and layout.
+   * layer on top so passages can be selected, copied and highlighted. It is the
+   * companion to the reflowed text the reader shows by default — the place to
+   * look at figures, tables, equations and layout.
+   *
+   * Highlights are the reflowed text's: the same selectors, matched against a
+   * model of the pages' text built the way the extractor reflowed it (see
+   * `utils/pdfTextModel.ts`), so a passage marked in either view is marked in
+   * both. This component only draws them and reports selections and taps; the
+   * host decides what they do.
    *
    * PDF.js is loaded on first use, so readers who never open an original never
    * download it. Pages are drawn only near the viewport and dropped again when
@@ -28,9 +44,32 @@
     fallbackHref?: string;
     /** Height of chrome fixed over the bottom edge (the mobile reader bar), in px. */
     bottomInset?: number;
+    /** Highlights to draw on the pages. Setting it (or `onselect`) turns highlighting on. */
+    highlights?: Highlight[];
+    /** A passage selected with a mouse, released: offer to highlight it. */
+    onselect?: (selector: TextQuoteSelector, range: Range) => void;
+    /**
+     * A touch selection let go of. Touch never gets a toolbar mid-selection, so
+     * the phone's own Copy/Look Up menu stays usable; clearing the selection is
+     * what makes the highlight, as in the text view.
+     */
+    oncommit?: (selector: TextQuoteSelector) => void;
+    /** A drawn highlight was tapped. `getRect` is where it is now (null once gone). */
+    onhighlight?: (id: string, getRect: () => DOMRect | null) => void;
   }
 
-  let { src, data: givenData, fallbackHref, bottomInset = 0 }: Props = $props();
+  let {
+    src,
+    data: givenData,
+    fallbackHref,
+    bottomInset = 0,
+    highlights,
+    onselect,
+    oncommit,
+    onhighlight,
+  }: Props = $props();
+
+  const highlighting = $derived(Boolean(highlights || onselect));
 
   type Status = 'loading' | 'ready' | 'error';
   let status = $state<Status>('loading');
@@ -68,10 +107,19 @@
     scale: number;
     task: RenderTask | null;
     textLayer: { cancel: () => void } | null;
+    /** The text layer's spans, one per text run, once it has rendered. */
+    runs: HTMLElement[] | null;
   }
   const drawn = new Map<number, Drawn>();
   const nearViewport = new Set<number>();
   let destroyed = false;
+
+  // The whole document's text, read once in the background when highlighting
+  // is on. Highlights can't be drawn or made until it's in: a selector's
+  // context can reach across pages, so it is matched against all of them.
+  let model = $state.raw<PdfTextModel | null>(null);
+  // Which page and run a text-layer span draws (pages 0-based, as the model's).
+  const runOf = new WeakMap<Element, { page: number; run: number }>();
 
   // iOS Safari refuses canvases past ~16.7M pixels; stay under it at any zoom.
   const MAX_CANVAS_PIXELS = 16_000_000;
@@ -120,6 +168,7 @@
       }));
       status = 'ready';
       void measurePages(doc);
+      if (highlighting) void readText(doc);
     } catch (err) {
       if (destroyed) return;
       console.error('[PdfViewer] load failed:', err);
@@ -156,6 +205,200 @@
     if (differs) pageSizes = sizes;
   }
 
+  // Every page's text, one page at a time so drawing the first pages isn't
+  // queued behind it in the worker. The same `getTextContent()` defaults the
+  // extractor and the text layer use, so the runs line up with both.
+  async function readText(pdf: PDFDocumentProxy) {
+    const pages: TextItem[][] = [];
+    try {
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const content = await (await pdf.getPage(i)).getTextContent();
+        if (destroyed || doc !== pdf) return;
+        pages.push(content.items.filter((item): item is TextItem => 'str' in item));
+      }
+    } catch (err) {
+      // Without the text the pages still read; they just can't be highlighted.
+      console.error('[PdfViewer] text read failed:', err);
+      return;
+    }
+    model = buildPdfTextModel(pages);
+  }
+
+  // Where each highlight falls, grouped by page (0-based).
+  let marksByPage = $derived.by(() => {
+    // `note`: the highlight has a note and ends on this page, where it's marked.
+    const byPage = new Map<number, { id: string; note: boolean; slices: PdfRunSlice[] }[]>();
+    if (!model || !highlights) return byPage;
+    for (const highlight of highlights) {
+      const slices = locateInPdf(model, highlight.selector);
+      if (!slices) continue;
+      const lastPage = slices[slices.length - 1].page;
+      for (const page of new Set(slices.map((s) => s.page))) {
+        const list = byPage.get(page) ?? [];
+        list.push({
+          id: highlight.id,
+          note: Boolean(highlight.note) && page === lastPage,
+          slices: slices.filter((s) => s.page === page),
+        });
+        byPage.set(page, list);
+      }
+    }
+    return byPage;
+  });
+
+  /**
+   * Draw a page's highlights as boxes under its text layer, measured from the
+   * spans they cover. Under, so the text above stays selectable; multiplied, so
+   * the ink tints the paper without veiling the type.
+   */
+  function paintPage(n: number) {
+    const el = pageEl(n);
+    const layer = el?.querySelector<HTMLDivElement>('.pdf-marks');
+    if (!el || !layer) return;
+    layer.replaceChildren();
+    const runs = drawn.get(n)?.runs;
+    const marks = marksByPage.get(n - 1);
+    if (!runs || !marks) return;
+    const origin = el.getBoundingClientRect();
+    const range = document.createRange();
+    for (const { id, note, slices } of marks) {
+      let last: HTMLElement | null = null;
+      for (const slice of slices) {
+        const text = runs[slice.run]?.firstChild;
+        if (!text || text.nodeType !== Node.TEXT_NODE) continue;
+        const length = text.textContent?.length ?? 0;
+        range.setStart(text, Math.min(slice.from, length));
+        range.setEnd(text, Math.min(slice.to, length));
+        for (const rect of range.getClientRects()) {
+          if (!rect.width || !rect.height) continue;
+          const mark = document.createElement('div');
+          mark.className = 'pdf-mark';
+          mark.dataset.highlightId = id;
+          mark.style.left = `${rect.left - origin.left - el.clientLeft}px`;
+          mark.style.top = `${rect.top - origin.top - el.clientTop}px`;
+          mark.style.width = `${rect.width}px`;
+          mark.style.height = `${rect.height}px`;
+          layer.append(mark);
+          last = mark;
+        }
+      }
+      // A note is marked where its passage ends, as in the text.
+      if (note && last) last.classList.add('has-note');
+    }
+  }
+
+  $effect(() => {
+    void marksByPage;
+    for (const n of drawn.keys()) paintPage(n);
+  });
+
+  /** The live mark boxes of one highlight, in page order. */
+  function marksOf(id: string): HTMLElement[] {
+    return Array.from(
+      containerEl?.querySelectorAll<HTMLElement>(
+        `.pdf-mark[data-highlight-id="${CSS.escape(id)}"]`
+      ) ?? []
+    );
+  }
+
+  // --- Selecting and tapping on the pages ---
+
+  /**
+   * Where a selection boundary falls in the model's text. Usually inside a
+   * run's span; otherwise (between runs, on a page's edge) at the nearest run
+   * on the selection's side of it.
+   */
+  function boundaryOffset(node: Node, offset: number, side: 'start' | 'end'): number | null {
+    if (!model) return null;
+    const at =
+      node.nodeType === Node.TEXT_NODE && node.parentElement && runOf.get(node.parentElement);
+    if (at) return textOffsetAt(model, at.page, at.run, offset);
+    const point = document.createRange();
+    point.setStart(node, offset);
+    const spans = Array.from(
+      containerEl?.querySelectorAll<HTMLElement>('.textLayer span') ?? []
+    ).filter((span) => runOf.has(span));
+    // comparePoint(span, 0) >= 0: the span starts at or after the boundary.
+    const span =
+      side === 'start'
+        ? spans.find((s) => point.comparePoint(s, 0) >= 0)
+        : spans.findLast((s) => point.comparePoint(s, 0) < 0);
+    const run = span && runOf.get(span);
+    if (!run) return null;
+    return textOffsetAt(
+      model,
+      run.page,
+      run.run,
+      side === 'start' ? 0 : (span.textContent?.length ?? 0)
+    );
+  }
+
+  /** The selector for the live selection, when it lies on the pages and says something. */
+  function selectionSelector(): { selector: TextQuoteSelector; range: Range } | null {
+    const selection = window.getSelection();
+    if (!model || !selection || selection.isCollapsed || !selection.rangeCount) return null;
+    const range = selection.getRangeAt(0);
+    const pages = containerEl?.querySelector('.pdf-pages');
+    if (!pages?.contains(range.commonAncestorContainer)) return null;
+    const start = boundaryOffset(range.startContainer, range.startOffset, 'start');
+    const end = boundaryOffset(range.endContainer, range.endOffset, 'end');
+    if (start === null || end === null) return null;
+    const selector = selectorForSpan(model, start, end);
+    if (!selector || selector.exact.length < 3) return null;
+    return { selector, range };
+  }
+
+  // A press that began on the pages, so its release is a selection gesture
+  // (and not, say, the zoom buttons'). Listened for on the document, so a drag
+  // released past the edge of the page still counts.
+  let pressOnPages = false;
+  let touching = false;
+  let pendingTouch: TextQuoteSelector | null = null;
+
+  function handlePointerDown(e: PointerEvent) {
+    touching = e.pointerType !== 'mouse';
+    const target = e.target as Element | null;
+    pressOnPages = Boolean(target?.closest?.('.pdf-page') && containerEl?.contains(target));
+  }
+
+  function handleMouseUp() {
+    if (!pressOnPages || touching || !onselect) return;
+    // Let the selection settle.
+    setTimeout(() => {
+      const found = selectionSelector();
+      if (found) onselect?.(found.selector, found.range);
+    }, 10);
+  }
+
+  function handleSelectionChange() {
+    if (!touching || !oncommit) return;
+    const selection = window.getSelection();
+    if (selection && !selection.isCollapsed) {
+      pendingTouch = selectionSelector()?.selector ?? null;
+      return;
+    }
+    const selector = pendingTouch;
+    pendingTouch = null;
+    if (selector) oncommit(selector);
+  }
+
+  // A tap on a highlight. The text layer is on top, so it's found by where the
+  // tap landed rather than by what it hit; a drag that selected text isn't one.
+  function handleClick(e: MouseEvent) {
+    if (!onhighlight || !window.getSelection()?.isCollapsed) return;
+    const page = (e.target as Element | null)?.closest?.('.pdf-page');
+    if (!page) return;
+    for (const mark of page.querySelectorAll<HTMLElement>('.pdf-mark')) {
+      const r = mark.getBoundingClientRect();
+      if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom)
+        continue;
+      const id = mark.dataset.highlightId;
+      if (!id) return;
+      onhighlight(id, () => marksOf(id)[0]?.getBoundingClientRect() ?? null);
+      return;
+    }
+  }
+
   function clearPage(n: number) {
     const d = drawn.get(n);
     if (!d) return;
@@ -167,6 +410,7 @@
     el.querySelector('canvas')?.remove();
     const text = el.querySelector<HTMLDivElement>('.textLayer');
     if (text) text.replaceChildren();
+    el.querySelector('.pdf-marks')?.replaceChildren();
   }
 
   async function drawPage(n: number) {
@@ -177,7 +421,7 @@
     const el = pageEl(n);
     if (!el) return;
 
-    const entry: Drawn = { scale, task: null, textLayer: null };
+    const entry: Drawn = { scale, task: null, textLayer: null, runs: null };
     drawn.set(n, entry);
     let page: PDFPageProxy;
     try {
@@ -226,7 +470,15 @@
       viewport,
     });
     entry.textLayer = textLayer;
-    await textLayer.render().catch(() => {});
+    try {
+      await textLayer.render();
+    } catch {
+      return;
+    }
+    if (drawn.get(n) !== entry) return;
+    entry.runs = textLayer.textDivs;
+    entry.runs.forEach((span, run) => runOf.set(span, { page: n - 1, run }));
+    paintPage(n);
   }
 
   // Draw what's near the viewport at the current scale; let the rest go.
@@ -282,9 +534,15 @@
     });
     if (containerEl) resize.observe(containerEl);
     void load();
+    document.addEventListener('pointerdown', handlePointerDown, true);
+    document.addEventListener('mouseup', handleMouseUp);
+    document.addEventListener('selectionchange', handleSelectionChange);
     return () => {
       destroyed = true;
       resize.disconnect();
+      document.removeEventListener('pointerdown', handlePointerDown, true);
+      document.removeEventListener('mouseup', handleMouseUp);
+      document.removeEventListener('selectionchange', handleSelectionChange);
       for (const n of [...drawn.keys()]) clearPage(n);
       void loadingTask?.destroy();
       loadingTask = null;
@@ -310,7 +568,14 @@
       {/if}
     </div>
   {:else}
-    <div class="pdf-pages" style:--scale-factor={scale} style:--total-scale-factor={scale}>
+    <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions
+         (a tap on a highlight is a pointer shortcut; the passage is text) -->
+    <div
+      class="pdf-pages"
+      style:--scale-factor={scale}
+      style:--total-scale-factor={scale}
+      onclick={handleClick}
+    >
       {#each pageSizes as size, i (i)}
         <div
           class="pdf-page"
@@ -320,6 +585,7 @@
           role="img"
           aria-label="Page {i + 1} of {pageSizes.length}"
         >
+          <div class="pdf-marks" aria-hidden="true"></div>
           <div class="textLayer"></div>
         </div>
       {/each}
@@ -411,6 +677,32 @@
     display: block;
   }
 
+  /* Highlights: the reader's gold, laid under the text layer and multiplied
+     into the drawing, so the type stays crisp black through it. */
+  .pdf-marks {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+
+  .pdf-marks :global(.pdf-mark) {
+    position: absolute;
+    background: color-mix(in srgb, #f5c518 55%, transparent);
+    mix-blend-mode: multiply;
+  }
+
+  /* A highlight with a note carries a small ink dot where it ends. */
+  .pdf-marks :global(.pdf-mark.has-note)::after {
+    content: '';
+    position: absolute;
+    top: -3px;
+    right: -3px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #b8860b;
+  }
+
   /* PDF.js's text layer (from pdfjs-dist/web/pdf_viewer.css, trimmed): the
      page's text, transparent, positioned over the drawing so it selects and
      copies like text. */
@@ -454,8 +746,10 @@
     display: contents;
   }
 
+  /* A pale wash of the highlight gold, as in the text view: a selection reads
+     as a highlight about to happen. */
   .pdf-page :global(.textLayer ::selection) {
-    background: rgba(0, 102, 204, 0.25);
+    background: color-mix(in srgb, #f5c518 30%, transparent);
     color: transparent;
   }
 
