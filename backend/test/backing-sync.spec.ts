@@ -344,7 +344,7 @@ describe('extractMissingBackedContent — fill bodies for imported stubs', () =>
     const n = await extractMissingBackedContent(env, DID);
     expect(n).toBe(1); // only the feed stub
     expect(spy).toHaveBeenCalledTimes(1);
-    expect(spy).toHaveBeenCalledWith('https://feed.test/a');
+    expect(spy).toHaveBeenCalledWith('https://feed.test/a', { userDid: DID });
   });
 
   it('is resilient to an extraction failure: leaves the row and continues', async () => {

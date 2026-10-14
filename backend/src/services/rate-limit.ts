@@ -1,4 +1,5 @@
 import type { Env } from '../types';
+import { PDF_QUOTA_ENDPOINT, pdfQuotaDay } from './pdf-quota';
 
 interface RateLimitConfig {
   limit: number;
@@ -180,11 +181,20 @@ export async function cleanupRateLimits(env: Env): Promise<{ deleted: number; du
   const startTime = Date.now();
 
   try {
-    const result = await env.DB.prepare('DELETE FROM rate_limits WHERE window_start < ?')
-      .bind(twoMinutesAgo)
-      .run();
+    // The daily PDF allowance shares this table with a day-long window; keep its
+    // current row, which the per-minute sweep would otherwise reset every minute.
+    const [minuteWindows, pastDays] = await env.DB.batch([
+      env.DB.prepare('DELETE FROM rate_limits WHERE window_start < ? AND endpoint != ?').bind(
+        twoMinutesAgo,
+        PDF_QUOTA_ENDPOINT
+      ),
+      env.DB.prepare('DELETE FROM rate_limits WHERE endpoint = ? AND window_start < ?').bind(
+        PDF_QUOTA_ENDPOINT,
+        pdfQuotaDay(startTime)
+      ),
+    ]);
 
-    const deleted = result.meta?.changes || 0;
+    const deleted = (minuteWindows.meta?.changes || 0) + (pastDays.meta?.changes || 0);
     const duration = Date.now() - startTime;
 
     return { deleted, duration };

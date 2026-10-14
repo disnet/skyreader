@@ -8,11 +8,11 @@ compatibility_date = "2025-09-27"
 workers_dev = false
 routes = [{ pattern = "pdf-extractor.skyreader.app", custom_domain = true }]
 
-# pdf.js is the whole job here, so give it room. 30s of CPU is the paid plan's
-# default made explicit (a 100-page paper takes ~2s); the proxy gives up on a
-# request after PDF_EXTRACT_TIMEOUT_MS anyway, so this only bounds a runaway.
+# A runaway's ceiling, and so the cost ceiling per parse: 4-5x the ~2s of CPU a
+# 100-page paper takes. (30s is the paid plan's default.) The proxy gives up
+# after PDF_EXTRACT_TIMEOUT_MS of wall time regardless.
 [limits]
-cpu_ms = 30000
+cpu_ms = 10000
 
 [observability]
 enabled = true

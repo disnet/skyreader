@@ -48,7 +48,7 @@ export async function handleExtract(request: Request, env: Env): Promise<Respons
 
   try {
     const proxyClient = new FeedProxyClient(env);
-    const extracted = await proxyClient.extract(body.url);
+    const extracted = await proxyClient.extract(body.url, { userDid: session.did });
     return new Response(JSON.stringify(extracted), {
       headers: { 'Content-Type': 'application/json' },
     });

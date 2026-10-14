@@ -424,6 +424,14 @@ const MAX_RESPONSE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
 // Extracted article content is effectively immutable per URL; cache it for a long
 // time so repeat (and cross-user) saves of the same article are free.
 const EXTRACT_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+// A PDF the extractor Worker failed on (timed out, password, unreadable) is
+// remembered this long, so a reader retrying, or several readers saving the same
+// paper, don't each pay for another parse. Short, since a timeout can be load.
+const PDF_FAILURE_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const PDF_FAILURE_CACHE_MAX = 1000;
+// Sent when the caller passed `allowPdf: false` (the reader is out of their daily
+// PDF allowance, which the backend keeps) and the URL turned out to be a PDF.
+export const PDF_QUOTA_MESSAGE = "You've saved a lot of PDFs today. Try this one again tomorrow.";
 
 // Version tag for parseFeed's durable output. A mismatch forces an unconditional
 // upstream fetch and re-delivers the source feed's current items, so parser
@@ -606,15 +614,19 @@ class PdfExtractError extends Error {
 
 // A PDF reflowed into reader HTML by the extractor Worker (see pdf-extract.ts),
 // in the same shape a web page's extraction has. Its domain comes from the URL;
-// a PDF has no lead image.
+// a PDF has no lead image. `onCall` runs just before the Worker is called: that
+// call is what a reader's daily PDF allowance counts.
 async function extractPdfArticle(
-  extractPdf: PdfExtractor | undefined,
+  pdfOpts: { extractPdf: PdfExtractor | undefined; allowPdf: boolean; onCall: () => void },
   bytes: Uint8Array<ArrayBuffer>,
   url: string
 ): Promise<ExtractedArticle> {
+  const { extractPdf, allowPdf, onCall } = pdfOpts;
   if (!extractPdf) throw new PdfExtractError('Saving PDFs is not set up on this server');
+  if (!allowPdf) throw new PdfExtractError(PDF_QUOTA_MESSAGE);
   let pdf: Awaited<ReturnType<PdfExtractor>>;
   try {
+    onCall();
     pdf = await extractPdf(bytes);
   } catch (err) {
     // Unreadable stays as it is: on the sniff-only path it means "not a PDF
@@ -1458,6 +1470,9 @@ export function createApp(db: Database, config: AppConfig) {
   const inFlight = new Map<string, Promise<ParsedFeed | null>>();
   // Same idea for /extract: collapse concurrent extractions of the same URL.
   const inFlightExtract = new Map<string, Promise<ExtractedArticle>>();
+  // PDFs the extractor Worker failed on, by url hash (see PDF_FAILURE_CACHE_TTL_MS).
+  // In memory: losing it on a restart costs one more parse per failing PDF.
+  const pdfFailures = new Map<string, { error: string; expiresAt: number }>();
   // And for standard.site document fetches, keyed by author DID.
   const inFlightDocs = new Map<string, Promise<ProxyDocument[] | null>>();
   // Collapse concurrent social-context lookups for the same link post.
@@ -2703,7 +2718,9 @@ export function createApp(db: Database, config: AppConfig) {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
-    let body: { url: string };
+    // `allowPdf: false` = the reader is out of PDF allowance: a URL that turns
+    // out to be a PDF fails without calling the extractor Worker. Absent = allowed.
+    let body: { url: string; allowPdf?: boolean };
     try {
       body = await c.req.json();
     } catch {
@@ -2713,6 +2730,7 @@ export function createApp(db: Database, config: AppConfig) {
     if (!body.url || typeof body.url !== 'string') {
       return c.json({ error: 'Missing url field' }, 400);
     }
+    const allowPdf = body.allowPdf !== false;
 
     try {
       new URL(body.url);
@@ -2740,9 +2758,30 @@ export function createApp(db: Database, config: AppConfig) {
       });
     }
 
-    // Collapse concurrent extractions of the same URL into one fetch + parse.
-    let pending = inFlightExtract.get(urlHash);
+    const failed = pdfFailures.get(urlHash);
+    if (failed && failed.expiresAt > now) {
+      c.header('X-Cache', 'NEGATIVE');
+      return c.json({ error: failed.error, blocked: false, pdf: true }, 200);
+    }
+    if (failed) pdfFailures.delete(urlHash);
+
+    // Collapse concurrent extractions of the same URL into one fetch + parse. A
+    // caller without PDF allowance never joins one with it (or the reverse), so
+    // it can neither borrow a parse it isn't owed nor fail one that is.
+    const flightKey = allowPdf ? urlHash : `${urlHash}:no-pdf`;
+    let pending = inFlightExtract.get(flightKey);
     const isLeader = !pending;
+    // Set when this request's own extraction called the extractor Worker, and
+    // reported as X-Pdf-Parsed so the backend can charge the reader's allowance.
+    // Followers of a coalesced extraction leave it false: the leader paid.
+    let pdfParsed = false;
+    const pdfOpts = {
+      extractPdf: config.extractPdf,
+      allowPdf,
+      onCall: () => {
+        pdfParsed = true;
+      },
+    };
     if (!pending) {
       pending = (async () => {
         // Acquire a permit before the fetch + DOM build (the heavy part). Throws
@@ -2791,13 +2830,13 @@ export function createApp(db: Database, config: AppConfig) {
           // application/octet-stream, and a PDF decoded as text is mojibake.
           let extracted: ExtractedArticle;
           if (isDeclaredPdf(contentType)) {
-            extracted = await extractPdfArticle(config.extractPdf, bytes, url);
+            extracted = await extractPdfArticle(pdfOpts, bytes, url);
           } else if (isPdf(bytes, contentType)) {
             // Only the sniff said PDF, and `%PDF-` can turn up near the top of a
             // page that isn't one, so a body pdf.js can't open still gets the
             // article extractor.
             try {
-              extracted = await extractPdfArticle(config.extractPdf, bytes, url);
+              extracted = await extractPdfArticle(pdfOpts, bytes, url);
             } catch (err) {
               if (!(err instanceof PdfUnreadableError)) throw err;
               extracted = await extractArticle(new TextDecoder().decode(bytes), url);
@@ -2816,7 +2855,7 @@ export function createApp(db: Database, config: AppConfig) {
           extractSemaphore.release();
         }
       })();
-      inFlightExtract.set(urlHash, pending);
+      inFlightExtract.set(flightKey, pending);
     }
 
     try {
@@ -2829,6 +2868,7 @@ export function createApp(db: Database, config: AppConfig) {
         console.warn(`[Proxy] /extract ${url}: slow (${elapsed}ms)`);
       }
       c.header('X-Cache', isLeader ? 'MISS' : 'COALESCED');
+      if (pdfParsed) c.header('X-Pdf-Parsed', '1');
       return c.json(extracted);
     } catch (error) {
       const elapsed = Date.now() - now;
@@ -2845,6 +2885,18 @@ export function createApp(db: Database, config: AppConfig) {
       }
       if (error instanceof PdfExtractError || error instanceof PdfUnreadableError) {
         console.error(`[Proxy] /extract ${url}: ${error.message} (${elapsed}ms)`);
+        if (pdfParsed) {
+          c.header('X-Pdf-Parsed', '1');
+          // Only a failure the Worker produced is remembered: no allowance or no
+          // extractor says nothing about the PDF.
+          if (pdfFailures.size >= PDF_FAILURE_CACHE_MAX) {
+            pdfFailures.delete(pdfFailures.keys().next().value!);
+          }
+          pdfFailures.set(urlHash, {
+            error: error.message,
+            expiresAt: Date.now() + PDF_FAILURE_CACHE_TTL_MS,
+          });
+        }
         return c.json({ error: error.message, blocked: false, pdf: true }, 200);
       }
       const isTimeout = error instanceof Error && error.name === 'TimeoutError';
@@ -2862,7 +2914,7 @@ export function createApp(db: Database, config: AppConfig) {
       console.error(`[Proxy] /extract ${url}: ${msg} (${elapsed}ms)`);
       return c.json({ error: msg, blocked: false }, 200);
     } finally {
-      if (isLeader) inFlightExtract.delete(urlHash);
+      if (isLeader) inFlightExtract.delete(flightKey);
     }
   });
 

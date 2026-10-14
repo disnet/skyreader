@@ -11,6 +11,7 @@ import {
   calculateBackoff,
   FEED_PARSER_VERSION,
   FEED_ITEMS_CAP,
+  PDF_QUOTA_MESSAGE,
   writeFeedItems,
   type AppConfig,
   type CacheRow,
@@ -3685,10 +3686,8 @@ describe('POST /extract', () => {
     db.close();
   });
 
-  it('reports a timed-out or failed extractor call as a PDF failure, uncached', async () => {
-    let fail = true;
+  it('reports a timed-out extractor call as a PDF failure, and remembers it', async () => {
     const { extractPdf, calls } = fakeExtractor(async () => {
-      if (!fail) return PARSED;
       const err = new Error('The operation timed out.');
       err.name = 'TimeoutError';
       throw err;
@@ -3698,15 +3697,81 @@ describe('POST /extract', () => {
       () => new Response('%PDF-1.7', { headers: { 'Content-Type': 'application/pdf' } })
     );
 
-    const first = await (await extract(app, 'https://example.com/slow.pdf')).json();
-    expect(first.pdf).toBe(true);
-    expect(first.error).toBe('This PDF took too long to read');
+    const first = await extract(app, 'https://example.com/slow.pdf');
+    expect(first.headers.get('X-Pdf-Parsed')).toBe('1');
+    expect(await first.json()).toMatchObject({
+      error: 'This PDF took too long to read',
+      pdf: true,
+    });
 
-    // A retry parses again rather than replaying the failure.
-    fail = false;
-    const second = await (await extract(app, 'https://example.com/slow.pdf')).json();
-    expect(second.title).toBe('Notes on Margins');
-    expect(calls).toHaveLength(2);
+    // A retry is answered from the failure cache: no fetch, no second parse,
+    // nothing charged to the reader's allowance.
+    fetchMock.mockClear();
+    const second = await extract(app, 'https://example.com/slow.pdf');
+    expect(second.headers.get('X-Cache')).toBe('NEGATIVE');
+    expect(second.headers.get('X-Pdf-Parsed')).toBeNull();
+    expect(await second.json()).toMatchObject({
+      error: 'This PDF took too long to read',
+      pdf: true,
+    });
+    expect(calls).toHaveLength(1);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    db.close();
+  });
+
+  it('marks a response that cost a parse, and not one served from cache', async () => {
+    const { extractPdf, calls } = fakeExtractor(async () => PARSED);
+    const { db, app } = createTestApp({ extractPdf });
+    fetchMock = mockFetch(
+      () => new Response('%PDF-1.7', { headers: { 'Content-Type': 'application/pdf' } })
+    );
+
+    const first = await extract(app, 'https://example.com/paper.pdf');
+    expect(first.headers.get('X-Pdf-Parsed')).toBe('1');
+    const again = await extract(app, 'https://example.com/paper.pdf');
+    expect(again.headers.get('X-Cache')).toBe('HIT');
+    expect(again.headers.get('X-Pdf-Parsed')).toBeNull();
+    expect(calls).toHaveLength(1);
+
+    db.close();
+  });
+
+  it('refuses a PDF without calling the extractor when the caller has no allowance', async () => {
+    const { extractPdf, calls } = fakeExtractor(async () => PARSED);
+    const { db, app } = createTestApp({ extractPdf });
+    fetchMock = mockFetch(
+      () => new Response('%PDF-1.7', { headers: { 'Content-Type': 'application/pdf' } })
+    );
+
+    const res = await app.request('/extract', {
+      method: 'POST',
+      headers: { 'X-Proxy-Secret': 'test-secret', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: 'https://example.com/paper.pdf', allowPdf: false }),
+    });
+
+    expect(res.headers.get('X-Pdf-Parsed')).toBeNull();
+    expect(await res.json()).toMatchObject({ error: PDF_QUOTA_MESSAGE, pdf: true });
+    expect(calls).toHaveLength(0);
+
+    // Not remembered as the PDF's failure: a reader with allowance still gets it.
+    const allowed = await extract(app, 'https://example.com/paper.pdf');
+    expect((await allowed.json()).title).toBe('Notes on Margins');
+
+    db.close();
+  });
+
+  it('saves a web page as usual for a caller with no PDF allowance', async () => {
+    const { db, app } = createTestApp();
+    fetchMock = mockFetchOnce(ARTICLE_HTML, { headers: { 'Content-Type': 'text/html' } });
+
+    const res = await app.request('/extract', {
+      method: 'POST',
+      headers: { 'X-Proxy-Secret': 'test-secret', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: 'https://example.com/a-piece', allowPdf: false }),
+    });
+
+    expect((await res.json()).error).toBeUndefined();
 
     db.close();
   });

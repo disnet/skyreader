@@ -22,6 +22,18 @@ so a large PDF can't exhaust the API isolate's memory.
 
 `PdfExtraction` is duplicated in `feed-proxy/src/pdf-extract.ts`; change both together.
 
+## Cost controls
+
+Parses are billed per CPU-ms, so three things bound them:
+
+- **Per reader:** 100 parses a day (`backend/src/services/pdf-quota.ts`), shared by every path into
+  the proxy's `/extract`. The proxy reports a parse with `X-Pdf-Parsed: 1` and the backend charges
+  it; once the day is spent the backend sends `allowPdf: false` and the proxy refuses PDFs without
+  calling here. Cache hits are free.
+- **Per URL:** the proxy caches a success for 7 days and a failure for 10 minutes.
+- **Per parse:** `[limits] cpu_ms = 10000`. Globally, the proxy's `EXTRACT_CONCURRENCY` (4) caps
+  parses in flight.
+
 ## Layout
 
 - `src/index.ts` — the fetch handler. An entry module may export only handlers (workerd refuses to

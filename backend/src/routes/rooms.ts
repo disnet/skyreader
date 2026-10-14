@@ -559,7 +559,7 @@ export async function handleRoomAddItem(request: Request, env: Env): Promise<Res
     let image: string | undefined;
     if (!title) {
       try {
-        const extracted = await new FeedProxyClient(env).extract(rawUrl);
+        const extracted = await new FeedProxyClient(env).extract(rawUrl, { userDid: session.did });
         title = str(extracted.title);
         description ??= str(extracted.description);
         author ??= str(extracted.author);
