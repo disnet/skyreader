@@ -78,3 +78,51 @@ describe('fillExtractedContent content_type', () => {
     expect(await typeOf('ddddddddddddd')).toBe('article');
   });
 });
+
+describe('fillExtractedContent with nothing to read', () => {
+  beforeEach(async () => {
+    await env.DB.prepare('DELETE FROM saved_articles WHERE user_did = ?').bind(DID).run();
+  });
+
+  async function bodyOf(rkey: string) {
+    return env.DB.prepare(
+      'SELECT content, word_count FROM saved_articles WHERE user_did = ? AND rkey = ?'
+    )
+      .bind(DID, rkey)
+      .first<{ content: string | null; word_count: number | null }>();
+  }
+
+  it('stores a note, never an empty body', async () => {
+    await seed('eeeeeeeeeeeee', 'webpage');
+    await seed('fffffffffffff', 'webpage');
+    await fillExtractedContent(
+      env,
+      article({ content: null, wordCount: 0 }),
+      { userDid: DID, rkey: 'eeeeeeeeeeeee' },
+      { url: 'https://example.com/eeeeeeeeeeeee' }
+    );
+    // An older proxy reported a script-rendered page as an empty shell.
+    await fillExtractedContent(
+      env,
+      article({ content: '<body></body>', wordCount: 0 }),
+      { userDid: DID, rkey: 'fffffffffffff' },
+      { url: 'https://example.com/fffffffffffff' }
+    );
+    for (const rkey of ['eeeeeeeeeeeee', 'fffffffffffff']) {
+      const row = await bodyOf(rkey);
+      expect(row?.content).toContain('data-skyreader-note="fetch-failed"');
+      expect(row?.content).toContain(`href="https://example.com/${rkey}"`);
+      expect(row?.word_count).toBeNull();
+    }
+  });
+
+  it('keeps a body that is only an image', async () => {
+    await seed('ggggggggggggg', 'webpage');
+    await fillExtractedContent(
+      env,
+      article({ content: '<p><img src="https://example.com/a.png"></p>', wordCount: 0 }),
+      { userDid: DID, rkey: 'ggggggggggggg' }
+    );
+    expect((await bodyOf('ggggggggggggg'))?.content).toContain('<img');
+  });
+});

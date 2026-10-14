@@ -15,6 +15,7 @@ import {
   saveAnywhereLabel,
   saveAnywhereUrl,
   failedSaveBody,
+  hasReadableContent,
   isFailedSaveBody,
 } from './saveAnywhere';
 
@@ -128,5 +129,28 @@ describe('isFailedSaveBody', () => {
     expect(isFailedSaveBody(failedSaveBody('https://example.com/a', 'failed'))).toBe(true);
     expect(isFailedSaveBody('<p>Skyreader couldn&#039;t fetch this article.</p>')).toBe(false);
     expect(isFailedSaveBody(null)).toBe(false);
+  });
+});
+
+describe('hasReadableContent', () => {
+  it('finds nothing to read in an empty extraction', () => {
+    expect(hasReadableContent(null)).toBe(false);
+    expect(hasReadableContent('')).toBe(false);
+    expect(hasReadableContent('<body></body>')).toBe(false);
+    expect(hasReadableContent('<div> &nbsp; </div><script>render()</script>')).toBe(false);
+  });
+
+  it('counts text, or media standing in for it', () => {
+    expect(hasReadableContent('<p>Words.</p>')).toBe(true);
+    expect(hasReadableContent('<p><img src="a.png"></p>')).toBe(true);
+  });
+});
+
+describe("failedSaveBody 'empty'", () => {
+  it('says the text was not found, and offers the extension', () => {
+    const body = failedSaveBody('https://attie.ai/@a/pages/x', 'empty');
+    expect(body).toContain("couldn't find the article text");
+    expect(body).toContain('Save this page');
+    expect(isFailedSaveBody(body)).toBe(true);
   });
 });

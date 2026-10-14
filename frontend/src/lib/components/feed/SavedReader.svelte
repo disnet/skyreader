@@ -23,6 +23,7 @@
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { profileService } from '$lib/services/profiles';
   import { bskyEmbed } from '$lib/actions/bsky-embed';
+  import { failedSaveBody, hasReadableContent } from '$lib/utils/saveAnywhere';
   import { mathRender } from '$lib/actions/math-render';
   import Icon from '$lib/components/Icon.svelte';
   import PopoverMenu from '$lib/components/PopoverMenu.svelte';
@@ -380,7 +381,16 @@
     if (linkPostArticle?.content) return linkPostArticle.content;
     // Prefer the lazily-loaded body for saved items; normalized.displayContent
     // falls back to the description until it arrives.
-    if (readerItem.type === 'saved' && lazySavedContent) return lazySavedContent;
+    if (readerItem.type === 'saved' && lazySavedContent != null) {
+      if (hasReadableContent(lazySavedContent)) return lazySavedContent;
+      // A URL save stored with nothing to read (from before an empty extraction
+      // became a note) opens to the note, never to a blank page. Other saves
+      // keep their description when they have one, as they always have.
+      const isUrlSave = readerItem.item.source === 'url';
+      if (itemUrl && (isUrlSave || !hasReadableContent(normalized.displayContent))) {
+        return failedSaveBody(itemUrl, 'empty');
+      }
+    }
     // A save's own snapshot still outranks everything — it's the body the user
     // kept (and what their highlights are anchored in).
     if (readerItem.type === 'article' && lazyArticleIsSavedCopy && lazyArticleContent)

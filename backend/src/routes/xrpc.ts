@@ -204,7 +204,8 @@ export async function handleXrpcSave(
 // the extraction. The UPDATE itself (content-IS-NULL guard, COALESCE metadata) lives in
 // fillExtractedContent — here we leave content_type alone so a URL save stays 'webpage'
 // (or becomes 'pdf' when the URL served one).
-// Best-effort — an un-extractable URL just keeps its title and an empty body.
+// Best-effort — a URL with nothing to read gets a note in place of its body; one
+// whose extraction fails outright just keeps its title.
 async function extractAndStoreSavedContent(
   env: Env,
   userDid: string,
@@ -213,7 +214,7 @@ async function extractAndStoreSavedContent(
 ): Promise<void> {
   try {
     const a = await new FeedProxyClient(env).extract(url, { userDid });
-    await fillExtractedContent(env, a, { userDid, rkey });
+    await fillExtractedContent(env, a, { userDid, rkey }, { url });
   } catch (err) {
     console.error('xrpc save: background extraction failed', err);
   }

@@ -3600,6 +3600,85 @@ describe('POST /extract', () => {
     db.close();
   });
 
+  // A page that builds its article with scripts serves an empty shell. Reported
+  // as no body, never as a blank `<body></body>` a reader would open to nothing.
+  it('reports a page with nothing to read as no content', async () => {
+    const { db, app } = createTestApp();
+    fetchMock = mockFetchOnce(
+      '<!DOCTYPE html><html><head><title>Shell</title></head><body><div id="root"></div><script>render()</script></body></html>',
+      { headers: { 'Content-Type': 'text/html' } }
+    );
+
+    const res = await extract(app, 'https://example.com/app-shell');
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.error).toBeUndefined();
+    expect(json.content).toBeNull();
+    expect(json.wordCount).toBe(0);
+
+    db.close();
+  });
+
+  it("reads an attie.ai page from its shared-page JSON, not the page's empty shell", async () => {
+    const { db, app } = createTestApp();
+    const requested: string[] = [];
+    fetchMock = spyOn(globalThis, 'fetch').mockImplementation((async (input: unknown) => {
+      const u = String(input instanceof Request ? input.url : input);
+      requested.push(u);
+      if (u.includes('/api/shared-pages/')) {
+        return new Response(
+          JSON.stringify({
+            title: 'The Dark Mode Toggle Discourse',
+            html: `<div><h1>How it unfolded</h1><p>${'A designer argued against the toggle. '.repeat(30)}</p></div>`,
+            owner: { handle: 'disnetdev.com' },
+            published_at: '2026-10-13T01:36:42Z',
+          }),
+          { headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      return new Response('<html><body><div id="root"></div></body></html>', {
+        headers: { 'Content-Type': 'text/html' },
+      });
+    }) as unknown as typeof fetch);
+
+    const res = await extract(
+      app,
+      'https://attie.ai/@disnetdev.com/pages/f2a1e090-72aa-46c4-93fe-b487dbdb440a'
+    );
+    const json = await res.json();
+
+    expect(requested).toEqual([
+      'https://attie.ai/api/shared-pages/f2a1e090-72aa-46c4-93fe-b487dbdb440a',
+    ]);
+    expect(json.title).toBe('The Dark Mode Toggle Discourse');
+    expect(json.content).toContain('A designer argued against the toggle.');
+    expect(json.wordCount).toBeGreaterThan(100);
+
+    db.close();
+  });
+
+  it('falls back to the page itself when a site source fails', async () => {
+    const { db, app } = createTestApp();
+    fetchMock = spyOn(globalThis, 'fetch').mockImplementation((async (input: unknown) => {
+      const u = String(input instanceof Request ? input.url : input);
+      if (u.includes('/api/shared-pages/')) {
+        return new Response('{"error":"page not found"}', { status: 404 });
+      }
+      return new Response(ARTICLE_HTML, { headers: { 'Content-Type': 'text/html' } });
+    }) as unknown as typeof fetch);
+
+    const res = await extract(
+      app,
+      'https://attie.ai/@someone/pages/f2a1e090-72aa-46c4-93fe-b487dbdb440a'
+    );
+    const json = await res.json();
+
+    expect(json.content).toContain('Some words about a subject.');
+
+    db.close();
+  });
+
   it('reports a timed-out fetch as a readable determination', async () => {
     const { db, app } = createTestApp();
     fetchMock = spyOn(globalThis, 'fetch').mockImplementation((async () => {
