@@ -72,6 +72,18 @@ jobs:
 
       - name: Run E2E tests
         run: npx playwright test --shard=${{ matrix.shard }}/4
+        env:
+          # wrangler's full debug log, kept in the workspace so a crash's real
+          # error (the console shows only a bare "✘ [ERROR]") can be uploaded.
+          WRANGLER_LOG_PATH: ${{ github.workspace }}/wrangler-logs
+
+      - name: Upload wrangler logs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: ${{ failure() }}
+        with:
+          name: wrangler-logs-${{ matrix.shard }}
+          path: wrangler-logs/
+          retention-days: 14
 
       - name: Upload blob report
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

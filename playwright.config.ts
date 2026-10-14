@@ -56,8 +56,8 @@ export default defineConfig({
       env: { PROXY_SECRET: feedProxySecret(), PORT: '3000' },
     },
     {
-      command: 'npm run dev',
-      cwd: './backend',
+      // wrangler dev under a supervisor that restarts it if it crashes mid-run.
+      command: './e2e/backend-supervisor.sh',
       port: 8787,
       reuseExistingServer: !process.env.CI,
       timeout: 30_000,
