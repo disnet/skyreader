@@ -793,7 +793,15 @@
   // a post, not an article. The card it linked goes under them, the way Bluesky
   // draws it, so the row says there's an article behind it and opens it.
   let keptLinkCardVM = $derived.by(() => {
-    if (!isKeptPost || !article || !itemUrl || linkPostContentStore.get(itemUrl)?.content) {
+    // Gone once any full body is in hand (fetched page, stored body, feed content).
+    if (
+      !isKeptPost ||
+      !article ||
+      !itemUrl ||
+      article.content ||
+      lazyContent ||
+      linkPostContentStore.get(itemUrl)?.content
+    ) {
       return undefined;
     }
     return keptPostLinkCard({
