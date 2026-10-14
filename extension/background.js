@@ -261,6 +261,9 @@ async function performSave(url, { fallbackTitle, extractTabId } = {}) {
     image: extracted?.image || undefined,
     publishedAt: extracted?.published || undefined,
     wordCount: wordCount || undefined,
+    // 'pdf' only from the backend extractor: the browser's PDF viewer can't be
+    // scripted, so a PDF tab always lands here via extractViaBackend.
+    contentType: extracted?.contentType || undefined,
   };
 
   let res;

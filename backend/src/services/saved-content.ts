@@ -12,7 +12,8 @@ import type { ExtractedArticle } from './feed-proxy-client';
  * The row is selected either by primary `id` or by `(user_did, rkey)`. Pass
  * `setArticleType: true` to hard-set `content_type = 'article'` (backed enrichment, where
  * the stub had no real type); omit it to leave the row's existing type intact — a URL
- * save stays 'webpage'.
+ * save stays 'webpage'. An extraction that came from a PDF sets `content_type = 'pdf'`
+ * either way: the body is a PDF's reflowed text, whatever the row was typed before.
  *
  * Stamps `updated_at` so a client that already cached the empty row picks up the
  * body through GET /api/saved/updates.
@@ -23,7 +24,9 @@ export async function fillExtractedContent(
   where: { id: number } | { userDid: string; rkey: string },
   opts: { setArticleType?: boolean } = {}
 ): Promise<void> {
-  const contentTypeClause = opts.setArticleType ? `,\n         content_type = 'article'` : '';
+  const contentType =
+    article.contentType === 'pdf' ? 'pdf' : opts.setArticleType ? 'article' : null;
+  const contentTypeClause = contentType ? `,\n         content_type = '${contentType}'` : '';
   const whereClause = 'id' in where ? 'id = ?' : 'user_did = ? AND rkey = ?';
   const whereBinds = 'id' in where ? [where.id] : [where.userDid, where.rkey];
 

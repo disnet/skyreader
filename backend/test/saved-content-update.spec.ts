@@ -248,3 +248,57 @@ describe('GET /api/saved/updates — in-place edits the list refresh cannot see'
     expect(res.body.articles[0].updatedAt).toEqual(expect.any(String));
   });
 });
+
+// A URL that served a PDF is saved with its reflowed text and typed 'pdf', so the
+// reader (and later citation export) can tell it apart from a web page.
+describe('POST /api/saved — content type of a URL save', () => {
+  beforeEach(() => reset());
+
+  it("types a PDF extraction 'pdf'", async () => {
+    const { status } = await call(
+      post({ url: URL, rkey: 'aaaaaaaaaaaaa', contentType: 'pdf', content: '<p>Text.</p>' })
+    );
+    expect(status).toBe(200);
+    expect((await getRow()).content_type).toBe('pdf');
+  });
+
+  it("types anything else 'webpage', ignoring an unknown contentType", async () => {
+    await call(post({ url: URL, rkey: 'aaaaaaaaaaaaa', contentType: 'article' }));
+    expect((await getRow()).content_type).toBe('webpage');
+  });
+
+  it("re-types a save 'pdf' when an upgrade turns out to be a PDF, and only then", async () => {
+    await call(post({ url: URL, rkey: 'aaaaaaaaaaaaa', content: '<p>Could not fetch</p>' }));
+
+    await call(
+      post({ url: URL, rkey: 'bbbbbbbbbbbbb', updateContent: true, content: '<p>Better</p>' })
+    );
+    expect((await getRow()).content_type).toBe('webpage');
+
+    await call(
+      post({
+        url: URL,
+        rkey: 'ccccccccccccc',
+        updateContent: true,
+        contentType: 'pdf',
+        content: '<p>PDF text</p>',
+      })
+    );
+    expect((await getRow()).content_type).toBe('pdf');
+  });
+
+  it("re-types a 'pdf' save as a web page when an HTML body replaces it", async () => {
+    await call(
+      post({ url: URL, rkey: 'aaaaaaaaaaaaa', contentType: 'pdf', content: '<p>PDF text</p>' })
+    );
+
+    // A metadata-only upgrade leaves the PDF's body, and its type, alone.
+    await call(post({ url: URL, rkey: 'bbbbbbbbbbbbb', updateContent: true, title: 'Paper' }));
+    expect((await getRow()).content_type).toBe('pdf');
+
+    await call(
+      post({ url: URL, rkey: 'ccccccccccccc', updateContent: true, content: '<p>Landing</p>' })
+    );
+    expect((await getRow()).content_type).toBe('webpage');
+  });
+});

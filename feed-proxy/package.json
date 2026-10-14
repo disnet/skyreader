@@ -22,6 +22,7 @@
     "http-message-sig": "^0.3.0",
     "linkedom": "^0.18.13",
     "temml": "^0.13.4",
+    "unpdf": "^1.8.1",
     "web-bot-auth": "^0.2.0"
   },
   "devDependencies": {

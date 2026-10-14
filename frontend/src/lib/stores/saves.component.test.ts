@@ -91,7 +91,8 @@ class ApiError extends Error {
   }
 }
 class ExtractionBlockedError extends Error {}
-vi.mock('$lib/services/api', () => ({ api, ApiError, ExtractionBlockedError }));
+class PdfExtractionError extends Error {}
+vi.mock('$lib/services/api', () => ({ api, ApiError, ExtractionBlockedError, PdfExtractionError }));
 
 const extractArticle = vi.fn();
 vi.mock('$lib/services/extract', () => ({ extractArticle }));
@@ -304,6 +305,19 @@ describe('savesStore.saveFromUrl when the article cannot be fetched', () => {
     expect(api.saveFromUrl.mock.calls[0][2].content).not.toContain('blocks automated readers');
   });
 
+  it('saves a PDF it could not read without pointing at the extension', async () => {
+    extractArticle.mockRejectedValueOnce(
+      new PdfExtractionError('This PDF is larger than 10 MB, the most Skyreader can save')
+    );
+
+    const saved = await savesStore.saveFromUrl('https://example.com/huge.pdf');
+
+    expect(saved.fetchFailed).toBe('pdf');
+    const content = api.saveFromUrl.mock.calls[0][2].content;
+    expect(content).toContain('this PDF');
+    expect(content).not.toContain('extension');
+  });
+
   it('replaces its own note in place once the article can be fetched', async () => {
     extractArticle.mockRejectedValueOnce(new ExtractionBlockedError());
     const note = await savesStore.saveFromUrl('https://example.com/later', { title: 'Later' });
@@ -511,5 +525,55 @@ describe('savesStore.saveArticle body choice', () => {
 
     expect(loadStoredBody).not.toHaveBeenCalled();
     expect(enqueue).toHaveBeenCalled();
+  });
+});
+
+describe('savesStore.saveFromUrl for a PDF', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    savedRows.clear();
+    authState.isGuest = false;
+    syncState.isOnline = true;
+    api.saveFromUrl.mockImplementation(async (_url: string, rkey: string) => ({
+      uri: `at://did:plc:me/app.skyreader.feed.saved/${rkey}`,
+      savedAt: '2026-09-28T00:00:00.000Z',
+    }));
+  });
+
+  it("carries the extractor's 'pdf' type to the server and the local copy", async () => {
+    extractArticle.mockResolvedValueOnce({
+      title: 'A Paper',
+      author: null,
+      description: null,
+      content: '<section data-pdf-page="1"><p>Its text.</p></section>',
+      domain: 'arxiv.org',
+      image: null,
+      published: null,
+      wordCount: 2,
+      contentType: 'pdf',
+    });
+
+    const saved = await savesStore.saveFromUrl('https://arxiv.org/pdf/1706.03762');
+
+    expect(api.saveFromUrl.mock.calls[0][2].contentType).toBe('pdf');
+    expect(saved.contentType).toBe('pdf');
+  });
+
+  it("keeps a web page typed 'webpage'", async () => {
+    extractArticle.mockResolvedValueOnce({
+      title: 'A Page',
+      author: null,
+      description: null,
+      content: '<p>Text.</p>',
+      domain: 'example.com',
+      image: null,
+      published: null,
+      wordCount: 1,
+    });
+
+    const saved = await savesStore.saveFromUrl('https://example.com/page');
+
+    expect(api.saveFromUrl.mock.calls[0][2].contentType).toBeUndefined();
+    expect(saved.contentType).toBe('webpage');
   });
 });

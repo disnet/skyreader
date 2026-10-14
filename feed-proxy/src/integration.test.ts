@@ -15,6 +15,7 @@ import {
   type AppConfig,
   type CacheRow,
 } from './app';
+import { makePdf } from './pdf-fixture';
 
 // Sample RSS feed for mocking
 const SAMPLE_RSS = `<?xml version="1.0" encoding="UTF-8"?>
@@ -3610,6 +3611,112 @@ describe('POST /extract', () => {
     expect(res.status).toBe(200);
     expect(json.blocked).toBe(false);
     expect(json.error).toContain('Timeout after');
+
+    db.close();
+  });
+
+  // A PDF used to be decoded as UTF-8 and handed to Defuddle, saving mojibake.
+  // Servers often mislabel PDFs, so the bytes are sniffed, not just the header.
+  it('extracts a PDF as text, even when served as octet-stream', async () => {
+    const { db, app } = createTestApp();
+    const pdf = makePdf([
+      [
+        [72, 700, 20, 'Notes on Margins'],
+        [72, 660, 10, 'Readers who write in the margins remember more of what'],
+        [72, 648, 10, 'they read than readers who do not.'],
+      ],
+    ]);
+    fetchMock = mockFetch(
+      () => new Response(pdf, { headers: { 'Content-Type': 'application/octet-stream' } })
+    );
+
+    const res = await extract(app, 'https://www.example.com/paper.pdf');
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.contentType).toBe('pdf');
+    expect(json.title).toBe('Notes on Margins');
+    expect(json.domain).toBe('example.com');
+    expect(json.content).toContain(
+      '<p>Readers who write in the margins remember more of what they read than readers who do not.</p>'
+    );
+
+    db.close();
+  });
+
+  it('reports an unreadable PDF as an error, not a garbled save', async () => {
+    const { db, app } = createTestApp();
+    fetchMock = mockFetchOnce('%PDF-1.4 truncated', {
+      headers: { 'Content-Type': 'application/pdf' },
+    });
+
+    const res = await extract(app, 'https://example.com/broken.pdf');
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.error).toBeTruthy();
+    expect(json.blocked).toBe(false);
+    // Marked as a PDF failure: the extension can't do better, so the reader
+    // isn't sent to it.
+    expect(json.pdf).toBe(true);
+
+    db.close();
+  });
+
+  it('names the size limit when a PDF is too large to save', async () => {
+    const { db, app } = createTestApp();
+    fetchMock = mockFetch(
+      () =>
+        new Response('%PDF-1.7', {
+          headers: {
+            'Content-Type': 'application/pdf',
+            'Content-Length': String(11 * 1024 * 1024),
+          },
+        })
+    );
+
+    const res = await extract(app, 'https://example.com/huge.pdf');
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.error).toBe('This PDF is larger than 10 MB, the most Skyreader can save');
+    expect(json.blocked).toBe(false);
+    expect(json.pdf).toBe(true);
+
+    db.close();
+  });
+
+  it('names the size limit for an oversized PDF served as octet-stream', async () => {
+    const { db, app } = createTestApp();
+    const big = new Uint8Array(11 * 1024 * 1024);
+    big.set(new TextEncoder().encode('%PDF-1.7\n'));
+    fetchMock = mockFetch(
+      () => new Response(big, { headers: { 'Content-Type': 'application/octet-stream' } })
+    );
+
+    const res = await extract(app, 'https://example.com/download?id=1');
+    const json = await res.json();
+
+    expect(json.error).toBe('This PDF is larger than 10 MB, the most Skyreader can save');
+    expect(json.pdf).toBe(true);
+
+    db.close();
+  });
+
+  // Only sniffed, not declared: a page that merely mentions the header near
+  // its top still gets the article extractor when pdf.js can't open it.
+  it('falls back to the article extractor when a sniffed PDF is not one', async () => {
+    const { db, app } = createTestApp();
+    const html = `<!doctype html><html><head><title>The PDF Format</title></head><body><article><h1>The PDF Format</h1><p>Every file starts with %PDF-1.7 and a version number. ${'This sentence pads the article out so the extractor keeps it. '.repeat(10)}</p></article></body></html>`;
+    // A byte body, so the response carries no Content-Type and the sniff decides.
+    fetchMock = mockFetch(() => new Response(new TextEncoder().encode(html)));
+
+    const res = await extract(app, 'https://example.com/pdf-format');
+    const json = await res.json();
+
+    expect(json.error).toBeUndefined();
+    expect(json.contentType).toBeUndefined();
+    expect(json.content).toContain('Every file starts with');
 
     db.close();
   });

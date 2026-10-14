@@ -195,6 +195,18 @@ export class ExtractionBlockedError extends Error {
   }
 }
 
+/**
+ * The target is a PDF the server couldn't turn into text (too large,
+ * password-protected, a failed parse). Unlike a blocked site there is no way
+ * through to offer: the extension extracts a PDF tab through the same server.
+ */
+export class PdfExtractionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PdfExtractionError';
+  }
+}
+
 export class OfflineError extends Error {
   constructor() {
     super('You are offline');
@@ -436,6 +448,8 @@ export interface ExtractedArticle {
   image: string | null;
   published: string | null;
   wordCount: number;
+  /** 'pdf' when the URL served a PDF (its text, reflowed); absent for a web page. */
+  contentType?: 'pdf';
 }
 
 // How many times a single request transparently retries a transient
@@ -609,6 +623,11 @@ class ApiClient {
       // extension fallback to offer.
       if ((error as { blocked?: boolean }).blocked === true && path.startsWith('/api/extract')) {
         throw new ExtractionBlockedError();
+      }
+      if ((error as { pdf?: boolean }).pdf === true && path.startsWith('/api/extract')) {
+        throw new PdfExtractionError(
+          (error as { error?: string }).error || 'Could not read that PDF'
+        );
       }
       throw new ApiError(
         (error as { error: string }).error || `HTTP ${response.status}`,
@@ -2011,6 +2030,7 @@ class ApiClient {
       publishedAt?: string;
       domain?: string;
       wordCount?: number;
+      contentType?: 'pdf';
       // Replace an existing save of this URL's content instead of a 409.
       updateContent?: boolean;
     }

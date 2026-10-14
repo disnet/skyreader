@@ -110,6 +110,16 @@ describe('failedSaveBody', () => {
   it('does not blame a bot filter for a generic failure', () => {
     expect(failedSaveBody('https://example.com/a', 'failed')).not.toContain('automated');
   });
+
+  // The extension sends a PDF tab through the same server extraction, so
+  // pointing a reader at it would be a dead end.
+  it('does not offer the extension for a PDF it could not read', () => {
+    const body = failedSaveBody('https://example.com/paper.pdf', 'pdf');
+    expect(body).toContain('this PDF');
+    expect(body).toContain('href="https://example.com/paper.pdf"');
+    expect(body).not.toContain('extension');
+    expect(isFailedSaveBody(body)).toBe(true);
+  });
 });
 
 describe('isFailedSaveBody', () => {

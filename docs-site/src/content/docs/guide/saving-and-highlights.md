@@ -21,6 +21,12 @@ The collections you use most sit at the top of the picker. Star a collection to 
 
 If the article is already in Semble or Margin, the picker opens on the collections it's in, so you can move it rather than save it twice.
 
+### Saving a PDF
+
+Save a link to a PDF (a paper, a report) the same way you save an article. Skyreader keeps its text, set as ordinary paragraphs, so you can read, highlight, and search it like anything else you save.
+
+Only the text comes through. Figures, tables, and equations stay in the original, so open the PDF for those. A scanned PDF has no text to keep, and a password-protected one can't be read. A very long PDF keeps the text of its first pages, and says so at the end. A PDF larger than 10 MB is too big to save as text: Skyreader keeps the link instead, so you can still open it from your Saved list.
+
 ### When a site won't let Skyreader read it
 
 Some sites refuse automated readers, so Skyreader's servers can't fetch the article even though it opens fine in your browser. The save still goes through: you get the link (and its title, when Skyreader knows it) with a note in place of the text. To get the full text, open the article and save it with the [Chrome](https://chromewebstore.google.com/detail/skyreader/kdefpnnpmajcclfepekgdkcdiklfooed) or [Firefox](https://addons.mozilla.org/firefox/addon/skyreader/) extension, which reads the page you already have open. That replaces the note.

@@ -9,7 +9,7 @@ import { savesStore } from '$lib/stores/saves.svelte';
 import { toastStore } from '$lib/stores/toast.svelte';
 import { UrlSaveLimitError } from '$lib/services/api';
 import { saveLimitLine } from '$lib/utils/limitCopy';
-import { failedSaveLine, blockedSaveAction } from '$lib/utils/saveAnywhere';
+import { failedSaveLine, blockedSaveAction, extensionCanHelp } from '$lib/utils/saveAnywhere';
 
 /** Toggle `url` in and out of Saved. Resolves once the list reflects the change. */
 export async function toggleSavedLink(url: string, title?: string): Promise<void> {
@@ -25,7 +25,12 @@ export async function toggleSavedLink(url: string, title?: string): Promise<void
     // and the way to get the text is the same one a blocked save always offered.
     if (saved.fetchFailed) {
       const id = toastStore.add(failedSaveLine(saved.fetchFailed));
-      toastStore.update(id, 'success', undefined, blockedSaveAction());
+      toastStore.update(
+        id,
+        'success',
+        undefined,
+        extensionCanHelp(saved.fetchFailed) ? blockedSaveAction() : undefined
+      );
     }
   } catch (err) {
     // The monthly save cap is a different kind of failure from "that didn't

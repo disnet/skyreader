@@ -278,6 +278,38 @@ describe('POST /api/saved — backed save routing', () => {
     expect(member?.external_item_uri).toBe('at://existing/card');
     expect(member?.external_link_uri).toBe('at://existing/link');
   });
+
+  it('a re-save with no text keeps the stored body and its type', async () => {
+    await setBackingRow(`semble:${COLLECTION}`);
+    vi.spyOn(write, 'createMember').mockResolvedValue({
+      itemUri: `at://${DID}/network.cosmik.card/c1`,
+      linkUri: `at://${DID}/network.cosmik.collectionLink/l1`,
+    });
+    // The re-saves carry a tracking param: an exact-URL re-save never reaches the
+    // upsert (409, or a content upgrade), but a normalize-equal one does.
+    const save = (url: string, extra: Record<string, unknown>) =>
+      call(post('/api/saved', { url, rkey: '3kpdfa1234567', source: 'url', ...extra }));
+    const resaveUrl = 'https://a.test/paper.pdf?utm_source=newsletter';
+    const row = () =>
+      env.DB.prepare('SELECT content, content_type FROM saved_articles WHERE user_did = ?')
+        .bind(DID)
+        .first<{ content: string | null; content_type: string }>();
+
+    expect(
+      (await save('https://a.test/paper.pdf', { content: '<p>PDF text</p>', contentType: 'pdf' }))
+        .status
+    ).toBe(200);
+    expect(await row()).toEqual({ content: '<p>PDF text</p>', content_type: 'pdf' });
+
+    // The extraction failed this time: no body, no type. The PDF's text stays,
+    // and so does 'pdf' — not the 'webpage' a bare URL save defaults to.
+    expect((await save(resaveUrl, {})).status).toBe(200);
+    expect(await row()).toEqual({ content: '<p>PDF text</p>', content_type: 'pdf' });
+
+    // A new body brings its own type.
+    expect((await save(resaveUrl, { content: '<p>Web page</p>' })).status).toBe(200);
+    expect(await row()).toEqual({ content: '<p>Web page</p>', content_type: 'webpage' });
+  });
 });
 
 describe('DELETE /api/saved/:rkey — backed unsave branch', () => {

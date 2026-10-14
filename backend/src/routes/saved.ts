@@ -66,6 +66,9 @@ interface CreateSavedBody {
   publishedAt?: string;
   domain?: string;
   wordCount?: number;
+  // 'pdf' when the extraction came from a PDF (the proxy's ExtractedArticle says
+  // so). Any other value is ignored: a URL save is otherwise a 'webpage'.
+  contentType?: 'pdf';
   // When the URL is already saved, upgrade the existing item's content/metadata
   // with this request's fields instead of returning 409. Used by the browser
   // extension, whose live-DOM extraction can see paywalled/JS-rendered content
@@ -343,6 +346,11 @@ async function handleContentUpdate(
        image = COALESCE(?, image),
        word_count = COALESCE(?, word_count),
        published_at = COALESCE(?, published_at),
+       content_type = CASE
+         WHEN ? = 'pdf' THEN 'pdf'
+         WHEN ? IS NOT NULL AND content_type = 'pdf' THEN 'webpage'
+         ELSE content_type
+       END,
        updated_at = ?
      WHERE id = ? AND user_did = ?`
   )
@@ -355,6 +363,10 @@ async function handleContentUpdate(
       body.image || null,
       body.wordCount || null,
       publishedAt,
+      // A PDF body re-types the save as 'pdf'. A non-PDF body replacing a PDF's
+      // is a web page again; any other upgrade keeps the type it had.
+      body.contentType === 'pdf' ? 'pdf' : null,
+      body.content || null,
       Date.now(),
       existing.id,
       session.did
@@ -369,6 +381,12 @@ async function handleContentUpdate(
     }),
     { headers: { 'Content-Type': 'application/json' } }
   );
+}
+
+// The stored type of a URL save. Only 'pdf' is accepted from the client; the
+// field is otherwise untrusted input and everything else is a web page.
+function urlSaveContentType(body: CreateSavedBody): 'pdf' | 'webpage' {
+  return body.contentType === 'pdf' ? 'pdf' : 'webpage';
 }
 
 async function handleUrlSave(
@@ -401,7 +419,7 @@ async function handleUrlSave(
       body.author || null,
       body.description || null,
       body.content || null,
-      'webpage',
+      urlSaveContentType(body),
       body.domain || null,
       body.image || null,
       body.wordCount || null,
@@ -439,7 +457,8 @@ async function handleBackedSave(
   const url = body.url;
   const urlNormalized = normalizeArticleUrl(url)!; // guaranteed by the caller's guard
   const publishedAt = body.publishedAt || null;
-  const contentType = source === 'feed' ? 'article' : source === 'url' ? 'webpage' : source;
+  const contentType =
+    source === 'feed' ? 'article' : source === 'url' ? urlSaveContentType(body) : source;
   // For a document save the member URL is the resolved blogs URL (already in body.url)
   // and the doc's recordUri (itemGuid) is the canonical atproto peer reference.
   const canonicalAtUri = source === 'document' ? body.itemGuid || undefined : undefined;
@@ -494,7 +513,11 @@ async function handleBackedSave(
          author = COALESCE(excluded.author, author),
          description = COALESCE(excluded.description, description),
          content = COALESCE(excluded.content, content),
-         content_type = excluded.content_type,
+         -- The type describes the body: when the body above is the one already
+         -- stored (this save brought no text, e.g. a failed PDF extraction), so
+         -- is the type. A stub with no body yet takes this save's type.
+         content_type = CASE WHEN excluded.content IS NULL AND content IS NOT NULL
+           THEN content_type ELSE excluded.content_type END,
          domain = COALESCE(excluded.domain, domain),
          image = COALESCE(excluded.image, image),
          word_count = COALESCE(excluded.word_count, word_count),
