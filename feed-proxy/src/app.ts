@@ -30,6 +30,7 @@ import { safeFetch } from './ssrf-guard';
 import type { RobotsPolicy } from './robots';
 import { signRequestHeaders, signedDirectory, type WebBotAuth } from './web-bot-auth';
 import { reportError, VERSION } from './instrument';
+import { siteSourceFor } from './site-sources';
 import { isDeclaredPdf, isPdf, PdfUnreadableError, type PdfExtractor } from './pdf-extract';
 
 export interface AppConfig {
@@ -454,7 +455,9 @@ export const FEED_PARSER_VERSION = 2;
 //   2: restoreCollapsedMathML added
 //   3: PDFs extracted as text (previously decoded as UTF-8 and fed to Defuddle,
 //      which cached mojibake for every PDF URL)
-export const EXTRACTOR_VERSION = 3;
+//   4: a body with nothing to read reported as null (it was cached as an empty
+//      `<body></body>`), and site sources for script-rendered pages (attie.ai)
+export const EXTRACTOR_VERSION = 4;
 
 function hostOf(url: string): string | null {
   try {
@@ -584,11 +587,29 @@ export function restoreCollapsedMathML(sourceHtml: string, content: string): str
   });
 }
 
+// Whether an extracted body has anything to read: text, or media standing in
+// for it (an image post, an embedded video). A page that builds its article
+// with scripts extracts as an empty shell (`<body></body>`), which is no article.
+export function hasReadableContent(html: string | null | undefined): html is string {
+  if (!html) return false;
+  if (/<(img|picture|video|audio|iframe|svg|math|canvas|object|embed)\b/i.test(html)) return true;
+  return /\S/.test(
+    html
+      .replace(/<(script|style)\b[\s\S]*?<\/\1>/gi, '')
+      .replace(/<[^>]*>/g, '')
+      .replace(/&nbsp;|&#160;/g, ' ')
+  );
+}
+
 async function extractArticle(html: string, url: string): Promise<ExtractedArticle> {
   // Defuddle's node entry builds a DOM from the HTML string via linkedom and
   // resolves relative URLs against `url`.
   const result = await Defuddle(html, url, { url });
-  const content = result.content ? restoreCollapsedMathML(html, result.content) : null;
+  // Nothing to read is reported as no body, so every caller sees one shape for
+  // it — the reader is told the text couldn't be found, never shown a blank page.
+  const content = hasReadableContent(result.content)
+    ? restoreCollapsedMathML(html, result.content)
+    : null;
   return {
     title: result.title || null,
     author: result.author || null,
@@ -599,6 +620,35 @@ async function extractArticle(html: string, url: string): Promise<ExtractedArtic
     published: toValidISODate(result.published),
     wordCount: result.wordCount || 0,
   };
+}
+
+// A page whose text is served apart from its HTML (see site-sources.ts),
+// extracted from that source. Null when the URL has no source, or the source
+// failed or held no article: the caller then fetches the page as usual, so a
+// source that changes shape costs one request, never the save.
+async function extractFromSiteSource(url: string): Promise<ExtractedArticle | null> {
+  const source = siteSourceFor(url);
+  if (!source) return null;
+  try {
+    const response = await fetchUpstream(
+      source.url,
+      { ...FETCH_HEADERS, Accept: source.accept },
+      { fetchTimeoutMs: EXTRACT_FETCH_TIMEOUT_MS }
+    );
+    if (!response.ok) {
+      console.warn(`[Proxy] /extract ${url}: site source answered HTTP ${response.status}`);
+      return null;
+    }
+    const html = source.toHtml(await readResponseWithLimit(response, MAX_RESPONSE_SIZE_BYTES));
+    if (!html) return null;
+    const extracted = await extractArticle(html, url);
+    return extracted.content ? extracted : null;
+  } catch (err) {
+    console.warn(
+      `[Proxy] /extract ${url}: site source failed: ${err instanceof Error ? err.message : err}`
+    );
+    return null;
+  }
 }
 
 // A PDF the proxy recognised but couldn't turn into text: too large, password-
@@ -2795,6 +2845,15 @@ export function createApp(db: Database, config: AppConfig) {
         // acquire() is outside the try so a failed acquire never calls release().
         await extractSemaphore.acquire(EXTRACT_QUEUE_WAIT_MS);
         try {
+          const fromSource = await extractFromSiteSource(url);
+          if (fromSource) {
+            db.run(
+              'INSERT OR REPLACE INTO extract_cache (url_hash, url, extracted_json, cached_at, extractor_version) VALUES (?, ?, ?, ?, ?)',
+              [urlHash, url, JSON.stringify(fromSource), Date.now(), EXTRACTOR_VERSION]
+            );
+            return fromSource;
+          }
+
           // Same identity as the crawl and discovery paths. A site that refuses
           // it answers 403 → `blocked`, which is what lets the reader be offered
           // the extension (the honest way to save a page a site won't serve us).

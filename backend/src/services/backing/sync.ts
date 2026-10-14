@@ -244,7 +244,7 @@ export async function extractMissingBackedContent(
         // Set the body, COALESCE-fill metadata only where the stub lacked it (keep the
         // foreign-record title/author we already captured), and hard-set the type to
         // 'article' — these rows are only ever article-like saves (source IN url/feed).
-        await fillExtractedContent(env, a, { id: row.id }, { setArticleType: true });
+        await fillExtractedContent(env, a, { id: row.id }, { url: row.url, setArticleType: true });
         filled++;
       } catch (err) {
         console.error(`[backing] extract failed for ${row.url}:`, err);

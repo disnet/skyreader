@@ -31,6 +31,8 @@ Only the text comes through. Figures, tables, and equations stay in the original
 
 Some sites refuse automated readers, so Skyreader's servers can't fetch the article even though it opens fine in your browser. The save still goes through: you get the link (and its title, when Skyreader knows it) with a note in place of the text. To get the full text, open the article and save it with the [Chrome](https://chromewebstore.google.com/detail/skyreader/kdefpnnpmajcclfepekgdkcdiklfooed) or [Firefox](https://addons.mozilla.org/firefox/addon/skyreader/) extension, which reads the page you already have open. That replaces the note.
 
+Some pages load their text only once they're open in a browser, so Skyreader's servers find nothing to read. Those saves get the same note, and the extension gets the text the same way.
+
 ### Backing your saves with Semble or Margin
 
 If you use [Semble](https://semble.so) or [Margin](https://margin.at), you can back your Saved list with one of them (**Settings → Library & privacy → Saved articles**). Your Saved list becomes a collection there: edit it in either app, or in any Atmospheric app, and the two stay in sync.

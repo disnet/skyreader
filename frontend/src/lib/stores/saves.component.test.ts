@@ -384,6 +384,59 @@ describe('savesStore.saveFromUrl when the article cannot be fetched', () => {
     extractArticle.mockReset();
   });
 
+  // A page that builds its text with scripts extracts fine, but to nothing.
+  it('saves a note, not a blank page, when the page had no article text', async () => {
+    extractArticle.mockResolvedValueOnce({
+      title: 'The Dark Mode Toggle Discourse',
+      author: null,
+      description: 'How the discourse unfolded',
+      content: '<body></body>',
+      domain: 'attie.ai',
+      image: null,
+      published: null,
+      wordCount: 0,
+    });
+
+    const saved = await savesStore.saveFromUrl('https://attie.ai/@a/pages/x');
+
+    expect(saved.fetchFailed).toBe('empty');
+    const meta = api.saveFromUrl.mock.calls[0][2];
+    // What the page said about itself is kept; the note stands in for the text.
+    expect(meta.title).toBe('The Dark Mode Toggle Discourse');
+    expect(meta.description).toBe('How the discourse unfolded');
+    expect(meta.wordCount).toBeUndefined();
+    expect(meta.content).toContain("couldn't find the article text");
+    expect(meta.content).toContain('Save this page');
+  });
+
+  it('replaces a save stored with nothing to read once the text can be found', async () => {
+    savedRows.set('emptyemptyemp', {
+      rkey: 'emptyemptyemp',
+      uri: 'at://did:plc:me/app.skyreader.feed.saved/emptyemptyemp',
+      url: 'https://example.com/blank',
+      title: 'Blank',
+      content: '<body></body>',
+      savedAt: '2026-09-01T00:00:00.000Z',
+      source: 'url',
+    } as never);
+    await savesStore.load();
+    extractArticle.mockResolvedValueOnce({
+      title: 'Blank',
+      author: null,
+      description: null,
+      content: '<p>found the words this time</p>',
+      domain: 'example.com',
+      image: null,
+      published: null,
+      wordCount: 5,
+    });
+
+    const upgraded = await savesStore.saveFromUrl('https://example.com/blank');
+
+    expect(upgraded.rkey).toBe('emptyemptyemp');
+    expect(api.saveFromUrl.mock.calls[0][2].updateContent).toBe(true);
+  });
+
   it('still fails when the problem is not the page (e.g. a 4xx or offline)', async () => {
     extractArticle.mockRejectedValueOnce(new ApiError('Unauthorized', 401));
 

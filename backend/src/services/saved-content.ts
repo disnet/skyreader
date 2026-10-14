@@ -1,12 +1,48 @@
 import type { Env } from '../types';
 import type { ExtractedArticle } from './feed-proxy-client';
+import { escapeHtml, htmlToText } from '../utils/html-text';
+
+// Whether an extracted body has anything to read: text, or media standing in for
+// it. A page that builds its article with scripts extracts as an empty shell.
+function hasReadableContent(html: string | null | undefined): html is string {
+  if (!html) return false;
+  if (/<(img|picture|video|audio|iframe|svg|math|canvas|object|embed)\b/i.test(html)) return true;
+  return htmlToText(html).trim().length > 0;
+}
+
+/**
+ * The body stored when an extraction found nothing to read, so a save never opens
+ * to a blank page. Carries the same marker as the frontend's failedSaveBody
+ * (frontend/src/lib/utils/saveAnywhere.ts): the reader counts no words for it,
+ * and a later save that does get the text may replace it.
+ */
+export function emptyExtractionNote(url: string | undefined): string {
+  let host: string | null = null;
+  try {
+    host = url ? new URL(url).hostname.replace(/^www\./, '') : null;
+  } catch {
+    // Leave the link out.
+  }
+  const lines = [
+    `<p data-skyreader-note="fetch-failed">Skyreader couldn't find the article text on this page. The link is saved, so it's here when you want it.</p>`,
+  ];
+  if (url && host) {
+    lines.push(`<p><a href="${escapeHtml(url)}">Read it on ${escapeHtml(host)}</a></p>`);
+  }
+  lines.push(
+    '<p>The browser extension can still save the full text. Open the article, then use ' +
+      '<strong>Save this page</strong>; it replaces this note.</p>'
+  );
+  return lines.join('\n');
+}
 
 /**
  * Write an extracted article body + metadata onto a saved_articles row.
  *
  * Guarded on `content IS NULL` so it never clobbers a body another path already filled;
- * a non-null `content` (empty string when extraction yielded nothing) marks the row as
- * extracted so later backfill passes skip it. Metadata is COALESCE-filled, preserving
+ * a non-null `content` marks the row as extracted so later backfill passes skip it. An
+ * extraction with nothing to read stores emptyExtractionNote (linking `opts.url`) rather
+ * than an empty body. Metadata is COALESCE-filled, preserving
  * anything the row already captured (e.g. a caller-supplied or foreign-record title).
  *
  * The row is selected either by primary `id` or by `(user_did, rkey)`. Pass
@@ -22,8 +58,9 @@ export async function fillExtractedContent(
   env: Env,
   article: ExtractedArticle,
   where: { id: number } | { userDid: string; rkey: string },
-  opts: { setArticleType?: boolean } = {}
+  opts: { url?: string; setArticleType?: boolean } = {}
 ): Promise<void> {
+  const hasBody = hasReadableContent(article.content);
   const contentType =
     article.contentType === 'pdf' ? 'pdf' : opts.setArticleType ? 'article' : null;
   const contentTypeClause = contentType ? `,\n         content_type = '${contentType}'` : '';
@@ -44,8 +81,9 @@ export async function fillExtractedContent(
        WHERE ${whereClause} AND content IS NULL`
   )
     .bind(
-      article.content ?? '', // non-null marks the row as extracted so backfill passes skip it
-      article.wordCount || null,
+      // Non-null either way: marks the row as extracted so backfill passes skip it.
+      hasBody ? article.content : emptyExtractionNote(opts.url),
+      hasBody ? article.wordCount || null : null,
       article.title ?? null,
       article.author ?? null,
       article.description ?? null,

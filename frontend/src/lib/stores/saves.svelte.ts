@@ -11,7 +11,12 @@ import { extractArticle } from '$lib/services/extract';
 import { loadStoredBody } from '$lib/services/itemBody';
 import { subscriptionsStore } from './subscriptions.svelte';
 import { preferExtractedBody } from '$lib/utils/saveBody';
-import { failedSaveBody, isFailedSaveBody, type SaveFetchFailure } from '$lib/utils/saveAnywhere';
+import {
+  failedSaveBody,
+  hasReadableContent,
+  isFailedSaveBody,
+  type SaveFetchFailure,
+} from '$lib/utils/saveAnywhere';
 import { computeContentStats } from '$lib/services/articleMerge';
 import { savedSearchStore } from './savedSearch.svelte';
 import { compareSavedNewestFirst } from '$lib/utils/savedPile';
@@ -417,12 +422,18 @@ function createSavesStore() {
     error = null;
     try {
       const rkey = generateTid();
-      // The existing save when it is a link-only note this save may replace.
-      // In memory saves are light (no body), so the note is read from Dexie.
+      // The existing save when it is a link-only note this save may replace, or
+      // one stored with nothing to read (saved before empty extractions became
+      // notes). In memory saves are light (no body), so the body is read from
+      // Dexie; a body that isn't cached here is unknown, and left alone.
       const existing = getByUrl(url);
+      const existingBody = existing
+        ? (await db.saved.get(existing.rkey).catch(() => undefined))?.content
+        : undefined;
       const noteSave =
         existing &&
-        isFailedSaveBody((await db.saved.get(existing.rkey).catch(() => undefined))?.content)
+        (isFailedSaveBody(existingBody) ||
+          (typeof existingBody === 'string' && !hasReadableContent(existingBody)))
           ? existing
           : null;
 
@@ -431,6 +442,19 @@ function createSavesStore() {
       let fetchFailed: SaveFetchFailure | undefined;
       try {
         extracted = await extractArticle(url);
+        // Fetched, but nothing to read (a page that builds its text with
+        // scripts): keep what the page said about itself, and put the note
+        // where the article would be rather than save a blank page.
+        if (!hasReadableContent(extracted.content)) {
+          fetchFailed = 'empty';
+          extracted = {
+            ...extracted,
+            title: extracted.title || hint.title?.trim() || null,
+            content: failedSaveBody(url, 'empty'),
+            wordCount: 0,
+            contentType: undefined,
+          };
+        }
       } catch (err) {
         const failure = saveFetchFailure(err);
         if (!failure) throw err;

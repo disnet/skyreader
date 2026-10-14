@@ -86,11 +86,29 @@ export function blockedSaveAction(): BlockedSaveAction {
 /**
  * Why a URL save came back without the article. `blocked` is the site refusing
  * the server's fetcher; `pdf` is a PDF the server couldn't turn into text (too
- * large, password-protected, a failed parse); `failed` is anything else that
- * went wrong fetching or extracting the page (a timeout, a broken page, the
- * proxy itself).
+ * large, password-protected, a failed parse); `empty` is a page fetched fine
+ * but with no article text in it (usually one that builds its text with
+ * scripts, which the extension sees and the server doesn't); `failed` is
+ * anything else that went wrong fetching or extracting the page (a timeout, a
+ * broken page, the proxy itself).
  */
-export type SaveFetchFailure = 'blocked' | 'pdf' | 'failed';
+export type SaveFetchFailure = 'blocked' | 'pdf' | 'empty' | 'failed';
+
+/**
+ * Whether an article body has anything to read: text, or media standing in for
+ * it (an image post, an embedded video). An extraction of a page that builds
+ * its article with scripts comes back as an empty shell like `<body></body>`.
+ */
+export function hasReadableContent(html: string | null | undefined): html is string {
+  if (!html) return false;
+  if (/<(img|picture|video|audio|iframe|svg|math|canvas|object|embed)\b/i.test(html)) return true;
+  return /\S/.test(
+    html
+      .replace(/<(script|style)\b[\s\S]*?<\/\1>/gi, '')
+      .replace(/<[^>]*>/g, '')
+      .replace(/&nbsp;|&#160;/g, ' ')
+  );
+}
 
 /**
  * Whether the browser extension is a way to the full text. It reads a web page
@@ -132,7 +150,9 @@ export function failedSaveBody(url: string, reason: SaveFetchFailure): string {
       ? "Skyreader couldn't fetch this article: the site blocks automated readers."
       : reason === 'pdf'
         ? "Skyreader couldn't read the text of this PDF."
-        : "Skyreader couldn't fetch this article.";
+        : reason === 'empty'
+          ? "Skyreader couldn't find the article text on this page."
+          : "Skyreader couldn't fetch this article.";
   const link = (href: string, text: string) =>
     `<a href="${escapeHtml(href)}">${escapeHtml(text)}</a>`;
   if (!extensionCanHelp(reason)) {
@@ -156,5 +176,6 @@ export function failedSaveBody(url: string, reason: SaveFetchFailure): string {
 export function failedSaveLine(reason: SaveFetchFailure): string {
   if (reason === 'blocked') return `Saved the link only. ${BLOCKED_SAVE_LINE}`;
   if (reason === 'pdf') return "Saved the link only. Skyreader couldn't read this PDF.";
+  if (reason === 'empty') return "Saved the link only. Skyreader couldn't find the article text.";
   return "Saved the link only. Skyreader couldn't fetch the article.";
 }

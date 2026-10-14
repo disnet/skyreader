@@ -174,7 +174,7 @@ async function extractFromTab(tabId) {
       target: { tabId },
       func: () => globalThis.__skyreaderExtract?.(),
     });
-    if (!result || result.error || !result.content) return null;
+    if (!result || result.error || !hasReadableContent(result.content)) return null;
     return result;
   } catch {
     return null;
@@ -199,6 +199,40 @@ function isHttpUrl(raw) {
   } catch {
     return false;
   }
+}
+
+// Whether an extracted body has anything to read: text, or media standing in
+// for it. Defuddle answers a page it found no article in with an empty shell
+// (`<body></body>`), which is no body. Mirrors hasReadableContent in
+// feed-proxy/src/app.ts.
+function hasReadableContent(html) {
+  if (!html) return false;
+  if (/<(img|picture|video|audio|iframe|svg|math|canvas|object|embed)\b/i.test(html)) return true;
+  return /\S/.test(
+    html
+      .replace(/<(script|style)\b[\s\S]*?<\/\1>/gi, '')
+      .replace(/<[^>]*>/g, '')
+      .replace(/&nbsp;|&#160;/g, ' ')
+  );
+}
+
+function escapeHtml(s) {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+// The body of a save whose text couldn't be found. Carries the marker of the
+// web app's note (failedSaveBody in frontend/src/lib/utils/saveAnywhere.ts), so
+// it counts no words and a later save that finds the text replaces it.
+function noTextNote(url) {
+  const host = new URL(url).hostname.replace(/^www\./, '');
+  return [
+    `<p data-skyreader-note="fetch-failed">Skyreader couldn't find the article text on this page. The link is saved, so it's here when you want it.</p>`,
+    `<p><a href="${escapeHtml(url)}">Read it on ${escapeHtml(host)}</a></p>`,
+  ].join('\n');
 }
 
 function wordCountFrom(html) {
@@ -245,18 +279,22 @@ async function performSave(url, { fallbackTitle, extractTabId } = {}) {
     // Network/extraction failure — fall through to a bare save.
   }
 
-  const wordCount = extracted?.wordCount || wordCountFrom(extracted?.content);
+  // Nothing to read from either extractor: save the link with a note where the
+  // text would be, so the save never opens to a blank page.
+  const hasBody = hasReadableContent(extracted?.content);
+  const wordCount = hasBody ? extracted?.wordCount || wordCountFrom(extracted?.content) : 0;
   const body = {
     url,
     rkey: generateTid(),
     source: 'url',
     // If this URL is already saved, upgrade the stored content with this
-    // (likely richer) extraction instead of getting a 409 back.
-    updateContent: true,
+    // (likely richer) extraction instead of getting a 409 back. A note is no
+    // upgrade: an existing save keeps whatever it has.
+    updateContent: hasBody,
     title: extracted?.title || fallbackTitle || undefined,
     author: extracted?.author || undefined,
     description: extracted?.description || undefined,
-    content: extracted?.content || undefined,
+    content: hasBody ? extracted.content : noTextNote(url),
     domain: extracted?.domain || undefined,
     image: extracted?.image || undefined,
     publishedAt: extracted?.published || undefined,
