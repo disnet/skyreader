@@ -258,6 +258,12 @@ directly, no concept tournament.
       <span class="benefit-figure">Newsletters by email</span>
       <span class="benefit-desc">A private address; each newsletter becomes a source.</span>
     </li>
+    <li class="benefit">
+      <span class="benefit-figure">PDFs</span>
+      <span class="benefit-desc"
+        >Save by link or upload; read and highlight them like any article.</span
+      >
+    </li>
     {#if searchLive}
       <li class="benefit">
         <span class="benefit-figure">Search everything you’ve read</span>
@@ -366,6 +372,13 @@ directly, no concept tournament.
             <span class="feature-text">
               Newsletters by email
               <span class="feature-sub">a private address; read them here, not in your inbox</span>
+            </span>
+          </li>
+          <li>
+            <span class="feature-check"><Icon name="check" size={16} strokeWidth={2.5} /></span>
+            <span class="feature-text">
+              PDFs, by link or upload
+              <span class="feature-sub">papers and reports, read and highlighted here</span>
             </span>
           </li>
           {#if searchLive}

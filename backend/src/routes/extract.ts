@@ -63,6 +63,10 @@ export async function handleExtract(request: Request, env: Env): Promise<Respons
         blocked: error instanceof FeedProxyError && error.blocked === true,
         // A PDF the proxy couldn't read: the extension would hit the same wall.
         pdf: error instanceof FeedProxyError && error.pdf === true,
+        // ...and one this reader's plan doesn't include: the way through is upgrading.
+        ...(error instanceof FeedProxyError && error.upgradeRequired
+          ? { code: 'upgrade_required' }
+          : {}),
       }),
       {
         status: 502,

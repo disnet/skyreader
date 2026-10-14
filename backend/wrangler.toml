@@ -68,6 +68,13 @@ database_id = "YOUR_D1_DATABASE_ID"
 binding = "ITEM_BODIES"
 bucket_name = "skyreader-item-bodies"
 
+# Original files of uploaded saves (routes/saved-pdf.ts), keyed by reader and
+# save, served only to their owner. Create before a deploy that carries it:
+#   npx wrangler r2 bucket create skyreader-saved-files
+[[r2_buckets]]
+binding = "SAVED_FILES"
+bucket_name = "skyreader-saved-files"
+
 # Environment variables
 [vars]
 FRONTEND_URL = "https://skyreader.app"
@@ -76,6 +83,11 @@ FRONTEND_URL = "https://skyreader.app"
 # back to it survives isValidReturnUrl after login.
 ALLOWED_ORIGINS = "https://skyreader.app,https://staging.skyreader.app,https://staging-prod.skyreader.app,https://linkblogs.skyreader.app"
 FEED_PROXY_URL = "https://skyreader-feed-proxy.fly.dev"
+# The pdf-extractor Worker, called directly for uploaded PDFs (PDFs saved by URL
+# go through the feed proxy, which calls it too). Authenticated with the
+# PDF_EXTRACTOR_SECRET secret, the same value as the Worker's EXTRACT_SECRET;
+# unset, uploads answer 503.
+PDF_EXTRACTOR_URL = "https://pdf-extractor.skyreader.app"
 # Public base for users' linkblogs, baked into their site.standard.publication
 # record's `url` field (DID-based so it survives handle changes).
 LINKBLOG_PUBLIC_URL = "https://linkblogs.skyreader.app"
@@ -134,7 +146,7 @@ name = "skyreader-api-staging"
 # under the sandbox token exists nowhere and surfaces only as a 502 from
 # /api/billing/checkout. The sandbox token + webhook secret are set with
 # `wrangler secret put <NAME> --env staging`; see POLAR_SETUP.md.
-vars = { FRONTEND_URL = "https://staging.skyreader.app", ALLOWED_ORIGINS = "https://staging.skyreader.app,https://staging-linkblogs.skyreader.app", FEED_PROXY_URL = "https://skyreader-feed-proxy-staging.fly.dev", LINKBLOG_PUBLIC_URL = "https://staging-linkblogs.skyreader.app", SENTRY_ENVIRONMENT = "staging", POLAR_SERVER = "sandbox", POLAR_PRODUCT_ID = "4f3e636c-8dd5-4af1-af3d-b88e85b104e4", USERINPUT_API_URL = "https://userinput.app", USERINPUT_SPACE_DID = "did:plc:ra4jsemddo2ii4pn5jaf6x4v", USERINPUT_SPACE_RKEY = "3mobgsd6d5n27", OAUTH_PERMISSION_SETS = "true", NEWSLETTER_EMAIL_DOMAIN = "" }
+vars = { FRONTEND_URL = "https://staging.skyreader.app", ALLOWED_ORIGINS = "https://staging.skyreader.app,https://staging-linkblogs.skyreader.app", FEED_PROXY_URL = "https://skyreader-feed-proxy-staging.fly.dev", PDF_EXTRACTOR_URL = "https://pdf-extractor-staging.skyreader.app", LINKBLOG_PUBLIC_URL = "https://staging-linkblogs.skyreader.app", SENTRY_ENVIRONMENT = "staging", POLAR_SERVER = "sandbox", POLAR_PRODUCT_ID = "4f3e636c-8dd5-4af1-af3d-b88e85b104e4", USERINPUT_API_URL = "https://userinput.app", USERINPUT_SPACE_DID = "did:plc:ra4jsemddo2ii4pn5jaf6x4v", USERINPUT_SPACE_RKEY = "3mobgsd6d5n27", OAUTH_PERMISSION_SETS = "true", NEWSLETTER_EMAIL_DOMAIN = "" }
 routes = [{ pattern = "api-staging.skyreader.app", custom_domain = true }]
 
 # Smart Placement — STAGING ONLY, deliberately, until it is measured.
@@ -170,6 +182,11 @@ database_id = "YOUR_STAGING_D1_DATABASE_ID"
 [[env.staging.r2_buckets]]
 binding = "ITEM_BODIES"
 bucket_name = "skyreader-item-bodies-staging"
+
+#   npx wrangler r2 bucket create skyreader-saved-files-staging
+[[env.staging.r2_buckets]]
+binding = "SAVED_FILES"
+bucket_name = "skyreader-saved-files-staging"
 
 # Cron Triggers in staging
 [env.staging.triggers]

@@ -7,17 +7,18 @@ Skyreader is independent software: no ads, no growth team, no investors to satis
 
 ## Plans
 
-|                        | Free  | Supporter |
-| ---------------------- | ----- | --------- |
-| Active feeds           | 100   | 1,000     |
-| URL saves per month    | 100   | 1,000     |
-| Mirrored subscriptions | 1,000 | 5,000     |
-| Newsletters by email   | —     | ✓         |
-| Search everything read | —     | ✓         |
+|                         | Free  | Supporter |
+| ----------------------- | ----- | --------- |
+| Active feeds            | 100   | 1,000     |
+| URL saves per month     | 100   | 1,000     |
+| Mirrored subscriptions  | 1,000 | 5,000     |
+| Newsletters by email    | —     | ✓         |
+| Search everything read  | —     | ✓         |
+| PDFs, by link or upload | —     | ✓         |
 
 Mirrored subscriptions are the headroom for what Atmospheric sync brings along from your PDS.
 
-Supporters also get a private address for [email newsletters](/guide/adding-sources/#email-newsletters), and [search](/guide/search/) across everything they've read, saved and highlighted.
+Supporters also get a private address for [email newsletters](/guide/adding-sources/#email-newsletters), [search](/guide/search/) across everything they've read, saved and highlighted, and [PDFs](/guide/saving-and-highlights/#saving-a-pdf): saved by link or uploaded, read and highlighted like any article.
 
 Everything else, the reader, highlights, the daily magazine, the linkblog, offline support, is the same on every plan.
 

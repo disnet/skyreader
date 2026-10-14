@@ -4,6 +4,7 @@ import { FeedProxyClient } from '../src/services/feed-proxy-client';
 import {
   PDF_PARSES_PER_DAY,
   PDF_QUOTA_ENDPOINT,
+  PDF_SUPPORTER_MESSAGE,
   chargePdfParse,
   hasPdfAllowance,
   pdfQuotaDay,
@@ -73,12 +74,25 @@ describe('PDF allowance', () => {
   });
 });
 
+async function setTier(tier: string | null, did = DID) {
+  await env.DB.prepare('DELETE FROM users WHERE did = ?').bind(did).run();
+  if (tier) {
+    await env.DB.prepare(
+      `INSERT INTO users (did, handle, pds_url, tier, created_at) VALUES (?, ?, ?, ?, unixepoch())`
+    )
+      .bind(did, 'pdf.test', 'https://pds.example', tier)
+      .run();
+  }
+}
+
 describe('FeedProxyClient.extract() and the PDF allowance', () => {
   let originalFetch: typeof fetch;
 
   beforeEach(async () => {
     originalFetch = globalThis.fetch;
     await env.DB.prepare('DELETE FROM rate_limits').run();
+    // PDFs are a Supporter feature; most of this block is about the daily cap.
+    await setTier('supporter');
   });
 
   afterEach(() => {
@@ -123,6 +137,30 @@ describe('FeedProxyClient.extract() and the PDF allowance', () => {
     await setSpent(PDF_PARSES_PER_DAY);
     const mock = proxyAnswers(PARSED);
     await client().extract('https://example.com/a', { userDid: DID });
+    expect(sentBody(mock)).toEqual({ url: 'https://example.com/a', allowPdf: false });
+  });
+
+  it("doesn't parse PDFs for a reader whose plan lacks them, and says why", async () => {
+    await setTier('free');
+    const mock = proxyAnswers({
+      error: "You've saved a lot of PDFs today. Try this one again tomorrow.",
+      blocked: false,
+      pdf: true,
+    });
+    const err = await client()
+      .extract('https://example.com/a.pdf', { userDid: DID })
+      .catch((e) => e);
+    expect(sentBody(mock)).toEqual({ url: 'https://example.com/a.pdf', allowPdf: false });
+    expect(err.message).toBe(PDF_SUPPORTER_MESSAGE);
+    expect(err.pdf).toBe(true);
+    expect(err.upgradeRequired).toBe(true);
+  });
+
+  it('still extracts web pages for a reader whose plan lacks PDFs', async () => {
+    await setTier('free');
+    const mock = proxyAnswers({ title: 'A page', content: '<p>Hi</p>' });
+    const article = await client().extract('https://example.com/a', { userDid: DID });
+    expect(article.title).toBe('A page');
     expect(sentBody(mock)).toEqual({ url: 'https://example.com/a', allowPdf: false });
   });
 

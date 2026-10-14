@@ -21,6 +21,7 @@ import {
 import { hasIntegrationScopes } from './integrations';
 import { normalizeArticleUrl } from '../utils/url-normalize';
 import { chunkArray } from './reading';
+import { deleteSavedFile } from './saved-pdf';
 
 const COLLECTION = 'app.skyreader.feed.saved';
 
@@ -1223,6 +1224,8 @@ export async function handleDeleteSaved(
     await env.DB.prepare('DELETE FROM saved_articles WHERE user_did = ? AND rkey = ?')
       .bind(session.did, rkey)
       .run();
+    // An uploaded PDF's original goes with it.
+    await deleteSavedFile(env, session.did, rkey);
 
     const settings = await getUserSettings(env, session.did);
     if (settings.backing.provider !== 'skyreader' && row.url_normalized) {

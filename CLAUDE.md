@@ -10,7 +10,7 @@ This is a monorepo with 8 packages:
 - `frontend/` - SvelteKit PWA
 - `admin/` - SvelteKit admin dashboard (Cloudflare Pages)
 - `feed-proxy/` - Feed crawler + article extraction (Fly.io; one app per environment)
-- `pdf-extractor/` - Cloudflare Worker that reflows saved PDFs into reader HTML for the feed proxy's `/extract`
+- `pdf-extractor/` - Cloudflare Worker that reflows saved PDFs into reader HTML, for the feed proxy's `/extract` (PDFs saved by link) and the backend's `POST /api/saved/pdf` (uploads)
 - `linkblog-site/` - Standalone SvelteKit app rendering public linkblogs at `linkblogs.skyreader.app` (Cloudflare Pages)
 - `extension/` - Chrome + Firefox extension for one-click saves with live-DOM article extraction (Manifest V3)
 - `docs-site/` - User-facing docs at `docs.skyreader.app` (Astro Starlight; Cloudflare Pages)

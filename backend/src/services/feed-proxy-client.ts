@@ -1,7 +1,7 @@
 import type { Env, FeedItem } from '../types';
 import { getRequestId } from '../utils/request-context';
 import { scrubText } from '../observability/scrub';
-import { chargePdfParse, hasPdfAllowance } from './pdf-quota';
+import { PDF_SUPPORTER_MESSAGE, chargePdfParse, pdfAccess } from './pdf-quota';
 
 /** Stamp the in-flight request id on an outbound proxy call, when there is one. */
 function setRequestIdHeader(headers: Headers): void {
@@ -56,6 +56,9 @@ export class FeedProxyError extends Error {
   // password-protected, a failed parse). The extension extracts a PDF tab through
   // the same proxy, so unlike `blocked` there is no way through to offer.
   pdf?: boolean;
+  // Set with `pdf` when the PDF wasn't read because the reader's plan doesn't
+  // include PDFs (not because it was unreadable): the way through is upgrading.
+  upgradeRequired?: boolean;
   /**
    * HTTP status of the proxy response, when the failure came with one. Kept as a
    * field rather than only interpolated into the message so a log line can be
@@ -795,14 +798,15 @@ export class FeedProxyClient {
 
   /**
    * `userDid` is the reader the extraction is for: a PDF parse is charged to
-   * their daily allowance (services/pdf-quota.ts), and once it is spent the
-   * proxy is told not to parse PDFs for them. Every caller acting for a reader
-   * passes it.
+   * their daily allowance (services/pdf-quota.ts), and once it is spent — or
+   * when their plan doesn't include PDFs — the proxy is told not to parse PDFs
+   * for them. Every caller acting for a reader passes it.
    */
   async extract(url: string, opts: { userDid?: string } = {}): Promise<ExtractedArticle> {
     const proxyUrl = `${this.proxyUrl}/extract`;
     const { userDid } = opts;
-    const allowPdf = userDid ? await hasPdfAllowance(this.env, userDid) : true;
+    const access = userDid ? await pdfAccess(this.env, userDid) : 'ok';
+    const allowPdf = access === 'ok';
 
     const headers = new Headers();
     headers.set('X-Proxy-Secret', this.proxySecret);
@@ -867,8 +871,17 @@ export class FeedProxyClient {
       throw new FeedProxyError('Failed to extract article: the feed service sent no JSON');
     }
     if (body.error) {
-      const err = new FeedProxyError(body.error, undefined, undefined, body.blocked);
+      // A PDF refused for the plan, not the daily cap: the proxy only knows it
+      // was told not to parse, so the reason is put back here.
+      const upgradeRequired = body.pdf === true && access === 'not_supporter';
+      const err = new FeedProxyError(
+        upgradeRequired ? PDF_SUPPORTER_MESSAGE : body.error,
+        undefined,
+        undefined,
+        body.blocked
+      );
       err.pdf = body.pdf === true;
+      err.upgradeRequired = upgradeRequired;
       throw err;
     }
 

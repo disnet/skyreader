@@ -341,7 +341,10 @@
 
   // Type badge
   let typeBadge = $derived.by(() => {
-    if (displayItem.type === 'saved') return displayItem.item.domain || 'Saved';
+    if (displayItem.type === 'saved') {
+      if (displayItem.item.domain) return displayItem.item.domain;
+      return displayItem.item.source === 'upload' ? 'PDF' : 'Saved';
+    }
     return '';
   });
 
