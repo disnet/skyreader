@@ -223,10 +223,9 @@
 
   // A saved PDF reads as reflowed text by default (where highlights and notes
   // live), and can be flipped to the original pages, drawn by PDF.js, for the
-  // figures, tables, equations and layout a reflow can't carry. An upload's
-  // original is the stored file; a PDF saved by link is fetched through the same
-  // route (the server reads it from its URL), which is a Supporter feature like
-  // PDFs themselves.
+  // figures, tables, equations and layout a reflow can't carry. The server keeps
+  // the original of every saved PDF, uploaded or saved by link; a link save's is a
+  // Supporter feature like PDFs themselves.
   let pdfSave = $derived(
     readerItem.type === 'saved' && readerItem.item.contentType === 'pdf' ? readerItem.item : null
   );

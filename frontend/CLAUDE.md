@@ -241,9 +241,9 @@ mounts `feed/PdfViewer.svelte` in place of the text body: PDF.js (`pdfjs-dist`, 
 lazy-imported so it costs nothing until used) draws each page to a canvas near the viewport and drops
 it far away, with PDF.js's text layer on top for selection. Highlights and notes stay in the text
 view (they anchor to the reflow), so the body and its hooks unmount in Original and re-attach on the
-way back; paged mode applies to the text only. The bytes come from `GET /api/saved/<rkey>/file`: an
-upload's stored file, or (Supporter) the link's PDF relayed by the backend, since most PDF hosts
-send no CORS headers. The CSP carries `worker-src 'self' blob:` for PDF.js's worker. PDF.js's image
+way back; paged mode applies to the text only. The bytes come from `GET /api/saved/<rkey>/file`: the
+original kept in R2, whether the PDF was uploaded or saved by link (the backend keeps a link's
+original at save time, or on first open for an older save; most PDF hosts send no CORS headers). The CSP carries `worker-src 'self' blob:` for PDF.js's worker. PDF.js's image
 decoders (OpenJPEG for JPEG 2000, JBIG2 for scans, QCMS for ICC colour) load by fixed filename from
 its `wasmUrl` option, as WebAssembly or the JS fallback beside it; without `wasmUrl` those images
 simply don't draw. `vite.config.ts`'s `pdfjsDecoders()` copies them to

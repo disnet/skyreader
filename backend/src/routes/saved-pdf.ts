@@ -13,7 +13,7 @@ import { readCapped } from './feedback';
 import { log } from '../utils/logger';
 
 /**
- * Uploaded PDFs (Supporter).
+ * Uploaded PDFs, and the originals of every saved PDF (Supporter).
  *
  *   POST /api/saved/pdf?rkey=<tid>&name=<filename>   body: the PDF's bytes
  *   GET  /api/saved/<rkey>/file                      the original, to its owner
@@ -25,14 +25,19 @@ import { log } from '../utils/logger';
  * file is kept in R2 (SAVED_FILES), private to the reader, for the figures and
  * equations a reflow can't carry; saved_files says where it is.
  *
+ * A PDF saved by link keeps its original the same way (storeLinkedPdf): fetched
+ * from its URL right after the save, so the reader needn't know or care which
+ * way a PDF came in, and the original outlives the site that served it.
+ *
  * It never reaches the reader's PDS, nor their Semble/Margin backing: it has no
  * URL to put on a card, and uploads are often someone else's copyright. With
  * backing on, the Saved list serves it alongside the collection like any other
  * URL-less save (services/backing/sync.ts listBackedSaved).
  *
  * Limits, from the plan (config/tier-limits.ts): the file size, uploads per
- * month, total bytes stored. A parse also spends the reader's daily PDF
- * allowance (services/pdf-quota.ts), shared with PDFs saved by URL.
+ * month, total bytes stored (every kept original, however it was saved). A
+ * parse also spends the reader's daily PDF allowance (services/pdf-quota.ts),
+ * shared with PDFs saved by URL.
  */
 
 const COLLECTION = 'app.skyreader.feed.saved';
@@ -72,7 +77,6 @@ export function titleFromFilename(name: string | null): string | null {
 
 // A PDF starts with `%PDF-`, though the spec lets junk precede it within the
 // first kilobyte (and some generators do).
-// The signature may sit after leading junk, but within this many bytes.
 const PDF_SIGNATURE_WINDOW = 1024;
 
 function looksLikePdf(bytes: ArrayBuffer): boolean {
@@ -161,10 +165,14 @@ export async function handleUploadPdf(request: Request, env: Env, session: Sessi
       session.did,
       rkey
     ),
+    // Stored bytes count every kept original; the monthly count, uploads only
+    // (a PDF saved by link counts as a URL save).
     env.DB.prepare(
-      `SELECT COALESCE(SUM(size), 0) AS stored,
-              COALESCE(SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END), 0) AS this_month
-       FROM saved_files WHERE user_did = ?`
+      `SELECT COALESCE(SUM(f.size), 0) AS stored,
+              COALESCE(SUM(CASE WHEN f.created_at >= ? AND s.source = 'upload' THEN 1 ELSE 0 END), 0) AS this_month
+       FROM saved_files f
+       LEFT JOIN saved_articles s ON s.user_did = f.user_did AND s.rkey = f.rkey
+       WHERE f.user_did = ?`
     ).bind(monthStart(now), session.did),
   ]);
 
@@ -194,8 +202,7 @@ export async function handleUploadPdf(request: Request, env: Env, session: Sessi
     return json(
       {
         error: 'pdf_storage_full',
-        message:
-          'Your uploaded PDFs are using all of your storage. Removing saved PDFs frees space.',
+        message: 'Your saved PDFs are using all of your storage. Removing saved PDFs frees space.',
         limit: limits.maxPdfStorageBytes,
         used: stored,
       },
@@ -327,35 +334,182 @@ function pdfResponse(body: BodyInit, filename: string, size?: number): Response 
 }
 
 /**
- * The original of a PDF saved by link, for the reader's PDF view. Those saves
- * keep only their text, and the browser can't fetch most PDFs itself (no CORS),
- * so it's read from the save's own URL here and relayed. Supporter, like PDFs.
- * The Worker's fetch reaches only the public internet
- * (global_fetch_strictly_public), and the URL is one this reader saved.
+ * A PDF saved by link, from its own URL. The Worker's fetch reaches only the
+ * public internet (global_fetch_strictly_public), and the URL is one this reader
+ * saved.
+ */
+function fetchFromSite(url: string): Promise<Response> {
+  return fetch(url, {
+    headers: {
+      Accept: 'application/pdf,*/*;q=0.8',
+      'User-Agent': 'Mozilla/5.0 (compatible; Skyreader/1.0; +https://skyreader.app)',
+    },
+    redirect: 'follow',
+    signal: AbortSignal.timeout(RELAY_TIMEOUT_MS),
+  });
+}
+
+// The filename a PDF saved by link is served under: its URL's last segment.
+function linkedPdfFilename(url: string): string {
+  let path = new URL(url).pathname;
+  try {
+    path = decodeURIComponent(path);
+  } catch {
+    // A malformed escape: name it by the raw path.
+  }
+  const name = cleanFilename(path) || 'document.pdf';
+  return /\.pdf$/i.test(name) ? name : `${name}.pdf`;
+}
+
+interface LinkedPdfSave {
+  rkey: string;
+  url: string;
+}
+
+function isLinkedPdf(
+  row: { url: string; content_type: string | null; source: string | null } | null
+): boolean {
+  return Boolean(
+    row && row.content_type === 'pdf' && row.source !== 'upload' && /^https?:\/\//i.test(row.url)
+  );
+}
+
+export type StoreLinkedPdfResult = 'stored' | 'storage_full' | 'unavailable';
+
+/**
+ * Keep the original of a PDF saved by link in R2, as an upload's is kept. Run
+ * after the save (under waitUntil), and again on first open for a save that
+ * predates this or whose fetch failed then. Same plan limits as an upload: the
+ * file size (the extractor's cap, so any PDF that was read fits) and the stored
+ * bytes. It isn't an upload, so the monthly upload count doesn't apply.
+ */
+async function storeLinkedPdf(
+  env: Env,
+  did: string,
+  save: LinkedPdfSave
+): Promise<StoreLinkedPdfResult> {
+  if (!env.SAVED_FILES) return 'unavailable';
+  const limits = await getUserTierLimits(env, did);
+  if (!limits.pdfSaves) return 'unavailable';
+
+  const [existing, usage] = await env.DB.batch([
+    env.DB.prepare('SELECT 1 AS x FROM saved_files WHERE user_did = ? AND rkey = ?').bind(
+      did,
+      save.rkey
+    ),
+    env.DB.prepare(
+      'SELECT COALESCE(SUM(size), 0) AS stored FROM saved_files WHERE user_did = ?'
+    ).bind(did),
+  ]);
+  if (existing.results.length > 0) return 'stored';
+  const { stored } = usage.results[0] as { stored: number };
+  if (stored >= limits.maxPdfStorageBytes) return 'storage_full';
+
+  let upstream: Response;
+  try {
+    upstream = await fetchFromSite(save.url);
+  } catch {
+    return 'unavailable';
+  }
+  if (!upstream.ok) {
+    await upstream.body?.cancel().catch(() => {});
+    return 'unavailable';
+  }
+  const bytes = await readCapped(upstream.body, limits.maxPdfUploadBytes).catch(() => null);
+  if (!bytes || bytes.byteLength === 0 || !looksLikePdf(bytes)) return 'unavailable';
+  if (stored + bytes.byteLength > limits.maxPdfStorageBytes) return 'storage_full';
+
+  const r2Key = savedFileKey(did, save.rkey);
+  const filename = linkedPdfFilename(save.url);
+  await env.SAVED_FILES.put(r2Key, bytes, {
+    httpMetadata: { contentType: 'application/pdf' },
+    customMetadata: { did, rkey: save.rkey, filename },
+  });
+  // OR IGNORE: two opens racing to store the same save write the same key.
+  const inserted = await env.DB.prepare(
+    `INSERT OR IGNORE INTO saved_files (user_did, rkey, r2_key, filename, mime_type, size, sha256, created_at)
+     SELECT ?, ?, ?, ?, 'application/pdf', ?, ?, ?
+     WHERE EXISTS (SELECT 1 FROM saved_articles WHERE user_did = ? AND rkey = ?)`
+  )
+    .bind(
+      did,
+      save.rkey,
+      r2Key,
+      filename,
+      bytes.byteLength,
+      await sha256Hex(bytes),
+      Date.now(),
+      did,
+      save.rkey
+    )
+    .run();
+  if (!inserted.meta.changes) {
+    // Deleted while we fetched: don't leave its file behind. (A lost race to
+    // another store keeps the key, which that row now owns.)
+    const owned = await env.DB.prepare(
+      'SELECT 1 AS x FROM saved_files WHERE user_did = ? AND rkey = ?'
+    )
+      .bind(did, save.rkey)
+      .first();
+    if (!owned) await env.SAVED_FILES.delete(r2Key).catch(() => {});
+    return owned ? 'stored' : 'unavailable';
+  }
+  log.info('pdf_link_original_stored', { size: bytes.byteLength });
+  return 'stored';
+}
+
+/**
+ * After a PDF is saved by link: keep its original. Looked up by URL, since a
+ * re-save or a backed save lands on whichever row already holds the URL.
+ */
+export async function storeLinkedPdfForUrl(env: Env, did: string, url: string): Promise<void> {
+  try {
+    const row = await env.DB.prepare(
+      'SELECT rkey, url, content_type, source FROM saved_articles WHERE user_did = ? AND url = ?'
+    )
+      .bind(did, url)
+      .first<{ rkey: string; url: string; content_type: string | null; source: string | null }>();
+    if (!row || !isLinkedPdf(row)) return;
+    const result = await storeLinkedPdf(env, did, row);
+    if (result !== 'stored') log.info('pdf_link_original_not_stored', { reason: result });
+  } catch (error) {
+    log.warn('pdf_link_original_store_failed', {
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+/**
+ * The original of a PDF saved by link with no kept file yet. Kept now and served
+ * from storage; only when the reader's storage is full is it streamed through
+ * from the site instead (the browser can't fetch most PDFs itself: no CORS).
+ * Supporter, like PDFs.
  */
 async function relayLinkedPdf(env: Env, session: Session, rkey: string): Promise<Response> {
   const save = await env.DB.prepare(
-    'SELECT url, content_type FROM saved_articles WHERE user_did = ? AND rkey = ?'
+    'SELECT url, content_type, source FROM saved_articles WHERE user_did = ? AND rkey = ?'
   )
     .bind(session.did, rkey)
-    .first<{ url: string; content_type: string | null }>();
-  if (!save || save.content_type !== 'pdf' || !/^https?:\/\//i.test(save.url)) {
+    .first<{ url: string; content_type: string | null; source: string | null }>();
+  if (!save || !isLinkedPdf(save)) {
     return json({ error: 'Not found' }, 404);
   }
   if (!(await getUserTierLimits(env, session.did)).pdfSaves) {
     return json({ error: 'pdf_upgrade_required', message: PDF_SUPPORTER_MESSAGE }, 403);
   }
 
+  // Kept now if it can be (a save from before originals were kept, or one whose
+  // fetch failed at save time), then served from storage like any other.
+  const kept = await storeLinkedPdf(env, session.did, { rkey, url: save.url });
+  if (kept === 'stored') {
+    return (await serveStoredFile(env, session.did, rkey)) ?? json({ error: 'Not found' }, 404);
+  }
+  if (kept === 'unavailable') return json({ error: "Couldn't fetch the PDF from its site." }, 502);
+
+  // Storage is full: show it anyway, streamed through without keeping it.
   let upstream: Response;
   try {
-    upstream = await fetch(save.url, {
-      headers: {
-        Accept: 'application/pdf,*/*;q=0.8',
-        'User-Agent': 'Mozilla/5.0 (compatible; Skyreader/1.0; +https://skyreader.app)',
-      },
-      redirect: 'follow',
-      signal: AbortSignal.timeout(RELAY_TIMEOUT_MS),
-    });
+    upstream = await fetchFromSite(save.url);
   } catch {
     return json({ error: "Couldn't fetch the PDF from its site." }, 502);
   }
@@ -395,13 +549,6 @@ async function relayLinkedPdf(env: Env, session: Session, rkey: string): Promise
     return json({ error: "That link doesn't serve a PDF now." }, 502);
   }
 
-  let path = new URL(save.url).pathname;
-  try {
-    path = decodeURIComponent(path);
-  } catch {
-    // A malformed escape: name it by the raw path.
-  }
-  const name = cleanFilename(path) || 'document.pdf';
   // A body with no (or a lying) Content-Length is still capped: past the limit
   // the stream errors and the reader gets a truncated file, not a held isolate.
   let sent = 0;
@@ -429,27 +576,29 @@ async function relayLinkedPdf(env: Env, session: Session, rkey: string): Promise
       return reader.cancel(reason);
     },
   });
-  return pdfResponse(body, /\.pdf$/i.test(name) ? name : `${name}.pdf`);
+  return pdfResponse(body, linkedPdfFilename(save.url));
 }
 
 // GET /api/saved/<rkey>/file — the original, only ever to the reader who saved it:
-// an upload's stored file, or (relayed) the PDF a link save points at.
+// the kept file (an upload's, or a link save's), else the link save's, kept now.
 export async function handleGetSavedFile(request: Request, env: Env, session: Session) {
   if (request.method !== 'GET') return json({ error: 'Method not allowed' }, 405);
   const rkey = new URL(request.url).pathname.split('/')[3];
   if (!rkey || !isValidRkey(rkey)) return invalidRkeyResponse();
 
+  return (await serveStoredFile(env, session.did, rkey)) ?? relayLinkedPdf(env, session, rkey);
+}
+
+// A save's kept original, or null when it has none.
+async function serveStoredFile(env: Env, did: string, rkey: string): Promise<Response | null> {
   const row = await env.DB.prepare(
-    'SELECT r2_key, filename, mime_type FROM saved_files WHERE user_did = ? AND rkey = ?'
+    'SELECT r2_key, filename FROM saved_files WHERE user_did = ? AND rkey = ?'
   )
-    .bind(session.did, rkey)
-    .first<{ r2_key: string; filename: string | null; mime_type: string }>();
-  if (!row) return relayLinkedPdf(env, session, rkey);
-  if (!env.SAVED_FILES) return json({ error: 'Not found' }, 404);
-
-  const object = await env.SAVED_FILES.get(row.r2_key);
+    .bind(did, rkey)
+    .first<{ r2_key: string; filename: string | null }>();
+  if (!row) return null;
+  const object = env.SAVED_FILES ? await env.SAVED_FILES.get(row.r2_key) : null;
   if (!object) return json({ error: 'Not found' }, 404);
-
   return pdfResponse(object.body, row.filename || 'document.pdf', object.size);
 }
 

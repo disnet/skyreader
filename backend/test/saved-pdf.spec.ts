@@ -199,13 +199,20 @@ describe('POST /api/saved/pdf', () => {
 
   it('holds to the monthly upload allowance', async () => {
     const now = Date.now();
-    const stmts = Array.from({ length: 200 }, (_, i) =>
-      env.DB.prepare(
-        `INSERT INTO saved_files (user_did, rkey, r2_key, mime_type, size, sha256, created_at)
-         VALUES (?, ?, 'k', 'application/pdf', 1, ?, ?)`
-      ).bind(DID, `old${String(i).padStart(10, '0')}`, `sha${i}`, now)
-    );
-    await env.DB.batch(stmts);
+    const stmts = Array.from({ length: 200 }, (_, i) => {
+      const rkey = `old${String(i).padStart(10, '0')}`;
+      return [
+        env.DB.prepare(
+          `INSERT INTO saved_files (user_did, rkey, r2_key, mime_type, size, sha256, created_at)
+           VALUES (?, ?, 'k', 'application/pdf', 1, ?, ?)`
+        ).bind(DID, rkey, `sha${i}`, now),
+        env.DB.prepare(
+          `INSERT INTO saved_articles (user_did, rkey, record_uri, url, content_type, saved_at, created_at, source)
+           VALUES (?, ?, ?, '', 'pdf', ?, ?, 'upload')`
+        ).bind(DID, rkey, `at://${DID}/app.skyreader.feed.saved/${rkey}`, now, now),
+      ];
+    });
+    await env.DB.batch(stmts.flat());
     const mock = extractorAnswers(Response.json(EXTRACTED));
     const { status, body } = await call(upload(PDF));
     expect(status).toBe(403);
@@ -347,14 +354,70 @@ describe('GET /api/saved/<rkey>/file for a PDF saved by link', () => {
     globalThis.fetch = originalFetch;
   });
 
-  it("relays the PDF from the save's URL", async () => {
+  async function keptFile() {
+    return env.DB.prepare('SELECT size, filename FROM saved_files WHERE user_did = ? AND rkey = ?')
+      .bind(DID, LINK_RKEY)
+      .first<{ size: number; filename: string }>();
+  }
+
+  it('keeps the original when a PDF is saved by link', async () => {
+    const mock = siteAnswers(new Response(PDF, { headers: { 'Content-Type': 'application/pdf' } }));
+    const { status } = await call(
+      new IncomingRequest('http://localhost/api/saved', {
+        method: 'POST',
+        headers: {
+          Cookie: `session_id=${SESSION}`,
+          Origin: env.FRONTEND_URL,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          url: PDF_URL,
+          rkey: LINK_RKEY,
+          title: 'A paper',
+          content: '<p>x</p>',
+          contentType: 'pdf',
+        }),
+      })
+    );
+    expect(status).toBe(200);
+    expect(await keptFile()).toEqual({ size: PDF.byteLength, filename: 'attention paper.pdf' });
+
+    // Opened from storage: the site isn't asked again.
+    mock.mockClear();
+    const { status: fileStatus, res } = await call(request(`/api/saved/${LINK_RKEY}/file`));
+    expect(fileStatus).toBe(200);
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(PDF);
+    expect(mock).not.toHaveBeenCalled();
+  });
+
+  it('keeps the original of an older link save on first open', async () => {
     await saveLink();
-    siteAnswers(new Response(PDF, { headers: { 'Content-Type': 'application/pdf' } }));
+    const mock = siteAnswers(new Response(PDF, { headers: { 'Content-Type': 'application/pdf' } }));
     const { status, res } = await call(request(`/api/saved/${LINK_RKEY}/file`));
     expect(status).toBe(200);
     expect(res.headers.get('Content-Type')).toBe('application/pdf');
     expect(res.headers.get('Content-Disposition')).toContain('attention%20paper.pdf');
     expect(new Uint8Array(await res.arrayBuffer())).toEqual(PDF);
+    expect(await keptFile()).not.toBeNull();
+
+    mock.mockClear();
+    expect((await call(request(`/api/saved/${LINK_RKEY}/file`))).status).toBe(200);
+    expect(mock).not.toHaveBeenCalled();
+  });
+
+  it('streams it through without keeping it when storage is full', async () => {
+    await saveLink();
+    await env.DB.prepare(
+      `INSERT INTO saved_files (user_did, rkey, r2_key, mime_type, size, sha256, created_at)
+       VALUES (?, 'oldoldoldoldo', 'k', 'application/pdf', ?, 'sha', 0)`
+    )
+      .bind(DID, 2048 * 1024 * 1024)
+      .run();
+    siteAnswers(new Response(PDF, { headers: { 'Content-Type': 'application/pdf' } }));
+    const { status, res } = await call(request(`/api/saved/${LINK_RKEY}/file`));
+    expect(status).toBe(200);
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(PDF);
+    expect(await keptFile()).toBeNull();
   });
 
   it('streams a PDF that arrives in small chunks with no length', async () => {

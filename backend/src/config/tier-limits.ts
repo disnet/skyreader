@@ -32,7 +32,7 @@ export interface TierLimits {
   maxPdfUploadBytes: number;
   /** Uploads per calendar month (UTC). URL saves of PDFs count as URL saves instead. */
   maxPdfUploadsPerMonth: number;
-  /** Total bytes of uploaded originals kept in R2. Deleting a save frees its file. */
+  /** Total bytes of PDF originals kept in R2, uploaded or saved by link. Deleting a save frees its file. */
   maxPdfStorageBytes: number;
 }
 
