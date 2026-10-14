@@ -1,5 +1,6 @@
 import PostalMime, { addressParser, type Email, type RawEmail } from 'postal-mime';
 import type { FeedItem } from '../types';
+import { escapeHtml } from '../utils/html-text';
 
 /**
  * Turn one inbound newsletter email into a feed item.
@@ -409,14 +410,6 @@ function decodeEntities(text: string): string {
 // An out-of-range reference in a sender's markup must not throw the whole parse.
 function fromCodePoint(code: number): string {
   return Number.isInteger(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : '';
-}
-
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
 }
 
 function isHttpUrl(value: string): boolean {

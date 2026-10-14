@@ -513,6 +513,20 @@ describe('getTypeSuggestions', () => {
     };
     expect(getTypeSuggestions(ctx)).toHaveLength(0);
   });
+
+  it('does not count Bluesky likes or bookmarks as RSS feeds', () => {
+    const ctx: SuggestionContext = {
+      subscriptions: [
+        makeSub({ id: 1 }),
+        makeSub({ id: 2, sourceType: 'bsky.likes', feedUrl: 'bsky-likes:did:plc:me' }),
+        makeSub({ id: 3, sourceType: 'atproto.documents', subjectDid: 'did:plc:a' }),
+        makeSub({ id: 4, sourceType: 'atproto.documents', subjectDid: 'did:plc:b' }),
+      ],
+      articles: [],
+      views: [],
+    };
+    expect(getTypeSuggestions(ctx).map((s) => s.id)).not.toContain('type:articles');
+  });
 });
 
 describe('getTagSuggestions', () => {

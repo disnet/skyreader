@@ -580,6 +580,24 @@ export class PDSClient {
   }
 
   /**
+   * Read the user's private Bluesky bookmarks from the appview, proxied through
+   * their PDS. Needs BSKY_BOOKMARKS_SCOPES.
+   */
+  async getBookmarks<T = unknown>(
+    cursor?: string,
+    limit = 100
+  ): Promise<PDSResult<{ bookmarks: T[]; cursor?: string }>> {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (cursor) params.set('cursor', cursor);
+    return this.request<{ bookmarks: T[]; cursor?: string }>(
+      'GET',
+      `app.bsky.bookmark.getBookmarks?${params}`,
+      undefined,
+      { proxy: BSKY_APPVIEW_PROXY }
+    );
+  }
+
+  /**
    * Delete a record from the PDS
    */
   async deleteRecord(collection: string, rkey: string): Promise<PDSResult<void>> {

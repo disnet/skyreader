@@ -3,7 +3,15 @@
  * reader uses it (progressive scopes), rather than at sign-in.
  */
 export type ScopeFeature =
-  'semble' | 'margin' | 'linkblog' | 'pckt' | 'offprint' | 'feedback' | 'follows' | 'blueskyPost';
+  | 'semble'
+  | 'margin'
+  | 'linkblog'
+  | 'pckt'
+  | 'offprint'
+  | 'feedback'
+  | 'follows'
+  | 'bskyBookmarks'
+  | 'blueskyPost';
 
 /** The reader-facing name of a scope feature, for "X needs your permission" copy. */
 export const SCOPE_FEATURE_LABELS: Record<ScopeFeature, string> = {
@@ -14,6 +22,7 @@ export const SCOPE_FEATURE_LABELS: Record<ScopeFeature, string> = {
   offprint: 'Offprint',
   feedback: 'Feedback',
   follows: 'From your follows',
+  bskyBookmarks: 'Your Bluesky bookmarks',
   blueskyPost: 'Posting to Bluesky',
 };
 
@@ -55,7 +64,11 @@ export type SubscriptionSourceType =
   | 'atproto.collection'
   // Created server-side from mail to the reader's private address; see
   // $lib/utils/newsletters.ts.
-  | 'email.newsletter';
+  | 'email.newsletter'
+  // The link posts the reader liked / bookmarked on Bluesky, gathered
+  // server-side; see $lib/utils/bskySources.ts.
+  | 'bsky.likes'
+  | 'bsky.bookmarks';
 
 export interface Subscription {
   id?: number;

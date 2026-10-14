@@ -131,6 +131,25 @@ function firstFacetLink(facets: Facet[] | undefined): string | null {
 }
 
 /**
+ * The one link a post carries, or null when it has none worth reading: the
+ * post's own link card wins, then its first link facet, then the card on the
+ * post it quotes. Links back into Bluesky or Skyreader don't count.
+ */
+export function postLink(post: {
+  record?: { facets?: Facet[] };
+  embed?: EmbedView;
+}): { url: string; urlNormalized: string; external: ExternalView | null } | null {
+  const ownExternal = externalOf(post.embed);
+  const facetLink = ownExternal ? null : firstFacetLink(post.record?.facets);
+  const external = ownExternal ?? (facetLink ? null : quotedExternalOf(post.embed));
+  const url = external?.uri ?? facetLink;
+  if (!url || skippedHost(url)) return null;
+  const urlNormalized = normalizeArticleUrl(url);
+  if (!urlNormalized) return null;
+  return { url, urlNormalized, external };
+}
+
+/**
  * Flatten one timeline item into a link share, or null when it isn't one.
  *
  * Takes top-level posts, quote posts and reposts that carry an external link.
@@ -149,13 +168,9 @@ export function extractLinkShare(item: TimelineItem, viewerDid: string): LinkSha
   const sharer = isRepost ? item.reason?.by : post.author;
   if (!sharer?.did || sharer.did === viewerDid) return null;
 
-  const ownExternal = externalOf(post.embed);
-  const facetLink = ownExternal ? null : firstFacetLink(post.record?.facets);
-  const external = ownExternal ?? (facetLink ? null : quotedExternalOf(post.embed));
-  const url = external?.uri ?? facetLink;
-  if (!url || skippedHost(url)) return null;
-  const urlNormalized = normalizeArticleUrl(url);
-  if (!urlNormalized) return null;
+  const link = postLink(post);
+  if (!link) return null;
+  const { url, urlNormalized, external } = link;
 
   const embedType = post.embed?.$type;
   const kind: ShareKind = isRepost

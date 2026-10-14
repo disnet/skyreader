@@ -1,5 +1,6 @@
 import type { Subscription } from '$lib/types';
 import { isNewsletterSubscription } from '$lib/utils/newsletters';
+import { isBskySourceSubscription } from '$lib/utils/bskySources';
 
 /**
  * Generate OPML XML from a list of subscriptions.
@@ -12,8 +13,9 @@ export function generateOPML(subscriptions: Subscription[]): string {
   const byCategory = new Map<string | undefined, Subscription[]>();
   for (const sub of subscriptions) {
     // A newsletter's `newsletter:` URL isn't a feed any reader can fetch, and
-    // importing it back would be refused: it arrives by email, not OPML.
-    if (isNewsletterSubscription(sub)) continue;
+    // importing it back would be refused: it arrives by email, not OPML. Same for
+    // Bluesky likes/bookmarks, which are gathered from Bluesky.
+    if (isNewsletterSubscription(sub) || isBskySourceSubscription(sub)) continue;
     const category = sub.category || undefined;
     if (!byCategory.has(category)) {
       byCategory.set(category, []);

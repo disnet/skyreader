@@ -1,5 +1,6 @@
 import { api, ApiError } from './api';
 import { isNewsletterSubscription } from '$lib/utils/newsletters';
+import { isBskySourceSubscription } from '$lib/utils/bskySources';
 import { liveDb } from './liveDb.svelte';
 import { db, getMetadata, setMetadata, type FeedCursorEntry } from './db';
 import { feedStatusStore, type V2FeedResult } from '$lib/stores/feedStatus.svelte';
@@ -500,10 +501,11 @@ async function fetchAllFeedsViaBatch(
   for (const sub of subscriptions) {
     if (!sub.id || !sub.feedUrl) continue;
 
-    // Skip AT Proto subscriptions (they don't have RSS feeds), and newsletters:
-    // they arrive by email, and the batch path asks the crawler.
+    // Skip AT Proto subscriptions (they don't have RSS feeds), newsletters and
+    // Bluesky likes/bookmarks: they're gathered server-side, and the batch path
+    // asks the crawler.
     if (sub.sourceType && sub.sourceType.startsWith('atproto.')) continue;
-    if (isNewsletterSubscription(sub)) continue;
+    if (isNewsletterSubscription(sub) || isBskySourceSubscription(sub)) continue;
 
     // Skip feeds in circuit-breaker cooldown
     if (!feedStatusStore.canFetch(sub.feedUrl)) {

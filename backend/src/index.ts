@@ -118,6 +118,8 @@ import {
   handleFollowLinksProbe,
   handleGetFollowLinks,
 } from './routes/follow-links';
+import { handleBskySources } from './routes/bsky-sources';
+import { refreshBskySourcesIfDue } from './services/bsky-sources';
 import { purgeFollowLinks } from './services/follow-links-store';
 import { handleGetSettings, handleUpdateSettings } from './routes/settings';
 import {
@@ -459,6 +461,13 @@ async function route(
     case url.pathname === '/api/v2/timeline':
       if (!session) return unauthorizedResponse(headers);
       response = await handleTimeline(request, env, session);
+      // Pull new link posts from the reader's Bluesky likes/bookmarks, if they
+      // follow either; they land on a later read (services/bsky-sources.ts).
+      ctx.waitUntil(
+        refreshBskySourcesIfDue(env, session).catch((error) => {
+          log.error('bsky_sources_refresh_threw', { did: session.did, ...serializeError(error) });
+        })
+      );
       break;
 
     // A long item's body, stored out-of-row in R2 at ingest.
@@ -504,6 +513,11 @@ async function route(
     case url.pathname === '/api/v2/following-links':
       if (!session) return unauthorizedResponse(headers);
       response = await handleGetFollowLinks(request, env, ctx, session);
+      break;
+    // Bluesky likes / bookmarks as sources — see services/bsky-sources.ts.
+    case url.pathname === '/api/v2/bluesky-sources':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleBskySources(request, env, session);
       break;
     case url.pathname === '/api/v2/following-links/all':
       if (!session) return unauthorizedResponse(headers);

@@ -6,6 +6,8 @@
 // page just ends pagination, a failed profile batch is skipped. Discovery is an
 // adornment — never let it throw into a route.
 
+import { log, serializeError } from '../utils/logger';
+
 const APPVIEW_BASE = 'https://public.api.bsky.app';
 
 // The subset of an actor's profile we render: avatar + handle + display name.
@@ -65,25 +67,14 @@ export async function fetchFollows(actor: string, maxPages = 20): Promise<BskyPr
 }
 
 /**
- * Like counts for a set of post at-uris, batched at getPosts' 25-uri limit. A
- * post that's gone (deleted, or taken down) is simply absent, as is every post
- * in a batch that failed.
+ * Like counts for a set of post at-uris. A post that's gone (deleted, or taken
+ * down) is simply absent, as is every post in a batch that failed.
  */
 export async function fetchPostLikeCounts(uris: string[]): Promise<Map<string, number>> {
+  const { posts } = await fetchPosts<{ uri?: string; likeCount?: number }>(uris);
   const counts = new Map<string, number>();
-  for (let i = 0; i < uris.length; i += 25) {
-    const params = new URLSearchParams();
-    for (const uri of uris.slice(i, i + 25)) params.append('uris', uri);
-    try {
-      const res = await fetch(`${APPVIEW_BASE}/xrpc/app.bsky.feed.getPosts?${params}`);
-      if (!res.ok) continue;
-      const data = (await res.json()) as { posts?: { uri?: string; likeCount?: number }[] };
-      for (const p of data.posts ?? []) {
-        if (p.uri && typeof p.likeCount === 'number') counts.set(p.uri, p.likeCount);
-      }
-    } catch (error) {
-      console.error('[bsky-appview] getPosts error:', error);
-    }
+  for (const [uri, p] of posts) {
+    if (typeof p.likeCount === 'number') counts.set(uri, p.likeCount);
   }
   return counts;
 }
@@ -111,4 +102,61 @@ export async function fetchProfiles(dids: string[]): Promise<Map<string, BskyPro
   }
 
   return map;
+}
+
+const GET_POSTS_MAX = 25;
+
+type GetPostsBatch<T> = { ok: true; posts: T[] } | { ok: false; rejected: boolean };
+
+async function getPostsBatch<T>(uris: string[]): Promise<GetPostsBatch<T>> {
+  const params = new URLSearchParams();
+  for (const uri of uris) params.append('uris', uri);
+  try {
+    const res = await fetch(`${APPVIEW_BASE}/xrpc/app.bsky.feed.getPosts?${params}`);
+    if (!res.ok) {
+      log.warn('bsky_appview_get_posts_failed', { status: res.status, uris: uris.length });
+      // A 4xx is the request (a uri the appview won't take), not the appview.
+      return { ok: false, rejected: res.status >= 400 && res.status < 500 && res.status !== 429 };
+    }
+    const data = (await res.json()) as { posts?: T[] };
+    return { ok: true, posts: data.posts ?? [] };
+  } catch (error) {
+    log.warn('bsky_appview_get_posts_failed', { uris: uris.length, ...serializeError(error) });
+    return { ok: false, rejected: false };
+  }
+}
+
+/**
+ * Full post views for a set of post at-uris, batched at getPosts' 25-uri limit
+ * and fetched in parallel, as uri → view. Posts that are gone or withheld from
+ * logged-out viewers are simply absent. A batch the appview rejects is retried
+ * one uri at a time, so one uri it won't take costs only itself. `complete` is
+ * false when a batch failed for any other reason (5xx, rate limit, network), so
+ * a caller walking a high-water mark can hold it rather than skip what the
+ * failed batch held.
+ */
+export async function fetchPosts<T extends { uri?: string }>(
+  uris: string[]
+): Promise<{ posts: Map<string, T>; complete: boolean }> {
+  const batches: string[][] = [];
+  for (let i = 0; i < uris.length; i += GET_POSTS_MAX) {
+    batches.push(uris.slice(i, i + GET_POSTS_MAX));
+  }
+  const fetchBatch = async (batch: string[]): Promise<{ posts: T[]; complete: boolean }> => {
+    const res = await getPostsBatch<T>(batch);
+    if (res.ok) return { posts: res.posts, complete: true };
+    if (!res.rejected) return { posts: [], complete: false };
+    if (batch.length === 1) return { posts: [], complete: true };
+    const singles = await Promise.all(batch.map((uri) => fetchBatch([uri])));
+    return {
+      posts: singles.flatMap((r) => r.posts),
+      complete: singles.every((r) => r.complete),
+    };
+  };
+  const results = await Promise.all(batches.map(fetchBatch));
+  const posts = new Map<string, T>();
+  for (const r of results) {
+    for (const p of r.posts) if (p.uri) posts.set(p.uri, p);
+  }
+  return { posts, complete: results.every((r) => r.complete) };
 }

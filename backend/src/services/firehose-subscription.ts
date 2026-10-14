@@ -1,4 +1,4 @@
-import { NEWSLETTER_SOURCE_TYPE, isNewsletterSubscription } from './newsletters';
+import { isLocalOnlySubscription, notLocalOnlySql } from './local-only-sources';
 
 export interface FirehoseSubscriptionRecord {
   feedUrl?: string;
@@ -38,9 +38,10 @@ export async function upsertSubscriptionFromFirehose(
   rkey: string,
   record: FirehoseSubscriptionRecord
 ): Promise<void> {
-  // Newsletters are local-only and never come from a PDS; a record naming one
-  // could point at another reader's inbox (services/newsletters.ts).
-  if (isNewsletterSubscription(record.feedUrl, record.sourceType)) return;
+  // Newsletters and Bluesky likes/bookmarks are local-only and never come from a
+  // PDS; a record naming one could point at another reader's inbox or bookmarks
+  // (services/local-only-sources.ts).
+  if (isLocalOnlySubscription(record.feedUrl, record.sourceType)) return;
 
   const recordUri = `at://${did}/app.skyreader.feed.subscription/${rkey}`;
   const createdAt = record.createdAt
@@ -69,7 +70,7 @@ export async function upsertSubscriptionFromFirehose(
            custom_title = ?, custom_icon_url = ?, category = ?,
            site_url = COALESCE(?, site_url), pds_dirty = 0
        WHERE record_uri = ?
-         AND (source_type IS NULL OR source_type <> '${NEWSLETTER_SOURCE_TYPE}')`
+         AND ${notLocalOnlySql()}`
     )
     .bind(...values, recordUri)
     .run();

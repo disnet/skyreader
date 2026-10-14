@@ -107,31 +107,32 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed documentation.
 
 ### Routes
 
-| File                          | Purpose                                                   |
-| ----------------------------- | --------------------------------------------------------- |
-| `src/routes/auth.ts`          | OAuth flow (login, upgrade, callback, logout, metadata)   |
-| `src/routes/timeline.ts`      | `GET /api/v2/timeline` — the whole refresh, one query     |
-| `src/routes/ingest.ts`        | Crawler endpoints: item ingest, crawl set, feed health    |
-| `src/routes/documents.ts`     | Document backfill + proxy-vs-D1 shadow compare (internal) |
-| `src/routes/feeds-v2.ts`      | Single-feed read (D1 + pull-through), discover, docs      |
-| `src/routes/social.ts`        | Social feed, popular, grouped, detect-content             |
-| `src/routes/shares.ts`        | User shares CRUD (with PDS sync)                          |
-| `src/routes/subscriptions.ts` | Subscription CRUD (with PDS sync)                         |
-| `src/routes/records.ts`       | PDS record listing                                        |
-| `src/routes/reading.ts`       | Article + document read positions (forward delta)         |
-| `src/routes/labels.ts`        | Unified item labels (read/starred/archived/tags)          |
-| `src/routes/saved.ts`         | Saved articles CRUD                                       |
-| `src/routes/recommends.ts`    | One-tap public recommends (+ standard.site copy)          |
-| `src/routes/integrations.ts`  | Semble/Margin writes to the user's PDS                    |
-| `src/routes/settings.ts`      | User settings                                             |
-| `src/routes/sync.ts`          | PDS full sync, subscription sync, sync status             |
-| `src/routes/lexicons.ts`      | Serve lexicon schemas at /.well-known/lexicons            |
-| `src/routes/health.ts`        | `/api/health` (shallow) + `/api/health/deep` (gated)      |
-| `src/routes/telemetry.ts`     | `/api/telemetry/error` — sampled client error reports     |
-| `src/routes/guest.ts`         | `/api/guest/*` — the unauthenticated reading surface      |
-| `src/routes/feedback.ts`      | `/api/v2/feedback` — userinput.app board read + post      |
-| `src/routes/newsletters.ts`   | `/api/newsletters/*` — newsletter address + blocked list  |
-| `src/routes/search.ts`        | `GET /api/search` — full-text search (Supporter)          |
+| File                          | Purpose                                                    |
+| ----------------------------- | ---------------------------------------------------------- |
+| `src/routes/auth.ts`          | OAuth flow (login, upgrade, callback, logout, metadata)    |
+| `src/routes/timeline.ts`      | `GET /api/v2/timeline` — the whole refresh, one query      |
+| `src/routes/ingest.ts`        | Crawler endpoints: item ingest, crawl set, feed health     |
+| `src/routes/documents.ts`     | Document backfill + proxy-vs-D1 shadow compare (internal)  |
+| `src/routes/feeds-v2.ts`      | Single-feed read (D1 + pull-through), discover, docs       |
+| `src/routes/social.ts`        | Social feed, popular, grouped, detect-content              |
+| `src/routes/shares.ts`        | User shares CRUD (with PDS sync)                           |
+| `src/routes/subscriptions.ts` | Subscription CRUD (with PDS sync)                          |
+| `src/routes/records.ts`       | PDS record listing                                         |
+| `src/routes/reading.ts`       | Article + document read positions (forward delta)          |
+| `src/routes/labels.ts`        | Unified item labels (read/starred/archived/tags)           |
+| `src/routes/saved.ts`         | Saved articles CRUD                                        |
+| `src/routes/recommends.ts`    | One-tap public recommends (+ standard.site copy)           |
+| `src/routes/integrations.ts`  | Semble/Margin writes to the user's PDS                     |
+| `src/routes/settings.ts`      | User settings                                              |
+| `src/routes/sync.ts`          | PDS full sync, subscription sync, sync status              |
+| `src/routes/lexicons.ts`      | Serve lexicon schemas at /.well-known/lexicons             |
+| `src/routes/health.ts`        | `/api/health` (shallow) + `/api/health/deep` (gated)       |
+| `src/routes/telemetry.ts`     | `/api/telemetry/error` — sampled client error reports      |
+| `src/routes/guest.ts`         | `/api/guest/*` — the unauthenticated reading surface       |
+| `src/routes/feedback.ts`      | `/api/v2/feedback` — userinput.app board read + post       |
+| `src/routes/newsletters.ts`   | `/api/newsletters/*` — newsletter address + blocked list   |
+| `src/routes/search.ts`        | `GET /api/search` — full-text search (Supporter)           |
+| `src/routes/bsky-sources.ts`  | `/api/v2/bluesky-sources` — Bluesky likes/bookmarks on/off |
 
 **Email newsletters** (Supporter) arrive through the Worker's `email()` handler, not HTTP:
 Cloudflare Email Routing hands it mail for `NEWSLETTER_EMAIL_DOMAIN`, and each message becomes a
@@ -139,6 +140,15 @@ Cloudflare Email Routing hands it mail for `NEWSLETTER_EMAIL_DOMAIN`, and each m
 subscriptions are private and local-only — never crawled, never on the PDS, readable only by the
 inbox owner — and every subscription path checks `isNewsletterSubscription`. See
 [`docs/plans/EMAIL_NEWSLETTERS.md`](../docs/plans/EMAIL_NEWSLETTERS.md).
+
+**Bluesky likes and bookmarks** are the same kind of private, local-only subscription
+(`bsky-likes:<did>` / `bsky-bookmarks:<did>`, `src/services/bsky-sources.ts`): turned on from
+Manage Sources (`POST /api/v2/bluesky-sources`), their link posts are ingested into `feed_items`
+by a gated refresh that runs under `waitUntil` after each `GET /api/v2/timeline`. Likes are read
+from the reader's own repo and hydrated through the public appview (no extra scope); bookmarks
+need `BSKY_BOOKMARKS_SCOPES` (`getBookmarks`, proxied to the appview). Every guard that keeps a
+newsletter off the PDS and out of the crawl set asks `isLocalOnlySubscription` /
+`notLocalOnlySql` (`src/services/local-only-sources.ts`), which covers both.
 
 Guest reading mode is the only unauthenticated surface that reads the archive,
 and it is **read-only**. `POST /api/guest/timeline` is a query over
@@ -173,24 +183,26 @@ returns a permission set expanded (`repo?collection=…`), so every check goes t
 
 ### Services
 
-| File                                | Purpose                                                      |
-| ----------------------------------- | ------------------------------------------------------------ |
-| `src/services/oauth.ts`             | PKCE, DPoP, handle resolution, session management            |
-| `src/services/feed-parser.ts`       | RSS/Atom/RDF parsing                                         |
-| `src/services/feed-proxy-client.ts` | Client for Fly.io feed proxy                                 |
-| `src/services/standard-site.ts`     | standard.site record mapping, digest, publication cache      |
-| `src/services/document-store.ts`    | The D1 document store: apply, backfill, reconcile, serve     |
-| `src/services/document-flags.ts`    | `documents_v2_enabled` / `documents_ingest_enabled` switches |
-| `src/services/pds-client.ts`        | PDS API client                                               |
-| `src/services/client-auth.ts`       | Confidential client auth helpers                             |
-| `src/services/share-sync.ts`        | Push/delete shares to/from PDS                               |
-| `src/services/subscription-sync.ts` | Sync subscriptions to/from PDS                               |
-| `src/services/rate-limit.ts`        | Per-user per-endpoint rate limiting (D1-backed)              |
-| `src/services/user-tier.ts`         | Tier lookup (free/supporter)                                 |
-| `src/services/search-index.ts`      | Search index change feed + document builder (reads D1/R2)    |
-| `src/services/search-query.ts`      | Reader query → safe FTS5 MATCH expression                    |
-| `src/services/newsletters.ts`       | Newsletter inboxes + the `email()` handler (inbound mail)    |
-| `src/services/newsletter-email.ts`  | Parse one newsletter email into a feed item                  |
+| File                                 | Purpose                                                      |
+| ------------------------------------ | ------------------------------------------------------------ |
+| `src/services/oauth.ts`              | PKCE, DPoP, handle resolution, session management            |
+| `src/services/feed-parser.ts`        | RSS/Atom/RDF parsing                                         |
+| `src/services/feed-proxy-client.ts`  | Client for Fly.io feed proxy                                 |
+| `src/services/standard-site.ts`      | standard.site record mapping, digest, publication cache      |
+| `src/services/document-store.ts`     | The D1 document store: apply, backfill, reconcile, serve     |
+| `src/services/document-flags.ts`     | `documents_v2_enabled` / `documents_ingest_enabled` switches |
+| `src/services/pds-client.ts`         | PDS API client                                               |
+| `src/services/client-auth.ts`        | Confidential client auth helpers                             |
+| `src/services/share-sync.ts`         | Push/delete shares to/from PDS                               |
+| `src/services/subscription-sync.ts`  | Sync subscriptions to/from PDS                               |
+| `src/services/rate-limit.ts`         | Per-user per-endpoint rate limiting (D1-backed)              |
+| `src/services/user-tier.ts`          | Tier lookup (free/supporter)                                 |
+| `src/services/search-index.ts`       | Search index change feed + document builder (reads D1/R2)    |
+| `src/services/search-query.ts`       | Reader query → safe FTS5 MATCH expression                    |
+| `src/services/newsletters.ts`        | Newsletter inboxes + the `email()` handler (inbound mail)    |
+| `src/services/newsletter-email.ts`   | Parse one newsletter email into a feed item                  |
+| `src/services/bsky-sources.ts`       | Bluesky likes/bookmarks as private sources (walk + ingest)   |
+| `src/services/local-only-sources.ts` | The one "private, never crawled, never on the PDS" predicate |
 
 ### Observability
 

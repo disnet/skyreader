@@ -26,6 +26,7 @@
     type AuthorPublication,
   } from '$lib/components/sources/SourcesDiscovery.svelte';
   import FollowsSourceRow from '$lib/components/sources/FollowsSourceRow.svelte';
+  import BlueskySavesSourceRows from '$lib/components/sources/BlueskySavesSourceRows.svelte';
   import LimitNotice from '$lib/components/LimitNotice.svelte';
   import { feedLimitLine } from '$lib/utils/limitCopy';
   import { auth } from '$lib/stores/auth.svelte';
@@ -708,6 +709,7 @@
         <SourceSectionHeader title="The Atmosphere" />
         <SourceList>
           <FollowsSourceRow />
+          <BlueskySavesSourceRows />
         </SourceList>
       </section>
     {/if}
@@ -723,6 +725,7 @@
         <SourceList>
           {#if !auth.isGuest && !searchQuery}
             <FollowsSourceRow />
+            <BlueskySavesSourceRows />
           {/if}
           {#each filteredAtmosphere as row (row.sub.rkey)}
             {@const display = getSourceDisplay(

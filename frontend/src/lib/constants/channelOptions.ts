@@ -5,26 +5,41 @@ import type {
   ReadingLengthFilter,
   SortOrder,
   ChannelAutoRule,
+  Subscription,
 } from '$lib/types';
+import { isNewsletterSubscription } from '$lib/utils/newsletters';
+import { bskySourceKind } from '$lib/utils/bskySources';
 
 // --- Content type options ---
 
 export const TYPE_OPTIONS: { value: SubscriptionSourceType; label: string }[] = [
   { value: 'rss', label: 'RSS Feeds' },
   { value: 'email.newsletter', label: 'Newsletters' },
+  { value: 'bsky.likes', label: 'Bluesky Likes' },
+  { value: 'bsky.bookmarks', label: 'Bluesky Bookmarks' },
   { value: 'atproto.documents', label: 'Standard.site Documents' },
 ];
 
-/**
- * The type options worth offering: Newsletters only to a reader who has some
- * (or a channel that already names the type), since it's a Supporter feature.
- */
+// Types only some readers have: offered only to a reader who has one (or a
+// channel that already names the type).
+const OPT_IN_TYPES = new Set<SubscriptionSourceType>([
+  'email.newsletter',
+  'bsky.likes',
+  'bsky.bookmarks',
+]);
+
+/** The type options worth offering, given the reader's subscriptions. */
 export function typeOptionsFor(
-  hasNewsletters: boolean,
+  subscriptions: readonly Pick<Subscription, 'sourceType' | 'feedUrl'>[],
   selected: Iterable<SubscriptionSourceType>
 ): typeof TYPE_OPTIONS {
-  if (hasNewsletters || new Set(selected).has('email.newsletter')) return TYPE_OPTIONS;
-  return TYPE_OPTIONS.filter((o) => o.value !== 'email.newsletter');
+  const present = new Set<SubscriptionSourceType>(selected);
+  for (const sub of subscriptions) {
+    if (isNewsletterSubscription(sub)) present.add('email.newsletter');
+    const bsky = bskySourceKind(sub);
+    if (bsky) present.add(bsky === 'likes' ? 'bsky.likes' : 'bsky.bookmarks');
+  }
+  return TYPE_OPTIONS.filter((o) => !OPT_IN_TYPES.has(o.value) || present.has(o.value));
 }
 
 export const SAVED_SOURCE_OPTIONS: { value: SavedSourceType; label: string }[] = [

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { isArchiveFeedSource, isNewsletterSubscription } from '$lib/utils/newsletters';
+  import { isArchiveFeedSource } from '$lib/utils/newsletters';
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { articlesStore } from '$lib/stores/articles.svelte';
@@ -71,9 +71,7 @@
   let savedDomainFilter = $state<Set<string>>(new Set());
   let savedTagFilter = $state<Set<string>>(new Set());
   let typeFilter = $state<Set<SubscriptionSourceType>>(new Set());
-  let typeOptions = $derived(
-    typeOptionsFor(subscriptionsStore.subscriptions.some(isNewsletterSubscription), typeFilter)
-  );
+  let typeOptions = $derived(typeOptionsFor(subscriptionsStore.subscriptions, typeFilter));
   let saving = $state(false);
   let error = $state<string | null>(null);
 

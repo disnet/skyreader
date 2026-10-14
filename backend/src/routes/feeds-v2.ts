@@ -1,5 +1,5 @@
 import type { Env, FeedItem, Session } from '../types';
-import { isNewsletterFeedUrl, ownsNewsletterFeed } from '../services/newsletters';
+import { isLocalOnlyFeedUrl, ownsLocalOnlyFeed } from '../services/local-only-sources';
 import { FeedProxyClient, FeedProxyError } from '../services/feed-proxy-client';
 import type {
   ProxyDocumentEntry,
@@ -171,10 +171,11 @@ export async function handleV2FeedFetch(
     ? Math.min(Math.max(parsedLimit, 1), SINGLE_FEED_MAX_LIMIT)
     : SINGLE_FEED_LIMIT;
 
-  // A newsletter is one reader's mail, not a public feed: only the inbox's owner
-  // reads it, and there is nothing to pull through — email is its only source.
-  const newsletter = isNewsletterFeedUrl(feedUrl);
-  if (newsletter && !(await ownsNewsletterFeed(env, session.did, feedUrl))) {
+  // A local-only source (a newsletter, Bluesky likes/bookmarks) is one reader's,
+  // not a public feed: only its owner reads it, and there is nothing to pull
+  // through — the crawler never fetches one.
+  const localOnly = isLocalOnlyFeedUrl(feedUrl);
+  if (localOnly && !(await ownsLocalOnlyFeed(env, session.did, feedUrl))) {
     return new Response(JSON.stringify({ error: 'Not found' }), {
       status: 404,
       headers: { 'Content-Type': 'application/json' },
@@ -203,7 +204,7 @@ export async function handleV2FeedFetch(
     archiveEmpty = items.length === 0;
     // An offset read is a walk down an archive we know exists; an empty page is
     // its bottom, not a feed nobody has ever crawled.
-    const wantsPullThrough = !newsletter && offset === 0 && (archiveEmpty || forceRefresh);
+    const wantsPullThrough = !localOnly && offset === 0 && (archiveEmpty || forceRefresh);
     if (wantsPullThrough && (await callerSubscribes(env, session.did, feedUrl))) {
       try {
         const client = new FeedProxyClient(env);

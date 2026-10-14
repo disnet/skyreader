@@ -1,7 +1,7 @@
 import type { Env, Session } from '../types';
 import { createPDSClient, type PDSResult, type WriteOp } from './pds-client';
 import { getUserTierLimits } from './user-tier';
-import { isNewsletterSubscription } from './newsletters';
+import { isLocalOnlySubscription } from './local-only-sources';
 import { chargeQueries, createBackfillScheduler, type QueryLedger } from './document-store';
 import { log } from '../utils/logger';
 
@@ -353,10 +353,10 @@ export async function syncSubscriptions(
       );
       if (!key) continue;
 
-      // A record naming a newsletter feed is never ours to mirror: newsletters
-      // are local-only, and one arriving from a PDS could name another reader's
-      // inbox (services/newsletters.ts).
-      if (isNewsletterSubscription(pdsRecord.value.feedUrl, pdsRecord.value.sourceType)) continue;
+      // A record naming a newsletter or Bluesky likes/bookmarks feed is never
+      // ours to mirror: those are local-only, and one arriving from a PDS could
+      // name another reader's inbox or bookmarks (services/local-only-sources.ts).
+      if (isLocalOnlySubscription(pdsRecord.value.feedUrl, pdsRecord.value.sourceType)) continue;
 
       // Already have this subscription locally — leave its active state untouched
       // (never silently demote something the reader is already showing).
@@ -545,8 +545,8 @@ export async function syncSubscriptions(
       );
       if (!key) continue;
 
-      // Newsletters are private and local-only: never pushed.
-      if (isNewsletterSubscription(localSub.feed_url, localSub.source_type)) continue;
+      // Newsletters and Bluesky likes/bookmarks are private and local-only: never pushed.
+      if (isLocalOnlySubscription(localSub.feed_url, localSub.source_type)) continue;
 
       // A subscription that already exists on the PDS is left alone *unless* it
       // carries an unpaid local edit. Its write-through is fire-and-forget, so a
