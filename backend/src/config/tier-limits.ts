@@ -22,6 +22,12 @@ export interface TierLimits {
    * write nudges the index, so a lapsed plan stops both.
    */
   fullTextSearch: boolean;
+  /**
+   * Saved searches: channels whose query is matched against every new item
+   * (durable-objects/percolator.ts). 0 = not in the plan. Past the cap, the
+   * oldest queries keep matching and the newer ones wait.
+   */
+  maxSavedSearches: number;
 }
 
 const TIER_MAP: Record<string, TierLimits> = {
@@ -31,6 +37,7 @@ const TIER_MAP: Record<string, TierLimits> = {
     maxUrlSavesPerMonth: 100,
     newsletterInbox: false,
     fullTextSearch: false,
+    maxSavedSearches: 0,
   },
   supporter: {
     maxSubscriptions: 1000,
@@ -38,6 +45,7 @@ const TIER_MAP: Record<string, TierLimits> = {
     maxUrlSavesPerMonth: 1000,
     newsletterInbox: true,
     fullTextSearch: true,
+    maxSavedSearches: 25,
   },
 };
 

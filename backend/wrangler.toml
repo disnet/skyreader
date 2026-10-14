@@ -22,7 +22,9 @@ enabled = true
 bindings = [
   { name = "JETSTREAM_POLLER", class_name = "JetstreamPoller" },
   # One per reader: their full-text search index (src/durable-objects/search-index.ts).
-  { name = "SEARCH_INDEX", class_name = "SearchIndex" }
+  { name = "SEARCH_INDEX", class_name = "SearchIndex" },
+  # The saved-search matcher (src/durable-objects/percolator.ts).
+  { name = "PERCOLATOR", class_name = "Percolator" }
 ]
 
 [[migrations]]
@@ -52,6 +54,10 @@ deleted_classes = ["FeedRefresher"]
 [[migrations]]
 tag = "v7"
 new_sqlite_classes = ["SearchIndex"]
+
+[[migrations]]
+tag = "v8"
+new_sqlite_classes = ["Percolator"]
 
 # D1 Database
 [[d1_databases]]
@@ -157,7 +163,9 @@ mode = "smart"
 [env.staging.durable_objects]
 bindings = [
   { name = "JETSTREAM_POLLER", class_name = "JetstreamPoller" },
-  { name = "SEARCH_INDEX", class_name = "SearchIndex" }
+  { name = "SEARCH_INDEX", class_name = "SearchIndex" },
+  # The saved-search matcher (src/durable-objects/percolator.ts).
+  { name = "PERCOLATOR", class_name = "Percolator" }
 ]
 
 [[env.staging.d1_databases]]
