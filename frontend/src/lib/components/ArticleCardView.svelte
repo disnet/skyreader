@@ -38,6 +38,7 @@
     followSharers,
     isFollowLink = false,
     followLinkCard,
+    keptLinkCard,
     socialContext,
     laneRow = [],
     filters = [],
@@ -231,6 +232,37 @@
   }
 </script>
 
+{#snippet linkCard(card: {
+  title: string;
+  description: string | null;
+  thumb: string | null;
+  domain: string;
+})}
+  <button
+    type="button"
+    class="follow-link-card"
+    title={itemUrl}
+    onclick={(e) => {
+      e.stopPropagation();
+      onOpenFullscreen?.();
+    }}
+  >
+    <span class="follow-link-card-text">
+      <span class="follow-link-card-title">{card.title}</span>
+      {#if card.description}
+        <span class="follow-link-card-description">{card.description}</span>
+      {/if}
+      <span class="follow-link-card-domain">
+        {#if faviconUrl}<img src={faviconUrl} alt="" class="link-post-url-favicon" />{/if}
+        {card.domain}
+      </span>
+    </span>
+    {#if card.thumb}
+      <img src={card.thumb} alt="" class="follow-link-card-thumb" loading="lazy" />
+    {/if}
+  </button>
+{/snippet}
+
 <article
   use:nearViewport
   class="article-item"
@@ -412,29 +444,7 @@
           <blockquote class="link-post-quote follow-said">{followLinkCard.said.text}</blockquote>
           <p class="follow-said-by">{followLinkCard.said.name}, on Bluesky</p>
         {/if}
-        <button
-          type="button"
-          class="follow-link-card"
-          title={itemUrl}
-          onclick={(e) => {
-            e.stopPropagation();
-            onOpenFullscreen?.();
-          }}
-        >
-          <span class="follow-link-card-text">
-            <span class="follow-link-card-title">{followLinkCard.title}</span>
-            {#if followLinkCard.description}
-              <span class="follow-link-card-description">{followLinkCard.description}</span>
-            {/if}
-            <span class="follow-link-card-domain">
-              {#if faviconUrl}<img src={faviconUrl} alt="" class="link-post-url-favicon" />{/if}
-              {followLinkCard.domain}
-            </span>
-          </span>
-          {#if followLinkCard.thumb}
-            <img src={followLinkCard.thumb} alt="" class="follow-link-card-thumb" loading="lazy" />
-          {/if}
-        </button>
+        {@render linkCard(followLinkCard)}
       {:else if hasContent}
         <div class="article-body-wrapper" class:has-fade={selected && !expanded && isTruncated}>
           <div
@@ -447,6 +457,11 @@
             {@html sanitizedContent}
           </div>
         </div>
+      {/if}
+      {#if keptLinkCard && !collection}
+        <!-- A liked or bookmarked post: its words above, the article it linked
+             here, so the row reads as a way into that article. -->
+        <div class="kept-link-card">{@render linkCard(keptLinkCard)}</div>
       {/if}
       <!-- When the feed only gave us a short excerpt, offer to pull the full
            article inline. Hidden once the body is long (full-content feeds)
@@ -1054,6 +1069,10 @@
     margin: 0 0 0.75rem;
     font-size: var(--text-sm);
     color: var(--color-text-secondary);
+  }
+
+  .kept-link-card {
+    margin-top: 0.75rem;
   }
 
   /* The link card a follow posted, the way Bluesky draws one: a bordered box

@@ -19,6 +19,7 @@
   import { getFaviconUrl } from '$lib/utils/favicon';
   import { sanitizeHtml } from '$lib/utils/sanitize';
   import { decodeEntities } from '$lib/utils/entities';
+  import { isBskySourceSubscription, keptPostLinkCard } from '$lib/utils/bskySources';
   import { marked } from 'marked';
   import { getDisplayContent } from '$lib/utils/displayItem';
   import {
@@ -122,6 +123,13 @@
   } = $props();
 
   let isFollowLink = $derived(Boolean(followLink));
+  // A post the reader liked or bookmarked on Bluesky: the item is the article
+  // it links to (see keptLinkCardVM).
+  let isKeptPost = $derived.by(() => {
+    if (!article) return false;
+    const sub = subscriptionsStore.getById(article.subscriptionId);
+    return Boolean(sub && isBskySourceSubscription(sub));
+  });
 
   // Determine if we're in document mode (showing someone's published document)
   let isDocumentMode = $derived(Boolean(document && !article));
@@ -281,6 +289,9 @@
     if (lazyContent) return lazyContent;
     if (article?.contentLead) return article.contentLead;
     if (lazyLead) return lazyLead;
+    // A kept post's summary is its card's blurb (or its words, which the lead
+    // already holds): the link card shows it, so the body doesn't repeat it.
+    if (isKeptPost) return '';
     if (article?.summary) return article.summary;
     if (localArticle?.content) return localArticle.content;
     if (localArticle?.summary) return localArticle.summary;
@@ -777,6 +788,23 @@
     };
   });
 
+  // A post you liked or bookmarked on Bluesky is the article it links to, but
+  // until that page is fetched the body is only the post's words — which read as
+  // a post, not an article. The card it linked goes under them, the way Bluesky
+  // draws it, so the row says there's an article behind it and opens it.
+  let keptLinkCardVM = $derived.by(() => {
+    if (!isKeptPost || !article || !itemUrl || linkPostContentStore.get(itemUrl)?.content) {
+      return undefined;
+    }
+    return keptPostLinkCard({
+      url: itemUrl,
+      title: article.title,
+      summary: article.summary,
+      imageUrl: article.imageUrl,
+      leadHtml: article.contentLead || lazyLead,
+    });
+  });
+
   let followSharersVM = $derived(
     followSharers && followSharers.length > 0
       ? {
@@ -882,10 +910,14 @@
         !hasFetchedOriginal &&
         (storedBodyStatus !== 'missing' || canFetchOriginal))
   );
-  // Not for a follows link: its link card is the way in (it opens the reader),
+  // Not for a follows link or a kept post: its link card is the way in (it opens the reader),
   // and expanding the row fetches the page. The ⋯ menu still offers a retry.
   let showFetchOriginal = $derived(
-    canFetchOriginal && !isFollowLink && bodyWordCount > 0 && bodyWordCount < SHORT_ARTICLE_WORDS
+    canFetchOriginal &&
+      !isFollowLink &&
+      !keptLinkCardVM &&
+      bodyWordCount > 0 &&
+      bodyWordCount < SHORT_ARTICLE_WORDS
   );
   // Everything fetchable that isn't the short-excerpt inline case (long bodies,
   // and the rare empty body) surfaces in the overflow menu instead.
@@ -1146,6 +1178,7 @@
   followSharers={followSharersVM}
   {isFollowLink}
   followLinkCard={followLinkCardVM}
+  keptLinkCard={keptLinkCardVM}
   socialContext={socialContext ? { quoteCount: socialContext.quoteCount } : undefined}
   laneRow={atmosphere.laneRow}
   filters={atmosphere.filters}
