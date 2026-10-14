@@ -91,3 +91,26 @@ export function remotePdfExtractor(
     );
   };
 }
+
+// EPUBs. The proxy only recognises one: a book is already marked-up text, so the
+// backend fetches and reads it itself (backend/src/services/epub.ts) when
+// /extract answers `epub: true`. Without this, a book was decoded as text and
+// handed to Defuddle, the same mojibake PDFs used to get.
+
+/** The response says it is an EPUB. */
+export function isDeclaredEpub(contentType: string | null): boolean {
+  return !!contentType && /^application\/epub\+zip\b/i.test(contentType);
+}
+
+/**
+ * True when the response is an EPUB: declared so, or a zip whose first entry is
+ * the uncompressed `mimetype` file naming `application/epub+zip` (OCF 3.0 §4.3),
+ * when the type is missing or generic.
+ */
+export function isEpub(bytes: Uint8Array, contentType: string | null): boolean {
+  if (isDeclaredEpub(contentType)) return true;
+  if (contentType && /^text\/|html|xml|json|pdf/i.test(contentType)) return false;
+  if (bytes.length < 58) return false;
+  const head = new TextDecoder('latin1').decode(bytes.subarray(0, 58));
+  return head.startsWith('PK\x03\x04') && head.slice(30) === 'mimetypeapplication/epub+zip';
+}

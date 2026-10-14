@@ -79,6 +79,7 @@ const api = {
   getSavedBodies: vi.fn(),
   saveFromUrl: vi.fn(),
   uploadPdf: vi.fn(),
+  uploadEpub: vi.fn(),
   updateSaved: vi.fn(),
   deleteSaved: vi.fn(),
   deleteSavedByGuid: vi.fn(),
@@ -95,12 +96,13 @@ class ExtractionBlockedError extends Error {}
 class PdfExtractionError extends Error {
   constructor(
     message: string,
-    readonly upgradeRequired = false
+    readonly upgradeRequired = false,
+    readonly format: 'pdf' | 'epub' = 'pdf'
   ) {
     super(message);
   }
 }
-class PdfUploadError extends Error {
+class FileUploadError extends Error {
   constructor(
     message: string,
     readonly code: string,
@@ -114,7 +116,7 @@ vi.mock('$lib/services/api', () => ({
   ApiError,
   ExtractionBlockedError,
   PdfExtractionError,
-  PdfUploadError,
+  FileUploadError,
 }));
 
 const extractArticle = vi.fn();
@@ -351,6 +353,25 @@ describe('savesStore.saveFromUrl when the article cannot be fetched', () => {
     expect(saved.fetchFailed).toBe('pdfUpgrade');
     const content = api.saveFromUrl.mock.calls[0][2].content;
     expect(content).toContain('Supporter');
+    expect(content).toContain('href="/supporter"');
+    expect(content).not.toContain('extension');
+  });
+
+  it('names an EPUB it could not read, or one the plan has no room for', async () => {
+    extractArticle.mockRejectedValueOnce(
+      new PdfExtractionError('This EPUB is DRM-protected.', false, 'epub')
+    );
+    const unread = await savesStore.saveFromUrl('https://example.com/locked.epub');
+    expect(unread.fetchFailed).toBe('epub');
+    expect(api.saveFromUrl.mock.calls[0][2].content).toContain('this EPUB');
+
+    extractArticle.mockRejectedValueOnce(
+      new PdfExtractionError('Reading EPUBs in Skyreader is a Supporter feature.', true, 'epub')
+    );
+    const upsell = await savesStore.saveFromUrl('https://example.com/book.epub');
+    expect(upsell.fetchFailed).toBe('epubUpgrade');
+    const content = api.saveFromUrl.mock.calls[1][2].content;
+    expect(content).toContain('Reading EPUBs');
     expect(content).toContain('href="/supporter"');
     expect(content).not.toContain('extension');
   });
@@ -668,7 +689,7 @@ describe('savesStore.saveFromUrl for a PDF', () => {
   });
 });
 
-describe('savesStore.uploadPdf', () => {
+describe('savesStore.uploadFile', () => {
   const file = () => new File(['%PDF-1.7'], 'paper.pdf', { type: 'application/pdf' });
 
   beforeEach(() => {
@@ -696,7 +717,7 @@ describe('savesStore.uploadPdf', () => {
       source: 'upload',
     }));
 
-    const saved = await savesStore.uploadPdf(file());
+    const saved = await savesStore.uploadFile(file(), 'pdf');
 
     expect(api.uploadPdf.mock.calls[0][2]).toBe('paper.pdf');
     expect(saved).toMatchObject({ url: '', source: 'upload', contentType: 'pdf' });
@@ -722,19 +743,45 @@ describe('savesStore.uploadPdf', () => {
       savedAt: '2026-10-14T00:00:00.000Z',
       source: 'upload',
     }));
-    const first = await savesStore.uploadPdf(file());
+    const first = await savesStore.uploadFile(file(), 'pdf');
     api.uploadPdf.mockRejectedValueOnce(
-      new PdfUploadError('This PDF is already saved.', 'already_saved', first.rkey)
+      new FileUploadError('This PDF is already saved.', 'already_saved', first.rkey)
     );
 
-    const again = await savesStore.uploadPdf(file());
+    const again = await savesStore.uploadFile(file(), 'pdf');
 
     expect(again.rkey).toBe(first.rkey);
   });
 
   it('needs a connection', async () => {
     syncState.isOnline = false;
-    await expect(savesStore.uploadPdf(file())).rejects.toThrow('offline');
+    await expect(savesStore.uploadFile(file(), 'pdf')).rejects.toThrow('offline');
     expect(api.uploadPdf).not.toHaveBeenCalled();
+  });
+
+  it('sends an EPUB to its own route and types the save as one', async () => {
+    api.uploadEpub.mockImplementationOnce(async (_file: File, rkey: string) => ({
+      rkey,
+      uri: `at://did:plc:me/app.skyreader.feed.saved/${rkey}`,
+      url: '',
+      title: 'A Book',
+      author: 'Someone',
+      description: null,
+      content: '<section data-epub-chapter="1"><p>Chapter one.</p></section>',
+      contentType: 'epub',
+      domain: null,
+      image: null,
+      wordCount: 2,
+      publishedAt: null,
+      savedAt: '2026-10-14T00:00:00.000Z',
+      source: 'upload',
+    }));
+    const book = new File(['PK'], 'book.epub', { type: 'application/epub+zip' });
+
+    const saved = await savesStore.uploadFile(book, 'epub');
+
+    expect(api.uploadPdf).not.toHaveBeenCalled();
+    expect(api.uploadEpub.mock.calls[0][2]).toBe('book.epub');
+    expect(saved).toMatchObject({ source: 'upload', contentType: 'epub' });
   });
 });

@@ -268,6 +268,15 @@ text-view only. Text the extractor dropped (running headers, page numbers) can b
 the pages but won't show in the text. If you change how the extractor joins lines, change
 `buildPdfTextModel` to match, or cross-view highlights stop lining up.
 
+#### Saved EPUBs
+
+A saved EPUB (`contentType: 'epub'`, uploaded via `savesStore.uploadFile` → `POST /api/saved/epub`
+or saved by link) reads as its text only, one `<section data-epub-chapter="N">` per chapter: the
+book's markup is already the text, so there is no Original view and no `PdfViewer` path. It shares
+the PDF plan flag (`limits.pdfSaves`) and upload limits, with its own size cap
+(`limits.maxEpubUploadBytes`). An unreadable or plan-gated EPUB link fails as `PdfExtractionError`
+with `format: 'epub'`, saved as the `epub` / `epubUpgrade` note (`utils/saveAnywhere.ts`).
+
 #### Selecting and re-bounding in paged mode
 
 Paged mode has no scroller, so a native selection used to stop at the page edge.

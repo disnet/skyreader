@@ -67,6 +67,8 @@ export async function handleExtract(request: Request, env: Env): Promise<Respons
         ...(error instanceof FeedProxyError && error.upgradeRequired
           ? { code: 'upgrade_required' }
           : {}),
+        // ...and which kind of file it was, for the reader's note.
+        ...(error instanceof FeedProxyError && error.format ? { format: error.format } : {}),
       }),
       {
         status: 502,

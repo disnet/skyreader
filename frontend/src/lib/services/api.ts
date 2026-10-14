@@ -118,21 +118,26 @@ export class ScopeUpgradeError extends Error {
 }
 
 /**
- * An upload POST /api/saved/pdf refused, with the server's reader-facing
- * sentence. `code` says which wall: the plan (`pdf_upgrade_required`), a limit
- * (`pdf_too_large`, `pdf_upload_limit_reached`, `pdf_storage_full`,
- * `pdf_daily_limit_reached`), the file (`not_a_pdf`, `pdf_unreadable`), or
- * `already_saved` — the same file is already a save, `rkey` says which.
+ * An upload POST /api/saved/pdf or /api/saved/epub refused, with the server's
+ * reader-facing sentence. `code` says which wall: the plan
+ * (`pdf_upgrade_required`, for either kind), a limit (`pdf_too_large`,
+ * `pdf_upload_limit_reached`, `pdf_storage_full`, `pdf_daily_limit_reached`),
+ * the file (`not_a_pdf`, `pdf_unreadable`, `not_an_epub`, `epub_unreadable`),
+ * or `already_saved` — the same file is already a save, `rkey` says which.
  */
-export class PdfUploadError extends Error {
+export class FileUploadError extends Error {
   constructor(
     message: string,
     readonly code: string,
     readonly rkey?: string
   ) {
     super(message);
-    this.name = 'PdfUploadError';
+    this.name = 'FileUploadError';
   }
+}
+
+function isUploadPath(path: string): boolean {
+  return /^\/api\/saved\/(pdf|epub)(\?|$)/.test(path);
 }
 
 /** The original file behind an uploaded save, served only to its owner. */
@@ -220,15 +225,17 @@ export class ExtractionBlockedError extends Error {
 }
 
 /**
- * The target is a PDF the server couldn't turn into text (too large,
- * password-protected, a failed parse). Unlike a blocked site there is no way
- * through to offer: the extension extracts a PDF tab through the same server.
+ * The target is a PDF (or an EPUB, per `format`) the server couldn't turn into
+ * text (too large, password-protected, a failed parse). Unlike a blocked site
+ * there is no way through to offer: the extension extracts a PDF tab through
+ * the same server.
  */
 export class PdfExtractionError extends Error {
   constructor(
     message: string,
     /** The reader's plan doesn't include PDFs; the way through is upgrading. */
-    readonly upgradeRequired = false
+    readonly upgradeRequired = false,
+    readonly format: 'pdf' | 'epub' = 'pdf'
   ) {
     super(message);
     this.name = 'PdfExtractionError';
@@ -489,8 +496,8 @@ export interface ExtractedArticle {
   image: string | null;
   published: string | null;
   wordCount: number;
-  /** 'pdf' when the URL served a PDF (its text, reflowed); absent for a web page. */
-  contentType?: 'pdf';
+  /** 'pdf' or 'epub' when the URL served one (its text, reflowed); absent for a web page. */
+  contentType?: 'pdf' | 'epub';
 }
 
 // How many times a single request transparently retries a transient
@@ -632,9 +639,9 @@ class ApiClient {
           }
           throw new ScopeUpgradeError(message, feature);
         }
-        if (path === '/api/saved/pdf' || path.startsWith('/api/saved/pdf?')) {
+        if (isUploadPath(path)) {
           const b = body as { error?: string; message?: string };
-          throw new PdfUploadError(
+          throw new FileUploadError(
             b.message || b.error || 'Upload refused',
             b.error || 'forbidden'
           );
@@ -674,15 +681,16 @@ class ApiClient {
       }
       if ((error as { pdf?: boolean }).pdf === true && path.startsWith('/api/extract')) {
         throw new PdfExtractionError(
-          (error as { error?: string }).error || 'Could not read that PDF',
-          (error as { code?: string }).code === 'upgrade_required'
+          (error as { error?: string }).error || 'Could not read that file',
+          (error as { code?: string }).code === 'upgrade_required',
+          (error as { format?: string }).format === 'epub' ? 'epub' : 'pdf'
         );
       }
       // An upload the server answered about (too large, not a PDF, unreadable,
       // already saved): its message is written for the reader.
-      if (path.startsWith('/api/saved/pdf') && response.status < 500) {
+      if (isUploadPath(path) && response.status < 500) {
         const b = error as { error?: string; message?: string; rkey?: string };
-        throw new PdfUploadError(
+        throw new FileUploadError(
           b.message || b.error || `HTTP ${response.status}`,
           b.error || 'failed',
           b.rkey
@@ -2103,6 +2111,21 @@ class ApiClient {
     });
   }
 
+  /** Upload an EPUB as a save (Supporter). Answers the save, its body included. */
+  async uploadEpub(
+    file: Blob,
+    rkey: string,
+    name?: string
+  ): Promise<SavedItem & { chapterCount?: number; chaptersKept?: number }> {
+    const params = new URLSearchParams({ rkey });
+    if (name) params.set('name', name);
+    return this.fetch(`/api/saved/epub?${params}`, {
+      method: 'POST',
+      body: file,
+      headers: { 'Content-Type': 'application/epub+zip' },
+    });
+  }
+
   async saveFromUrl(
     url: string,
     rkey: string,
@@ -2118,7 +2141,7 @@ class ApiClient {
       publishedAt?: string;
       domain?: string;
       wordCount?: number;
-      contentType?: 'pdf';
+      contentType?: 'pdf' | 'epub';
       // Replace an existing save of this URL's content instead of a 409.
       updateContent?: boolean;
     }

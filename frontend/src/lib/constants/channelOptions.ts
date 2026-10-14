@@ -46,7 +46,7 @@ export const SAVED_SOURCE_OPTIONS: { value: SavedSourceType; label: string }[] =
   { value: 'url', label: 'URL Saves' },
   { value: 'feed', label: 'Feed Articles' },
   { value: 'document', label: 'Documents' },
-  { value: 'upload', label: 'Uploaded PDFs' },
+  { value: 'upload', label: 'Uploaded files' },
 ];
 
 // --- Smart rule options ---

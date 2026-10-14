@@ -3,20 +3,28 @@ import { hasRequiredScopes, insufficientScopesResponse } from './auth';
 import { isValidRkey, invalidRkeyResponse } from '../utils/validation';
 import { getUserTierLimits } from '../services/user-tier';
 import {
+  EPUB_SUPPORTER_MESSAGE,
   PDF_QUOTA_MESSAGE,
   PDF_SUPPORTER_MESSAGE,
   chargePdfParse,
   hasPdfAllowance,
 } from '../services/pdf-quota';
 import { PdfParseError, parsePdf, pdfExtractorConfigured } from '../services/pdf-extractor';
+import { EpubError, looksLikeZip, parseEpub } from '../services/epub';
 import { readCapped } from './feedback';
 import { log } from '../utils/logger';
 
 /**
- * Uploaded PDFs, and the originals of every saved PDF (Supporter).
+ * Uploaded PDFs and EPUBs, and the originals of every saved PDF (Supporter).
  *
- *   POST /api/saved/pdf?rkey=<tid>&name=<filename>   body: the PDF's bytes
- *   GET  /api/saved/<rkey>/file                      the original, to its owner
+ *   POST /api/saved/pdf?rkey=<tid>&name=<filename>    body: the PDF's bytes
+ *   POST /api/saved/epub?rkey=<tid>&name=<filename>   body: the EPUB's bytes
+ *   GET  /api/saved/<rkey>/file                       the original, to its owner
+ *
+ * An EPUB upload works the same way, except that the book is read here
+ * (services/epub.ts) rather than by the extractor, so it spends no daily parse
+ * allowance; it saves with content_type 'epub'. It shares the PDF limits below:
+ * the monthly upload count and the stored bytes are one budget for both.
  *
  * An upload becomes an ordinary save: a saved_articles row with source 'upload',
  * content_type 'pdf', no URL, and the PDF's text reflowed into reader HTML by the
@@ -49,8 +57,8 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
-export function savedFileKey(did: string, rkey: string): string {
-  return `pdf/${did}/${rkey}.pdf`;
+export function savedFileKey(did: string, rkey: string, kind: UploadKind = 'pdf'): string {
+  return `${kind}/${did}/${rkey}.${kind}`;
 }
 
 /** A display filename: the last path segment, without control characters, capped. */
@@ -65,11 +73,11 @@ export function cleanFilename(raw: string | null): string | null {
   return name || null;
 }
 
-/** The title for an upload whose PDF names none: its filename, less the extension. */
+/** The title for an upload whose file names none: its filename, less the extension. */
 export function titleFromFilename(name: string | null): string | null {
   if (!name) return null;
   const stem = name
-    .replace(/\.pdf$/i, '')
+    .replace(/\.(pdf|epub)$/i, '')
     .replace(/[_]+/g, ' ')
     .trim();
   return stem || null;
@@ -114,8 +122,93 @@ function nextMonth(now: Date): string {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString();
 }
 
+/** The two kinds of file a reader can upload; each is a save's content_type. */
+export type UploadKind = 'pdf' | 'epub';
+
+const MIME_TYPES: Record<UploadKind, string> = {
+  pdf: 'application/pdf',
+  epub: 'application/epub+zip',
+};
+
+/** What an upload's file reflowed to, whichever parser read it. */
+interface ParsedUpload {
+  title: string | null;
+  author: string | null;
+  description: string | null;
+  content: string | null;
+  published: string | null;
+  wordCount: number;
+  /** Reported back: pages for a PDF, chapters for an EPUB. */
+  extent: Record<string, number>;
+}
+
+type ParseOutcome = ParsedUpload | Response;
+
+// The pdf-extractor Worker reads a PDF, and the reader's daily allowance pays.
+async function parsePdfUpload(env: Env, did: string, bytes: ArrayBuffer): Promise<ParseOutcome> {
+  if (!(await hasPdfAllowance(env, did))) {
+    return json({ error: 'pdf_daily_limit_reached', message: PDF_QUOTA_MESSAGE }, 403);
+  }
+  let pdf;
+  try {
+    pdf = await parsePdf(env, bytes);
+  } catch (err) {
+    if (!(err instanceof PdfParseError)) throw err;
+    if (err.charged) await chargePdfParse(env, did);
+    log.warn('pdf_upload_parse_failed', { message: err.message, size: bytes.byteLength });
+    return json({ error: 'pdf_unreadable', message: err.message }, err.userFacing ? 422 : 502);
+  }
+  await chargePdfParse(env, did);
+  // A scan with no text layer reflows to nothing: there would be nothing to
+  // read or highlight, so it isn't kept.
+  if (!pdf.content || pdf.wordCount === 0) {
+    return json(
+      {
+        error: 'pdf_unreadable',
+        message: 'This PDF has no text Skyreader can read. It may be scanned pages.',
+      },
+      422
+    );
+  }
+  return { ...pdf, extent: { pageCount: pdf.pageCount, pagesKept: pdf.pagesKept } };
+}
+
+// An EPUB is already marked-up text, read here (services/epub.ts): no extractor
+// call, so no daily allowance to spend.
+async function parseEpubUpload(bytes: ArrayBuffer): Promise<ParseOutcome> {
+  let book;
+  try {
+    book = await parseEpub(bytes);
+  } catch (err) {
+    if (!(err instanceof EpubError)) throw err;
+    log.warn('epub_upload_parse_failed', { message: err.message, size: bytes.byteLength });
+    return json({ error: 'epub_unreadable', message: err.message }, 422);
+  }
+  if (!book.content || book.wordCount === 0) {
+    return json(
+      { error: 'epub_unreadable', message: 'This EPUB has no text Skyreader can read.' },
+      422
+    );
+  }
+  return {
+    ...book,
+    extent: { chapterCount: book.chapterCount, chaptersKept: book.chaptersKept },
+  };
+}
+
+const KIND_NAMES: Record<UploadKind, string> = { pdf: 'PDF', epub: 'EPUB' };
+
 // POST /api/saved/pdf
-export async function handleUploadPdf(request: Request, env: Env, session: Session) {
+export function handleUploadPdf(request: Request, env: Env, session: Session) {
+  return handleUpload(request, env, session, 'pdf');
+}
+
+// POST /api/saved/epub
+export function handleUploadEpub(request: Request, env: Env, session: Session) {
+  return handleUpload(request, env, session, 'epub');
+}
+
+async function handleUpload(request: Request, env: Env, session: Session, kind: UploadKind) {
   if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
   if (!hasRequiredScopes(session.grantedScopes)) return insufficientScopesResponse();
 
@@ -123,21 +216,28 @@ export async function handleUploadPdf(request: Request, env: Env, session: Sessi
   const rkey = url.searchParams.get('rkey');
   if (!rkey || !isValidRkey(rkey)) return invalidRkeyResponse();
   const filename = cleanFilename(url.searchParams.get('name'));
+  const kindName = KIND_NAMES[kind];
 
   const limits = await getUserTierLimits(env, session.did);
   if (!limits.pdfSaves) {
-    return json({ error: 'pdf_upgrade_required', message: PDF_SUPPORTER_MESSAGE }, 403);
+    return json(
+      {
+        error: 'pdf_upgrade_required',
+        message: kind === 'pdf' ? PDF_SUPPORTER_MESSAGE : EPUB_SUPPORTER_MESSAGE,
+      },
+      403
+    );
   }
-  if (!pdfExtractorConfigured(env) || !env.SAVED_FILES) {
-    return json({ error: 'Uploading PDFs is not set up on this server' }, 503);
+  if ((kind === 'pdf' && !pdfExtractorConfigured(env)) || !env.SAVED_FILES) {
+    return json({ error: `Uploading ${kindName}s is not set up on this server` }, 503);
   }
 
-  const maxBytes = limits.maxPdfUploadBytes;
+  const maxBytes = kind === 'pdf' ? limits.maxPdfUploadBytes : limits.maxEpubUploadBytes;
   const tooLarge = () =>
     json(
       {
         error: 'pdf_too_large',
-        message: `PDFs up to ${Math.round(maxBytes / (1024 * 1024))} MB can be uploaded.`,
+        message: `${kindName}s up to ${Math.round(maxBytes / (1024 * 1024))} MB can be uploaded.`,
         limit: maxBytes,
       },
       413
@@ -149,8 +249,13 @@ export async function handleUploadPdf(request: Request, env: Env, session: Sessi
   const bytes = await readCapped(request.body, maxBytes);
   if (bytes === null) return tooLarge();
   if (bytes.byteLength === 0) return json({ error: 'Empty file' }, 400);
-  if (!looksLikePdf(bytes)) {
+  if (kind === 'pdf' && !looksLikePdf(bytes)) {
     return json({ error: 'not_a_pdf', message: "That file isn't a PDF." }, 415);
+  }
+  // Any zip gets as far as the parser, which knows an EPUB by its package
+  // document; plenty of tools don't store the `mimetype` entry first.
+  if (kind === 'epub' && !looksLikeZip(new Uint8Array(bytes))) {
+    return json({ error: 'not_an_epub', message: "That file isn't an EPUB." }, 415);
   }
 
   const sha256 = await sha256Hex(bytes);
@@ -166,7 +271,7 @@ export async function handleUploadPdf(request: Request, env: Env, session: Sessi
       rkey
     ),
     // Stored bytes count every kept original; the monthly count, uploads only
-    // (a PDF saved by link counts as a URL save).
+    // (a PDF saved by link counts as a URL save). PDFs and EPUBs share both.
     env.DB.prepare(
       `SELECT COALESCE(SUM(f.size), 0) AS stored,
               COALESCE(SUM(CASE WHEN f.created_at >= ? AND s.source = 'upload' THEN 1 ELSE 0 END), 0) AS this_month
@@ -180,7 +285,7 @@ export async function handleUploadPdf(request: Request, env: Env, session: Sessi
   const dupeRkey = (dupe.results[0] as { rkey: string } | undefined)?.rkey;
   if (dupeRkey) {
     return json(
-      { error: 'already_saved', message: 'This PDF is already saved.', rkey: dupeRkey },
+      { error: 'already_saved', message: `This ${kindName} is already saved.`, rkey: dupeRkey },
       409
     );
   }
@@ -191,7 +296,7 @@ export async function handleUploadPdf(request: Request, env: Env, session: Sessi
     return json(
       {
         error: 'pdf_upload_limit_reached',
-        message: `You've uploaded ${limits.maxPdfUploadsPerMonth} PDFs this month.`,
+        message: `You've uploaded ${limits.maxPdfUploadsPerMonth} files this month.`,
         limit: limits.maxPdfUploadsPerMonth,
         resetsAt: nextMonth(now),
       },
@@ -202,74 +307,58 @@ export async function handleUploadPdf(request: Request, env: Env, session: Sessi
     return json(
       {
         error: 'pdf_storage_full',
-        message: 'Your saved PDFs are using all of your storage. Removing saved PDFs frees space.',
+        message:
+          'Your saved PDFs and EPUBs are using all of your storage. Removing some frees space.',
         limit: limits.maxPdfStorageBytes,
         used: stored,
       },
       403
     );
   }
-  if (!(await hasPdfAllowance(env, session.did))) {
-    return json({ error: 'pdf_daily_limit_reached', message: PDF_QUOTA_MESSAGE }, 403);
-  }
 
-  let pdf;
-  try {
-    pdf = await parsePdf(env, bytes);
-  } catch (err) {
-    if (!(err instanceof PdfParseError)) throw err;
-    if (err.charged) await chargePdfParse(env, session.did);
-    log.warn('pdf_upload_parse_failed', { message: err.message, size: bytes.byteLength });
-    return json({ error: 'pdf_unreadable', message: err.message }, err.userFacing ? 422 : 502);
-  }
-  await chargePdfParse(env, session.did);
+  const parsed =
+    kind === 'pdf' ? await parsePdfUpload(env, session.did, bytes) : await parseEpubUpload(bytes);
+  if (parsed instanceof Response) return parsed;
 
-  // A scan with no text layer reflows to nothing: there would be nothing to
-  // read or highlight, so it isn't kept.
-  if (!pdf.content || pdf.wordCount === 0) {
-    return json(
-      {
-        error: 'pdf_unreadable',
-        message: 'This PDF has no text Skyreader can read. It may be scanned pages.',
-      },
-      422
-    );
-  }
-
-  const title = pdf.title || titleFromFilename(filename) || 'Untitled PDF';
-  const publishedMs = pdf.published ? Date.parse(pdf.published) : NaN;
+  const title =
+    parsed.title ||
+    titleFromFilename(filename) ||
+    (kind === 'pdf' ? 'Untitled PDF' : 'Untitled book');
+  const publishedMs = parsed.published ? Date.parse(parsed.published) : NaN;
   const publishedAt = Number.isFinite(publishedMs) ? publishedMs : null;
   const savedAt = Date.now();
   const recordUri = `at://${session.did}/${COLLECTION}/${rkey}`;
-  const r2Key = savedFileKey(session.did, rkey);
+  const r2Key = savedFileKey(session.did, rkey, kind);
+  const mimeType = MIME_TYPES[kind];
 
   // The file first: a row pointing at a missing file is worse than a stray file.
   await env.SAVED_FILES.put(r2Key, bytes, {
-    httpMetadata: { contentType: 'application/pdf' },
+    httpMetadata: { contentType: mimeType },
     customMetadata: { did: session.did, rkey, ...(filename ? { filename } : {}) },
   });
   try {
     await env.DB.batch([
       env.DB.prepare(
         `INSERT INTO saved_articles (user_did, rkey, record_uri, url, title, author, description, content, content_type, domain, image, word_count, published_at, saved_at, created_at, source)
-         VALUES (?, ?, ?, '', ?, ?, ?, ?, 'pdf', NULL, NULL, ?, ?, ?, ?, 'upload')`
+         VALUES (?, ?, ?, '', ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, 'upload')`
       ).bind(
         session.did,
         rkey,
         recordUri,
         title,
-        pdf.author,
-        pdf.description,
-        pdf.content,
-        pdf.wordCount,
+        parsed.author,
+        parsed.description,
+        parsed.content,
+        kind,
+        parsed.wordCount,
         publishedAt,
         savedAt,
         savedAt
       ),
       env.DB.prepare(
         `INSERT INTO saved_files (user_did, rkey, r2_key, filename, mime_type, size, sha256, created_at)
-         VALUES (?, ?, ?, ?, 'application/pdf', ?, ?, ?)`
-      ).bind(session.did, rkey, r2Key, filename, bytes.byteLength, sha256, savedAt),
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(session.did, rkey, r2Key, filename, mimeType, bytes.byteLength, sha256, savedAt),
     ]);
   } catch (err) {
     // r2Key is derived from (did, rkey): if a concurrent upload with the same
@@ -284,11 +373,10 @@ export async function handleUploadPdf(request: Request, env: Env, session: Sessi
     throw err;
   }
 
-  log.info('pdf_uploaded', {
+  log.info(`${kind}_uploaded`, {
     size: bytes.byteLength,
-    pages: pdf.pageCount,
-    pagesKept: pdf.pagesKept,
-    wordCount: pdf.wordCount,
+    wordCount: parsed.wordCount,
+    ...parsed.extent,
   });
 
   return json(
@@ -297,19 +385,19 @@ export async function handleUploadPdf(request: Request, env: Env, session: Sessi
       uri: recordUri,
       url: '',
       title,
-      author: pdf.author,
-      description: pdf.description,
-      content: pdf.content,
-      contentType: 'pdf',
+      author: parsed.author,
+      description: parsed.description,
+      content: parsed.content,
+      contentType: kind,
       domain: null,
       image: null,
-      wordCount: pdf.wordCount,
+      wordCount: parsed.wordCount,
       publishedAt: publishedAt ? new Date(publishedAt).toISOString() : null,
       savedAt: new Date(savedAt).toISOString(),
       source: 'upload',
-      // Less than pageCount when a cap (300 pages, 1 MB of text) cut the reflow short.
-      pageCount: pdf.pageCount,
-      pagesKept: pdf.pagesKept,
+      // pageCount/pagesKept for a PDF, chapterCount/chaptersKept for an EPUB:
+      // the kept count is less when a cap (1 MB of text) cut the reflow short.
+      ...parsed.extent,
     },
     201
   );
@@ -321,9 +409,14 @@ export async function handleUploadPdf(request: Request, env: Env, session: Sessi
 const MAX_RELAYED_PDF_BYTES = 30 * 1024 * 1024;
 const RELAY_TIMEOUT_MS = 20_000;
 
-function pdfResponse(body: BodyInit, filename: string, size?: number): Response {
+function fileResponse(
+  body: BodyInit,
+  filename: string,
+  size?: number,
+  contentType = 'application/pdf'
+): Response {
   const headers: Record<string, string> = {
-    'Content-Type': 'application/pdf',
+    'Content-Type': contentType,
     // RFC 5987, so a non-ASCII filename survives; the plain one is the fallback.
     'Content-Disposition': `inline; filename="${filename.replace(/[^\x20-\x7e]|"/g, '_')}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
     'Cache-Control': 'private, max-age=3600',
@@ -576,7 +669,7 @@ async function relayLinkedPdf(env: Env, session: Session, rkey: string): Promise
       return reader.cancel(reason);
     },
   });
-  return pdfResponse(body, linkedPdfFilename(save.url));
+  return fileResponse(body, linkedPdfFilename(save.url));
 }
 
 // GET /api/saved/<rkey>/file — the original, only ever to the reader who saved it:
@@ -592,14 +685,15 @@ export async function handleGetSavedFile(request: Request, env: Env, session: Se
 // A save's kept original, or null when it has none.
 async function serveStoredFile(env: Env, did: string, rkey: string): Promise<Response | null> {
   const row = await env.DB.prepare(
-    'SELECT r2_key, filename FROM saved_files WHERE user_did = ? AND rkey = ?'
+    'SELECT r2_key, filename, mime_type FROM saved_files WHERE user_did = ? AND rkey = ?'
   )
     .bind(did, rkey)
-    .first<{ r2_key: string; filename: string | null }>();
+    .first<{ r2_key: string; filename: string | null; mime_type: string }>();
   if (!row) return null;
   const object = env.SAVED_FILES ? await env.SAVED_FILES.get(row.r2_key) : null;
   if (!object) return json({ error: 'Not found' }, 404);
-  return pdfResponse(object.body, row.filename || 'document.pdf', object.size);
+  const fallbackName = row.mime_type === MIME_TYPES.epub ? 'book.epub' : 'document.pdf';
+  return fileResponse(object.body, row.filename || fallbackName, object.size, row.mime_type);
 }
 
 /** Drop a save's uploaded file, if it has one. Called after the save's row is deleted. */

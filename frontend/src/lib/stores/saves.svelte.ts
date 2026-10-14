@@ -5,7 +5,7 @@ import {
   ApiError,
   ExtractionBlockedError,
   PdfExtractionError,
-  PdfUploadError,
+  FileUploadError,
 } from '$lib/services/api';
 import type { ExtractedArticle } from '$lib/services/api';
 import { generateTid } from '$lib/utils/tid';
@@ -404,7 +404,10 @@ function createSavesStore() {
    */
   function saveFetchFailure(err: unknown): SaveFetchFailure | null {
     if (err instanceof ExtractionBlockedError) return 'blocked';
-    if (err instanceof PdfExtractionError) return err.upgradeRequired ? 'pdfUpgrade' : 'pdf';
+    if (err instanceof PdfExtractionError) {
+      if (err.format === 'epub') return err.upgradeRequired ? 'epubUpgrade' : 'epub';
+      return err.upgradeRequired ? 'pdfUpgrade' : 'pdf';
+    }
     if (err instanceof ApiError && err.status >= 500) return 'failed';
     return null;
   }
@@ -555,14 +558,14 @@ function createSavesStore() {
   }
 
   /**
-   * Upload a PDF as a save (Supporter; the server holds to the plan's limits).
-   * The server parses it and answers the save with its reflowed body, so it is
-   * readable — and highlightable — at once. Needs a connection: there is no
+   * Upload a PDF or an EPUB as a save (Supporter; the server holds to the plan's
+   * limits). The server reads it and answers the save with its reflowed body, so
+   * it is readable — and highlightable — at once. Needs a connection: there is no
    * queue for a file. Uploading a file already saved answers that save.
    */
-  async function uploadPdf(file: File): Promise<SavedItem> {
+  async function uploadFile(file: File, kind: 'pdf' | 'epub'): Promise<SavedItem> {
     if (!canReachBackend()) {
-      throw new Error(auth.isGuest ? 'Uploading a PDF needs an account.' : 'You are offline.');
+      throw new Error(auth.isGuest ? 'Uploading a file needs an account.' : 'You are offline.');
     }
     saving = true;
     error = null;
@@ -570,9 +573,12 @@ function createSavesStore() {
       const rkey = generateTid();
       let result: SavedItem;
       try {
-        result = await api.uploadPdf(file, rkey, file.name);
+        result =
+          kind === 'epub'
+            ? await api.uploadEpub(file, rkey, file.name)
+            : await api.uploadPdf(file, rkey, file.name);
       } catch (err) {
-        if (err instanceof PdfUploadError && err.code === 'already_saved' && err.rkey) {
+        if (err instanceof FileUploadError && err.code === 'already_saved' && err.rkey) {
           const existing = articles.find((a) => a.rkey === err.rkey);
           if (existing) return existing;
         }
@@ -586,7 +592,7 @@ function createSavesStore() {
         author: result.author,
         description: result.description,
         content: result.content,
-        contentType: 'pdf',
+        contentType: kind,
         domain: null,
         image: null,
         wordCount: result.wordCount,
@@ -600,7 +606,7 @@ function createSavesStore() {
       savedSearchStore.upsert(savedItem);
       return savedItem;
     } catch (err) {
-      error = err instanceof Error ? err.message : 'Failed to upload PDF';
+      error = err instanceof Error ? err.message : 'Failed to upload the file';
       throw err;
     } finally {
       saving = false;
@@ -1075,7 +1081,7 @@ function createSavesStore() {
     },
     load,
     saveFromUrl,
-    uploadPdf,
+    uploadFile,
     saveArticle,
     saveDocument,
     unsaveByGuid,

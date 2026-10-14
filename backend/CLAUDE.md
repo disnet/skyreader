@@ -121,7 +121,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed documentation.
 | `src/routes/reading.ts`       | Article + document read positions (forward delta)          |
 | `src/routes/labels.ts`        | Unified item labels (read/starred/archived/tags)           |
 | `src/routes/saved.ts`         | Saved articles CRUD                                        |
-| `src/routes/saved-pdf.ts`     | PDFs (Supporter): upload, kept originals, cleanup          |
+| `src/routes/saved-pdf.ts`     | PDFs + EPUBs (Supporter): upload, kept originals, cleanup  |
 | `src/routes/recommends.ts`    | One-tap public recommends (+ standard.site copy)           |
 | `src/routes/integrations.ts`  | Semble/Margin writes to the user's PDS                     |
 | `src/routes/settings.ts`      | User settings                                              |
@@ -155,6 +155,16 @@ PDS or a Semble/Margin backing collection. A PDF saved by link keeps its origina
 `GET /api/saved/<rkey>/file` keeps it on first open for a save that has none (streaming it through
 uncached only when storage is full). Limits: file size, uploads per month (uploads only) and stored
 bytes (every kept original) from the plan, plus the shared daily parse cap.
+
+**EPUBs** ride the same plan flag and the same upload/storage limits (`maxEpubUploadBytes` is their
+own, larger size cap), but are read in this Worker (`src/services/epub.ts`: unzip, walk the OPF
+spine, strip each chapter to reading markup with `HTMLRewriter`, one
+`<section data-epub-chapter="N">` per chapter, capped at 1 MB like a PDF's text), so they spend no
+daily parse allowance. An upload is `POST /api/saved/epub` (`content_type = 'epub'`, original kept in
+R2 like a PDF's). By link, the proxy's `/extract` recognises an EPUB and answers `epub: true`
+without caching; `FeedProxyClient.extract` then fetches and reads the book itself. Unlike a linked
+PDF, a linked EPUB's original isn't kept: there's no original-view for a book. Images and internal
+links aren't carried.
 
 **Bluesky likes and bookmarks** are the same kind of private, local-only subscription
 (`bsky-likes:<did>` / `bsky-bookmarks:<did>`, `src/services/bsky-sources.ts`): turned on from

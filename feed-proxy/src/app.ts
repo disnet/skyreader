@@ -31,7 +31,14 @@ import type { RobotsPolicy } from './robots';
 import { signRequestHeaders, signedDirectory, type WebBotAuth } from './web-bot-auth';
 import { reportError, VERSION } from './instrument';
 import { siteSourceFor } from './site-sources';
-import { isDeclaredPdf, isPdf, PdfUnreadableError, type PdfExtractor } from './pdf-extract';
+import {
+  isDeclaredEpub,
+  isDeclaredPdf,
+  isEpub,
+  isPdf,
+  PdfUnreadableError,
+  type PdfExtractor,
+} from './pdf-extract';
 
 export interface AppConfig {
   proxySecret?: string;
@@ -457,7 +464,9 @@ export const FEED_PARSER_VERSION = 2;
 //      which cached mojibake for every PDF URL)
 //   4: a body with nothing to read reported as null (it was cached as an empty
 //      `<body></body>`), and site sources for script-rendered pages (attie.ai)
-export const EXTRACTOR_VERSION = 4;
+//   5: EPUBs handed back to the backend (`epub: true`) instead of decoded as
+//      text and cached as mojibake
+export const EXTRACTOR_VERSION = 5;
 
 function hostOf(url: string): string | null {
   try {
@@ -648,6 +657,16 @@ async function extractFromSiteSource(url: string): Promise<ExtractedArticle | nu
       `[Proxy] /extract ${url}: site source failed: ${err instanceof Error ? err.message : err}`
     );
     return null;
+  }
+}
+
+// An EPUB: not read here, but answered `epub: true` so the backend fetches and
+// reads it (backend/src/services/epub.ts). Never cached: there is nothing of
+// ours to keep, and the backend owns the book's size cap.
+class EpubHandOff extends Error {
+  constructor() {
+    super('EPUBs are read by the Skyreader API');
+    this.name = 'EpubHandOff';
   }
 }
 
@@ -2859,7 +2878,11 @@ export function createApp(db: Database, config: AppConfig) {
           // the extension (the honest way to save a page a site won't serve us).
           const response = await fetchUpstream(
             url,
-            { ...FETCH_HEADERS, Accept: 'text/html, application/xhtml+xml, application/pdf, */*' },
+            {
+              ...FETCH_HEADERS,
+              Accept:
+                'text/html, application/xhtml+xml, application/pdf, application/epub+zip, */*',
+            },
             { fetchTimeoutMs: EXTRACT_FETCH_TIMEOUT_MS }
           );
 
@@ -2873,6 +2896,16 @@ export function createApp(db: Database, config: AppConfig) {
           try {
             bytes = await readBytesWithLimit(response, MAX_RESPONSE_SIZE_BYTES);
           } catch (err) {
+            // A book over the page limit is still the backend's to fetch: its cap
+            // is the reader's plan's, not ours.
+            if (
+              err instanceof ResponseTooLargeError &&
+              (isDeclaredEpub(contentType) ||
+                (err.head && isEpub(err.head, contentType)) ||
+                /\.epub$/i.test(new URL(url).pathname))
+            ) {
+              throw new EpubHandOff();
+            }
             // Name the limit in words a reader can act on; the byte counts are
             // still in the log line below via the original message. A PDF is
             // recognised by its type, its first bytes (when any were read) or its path.
@@ -2889,6 +2922,7 @@ export function createApp(db: Database, config: AppConfig) {
             }
             throw err;
           }
+          if (isEpub(bytes, contentType)) throw new EpubHandOff();
           // Sniff as well as trust the header: plenty of servers send a PDF as
           // application/octet-stream, and a PDF decoded as text is mojibake.
           let extracted: ExtractedArticle;
@@ -2945,6 +2979,9 @@ export function createApp(db: Database, config: AppConfig) {
       if (error instanceof FetchHtmlError) {
         console.error(`[Proxy] /extract ${url}: ${error.message} (${elapsed}ms)`);
         return c.json({ error: error.message, blocked: error.blocked }, 200);
+      }
+      if (error instanceof EpubHandOff) {
+        return c.json({ error: error.message, blocked: false, epub: true }, 200);
       }
       if (error instanceof PdfExtractError || error instanceof PdfUnreadableError) {
         console.error(`[Proxy] /extract ${url}: ${error.message} (${elapsed}ms)`);

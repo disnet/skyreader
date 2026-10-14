@@ -102,7 +102,7 @@ import {
   handleDeleteSavedByGuid,
   handleSetBacking,
 } from './routes/saved';
-import { handleGetSavedFile, handleUploadPdf } from './routes/saved-pdf';
+import { handleGetSavedFile, handleUploadEpub, handleUploadPdf } from './routes/saved-pdf';
 import { handleExtract } from './routes/extract';
 import {
   handleCreateRoom,
@@ -799,10 +799,14 @@ async function route(
       if (!session) return unauthorizedResponse(headers);
       response = await handleGetSavedUpdates(request, env);
       break;
-    // Uploaded PDFs (Supporter) — routes/saved-pdf.ts
+    // Uploaded PDFs and EPUBs (Supporter) — routes/saved-pdf.ts
     case url.pathname === '/api/saved/pdf':
       if (!session) return unauthorizedResponse(headers);
       response = await handleUploadPdf(request, env, session);
+      break;
+    case url.pathname === '/api/saved/epub':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleUploadEpub(request, env, session);
       break;
     case /^\/api\/saved\/[^/]+\/file$/.test(url.pathname):
       if (!session) return unauthorizedResponse(headers);

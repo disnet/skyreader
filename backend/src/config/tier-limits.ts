@@ -23,16 +23,21 @@ export interface TierLimits {
    */
   fullTextSearch: boolean;
   /**
-   * Reading PDFs: saving a PDF by URL (its text reflowed for the reader) and
-   * uploading one (routes/saved-pdf.ts). Checked before every parse, so a lapsed
-   * plan keeps the PDFs it saved but can't add more.
+   * Reading PDFs and EPUBs: saving one by URL (its text reflowed for the reader)
+   * and uploading one (routes/saved-pdf.ts). Checked before every parse, so a
+   * lapsed plan keeps the files it saved but can't add more.
    */
   pdfSaves: boolean;
   /** Largest PDF upload, in bytes. The pdf-extractor Worker refuses anything bigger. */
   maxPdfUploadBytes: number;
-  /** Uploads per calendar month (UTC). URL saves of PDFs count as URL saves instead. */
+  /**
+   * Largest EPUB, uploaded or saved by link, in bytes. Larger than a PDF's: a
+   * book's images make up most of its size, and only its text is inflated.
+   */
+  maxEpubUploadBytes: number;
+  /** Uploads (PDF or EPUB) per calendar month (UTC). URL saves count as URL saves instead. */
   maxPdfUploadsPerMonth: number;
-  /** Total bytes of PDF originals kept in R2, uploaded or saved by link. Deleting a save frees its file. */
+  /** Total bytes of originals kept in R2 (PDFs uploaded or saved by link, uploaded EPUBs). Deleting a save frees its file. */
   maxPdfStorageBytes: number;
 }
 
@@ -47,6 +52,7 @@ const TIER_MAP: Record<string, TierLimits> = {
     fullTextSearch: false,
     pdfSaves: false,
     maxPdfUploadBytes: 0,
+    maxEpubUploadBytes: 0,
     maxPdfUploadsPerMonth: 0,
     maxPdfStorageBytes: 0,
   },
@@ -59,6 +65,7 @@ const TIER_MAP: Record<string, TierLimits> = {
     pdfSaves: true,
     // The extractor's own cap (pdf-extractor/src/extract.ts MAX_PDF_BYTES).
     maxPdfUploadBytes: 10 * MB,
+    maxEpubUploadBytes: 30 * MB,
     maxPdfUploadsPerMonth: 200,
     maxPdfStorageBytes: 2048 * MB,
   },

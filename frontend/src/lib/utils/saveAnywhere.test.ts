@@ -137,6 +137,21 @@ describe('a PDF left unread for the plan', () => {
   });
 });
 
+describe('an EPUB left unread', () => {
+  it('names the EPUB, and offers the plan rather than the extension', () => {
+    const unread = failedSaveBody('https://example.com/book.epub', 'epub');
+    expect(unread).toContain('this EPUB');
+    expect(unread).not.toContain('extension');
+    expect(extensionCanHelp('epub')).toBe(false);
+    expect(failedSaveLine('epub')).toBe("Saved the link only. Skyreader couldn't read this EPUB.");
+
+    const upsell = failedSaveBody('https://example.com/book.epub', 'epubUpgrade');
+    expect(upsell).toContain('Reading EPUBs in Skyreader is a Supporter feature.');
+    expect(upsell).toContain('highlight EPUBs here');
+    expect(failedSaveLine('epubUpgrade')).toContain('Reading EPUBs is a Supporter feature');
+  });
+});
+
 describe('isFailedSaveBody', () => {
   it('recognizes the note and nothing else', () => {
     expect(isFailedSaveBody(failedSaveBody('https://example.com/a', 'blocked'))).toBe(true);

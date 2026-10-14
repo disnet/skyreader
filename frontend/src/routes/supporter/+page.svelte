@@ -259,7 +259,7 @@ directly, no concept tournament.
       <span class="benefit-desc">A private address; each newsletter becomes a source.</span>
     </li>
     <li class="benefit">
-      <span class="benefit-figure">PDFs</span>
+      <span class="benefit-figure">PDFs and EPUBs</span>
       <span class="benefit-desc"
         >Save by link or upload; read and highlight them like any article.</span
       >
@@ -377,8 +377,8 @@ directly, no concept tournament.
           <li>
             <span class="feature-check"><Icon name="check" size={16} strokeWidth={2.5} /></span>
             <span class="feature-text">
-              PDFs, by link or upload
-              <span class="feature-sub">papers and reports, read and highlighted here</span>
+              PDFs and EPUBs, by link or upload
+              <span class="feature-sub">papers, reports and books, read and highlighted here</span>
             </span>
           </li>
           {#if searchLive}
