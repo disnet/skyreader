@@ -632,7 +632,7 @@ class ApiClient {
           }
           throw new ScopeUpgradeError(message, feature);
         }
-        if (path.startsWith('/api/saved/pdf')) {
+        if (path === '/api/saved/pdf' || path.startsWith('/api/saved/pdf?')) {
           const b = body as { error?: string; message?: string };
           throw new PdfUploadError(
             b.message || b.error || 'Upload refused',

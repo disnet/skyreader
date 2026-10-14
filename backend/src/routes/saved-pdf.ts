@@ -252,7 +252,15 @@ export async function handleUploadPdf(request: Request, env: Env, session: Sessi
       ).bind(session.did, rkey, r2Key, filename, bytes.byteLength, sha256, savedAt),
     ]);
   } catch (err) {
-    await env.SAVED_FILES.delete(r2Key).catch(() => {});
+    // r2Key is derived from (did, rkey): if a concurrent upload with the same
+    // rkey won the insert, the object now belongs to its row, so keep it.
+    const winner = await env.DB.prepare(
+      'SELECT 1 AS x FROM saved_files WHERE user_did = ? AND rkey = ?'
+    )
+      .bind(session.did, rkey)
+      .first()
+      .catch(() => null);
+    if (!winner) await env.SAVED_FILES.delete(r2Key).catch(() => {});
     throw err;
   }
 
