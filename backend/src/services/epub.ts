@@ -13,9 +13,11 @@
 // render (DOMPurify); this pass is about reading, not trust: drop the
 // publisher's styles, scripts, images and ids, and keep text structure.
 //
-// Not carried: images (they'd need serving out of the stored original), and
-// internal links (footnote refs, a chapter's own TOC), which are unwrapped to
-// their text since the reader opens every link in a new tab.
+// Pictures and the book's own links are kept, rewritten for the joined text:
+// an `<img>` carries `data-epub-src` (its path in the zip), which the reader
+// turns into GET /api/saved/<rkey>/asset?path=… served out of the kept
+// original; ids and internal hrefs are scoped by spine position
+// (`#epub-c3-note12`, epubAnchorId), and the reader jumps to them in place.
 
 export interface EpubExtraction {
   title: string | null;
@@ -73,7 +75,7 @@ export function looksLikeZip(bytes: Uint8Array): boolean {
 // ---------------------------------------------------------------------------
 // Zip
 
-interface ZipEntry {
+export interface ZipEntry {
   name: string;
   method: number;
   encrypted: boolean;
@@ -84,12 +86,20 @@ interface ZipEntry {
 
 const EOCD_SIG = 0x06054b50;
 const CENTRAL_SIG = 0x02014b50;
+/** The end-of-central-directory record is 22 bytes plus a comment of up to 64 KiB. */
+export const EOCD_SEARCH_BYTES = 22 + 0xffff;
 
-function readCentralDirectory(bytes: Uint8Array): Map<string, ZipEntry> {
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  // The end-of-central-directory record is 22 bytes plus a comment of up to 64 KiB.
+export interface CentralDirectoryLocation {
+  count: number;
+  offset: number;
+  size: number;
+}
+
+/** Where the central directory is, from the file's tail (at least its last EOCD_SEARCH_BYTES). */
+export function locateCentralDirectory(tail: Uint8Array): CentralDirectoryLocation {
+  const view = new DataView(tail.buffer, tail.byteOffset, tail.byteLength);
   let eocd = -1;
-  for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 22 - 0xffff); i--) {
+  for (let i = tail.length - 22; i >= Math.max(0, tail.length - EOCD_SEARCH_BYTES); i--) {
     if (view.getUint32(i, true) === EOCD_SIG) {
       eocd = i;
       break;
@@ -97,15 +107,22 @@ function readCentralDirectory(bytes: Uint8Array): Map<string, ZipEntry> {
   }
   if (eocd < 0) throw new EpubError("This file isn't an EPUB.");
   const count = view.getUint16(eocd + 10, true);
-  let offset = view.getUint32(eocd + 16, true);
+  const size = view.getUint32(eocd + 12, true);
+  const offset = view.getUint32(eocd + 16, true);
   if (offset === 0xffffffff || count === 0xffff) {
     throw new EpubError("Skyreader can't read this EPUB (Zip64).");
   }
+  return { count, offset, size };
+}
 
+/** The entries of a central directory, given its bytes alone. */
+export function parseCentralDirectory(cd: Uint8Array, count: number): Map<string, ZipEntry> {
+  const view = new DataView(cd.buffer, cd.byteOffset, cd.byteLength);
   const decoder = new TextDecoder();
   const entries = new Map<string, ZipEntry>();
+  let offset = 0;
   for (let n = 0; n < count; n++) {
-    if (offset + 46 > bytes.length || view.getUint32(offset, true) !== CENTRAL_SIG) {
+    if (offset + 46 > cd.length || view.getUint32(offset, true) !== CENTRAL_SIG) {
       throw new EpubError("This EPUB's file list is damaged.");
     }
     const flags = view.getUint16(offset + 8, true);
@@ -116,7 +133,7 @@ function readCentralDirectory(bytes: Uint8Array): Map<string, ZipEntry> {
     const extraLen = view.getUint16(offset + 30, true);
     const commentLen = view.getUint16(offset + 32, true);
     const localOffset = view.getUint32(offset + 42, true);
-    const name = decoder.decode(bytes.subarray(offset + 46, offset + 46 + nameLen));
+    const name = decoder.decode(cd.subarray(offset + 46, offset + 46 + nameLen));
     entries.set(name, {
       name,
       method,
@@ -130,60 +147,85 @@ function readCentralDirectory(bytes: Uint8Array): Map<string, ZipEntry> {
   return entries;
 }
 
+function readCentralDirectory(bytes: Uint8Array): Map<string, ZipEntry> {
+  const loc = locateCentralDirectory(bytes.subarray(Math.max(0, bytes.length - EOCD_SEARCH_BYTES)));
+  return parseCentralDirectory(bytes.subarray(loc.offset, loc.offset + loc.size), loc.count);
+}
+
+export const LOCAL_HEADER_BYTES = 30;
+
+/** Where an entry's data starts, given its local header's first 30 bytes. */
+export function entryDataOffset(entry: ZipEntry, localHeader: Uint8Array): number {
+  const view = new DataView(localHeader.buffer, localHeader.byteOffset, localHeader.byteLength);
+  if (localHeader.length < LOCAL_HEADER_BYTES || view.getUint32(0, true) !== ZIP_LOCAL_SIG) {
+    throw new EpubError('This EPUB is damaged.');
+  }
+  return (
+    entry.localOffset + LOCAL_HEADER_BYTES + view.getUint16(26, true) + view.getUint16(28, true)
+  );
+}
+
+/**
+ * An entry's uncompressed bytes from its stored data. Inflated as a stream so a
+ * lying size field can't make us hold more than `maxBytes`: past it the read is
+ * abandoned. `onChunk` sees every chunk (the parser's whole-book budget).
+ */
+export async function inflateEntry(
+  entry: ZipEntry,
+  data: Uint8Array,
+  maxBytes: number,
+  onChunk: (chunk: Uint8Array) => void = () => {}
+): Promise<Uint8Array> {
+  if (entry.encrypted) throw new EpubError('This EPUB is password-protected.');
+  if (entry.size > maxBytes) throw new EpubError('This EPUB is too large to read.');
+  if (data.length < entry.compressedSize) throw new EpubError('This EPUB is damaged.');
+  if (entry.method === 0) {
+    onChunk(data);
+    return data;
+  }
+  if (entry.method !== 8) throw new EpubError("Skyreader can't read this EPUB's compression.");
+
+  const stream = new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > maxBytes) throw new EpubError('This EPUB is too large to read.');
+      onChunk(value);
+      chunks.push(value);
+    }
+  } catch (err) {
+    await reader.cancel().catch(() => {});
+    if (err instanceof EpubError) throw err;
+    throw new EpubError('This EPUB is damaged.');
+  }
+  const out = new Uint8Array(size);
+  let o = 0;
+  for (const c of chunks) {
+    out.set(c, o);
+    o += c.byteLength;
+  }
+  return out;
+}
+
 class Inflater {
   private total = 0;
   constructor(private readonly bytes: Uint8Array) {}
 
   async read(entry: ZipEntry): Promise<Uint8Array> {
-    if (entry.encrypted) throw new EpubError('This EPUB is password-protected.');
-    if (entry.size > MAX_ENTRY_BYTES) throw new EpubError('This EPUB is too large to read.');
-    const view = new DataView(this.bytes.buffer, this.bytes.byteOffset, this.bytes.byteLength);
     const at = entry.localOffset;
-    if (at + 30 > this.bytes.length || view.getUint32(at, true) !== ZIP_LOCAL_SIG) {
-      throw new EpubError('This EPUB is damaged.');
-    }
-    const start = at + 30 + view.getUint16(at + 26, true) + view.getUint16(at + 28, true);
+    const start = entryDataOffset(entry, this.bytes.subarray(at, at + LOCAL_HEADER_BYTES));
     const data = this.bytes.subarray(start, start + entry.compressedSize);
-    if (data.length < entry.compressedSize) throw new EpubError('This EPUB is damaged.');
-
-    if (entry.method === 0) return this.count(data);
-    if (entry.method !== 8) throw new EpubError("Skyreader can't read this EPUB's compression.");
-
-    // Inflate as a stream so a lying size field can't make us hold more than
-    // the cap: past it the read is abandoned.
-    const stream = new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
-    const reader = stream.getReader();
-    const chunks: Uint8Array[] = [];
-    let size = 0;
-    try {
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        size += value.byteLength;
-        if (size > MAX_ENTRY_BYTES) throw new EpubError('This EPUB is too large to read.');
-        this.count(value);
-        chunks.push(value);
+    return inflateEntry(entry, data, MAX_ENTRY_BYTES, (chunk) => {
+      this.total += chunk.byteLength;
+      if (this.total > MAX_TOTAL_INFLATED_BYTES) {
+        throw new EpubError('This EPUB is too large to read.');
       }
-    } catch (err) {
-      await reader.cancel().catch(() => {});
-      if (err instanceof EpubError) throw err;
-      throw new EpubError('This EPUB is damaged.');
-    }
-    const out = new Uint8Array(size);
-    let o = 0;
-    for (const c of chunks) {
-      out.set(c, o);
-      o += c.byteLength;
-    }
-    return out;
-  }
-
-  private count(chunk: Uint8Array): Uint8Array {
-    this.total += chunk.byteLength;
-    if (this.total > MAX_TOTAL_INFLATED_BYTES) {
-      throw new EpubError('This EPUB is too large to read.');
-    }
-    return chunk;
+    });
   }
 }
 
@@ -340,7 +382,6 @@ const DROPPED = [
   'textarea',
   'svg',
   'math',
-  'img',
   'image',
   'picture',
   'video',
@@ -350,23 +391,89 @@ const DROPPED = [
   'nav',
 ];
 
-const KEPT_ATTRIBUTES = new Set(['href', 'colspan', 'rowspan', 'lang', 'dir', 'start', 'reversed']);
+const KEPT_ATTRIBUTES = new Set(['colspan', 'rowspan', 'lang', 'dir', 'start', 'reversed']);
+
+/** Image types a book's pictures come in, and the reader can show. */
+export const EPUB_IMAGE_TYPES: Record<string, string> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  avif: 'image/avif',
+  svg: 'image/svg+xml',
+};
+
+/** The MIME type of an image entry in a book, by its extension; null for anything else. */
+export function epubImageType(path: string): string | null {
+  return EPUB_IMAGE_TYPES[path.split('.').pop()?.toLowerCase() ?? ''] ?? null;
+}
+
+/**
+ * The id a chapter's element gets in the joined book: scoped by the chapter's
+ * spine position, so two chapters' `#note1` stay apart, and the reader can tell
+ * a book's own anchors (`#epub-…`) from a page's.
+ */
+export function epubAnchorId(chapter: number, id?: string): string {
+  return id ? `epub-c${chapter}-${id.replace(/[^\w-]/g, '_')}` : `epub-c${chapter}`;
+}
+
+/** What a chapter's cleanup needs to know about the rest of the book. */
+interface ChapterContext {
+  /** The chapter's path in the zip, which its links and images are relative to. */
+  path: string;
+  /** Its 1-based position in the spine. */
+  index: number;
+  /** Every spine chapter's path → its position, for links between chapters. */
+  spine: Map<string, number>;
+  entries: Map<string, ZipEntry>;
+}
 
 /**
  * XHTML written for an HTML parser: `<a id="x"/>` is a complete element in XML
  * but an unclosed `<a>` to HTML, which would swallow the rest of the chapter.
+ * A picture wrapped in SVG (the usual cover page) becomes a plain `<img>`.
  */
 function xhtmlToHtml(xhtml: string): string {
   return xhtml
     .replace(/<\?xml[\s\S]*?\?>/g, '')
     .replace(/<!DOCTYPE[^>]*>/gi, '')
     .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+    .replace(
+      /<svg\b[^>]*>(?:(?!<\/svg>)[\s\S])*?<image\b[^>]*?\s(?:xlink:)?href\s*=\s*["']([^"']+)["'][\s\S]*?<\/svg>/gi,
+      (_all, href: string) => `<img src="${href}" alt="">`
+    )
     .replace(/<([a-zA-Z][\w:-]*)(\s[^<>]*?)?\s*\/>/g, (all, tag: string, rest = '') =>
       VOID_ELEMENTS.has(tag.toLowerCase()) ? all : `<${tag}${rest}></${tag}>`
     );
 }
 
-async function cleanChapter(xhtml: string): Promise<string> {
+function decodeFragment(fragment: string): string {
+  try {
+    return decodeURIComponent(fragment);
+  } catch {
+    return fragment;
+  }
+}
+
+// A URL with a scheme (http:, data:, javascript:…), as opposed to a path in the book.
+const HAS_SCHEME = /^[a-z][\w+.-]*:/i;
+
+/**
+ * A link inside the book, as an anchor in the joined text: `#epub-c3` for a
+ * chapter, `#epub-c3-note12` for a place in one. Null when it points outside
+ * the reading order (a non-linear notes file, the stylesheet).
+ */
+function internalHref(ctx: ChapterContext, href: string): string | null {
+  const hash = href.indexOf('#');
+  const pathPart = hash < 0 ? href : href.slice(0, hash);
+  const fragment = hash < 0 ? '' : decodeFragment(href.slice(hash + 1));
+  const target = pathPart ? ctx.spine.get(resolvePath(ctx.path, pathPart)) : ctx.index;
+  if (!target) return null;
+  return `#${epubAnchorId(target, fragment || undefined)}`;
+}
+
+async function cleanChapter(xhtml: string, ctx: ChapterContext): Promise<string> {
   let rewriter = new HTMLRewriter();
   for (const tag of DROPPED) {
     rewriter = rewriter.on(tag, {
@@ -389,16 +496,43 @@ async function cleanChapter(xhtml: string): Promise<string> {
           el.remove();
           return;
         }
+        const tag = el.tagName.toLowerCase();
+        const id = el.getAttribute('id') ?? (tag === 'a' ? el.getAttribute('name') : null);
+        const href = tag === 'a' ? (el.getAttribute('href') ?? '').trim() : '';
+        const src = tag === 'img' ? (el.getAttribute('src') ?? '').trim() : '';
+        const alt = tag === 'img' ? (el.getAttribute('alt') ?? '') : '';
+
         const names = [...el.attributes].map(([name]) => name);
         for (const name of names) {
           if (!KEPT_ATTRIBUTES.has(name.toLowerCase())) el.removeAttribute(name);
         }
-      },
-    })
-    .on('a', {
-      element(el) {
-        const href = el.getAttribute('href') ?? '';
-        if (!/^(https?:|mailto:)/i.test(href)) el.removeAndKeepContent();
+        // Kept, scoped to the chapter, so the book's own links can land on it.
+        if (id) el.setAttribute('id', epubAnchorId(ctx.index, id));
+
+        if (tag === 'img') {
+          // A picture in the book is served from the kept original
+          // (GET /api/saved/<rkey>/asset); the reader fills in its src.
+          const path = src && !HAS_SCHEME.test(src) ? resolvePath(ctx.path, src) : '';
+          if (!path || !ctx.entries.has(path) || !epubImageType(path)) {
+            el.remove();
+            return;
+          }
+          el.setAttribute('data-epub-src', path);
+          el.setAttribute('alt', alt);
+          return;
+        }
+
+        if (tag === 'a') {
+          const target = /^(https?:|mailto:)/i.test(href)
+            ? href
+            : href && !HAS_SCHEME.test(href)
+              ? internalHref(ctx, href)
+              : null;
+          if (target) el.setAttribute('href', target);
+          // A link to nowhere we keep is just its text; an anchor with an id
+          // stays as a landing place.
+          else if (!id) el.removeAndKeepContent();
+        }
       },
     });
   const html = await rewriter.transform(new Response(xhtmlToHtml(xhtml))).text();
@@ -440,6 +574,53 @@ function isoDate(raw: string | null): string | null {
 
 function shorten(text: string, max = 300): string {
   return text.length > max ? text.slice(0, max - 3).replace(/\s+\S*$/, '') + '…' : text;
+}
+
+// ---------------------------------------------------------------------------
+// One entry out of a kept original (the reader's pictures)
+
+/** The largest picture served out of a book. */
+export const MAX_EPUB_ASSET_BYTES = 20 * 1024 * 1024;
+
+async function readRange(
+  bucket: R2Bucket,
+  key: string,
+  offset: number,
+  length: number
+): Promise<Uint8Array> {
+  if (length === 0) return new Uint8Array(0);
+  const object = await bucket.get(key, { range: { offset, length } });
+  if (!object) throw new EpubError('This EPUB is damaged.');
+  return new Uint8Array(await object.arrayBuffer());
+}
+
+/**
+ * One file inside a book kept in R2, without reading the whole book: its tail
+ * (the central directory's location), the directory, the entry's local header,
+ * then its data — four ranged reads. Null when the book has no such entry.
+ */
+export async function readStoredEpubEntry(
+  bucket: R2Bucket,
+  key: string,
+  path: string,
+  maxBytes = MAX_EPUB_ASSET_BYTES
+): Promise<Uint8Array | null> {
+  const head = await bucket.head(key);
+  if (!head) return null;
+  const tailLength = Math.min(head.size, EOCD_SEARCH_BYTES);
+  const tail = await readRange(bucket, key, head.size - tailLength, tailLength);
+  const loc = locateCentralDirectory(tail);
+  if (loc.offset + loc.size > head.size) throw new EpubError("This EPUB's file list is damaged.");
+  const entries = parseCentralDirectory(
+    await readRange(bucket, key, loc.offset, loc.size),
+    loc.count
+  );
+  const entry = entries.get(path);
+  if (!entry) return null;
+  if (entry.compressedSize > maxBytes) throw new EpubError('This picture is too large.');
+  const local = await readRange(bucket, key, entry.localOffset, LOCAL_HEADER_BYTES);
+  const data = await readRange(bucket, key, entryDataOffset(entry, local), entry.compressedSize);
+  return inflateEntry(entry, data, maxBytes);
 }
 
 // ---------------------------------------------------------------------------
@@ -544,32 +725,39 @@ export async function parseEpub(
     }
   }
 
-  const chapters: string[] = [];
-  for (const path of pkg.chapters) {
+  const spine = new Map(pkg.chapters.map((path, i) => [path, i + 1]));
+  const chapters: { index: number; html: string }[] = [];
+  for (const [i, path] of pkg.chapters.entries()) {
     const xhtml = await readEntry(path);
     if (!xhtml) continue;
-    const html = await cleanChapter(xhtml);
-    // Covers, title pages that are only an image, blank separators.
-    if (countWords(html) > 0) chapters.push(html);
+    const html = await cleanChapter(xhtml, { path, index: i + 1, spine, entries });
+    // Blank separators go; a cover or a plate is only a picture, and stays.
+    if (countWords(html) > 0 || html.includes('data-epub-src=')) {
+      chapters.push({ index: i + 1, html });
+    }
   }
 
-  const render = (n: number, html: string) =>
-    `<section data-epub-chapter="${n}">\n${html}\n</section>`;
+  // `data-epub-chapter` counts the chapters kept; the id is the spine position
+  // the book's links were scoped by.
+  const sectionFor = (n: number, spineIndex: number, html: string) =>
+    `<section data-epub-chapter="${n}" id="${epubAnchorId(spineIndex)}">\n${html}\n</section>`;
   const sections: string[] = [];
   let size = 0;
   let chaptersKept = 0;
   let wordCount = 0;
   let firstChapterCut = false;
-  for (const [i, html] of chapters.entries()) {
+  for (const [i, chapter] of chapters.entries()) {
+    const render = (html: string) => sectionFor(i + 1, chapter.index, html);
+    const html = chapter.html;
     let kept = html;
-    let section = render(i + 1, kept);
+    let section = render(kept);
     let sectionBytes = byteLength(section);
     if (size + sectionBytes > maxBytes) {
       if (sections.length) break;
       // One chapter over the cap on its own: keep the blocks that fit.
-      kept = cutAtBlock(html, maxBytes - byteLength(render(i + 1, '')) - 200);
+      kept = cutAtBlock(html, maxBytes - byteLength(render('')) - 200);
       firstChapterCut = true;
-      section = render(i + 1, kept);
+      section = render(kept);
       sectionBytes = byteLength(section);
     }
     sections.push(section);

@@ -162,9 +162,13 @@ spine, strip each chapter to reading markup with `HTMLRewriter`, one
 `<section data-epub-chapter="N">` per chapter, capped at 1 MB like a PDF's text), so they spend no
 daily parse allowance. An upload is `POST /api/saved/epub` (`content_type = 'epub'`, original kept in
 R2 like a PDF's). By link, the proxy's `/extract` recognises an EPUB and answers `epub: true`
-without caching; `FeedProxyClient.extract` then fetches and reads the book itself. Unlike a linked
-PDF, a linked EPUB's original isn't kept: there's no original-view for a book. Images and internal
-links aren't carried.
+without caching; `FeedProxyClient.extract` then fetches and reads the book itself, and the save keeps
+its original like a linked PDF (`storeLinkedOriginalForUrl`). Pictures stay in the book: the text
+carries `<img data-epub-src="<path in zip>">`, and `GET /api/saved/<rkey>/asset?path=` serves one
+entry out of the kept original with four ranged R2 reads (`readStoredEpubEntry`), owner-only and
+sandboxed (an SVG must not run as a page on the API origin); a linked save with no kept original
+keeps it on the first picture asked for. Ids and internal hrefs are scoped by spine position
+(`#epub-c3-note12`, `epubAnchorId`), which the frontend's footnote navigation follows.
 
 **Bluesky likes and bookmarks** are the same kind of private, local-only subscription
 (`bsky-likes:<did>` / `bsky-bookmarks:<did>`, `src/services/bsky-sources.ts`): turned on from

@@ -22,38 +22,94 @@ describe('parseEpub', () => {
     expect(book.published).toBe('1949-01-01T00:00:00.000Z');
     expect(book.chapterCount).toBe(2);
     expect(book.chaptersKept).toBe(2);
-    expect(book.content).toContain('<section data-epub-chapter="1">');
-    expect(book.content).toContain('<section data-epub-chapter="2">');
+    expect(book.content).toContain('<section data-epub-chapter="1" id="epub-c1">');
+    expect(book.content).toContain('<section data-epub-chapter="2" id="epub-c2">');
     expect(book.content!.indexOf('bright cold day')).toBeLessThan(
       book.content!.indexOf('dreaming of his mother')
     );
     expect(book.wordCount).toBe(1 + 8 + 1 + 6);
   });
 
-  it('strips styles, scripts, images, ids and internal links, keeping text', async () => {
+  it('strips styles, scripts and attributes, keeping text', async () => {
     const book = await parseEpub(
       await buildEpub({
         chapters: [
           {
             id: 'ch1',
             body: `<style>p{color:red}</style><script>alert(1)</script>
-<p class="first" id="p1" style="x" onclick="evil()">Hello <span class="sc">world</span><a id="anchor"/> again.</p>
-<p>See <a href="ch2.xhtml#n1" epub:type="noteref">note 1</a> and <a href="https://example.com/">the site</a>.</p>
-<span epub:type="pagebreak" id="page12" title="12">12</span>
-<figure><img src="../images/fig.png" alt="A figure"/><figcaption>Figure 1</figcaption></figure>`,
+<p class="first" style="x" onclick="evil()">Hello <span class="sc">world</span> again.</p>
+<p>See <a href="https://example.com/">the site</a> and <a href="javascript:evil()">this</a>.</p>
+<span epub:type="pagebreak" id="page12" title="12">12</span>`,
           },
         ],
       })
     );
     const html = book.content!;
-    expect(html).not.toMatch(/<style|<script|<img|class=|id=|style=|onclick|alert/);
+    expect(html).not.toMatch(/<style|<script|class=|style=|onclick|alert|evil/);
     expect(html).toContain('<p>Hello world again.</p>');
-    expect(html).toContain('See note 1 and <a href="https://example.com/">the site</a>.');
+    expect(html).toContain('See <a href="https://example.com/">the site</a> and this.');
     expect(html).not.toContain('>12<');
-    expect(html).toContain('Figure 1');
   });
 
-  it('skips non-linear items, the nav document and image-only chapters', async () => {
+  it('scopes ids by chapter and points the book’s own links at them', async () => {
+    const book = await parseEpub(
+      await buildEpub({
+        chapters: [
+          {
+            id: 'ch1',
+            body: `<p id="intro">Start.<a id="r1" href="ch2.xhtml#n%201">1</a> <a href="#intro">Back up</a> <a href="ch2.xhtml">Next</a> <a href="notes.xhtml#x">Gone</a></p>`,
+          },
+          {
+            id: 'ch2',
+            body: '<aside id="n 1"><p>The note.</p></aside><a name="old">Old anchor</a>',
+          },
+        ],
+      })
+    );
+    const html = book.content!;
+    expect(html).toContain('<p id="epub-c1-intro">');
+    expect(html).toContain('<a id="epub-c1-r1" href="#epub-c2-n_1">1</a>');
+    expect(html).toContain('<a href="#epub-c1-intro">Back up</a>');
+    expect(html).toContain('<a href="#epub-c2">Next</a>');
+    // A link outside the reading order is just its text.
+    expect(html).toContain(' Gone</p>');
+    expect(html).toContain('<aside id="epub-c2-n_1">');
+    expect(html).toContain('<a id="epub-c2-old">Old anchor</a>');
+  });
+
+  it('keeps pictures as references into the book', async () => {
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+    const book = await parseEpub(
+      await buildEpub({
+        chapters: [
+          {
+            id: 'cover',
+            body: '<svg xmlns:xlink="http://www.w3.org/1999/xlink"><image width="600" xlink:href="../images/cover.jpg"/></svg>',
+          },
+          {
+            id: 'ch1',
+            body: `<p>Text.</p><figure><img src="../images/fig%201.png" alt="A figure" class="big"/><figcaption>Figure 1</figcaption></figure>
+<img src="../images/missing.png" alt="gone"/><img src="data:image/png;base64,AAAA"/><img src="../styles/a.css"/>`,
+          },
+        ],
+        extra: [
+          ['OEBPS/images/cover.jpg', png],
+          ['OEBPS/images/fig 1.png', png],
+          ['OEBPS/styles/a.css', 'p{}'],
+        ],
+      })
+    );
+    const html = book.content!;
+    // The cover is only a picture, and is kept as the book's first section.
+    expect(html).toMatch(
+      /<section data-epub-chapter="1" id="epub-c1">\n<img data-epub-src="OEBPS\/images\/cover.jpg" alt="">/
+    );
+    expect(html).toMatch(/<img data-epub-src="OEBPS\/images\/fig 1.png" alt="A figure"\s*\/?>/);
+    expect(html).toContain('Figure 1');
+    expect(html).not.toMatch(/missing|data:image|a\.css|class=|\ssrc=/);
+  });
+
+  it('skips non-linear items, the nav document and chapters with nothing kept', async () => {
     const book = await parseEpub(
       await buildEpub({
         chapters: [

@@ -102,7 +102,12 @@ import {
   handleDeleteSavedByGuid,
   handleSetBacking,
 } from './routes/saved';
-import { handleGetSavedFile, handleUploadEpub, handleUploadPdf } from './routes/saved-pdf';
+import {
+  handleGetSavedAsset,
+  handleGetSavedFile,
+  handleUploadEpub,
+  handleUploadPdf,
+} from './routes/saved-pdf';
 import { handleExtract } from './routes/extract';
 import {
   handleCreateRoom,
@@ -811,6 +816,10 @@ async function route(
     case /^\/api\/saved\/[^/]+\/file$/.test(url.pathname):
       if (!session) return unauthorizedResponse(headers);
       response = await handleGetSavedFile(request, env, session);
+      break;
+    case /^\/api\/saved\/[^/]+\/asset$/.test(url.pathname):
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleGetSavedAsset(request, env, session);
       break;
     case url.pathname.startsWith('/api/saved/'):
       if (!session) return unauthorizedResponse(headers);

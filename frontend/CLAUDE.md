@@ -272,7 +272,11 @@ the pages but won't show in the text. If you change how the extractor joins line
 
 A saved EPUB (`contentType: 'epub'`, uploaded via `savesStore.uploadFile` → `POST /api/saved/epub`
 or saved by link) reads as its text only, one `<section data-epub-chapter="N">` per chapter: the
-book's markup is already the text, so there is no Original view and no `PdfViewer` path. It shares
+book's markup is already the text, so there is no Original view and no `PdfViewer` path. Its
+pictures arrive as `<img data-epub-src>` (a path in the kept book), which `SavedReader` points at
+`savedAssetUrl` after sanitizing (`utils/epubContent.ts`); it's sanitized with no base URL, so the
+book's own `#epub-c…` links stay hash links, and `handleFootnoteClick` (`utils/footnoteNav.ts`, run by
+the link interception) jumps to them in place, turning the page in paged mode. It shares
 the PDF plan flag (`limits.pdfSaves`) and upload limits, with its own size cap
 (`limits.maxEpubUploadBytes`). An unreadable or plan-gated EPUB link fails as `PdfExtractionError`
 with `format: 'epub'`, saved as the `epub` / `epubUpgrade` note (`utils/saveAnywhere.ts`).

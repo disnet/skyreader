@@ -9,7 +9,8 @@ const devCsp = [
   "script-src 'self' 'unsafe-inline'", // unsafe-inline OK for local dev
   // fonts.googleapis.com: collections-publication typography stylesheets (magazine view).
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-  "img-src 'self' https: data: blob:",
+  // The local API, for a saved EPUB's pictures (served by the backend).
+  "img-src 'self' http://127.0.0.1:8787 https: data: blob:",
   "media-src 'self' https: data: blob:",
   "connect-src 'self' http://127.0.0.1:8787 ws://127.0.0.1:5173 https:",
   // The PDF viewer's PDF.js worker (a same-origin build asset), and the service

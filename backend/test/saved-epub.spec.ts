@@ -109,7 +109,7 @@ describe('POST /api/saved/epub', () => {
       chapterCount: 2,
       chaptersKept: 2,
     });
-    expect(body.content).toContain('<section data-epub-chapter="2">');
+    expect(body.content).toContain('<section data-epub-chapter="2" id="epub-c2">');
     expect(globalThis.fetch).not.toHaveBeenCalled();
 
     const row = await env.DB.prepare(
@@ -254,8 +254,8 @@ describe('POST /api/extract for an EPUB link', () => {
     expect(body.code).toBeUndefined();
   });
 
-  it('saves the extraction typed as an EPUB', async () => {
-    const save = await call(
+  function saveLink() {
+    return call(
       request('/api/saved', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -268,10 +268,104 @@ describe('POST /api/extract for an EPUB link', () => {
         }),
       })
     );
+  }
+
+  it('saves the extraction typed as an EPUB, and keeps the book for its pictures', async () => {
+    const book = await BOOK();
+    stub(book);
+    const save = await saveLink();
     expect(save.status).toBeLessThan(300);
     const row = await env.DB.prepare('SELECT content_type FROM saved_articles WHERE user_did = ?')
       .bind(DID)
       .first();
     expect(row).toMatchObject({ content_type: 'epub' });
+
+    const file = await env.DB.prepare('SELECT * FROM saved_files WHERE user_did = ?')
+      .bind(DID)
+      .first<{ r2_key: string; mime_type: string; filename: string; size: number }>();
+    expect(file).toMatchObject({
+      r2_key: `epub/${DID}/${RKEY}.epub`,
+      mime_type: 'application/epub+zip',
+      filename: 'woolf.epub',
+      size: book.byteLength,
+    });
+  });
+
+  it('keeps the book on the first picture asked for when the save could not', async () => {
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
+    globalThis.fetch = vi.fn(async () => {
+      throw new Error('offline');
+    }) as unknown as typeof fetch;
+    await saveLink();
+    expect(
+      await env.DB.prepare('SELECT 1 FROM saved_files WHERE user_did = ?').bind(DID).first()
+    ).toBeNull();
+
+    stub(await buildEpub({ extra: [['OEBPS/images/a.png', png]] }));
+    const got = await call(request(`/api/saved/${RKEY}/asset?path=OEBPS/images/a.png`));
+    expect(got.status).toBe(200);
+    expect(new Uint8Array(await got.res.arrayBuffer())).toEqual(png);
+  });
+});
+
+describe('GET /api/saved/<rkey>/asset', () => {
+  let originalFetch: typeof fetch;
+  const PNG = new Uint8Array(4096).map((_, i) => (i * 7) % 256);
+  const SVG = '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>';
+
+  beforeEach(async () => {
+    originalFetch = globalThis.fetch;
+    await reset();
+    const epub = await buildEpub({
+      chapters: [
+        { id: 'ch1', body: '<p>Text.</p><img src="../images/plate%201.png" alt="Plate"/>' },
+      ],
+      extra: [
+        ['OEBPS/images/plate 1.png', PNG],
+        ['OEBPS/images/logo.svg', SVG],
+      ],
+    });
+    const { status, body } = await call(upload(epub));
+    expect(status).toBe(201);
+    expect(body.content).toContain('data-epub-src="OEBPS/images/plate 1.png"');
+  });
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const asset = (path: string, rkey = RKEY) =>
+    call(request(`/api/saved/${rkey}/asset?path=${encodeURIComponent(path)}`));
+
+  it('serves a picture out of the kept book', async () => {
+    const { status, res } = await asset('OEBPS/images/plate 1.png');
+    expect(status).toBe(200);
+    expect(res.headers.get('Content-Type')).toBe('image/png');
+    expect(res.headers.get('Cache-Control')).toContain('private');
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(PNG);
+  });
+
+  it('serves an SVG sandboxed, so it cannot run as a page', async () => {
+    const { status, res } = await asset('OEBPS/images/logo.svg');
+    expect(status).toBe(200);
+    expect(res.headers.get('Content-Type')).toBe('image/svg+xml');
+    expect(res.headers.get('Content-Security-Policy')).toContain('sandbox');
+    expect(res.headers.get('X-Content-Type-Options')).toBe('nosniff');
+  });
+
+  it('serves only pictures that are in the book', async () => {
+    expect((await asset('OEBPS/images/missing.png')).status).toBe(404);
+    expect((await asset('OEBPS/content.opf')).status).toBe(404);
+    expect((await asset('OEBPS/text/ch1.xhtml')).status).toBe(404);
+    expect((await asset('OEBPS/images/plate 1.png', 'eeeeeeeeeeeee')).status).toBe(404);
+  });
+
+  it('serves only to the reader who saved it', async () => {
+    await env.DB.prepare('UPDATE saved_files SET user_did = ? WHERE user_did = ?')
+      .bind('did:plc:someoneelse', DID)
+      .run();
+    expect((await asset('OEBPS/images/plate 1.png')).status).toBe(404);
+    await env.DB.prepare('DELETE FROM saved_files WHERE user_did = ?')
+      .bind('did:plc:someoneelse')
+      .run();
   });
 });

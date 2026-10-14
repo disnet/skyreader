@@ -180,3 +180,45 @@ describe('handleFootnoteClick', () => {
     expect(scrollIntoView).not.toHaveBeenCalled();
   });
 });
+
+describe('a saved EPUB’s own links', () => {
+  function book(paged = false) {
+    const host = document.createElement('div');
+    if (paged) host.className = 'paged-content';
+    host.innerHTML = `
+      <section id="epub-c1"><p>Claim.<a id="epub-c1-r1" href="#epub-c2-n1" target="_blank">1</a>
+        <a href="https://example.com/" target="_blank">out</a> <a href="#intro">page anchor</a></p></section>
+      <section id="epub-c2"><aside id="epub-c2-n1">The note.</aside></section>`;
+    document.body.appendChild(host);
+    return {
+      container: host,
+      marker: host.querySelector('a[href="#epub-c2-n1"]') as HTMLAnchorElement,
+      note: host.querySelector('#epub-c2-n1') as HTMLElement,
+    };
+  }
+
+  it('jumps to the place a book link points at, in this tab', () => {
+    const { container, marker, note } = book();
+    const { result, prevented, reachedAncestor } = click(marker, container);
+    expect(result).toBe('handled');
+    expect(prevented).toBe(true);
+    expect(reachedAncestor).toBe(false);
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+    expect(note.classList.contains('footnote-flash')).toBe(true);
+  });
+
+  it('turns the page to it in paged mode', () => {
+    const { container, marker, note } = book(true);
+    const goToElement = vi.fn();
+    click(marker, container, { pagedController: () => ({ goToElement }) });
+    expect(goToElement).toHaveBeenCalledWith(note);
+    expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  it('leaves links out of the book, and other hash links, alone', () => {
+    const { container } = book();
+    for (const a of container.querySelectorAll<HTMLAnchorElement>('a:not([href^="#epub"])')) {
+      expect(click(a, container).result).toBe('none');
+    }
+  });
+});

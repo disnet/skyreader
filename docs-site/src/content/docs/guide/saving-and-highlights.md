@@ -39,9 +39,9 @@ Uploaded PDFs are private to you. They stay on Skyreader, and aren't added to a 
 
 EPUBs are a [Supporter](/supporter/) feature too. Save a link to an EPUB, or upload one: open **+ → Save a link**, then **Upload a file**, or drop the book onto that panel. Skyreader keeps the book's text, chapter by chapter, so you can read, highlight, take notes, and search it like anything else you save.
 
-Skyreader keeps the words, not the publisher's design: images and in-book links (footnote markers, a chapter's contents page) are left out. A book with DRM can't be read. A very long book keeps its first chapters, and says so at the end.
+Skyreader keeps the words and pictures, not the publisher's design. The book's own links work: a footnote marker or a chapter's contents takes you to that place in the text. Skyreader keeps the original of every EPUB you save, by link or upload; its pictures are read from it. A book with DRM can't be read. A very long book keeps its first chapters, and says so at the end.
 
-Limits: an EPUB can be up to 30 MB. Uploaded EPUBs share the PDF allowances: 200 uploads a month, and 2 GB of kept originals between them. Like uploaded PDFs, uploaded EPUBs are private to you and stay on Skyreader.
+Limits: an EPUB can be up to 30 MB. EPUBs share the PDF allowances: 200 uploads a month, and 2 GB of kept originals between them; removing a saved EPUB frees its space. Like uploaded PDFs, uploaded EPUBs are private to you and stay on Skyreader.
 
 ### When a site won't let Skyreader read it
 

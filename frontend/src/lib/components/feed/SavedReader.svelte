@@ -26,7 +26,8 @@
   import { failedSaveBody, hasReadableContent } from '$lib/utils/saveAnywhere';
   import { mathRender } from '$lib/actions/math-render';
   import Icon from '$lib/components/Icon.svelte';
-  import { savedFileUrl } from '$lib/services/api';
+  import { savedAssetUrl, savedFileUrl } from '$lib/services/api';
+  import { resolveEpubImages } from '$lib/utils/epubContent';
   import PdfViewer from '$lib/components/feed/PdfViewer.svelte';
   import PopoverMenu from '$lib/components/PopoverMenu.svelte';
   import TagMenu from '$lib/components/feed/TagMenu.svelte';
@@ -578,7 +579,20 @@
     if (text) shareComposerStore.appendQuote(text);
   }
 
-  let sanitizedContent = $derived(sanitizeHtml(displayContent, itemUrl));
+  // A saved EPUB's pictures are references into the kept book, given their
+  // addresses here (after sanitizing, so the address is ours). Its links are
+  // anchors in this text, so it takes no base URL to resolve them against; the
+  // link interception's footnote jump (utils/footnoteNav.ts) follows them.
+  let epubSave = $derived(
+    readerItem.type === 'saved' && readerItem.item.contentType === 'epub' ? readerItem.item : null
+  );
+  let sanitizedContent = $derived.by(() => {
+    if (!epubSave) return sanitizeHtml(displayContent, itemUrl);
+    const rkey = epubSave.rkey;
+    return resolveEpubImages(sanitizeHtml(displayContent), (path) =>
+      rkey ? savedAssetUrl(rkey, path) : ''
+    );
+  });
 
   // Kindle-style paged reading. When on, the article flows into columns turned a
   // page at a time instead of scrolling; the scroll-driven paragraph highlight and

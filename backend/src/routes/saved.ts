@@ -21,7 +21,7 @@ import {
 import { hasIntegrationScopes } from './integrations';
 import { normalizeArticleUrl } from '../utils/url-normalize';
 import { chunkArray } from './reading';
-import { deleteSavedFile, storeLinkedPdfForUrl } from './saved-pdf';
+import { deleteSavedFile, storeLinkedOriginalForUrl } from './saved-pdf';
 
 const COLLECTION = 'app.skyreader.feed.saved';
 
@@ -115,11 +115,11 @@ export async function handleCreateSaved(
   // Determine source
   const source: string = body.source || (body.fromFeed ? 'feed' : 'url');
 
-  // A PDF saved by link keeps its original, as an upload does, fetched after the
-  // response so the save itself waits on nothing (routes/saved-pdf.ts).
+  // A PDF or EPUB saved by link keeps its original, as an upload does, fetched
+  // after the response so the save itself waits on nothing (routes/saved-pdf.ts).
   const keepPdfOriginal = (response: Response): Response => {
-    if (response.ok && body.contentType === 'pdf' && body.url) {
-      ctx.waitUntil(storeLinkedPdfForUrl(env, session.did, body.url));
+    if (response.ok && fileContentType(body) && body.url) {
+      ctx.waitUntil(storeLinkedOriginalForUrl(env, session.did, body.url));
     }
     return response;
   };
