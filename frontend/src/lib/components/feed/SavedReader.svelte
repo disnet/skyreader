@@ -221,9 +221,10 @@
   );
   let feedTitle = $derived(sub?.customTitle || sub?.title || '');
 
-  // A saved PDF reads as reflowed text by default (where highlights and notes
-  // live), and can be flipped to the original pages, drawn by PDF.js, for the
-  // figures, tables, equations and layout a reflow can't carry. The server keeps
+  // A saved PDF reads as reflowed text by default, and can be flipped to the
+  // original pages, drawn by PDF.js, for the figures, tables, equations and
+  // layout a reflow can't carry. Highlights are shared: the pages match the same
+  // quotes, so a passage marked in either view is marked in both. The server keeps
   // the original of every saved PDF, uploaded or saved by link; a link save's is a
   // Supporter feature like PDFs themselves.
   let pdfSave = $derived(
@@ -1418,7 +1419,7 @@
             class:active={!showOriginalPdf}
             aria-pressed={!showOriginalPdf}
             onclick={() => setPdfView('text')}
-            title="Reflowed text, for reading, highlights and notes">Text</button
+            title="Reflowed text, for reading">Text</button
           >
           <button
             type="button"
@@ -1432,8 +1433,10 @@
     {/snippet}
 
     {#if showOriginalPdf && originalPdfSrc}
-      <!-- The original pages. Highlights live in the text view, so its body
-           (and every hook bound to it) unmounts here and re-attaches on return. -->
+      <!-- The original pages. The text body (and every hook bound to it)
+           unmounts here and re-attaches on return; the pages draw the same
+           highlights themselves, and hand selections and taps to the highlights
+           hook so its popover and writes serve both views. -->
       <article class="reader-article">
         <div class="reader-article-header" bind:this={articleHeaderEl}>
           <h1 class="reader-title">{title}</h1>
@@ -1444,6 +1447,10 @@
             src={originalPdfSrc}
             fallbackHref={originalPdfHref ?? undefined}
             bottomInset={mobileStore.isMobile ? READER_BAR_INSET : 0}
+            highlights={itemLabelsStore.getHighlights(itemKey)}
+            onselect={highlightsHook.offerSelection}
+            oncommit={highlightsHook.addHighlight}
+            onhighlight={highlightsHook.openHighlight}
           />
         {/key}
       </article>
@@ -1469,6 +1476,8 @@
   </div>
 </div>
 
+<!-- On the original PDF's pages there's no margin or gloss to write a note in,
+     so without `onNote` the popover opens its own note editor. -->
 {#if highlightsHook.popoverState}
   <HighlightPopover
     mode={highlightsHook.popoverState.mode}
@@ -1480,7 +1489,7 @@
     onSaveToMargin={highlightsHook.savePopoverHighlightToMargin}
     onPostToBluesky={highlightsHook.postPopoverHighlightToBluesky}
     onSaveNote={highlightsHook.saveNoteFromPopover}
-    onNote={highlightsHook.noteFromPopover}
+    onNote={showOriginalPdf ? undefined : highlightsHook.noteFromPopover}
     onQuoteToShare={composerOpenHere ? quoteSelectionToShare : undefined}
     existingNote={highlightsHook.popoverHighlightNote}
     marginSaved={highlightsHook.popoverHighlightSavedToMargin}

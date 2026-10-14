@@ -25,7 +25,7 @@ If the article is already in Semble or Margin, the picker opens on the collectio
 
 PDFs are a [Supporter](/supporter/) feature. Save a link to a PDF (a paper, a report) the same way you save an article, or upload one from your device: open **+ → Save a link**, then **Upload a PDF**, or drop the file onto that panel. Skyreader keeps its text, set as ordinary paragraphs, so you can read, highlight, take notes, and search it like anything else you save.
 
-A saved PDF opens as text, set for reading. For figures, tables, equations, and layout, switch the toggle under the title from **Text** to **Original** to see the pages as printed; switch back to highlight and take notes, which live in the text. Skyreader remembers which you prefer. Skyreader keeps the original of every PDF you save, by link or upload, so it stays readable even if its site takes it down.
+A saved PDF opens as text, set for reading. For figures, tables, equations, and layout, switch the toggle under the title from **Text** to **Original** to see the pages as printed. Highlight and take notes on either: a passage you mark in one is marked in the other. Skyreader remembers which you prefer. Skyreader keeps the original of every PDF you save, by link or upload, so it stays readable even if its site takes it down.
 
 A scanned PDF has no text to keep, and a password-protected one can't be read. A very long PDF keeps the text of its first pages, and says so at the end.
 

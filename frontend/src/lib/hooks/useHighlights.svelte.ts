@@ -119,6 +119,9 @@ export function useHighlights(params: HighlightParams) {
     // range for a selection (which outlives the selection being cleared).
     anchorEl?: HTMLElement;
     anchorRange?: Range;
+    // A highlight drawn by another view of the text (the original PDF's pages),
+    // which knows where its passage is now.
+    getRect?: () => DOMRect | null;
   } | null>(null);
 
   // Desktop-only hover peek: a read-only preview of a note when the pointer
@@ -1024,6 +1027,7 @@ export function useHighlights(params: HighlightParams) {
   function popoverAnchorRect(): DOMRect | null {
     const state = popoverState;
     if (!state) return null;
+    if (state.getRect) return state.getRect();
     if (state.anchorRange) {
       const rect = selectionAnchorRect(state.anchorRange);
       // A range whose nodes have been replaced measures as an empty rect.
@@ -1128,6 +1132,58 @@ export function useHighlights(params: HighlightParams) {
       );
     }
     requestAnimationFrame(applyHighlights);
+  }
+
+  // --- Another view of the same text ---
+  // The original PDF's pages anchor the same selectors in their own text layer
+  // and draw their own marks, but a selection or a tap there is answered by
+  // this popover and these writes, so a highlight is one highlight in both.
+
+  /** Offer the selection toolbar for a passage selected on the original pages. */
+  function offerSelection(selector: TextQuoteSelector, range: Range) {
+    if (exceedsSelectorLimit(selector.exact)) {
+      reportTooLong();
+      return;
+    }
+    popoverState = {
+      mode: 'create',
+      anchorRect: range.getBoundingClientRect(),
+      pendingSelector: selector,
+      anchorRange: range.cloneRange(),
+    };
+  }
+
+  /**
+   * Highlight a passage outright: a touch selection on the original pages, let
+   * go of — the same commit-on-collapse the text view's touch path makes.
+   */
+  function addHighlight(selector: TextQuoteSelector) {
+    if (exceedsSelectorLimit(selector.exact)) {
+      reportTooLong();
+      return;
+    }
+    itemLabelsStore.addHighlight(
+      params.itemKey(),
+      params.itemType(),
+      makeHighlight(selector, highlightSource())
+    );
+  }
+
+  /**
+   * Open a highlight drawn on the original pages: its note when it has one,
+   * else its toolbar. `getRect` says where the passage is now.
+   */
+  function openHighlight(highlightId: string, getRect: () => DOMRect | null) {
+    const rect = getRect();
+    const highlight = findHighlight(highlightId);
+    if (!rect || !highlight) return;
+    notePeek = null;
+    popoverState = {
+      mode: highlight.note ? 'view' : 'remove',
+      anchorRect: rect,
+      highlightId,
+      getRect,
+    };
   }
 
   function attach() {
@@ -1302,6 +1358,9 @@ export function useHighlights(params: HighlightParams) {
       if (popoverState?.highlightId) removeHighlightWithUndo(popoverState.highlightId);
     },
     removeHighlightWithUndo,
+    offerSelection,
+    addHighlight,
+    openHighlight,
     get publishToMargin() {
       return auth.isGuest ? undefined : publishToMargin;
     },
