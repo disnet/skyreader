@@ -485,6 +485,10 @@ async function cleanChapter(xhtml: string, ctx: ChapterContext): Promise<string>
   rewriter = rewriter
     .on('html, body, span, font, small, big', {
       element(el) {
+        // A span carrying an id is a landing place for the book's links (page
+        // markers, note targets): unwrapping it would leave those links dead.
+        const tag = el.tagName.toLowerCase();
+        if (tag !== 'html' && tag !== 'body' && el.getAttribute('id')) return;
         el.removeAndKeepContent();
       },
     })
@@ -550,14 +554,19 @@ function byteLength(s: string): number {
 
 /** The longest prefix of `html` under `maxBytes` that ends after a block. */
 function cutAtBlock(html: string, maxBytes: number): string {
-  let cut = '';
-  for (const m of html.matchAll(/<\/(?:p|h[1-6]|blockquote|li|ul|ol|div|pre|table)>/gi)) {
-    const end = m.index! + m[0].length;
-    const candidate = html.slice(0, end);
-    if (byteLength(candidate) > maxBytes) break;
-    cut = candidate;
+  const ends = [...html.matchAll(/<\/(?:p|h[1-6]|blockquote|li|ul|ol|div|pre|table)>/gi)].map(
+    (m) => m.index! + m[0].length
+  );
+  // Byte length only grows with the prefix, so binary-search the last block end
+  // that fits rather than re-encoding a growing prefix at every block.
+  let lo = 0;
+  let hi = ends.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (byteLength(html.slice(0, ends[mid])) <= maxBytes) lo = mid + 1;
+    else hi = mid;
   }
-  return cut;
+  return lo === 0 ? '' : html.slice(0, ends[lo - 1]);
 }
 
 function isoDate(raw: string | null): string | null {
