@@ -11,13 +11,13 @@ import type { Env } from '../types';
 // fine for a cap whose job is bounding cost.
 //
 // Counted in rate_limits under its own endpoint key, one row per reader per UTC
-// day. cleanupRateLimits keeps the current day's row (it would otherwise drop it
-// with the per-minute windows).
+// day. cleanupRateLimits sweeps it by this window, like any long rate limit.
 export const PDF_PARSES_PER_DAY = 100;
 export const PDF_QUOTA_ENDPOINT = 'pdf-parse:day';
-const DAY_MS = 24 * 60 * 60 * 1000;
+export const PDF_QUOTA_WINDOW_MS = 24 * 60 * 60 * 1000;
 
-export const pdfQuotaDay = (now: number) => Math.floor(now / DAY_MS) * DAY_MS;
+export const pdfQuotaDay = (now: number) =>
+  Math.floor(now / PDF_QUOTA_WINDOW_MS) * PDF_QUOTA_WINDOW_MS;
 
 /** Whether the reader may have another PDF parsed today. Fails open, like the rate limiter. */
 export async function hasPdfAllowance(env: Env, did: string, now = Date.now()): Promise<boolean> {

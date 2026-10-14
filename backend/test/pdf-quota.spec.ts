@@ -53,16 +53,23 @@ describe('PDF allowance', () => {
   });
 
   it('starts each UTC day fresh, and survives the per-minute sweep', async () => {
-    await setSpent(PDF_PARSES_PER_DAY, pdfQuotaDay(Date.now()) - 24 * 60 * 60 * 1000);
-    await chargePdfParse(env as unknown as Env, DID);
+    // Midday, so the sweep's grace minute after midnight can't blur the boundary.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(pdfQuotaDay(Date.now()) + 12 * 60 * 60 * 1000);
+      await setSpent(PDF_PARSES_PER_DAY, pdfQuotaDay(Date.now()) - 24 * 60 * 60 * 1000);
+      await chargePdfParse(env as unknown as Env, DID);
 
-    await cleanupRateLimits(env as unknown as Env);
+      await cleanupRateLimits(env as unknown as Env);
 
-    // Yesterday's row is gone; today's is kept, though older than two minutes.
-    const rows = await env.DB.prepare('SELECT window_start, count FROM rate_limits WHERE did = ?')
-      .bind(DID)
-      .all<{ window_start: number; count: number }>();
-    expect(rows.results).toEqual([{ window_start: pdfQuotaDay(Date.now()), count: 1 }]);
+      // Yesterday's row is gone; today's is kept, though older than two minutes.
+      const rows = await env.DB.prepare('SELECT window_start, count FROM rate_limits WHERE did = ?')
+        .bind(DID)
+        .all<{ window_start: number; count: number }>();
+      expect(rows.results).toEqual([{ window_start: pdfQuotaDay(Date.now()), count: 1 }]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

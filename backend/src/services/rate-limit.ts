@@ -1,5 +1,5 @@
 import type { Env } from '../types';
-import { PDF_QUOTA_ENDPOINT, pdfQuotaDay } from './pdf-quota';
+import { PDF_QUOTA_ENDPOINT, PDF_QUOTA_WINDOW_MS } from './pdf-quota';
 
 interface RateLimitConfig {
   limit: number;
@@ -86,7 +86,6 @@ const RATE_LIMITS: Record<string, RateLimitConfig> = {
   '/api/sync/full': { limit: 20, windowMs: 300000 },
   // Individual sync operations (6 per hour)
   '/api/sync/subscriptions': { limit: 6, windowMs: 3600000 },
-  '/api/sync/reading': { limit: 6, windowMs: 3600000 },
 
   // Standard operations (user data reads/writes)
   '/api/records/sync': STANDARD_LIMIT,
@@ -172,29 +171,28 @@ export async function checkRateLimit(
   }
 }
 
+// How long a row outlives its window before the sweep removes it: room for a
+// request that read the clock just before the boundary to still find its row.
+const CLEANUP_GRACE_MS = 60000;
+
 /**
  * Clean up old rate limit records.
  * Should be called periodically (e.g., every minute via cron).
+ *
+ * A row is removed only once its OWN window has closed. A row's window_start is
+ * the start of its window, so a single cutoff (it used to be "older than two
+ * minutes") deletes a 1-hour row two minutes into its hour: the next request
+ * recreates it at count 1, and a 6-per-hour limit becomes 6 per minute. Rows
+ * are swept per window length instead; any endpoint not listed with a longer
+ * window uses DEFAULT_LIMIT's.
  */
 export async function cleanupRateLimits(env: Env): Promise<{ deleted: number; duration: number }> {
-  const twoMinutesAgo = Date.now() - 120000;
   const startTime = Date.now();
 
   try {
-    // The daily PDF allowance shares this table with a day-long window; keep its
-    // current row, which the per-minute sweep would otherwise reset every minute.
-    const [minuteWindows, pastDays] = await env.DB.batch([
-      env.DB.prepare('DELETE FROM rate_limits WHERE window_start < ? AND endpoint != ?').bind(
-        twoMinutesAgo,
-        PDF_QUOTA_ENDPOINT
-      ),
-      env.DB.prepare('DELETE FROM rate_limits WHERE endpoint = ? AND window_start < ?').bind(
-        PDF_QUOTA_ENDPOINT,
-        pdfQuotaDay(startTime)
-      ),
-    ]);
+    const results = await env.DB.batch(cleanupStatements(env, startTime));
 
-    const deleted = (minuteWindows.meta?.changes || 0) + (pastDays.meta?.changes || 0);
+    const deleted = results.reduce((sum, r) => sum + (r.meta?.changes || 0), 0);
     const duration = Date.now() - startTime;
 
     return { deleted, duration };
@@ -202,6 +200,34 @@ export async function cleanupRateLimits(env: Env): Promise<{ deleted: number; du
     console.error('[RateLimit] Cleanup error:', error);
     return { deleted: 0, duration: Date.now() - startTime };
   }
+}
+
+function cleanupStatements(env: Env, now: number): D1PreparedStatement[] {
+  // Endpoints whose window differs from the default, grouped by window length.
+  const byWindow = new Map<number, string[]>();
+  const windows: [string, { windowMs: number }][] = [
+    ...Object.entries(RATE_LIMITS),
+    // Counted in this table too, though not by checkRateLimit (services/pdf-quota.ts).
+    [PDF_QUOTA_ENDPOINT, { windowMs: PDF_QUOTA_WINDOW_MS }],
+  ];
+  for (const [endpoint, { windowMs }] of windows) {
+    if (windowMs === DEFAULT_LIMIT.windowMs) continue;
+    byWindow.set(windowMs, [...(byWindow.get(windowMs) ?? []), endpoint]);
+  }
+  const listed = [...byWindow.values()].flat();
+  const placeholders = (n: number) => Array(n).fill('?').join(', ');
+  const cutoff = (windowMs: number) => now - windowMs - CLEANUP_GRACE_MS;
+
+  return [
+    env.DB.prepare(
+      `DELETE FROM rate_limits WHERE window_start < ? AND endpoint NOT IN (${placeholders(listed.length)})`
+    ).bind(cutoff(DEFAULT_LIMIT.windowMs), ...listed),
+    ...[...byWindow].map(([windowMs, endpoints]) =>
+      env.DB.prepare(
+        `DELETE FROM rate_limits WHERE window_start < ? AND endpoint IN (${placeholders(endpoints.length)})`
+      ).bind(cutoff(windowMs), ...endpoints)
+    ),
+  ];
 }
 
 /**
