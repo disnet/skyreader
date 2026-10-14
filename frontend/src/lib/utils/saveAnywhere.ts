@@ -124,6 +124,8 @@ export function extensionCanHelp(reason: SaveFetchFailure): boolean {
  * is never counted as words (a read time for a page nobody fetched) and a later
  * save that does fetch the article knows it may replace it.
  */
+// Wording for a failed save; an empty extraction can also be met on open, so it omits this.
+const SAVED_LINK_SUFFIX = " The link is saved, so it's here when you want it.";
 const FAILED_SAVE_MARKER = 'data-skyreader-note="fetch-failed"';
 
 /** Whether `html` is the note a link-only save stores in place of the article. */
@@ -157,12 +159,12 @@ export function failedSaveBody(url: string, reason: SaveFetchFailure): string {
     `<a href="${escapeHtml(href)}">${escapeHtml(text)}</a>`;
   if (!extensionCanHelp(reason)) {
     return [
-      `<p ${FAILED_SAVE_MARKER}>${why} The link is saved, so it's here when you want it.</p>`,
+      `<p ${FAILED_SAVE_MARKER}>${why}${reason === 'empty' ? '' : SAVED_LINK_SUFFIX}</p>`,
       `<p>${link(url, `Open it on ${host}`)}</p>`,
     ].join('\n');
   }
   return [
-    `<p ${FAILED_SAVE_MARKER}>${why} The link is saved, so it's here when you want it.</p>`,
+    `<p ${FAILED_SAVE_MARKER}>${why}${reason === 'empty' ? '' : SAVED_LINK_SUFFIX}</p>`,
     `<p>${link(url, `Read it on ${host}`)}</p>`,
     '<p>The browser extension can still save the full text. Open the article, then use ' +
       '<strong>Save this page</strong>; it replaces this note.</p>',

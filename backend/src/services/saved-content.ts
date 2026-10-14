@@ -24,7 +24,7 @@ export function emptyExtractionNote(url: string | undefined): string {
     // Leave the link out.
   }
   const lines = [
-    `<p data-skyreader-note="fetch-failed">Skyreader couldn't find the article text on this page. The link is saved, so it's here when you want it.</p>`,
+    `<p data-skyreader-note="fetch-failed">Skyreader couldn't find the article text on this page.</p>`,
   ];
   if (url && host) {
     lines.push(`<p><a href="${escapeHtml(url)}">Read it on ${escapeHtml(host)}</a></p>`);
