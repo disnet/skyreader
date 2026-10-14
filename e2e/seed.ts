@@ -354,6 +354,11 @@ export async function cleanupTestData(user: TestUser) {
  * this with `disableSearch()` in cleanup; other specs' users are free-tier and
  * never see search either way.
  */
+/** Put `user` on the Supporter plan (PDFs, newsletters, search entitlement). */
+export async function makeSupporter(user: TestUser): Promise<void> {
+  await execD1([`UPDATE users SET tier = 'supporter' WHERE did = ${sqlString(user.did)}`]);
+}
+
 export async function enableSearchFor(user: TestUser): Promise<void> {
   await execD1([`UPDATE users SET tier = 'supporter' WHERE did = ${sqlString(user.did)}`]);
   await enableSearchSwitch();

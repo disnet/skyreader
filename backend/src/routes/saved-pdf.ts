@@ -295,7 +295,82 @@ export async function handleUploadPdf(request: Request, env: Env, session: Sessi
   );
 }
 
-// GET /api/saved/<rkey>/file — the original, only ever to the reader who saved it.
+// Largest PDF the viewer route will relay for a save made by link. Nothing parses
+// it here (the browser draws it), so it can be bigger than a parse allows; the
+// cap bounds what one request holds in the Worker's memory.
+const MAX_RELAYED_PDF_BYTES = 30 * 1024 * 1024;
+const RELAY_TIMEOUT_MS = 20_000;
+
+function pdfResponse(body: BodyInit, filename: string, size?: number): Response {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/pdf',
+    // RFC 5987, so a non-ASCII filename survives; the plain one is the fallback.
+    'Content-Disposition': `inline; filename="${filename.replace(/[^\x20-\x7e]|"/g, '_')}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
+    'Cache-Control': 'private, max-age=3600',
+    'X-Content-Type-Options': 'nosniff',
+  };
+  if (size !== undefined) headers['Content-Length'] = String(size);
+  return new Response(body, { headers });
+}
+
+/**
+ * The original of a PDF saved by link, for the reader's PDF view. Those saves
+ * keep only their text, and the browser can't fetch most PDFs itself (no CORS),
+ * so it's read from the save's own URL here and relayed. Supporter, like PDFs.
+ * The Worker's fetch reaches only the public internet
+ * (global_fetch_strictly_public), and the URL is one this reader saved.
+ */
+async function relayLinkedPdf(env: Env, session: Session, rkey: string): Promise<Response> {
+  const save = await env.DB.prepare(
+    'SELECT url, content_type FROM saved_articles WHERE user_did = ? AND rkey = ?'
+  )
+    .bind(session.did, rkey)
+    .first<{ url: string; content_type: string | null }>();
+  if (!save || save.content_type !== 'pdf' || !/^https?:\/\//i.test(save.url)) {
+    return json({ error: 'Not found' }, 404);
+  }
+  if (!(await getUserTierLimits(env, session.did)).pdfSaves) {
+    return json({ error: 'pdf_upgrade_required', message: PDF_SUPPORTER_MESSAGE }, 403);
+  }
+
+  let upstream: Response;
+  try {
+    upstream = await fetch(save.url, {
+      headers: {
+        Accept: 'application/pdf,*/*;q=0.8',
+        'User-Agent': 'Mozilla/5.0 (compatible; Skyreader/1.0; +https://skyreader.app)',
+      },
+      redirect: 'follow',
+      signal: AbortSignal.timeout(RELAY_TIMEOUT_MS),
+    });
+  } catch {
+    return json({ error: "Couldn't fetch the PDF from its site." }, 502);
+  }
+  if (!upstream.ok) {
+    await upstream.body?.cancel().catch(() => {});
+    return json({ error: "Couldn't fetch the PDF from its site.", status: upstream.status }, 502);
+  }
+  const declared = Number(upstream.headers.get('Content-Length'));
+  if (Number.isFinite(declared) && declared > MAX_RELAYED_PDF_BYTES) {
+    await upstream.body?.cancel().catch(() => {});
+    return json({ error: 'This PDF is too large to show.' }, 413);
+  }
+  const bytes = await readCapped(upstream.body, MAX_RELAYED_PDF_BYTES);
+  if (bytes === null) return json({ error: 'This PDF is too large to show.' }, 413);
+  if (!looksLikePdf(bytes)) return json({ error: "That link doesn't serve a PDF now." }, 502);
+
+  let path = new URL(save.url).pathname;
+  try {
+    path = decodeURIComponent(path);
+  } catch {
+    // A malformed escape: name it by the raw path.
+  }
+  const name = cleanFilename(path) || 'document.pdf';
+  return pdfResponse(bytes, /\.pdf$/i.test(name) ? name : `${name}.pdf`, bytes.byteLength);
+}
+
+// GET /api/saved/<rkey>/file — the original, only ever to the reader who saved it:
+// an upload's stored file, or (relayed) the PDF a link save points at.
 export async function handleGetSavedFile(request: Request, env: Env, session: Session) {
   if (request.method !== 'GET') return json({ error: 'Method not allowed' }, 405);
   const rkey = new URL(request.url).pathname.split('/')[3];
@@ -306,22 +381,13 @@ export async function handleGetSavedFile(request: Request, env: Env, session: Se
   )
     .bind(session.did, rkey)
     .first<{ r2_key: string; filename: string | null; mime_type: string }>();
-  if (!row || !env.SAVED_FILES) return json({ error: 'Not found' }, 404);
+  if (!row) return relayLinkedPdf(env, session, rkey);
+  if (!env.SAVED_FILES) return json({ error: 'Not found' }, 404);
 
   const object = await env.SAVED_FILES.get(row.r2_key);
   if (!object) return json({ error: 'Not found' }, 404);
 
-  const filename = row.filename || 'document.pdf';
-  return new Response(object.body, {
-    headers: {
-      'Content-Type': row.mime_type,
-      'Content-Length': String(object.size),
-      // RFC 5987, so a non-ASCII filename survives; the plain one is the fallback.
-      'Content-Disposition': `inline; filename="${filename.replace(/[^\x20-\x7e]|"/g, '_')}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
-      'Cache-Control': 'private, max-age=3600',
-      'X-Content-Type-Options': 'nosniff',
-    },
-  });
+  return pdfResponse(object.body, row.filename || 'document.pdf', object.size);
 }
 
 /** Drop a save's uploaded file, if it has one. Called after the save's row is deleted. */

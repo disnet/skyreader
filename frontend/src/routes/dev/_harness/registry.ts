@@ -116,4 +116,11 @@ export const harnesses: HarnessEntry[] = [
       'Presentational feed pieces: filter popover, highlight popover, share-note box, and the welcome screen.',
     components: ['FilterPopover', 'HighlightPopover', 'ShareComposer', 'WelcomePage'],
   },
+  {
+    slug: 'pdf',
+    title: 'PDF viewer',
+    description:
+      'The original-PDF view: pages drawn by PDF.js with a selectable text layer, lazy page drawing, and zoom.',
+    components: ['PdfViewer'],
+  },
 ];

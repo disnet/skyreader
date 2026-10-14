@@ -307,6 +307,79 @@ describe('GET /api/saved/<rkey>/file and deleting the save', () => {
   });
 });
 
+describe('GET /api/saved/<rkey>/file for a PDF saved by link', () => {
+  let originalFetch: typeof fetch;
+  const LINK_RKEY = 'ccccccccccccc';
+  const PDF_URL = 'https://papers.example/attention%20paper.pdf';
+
+  async function saveLink(contentType = 'pdf') {
+    await env.DB.prepare(
+      `INSERT INTO saved_articles (user_did, rkey, record_uri, url, title, content, content_type, saved_at, created_at, source)
+       VALUES (?, ?, ?, ?, 'A paper', '<p>x</p>', ?, ?, ?, 'url')`
+    )
+      .bind(
+        DID,
+        LINK_RKEY,
+        `at://${DID}/app.skyreader.feed.saved/${LINK_RKEY}`,
+        PDF_URL,
+        contentType,
+        Date.now(),
+        Date.now()
+      )
+      .run();
+  }
+
+  function siteAnswers(answer: Response) {
+    const mock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url === PDF_URL) return answer.clone();
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    globalThis.fetch = mock as unknown as typeof fetch;
+    return mock;
+  }
+
+  beforeEach(async () => {
+    originalFetch = globalThis.fetch;
+    await reset();
+  });
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("relays the PDF from the save's URL", async () => {
+    await saveLink();
+    siteAnswers(new Response(PDF, { headers: { 'Content-Type': 'application/pdf' } }));
+    const { status, res } = await call(request(`/api/saved/${LINK_RKEY}/file`));
+    expect(status).toBe(200);
+    expect(res.headers.get('Content-Type')).toBe('application/pdf');
+    expect(res.headers.get('Content-Disposition')).toContain('attention%20paper.pdf');
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(PDF);
+  });
+
+  it('is a Supporter feature', async () => {
+    await reset('free');
+    await saveLink();
+    const mock = siteAnswers(new Response(PDF));
+    const { status } = await call(request(`/api/saved/${LINK_RKEY}/file`));
+    expect(status).toBe(403);
+    expect(mock).not.toHaveBeenCalled();
+  });
+
+  it('relays nothing for a save that is not a PDF', async () => {
+    await saveLink('webpage');
+    const mock = siteAnswers(new Response(PDF));
+    expect((await call(request(`/api/saved/${LINK_RKEY}/file`))).status).toBe(404);
+    expect(mock).not.toHaveBeenCalled();
+  });
+
+  it('refuses what is no longer a PDF', async () => {
+    await saveLink();
+    siteAnswers(new Response('<html>moved</html>', { headers: { 'Content-Type': 'text/html' } }));
+    expect((await call(request(`/api/saved/${LINK_RKEY}/file`))).status).toBe(502);
+  });
+});
+
 describe('upload filenames', () => {
   it('keeps the last path segment, without control characters', () => {
     expect(cleanFilename('C:\\Users\\me\\paper.pdf')).toBe('paper.pdf');

@@ -35,6 +35,9 @@ export const onRequest: PagesFunction = async (context) => {
     "img-src 'self' https: data: blob:",
     "media-src 'self' https: data: blob:",
     "connect-src 'self' https://*.skyreader.app https:",
+    // The PDF viewer's PDF.js worker (a same-origin build asset), and the service
+    // worker. Spelled out because script-src's 'strict-dynamic' doesn't cover workers.
+    "worker-src 'self' blob:",
     // fonts.gstatic.com: the actual web-font files for the magazine view.
     "font-src 'self' data: https://fonts.gstatic.com",
     'frame-src https://www.youtube.com https://youtube.com https://www.youtube-nocookie.com https://youtube-nocookie.com https://player.vimeo.com',
