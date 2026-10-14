@@ -20,6 +20,10 @@ const STANDARD_LIMIT: RateLimitConfig = { limit: 100, windowMs: 60000 };
 // Light operations that are cheap to serve
 const LIGHT_LIMIT: RateLimitConfig = { limit: 300, windowMs: 60000 };
 
+// Paths with an id in them share one bucket: a book's pictures all load at once.
+const SAVED_ASSET_PATH = /^\/api\/saved\/[^/]+\/asset$/;
+const SAVED_ASSET_KEY = '/api/saved/:rkey/asset';
+
 const RATE_LIMITS: Record<string, RateLimitConfig> = {
   // Deep health check. Keyed by client IP (not did) since callers are monitors,
   // not users. Sized for a poll every 30s plus retries — anything above that is
@@ -130,10 +134,6 @@ const RATE_LIMITS: Record<string, RateLimitConfig> = {
 
 // Default limit for unspecified endpoints
 const DEFAULT_LIMIT: RateLimitConfig = STANDARD_LIMIT;
-
-// Paths with an id in them share one bucket: a book's pictures all load at once.
-const SAVED_ASSET_PATH = /^\/api\/saved\/[^/]+\/asset$/;
-const SAVED_ASSET_KEY = '/api/saved/:rkey/asset';
 
 function endpointKey(pathname: string): string {
   return SAVED_ASSET_PATH.test(pathname) ? SAVED_ASSET_KEY : pathname;

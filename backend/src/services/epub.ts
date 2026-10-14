@@ -775,8 +775,9 @@ export async function parseEpub(
     wordCount += countWords(kept);
     if (firstChapterCut) break;
   }
-  // Chapters past the cut are never opened, so the total is the spine's length.
-  const chapterCount = pkg.chapters.length;
+  // A book read to the end counts the chapters it kept. One cut short never
+  // opens the rest, so its total is the spine's length (blank separators and all).
+  const chapterCount = stoppedEarly || firstChapterCut ? pkg.chapters.length : chaptersKept;
   if (firstChapterCut) {
     sections.push(
       `<p><em>This copy holds part of chapter 1 of ${chapterCount}: the book is longer than Skyreader can keep in one save.</em></p>`
