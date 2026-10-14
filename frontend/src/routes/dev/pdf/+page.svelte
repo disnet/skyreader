@@ -5,6 +5,7 @@
   import { page } from '$app/state';
   import PdfViewer from '$lib/components/feed/PdfViewer.svelte';
   import { makePdf, type Placed } from '../_harness/pdfFixture';
+  import { SAMPLE_JPX_BASE64, makeJpxPdf } from '../_harness/jpxPdf';
 
   const LOREM =
     'The dominant sequence transduction models are based on complex recurrent or convolutional';
@@ -19,8 +20,19 @@
     return makePdf(pages, { Title: 'Harness paper' });
   }
 
+  // `?sample=jpx`: a JPEG 2000 image, which only draws when PDF.js finds its
+  // OpenJPEG decoder at `wasmUrl`.
+  function jpxPdf(): Uint8Array {
+    const jpx = Uint8Array.from(atob(SAMPLE_JPX_BASE64), (c) => c.charCodeAt(0));
+    return makeJpxPdf(jpx, 160, 100);
+  }
+
   const src = page.url.searchParams.get('src') ?? undefined;
-  const data = src ? undefined : samplePdf();
+  const data = src
+    ? undefined
+    : page.url.searchParams.get('sample') === 'jpx'
+      ? jpxPdf()
+      : samplePdf();
 </script>
 
 <div class="harness">

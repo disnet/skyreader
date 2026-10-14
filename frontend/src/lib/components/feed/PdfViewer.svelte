@@ -98,9 +98,12 @@
       pdfjs = lib;
       pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
       if (destroyed) return;
-      // No WebAssembly decoders: the app's CSP doesn't allow compiling wasm, and
-      // the JS fallbacks cover the same images.
-      loadingTask = pdfjs.getDocument({ data, useWasm: false });
+      // The image decoders (JPEG 2000, JBIG2, ICC colour) load from here, as
+      // WebAssembly or their JS fallbacks; vite.config.ts's pdfjsDecoders()
+      // ships them at this versioned path. They run in PDF.js's worker, a static
+      // asset the page's CSP doesn't apply to.
+      const wasmUrl = new URL(`/_app/immutable/pdfjs/${pdfjs.version}/`, location.origin).href;
+      loadingTask = pdfjs.getDocument({ data, wasmUrl });
       doc = await loadingTask.promise;
       if (destroyed) {
         void loadingTask.destroy();

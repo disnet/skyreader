@@ -243,8 +243,13 @@ it far away, with PDF.js's text layer on top for selection. Highlights and notes
 view (they anchor to the reflow), so the body and its hooks unmount in Original and re-attach on the
 way back; paged mode applies to the text only. The bytes come from `GET /api/saved/<rkey>/file`: an
 upload's stored file, or (Supporter) the link's PDF relayed by the backend, since most PDF hosts
-send no CORS headers. The CSP carries `worker-src 'self' blob:` for PDF.js's worker, and the viewer
-passes `useWasm: false` because the CSP doesn't allow compiling wasm. Harness: `/dev/pdf`.
+send no CORS headers. The CSP carries `worker-src 'self' blob:` for PDF.js's worker. PDF.js's image
+decoders (OpenJPEG for JPEG 2000, JBIG2 for scans, QCMS for ICC colour) load by fixed filename from
+its `wasmUrl` option, as WebAssembly or the JS fallback beside it; without `wasmUrl` those images
+simply don't draw. `vite.config.ts`'s `pdfjsDecoders()` copies them to
+`/_app/immutable/pdfjs/<pdfjs version>/` (outside the precache, fetched on demand), and they run in
+the worker, a static asset the Pages middleware's CSP doesn't cover, so no `'wasm-unsafe-eval'` is
+needed. Harness: `/dev/pdf` (`?sample=jpx` for a JPEG 2000 image).
 
 #### Selecting and re-bounding in paged mode
 
