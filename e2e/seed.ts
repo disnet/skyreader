@@ -1,4 +1,50 @@
+import { existsSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+
 const BACKEND_URL = process.env.E2E_BACKEND_URL ?? 'http://127.0.0.1:8787';
+
+// How long to wait for the backend to answer /api/health: long enough for
+// e2e/backend-supervisor.sh to bring a crashed wrangler dev back up, and short
+// enough to give up inside the 30s test timeout (fixture time counts toward it).
+const BACKEND_WAIT_MS = 20_000;
+
+/**
+ * Written once the backend has stayed down for a full BACKEND_WAIT_MS, so the
+ * remaining tests (each retry runs in a fresh worker process) fail at once
+ * instead of each waiting out the same timeout. global-setup clears it.
+ */
+export const BACKEND_DOWN_MARKER = path.join(tmpdir(), 'skyreader-e2e-backend-down');
+
+async function backendHealthy(): Promise<boolean> {
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/health`, { signal: AbortSignal.timeout(2_000) });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Wait for the backend to answer before talking to it. When wrangler dev crashes
+ * mid-run, the supervisor restarts it, and this turns the crash into a short
+ * pause rather than a connection error for every test that follows.
+ */
+async function waitForBackend(): Promise<void> {
+  if (await backendHealthy()) return;
+  const downError = new Error(
+    `Backend at ${BACKEND_URL} is not responding: wrangler dev crashed and did not come back. ` +
+      'In CI, the wrangler-logs-* artifact has the crash; locally, see ~/.config/.wrangler/logs/.'
+  );
+  if (existsSync(BACKEND_DOWN_MARKER)) throw downError;
+  const deadline = Date.now() + BACKEND_WAIT_MS;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    if (await backendHealthy()) return;
+  }
+  writeFileSync(BACKEND_DOWN_MARKER, new Date().toISOString());
+  throw downError;
+}
 
 /**
  * Run SQL against the backend's own D1 binding via the test-only `/api/test/exec`
@@ -8,6 +54,7 @@ const BACKEND_URL = process.env.E2E_BACKEND_URL ?? 'http://127.0.0.1:8787';
  * SQLITE_BUSY ("database is locked"). Statements run as one atomic batch.
  */
 async function execD1(statements: string[]) {
+  await waitForBackend();
   const res = await fetch(`${BACKEND_URL}/api/test/exec`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

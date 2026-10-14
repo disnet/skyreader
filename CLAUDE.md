@@ -168,6 +168,7 @@ Playwright spins up the backend (port 8787) and frontend (port 5173) via `webSer
 ```
 e2e/
 ├── global-setup.ts          # Applies D1 migrations before test run
+├── backend-supervisor.sh    # Runs wrangler dev for Playwright, restarting it if it crashes
 ├── seed.ts                  # Seeds test data into D1 via the backend's /api/test/exec endpoint
 ├── fixtures.ts              # Custom Playwright fixtures (testUser, authedPage)
 └── custom-fields.spec.ts    # Test specs
@@ -183,6 +184,10 @@ e2e/
 - **Sharded in CI:** `e2e.yml` splits the suite per test across 4 runners (one worker each — several
   workers against one dev stack flake), so a test must never depend on another having run first.
   The `Playwright E2E` job gates on all shards and merges their reports.
+- **Backend crashes:** `wrangler dev` sometimes dies mid-run in CI (a bare `✘ [ERROR]` after workerd
+  "Broken pipe" lines). `backend-supervisor.sh` restarts it, and `seed.ts` waits for `/api/health`
+  before every D1 call, so a crash costs a pause, not the rest of the shard. A failing shard uploads
+  wrangler's full debug log as the `wrangler-logs-<shard>` artifact — that's where the crash's cause is.
 - **Merge queue:** every PR-check workflow also triggers on `merge_group`, and its concurrency group
   is `${{ github.head_ref || github.ref }}` (`head_ref` is empty in the queue). A new check workflow
   needs both, or a required check never reports and the queue stalls.

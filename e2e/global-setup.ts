@@ -1,9 +1,14 @@
 import { execFileSync } from 'node:child_process';
+import { rmSync } from 'node:fs';
 import path from 'node:path';
+import { BACKEND_DOWN_MARKER } from './seed';
 
 const BACKEND_DIR = path.resolve(import.meta.dirname, '..', 'backend');
 
 export default function globalSetup() {
+  // A previous run may have given up on a crashed backend (see seed.ts).
+  rmSync(BACKEND_DOWN_MARKER, { force: true });
+
   console.log('Applying D1 migrations...');
   try {
     execFileSync('npx', ['wrangler', 'd1', 'migrations', 'apply', 'skyreader', '--local'], {
