@@ -30,4 +30,7 @@ interface Env {
   // must NOT be redeclared here (merge conflict, per the note above).
   POLAR_ACCESS_TOKEN: string;
   POLAR_WEBHOOK_SECRET: string;
+  // Secret; the pdf-extractor Worker's EXTRACT_SECRET, for uploaded PDFs
+  // (routes/saved-pdf.ts). Non-optional for the same reason; empty = uploads off.
+  PDF_EXTRACTOR_SECRET: string;
 }

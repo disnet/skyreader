@@ -26,6 +26,8 @@
   import { failedSaveBody, hasReadableContent } from '$lib/utils/saveAnywhere';
   import { mathRender } from '$lib/actions/math-render';
   import Icon from '$lib/components/Icon.svelte';
+  import { savedFileUrl } from '$lib/services/api';
+  import PdfViewer from '$lib/components/feed/PdfViewer.svelte';
   import PopoverMenu from '$lib/components/PopoverMenu.svelte';
   import TagMenu from '$lib/components/feed/TagMenu.svelte';
   import LinkContextMenu from '$lib/components/feed/LinkContextMenu.svelte';
@@ -218,6 +220,48 @@
       : undefined
   );
   let feedTitle = $derived(sub?.customTitle || sub?.title || '');
+
+  // A saved PDF reads as reflowed text by default (where highlights and notes
+  // live), and can be flipped to the original pages, drawn by PDF.js, for the
+  // figures, tables, equations and layout a reflow can't carry. The server keeps
+  // the original of every saved PDF, uploaded or saved by link; a link save's is a
+  // Supporter feature like PDFs themselves.
+  let pdfSave = $derived(
+    readerItem.type === 'saved' && readerItem.item.contentType === 'pdf' ? readerItem.item : null
+  );
+  let originalPdfSrc = $derived(
+    pdfSave?.rkey &&
+      (pdfSave.source === 'upload' ||
+        (Boolean(pdfSave.url) && Boolean(auth.user?.limits?.pdfSaves)))
+      ? savedFileUrl(pdfSave.rkey)
+      : null
+  );
+  // Where "open in a new tab" goes: the stored file, or the PDF's own address.
+  let originalPdfHref = $derived(
+    pdfSave ? (pdfSave.source === 'upload' ? originalPdfSrc : pdfSave.url || null) : null
+  );
+
+  // The choice sticks across PDFs (a reader who wants pages wants them every
+  // time). A per-device convenience, so it lives in localStorage.
+  const PDF_VIEW_KEY = 'skyreader-pdf-view';
+  let pdfViewPref = $state<'text' | 'original'>(
+    (() => {
+      try {
+        return localStorage.getItem(PDF_VIEW_KEY) === 'original' ? 'original' : 'text';
+      } catch {
+        return 'text';
+      }
+    })()
+  );
+  function setPdfView(view: 'text' | 'original') {
+    pdfViewPref = view;
+    try {
+      localStorage.setItem(PDF_VIEW_KEY, view);
+    } catch {
+      // Private mode: the choice lasts this session.
+    }
+  }
+  let showOriginalPdf = $derived(Boolean(originalPdfSrc) && pdfViewPref === 'original');
 
   // Normalize data from different item types using shared utility
   let normalized = $derived(normalizeDisplayItem(readerItem, sub));
@@ -539,7 +583,8 @@
   // page at a time instead of scrolling; the scroll-driven paragraph highlight and
   // progress bar are disabled (see the `enabled`/`!paged` guards below) and the
   // Discussion section is dropped for a focused read.
-  let paged = $derived(preferences.readerViewMode === 'paged');
+  // The original PDF view scrolls its pages; paging applies to the text.
+  let paged = $derived(preferences.readerViewMode === 'paged' && !showOriginalPdf);
   let pagedController = $state<PagedController>();
   let pagedRestoredForKey: string | null = null;
   let pagedSaveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1293,6 +1338,7 @@
             {readTimeMinutes} min read
           </span>
         </div>
+        {@render pdfViewToggle()}
         {#if itemTags.length > 0}
           <div class="reader-tags">
             {#each itemTags as tag}
@@ -1364,7 +1410,44 @@
       />
     {/snippet}
 
-    {#if paged}
+    {#snippet pdfViewToggle()}
+      {#if originalPdfSrc}
+        <div class="reader-pdf-toggle" role="group" aria-label="Show this PDF as">
+          <button
+            type="button"
+            class:active={!showOriginalPdf}
+            aria-pressed={!showOriginalPdf}
+            onclick={() => setPdfView('text')}
+            title="Reflowed text, for reading, highlights and notes">Text</button
+          >
+          <button
+            type="button"
+            class:active={showOriginalPdf}
+            aria-pressed={showOriginalPdf}
+            onclick={() => setPdfView('original')}
+            title="The pages as printed">Original</button
+          >
+        </div>
+      {/if}
+    {/snippet}
+
+    {#if showOriginalPdf && originalPdfSrc}
+      <!-- The original pages. Highlights live in the text view, so its body
+           (and every hook bound to it) unmounts here and re-attaches on return. -->
+      <article class="reader-article">
+        <div class="reader-article-header" bind:this={articleHeaderEl}>
+          <h1 class="reader-title">{title}</h1>
+          {@render pdfViewToggle()}
+        </div>
+        {#key originalPdfSrc}
+          <PdfViewer
+            src={originalPdfSrc}
+            fallbackHref={originalPdfHref ?? undefined}
+            bottomInset={mobileStore.isMobile ? READER_BAR_INSET : 0}
+          />
+        {/key}
+      </article>
+    {:else if paged}
       <!-- Kindle-style paged reading. -->
       <PagedView
         overlay={collection ? undefined : marginalia}
@@ -1839,6 +1922,30 @@
 
   .reader-feed:hover {
     color: var(--color-primary, #0066cc);
+  }
+
+  .reader-pdf-toggle {
+    display: inline-flex;
+    margin-top: 0.75rem;
+    padding: 2px;
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+  }
+
+  .reader-pdf-toggle button {
+    padding: 0.25rem 0.75rem;
+    background: none;
+    border: none;
+    border-radius: 4px;
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+  }
+
+  .reader-pdf-toggle button.active {
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    font-weight: var(--weight-medium);
   }
 
   .reader-read-time {

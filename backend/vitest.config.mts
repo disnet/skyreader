@@ -51,6 +51,9 @@ export default defineConfig({
           USERINPUT_SPACE_RKEY: '3mobgsd6d5n27',
           // Newsletters on, so the inbound-email and inbox routes are exercised.
           NEWSLETTER_EMAIL_DOMAIN: 'inbox.test',
+          // Uploaded PDFs post to the extractor directly; tests stub fetch.
+          PDF_EXTRACTOR_URL: 'https://pdf-extractor.test',
+          PDF_EXTRACTOR_SECRET: 'test-extract-secret',
         },
       },
     }),

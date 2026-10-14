@@ -78,6 +78,7 @@ const api = {
   getSaved: vi.fn(),
   getSavedBodies: vi.fn(),
   saveFromUrl: vi.fn(),
+  uploadPdf: vi.fn(),
   updateSaved: vi.fn(),
   deleteSaved: vi.fn(),
   deleteSavedByGuid: vi.fn(),
@@ -91,8 +92,30 @@ class ApiError extends Error {
   }
 }
 class ExtractionBlockedError extends Error {}
-class PdfExtractionError extends Error {}
-vi.mock('$lib/services/api', () => ({ api, ApiError, ExtractionBlockedError, PdfExtractionError }));
+class PdfExtractionError extends Error {
+  constructor(
+    message: string,
+    readonly upgradeRequired = false
+  ) {
+    super(message);
+  }
+}
+class PdfUploadError extends Error {
+  constructor(
+    message: string,
+    readonly code: string,
+    readonly rkey?: string
+  ) {
+    super(message);
+  }
+}
+vi.mock('$lib/services/api', () => ({
+  api,
+  ApiError,
+  ExtractionBlockedError,
+  PdfExtractionError,
+  PdfUploadError,
+}));
 
 const extractArticle = vi.fn();
 vi.mock('$lib/services/extract', () => ({ extractArticle }));
@@ -315,6 +338,20 @@ describe('savesStore.saveFromUrl when the article cannot be fetched', () => {
     expect(saved.fetchFailed).toBe('pdf');
     const content = api.saveFromUrl.mock.calls[0][2].content;
     expect(content).toContain('this PDF');
+    expect(content).not.toContain('extension');
+  });
+
+  it('saves the link with a Supporter note when the plan has no PDFs', async () => {
+    extractArticle.mockRejectedValueOnce(
+      new PdfExtractionError('Reading PDFs in Skyreader is a Supporter feature.', true)
+    );
+
+    const saved = await savesStore.saveFromUrl('https://example.com/paper.pdf');
+
+    expect(saved.fetchFailed).toBe('pdfUpgrade');
+    const content = api.saveFromUrl.mock.calls[0][2].content;
+    expect(content).toContain('Supporter');
+    expect(content).toContain('href="/supporter"');
     expect(content).not.toContain('extension');
   });
 
@@ -628,5 +665,76 @@ describe('savesStore.saveFromUrl for a PDF', () => {
 
     expect(api.saveFromUrl.mock.calls[0][2].contentType).toBeUndefined();
     expect(saved.contentType).toBe('webpage');
+  });
+});
+
+describe('savesStore.uploadPdf', () => {
+  const file = () => new File(['%PDF-1.7'], 'paper.pdf', { type: 'application/pdf' });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    savedRows.clear();
+    authState.isGuest = false;
+    syncState.isOnline = true;
+  });
+
+  it('adds the upload, body and all, as a URL-less PDF save', async () => {
+    api.uploadPdf.mockImplementationOnce(async (_file: File, rkey: string) => ({
+      rkey,
+      uri: `at://did:plc:me/app.skyreader.feed.saved/${rkey}`,
+      url: '',
+      title: 'A Paper',
+      author: null,
+      description: null,
+      content: '<section data-pdf-page="1"><p>Its text.</p></section>',
+      contentType: 'pdf',
+      domain: null,
+      image: null,
+      wordCount: 2,
+      publishedAt: null,
+      savedAt: '2026-10-14T00:00:00.000Z',
+      source: 'upload',
+    }));
+
+    const saved = await savesStore.uploadPdf(file());
+
+    expect(api.uploadPdf.mock.calls[0][2]).toBe('paper.pdf');
+    expect(saved).toMatchObject({ url: '', source: 'upload', contentType: 'pdf' });
+    // The body is kept for the reader (and offline), the list copy stays light.
+    expect(savedRows.get(saved.rkey)?.content).toContain('Its text.');
+    expect(savesStore.articles.find((a) => a.rkey === saved.rkey)?.content).toBeNull();
+  });
+
+  it('answers the existing save when the same file is uploaded again', async () => {
+    api.uploadPdf.mockImplementationOnce(async (_file: File, rkey: string) => ({
+      rkey,
+      uri: `at://did:plc:me/app.skyreader.feed.saved/${rkey}`,
+      url: '',
+      title: 'First',
+      author: null,
+      description: null,
+      content: '<p>x</p>',
+      contentType: 'pdf',
+      domain: null,
+      image: null,
+      wordCount: 1,
+      publishedAt: null,
+      savedAt: '2026-10-14T00:00:00.000Z',
+      source: 'upload',
+    }));
+    const first = await savesStore.uploadPdf(file());
+    api.uploadPdf.mockRejectedValueOnce(
+      new PdfUploadError('This PDF is already saved.', 'already_saved', first.rkey)
+    );
+
+    const again = await savesStore.uploadPdf(file());
+
+    expect(again.rkey).toBe(first.rkey);
+  });
+
+  it('needs a connection', async () => {
+    syncState.isOnline = false;
+    await expect(savesStore.uploadPdf(file())).rejects.toThrow('offline');
+    expect(api.uploadPdf).not.toHaveBeenCalled();
   });
 });

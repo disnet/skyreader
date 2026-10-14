@@ -121,6 +121,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed documentation.
 | `src/routes/reading.ts`       | Article + document read positions (forward delta)          |
 | `src/routes/labels.ts`        | Unified item labels (read/starred/archived/tags)           |
 | `src/routes/saved.ts`         | Saved articles CRUD                                        |
+| `src/routes/saved-pdf.ts`     | PDFs (Supporter): upload, kept originals, cleanup          |
 | `src/routes/recommends.ts`    | One-tap public recommends (+ standard.site copy)           |
 | `src/routes/integrations.ts`  | Semble/Margin writes to the user's PDS                     |
 | `src/routes/settings.ts`      | User settings                                              |
@@ -140,6 +141,20 @@ Cloudflare Email Routing hands it mail for `NEWSLETTER_EMAIL_DOMAIN`, and each m
 subscriptions are private and local-only — never crawled, never on the PDS, readable only by the
 inbox owner — and every subscription path checks `isNewsletterSubscription`. See
 [`docs/plans/EMAIL_NEWSLETTERS.md`](../docs/plans/EMAIL_NEWSLETTERS.md).
+
+**PDFs** are a Supporter feature (`TierLimits.pdfSaves`), by link or upload. By link, the proxy
+fetches and the pdf-extractor Worker parses; `FeedProxyClient.extract` sends `allowPdf: false` for a
+reader without the plan or out of their daily parses (`services/pdf-quota.ts`). An upload
+(`POST /api/saved/pdf`, raw bytes) is posted to the extractor directly
+(`services/pdf-extractor.ts`) and becomes an ordinary URL-less save (`source = 'upload'`,
+`content_type = 'pdf'`), so highlights and search key on its record uri like any other save. The
+original file is kept private in R2 (`SAVED_FILES`, one row per file in `saved_files`), served only
+to its owner at `GET /api/saved/<rkey>/file`, and deleted with the save. Uploads never reach the
+PDS or a Semble/Margin backing collection. A PDF saved by link keeps its original the same way:
+`storeLinkedPdfForUrl` fetches it from the URL under `waitUntil` after the save, and
+`GET /api/saved/<rkey>/file` keeps it on first open for a save that has none (streaming it through
+uncached only when storage is full). Limits: file size, uploads per month (uploads only) and stored
+bytes (every kept original) from the plan, plus the shared daily parse cap.
 
 **Bluesky likes and bookmarks** are the same kind of private, local-only subscription
 (`bsky-likes:<did>` / `bsky-bookmarks:<did>`, `src/services/bsky-sources.ts`): turned on from

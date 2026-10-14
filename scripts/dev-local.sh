@@ -97,7 +97,9 @@ sleep 2
 # Start backend
 echo -e "${YELLOW}[2/5] Starting backend...${NC}"
 cd "$BACKEND_DIR"
-npm run dev &
+# The backend posts uploaded PDFs to the same extractor (routes/saved-pdf.ts).
+npm run dev -- --var PDF_EXTRACTOR_URL:http://127.0.0.1:8788 \
+    --var PDF_EXTRACTOR_SECRET:"$DEV_PDF_EXTRACTOR_SECRET" &
 BACKEND_PID=$!
 sleep 2
 

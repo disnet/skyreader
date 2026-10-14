@@ -21,6 +21,7 @@ import {
 import { hasIntegrationScopes } from './integrations';
 import { normalizeArticleUrl } from '../utils/url-normalize';
 import { chunkArray } from './reading';
+import { deleteSavedFile, storeLinkedPdfForUrl } from './saved-pdf';
 
 const COLLECTION = 'app.skyreader.feed.saved';
 
@@ -114,6 +115,15 @@ export async function handleCreateSaved(
   // Determine source
   const source: string = body.source || (body.fromFeed ? 'feed' : 'url');
 
+  // A PDF saved by link keeps its original, as an upload does, fetched after the
+  // response so the save itself waits on nothing (routes/saved-pdf.ts).
+  const keepPdfOriginal = (response: Response): Response => {
+    if (response.ok && body.contentType === 'pdf' && body.url) {
+      ctx.waitUntil(storeLinkedPdfForUrl(env, session.did, body.url));
+    }
+    return response;
+  };
+
   // Feed/share/document saves are deduped by item guid, not URL (below).
   const keyedByGuid =
     (body.fromFeed || source === 'feed' || source === 'share' || source === 'document') &&
@@ -179,7 +189,7 @@ export async function handleCreateSaved(
       // This is an update of an existing save, so it deliberately runs before —
       // and doesn't count against — the monthly URL-save limit.
       if (body.updateContent && body.content) {
-        return await handleContentUpdate(env, session, body, existing);
+        return keepPdfOriginal(await handleContentUpdate(env, session, body, existing));
       }
       return new Response(JSON.stringify({ error: 'Article already saved' }), {
         status: 409,
@@ -225,7 +235,7 @@ export async function handleCreateSaved(
     // on) falls through to the native, D1-only path below.
     const settings = await getUserSettings(env, session.did);
     if (settings.backing.provider !== 'skyreader' && normalizeArticleUrl(body.url)) {
-      return await handleBackedSave(env, session, body, source, settings.backing);
+      return keepPdfOriginal(await handleBackedSave(env, session, body, source, settings.backing));
     }
 
     if (source === 'feed' || source === 'share' || source === 'document') {
@@ -234,7 +244,7 @@ export async function handleCreateSaved(
     } else {
       // URL save: the client has already extracted the article (via /api/extract)
       // and posts the content, so nothing here fetches the page.
-      return await handleUrlSave(request, env, ctx, session, body);
+      return keepPdfOriginal(await handleUrlSave(request, env, ctx, session, body));
     }
   } catch (error) {
     console.error('Failed to save item:', error);
@@ -1223,6 +1233,8 @@ export async function handleDeleteSaved(
     await env.DB.prepare('DELETE FROM saved_articles WHERE user_did = ? AND rkey = ?')
       .bind(session.did, rkey)
       .run();
+    // An uploaded PDF's original goes with it.
+    await deleteSavedFile(env, session.did, rkey);
 
     const settings = await getUserSettings(env, session.did);
     if (settings.backing.provider !== 'skyreader' && row.url_normalized) {

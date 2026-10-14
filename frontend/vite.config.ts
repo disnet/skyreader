@@ -1,5 +1,7 @@
 import { sveltekit } from '@sveltejs/kit/vite';
 import { SvelteKitPWA } from '@vite-pwa/sveltekit';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { defineConfig, type Plugin } from 'vite';
 
 // The /dev/* component harness is a local-only playground. src/routes/dev/+layout.ts
@@ -28,9 +30,62 @@ function stripDevRoutes(): Plugin {
   };
 }
 
+// PDF.js's image decoders for the original-PDF view (components/feed/PdfViewer):
+// OpenJPEG (JPEG 2000), JBIG2 (black-and-white scans), and QCMS (ICC colour).
+// PDF.js loads each from its `wasmUrl` option by a fixed filename, as WebAssembly
+// or, failing that, as the JS fallback beside it, so they can't go through Vite's
+// hashed asset pipeline. They're copied verbatim to a versioned directory under
+// _app/immutable (cacheable forever, and outside the CSP the Pages middleware
+// adds), which PdfViewer derives from PDF.js's own `version`. Served from
+// node_modules in dev. Kept out of the service worker's precache (see
+// globIgnores): fetched only when a PDF actually holds such an image.
+const PDFJS_DIR = fileURLToPath(new URL('./node_modules/pdfjs-dist/', import.meta.url));
+const PDFJS_VERSION: string = JSON.parse(readFileSync(`${PDFJS_DIR}package.json`, 'utf8')).version;
+const PDFJS_DECODERS_PATH = `_app/immutable/pdfjs/${PDFJS_VERSION}/`;
+const PDFJS_DECODERS = [
+  'jbig2.wasm',
+  'jbig2_nowasm_fallback.js',
+  'openjpeg.wasm',
+  'openjpeg_nowasm_fallback.js',
+  'qcms_bg.wasm',
+];
+
+function pdfjsDecoders(): Plugin {
+  let ssr = false;
+  const read = (name: string) => readFileSync(`${PDFJS_DIR}wasm/${name}`);
+  return {
+    name: 'skyreader:pdfjs-decoders',
+    configResolved(config) {
+      ssr = Boolean(config.build.ssr);
+    },
+    configureServer(server) {
+      server.middlewares.use(`/${PDFJS_DECODERS_PATH}`, (req, res, next) => {
+        const name = (req.url ?? '').split('?')[0].replace(/^\//, '');
+        if (!PDFJS_DECODERS.includes(name)) return next();
+        res.setHeader(
+          'Content-Type',
+          name.endsWith('.wasm') ? 'application/wasm' : 'text/javascript'
+        );
+        res.end(read(name));
+      });
+    },
+    generateBundle() {
+      if (ssr) return;
+      for (const name of PDFJS_DECODERS) {
+        this.emitFile({
+          type: 'asset',
+          fileName: `${PDFJS_DECODERS_PATH}${name}`,
+          source: read(name),
+        });
+      }
+    },
+  };
+}
+
 export default defineConfig({
   plugins: [
     stripDevRoutes(),
+    pdfjsDecoders(),
     sveltekit(),
     SvelteKitPWA({
       // injectManifest lets us keep a hand-written service worker for our custom
@@ -91,6 +146,9 @@ export default defineConfig({
         // SPA shell (index.html) is added to the manifest separately by kit.spa above,
         // so it is NOT globbed here (no prerendered/ dir exists in a pure SPA).
         globPatterns: ['client/**/*.{js,css,ico,png,svg,webp,webmanifest}'],
+        // PDF.js's image decoders (see pdfjsDecoders): fetched on demand, by the
+        // few PDFs that need them, rather than installed on every device.
+        globIgnores: ['client/_app/immutable/pdfjs/**'],
       },
 
       devOptions: {

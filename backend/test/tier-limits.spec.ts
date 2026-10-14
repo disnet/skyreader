@@ -15,6 +15,10 @@ describe('Tier Limits Config', () => {
         maxUrlSavesPerMonth: 100,
         newsletterInbox: false,
         fullTextSearch: false,
+        pdfSaves: false,
+        maxPdfUploadBytes: 0,
+        maxPdfUploadsPerMonth: 0,
+        maxPdfStorageBytes: 0,
       });
     });
 
@@ -26,6 +30,10 @@ describe('Tier Limits Config', () => {
         maxUrlSavesPerMonth: 1000,
         newsletterInbox: true,
         fullTextSearch: true,
+        pdfSaves: true,
+        maxPdfUploadBytes: 10 * 1024 * 1024,
+        maxPdfUploadsPerMonth: 200,
+        maxPdfStorageBytes: 2048 * 1024 * 1024,
       });
     });
 
@@ -37,6 +45,10 @@ describe('Tier Limits Config', () => {
         maxUrlSavesPerMonth: 100,
         newsletterInbox: false,
         fullTextSearch: false,
+        pdfSaves: false,
+        maxPdfUploadBytes: 0,
+        maxPdfUploadsPerMonth: 0,
+        maxPdfStorageBytes: 0,
       });
     });
 
@@ -48,6 +60,10 @@ describe('Tier Limits Config', () => {
         maxUrlSavesPerMonth: 100,
         newsletterInbox: false,
         fullTextSearch: false,
+        pdfSaves: false,
+        maxPdfUploadBytes: 0,
+        maxPdfUploadsPerMonth: 0,
+        maxPdfStorageBytes: 0,
       });
     });
   });
@@ -212,6 +228,10 @@ describe('User Tier Service', () => {
         maxUrlSavesPerMonth: 100,
         newsletterInbox: false,
         fullTextSearch: false,
+        pdfSaves: false,
+        maxPdfUploadBytes: 0,
+        maxPdfUploadsPerMonth: 0,
+        maxPdfStorageBytes: 0,
       });
     });
 
@@ -229,6 +249,10 @@ describe('User Tier Service', () => {
         maxUrlSavesPerMonth: 1000,
         newsletterInbox: true,
         fullTextSearch: true,
+        pdfSaves: true,
+        maxPdfUploadBytes: 10 * 1024 * 1024,
+        maxPdfUploadsPerMonth: 200,
+        maxPdfStorageBytes: 2048 * 1024 * 1024,
       });
     });
 
@@ -240,6 +264,10 @@ describe('User Tier Service', () => {
         maxUrlSavesPerMonth: 100,
         newsletterInbox: false,
         fullTextSearch: false,
+        pdfSaves: false,
+        maxPdfUploadBytes: 0,
+        maxPdfUploadsPerMonth: 0,
+        maxPdfStorageBytes: 0,
       });
     });
   });

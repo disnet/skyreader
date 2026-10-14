@@ -50,6 +50,13 @@ export interface User {
     newsletterInbox?: boolean;
     /** Full-text search over everything read, saved and highlighted (Supporter). */
     fullTextSearch?: boolean;
+    /** Reading PDFs, saved by URL or uploaded (Supporter). */
+    pdfSaves?: boolean;
+    /** Largest PDF upload, in bytes. */
+    maxPdfUploadBytes?: number;
+    maxPdfUploadsPerMonth?: number;
+    /** Total bytes of uploaded originals kept. */
+    maxPdfStorageBytes?: number;
   };
   /**
    * The operator switch for full-text search in this environment. Search is
@@ -1202,7 +1209,7 @@ export type ChannelAutoRule =
   | { type: 'longReads'; minLength: number }
   | { type: 'recent'; withinDays: number };
 
-export type SavedSourceType = 'url' | 'feed' | 'document';
+export type SavedSourceType = 'url' | 'feed' | 'document' | 'upload';
 export type DateAddedPreset = 'last-week' | 'last-month' | 'last-3-months' | 'last-year';
 export type ReadingLengthFilter = 'quick' | 'medium' | 'long';
 export type SortOrder =
@@ -1276,7 +1283,9 @@ export interface SavedItem {
   wordCount: number | null;
   publishedAt: string | null;
   savedAt: string;
-  source?: 'url' | 'feed' | 'document';
+  // 'upload': a PDF the reader uploaded. It has no URL; its original file is
+  // served to them at savedFileUrl(rkey) ($lib/services/api).
+  source?: 'url' | 'feed' | 'document' | 'upload';
   itemGuid?: string;
   // Server stamp of the last in-place edit (e.g. an extension re-save that
   // upgraded the body); null/absent when never edited since the save. A cached

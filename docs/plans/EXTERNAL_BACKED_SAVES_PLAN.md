@@ -214,6 +214,13 @@ rather than rendering a URL-less save.
 
 ## Uploads (EPUB/PDF): the native-pinning exception
 
+> **As built (PDF uploads, `backend/src/routes/saved-pdf.ts`):** the original is kept in Skyreader's
+> R2 (`SAVED_FILES`), private to the reader, not as a PDS blob. Uploads are mostly someone else's
+> copyright, and a PDS blob is publicly fetchable by CID, so until atproto permissioned data lands
+> (see below) private hosting won over portability. An upload is a native-only, URL-less save
+> (`source = 'upload'`) that is never projected into a backing collection; the reflowed text lives
+> in D1 like every save. The PDS-blob design below stays the direction once blobs can be private.
+
 Users upload EPUBs and PDFs — content that **doesn't exist on the open web**, so it has no URL to key
 on or render. This is the one item type that legitimately breaks "adopt — drop native," forced by two
 atproto facts:

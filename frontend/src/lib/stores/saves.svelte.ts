@@ -1,6 +1,12 @@
 import { db, getMetadata, setMetadata } from '$lib/services/db';
 import { safePut, safeBulkPut } from '$lib/services/safeDb.svelte';
-import { api, ApiError, ExtractionBlockedError, PdfExtractionError } from '$lib/services/api';
+import {
+  api,
+  ApiError,
+  ExtractionBlockedError,
+  PdfExtractionError,
+  PdfUploadError,
+} from '$lib/services/api';
 import type { ExtractedArticle } from '$lib/services/api';
 import { generateTid } from '$lib/utils/tid';
 import { urlKey } from '$lib/utils/urlKey';
@@ -398,7 +404,7 @@ function createSavesStore() {
    */
   function saveFetchFailure(err: unknown): SaveFetchFailure | null {
     if (err instanceof ExtractionBlockedError) return 'blocked';
-    if (err instanceof PdfExtractionError) return 'pdf';
+    if (err instanceof PdfExtractionError) return err.upgradeRequired ? 'pdfUpgrade' : 'pdf';
     if (err instanceof ApiError && err.status >= 500) return 'failed';
     return null;
   }
@@ -542,6 +548,59 @@ function createSavesStore() {
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to save bookmark';
       error = msg;
+      throw err;
+    } finally {
+      saving = false;
+    }
+  }
+
+  /**
+   * Upload a PDF as a save (Supporter; the server holds to the plan's limits).
+   * The server parses it and answers the save with its reflowed body, so it is
+   * readable — and highlightable — at once. Needs a connection: there is no
+   * queue for a file. Uploading a file already saved answers that save.
+   */
+  async function uploadPdf(file: File): Promise<SavedItem> {
+    if (!canReachBackend()) {
+      throw new Error(auth.isGuest ? 'Uploading a PDF needs an account.' : 'You are offline.');
+    }
+    saving = true;
+    error = null;
+    try {
+      const rkey = generateTid();
+      let result: SavedItem;
+      try {
+        result = await api.uploadPdf(file, rkey, file.name);
+      } catch (err) {
+        if (err instanceof PdfUploadError && err.code === 'already_saved' && err.rkey) {
+          const existing = articles.find((a) => a.rkey === err.rkey);
+          if (existing) return existing;
+        }
+        throw err;
+      }
+      const savedItem: SavedItem = {
+        rkey: result.rkey,
+        uri: result.uri,
+        url: '',
+        title: result.title,
+        author: result.author,
+        description: result.description,
+        content: result.content,
+        contentType: 'pdf',
+        domain: null,
+        image: null,
+        wordCount: result.wordCount,
+        publishedAt: result.publishedAt,
+        savedAt: result.savedAt,
+        source: 'upload',
+      };
+      articles = [toLightSaved(savedItem), ...articles];
+      rebuildMaps();
+      await safePut(db.saved, savedItem);
+      savedSearchStore.upsert(savedItem);
+      return savedItem;
+    } catch (err) {
+      error = err instanceof Error ? err.message : 'Failed to upload PDF';
       throw err;
     } finally {
       saving = false;
@@ -1016,6 +1075,7 @@ function createSavesStore() {
     },
     load,
     saveFromUrl,
+    uploadPdf,
     saveArticle,
     saveDocument,
     unsaveByGuid,

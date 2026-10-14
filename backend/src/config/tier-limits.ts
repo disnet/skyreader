@@ -22,7 +22,21 @@ export interface TierLimits {
    * write nudges the index, so a lapsed plan stops both.
    */
   fullTextSearch: boolean;
+  /**
+   * Reading PDFs: saving a PDF by URL (its text reflowed for the reader) and
+   * uploading one (routes/saved-pdf.ts). Checked before every parse, so a lapsed
+   * plan keeps the PDFs it saved but can't add more.
+   */
+  pdfSaves: boolean;
+  /** Largest PDF upload, in bytes. The pdf-extractor Worker refuses anything bigger. */
+  maxPdfUploadBytes: number;
+  /** Uploads per calendar month (UTC). URL saves of PDFs count as URL saves instead. */
+  maxPdfUploadsPerMonth: number;
+  /** Total bytes of PDF originals kept in R2, uploaded or saved by link. Deleting a save frees its file. */
+  maxPdfStorageBytes: number;
 }
+
+const MB = 1024 * 1024;
 
 const TIER_MAP: Record<string, TierLimits> = {
   free: {
@@ -31,6 +45,10 @@ const TIER_MAP: Record<string, TierLimits> = {
     maxUrlSavesPerMonth: 100,
     newsletterInbox: false,
     fullTextSearch: false,
+    pdfSaves: false,
+    maxPdfUploadBytes: 0,
+    maxPdfUploadsPerMonth: 0,
+    maxPdfStorageBytes: 0,
   },
   supporter: {
     maxSubscriptions: 1000,
@@ -38,6 +56,11 @@ const TIER_MAP: Record<string, TierLimits> = {
     maxUrlSavesPerMonth: 1000,
     newsletterInbox: true,
     fullTextSearch: true,
+    pdfSaves: true,
+    // The extractor's own cap (pdf-extractor/src/extract.ts MAX_PDF_BYTES).
+    maxPdfUploadBytes: 10 * MB,
+    maxPdfUploadsPerMonth: 200,
+    maxPdfStorageBytes: 2048 * MB,
   },
 };
 
