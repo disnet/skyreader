@@ -735,17 +735,6 @@ export async function parseEpub(
   }
 
   const spine = new Map(pkg.chapters.map((path, i) => [path, i + 1]));
-  const chapters: { index: number; html: string }[] = [];
-  for (const [i, path] of pkg.chapters.entries()) {
-    const xhtml = await readEntry(path);
-    if (!xhtml) continue;
-    const html = await cleanChapter(xhtml, { path, index: i + 1, spine, entries });
-    // Blank separators go; a cover or a plate is only a picture, and stays.
-    if (countWords(html) > 0 || html.includes('data-epub-src=')) {
-      chapters.push({ index: i + 1, html });
-    }
-  }
-
   // `data-epub-chapter` counts the chapters kept; the id is the spine position
   // the book's links were scoped by.
   const sectionFor = (n: number, spineIndex: number, html: string) =>
@@ -755,14 +744,25 @@ export async function parseEpub(
   let chaptersKept = 0;
   let wordCount = 0;
   let firstChapterCut = false;
-  for (const [i, chapter] of chapters.entries()) {
-    const render = (html: string) => sectionFor(i + 1, chapter.index, html);
-    const html = chapter.html;
+  let stoppedEarly = false;
+  // Chapters are cleaned one at a time and the walk stops at the first one that
+  // would pass the cap, so a long book never pays for the chapters it drops.
+  for (const [i, path] of pkg.chapters.entries()) {
+    const xhtml = await readEntry(path);
+    if (!xhtml) continue;
+    const html = await cleanChapter(xhtml, { path, index: i + 1, spine, entries });
+    // Blank separators go; a cover or a plate is only a picture, and stays.
+    if (countWords(html) === 0 && !html.includes('data-epub-src=')) continue;
+    const n = chaptersKept + 1;
+    const render = (h: string) => sectionFor(n, i + 1, h);
     let kept = html;
     let section = render(kept);
     let sectionBytes = byteLength(section);
     if (size + sectionBytes > maxBytes) {
-      if (sections.length) break;
+      if (sections.length) {
+        stoppedEarly = true;
+        break;
+      }
       // One chapter over the cap on its own: keep the blocks that fit.
       kept = cutAtBlock(html, maxBytes - byteLength(render('')) - 200);
       firstChapterCut = true;
@@ -771,16 +771,17 @@ export async function parseEpub(
     }
     sections.push(section);
     size += sectionBytes;
-    chaptersKept = i + 1;
+    chaptersKept = n;
     wordCount += countWords(kept);
     if (firstChapterCut) break;
   }
-  const chapterCount = chapters.length;
+  // Chapters past the cut are never opened, so the total is the spine's length.
+  const chapterCount = pkg.chapters.length;
   if (firstChapterCut) {
     sections.push(
       `<p><em>This copy holds part of chapter 1 of ${chapterCount}: the book is longer than Skyreader can keep in one save.</em></p>`
     );
-  } else if (chaptersKept < chapterCount) {
+  } else if (stoppedEarly) {
     sections.push(
       `<p><em>This copy holds the first ${chaptersKept} of ${chapterCount} chapters: the book is longer than Skyreader can keep in one save.</em></p>`
     );
