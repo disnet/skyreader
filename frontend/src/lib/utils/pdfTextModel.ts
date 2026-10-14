@@ -34,6 +34,8 @@ export interface PdfTextModel {
    * where the next one does, so it takes up no room.
    */
   offsets: Int32Array[][];
+  /** `skipped[page][run]`: the run was rotated and left out of `text`. */
+  skipped: boolean[][];
 }
 
 /** A stretch of one run: characters `[from, to)` of `runs[run]` on `page` (0-based). */
@@ -59,10 +61,25 @@ export function buildPdfTextModel(pages: PdfTextRun[][]): PdfTextModel {
   // to it with a space, or, after a broken word, with nothing.
   let atBreak = false;
 
+  // Every run's offsets, in order, so a join that shortens the text can pull
+  // back the ones recorded past its new end.
+  const all: Int32Array[] = [];
+  const clampTail = () => {
+    for (let i = all.length - 1; i >= 0; i--) {
+      const arr = all[i];
+      if (arr[arr.length - 1] <= text.length) break;
+      for (let c = 0; c < arr.length; c++) if (arr[c] > text.length) arr[c] = text.length;
+    }
+  };
+  const skipped: boolean[][] = [];
+
   const offsets = pages.map((runs) => {
+    const pageSkipped: boolean[] = [];
+    skipped.push(pageSkipped);
     const pageOffsets = runs.map((run) => {
       const out = new Int32Array(run.str.length + 1);
       const skip = isRotated(run);
+      pageSkipped.push(skip);
       for (let c = 0; c < run.str.length; c++) {
         const ch = run.str[c];
         if (skip) {
@@ -79,12 +96,14 @@ export function buildPdfTextModel(pages: PdfTextRun[][]): PdfTextModel {
           if (/[a-z]-$/.test(text) && /[a-z]/.test(ch)) text = text.slice(0, -1);
           else if (text) text += ' ';
           atBreak = false;
+          clampTail();
         }
         out[c] = text.length;
         text += ch;
       }
       out[run.str.length] = text.length;
       if (run.hasEOL && !skip) atBreak = true;
+      all.push(out);
       return out;
     });
     atBreak = true;
@@ -98,7 +117,7 @@ export function buildPdfTextModel(pages: PdfTextRun[][]): PdfTextModel {
     for (const run of page)
       for (let c = 0; c < run.length; c++) if (run[c] > text.length) run[c] = text.length;
 
-  return { text, offsets };
+  return { text, offsets, skipped };
 }
 
 /** Where a point inside a run (character `c` of `runs[run]` on `page`) falls in the text. */
@@ -136,6 +155,7 @@ export function slicesForSpan(model: PdfTextModel, start: number, end: number): 
     const last = runs[runs.length - 1];
     if (!first || !last || last[last.length - 1] <= start || first[0] >= end) return;
     runs.forEach((offsets, run) => {
+      if (model.skipped[page]?.[run]) return;
       if (offsets.length < 2 || offsets[offsets.length - 1] <= start || offsets[0] >= end) return;
       let from = -1;
       let to = -1;

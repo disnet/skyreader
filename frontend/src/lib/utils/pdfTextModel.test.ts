@@ -128,3 +128,18 @@ describe('selectors over the model', () => {
     expect(locateInPdf(model, selector)).toEqual(slicesForSpan(model, start, end));
   });
 });
+
+describe('offsets across a joined hyphen and rotated runs', () => {
+  it('keeps a run end at the next run start when the hyphen is dropped', () => {
+    const model = buildPdfTextModel([[run('inter-', true), run('national')]]);
+    expect(model.text).toBe('international');
+    expect(model.offsets[0][0][6]).toBe(5);
+    expect(model.offsets[0][1][0]).toBe(5);
+  });
+
+  it('leaves a rotated run out of the slices', () => {
+    const stamp = { str: 'arXiv', transform: [0, 1, -1, 0, 0, 0] };
+    const model = buildPdfTextModel([[run('one '), stamp, run('two')]]);
+    expect(slicesForSpan(model, 0, model.text.length).some((s) => s.run === 1)).toBe(false);
+  });
+});
