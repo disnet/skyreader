@@ -1,0 +1,123 @@
+name: Deploy PDF Extractor
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+
+  # The workflow file is in its own paths filter on purpose: a commit that only
+  # changes this file still has to run it (see feed-proxy-deploy.yml).
+  push:
+    branches: [main]
+    paths: ['pdf-extractor/**', '.github/workflows/pdf-extractor-deploy.yml']
+  pull_request:
+    branches: [main]
+    paths: ['pdf-extractor/**', '.github/workflows/pdf-extractor-deploy.yml']
+  merge_group:
+  release:
+    types: [published]
+
+concurrency:
+  group: pdf-extractor-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: pdf-extractor
+
+jobs:
+  test:
+    name: Test & Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: pdf-extractor/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate worker types
+        run: npm run cf-typegen
+
+      - name: Type check & format
+        run: npm run check
+
+      # Runs inside workerd, so this is also the proof pdf.js parses on Workers.
+      - name: Run tests
+        run: npm test
+
+  deploy-staging:
+    name: Deploy to Staging
+    needs: test
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: pdf-extractor/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Deploy to staging
+        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy --env staging --var GIT_COMMIT_SHA:${{ github.sha }}
+          workingDirectory: pdf-extractor
+
+      - name: Smoke check staging
+        env:
+          HEALTH_URL: https://pdf-extractor-staging.skyreader.app/health
+          EXPECTED_SHA: ${{ github.sha }}
+        run: node ../scripts/smoke-check.mjs "$HEALTH_URL" --version "$EXPECTED_SHA"
+
+  deploy-production:
+    name: Deploy to Production
+    needs: test
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: pdf-extractor/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Deploy to production
+        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy --var GIT_COMMIT_SHA:${{ github.sha }}
+          workingDirectory: pdf-extractor
+
+      - name: Smoke check production
+        env:
+          HEALTH_URL: https://pdf-extractor.skyreader.app/health
+          EXPECTED_SHA: ${{ github.sha }}
+        run: node ../scripts/smoke-check.mjs "$HEALTH_URL" --version "$EXPECTED_SHA"

@@ -15,6 +15,7 @@ skyreader/
 ├── backend/        Cloudflare Workers API
 ├── admin/          SvelteKit admin dashboard (Cloudflare Pages)
 ├── feed-proxy/     Feed caching proxy (Fly.io)
+├── pdf-extractor/  PDF → reader HTML (Cloudflare Worker, called by the proxy)
 ├── e2e/            Playwright end-to-end tests
 └── scripts/        Development scripts
 ```
@@ -59,6 +60,7 @@ To start services individually:
 ```bash
 cd feed-proxy && bun run dev                # port 3000
 cd backend && npm run dev                   # port 8787
+cd pdf-extractor && npm run dev             # port 8788 (needs EXTRACT_SECRET in .dev.vars)
 cd frontend && npm run dev                  # port 5173
 cd admin && npm install && npm run dev      # port 5174
 ```

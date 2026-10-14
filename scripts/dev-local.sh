@@ -8,6 +8,7 @@ ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 BACKEND_DIR="$ROOT_DIR/backend"
 FRONTEND_DIR="$ROOT_DIR/frontend"
 FEED_PROXY_DIR="$ROOT_DIR/feed-proxy"
+PDF_EXTRACTOR_DIR="$ROOT_DIR/pdf-extractor"
 LINKBLOG_DIR="$ROOT_DIR/linkblog-site"
 DOCS_DIR="$ROOT_DIR/docs-site"
 
@@ -20,6 +21,7 @@ NC='\033[0m' # No Color
 # Cleanup function
 cleanup() {
     echo -e "\n${YELLOW}Shutting down...${NC}"
+    kill $PDF_EXTRACTOR_PID 2>/dev/null || true
     kill $FEED_PROXY_PID 2>/dev/null || true
     kill $BACKEND_PID 2>/dev/null || true
     kill $FRONTEND_PID 2>/dev/null || true
@@ -34,6 +36,8 @@ trap cleanup SIGINT SIGTERM
 # local Worker's D1 and pulls the crawl set back from it. Ingest is fail-closed on
 # the Worker side, so both halves must share this secret.
 DEV_PROXY_SECRET="dev-proxy-secret"
+# Shared by the proxy and the PDF extractor Worker it hands PDFs to.
+DEV_PDF_EXTRACTOR_SECRET="dev-pdf-extractor-secret"
 
 # Check for required .dev.vars
 if [ ! -f "$BACKEND_DIR/.dev.vars" ]; then
@@ -71,11 +75,22 @@ npx wrangler d1 execute skyreader --local --command \
      ON CONFLICT(key) DO UPDATE SET value = '1', updated_at = unixepoch()" >/dev/null 2>&1 \
     || echo -e "${YELLOW}Could not open the timeline gate; the reader will use the legacy batch path.${NC}"
 
+# Start the PDF extractor Worker (port 8788): the proxy posts saved PDFs to it.
+echo -e "${YELLOW}Starting PDF extractor (the feed proxy hands it PDFs)...${NC}"
+cd "$PDF_EXTRACTOR_DIR"
+if [ ! -d node_modules ]; then
+    npm ci || npm install
+fi
+npx wrangler dev --port 8788 --var EXTRACT_SECRET:"$DEV_PDF_EXTRACTOR_SECRET" &
+PDF_EXTRACTOR_PID=$!
+
 # Start feed proxy (crawler + ingest pusher pointed at the local Worker)
 echo -e "${YELLOW}[1/5] Starting feed proxy...${NC}"
 cd "$FEED_PROXY_DIR"
 bun install --frozen-lockfile 2>/dev/null || bun install
-INGEST_URL=http://127.0.0.1:8787 PROXY_SECRET="$DEV_PROXY_SECRET" bun run dev &
+INGEST_URL=http://127.0.0.1:8787 PROXY_SECRET="$DEV_PROXY_SECRET" \
+    PDF_EXTRACTOR_URL=http://127.0.0.1:8788 PDF_EXTRACTOR_SECRET="$DEV_PDF_EXTRACTOR_SECRET" \
+    bun run dev &
 FEED_PROXY_PID=$!
 sleep 2
 
@@ -126,6 +141,7 @@ echo -e "\n${GREEN}========================================${NC}"
 echo -e "${GREEN}Development environment ready!${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo -e "Feed proxy: http://127.0.0.1:3000"
+echo -e "PDF extractor: http://127.0.0.1:8788"
 echo -e "Backend:    http://127.0.0.1:8787"
 echo -e "Linkblogs:  http://127.0.0.1:5175/<did-or-handle>"
 echo -e "Docs:       http://localhost:5176"

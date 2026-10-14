@@ -6,10 +6,7 @@ export type Placed = [number, number, number, string];
 // A minimal, valid PDF: Helvetica text at fixed positions, one content stream
 // per page, an Info dictionary. Enough geometry to exercise the line/paragraph
 // inference without checking a binary fixture into the repo.
-export function makePdf(
-  pages: Placed[][],
-  info: Record<string, string> = {}
-): Uint8Array<ArrayBuffer> {
+export function makePdf(pages: Placed[][], info: Record<string, string> = {}): Uint8Array {
   const esc = (s: string) => s.replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
   const objects: string[] = [];
   const add = (body: string) => objects.push(body); // the new length is the 1-based object number

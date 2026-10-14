@@ -30,7 +30,7 @@ import { safeFetch } from './ssrf-guard';
 import type { RobotsPolicy } from './robots';
 import { signRequestHeaders, signedDirectory, type WebBotAuth } from './web-bot-auth';
 import { reportError, VERSION } from './instrument';
-import { extractPdfInWorker, isDeclaredPdf, isPdf, PdfUnreadableError } from './pdf-extract';
+import { isDeclaredPdf, isPdf, PdfUnreadableError, type PdfExtractor } from './pdf-extract';
 
 export interface AppConfig {
   proxySecret?: string;
@@ -105,6 +105,10 @@ export interface AppConfig {
   // Whether this proxy pushes its item log into a paired Worker's D1 (INGEST_URL
   // is set). Reported by /stats; the loops themselves live in index.ts.
   ingestEnabled?: boolean;
+  // Parses a PDF /extract fetched: the pdf-extractor Worker in production
+  // (remotePdfExtractor). Unset = PDFs are reported as unsupported, which is what
+  // a dev proxy without PDF_EXTRACTOR_URL gets.
+  extractPdf?: PdfExtractor;
   // robots.txt policy for the crawl path (fetchParseAndCache). Unset = the crawl
   // ignores robots.txt — the historical behaviour, and what unit tests get.
   // index.ts wires a RobotsPolicy in unless ROBOTS_ENABLED=false. See robots.ts
@@ -384,7 +388,7 @@ const FETCH_TIMEOUT_MS = 30 * 1000; // 30 seconds
 // Tighter budget for /extract's upstream fetch. The route is interactive (a
 // reader is watching a save spin) and its worst case has to fit under the
 // server's idleTimeout with room for the parse: permit wait + this fetch +
-// Defuddle or the PDF parse (PDF_PARSE_HARD_TIMEOUT_MS). Raising it means
+// Defuddle or the PDF extractor call (PDF_EXTRACT_TIMEOUT_MS). Raising it means
 // raising idleTimeout in index.ts first.
 const EXTRACT_FETCH_TIMEOUT_MS = 20 * 1000; // 20 seconds
 // How long an /extract may wait for a permit before it is shed. The semaphore's
@@ -590,9 +594,9 @@ async function extractArticle(html: string, url: string): Promise<ExtractedArtic
 }
 
 // A PDF the proxy recognised but couldn't turn into text: too large, password-
-// protected, a parse that timed out or crashed. Reported with `pdf: true` so the
-// reader isn't sent to the extension, which extracts a PDF tab through this same
-// route and would fail the same way.
+// protected, a parse that timed out or failed, or no extractor configured.
+// Reported with `pdf: true` so the reader isn't sent to the extension, which
+// extracts a PDF tab through this same route and would fail the same way.
 class PdfExtractError extends Error {
   constructor(message: string) {
     super(message);
@@ -600,22 +604,25 @@ class PdfExtractError extends Error {
   }
 }
 
-// A PDF reflowed into reader HTML (see pdf-extract.ts), in the same shape a web
-// page's extraction has. Its domain comes from the URL; a PDF has no lead image.
-// `cacheable` is false when the time budget cut the parse short: that depends
-// on load, and a quiet retry would read more of the document.
+// A PDF reflowed into reader HTML by the extractor Worker (see pdf-extract.ts),
+// in the same shape a web page's extraction has. Its domain comes from the URL;
+// a PDF has no lead image.
 async function extractPdfArticle(
-  bytes: Uint8Array,
-  url: string,
-  opts: { transfer?: boolean } = {}
-): Promise<{ article: ExtractedArticle; cacheable: boolean }> {
-  let pdf: Awaited<ReturnType<typeof extractPdfInWorker>>;
+  extractPdf: PdfExtractor | undefined,
+  bytes: Uint8Array<ArrayBuffer>,
+  url: string
+): Promise<ExtractedArticle> {
+  if (!extractPdf) throw new PdfExtractError('Saving PDFs is not set up on this server');
+  let pdf: Awaited<ReturnType<PdfExtractor>>;
   try {
-    pdf = await extractPdfInWorker(bytes, opts);
+    pdf = await extractPdf(bytes);
   } catch (err) {
     // Unreadable stays as it is: on the sniff-only path it means "not a PDF
     // after all", and the caller falls back to the article extractor.
     if (err instanceof PdfUnreadableError) throw err;
+    if (err instanceof Error && err.name === 'TimeoutError') {
+      throw new PdfExtractError('This PDF took too long to read');
+    }
     throw new PdfExtractError(err instanceof Error ? err.message : String(err));
   }
   const article: ExtractedArticle = {
@@ -629,7 +636,7 @@ async function extractPdfArticle(
     wordCount: pdf.wordCount,
     contentType: 'pdf',
   };
-  return { article, cacheable: !pdf.budgetExceeded };
+  return article;
 }
 
 export class ResponseTooLargeError extends Error {
@@ -668,7 +675,10 @@ async function readResponseWithLimit(response: Response, maxBytes: number): Prom
   return out + decoder.decode();
 }
 
-async function readBytesWithLimit(response: Response, maxBytes: number): Promise<Uint8Array> {
+async function readBytesWithLimit(
+  response: Response,
+  maxBytes: number
+): Promise<Uint8Array<ArrayBuffer>> {
   const chunks: Uint8Array[] = [];
   const total = await streamWithLimit(response, maxBytes, (chunk) => chunks.push(chunk));
   const out = new Uint8Array(total);
@@ -2757,7 +2767,7 @@ export function createApp(db: Database, config: AppConfig) {
           }
 
           const contentType = response.headers.get('Content-Type');
-          let bytes: Uint8Array;
+          let bytes: Uint8Array<ArrayBuffer>;
           try {
             bytes = await readBytesWithLimit(response, MAX_RESPONSE_SIZE_BYTES);
           } catch (err) {
@@ -2780,17 +2790,14 @@ export function createApp(db: Database, config: AppConfig) {
           // Sniff as well as trust the header: plenty of servers send a PDF as
           // application/octet-stream, and a PDF decoded as text is mojibake.
           let extracted: ExtractedArticle;
-          let cacheable = true;
           if (isDeclaredPdf(contentType)) {
-            ({ article: extracted, cacheable } = await extractPdfArticle(bytes, url));
+            extracted = await extractPdfArticle(config.extractPdf, bytes, url);
           } else if (isPdf(bytes, contentType)) {
             // Only the sniff said PDF, and `%PDF-` can turn up near the top of a
-            // page that isn't one. Keep the bytes (the worker gets a copy) so a
-            // body pdf.js can't open still gets the article extractor.
+            // page that isn't one, so a body pdf.js can't open still gets the
+            // article extractor.
             try {
-              ({ article: extracted, cacheable } = await extractPdfArticle(bytes, url, {
-                transfer: false,
-              }));
+              extracted = await extractPdfArticle(config.extractPdf, bytes, url);
             } catch (err) {
               if (!(err instanceof PdfUnreadableError)) throw err;
               extracted = await extractArticle(new TextDecoder().decode(bytes), url);
@@ -2799,12 +2806,10 @@ export function createApp(db: Database, config: AppConfig) {
             extracted = await extractArticle(new TextDecoder().decode(bytes), url);
           }
 
-          if (cacheable) {
-            db.run(
-              'INSERT OR REPLACE INTO extract_cache (url_hash, url, extracted_json, cached_at, extractor_version) VALUES (?, ?, ?, ?, ?)',
-              [urlHash, url, JSON.stringify(extracted), Date.now(), EXTRACTOR_VERSION]
-            );
-          }
+          db.run(
+            'INSERT OR REPLACE INTO extract_cache (url_hash, url, extracted_json, cached_at, extractor_version) VALUES (?, ?, ?, ?, ?)',
+            [urlHash, url, JSON.stringify(extracted), Date.now(), EXTRACTOR_VERSION]
+          );
 
           return extracted;
         } finally {
