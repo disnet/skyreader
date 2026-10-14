@@ -14,7 +14,9 @@ import {
   saveAnywhereHint,
   saveAnywhereLabel,
   saveAnywhereUrl,
+  extensionCanHelp,
   failedSaveBody,
+  failedSaveLine,
   isFailedSaveBody,
 } from './saveAnywhere';
 
@@ -119,6 +121,18 @@ describe('failedSaveBody', () => {
     expect(body).toContain('href="https://example.com/paper.pdf"');
     expect(body).not.toContain('extension');
     expect(isFailedSaveBody(body)).toBe(true);
+  });
+});
+
+describe('a PDF left unread for the plan', () => {
+  it('says why and points at becoming a Supporter, not the extension', () => {
+    const body = failedSaveBody('https://example.com/paper.pdf', 'pdfUpgrade');
+    expect(body).toContain('Supporter feature');
+    expect(body).toContain('href="/supporter"');
+    expect(body).not.toContain('extension');
+    expect(isFailedSaveBody(body)).toBe(true);
+    expect(extensionCanHelp('pdfUpgrade')).toBe(false);
+    expect(failedSaveLine('pdfUpgrade')).toContain('Supporter');
   });
 });
 

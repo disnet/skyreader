@@ -25,6 +25,7 @@
   import { bskyEmbed } from '$lib/actions/bsky-embed';
   import { mathRender } from '$lib/actions/math-render';
   import Icon from '$lib/components/Icon.svelte';
+  import { savedFileUrl } from '$lib/services/api';
   import PopoverMenu from '$lib/components/PopoverMenu.svelte';
   import TagMenu from '$lib/components/feed/TagMenu.svelte';
   import LinkContextMenu from '$lib/components/feed/LinkContextMenu.svelte';
@@ -217,6 +218,14 @@
       : undefined
   );
   let feedTitle = $derived(sub?.customTitle || sub?.title || '');
+
+  // An uploaded PDF has no web page to go back to: its original file (figures,
+  // equations, layout the reflow can't carry) is linked in the meta line instead.
+  let originalFileUrl = $derived(
+    readerItem.type === 'saved' && readerItem.item.source === 'upload' && readerItem.item.rkey
+      ? savedFileUrl(readerItem.item.rkey)
+      : null
+  );
 
   // Normalize data from different item types using shared utility
   let normalized = $derived(normalizeDisplayItem(readerItem, sub));
@@ -1282,6 +1291,18 @@
             <Icon name="clock" size={12} />
             {readTimeMinutes} min read
           </span>
+          {#if originalFileUrl}
+            <a
+              href={originalFileUrl}
+              target="_blank"
+              rel="noopener"
+              class="reader-feed reader-original"
+              title="Open the PDF as uploaded"
+            >
+              <Icon name="file-text" size={12} />
+              Original PDF
+            </a>
+          {/if}
         </div>
         {#if itemTags.length > 0}
           <div class="reader-tags">
@@ -1829,6 +1850,12 @@
 
   .reader-feed:hover {
     color: var(--color-primary, #0066cc);
+  }
+
+  .reader-original {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
   }
 
   .reader-read-time {

@@ -1,4 +1,5 @@
 import type { Env } from '../types';
+import { getUserTierLimits } from './user-tier';
 
 // A reader's daily allowance of PDF parses. Parsing runs on the pdf-extractor
 // Worker and is the one extraction we pay for per CPU-second, so it gets a
@@ -46,4 +47,26 @@ export async function chargePdfParse(env: Env, did: string, now = Date.now()): P
   } catch (error) {
     console.error('[PdfQuota] charge failed:', error);
   }
+}
+
+/**
+ * Whether a parse may run for this reader: PDFs are a Supporter feature
+ * (TierLimits.pdfSaves), and a Supporter still has the daily cap above.
+ * Like the allowance, the plan lookup fails open: a D1 hiccup shouldn't turn
+ * a Supporter's save into an upsell.
+ */
+export type PdfAccess = 'ok' | 'not_supporter' | 'quota';
+
+export const PDF_SUPPORTER_MESSAGE = 'Reading PDFs in Skyreader is a Supporter feature.';
+export const PDF_QUOTA_MESSAGE = "You've saved a lot of PDFs today. Try again tomorrow.";
+
+export async function pdfAccess(env: Env, did: string, now = Date.now()): Promise<PdfAccess> {
+  let entitled = true;
+  try {
+    entitled = (await getUserTierLimits(env, did)).pdfSaves;
+  } catch (error) {
+    console.error('[PdfQuota] plan lookup failed:', error);
+  }
+  if (!entitled) return 'not_supporter';
+  return (await hasPdfAllowance(env, did, now)) ? 'ok' : 'quota';
 }

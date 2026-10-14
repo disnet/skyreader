@@ -23,9 +23,15 @@ If the article is already in Semble or Margin, the picker opens on the collectio
 
 ### Saving a PDF
 
-Save a link to a PDF (a paper, a report) the same way you save an article. Skyreader keeps its text, set as ordinary paragraphs, so you can read, highlight, and search it like anything else you save.
+PDFs are a [Supporter](/supporter/) feature. Save a link to a PDF (a paper, a report) the same way you save an article, or upload one from your device: open **+ → Save a link**, then **Upload a PDF**, or drop the file onto that panel. Skyreader keeps its text, set as ordinary paragraphs, so you can read, highlight, take notes, and search it like anything else you save.
 
-Only the text comes through. Figures, tables, and equations stay in the original, so open the PDF for those. A scanned PDF has no text to keep, and a password-protected one can't be read. A very long PDF keeps the text of its first pages, and says so at the end. A PDF larger than 10 MB is too big to save as text: Skyreader keeps the link instead, so you can still open it from your Saved list. Up to 100 PDFs a day come through as text; past that, Skyreader keeps the link, and saving it again the next day brings in the text.
+Only the text comes through. Figures, tables, and equations stay in the original, so open the PDF for those: a PDF you uploaded keeps its original file, linked as **Original PDF** under the title. A scanned PDF has no text to keep, and a password-protected one can't be read. A very long PDF keeps the text of its first pages, and says so at the end.
+
+Limits: a PDF can be up to 10 MB. You can upload 200 PDFs a month and keep up to 2 GB of uploaded files; removing a saved PDF frees its space. Up to 100 PDFs a day come through as text, by link or upload; past that, a saved link keeps just the link, and saving it again the next day brings in the text.
+
+On the free plan, saving a link to a PDF keeps the link, so you can still open it from your Saved list.
+
+Uploaded PDFs are private to you. They stay on Skyreader, and aren't added to a Semble or Margin collection when your saves are backed by one.
 
 ### When a site won't let Skyreader read it
 
@@ -35,7 +41,7 @@ Some sites refuse automated readers, so Skyreader's servers can't fetch the arti
 
 If you use [Semble](https://semble.so) or [Margin](https://margin.at), you can back your Saved list with one of them (**Settings → Library & privacy → Saved articles**). Your Saved list becomes a collection there: edit it in either app, or in any Atmospheric app, and the two stay in sync.
 
-One thing to know before turning it on: **backing publishes your saves publicly**, because Semble and Margin collections are public. Saved newsletters are the exception: they have no web link to share, so they stay private to Skyreader.
+One thing to know before turning it on: **backing publishes your saves publicly**, because Semble and Margin collections are public. Saved newsletters and uploaded PDFs are the exception: they have no web link to share, so they stay private to Skyreader.
 
 ## Highlights
 

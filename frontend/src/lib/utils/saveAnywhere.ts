@@ -88,9 +88,10 @@ export function blockedSaveAction(): BlockedSaveAction {
  * the server's fetcher; `pdf` is a PDF the server couldn't turn into text (too
  * large, password-protected, a failed parse); `failed` is anything else that
  * went wrong fetching or extracting the page (a timeout, a broken page, the
- * proxy itself).
+ * proxy itself). `pdfUpgrade` is a PDF left unread because the reader's plan
+ * doesn't include PDFs (a Supporter feature).
  */
-export type SaveFetchFailure = 'blocked' | 'pdf' | 'failed';
+export type SaveFetchFailure = 'blocked' | 'pdf' | 'pdfUpgrade' | 'failed';
 
 /**
  * Whether the browser extension is a way to the full text. It reads a web page
@@ -98,7 +99,7 @@ export type SaveFetchFailure = 'blocked' | 'pdf' | 'failed';
  * a PDF through the same server extraction that just failed.
  */
 export function extensionCanHelp(reason: SaveFetchFailure): boolean {
-  return reason !== 'pdf';
+  return reason !== 'pdf' && reason !== 'pdfUpgrade';
 }
 
 /**
@@ -132,13 +133,19 @@ export function failedSaveBody(url: string, reason: SaveFetchFailure): string {
       ? "Skyreader couldn't fetch this article: the site blocks automated readers."
       : reason === 'pdf'
         ? "Skyreader couldn't read the text of this PDF."
-        : "Skyreader couldn't fetch this article.";
+        : reason === 'pdfUpgrade'
+          ? 'Reading PDFs in Skyreader is a Supporter feature.'
+          : "Skyreader couldn't fetch this article.";
   const link = (href: string, text: string) =>
     `<a href="${escapeHtml(href)}">${escapeHtml(text)}</a>`;
   if (!extensionCanHelp(reason)) {
     return [
       `<p ${FAILED_SAVE_MARKER}>${why} The link is saved, so it's here when you want it.</p>`,
       `<p>${link(url, `Open it on ${host}`)}</p>`,
+      // Saving the link again once they are a Supporter replaces this note.
+      ...(reason === 'pdfUpgrade'
+        ? [`<p>${link('/supporter', 'Become a Supporter')} to read and highlight PDFs here.</p>`]
+        : []),
     ].join('\n');
   }
   return [
@@ -156,5 +163,6 @@ export function failedSaveBody(url: string, reason: SaveFetchFailure): string {
 export function failedSaveLine(reason: SaveFetchFailure): string {
   if (reason === 'blocked') return `Saved the link only. ${BLOCKED_SAVE_LINE}`;
   if (reason === 'pdf') return "Saved the link only. Skyreader couldn't read this PDF.";
+  if (reason === 'pdfUpgrade') return 'Saved the link only. Reading PDFs is a Supporter feature.';
   return "Saved the link only. Skyreader couldn't fetch the article.";
 }

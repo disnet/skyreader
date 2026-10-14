@@ -123,19 +123,24 @@ errors stay visible in the issue stream; they just don't ring.
 
 ### Backend (`npx wrangler secret put <NAME>`, per environment)
 
-| Name                   | Required | Purpose                                                          |
-| ---------------------- | -------- | ---------------------------------------------------------------- |
-| `SENTRY_DSN`           | no       | Error reporting. Unset ⇒ reporting is a silent no-op.            |
-| `HEARTBEAT_URL`        | no       | Cron dead-man ping URL. Unset ⇒ no ping (correct for local/dev). |
-| `HEALTH_CHECK_SECRET`  | no       | Gates `/api/health/deep`. Unset ⇒ the endpoint 503s, by design.  |
-| `POLAR_ACCESS_TOKEN`   | no       | Polar API. Unset ⇒ billing off: checkout 503s.                   |
-| `POLAR_WEBHOOK_SECRET` | no       | Polar webhook signing. Unset ⇒ the webhook fails closed (500).   |
+| Name                   | Required        | Purpose                                                                                                                                                  |
+| ---------------------- | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SENTRY_DSN`           | no              | Error reporting. Unset ⇒ reporting is a silent no-op.                                                                                                    |
+| `HEARTBEAT_URL`        | no              | Cron dead-man ping URL. Unset ⇒ no ping (correct for local/dev).                                                                                         |
+| `HEALTH_CHECK_SECRET`  | no              | Gates `/api/health/deep`. Unset ⇒ the endpoint 503s, by design.                                                                                          |
+| `POLAR_ACCESS_TOKEN`   | no              | Polar API. Unset ⇒ billing off: checkout 503s.                                                                                                           |
+| `POLAR_WEBHOOK_SECRET` | no              | Polar webhook signing. Unset ⇒ the webhook fails closed (500).                                                                                           |
+| `PDF_EXTRACTOR_SECRET` | for PDF uploads | Same value as the pdf-extractor Worker's `EXTRACT_SECRET`. Unset ⇒ `POST /api/saved/pdf` answers 503; PDFs saved by link (via the proxy) are unaffected. |
 
 The two `POLAR_*` secrets are **per Polar org, and the orgs differ per
 environment**: production uses the live org, staging a separate sandbox one
 (`POLAR_SERVER` in `wrangler.toml` picks which host the SDK talks to). Setting a
 production token on staging authenticates against the wrong catalog and every
 checkout 502s. Set them with `--env staging` and see [`POLAR_SETUP.md`](../POLAR_SETUP.md).
+
+Uploaded PDFs also need the `SAVED_FILES` R2 bucket to exist before the deploy that
+binds it (`npx wrangler r2 bucket create skyreader-saved-files`, and
+`skyreader-saved-files-staging`); `PDF_EXTRACTOR_URL` is a plain var in `wrangler.toml`.
 
 `SENTRY_ENVIRONMENT` is a plain var in `wrangler.toml` (`production` / `staging`).
 `GIT_COMMIT_SHA` is passed by CI at deploy time (`--var GIT_COMMIT_SHA:<sha>`); a
