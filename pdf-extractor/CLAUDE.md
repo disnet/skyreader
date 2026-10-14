@@ -55,10 +55,10 @@ Workers.
 
 ## Configuration
 
-| Name             | Where                           | Purpose                                                                                        |
-| ---------------- | ------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Name             | Where                           | Purpose                                                                                                                                               |
+| ---------------- | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `EXTRACT_SECRET` | `wrangler secret put` (per env) | Same value as the proxy's `PDF_EXTRACTOR_SECRET` Fly secret and the backend's `PDF_EXTRACTOR_SECRET` Worker secret. Unset ⇒ every request is refused. |
-| `GIT_COMMIT_SHA` | `--var` from CI                 | Reported on `/health`.                                                                         |
+| `GIT_COMMIT_SHA` | `--var` from CI                 | Reported on `/health`.                                                                                                                                |
 
 Deployed by `.github/workflows/pdf-extractor-deploy.yml`: staging
 (`pdf-extractor-staging.skyreader.app`) on push to main, production
