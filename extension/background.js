@@ -294,7 +294,9 @@ async function performSave(url, { fallbackTitle, extractTabId } = {}) {
     title: extracted?.title || fallbackTitle || undefined,
     author: extracted?.author || undefined,
     description: extracted?.description || undefined,
-    content: hasBody ? extracted.content : noTextNote(url),
+    // No extraction at all (network failure) stays a bare save so a later backfill can
+    // still fill it; only a fetched-but-empty page gets the note.
+    content: hasBody ? extracted.content : extracted ? noTextNote(url) : undefined,
     domain: extracted?.domain || undefined,
     image: extracted?.image || undefined,
     publishedAt: extracted?.published || undefined,
