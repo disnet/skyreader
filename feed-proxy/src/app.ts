@@ -606,8 +606,12 @@ async function extractArticle(html: string, url: string): Promise<ExtractedArtic
 // Reported with `pdf: true` so the reader isn't sent to the extension, which
 // extracts a PDF tab through this same route and would fail the same way.
 class PdfExtractError extends Error {
-  constructor(message: string) {
+  // True for a failure of the extractor Worker itself (outage, bad secret, 5xx),
+  // which says nothing about the PDF: neither cached nor charged to the reader.
+  transient: boolean;
+  constructor(message: string, transient = false) {
     super(message);
+    this.transient = transient;
     this.name = 'PdfExtractError';
   }
 }
@@ -635,7 +639,7 @@ async function extractPdfArticle(
     if (err instanceof Error && err.name === 'TimeoutError') {
       throw new PdfExtractError('This PDF took too long to read');
     }
-    throw new PdfExtractError(err instanceof Error ? err.message : String(err));
+    throw new PdfExtractError(err instanceof Error ? err.message : String(err), true);
   }
   const article: ExtractedArticle = {
     title: pdf.title,
@@ -2831,7 +2835,7 @@ export function createApp(db: Database, config: AppConfig) {
           let extracted: ExtractedArticle;
           if (isDeclaredPdf(contentType)) {
             extracted = await extractPdfArticle(pdfOpts, bytes, url);
-          } else if (isPdf(bytes, contentType)) {
+          } else if (pdfOpts.extractPdf && pdfOpts.allowPdf && isPdf(bytes, contentType)) {
             // Only the sniff said PDF, and `%PDF-` can turn up near the top of a
             // page that isn't one, so a body pdf.js can't open still gets the
             // article extractor.
@@ -2885,7 +2889,8 @@ export function createApp(db: Database, config: AppConfig) {
       }
       if (error instanceof PdfExtractError || error instanceof PdfUnreadableError) {
         console.error(`[Proxy] /extract ${url}: ${error.message} (${elapsed}ms)`);
-        if (pdfParsed) {
+        const transient = error instanceof PdfExtractError && error.transient;
+        if (pdfParsed && !transient) {
           c.header('X-Pdf-Parsed', '1');
           // Only a failure the Worker produced is remembered: no allowance or no
           // extractor says nothing about the PDF.

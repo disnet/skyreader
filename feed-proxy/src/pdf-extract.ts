@@ -79,7 +79,10 @@ export function remotePdfExtractor(
     });
     const body = (await res.json().catch(() => null)) as
       (PdfExtraction & { name?: string; message?: string }) | null;
-    if (res.ok && body) return body;
+    if (res.ok && body && typeof body.content === 'string' && typeof body.wordCount === 'number') {
+      return body;
+    }
+    if (res.status === 413) throw new PdfUnreadableError('PDF too large');
     if (res.status === 422 && body?.name === 'PdfPasswordError') throw new PdfPasswordError();
     if (res.status === 422 && body?.name === 'PdfUnreadableError')
       throw new PdfUnreadableError(body.message ?? 'Unreadable PDF');
