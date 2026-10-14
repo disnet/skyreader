@@ -1,6 +1,7 @@
 import type { Env, FeedItem } from '../types';
 import { getRequestId } from '../utils/request-context';
 import { scrubText } from '../observability/scrub';
+import { chargePdfParse, hasPdfAllowance } from './pdf-quota';
 
 /** Stamp the in-flight request id on an outbound proxy call, when there is one. */
 function setRequestIdHeader(headers: Headers): void {
@@ -421,10 +422,12 @@ interface RawBatchResponse {
 export class FeedProxyClient {
   private proxyUrl: string;
   private proxySecret: string;
+  private env: Env;
 
   constructor(env: Env) {
     this.proxyUrl = env.FEED_PROXY_URL;
     this.proxySecret = env.FEED_PROXY_SECRET;
+    this.env = env;
   }
 
   private async fetch<T>(
@@ -790,8 +793,16 @@ export class FeedProxyClient {
     return response;
   }
 
-  async extract(url: string): Promise<ExtractedArticle> {
+  /**
+   * `userDid` is the reader the extraction is for: a PDF parse is charged to
+   * their daily allowance (services/pdf-quota.ts), and once it is spent the
+   * proxy is told not to parse PDFs for them. Every caller acting for a reader
+   * passes it.
+   */
+  async extract(url: string, opts: { userDid?: string } = {}): Promise<ExtractedArticle> {
     const proxyUrl = `${this.proxyUrl}/extract`;
+    const { userDid } = opts;
+    const allowPdf = userDid ? await hasPdfAllowance(this.env, userDid) : true;
 
     const headers = new Headers();
     headers.set('X-Proxy-Secret', this.proxySecret);
@@ -803,7 +814,7 @@ export class FeedProxyClient {
       response = await fetch(proxyUrl, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ url }),
+        body: JSON.stringify(allowPdf ? { url } : { url, allowPdf: false }),
         signal: AbortSignal.timeout(EXTRACT_TIMEOUT_MS),
       });
     } catch (err) {
@@ -820,6 +831,11 @@ export class FeedProxyClient {
     // large (see the status contract on its /extract route). A 5xx body does not
     // survive the hop from Fly to here, so a non-2xx means the app never
     // answered at all and the body is the edge's, not ours.
+    // Charged whether or not the parse succeeded: the Worker ran either way.
+    if (userDid && response.headers.get('X-Pdf-Parsed') === '1') {
+      await chargePdfParse(this.env, userDid);
+    }
+
     type ExtractBody = Partial<ExtractedArticle> & {
       error?: string;
       blocked?: boolean;

@@ -1,4 +1,5 @@
 import type { Env } from '../types';
+import { PDF_QUOTA_ENDPOINT, PDF_QUOTA_WINDOW_MS } from './pdf-quota';
 
 interface RateLimitConfig {
   limit: number;
@@ -204,7 +205,12 @@ export async function cleanupRateLimits(env: Env): Promise<{ deleted: number; du
 function cleanupStatements(env: Env, now: number): D1PreparedStatement[] {
   // Endpoints whose window differs from the default, grouped by window length.
   const byWindow = new Map<number, string[]>();
-  for (const [endpoint, { windowMs }] of Object.entries(RATE_LIMITS)) {
+  const windows: [string, { windowMs: number }][] = [
+    ...Object.entries(RATE_LIMITS),
+    // Counted in this table too, though not by checkRateLimit (services/pdf-quota.ts).
+    [PDF_QUOTA_ENDPOINT, { windowMs: PDF_QUOTA_WINDOW_MS }],
+  ];
+  for (const [endpoint, { windowMs }] of windows) {
     if (windowMs === DEFAULT_LIMIT.windowMs) continue;
     byWindow.set(windowMs, [...(byWindow.get(windowMs) ?? []), endpoint]);
   }

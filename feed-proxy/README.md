@@ -296,6 +296,8 @@ curl "/feed?url=...&since_guids=old-guid&limit=50"
 | `STALE_TTL_SECONDS`            | `3600`   | Stale cache max age (1 hour)                            |
 | `PORT`                         | `3000`   | HTTP server port                                        |
 | `INGEST_URL`                   | (none)   | Paired Worker base URL. **Unset ⇒ ingest disabled**     |
+| `PDF_EXTRACTOR_URL`            | (none)   | pdf-extractor Worker. **Unset ⇒ PDFs can't be saved**   |
+| `PDF_EXTRACTOR_SECRET`         | (none)   | Its `EXTRACT_SECRET` (Fly secret)                       |
 | `INGEST_INTERVAL_SECONDS`      | `15`     | Push cycle                                              |
 | `INGEST_BATCH_SIZE`            | `100`    | Items per push request                                  |
 | `CRAWL_SET_INTERVAL_SECONDS`   | `300`    | How often to pull the crawl set                         |

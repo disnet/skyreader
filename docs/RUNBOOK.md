@@ -144,11 +144,12 @@ a smoke check fails right after a hand deploy.
 
 ### Feed proxy (`fly secrets set <NAME>=...`)
 
-| Name                 | Required | Purpose                                                                                                                                                                            |
-| -------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SENTRY_DSN`         | no       | Already provisioned by `fly ext sentry create`.                                                                                                                                    |
-| `WARM_HEARTBEAT_URL` | no       | Warmer dead-man ping URL.                                                                                                                                                          |
-| `WEB_BOT_AUTH_KEY`   | no       | Crawler's private Ed25519 JWK (Web Bot Auth). Same value on both apps; unset ⇒ fetches are unsigned. `bun run keygen:web-bot-auth`; see `feed-proxy/README.md` "Crawler identity". |
+| Name                   | Required | Purpose                                                                                                                                                                                                                          |
+| ---------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PDF_EXTRACTOR_SECRET` | for PDFs | Same value as the pdf-extractor Worker's `EXTRACT_SECRET` (`npx wrangler secret put EXTRACT_SECRET [--env staging]` in `pdf-extractor/`). Unset or mismatched ⇒ every PDF save fails with `pdf: true`; web pages are unaffected. |
+| `SENTRY_DSN`           | no       | Already provisioned by `fly ext sentry create`.                                                                                                                                                                                  |
+| `WARM_HEARTBEAT_URL`   | no       | Warmer dead-man ping URL.                                                                                                                                                                                                        |
+| `WEB_BOT_AUTH_KEY`     | no       | Crawler's private Ed25519 JWK (Web Bot Auth). Same value on both apps; unset ⇒ fetches are unsigned. `bun run keygen:web-bot-auth`; see `feed-proxy/README.md` "Crawler identity".                                               |
 
 `GIT_COMMIT_SHA` is a Docker build arg passed by CI, surfaced on `/health`.
 

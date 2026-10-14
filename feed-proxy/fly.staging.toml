@@ -2,7 +2,7 @@ app = "skyreader-feed-proxy-staging"
 primary_region = "sjc"
 
 # KEEP IN SYNC WITH fly.toml. These two files must differ only in `app` and the
-# `INGEST_URL` in [env]; everything else (mounts, http_service, vm, tuning) is
+# `INGEST_URL` and `PDF_EXTRACTOR_URL` in [env]; everything else (mounts, http_service, vm, tuning) is
 # deliberately identical so staging is a faithful soak of what prod will run.
 # Staging deploys on every push to main, prod on release — so drift shows up here
 # first, before a release ships it.
@@ -43,6 +43,8 @@ primary_region = "sjc"
   # This proxy pushes its item log into the STAGING Worker's D1 and pulls the
   # staging crawl set from it. One proxy, one Worker — never both environments.
   INGEST_URL = "https://api-staging.skyreader.app"
+  # The staging pdf-extractor Worker; PDF_EXTRACTOR_SECRET is a Fly secret.
+  PDF_EXTRACTOR_URL = "https://pdf-extractor-staging.skyreader.app"
   CACHE_TTL_SECONDS = "300"
   STALE_TTL_SECONDS = "3600"
   WARM_ENABLED = "true"

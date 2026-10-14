@@ -7,6 +7,7 @@ backend/
 frontend/
 admin/
 feed-proxy/
+pdf-extractor/
 cli/
 linkblog-site/
 docs-site/

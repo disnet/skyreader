@@ -240,7 +240,7 @@ export async function extractMissingBackedContent(
       const row = queue.shift();
       if (!row) return;
       try {
-        const a = await proxy.extract(row.url);
+        const a = await proxy.extract(row.url, { userDid });
         // Set the body, COALESCE-fill metadata only where the stub lacked it (keep the
         // foreign-record title/author we already captured), and hard-set the type to
         // 'article' — these rows are only ever article-like saves (source IN url/feed).

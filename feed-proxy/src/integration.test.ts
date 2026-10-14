@@ -11,11 +11,12 @@ import {
   calculateBackoff,
   FEED_PARSER_VERSION,
   FEED_ITEMS_CAP,
+  PDF_QUOTA_MESSAGE,
   writeFeedItems,
   type AppConfig,
   type CacheRow,
 } from './app';
-import { makePdf } from './pdf-fixture';
+import { PdfUnreadableError, type PdfExtraction, type PdfExtractor } from './pdf-extract';
 
 // Sample RSS feed for mocking
 const SAMPLE_RSS = `<?xml version="1.0" encoding="UTF-8"?>
@@ -3615,17 +3616,35 @@ describe('POST /extract', () => {
     db.close();
   });
 
+  // What the extractor Worker answers for a one-page paper.
+  const PARSED: PdfExtraction = {
+    title: 'Notes on Margins',
+    author: null,
+    description: null,
+    content:
+      '<section data-pdf-page="1">\n<p>Readers who write in the margins remember more.</p>\n</section>',
+    published: null,
+    wordCount: 8,
+    pageCount: 1,
+    pagesKept: 1,
+  };
+
+  // A PdfExtractor that records what it was handed and answers with `answer`.
+  function fakeExtractor(answer: () => Promise<PdfExtraction>) {
+    const calls: Uint8Array[] = [];
+    const extractPdf: PdfExtractor = (bytes) => {
+      calls.push(bytes);
+      return answer();
+    };
+    return { extractPdf, calls };
+  }
+
   // A PDF used to be decoded as UTF-8 and handed to Defuddle, saving mojibake.
   // Servers often mislabel PDFs, so the bytes are sniffed, not just the header.
-  it('extracts a PDF as text, even when served as octet-stream', async () => {
-    const { db, app } = createTestApp();
-    const pdf = makePdf([
-      [
-        [72, 700, 20, 'Notes on Margins'],
-        [72, 660, 10, 'Readers who write in the margins remember more of what'],
-        [72, 648, 10, 'they read than readers who do not.'],
-      ],
-    ]);
+  it('sends a PDF to the extractor, even when served as octet-stream', async () => {
+    const { extractPdf, calls } = fakeExtractor(async () => PARSED);
+    const { db, app } = createTestApp({ extractPdf });
+    const pdf = new TextEncoder().encode('%PDF-1.7\n...');
     fetchMock = mockFetch(
       () => new Response(pdf, { headers: { 'Content-Type': 'application/octet-stream' } })
     );
@@ -3634,18 +3653,22 @@ describe('POST /extract', () => {
     const json = await res.json();
 
     expect(res.status).toBe(200);
+    expect(calls).toHaveLength(1);
+    expect(new TextDecoder().decode(calls[0])).toBe('%PDF-1.7\n...');
     expect(json.contentType).toBe('pdf');
     expect(json.title).toBe('Notes on Margins');
     expect(json.domain).toBe('example.com');
-    expect(json.content).toContain(
-      '<p>Readers who write in the margins remember more of what they read than readers who do not.</p>'
-    );
+    expect(json.image).toBeNull();
+    expect(json.content).toBe(PARSED.content);
 
     db.close();
   });
 
   it('reports an unreadable PDF as an error, not a garbled save', async () => {
-    const { db, app } = createTestApp();
+    const { extractPdf } = fakeExtractor(async () => {
+      throw new PdfUnreadableError('Invalid PDF structure.');
+    });
+    const { db, app } = createTestApp({ extractPdf });
     fetchMock = mockFetchOnce('%PDF-1.4 truncated', {
       headers: { 'Content-Type': 'application/pdf' },
     });
@@ -3654,10 +3677,112 @@ describe('POST /extract', () => {
     const json = await res.json();
 
     expect(res.status).toBe(200);
-    expect(json.error).toBeTruthy();
+    expect(json.error).toBe('Invalid PDF structure.');
     expect(json.blocked).toBe(false);
     // Marked as a PDF failure: the extension can't do better, so the reader
     // isn't sent to it.
+    expect(json.pdf).toBe(true);
+
+    db.close();
+  });
+
+  it('reports a timed-out extractor call as a PDF failure, and remembers it', async () => {
+    const { extractPdf, calls } = fakeExtractor(async () => {
+      const err = new Error('The operation timed out.');
+      err.name = 'TimeoutError';
+      throw err;
+    });
+    const { db, app } = createTestApp({ extractPdf });
+    fetchMock = mockFetch(
+      () => new Response('%PDF-1.7', { headers: { 'Content-Type': 'application/pdf' } })
+    );
+
+    const first = await extract(app, 'https://example.com/slow.pdf');
+    expect(first.headers.get('X-Pdf-Parsed')).toBe('1');
+    expect(await first.json()).toMatchObject({
+      error: 'This PDF took too long to read',
+      pdf: true,
+    });
+
+    // A retry is answered from the failure cache: no fetch, no second parse,
+    // nothing charged to the reader's allowance.
+    fetchMock.mockClear();
+    const second = await extract(app, 'https://example.com/slow.pdf');
+    expect(second.headers.get('X-Cache')).toBe('NEGATIVE');
+    expect(second.headers.get('X-Pdf-Parsed')).toBeNull();
+    expect(await second.json()).toMatchObject({
+      error: 'This PDF took too long to read',
+      pdf: true,
+    });
+    expect(calls).toHaveLength(1);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    db.close();
+  });
+
+  it('marks a response that cost a parse, and not one served from cache', async () => {
+    const { extractPdf, calls } = fakeExtractor(async () => PARSED);
+    const { db, app } = createTestApp({ extractPdf });
+    fetchMock = mockFetch(
+      () => new Response('%PDF-1.7', { headers: { 'Content-Type': 'application/pdf' } })
+    );
+
+    const first = await extract(app, 'https://example.com/paper.pdf');
+    expect(first.headers.get('X-Pdf-Parsed')).toBe('1');
+    const again = await extract(app, 'https://example.com/paper.pdf');
+    expect(again.headers.get('X-Cache')).toBe('HIT');
+    expect(again.headers.get('X-Pdf-Parsed')).toBeNull();
+    expect(calls).toHaveLength(1);
+
+    db.close();
+  });
+
+  it('refuses a PDF without calling the extractor when the caller has no allowance', async () => {
+    const { extractPdf, calls } = fakeExtractor(async () => PARSED);
+    const { db, app } = createTestApp({ extractPdf });
+    fetchMock = mockFetch(
+      () => new Response('%PDF-1.7', { headers: { 'Content-Type': 'application/pdf' } })
+    );
+
+    const res = await app.request('/extract', {
+      method: 'POST',
+      headers: { 'X-Proxy-Secret': 'test-secret', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: 'https://example.com/paper.pdf', allowPdf: false }),
+    });
+
+    expect(res.headers.get('X-Pdf-Parsed')).toBeNull();
+    expect(await res.json()).toMatchObject({ error: PDF_QUOTA_MESSAGE, pdf: true });
+    expect(calls).toHaveLength(0);
+
+    // Not remembered as the PDF's failure: a reader with allowance still gets it.
+    const allowed = await extract(app, 'https://example.com/paper.pdf');
+    expect((await allowed.json()).title).toBe('Notes on Margins');
+
+    db.close();
+  });
+
+  it('saves a web page as usual for a caller with no PDF allowance', async () => {
+    const { db, app } = createTestApp();
+    fetchMock = mockFetchOnce(ARTICLE_HTML, { headers: { 'Content-Type': 'text/html' } });
+
+    const res = await app.request('/extract', {
+      method: 'POST',
+      headers: { 'X-Proxy-Secret': 'test-secret', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: 'https://example.com/a-piece', allowPdf: false }),
+    });
+
+    expect((await res.json()).error).toBeUndefined();
+
+    db.close();
+  });
+
+  it('reports PDFs as unsupported when no extractor is configured', async () => {
+    const { db, app } = createTestApp();
+    fetchMock = mockFetchOnce('%PDF-1.7', { headers: { 'Content-Type': 'application/pdf' } });
+
+    const json = await (await extract(app, 'https://example.com/paper.pdf')).json();
+
+    expect(json.error).toBe('Saving PDFs is not set up on this server');
     expect(json.pdf).toBe(true);
 
     db.close();
@@ -3706,7 +3831,10 @@ describe('POST /extract', () => {
   // Only sniffed, not declared: a page that merely mentions the header near
   // its top still gets the article extractor when pdf.js can't open it.
   it('falls back to the article extractor when a sniffed PDF is not one', async () => {
-    const { db, app } = createTestApp();
+    const { extractPdf } = fakeExtractor(async () => {
+      throw new PdfUnreadableError('Invalid PDF structure.');
+    });
+    const { db, app } = createTestApp({ extractPdf });
     const html = `<!doctype html><html><head><title>The PDF Format</title></head><body><article><h1>The PDF Format</h1><p>Every file starts with %PDF-1.7 and a version number. ${'This sentence pads the article out so the extractor keeps it. '.repeat(10)}</p></article></body></html>`;
     // A byte body, so the response carries no Content-Type and the sniff decides.
     fetchMock = mockFetch(() => new Response(new TextEncoder().encode(html)));
