@@ -35,7 +35,7 @@ Supporters get a private email address for newsletters. Find it on the **+** but
 
 Like or bookmark a post on Bluesky, and the article it links to can be waiting in your reader. Go to **Manage Sources**, find **Your Bluesky likes** or **Your Bluesky bookmarks** under **The Atmosphere**, and choose **Add**. Bookmarks are private on Bluesky, so the first time Skyreader asks for permission to read them: choose **Allow** and confirm on your account provider's page.
 
-- **Only posts with a link.** A post that links somewhere becomes an article: the linked page, with the post's words above it. Posts without a link are left out, and so are links back to Bluesky.
+- **Only posts with a link.** A post that links somewhere becomes an article: its card shows the post's words, then the card for the page it links to. Open either to read the page. Posts without a link are left out, and so are links back to Bluesky.
 - **Newest first, by when you liked or bookmarked it.** New ones arrive within a few minutes while you read.
 - **Read it, save it.** Open one to read the full article. Save it like any other article.
 - **Un-liking leaves it here.** Remove the article by marking it read, or remove the source to clear them all.

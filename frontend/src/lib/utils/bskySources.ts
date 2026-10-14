@@ -1,4 +1,5 @@
 import type { Subscription } from '$lib/types';
+import { decodeEntities } from './entities';
 
 /**
  * Bluesky likes and bookmarks as sources. The posts a reader liked or
@@ -37,4 +38,63 @@ export function bskySourceKind(
     return 'bookmarks';
   }
   return null;
+}
+
+/** The link card a kept post links to, as the feed card draws it. */
+export interface KeptPostLinkCard {
+  title: string;
+  description: string | null;
+  thumb: string | null;
+  domain: string;
+}
+
+function squash(s: string): string {
+  return s.replace(/\s+/g, ' ').trim();
+}
+
+/** The post's own words, read back out of the item's `contentLead` quote. */
+function postTextOf(leadHtml: string | null | undefined): string {
+  const quoted = leadHtml?.match(/<blockquote>([\s\S]*?)<\/blockquote>/)?.[1];
+  if (!quoted) return '';
+  return squash(decodeEntities(quoted.replace(/<br\s*\/?>/gi, ' ').replace(/<[^>]+>/g, '')));
+}
+
+/**
+ * The link card behind a liked or bookmarked post. The item IS the linked
+ * article, but until its page is fetched the card shows only the post's words,
+ * which read as a post, not as a way into an article. So the article gets the
+ * card Bluesky draws for it: its title, blurb and site, thumbnail beside.
+ *
+ * The item's `title` and `summary` fall back to the post's own text when the
+ * post had no embed card (see bskyPostItem in the backend); those would only
+ * repeat the words above the card, so the card drops them and names the link.
+ */
+export function keptPostLinkCard(item: {
+  url: string;
+  title: string;
+  summary?: string | null;
+  imageUrl?: string | null;
+  leadHtml?: string | null;
+}): KeptPostLinkCard {
+  let domain = item.url;
+  let address = item.url;
+  try {
+    const u = new URL(item.url);
+    domain = u.hostname.replace(/^www\./, '');
+    address = `${domain}${u.pathname === '/' ? '' : u.pathname}`;
+  } catch {
+    // keep the raw url
+  }
+
+  const postText = postTextOf(item.leadHtml);
+  const fromPost = (s: string) => Boolean(postText) && postText.startsWith(s.replace(/…$/, ''));
+
+  const title = squash(decodeEntities(item.title) || '');
+  const summary = squash(decodeEntities(item.summary ?? '') || '');
+  return {
+    title: title && title !== domain && !fromPost(title) ? title : address,
+    description: summary && !fromPost(summary) ? summary : null,
+    thumb: item.imageUrl || null,
+    domain,
+  };
 }

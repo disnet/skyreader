@@ -203,6 +203,9 @@ export interface ArticleCardViewProps {
   /** A follows link's body until its page is fetched: the sharer's words, then
    *  the link card they posted. */
   followLinkCard?: FollowLinkCardVM;
+  /** A liked or bookmarked post's link card, drawn under the post's words
+   *  until the article is fetched. */
+  keptLinkCard?: Omit<FollowLinkCardVM, 'said'>;
 
   socialContext?: SocialContextVM;
 
