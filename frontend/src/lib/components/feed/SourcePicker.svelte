@@ -498,7 +498,7 @@
     }
 
     .expand-btn {
-      width: 32px;
+      width: 24px;
       height: 44px;
     }
 
