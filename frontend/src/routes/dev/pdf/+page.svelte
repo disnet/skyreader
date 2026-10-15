@@ -7,10 +7,12 @@
   // selection let go of) highlights it at once, a tap on a highlight removes it,
   // and the sample opens with one that crosses from page 1 onto page 2. Page 1's
   // top line carries links: two into the document and one out of it. Zoom and
-  // place are remembered per `src` (or per sample), as a save's are by its rkey.
+  // place are remembered per `src` (or per sample) on this device; a save's
+  // place syncs as an item label instead.
   import { page } from '$app/state';
   import PdfViewer from '$lib/components/feed/PdfViewer.svelte';
   import type { Highlight, TextQuoteSelector } from '$lib/types';
+  import { isPdfPlace, type PdfPlace } from '$lib/utils/pdfPlace';
   import { makePdf, type Placed, type PlacedLink } from '../_harness/pdfFixture';
   import { SAMPLE_JPX_BASE64, makeJpxPdf } from '../_harness/jpxPdf';
 
@@ -53,6 +55,27 @@
       ? jpxPdf()
       : samplePdf();
 
+  // Stands in for the item label a save's place is synced as.
+  const harnessKey = `dev-harness:${src ?? page.url.searchParams.get('sample') ?? 'sample'}`;
+  const PLACE_KEY = 'skyreader-dev-pdf-place';
+  function storedPlace(): PdfPlace | null {
+    try {
+      const value: unknown = JSON.parse(localStorage.getItem(PLACE_KEY) ?? '{}')[harnessKey];
+      return isPdfPlace(value) ? value : null;
+    } catch {
+      return null;
+    }
+  }
+  const harnessPlace = storedPlace();
+  function rememberPlace(place: PdfPlace) {
+    try {
+      const all = JSON.parse(localStorage.getItem(PLACE_KEY) ?? '{}');
+      localStorage.setItem(PLACE_KEY, JSON.stringify({ ...all, [harnessKey]: place }));
+    } catch {
+      // The harness forgets.
+    }
+  }
+
   const make = (selector: TextQuoteSelector): Highlight => ({
     id: Math.random().toString(36).slice(2),
     selector,
@@ -85,7 +108,9 @@
     onselect={add}
     oncommit={add}
     onhighlight={(id) => (highlights = highlights.filter((h) => h.id !== id))}
-    rememberKey={`dev-harness:${src ?? page.url.searchParams.get('sample') ?? 'sample'}`}
+    zoomKey={harnessKey}
+    place={harnessPlace}
+    onplace={rememberPlace}
   />
 </div>
 

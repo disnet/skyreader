@@ -1,3 +1,4 @@
+import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 import { makeSupporter, seedSavedArticle } from './seed';
 import { makePdf, type Placed } from '../frontend/src/routes/dev/_harness/pdfFixture';
@@ -175,6 +176,61 @@ test.describe('PDF original view', () => {
     await authedPage.getByRole('button', { name: 'Back to page 1' }).click();
     await expect(authedPage.locator('.pdf-links a[data-page="4"]')).toBeInViewport();
     await expect(authedPage.getByRole('button', { name: /^Back to page/ })).toHaveCount(0);
+  });
+
+  test('opens where it was left, on another device too', async ({
+    authedPage,
+    testUser,
+    browser,
+  }) => {
+    await makeSupporter(testUser);
+    const rkey = await seedSavedArticle(testUser, {
+      url: '',
+      title: TITLE,
+      source: 'upload',
+      contentType: 'pdf',
+      content: BODY,
+      wordCount: 60,
+    });
+    const pages: Placed[][] = [1, 2, 3, 4, 5, 6, 7, 8].map((p) => [
+      [72, 720, 20, `Page ${p} heading`],
+      [72, 680, 11, `Original text on page ${p}.`],
+    ]);
+    const pdf = Buffer.from(makePdf(pages));
+    const open = async (page: Page) => {
+      await page.route(`**/api/saved/${rkey}/file`, (route) =>
+        route.fulfill({ body: pdf, contentType: 'application/pdf' })
+      );
+      await page.evaluate(() => localStorage.setItem('skyreader-pdf-view', 'original'));
+      await page.goto('/saved');
+      await page.getByText(TITLE).first().click({ timeout: 15_000 });
+      await expect(page.locator('.pdf-page canvas').first()).toBeVisible({ timeout: 15_000 });
+    };
+
+    await open(authedPage);
+    await expect(authedPage.locator('.pdf-page-count')).toHaveText('1 / 8');
+
+    // Read down to page 6; the place is sent to the server once the scrolling stops.
+    const sent = authedPage.waitForRequest(
+      (req) => req.url().endsWith('/api/labels') && req.postData()?.includes('"pdfPlace"') === true
+    );
+    await authedPage.locator('.pdf-page[data-page="6"]').scrollIntoViewIfNeeded();
+    await expect(authedPage.locator('.pdf-page-count')).toHaveText('6 / 8');
+    const body = JSON.parse((await sent).postData() ?? '{}');
+    expect(body.props.page).toBe(6);
+
+    // Another device (no local cache, same account) opens it on page 6.
+    const other = await browser.newContext({
+      storageState: await authedPage.context().storageState(),
+    });
+    try {
+      const otherPage = await other.newPage();
+      await otherPage.goto('/');
+      await open(otherPage);
+      await expect(otherPage.locator('.pdf-page-count')).toHaveText('6 / 8', { timeout: 15_000 });
+    } finally {
+      await other.close();
+    }
   });
 
   test('a web article has no PDF toggle', async ({ authedPage, testUser }) => {

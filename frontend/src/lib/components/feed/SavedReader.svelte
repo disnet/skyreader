@@ -1508,7 +1508,11 @@
             onselect={highlightsHook.offerSelection}
             oncommit={highlightsHook.addHighlight}
             onhighlight={highlightsHook.openHighlight}
-            rememberKey={pdfSave?.rkey}
+            zoomKey={pdfSave?.rkey}
+            place={pdfSave ? itemLabelsStore.getPdfPlace(pdfSave.uri) : null}
+            onplace={(place) => {
+              if (pdfSave) void itemLabelsStore.setPdfPlace(pdfSave.uri, 'saved', place);
+            }}
           />
         {/key}
       </article>

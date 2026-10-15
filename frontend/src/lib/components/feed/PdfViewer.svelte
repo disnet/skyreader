@@ -20,7 +20,7 @@
   } from '$lib/utils/pdfTextModel';
   import { resolvePdfLink, type PdfLinkAnnotation, type PdfLinkTarget } from '$lib/utils/pdfLinks';
   import { claimPdfZoomShortcuts, pdfZoom, setPdfZoom } from '$lib/utils/pdfZoom';
-  import { pdfPlace, setPdfPlace, type PdfPlace } from '$lib/utils/pdfPlace';
+  import type { PdfPlace } from '$lib/utils/pdfPlace';
 
   /**
    * A saved PDF as it was printed: every page drawn by PDF.js, with its text
@@ -63,8 +63,12 @@
     oncommit?: (selector: TextQuoteSelector) => void;
     /** A drawn highlight was tapped. `getRect` is where it is now (null once gone). */
     onhighlight?: (id: string, getRect: () => DOMRect | null) => void;
-    /** Remember the zoom and place under this key, and open where the PDF was left. */
-    rememberKey?: string;
+    /** Remember the zoom under this key, and open at the zoom it was left at. */
+    zoomKey?: string;
+    /** Where to open: a page and how far down it (see `utils/pdfPlace.ts`). Followed until the reader scrolls. */
+    place?: PdfPlace | null;
+    /** The reader scrolled to a new place; debounced. */
+    onplace?: (place: PdfPlace) => void;
   }
 
   let {
@@ -76,7 +80,9 @@
     onselect,
     oncommit,
     onhighlight,
-    rememberKey,
+    zoomKey,
+    place,
+    onplace,
   }: Props = $props();
 
   const highlighting = $derived(Boolean(highlights || onselect));
@@ -785,69 +791,64 @@
     scroller.scrollTop += rect.top + place.at * rect.height - middleOf(scroller);
   }
 
-  // Open where this PDF was left. Put back once its pages are laid out, and
-  // again if they change size (the rest of the pages measured, the column
-  // resized) before the reader has moved: the place is relative to a page, so
-  // it holds where an offset wouldn't.
-  let leftAt = rememberedPlace();
-  function rememberedPlace(): PdfPlace | null {
-    return rememberKey ? pdfPlace(rememberKey) : null;
-  }
+  // Open where this PDF was left, and stay there until the reader moves: put
+  // back once the pages are laid out, again if they change size (the rest of
+  // the pages measured, the column resized), and if `place` arrives late (a
+  // sync from another device). The place is relative to a page, so it holds
+  // where an offset wouldn't. Once the reader scrolls, the view is theirs.
+  let following = true;
+  // Where the view was last put, to tell the reader's scrolling from ours.
   let placedTop: number | null = null;
-  // Nothing is saved until the place is put back, so opening at the top doesn't
-  // overwrite it.
-  let placed = !leftAt;
   $effect(() => {
     void pageSizes;
-    if (status !== 'ready' || scale <= 0 || !leftAt) return;
-    const place = leftAt;
+    const target = place;
+    if (status !== 'ready' || scale <= 0) return;
     void tick().then(() => {
-      if (destroyed || !containerEl || leftAt !== place) return;
+      if (destroyed || !containerEl || !following) return;
       const scroller = scrollerOf(containerEl);
-      if (placedTop !== null && Math.abs(scroller.scrollTop - placedTop) > 1) {
-        leftAt = null; // the reader has moved on
-        return;
-      }
-      goToPlace(place);
+      if (target) goToPlace(target);
       placedTop = scroller.scrollTop;
-      placed = true;
     });
   });
 
-  // Remember the place as the reader scrolls: measured once a frame, written a
-  // moment after the scrolling stops, and on the way out.
+  // Report the place as the reader scrolls: measured once a frame, reported a
+  // moment after the scrolling stops, and on the way out. Nothing is reported
+  // until the reader has scrolled, so opening at the top can't overwrite it.
   onMount(() => {
-    if (!rememberKey) return;
-    const key = rememberKey;
     let frame: number | null = null;
     let timer: ReturnType<typeof setTimeout> | null = null;
     let latest: PdfPlace | null = null;
-    const save = () => {
+    const report = () => {
       if (timer) clearTimeout(timer);
       timer = null;
-      if (latest) setPdfPlace(key, latest);
+      if (latest) onplace?.(latest);
       latest = null;
     };
     const onScroll = () => {
-      if (!placed || frame !== null) return;
+      if (frame !== null) return;
       frame = requestAnimationFrame(() => {
         frame = null;
-        const place = placeInView();
-        if (!place) return;
-        latest = place;
+        if (!containerEl || placedTop === null) return;
+        if (following) {
+          if (Math.abs(scrollerOf(containerEl).scrollTop - placedTop) <= 1) return;
+          following = false;
+        }
+        const now = placeInView();
+        if (!now) return;
+        latest = now;
         if (timer) clearTimeout(timer);
-        timer = setTimeout(save, 500);
+        timer = setTimeout(report, 500);
       });
     };
     // Captured on the document, so it hears the reader overlay's scroll as well
     // as the page's, whichever is hosting the viewer.
     document.addEventListener('scroll', onScroll, { capture: true, passive: true });
-    window.addEventListener('pagehide', save);
+    window.addEventListener('pagehide', report);
     return () => {
       document.removeEventListener('scroll', onScroll, { capture: true });
-      window.removeEventListener('pagehide', save);
+      window.removeEventListener('pagehide', report);
       if (frame !== null) cancelAnimationFrame(frame);
-      save();
+      report();
     };
   });
 
@@ -865,7 +866,7 @@
       : 0.5;
 
     zoom = next;
-    if (rememberKey) setPdfZoom(rememberKey, next);
+    if (zoomKey) setPdfZoom(zoomKey, next);
     await tick();
 
     if (anchor && across !== null) {
@@ -876,7 +877,7 @@
   }
 
   function rememberedZoom(): number {
-    const remembered = rememberKey ? pdfZoom(rememberKey) : 1;
+    const remembered = zoomKey ? pdfZoom(zoomKey) : 1;
     return ZOOM_STEPS.includes(remembered) ? remembered : 1;
   }
 
