@@ -262,6 +262,11 @@ Each jump pushes the scroller's offset onto `returnTo`, which the toolbar offers
 a zoom change clears it, since an offset means nothing at another scale. The harness's page 1 and
 `pdfFixture`'s `links` argument carry sample links.
 
+**Zoom** keeps the point in the middle of the view where it was (`setZoom`, with the browser's own
+scroll anchoring off on `.pdf-pages`). A page zoomed past the column spills into the reader's
+whole width (`band`, the room beside the column less a 16px gutter), centred on the column while
+it fits; only a page wider than all of that scrolls sideways inside `.pdf-pages`.
+
 **Highlights are shared between the views**, because they are the same `TextQuoteSelector`s.
 `utils/pdfTextModel.ts` reads every page's `getTextContent()` once and joins the runs the way the
 extractor reflowed them (whitespace collapsed, a line-end `[a-z]-` joined to a lowercase
