@@ -600,7 +600,9 @@ async function readRange(
   if (length === 0) return new Uint8Array(0);
   const object = await bucket.get(key, { range: { offset, length } });
   if (!object) throw new EpubError('This EPUB is damaged.');
-  return new Uint8Array(await object.arrayBuffer());
+  const bytes = new Uint8Array(await object.arrayBuffer());
+  if (bytes.byteLength !== length) throw new EpubError('This EPUB is damaged.');
+  return bytes;
 }
 
 /**
@@ -627,8 +629,15 @@ export async function readStoredEpubEntry(
   const entry = entries.get(path);
   if (!entry) return null;
   if (entry.compressedSize > maxBytes) throw new EpubError('This picture is too large.');
+  // The directory is the book's word, not R2's: a range past the end of the
+  // object is a damaged book (a 404 to the reader), not an R2 error.
+  if (entry.localOffset + LOCAL_HEADER_BYTES > head.size) {
+    throw new EpubError('This EPUB is damaged.');
+  }
   const local = await readRange(bucket, key, entry.localOffset, LOCAL_HEADER_BYTES);
-  const data = await readRange(bucket, key, entryDataOffset(entry, local), entry.compressedSize);
+  const dataOffset = entryDataOffset(entry, local);
+  if (dataOffset + entry.compressedSize > head.size) throw new EpubError('This EPUB is damaged.');
+  const data = await readRange(bucket, key, dataOffset, entry.compressedSize);
   return inflateEntry(entry, data, maxBytes);
 }
 
@@ -669,16 +678,28 @@ export async function fetchEpub(url: string, maxBytes: number): Promise<Uint8Arr
     throw new EpubError(tooLarge);
   }
   if (!response.body) throw new EpubError("Couldn't fetch the EPUB from its site.");
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
+  // Read into one buffer rather than collecting chunks and joining them, which
+  // holds the book twice at the peak. Sized by Content-Length when the site
+  // sends one, grown by doubling (to the cap) when it doesn't.
+  let buffer = new Uint8Array(
+    Number.isFinite(declared) && declared > 0 ? declared : Math.min(maxBytes, 1024 * 1024)
+  );
   let total = 0;
+  const reader = response.body.getReader();
   try {
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
+      if (total + value.byteLength > maxBytes) throw new EpubError(tooLarge);
+      if (total + value.byteLength > buffer.byteLength) {
+        const grown = new Uint8Array(
+          Math.min(maxBytes, Math.max(buffer.byteLength * 2, total + value.byteLength))
+        );
+        grown.set(buffer.subarray(0, total));
+        buffer = grown;
+      }
+      buffer.set(value, total);
       total += value.byteLength;
-      if (total > maxBytes) throw new EpubError(tooLarge);
-      chunks.push(value);
     }
   } catch (err) {
     if (err instanceof EpubError) throw err;
@@ -686,13 +707,7 @@ export async function fetchEpub(url: string, maxBytes: number): Promise<Uint8Arr
   } finally {
     await reader.cancel().catch(() => {});
   }
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return bytes;
+  return buffer.subarray(0, total);
 }
 
 // ---------------------------------------------------------------------------
@@ -743,7 +758,7 @@ export async function parseEpub(
   let size = 0;
   let chaptersKept = 0;
   let wordCount = 0;
-  let firstChapterCut = false;
+  let chapterCut = false;
   let stoppedEarly = false;
   // Chapters are cleaned one at a time and the walk stops at the first one that
   // would pass the cap, so a long book never pays for the chapters it drops.
@@ -759,13 +774,15 @@ export async function parseEpub(
     let section = render(kept);
     let sectionBytes = byteLength(section);
     if (size + sectionBytes > maxBytes) {
-      if (sections.length) {
+      // Text already kept: stop at a chapter boundary. Only front matter so far
+      // (a cover, a title page): cut this chapter at a block instead, or a book
+      // whose text is one big file would keep nothing but its cover.
+      if (wordCount > 0) {
         stoppedEarly = true;
         break;
       }
-      // One chapter over the cap on its own: keep the blocks that fit.
-      kept = cutAtBlock(html, maxBytes - byteLength(render('')) - 200);
-      firstChapterCut = true;
+      kept = cutAtBlock(html, maxBytes - size - byteLength(render('')) - 200);
+      chapterCut = true;
       section = render(kept);
       sectionBytes = byteLength(section);
     }
@@ -773,14 +790,14 @@ export async function parseEpub(
     size += sectionBytes;
     chaptersKept = n;
     wordCount += countWords(kept);
-    if (firstChapterCut) break;
+    if (chapterCut) break;
   }
   // A book read to the end counts the chapters it kept. One cut short never
   // opens the rest, so its total is the spine's length (blank separators and all).
-  const chapterCount = stoppedEarly || firstChapterCut ? pkg.chapters.length : chaptersKept;
-  if (firstChapterCut) {
+  const chapterCount = stoppedEarly || chapterCut ? pkg.chapters.length : chaptersKept;
+  if (chapterCut) {
     sections.push(
-      `<p><em>This copy holds part of chapter 1 of ${chapterCount}: the book is longer than Skyreader can keep in one save.</em></p>`
+      `<p><em>This copy holds part of chapter ${chaptersKept} of ${chapterCount}: the book is longer than Skyreader can keep in one save.</em></p>`
     );
   } else if (stoppedEarly) {
     sections.push(

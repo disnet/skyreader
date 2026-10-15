@@ -114,3 +114,41 @@ export function isEpub(bytes: Uint8Array, contentType: string | null): boolean {
   const head = new TextDecoder('latin1').decode(bytes.subarray(0, 58));
   return head.startsWith('PK\x03\x04') && head.slice(30) === 'mimetypeapplication/epub+zip';
 }
+
+/**
+ * isEpub, plus the books its strict check misses: plenty of tools don't store
+ * the `mimetype` entry first (or pad its local header), and plenty of servers
+ * send a book as octet-stream or zip. A zip is never a web page, so one is a
+ * book when its path says .epub or it holds an OCF container document (the
+ * name sits in the zip's directory as plain bytes).
+ */
+export function isEpubResponse(
+  bytes: Uint8Array,
+  contentType: string | null,
+  url: string
+): boolean {
+  if (isEpub(bytes, contentType)) return true;
+  if (contentType && /^text\/|html|xml|json|pdf/i.test(contentType)) return false;
+  if (bytes.length < 4 || new TextDecoder('latin1').decode(bytes.subarray(0, 4)) !== 'PK\x03\x04') {
+    return false;
+  }
+  let path = '';
+  try {
+    path = new URL(url).pathname;
+  } catch {
+    // Not a URL we can read a path from: only the contents can say.
+  }
+  return /\.epub$/i.test(path) || containsAscii(bytes, 'META-INF/container.xml');
+}
+
+function containsAscii(bytes: Uint8Array, needle: string): boolean {
+  const first = needle.charCodeAt(0);
+  outer: for (let i = 0; i <= bytes.length - needle.length; i++) {
+    if (bytes[i] !== first) continue;
+    for (let k = 1; k < needle.length; k++) {
+      if (bytes[i + k] !== needle.charCodeAt(k)) continue outer;
+    }
+    return true;
+  }
+  return false;
+}

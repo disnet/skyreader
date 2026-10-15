@@ -3991,6 +3991,27 @@ describe('POST /extract', () => {
     db.close();
   });
 
+  // Not every tool stores `mimetype` first; the path or the container document
+  // still says it's a book, on the ordinary (not-too-large) path too.
+  it('hands back an EPUB whose mimetype entry is not first', async () => {
+    for (const [url, body] of [
+      ['https://example.com/files/book.epub', 'content.opf'],
+      ['https://example.com/download?id=8', 'META-INF/container.xml'],
+    ]) {
+      const { db, app } = createTestApp();
+      const zip = epubHead();
+      zip.set(new TextEncoder().encode(body.padEnd(28, 'x')), 30);
+      fetchMock = mockFetch(
+        () => new Response(zip, { headers: { 'Content-Type': 'application/octet-stream' } })
+      );
+      const json = await (await extract(app, url)).json();
+      expect(json.epub).toBe(true);
+      const cached = db.query('SELECT COUNT(*) AS n FROM extract_cache').get() as { n: number };
+      expect(cached.n).toBe(0);
+      db.close();
+    }
+  });
+
   // Auth runs before the route determines anything, so it keeps its own status.
   it('still answers 401 without the shared secret', async () => {
     const { db, app } = createTestApp();

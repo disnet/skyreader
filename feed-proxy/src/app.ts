@@ -35,6 +35,7 @@ import {
   isDeclaredEpub,
   isDeclaredPdf,
   isEpub,
+  isEpubResponse,
   isPdf,
   PdfUnreadableError,
   type PdfExtractor,
@@ -2922,7 +2923,7 @@ export function createApp(db: Database, config: AppConfig) {
             }
             throw err;
           }
-          if (isEpub(bytes, contentType)) throw new EpubHandOff();
+          if (isEpubResponse(bytes, contentType, url)) throw new EpubHandOff();
           // Sniff as well as trust the header: plenty of servers send a PDF as
           // application/octet-stream, and a PDF decoded as text is mojibake.
           let extracted: ExtractedArticle;

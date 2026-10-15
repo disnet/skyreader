@@ -167,7 +167,12 @@ its original like a linked PDF (`storeLinkedOriginalForUrl`). Pictures stay in t
 carries `<img data-epub-src="<path in zip>">`, and `GET /api/saved/<rkey>/asset?path=` serves one
 entry out of the kept original with four ranged R2 reads (`readStoredEpubEntry`), owner-only and
 sandboxed (an SVG must not run as a page on the API origin); a linked save with no kept original
-keeps it on the first picture asked for. Ids and internal hrefs are scoped by spine position
+keeps it on the first picture asked for — once per save, not per picture (`keepLinkedOriginalOnce`:
+an in-isolate promise plus a one-a-minute D1 claim in `rate_limits`; the other requests wait for its
+row), and answers `pdf_storage_full` when there's no room, which the reader turns into a note. The
+book is downloaded once per save by link: `extractEpub` stages the bytes it read in R2
+(`services/linked-originals.ts`, `staged/epub/<did>/<sha256(url)>.epub`), the save moves that object
+into place instead of fetching again, and the hourly cron sweeps staged books no save adopted. Ids and internal hrefs are scoped by spine position
 (`#epub-c3-note12`, `epubAnchorId`), which the frontend's footnote navigation follows.
 
 **Bluesky likes and bookmarks** are the same kind of private, local-only subscription

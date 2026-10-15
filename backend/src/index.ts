@@ -184,6 +184,7 @@ import { handleHealth, handleDeepHealth } from './routes/health';
 import { handleTelemetryError, TELEMETRY_PATH } from './routes/telemetry';
 import { resolveSessionFromRequest, updateUserActivity } from './services/oauth';
 import { checkRateLimit, cleanupRateLimits, getRateLimitConfig } from './services/rate-limit';
+import { sweepStagedOriginals } from './services/linked-originals';
 import * as Sentry from '@sentry/cloudflare';
 import { sentryOptions, reportError, tagRequestId } from './observability/sentry';
 import { pingHeartbeat } from './observability/heartbeat';
@@ -1385,6 +1386,18 @@ async function runScheduled(
           ...serializeError(error),
         });
         reportError(error, { tags: { source: 'cron', phase: 'share-draft-tombstone-purge' } });
+      }
+
+      // Linked EPUBs read by /api/extract that no save adopted.
+      try {
+        const staged = await sweepStagedOriginals(env, now);
+        if (staged) log.info('cron_staged_originals_swept', { deleted: staged });
+      } catch (error) {
+        log.error('cron_phase_failed', {
+          phase: 'staged-originals-sweep',
+          ...serializeError(error),
+        });
+        reportError(error, { tags: { source: 'cron', phase: 'staged-originals-sweep' } });
       }
 
       // From your follows: shares past the 7-day window.

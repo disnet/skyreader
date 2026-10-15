@@ -586,6 +586,34 @@
   let epubSave = $derived(
     readerItem.type === 'saved' && readerItem.item.contentType === 'epub' ? readerItem.item : null
   );
+  // A book's pictures are read out of its kept original. When storage is full
+  // there is none, and each picture fails alone; ask once why, so the reader
+  // isn't left with silent gaps.
+  let epubPicturesNote = $state<string | null>(null);
+  $effect(() => {
+    const rkey = epubSave?.rkey;
+    const root = overlayEl;
+    epubPicturesNote = null;
+    if (!rkey || !root) return;
+    let asked = false;
+    const onError = (e: Event) => {
+      const img = e.target;
+      if (asked || !(img instanceof HTMLImageElement) || !img.dataset.epubSrc) return;
+      asked = true;
+      fetch(savedAssetUrl(rkey, img.dataset.epubSrc), { credentials: 'include' })
+        .then(async (response) => {
+          if (response.status !== 403) return;
+          const body = (await response.json().catch(() => null)) as { error?: string } | null;
+          if (body?.error === 'pdf_storage_full') {
+            epubPicturesNote = 'Pictures need room in your saved-file storage, which is full.';
+          }
+        })
+        .catch(() => {});
+    };
+    // Image errors don't bubble; listen on the way down.
+    root.addEventListener('error', onError, true);
+    return () => root.removeEventListener('error', onError, true);
+  });
   let sanitizedContent = $derived.by(() => {
     if (!epubSave) return sanitizeHtml(displayContent, itemUrl);
     const rkey = epubSave.rkey;
@@ -1354,6 +1382,9 @@
           </span>
         </div>
         {@render pdfViewToggle()}
+        {#if epubPicturesNote}
+          <p class="reader-epub-note">{epubPicturesNote}</p>
+        {/if}
         {#if itemTags.length > 0}
           <div class="reader-tags">
             {#each itemTags as tag}
@@ -1993,6 +2024,12 @@
     background: rgba(37, 99, 235, 0.08);
     color: var(--color-primary, #2563eb);
     border-radius: 999px;
+  }
+
+  .reader-epub-note {
+    margin: 0.5rem 0 0;
+    font-size: var(--text-xs);
+    color: var(--color-text-secondary, #666);
   }
 
   .reader-body-wrapper {

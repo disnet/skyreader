@@ -3,6 +3,14 @@ import { describe, expect, it } from 'vitest';
 import { findEpubAnchor, isEpubAnchorHref, resolveEpubImages } from './epubContent';
 
 describe('resolveEpubImages', () => {
+  it("keeps the book's own links in this tab", () => {
+    const html =
+      '<a href="#epub-c3-note12" target="_blank" rel="noopener noreferrer">1</a><a href="https://x.test/" target="_blank" rel="noopener noreferrer">x</a>';
+    expect(resolveEpubImages(html, (p) => p)).toBe(
+      '<a href="#epub-c3-note12">1</a><a href="https://x.test/" target="_blank" rel="noopener noreferrer">x</a>'
+    );
+  });
+
   const assetUrl = (path: string) =>
     `https://api.test/api/saved/r1/asset?path=${encodeURIComponent(path)}`;
 

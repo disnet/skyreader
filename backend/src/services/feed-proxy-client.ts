@@ -10,6 +10,7 @@ import {
 } from './pdf-quota';
 import { EpubError, MAX_LINKED_EPUB_BYTES, fetchEpub, parseEpub } from './epub';
 import { getUserTierLimits } from './user-tier';
+import { stageLinkedOriginal } from './linked-originals';
 
 /** Stamp the in-flight request id on an outbound proxy call, when there is one. */
 function setRequestIdHeader(headers: Headers): void {
@@ -929,7 +930,11 @@ export class FeedProxyClient {
       ? (await getUserTierLimits(this.env, userDid)).maxEpubUploadBytes
       : MAX_LINKED_EPUB_BYTES;
     try {
-      const book = await parseEpub(await fetchEpub(url, maxBytes));
+      const bytes = await fetchEpub(url, maxBytes);
+      const book = await parseEpub(bytes);
+      // The save that follows keeps this read as its original rather than
+      // downloading the book again (routes/saved-pdf.ts storeLinkedOriginal).
+      if (userDid && book.content) await stageLinkedOriginal(this.env, userDid, url, bytes);
       return {
         title: book.title,
         author: book.author,

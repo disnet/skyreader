@@ -18,6 +18,7 @@ import {
   readStoredEpubEntry,
 } from '../services/epub';
 import { readCapped } from './feedback';
+import { sha256Hex, stagedOriginalKey } from '../services/linked-originals';
 import { log } from '../utils/logger';
 
 /**
@@ -113,11 +114,6 @@ function concatChunks(chunks: Uint8Array[], total: number): ArrayBuffer {
     offset += chunk.byteLength;
   }
   return bytes.buffer;
-}
-
-async function sha256Hex(bytes: ArrayBuffer): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', bytes);
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 function monthStart(now: Date): number {
@@ -506,6 +502,11 @@ async function storeLinkedOriginal(
   const { stored } = usage.results[0] as { stored: number };
   if (stored >= limits.maxPdfStorageBytes) return 'storage_full';
 
+  if (save.kind === 'epub') {
+    const adopted = await adoptStagedOriginal(env, did, save, stored, limits.maxPdfStorageBytes);
+    if (adopted) return adopted;
+  }
+
   let upstream: Response;
   try {
     upstream = await fetchFromSite(save.url, save.kind);
@@ -526,12 +527,33 @@ async function storeLinkedOriginal(
   if (stored + bytes.byteLength > limits.maxPdfStorageBytes) return 'storage_full';
 
   const r2Key = savedFileKey(did, save.rkey, save.kind);
+  await env.SAVED_FILES.put(r2Key, bytes, {
+    httpMetadata: { contentType: MIME_TYPES[save.kind] },
+    customMetadata: { did, rkey: save.rkey, filename: linkedFilename(save.url, save.kind) },
+  });
+  const result = await recordLinkedOriginal(env, did, save, {
+    r2Key,
+    size: bytes.byteLength,
+    sha256: await sha256Hex(bytes),
+  });
+  if (result === 'stored')
+    log.info(`${save.kind}_link_original_stored`, { size: bytes.byteLength });
+  return result;
+}
+
+/**
+ * The saved_files row for a linked save's kept original, once its object is in
+ * R2 at `r2Key`. Undone (the object deleted) when the save went away meanwhile.
+ */
+async function recordLinkedOriginal(
+  env: Env,
+  did: string,
+  save: LinkedSave,
+  file: { r2Key: string; size: number; sha256: string }
+): Promise<StoreLinkedResult> {
+  const { r2Key } = file;
   const filename = linkedFilename(save.url, save.kind);
   const mimeType = MIME_TYPES[save.kind];
-  await env.SAVED_FILES.put(r2Key, bytes, {
-    httpMetadata: { contentType: mimeType },
-    customMetadata: { did, rkey: save.rkey, filename },
-  });
   // OR IGNORE: two opens racing to store the same save write the same key.
   const inserted = await env.DB.prepare(
     `INSERT OR IGNORE INTO saved_files (user_did, rkey, r2_key, filename, mime_type, size, sha256, created_at)
@@ -544,8 +566,8 @@ async function storeLinkedOriginal(
       r2Key,
       filename,
       mimeType,
-      bytes.byteLength,
-      await sha256Hex(bytes),
+      file.size,
+      file.sha256,
       Date.now(),
       did,
       save.rkey
@@ -559,11 +581,122 @@ async function storeLinkedOriginal(
     )
       .bind(did, save.rkey)
       .first();
-    if (!owned) await env.SAVED_FILES.delete(r2Key).catch(() => {});
+    if (!owned) await env.SAVED_FILES?.delete(r2Key).catch(() => {});
     return owned ? 'stored' : 'unavailable';
   }
-  log.info(`${save.kind}_link_original_stored`, { size: bytes.byteLength });
   return 'stored';
+}
+
+/**
+ * A linked book already read by /api/extract was staged in R2 then
+ * (services/linked-originals.ts): move it into place rather than download it a
+ * second time. Null when nothing is staged (the save fetches the book itself).
+ */
+async function adoptStagedOriginal(
+  env: Env,
+  did: string,
+  save: LinkedSave,
+  stored: number,
+  maxStorageBytes: number
+): Promise<StoreLinkedResult | null> {
+  const bucket = env.SAVED_FILES;
+  if (!bucket) return null;
+  const stagedKey = await stagedOriginalKey(did, save.url);
+  const staged = await bucket.get(stagedKey);
+  if (!staged) return null;
+  if (stored + staged.size > maxStorageBytes) {
+    await staged.body.cancel().catch(() => {});
+    return 'storage_full';
+  }
+  const sha256 = staged.customMetadata?.sha256;
+  if (!sha256) {
+    await staged.body.cancel().catch(() => {});
+    return null;
+  }
+  // R2 has no copy: stream it across (a fixed length, as put requires).
+  const r2Key = savedFileKey(did, save.rkey, save.kind);
+  await bucket.put(r2Key, staged.body.pipeThrough(new FixedLengthStream(staged.size)), {
+    httpMetadata: { contentType: MIME_TYPES[save.kind] },
+    customMetadata: { did, rkey: save.rkey, filename: linkedFilename(save.url, save.kind) },
+  });
+  await bucket.delete(stagedKey).catch(() => {});
+  const result = await recordLinkedOriginal(env, did, save, { r2Key, size: staged.size, sha256 });
+  if (result === 'stored') log.info('epub_link_original_adopted', { size: staged.size });
+  return result;
+}
+
+// Opens in this isolate that are already keeping a save's original.
+const keeping = new Map<string, Promise<StoreLinkedResult>>();
+// A minute is long enough for one fetch of the book (RELAY_TIMEOUT_MS).
+const KEEP_CLAIM_WINDOW_MS = 60_000;
+const KEEP_WAIT_MS = 25_000;
+const KEEP_POLL_MS = 1_000;
+
+/**
+ * storeLinkedOriginal for a book's pictures, which all ask at once: one fetch
+ * per save, not one per picture. Requests in this isolate share the attempt;
+ * across isolates a D1 claim (one a minute per save, in rate_limits, swept with
+ * it) picks the one that fetches, and the rest wait for its outcome: the kept
+ * row, or the failure it records. A failed attempt isn't retried until the claim
+ * window turns over, so a site that's gone costs one fetch a minute, not one
+ * per picture per open.
+ */
+async function keepLinkedOriginalOnce(
+  env: Env,
+  did: string,
+  save: LinkedSave
+): Promise<StoreLinkedResult> {
+  const id = `${did} ${save.rkey}`;
+  const pending = keeping.get(id);
+  if (pending) return pending;
+  const attempt = (async (): Promise<StoreLinkedResult> => {
+    const windowStart = Math.floor(Date.now() / KEEP_CLAIM_WINDOW_MS) * KEEP_CLAIM_WINDOW_MS;
+    const claimKey = `epub-original:${save.rkey}`;
+    // The outcome of a failed attempt this window: 1 unavailable, 2 storage full.
+    const outcomeKey = `epub-original-failed:${save.rkey}`;
+    const claim = await env.DB.prepare(
+      `INSERT INTO rate_limits (did, endpoint, window_start, count) VALUES (?, ?, ?, 1)
+       ON CONFLICT(did, endpoint, window_start) DO UPDATE SET count = count + 1
+       RETURNING count`
+    )
+      .bind(did, claimKey, windowStart)
+      .first<{ count: number }>();
+    if ((claim?.count ?? 1) === 1) {
+      const result = await storeLinkedOriginal(env, did, save);
+      if (result !== 'stored') {
+        await env.DB.prepare(
+          `INSERT OR REPLACE INTO rate_limits (did, endpoint, window_start, count) VALUES (?, ?, ?, ?)`
+        )
+          .bind(did, outcomeKey, windowStart, result === 'storage_full' ? 2 : 1)
+          .run();
+      }
+      return result;
+    }
+    // Another request is fetching (or just tried): wait for how it went.
+    const deadline = Date.now() + KEEP_WAIT_MS;
+    for (;;) {
+      const [kept, failed] = await env.DB.batch([
+        env.DB.prepare('SELECT 1 AS x FROM saved_files WHERE user_did = ? AND rkey = ?').bind(
+          did,
+          save.rkey
+        ),
+        env.DB.prepare(
+          'SELECT count FROM rate_limits WHERE did = ? AND endpoint = ? AND window_start = ?'
+        ).bind(did, outcomeKey, windowStart),
+      ]);
+      if (kept.results.length) return 'stored';
+      const outcome = (failed.results[0] as { count: number } | undefined)?.count;
+      if (outcome) return outcome === 2 ? 'storage_full' : 'unavailable';
+      if (Date.now() >= deadline) return 'unavailable';
+      await new Promise((resolve) => setTimeout(resolve, KEEP_POLL_MS));
+    }
+  })();
+  keeping.set(id, attempt);
+  try {
+    return await attempt;
+  } finally {
+    keeping.delete(id);
+  }
 }
 
 /**
@@ -619,12 +752,7 @@ async function relayLinkedOriginal(env: Env, session: Session, rkey: string): Pr
     return json({ error: `Couldn't fetch the ${kindName} from its site.` }, 502);
   }
   // A book is only kept, never relayed: its pictures are read out of the kept copy.
-  if (kind === 'epub') {
-    return json(
-      { error: 'pdf_storage_full', message: 'Your storage for saved files is full.' },
-      403
-    );
-  }
+  if (kind === 'epub') return storageFullResponse();
 
   // Storage is full: show it anyway, streamed through without keeping it.
   let upstream: Response;
@@ -745,7 +873,14 @@ export async function handleGetSavedAsset(request: Request, env: Env, session: S
       .bind(session.did, rkey)
       .first<{ url: string; content_type: string | null; source: string | null }>();
     if (save && linkedKind(save) === 'epub') {
-      await storeLinkedOriginal(env, session.did, { rkey, url: save.url, kind: 'epub' });
+      const kept = await keepLinkedOriginalOnce(env, session.did, {
+        rkey,
+        url: save.url,
+        kind: 'epub',
+      });
+      // Never relayed (each picture would download the whole book): say why the
+      // pictures are missing, so the reader can tell the reader.
+      if (kept === 'storage_full') return storageFullResponse();
       row = await fileRow();
     }
   }
@@ -767,6 +902,10 @@ export async function handleGetSavedAsset(request: Request, env: Env, session: S
       'Content-Length': String(bytes.byteLength),
     },
   });
+}
+
+function storageFullResponse(): Response {
+  return json({ error: 'pdf_storage_full', message: 'Your storage for saved files is full.' }, 403);
 }
 
 // A save's kept original, or null when it has none.

@@ -291,6 +291,59 @@ describe('POST /api/extract for an EPUB link', () => {
     });
   });
 
+  it('keeps the book it read for the save, without fetching it again', async () => {
+    const book = await BOOK();
+    const mock = stub(book);
+    expect((await call(extract())).status).toBe(200);
+    expect(mock).toHaveBeenCalledTimes(2);
+    expect((await saveLink()).status).toBeLessThan(300);
+    // The proxy and the book, once: the save adopted what extract read.
+    expect(mock).toHaveBeenCalledTimes(2);
+    const file = await env.DB.prepare('SELECT r2_key, size FROM saved_files WHERE user_did = ?')
+      .bind(DID)
+      .first<{ r2_key: string; size: number }>();
+    expect(file).toMatchObject({ r2_key: `epub/${DID}/${RKEY}.epub`, size: book.byteLength });
+    const kept = await env.SAVED_FILES!.get(file!.r2_key);
+    expect(new Uint8Array(await kept!.arrayBuffer())).toEqual(book);
+    const staged = await env.SAVED_FILES!.list({ prefix: `staged/epub/${DID}/` });
+    expect(staged.objects).toHaveLength(0);
+  });
+
+  it('fetches the book once for a burst of pictures', async () => {
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
+    globalThis.fetch = vi.fn(async () => {
+      throw new Error('offline');
+    }) as unknown as typeof fetch;
+    await saveLink();
+    const mock = stub(await buildEpub({ extra: [['OEBPS/images/a.png', png]] }));
+    const got = await Promise.all(
+      Array.from({ length: 5 }, () =>
+        call(request(`/api/saved/${RKEY}/asset?path=OEBPS/images/a.png`))
+      )
+    );
+    expect(got.map((g) => g.status)).toEqual([200, 200, 200, 200, 200]);
+    expect(mock.mock.calls.filter(([u]) => String(u) === BOOK_URL)).toHaveLength(1);
+  });
+
+  it('says storage is full rather than leaving a book’s pictures to fail silently', async () => {
+    globalThis.fetch = vi.fn(async () => {
+      throw new Error('offline');
+    }) as unknown as typeof fetch;
+    await saveLink();
+    await env.DB.prepare(
+      `INSERT INTO saved_files (user_did, rkey, r2_key, filename, mime_type, size, sha256, created_at)
+       VALUES (?, 'ddddddddddddd', 'x', 'x.pdf', 'application/pdf', ?, 'x', 0)`
+    )
+      .bind(DID, 100 * 1024 * 1024 * 1024)
+      .run();
+    const got = await call(request(`/api/saved/${RKEY}/asset?path=OEBPS/images/a.png`));
+    expect(got.status).toBe(403);
+    expect(got.body).toMatchObject({ error: 'pdf_storage_full' });
+    // A later picture in the same minute hears the same, without trying again.
+    const again = await call(request(`/api/saved/${RKEY}/asset?path=OEBPS/images/b.png`));
+    expect(again.status).toBe(403);
+  });
+
   it('keeps the book on the first picture asked for when the save could not', async () => {
     const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
     globalThis.fetch = vi.fn(async () => {
@@ -357,6 +410,18 @@ describe('GET /api/saved/<rkey>/asset', () => {
     expect((await asset('OEBPS/content.opf')).status).toBe(404);
     expect((await asset('OEBPS/text/ch1.xhtml')).status).toBe(404);
     expect((await asset('OEBPS/images/plate 1.png', 'eeeeeeeeeeeee')).status).toBe(404);
+  });
+
+  it('answers 404, not 500, when the book’s directory points past its end', async () => {
+    const key = `epub/${DID}/${RKEY}.epub`;
+    const bytes = new Uint8Array(await (await env.SAVED_FILES!.get(key))!.arrayBuffer());
+    const view = new DataView(bytes.buffer);
+    // Every central directory entry's local header offset, past the end.
+    for (let i = 0; i + 46 <= bytes.length; i++) {
+      if (view.getUint32(i, true) === 0x02014b50) view.setUint32(i + 42, bytes.length + 10, true);
+    }
+    await env.SAVED_FILES!.put(key, bytes);
+    expect((await asset('OEBPS/images/plate 1.png')).status).toBe(404);
   });
 
   it('serves only to the reader who saved it', async () => {

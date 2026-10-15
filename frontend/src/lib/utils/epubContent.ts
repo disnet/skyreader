@@ -26,10 +26,24 @@ function encodeAttribute(value: string): string {
  * address is ours, not the book's.
  */
 export function resolveEpubImages(html: string, assetUrl: (path: string) => string): string {
-  return html.replace(
-    /<img\b([^>]*?)\sdata-epub-src="([^"]*)"/g,
-    (_all, before: string, path: string) =>
-      `<img${before} src="${encodeAttribute(assetUrl(decodeAttribute(path)))}" data-epub-src="${path}"`
+  return keepEpubLinksInPlace(
+    html.replace(
+      /<img\b([^>]*?)\sdata-epub-src="([^"]*)"/g,
+      (_all, before: string, path: string) =>
+        `<img${before} src="${encodeAttribute(assetUrl(decodeAttribute(path)))}" data-epub-src="${path}"`
+    )
+  );
+}
+
+/**
+ * The sanitizer opens every link in a new tab. A book's own links are places in
+ * this text, so they stay plain hash links: a click the footnote jump doesn't
+ * take moves within this page, and one opened elsewhere (a middle click, the
+ * context menu) is this reader's own URL at that anchor.
+ */
+function keepEpubLinksInPlace(html: string): string {
+  return html.replace(/<a\b[^>]*\shref="#epub-c\d+[^"]*"[^>]*>/g, (tag) =>
+    tag.replace(/\s(?:target|rel)="[^"]*"/g, '')
   );
 }
 

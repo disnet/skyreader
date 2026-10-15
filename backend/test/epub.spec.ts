@@ -154,6 +154,31 @@ describe('parseEpub', () => {
     expect(new TextEncoder().encode(book.content!).length).toBeLessThan(2_400);
   });
 
+  it('cuts a big chapter after a cover rather than keeping only the cover', async () => {
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+    const body = Array.from(
+      { length: 50 },
+      (_, i) => `<p>Paragraph ${i} ${'x '.repeat(50)}</p>`
+    ).join('');
+    const book = await parseEpub(
+      await buildEpub({
+        chapters: [
+          { id: 'cover', body: '<img src="../images/cover.png" alt=""/>' },
+          { id: 'book', body },
+        ],
+        extra: [['OEBPS/images/cover.png', png]],
+      }),
+      { maxContentBytes: 2_000 }
+    );
+    expect(book.content).toContain('data-epub-src="OEBPS/images/cover.png"');
+    expect(book.content).toContain('Paragraph 0');
+    expect(book.content).not.toContain('Paragraph 49');
+    expect(book.wordCount).toBeGreaterThan(0);
+    expect(book.chaptersKept).toBe(2);
+    expect(book.content).toContain('part of chapter 2 of 2');
+    expect(new TextEncoder().encode(book.content!).length).toBeLessThan(2_400);
+  });
+
   it('turns XHTML self-closing tags into closed elements', async () => {
     const book = await parseEpub(
       await buildEpub({
