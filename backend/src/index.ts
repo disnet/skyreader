@@ -182,6 +182,7 @@ import {
 import { handleTestExec } from './routes/test-utils';
 import { handleHealth, handleDeepHealth } from './routes/health';
 import { handleTelemetryError, TELEMETRY_PATH } from './routes/telemetry';
+import { handleVitals, pruneVitals, VITALS_PATH } from './routes/vitals';
 import { resolveSessionFromRequest, updateUserActivity } from './services/oauth';
 import { checkRateLimit, cleanupRateLimits, getRateLimitConfig } from './services/rate-limit';
 import { sweepStagedOriginals } from './services/linked-originals';
@@ -337,6 +338,11 @@ async function route(
   // DID; the handler owns that limit, so this also stops paying for two.
   if (url.pathname === TELEMETRY_PATH) {
     return withCors(await handleTelemetryError(request, env), headers);
+  }
+  // Field vitals: same reasoning — sessionless by design, and nothing about the
+  // reader is wanted (see routes/vitals.ts).
+  if (url.pathname === VITALS_PATH) {
+    return withCors(await handleVitals(request, env), headers);
   }
 
   // Polar billing webhooks: server-to-server, gated by a standard-webhooks HMAC
@@ -1420,6 +1426,8 @@ async function runScheduled(
       // a multiple of 5), so the snapshot reads fresh values rather than
       // five-minute-old ones. Prunes its own tail at 90 days.
       await runRecordingStep('metrics-snapshot', () => writeMetricsSnapshot(env));
+      // Field vitals' daily histograms, kept 90 days like the snapshots.
+      await runRecordingStep('vitals-prune', () => pruneVitals(env));
 
       // Document self-heal. The firehose only carries writes made while we were
       // watching, so a gap (reconnect, cursor reset, a paused ingest) leaves a hole

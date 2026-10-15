@@ -49,6 +49,7 @@ All stores use Svelte 5 runes (`.svelte.ts` files):
 | `sync-queue.ts`   | Queue operations when offline, process when online |
 | `readDelta.ts`    | Pure delta/merge decisions (unit-tested)           |
 | `telemetry.ts`    | Sampled client error reports to the backend        |
+| `vitals.ts`       | Sampled field vitals (INP/CLS/blocking) per route  |
 
 ### Feed refresh
 

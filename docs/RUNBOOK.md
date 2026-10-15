@@ -30,12 +30,16 @@ it rather than learning to ignore it.
 | Backend cron (hourly)       | `metrics_snapshots` rows (D1)         | One trend point per hour, pruned at 90 days.        |
 | Admin dashboard             | Ops tiles + 30-day sparklines         | The same rows, rendered. No token, works locally.   |
 | Frontend PWA                | `POST /api/telemetry/error`           | Sampled client errors, forwarded to Sentry.         |
+| Frontend PWA                | `POST /api/telemetry/vitals`          | Sampled field vitals → daily histograms (§4c).      |
 | Frontend PWA                | Settings → Diagnostics                | On-device state. Sent nowhere; read by a human.     |
 | All deploys                 | `scripts/smoke-check.mjs`             | Post-deploy assertion against production.           |
 
 Deliberately absent: per-user client telemetry (no page views, no session replay,
 no third-party SDK in the browser bundle), distributed tracing, and log shipping.
 See "Non-goals" in the plan — each was considered and declined, not overlooked.
+The one relaxation, made on purpose: **aggregate** field vitals (§4c) — three
+numbers per sampled page view that only ever increment daily histogram buckets,
+so no report and nothing about a reader is stored.
 
 ---
 
@@ -660,6 +664,44 @@ What restrains it, in the order it applies:
 Everything the client sends is capped and validated server-side — a 300-character
 message, a 2000-character stack, a path with no query string, and a `kind` from a
 closed set. Nothing else about the page is collected.
+
+### Field vitals
+
+How responsive Skyreader is on readers' real devices — the crispness the CI spec
+(`e2e/responsiveness.spec.ts`) can only approximate. A quarter of page loads
+(`frontend/src/lib/services/vitals.ts`) report, per route view, as the view ends
+(navigation or the page hiding):
+
+- **INP**: the slowest tap/click/key to next paint in the view (one outlier
+  forgiven per 50). Omitted when the view had no interaction; reported as "under
+  40 ms" when every interaction was too fast for the browser to time.
+- **CLS**: the largest burst of unexpected layout shift.
+- **Blocking**: the sum of every long task's time past 50 ms.
+
+`backend/src/routes/vitals.ts` counts each into `client_vitals` (migration 0092):
+one row per day × metric × route × build × bucket, holding only a count. The route
+is the path's first segment, reduced server-side to an allowlist (anything else is
+`other`); the build is the deploy SHA. No report is stored, and no field could
+identify a reader. Rate limited at 20 per minute per IP, routed before session
+resolution like the error endpoint, pruned at 90 days by the hourly cron.
+
+**Reading it:** the admin dashboard's "Field vitals" panel shows p75 for the last
+7 days beside the 7 before, rated against the web-vitals lines (INP 200 / 500 ms,
+CLS 0.1 / 0.25; blocking against Lighthouse's TBT lines, 200 / 600 ms), and the
+same per route. Each value is the upper edge of the bucket holding the percentile —
+"at most this" — never an interpolation. A jump that starts with one build is that
+deploy: query by `app_version` to confirm.
+
+```sql
+-- p75 per build needs the buckets; this is the raw distribution for one metric.
+SELECT app_version, bucket_le, SUM(count) AS views
+  FROM client_vitals WHERE metric = 'inp' AND day >= date('now', '-3 day')
+ GROUP BY app_version, bucket_le ORDER BY app_version, bucket_le;
+```
+
+Not an alert: these move slowly and are read at review time. Browsers without the
+Event Timing / Layout Instability / Long Tasks APIs report what they can, so the
+mix leans Chromium.
 
 ### Settings → Diagnostics
 

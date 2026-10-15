@@ -35,6 +35,9 @@ const RATE_LIMITS: Record<string, RateLimitConfig> = {
   // for a client stuck in an error loop — the client samples before it sends, and
   // anything above this is a bug in the client, not signal worth keeping.
   '/api/telemetry/error': { limit: 20, windowMs: 60000 },
+  // Field vitals: one sampled report per page view (frontend/src/lib/services/
+  // vitals.ts). A reader navigating fast sends a few a minute at most.
+  '/api/telemetry/vitals': { limit: 20, windowMs: 60000 },
   // Guest reading mode. Keyed by client IP (there is no did). The timeline is a
   // read over the archive that never fetches, so it gets a poll-sized limit.
   // Nothing unauthenticated writes to the archive — adding a feed needs an
