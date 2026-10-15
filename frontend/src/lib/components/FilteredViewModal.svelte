@@ -4,7 +4,6 @@
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { articlesStore } from '$lib/stores/articles.svelte';
   import Modal from '$lib/components/common/Modal.svelte';
-  import Icon from '$lib/components/Icon.svelte';
   import type {
     SubscriptionSourceType,
     ChannelAutoRule,
