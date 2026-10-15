@@ -1,3 +1,16 @@
+<script lang="ts" module>
+  import type { SourceFilter as Filter } from '$lib/utils/sourceFilter';
+  import type { SortOrder as Order } from '$lib/types';
+
+  /** What a new feed channel starts from: the view you're looking at. */
+  export interface ChannelSeed {
+    sourceFilter: Filter;
+    readFilter: 'all' | 'unread';
+    sortOrder: Order;
+    tagFilter: string[];
+  }
+</script>
+
 <script lang="ts">
   // Making or editing a channel, the same on every surface: the desktop modal
   // and the mobile filter sheet both render this. It asks, in order:
@@ -19,9 +32,8 @@
   import { followLinksStore } from '$lib/stores/followLinks.svelte';
   import { FOLLOWS_SOURCE_KEY } from '$lib/utils/sourceKeys';
   import { computeSourceKeys } from '$lib/utils/channelLogic';
-  import { sourceFilterName, uniqueChannelName } from '$lib/utils/channelName';
+  import { joinNames, sourceFilterName, uniqueChannelName } from '$lib/utils/channelName';
   import {
-    buildSourceGroups,
     categoryGroupKey,
     isSourceShown,
     keysOfTypes,
@@ -54,8 +66,8 @@
     editingChannelId: number | null;
     /** Where a new channel's items come from, when the entry point knows; null asks. */
     initialChannelType?: 'feed' | 'saved' | null;
-    /** A new feed channel's sources to start from (the filters you're looking at). */
-    initialSourceFilter?: SourceFilter | null;
+    /** A new feed channel's starting point (the view you're looking at). */
+    seed?: ChannelSeed | null;
     /** Cap the source list's height and scroll inside it (the desktop modal). */
     scrollPicker?: boolean;
     /** Shown as a Cancel button when given. */
@@ -67,7 +79,7 @@
   let {
     editingChannelId,
     initialChannelType = null,
-    initialSourceFilter = null,
+    seed = null,
     scrollPicker = false,
     oncancel,
     onsaved,
@@ -93,26 +105,32 @@
   let savedReadingLength = $state<Set<ReadingLengthFilter>>(new Set());
   let savedDomainFilter = $state<Set<string>>(new Set());
   let savedTagFilter = $state<Set<string>>(new Set());
+  // A feed channel's tag filter has no control here; it's kept as it was, or as
+  // the view it was saved from had it (see ChannelSeed).
+  let feedTagFilter = $state<string[]>([]);
   let readFilter = $state<'all' | 'unread' | 'read'>('unread');
   let sortOrder = $state<SortOrder>('newest');
   let saving = $state(false);
   let error = $state<string | null>(null);
 
   let isEditing = $derived(editingChannelId != null);
+  // Flips once, when the channel being edited is in the store (it can sync in
+  // after the editor opens); a $derived so later syncs don't notify.
+  let channelLoaded = $derived(
+    editingChannelId != null && filteredViewsStore.getById(editingChannelId) != null
+  );
 
   // Load the channel, or a new one's defaults, whenever what's being edited
   // changes, and only then: a sync landing mid-edit mustn't reset the form.
   $effect(() => {
     const id = editingChannelId;
     const type = initialChannelType;
-    const initial = initialSourceFilter;
-    // Tracked, so a channel that syncs in after the editor opens still loads;
-    // flips once, so a later sync can't reset the form mid-edit.
-    void (id != null && filteredViewsStore.getById(id) != null);
+    const initial = seed;
+    void channelLoaded;
     untrack(() => load(id, type, initial));
   });
 
-  function load(id: number | null, type: 'feed' | 'saved' | null, initial: SourceFilter | null) {
+  function load(id: number | null, type: 'feed' | 'saved' | null, initial: ChannelSeed | null) {
     const view = id != null ? filteredViewsStore.getById(id) : null;
     error = null;
     saving = false;
@@ -127,19 +145,23 @@
       savedReadingLength = new Set(view.savedReadingLength ?? []);
       savedDomainFilter = new Set(view.savedDomainFilter ?? []);
       savedTagFilter = new Set(view.tagFilter ?? []);
+      feedTagFilter = view.mode === 'saved' ? [] : [...(view.tagFilter ?? [])];
       const upgraded = upgradeChannelFilter(view);
       typeFilter = upgraded.typeFilter;
       const rule = view.autoRule;
       if (rule?.type === 'category') {
         // A folder is a pick now: the picker takes a whole folder, as it grows.
         mode = 'pick';
-        // The old rule matched the folder's name regardless of case.
+        // The old rule matched the folder's name regardless of case, so take
+        // every spelling of it that's filed under.
         const want = rule.value.trim().toLowerCase();
-        const folder =
+        const folders = new Set(
           subscriptionsStore.subscriptions
             .map((s) => s.category?.trim())
-            .find((c) => c && c.toLowerCase() === want) ?? rule.value.trim();
-        sourceFilter = { sourceMode: 'include', sourceKeys: [categoryGroupKey(folder)] };
+            .filter((c): c is string => !!c && c.toLowerCase() === want)
+        );
+        if (folders.size === 0) folders.add(rule.value.trim());
+        sourceFilter = { sourceMode: 'include', sourceKeys: [...folders].map(categoryGroupKey) };
         typeFilter = undefined;
       } else if (rule) {
         mode = 'rule';
@@ -158,7 +180,10 @@
     channelType = initial ? 'feed' : type;
     mode = 'pick';
     sourceFilter = initial
-      ? { sourceMode: initial.sourceMode, sourceKeys: [...initial.sourceKeys] }
+      ? {
+          sourceMode: initial.sourceFilter.sourceMode,
+          sourceKeys: [...initial.sourceFilter.sourceKeys],
+        }
       : NO_SOURCES;
     ruleType = 'frequency:high';
     recentWithinDays = 14;
@@ -170,8 +195,9 @@
     savedReadingLength = new Set();
     savedDomainFilter = new Set();
     savedTagFilter = new Set();
-    readFilter = 'unread';
-    sortOrder = 'newest';
+    feedTagFilter = [...(initial?.tagFilter ?? [])];
+    readFilter = initial?.readFilter ?? 'unread';
+    sortOrder = initial?.sortOrder ?? 'newest';
   }
 
   // Your follows' links are a row like any other source (see SourcePicker).
@@ -186,7 +212,7 @@
       mode === 'pick' &&
       sourceFilter.sourceMode !== 'all' &&
       isSourceShown(sourceFilter, FOLLOWS_SOURCE_KEY, {
-        groups: buildSourceGroups(subscriptionsStore.subscriptions),
+        groups: feedViewStore.sourceGroups,
         followsInEverything,
       })
   );
@@ -266,12 +292,29 @@
       if (ruleType === 'domain' && domainPatterns.length > 0) return domainPatterns[0];
       return DEFAULT_NAMES[ruleType];
     }
-    return sourceFilterName(sourceFilter, subscriptionsStore.subscriptions, followsInEverything);
+    const parts: string[] = [];
+    const sources = sourceFilterName(
+      sourceFilter,
+      subscriptionsStore.subscriptions,
+      followsInEverything
+    );
+    if (sources) parts.push(sources);
+    // A tag filter carried over from the view (see ChannelSeed), as the toolbar names it.
+    if (feedTagFilter.length > 0) parts.push(joinNames(feedTagFilter));
+    return parts.join(' \u00b7 ');
   });
+
+  /** The name a new channel gets if you don't type one: never one that's taken. */
+  function autoName(): string {
+    return uniqueChannelName(
+      suggestedName || (channelType === 'saved' ? 'Saved articles' : 'New channel'),
+      filteredViewsStore.views.map((v) => v.name)
+    );
+  }
 
   // Fill the name in as you choose, until you type one.
   $effect(() => {
-    if (!nameEdited) name = suggestedName;
+    if (!nameEdited) name = suggestedName ? autoName() : '';
   });
 
   function toggleIn<T>(set: Set<T>, value: T): Set<T> {
@@ -303,12 +346,9 @@
       error = ruleType === 'subscriptionTag' ? 'Choose a tag' : 'Add a site pattern';
       return;
     }
-    const finalName =
-      name.trim() ||
-      uniqueChannelName(
-        suggestedName || (channelType === 'saved' ? 'Saved articles' : 'New channel'),
-        filteredViewsStore.views.map((v) => v.name)
-      );
+    // A name you typed stands; one filled in for you is checked again, in case
+    // a channel has taken it since.
+    const finalName = (nameEdited && name.trim()) || autoName();
 
     error = null;
     saving = true;
@@ -338,6 +378,7 @@
                 : [...sourceFilter.sourceKeys],
               autoRule: currentRule,
               typeFilter: currentRule ? typeFilter : undefined,
+              tagFilter: feedTagFilter.length > 0 ? [...feedTagFilter] : undefined,
               filterVersion: CHANNEL_FILTER_VERSION,
               readFilter,
               // Ranking by shares needs your follows' links in the channel.
@@ -380,7 +421,7 @@
     />
   </div>
 
-  {#if !isEditing && !initialChannelType && !initialSourceFilter}
+  {#if !isEditing && !initialChannelType && !seed}
     <div class="section">
       <span class="section-label">Items from</span>
       <div class="option-cards">

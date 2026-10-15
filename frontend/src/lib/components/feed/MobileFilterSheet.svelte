@@ -2,11 +2,10 @@
   import Icon from '$lib/components/Icon.svelte';
   import AppearanceToolbar from './AppearanceToolbar.svelte';
   import SourcePicker from './SourcePicker.svelte';
-  import ChannelEditor from './ChannelEditor.svelte';
+  import ChannelEditor, { type ChannelSeed } from './ChannelEditor.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import { followLinksStore } from '$lib/stores/followLinks.svelte';
-  import type { SourceFilter } from '$lib/utils/sourceFilter';
   import {
     DATE_PRESET_OPTIONS_SHORT as DATE_PRESET_OPTIONS,
     READING_LENGTH_OPTIONS_SHORT as READING_LENGTH_OPTIONS,
@@ -60,12 +59,12 @@
   let activeTab = $state<'filters' | 'channel'>('filters');
 
   // "Save as channel" from the View tab: a new channel starting from these sources.
-  let saveAsFilter = $state<SourceFilter | null>(null);
+  let saveAsSeed = $state<ChannelSeed | null>(null);
 
   // The two tabs only when the sheet opened on the view; opened to make or edit
   // a channel, it's just the channel editor.
   let showTabs = $derived(
-    initialTab === 'filters' && (editingChannelId != null || saveAsFilter != null)
+    initialTab === 'filters' && (editingChannelId != null || saveAsSeed != null)
   );
 
   // Sync activeTab when initialTab prop changes
@@ -75,7 +74,13 @@
 
   function startSaveAsChannel() {
     const ef = feedViewStore.effectiveFilters;
-    saveAsFilter = { sourceMode: ef.sourceMode, sourceKeys: [...ef.sourceKeys] };
+    // The whole view, as the toolbar's Save keeps it.
+    saveAsSeed = {
+      sourceFilter: { sourceMode: ef.sourceMode, sourceKeys: [...ef.sourceKeys] },
+      readFilter: feedViewStore.showOnlyUnread ? 'unread' : 'all',
+      sortOrder: feedViewStore.currentSortOrder,
+      tagFilter: [...feedViewStore.toolbarTagFilter],
+    };
     activeTab = 'channel';
   }
 
@@ -346,21 +351,27 @@
         </button>
       </div>
     {/if}
-  {:else}
-    <!-- ===== CHANNEL TAB ===== -->
-    <ChannelEditor
-      editingChannelId={saveAsFilter ? null : (editingChannelId ?? null)}
-      initialChannelType={saveAsFilter ? 'feed' : initialChannelType}
-      initialSourceFilter={saveAsFilter}
-      onsaved={(created) => {
-        if (created) oncreated?.(created);
-        onclose();
-      }}
-      ondeleted={() => {
-        ondeleted?.();
-        onclose();
-      }}
-    />
+  {/if}
+
+  {#if activeTab === 'channel' || showTabs}
+    <!-- ===== CHANNEL TAB =====
+         Kept mounted while the View tab is up, so a look at the view doesn't
+         drop the edits in progress. -->
+    <div class="channel-tab" hidden={activeTab !== 'channel'}>
+      <ChannelEditor
+        editingChannelId={saveAsSeed ? null : (editingChannelId ?? null)}
+        initialChannelType={saveAsSeed ? 'feed' : initialChannelType}
+        seed={saveAsSeed}
+        onsaved={(created) => {
+          if (created) oncreated?.(created);
+          onclose();
+        }}
+        ondeleted={() => {
+          ondeleted?.();
+          onclose();
+        }}
+      />
+    </div>
   {/if}
 </div>
 
