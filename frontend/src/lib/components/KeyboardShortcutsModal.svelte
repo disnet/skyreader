@@ -48,6 +48,7 @@
     { category: 'Article', key: 'F', description: 'Fetch full article' },
     { category: 'Article', key: 'e', description: 'Archive/unarchive saved item' },
     { category: 'Article', key: 'h', description: 'Toggle highlight on paragraph' },
+    { category: 'Article', key: 'c', description: 'Table of contents (in the reader)' },
     { category: 'Article', key: '+', description: 'Increase font size / zoom in PDF' },
     { category: 'Article', key: '_', description: 'Decrease font size / zoom out PDF' },
     { category: 'Article', key: ')', description: 'Reset font size / PDF zoom' },

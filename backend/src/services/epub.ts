@@ -306,6 +306,9 @@ interface Package {
   date: string | null;
   /** Spine chapter paths, in reading order, inside the zip. */
   chapters: string[];
+  /** The book's table of contents: the EPUB 3 navigation document's path, else the EPUB 2 NCX's. */
+  tocPath: string | null;
+  tocKind: 'nav' | 'ncx' | null;
 }
 
 function readPackage(opfPath: string, opf: string): Package {
@@ -320,6 +323,16 @@ function readPackage(opfPath: string, opf: string): Package {
       });
     }
   }
+
+  let navPath: string | null = null;
+  let ncxPath: string | null = null;
+  for (const item of manifest.values()) {
+    if (!navPath && /\bnav\b/.test(item.props) && /html/.test(item.type)) navPath = item.path;
+    if (!ncxPath && item.type === 'application/x-dtbncx+xml') ncxPath = item.path;
+  }
+  // EPUB 2 names its NCX on the spine.
+  const spineToc = attrs(opf.match(/<(?:[\w-]+:)?spine\b([^>]*)>/i)?.[1] ?? '').toc;
+  if (spineToc && manifest.has(spineToc)) ncxPath = manifest.get(spineToc)!.path;
 
   const chapters: string[] = [];
   for (const m of opf.matchAll(/<(?:[\w-]+:)?itemref\b([^>]*)>/gi)) {
@@ -342,7 +355,116 @@ function readPackage(opfPath: string, opf: string): Package {
     description: dcValues(metadata, 'description')[0] ?? null,
     date: dcValues(metadata, 'date')[0] ?? null,
     chapters,
+    tocPath: navPath ?? ncxPath,
+    tocKind: navPath ? 'nav' : ncxPath ? 'ncx' : null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Table of contents
+//
+// The book's own TOC (the EPUB 3 nav document's `toc` nav, or the EPUB 2 NCX)
+// rides the text as `data-toc-title` / `data-toc-level` on the element each
+// entry lands on, which the reader's contents list reads (frontend
+// `utils/readerToc.ts`). The nav document itself stays out of the text: its
+// links are what this keeps.
+
+export interface TocEntry {
+  title: string;
+  /** 1 is the top level. */
+  level: number;
+  /** The entry's target, resolved against the TOC file: a path in the zip. */
+  path: string;
+  /** The id it points at in that file; empty for the file's top. */
+  fragment: string;
+}
+
+const MAX_TOC_ENTRIES = 2000;
+const MAX_TOC_TITLE = 200;
+
+function tocTitle(html: string): string {
+  const text = plainText(html.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1'));
+  return text.length > MAX_TOC_TITLE ? text.slice(0, MAX_TOC_TITLE - 1).trimEnd() + '…' : text;
+}
+
+function tocTarget(tocPath: string, href: string): { path: string; fragment: string } | null {
+  if (!href || HAS_SCHEME.test(href)) return null;
+  const hash = href.indexOf('#');
+  const pathPart = hash < 0 ? href : href.slice(0, hash);
+  return {
+    path: pathPart ? resolvePath(tocPath, pathPart) : tocPath,
+    fragment: hash < 0 ? '' : decodeFragment(href.slice(hash + 1)),
+  };
+}
+
+/** The entries of an EPUB 3 navigation document's `toc` nav, in order. */
+export function readNavToc(navPath: string, xhtml: string): TocEntry[] {
+  const navs = [...xhtml.matchAll(/<(?:[\w-]+:)?nav\b([^>]*)>([\s\S]*?)<\/(?:[\w-]+:)?nav>/gi)];
+  // The one typed `toc`; a book with a single untyped nav means that one.
+  const toc =
+    navs.find((m) => {
+      const a = attrs(m[1]);
+      return /\btoc\b/.test(a.type ?? '') || /\bdoc-toc\b/.test(a.role ?? '');
+    }) ?? navs[0];
+  if (!toc) return [];
+  const entries: TocEntry[] = [];
+  let depth = 0;
+  for (const m of toc[2].matchAll(/<(\/?)(ol|a)\b([^>]*)>([\s\S]*?)(?=<\/?(?:ol|a)\b|$)/gi)) {
+    const [, closing, tag, attributes, text] = m;
+    if (tag.toLowerCase() === 'ol') {
+      depth += closing ? -1 : 1;
+      continue;
+    }
+    if (closing) continue;
+    const target = tocTarget(navPath, attrs(attributes).href ?? '');
+    const title = tocTitle(text);
+    if (target && title) entries.push({ title, level: Math.max(depth, 1), ...target });
+    if (entries.length >= MAX_TOC_ENTRIES) break;
+  }
+  return entries;
+}
+
+/** The entries of an EPUB 2 NCX's navMap, in order. */
+export function readNcxToc(ncxPath: string, ncx: string): TocEntry[] {
+  const navMap = ncx.match(/<(?:[\w-]+:)?navMap\b[^>]*>([\s\S]*)<\/(?:[\w-]+:)?navMap>/i)?.[1];
+  if (!navMap) return [];
+  const entries: TocEntry[] = [];
+  let depth = 0;
+  // A point's label comes before its content; a nested point's after both.
+  let title = '';
+  for (const m of navMap.matchAll(
+    /<(\/?)(?:[\w-]+:)?(navPoint|content)\b([^>]*)>|<(?:[\w-]+:)?text\b[^>]*>([\s\S]*?)<\/(?:[\w-]+:)?text>/gi
+  )) {
+    const [, closing, tag, attributes, text] = m;
+    if (text !== undefined) {
+      if (!title) title = tocTitle(text);
+    } else if (tag.toLowerCase() === 'navpoint') {
+      depth += closing ? -1 : 1;
+      title = '';
+    } else if (!closing) {
+      const target = tocTarget(ncxPath, attrs(attributes).src ?? '');
+      if (target && title) entries.push({ title, level: Math.max(depth, 1), ...target });
+      title = '';
+      if (entries.length >= MAX_TOC_ENTRIES) break;
+    }
+  }
+  return entries;
+}
+
+/** A TOC entry's title and level, as the text carries them. */
+interface TocMark {
+  title: string;
+  level: number;
+}
+
+function escapeAttribute(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+}
+
+function tocAttributes(mark: TocMark | undefined): string {
+  return mark
+    ? ` data-toc-title="${escapeAttribute(mark.title)}" data-toc-level="${mark.level}"`
+    : '';
 }
 
 // ---------------------------------------------------------------------------
@@ -427,6 +549,10 @@ interface ChapterContext {
   /** Every spine chapter's path → its position, for links between chapters. */
   spine: Map<string, number>;
   entries: Map<string, ZipEntry>;
+  /** The TOC entries landing on an id in this chapter, by that id (unscoped). */
+  toc?: Map<string, TocMark>;
+  /** The ids in `toc` that were found, filled in by the cleanup. */
+  tocFound?: Set<string>;
 }
 
 /**
@@ -512,6 +638,12 @@ async function cleanChapter(xhtml: string, ctx: ChapterContext): Promise<string>
         }
         // Kept, scoped to the chapter, so the book's own links can land on it.
         if (id) el.setAttribute('id', epubAnchorId(ctx.index, id));
+        const mark = id ? ctx.toc?.get(id) : undefined;
+        if (id && mark && !ctx.tocFound?.has(id) && tag !== 'img') {
+          ctx.tocFound?.add(id);
+          el.setAttribute('data-toc-title', mark.title);
+          el.setAttribute('data-toc-level', String(mark.level));
+        }
 
         if (tag === 'img') {
           // A picture in the book is served from the kept original
@@ -750,10 +882,31 @@ export async function parseEpub(
   }
 
   const spine = new Map(pkg.chapters.map((path, i) => [path, i + 1]));
+
+  // The book's TOC, grouped by the chapter each entry lands in: the first entry
+  // on a target wins. A broken or missing TOC only costs the contents list.
+  const tocByChapter = new Map<number, Map<string, TocMark>>();
+  if (pkg.tocPath) {
+    const source = await readEntry(pkg.tocPath).catch(() => null);
+    const toc = !source
+      ? []
+      : pkg.tocKind === 'nav'
+        ? readNavToc(pkg.tocPath, source)
+        : readNcxToc(pkg.tocPath, source);
+    for (const entry of toc) {
+      const chapter = spine.get(entry.path);
+      if (!chapter) continue;
+      let marks = tocByChapter.get(chapter);
+      if (!marks) tocByChapter.set(chapter, (marks = new Map()));
+      if (!marks.has(entry.fragment)) marks.set(entry.fragment, entry);
+    }
+  }
+
   // `data-epub-chapter` counts the chapters kept; the id is the spine position
-  // the book's links were scoped by.
-  const sectionFor = (n: number, spineIndex: number, html: string) =>
-    `<section data-epub-chapter="${n}" id="${epubAnchorId(spineIndex)}">\n${html}\n</section>`;
+  // the book's links were scoped by. An entry for the chapter itself, or one
+  // whose target didn't survive the cleanup, marks the section.
+  const sectionFor = (n: number, spineIndex: number, html: string, mark?: TocMark) =>
+    `<section data-epub-chapter="${n}" id="${epubAnchorId(spineIndex)}"${tocAttributes(mark)}>\n${html}\n</section>`;
   const sections: string[] = [];
   let size = 0;
   let chaptersKept = 0;
@@ -765,11 +918,15 @@ export async function parseEpub(
   for (const [i, path] of pkg.chapters.entries()) {
     const xhtml = await readEntry(path);
     if (!xhtml) continue;
-    const html = await cleanChapter(xhtml, { path, index: i + 1, spine, entries });
+    const toc = tocByChapter.get(i + 1);
+    const tocFound = new Set<string>();
+    const html = await cleanChapter(xhtml, { path, index: i + 1, spine, entries, toc, tocFound });
     // Blank separators go; a cover or a plate is only a picture, and stays.
     if (countWords(html) === 0 && !html.includes('data-epub-src=')) continue;
     const n = chaptersKept + 1;
-    const render = (h: string) => sectionFor(n, i + 1, h);
+    const sectionMark =
+      toc?.get('') ?? [...(toc ?? [])].find(([id]) => id && !tocFound.has(id))?.[1];
+    const render = (h: string) => sectionFor(n, i + 1, h, sectionMark);
     let kept = html;
     let section = render(kept);
     let sectionBytes = byteLength(section);

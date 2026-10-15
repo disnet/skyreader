@@ -3,7 +3,8 @@
   // generated EPUB-shaped body (one <section data-epub-chapter> per chapter).
   // ?chapters=N sets the length (default 120, ~1.2M characters); ?at=P opens
   // with saved progress at paragraph P, to watch the restore land; ?pictures=1
-  // adds a picture per chapter.
+  // adds a picture per chapter; ?toc=1 marks the book's own TOC on the text, as
+  // the EPUB conversion does from its nav (each chapter, and a scene in each).
   import { onMount } from 'svelte';
   import { page } from '$app/state';
   import SavedReader from '$lib/components/feed/SavedReader.svelte';
@@ -15,6 +16,7 @@
   // ?pictures=1 opens each chapter with a picture, as an EPUB's arrive: a path
   // in the kept book, fetched from the (here absent) asset endpoint.
   const pictures = page.url.searchParams.get('pictures') === '1';
+  const toc = page.url.searchParams.get('toc') === '1';
   const KEY = `at://did:plc:devharness/app.skyreader.feed.saved/book${chapters}`;
 
   const words =
@@ -29,9 +31,14 @@
   }
   let content = '';
   for (let c = 0; c < chapters; c++) {
-    content += `<section data-epub-chapter="${c}"><h2>Chapter ${c + 1}</h2>`;
+    const mark = (title: string, level: number) =>
+      toc ? ` data-toc-title="${title}" data-toc-level="${level}"` : '';
+    content += `<section data-epub-chapter="${c}"${mark(`${c + 1}. A Chapter`, 1)}><h2>Chapter ${c + 1}</h2>`;
     if (pictures) content += `<p><img data-epub-src="images/ch${c}.png" alt=""></p>`;
-    for (let p = 0; p < 40; p++) content += paragraph(c * 40 + p);
+    for (let p = 0; p < 40; p++) {
+      if (p === 20) content += `<div${mark(`A scene in chapter ${c + 1}`, 2)}></div>`;
+      content += paragraph(c * 40 + p);
+    }
     content += '</section>';
   }
 

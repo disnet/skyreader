@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
   import type {
     PDFDocumentLoadingTask,
@@ -21,6 +21,7 @@
   import { resolvePdfLink, type PdfLinkAnnotation, type PdfLinkTarget } from '$lib/utils/pdfLinks';
   import { claimPdfZoomShortcuts, pdfZoom, setPdfZoom } from '$lib/utils/pdfZoom';
   import type { PdfPlace } from '$lib/utils/pdfPlace';
+  import { flattenPdfOutline, type PdfOutlineEntry } from '$lib/utils/pdfOutline';
 
   /**
    * A saved PDF as it was printed: every page drawn by PDF.js, with its text
@@ -69,6 +70,8 @@
     place?: PdfPlace | null;
     /** The reader scrolled to a new place; debounced. */
     onplace?: (place: PdfPlace) => void;
+    /** The PDF's outline (its bookmarks), once read; empty when it has none. */
+    onoutline?: (entries: PdfOutlineEntry[]) => void;
   }
 
   let {
@@ -83,6 +86,7 @@
     zoomKey,
     place,
     onplace,
+    onoutline,
   }: Props = $props();
 
   const highlighting = $derived(Boolean(highlights || onselect));
@@ -262,6 +266,35 @@
       return;
     }
     model = buildPdfTextModel(pages);
+  }
+
+  // The outline is the reader's contents list here. Read once per document.
+  $effect(() => {
+    const pdf = readyDoc;
+    // Not tracked: a new callback is no reason to read the outline again.
+    const report = untrack(() => onoutline);
+    if (!pdf || !report) return;
+    let stale = false;
+    pdf
+      .getOutline()
+      .then((outline) => flattenPdfOutline(pdf, outline))
+      .then((entries) => {
+        if (!stale) report(entries);
+      })
+      .catch((err) => console.error('[PdfViewer] outline read failed:', err));
+    return () => {
+      stale = true;
+    };
+  });
+
+  /** The page in view, 1-based. */
+  export function pageInView(): number {
+    return currentPage;
+  }
+
+  /** Go to a place in the PDF (an outline entry's), with a way back. */
+  export function goTo(target: { page: number; top: number | null }) {
+    void jumpTo(target);
   }
 
   $effect(() => {

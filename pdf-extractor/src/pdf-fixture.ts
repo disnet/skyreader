@@ -3,10 +3,24 @@
 // A text line placed on a page: [x, y, size, text].
 export type Placed = [number, number, number, string];
 
+// An outline (bookmark) entry: a 0-based page, and the y it scrolls to (XYZ)
+// or none (Fit).
+export interface OutlineItem {
+  title: string;
+  page: number;
+  top?: number;
+  children?: OutlineItem[];
+}
+
 // A minimal, valid PDF: Helvetica text at fixed positions, one content stream
-// per page, an Info dictionary. Enough geometry to exercise the line/paragraph
-// inference without checking a binary fixture into the repo.
-export function makePdf(pages: Placed[][], info: Record<string, string> = {}): Uint8Array {
+// per page, an Info dictionary, and optionally an outline. Enough geometry to
+// exercise the line/paragraph inference without checking a binary fixture into
+// the repo.
+export function makePdf(
+  pages: Placed[][],
+  info: Record<string, string> = {},
+  outline: OutlineItem[] = []
+): Uint8Array {
   const esc = (s: string) => s.replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
   const objects: string[] = [];
   const add = (body: string) => objects.push(body); // the new length is the 1-based object number
@@ -26,7 +40,35 @@ export function makePdf(pages: Placed[][], info: Record<string, string> = {}): U
       )
     );
   }
-  objects[catalog - 1] = `<< /Type /Catalog /Pages ${pagesObj} 0 R >>`;
+  // Siblings are numbered first so each can name its neighbours.
+  const addOutline = (items: OutlineItem[], parent: number): number[] => {
+    const nums = items.map(() => add(''));
+    items.forEach((item, i) => {
+      const kidNums = item.children?.length ? addOutline(item.children, nums[i]) : [];
+      const dest =
+        item.top === undefined
+          ? `[${kids[item.page]} 0 R /Fit]`
+          : `[${kids[item.page]} 0 R /XYZ 0 ${item.top} 0]`;
+      objects[nums[i] - 1] =
+        `<< /Title (${esc(item.title)}) /Parent ${parent} 0 R /Dest ${dest}` +
+        (i > 0 ? ` /Prev ${nums[i - 1]} 0 R` : '') +
+        (i < items.length - 1 ? ` /Next ${nums[i + 1]} 0 R` : '') +
+        (kidNums.length
+          ? ` /First ${kidNums[0]} 0 R /Last ${kidNums[kidNums.length - 1]} 0 R /Count ${kidNums.length}`
+          : '') +
+        ' >>';
+    });
+    return nums;
+  };
+  let outlines = '';
+  if (outline.length) {
+    const root = add('');
+    const top = addOutline(outline, root);
+    objects[root - 1] =
+      `<< /Type /Outlines /First ${top[0]} 0 R /Last ${top[top.length - 1]} 0 R /Count ${top.length} >>`;
+    outlines = ` /Outlines ${root} 0 R`;
+  }
+  objects[catalog - 1] = `<< /Type /Catalog /Pages ${pagesObj} 0 R${outlines} >>`;
   objects[pagesObj - 1] =
     `<< /Type /Pages /Kids [${kids.map((k) => `${k} 0 R`).join(' ')}] /Count ${kids.length} >>`;
   const infoObj = add(

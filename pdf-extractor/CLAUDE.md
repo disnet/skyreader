@@ -51,7 +51,11 @@ Parses are billed per CPU-ms, so three things bound them:
   How runs become text (whitespace, `joinLine`'s de-hyphenation, dropping rotated runs) is
   mirrored by the frontend's `utils/pdfTextModel.ts`, so a highlight made on the original pages
   finds its passage in this reflow and back. Change one, change the other.
-- `src/pdf-fixture.ts` — builds small PDFs in memory for tests.
+  The PDF's outline (bookmarks) is placed on the reflow as `data-toc-title` / `data-toc-level`
+  (`placeOutline`: the block on the entry's page whose text is its title, else the first block at
+  or below its point, else the page's first), for the reader's Contents list. Several entries on
+  one block become empty `<div data-toc-…>` markers ahead of it, which add no text.
+- `src/pdf-fixture.ts` — builds small PDFs in memory for tests (an outline too).
 
 Tests run inside workerd (`@cloudflare/vitest-pool-workers`), so they also prove pdf.js works on
 Workers.

@@ -30,6 +30,9 @@
   import { resolveEpubImages } from '$lib/utils/epubContent';
   import { epubViewMode, setEpubViewMode } from '$lib/utils/epubViewMode';
   import PdfViewer from '$lib/components/feed/PdfViewer.svelte';
+  import ReaderToc from '$lib/components/feed/ReaderToc.svelte';
+  import { buildReaderToc, currentTocIndex, type TocEntry } from '$lib/utils/readerToc';
+  import type { PdfOutlineEntry } from '$lib/utils/pdfOutline';
   import PopoverMenu from '$lib/components/PopoverMenu.svelte';
   import TagMenu from '$lib/components/feed/TagMenu.svelte';
   import LinkContextMenu from '$lib/components/feed/LinkContextMenu.svelte';
@@ -121,8 +124,11 @@
   let controlsVisible = $state(true);
   // Desktop header hides on scroll-down, but stays put while a header-anchored
   // menu (Style/Tag/overflow ⋯) is open so its popover doesn't slide off-screen.
+  // Contents: a panel under the desktop header, a sheet on mobile.
+  let tocOpen = $state(false);
+  let tocSheetOpen = $state(false);
   let headerHidden = $derived(
-    !controlsVisible && !styleMenuOpen && !tagMenuOpen && !overflowMenuOpen
+    !controlsVisible && !styleMenuOpen && !tagMenuOpen && !overflowMenuOpen && !tocOpen
   );
   let lastScrollY = $state(0);
   let suppressScrollHide = $state(false);
@@ -659,6 +665,86 @@
   );
   let railVisible = $derived(paged ? pagedTotal > 1 : progressVisible);
 
+  // Table of contents. The text view's (an article, a PDF's reflowed text, an
+  // EPUB) is read off the rendered body: the TOC a PDF or book carries, which
+  // the conversion marked on the text, else the headings (utils/readerToc.ts).
+  // The original PDF's is its outline, read by PdfViewer.
+  let textToc = $state.raw<TocEntry[]>([]);
+  let pdfOutline = $state.raw<PdfOutlineEntry[]>([]);
+  let pdfViewer = $state<ReturnType<typeof PdfViewer>>();
+  let tocCurrent = $state(-1);
+  $effect(() => {
+    // The body re-renders with the content, and is a new element across a
+    // switch between scroll and paged.
+    void sanitizedContent;
+    const root = readerBodyEl;
+    const markers = Boolean(pdfSave || epubSave);
+    const articleTitle = untrack(() => title);
+    if (!root) {
+      textToc = [];
+      return;
+    }
+    let stale = false;
+    void tick().then(() => {
+      if (!stale) textToc = buildReaderToc(root, { markers, articleTitle });
+    });
+    return () => {
+      stale = true;
+    };
+  });
+  $effect(() => {
+    void originalPdfSrc;
+    pdfOutline = [];
+  });
+  let tocEntries = $derived<readonly { title: string; level: number }[]>(
+    showOriginalPdf ? pdfOutline : textToc
+  );
+  // One entry is no map.
+  let hasToc = $derived(tocEntries.length >= 2);
+  $effect(() => {
+    if (!hasToc) tocOpen = tocSheetOpen = false;
+  });
+
+  /** The entry being read: the last one at or above the top third of the view. */
+  function findTocCurrent(): number {
+    if (showOriginalPdf) {
+      const page = pdfViewer?.pageInView() ?? 1;
+      return currentTocIndex(pdfOutline, (e) => e.page + 1 <= page);
+    }
+    const pager = paged ? pagedController : undefined;
+    if (pager) {
+      const page = pager.currentPage;
+      return currentTocIndex(textToc, (e) => pager.pageOfElement(e.el) <= page);
+    }
+    const view = overlayEl?.getBoundingClientRect();
+    const line = view ? view.top + view.height / 3 : window.innerHeight / 3;
+    return currentTocIndex(textToc, (e) => e.el.getBoundingClientRect().top <= line);
+  }
+
+  function toggleToc() {
+    if (tocOpen || tocSheetOpen) {
+      tocOpen = tocSheetOpen = false;
+      return;
+    }
+    if (!hasToc) return;
+    tocCurrent = findTocCurrent();
+    if (mobileStore.isMobile) tocSheetOpen = true;
+    else tocOpen = true;
+  }
+
+  function goToTocEntry(index: number) {
+    tocOpen = tocSheetOpen = false;
+    if (showOriginalPdf) {
+      const entry = pdfOutline[index];
+      if (entry) pdfViewer?.goTo(entry);
+      return;
+    }
+    const el = textToc[index]?.el;
+    if (!el?.isConnected) return;
+    if (paged && pagedController) pagedController.goToElement(el);
+    else el.scrollIntoView({ block: 'start' });
+  }
+
   // Paged mode: the H1 lives on page one, so the bar takes the title from page two.
   $effect(() => {
     if (paged) {
@@ -854,7 +940,12 @@
       return;
     }
     const noMod = !e.metaKey && !e.ctrlKey && !e.altKey;
-    if (e.key === 'Escape') {
+    if (e.key === 'Escape' && (tocOpen || tocSheetOpen)) {
+      // Close the contents, not the reader.
+      e.preventDefault();
+      e.stopPropagation();
+      tocOpen = tocSheetOpen = false;
+    } else if (e.key === 'Escape') {
       e.preventDefault();
       e.stopPropagation();
       onClose();
@@ -866,6 +957,10 @@
       e.preventDefault();
       e.stopPropagation();
       onToggleSave();
+    } else if (e.key === 'c' && noMod && hasToc) {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleToc();
     } else if (e.key === 't' && noMod) {
       e.preventDefault();
       e.stopPropagation();
@@ -894,9 +989,10 @@
   // Dismiss the inline desktop style row when clicking outside the header
   // (it stays pinned, so it mirrors the feed nav's click-outside behavior).
   function handleClickOutside(e: MouseEvent) {
-    if (!styleMenuOpen) return;
+    if (!styleMenuOpen && !tocOpen) return;
     if (headerRef && !headerRef.contains(e.target as Node)) {
       styleMenuOpen = false;
+      tocOpen = false;
     }
   }
 
@@ -1119,6 +1215,18 @@
           <Icon name="arrow-left" size={16} />
           <span class="action-label">Back</span>
         </button>
+        {#if hasToc}
+          <button
+            class="action-btn"
+            class:active={tocOpen}
+            aria-expanded={tocOpen}
+            onclick={toggleToc}
+            title="Contents (c)"
+          >
+            <Icon name="list" size={16} />
+            <span class="action-label">Contents</span>
+          </button>
+        {/if}
       </div>
 
       <!-- Takes over from the article's H1 once that scrolls away. Decorative:
@@ -1236,6 +1344,14 @@
       </div>
     {/if}
 
+    <!-- Contents: floats over the page under the bar's left end, where its
+         button is. -->
+    {#if tocOpen && !mobileStore.isMobile}
+      <div class="reader-toc-panel">
+        <ReaderToc entries={tocEntries} current={tocCurrent} onselect={goToTocEntry} />
+      </div>
+    {/if}
+
     <!-- Desktop only: the mobile menu below anchors to the bottom bar instead.
          Mounting both would register two document-level keydown handlers, and
          the number-key tag shortcuts would cancel each other out. Tag lives in
@@ -1266,6 +1382,7 @@
     eased={paged}
     visible={controlsVisible}
     onBack={onClose}
+    onContents={hasToc ? toggleToc : undefined}
     {onArchive}
     {isArchived}
     {onToggleSave}
@@ -1389,6 +1506,10 @@
             </div>
           </div>
         </div>
+      </BottomSheet>
+
+      <BottomSheet open={tocSheetOpen} onclose={() => (tocSheetOpen = false)} title="Contents">
+        <ReaderToc entries={tocEntries} current={tocCurrent} onselect={goToTocEntry} />
       </BottomSheet>
 
       {#if tagMenuOpen}
@@ -1543,6 +1664,8 @@
         </div>
         {#key originalPdfSrc}
           <PdfViewer
+            bind:this={pdfViewer}
+            onoutline={(entries) => (pdfOutline = entries)}
             src={originalPdfSrc}
             fallbackHref={originalPdfHref ?? undefined}
             bottomInset={mobileStore.isMobile ? READER_BAR_INSET : 0}
@@ -1994,6 +2117,32 @@
   /* Inline style row: a flat extension of the bar, right-aligned beneath the
      controls it belongs to and sharing their full-bleed inset. No floating pill —
      it sits in normal flow above the rail (closes on click-outside). */
+  .reader-toc-panel {
+    position: absolute;
+    top: 100%;
+    left: clamp(0.75rem, 1.5vw, 1.5rem);
+    width: min(22rem, calc(100vw - 2rem));
+    max-height: min(70vh, 40rem);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 0.5rem 0;
+    background: var(--color-bg, #ffffff);
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .reader-toc-panel {
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    }
+  }
+
+  /* A contents jump lands clear of the sticky bar. */
+  .reader-body :global(:is(h1, h2, h3, h4, h5, h6, [data-toc-title])) {
+    scroll-margin-top: 4.5rem;
+  }
+
   .reader-style-row {
     display: flex;
     justify-content: flex-end;
