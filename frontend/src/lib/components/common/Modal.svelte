@@ -142,6 +142,7 @@
     width: 100%;
     max-width: var(--modal-max-width, 480px);
     max-height: 80vh;
+    max-height: 80dvh;
     display: flex;
     flex-direction: column;
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
@@ -186,5 +187,33 @@
     gap: 0.75rem;
     padding: 1rem 1.5rem;
     border-top: 1px solid var(--color-border);
+  }
+
+  /* A phone has no room to spare: give the dialog the height and keep the
+     chrome compact, so the content (and its buttons) stay in view. */
+  @media (max-width: 640px) {
+    .modal-backdrop {
+      padding: 0.75rem;
+    }
+
+    .modal {
+      max-height: 100%;
+    }
+
+    .modal-header {
+      padding: 0.75rem 1rem;
+    }
+
+    .modal-header h2 {
+      font-size: var(--text-xl);
+    }
+
+    .modal-body {
+      padding: var(--modal-body-padding, 1rem);
+    }
+
+    .modal-footer {
+      padding: 0.75rem 1rem;
+    }
   }
 </style>
