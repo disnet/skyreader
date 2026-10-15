@@ -1,0 +1,959 @@
+<script lang="ts">
+  // Making or editing a channel, the same on every surface: the desktop modal
+  // and the mobile filter sheet both render this. It asks, in order:
+  //   - where items come from (new posts or saved articles), only when the
+  //     entry point didn't already say, and never when editing;
+  //   - what's in it: sources you pick (a folder counts, and grows) or sources
+  //     that match a rule;
+  //   - how to show it (read state, order).
+  import { untrack } from 'svelte';
+  import { isArchiveFeedSource } from '$lib/utils/newsletters';
+  import SourcePicker from './SourcePicker.svelte';
+  import DomainPatternInput from '$lib/components/DomainPatternInput.svelte';
+  import { feedViewStore } from '$lib/stores/feedView.svelte';
+  import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
+  import { articlesStore } from '$lib/stores/articles.svelte';
+  import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
+  import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
+  import { auth } from '$lib/stores/auth.svelte';
+  import { followLinksStore } from '$lib/stores/followLinks.svelte';
+  import { FOLLOWS_SOURCE_KEY } from '$lib/utils/sourceKeys';
+  import { computeSourceKeys } from '$lib/utils/channelLogic';
+  import { sourceFilterName, uniqueChannelName } from '$lib/utils/channelName';
+  import {
+    buildSourceGroups,
+    categoryGroupKey,
+    isSourceShown,
+    keysOfTypes,
+    upgradeChannelFilter,
+    CHANNEL_FILTER_VERSION,
+    type SourceFilter,
+  } from '$lib/utils/sourceFilter';
+  import type {
+    ChannelAutoRule,
+    DateAddedPreset,
+    ReadingLengthFilter,
+    SavedSourceType,
+    SortOrder,
+    SubscriptionSourceType,
+  } from '$lib/types';
+  import {
+    SAVED_SOURCE_OPTIONS,
+    DATE_PRESET_OPTIONS_SHORT as DATE_PRESET_OPTIONS,
+    READING_LENGTH_OPTIONS_SHORT as READING_LENGTH_OPTIONS,
+    SAVED_SORT_OPTIONS_SHORT as SAVED_SORT_OPTIONS,
+    FOLLOWS_SORT_OPTIONS,
+    AUTO_RULE_OPTIONS,
+    AUTO_RULE_DEFAULT_NAMES as DEFAULT_NAMES,
+    autoRuleToOption,
+    type AutoRuleOption,
+  } from '$lib/constants/channelOptions';
+
+  interface Props {
+    /** The channel being edited; null makes a new one. */
+    editingChannelId: number | null;
+    /** Where a new channel's items come from, when the entry point knows; null asks. */
+    initialChannelType?: 'feed' | 'saved' | null;
+    /** A new feed channel's sources to start from (the filters you're looking at). */
+    initialSourceFilter?: SourceFilter | null;
+    /** Cap the source list's height and scroll inside it (the desktop modal). */
+    scrollPicker?: boolean;
+    /** Shown as a Cancel button when given. */
+    oncancel?: () => void;
+    onsaved: (created: string | null) => void;
+    ondeleted?: () => void;
+  }
+
+  let {
+    editingChannelId,
+    initialChannelType = null,
+    initialSourceFilter = null,
+    scrollPicker = false,
+    oncancel,
+    onsaved,
+    ondeleted,
+  }: Props = $props();
+
+  const NO_SOURCES: SourceFilter = { sourceMode: 'include', sourceKeys: [] };
+
+  let name = $state('');
+  let nameEdited = $state(false);
+  let channelType = $state<'feed' | 'saved' | null>('feed');
+  let mode = $state<'pick' | 'rule'>('pick');
+  let sourceFilter = $state<SourceFilter>(NO_SOURCES);
+  let ruleType = $state<AutoRuleOption>('frequency:high');
+  let recentWithinDays = $state(14);
+  let tagValue = $state('');
+  let domainPatterns = $state<string[]>([]);
+  // A smart channel from before source groups may narrow its rule by type; kept
+  // as it was, since there's no longer a control for it.
+  let typeFilter = $state<SubscriptionSourceType[] | undefined>(undefined);
+  let savedSourceFilter = $state<Set<SavedSourceType>>(new Set());
+  let savedDateFilter = $state<DateAddedPreset | ''>('');
+  let savedReadingLength = $state<Set<ReadingLengthFilter>>(new Set());
+  let savedDomainFilter = $state<Set<string>>(new Set());
+  let savedTagFilter = $state<Set<string>>(new Set());
+  let readFilter = $state<'all' | 'unread' | 'read'>('unread');
+  let sortOrder = $state<SortOrder>('newest');
+  let saving = $state(false);
+  let error = $state<string | null>(null);
+
+  let isEditing = $derived(editingChannelId != null);
+
+  // Load the channel, or a new one's defaults, whenever what's being edited
+  // changes, and only then: a sync landing mid-edit mustn't reset the form.
+  $effect(() => {
+    const id = editingChannelId;
+    const type = initialChannelType;
+    const initial = initialSourceFilter;
+    untrack(() => load(id, type, initial));
+  });
+
+  function load(id: number | null, type: 'feed' | 'saved' | null, initial: SourceFilter | null) {
+    const view = id != null ? filteredViewsStore.getById(id) : null;
+    error = null;
+    saving = false;
+    if (view) {
+      name = view.name;
+      nameEdited = true;
+      channelType = view.mode === 'saved' ? 'saved' : 'feed';
+      readFilter = view.readFilter;
+      sortOrder = view.sortOrder;
+      savedSourceFilter = new Set(view.savedSourceFilter ?? []);
+      savedDateFilter = view.savedDateFilter ?? '';
+      savedReadingLength = new Set(view.savedReadingLength ?? []);
+      savedDomainFilter = new Set(view.savedDomainFilter ?? []);
+      savedTagFilter = new Set(view.tagFilter ?? []);
+      const upgraded = upgradeChannelFilter(view);
+      typeFilter = upgraded.typeFilter;
+      const rule = view.autoRule;
+      if (rule?.type === 'category') {
+        // A folder is a pick now: the picker takes a whole folder, as it grows.
+        mode = 'pick';
+        sourceFilter = { sourceMode: 'include', sourceKeys: [categoryGroupKey(rule.value)] };
+        typeFilter = undefined;
+      } else if (rule) {
+        mode = 'rule';
+        ruleType = autoRuleToOption(rule);
+        if (rule.type === 'recent') recentWithinDays = rule.withinDays;
+        else if (rule.type === 'subscriptionTag') tagValue = rule.value;
+        else if (rule.type === 'domain') domainPatterns = [...rule.patterns];
+      } else {
+        mode = 'pick';
+        sourceFilter = { sourceMode: upgraded.sourceMode, sourceKeys: upgraded.sourceKeys };
+      }
+      return;
+    }
+    name = '';
+    nameEdited = false;
+    channelType = initial ? 'feed' : type;
+    mode = 'pick';
+    sourceFilter = initial
+      ? { sourceMode: initial.sourceMode, sourceKeys: [...initial.sourceKeys] }
+      : NO_SOURCES;
+    ruleType = 'frequency:high';
+    recentWithinDays = 14;
+    tagValue = '';
+    domainPatterns = [];
+    typeFilter = undefined;
+    savedSourceFilter = new Set();
+    savedDateFilter = '';
+    savedReadingLength = new Set();
+    savedDomainFilter = new Set();
+    savedTagFilter = new Set();
+    readFilter = 'unread';
+    sortOrder = 'newest';
+  }
+
+  // Your follows' links are a row like any other source (see SourcePicker).
+  let showFollowsSource = $derived(
+    !auth.isGuest && followLinksStore.loaded && !followLinksStore.scopeRequired
+  );
+  let followsInEverything = $derived(followLinksStore.inEverything === true);
+
+  // Ranking by shares needs the follows source (see canSortByPopularity).
+  let includesFollows = $derived(
+    channelType === 'feed' &&
+      mode === 'pick' &&
+      sourceFilter.sourceMode !== 'all' &&
+      isSourceShown(sourceFilter, FOLLOWS_SOURCE_KEY, {
+        groups: buildSourceGroups(subscriptionsStore.subscriptions),
+        followsInEverything,
+      })
+  );
+  let feedSortOptions = $derived(
+    includesFollows
+      ? FOLLOWS_SORT_OPTIONS
+      : FOLLOWS_SORT_OPTIONS.filter((o) => o.value !== 'popular')
+  );
+
+  let availableTags = $derived(
+    [
+      ...new Set(
+        subscriptionsStore.subscriptions
+          .flatMap((s) => s.tags.map((t) => t.trim().toLowerCase()))
+          .filter(Boolean)
+      ),
+    ].sort()
+  );
+
+  let availableDomains = $derived(
+    [
+      ...new Set(
+        subscriptionsStore.subscriptions
+          .filter((s) => isArchiveFeedSource(s.sourceType))
+          .flatMap((s) =>
+            [s.feedUrl, s.siteUrl]
+              .filter(Boolean)
+              .map((u) => {
+                try {
+                  return new URL(u!).hostname;
+                } catch {
+                  return null;
+                }
+              })
+              .filter((h): h is string => !!h)
+          )
+      ),
+    ].sort()
+  );
+
+  let currentRule = $derived.by((): ChannelAutoRule | undefined => {
+    if (mode !== 'rule') return undefined;
+    switch (ruleType) {
+      case 'frequency:high':
+        return { type: 'frequency', threshold: 'high' };
+      case 'frequency:low':
+        return { type: 'frequency', threshold: 'low' };
+      case 'longReads':
+        return { type: 'longReads', minLength: 5000 };
+      case 'recent':
+        return { type: 'recent', withinDays: recentWithinDays };
+      case 'subscriptionTag':
+        return tagValue.trim() ? { type: 'subscriptionTag', value: tagValue.trim() } : undefined;
+      case 'domain':
+        return domainPatterns.length > 0 ? { type: 'domain', patterns: domainPatterns } : undefined;
+      case 'people':
+        return { type: 'people' };
+      default:
+        return undefined;
+    }
+  });
+
+  let matchedSourceKeys = $derived(
+    currentRule
+      ? computeSourceKeys(currentRule, subscriptionsStore.subscriptions, articlesStore.allArticles)
+      : []
+  );
+
+  /** What a new channel would be called if you don't name it. */
+  let suggestedName = $derived.by(() => {
+    if (channelType !== 'feed') return '';
+    if (mode === 'rule') {
+      if (ruleType === 'subscriptionTag' && tagValue.trim()) {
+        const t = tagValue.trim();
+        return t.charAt(0).toUpperCase() + t.slice(1);
+      }
+      if (ruleType === 'domain' && domainPatterns.length > 0) return domainPatterns[0];
+      return DEFAULT_NAMES[ruleType];
+    }
+    return sourceFilterName(sourceFilter, subscriptionsStore.subscriptions, followsInEverything);
+  });
+
+  // Fill the name in as you choose, until you type one.
+  $effect(() => {
+    if (!nameEdited) name = suggestedName;
+  });
+
+  function toggleIn<T>(set: Set<T>, value: T): Set<T> {
+    const next = new Set(set);
+    if (next.has(value)) next.delete(value);
+    else next.add(value);
+    return next;
+  }
+
+  async function handleDelete() {
+    if (editingChannelId == null) return;
+    if (!confirm('Delete this channel?')) return;
+    await filteredViewsStore.remove(editingChannelId);
+    ondeleted?.();
+  }
+
+  async function handleSave() {
+    if (channelType === null) {
+      error = 'Choose where its items come from';
+      return;
+    }
+    if (channelType === 'feed' && mode === 'pick') {
+      if (sourceFilter.sourceMode === 'include' && sourceFilter.sourceKeys.length === 0) {
+        error = 'Pick at least one source';
+        return;
+      }
+    }
+    if (channelType === 'feed' && mode === 'rule' && !currentRule) {
+      error = ruleType === 'subscriptionTag' ? 'Choose a tag' : 'Add a site pattern';
+      return;
+    }
+    const finalName =
+      name.trim() ||
+      uniqueChannelName(
+        suggestedName || (channelType === 'saved' ? 'Saved articles' : 'New channel'),
+        filteredViewsStore.views.map((v) => v.name)
+      );
+
+    error = null;
+    saving = true;
+    try {
+      const viewData =
+        channelType === 'saved'
+          ? {
+              name: finalName,
+              mode: 'saved' as const,
+              savedSourceFilter: savedSourceFilter.size > 0 ? [...savedSourceFilter] : undefined,
+              savedDateFilter: savedDateFilter || undefined,
+              savedReadingLength: savedReadingLength.size > 0 ? [...savedReadingLength] : undefined,
+              savedDomainFilter: savedDomainFilter.size > 0 ? [...savedDomainFilter] : undefined,
+              tagFilter: savedTagFilter.size > 0 ? [...savedTagFilter] : undefined,
+              readFilter: readFilter === 'all' ? ('unread' as const) : readFilter,
+              sortOrder,
+            }
+          : {
+              name: finalName,
+              mode: 'feed' as const,
+              sourceMode: currentRule ? ('include' as const) : sourceFilter.sourceMode,
+              sourceKeys: currentRule
+                ? keysOfTypes(matchedSourceKeys, typeFilter, subscriptionsStore.subscriptions)
+                : [...sourceFilter.sourceKeys],
+              autoRule: currentRule,
+              typeFilter: currentRule ? typeFilter : undefined,
+              filterVersion: CHANNEL_FILTER_VERSION,
+              readFilter,
+              // Ranking by shares needs your follows' links in the channel.
+              sortOrder:
+                sortOrder === 'oldest' || (sortOrder === 'popular' && includesFollows)
+                  ? sortOrder
+                  : ('newest' as const),
+            };
+
+      if (editingChannelId != null) {
+        await filteredViewsStore.update(editingChannelId, viewData);
+        onsaved(null);
+      } else {
+        onsaved(await filteredViewsStore.create(viewData));
+      }
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Failed to save';
+    } finally {
+      saving = false;
+    }
+  }
+</script>
+
+<form
+  class="channel-editor"
+  onsubmit={(e) => {
+    e.preventDefault();
+    handleSave();
+  }}
+>
+  <div class="section">
+    <label class="section-label" for="channel-name">Name</label>
+    <input
+      id="channel-name"
+      type="text"
+      class="text-input"
+      bind:value={name}
+      oninput={() => (nameEdited = true)}
+      placeholder={suggestedName || 'Name your channel'}
+    />
+  </div>
+
+  {#if !isEditing && !initialChannelType && !initialSourceFilter}
+    <div class="section">
+      <span class="section-label">Items from</span>
+      <div class="option-cards">
+        <button
+          type="button"
+          class="option-card"
+          class:selected={channelType === 'feed'}
+          aria-pressed={channelType === 'feed'}
+          onclick={() => (channelType = 'feed')}
+        >
+          <span class="option-title">Your sources</span>
+          <span class="option-desc">New posts from what you follow</span>
+        </button>
+        <button
+          type="button"
+          class="option-card"
+          class:selected={channelType === 'saved'}
+          aria-pressed={channelType === 'saved'}
+          onclick={() => (channelType = 'saved')}
+        >
+          <span class="option-title">Your saved articles</span>
+          <span class="option-desc">What you've kept to read</span>
+        </button>
+      </div>
+    </div>
+  {/if}
+
+  {#if channelType === 'feed'}
+    <div class="section">
+      <span class="section-label">What's in it</span>
+      <div class="option-cards">
+        <button
+          type="button"
+          class="option-card"
+          class:selected={mode === 'pick'}
+          aria-pressed={mode === 'pick'}
+          onclick={() => (mode = 'pick')}
+        >
+          <span class="option-title">Sources I pick</span>
+          <span class="option-desc">A list you choose</span>
+        </button>
+        <button
+          type="button"
+          class="option-card"
+          class:selected={mode === 'rule'}
+          aria-pressed={mode === 'rule'}
+          onclick={() => (mode = 'rule')}
+        >
+          <span class="option-title">Sources that match</span>
+          <span class="option-desc">Updates as you follow more</span>
+        </button>
+      </div>
+
+      {#if mode === 'pick'}
+        <p class="hint">
+          Checked sources are in this channel. A checked folder also takes in what you add to it
+          later.
+        </p>
+        <div class="picker-box">
+          <SourcePicker
+            filter={sourceFilter}
+            onchange={(f) => (sourceFilter = f)}
+            showFollows={showFollowsSource}
+            {followsInEverything}
+            scroll={scrollPicker}
+          />
+        </div>
+      {:else}
+        <fieldset class="rule-list">
+          <legend class="visually-hidden">Rule</legend>
+          {#each AUTO_RULE_OPTIONS as opt (opt.value)}
+            <label class="rule-row">
+              <input type="radio" name="channel-rule" value={opt.value} bind:group={ruleType} />
+              <span class="rule-text">
+                <span class="rule-title">{opt.label}</span>
+                <span class="option-desc">{opt.description}</span>
+              </span>
+            </label>
+          {/each}
+        </fieldset>
+
+        {#if ruleType === 'recent'}
+          <div class="inline-input">
+            <label for="recent-days" class="input-prefix">Added in the last</label>
+            <input
+              id="recent-days"
+              type="number"
+              bind:value={recentWithinDays}
+              min="1"
+              max="90"
+              class="days-input"
+            />
+            <span class="input-suffix">days</span>
+          </div>
+        {:else if ruleType === 'subscriptionTag'}
+          <input
+            type="text"
+            list="channel-tag-options"
+            class="text-input"
+            aria-label="Tag"
+            bind:value={tagValue}
+            placeholder="Tag, e.g. news"
+          />
+          <datalist id="channel-tag-options">
+            {#each availableTags as tag}
+              <option value={tag}></option>
+            {/each}
+          </datalist>
+        {:else if ruleType === 'domain'}
+          <DomainPatternInput
+            patterns={domainPatterns}
+            {availableDomains}
+            onchange={(p) => (domainPatterns = p)}
+            hint=""
+          />
+        {/if}
+
+        <div class="match-preview" class:empty={matchedSourceKeys.length === 0}>
+          {#if matchedSourceKeys.length > 0}
+            Matches <strong>{matchedSourceKeys.length}</strong>
+            {matchedSourceKeys.length === 1 ? 'source' : 'sources'} today
+          {:else}
+            No sources match this yet
+          {/if}
+        </div>
+      {/if}
+    </div>
+  {:else if channelType === 'saved'}
+    <div class="section">
+      <span class="section-label">What's in it</span>
+      <p class="hint">Choose nothing in a row to take in all of it.</p>
+
+      <span class="row-label">Kind</span>
+      <div class="chip-row">
+        {#each SAVED_SOURCE_OPTIONS as opt}
+          <button
+            type="button"
+            class="chip"
+            class:active={savedSourceFilter.has(opt.value)}
+            aria-pressed={savedSourceFilter.has(opt.value)}
+            onclick={() => (savedSourceFilter = toggleIn(savedSourceFilter, opt.value))}
+          >
+            {opt.label}
+          </button>
+        {/each}
+      </div>
+
+      <span class="row-label">Saved in the last</span>
+      <div class="chip-row">
+        {#each DATE_PRESET_OPTIONS as opt}
+          <button
+            type="button"
+            class="chip"
+            class:active={savedDateFilter === opt.value}
+            aria-pressed={savedDateFilter === opt.value}
+            onclick={() => (savedDateFilter = opt.value as DateAddedPreset | '')}
+          >
+            {opt.label}
+          </button>
+        {/each}
+      </div>
+
+      <span class="row-label">Length</span>
+      <div class="chip-row">
+        {#each READING_LENGTH_OPTIONS as opt}
+          <button
+            type="button"
+            class="chip"
+            class:active={savedReadingLength.has(opt.value)}
+            aria-pressed={savedReadingLength.has(opt.value)}
+            onclick={() => (savedReadingLength = toggleIn(savedReadingLength, opt.value))}
+          >
+            {opt.label}
+          </button>
+        {/each}
+      </div>
+
+      {#if feedViewStore.availableSavedDomains.length > 0}
+        <span class="row-label">Sites</span>
+        <div class="chip-row scroll-chips">
+          {#each feedViewStore.availableSavedDomains as domain}
+            <button
+              type="button"
+              class="chip"
+              class:active={savedDomainFilter.has(domain)}
+              aria-pressed={savedDomainFilter.has(domain)}
+              onclick={() => (savedDomainFilter = toggleIn(savedDomainFilter, domain))}
+            >
+              {domain}
+            </button>
+          {/each}
+        </div>
+      {/if}
+
+      {#if itemLabelsStore.allTags.length > 0}
+        <span class="row-label">Tags</span>
+        <div class="chip-row scroll-chips">
+          {#each itemLabelsStore.allTags as tag}
+            <button
+              type="button"
+              class="chip"
+              class:active={savedTagFilter.has(tag)}
+              aria-pressed={savedTagFilter.has(tag)}
+              onclick={() => (savedTagFilter = toggleIn(savedTagFilter, tag))}
+            >
+              {tag}
+            </button>
+          {/each}
+        </div>
+      {/if}
+    </div>
+  {/if}
+
+  {#if channelType}
+    <div class="section">
+      <span class="section-label">Show</span>
+      <div class="chip-row">
+        {#if channelType === 'saved'}
+          <button
+            type="button"
+            class="chip"
+            class:active={readFilter !== 'read'}
+            aria-pressed={readFilter !== 'read'}
+            onclick={() => (readFilter = 'unread')}>Inbox</button
+          >
+          <button
+            type="button"
+            class="chip"
+            class:active={readFilter === 'read'}
+            aria-pressed={readFilter === 'read'}
+            onclick={() => (readFilter = 'read')}>Archive</button
+          >
+        {:else}
+          <button
+            type="button"
+            class="chip"
+            class:active={readFilter === 'unread'}
+            aria-pressed={readFilter === 'unread'}
+            onclick={() => (readFilter = 'unread')}>Unread</button
+          >
+          <button
+            type="button"
+            class="chip"
+            class:active={readFilter === 'all'}
+            aria-pressed={readFilter === 'all'}
+            onclick={() => (readFilter = 'all')}>All</button
+          >
+          {#if readFilter === 'read'}
+            <button type="button" class="chip active" aria-pressed="true">Read</button>
+          {/if}
+        {/if}
+      </div>
+      <span class="row-label">Order</span>
+      <div class="chip-row">
+        {#each channelType === 'saved' ? SAVED_SORT_OPTIONS : feedSortOptions as opt (opt.value)}
+          <button
+            type="button"
+            class="chip"
+            class:active={sortOrder === opt.value}
+            aria-pressed={sortOrder === opt.value}
+            onclick={() => (sortOrder = opt.value)}
+          >
+            {opt.label}
+          </button>
+        {/each}
+      </div>
+    </div>
+  {/if}
+
+  {#if error}
+    <p class="error" role="alert">{error}</p>
+  {/if}
+
+  <div class="actions">
+    {#if oncancel}
+      <button type="button" class="btn-secondary" onclick={oncancel} disabled={saving}>
+        Cancel
+      </button>
+    {/if}
+    <button type="submit" class="btn-primary" disabled={saving}>
+      {#if saving}
+        Saving…
+      {:else if isEditing}
+        Save
+      {:else}
+        Create channel
+      {/if}
+    </button>
+  </div>
+  {#if isEditing}
+    <button type="button" class="delete-btn" onclick={handleDelete} disabled={saving}>
+      Delete channel
+    </button>
+  {/if}
+</form>
+
+<style>
+  .channel-editor {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .section + .section {
+    padding-top: 1rem;
+    border-top: 1px solid var(--color-border);
+  }
+
+  .section-label {
+    font-size: var(--text-2xs);
+    font-weight: var(--weight-semibold);
+    color: var(--color-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wider);
+    padding-left: 0.25rem;
+  }
+
+  .row-label {
+    margin-top: 0.25rem;
+    padding-left: 0.25rem;
+    font-size: var(--text-xs);
+    color: var(--color-text-secondary);
+  }
+
+  .hint {
+    margin: 0;
+    padding-left: 0.25rem;
+    font-size: var(--text-xs);
+    color: var(--color-text-secondary);
+  }
+
+  .text-input {
+    padding: 0.625rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    background: var(--color-bg);
+    color: var(--color-text);
+    font-size: var(--text-base);
+    outline: none;
+  }
+
+  .text-input:focus {
+    border-color: var(--color-primary);
+  }
+
+  .text-input::placeholder {
+    color: var(--color-text-secondary);
+  }
+
+  .option-cards {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+  }
+
+  .rule-list {
+    margin: 0;
+    padding: 0;
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    background: var(--color-bg);
+    overflow: hidden;
+  }
+
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .rule-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.625rem;
+    padding: 0.5rem 0.75rem;
+    cursor: pointer;
+  }
+
+  .rule-row + .rule-row {
+    border-top: 1px solid var(--color-border);
+  }
+
+  .rule-row input {
+    margin: 0.2rem 0 0;
+    accent-color: var(--color-primary);
+  }
+
+  .rule-text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.0625rem;
+  }
+
+  .rule-title {
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+    color: var(--color-text);
+  }
+
+  .option-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
+    padding: 0.625rem 0.75rem;
+    border: 1.5px solid var(--color-border);
+    border-radius: 8px;
+    background: var(--color-bg);
+    text-align: left;
+    cursor: pointer;
+    transition:
+      border-color 0.15s,
+      background-color 0.15s;
+  }
+
+  .option-card:hover {
+    border-color: var(--color-text-secondary);
+  }
+
+  .option-card.selected {
+    border-color: var(--color-primary);
+    background: var(--color-sidebar-active, rgba(0, 102, 204, 0.06));
+  }
+
+  .option-title {
+    font-size: var(--text-sm);
+    font-weight: var(--weight-semibold);
+    color: var(--color-text);
+  }
+
+  .option-card.selected .option-title {
+    color: var(--color-primary);
+  }
+
+  .option-desc {
+    font-size: var(--text-2xs);
+    color: var(--color-text-secondary);
+    line-height: var(--leading-tight);
+  }
+
+  .picker-box {
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    background: var(--color-bg);
+    overflow: hidden;
+  }
+
+  .chip-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.375rem;
+  }
+
+  .scroll-chips {
+    max-height: 7.5rem;
+    overflow-y: auto;
+  }
+
+  .chip {
+    padding: 0.375rem 0.75rem;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    background: var(--color-bg-secondary);
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+    cursor: pointer;
+    transition:
+      background-color 0.15s,
+      border-color 0.15s;
+  }
+
+  .chip.active {
+    background: var(--color-sidebar-active, rgba(0, 102, 204, 0.1));
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+  }
+
+  .inline-input {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .input-prefix,
+  .input-suffix {
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+  }
+
+  .days-input {
+    width: 4rem;
+    padding: 0.5rem;
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    background: var(--color-bg);
+    color: var(--color-text);
+    font-size: var(--text-base);
+    text-align: center;
+    outline: none;
+  }
+
+  .days-input:focus {
+    border-color: var(--color-primary);
+  }
+
+  .match-preview {
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+  }
+
+  .match-preview.empty {
+    font-style: italic;
+  }
+
+  .error {
+    margin: 0;
+    color: var(--color-error);
+    font-size: var(--text-sm);
+  }
+
+  .actions {
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  .btn-primary,
+  .btn-secondary {
+    flex: 1;
+    padding: 0.75rem;
+    border-radius: 8px;
+    font-size: var(--text-md);
+    font-weight: var(--weight-medium);
+    cursor: pointer;
+  }
+
+  .btn-primary {
+    border: none;
+    background: var(--color-primary);
+    color: white;
+  }
+
+  .btn-secondary {
+    border: 1px solid var(--color-border);
+    background: var(--color-bg);
+    color: var(--color-text);
+  }
+
+  .btn-primary:disabled,
+  .btn-secondary:disabled,
+  .delete-btn:disabled {
+    opacity: 0.6;
+  }
+
+  .delete-btn {
+    align-self: center;
+    padding: 0.5rem 1rem;
+    border: none;
+    background: none;
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
+    cursor: pointer;
+  }
+
+  .delete-btn:hover:not(:disabled),
+  .delete-btn:active:not(:disabled) {
+    color: var(--color-error);
+  }
+
+  /* iOS Safari zooms the viewport when a focused input is smaller than 16px. */
+  @media (hover: none) and (pointer: coarse) {
+    .text-input,
+    .days-input {
+      font-size: 1rem;
+    }
+  }
+</style>

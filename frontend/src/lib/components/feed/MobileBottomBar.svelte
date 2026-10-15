@@ -154,8 +154,8 @@
           class="bar-btn"
           class:has-filters={hasActiveFilters}
           onclick={onOpenFilterSheet}
-          aria-label="Filters and style"
-          title="Filters & Style"
+          aria-label="View options"
+          title="View options"
         >
           <Icon name="sliders" size={20} />
           {#if hasActiveFilters}

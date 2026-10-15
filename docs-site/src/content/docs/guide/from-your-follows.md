@@ -49,7 +49,7 @@ In any view, **People you follow** is a row in the **Sources** filter under **Fr
 
 The **From your follows** channel is an ordinary channel. Rename it, change its filters, or delete it. To add your follows' links to another channel, edit that channel's sources and check **People you follow**.
 
-A channel with your follows' links in it can also sort by **Most shared**: the links the most people you follow shared come first, newest first among equals. An article from your feeds counts the people you follow who shared it too. Pick it from the sort menu, or under **Sort Order** when you edit the channel.
+A channel with your follows' links in it can also sort by **Most shared**: the links the most people you follow shared come first, newest first among equals. An article from your feeds counts the people you follow who shared it too. Pick it from the sort menu, or under **Order** when you edit the channel.
 
 ## What's kept
 

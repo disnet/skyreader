@@ -1,7 +1,7 @@
 import { auth } from '$lib/stores/auth.svelte';
 import { followLinksStore } from '$lib/stores/followLinks.svelte';
 import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
-import { FOLLOWS_SOURCE_KEY, isFollowsSource } from '$lib/utils/sourceKeys';
+import { FOLLOWS_CHANNEL_NAME, FOLLOWS_SOURCE_KEY, isFollowsSource } from '$lib/utils/sourceKeys';
 import type { FilteredView } from '$lib/types';
 
 // The follows channel: the preset that gives "From your follows" its place in
@@ -10,7 +10,7 @@ import type { FilteredView } from '$lib/types';
 // reader for free, and can be renamed, edited or deleted like any other.
 // See docs/plans/FOLLOWS_LINKS_PLAN.md.
 
-export const FOLLOWS_CHANNEL_NAME = 'From your follows';
+export { FOLLOWS_CHANNEL_NAME };
 
 /** Where the follows surface lives. Resolves to the channel (making it if
  *  there isn't one) or, without the permission, to the ask on Manage Sources. */

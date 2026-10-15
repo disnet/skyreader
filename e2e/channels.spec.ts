@@ -13,12 +13,14 @@ async function createChannel(page: Page, name: string, row: 'Feeds' | 'Saved' = 
   await navRow.locator('.row-add-btn').click({ force: true });
 
   // Fill the channel name in the modal
-  const nameInput = page.locator('#view-name');
+  const nameInput = page.locator('#channel-name');
   await expect(nameInput).toBeVisible({ timeout: 5_000 });
   await nameInput.fill(name);
 
-  // Click the Create button
-  await page.locator('button.btn-primary', { hasText: 'Create' }).click();
+  // A new feed channel starts with no sources picked; take them all.
+  if (row === 'Feeds') await page.getByRole('button', { name: 'Show everything' }).click();
+
+  await page.getByRole('button', { name: 'Create channel' }).click();
 
   // Wait for the channel to appear in the sidebar
   const channel = page.locator('.view-item .nav-label', { hasText: name });
@@ -39,6 +41,54 @@ test.describe('Channels', () => {
     await expect(authedPage).toHaveURL(/view=/);
   });
 
+  test('a channel picked from a folder names itself and keeps the folder', async ({
+    authedPage,
+    testUser,
+  }) => {
+    await seedSubscription(testUser, {
+      feedUrl: 'https://example.com/folder-a.xml',
+      title: 'Folder Feed A',
+      category: 'Tech',
+    });
+    await seedSubscription(testUser, {
+      feedUrl: 'https://example.com/folder-b.xml',
+      title: 'Folder Feed B',
+      category: 'Tech',
+    });
+    await seedSubscription(testUser, {
+      feedUrl: 'https://example.com/loose.xml',
+      title: 'Loose Feed',
+    });
+    await authedPage.reload();
+
+    const navRow = authedPage.locator('.nav-row', {
+      has: authedPage.locator('.nav-label', { hasText: 'Feeds' }),
+    });
+    await navRow.locator('.row-add-btn').click({ force: true });
+
+    // Nothing is picked yet, so there's nothing to make.
+    await authedPage.getByRole('button', { name: 'Create channel' }).click();
+    await expect(authedPage.getByRole('alert')).toHaveText('Pick at least one source');
+
+    await authedPage.getByRole('button', { name: 'Show only Tech' }).click();
+    await expect(authedPage.locator('#channel-name')).toHaveValue('Tech');
+    await authedPage.getByRole('button', { name: 'Create channel' }).click();
+
+    const channel = authedPage.locator('.view-item .nav-label', { hasText: 'Tech' });
+    await expect(channel).toBeVisible({ timeout: 10_000 });
+
+    // It reopens holding the folder itself, not the two feeds in it.
+    await authedPage.locator('.view-item', { hasText: 'Tech' }).click({ button: 'right' });
+    await authedPage.getByRole('menuitem', { name: 'Edit' }).click();
+    await expect(authedPage.getByRole('heading', { name: 'Edit channel' })).toBeVisible();
+    const folder = authedPage.locator('.source-row', { hasText: 'Tech' }).getByRole('checkbox');
+    await expect(folder).toBeChecked();
+    const loose = authedPage
+      .locator('.source-row', { hasText: 'Loose Feed' })
+      .getByRole('checkbox');
+    await expect(loose).not.toBeChecked();
+  });
+
   test('the header Edit button opens a saved channel in its editor', async ({ authedPage }) => {
     // A saved channel routes to /saved?view=<uuid> and puts an Edit button in
     // the header. That button used to resolve the channel with
@@ -50,10 +100,10 @@ test.describe('Channels', () => {
     await authedPage.getByRole('button', { name: 'Edit channel' }).click();
 
     // The editor is populated with this channel, not an empty create form.
-    await expect(authedPage.getByRole('heading', { name: 'Edit Channel' })).toBeVisible({
+    await expect(authedPage.getByRole('heading', { name: 'Edit channel' })).toBeVisible({
       timeout: 5_000,
     });
-    await expect(authedPage.locator('#view-name')).toHaveValue('Edit From Header');
+    await expect(authedPage.locator('#channel-name')).toHaveValue('Edit From Header');
   });
 
   test('rename a channel via context menu', async ({ authedPage }) => {
@@ -257,7 +307,7 @@ test.describe('A channel filter survives a reload', () => {
     // the inline Save/Update control. Verify the restored channel reaches that
     // state; the store-level tests cover the transient unsaved-changes guard.
     await openFilterToolbar(authedPage);
-    await expect(authedPage.getByRole('button', { name: 'Edit Channel' })).toBeVisible();
+    await expect(authedPage.getByRole('button', { name: 'Edit channel' })).toBeVisible();
     await expect(authedPage.getByRole('button', { name: 'Update' })).toHaveCount(0);
   });
 });

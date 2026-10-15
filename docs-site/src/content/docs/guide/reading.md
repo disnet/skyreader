@@ -13,7 +13,20 @@ The **Sources** filter lists everything that brings you things to read, grouped:
 - **Newsletters**: every sender, together or one by one.
 - **Publications**: your feeds, by folder.
 
-Everything starts checked. Uncheck a source, a folder or a whole group to leave it out. Choose **only** beside one to see just that. **Show everything** puts it all back. A group stays whole as it grows: hide **Newsletters** and a newsletter that arrives tomorrow stays hidden too. Choose **Save** to keep a filter as a channel.
+Everything starts checked. Uncheck a source, a folder or a whole group to leave it out. Choose **only** beside one to see just that. **Show everything** puts it all back. A group or folder stays whole as it grows: hide **Newsletters** and a newsletter that arrives tomorrow stays hidden too. Choose **Save** (on a phone, **Save as channel**) to keep a filter as a channel.
+
+### Making a channel
+
+Choose **+** beside **Feeds** or **Saved** in the sidebar, or **New channel** in the feed switcher on a phone.
+
+- **Name** fills itself in from what you choose. Type your own to keep it.
+- **What's in it**, for a channel of your feeds:
+  - **Sources I pick**: check the sources you want. Check a folder to take in everything filed there, now and later.
+  - **Sources that match**: a rule picks them and keeps up as you follow more. **Daily Digest** takes sources that post several times a day, **Don't Miss** the ones that post rarely, and **Long Reads** the ones that write at length. You can also match the sources you added lately, ones you tagged, or ones from a site.
+- **What's in it**, for a channel of saved articles: narrow by kind, when you saved it, length, site or tag. Leave a row empty to take in all of it.
+- **Show** and **Order** set what the channel opens on: unread or everything, newest or oldest first.
+
+To change a channel later, open it and choose **Edit channel**, or right-click it in the sidebar. On a phone, **Edit channel** sits beside **View** in the view options.
 
 ![The Feeds view: sources and channels in the sidebar, newest articles first in the stream](../../../assets/screenshots/library.png)
 
