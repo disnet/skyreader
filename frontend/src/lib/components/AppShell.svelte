@@ -33,6 +33,8 @@
   import ShareComposer from '$lib/components/feed/ShareComposer.svelte';
   import BlueskyComposer from '$lib/components/feed/BlueskyComposer.svelte';
   import IntegrationSaveDialog from '$lib/components/feed/IntegrationSaveDialog.svelte';
+  import ShelfCollectionPicker from '$lib/components/shelf/ShelfCollectionPicker.svelte';
+  import { shelfStore } from '$lib/stores/shelf.svelte';
   import SembleConnectionDialog from '$lib/components/feed/SembleConnectionDialog.svelte';
   import SyncLimitBanner from '$lib/components/SyncLimitBanner.svelte';
   import SearchOverlay from '$lib/components/search/SearchOverlay.svelte';
@@ -121,6 +123,16 @@
     if (appManager.phase !== 'ready' && appManager.phase !== 'error') return;
     followsGrantChecked = true;
     void completeFollowsGrant().catch(() => {});
+  });
+
+  // Shelf collections: once the app is up, per account (shelfStore.load is a
+  // no-op on a second call for the same DID). Membership puts a save on the
+  // Shelf, so the Saved list's "Keep on Shelf" state needs them too.
+  $effect(() => {
+    const did = auth.user?.did;
+    if (!did || auth.isGuest || $page.url.pathname.startsWith('/dev')) return;
+    if (appManager.phase !== 'ready' && appManager.phase !== 'error') return;
+    void shelfStore.load();
   });
 
   // Back from a permission grant asked for in the share drawer or the highlight
@@ -489,6 +501,7 @@
 <ShareComposer />
 <BlueskyComposer />
 <IntegrationSaveDialog />
+<ShelfCollectionPicker />
 <SembleConnectionDialog />
 
 {#if searchStore.isOpen}

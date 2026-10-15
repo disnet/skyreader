@@ -19,6 +19,7 @@ import type {
   ShareDraft,
   SaveBacking,
   SembleCollection,
+  ShelfCollection,
   SembleCard,
   SembleConnectionType,
   SocialContextResult,
@@ -1462,6 +1463,55 @@ class ApiClient {
     return this.fetch('/api/labels', {
       method: 'DELETE',
       body: JSON.stringify({ itemKey, label, updatedAt }),
+    });
+  }
+
+  // --- Shelf collections (routes/shelf.ts) ---
+
+  async getShelfCollections(): Promise<{ collections: ShelfCollection[] }> {
+    return this.fetch('/api/shelf/collections');
+  }
+
+  async createShelfCollection(data: {
+    id: string;
+    name: string;
+    description?: string | null;
+  }): Promise<{ success: boolean; id: string }> {
+    return this.fetch('/api/shelf/collections', { method: 'POST', body: JSON.stringify(data) });
+  }
+
+  async updateShelfCollection(
+    id: string,
+    data: { name?: string; description?: string | null; position?: number }
+  ): Promise<{ success: boolean }> {
+    return this.fetch(`/api/shelf/collections/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteShelfCollection(id: string): Promise<{ success: boolean }> {
+    return this.fetch(`/api/shelf/collections/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  }
+
+  async addToShelfCollection(id: string, rkey: string): Promise<{ success: boolean }> {
+    return this.fetch(`/api/shelf/collections/${encodeURIComponent(id)}/items`, {
+      method: 'POST',
+      body: JSON.stringify({ rkey }),
+    });
+  }
+
+  async removeFromShelfCollection(id: string, rkey: string): Promise<{ success: boolean }> {
+    return this.fetch(
+      `/api/shelf/collections/${encodeURIComponent(id)}/items/${encodeURIComponent(rkey)}`,
+      { method: 'DELETE' }
+    );
+  }
+
+  async reorderShelfCollection(id: string, rkeys: string[]): Promise<{ success: boolean }> {
+    return this.fetch(`/api/shelf/collections/${encodeURIComponent(id)}/items`, {
+      method: 'PUT',
+      body: JSON.stringify({ rkeys }),
     });
   }
 

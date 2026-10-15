@@ -1,6 +1,6 @@
 ---
 title: Saving and highlights
-description: Save articles from anywhere, highlight passages, and review what you keep.
+description: Save articles from anywhere, keep references on your Shelf, highlight passages, and review what you keep.
 ---
 
 ## Saving
@@ -54,6 +54,20 @@ Some pages load their text only once they're open in a browser, so Skyreader's s
 If you use [Semble](https://semble.so) or [Margin](https://margin.at), you can back your Saved list with one of them (**Settings → Library & privacy → Saved articles**). Your Saved list becomes a collection there: edit it in either app, or in any Atmospheric app, and the two stay in sync.
 
 One thing to know before turning it on: **backing publishes your saves publicly**, because Semble and Margin collections are public. Saved newsletters and uploaded PDFs and EPUBs are the exception: they have no web link to share, so they stay private to Skyreader.
+
+## The Shelf
+
+Saved is a reading queue: read something, archive it, and it leaves. The **Shelf** is for what you keep and come back to, like books, papers, and references. It shows the same saves, so an item can be in both: archiving it clears it from Saved and leaves it on the Shelf.
+
+Books and PDFs go on the Shelf as soon as you save them. To put anything else there, choose **Keep on Shelf** from its **⋯** menu in Saved. **Take off Shelf** removes it, and the save stays in Saved.
+
+The Shelf opens on **Continue reading**, the things you're partway through. Below that is everything on it, as covers or as a list. Filter by title or author, show only books, PDFs, or articles, and sort by what you read last, what you saved last, title, or author.
+
+### Collections
+
+Collections group what's on your Shelf, like a course's readings or a project's sources. Create one with **New collection**, then add items from their **⋯** menu (**Add to collection**). An item can be in more than one collection. A collection keeps its own order (**Move up** and **Move down** in the item menu) and can carry a short description.
+
+Collections are private to Skyreader and need an account and a connection.
 
 ## Highlights
 

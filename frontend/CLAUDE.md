@@ -37,6 +37,7 @@ All stores use Svelte 5 runes (`.svelte.ts` files):
 | `social.svelte.ts`        | Social feed from followed users                     |
 | `sync.svelte.ts`          | Online status, pending queue count, last sync       |
 | `preferences.svelte.ts`   | User preferences                                    |
+| `shelf.svelte.ts`         | Shelf membership (`kept` label) + collections       |
 
 ### Services
 
@@ -203,6 +204,7 @@ See [`docs/RUNBOOK.md`](../docs/RUNBOOK.md) for sampling and recovery details.
 | `/starred`           | Starred articles                                |
 | `/feeds`             | Manage feed subscriptions                       |
 | `/discover`          | Discover new feeds                              |
+| `/shelf`             | Shelf: kept saves, books, PDFs; collections     |
 | `/highlights`        | Every highlight, grouped by source article      |
 | `/highlights/review` | Review deck — a few highlights, one at a time   |
 | `/search`            | Legacy link: opens the search overlay           |
@@ -303,6 +305,17 @@ a noted highlight wears a dot where it ends. Grab handles and double-click-a-par
 text-view only. Text the extractor dropped (running headers, page numbers) can be highlighted on
 the pages but won't show in the text. If you change how the extractor joins lines, change
 `buildPdfTextModel` to match, or cross-view highlights stop lining up.
+
+#### The Shelf
+
+`/shelf` is the reference half of Saved: a view over the same saves, not a second pile
+(`stores/shelf.svelte.ts`, `components/shelf/`). A save is on it when its `kept` label says so
+(`props.kept` true/false, read across every alias via `itemLabelsStore.getKeptState`), else by kind
+(PDFs and EPUBs default on, webpages off), or when it's in a collection. Collections are private,
+ordered groups held server-side (`/api/shelf/collections`), keyed by the save's **rkey**, fetched
+whole once per account after boot and cached in Dexie `metadata`. Their writes are optimistic,
+online and account-only, and roll back with a toast instead of queueing. Taking a save off the Shelf
+also removes it from its collections. See `docs/plans/SHELF_PLAN.md`.
 
 #### Saved EPUBs
 

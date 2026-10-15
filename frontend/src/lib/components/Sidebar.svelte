@@ -452,6 +452,18 @@
       {/if}
     </div>
 
+    <!-- Shelf: the reference half of Saved — books, PDFs and whatever else the
+         reader keeps (local for a guest; collections are account-only). -->
+    <a
+      href="/shelf"
+      class="nav-item nav-link"
+      class:active={$page.url.pathname === '/shelf'}
+      onclick={() => sidebarStore.closeMobile()}
+    >
+      <span class="nav-icon"><Icon name="shelf" /></span>
+      <span class="nav-label">Shelf</span>
+    </a>
+
     <!-- Bottom nav. The linkblog entry hides once the user deletes their
          linkblog; the rest of the nav is unrelated to it and always shows. -->
     {#if !auth.isGuest && !preferences.linkblogDisabled}

@@ -28,6 +28,7 @@
   import Icon from '$lib/components/Icon.svelte';
   import PopoverMenu from '$lib/components/PopoverMenu.svelte';
   import TagMenu from '$lib/components/feed/TagMenu.svelte';
+  import { shelfStore } from '$lib/stores/shelf.svelte';
   import { isFailedSaveBody } from '$lib/utils/saveAnywhere';
 
   let {
@@ -513,6 +514,14 @@
     });
   }
 
+  // The save behind this row, for the Shelf actions (a feed article or document
+  // row is saved under its guid / record uri or its url).
+  let shelfSave = $derived.by(() => {
+    if (displayItem.type === 'saved') return displayItem.item;
+    return savesStore.find(itemKey) ?? (url ? savesStore.find(url) : undefined);
+  });
+  let onShelf = $derived(shelfSave ? shelfStore.isOnShelf(shelfSave) : false);
+
   let popoverMenuItems = $derived.by(() => {
     const items: {
       label: string;
@@ -536,6 +545,24 @@
         },
       },
     ];
+    if (shelfSave) {
+      const save = shelfSave;
+      items.push({
+        label: onShelf ? 'Take off Shelf' : 'Keep on Shelf',
+        icon: 'shelf',
+        active: onShelf,
+        onclick: () => {
+          void shelfStore.setOnShelf(save, !onShelf);
+        },
+      });
+      if (auth.user) {
+        items.push({
+          label: 'Add to collection',
+          icon: 'folder-plus',
+          onclick: () => shelfStore.openPicker(save),
+        });
+      }
+    }
     if (canShare) {
       items.push({
         label: isShared

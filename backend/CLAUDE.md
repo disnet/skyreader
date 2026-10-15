@@ -122,6 +122,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed documentation.
 | `src/routes/labels.ts`        | Unified item labels (read/starred/archived/tags)           |
 | `src/routes/saved.ts`         | Saved articles CRUD                                        |
 | `src/routes/saved-pdf.ts`     | PDFs + EPUBs (Supporter): upload, kept originals, cleanup  |
+| `src/routes/shelf.ts`         | Shelf collections: private, ordered groups of saves        |
 | `src/routes/recommends.ts`    | One-tap public recommends (+ standard.site copy)           |
 | `src/routes/integrations.ts`  | Semble/Margin writes to the user's PDS                     |
 | `src/routes/settings.ts`      | User settings                                              |
@@ -336,6 +337,8 @@ Key tables:
   They stay until the proxy document path is decommissioned
 - `item_labels_cache` - Unified labels (read/starred/archived/tags)
 - `saved_articles` - Saved/bookmarked articles
+- `shelf_collections` / `shelf_collection_items` - Shelf collections and their members (by saved
+  rkey); private, never on the PDS. See `docs/plans/SHELF_PLAN.md`
 - `social_read_positions_cache` - Legacy social read tracking (superseded; document
   reads now live in `item_labels_cache` as `item_type='document'`/`label='read'`)
 - `user_settings` - User preferences
