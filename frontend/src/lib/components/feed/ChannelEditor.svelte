@@ -16,9 +16,10 @@
   // and the mobile filter sheet both render this. It asks, in order:
   //   - where items come from (new posts or saved articles), only when the
   //     entry point didn't already say, and never when editing;
+  //   - how to show it (read state, order) — ahead of the source list, which
+  //     can run long enough that anything below it goes unseen;
   //   - what's in it: sources you pick (a folder counts, and grows) or sources
-  //     that match a rule;
-  //   - how to show it (read state, order).
+  //     that match a rule.
   import { untrack } from 'svelte';
   import { isArchiveFeedSource } from '$lib/utils/newsletters';
   import SourcePicker from './SourcePicker.svelte';
@@ -455,6 +456,62 @@
     </div>
   {/if}
 
+  {#if channelType}
+    <div class="section">
+      <span class="section-label">Show</span>
+      <div class="chip-row">
+        {#if channelType === 'saved'}
+          <button
+            type="button"
+            class="chip"
+            class:active={readFilter !== 'read'}
+            aria-pressed={readFilter !== 'read'}
+            onclick={() => (readFilter = 'unread')}>Inbox</button
+          >
+          <button
+            type="button"
+            class="chip"
+            class:active={readFilter === 'read'}
+            aria-pressed={readFilter === 'read'}
+            onclick={() => (readFilter = 'read')}>Archive</button
+          >
+        {:else}
+          <button
+            type="button"
+            class="chip"
+            class:active={readFilter === 'unread'}
+            aria-pressed={readFilter === 'unread'}
+            onclick={() => (readFilter = 'unread')}>Unread</button
+          >
+          <button
+            type="button"
+            class="chip"
+            class:active={readFilter === 'all'}
+            aria-pressed={readFilter === 'all'}
+            onclick={() => (readFilter = 'all')}>All</button
+          >
+          {#if readFilter === 'read'}
+            <button type="button" class="chip active" aria-pressed="true">Read</button>
+          {/if}
+        {/if}
+      </div>
+      <span class="row-label">Order</span>
+      <div class="chip-row">
+        {#each channelType === 'saved' ? SAVED_SORT_OPTIONS : feedSortOptions as opt (opt.value)}
+          <button
+            type="button"
+            class="chip"
+            class:active={sortOrder === opt.value}
+            aria-pressed={sortOrder === opt.value}
+            onclick={() => (sortOrder = opt.value)}
+          >
+            {opt.label}
+          </button>
+        {/each}
+      </div>
+    </div>
+  {/if}
+
   {#if channelType === 'feed'}
     <div class="section">
       <span class="section-label">What's in it</span>
@@ -638,62 +695,6 @@
           {/each}
         </div>
       {/if}
-    </div>
-  {/if}
-
-  {#if channelType}
-    <div class="section">
-      <span class="section-label">Show</span>
-      <div class="chip-row">
-        {#if channelType === 'saved'}
-          <button
-            type="button"
-            class="chip"
-            class:active={readFilter !== 'read'}
-            aria-pressed={readFilter !== 'read'}
-            onclick={() => (readFilter = 'unread')}>Inbox</button
-          >
-          <button
-            type="button"
-            class="chip"
-            class:active={readFilter === 'read'}
-            aria-pressed={readFilter === 'read'}
-            onclick={() => (readFilter = 'read')}>Archive</button
-          >
-        {:else}
-          <button
-            type="button"
-            class="chip"
-            class:active={readFilter === 'unread'}
-            aria-pressed={readFilter === 'unread'}
-            onclick={() => (readFilter = 'unread')}>Unread</button
-          >
-          <button
-            type="button"
-            class="chip"
-            class:active={readFilter === 'all'}
-            aria-pressed={readFilter === 'all'}
-            onclick={() => (readFilter = 'all')}>All</button
-          >
-          {#if readFilter === 'read'}
-            <button type="button" class="chip active" aria-pressed="true">Read</button>
-          {/if}
-        {/if}
-      </div>
-      <span class="row-label">Order</span>
-      <div class="chip-row">
-        {#each channelType === 'saved' ? SAVED_SORT_OPTIONS : feedSortOptions as opt (opt.value)}
-          <button
-            type="button"
-            class="chip"
-            class:active={sortOrder === opt.value}
-            aria-pressed={sortOrder === opt.value}
-            onclick={() => (sortOrder = opt.value)}
-          >
-            {opt.label}
-          </button>
-        {/each}
-      </div>
     </div>
   {/if}
 
