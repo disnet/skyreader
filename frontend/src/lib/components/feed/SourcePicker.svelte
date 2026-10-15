@@ -475,10 +475,45 @@
     text-decoration: underline;
   }
 
-  /* No hover on touch: keep "only" in view. */
+  /* No hover on touch: keep "only" in view, quieter since every row has one,
+     and make each row a finger-sized target. */
   @media (hover: none) {
     .only-btn {
       opacity: 1;
+      color: var(--color-text-secondary);
+    }
+  }
+
+  @media (hover: none) and (pointer: coarse) {
+    .source-check {
+      min-height: 44px;
+      padding: 0 0.375rem;
+      font-size: var(--text-base);
+    }
+
+    .source-check input {
+      width: 18px;
+      height: 18px;
+      flex-shrink: 0;
+    }
+
+    .expand-btn {
+      width: 32px;
+      height: 44px;
+    }
+
+    .only-btn {
+      min-height: 44px;
+      padding: 0 0.625rem;
+      font-size: var(--text-sm);
+    }
+
+    .source-row {
+      padding-left: calc(var(--indent) * 1rem);
+    }
+
+    .source-row:hover {
+      background: none;
     }
   }
 
