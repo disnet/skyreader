@@ -457,57 +457,61 @@
   {/if}
 
   {#if channelType}
-    <div class="section">
-      <span class="section-label">Show</span>
-      <div class="chip-row">
-        {#if channelType === 'saved'}
-          <button
-            type="button"
-            class="chip"
-            class:active={readFilter !== 'read'}
-            aria-pressed={readFilter !== 'read'}
-            onclick={() => (readFilter = 'unread')}>Inbox</button
-          >
-          <button
-            type="button"
-            class="chip"
-            class:active={readFilter === 'read'}
-            aria-pressed={readFilter === 'read'}
-            onclick={() => (readFilter = 'read')}>Archive</button
-          >
-        {:else}
-          <button
-            type="button"
-            class="chip"
-            class:active={readFilter === 'unread'}
-            aria-pressed={readFilter === 'unread'}
-            onclick={() => (readFilter = 'unread')}>Unread</button
-          >
-          <button
-            type="button"
-            class="chip"
-            class:active={readFilter === 'all'}
-            aria-pressed={readFilter === 'all'}
-            onclick={() => (readFilter = 'all')}>All</button
-          >
-          {#if readFilter === 'read'}
-            <button type="button" class="chip active" aria-pressed="true">Read</button>
+    <div class="section show-row">
+      <div class="show-group">
+        <span class="section-label">Show</span>
+        <div class="chip-row">
+          {#if channelType === 'saved'}
+            <button
+              type="button"
+              class="chip"
+              class:active={readFilter !== 'read'}
+              aria-pressed={readFilter !== 'read'}
+              onclick={() => (readFilter = 'unread')}>Inbox</button
+            >
+            <button
+              type="button"
+              class="chip"
+              class:active={readFilter === 'read'}
+              aria-pressed={readFilter === 'read'}
+              onclick={() => (readFilter = 'read')}>Archive</button
+            >
+          {:else}
+            <button
+              type="button"
+              class="chip"
+              class:active={readFilter === 'unread'}
+              aria-pressed={readFilter === 'unread'}
+              onclick={() => (readFilter = 'unread')}>Unread</button
+            >
+            <button
+              type="button"
+              class="chip"
+              class:active={readFilter === 'all'}
+              aria-pressed={readFilter === 'all'}
+              onclick={() => (readFilter = 'all')}>All</button
+            >
+            {#if readFilter === 'read'}
+              <button type="button" class="chip active" aria-pressed="true">Read</button>
+            {/if}
           {/if}
-        {/if}
+        </div>
       </div>
-      <span class="row-label">Order</span>
-      <div class="chip-row">
-        {#each channelType === 'saved' ? SAVED_SORT_OPTIONS : feedSortOptions as opt (opt.value)}
-          <button
-            type="button"
-            class="chip"
-            class:active={sortOrder === opt.value}
-            aria-pressed={sortOrder === opt.value}
-            onclick={() => (sortOrder = opt.value)}
-          >
-            {opt.label}
-          </button>
-        {/each}
+      <div class="show-group">
+        <span class="section-label">Order</span>
+        <div class="chip-row">
+          {#each channelType === 'saved' ? SAVED_SORT_OPTIONS : feedSortOptions as opt (opt.value)}
+            <button
+              type="button"
+              class="chip"
+              class:active={sortOrder === opt.value}
+              aria-pressed={sortOrder === opt.value}
+              onclick={() => (sortOrder = opt.value)}
+            >
+              {opt.label}
+            </button>
+          {/each}
+        </div>
       </div>
     </div>
   {/if}
@@ -750,6 +754,20 @@
     text-transform: uppercase;
     letter-spacing: var(--tracking-wider);
     padding-left: 0.25rem;
+  }
+
+  /* Show and Order share a row; Order wraps under Show when the chips don't fit. */
+  .show-row {
+    flex-direction: row;
+    flex-wrap: wrap;
+    column-gap: 1.5rem;
+    row-gap: 0.75rem;
+  }
+
+  .show-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
   }
 
   .row-label {
