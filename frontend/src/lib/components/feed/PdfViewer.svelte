@@ -18,6 +18,7 @@
     type PdfRunSlice,
     type PdfTextModel,
   } from '$lib/utils/pdfTextModel';
+  import { resolvePdfLink, type PdfLinkAnnotation, type PdfLinkTarget } from '$lib/utils/pdfLinks';
 
   /**
    * A saved PDF as it was printed: every page drawn by PDF.js, with its text
@@ -34,6 +35,10 @@
    * PDF.js is loaded on first use, so readers who never open an original never
    * download it. Pages are drawn only near the viewport and dropped again when
    * they scroll far away, so a 300-page paper costs what a few pages cost.
+   *
+   * The PDF's own links work: a reference, a footnote mark or a table of
+   * contents entry jumps to the page it points at (with a way back), and a web
+   * link opens in a new tab (see `utils/pdfLinks.ts`).
    */
   interface Props {
     /** Where the PDF's bytes come from (sent with the session cookie). */
@@ -124,6 +129,12 @@
   let textRequested = false;
   // Which page and run a text-layer span draws (pages 0-based, as the model's).
   const runOf = new WeakMap<Element, { page: number; run: number }>();
+
+  // Where each followed in-document link was read from, so the reader can go
+  // back: the scroller and its offset, and the page that was in view.
+  type ReturnPoint = { page: number; scroller: Element; top: number };
+  let returnTo = $state.raw<ReturnPoint[]>([]);
+  const MAX_RETURNS = 20;
 
   // iOS Safari refuses canvases past ~16.7M pixels; stay under it at any zoom.
   const MAX_CANVAS_PIXELS = 16_000_000;
@@ -421,7 +432,125 @@
     const text = el.querySelector<HTMLDivElement>('.textLayer');
     if (text) text.replaceChildren();
     el.querySelector('.pdf-marks')?.replaceChildren();
+    el.querySelector('.pdf-links')?.replaceChildren();
   }
+
+  // --- Links ---
+
+  /**
+   * The page's link annotations as anchors over the text layer: a web link
+   * opens in a new tab, an in-document one jumps. Destinations are resolved
+   * up front, so each link can say where it goes.
+   */
+  async function drawLinks(
+    n: number,
+    page: PDFPageProxy,
+    viewport: ReturnType<PDFPageProxy['getViewport']>,
+    entry: Drawn
+  ) {
+    const pdf = doc;
+    if (!pdf) return;
+    let resolved: { rect: number[]; target: PdfLinkTarget }[];
+    try {
+      const annotations: PdfLinkAnnotation[] = await page.getAnnotations({ intent: 'display' });
+      const links = annotations.filter((a) => a.subtype === 'Link' && a.rect?.length === 4);
+      resolved = (
+        await Promise.all(
+          links.map(async (a) => ({ rect: a.rect!, target: await resolvePdfLink(pdf, a, n - 1) }))
+        )
+      ).filter((l): l is { rect: number[]; target: PdfLinkTarget } => l.target !== null);
+    } catch {
+      // Without its links the page still reads.
+      return;
+    }
+    if (drawn.get(n) !== entry) return;
+    const layer = pageEl(n)?.querySelector<HTMLDivElement>('.pdf-links');
+    if (!layer) return;
+    layer.replaceChildren();
+    for (const { rect, target } of resolved) {
+      const [x1, y1] = viewport.convertToViewportPoint(rect[0], rect[1]);
+      const [x2, y2] = viewport.convertToViewportPoint(rect[2], rect[3]);
+      const link = document.createElement('a');
+      link.style.left = `${Math.min(x1, x2)}px`;
+      link.style.top = `${Math.min(y1, y2)}px`;
+      link.style.width = `${Math.abs(x2 - x1)}px`;
+      link.style.height = `${Math.abs(y2 - y1)}px`;
+      link.draggable = false;
+      if (target.kind === 'url') {
+        link.href = target.href;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.title = target.href;
+      } else {
+        link.href = `#page=${target.page + 1}`;
+        link.title = `Go to page ${target.page + 1}`;
+        link.dataset.page = String(target.page + 1);
+        link.addEventListener('click', (e) => {
+          e.preventDefault();
+          void jumpTo(target);
+        });
+      }
+      // A link isn't a tap on a highlight it happens to sit on.
+      link.addEventListener('click', (e) => e.stopPropagation());
+      layer.append(link);
+    }
+  }
+
+  /** The element that scrolls the pages vertically: the reader overlay, or the page itself. */
+  function scrollerOf(el: Element): Element {
+    for (let p = el.parentElement; p; p = p.parentElement) {
+      const { overflowY } = getComputedStyle(p);
+      if ((overflowY === 'auto' || overflowY === 'scroll') && p.scrollHeight > p.clientHeight)
+        return p;
+    }
+    return document.scrollingElement ?? document.documentElement;
+  }
+
+  /** Bring a point `y` px down page `n` to the top of the view. */
+  function scrollToPoint(n: number, y: number) {
+    const el = pageEl(n);
+    if (!el) return;
+    // A throwaway element at the point lets the browser find the scroller and
+    // honour the scroll margin, whatever is hosting the viewer.
+    const marker = document.createElement('div');
+    marker.className = 'pdf-jump';
+    marker.style.top = `${Math.max(0, y)}px`;
+    el.append(marker);
+    marker.scrollIntoView({ block: 'start', inline: 'nearest' });
+    marker.remove();
+  }
+
+  async function jumpTo(target: { page: number; top: number | null }) {
+    if (!doc || !containerEl) return;
+    let y = 0;
+    if (target.top !== null) {
+      try {
+        const page = await doc.getPage(target.page + 1);
+        y = page.getViewport({ scale }).convertToViewportPoint(0, target.top)[1];
+      } catch {
+        // The page's top will do.
+      }
+    }
+    const scroller = scrollerOf(containerEl);
+    returnTo = [
+      ...returnTo.slice(-(MAX_RETURNS - 1)),
+      { page: currentPage, scroller, top: scroller.scrollTop },
+    ];
+    scrollToPoint(target.page + 1, y);
+  }
+
+  function goBack() {
+    const point = returnTo[returnTo.length - 1];
+    if (!point) return;
+    returnTo = returnTo.slice(0, -1);
+    point.scroller.scrollTo({ top: point.top });
+  }
+
+  // A saved offset means nothing at another scale.
+  $effect(() => {
+    void scale;
+    returnTo = [];
+  });
 
   async function drawPage(n: number) {
     if (!doc || !pdfjs || scale <= 0) return;
@@ -489,6 +618,7 @@
     entry.runs = textLayer.textDivs;
     entry.runs.forEach((span, run) => runOf.set(span, { page: n - 1, run }));
     paintPage(n);
+    await drawLinks(n, page, viewport, entry);
   }
 
   // Draw what's near the viewport at the current scale; let the rest go.
@@ -597,6 +727,7 @@
         >
           <div class="pdf-marks" aria-hidden="true"></div>
           <div class="textLayer"></div>
+          <div class="pdf-links"></div>
         </div>
       {/each}
     </div>
@@ -607,6 +738,19 @@
       aria-label="PDF view"
       style:bottom="calc(1rem + {bottomInset}px)"
     >
+      {#if returnTo.length}
+        {@const back = returnTo[returnTo.length - 1].page}
+        <button
+          type="button"
+          class="pdf-back"
+          onclick={goBack}
+          title="Back to page {back}"
+          aria-label="Back to page {back}"
+        >
+          <Icon name="arrow-left" size={14} />
+          {back}
+        </button>
+      {/if}
       <span class="pdf-page-count" aria-live="polite">{currentPage} / {pageSizes.length}</span>
       <button
         type="button"
@@ -772,6 +916,35 @@
     user-select: none;
   }
 
+  /* Link areas: invisible over the drawing, as in a PDF reader, with the
+     pointer saying what they are. Above the text layer, so they take the tap. */
+  .pdf-links {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  .pdf-links :global(a) {
+    position: absolute;
+    pointer-events: auto;
+    cursor: pointer;
+  }
+
+  .pdf-links :global(a:focus-visible) {
+    outline: 2px solid var(--color-primary, #0066cc);
+    outline-offset: 1px;
+  }
+
+  /* Where a jump lands: clear of the reader's header. */
+  .pdf-page :global(.pdf-jump) {
+    position: absolute;
+    left: 0;
+    width: 1px;
+    height: 1px;
+    scroll-margin-top: 3.5rem;
+  }
+
   /* Floats over the pages, so it alone gets elevation. */
   .pdf-toolbar {
     position: sticky;
@@ -810,6 +983,12 @@
     color: var(--color-text);
     font-size: var(--text-md);
     cursor: pointer;
+  }
+
+  .pdf-toolbar .pdf-back {
+    gap: 0.25rem;
+    font-size: var(--text-sm);
+    font-variant-numeric: tabular-nums;
   }
 
   .pdf-toolbar .pdf-fit {

@@ -5,11 +5,12 @@
   //
   // Highlighting is live but local: selecting text (mouse release, or a touch
   // selection let go of) highlights it at once, a tap on a highlight removes it,
-  // and the sample opens with one that crosses from page 1 onto page 2.
+  // and the sample opens with one that crosses from page 1 onto page 2. Page 1's
+  // top line carries links: two into the document and one out of it.
   import { page } from '$app/state';
   import PdfViewer from '$lib/components/feed/PdfViewer.svelte';
   import type { Highlight, TextQuoteSelector } from '$lib/types';
-  import { makePdf, type Placed } from '../_harness/pdfFixture';
+  import { makePdf, type Placed, type PlacedLink } from '../_harness/pdfFixture';
   import { SAMPLE_JPX_BASE64, makeJpxPdf } from '../_harness/jpxPdf';
 
   const LOREM =
@@ -22,7 +23,19 @@
       for (let i = 0; i < 28; i++) lines.push([72, 680 - i * 20, 11, `${LOREM} ${p}.${i + 1}`]);
       pages.push(lines);
     }
-    return makePdf(pages, { Title: 'Harness paper' });
+    pages[0].unshift(
+      [72, 750, 9, 'Jump to Section 5'],
+      [180, 750, 9, 'Section 12'],
+      [250, 750, 9, 'The paper on arXiv']
+    );
+    const links: PlacedLink[][] = [
+      [
+        { rect: [70, 746, 150, 760], page: 4, top: 740 },
+        { rect: [178, 746, 226, 760], page: 11 },
+        { rect: [248, 746, 336, 760], url: 'https://arxiv.org/abs/1706.03762' },
+      ],
+    ];
+    return makePdf(pages, { Title: 'Harness paper' }, links);
   }
 
   // `?sample=jpx`: a JPEG 2000 image, which only draws when PDF.js finds its

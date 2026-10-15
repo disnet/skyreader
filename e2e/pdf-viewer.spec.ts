@@ -131,6 +131,52 @@ test.describe('PDF original view', () => {
     await expect(authedPage.locator('.pdf-mark')).toHaveCount(1);
   });
 
+  test("the PDF's links jump between pages, and back", async ({ authedPage, testUser }) => {
+    await makeSupporter(testUser);
+    const rkey = await seedSavedArticle(testUser, {
+      url: '',
+      title: TITLE,
+      source: 'upload',
+      contentType: 'pdf',
+      content: BODY,
+      wordCount: 60,
+    });
+    const pages: Placed[][] = [1, 2, 3, 4].map((p) => [
+      [72, 720, 20, `Page ${p} heading`],
+      [72, 400, 11, `Halfway down page ${p}.`],
+    ]);
+    pages[0].push([72, 680, 11, 'See page 4'], [200, 680, 11, 'Project site']);
+    const pdf = Buffer.from(
+      makePdf(pages, {}, [
+        [
+          { rect: [70, 676, 140, 692], page: 3, top: 412 },
+          { rect: [198, 676, 270, 692], url: 'https://example.com/project' },
+        ],
+      ])
+    );
+    await authedPage.route(`**/api/saved/${rkey}/file`, (route) =>
+      route.fulfill({ body: pdf, contentType: 'application/pdf' })
+    );
+    await authedPage.evaluate(() => localStorage.setItem('skyreader-pdf-view', 'original'));
+
+    await authedPage.goto('/saved');
+    await authedPage.getByText(TITLE).first().click({ timeout: 15_000 });
+
+    const web = authedPage.locator('.pdf-links a[href="https://example.com/project"]');
+    await expect(web).toHaveAttribute('target', '_blank', { timeout: 15_000 });
+
+    // The internal link lands on its destination: page 4, halfway down.
+    await authedPage.locator('.pdf-links a[data-page="4"]').click();
+    const halfway = authedPage.locator('.textLayer span', { hasText: 'Halfway down page 4.' });
+    await expect(halfway).toBeInViewport();
+    await expect(authedPage.locator('.pdf-page-count')).toHaveText('4 / 4');
+
+    // And the toolbar offers the way back to where the reader was.
+    await authedPage.getByRole('button', { name: 'Back to page 1' }).click();
+    await expect(authedPage.locator('.pdf-links a[data-page="4"]')).toBeInViewport();
+    await expect(authedPage.getByRole('button', { name: /^Back to page/ })).toHaveCount(0);
+  });
+
   test('a web article has no PDF toggle', async ({ authedPage, testUser }) => {
     await seedSavedArticle(testUser, {
       url: 'https://example.com/plain-article',

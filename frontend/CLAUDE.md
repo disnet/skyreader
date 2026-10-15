@@ -250,6 +250,18 @@ simply don't draw. `vite.config.ts`'s `pdfjsDecoders()` copies them to
 the worker, a static asset the Pages middleware's CSP doesn't cover, so no `'wasm-unsafe-eval'` is
 needed. Harness: `/dev/pdf` (`?sample=jpx` for a JPEG 2000 image; highlighting there is live but local).
 
+**The PDF's links work in Original.** After a page's text layer, `drawLinks` reads its
+`getAnnotations()` and lays an `<a>` over each Link annotation in a `.pdf-links` layer above the
+text layer (so the link, not the text, takes the tap; a link's click stops there and is never a
+highlight tap). `utils/pdfLinks.ts` resolves the target up front: a web or mail URL opens in a new
+tab (`javascript:`, `file:` and relative URLs are dropped); a destination, explicit or named, or a
+`NextPage`-style action becomes a page and a `top` in PDF space. A jump drops a throwaway
+`.pdf-jump` element at that point and `scrollIntoView`s it, so it works whichever element scrolls
+(the reader overlay, or the window in the harness) and clears the header via `scroll-margin-top`.
+Each jump pushes the scroller's offset onto `returnTo`, which the toolbar offers as ← page N;
+a zoom change clears it, since an offset means nothing at another scale. The harness's page 1 and
+`pdfFixture`'s `links` argument carry sample links.
+
 **Highlights are shared between the views**, because they are the same `TextQuoteSelector`s.
 `utils/pdfTextModel.ts` reads every page's `getTextContent()` once and joins the runs the way the
 extractor reflowed them (whitespace collapsed, a line-end `[a-z]-` joined to a lowercase
