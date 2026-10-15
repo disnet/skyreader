@@ -32,12 +32,26 @@
   // dynamically, only once the user is authenticated. A logged-out visitor downloads
   // just this layout plus the landing page, not the whole app.
   let AppShell = $state<Component<{ children: Snippet }> | null>(null);
-  $effect(() => {
-    if (browser && (auth.isAuthenticated || auth.isGuest) && !AppShell) {
-      import('$lib/components/AppShell.svelte').then((m) => {
-        AppShell = m.default;
-      });
+  let shellImport: Promise<void> | null = null;
+  function loadAppShell() {
+    shellImport ??= import('$lib/components/AppShell.svelte').then((m) => {
+      AppShell = m.default;
+    });
+  }
+  // A returning reader's session is already in localStorage: start fetching the
+  // shell now, alongside auth init, rather than after it — the gap between them
+  // was a blank "Loading..." screen on every boot.
+  if (browser) {
+    try {
+      if (localStorage.getItem('skyreader-auth') || localStorage.getItem('skyreader-guest')) {
+        loadAppShell();
+      }
+    } catch {
+      // Storage blocked: the effect below still loads it once auth settles.
     }
+  }
+  $effect(() => {
+    if (browser && (auth.isAuthenticated || auth.isGuest) && !AppShell) loadAppShell();
   });
 
   // The reading surfaces require auth. A logged-out visitor who deep-links to one
@@ -353,6 +367,24 @@
     height: 100dvh;
     font-size: var(--text-2xl);
     color: var(--color-text-secondary, #666);
+    /* Boot normally finishes well inside a second: show a quiet page, not a word
+       that flashes. The text only appears for a load that's genuinely slow. */
+    animation: loading-text-in 200ms ease-out 1s both;
+  }
+
+  @keyframes loading-text-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .loading {
+      animation-duration: 1ms;
+    }
   }
 
   .app-footer {

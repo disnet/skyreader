@@ -1,3 +1,8 @@
+<script lang="ts" module>
+  // Home's "From your saved" sample, kept across visits for the session.
+  let sessionSample: string[] | null = null;
+</script>
+
 <script lang="ts">
   import { shellToolbar } from '$lib/actions/shell-toolbar';
   import { appScrollTo } from '$lib/utils/appScroll';
@@ -220,11 +225,13 @@
       .map((e) => toVM(e.s, null))
   );
 
-  // From your saved: a rotating random sample. Held in state so it only re-rolls on
-  // demand (shuffle) or when first seeded — not on every reactive tick. Prefers
-  // never-opened saves so the lane resurfaces things from the pile.
-  let randomRkeys = $state<string[]>([]);
-  let seededOnce = false;
+  // From your saved: a rotating random sample. It only re-rolls on demand
+  // (Shuffle) — not on every reactive tick, and not on every visit: the sample is
+  // kept for the session (`sessionSample`, module scope), so going back to Home
+  // finds the lane as it was left. Drawn during render, so it paints with the
+  // page rather than a frame after it. Prefers never-opened saves so the lane
+  // resurfaces things from the pile.
+  let shuffles = $state(0);
 
   function shuffled<T>(arr: T[]): T[] {
     const a = [...arr];
@@ -235,24 +242,27 @@
     return a;
   }
 
-  function reshuffle() {
+  function drawSample(): string[] {
     const pool = enriched.filter((e) => !continueSet.has(e.s.rkey));
     const fresh = pool.filter((e) => !e.activity);
     const rest = pool.filter((e) => e.activity);
-    randomRkeys = [...shuffled(fresh), ...shuffled(rest)].slice(0, RANDOM_CAP).map((e) => e.s.rkey);
+    return [...shuffled(fresh), ...shuffled(rest)].slice(0, RANDOM_CAP).map((e) => e.s.rkey);
   }
 
-  // Seed once data arrives; re-seed if the pool was empty before (first load).
-  $effect(() => {
-    if (!seededOnce && enriched.length > 0) {
-      seededOnce = true;
-      reshuffle();
-    }
-  });
+  function reshuffle() {
+    sessionSample = drawSample();
+    shuffles++;
+  }
 
   let randomItems = $derived.by(() => {
+    void shuffles;
     const byRkey = new Map(enriched.map((e) => [e.s.rkey, e]));
-    return randomRkeys
+    // Draw once there's a pile to draw from — and again if none of the sample is
+    // left in it (all unsaved since, or the pile was empty at the first draw).
+    if (enriched.length > 0 && !sessionSample?.some((rk) => byRkey.has(rk))) {
+      sessionSample = drawSample();
+    }
+    return (sessionSample ?? [])
       .map((rk) => byRkey.get(rk))
       .filter((e): e is Enriched => Boolean(e))
       .map((e) => toVM(e.s, null));
