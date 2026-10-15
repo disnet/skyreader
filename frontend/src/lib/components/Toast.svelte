@@ -1,53 +1,61 @@
 <script lang="ts">
+  import { fade } from 'svelte/transition';
+  import { flip } from 'svelte/animate';
   import { toastStore } from '$lib/stores/toast.svelte';
   import { safeHref } from '$lib/utils/sanitize';
+
+  // Svelte's transitions don't read the OS setting themselves.
+  const reduceMotion =
+    typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const motion = (ms: number) => (reduceMotion ? 0 : ms);
 </script>
 
-{#if toastStore.toasts.length > 0}
-  <div class="toast-container">
-    {#each toastStore.toasts as toast (toast.id)}
-      <div class="toast toast-{toast.state}">
-        {#if toast.state === 'pending'}
-          <span class="spinner"></span>
-        {:else if toast.state === 'success'}
-          <span class="icon">&#10003;</span>
-        {:else}
-          <span class="icon">&#10007;</span>
-        {/if}
-        <span>{toast.message}</span>
-        {#if toast.action?.run}
-          {@const run = toast.action.run}
-          <button
-            class="toast-action toast-action-btn"
-            type="button"
-            onclick={() => {
-              toastStore.remove(toast.id);
-              run();
-            }}>{toast.action.label}</button
-          >
-        {:else if toast.action?.href}
-          {#if toast.action.href.startsWith('/') && !toast.action.href.startsWith('//')}
-            <!-- An in-app route. safeHref deliberately rejects relative URLs (it
+<!-- Always mounted: a live region only announces what changes inside it after
+     it exists, so one created together with its first toast stays silent. -->
+<div class="toast-container" role="status" aria-live="polite">
+  {#each toastStore.toasts as toast (toast.id)}
+    <div
+      class="toast toast-{toast.state}"
+      out:fade={{ duration: motion(150) }}
+      animate:flip={{ duration: motion(200) }}
+    >
+      {#if toast.state === 'pending'}
+        <span class="spinner"></span>
+      {:else if toast.state === 'success'}
+        <span class="icon">&#10003;</span>
+      {:else}
+        <span class="icon">&#10007;</span>
+      {/if}
+      <span>{toast.message}</span>
+      {#if toast.action?.run}
+        {@const run = toast.action.run}
+        <button
+          class="toast-action toast-action-btn"
+          type="button"
+          onclick={() => {
+            toastStore.remove(toast.id);
+            run();
+          }}>{toast.action.label}</button
+        >
+      {:else if toast.action?.href}
+        {#if toast.action.href.startsWith('/') && !toast.action.href.startsWith('//')}
+          <!-- An in-app route. safeHref deliberately rejects relative URLs (it
                  guards links authored elsewhere), and a toast action's href is
                  ours, so it is resolved here instead — and stays in the app
                  rather than opening a second tab onto it. The `//` exclusion
                  matters: a protocol-relative URL also starts with `/` but is a
                  link off-site, and some action hrefs come from external data
                  (Semble card URLs), so those go through safeHref below. -->
-            <a class="toast-action" href={toast.action.href}>{toast.action.label}</a>
-          {:else}
-            <a
-              class="toast-action"
-              href={safeHref(toast.action.href)}
-              target="_blank"
-              rel="noopener">{toast.action.label}</a
-            >
-          {/if}
+          <a class="toast-action" href={toast.action.href}>{toast.action.label}</a>
+        {:else}
+          <a class="toast-action" href={safeHref(toast.action.href)} target="_blank" rel="noopener"
+            >{toast.action.label}</a
+          >
         {/if}
-      </div>
-    {/each}
-  </div>
-{/if}
+      {/if}
+    </div>
+  {/each}
+</div>
 
 <style>
   .toast-container {
@@ -142,6 +150,17 @@
     to {
       opacity: 1;
       transform: translateY(0);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .toast {
+      animation: none;
+    }
+
+    /* Still a sign of work in progress, just not a fast one. */
+    .spinner {
+      animation-duration: 1.5s;
     }
   }
 

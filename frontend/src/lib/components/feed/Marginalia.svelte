@@ -503,7 +503,7 @@
     {#each r.written as item (item.id)}
       <div
         class="rail-slot"
-        style:top={`${r.y.get(item.id) ?? item.top}px`}
+        style:transform={`translateY(${r.y.get(item.id) ?? item.top}px)`}
         bind:offsetHeight={heights[item.id]}
       >
         <MarginNote variant="margin" {...noteProps(item.highlight)} />
@@ -562,7 +562,7 @@
           {@const person = firstNote(item.group)}
           <div
             class="rail-slot"
-            style:top={`${commY.get(item.id) ?? item.top}px`}
+            style:transform={`translateY(${commY.get(item.id) ?? item.top}px)`}
             bind:offsetHeight={heights[item.id]}
           >
             <button
@@ -714,11 +714,14 @@
     transform: none;
   }
 
+  /* Placed by translateY, not top: notes re-settle whenever a neighbour grows
+     or a highlight lands, and animating top re-ran layout every frame. */
   .rail-slot {
     position: absolute;
+    top: 0;
     width: var(--rail);
     pointer-events: auto;
-    transition: top 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+    transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
   }
 
   .rail-right .rail-slot {

@@ -46,6 +46,39 @@
       })();
     </script>
 
+    <!--
+      The reading font and size, also before first paint. AppShell applies them
+      once it mounts; until then every reader saw the default serif at 18px, then
+      a swap and a reflow. Literata is opt-in (app.css), so it's preloaded only
+      for a reader who chose it. A copy of AppShell's two effects and the
+      preferences store's bounds (14-40px) — keep them in step.
+    -->
+    <script>
+      (function () {
+        try {
+          var prefs = JSON.parse(localStorage.getItem('skyreader-preferences') || '{}');
+          var root = document.documentElement;
+          var font = prefs && prefs.articleFont;
+          if (/^(sans-serif|serif|mono|literata)$/.test(font)) {
+            root.setAttribute('data-article-font', font);
+          }
+          if (font === 'literata') {
+            var link = document.createElement('link');
+            link.rel = 'preload';
+            link.as = 'font';
+            link.type = 'font/woff2';
+            link.crossOrigin = 'anonymous';
+            link.href = '/fonts/literata-latin-wght-normal.woff2';
+            document.head.appendChild(link);
+          }
+          var size = prefs && prefs.articleFontSize;
+          if (typeof size === 'number' && size >= 14 && size <= 40) {
+            root.style.setProperty('--article-font-size', Math.round(size) + 'px');
+          }
+        } catch (e) {}
+      })();
+    </script>
+
     <!-- Open Graph / social sharing -->
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Skyreader" />
