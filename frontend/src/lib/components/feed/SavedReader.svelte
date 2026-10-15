@@ -57,6 +57,7 @@
   import { installMarginaliaInk } from '$lib/utils/marginaliaInk';
   import CollectionMagazine from '$lib/components/feed/CollectionMagazine.svelte';
   import PagedView, { type PagedController } from '$lib/components/feed/PagedView.svelte';
+  import { lastIndexOnOrBefore } from '$lib/utils/pagedProgress';
   import { magazineThemeVars } from '$lib/utils/magazineTheme';
   import { preferences, type ReaderViewMode } from '$lib/stores/preferences.svelte';
   import { mobileStore } from '$lib/stores/mediaQuery.svelte';
@@ -674,17 +675,21 @@
   // Save the furthest paragraph that has been paged past, reusing the same
   // read-progress store the scroll reader writes — so position is stable across
   // reflows (font size / width changes repaginate but the paragraph is unchanged).
+  // The paragraph walk runs once the reader settles, not on every turn: a long
+  // book has thousands of paragraphs, and walking them inside the turn held the
+  // page still until it was done.
   function handlePagedPageChange(page: number) {
     if (!paged || !pagedController) return;
-    const paras = detectReaderParagraphs();
-    if (!paras.length) return;
-    let furthest = 0;
-    for (let i = 0; i < paras.length; i++) {
-      if (pagedController.pageOfElement(paras[i]) <= page) furthest = i;
-    }
     if (pagedSaveTimer) clearTimeout(pagedSaveTimer);
+    const key = itemKey;
+    const type = labelItemType;
     pagedSaveTimer = setTimeout(() => {
-      itemLabelsStore.setReadProgress(itemKey, labelItemType, furthest, paras.length);
+      if (!paged || !pagedController || key !== itemKey) return;
+      const paras = detectReaderParagraphs();
+      if (!paras.length) return;
+      const controller = pagedController;
+      const furthest = lastIndexOnOrBefore(paras, page, (el) => controller.pageOfElement(el));
+      itemLabelsStore.setReadProgress(key, type, furthest, paras.length);
     }, 500);
   }
 
