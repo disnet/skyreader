@@ -1508,7 +1508,7 @@
             onselect={highlightsHook.offerSelection}
             oncommit={highlightsHook.addHighlight}
             onhighlight={highlightsHook.openHighlight}
-            zoomKey={pdfSave?.rkey}
+            rememberKey={pdfSave?.rkey}
           />
         {/key}
       </article>

@@ -20,6 +20,7 @@
   } from '$lib/utils/pdfTextModel';
   import { resolvePdfLink, type PdfLinkAnnotation, type PdfLinkTarget } from '$lib/utils/pdfLinks';
   import { claimPdfZoomShortcuts, pdfZoom, setPdfZoom } from '$lib/utils/pdfZoom';
+  import { pdfPlace, setPdfPlace, type PdfPlace } from '$lib/utils/pdfPlace';
 
   /**
    * A saved PDF as it was printed: every page drawn by PDF.js, with its text
@@ -62,8 +63,8 @@
     oncommit?: (selector: TextQuoteSelector) => void;
     /** A drawn highlight was tapped. `getRect` is where it is now (null once gone). */
     onhighlight?: (id: string, getRect: () => DOMRect | null) => void;
-    /** Remember the zoom under this key, and open at the zoom it was left at. */
-    zoomKey?: string;
+    /** Remember the zoom and place under this key, and open where the PDF was left. */
+    rememberKey?: string;
   }
 
   let {
@@ -75,7 +76,7 @@
     onselect,
     oncommit,
     onhighlight,
-    zoomKey,
+    rememberKey,
   }: Props = $props();
 
   const highlighting = $derived(Boolean(highlights || onselect));
@@ -739,16 +740,123 @@
     };
   });
 
+  /** Where the middle of the scroller's view is, in viewport px. */
+  function middleOf(scroller: Element): number {
+    const top =
+      scroller === document.scrollingElement || scroller === document.documentElement
+        ? 0
+        : scroller.getBoundingClientRect().top + scroller.clientTop;
+    return top + scroller.clientHeight / 2;
+  }
+
+  /** The page in the middle of the view, and how far down it the middle is. */
+  function placeInView(): PdfPlace | null {
+    if (!containerEl || status !== 'ready') return null;
+    const middle = middleOf(scrollerOf(containerEl));
+    // Start from the page the observer last saw there, and step to the one the
+    // middle is really on if a fast scroll has outrun it.
+    let page = currentPage;
+    let step = 0;
+    for (;;) {
+      const el = pageEl(page);
+      if (!el) return null;
+      const rect = el.getBoundingClientRect();
+      if (rect.height <= 0) return null;
+      const at = (middle - rect.top) / rect.height;
+      // Below this page's bottom: a later one. Above its top (past the gap
+      // between pages): an earlier one. One direction only, then settle.
+      const next = at > 1 ? 1 : at < 0 && middle < rect.top - 32 ? -1 : 0;
+      const to = page + next;
+      if (next === 0 || next === -step || to < 1 || to > pageSizes.length) {
+        return { page, at: Math.min(1, Math.max(0, at)) };
+      }
+      step = next;
+      page = to;
+    }
+  }
+
+  /** Scroll so a place is in the middle of the view. */
+  function goToPlace(place: PdfPlace) {
+    if (!containerEl) return;
+    const el = pageEl(Math.min(place.page, pageSizes.length));
+    if (!el) return;
+    const scroller = scrollerOf(containerEl);
+    const rect = el.getBoundingClientRect();
+    scroller.scrollTop += rect.top + place.at * rect.height - middleOf(scroller);
+  }
+
+  // Open where this PDF was left. Put back once its pages are laid out, and
+  // again if they change size (the rest of the pages measured, the column
+  // resized) before the reader has moved: the place is relative to a page, so
+  // it holds where an offset wouldn't.
+  let leftAt = rememberedPlace();
+  function rememberedPlace(): PdfPlace | null {
+    return rememberKey ? pdfPlace(rememberKey) : null;
+  }
+  let placedTop: number | null = null;
+  // Nothing is saved until the place is put back, so opening at the top doesn't
+  // overwrite it.
+  let placed = !leftAt;
+  $effect(() => {
+    void pageSizes;
+    if (status !== 'ready' || scale <= 0 || !leftAt) return;
+    const place = leftAt;
+    void tick().then(() => {
+      if (destroyed || !containerEl || leftAt !== place) return;
+      const scroller = scrollerOf(containerEl);
+      if (placedTop !== null && Math.abs(scroller.scrollTop - placedTop) > 1) {
+        leftAt = null; // the reader has moved on
+        return;
+      }
+      goToPlace(place);
+      placedTop = scroller.scrollTop;
+      placed = true;
+    });
+  });
+
+  // Remember the place as the reader scrolls: measured once a frame, written a
+  // moment after the scrolling stops, and on the way out.
+  onMount(() => {
+    if (!rememberKey) return;
+    const key = rememberKey;
+    let frame: number | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let latest: PdfPlace | null = null;
+    const save = () => {
+      if (timer) clearTimeout(timer);
+      timer = null;
+      if (latest) setPdfPlace(key, latest);
+      latest = null;
+    };
+    const onScroll = () => {
+      if (!placed || frame !== null) return;
+      frame = requestAnimationFrame(() => {
+        frame = null;
+        const place = placeInView();
+        if (!place) return;
+        latest = place;
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(save, 500);
+      });
+    };
+    // Captured on the document, so it hears the reader overlay's scroll as well
+    // as the page's, whichever is hosting the viewer.
+    document.addEventListener('scroll', onScroll, { capture: true, passive: true });
+    window.addEventListener('pagehide', save);
+    return () => {
+      document.removeEventListener('scroll', onScroll, { capture: true });
+      window.removeEventListener('pagehide', save);
+      if (frame !== null) cancelAnimationFrame(frame);
+      save();
+    };
+  });
+
   /** Zoom, keeping what's in the middle of the view in the middle of the view. */
   async function setZoom(next: number) {
     if (next === zoom || !containerEl) return;
     const scroller = scrollerOf(containerEl);
     const pages = containerEl.querySelector<HTMLElement>('.pdf-pages');
-    const top =
-      scroller === document.scrollingElement || scroller === document.documentElement
-        ? 0
-        : scroller.getBoundingClientRect().top + scroller.clientTop;
-    const middle = top + scroller.clientHeight / 2;
+    const middle = middleOf(scroller);
     const anchor = pageEl(currentPage);
     const before = anchor?.getBoundingClientRect();
     const across = before ? (middle - before.top) / before.height : null;
@@ -757,7 +865,7 @@
       : 0.5;
 
     zoom = next;
-    if (zoomKey) setPdfZoom(zoomKey, next);
+    if (rememberKey) setPdfZoom(rememberKey, next);
     await tick();
 
     if (anchor && across !== null) {
@@ -768,7 +876,7 @@
   }
 
   function rememberedZoom(): number {
-    const remembered = zoomKey ? pdfZoom(zoomKey) : 1;
+    const remembered = rememberKey ? pdfZoom(rememberKey) : 1;
     return ZOOM_STEPS.includes(remembered) ? remembered : 1;
   }
 

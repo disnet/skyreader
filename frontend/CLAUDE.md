@@ -248,9 +248,12 @@ its `wasmUrl` option, as WebAssembly or the JS fallback beside it; without `wasm
 simply don't draw. `vite.config.ts`'s `pdfjsDecoders()` copies them to
 `/_app/immutable/pdfjs/<pdfjs version>/` (outside the precache, fetched on demand), and they run in
 the worker, a static asset the Pages middleware's CSP doesn't cover, so no `'wasm-unsafe-eval'` is
-needed. The Original view opens at the zoom that PDF was last left at (`utils/pdfZoom.ts`,
-`localStorage['skyreader-pdf-zoom']`, keyed by rkey via `PdfViewer`'s `zoomKey`; fit width is
-unstored). While it's open, AppShell's font-size shortcuts (Shift +, Shift -, Shift 0) zoom it
+needed. The Original view opens at the zoom and place that PDF was last left at, both keyed by rkey
+via `PdfViewer`'s `rememberKey`: the zoom in `utils/pdfZoom.ts` (`localStorage['skyreader-pdf-zoom']`;
+fit width is unstored), the place in `utils/pdfPlace.ts` (`localStorage['skyreader-pdf-place']`: the
+page in the middle of the view and how far down it, so it holds at any zoom or width; the top is
+unstored). The place is put back once the pages are laid out, and again if they resize before the
+reader scrolls; nothing is saved until then, so opening at the top can't overwrite it. While it's open, AppShell's font-size shortcuts (Shift +, Shift -, Shift 0) zoom it
 instead (`claimPdfZoomShortcuts` / `openPdfZoom`). Harness: `/dev/pdf` (`?sample=jpx` for a JPEG 2000 image; highlighting there is live but local).
 
 **The PDF's links work in Original.** After a page's text layer, `drawLinks` reads its

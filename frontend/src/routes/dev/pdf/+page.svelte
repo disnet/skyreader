@@ -6,7 +6,8 @@
   // Highlighting is live but local: selecting text (mouse release, or a touch
   // selection let go of) highlights it at once, a tap on a highlight removes it,
   // and the sample opens with one that crosses from page 1 onto page 2. Page 1's
-  // top line carries links: two into the document and one out of it.
+  // top line carries links: two into the document and one out of it. Zoom and
+  // place are remembered per `src` (or per sample), as a save's are by its rkey.
   import { page } from '$app/state';
   import PdfViewer from '$lib/components/feed/PdfViewer.svelte';
   import type { Highlight, TextQuoteSelector } from '$lib/types';
@@ -84,6 +85,7 @@
     onselect={add}
     oncommit={add}
     onhighlight={(id) => (highlights = highlights.filter((h) => h.id !== id))}
+    rememberKey={`dev-harness:${src ?? page.url.searchParams.get('sample') ?? 'sample'}`}
   />
 </div>
 
