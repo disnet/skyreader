@@ -106,6 +106,9 @@
     const id = editingChannelId;
     const type = initialChannelType;
     const initial = initialSourceFilter;
+    // Tracked, so a channel that syncs in after the editor opens still loads;
+    // flips once, so a later sync can't reset the form mid-edit.
+    void (id != null && filteredViewsStore.getById(id) != null);
     untrack(() => load(id, type, initial));
   });
 
@@ -130,7 +133,13 @@
       if (rule?.type === 'category') {
         // A folder is a pick now: the picker takes a whole folder, as it grows.
         mode = 'pick';
-        sourceFilter = { sourceMode: 'include', sourceKeys: [categoryGroupKey(rule.value)] };
+        // The old rule matched the folder's name regardless of case.
+        const want = rule.value.trim().toLowerCase();
+        const folder =
+          subscriptionsStore.subscriptions
+            .map((s) => s.category?.trim())
+            .find((c) => c && c.toLowerCase() === want) ?? rule.value.trim();
+        sourceFilter = { sourceMode: 'include', sourceKeys: [categoryGroupKey(folder)] };
         typeFilter = undefined;
       } else if (rule) {
         mode = 'rule';
@@ -315,7 +324,10 @@
               savedDomainFilter: savedDomainFilter.size > 0 ? [...savedDomainFilter] : undefined,
               tagFilter: savedTagFilter.size > 0 ? [...savedTagFilter] : undefined,
               readFilter: readFilter === 'all' ? ('unread' as const) : readFilter,
-              sortOrder,
+              // 'popular' (a feed sort) can carry over from before switching to Saved.
+              sortOrder: SAVED_SORT_OPTIONS.some((o) => o.value === sortOrder)
+                ? sortOrder
+                : ('newest' as const),
             }
           : {
               name: finalName,
