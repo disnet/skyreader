@@ -50,11 +50,11 @@ async function seedLongList(page: Page, user: Parameters<typeof seedSubscription
     const count = await page.locator('.read-toggle').count();
     if (count >= CARDS) break;
     await page
-      .getByText(`Responsive article ${count - 1}`, { exact: true })
+      .getByText(`Responsive article ${Math.max(count - 1, 0)}`, { exact: true })
       .scrollIntoViewIfNeeded();
     await page.waitForTimeout(500);
   }
-  await expect(page.locator('.read-toggle')).toHaveCount(CARDS);
+  await expect(page.locator('.read-toggle')).toHaveCount(CARDS, { timeout: 15_000 });
 }
 
 /** Lets reactive work and body hydration settle, then zeroes the counters. */
@@ -93,6 +93,9 @@ test('marking one item read re-checks a few cards, not the whole list', async ({
 
     // An open card's body is sanitized once, when it renders. Re-sanitizing on a
     // read toggle means each card got a new article object.
+    // Guard against a vacuous pass: the counters only exist in a dev build, so
+    // the toggled card itself must have been counted.
+    expect(counts.cardLabels, 'work counters are live (dev build)').toBeGreaterThan(0);
     expect(counts.sanitize, 'bodies re-sanitized by one mark-read').toBeLessThanOrEqual(2);
     // The toggled card, plus the odd neighbour sharing its reactivity bucket
     // (utils/keyedSignals). Before per-key reactivity this was every card.
