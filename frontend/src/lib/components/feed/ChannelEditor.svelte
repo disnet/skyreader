@@ -70,6 +70,11 @@
     seed?: ChannelSeed | null;
     /** Cap the source list's height and scroll inside it (the desktop modal). */
     scrollPicker?: boolean;
+    /**
+     * Stick the Save row to the bottom of the scrolling container (the mobile
+     * sheet), so a long source list doesn't bury it.
+     */
+    pinActions?: boolean;
     /** Shown as a Cancel button when given. */
     oncancel?: () => void;
     onsaved: (created: string | null) => void;
@@ -81,6 +86,7 @@
     initialChannelType = null,
     seed = null,
     scrollPicker = false,
+    pinActions = false,
     oncancel,
     onsaved,
     ondeleted,
@@ -695,7 +701,7 @@
     <p class="error" role="alert">{error}</p>
   {/if}
 
-  <div class="actions">
+  <div class="actions" class:pinned={pinActions}>
     {#if oncancel}
       <button type="button" class="btn-secondary" onclick={oncancel} disabled={saving}>
         Cancel
@@ -957,6 +963,16 @@
   .actions {
     display: flex;
     gap: 0.5rem;
+  }
+
+  /* Rides the bottom of the sheet's scroll area, opaque so rows scroll under it. */
+  .actions.pinned {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    padding: 0.75rem 0;
+    background: var(--color-bg, #fff);
+    border-top: 1px solid var(--color-border);
   }
 
   .btn-primary,
