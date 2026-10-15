@@ -294,23 +294,26 @@ async function reorderItems(
 
   const unique = [...new Set(rkeys as string[])];
   const now = Math.floor(Date.now() / 1000);
-  const statements = unique.map((rkey, index) =>
+  // Compute the final order in JS (named members first, the rest after, in their
+  // current order): D1 caps bound parameters at 100 per statement, so a
+  // NOT IN (...) over up to 2000 names would fail.
+  const current = await env.DB.prepare(
+    `SELECT saved_rkey FROM shelf_collection_items
+      WHERE user_did = ? AND collection_id = ? ORDER BY position ASC, added_at ASC`
+  )
+    .bind(did, id)
+    .all<{ saved_rkey: string }>();
+  const members = (current.results ?? []).map((r) => r.saved_rkey);
+  const memberSet = new Set(members);
+  const named = unique.filter((r) => memberSet.has(r));
+  const namedSet = new Set(named);
+  const finalOrder = [...named, ...members.filter((r) => !namedSet.has(r))];
+  const statements = finalOrder.map((rkey, index) =>
     env.DB.prepare(
       `UPDATE shelf_collection_items SET position = ?
         WHERE user_did = ? AND collection_id = ? AND saved_rkey = ?`
     ).bind(index, did, id, rkey)
   );
-  // Members the client didn't name go after the ones it did, keeping their
-  // relative order.
-  if (unique.length > 0) {
-    statements.push(
-      env.DB.prepare(
-        `UPDATE shelf_collection_items SET position = position + ?
-          WHERE user_did = ? AND collection_id = ?
-            AND saved_rkey NOT IN (${unique.map(() => '?').join(', ')})`
-      ).bind(unique.length, did, id, ...unique)
-    );
-  }
   statements.push(
     env.DB.prepare(
       'UPDATE shelf_collections SET updated_at = ? WHERE user_did = ? AND id = ?'
@@ -345,11 +348,16 @@ export async function handleShelfCollections(
   did: string
 ): Promise<Response> {
   const url = new URL(request.url);
-  const parts = url.pathname
-    .replace(/^\/api\/shelf\/collections\/?/, '')
-    .split('/')
-    .filter(Boolean)
-    .map((p) => decodeURIComponent(p));
+  let parts: string[];
+  try {
+    parts = url.pathname
+      .replace(/^\/api\/shelf\/collections\/?/, '')
+      .split('/')
+      .filter(Boolean)
+      .map((p) => decodeURIComponent(p));
+  } catch {
+    return badRequest('Invalid path');
+  }
   const method = request.method;
 
   try {
