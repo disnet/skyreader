@@ -18,6 +18,7 @@ import { syncStore } from './sync.svelte';
 import { auth } from './auth.svelte';
 import { savesStore } from './saves.svelte';
 import { generateTid } from '$lib/utils/tid';
+import { KeyedSignals } from '$lib/utils/keyedSignals.svelte';
 import {
   mutateHighlightUnion,
   resolveHighlightAliases,
@@ -51,9 +52,18 @@ export interface SavedArticle {
 
 function createItemLabelsStore() {
   // Primary state: all labels indexed by compound key "itemKey:label"
-  let labelMap = $state<Map<string, ItemLabel>>(new Map());
+  let labelMap = new Map<string, ItemLabel>();
   // Secondary index: itemKey → Set of labels
-  let labelsByItem = $state<Map<string, Set<string>>>(new Map());
+  let labelsByItem = new Map<string, Set<string>>();
+  // The maps are plain; reactivity is per key. Per-item reads (`isRead`,
+  // `getTagsForItem`, …) track their item's signal and whole-map scans track
+  // the label they scan for, so marking one item read re-runs that item's card,
+  // not every card on screen. `triggerReactivity` bumps whatever changed since
+  // its last call.
+  const itemSignals = new KeyedSignals(512);
+  const labelSignals = new KeyedSignals(16);
+  const changedItems = new Set<string>();
+  const changedLabels = new Set<string>();
   let isLoading = $state(true);
   let hasLoaded = false;
 
@@ -153,6 +163,8 @@ function createItemLabelsStore() {
   }
 
   function addToState(lbl: ItemLabel) {
+    changedItems.add(lbl.itemKey);
+    changedLabels.add(lbl.label);
     const key = makeKey(lbl.itemKey, lbl.label);
     labelMap.set(key, lbl);
 
@@ -165,6 +177,8 @@ function createItemLabelsStore() {
   }
 
   function removeFromState(itemKey: string, label: string) {
+    changedItems.add(itemKey);
+    changedLabels.add(label);
     const key = makeKey(itemKey, label);
     labelMap.delete(key);
 
@@ -178,8 +192,10 @@ function createItemLabelsStore() {
   }
 
   function triggerReactivity() {
-    labelMap = new Map(labelMap);
-    labelsByItem = new Map(labelsByItem);
+    for (const itemKey of changedItems) itemSignals.bump(itemKey);
+    for (const label of changedLabels) labelSignals.bump(label);
+    changedItems.clear();
+    changedLabels.clear();
   }
 
   /**
@@ -316,6 +332,10 @@ function createItemLabelsStore() {
         }
         labelMap = newMap;
         labelsByItem = newByItem;
+        changedItems.clear();
+        changedLabels.clear();
+        itemSignals.bumpAll();
+        labelSignals.bumpAll();
         isLoading = false;
       }
     } catch (e) {
@@ -667,10 +687,12 @@ function createItemLabelsStore() {
   // --- Query methods ---
 
   function hasLabel(itemKey: string, label: string): boolean {
+    itemSignals.track(itemKey);
     return labelMap.has(makeKey(itemKey, label));
   }
 
   function getLabel(itemKey: string, label: string): ItemLabel | undefined {
+    itemSignals.track(itemKey);
     return labelMap.get(makeKey(itemKey, label));
   }
 
@@ -707,11 +729,12 @@ function createItemLabelsStore() {
   }
 
   // All highlights across every item, flattened to one entry per highlight.
-  // Drives the standalone Highlights view; stays reactive off labelMap.
+  // Drives the standalone Highlights view; tracks every highlights label.
   let allHighlights = $derived.by(
     (): Array<{ itemKey: string; itemType: ItemLabelType; highlight: Highlight }> => {
       const out: Array<{ itemKey: string; itemType: ItemLabelType; highlight: Highlight }> = [];
       const emitted = new Set<string>();
+      labelSignals.track('highlights');
       for (const [, lbl] of labelMap) {
         if (lbl.label !== 'highlights') continue;
         const context = highlightContext(lbl.itemKey);
@@ -733,6 +756,7 @@ function createItemLabelsStore() {
   // All unique tags across all items
   let allTags = $derived.by((): string[] => {
     const tagSet = new Set<string>();
+    labelSignals.track('tagged');
     for (const [, lbl] of labelMap) {
       if (lbl.label === 'tagged') {
         const tags = (lbl.props.tags as string[]) || [];
@@ -749,6 +773,7 @@ function createItemLabelsStore() {
   let readPositions = $derived.by(() => {
     const map = new Map<string, { readAt: number; itemUrl?: string; itemTitle?: string }>();
 
+    labelSignals.track('read');
     for (const [, lbl] of labelMap) {
       if (lbl.itemType !== 'article') continue;
       if (lbl.label !== 'read') continue;
@@ -769,6 +794,7 @@ function createItemLabelsStore() {
   // the actual read check is isSocialRead → hasLabel.
   let socialPositions = $derived.by(() => {
     const map = new Map<string, { readAt: unknown }>();
+    labelSignals.track('read');
     for (const [, lbl] of labelMap) {
       if (lbl.itemType !== 'document') continue;
       if (lbl.label !== 'read') continue;
@@ -795,6 +821,7 @@ function createItemLabelsStore() {
   // Archived count (saved + archived)
   let archivedCount = $derived.by(() => {
     let count = 0;
+    labelSignals.track('archived');
     for (const [itemKey, labels] of labelsByItem) {
       if (labels.has('archived')) {
         if (savesStore.isSaved(itemKey)) count++;
@@ -1535,7 +1562,7 @@ function createItemLabelsStore() {
   function getReadProgress(
     itemKey: string
   ): { paragraphIndex: number; totalParagraphs: number } | null {
-    const lbl = labelMap.get(makeKey(itemKey, 'readProgress'));
+    const lbl = getLabel(itemKey, 'readProgress');
     if (!lbl) return null;
     return {
       paragraphIndex: lbl.props.paragraphIndex as number,
@@ -1549,7 +1576,7 @@ function createItemLabelsStore() {
   // `readAt` (finished) or `lastReadAt` (in-progress) timestamp seen across those
   // keys, plus the current scroll progress when one exists. Returns null when the
   // item has never been opened. Drives the Home "Continue reading" lane.
-  // Reads labelMap directly so it stays reactive when called inside a $derived.
+  // Tracks each key, so it stays reactive when called inside a $derived.
   function getReadActivity(itemKeys: string[]): {
     lastActivityAt: number;
     progress: { paragraphIndex: number; totalParagraphs: number } | null;
@@ -1560,13 +1587,13 @@ function createItemLabelsStore() {
     for (const key of itemKeys) {
       if (!key) continue;
 
-      const read = labelMap.get(makeKey(key, 'read'));
+      const read = getLabel(key, 'read');
       if (read) {
         const at = (read.props.readAt as number) || read.updatedAt || 0;
         if (at > lastActivityAt) lastActivityAt = at;
       }
 
-      const rp = labelMap.get(makeKey(key, 'readProgress'));
+      const rp = getLabel(key, 'readProgress');
       if (rp) {
         const at = (rp.props.lastReadAt as number) || rp.updatedAt || 0;
         if (at > lastActivityAt) lastActivityAt = at;
@@ -1621,7 +1648,7 @@ function createItemLabelsStore() {
 
   /** Where a saved PDF's Original view was left, or null to open at its top. */
   function getPdfPlace(itemKey: string): PdfPlace | null {
-    const props = labelMap.get(makeKey(itemKey, 'pdfPlace'))?.props;
+    const props = getLabel(itemKey, 'pdfPlace')?.props;
     return isPdfPlace(props) ? { page: props.page, at: props.at } : null;
   }
 
@@ -2038,6 +2065,7 @@ function createItemLabelsStore() {
       return allTags;
     },
     get tagsByItem() {
+      labelSignals.trackAll();
       return labelsByItem;
     },
     // Social positions (backward compat)

@@ -9,7 +9,8 @@ import {
 interface ScrollMarkAsReadParams {
   getArticleElements: () => HTMLElement[];
   getItemKey: (index: number) => string | undefined;
-  enabled: boolean;
+  /** Read on every setup, so turning the preference off takes effect live. */
+  enabled: () => boolean;
   onMarkAsRead: (key: string) => void;
 }
 
@@ -23,6 +24,8 @@ export function useScrollMarkAsRead(params: ScrollMarkAsReadParams) {
   let lastScrollY = 0;
   let scrollDirection: 'up' | 'down' | null = null;
   let scrollMarkObserver: IntersectionObserver | null = null;
+  let observerRoot: Element | null = null;
+  const observed = new Set<HTMLElement>();
   let stopScrollListener: (() => void) | null = null;
   let stopRootListener: (() => void) | null = null;
 
@@ -36,20 +39,51 @@ export function useScrollMarkAsRead(params: ScrollMarkAsReadParams) {
     lastScrollY = currentScrollY;
   }
 
-  function setupObserver() {
-    // Clean up existing observer
-    if (scrollMarkObserver) {
-      scrollMarkObserver.disconnect();
-      scrollMarkObserver = null;
-    }
+  function disconnect() {
+    scrollMarkObserver?.disconnect();
+    scrollMarkObserver = null;
+    observed.clear();
+  }
 
-    if (!params.enabled) return;
+  // Called whenever the list changes. The observer is kept and only the
+  // elements that came or went are (un)observed: rebuilding it re-observed every
+  // card, each with its own initial callback, once per item marked read.
+  function setupObserver() {
+    if (!params.enabled()) {
+      disconnect();
+      return;
+    }
 
     // Reset scroll direction to prevent stale direction from marking items
     // when content changes cause elements to shift above the viewport
     scrollDirection = null;
 
-    scrollMarkObserver = new IntersectionObserver(
+    const root = appScrollElement();
+    if (scrollMarkObserver && observerRoot !== root) disconnect();
+    if (!scrollMarkObserver) {
+      observerRoot = root;
+      scrollMarkObserver = createObserver(root);
+    }
+
+    // Keys follow the index, which shifts when the list changes, so every
+    // current element gets its key refreshed even if it's already observed.
+    const current = new Set<HTMLElement>();
+    params.getArticleElements().forEach((el, index) => {
+      const key = params.getItemKey(index);
+      if (!el || !key) return;
+      el.dataset.key = key;
+      current.add(el);
+      if (!observed.has(el)) scrollMarkObserver!.observe(el);
+    });
+    for (const el of observed) {
+      if (!current.has(el)) scrollMarkObserver.unobserve(el);
+    }
+    observed.clear();
+    for (const el of current) observed.add(el);
+  }
+
+  function createObserver(root: Element | null): IntersectionObserver {
+    return new IntersectionObserver(
       (entries) => {
         // Only process if scrolling down
         if (scrollDirection !== 'down') return;
@@ -69,21 +103,11 @@ export function useScrollMarkAsRead(params: ScrollMarkAsReadParams) {
         });
       },
       {
-        root: appScrollElement(), // the content card, or null for the window
+        root, // the content card, or null for the window
         rootMargin: '0px',
         threshold: 0,
       }
     );
-
-    // Observe all article elements
-    const elements = params.getArticleElements();
-    elements.forEach((el, index) => {
-      const key = params.getItemKey(index);
-      if (el && key) {
-        el.dataset.key = key;
-        scrollMarkObserver?.observe(el);
-      }
-    });
   }
 
   function init() {
@@ -105,8 +129,7 @@ export function useScrollMarkAsRead(params: ScrollMarkAsReadParams) {
     stopScrollListener = null;
     stopRootListener?.();
     stopRootListener = null;
-    scrollMarkObserver?.disconnect();
-    scrollMarkObserver = null;
+    disconnect();
   }
 
   // Auto-cleanup on component destroy

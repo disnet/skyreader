@@ -109,10 +109,23 @@ class LiveDatabase {
     rows: Array<Pick<Article, 'id' | 'guid' | 'subscriptionId'>>
   ): Promise<Map<string, string>> {
     const out = new Map<string, string>();
+    // One bulk read for every row with an id; only the stragglers go by guid.
+    const withId = rows.filter((a) => a.id != null);
+    let byId: Array<Article | undefined> = [];
+    try {
+      byId = await db.articles.bulkGet(withId.map((a) => a.id!));
+    } catch {
+      // Fall through: each row is retried by guid below.
+    }
+    const found = new Map<(typeof rows)[number], Article>();
+    withId.forEach((a, i) => {
+      const row = byId[i];
+      if (row) found.set(a, row);
+    });
     await Promise.all(
       rows.map(async (a) => {
         try {
-          let row = a.id != null ? await db.articles.get(a.id) : undefined;
+          let row = found.get(a);
           if (!row && a.guid) {
             row = await db.articles
               .where('guid')
