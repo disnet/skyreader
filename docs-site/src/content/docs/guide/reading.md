@@ -5,9 +5,15 @@ description: The library, channels, the reader, paged mode, the daily magazine, 
 
 ## The library
 
-**Feeds** shows everything you follow in one chronological stream. The sidebar lists your sources and channels; **channels** are saved views over the library, filtered by source, content type, or read state, so "Newsletters" or "Slow reads" is one click away.
+**Feeds** shows everything you follow in one chronological stream. The sidebar lists your sources and channels; **channels** are saved views over the library, filtered by source or read state, so "Newsletters" or "Slow reads" is one click away.
 
-The **Type** filter splits what you follow by kind: **RSS Feeds**, **Newsletters**, **Bluesky Likes** and **Bluesky Bookmarks** (each if you have them), and **Standard.site Documents**. Check only RSS Feeds to keep newsletters and Bluesky out of a view.
+The **Sources** filter lists everything that brings you things to read, grouped:
+
+- **From Bluesky**: **Your likes** and **Your bookmarks** (the links in posts you liked or bookmarked, if you've turned them on), and **People you follow** (the links they share).
+- **Newsletters**: every sender, together or one by one.
+- **Publications**: your feeds, by folder.
+
+Everything starts checked. Uncheck a source, a folder or a whole group to leave it out. Choose **only** beside one to see just that. **Show everything** puts it all back. A group stays whole as it grows: hide **Newsletters** and a newsletter that arrives tomorrow stays hidden too. Choose **Save** to keep a filter as a channel.
 
 ![The Feeds view: sources and channels in the sidebar, newest articles first in the stream](../../../assets/screenshots/library.png)
 

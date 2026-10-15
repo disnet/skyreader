@@ -87,6 +87,7 @@ function excludeChannel(overrides: Partial<FilteredView> = {}): FilteredView {
     mode: 'feed',
     sourceMode: 'exclude',
     sourceKeys: ['rss~3knoisyfeedaaa'],
+    filterVersion: 2,
     readFilter: 'unread',
     sortOrder: 'newest',
     ...overrides,

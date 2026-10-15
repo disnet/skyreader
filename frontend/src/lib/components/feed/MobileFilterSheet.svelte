@@ -2,15 +2,23 @@
   import { isArchiveFeedSource } from '$lib/utils/newsletters';
   import Icon from '$lib/components/Icon.svelte';
   import AppearanceToolbar from './AppearanceToolbar.svelte';
+  import SourcePicker from './SourcePicker.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { articlesStore } from '$lib/stores/articles.svelte';
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
-  import { FOLLOWS_SOURCE_KEY, subscriptionSourceKey } from '$lib/utils/sourceKeys';
+  import { FOLLOWS_SOURCE_KEY } from '$lib/utils/sourceKeys';
   import { auth } from '$lib/stores/auth.svelte';
   import { followLinksStore } from '$lib/stores/followLinks.svelte';
   import { computeSourceKeys } from '$lib/utils/channelLogic';
-  import { filterSubscriptionsBySearch, subscriptionIconUrl } from '$lib/utils/subscriptionDisplay';
+  import {
+    buildSourceGroups,
+    isSourceShown,
+    keysOfTypes,
+    upgradeChannelFilter,
+    CHANNEL_FILTER_VERSION,
+    type SourceFilter,
+  } from '$lib/utils/sourceFilter';
   import DomainPatternInput from '$lib/components/DomainPatternInput.svelte';
   import type {
     ChannelAutoRule,
@@ -23,7 +31,6 @@
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import {
     SAVED_SOURCE_OPTIONS,
-    typeOptionsFor,
     DATE_PRESET_OPTIONS_SHORT as DATE_PRESET_OPTIONS,
     READING_LENGTH_OPTIONS_SHORT as READING_LENGTH_OPTIONS,
     SAVED_SORT_OPTIONS_SHORT as SAVED_SORT_OPTIONS,
@@ -64,32 +71,17 @@
     ondeleted,
   }: Props = $props();
 
-  // Everything takes your follows' links only when you say so; the choice is
-  // saved for the account (see followLinksStore.setInEverything).
-  let showFollowsInEverythingToggle = $derived(
-    feedViewStore.isEverythingView &&
-      feedViewStore.effectiveFilters.sourceMode === 'all' &&
-      !auth.isGuest &&
-      followLinksStore.loaded &&
-      !followLinksStore.scopeRequired
+  // Your follows' links are a row like any other source, offered once you've
+  // let Skyreader read your Following timeline (see SourcePicker).
+  let showFollowsSource = $derived(
+    !auth.isGuest && followLinksStore.loaded && !followLinksStore.scopeRequired
   );
-  let savingFollowsInEverything = $state(false);
+  let followsInEverything = $derived(followLinksStore.inEverything === true);
   let followsSortOrder = $derived(
     feedViewStore.currentSortOrder === 'popular' || feedViewStore.currentSortOrder === 'oldest'
       ? feedViewStore.currentSortOrder
       : 'newest'
   );
-
-  async function toggleFollowsInEverything(on: boolean) {
-    savingFollowsInEverything = true;
-    try {
-      await followLinksStore.setInEverything(on);
-    } catch {
-      // The store puts the old value back; the checkbox follows it.
-    } finally {
-      savingFollowsInEverything = false;
-    }
-  }
 
   // --- Tab state ---
   let activeTab = $state<'filters' | 'channel'>('filters');
@@ -117,14 +109,13 @@
   let chCategoryValue = $state('');
   let chTagValue = $state('');
   let chDomainPatterns = $state<string[]>([]);
-  let chSourceMode = $state<'all' | 'include' | 'exclude'>('all');
-  let chSourceKeys = $state<Set<string>>(new Set());
-  let chTypeFilter = $state<Set<SubscriptionSourceType>>(new Set());
-  let typeOptions = $derived(typeOptionsFor(subscriptionsStore.subscriptions, chTypeFilter));
+  let chSourceFilter = $state<SourceFilter>({ sourceMode: 'all', sourceKeys: [] });
+  // A smart channel from before source groups may narrow its rule by type; kept
+  // as it was, since there's no longer a control for it.
+  let chTypeFilter = $state<SubscriptionSourceType[] | undefined>(undefined);
   let chSaving = $state(false);
   let chError = $state<string | null>(null);
   let chNameManuallyEdited = $state(false);
-  let chFeedSearch = $state('');
 
   let availableCategories = $derived(
     [
@@ -220,10 +211,6 @@
     }
   });
 
-  let chFilteredSubscriptions = $derived(
-    filterSubscriptionsBySearch(subscriptionsStore.subscriptions, chFeedSearch)
-  );
-
   // Reset channel editor when editingChannelId changes
   $effect(() => {
     if (editingChannelId != null) {
@@ -238,7 +225,8 @@
         chSavedDomainFilter = new Set(view.savedDomainFilter ?? []);
         chSavedTagFilter = new Set(view.tagFilter ?? []);
         chSortOrder = view.sortOrder;
-        chTypeFilter = new Set(view.typeFilter ?? []);
+        const upgraded = upgradeChannelFilter(view);
+        chTypeFilter = upgraded.typeFilter;
         const isSmartChannel = !!view.autoRule;
         if (isSmartChannel) {
           chMode = 'smart';
@@ -250,16 +238,8 @@
             chDomainPatterns = [...view.autoRule!.patterns];
         } else {
           chMode = 'manual';
-          const mode =
-            view.sourceMode === 'include'
-              ? 'include'
-              : view.sourceMode === 'exclude'
-                ? 'exclude'
-                : 'all';
-          chSourceMode = mode;
-          chSourceKeys = mode === 'all' ? new Set() : new Set(view.sourceKeys ?? []);
+          chSourceFilter = { sourceMode: upgraded.sourceMode, sourceKeys: upgraded.sourceKeys };
         }
-        chFeedSearch = '';
         chError = null;
         return;
       }
@@ -275,44 +255,30 @@
       chTagValue = '';
       chDomainPatterns = [];
       chNameManuallyEdited = false;
-      chSourceMode = 'all';
-      chSourceKeys = new Set();
-      chTypeFilter = new Set();
+      chSourceFilter = { sourceMode: 'all', sourceKeys: [] };
+      chTypeFilter = undefined;
       chSavedSourceFilter = new Set();
       chSavedDateFilter = '';
       chSavedReadingLength = new Set();
       chSavedDomainFilter = new Set();
       chSavedTagFilter = new Set();
       chSortOrder = 'newest';
-      chFeedSearch = '';
       chError = null;
     }
   });
 
-  // A feed channel that names the follows source can rank by shares.
+  // A feed channel whose sources take in your follows' links can rank by shares.
   let chIncludesFollows = $derived(
-    chMode === 'manual' && chSourceMode === 'include' && chSourceKeys.has(FOLLOWS_SOURCE_KEY)
+    chMode === 'manual' &&
+      chSourceFilter.sourceMode !== 'all' &&
+      isSourceShown(chSourceFilter, FOLLOWS_SOURCE_KEY, {
+        groups: buildSourceGroups(subscriptionsStore.subscriptions),
+        followsInEverything,
+      })
   );
   let chFollowsSortOrder = $derived<SortOrder>(
     chSortOrder === 'popular' || chSortOrder === 'oldest' ? chSortOrder : 'newest'
   );
-
-  function toggleChSourceKey(key: string) {
-    const next = new Set(chSourceKeys);
-    if (next.has(key)) {
-      next.delete(key);
-    } else {
-      next.add(key);
-    }
-    chSourceKeys = next;
-  }
-
-  function toggleChTypeFilter(type: SubscriptionSourceType) {
-    const next = new Set(chTypeFilter);
-    if (next.has(type)) next.delete(type);
-    else next.add(type);
-    chTypeFilter = next;
-  }
 
   async function handleChDelete() {
     if (editingChannelId == null) return;
@@ -353,15 +319,13 @@
           : {
               name: chName.trim(),
               mode: 'feed' as const,
-              sourceMode: isSmartMode ? ('include' as const) : chSourceMode,
-              sourceKeys: isSmartMode ? chMatchedSourceKeys : Array.from(chSourceKeys),
+              sourceMode: isSmartMode ? ('include' as const) : chSourceFilter.sourceMode,
+              sourceKeys: isSmartMode
+                ? keysOfTypes(chMatchedSourceKeys, chTypeFilter, subscriptionsStore.subscriptions)
+                : [...chSourceFilter.sourceKeys],
               autoRule: isSmartMode ? chCurrentAutoRule : undefined,
-              typeFilter:
-                chMode === 'manual' && chSourceMode === 'include'
-                  ? undefined
-                  : chTypeFilter.size > 0
-                    ? Array.from(chTypeFilter)
-                    : undefined,
+              typeFilter: isSmartMode ? chTypeFilter : undefined,
+              filterVersion: CHANNEL_FILTER_VERSION,
               readFilter: 'unread' as const,
               sortOrder: chIncludesFollows ? chFollowsSortOrder : ('newest' as const),
             };
@@ -602,24 +566,21 @@
         </div>
       </div>
 
-      {#if showFollowsInEverythingToggle}
+      {#if feedViewStore.isEverythingView}
         <div class="sheet-section">
           <div class="section-label">
             <Icon name="filter" size={12} />
             Sources
           </div>
-          <div class="source-list">
-            <label class="source-item">
-              <input
-                type="checkbox"
-                checked={followLinksStore.inEverything === true}
-                disabled={savingFollowsInEverything}
-                onchange={(e) => toggleFollowsInEverything(e.currentTarget.checked)}
-              />
-              <Icon name="share-2" size={16} />
-              <span class="source-name">Links from people you follow</span>
-            </label>
-          </div>
+          <SourcePicker
+            filter={{
+              sourceMode: feedViewStore.effectiveFilters.sourceMode,
+              sourceKeys: feedViewStore.effectiveFilters.sourceKeys,
+            }}
+            onchange={(f) => feedViewStore.setToolbarSourceFilter(f.sourceMode, f.sourceKeys)}
+            showFollows={showFollowsSource}
+            {followsInEverything}
+          />
         </div>
       {/if}
     {/if}
@@ -917,81 +878,13 @@
         <!-- Manual source picker -->
         <div class="sheet-section">
           <div class="section-label">Sources</div>
-          <div class="toggle-row">
-            <button
-              class="toggle-btn small"
-              class:active={chSourceMode === 'all'}
-              onclick={() => (chSourceMode = 'all')}
-            >
-              All sources
-            </button>
-            <button
-              class="toggle-btn small"
-              class:active={chSourceMode === 'include'}
-              onclick={() => (chSourceMode = 'include')}
-            >
-              Include only
-            </button>
-            <button
-              class="toggle-btn small"
-              class:active={chSourceMode === 'exclude'}
-              onclick={() => (chSourceMode = 'exclude')}
-            >
-              Exclude only
-            </button>
-          </div>
-
-          {#if chSourceMode !== 'all' && subscriptionsStore.subscriptions.length > 0}
-            <p class="section-hint">
-              {chSourceMode === 'exclude'
-                ? 'Show everything except the sources you check.'
-                : 'Show only the sources you check.'}
-            </p>
-            {#if subscriptionsStore.subscriptions.length > 6}
-              <input
-                type="text"
-                class="source-search"
-                placeholder="Search subscriptions..."
-                aria-label="Search subscriptions"
-                bind:value={chFeedSearch}
-              />
-            {/if}
-            <div class="source-list">
-              {#if chSourceMode === 'include' && !auth.isGuest && !chFeedSearch}
-                <!-- Never part of "All sources": a channel shows your follows'
-                     links only by naming them. -->
-                <label class="source-item">
-                  <input
-                    type="checkbox"
-                    checked={chSourceKeys.has(FOLLOWS_SOURCE_KEY)}
-                    onchange={() => toggleChSourceKey(FOLLOWS_SOURCE_KEY)}
-                  />
-                  <Icon name="share-2" size={16} />
-                  <span class="source-name">People you follow on Bluesky</span>
-                </label>
-              {/if}
-              {#each chFilteredSubscriptions as sub}
-                {@const key = subscriptionSourceKey(sub)}
-                {#if key}
-                  {@const iconUrl = subscriptionIconUrl(sub)}
-                  <label class="source-item">
-                    <input
-                      type="checkbox"
-                      checked={chSourceKeys.has(key)}
-                      onchange={() => toggleChSourceKey(key)}
-                    />
-                    {#if iconUrl}
-                      <img src={iconUrl} alt="" class="source-icon" />
-                    {/if}
-                    <span class="source-name">{sub.customTitle || sub.title}</span>
-                  </label>
-                {/if}
-              {/each}
-              {#if chFeedSearch && chFilteredSubscriptions.length === 0}
-                <div class="no-results">No subscriptions match</div>
-              {/if}
-            </div>
-          {/if}
+          <p class="section-hint">Uncheck what to leave out, or tap “only” to show just one.</p>
+          <SourcePicker
+            filter={chSourceFilter}
+            onchange={(f) => (chSourceFilter = f)}
+            showFollows={showFollowsSource}
+            {followsInEverything}
+          />
         </div>
       {/if}
 
@@ -1009,25 +902,6 @@
               </button>
             {/each}
           </div>
-        </div>
-      {/if}
-
-      {#if chChannelType === 'feed' && !(chMode === 'manual' && chSourceMode === 'include')}
-        <div class="sheet-section">
-          <div class="section-label">Content Types</div>
-          <div class="source-list">
-            {#each typeOptions as opt}
-              <label class="source-item">
-                <input
-                  type="checkbox"
-                  checked={chTypeFilter.has(opt.value)}
-                  onchange={() => toggleChTypeFilter(opt.value)}
-                />
-                <span class="source-name">{opt.label}</span>
-              </label>
-            {/each}
-          </div>
-          <p class="section-hint">Leave all unchecked to show all types</p>
         </div>
       {/if}
     {/if}
@@ -1170,11 +1044,6 @@
     padding: 0.375rem 0.75rem;
   }
 
-  .toggle-btn.small {
-    font-size: var(--text-sm);
-    padding: 0.5rem;
-  }
-
   /* --- Filter tab styles --- */
 
   .toolbar-wrapper {
@@ -1220,24 +1089,6 @@
     font-size: var(--text-xs);
   }
 
-  .source-search {
-    padding: 0.5rem 0.75rem;
-    border: 1px solid var(--color-border);
-    border-radius: 8px;
-    background: var(--color-bg);
-    color: var(--color-text);
-    font-size: var(--text-base);
-    outline: none;
-  }
-
-  .source-search:focus {
-    border-color: var(--color-primary);
-  }
-
-  .source-search::placeholder {
-    color: var(--color-text-secondary);
-  }
-
   .source-list {
     display: flex;
     flex-direction: column;
@@ -1262,24 +1113,10 @@
     border-bottom: none;
   }
 
-  .source-icon {
-    width: 16px;
-    height: 16px;
-    border-radius: 2px;
-    flex-shrink: 0;
-  }
-
   .source-name {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  .no-results {
-    padding: 0.75rem;
-    text-align: center;
-    font-size: var(--text-sm);
-    color: var(--color-text-secondary);
   }
 
   .section-hint {
@@ -1487,7 +1324,6 @@
       background: rgba(255, 255, 255, 0.1);
     }
 
-    .source-search,
     .source-list,
     .ch-input,
     .days-input {

@@ -94,9 +94,7 @@
   }
 
   let hasActiveFilters = $derived(
-    feedViewStore.toolbarTypeFilter.length > 0 ||
-      feedViewStore.toolbarTagFilter.length > 0 ||
-      feedViewStore.effectiveFilters.sourceMode !== 'all'
+    feedViewStore.toolbarTagFilter.length > 0 || feedViewStore.effectiveFilters.sourceMode !== 'all'
   );
 
   // Profile for sharer filter title

@@ -1,6 +1,7 @@
 <script lang="ts">
   import Icon from '$lib/components/Icon.svelte';
   import FilterPopover from './FilterPopover.svelte';
+  import SourcePicker from './SourcePicker.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
@@ -11,9 +12,8 @@
   import { FOLLOWS_CHANNEL_NAME } from '$lib/utils/followsChannel';
   import { auth } from '$lib/stores/auth.svelte';
   import { followLinksStore } from '$lib/stores/followLinks.svelte';
-  import { filterSubscriptionsBySearch, subscriptionIconUrl } from '$lib/utils/subscriptionDisplay';
+  import { GROUP_LABELS, type SourceFilter } from '$lib/utils/sourceFilter';
   import {
-    typeOptionsFor,
     SAVED_SOURCE_OPTIONS,
     DATE_PRESET_OPTIONS,
     READING_LENGTH_OPTIONS,
@@ -29,29 +29,8 @@
   let { showSourceFilter, onEditChannel }: Props = $props();
 
   let ef = $derived(feedViewStore.effectiveFilters);
-  let sourceKeySet = $derived(new Set(ef.sourceKeys));
 
-  // Search state for filtering lists
-  let feedSearch = $state('');
   let domainSearchText = $state('');
-
-  // Clear search when source popover closes
-  $effect(() => {
-    if (!feedViewStore.sourcePopoverOpen) {
-      feedSearch = '';
-    }
-  });
-
-  let filteredSubscriptions = $derived(
-    filterSubscriptionsBySearch(subscriptionsStore.subscriptions, feedSearch)
-  );
-
-  let activeTypeFilter = $derived(feedViewStore.toolbarTypeFilter);
-  let activeTypeSet = $derived(new Set(activeTypeFilter));
-  let typeOptions = $derived(typeOptionsFor(subscriptionsStore.subscriptions, activeTypeSet));
-  let typeFilterLabel = $derived(
-    activeTypeFilter.length === 0 ? 'Type' : `Type (${activeTypeFilter.length})`
-  );
 
   let isSavedChannel = $derived(feedViewStore.isSavedChannel);
   let activeSavedSourceFilter = $derived(feedViewStore.toolbarSavedSourceFilter);
@@ -100,7 +79,7 @@
   );
 
   // Popover open states (local to this component)
-  let typePopoverOpen = $state(false);
+  let savedSourcePopoverOpen = $state(false);
   let datePopoverOpen = $state(false);
   let lengthPopoverOpen = $state(false);
   let domainPopoverOpen = $state(false);
@@ -125,61 +104,30 @@
     activeTagFilter.length === 0 ? 'Tags' : `Tags (${activeTagFilter.length})`
   );
 
-  function setSourceMode(mode: 'all' | 'include' | 'exclude') {
-    feedViewStore.setToolbarSourceFilter(mode, mode === 'all' ? [] : [...ef.sourceKeys]);
-  }
-
-  // All possible source keys (deduplicated across all subscriptions)
-  let allSourceKeys = $derived.by(() => {
-    const keys = new Set<string>();
-    for (const sub of subscriptionsStore.subscriptions) {
-      const key = subscriptionSourceKey(sub);
-      if (key) keys.add(key);
-    }
-    return [...keys];
-  });
-
-  let allSourcesSelected = $derived(
-    allSourceKeys.length > 0 && allSourceKeys.every((k) => sourceKeySet.has(k))
+  // Your follows' links are a row like any other source, offered once you've
+  // let Skyreader read your Following timeline.
+  let showFollowsSource = $derived(
+    !auth.isGuest && followLinksStore.loaded && !followLinksStore.scopeRequired
   );
+  let followsInEverything = $derived(followLinksStore.inEverything === true);
 
-  function selectAllSources() {
-    const newKeys = allSourceKeys.filter((k) => !sourceKeySet.has(k));
-    if (newKeys.length > 0) {
-      feedViewStore.setToolbarSourceFilter(ef.sourceMode, [...ef.sourceKeys, ...newKeys]);
-    }
+  function setSourceFilter(next: SourceFilter) {
+    feedViewStore.setToolbarSourceFilter(next.sourceMode, next.sourceKeys);
   }
 
-  function deselectAllSources() {
-    const allKeySet = new Set(allSourceKeys);
-    const keys = ef.sourceKeys.filter((k) => !allKeySet.has(k));
-    feedViewStore.setToolbarSourceFilter(ef.sourceMode, keys);
-  }
-
-  // Everything takes your follows' links only when you say so; the choice is
-  // saved for the account (see followLinksStore.setInEverything).
-  let showFollowsInEverythingToggle = $derived(
-    feedViewStore.isEverythingView &&
-      ef.sourceMode === 'all' &&
-      !auth.isGuest &&
-      followLinksStore.loaded &&
-      !followLinksStore.scopeRequired
+  // What the filter leaves out, not counting the follows key an exclude filter
+  // carries only to say "as Everything" (see utils/sourceFilter.ts).
+  let hiddenCount = $derived(
+    ef.sourceKeys.filter((k) => followsInEverything || k !== FOLLOWS_SOURCE_KEY).length
   );
-  let savingFollowsInEverything = $state(false);
-
-  async function toggleFollowsInEverything(on: boolean) {
-    savingFollowsInEverything = true;
-    try {
-      await followLinksStore.setInEverything(on);
-    } catch {
-      // The store puts the old value back; the checkbox follows it.
-    } finally {
-      savingFollowsInEverything = false;
-    }
-  }
-
   let sourceFilterLabel = $derived(
-    ef.sourceMode === 'all' ? 'Sources' : `Sources (${ef.sourceKeys.length})`
+    ef.sourceMode === 'include'
+      ? `Sources (${ef.sourceKeys.length})`
+      : ef.sourceMode === 'exclude'
+        ? hiddenCount > 0
+          ? `Sources (\u2212${hiddenCount})`
+          : 'Sources'
+        : 'Sources'
   );
 
   // Save view state
@@ -201,16 +149,8 @@
 
   // --- Auto naming ---
 
-  const TYPE_SHORT_LABELS: Record<string, string> = {
-    rss: 'Feeds',
-    'email.newsletter': 'Newsletters',
-    'bsky.likes': 'Likes',
-    'bsky.bookmarks': 'Bookmarks',
-    'atproto.documents': 'Documents',
-  };
-
   let sourceTitleByKey = $derived.by(() => {
-    const map = new Map<string, string>();
+    const map = new Map<string, string>(Object.entries(GROUP_LABELS));
     for (const sub of subscriptionsStore.subscriptions) {
       const key = subscriptionSourceKey(sub);
       if (key) map.set(key, sub.customTitle || sub.title);
@@ -239,6 +179,7 @@
   function autoChannelName(): string {
     const parts: string[] = [];
     const sourceNames = ef.sourceKeys
+      .filter((k) => ef.sourceMode === 'include' || followsInEverything || k !== FOLLOWS_SOURCE_KEY)
       .map((k) => sourceTitleByKey.get(k))
       .filter((n): n is string => !!n);
 
@@ -246,8 +187,8 @@
       parts.push(joinNames(sourceNames));
     } else if (ef.sourceMode === 'exclude' && sourceNames.length > 0) {
       parts.push(`Without ${joinNames(sourceNames)}`);
-    } else if (activeTypeFilter.length > 0) {
-      parts.push(joinNames(activeTypeFilter.map((t) => TYPE_SHORT_LABELS[t] ?? t)));
+    } else if (ef.sourceMode === 'exclude') {
+      parts.push(`Everything + ${FOLLOWS_CHANNEL_NAME}`);
     }
 
     if (activeTagFilter.length > 0) parts.push(joinNames([...activeTagFilter]));
@@ -322,7 +263,6 @@
         readFilter: feedViewStore.showOnlyUnread ? 'unread' : 'all',
         sortOrder: feedViewStore.currentSortOrder,
         tagFilter: activeTagFilter.length > 0 ? [...activeTagFilter] : undefined,
-        typeFilter: activeTypeFilter.length > 0 ? [...activeTypeFilter] : undefined,
       });
       const created = filteredViewsStore.getByUuid(uuid);
       await goto(channelPath(uuid));
@@ -459,8 +399,8 @@
           iconName="layers"
           label={savedSourceFilterLabel}
           hasFilter={activeSavedSourceFilter.length > 0}
-          open={typePopoverOpen}
-          onOpenChange={(v) => (typePopoverOpen = v)}
+          open={savedSourcePopoverOpen}
+          onOpenChange={(v) => (savedSourcePopoverOpen = v)}
         >
           <div class="popover-group-header">
             <span>Save Sources</span>
@@ -601,146 +541,13 @@
           open={feedViewStore.sourcePopoverOpen}
           onOpenChange={(v) => feedViewStore.setSourcePopoverOpen(v)}
         >
-          <div class="popover-section">
-            <label class="radio-label">
-              <input
-                type="radio"
-                name="sourceMode"
-                value="all"
-                checked={ef.sourceMode === 'all'}
-                onchange={() => setSourceMode('all')}
-              />
-              All sources
-            </label>
-            <label class="radio-label">
-              <input
-                type="radio"
-                name="sourceMode"
-                value="include"
-                checked={ef.sourceMode === 'include'}
-                onchange={() => setSourceMode('include')}
-              />
-              Include only
-            </label>
-            <label class="radio-label">
-              <input
-                type="radio"
-                name="sourceMode"
-                value="exclude"
-                checked={ef.sourceMode === 'exclude'}
-                onchange={() => setSourceMode('exclude')}
-              />
-              Exclude only
-            </label>
-          </div>
-
-          {#if showFollowsInEverythingToggle}
-            <div class="popover-list">
-              <label class="check-label">
-                <input
-                  type="checkbox"
-                  checked={followLinksStore.inEverything === true}
-                  disabled={savingFollowsInEverything}
-                  onchange={(e) => toggleFollowsInEverything(e.currentTarget.checked)}
-                />
-                <Icon name="share-2" size={16} />
-                <span class="check-text">Links from people you follow</span>
-              </label>
-            </div>
-          {/if}
-
-          {#if ef.sourceMode !== 'all'}
-            {#if subscriptionsStore.subscriptions.length > 0}
-              <div class="popover-group-header">
-                <span>Subscriptions</span>
-                <button
-                  class="select-all-btn"
-                  onclick={allSourcesSelected ? deselectAllSources : selectAllSources}
-                >
-                  {allSourcesSelected ? 'Deselect all' : 'Select all'}
-                </button>
-              </div>
-              <div class="popover-search">
-                <input
-                  type="text"
-                  placeholder="Search subscriptions..."
-                  bind:value={feedSearch}
-                  class="search-input"
-                />
-              </div>
-              <div class="popover-list">
-                {#if ef.sourceMode === 'include' && !auth.isGuest && !feedSearch}
-                  <!-- Not a subscription, and never part of "All sources": a
-                       channel shows your follows' links only by naming them. -->
-                  <label class="check-label">
-                    <input
-                      type="checkbox"
-                      checked={sourceKeySet.has(FOLLOWS_SOURCE_KEY)}
-                      onchange={() => feedViewStore.toggleToolbarSourceKey(FOLLOWS_SOURCE_KEY)}
-                    />
-                    <Icon name="share-2" size={16} />
-                    <span class="check-text">People you follow on Bluesky</span>
-                  </label>
-                {/if}
-                {#each filteredSubscriptions as sub}
-                  {@const key = subscriptionSourceKey(sub)}
-                  {#if key}
-                    {@const iconUrl = subscriptionIconUrl(sub)}
-                    <label class="check-label">
-                      <input
-                        type="checkbox"
-                        checked={sourceKeySet.has(key)}
-                        onchange={() => feedViewStore.toggleToolbarSourceKey(key)}
-                      />
-                      {#if iconUrl}
-                        <img src={iconUrl} alt="" class="check-icon" />
-                      {/if}
-                      <span class="check-text">{sub.customTitle || sub.title}</span>
-                    </label>
-                  {/if}
-                {/each}
-                {#if feedSearch && filteredSubscriptions.length === 0}
-                  <div class="no-results">No subscriptions match</div>
-                {/if}
-              </div>
-            {/if}
-          {/if}
-        </FilterPopover>
-      </div>
-    {/if}
-
-    {#if !isSavedChannel}
-      <span class="toolbar-divider group-divider"></span>
-
-      <!-- Type filter dropdown -->
-      <div class="filter-group">
-        <FilterPopover
-          iconName="layers"
-          label={typeFilterLabel}
-          hasFilter={activeTypeFilter.length > 0}
-          open={typePopoverOpen}
-          onOpenChange={(v) => (typePopoverOpen = v)}
-        >
-          <div class="popover-group-header">
-            <span>Types</span>
-            {#if activeTypeFilter.length > 0}
-              <button class="select-all-btn" onclick={() => feedViewStore.clearToolbarType()}
-                >Clear</button
-              >
-            {/if}
-          </div>
-          <div class="popover-list">
-            {#each typeOptions as opt}
-              <label class="check-label">
-                <input
-                  type="checkbox"
-                  checked={activeTypeSet.has(opt.value)}
-                  onchange={() => feedViewStore.toggleToolbarType(opt.value)}
-                />
-                <span class="check-text">{opt.label}</span>
-              </label>
-            {/each}
-          </div>
+          <SourcePicker
+            filter={{ sourceMode: ef.sourceMode, sourceKeys: ef.sourceKeys }}
+            onchange={setSourceFilter}
+            showFollows={showFollowsSource}
+            {followsInEverything}
+            scroll
+          />
         </FilterPopover>
       </div>
     {/if}
@@ -794,14 +601,14 @@
             ? feedViewStore.hasUnsavedChanges
             : isSavedChannel
               ? hasSavedChannelFilters
-              : ef.sourceMode !== 'all' || activeTypeFilter.length > 0}
+              : ef.sourceMode !== 'all'}
           onclick={handleSave}
           disabled={saving ||
             (isEditingView
               ? !feedViewStore.hasUnsavedChanges
               : isSavedChannel
                 ? !hasSavedChannelFilters
-                : ef.sourceMode === 'all' && activeTypeFilter.length === 0)}
+                : ef.sourceMode === 'all')}
           title={isEditingView ? 'Update channel' : 'Save as new channel'}
         >
           <Icon name="save" size={16} />
@@ -937,14 +744,6 @@
   }
 
   /* Popover content (rendered inside FilterPopover snippets, so styled in caller scope). */
-  .popover-section {
-    padding: 0.5rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-    border-bottom: 1px solid var(--color-border);
-  }
-
   .popover-group-header {
     display: flex;
     align-items: center;
@@ -974,7 +773,6 @@
     text-decoration: underline;
   }
 
-  .radio-label,
   .check-label {
     display: flex;
     align-items: center;
@@ -985,7 +783,6 @@
     border-radius: 4px;
   }
 
-  .radio-label:hover,
   .check-label:hover {
     background: var(--color-bg-secondary, #f5f5f5);
   }
@@ -994,13 +791,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  .check-icon {
-    width: 16px;
-    height: 16px;
-    flex-shrink: 0;
-    border-radius: 2px;
   }
 
   .popover-search {

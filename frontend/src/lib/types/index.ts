@@ -1254,7 +1254,10 @@ export interface FilteredView {
   readFilter: 'all' | 'unread' | 'read';
   sortOrder: SortOrder;
   tagFilter?: string[];
+  /** Legacy: folded into sourceKeys (utils/sourceFilter.ts). Kept only by smart channels. */
   typeFilter?: SubscriptionSourceType[];
+  /** Which meaning sourceMode/sourceKeys were saved under (CHANNEL_FILTER_VERSION). */
+  filterVersion?: number;
   createdAt: number;
   updatedAt: number;
   position: number;

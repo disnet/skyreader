@@ -3,7 +3,7 @@
 //
 // "From your follows" is a source, not a page: a channel that names it gets the
 // links your Bluesky follows shared, as river rows beside its articles. These
-// pin the rules that keep that calm: the source is part of "All sources" only
+// pin the rules that keep that calm: the source is part of Everything only
 // when the reader has said yes,
 // a page the river already shows as an article isn't shown twice, a link is
 // dated by its first share, and it reads like everything else.
@@ -297,10 +297,30 @@ describe('follows links in the river', () => {
     expect(rows()).toEqual([]);
   });
 
-  it('leaves them out under a type filter, which picks subscription types', () => {
+  it('shows them in an exclude channel unless it leaves them out', () => {
     river.links = [link('a', 1)];
-    show(channel([FOLLOWS_SOURCE_KEY], { typeFilter: ['rss'] }));
+    show(channel([], { sourceMode: 'exclude', filterVersion: 2 }));
+    expect(rows()).toEqual(['link:a']);
+    show(channel([FOLLOWS_SOURCE_KEY], { sourceMode: 'exclude', filterVersion: 2 }));
     expect(rows()).toEqual([]);
+  });
+
+  it('keeps them out of an exclude channel saved before they could be in one', () => {
+    river.links = [link('a', 1)];
+    show(channel(['rss~feedaaaaaaaaa'], { sourceMode: 'exclude' }));
+    expect(rows()).toEqual([]);
+  });
+
+  it('leaves them out of an old type-filtered channel', () => {
+    river.links = [link('a', 1)];
+    show(channel([], { sourceMode: 'all', typeFilter: ['rss'] }));
+    expect(rows()).toEqual([]);
+  });
+
+  it('ranks an exclude channel that takes them in by shares', () => {
+    river.links = [link('a', 1)];
+    show(channel([], { sourceMode: 'exclude', filterVersion: 2, sortOrder: 'popular' }));
+    expect(feedViewStore.canSortByPopularity).toBe(true);
   });
 
   it('reads them like articles: gone under Unread, but kept while you are on them', () => {

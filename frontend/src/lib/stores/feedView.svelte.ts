@@ -10,13 +10,11 @@ import { filteredViewsStore } from './filteredViews.svelte';
 import { followLinksStore } from './followLinks.svelte';
 import { mobileStore } from './mediaQuery.svelte';
 import { liveDb } from '$lib/services/liveDb.svelte';
-import { archiveTypeFilter, typeFilterShowsArchive } from '$lib/utils/newsletters';
 import type {
   Article,
   SocialDocument,
   CombinedFeedItem,
   SavedItem,
-  SubscriptionSourceType,
   SavedSourceType,
   DateAddedPreset,
   ReadingLengthFilter,
@@ -38,6 +36,13 @@ import {
   docInAnyScope,
   migrateLegacyView,
 } from '$lib/utils/sourceKeys';
+import {
+  buildSourceGroups,
+  expandSourceKeys,
+  upgradeChannelFilter,
+  CHANNEL_FILTER_VERSION,
+  type SourceFilter,
+} from '$lib/utils/sourceFilter';
 
 export type ViewMode = 'articles' | 'shares' | 'combined';
 
@@ -87,17 +92,16 @@ export interface EffectiveFilters {
   sourceKeys: string[];
   readFilter: 'all' | 'unread' | 'read';
   sortOrder: SortOrder;
-  typeFilter: SubscriptionSourceType[];
 }
 
 /**
- * Derive an RSS subscription-id predicate from effective filters.
- * Converts rkeys in sourceKeys to Dexie IDs and returns a test for whether an
+ * Derive an RSS subscription-id predicate from a source filter whose group keys
+ * have been expanded. Converts rkeys in sourceKeys to Dexie IDs and returns a test for whether an
  * article's subscriptionId is allowed. In 'include' mode only the listed ids
  * pass; in 'exclude' mode every id except the listed ones passes.
  * Returns null if all RSS sources are allowed (no filtering needed).
  */
-function deriveRssFilter(fv: EffectiveFilters): ((subscriptionId: number) => boolean) | null {
+function deriveRssFilter(fv: SourceFilter): ((subscriptionId: number) => boolean) | null {
   if (fv.sourceMode === 'all') return null;
 
   const ids = new Set<number>();
@@ -354,8 +358,6 @@ function createFeedViewStore() {
   let toolbarSortOrder = $state<SortOrder | null>(null);
   // Tag filter (empty = no tag filter)
   let toolbarTagFilter = $state<string[]>([]);
-  // Type filter (empty = all types shown)
-  let toolbarTypeFilter = $state<SubscriptionSourceType[]>([]);
   // Saved source filter (for saved-mode channels: url, feed, document)
   let toolbarSavedSourceFilter = $state<SavedSourceType[]>([]);
   // Saved channel: date added filter
@@ -458,14 +460,22 @@ function createFeedViewStore() {
       sourceKeys: toolbarSourceKeys,
       readFilter: showOnlyUnread ? 'unread' : 'all',
       sortOrder: toolbarSortOrder ?? preferences.sortOrder,
-      typeFilter: toolbarTypeFilter,
     };
   });
+
+  // Derived: the source filter as items are matched against it — group keys
+  // ("Newsletters", "Your likes") replaced by the subscriptions in them now.
+  let sourceGroups = $derived(buildSourceGroups(subscriptionsStore.subscriptions));
+  let matchFilter = $derived.by((): SourceFilter => ({
+    sourceMode: toolbarSourceMode,
+    sourceKeys:
+      toolbarSourceMode === 'all' ? [] : expandSourceKeys(toolbarSourceKeys, sourceGroups),
+  }));
 
   // Derived: whether any toolbar filter differs from defaults
   let hasActiveFilters = $derived.by(() => {
     if (activeFilteredView) return true;
-    return toolbarSourceMode !== 'all' || toolbarTypeFilter.length > 0;
+    return toolbarSourceMode !== 'all';
   });
 
   // Derived: whether toolbar state differs from the persisted saved view
@@ -506,17 +516,15 @@ function createFeedViewStore() {
         if (!savedDomains.has(d)) return true;
       }
     } else {
-      const savedMode = view.sourceMode ?? 'all';
-      const savedKeys = new Set(view.sourceKeys ?? []);
+      // Against the channel as the toolbar loaded it: an old channel's type
+      // filter, folded into its sources, isn't an edit.
+      const saved = view.sourceMode == null ? null : upgradeChannelFilter(view);
+      const savedMode = saved?.sourceMode ?? 'all';
+      const savedKeys = new Set(saved?.sourceKeys ?? []);
       if (toolbarSourceMode !== savedMode) return true;
       if (toolbarSourceKeys.length !== savedKeys.size) return true;
       for (const key of toolbarSourceKeys) {
         if (!savedKeys.has(key)) return true;
-      }
-      const savedTypeFilter = new Set(view.typeFilter ?? []);
-      if (toolbarTypeFilter.length !== savedTypeFilter.size) return true;
-      for (const t of toolbarTypeFilter) {
-        if (!savedTypeFilter.has(t)) return true;
       }
     }
     return false;
@@ -572,10 +580,9 @@ function createFeedViewStore() {
   let readArticleGuidsThisSession = $state<Set<string>>(new Set());
   let readDocumentUrisThisSession = $state<Set<string>>(new Set());
 
-  // Derived: whether articles are shown (any RSS source allowed and type filter permits)
+  // Derived: whether articles are shown (any RSS source allowed)
   let showArticles = $derived.by((): boolean => {
-    const fv = effectiveFilters;
-    if (!typeFilterShowsArchive(fv.typeFilter)) return false;
+    const fv = matchFilter;
     if (fv.sourceMode === 'all') return true;
     // Exclude mode never zeroes out a whole type — the per-item filter drops the
     // excluded sources and everything else stays.
@@ -583,10 +590,9 @@ function createFeedViewStore() {
     return fv.sourceKeys.some(isRssSource);
   });
 
-  // Derived: whether documents are shown (any documents source allowed and type filter permits)
+  // Derived: whether documents are shown (any documents source allowed)
   let showDocuments = $derived.by((): boolean => {
-    const fv = effectiveFilters;
-    if (fv.typeFilter.length > 0 && !fv.typeFilter.includes('atproto.documents')) return false;
+    const fv = matchFilter;
     if (fv.sourceMode === 'all') return true;
     if (fv.sourceMode === 'exclude') return true;
     return fv.sourceKeys.some(isDocumentsSource);
@@ -636,17 +642,9 @@ function createFeedViewStore() {
       }
 
       // Apply source-based RSS filtering
-      const rssAllowed = deriveRssFilter(fv);
+      const rssAllowed = deriveRssFilter(matchFilter);
       if (rssAllowed !== null) {
         articles = articles.filter((a) => rssAllowed(a.subscriptionId));
-      }
-
-      // Feeds vs newsletters, when the type filter names only one of them
-      const archiveType = archiveTypeFilter(fv.typeFilter);
-      if (archiveType !== null) {
-        articles = articles.filter((a) =>
-          archiveType(subscriptionsStore.getById(a.subscriptionId))
-        );
       }
     }
 
@@ -732,10 +730,10 @@ function createFeedViewStore() {
 
     // Apply source-based filtering for documents — scoped to (author, publication)
     // so two publications owned by one author are independently includable.
-    if (fv.sourceMode !== 'all') {
-      const scopes = resolveDocScopes(fv.sourceKeys, subscriptionsStore.subscriptions);
+    if (matchFilter.sourceMode !== 'all') {
+      const scopes = resolveDocScopes(matchFilter.sourceKeys, subscriptionsStore.subscriptions);
       filtered =
-        fv.sourceMode === 'exclude'
+        matchFilter.sourceMode === 'exclude'
           ? filtered.filter((d) => !docInAnyScope(d, scopes))
           : filtered.filter((d) => docInAnyScope(d, scopes));
     }
@@ -786,24 +784,25 @@ function createFeedViewStore() {
     viewMode === 'combined' && !viewFilter && !categoryFilter && !myLinkblogFilter && !isSavedView
   );
 
-  // Derived: whether follows links are shown. A view that names the source gets
-  // them. "All sources" (Everything) gets them only when the reader has said yes
-  // (see FOLLOWS_SOURCE_KEY), and a category, being a set of subscriptions,
-  // never does. A type filter, which picks subscription types, leaves them out.
+  // Derived: whether follows links are shown. They're a source like any other
+  // (see utils/sourceFilter.ts): an include filter shows them by naming them, an
+  // exclude filter unless it names them, and Everything only when the reader has
+  // said yes (see FOLLOWS_SOURCE_KEY). A category, being a set of subscriptions,
+  // never does.
   let showFollowLinks = $derived.by((): boolean => {
-    const fv = effectiveFilters;
-    if (isSavedView || viewMode !== 'combined') return false;
-    if (fv.typeFilter.length > 0) return false;
-    if (fv.sourceMode === 'all') return !categoryFilter && followLinksStore.inEverything === true;
-    return fv.sourceMode === 'include' && fv.sourceKeys.some(isFollowsSource);
+    const fv = matchFilter;
+    if (isSavedView || viewMode !== 'combined' || categoryFilter) return false;
+    if (fv.sourceMode === 'all') return followLinksStore.inEverything === true;
+    const named = fv.sourceKeys.some(isFollowsSource);
+    return fv.sourceMode === 'include' ? named : !named;
   });
 
-  // Derived: a channel that names the follows source can rank by how many of
-  // your follows shared each item. Everywhere else 'popular' reads as newest.
-  // "All sources" doesn't qualify even with follows in Everything, matching the
+  // Derived: a channel whose sources take in your follows' links can rank by how
+  // many of your follows shared each item. Everywhere else 'popular' reads as
+  // newest. Everything doesn't qualify even with follows in it, matching the
   // channel editors (FilteredViewModal, MobileFilterSheet).
   let canSortByPopularity = $derived(
-    !!viewFilter && showFollowLinks && effectiveFilters.sourceMode === 'include'
+    !!viewFilter && showFollowLinks && effectiveFilters.sourceMode !== 'all'
   );
 
   /** How many of your follows shared this page; 0 when none did. */
@@ -1566,7 +1565,10 @@ function createFeedViewStore() {
     } else {
       updates.sourceMode = toolbarSourceMode;
       updates.sourceKeys = [...toolbarSourceKeys];
-      updates.typeFilter = toolbarTypeFilter.length > 0 ? [...toolbarTypeFilter] : undefined;
+      // The toolbar shows an old type filter folded into the sources, so that's
+      // what it writes back. A smart channel's rule still reads its own.
+      updates.typeFilter = fv.autoRule ? fv.typeFilter : undefined;
+      updates.filterVersion = CHANNEL_FILTER_VERSION;
     }
     filteredViewsStore.update(id, updates);
   }
@@ -1585,15 +1587,15 @@ function createFeedViewStore() {
       toolbarDomainFilter = fv.savedDomainFilter ? [...fv.savedDomainFilter] : [];
       toolbarSourceMode = 'all';
       toolbarSourceKeys = [];
-      toolbarTypeFilter = [];
       // Derive the inbox/archive tab from the channel's readFilter so
       // entering a channel lands on its persisted Status, not leftover
       // global state from a prior view.
       savedView = fv.readFilter === 'read' ? 'archive' : 'inbox';
     } else if (fv.sourceMode != null) {
-      // New format
-      toolbarSourceMode = fv.sourceMode;
-      toolbarSourceKeys = toolbarSourceMode === 'all' ? [] : [...(fv.sourceKeys ?? [])];
+      // New format, with any old type filter folded into the sources
+      const upgraded = upgradeChannelFilter(fv);
+      toolbarSourceMode = upgraded.sourceMode;
+      toolbarSourceKeys = upgraded.sourceKeys;
       toolbarSavedSourceFilter = [];
     } else {
       // Legacy format — migrate
@@ -1617,7 +1619,6 @@ function createFeedViewStore() {
     showOnlyUnread = fv.readFilter === 'unread';
     toolbarSortOrder = fv.sortOrder;
     toolbarTagFilter = fv.tagFilter ? [...fv.tagFilter] : [];
-    toolbarTypeFilter = fv.typeFilter ? [...fv.typeFilter] : [];
     // Fire-and-forget legacy migration write-back
     if (fv.sourceMode == null && fv.mode !== 'saved' && fv.id != null) {
       filteredViewsStore.update(fv.id, {
@@ -1632,7 +1633,6 @@ function createFeedViewStore() {
     toolbarSourceKeys = [];
     toolbarSortOrder = null;
     toolbarTagFilter = [];
-    toolbarTypeFilter = [];
     toolbarSavedSourceFilter = [];
     toolbarDateFilter = null;
     toolbarReadingLength = [];
@@ -1773,9 +1773,6 @@ function createFeedViewStore() {
     get toolbarTagFilter() {
       return toolbarTagFilter;
     },
-    get toolbarTypeFilter() {
-      return toolbarTypeFilter;
-    },
     get toolbarDateFilter() {
       return toolbarDateFilter;
     },
@@ -1861,20 +1858,6 @@ function createFeedViewStore() {
     clearToolbarTag() {
       cancelPendingView();
       toolbarTagFilter = [];
-    },
-    setToolbarTypeFilter(types: SubscriptionSourceType[]) {
-      cancelPendingView();
-      toolbarTypeFilter = types;
-    },
-    toggleToolbarType(type: SubscriptionSourceType) {
-      cancelPendingView();
-      toolbarTypeFilter = toolbarTypeFilter.includes(type)
-        ? toolbarTypeFilter.filter((t) => t !== type)
-        : [...toolbarTypeFilter, type];
-    },
-    clearToolbarType() {
-      cancelPendingView();
-      toolbarTypeFilter = [];
     },
     setToolbarSavedSourceFilter(sources: SavedSourceType[]) {
       cancelPendingView();
