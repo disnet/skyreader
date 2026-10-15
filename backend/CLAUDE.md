@@ -129,6 +129,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed documentation.
 | `src/routes/lexicons.ts`      | Serve lexicon schemas at /.well-known/lexicons             |
 | `src/routes/health.ts`        | `/api/health` (shallow) + `/api/health/deep` (gated)       |
 | `src/routes/telemetry.ts`     | `/api/telemetry/error` — sampled client error reports      |
+| `src/routes/vitals.ts`        | `/api/telemetry/vitals` — field vitals → daily histograms  |
 | `src/routes/guest.ts`         | `/api/guest/*` — the unauthenticated reading surface       |
 | `src/routes/feedback.ts`      | `/api/v2/feedback` — userinput.app board read + post       |
 | `src/routes/newsletters.ts`   | `/api/newsletters/*` — newsletter address + blocked list   |
@@ -342,6 +343,7 @@ Key tables:
   the `documents_apply_cap` override
 - `system_status` - Cron-written health board (cron liveness, poller lag, proxy stats)
 - `metrics_snapshots` - Hourly trend points behind the admin's sparklines (90-day retention)
+- `client_vitals` - Field vitals as daily histogram buckets (counts only, no reports; 90 days)
 
 ## Common Tasks
 

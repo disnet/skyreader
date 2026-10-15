@@ -25,6 +25,36 @@
   </section>
 {/if}
 
+<!-- How it feels on readers' devices: aggregate histograms only (no reader is
+     identifiable), sampled from a quarter of page loads. -->
+{#if data.vitals.available}
+  <div class="vitals">
+    <MetricGrid category="Field vitals (p75, last 7 days)" metrics={data.vitals.metrics} />
+    {#if data.vitals.routes.length > 0}
+      <table class="card vitals-routes">
+        <thead>
+          <tr><th>Route</th><th>Views</th><th>INP</th><th>CLS</th><th>Blocking</th></tr>
+        </thead>
+        <tbody>
+          {#each data.vitals.routes as route (route.route)}
+            <tr>
+              <td><code>{route.route}</code></td>
+              <td>{route.views}</td>
+              <td>{route.inp}</td>
+              <td>{route.cls}</td>
+              <td>{route.blocking}</td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    {/if}
+    <p class="note">
+      Each value is the upper edge of the histogram bucket holding the 75th percentile. Browsers
+      without the performance APIs don't report.
+    </p>
+  </div>
+{/if}
+
 {#each data.groups as group}
   <MetricGrid category={group.category} metrics={group.metrics} />
 {/each}
@@ -69,6 +99,36 @@
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
     gap: 1rem;
+  }
+
+  .vitals {
+    margin-bottom: 2rem;
+  }
+
+  .vitals :global(section) {
+    margin-bottom: 0;
+  }
+
+  .vitals-routes {
+    width: 100%;
+    margin-top: 0.75rem;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+  }
+
+  .vitals-routes th,
+  .vitals-routes td {
+    text-align: left;
+    padding: 0.35rem 0.5rem;
+  }
+
+  .vitals-routes th {
+    color: var(--color-text-secondary);
+    font-weight: 500;
+  }
+
+  .vitals-routes + .note {
+    margin-top: 0.5rem;
   }
 
   .unavailable p {

@@ -1,5 +1,6 @@
 import type { HandleClientError } from '@sveltejs/kit';
 import { reportClientError } from '$lib/services/telemetry';
+import { startVitals } from '$lib/services/vitals';
 
 // Two jobs, both about surviving a deploy:
 //
@@ -71,3 +72,7 @@ export const handleError: HandleClientError = ({ error, message }) => {
   reportClientError('render', error);
   return { message };
 };
+
+// Field vitals for a sampled share of page loads ($lib/services/vitals). The
+// first view's route is filled in by the root layout's first afterNavigate.
+startVitals();

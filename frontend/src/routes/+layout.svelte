@@ -4,6 +4,7 @@
   import { goto, afterNavigate } from '$app/navigation';
   import { onMount } from 'svelte';
   import { perfEndOnPaint, PERF_VIEW_SWITCH } from '$lib/utils/perfMarks';
+  import { vitalsRouteChanged } from '$lib/services/vitals';
   import { writable, type Writable } from 'svelte/store';
   import type { Component, Snippet } from 'svelte';
   import { useRegisterSW } from 'virtual:pwa-register/svelte';
@@ -20,7 +21,11 @@
   // something opened one). Lives here rather than per-surface because a view
   // switch can be a same-route filter change or a whole route hop, and both end
   // at the same place: the first frame after the navigation settles.
-  afterNavigate(() => perfEndOnPaint(PERF_VIEW_SWITCH));
+  afterNavigate(({ to }) => {
+    perfEndOnPaint(PERF_VIEW_SWITCH);
+    // Field vitals are reported per route view, by the path's first segment only.
+    vitalsRouteChanged(to?.url.pathname);
+  });
 
   // The authenticated app shell is code-split: it (and its heavy dependency graph —
   // the IndexedDB data layer, feed stores, Sidebar, @mention polling) is fetched
