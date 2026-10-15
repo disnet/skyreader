@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
   import type {
     PDFDocumentLoadingTask,
@@ -99,6 +99,20 @@
     // Less the page's 1px border each side, so a fitted page never overflows.
     return ((Math.min(availableWidth, MAX_FIT_WIDTH) - 2) / first.width) * zoom;
   });
+
+  // Zoomed past the column, a page spills into the room beside it (the reader's
+  // whole width, less a gutter), still centred on the column while it fits;
+  // only a page wider than all of that scrolls sideways. `band` is that room,
+  // each side of the column.
+  const BAND_GUTTER = 16;
+  let band = $state({ left: 0, right: 0 });
+
+  /** Where a page `width` px wide (border included) sits in the band. */
+  function pageInset(width: number): number {
+    const room = band.left + availableWidth + band.right;
+    const centred = band.left + (availableWidth - width) / 2;
+    return Math.max(0, Math.min(centred, room - width));
+  }
 
   let containerEl = $state<HTMLDivElement | null>(null);
   const pageEl = (n: number) =>
@@ -506,6 +520,30 @@
     return document.scrollingElement ?? document.documentElement;
   }
 
+  /** The element whose width the reader has: the reader overlay, or the page. */
+  function hostOf(el: Element): Element {
+    for (let p = el.parentElement; p; p = p.parentElement) {
+      const { overflowY } = getComputedStyle(p);
+      if (overflowY === 'auto' || overflowY === 'scroll') return p;
+    }
+    return document.documentElement;
+  }
+
+  function measureBand() {
+    if (!containerEl) return;
+    const host = hostOf(containerEl);
+    let left = 0;
+    if (host !== document.documentElement)
+      left = host.getBoundingClientRect().left + host.clientLeft;
+    const right = left + host.clientWidth;
+    const column = containerEl.getBoundingClientRect();
+    const next = {
+      left: Math.max(0, Math.floor(column.left - left - BAND_GUTTER)),
+      right: Math.max(0, Math.floor(right - BAND_GUTTER - column.right)),
+    };
+    if (next.left !== band.left || next.right !== band.right) band = next;
+  }
+
   /** Bring a point `y` px down page `n` to the top of the view. */
   function scrollToPoint(n: number, y: number) {
     const el = pageEl(n);
@@ -671,8 +709,14 @@
       // Rounded so sub-pixel jitter doesn't redraw every page.
       const width = Math.floor(entry.contentRect.width);
       if (Math.abs(width - availableWidth) > 2) availableWidth = width;
+      measureBand();
     });
-    if (containerEl) resize.observe(containerEl);
+    if (containerEl) {
+      resize.observe(containerEl);
+      // The column can move without resizing (a centred column, a scrollbar).
+      resize.observe(hostOf(containerEl));
+    }
+    window.addEventListener('resize', measureBand);
     void load();
     document.addEventListener('pointerdown', handlePointerDown, true);
     document.addEventListener('mouseup', handleMouseUp);
@@ -680,6 +724,7 @@
     return () => {
       destroyed = true;
       resize.disconnect();
+      window.removeEventListener('resize', measureBand);
       document.removeEventListener('pointerdown', handlePointerDown, true);
       document.removeEventListener('mouseup', handleMouseUp);
       document.removeEventListener('selectionchange', handleSelectionChange);
@@ -690,10 +735,37 @@
     };
   });
 
+  /** Zoom, keeping what's in the middle of the view in the middle of the view. */
+  async function setZoom(next: number) {
+    if (next === zoom || !containerEl) return;
+    const scroller = scrollerOf(containerEl);
+    const pages = containerEl.querySelector<HTMLElement>('.pdf-pages');
+    const top =
+      scroller === document.scrollingElement || scroller === document.documentElement
+        ? 0
+        : scroller.getBoundingClientRect().top + scroller.clientTop;
+    const middle = top + scroller.clientHeight / 2;
+    const anchor = pageEl(currentPage);
+    const before = anchor?.getBoundingClientRect();
+    const across = before ? (middle - before.top) / before.height : null;
+    const sideways = pages
+      ? (pages.scrollLeft + pages.clientWidth / 2) / Math.max(1, pages.scrollWidth)
+      : 0.5;
+
+    zoom = next;
+    await tick();
+
+    if (anchor && across !== null) {
+      const after = anchor.getBoundingClientRect();
+      scroller.scrollTop += after.top + across * after.height - middle;
+    }
+    if (pages) pages.scrollLeft = sideways * pages.scrollWidth - pages.clientWidth / 2;
+  }
+
   function stepZoom(direction: 1 | -1) {
     const i = ZOOM_STEPS.indexOf(zoom);
     const next = ZOOM_STEPS[Math.min(ZOOM_STEPS.length - 1, Math.max(0, i + direction))];
-    if (next !== undefined) zoom = next;
+    if (next !== undefined) void setZoom(next);
   }
 </script>
 
@@ -714,13 +786,17 @@
       class="pdf-pages"
       style:--scale-factor={scale}
       style:--total-scale-factor={scale}
+      style:margin-left="{-band.left}px"
+      style:margin-right="{-band.right}px"
       onclick={handleClick}
     >
       {#each pageSizes as size, i (i)}
+        {@const width = Math.floor(size.width * scale) + 2}
         <div
           class="pdf-page"
           data-page={i + 1}
-          style:width="{Math.floor(size.width * scale) + 2}px"
+          style:width="{width}px"
+          style:margin-left="{pageInset(width)}px"
           style:height="{Math.floor(size.height * scale) + 2}px"
           role="img"
           aria-label="Page {i + 1} of {pageSizes.length}"
@@ -761,7 +837,7 @@
       <button
         type="button"
         class="pdf-fit"
-        onclick={() => (zoom = 1)}
+        onclick={() => void setZoom(1)}
         disabled={zoom === 1}
         title="Fit to width">{Math.round(zoom * 100)}%</button
       >
@@ -804,16 +880,20 @@
     color: var(--color-primary, #0066cc);
   }
 
-  /* Wider than the column when zoomed in: scroll sideways within the viewer. */
+  /* Bleeds past the column into the reader's width (negative margins, set from
+     `band`); a page wider than that scrolls sideways here. Each page is placed
+     by its own left margin, never align-items: center, which would push a
+     zoomed page's left edge out of reach. */
   .pdf-pages {
     display: flex;
     flex-direction: column;
-    /* Not align-items: center, which would push a zoomed page's left edge out
-       of reach; auto margins centre a page only while it fits. */
     align-items: flex-start;
     gap: 1rem;
     padding-bottom: 4.5rem;
     overflow-x: auto;
+    /* A zoom puts the view back itself (setZoom); the browser's own anchoring
+       would fight it. */
+    overflow-anchor: none;
   }
 
   /* A page is paper: white in either theme, the one surface here that floats
@@ -822,7 +902,6 @@
   .pdf-page {
     position: relative;
     flex: none;
-    margin: 0 auto;
     background: #fff;
     border: 1px solid var(--color-border);
   }

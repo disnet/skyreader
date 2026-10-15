@@ -259,7 +259,11 @@ tab (`javascript:`, `file:` and relative URLs are dropped); a destination, expli
 `.pdf-jump` element at that point and `scrollIntoView`s it, so it works whichever element scrolls
 (the reader overlay, or the window in the harness) and clears the header via `scroll-margin-top`.
 Each jump pushes the scroller's offset onto `returnTo`, which the toolbar offers as ← page N;
-a zoom change clears it, since an offset means nothing at another scale. The harness's page 1 and
+a zoom change clears it, since an offset means nothing at another scale.
+Zoom keeps the point in the middle of the view where it was (`setZoom`, with the browser's own
+scroll anchoring off on `.pdf-pages`). A page zoomed past the column spills into the reader's
+whole width (`band`, the room beside the column less a 16px gutter), centred on the column while
+it fits; only a page wider than all of that scrolls sideways inside `.pdf-pages`. The harness's page 1 and
 `pdfFixture`'s `links` argument carry sample links.
 
 **Highlights are shared between the views**, because they are the same `TextQuoteSelector`s.
