@@ -362,6 +362,7 @@
         editingChannelId={saveAsSeed ? null : (editingChannelId ?? null)}
         initialChannelType={saveAsSeed ? 'feed' : initialChannelType}
         seed={saveAsSeed}
+        pinActions
         onsaved={(created) => {
           if (created) oncreated?.(created);
           onclose();
