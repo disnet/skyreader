@@ -15,13 +15,21 @@
   } from '$lib/types';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
-  import { FOLLOWS_SOURCE_KEY, subscriptionSourceKey } from '$lib/utils/sourceKeys';
+  import { FOLLOWS_SOURCE_KEY } from '$lib/utils/sourceKeys';
   import { auth } from '$lib/stores/auth.svelte';
-  import { getFaviconUrl } from '$lib/utils/favicon';
+  import { followLinksStore } from '$lib/stores/followLinks.svelte';
   import { computeSourceKeys } from '$lib/utils/channelLogic';
-  import DomainPatternInput from '$lib/components/DomainPatternInput.svelte';
   import {
-    typeOptionsFor,
+    buildSourceGroups,
+    isSourceShown,
+    keysOfTypes,
+    upgradeChannelFilter,
+    CHANNEL_FILTER_VERSION,
+    type SourceFilter,
+  } from '$lib/utils/sourceFilter';
+  import DomainPatternInput from '$lib/components/DomainPatternInput.svelte';
+  import SourcePicker from '$lib/components/feed/SourcePicker.svelte';
+  import {
     SAVED_SOURCE_OPTIONS,
     AUTO_RULE_OPTIONS,
     AUTO_RULE_DEFAULT_NAMES as DEFAULT_NAMES,
@@ -57,26 +65,34 @@
   let categoryValue = $state('');
   let tagValue = $state('');
   let domainPatterns = $state<string[]>([]);
-  let sourceMode = $state<'all' | 'include' | 'exclude'>('all');
-  let sourceKeys = $state<Set<string>>(new Set());
+  let sourceFilter = $state<SourceFilter>({ sourceMode: 'all', sourceKeys: [] });
   let readFilter = $state<'all' | 'unread' | 'read'>('all');
   let sortOrder = $state<SortOrder>('newest');
 
+  // Your follows' links are a row like any other source (see SourcePicker).
+  let showFollowsSource = $derived(
+    !auth.isGuest && followLinksStore.loaded && !followLinksStore.scopeRequired
+  );
+  let followsInEverything = $derived(followLinksStore.inEverything === true);
+
   // Ranking by shares needs the follows source (see canSortByPopularity).
   let includesFollows = $derived(
-    channelMode === 'manual' && sourceMode === 'include' && sourceKeys.has(FOLLOWS_SOURCE_KEY)
+    channelMode === 'manual' &&
+      sourceFilter.sourceMode !== 'all' &&
+      isSourceShown(sourceFilter, FOLLOWS_SOURCE_KEY, {
+        groups: buildSourceGroups(subscriptionsStore.subscriptions),
+        followsInEverything,
+      })
   );
   let savedDateFilter = $state<DateAddedPreset | ''>('');
   let savedReadingLength = $state<Set<ReadingLengthFilter>>(new Set());
   let savedDomainFilter = $state<Set<string>>(new Set());
   let savedTagFilter = $state<Set<string>>(new Set());
-  let typeFilter = $state<Set<SubscriptionSourceType>>(new Set());
-  let typeOptions = $derived(typeOptionsFor(subscriptionsStore.subscriptions, typeFilter));
+  // A smart channel from before source groups may narrow its rule by type; kept
+  // as it was, since there's no longer a control for it.
+  let typeFilter = $state<SubscriptionSourceType[] | undefined>(undefined);
   let saving = $state(false);
   let error = $state<string | null>(null);
-
-  // Search state for filtering source lists
-  let feedSearch = $state('');
 
   // Track whether user has manually edited the name
   let nameManuallyEdited = $state(false);
@@ -173,29 +189,6 @@
     }
   });
 
-  // Filtered subscriptions based on search
-  let filteredSubscriptions = $derived(
-    feedSearch
-      ? subscriptionsStore.subscriptions.filter((sub) => {
-          const term = feedSearch.toLowerCase();
-          return (
-            (sub.customTitle || sub.title).toLowerCase().includes(term) ||
-            (sub.feedUrl?.toLowerCase().includes(term) ?? false)
-          );
-        })
-      : subscriptionsStore.subscriptions
-  );
-
-  function toggleTypeFilter(type: SubscriptionSourceType) {
-    const next = new Set(typeFilter);
-    if (next.has(type)) {
-      next.delete(type);
-    } else {
-      next.add(type);
-    }
-    typeFilter = next;
-  }
-
   // Reset form when modal opens or editingViewId changes
   $effect(() => {
     if (open) {
@@ -205,7 +198,8 @@
           name = view.name;
           readFilter = view.readFilter;
           sortOrder = view.sortOrder;
-          typeFilter = new Set(view.typeFilter ?? []);
+          const upgraded = upgradeChannelFilter(view);
+          typeFilter = upgraded.typeFilter;
           nameManuallyEdited = true; // Preserve existing name when editing
 
           // Detect saved channel
@@ -236,16 +230,8 @@
 
           // Load source mode/keys for manual mode
           if (!isSmartChannel) {
-            const mode =
-              view.sourceMode === 'include'
-                ? 'include'
-                : view.sourceMode === 'exclude'
-                  ? 'exclude'
-                  : 'all';
-            sourceMode = mode;
-            sourceKeys = mode === 'all' ? new Set() : new Set(view.sourceKeys ?? []);
+            sourceFilter = { sourceMode: upgraded.sourceMode, sourceKeys: upgraded.sourceKeys };
           }
-          feedSearch = '';
           return;
         }
       }
@@ -259,8 +245,7 @@
       tagValue = '';
       domainPatterns = [];
       nameManuallyEdited = false;
-      sourceMode = 'all';
-      sourceKeys = new Set();
+      sourceFilter = { sourceMode: 'all', sourceKeys: [] };
       savedSourceFilter = new Set();
       savedDateFilter = '';
       savedReadingLength = new Set();
@@ -268,8 +253,7 @@
       savedTagFilter = new Set();
       readFilter = (initialChannelType ?? 'feed') === 'saved' ? 'unread' : 'all';
       sortOrder = 'newest';
-      typeFilter = new Set();
-      feedSearch = '';
+      typeFilter = undefined;
     }
   });
 
@@ -277,16 +261,6 @@
     error = null;
     saving = false;
     onclose();
-  }
-
-  function toggleSourceKey(key: string) {
-    const next = new Set(sourceKeys);
-    if (next.has(key)) {
-      next.delete(key);
-    } else {
-      next.add(key);
-    }
-    sourceKeys = next;
   }
 
   async function handleDelete() {
@@ -328,17 +302,15 @@
           : {
               name: name.trim(),
               mode: 'feed' as const,
-              sourceMode: isSmartMode ? ('include' as const) : sourceMode,
-              sourceKeys: isSmartMode ? matchedSourceKeys : Array.from(sourceKeys),
+              sourceMode: isSmartMode ? ('include' as const) : sourceFilter.sourceMode,
+              sourceKeys: isSmartMode
+                ? keysOfTypes(matchedSourceKeys, typeFilter, subscriptionsStore.subscriptions)
+                : [...sourceFilter.sourceKeys],
               autoRule: isSmartMode ? currentAutoRule : undefined,
               readFilter,
               sortOrder: sortOrder === 'popular' && !includesFollows ? 'newest' : sortOrder,
-              typeFilter:
-                channelMode === 'manual' && sourceMode === 'include'
-                  ? undefined
-                  : typeFilter.size > 0
-                    ? Array.from(typeFilter)
-                    : undefined,
+              typeFilter: isSmartMode ? typeFilter : undefined,
+              filterVersion: CHANNEL_FILTER_VERSION,
             };
 
       if (editingViewId != null) {
@@ -639,104 +611,21 @@
         <!-- Manual source picker -->
         <div class="form-group">
           <span class="form-label">Sources</span>
-          <div class="radio-group">
-            <label class="radio-label">
-              <input type="radio" bind:group={sourceMode} value="all" />
-              All sources
-            </label>
-            <label class="radio-label">
-              <input type="radio" bind:group={sourceMode} value="include" />
-              Include only
-            </label>
-            <label class="radio-label">
-              <input type="radio" bind:group={sourceMode} value="exclude" />
-              Exclude only
-            </label>
+          <p class="form-hint">Uncheck what to leave out, or choose “only” to show just one.</p>
+          <div class="picker-box">
+            <SourcePicker
+              filter={sourceFilter}
+              onchange={(f) => (sourceFilter = f)}
+              showFollows={showFollowsSource}
+              {followsInEverything}
+              scroll
+            />
           </div>
-
-          {#if sourceMode !== 'all'}
-            {#if subscriptionsStore.subscriptions.length > 0}
-              <p class="form-hint">
-                {sourceMode === 'exclude'
-                  ? 'Show everything except the sources you check.'
-                  : 'Show only the sources you check.'}
-              </p>
-              <div class="source-group-header">Subscriptions</div>
-              <input
-                type="text"
-                placeholder="Search subscriptions..."
-                bind:value={feedSearch}
-                class="search-input"
-              />
-              <div class="checklist">
-                {#if sourceMode === 'include' && !auth.isGuest && !feedSearch}
-                  <!-- Never part of "All sources": a channel shows your follows'
-                       links only by naming them. -->
-                  <label class="checklist-item">
-                    <input
-                      type="checkbox"
-                      checked={sourceKeys.has(FOLLOWS_SOURCE_KEY)}
-                      onchange={() => toggleSourceKey(FOLLOWS_SOURCE_KEY)}
-                    />
-                    <Icon name="share-2" size={16} />
-                    <span class="checklist-label">People you follow on Bluesky</span>
-                  </label>
-                {/if}
-                {#each filteredSubscriptions as sub (sub.id)}
-                  {@const key = subscriptionSourceKey(sub)}
-                  {#if key}
-                    {@const isAtProto = sub.sourceType?.startsWith('atproto.') ?? false}
-                    {@const iconUrl =
-                      sub.customIconUrl ||
-                      (isAtProto
-                        ? sub.siteUrl
-                          ? getFaviconUrl(sub.siteUrl)
-                          : '/icons/icon-192.svg'
-                        : getFaviconUrl(sub.siteUrl || sub.feedUrl || ''))}
-                    <label class="checklist-item">
-                      <input
-                        type="checkbox"
-                        checked={sourceKeys.has(key)}
-                        onchange={() => toggleSourceKey(key)}
-                      />
-                      {#if iconUrl}
-                        <img src={iconUrl} alt="" class="checklist-icon" />
-                      {/if}
-                      <span class="checklist-label">{sub.customTitle || sub.title}</span>
-                    </label>
-                  {/if}
-                {/each}
-                {#if feedSearch && filteredSubscriptions.length === 0}
-                  <div class="no-results">No subscriptions match</div>
-                {/if}
-              </div>
-            {/if}
-          {/if}
         </div>
       {/if}
     {/if}
 
     <div class="advanced-section">
-      {#if channelType === 'feed' && !(channelMode === 'manual' && sourceMode === 'include')}
-        <!-- Type Filter (feed channels only) -->
-        <div class="form-group">
-          <span class="form-label">Content Types</span>
-          <div class="checklist type-checklist">
-            {#each typeOptions as opt}
-              <label class="checklist-item">
-                <input
-                  type="checkbox"
-                  checked={typeFilter.has(opt.value)}
-                  onchange={() => toggleTypeFilter(opt.value)}
-                />
-                <span class="checklist-label">{opt.label}</span>
-              </label>
-            {/each}
-          </div>
-          <span class="form-hint">Leave all unchecked to show all types</span>
-        </div>
-      {/if}
-
       <!-- Read State -->
       <div class="form-group">
         <span class="form-label">{channelType === 'saved' ? 'Status' : 'Read State'}</span>
@@ -1012,41 +901,9 @@
     cursor: pointer;
   }
 
-  .source-group-header {
-    font-size: var(--text-xs);
-    font-weight: var(--weight-semibold);
-    color: var(--color-text-secondary);
-    text-transform: uppercase;
-    letter-spacing: var(--tracking-wider);
-    margin-top: 0.5rem;
-  }
-
-  .search-input {
-    width: 100%;
-    padding: 0.375rem 0.5rem;
+  .picker-box {
     border: 1px solid var(--color-border);
-    border-radius: 4px;
-    font-size: var(--text-sm);
-    background: var(--color-bg);
-    color: var(--color-text);
-    outline: none;
-    margin-top: 0.25rem;
-    box-sizing: border-box;
-  }
-
-  .search-input:focus {
-    border-color: var(--color-primary);
-  }
-
-  .search-input::placeholder {
-    color: var(--color-text-secondary, #999);
-  }
-
-  .no-results {
-    padding: 0.375rem;
-    font-size: var(--text-sm);
-    color: var(--color-text-secondary, #999);
-    text-align: center;
+    border-radius: 6px;
   }
 
   .checklist {
@@ -1097,13 +954,6 @@
 
   .checklist-item:hover {
     background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
-  }
-
-  .checklist-icon {
-    width: 16px;
-    height: 16px;
-    flex-shrink: 0;
-    border-radius: 2px;
   }
 
   .checklist-label {

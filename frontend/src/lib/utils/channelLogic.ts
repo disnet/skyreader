@@ -4,12 +4,10 @@
  */
 
 import { isArchiveFeedSource, isNewsletterSubscription } from '$lib/utils/newsletters';
-import { isBskySourceSubscription } from '$lib/utils/bskySources';
 import type {
   Subscription,
   Article,
   FilteredView,
-  SubscriptionSourceType,
   SavedItem,
   SavedSourceType,
   ReadingLengthFilter,
@@ -18,6 +16,7 @@ import type {
 } from '$lib/types';
 import type { ChannelAutoRule } from '$lib/types';
 import { rssSourceKey, documentsSourceKey } from '$lib/utils/sourceKeys';
+import { GROUP_NEWSLETTERS, upgradeChannelFilter } from '$lib/utils/sourceFilter';
 
 // ─── Auto-rule validation ─────────────────────────────────────────────
 
@@ -209,7 +208,6 @@ export interface ChannelSuggestion {
   description: string;
   sourceMode: 'all' | 'include';
   sourceKeys: string[];
-  typeFilter: SubscriptionSourceType[];
   autoRule?: ChannelAutoRule;
 }
 
@@ -219,24 +217,15 @@ export const MIN_SOURCES_FOR_SUGGESTION = 3;
  * Check if an existing channel already covers a given set of source keys.
  * A channel "covers" sources if 70%+ of suggested sources overlap.
  */
-export function isAlreadyCovered(
-  sourceKeys: string[],
-  typeFilter: SubscriptionSourceType[],
-  views: FilteredView[]
-): boolean {
+export function isAlreadyCovered(sourceKeys: string[], views: FilteredView[]): boolean {
   for (const view of views) {
-    const viewSourceMode = view.sourceMode ?? 'all';
-    const viewTypeFilter = view.typeFilter ?? [];
+    // As the channel reads today, with any old type filter folded into its sources.
+    const filter = upgradeChannelFilter(view);
 
-    if (viewSourceMode === 'all') {
-      if (typeFilter.length > 0 && viewTypeFilter.length > 0) {
-        if (typeFilter.every((t) => viewTypeFilter.includes(t))) return true;
-      }
-      if (typeFilter.length === 0 && viewTypeFilter.length === 0) return true;
-    }
+    if (filter.sourceMode === 'all') return true;
 
-    if (viewSourceMode === 'include' && view.sourceKeys) {
-      const viewKeySet = new Set(view.sourceKeys);
+    if (filter.sourceMode === 'include') {
+      const viewKeySet = new Set(filter.sourceKeys);
       const overlap = sourceKeys.filter((k) => viewKeySet.has(k));
       if (overlap.length >= sourceKeys.length * 0.7) return true;
     }
@@ -267,58 +256,34 @@ export function getCategorySuggestions(ctx: SuggestionContext): ChannelSuggestio
   for (const [category, rkeys] of byCategory) {
     if (rkeys.length < MIN_SOURCES_FOR_SUGGESTION) continue;
     const sourceKeys = rkeys.map(rssSourceKey);
-    if (isAlreadyCovered(sourceKeys, [], ctx.views)) continue;
+    if (isAlreadyCovered(sourceKeys, ctx.views)) continue;
     suggestions.push({
       id: `category:${category.toLowerCase()}`,
       name: category,
       description: `${rkeys.length} feeds from your "${category}" folder`,
       sourceMode: 'include',
       sourceKeys,
-      typeFilter: [],
       autoRule: { type: 'category', value: category },
     });
   }
   return suggestions;
 }
 
-export function getTypeSuggestions(ctx: SuggestionContext): ChannelSuggestion[] {
-  const suggestions: ChannelSuggestion[] = [];
-  const subs = ctx.subscriptions;
-
-  // The Articles suggestion filters to 'rss', which leaves newsletters and
-  // Bluesky likes/bookmarks out.
-  const rssSubs = subs.filter(
-    (s) =>
-      isArchiveFeedSource(s.sourceType) &&
-      !isNewsletterSubscription(s) &&
-      !isBskySourceSubscription(s)
-  );
-  const docSubs = subs.filter((s) => s.sourceType === 'atproto.documents');
-
-  if (rssSubs.length >= 2 && docSubs.length >= 2) {
-    if (!isAlreadyCovered([], ['rss'], ctx.views)) {
-      suggestions.push({
-        id: 'type:articles',
-        name: 'Articles',
-        description: `${rssSubs.length} RSS feeds, without social content`,
-        sourceMode: 'all',
-        sourceKeys: [],
-        typeFilter: ['rss'],
-      });
-    }
-
-    if (!isAlreadyCovered([], ['atproto.documents'], ctx.views)) {
-      suggestions.push({
-        id: 'type:social',
-        name: 'Social',
-        description: `${docSubs.length} people you follow`,
-        sourceMode: 'all',
-        sourceKeys: [],
-        typeFilter: ['atproto.documents'],
-      });
-    }
-  }
-  return suggestions;
+/** A Newsletters channel, once there's more than one sender to gather. */
+export function getNewsletterSuggestion(ctx: SuggestionContext): ChannelSuggestion[] {
+  const count = ctx.subscriptions.filter(isNewsletterSubscription).length;
+  if (count < 2) return [];
+  const sourceKeys = [GROUP_NEWSLETTERS];
+  if (isAlreadyCovered(sourceKeys, ctx.views)) return [];
+  return [
+    {
+      id: 'group:newsletters',
+      name: 'Newsletters',
+      description: `${count} newsletters, without your feeds`,
+      sourceMode: 'include',
+      sourceKeys,
+    },
+  ];
 }
 
 export function getTagSuggestions(ctx: SuggestionContext): ChannelSuggestion[] {
@@ -339,7 +304,7 @@ export function getTagSuggestions(ctx: SuggestionContext): ChannelSuggestion[] {
   for (const [tag, rkeys] of byTag) {
     if (rkeys.length < MIN_SOURCES_FOR_SUGGESTION) continue;
     const sourceKeys = rkeys.map(rssSourceKey);
-    if (isAlreadyCovered(sourceKeys, [], ctx.views)) continue;
+    if (isAlreadyCovered(sourceKeys, ctx.views)) continue;
     const displayName = tag.charAt(0).toUpperCase() + tag.slice(1);
     suggestions.push({
       id: `tag:${tag}`,
@@ -347,7 +312,6 @@ export function getTagSuggestions(ctx: SuggestionContext): ChannelSuggestion[] {
       description: `${rkeys.length} sources tagged "${tag}"`,
       sourceMode: 'include',
       sourceKeys,
-      typeFilter: [],
       autoRule: { type: 'subscriptionTag', value: tag },
     });
   }
@@ -367,7 +331,7 @@ export function getPeopleSuggestion(ctx: SuggestionContext): ChannelSuggestion[]
     sourceKeys.push(documentsSourceKey(sub.rkey));
     seenDids.add(sub.subjectDid);
   }
-  if (isAlreadyCovered(sourceKeys, [], ctx.views)) return [];
+  if (isAlreadyCovered(sourceKeys, ctx.views)) return [];
 
   return [
     {
@@ -376,7 +340,6 @@ export function getPeopleSuggestion(ctx: SuggestionContext): ChannelSuggestion[]
       description: `${seenDids.size} people you follow`,
       sourceMode: 'include',
       sourceKeys,
-      typeFilter: [],
       autoRule: { type: 'people' },
     },
   ];
@@ -464,14 +427,13 @@ export function getDomainSuggestions(ctx: SuggestionContext): ChannelSuggestion[
     }
     if (matchingRkeys.length < MIN_SOURCES_FOR_SUGGESTION) continue;
     const sourceKeys = matchingRkeys.map(rssSourceKey);
-    if (isAlreadyCovered(sourceKeys, [], ctx.views)) continue;
+    if (isAlreadyCovered(sourceKeys, ctx.views)) continue;
     suggestions.push({
       id: cluster.id,
       name: cluster.name,
       description: `${matchingRkeys.length} ${cluster.description.toLowerCase()}`,
       sourceMode: 'include',
       sourceKeys,
-      typeFilter: [],
       autoRule: { type: 'domain', patterns: [...cluster.patterns] },
     });
   }
@@ -508,14 +470,13 @@ export function getFrequencySuggestions(ctx: SuggestionContext): ChannelSuggesti
 
   if (highFreqRkeys.length >= MIN_SOURCES_FOR_SUGGESTION) {
     const sourceKeys = highFreqRkeys.map(rssSourceKey);
-    if (!isAlreadyCovered(sourceKeys, [], ctx.views)) {
+    if (!isAlreadyCovered(sourceKeys, ctx.views)) {
       suggestions.push({
         id: 'frequency:high',
         name: 'Daily Digest',
         description: `${highFreqRkeys.length} high-volume feeds that publish multiple times per day`,
         sourceMode: 'include',
         sourceKeys,
-        typeFilter: [],
         autoRule: { type: 'frequency', threshold: 'high' },
       });
     }
@@ -523,14 +484,13 @@ export function getFrequencySuggestions(ctx: SuggestionContext): ChannelSuggesti
 
   if (lowFreqRkeys.length >= MIN_SOURCES_FOR_SUGGESTION) {
     const sourceKeys = lowFreqRkeys.map(rssSourceKey);
-    if (!isAlreadyCovered(sourceKeys, [], ctx.views)) {
+    if (!isAlreadyCovered(sourceKeys, ctx.views)) {
       suggestions.push({
         id: 'frequency:low',
         name: "Don't Miss",
         description: `${lowFreqRkeys.length} feeds that publish infrequently — every post counts`,
         sourceMode: 'include',
         sourceKeys,
-        typeFilter: [],
         autoRule: { type: 'frequency', threshold: 'low' },
       });
     }
@@ -566,7 +526,7 @@ export function getLongReadsSuggestion(ctx: SuggestionContext): ChannelSuggestio
 
   if (longReadRkeys.length < MIN_SOURCES_FOR_SUGGESTION) return [];
   const sourceKeys = longReadRkeys.map(rssSourceKey);
-  if (isAlreadyCovered(sourceKeys, [], ctx.views)) return [];
+  if (isAlreadyCovered(sourceKeys, ctx.views)) return [];
 
   return [
     {
@@ -575,7 +535,6 @@ export function getLongReadsSuggestion(ctx: SuggestionContext): ChannelSuggestio
       description: `${longReadRkeys.length} feeds with in-depth, long-form articles`,
       sourceMode: 'include',
       sourceKeys,
-      typeFilter: [],
       autoRule: { type: 'longReads', minLength: MIN_AVG_LENGTH },
     },
   ];
@@ -600,7 +559,7 @@ export function getRecentSuggestion(
   }
 
   if (recentKeys.length < MIN_SOURCES_FOR_SUGGESTION) return [];
-  if (isAlreadyCovered(recentKeys, [], ctx.views)) return [];
+  if (isAlreadyCovered(recentKeys, ctx.views)) return [];
 
   return [
     {
@@ -609,7 +568,6 @@ export function getRecentSuggestion(
       description: `${recentKeys.length} sources added in the last 2 weeks`,
       sourceMode: 'include',
       sourceKeys: recentKeys,
-      typeFilter: [],
       autoRule: { type: 'recent', withinDays },
     },
   ];
@@ -621,8 +579,7 @@ const PRIORITY: Record<string, number> = {
   'frequency:low': 2,
   'content:longreads': 3,
   'people:all': 4,
-  'type:articles': 5,
-  'type:social': 6,
+  'group:newsletters': 5,
   'recent:new': 7,
 };
 
@@ -644,7 +601,7 @@ export function generateAllSuggestions(
 ): ChannelSuggestion[] {
   const all = [
     ...getCategorySuggestions(ctx),
-    ...getTypeSuggestions(ctx),
+    ...getNewsletterSuggestion(ctx),
     ...getTagSuggestions(ctx),
     ...getPeopleSuggestion(ctx),
     ...getDomainSuggestions(ctx),

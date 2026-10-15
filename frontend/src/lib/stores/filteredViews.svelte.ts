@@ -11,6 +11,7 @@ import {
   documentsSourceKey,
 } from '$lib/utils/sourceKeys';
 import { toConfig, fromRemote, computeSyncOperations } from '$lib/utils/channelSync';
+import { CHANNEL_FILTER_VERSION, upgradeChannelFilter } from '$lib/utils/sourceFilter';
 
 const PENDING_DELETES_KEY = 'channelsPendingDelete';
 
@@ -159,37 +160,34 @@ function createFilteredViewsStore() {
       }
     }
 
-    // One-time fix: manual feed channels with sourceMode='include' should not
-    // carry a typeFilter — the modal no longer offers it for that combination,
-    // but channels created before that change still have it set and silently
-    // hide their explicitly-included sources.
-    const fixedTypeFilterViews: FilteredView[] = [];
+    // Fold each channel's old type filter into its sources, and keep old exclude
+    // channels free of follows links (utils/sourceFilter.ts). Also covers the
+    // older fix for manual include channels that still carried a type filter.
+    const upgradedViews: FilteredView[] = [];
     for (const view of all) {
-      if (
-        view.mode !== 'saved' &&
-        view.autoRule == null &&
-        view.sourceMode === 'include' &&
-        view.typeFilter &&
-        view.typeFilter.length > 0
-      ) {
-        const updates: Partial<FilteredView> = {
-          typeFilter: undefined,
-          updatedAt: Date.now(),
-        };
-        Object.assign(view, updates);
-        if (view.id != null) {
-          await safeUpdate(db.filteredViews, view.id, updates);
-        }
-        fixedTypeFilterViews.push(view);
+      if (view.mode === 'saved' || view.sourceMode == null) continue;
+      if ((view.filterVersion ?? 0) >= CHANNEL_FILTER_VERSION) continue;
+      const upgraded = upgradeChannelFilter(view);
+      const updates: Partial<FilteredView> = {
+        sourceMode: upgraded.sourceMode,
+        sourceKeys: upgraded.sourceKeys,
+        typeFilter: upgraded.typeFilter,
+        filterVersion: upgraded.filterVersion,
+        updatedAt: Date.now(),
+      };
+      Object.assign(view, updates);
+      if (view.id != null) {
+        await safeUpdate(db.filteredViews, view.id, updates);
       }
+      upgradedViews.push(view);
     }
 
     views = all;
 
-    // Propagate the typeFilter fix to the backend so other devices pick it up.
+    // Propagate the upgrade to the backend so other devices pick it up.
     // syncWithBackend doesn't push updates to channels that already exist on
     // the remote, so we have to do it explicitly here.
-    for (const view of fixedTypeFilterViews) {
+    for (const view of upgradedViews) {
       pushToBackend(view);
     }
   }
@@ -293,6 +291,7 @@ function createFilteredViewsStore() {
     const uuid = crypto.randomUUID();
     const newView: FilteredView = {
       ...view,
+      ...(view.mode === 'saved' ? {} : { filterVersion: CHANNEL_FILTER_VERSION }),
       uuid,
       createdAt: now,
       updatedAt: now,

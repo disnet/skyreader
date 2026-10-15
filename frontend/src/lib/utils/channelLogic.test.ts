@@ -7,7 +7,7 @@ import {
   getAvgContentLengthByFeed,
   isAlreadyCovered,
   getCategorySuggestions,
-  getTypeSuggestions,
+  getNewsletterSuggestion,
   getTagSuggestions,
   getPeopleSuggestion,
   getDomainSuggestions,
@@ -383,17 +383,13 @@ describe('getAvgContentLengthByFeed', () => {
 describe('isAlreadyCovered', () => {
   it('returns true when a view with sourceMode all and no type filter exists', () => {
     const views = [makeView({ id: 1, sourceMode: 'all' })];
-    expect(isAlreadyCovered([], [], views)).toBe(true);
+    expect(isAlreadyCovered([], views)).toBe(true);
   });
 
-  it('returns true when a view covers the type filter', () => {
-    const views = [makeView({ id: 1, sourceMode: 'all', typeFilter: ['rss'] })];
-    expect(isAlreadyCovered([], ['rss'], views)).toBe(true);
-  });
-
-  it('returns false when type filters do not match', () => {
-    const views = [makeView({ id: 1, sourceMode: 'all', typeFilter: ['rss'] })];
-    expect(isAlreadyCovered([], ['atproto.documents'], views)).toBe(false);
+  it('reads an old type filter as the sources it stands for', () => {
+    const views = [makeView({ id: 1, sourceMode: 'all', typeFilter: ['email.newsletter'] })];
+    expect(isAlreadyCovered(['group~newsletters'], views)).toBe(true);
+    expect(isAlreadyCovered(['rss~rkey-1'], views)).toBe(false);
   });
 
   it('returns true when 70%+ of source keys overlap', () => {
@@ -405,7 +401,7 @@ describe('isAlreadyCovered', () => {
       }),
     ];
     // 2 out of 2 overlap (100%) with the view
-    expect(isAlreadyCovered(['rss~rkey-1', 'rss~rkey-2'], [], views)).toBe(true);
+    expect(isAlreadyCovered(['rss~rkey-1', 'rss~rkey-2'], views)).toBe(true);
   });
 
   it('returns false when less than 70% overlap', () => {
@@ -417,13 +413,13 @@ describe('isAlreadyCovered', () => {
       }),
     ];
     // 1 out of 4 overlap (25%)
-    expect(
-      isAlreadyCovered(['rss~rkey-1', 'rss~rkey-2', 'rss~rkey-3', 'rss~rkey-4'], [], views)
-    ).toBe(false);
+    expect(isAlreadyCovered(['rss~rkey-1', 'rss~rkey-2', 'rss~rkey-3', 'rss~rkey-4'], views)).toBe(
+      false
+    );
   });
 
   it('returns false when no views exist', () => {
-    expect(isAlreadyCovered(['rss~rkey-1'], [], [])).toBe(false);
+    expect(isAlreadyCovered(['rss~rkey-1'], [])).toBe(false);
   });
 });
 
@@ -480,52 +476,25 @@ describe('getCategorySuggestions', () => {
   });
 });
 
-describe('getTypeSuggestions', () => {
-  it('suggests Articles and Social when both types present', () => {
-    const ctx: SuggestionContext = {
-      subscriptions: [
-        makeSub({ id: 1 }),
-        makeSub({ id: 2 }),
-        makeSub({
-          id: 3,
-          sourceType: 'atproto.documents',
-          subjectDid: 'did:plc:a',
-        }),
-        makeSub({
-          id: 4,
-          sourceType: 'atproto.documents',
-          subjectDid: 'did:plc:b',
-        }),
-      ],
-      articles: [],
-      views: [],
-    };
-    const suggestions = getTypeSuggestions(ctx);
-    expect(suggestions.map((s) => s.id)).toContain('type:articles');
-    expect(suggestions.map((s) => s.id)).toContain('type:social');
+describe('getNewsletterSuggestion', () => {
+  const mail = (id: number) =>
+    makeSub({ id, sourceType: 'email.newsletter', feedUrl: `newsletter:inbox/${id}@x.com` });
+
+  it('suggests a Newsletters channel once there are two senders', () => {
+    const ctx: SuggestionContext = { subscriptions: [mail(1), mail(2)], articles: [], views: [] };
+    const [suggestion] = getNewsletterSuggestion(ctx);
+    expect(suggestion.id).toBe('group:newsletters');
+    expect(suggestion.sourceKeys).toEqual(['group~newsletters']);
   });
 
-  it('does not suggest when only RSS feeds exist', () => {
-    const ctx: SuggestionContext = {
-      subscriptions: [makeSub({ id: 1 }), makeSub({ id: 2 })],
-      articles: [],
-      views: [],
-    };
-    expect(getTypeSuggestions(ctx)).toHaveLength(0);
-  });
-
-  it('does not count Bluesky likes or bookmarks as RSS feeds', () => {
-    const ctx: SuggestionContext = {
-      subscriptions: [
-        makeSub({ id: 1 }),
-        makeSub({ id: 2, sourceType: 'bsky.likes', feedUrl: 'bsky-likes:did:plc:me' }),
-        makeSub({ id: 3, sourceType: 'atproto.documents', subjectDid: 'did:plc:a' }),
-        makeSub({ id: 4, sourceType: 'atproto.documents', subjectDid: 'did:plc:b' }),
-      ],
-      articles: [],
-      views: [],
-    };
-    expect(getTypeSuggestions(ctx).map((s) => s.id)).not.toContain('type:articles');
+  it('does not suggest with one sender, or when a channel already has them', () => {
+    expect(
+      getNewsletterSuggestion({ subscriptions: [mail(1)], articles: [], views: [] })
+    ).toHaveLength(0);
+    const views = [makeView({ id: 1, sourceMode: 'include', sourceKeys: ['group~newsletters'] })];
+    expect(
+      getNewsletterSuggestion({ subscriptions: [mail(1), mail(2)], articles: [], views })
+    ).toHaveLength(0);
   });
 });
 

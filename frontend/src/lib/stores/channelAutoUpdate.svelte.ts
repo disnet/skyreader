@@ -5,6 +5,7 @@ import {
   isValidAutoRule,
   computeSourceKeys as computeSourceKeysPure,
 } from '$lib/utils/channelLogic';
+import { keysOfTypes } from '$lib/utils/sourceFilter';
 
 /**
  * Check all channels with autoRules and update their sourceKeys if needed.
@@ -21,10 +22,15 @@ export async function syncAutoRuleChannels() {
       continue;
     }
 
-    const newKeys = computeSourceKeysPure(
-      view.autoRule,
-      subscriptionsStore.subscriptions,
-      articlesStore.allArticles
+    // A smart channel from before source groups may still narrow its rule by type.
+    const newKeys = keysOfTypes(
+      computeSourceKeysPure(
+        view.autoRule,
+        subscriptionsStore.subscriptions,
+        articlesStore.allArticles
+      ),
+      view.typeFilter,
+      subscriptionsStore.subscriptions
     );
     const currentKeys = view.sourceKeys ?? [];
 

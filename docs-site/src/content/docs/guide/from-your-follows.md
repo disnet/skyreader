@@ -43,9 +43,11 @@ By default you get the week's most-shared links, up to 60. If you follow a lot o
 
 ## Everything and other channels
 
-Your follows' links show in **Everything** only if you said yes to that. Change it any time with **Links from people you follow** in Everything's **Sources** filter, or **Show them in Everything too** on **Manage Sources**. They never add to your unread counts.
+Your follows' links show in **Everything** only if you said yes to that. Change it any time with **Show them in Everything too** on **Manage Sources**. They never add to your unread counts.
 
-The **From your follows** channel is an ordinary channel. Rename it, change its filters, or delete it. To add your follows' links to another channel, edit that channel's sources, choose **Include only**, and check **People you follow on Bluesky**.
+In any view, **People you follow** is a row in the **Sources** filter under **From Bluesky**, next to your likes and bookmarks. Check it to add their links, uncheck it to leave them out, or choose **only** to see just them.
+
+The **From your follows** channel is an ordinary channel. Rename it, change its filters, or delete it. To add your follows' links to another channel, edit that channel's sources and check **People you follow**.
 
 A channel with your follows' links in it can also sort by **Most shared**: the links the most people you follow shared come first, newest first among equals. An article from your feeds counts the people you follow who shared it too. Pick it from the sort menu, or under **Sort Order** when you edit the channel.
 

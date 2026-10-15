@@ -9,6 +9,7 @@
   import { feedViewStore } from '$lib/stores/feedView.svelte';
   import { channelPath } from '$lib/utils/viewNav';
   import { DOMAIN_CLUSTERS } from '$lib/utils/channelLogic';
+  import { GROUP_BOOKMARKS, GROUP_LIKES, GROUP_NEWSLETTERS } from '$lib/utils/sourceFilter';
   import Icon from '$lib/components/Icon.svelte';
   import StaticPageChrome from '$lib/components/feed/StaticPageChrome.svelte';
   import type { ChannelSuggestion } from '$lib/stores/channelSuggestions.svelte';
@@ -24,7 +25,6 @@
       name: suggestion.name,
       sourceMode: suggestion.sourceMode,
       sourceKeys: suggestion.sourceKeys,
-      typeFilter: suggestion.typeFilter.length > 0 ? suggestion.typeFilter : undefined,
       autoRule: suggestion.autoRule,
       readFilter: 'unread',
       sortOrder: 'newest',
@@ -50,8 +50,7 @@
     const id = await filteredViewsStore.create({
       name: type.name,
       sourceMode: type.sourceMode,
-      sourceKeys: [],
-      typeFilter: type.typeFilter,
+      sourceKeys: type.sourceKeys ?? [],
       autoRule: type.autoRule,
       readFilter: 'unread',
       sortOrder: 'newest',
@@ -75,10 +74,11 @@
   interface ChannelTypeConfig {
     id: string;
     name: string;
-    icon: 'inbox' | 'bookmark' | 'file-text' | 'users' | 'rss' | 'share' | 'plus' | 'newspaper';
+    icon: 'inbox' | 'bookmark' | 'file-text' | 'users' | 'mail' | 'heart' | 'plus' | 'newspaper';
     description: string;
     sourceMode: 'all' | 'include';
-    typeFilter?: ('rss' | 'atproto.documents')[];
+    /** Source keys, groups included (see utils/sourceFilter.ts). */
+    sourceKeys?: string[];
     autoRule?: ChannelAutoRule;
   }
 
@@ -120,22 +120,22 @@
       autoRule: { type: 'people' },
     },
     {
-      id: 'type:articles',
-      name: 'Articles',
-      icon: 'rss',
+      id: 'group:newsletters',
+      name: 'Newsletters',
+      icon: 'mail',
       description:
-        'Only RSS feed articles, with social content filtered out. A clean reading experience for traditional blog and news content.',
-      sourceMode: 'all',
-      typeFilter: ['rss'],
+        'Every newsletter you get by email, apart from your feeds. A sender who writes for the first time joins it on their own.',
+      sourceMode: 'include',
+      sourceKeys: [GROUP_NEWSLETTERS],
     },
     {
-      id: 'type:social',
-      name: 'Social',
-      icon: 'share',
+      id: 'group:bluesky',
+      name: 'Kept on Bluesky',
+      icon: 'heart',
       description:
-        'Only content from people you follow — published documents and linkblog posts, without RSS articles mixed in.',
-      sourceMode: 'all',
-      typeFilter: ['atproto.documents'],
+        'The links in posts you liked or bookmarked on Bluesky, gathered in one place to read when you have time.',
+      sourceMode: 'include',
+      sourceKeys: [GROUP_LIKES, GROUP_BOOKMARKS],
     },
     {
       id: 'recent:new',

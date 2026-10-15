@@ -186,8 +186,9 @@ test.describe('A channel filter survives a reload', () => {
     await openFilterToolbar(page);
 
     await page.locator('.filter-toolbar .source-btn').click();
-    await page.getByRole('radio', { name: 'Exclude only' }).check();
-    await page.getByRole('checkbox', { name: 'Noisy Blog' }).check();
+    // Every source starts checked; unchecking one leaves it out.
+    await expect(page.getByRole('checkbox', { name: 'Noisy Blog' })).toBeChecked();
+    await page.getByRole('checkbox', { name: 'Noisy Blog' }).uncheck();
 
     // The excluded source drops out of the list right away — the state the user
     // is trying to make permanent.

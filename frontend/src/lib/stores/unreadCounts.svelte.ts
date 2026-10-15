@@ -1,8 +1,5 @@
-import {
-  archiveTypeFilter,
-  isArchiveFeedSource,
-  typeFilterShowsArchive,
-} from '$lib/utils/newsletters';
+import { isArchiveFeedSource } from '$lib/utils/newsletters';
+import { buildSourceGroups, expandSourceKeys, upgradeChannelFilter } from '$lib/utils/sourceFilter';
 import { articlesStore } from './articles.svelte';
 import { subscriptionsStore } from './subscriptions.svelte';
 import { socialStore } from './social.svelte';
@@ -164,6 +161,7 @@ function createUnreadCountsStore() {
     itemLabelsStore.socialPositions;
 
     const counts = new Map<number, number>();
+    const sourceGroups = buildSourceGroups(subscriptionsStore.subscriptions);
     for (const view of filteredViewsStore.views) {
       if (view.id == null) continue;
 
@@ -260,26 +258,22 @@ function createUnreadCountsStore() {
         continue;
       }
 
-      const sourceMode = view.sourceMode ?? 'all';
-      const sourceKeys = view.sourceKeys ?? [];
-      const typeFilter = view.typeFilter ?? [];
+      // The channel as the toolbar reads it: old type filters folded into its
+      // sources, then groups ("Newsletters") expanded to what's in them now.
+      const upgraded = upgradeChannelFilter(view);
+      const sourceMode = upgraded.sourceMode;
+      const sourceKeys = expandSourceKeys(upgraded.sourceKeys, sourceGroups);
 
       // Determine which content types this channel shows. Exclude mode always
-      // leaves some of every type visible (unless the type filter says otherwise).
-      const showRss =
-        typeFilterShowsArchive(typeFilter) &&
-        (sourceMode !== 'include' || sourceKeys.some(isRssSource));
-      const showDocs =
-        (typeFilter.length === 0 || typeFilter.includes('atproto.documents')) &&
-        (sourceMode !== 'include' || sourceKeys.some(isDocumentsSource));
+      // leaves some of every type visible.
+      const showRss = sourceMode !== 'include' || sourceKeys.some(isRssSource);
+      const showDocs = sourceMode !== 'include' || sourceKeys.some(isDocumentsSource);
 
       let count = 0;
 
       // Count unread articles
       if (showRss) {
-        // Feeds vs newsletters: a type filter naming only one of them.
-        const archiveType = archiveTypeFilter(typeFilter);
-        if (sourceMode === 'all' && !archiveType) {
+        if (sourceMode === 'all') {
           // Reuse already-computed total (deduped by guid)
           count += totalArticles;
         } else {
@@ -292,14 +286,10 @@ function createUnreadCountsStore() {
               })
               .filter((id): id is number => id != null)
           );
-          const inSources =
-            sourceMode === 'all'
-              ? () => true
-              : sourceMode === 'exclude'
-                ? (id: number) => !listedIds.has(id)
-                : (id: number) => listedIds.has(id);
-          const isAllowed = (id: number) =>
-            inSources(id) && (!archiveType || archiveType(subscriptionsStore.getById(id)));
+          const isAllowed =
+            sourceMode === 'exclude'
+              ? (id: number) => !listedIds.has(id)
+              : (id: number) => listedIds.has(id);
           const seen = new Set<string>();
           for (const article of articlesStore.allArticles) {
             if (seen.has(article.guid)) continue;
