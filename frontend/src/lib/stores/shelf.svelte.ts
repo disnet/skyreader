@@ -88,12 +88,15 @@ function createShelfStore() {
       const cached = await getMetadata<ShelfCollection[]>(CACHE_KEY).catch(() => null);
       collections = Array.isArray(cached) ? sortCollections(cached) : [];
     }
-    loadedFor = did;
-    if (!syncStore.isOnline) return;
+    if (!syncStore.isOnline) {
+      loadedFor = did;
+      return;
+    }
     loading = true;
     try {
       const { collections: fresh } = await api.getShelfCollections();
       collections = sortCollections(fresh);
+      loadedFor = did;
       await persist();
     } catch (e) {
       console.error('[shelf] Failed to load collections:', e);
