@@ -546,11 +546,7 @@
       feedViewStore.effectiveFilters.sourceMode === 'all'
   );
   let askAboutFollows = $derived(
-    isEverything &&
-      auth.isAuthenticated &&
-      !auth.isGuest &&
-      followLinksStore.loaded &&
-      followLinksStore.inEverything === null
+    isEverything && auth.isAuthenticated && !auth.isGuest && followLinksStore.askPending
   );
 
   async function handleRefreshWithToast() {

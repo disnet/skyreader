@@ -37,7 +37,7 @@
     Skyreader can add the links people you follow share on Bluesky to Everything, each marked with
     who shared it. It reads your Following timeline for them, keeps them for a week, and never posts
     anything.
-    {#if followLinksStore.scopeRequired}Turning it on asks your permission, once.{/if}
+    {#if followLinksStore.askNeedsScope}Turning it on asks your permission, once.{/if}
   </p>
   <div class="follows-intro-actions">
     <button type="button" class="primary" disabled={busy} onclick={() => answer(true)}>

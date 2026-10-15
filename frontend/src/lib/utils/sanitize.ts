@@ -1,4 +1,5 @@
 import DOMPurify from 'dompurify';
+import { countWork } from './workCounters';
 
 /**
  * Hosts allowed to be embedded via <iframe>. Only well-known video
@@ -81,6 +82,7 @@ export function safeSanitizerBase(baseUrl: string | null | undefined): URL | nul
  */
 export function sanitizeHtml(html: string, baseUrl?: string): string {
   if (!html) return '';
+  countWork('sanitize');
 
   const base = safeSanitizerBase(baseUrl);
 

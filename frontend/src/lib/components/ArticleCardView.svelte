@@ -57,6 +57,7 @@
     isOpen,
     highlighted = false,
     isTruncated = false,
+    bodyPending = false,
     canExpand = false,
     currentlyShared = false,
     canShare = false,
@@ -451,6 +452,7 @@
             bind:this={bodyEl}
             class="article-body"
             class:truncated={selected && !expanded}
+            class:body-pending={bodyPending}
             use:bskyEmbed
             use:mathRender
           >
@@ -1488,6 +1490,13 @@
   .fetch-original:disabled {
     cursor: default;
     opacity: 0.7;
+  }
+
+  /* A long body is still loading from IndexedDB and the summary stands in. The
+     clamped preview it becomes is 8 lines, so hold that much room: the card
+     would otherwise paint short and grow under the reader a moment later. */
+  .article-body.truncated.body-pending {
+    min-height: calc(8 * 1.7em);
   }
 
   .article-body.truncated {

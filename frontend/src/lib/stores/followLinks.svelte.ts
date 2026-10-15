@@ -38,6 +38,33 @@ const RETRY_MAX_MS = 60 * 1000;
 /** Failed pages in a row before a walk over every page gives up for now. */
 const EVERY_LINK_PATIENCE = 4;
 
+// Everything's first-run question waits on the server's answer, which lands
+// after the list has painted: asking then pushed the whole list down ~200px.
+// Whether it's still unanswered (and whether a yes needs the permission, which
+// adds a line to it) is remembered per account, so every visit after the first
+// asks from the first paint, at its final height.
+const ASK_PENDING_KEY = 'skyreader-follows-ask-pending';
+
+type AskPending = 'no' | 'ask' | 'ask-scope';
+
+function readAskPending(did: string): AskPending {
+  try {
+    const value = localStorage.getItem(`${ASK_PENDING_KEY}:${did}`);
+    return value === 'ask' || value === 'ask-scope' ? value : 'no';
+  } catch {
+    return 'no';
+  }
+}
+
+function writeAskPending(did: string, pending: AskPending): void {
+  try {
+    if (pending === 'no') localStorage.removeItem(`${ASK_PENDING_KEY}:${did}`);
+    else localStorage.setItem(`${ASK_PENDING_KEY}:${did}`, pending);
+  } catch {
+    // Storage blocked: the question just waits for the server, as before.
+  }
+}
+
 function createFollowLinksStore() {
   let links = $state<FollowLink[]>([]);
   let loaded = $state(false);
@@ -173,6 +200,7 @@ function createFollowLinksStore() {
     if (epoch === settingsEpoch && settingsInFlight === 0) {
       inEverything = res.inEverything ?? null;
       allLinks = res.allLinks ?? false;
+      writeAskPending(did, inEverything !== null ? 'no' : scopeRequired ? 'ask-scope' : 'ask');
     }
     links = res.links;
     loaded = true;
@@ -319,10 +347,13 @@ function createFollowLinksStore() {
   async function setInEverything(on: boolean): Promise<void> {
     const prior = inEverything;
     inEverything = on;
+    const did = auth.user?.did;
+    if (did) writeAskPending(did, 'no');
     try {
       await saveSettings({ inEverything: on });
     } catch (err) {
       inEverything = prior;
+      if (did && prior === null) writeAskPending(did, scopeRequired ? 'ask-scope' : 'ask');
       throw err;
     }
   }
@@ -401,6 +432,20 @@ function createFollowLinksStore() {
     /** Whether they show in Everything; null until the reader has been asked. */
     get inEverything() {
       return inEverything;
+    },
+    /** Everything should ask about them. Before this load's answer arrives it's
+     *  what the last answer on this device said, so the ask paints with the list. */
+    get askPending() {
+      if (loaded) return inEverything === null;
+      const did = auth.user?.did;
+      return did ? readAskPending(did) !== 'no' : false;
+    },
+    /** Whether a yes needs the permission; until this load answers, what the
+     *  last answer said (see askPending). */
+    get askNeedsScope() {
+      if (loaded) return scopeRequired;
+      const did = auth.user?.did;
+      return did ? readAskPending(did) === 'ask-scope' : false;
     },
     /** The river shows every link, newest first, rather than the week's most shared. */
     get allLinks() {
