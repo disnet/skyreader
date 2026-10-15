@@ -127,7 +127,85 @@ describe('parseEpub', () => {
     expect(book.chapterCount).toBe(1);
     expect(book.content).toContain('The text.');
     expect(book.content).not.toContain('Answer key');
-    expect(book.content).not.toContain('One');
+    // Its entry marks the chapter for the contents list, but isn't text.
+    expect(book.content).not.toMatch(/>\s*One\s*</);
+  });
+
+  it('marks the book’s nav TOC on the elements its entries land on', async () => {
+    const book = await parseEpub(
+      await buildEpub({
+        chapters: [
+          {
+            id: 'toc',
+            body: `<nav epub:type="landmarks"><ol><li><a href="ch2.xhtml">Start</a></li></ol></nav>
+<nav epub:type="toc"><h1>Contents</h1><ol>
+  <li><a href="ch1.xhtml"><span>Part &amp; One</span></a>
+    <ol>
+      <li><a href="ch2.xhtml#s1">A "quoted" section</a></li>
+      <li><a href="ch2.xhtml#gone">Missing target</a></li>
+    </ol>
+  </li>
+  <li><a href="https://example.com/">Elsewhere</a></li>
+  <li><a href="ch3.xhtml#late">Later</a></li>
+</ol></nav>`,
+            nav: true,
+          },
+          { id: 'ch1', body: '<h1>Part One</h1><p>Opening words here.</p>' },
+          { id: 'ch2', body: '<p>Before.</p><h2 id="s1">Section</h2><p>After.</p>' },
+          { id: 'ch3', body: '<p>Some text.</p><p id="late">Late text.</p>' },
+        ],
+      })
+    );
+    const html = book.content!;
+    expect(html).toContain(
+      '<section data-epub-chapter="1" id="epub-c1" data-toc-title="Part &amp; One" data-toc-level="1">'
+    );
+    expect(html).toMatch(
+      /<h2 id="epub-c2-s1" data-toc-title="A (&quot;|")quoted(&quot;|") section" data-toc-level="2">Section<\/h2>/
+    );
+    // A target the cleanup didn't keep falls back to its chapter.
+    expect(html).toContain(
+      '<section data-epub-chapter="2" id="epub-c2" data-toc-title="Missing target" data-toc-level="2">'
+    );
+    expect(html).toContain('<p id="epub-c3-late" data-toc-title="Later" data-toc-level="1">');
+    expect(html).not.toContain('Elsewhere');
+    expect(html).not.toContain('Start');
+  });
+
+  it('marks an EPUB 2 NCX TOC', async () => {
+    const book = await parseEpub(
+      await buildEpub({
+        ncx: `<?xml version="1.0"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
+  <head></head><docTitle><text>The Book</text></docTitle>
+  <navMap>
+    <navPoint id="p1" playOrder="1">
+      <navLabel><text>Chapter One</text></navLabel>
+      <content src="text/ch1.xhtml"/>
+      <navPoint id="p2" playOrder="2">
+        <navLabel><text>First Part</text></navLabel>
+        <content src="text/ch1.xhtml#part1"/>
+      </navPoint>
+    </navPoint>
+    <navPoint id="p3" playOrder="3">
+      <navLabel><text>Chapter Two</text></navLabel>
+      <content src="text/ch2.xhtml"/>
+    </navPoint>
+  </navMap>
+</ncx>`,
+        chapters: [
+          { id: 'ch1', body: '<p>Intro.</p><h2 id="part1">Part</h2><p>Body.</p>' },
+          { id: 'ch2', body: '<p>Second chapter.</p>' },
+        ],
+      })
+    );
+    const html = book.content!;
+    expect(html).toContain('id="epub-c1" data-toc-title="Chapter One" data-toc-level="1">');
+    expect(html).toContain(
+      '<h2 id="epub-c1-part1" data-toc-title="First Part" data-toc-level="2">'
+    );
+    expect(html).toContain('id="epub-c2" data-toc-title="Chapter Two" data-toc-level="1">');
+    expect(html).not.toContain('The Book');
   });
 
   it('keeps whole chapters under the size cap and says when it stops early', async () => {

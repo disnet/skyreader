@@ -174,7 +174,11 @@ row), and answers `pdf_storage_full` when there's no room, which the reader turn
 book is downloaded once per save by link: `extractEpub` stages the bytes it read in R2
 (`services/linked-originals.ts`, `staged/epub/<did>/<sha256(url)>.epub`), the save moves that object
 into place instead of fetching again, and the hourly cron sweeps staged books no save adopted. Ids and internal hrefs are scoped by spine position
-(`#epub-c3-note12`, `epubAnchorId`), which the frontend's footnote navigation follows.
+(`#epub-c3-note12`, `epubAnchorId`), which the frontend's footnote navigation follows. The book's
+own table of contents (the EPUB 3 nav's `toc`, else the EPUB 2 NCX) rides the text as
+`data-toc-title` / `data-toc-level` on the element each entry lands on (its chapter's section when
+the entry names the chapter, or its target didn't survive the cleanup), which the reader's
+Contents list reads.
 
 **Bluesky likes and bookmarks** are the same kind of private, local-only subscription
 (`bsky-likes:<did>` / `bsky-bookmarks:<did>`, `src/services/bsky-sources.ts`): turned on from

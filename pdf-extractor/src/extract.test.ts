@@ -303,3 +303,62 @@ describe('fallback title', () => {
     expect(out.title).toBe('The Real Title');
   });
 });
+
+describe('extractPdf: outline', () => {
+  const pages = (): Placed[][] => [
+    [
+      [72, 700, 16, 'Getting Started'],
+      ...para(670, ['The first page has some text on it.', 'And a second line here.']),
+      ...para(560, ['Further down the first page, more text.', 'It goes on.']),
+    ],
+    [...para(700, ['Second page text, all body type.', 'More of it here.'])],
+    [],
+    [...para(700, ['Fourth page, after a blank one.', 'The end of it.'])],
+  ];
+
+  it('marks each outline entry on the block it points at', async () => {
+    const out = await extractPdf(
+      makePdf(pages(), { Title: 'A Manual' }, [
+        {
+          title: 'Getting  Started',
+          page: 0,
+          top: 720,
+          children: [{ title: 'Lower down', page: 0, top: 575 }],
+        },
+        { title: 'Page two', page: 1 },
+        { title: 'Blank page', page: 2 },
+      ])
+    );
+    const html = out.content!;
+    expect(html).toContain(
+      '<h2 data-toc-title="Getting Started" data-toc-level="1">Getting Started</h2>'
+    );
+    expect(html).toContain(
+      '<p data-toc-title="Lower down" data-toc-level="2">Further down the first page, more text. It goes on.</p>'
+    );
+    expect(html).toContain('<p data-toc-title="Page two" data-toc-level="1">Second page text');
+    // A page with no text hands its entry to the next block.
+    expect(html).toContain('<p data-toc-title="Blank page" data-toc-level="1">Fourth page');
+  });
+
+  it('keeps every entry when several land on one block, in outline order', async () => {
+    const out = await extractPdf(
+      makePdf(pages(), { Title: 'A Manual' }, [
+        { title: 'Part <One>', page: 1 },
+        { title: 'Chapter "1"', page: 1, children: [{ title: 'Deep', page: 1 }] },
+      ])
+    );
+    expect(out.content).toContain(
+      [
+        '<div data-toc-title="Part &lt;One&gt;" data-toc-level="1"></div>',
+        '<div data-toc-title="Chapter &quot;1&quot;" data-toc-level="1"></div>',
+        '<p data-toc-title="Deep" data-toc-level="2">Second page text',
+      ].join('\n')
+    );
+  });
+
+  it('leaves a PDF without an outline unmarked', async () => {
+    const out = await extractPdf(makePdf(pages(), { Title: 'A Manual' }));
+    expect(out.content).not.toContain('data-toc');
+  });
+});

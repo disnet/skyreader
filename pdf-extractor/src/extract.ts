@@ -62,6 +62,15 @@ interface Block {
   kind: 'p' | 'h2' | 'h3' | 'h4';
   text: string;
   size: number;
+  /** The top of its first line, in PDF user space (y up). */
+  top: number;
+  /** Outline entries that land here, in outline order. */
+  toc?: TocMark[];
+}
+
+interface TocMark {
+  title: string;
+  level: number;
 }
 
 interface TextRun {
@@ -222,7 +231,7 @@ function blocksOf(lines: Line[], bodySize: number): Block[] {
         shortEnd ||
         (headingEnds && drop > lineHeight * 1.4)
       ) {
-        blocks.push({ kind: cur.kind, text: cur.text, size: cur.size });
+        blocks.push({ kind: cur.kind, text: cur.text, size: cur.size, top: cur.top });
         cur = null;
       }
     }
@@ -231,6 +240,7 @@ function blocksOf(lines: Line[], bodySize: number): Block[] {
         kind: 'p',
         text: line.text,
         size: line.size,
+        top: line.y + line.size,
         last: line,
         maxEndX: line.endX,
         minX: line.x,
@@ -246,7 +256,7 @@ function blocksOf(lines: Line[], bodySize: number): Block[] {
       cur.last = line;
     }
   }
-  if (cur) blocks.push({ kind: cur.kind, text: cur.text, size: cur.size });
+  if (cur) blocks.push({ kind: cur.kind, text: cur.text, size: cur.size, top: cur.top });
   return blocks.map((b) => ({ ...b, kind: kindFor(b.size, b.text) }));
 }
 
@@ -258,10 +268,26 @@ function escapeHtml(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
+const tocAttributes = (m: TocMark) =>
+  ` data-toc-title="${escapeHtml(m.title)}" data-toc-level="${m.level}"`;
+
+// A block's markup. Outline entries ride it as `data-toc-*` (read by the
+// reader's contents list): the last on the block itself, any before it as empty
+// markers ahead of it, so document order stays outline order.
+function blockHtml(b: Block): string {
+  const marks = b.toc ?? [];
+  const before = marks
+    .slice(0, -1)
+    .map((m) => `<div${tocAttributes(m)}></div>\n`)
+    .join('');
+  const own = marks.length ? tocAttributes(marks[marks.length - 1]) : '';
+  return `${before}<${b.kind}${own}>${escapeHtml(b.text)}</${b.kind}>`;
+}
+
 // The leading blocks whose markup fits in `budget` bytes. When not even the first
 // fits, it is cut to fit, at a word where there is one.
 function fitBlocks(blocks: Block[], budget: number): Block[] {
-  const blockBytes = (b: Block) => byteLength(`<${b.kind}>${escapeHtml(b.text)}</${b.kind}>\n`);
+  const blockBytes = (b: Block) => byteLength(`${blockHtml(b)}\n`);
   const kept: Block[] = [];
   let used = 0;
   for (const b of blocks) {
@@ -308,6 +334,130 @@ export function parsePdfDate(value: unknown): string | null {
   // Same bounds the article path applies: nothing before 1990 or in the future.
   if (isNaN(ms) || ms < 631152000000 || ms > Date.now() + 86400000) return null;
   return new Date(ms).toISOString();
+}
+
+// ---------------------------------------------------------------------------
+// Outline
+//
+// A PDF's outline (its bookmarks) is the author's table of contents. Each entry
+// is placed on the block it points at, so the reader's contents list can jump
+// into the reflowed text as well as the original pages.
+
+interface OutlineNode {
+  title?: unknown;
+  dest?: unknown;
+  items?: OutlineNode[];
+}
+
+interface OutlineEntry extends TocMark {
+  /** 0-based. */
+  page: number;
+  /** In PDF user space (y up); null for the page's top. */
+  top: number | null;
+}
+
+interface OutlineDoc {
+  numPages: number;
+  getOutline(): Promise<OutlineNode[] | null>;
+  getDestination(name: string): Promise<unknown[] | null>;
+  getPageIndex(ref: { num: number; gen: number }): Promise<number>;
+}
+
+const OUTLINE_MAX_LEVEL = 3;
+const OUTLINE_MAX_ENTRIES = 1000;
+const OUTLINE_MAX_TITLE = 200;
+
+const finite = (v: unknown): number | null => (typeof v === 'number' && isFinite(v) ? v : null);
+
+/** The y an explicit destination shows, by its kind; null for the page's top. */
+function destinationTop(dest: unknown[]): number | null {
+  switch ((dest[1] as { name?: unknown } | undefined)?.name) {
+    case 'XYZ':
+      return finite(dest[3]);
+    case 'FitH':
+    case 'FitBH':
+      return finite(dest[2]);
+    case 'FitR':
+      return finite(dest[5]);
+    default:
+      return null;
+  }
+}
+
+async function resolveDestination(
+  pdf: OutlineDoc,
+  dest: unknown
+): Promise<{ page: number; top: number | null } | null> {
+  try {
+    const explicit = typeof dest === 'string' ? await pdf.getDestination(dest) : dest;
+    if (!Array.isArray(explicit) || !explicit.length) return null;
+    const ref = explicit[0] as { num?: unknown; gen?: unknown } | number;
+    const page =
+      typeof ref === 'number'
+        ? ref
+        : typeof ref?.num === 'number' && typeof ref.gen === 'number'
+          ? await pdf.getPageIndex(ref as { num: number; gen: number })
+          : null;
+    if (page === null || !Number.isInteger(page) || page < 0 || page >= pdf.numPages) return null;
+    return { page, top: destinationTop(explicit) };
+  } catch {
+    // A dangling reference or a broken name tree: the entry just isn't listed.
+    return null;
+  }
+}
+
+/** The outline, flattened in order, three levels deep. Empty when there is none. */
+export async function readOutline(pdf: OutlineDoc): Promise<OutlineEntry[]> {
+  const outline = await pdf.getOutline().catch(() => null);
+  const pending: { title: string; level: number; dest: unknown }[] = [];
+  const walk = (nodes: OutlineNode[], level: number) => {
+    for (const node of nodes) {
+      if (pending.length >= OUTLINE_MAX_ENTRIES) return;
+      let title = typeof node.title === 'string' ? node.title.replace(/\s+/g, ' ').trim() : '';
+      if (title.length > OUTLINE_MAX_TITLE)
+        title = `${title.slice(0, OUTLINE_MAX_TITLE - 1).trimEnd()}…`;
+      if (title && node.dest != null) pending.push({ title, level, dest: node.dest });
+      if (node.items?.length && level < OUTLINE_MAX_LEVEL) walk(node.items, level + 1);
+    }
+  };
+  walk(outline ?? [], 1);
+  const placed = await Promise.all(
+    pending.map(async ({ title, level, dest }) => {
+      const target = await resolveDestination(pdf, dest);
+      return target ? { title, level, ...target } : null;
+    })
+  );
+  return placed.filter((e): e is OutlineEntry => e !== null);
+}
+
+const matchKey = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+
+/**
+ * Hang each outline entry on the block it points at: a block on its page whose
+ * text is the entry's title (the heading it names), else the first block at or
+ * below the point it scrolls to, else the page's first block. An entry on a
+ * page left with no text goes to the next block after it.
+ */
+function placeOutline(pageBlocks: Block[][], outline: OutlineEntry[]): void {
+  for (const entry of outline) {
+    const key = matchKey(entry.title);
+    let target: Block | undefined;
+    const blocks = pageBlocks[entry.page] ?? [];
+    if (key.length >= 3) {
+      target = blocks.find((b) => {
+        const text = matchKey(b.text);
+        return (
+          text === key ||
+          (b.kind !== 'p' && (text.startsWith(key) || key.startsWith(text)) && text.length >= 3)
+        );
+      });
+    }
+    // A little slack above the point: a destination usually sits just over its line.
+    if (!target && entry.top !== null) target = blocks.find((b) => b.top <= entry.top! + 2);
+    target ??= blocks[0];
+    for (let p = entry.page + 1; !target && p < pageBlocks.length; p++) target = pageBlocks[p][0];
+    if (target) (target.toc ??= []).push({ title: entry.title, level: entry.level });
+  }
 }
 
 export async function extractPdf(
@@ -401,6 +551,8 @@ export async function extractPdf(
       if (idx >= 0) pageBlocks[0].splice(idx, 1);
     }
 
+    placeOutline(pageBlocks, await readOutline(pdf));
+
     const allBlocks = pageBlocks.flat();
     let description: string | null = null;
     const abstractIdx = allBlocks.findIndex((b) => /^abstract\b/i.test(b.text));
@@ -418,9 +570,7 @@ export async function extractPdf(
     // limit in bytes. The first page with text, if over the cap alone, keeps the
     // blocks that fit.
     const render = (i: number, blocks: Block[]) =>
-      `<section data-pdf-page="${i + 1}">\n${blocks
-        .map((b) => `<${b.kind}>${escapeHtml(b.text)}</${b.kind}>`)
-        .join('\n')}\n</section>`;
+      `<section data-pdf-page="${i + 1}">\n${blocks.map(blockHtml).join('\n')}\n</section>`;
     const sections: string[] = [];
     let size = 0;
     let pagesKept = 0;

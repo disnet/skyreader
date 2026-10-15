@@ -103,6 +103,8 @@ export async function buildEpub(
     description?: string;
     chapters?: FixtureChapter[];
     extra?: [string, string | Uint8Array][];
+    /** An EPUB 2 NCX, stored at OEBPS/toc.ncx and named on the spine. */
+    ncx?: string;
   } = {}
 ): Promise<Uint8Array> {
   const chapters = opts.chapters ?? [
@@ -127,8 +129,9 @@ export async function buildEpub(
           `<item id="${c.id}" href="text/${c.id}.xhtml" media-type="application/xhtml+xml"${c.nav ? ' properties="nav"' : ''}/>`
       )
       .join('\n    ')}
+    ${opts.ncx ? '<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>' : ''}
   </manifest>
-  <spine>
+  <spine${opts.ncx ? ' toc="ncx"' : ''}>
     ${chapters
       .map((c) => `<itemref idref="${c.id}"${c.linear === false ? ' linear="no"' : ''}/>`)
       .join('\n    ')}
@@ -153,6 +156,7 @@ export async function buildEpub(
 </html>`,
         ] as [string, string]
     ),
+    ...(opts.ncx ? [['OEBPS/toc.ncx', opts.ncx] as [string, string]] : []),
     ...(opts.extra ?? []),
   ]);
 }

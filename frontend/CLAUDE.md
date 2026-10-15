@@ -320,6 +320,21 @@ the PDF plan flag (`limits.pdfSaves`) and upload limits, with its own size cap
 (`limits.maxEpubUploadBytes`). An unreadable or plan-gated EPUB link fails as `PdfExtractionError`
 with `format: 'epub'`, saved as the `epub` / `epubUpgrade` note (`utils/saveAnywhere.ts`).
 
+#### Contents (table of contents)
+
+`SavedReader` offers **Contents** (desktop: a panel under **Back**; mobile: `ReaderBottomBar`'s
+`onContents`, opening a sheet; `c` on either) whenever there are two or more entries. In the text
+view the list is read off the rendered body by `utils/readerToc.ts`: for a PDF or EPUB, the
+`data-toc-title` / `data-toc-level` marks the conversion put on the text (the PDF's outline,
+placed by `pdf-extractor`; the book's nav or NCX, by the backend's `services/epub.ts`), else the
+article's h1–h6 ranked by the levels used, three deep. Marks are ignored on anything else, since a web
+page's own `data-toc-*` means nothing here. In Original, the list is the PDF's outline, read by
+`PdfViewer` (`onoutline`, `utils/pdfOutline.ts`) and followed with its `goTo`, which keeps the
+← page N way back. Saves made before the marks existed fall back to headings. Entries hold elements,
+not ids: a jump is `scrollIntoView` (cleared of the bar by `scroll-margin-top`) or the pager's
+`goToElement`. The current entry is worked out when the list opens, not tracked while reading.
+Harness: `/dev/book?toc=1`.
+
 #### Selecting and re-bounding in paged mode
 
 Paged mode has no scroller, so a native selection used to stop at the page edge.
