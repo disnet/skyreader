@@ -248,7 +248,9 @@ its `wasmUrl` option, as WebAssembly or the JS fallback beside it; without `wasm
 simply don't draw. `vite.config.ts`'s `pdfjsDecoders()` copies them to
 `/_app/immutable/pdfjs/<pdfjs version>/` (outside the precache, fetched on demand), and they run in
 the worker, a static asset the Pages middleware's CSP doesn't cover, so no `'wasm-unsafe-eval'` is
-needed. Harness: `/dev/pdf` (`?sample=jpx` for a JPEG 2000 image; highlighting there is live but local).
+needed. The Original view opens at the zoom that PDF was last left at (`utils/pdfZoom.ts`,
+`localStorage['skyreader-pdf-zoom']`, keyed by rkey via `PdfViewer`'s `zoomKey`; fit width is
+unstored). Harness: `/dev/pdf` (`?sample=jpx` for a JPEG 2000 image; highlighting there is live but local).
 
 **The PDF's links work in Original.** After a page's text layer, `drawLinks` reads its
 `getAnnotations()` and lays an `<a>` over each Link annotation in a `.pdf-links` layer above the
