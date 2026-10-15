@@ -1,4 +1,5 @@
 import { onDestroy } from 'svelte';
+import { IMAGES_AHEAD_PAGES, loadImagesThrough } from '$lib/utils/pagedImages';
 
 /**
  * Kindle-style column pagination for a block of prose.
@@ -61,8 +62,24 @@ export function usePagination(params: PaginationParams) {
   let resizeObserver: ResizeObserver | null = null;
   let mutationObserver: MutationObserver | null = null;
   let imgCleanups: Array<() => void> = [];
+  // The content's pictures in document order, and how many of them (from the
+  // start) have been let load; see utils/pagedImages.ts.
+  let images: HTMLImageElement[] = [];
+  let imagesLoaded = 0;
   let recalcRaf: number | null = null;
   const deferredTimers: Array<ReturnType<typeof setTimeout>> = [];
+
+  // Load the pictures up to a couple of pages past the one being read. Called
+  // whenever the page or the layout may have moved.
+  function loadNearImages() {
+    if (imagesLoaded >= images.length || pageStride <= 0) return;
+    imagesLoaded = loadImagesThrough(
+      images,
+      imagesLoaded,
+      currentPage + IMAGES_AHEAD_PAGES,
+      pageOfElement
+    );
+  }
 
   function applyTransform() {
     const content = params.getContentEl();
@@ -114,6 +131,7 @@ export function usePagination(params: PaginationParams) {
     }
 
     applyTransform();
+    loadNearImages();
     params.onPageChange?.(currentPage, totalPages);
   }
 
@@ -130,13 +148,13 @@ export function usePagination(params: PaginationParams) {
     imgCleanups = [];
     const content = params.getContentEl();
     if (!content) return;
-    const imgs = Array.from(content.querySelectorAll('img'));
-    for (const img of imgs) {
-      // Paged mode never scrolls, so `loading="lazy"` images translated off the
-      // current page would never enter the viewport and never load — leaving their
-      // columns measured at ~0 height and page counts (and jump targets) wrong.
-      // Force them to load so the flow is stable.
-      if (img.loading === 'lazy') img.loading = 'eager';
+    images = Array.from(content.querySelectorAll('img'));
+    imagesLoaded = 0;
+    for (const img of images) {
+      // `loading="lazy"` pictures translated off the current page would never
+      // load here, leaving their columns measured at ~0 height. loadNearImages()
+      // lets them load in reading order instead, a few pages ahead of the reader;
+      // a picture arriving re-measures the flow.
       if (img.complete) continue;
       const onLoad = () => scheduleMeasure();
       img.addEventListener('load', onLoad);
@@ -193,6 +211,7 @@ export function usePagination(params: PaginationParams) {
     const direction = clamped - currentPage;
     currentPage = clamped;
     applyTransform();
+    loadNearImages();
     params.onPageChange?.(currentPage, totalPages);
     params.onTurn?.(direction);
   }
@@ -207,6 +226,7 @@ export function usePagination(params: PaginationParams) {
       params.onPageChange?.(currentPage, totalPages);
     }
     applyTransform();
+    loadNearImages();
   }
 
   function next() {
@@ -266,6 +286,7 @@ export function usePagination(params: PaginationParams) {
       const direction = target - currentPage;
       currentPage = target;
       applyTransform(); // animate to the committed page
+      loadNearImages();
       params.onPageChange?.(currentPage, totalPages);
       params.onTurn?.(direction);
     }
