@@ -102,6 +102,14 @@ diverging across devices — each one is a bug that was actually shipped:
 - **Timestamps are milliseconds everywhere in the label store.** Server rows arrive in seconds and
   are converted once, at the boundary (`localTimestamps`).
 
+**Reactivity is per key, not per map.** `labelMap` / `labelsByItem` are plain Maps; per-item
+reads (`hasLabel`, `getLabel`, so `isRead`, `getTagsForItem`, …) track that item's signal and the
+whole-map scans (`readPositions`, `allTags`, …) track the label they scan for
+(`utils/keyedSignals.svelte.ts`). A mutation must go through `addToState` / `removeFromState` and
+then `triggerReactivity()`, which bumps only what changed — so marking one item read re-runs that
+card, not every card on screen. A new query method must read through `getLabel`/`hasLabel` (or
+track the label) or it won't update.
+
 Freshness: `refreshFromBackend` pulls both, plus `itemLabelsStore.pullDelta()` on `online` (after
 the queue drains), on `visibilitychange`, and on a 5-minute while-open timer — all gated to one
 pull a minute. There is deliberately **no push channel**: a no-change delta is one indexed query

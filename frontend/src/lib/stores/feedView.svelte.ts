@@ -336,6 +336,16 @@ function titleHaystack(item: FeedDisplayItem): string {
   return normalize(item.item.title ?? '');
 }
 
+// Element-wise identity, so a re-filter that kept the same items can return the
+// array it returned before and stop the change there.
+function sameItems<T>(a: readonly T[], b: readonly T[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
 function createFeedViewStore() {
   // UI state
   let showOnlyUnread = $state(true);
@@ -666,15 +676,24 @@ function createFeedViewStore() {
 
   // Derived: filtered articles based on current filters (the saved view keeps
   // its own inbox/archive split and ignores the read filter).
+  // Marking an item read re-runs this filter, but usually leaves the list as it
+  // was (an item read this session stays put), so it hands back the previous
+  // array when nothing changed: the merge, sort and every card downstream then
+  // have nothing to redo.
+  let lastFilteredArticles: Article[] = [];
   let filteredArticles = $derived.by((): Article[] => {
     const readFilter = effectiveFilters.readFilter;
     if (isSavedView || readFilter === 'all') return scopedArticles;
+    let next: Article[];
     if (readFilter === 'unread') {
-      return scopedArticles.filter(
+      next = scopedArticles.filter(
         (a) => !itemLabelsStore.isRead(a.guid) || readArticleGuidsThisSession.has(a.guid)
       );
+    } else {
+      next = scopedArticles.filter((a) => itemLabelsStore.isRead(a.guid));
     }
-    return scopedArticles.filter((a) => itemLabelsStore.isRead(a.guid));
+    lastFilteredArticles = sameItems(lastFilteredArticles, next) ? lastFilteredArticles : next;
+    return lastFilteredArticles;
   });
 
   // Derived: paginated articles (limited to loadedArticleCount)
@@ -816,6 +835,7 @@ function createFeedViewStore() {
   // dated by its FIRST share, so a late repost doesn't lift it back to the top.
   // One the river already shows as an article or document (same page, any URL
   // form) is dropped: that row carries the "shared by" line instead.
+  let lastFollowLinks: FollowLink[] = [];
   let displayedFollowLinks = $derived.by((): FollowLink[] => {
     if (!showFollowLinks) return [];
     const fv = effectiveFilters;
@@ -867,11 +887,14 @@ function createFeedViewStore() {
       links = links.filter((l) => itemLabelsStore.isRead(followLinkReadKey(l)));
     }
 
-    return [...links].sort((a, b) =>
+    const next = [...links].sort((a, b) =>
       fv.sortOrder === 'oldest'
         ? a.firstSharedAt - b.firstSharedAt
         : b.firstSharedAt - a.firstSharedAt
     );
+    // Same as filteredArticles: a read toggle that changes nothing changes nothing.
+    lastFollowLinks = sameItems(lastFollowLinks, next) ? lastFollowLinks : next;
+    return lastFollowLinks;
   });
 
   // Every follows link, when the reader turned that on, arrives a page at a time,
@@ -919,23 +942,23 @@ function createFeedViewStore() {
       })),
     ];
 
+    // Parse each date once, not twice per comparison.
+    const times = new Map(combined.map((c) => [c, new Date(c.date).getTime()]));
+
     if (sortOrder === 'popular' && canSortByPopularity) {
       // Most shared first; the newest breaks a tie. Counted once per row.
       const counts = new Map(combined.map((c) => [c, followShareCount(c)]));
-      combined.sort(
-        (a, b) =>
-          counts.get(b)! - counts.get(a)! || new Date(b.date).getTime() - new Date(a.date).getTime()
-      );
+      combined.sort((a, b) => counts.get(b)! - counts.get(a)! || times.get(b)! - times.get(a)!);
       return combined;
     }
 
     combined.sort((a, b) => {
-      const diff = new Date(b.date).getTime() - new Date(a.date).getTime();
+      const diff = times.get(b)! - times.get(a)!;
       return sortOrder === 'oldest' ? -diff : diff;
     });
     const floor = followLinkFloor;
     if (floor !== null) {
-      const end = combined.findIndex((c) => new Date(c.date).getTime() < floor);
+      const end = combined.findIndex((c) => times.get(c)! < floor);
       if (end !== -1) return combined.slice(0, end);
     }
     return combined;
@@ -1294,10 +1317,19 @@ function createFeedViewStore() {
   // Splice the lazily-loaded body onto a light article for display. Returns the
   // same object untouched when the body isn't loaded yet, so the card shows the
   // summary until it arrives (one extra paint, no missing content).
+  // The spliced copy is cached per article, so re-deriving the list hands each
+  // card the same object it already has; a fresh one would make every open card
+  // re-sanitize its whole body.
+  const withBodyCache = new WeakMap<Article, { body: string; article: Article }>();
   function withArticleBody(a: Article): Article {
     if (a.content) return a;
     const body = articleBodies.get(a.guid);
-    return body ? { ...a, content: body } : a;
+    if (!body) return a;
+    const cached = withBodyCache.get(a);
+    if (cached?.body === body) return cached.article;
+    const article = { ...a, content: body };
+    withBodyCache.set(a, { body, article });
+    return article;
   }
 
   let currentItems = $derived.by((): RiverItem[] => {

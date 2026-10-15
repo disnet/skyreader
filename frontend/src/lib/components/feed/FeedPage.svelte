@@ -305,7 +305,7 @@
   const scrollMarkAsRead = useScrollMarkAsRead({
     getArticleElements,
     getItemKey: (index) => feedViewStore.currentItems[index]?.key,
-    enabled: preferences.scrollToMarkAsRead,
+    enabled: () => preferences.scrollToMarkAsRead,
     onMarkAsRead: markItemAsReadByKey,
   });
 
