@@ -58,11 +58,11 @@ test.describe('Mobile switcher', () => {
 
     await authedPage.getByRole('button', { name: 'Switch feed' }).click();
 
-    const savedRow = authedPage.locator('.feed-switcher .nav-item-row', {
-      has: authedPage.locator('.item-label', { hasText: 'Saved' }),
+    const savedRow = authedPage.locator('.feed-switcher .nav-item', {
+      has: authedPage.locator('.item-label', { hasText: /^Saved$/ }),
     });
     await expect(savedRow).toBeVisible({ timeout: 5_000 });
-    await savedRow.locator('.nav-item-main').click();
+    await savedRow.click();
 
     // `goto` is deferred a frame behind the sheet dismissal, so the navigation
     // still has to land — this is the assertion that the deferral didn't drop it.

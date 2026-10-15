@@ -17,7 +17,7 @@ Everything starts checked. Uncheck a source, a folder or a whole group to leave 
 
 ### Making a channel
 
-Choose **+** beside **Feeds** or **Saved** in the sidebar, or **New channel** in the feed switcher on a phone.
+Choose **New channel** under **Feeds** or **Saved**, in the sidebar or the feed switcher on a phone.
 
 - **Name** fills itself in from what you choose. Type your own to keep it.
 - **What's in it**, for a channel of your feeds:

@@ -346,16 +346,6 @@
           <span class="nav-icon"><Icon name="inbox" /></span>
           <span class="nav-label">Feeds</span>
         </button>
-        <button
-          class="row-add-btn"
-          onclick={(e) => {
-            e.stopPropagation();
-            openChannelModal(null, 'feed');
-          }}
-          title="New channel"
-        >
-          <Icon name="plus" size={14} strokeWidth={2} />
-        </button>
         {#if totalUnread > 0}
           <span class="nav-count">{totalUnread}</span>
         {/if}
@@ -397,17 +387,10 @@
               onRenameCancel={() => (renamingViewId = null)}
             />
           {/each}
-          {#if sourceChannels.length === 0}
-            <div class="empty-section">No channels yet</div>
-          {/if}
-          <a
-            href="/channels/discover"
-            class="more-suggestions-link"
-            onclick={() => sidebarStore.closeMobile()}
-          >
-            More channel ideas
-            <Icon name="arrow-right" size={12} />
-          </a>
+          <button class="new-channel-btn" onclick={() => openChannelModal(null, 'feed')}>
+            <Icon name="plus" size={12} strokeWidth={2} />
+            New channel
+          </button>
         </div>
       {/if}
     </div>
@@ -419,16 +402,6 @@
         <button class="nav-row-main" onclick={() => selectFilter('saved')}>
           <span class="nav-icon"><Icon name="bookmark" /></span>
           <span class="nav-label">Saved</span>
-        </button>
-        <button
-          class="row-add-btn"
-          onclick={(e) => {
-            e.stopPropagation();
-            openChannelModal(null, 'saved');
-          }}
-          title="New saved channel"
-        >
-          <Icon name="plus" size={14} strokeWidth={2} />
         </button>
         {#if itemLabelsStore.inboxCount > 0}
           <span class="nav-count">{itemLabelsStore.inboxCount}</span>
@@ -471,17 +444,10 @@
               onRenameCancel={() => (renamingViewId = null)}
             />
           {/each}
-          {#if savedChannels.length === 0}
-            <div class="empty-section">No saved channels yet</div>
-          {/if}
-          <a
-            href="/channels/discover"
-            class="more-suggestions-link"
-            onclick={() => sidebarStore.closeMobile()}
-          >
-            More channel ideas
-            <Icon name="arrow-right" size={12} />
-          </a>
+          <button class="new-channel-btn" onclick={() => openChannelModal(null, 'saved')}>
+            <Icon name="plus" size={12} strokeWidth={2} />
+            New channel
+          </button>
         </div>
       {/if}
     </div>
@@ -983,7 +949,6 @@
     color: var(--color-primary);
   }
 
-  .row-add-btn,
   .row-disclosure-btn {
     flex-shrink: 0;
     width: 1.25rem;
@@ -999,25 +964,7 @@
     border-radius: 4px;
   }
 
-  .row-add-btn {
-    opacity: 0.6;
-    transition: opacity 0.15s;
-  }
-
   @media (hover: hover) {
-    .row-add-btn {
-      opacity: 0;
-    }
-
-    .nav-row:hover .row-add-btn {
-      opacity: 0.6;
-    }
-
-    .row-add-btn:hover {
-      opacity: 1 !important;
-      color: var(--color-primary);
-    }
-
     .row-disclosure-btn:hover {
       color: var(--color-text);
     }
@@ -1088,19 +1035,22 @@
     font-style: italic;
   }
 
-  .more-suggestions-link {
+  .new-channel-btn {
     display: flex;
     align-items: center;
     gap: 0.375rem;
     padding: 0.25rem 0.75rem;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font: inherit;
     font-size: var(--text-xs);
     color: var(--color-text-secondary);
-    text-decoration: none;
     transition: color 0.15s;
   }
 
   @media (hover: hover) {
-    .more-suggestions-link:hover {
+    .new-channel-btn:hover {
       color: var(--color-primary);
     }
   }
