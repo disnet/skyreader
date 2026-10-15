@@ -218,14 +218,24 @@ export function usePagination(params: PaginationParams) {
 
   // Turn to the page an element sits on and keep it pinned there through any
   // reflow until the reader turns a page (see `pendingElement` in measure()).
-  function goToElement(el: HTMLElement) {
+  // `instant` lands without the turn's slide — for restoring a position on open,
+  // where gliding in from page one would show the cover first.
+  function goToElement(el: HTMLElement, opts?: { instant?: boolean }) {
     pendingElement = el;
     const clamped = Math.max(0, Math.min(totalPages - 1, pageOfElement(el)));
     if (clamped !== currentPage) {
       currentPage = clamped;
       params.onPageChange?.(currentPage, totalPages);
     }
-    applyTransform();
+    if (opts?.instant) {
+      setTransition(false);
+      applyTransform();
+      const content = params.getContentEl();
+      if (content) void content.offsetWidth; // commit the jump before easing returns
+      setTransition(true);
+    } else {
+      applyTransform();
+    }
     loadNearImages();
   }
 

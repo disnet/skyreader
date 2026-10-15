@@ -641,7 +641,7 @@
   }
   let paged = $derived(viewMode === 'paged' && !showOriginalPdf);
   let pagedController = $state<PagedController>();
-  let pagedRestoredForKey: string | null = null;
+  let pagedRestoredForKey = $state<string | null>(null);
   let pagedSaveTimer: ReturnType<typeof setTimeout> | undefined;
 
   // One value feeds both drawings of the rail: scroll fraction while scrolling,
@@ -705,9 +705,26 @@
       const paras = detectReaderParagraphs();
       if (!paras.length) return; // body not loaded yet — retry on next settle
       const idx = Math.min(saved.paragraphIndex, paras.length - 1);
-      pagedController?.goToElement(paras[idx]);
+      pagedController?.goToElement(paras[idx], { instant: true });
       pagedRestoredForKey = key;
     }, 300);
+    return () => clearTimeout(timer);
+  });
+
+  // Pages stay hidden until that restore lands, so opening a book partway
+  // through doesn't show its cover (page one) and then slide away from it. A
+  // body that never yields paragraphs is shown anyway after a moment.
+  let pagedRevealedForKey = $state<string | null>(null);
+  let pagedRestorePending = $derived(
+    paged &&
+      pagedRestoredForKey !== itemKey &&
+      pagedRevealedForKey !== itemKey &&
+      (itemLabelsStore.getReadProgress(itemKey)?.paragraphIndex ?? 0) > 0
+  );
+  $effect(() => {
+    if (!pagedRestorePending) return;
+    const key = itemKey;
+    const timer = setTimeout(() => (pagedRevealedForKey = key), 2000);
     return () => clearTimeout(timer);
   });
 
@@ -1517,6 +1534,7 @@
       <PagedView
         overlay={collection ? undefined : marginalia}
         bind:sideRoom={pagedSideRoom}
+        concealed={pagedRestorePending}
         bottomInset={mobileStore.isMobile ? READER_BAR_INSET : 0}
         deps={() => [sanitizedContent, preferences.articleFont, preferences.articleFontSize]}
         bind:currentPage={pagedPage}

@@ -11,7 +11,7 @@
 
   export interface PagedController {
     goToPage: (page: number) => void;
-    goToElement: (el: HTMLElement) => void;
+    goToElement: (el: HTMLElement, opts?: { instant?: boolean }) => void;
     next: () => void;
     prev: () => void;
     startDrag: () => void;
@@ -40,6 +40,7 @@
     onpagechange,
     overlay,
     sideRoom = $bindable(0),
+    concealed = false,
   }: {
     children: Snippet;
     /**
@@ -49,6 +50,11 @@
     overlay?: Snippet;
     /** Room (px) between the page window and the nearer edge of the window. */
     sideRoom?: number;
+    /**
+     * Lay the pages out but don't show them — while the host is still turning
+     * to a restored position, so the first page doesn't flash before it.
+     */
+    concealed?: boolean;
     bottomInset?: number;
     deps?: () => unknown;
     currentPage?: number;
@@ -375,7 +381,7 @@
 </script>
 
 <div class="paged-root" style:padding-bottom={bottomInset ? `${bottomInset}px` : undefined}>
-  <div class="paged-stage">
+  <div class="paged-stage" style:visibility={concealed ? 'hidden' : undefined}>
     <div class="paged-viewport" bind:this={viewportEl}>
       <div class="paged-content" bind:this={contentEl}>
         {@render children()}
