@@ -18,6 +18,7 @@
   import NotePeek from './NotePeek.svelte';
   import LinkContextMenu from './LinkContextMenu.svelte';
   import ReaderDiscussion from './ReaderDiscussion.svelte';
+  import { lastIndexOnOrBefore } from '$lib/utils/pagedProgress';
 
   export interface MagazineArticleControls {
     nextParagraph: () => void;
@@ -182,15 +183,14 @@
     const controller = pagedController;
     if (!paged || !active || !controller || bodyStatus !== 'ready') return;
     const page = controller.currentPage; // re-run on every page turn
-    const paras = paragraphTracking.paragraphElements();
-    if (!paras.length) return;
-    let furthest = 0;
-    for (let i = 0; i < paras.length; i++) {
-      if (controller.pageOfElement(paras[i]) <= page) furthest = i;
-    }
+    const key = itemKey;
+    // Walked once the reader settles, not inside every turn.
     if (pagedSaveTimer) clearTimeout(pagedSaveTimer);
     pagedSaveTimer = setTimeout(() => {
-      itemLabelsStore.setReadProgress(itemKey, 'saved', furthest, paras.length);
+      const paras = paragraphTracking.paragraphElements();
+      if (!paras.length) return;
+      const furthest = lastIndexOnOrBefore(paras, page, (el) => controller.pageOfElement(el));
+      itemLabelsStore.setReadProgress(key, 'saved', furthest, paras.length);
     }, 500);
   });
 
