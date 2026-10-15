@@ -20,6 +20,7 @@
   } from '$lib/utils/pdfTextModel';
   import { resolvePdfLink, type PdfLinkAnnotation, type PdfLinkTarget } from '$lib/utils/pdfLinks';
   import { claimPdfZoomShortcuts, pdfZoom, setPdfZoom } from '$lib/utils/pdfZoom';
+  import type { PdfPlace } from '$lib/utils/pdfPlace';
 
   /**
    * A saved PDF as it was printed: every page drawn by PDF.js, with its text
@@ -64,6 +65,10 @@
     onhighlight?: (id: string, getRect: () => DOMRect | null) => void;
     /** Remember the zoom under this key, and open at the zoom it was left at. */
     zoomKey?: string;
+    /** Where to open: a page and how far down it (see `utils/pdfPlace.ts`). Followed until the reader scrolls. */
+    place?: PdfPlace | null;
+    /** The reader scrolled to a new place; debounced. */
+    onplace?: (place: PdfPlace) => void;
   }
 
   let {
@@ -76,6 +81,8 @@
     oncommit,
     onhighlight,
     zoomKey,
+    place,
+    onplace,
   }: Props = $props();
 
   const highlighting = $derived(Boolean(highlights || onselect));
@@ -739,16 +746,118 @@
     };
   });
 
+  /** Where the middle of the scroller's view is, in viewport px. */
+  function middleOf(scroller: Element): number {
+    const top =
+      scroller === document.scrollingElement || scroller === document.documentElement
+        ? 0
+        : scroller.getBoundingClientRect().top + scroller.clientTop;
+    return top + scroller.clientHeight / 2;
+  }
+
+  /** The page in the middle of the view, and how far down it the middle is. */
+  function placeInView(): PdfPlace | null {
+    if (!containerEl || status !== 'ready') return null;
+    const middle = middleOf(scrollerOf(containerEl));
+    // Start from the page the observer last saw there, and step to the one the
+    // middle is really on if a fast scroll has outrun it.
+    let page = currentPage;
+    let step = 0;
+    for (;;) {
+      const el = pageEl(page);
+      if (!el) return null;
+      const rect = el.getBoundingClientRect();
+      if (rect.height <= 0) return null;
+      const at = (middle - rect.top) / rect.height;
+      // Below this page's bottom: a later one. Above its top (past the gap
+      // between pages): an earlier one. One direction only, then settle.
+      const next = at > 1 ? 1 : at < 0 && middle < rect.top - 32 ? -1 : 0;
+      const to = page + next;
+      if (next === 0 || next === -step || to < 1 || to > pageSizes.length) {
+        return { page, at: Math.min(1, Math.max(0, at)) };
+      }
+      step = next;
+      page = to;
+    }
+  }
+
+  /** Scroll so a place is in the middle of the view. */
+  function goToPlace(place: PdfPlace) {
+    if (!containerEl) return;
+    const el = pageEl(Math.min(place.page, pageSizes.length));
+    if (!el) return;
+    const scroller = scrollerOf(containerEl);
+    const rect = el.getBoundingClientRect();
+    scroller.scrollTop += rect.top + place.at * rect.height - middleOf(scroller);
+  }
+
+  // Open where this PDF was left, and stay there until the reader moves: put
+  // back once the pages are laid out, again if they change size (the rest of
+  // the pages measured, the column resized), and if `place` arrives late (a
+  // sync from another device). The place is relative to a page, so it holds
+  // where an offset wouldn't. Once the reader scrolls, the view is theirs.
+  let following = true;
+  // Where the view was last put, to tell the reader's scrolling from ours.
+  let placedTop: number | null = null;
+  $effect(() => {
+    void pageSizes;
+    const target = place;
+    if (status !== 'ready' || scale <= 0) return;
+    void tick().then(() => {
+      if (destroyed || !containerEl || !following) return;
+      const scroller = scrollerOf(containerEl);
+      if (target) goToPlace(target);
+      placedTop = scroller.scrollTop;
+    });
+  });
+
+  // Report the place as the reader scrolls: measured once a frame, reported a
+  // moment after the scrolling stops, and on the way out. Nothing is reported
+  // until the reader has scrolled, so opening at the top can't overwrite it.
+  onMount(() => {
+    let frame: number | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let latest: PdfPlace | null = null;
+    const report = () => {
+      if (timer) clearTimeout(timer);
+      timer = null;
+      if (latest) onplace?.(latest);
+      latest = null;
+    };
+    const onScroll = () => {
+      if (frame !== null) return;
+      frame = requestAnimationFrame(() => {
+        frame = null;
+        if (!containerEl || placedTop === null) return;
+        if (following) {
+          if (Math.abs(scrollerOf(containerEl).scrollTop - placedTop) <= 1) return;
+          following = false;
+        }
+        const now = placeInView();
+        if (!now) return;
+        latest = now;
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(report, 500);
+      });
+    };
+    // Captured on the document, so it hears the reader overlay's scroll as well
+    // as the page's, whichever is hosting the viewer.
+    document.addEventListener('scroll', onScroll, { capture: true, passive: true });
+    window.addEventListener('pagehide', report);
+    return () => {
+      document.removeEventListener('scroll', onScroll, { capture: true });
+      window.removeEventListener('pagehide', report);
+      if (frame !== null) cancelAnimationFrame(frame);
+      report();
+    };
+  });
+
   /** Zoom, keeping what's in the middle of the view in the middle of the view. */
   async function setZoom(next: number) {
     if (next === zoom || !containerEl) return;
     const scroller = scrollerOf(containerEl);
     const pages = containerEl.querySelector<HTMLElement>('.pdf-pages');
-    const top =
-      scroller === document.scrollingElement || scroller === document.documentElement
-        ? 0
-        : scroller.getBoundingClientRect().top + scroller.clientTop;
-    const middle = top + scroller.clientHeight / 2;
+    const middle = middleOf(scroller);
     const anchor = pageEl(currentPage);
     const before = anchor?.getBoundingClientRect();
     const across = before ? (middle - before.top) / before.height : null;

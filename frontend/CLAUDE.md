@@ -250,7 +250,12 @@ simply don't draw. `vite.config.ts`'s `pdfjsDecoders()` copies them to
 the worker, a static asset the Pages middleware's CSP doesn't cover, so no `'wasm-unsafe-eval'` is
 needed. The Original view opens at the zoom that PDF was last left at (`utils/pdfZoom.ts`,
 `localStorage['skyreader-pdf-zoom']`, keyed by rkey via `PdfViewer`'s `zoomKey`; fit width is
-unstored). While it's open, AppShell's font-size shortcuts (Shift +, Shift -, Shift 0) zoom it
+unstored), and at the place it was last read, on any device: the `pdfPlace` item label on the
+save's URI (`itemLabelsStore.getPdfPlace` / `setPdfPlace`, merged by `lastReadAt` like
+`readProgress`), passed in as `place` and reported back through `onplace`. A place is the page in
+the middle of the view and how far down it (`utils/pdfPlace.ts`), so it holds at any zoom or
+width. The viewer follows `place` (once laid out, on resize, and when a sync lands late) until the
+reader scrolls, and reports nothing before that, so opening at the top can't overwrite it. While it's open, AppShell's font-size shortcuts (Shift +, Shift -, Shift 0) zoom it
 instead (`claimPdfZoomShortcuts` / `openPdfZoom`). Harness: `/dev/pdf` (`?sample=jpx` for a JPEG 2000 image; highlighting there is live but local).
 
 **The PDF's links work in Original.** After a page's text layer, `drawLinks` reads its

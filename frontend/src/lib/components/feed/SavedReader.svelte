@@ -1526,6 +1526,10 @@
             oncommit={highlightsHook.addHighlight}
             onhighlight={highlightsHook.openHighlight}
             zoomKey={pdfSave?.rkey}
+            place={pdfSave ? itemLabelsStore.getPdfPlace(pdfSave.uri) : null}
+            onplace={(place) => {
+              if (pdfSave) void itemLabelsStore.setPdfPlace(pdfSave.uri, 'saved', place);
+            }}
           />
         {/key}
       </article>

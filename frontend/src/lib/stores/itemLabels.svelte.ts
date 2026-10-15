@@ -25,6 +25,7 @@ import {
   unionHighlightSources,
 } from '$lib/utils/highlightAliases';
 import type { ItemLabel, ItemLabelType, SocialItemType, Highlight, ReviewIntent } from '$lib/types';
+import { isPdfPlace, type PdfPlace, type PdfPlaceProps } from '$lib/utils/pdfPlace';
 
 const BULK_BATCH_SIZE = 500;
 
@@ -469,7 +470,7 @@ function createItemLabelsStore() {
   // 'read' positions live in dedicated tables/endpoints. Everything else here
   // is fetched in a single pass. 'highlights' carries a Highlight[] array and
   // is merged by id (union) rather than overwritten — see the loop below.
-  const MANAGED_LABELS = ['tagged', 'archived', 'readProgress', 'highlights'] as const;
+  const MANAGED_LABELS = ['tagged', 'archived', 'readProgress', 'pdfPlace', 'highlights'] as const;
 
   // Fetch managed labels in ONE paginated stream and reconcile each type,
   // instead of issuing a separate (paginated) /api/labels request per type.
@@ -569,6 +570,24 @@ function createItemLabelsStore() {
         itemKey: raw.itemKey,
         itemType: (raw.itemType as ItemLabelType) || 'article',
         label: 'readProgress',
+        props: raw.props || {},
+        ...localTimestamps(raw),
+      };
+      addToState(lbl);
+      dbOps.push(lbl);
+    }
+    // A PDF's place in its Original view, merged by `lastReadAt` for the same
+    // reason as read progress above.
+    for (const raw of byLabel.get('pdfPlace') || []) {
+      const remoteProps: unknown = raw.props;
+      if (!isPdfPlace(remoteProps)) continue;
+      const localProps = getLabel(raw.itemKey, 'pdfPlace')?.props as
+        Partial<PdfPlaceProps> | undefined;
+      if (mergeReadProgress(localProps, remoteProps) === 'local') continue;
+      const lbl: ItemLabel = {
+        itemKey: raw.itemKey,
+        itemType: (raw.itemType as ItemLabelType) || 'saved',
+        label: 'pdfPlace',
         props: raw.props || {},
         ...localTimestamps(raw),
       };
@@ -1598,6 +1617,51 @@ function createItemLabelsStore() {
     void persistReadProgress(itemKey, itemType, -1, 0);
   }
 
+  // --- PDF place (the Original view's scroll position) ---
+
+  /** Where a saved PDF's Original view was left, or null to open at its top. */
+  function getPdfPlace(itemKey: string): PdfPlace | null {
+    const props = labelMap.get(makeKey(itemKey, 'pdfPlace'))?.props;
+    return isPdfPlace(props) ? { page: props.page, at: props.at } : null;
+  }
+
+  /**
+   * Remember where a saved PDF's Original view was left, here and on the server
+   * so another device opens it there too. The viewer debounces its calls.
+   */
+  async function setPdfPlace(itemKey: string, itemType: ItemLabelType, place: PdfPlace) {
+    if (!isPdfPlace(place)) return;
+    const current = getPdfPlace(itemKey);
+    const at = Math.round(place.at * 1000) / 1000;
+    if (current && current.page === place.page && current.at === at) return;
+    const now = Date.now();
+    const props: Record<string, unknown> = {
+      page: place.page,
+      at,
+      lastReadAt: now,
+    } satisfies PdfPlaceProps;
+    await putLabel({
+      itemKey,
+      itemType,
+      label: 'pdfPlace',
+      props,
+      createdAt: labelMap.get(makeKey(itemKey, 'pdfPlace'))?.createdAt ?? now,
+      updatedAt: now,
+    });
+    triggerReactivity();
+
+    const payload: LabelPayload = { itemKey, itemType, label: 'pdfPlace', props };
+    if (canReachBackend()) {
+      try {
+        await api.addLabel({ itemKey, itemType, label: 'pdfPlace', props, updatedAt: now });
+        return;
+      } catch (e) {
+        console.error('Failed to sync PDF place, queueing for retry:', e);
+      }
+    }
+    await syncQueue.enqueue('create', 'label', `${itemKey}\0pdfPlace`, payload);
+  }
+
   // --- Highlight mutations ---
 
   // A logical item can be addressed by more than one key: a saved feed article is
@@ -2022,6 +2086,9 @@ function createItemLabelsStore() {
     getReadActivity,
     setReadProgress,
     markOpened,
+    // PDF place
+    getPdfPlace,
+    setPdfPlace,
     // Highlights
     get allHighlights() {
       return allHighlights;
