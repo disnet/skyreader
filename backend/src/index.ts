@@ -102,6 +102,7 @@ import {
   handleDeleteSavedByGuid,
   handleSetBacking,
 } from './routes/saved';
+import { handleShelfCollections } from './routes/shelf';
 import {
   handleGetSavedAsset,
   handleGetSavedFile,
@@ -835,6 +836,13 @@ async function route(
       } else {
         response = await handleDeleteSaved(request, env, ctx);
       }
+      break;
+
+    // Shelf collections — ordered, private groups of saves (routes/shelf.ts)
+    case url.pathname === '/api/shelf/collections' ||
+      url.pathname.startsWith('/api/shelf/collections/'):
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleShelfCollections(request, env, session.did);
       break;
 
     // Settings routes

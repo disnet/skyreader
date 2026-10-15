@@ -490,7 +490,14 @@ function createItemLabelsStore() {
   // 'read' positions live in dedicated tables/endpoints. Everything else here
   // is fetched in a single pass. 'highlights' carries a Highlight[] array and
   // is merged by id (union) rather than overwritten — see the loop below.
-  const MANAGED_LABELS = ['tagged', 'archived', 'readProgress', 'pdfPlace', 'highlights'] as const;
+  const MANAGED_LABELS = [
+    'tagged',
+    'archived',
+    'kept',
+    'readProgress',
+    'pdfPlace',
+    'highlights',
+  ] as const;
 
   // Fetch managed labels in ONE paginated stream and reconcile each type,
   // instead of issuing a separate (paginated) /api/labels request per type.
@@ -569,6 +576,18 @@ function createItemLabelsStore() {
         itemKey: raw.itemKey,
         itemType: (raw.itemType as ItemLabelType) || 'article',
         label: 'archived',
+        props: raw.props || {},
+        ...localTimestamps(raw),
+      };
+      addToState(lbl);
+      dbOps.push(lbl);
+    }
+    // Shelf membership (see `getKeptState`): a plain last-write-wins flag.
+    for (const raw of byLabel.get('kept') || []) {
+      const lbl: ItemLabel = {
+        itemKey: raw.itemKey,
+        itemType: (raw.itemType as ItemLabelType) || 'saved',
+        label: 'kept',
         props: raw.props || {},
         ...localTimestamps(raw),
       };
@@ -1130,6 +1149,80 @@ function createItemLabelsStore() {
     await deleteLabel(itemKey, 'archived');
 
     await syncArchiveToBackend(itemKey, false, itemType);
+  }
+
+  // --- Shelf (kept) ---
+  //
+  // Whether a save is on the Shelf — the reference half of Saved — is a `kept`
+  // label with `props.kept` true or false. No label means "the default for this
+  // kind of save", which the caller decides (uploaded PDFs and EPUBs default to
+  // on, webpages to off); `false` is how a default-on save is taken off. A save
+  // answers to several keys (see utils/savedPile.ts), so reads take the newest
+  // label across all of them and writes cover every key that already has one.
+
+  /** The explicit kept state across a save's keys, or null when none is set. */
+  function getKeptState(itemKeys: string[]): boolean | null {
+    let newest: ItemLabel | undefined;
+    for (const key of itemKeys) {
+      if (!key) continue;
+      const lbl = getLabel(key, 'kept');
+      if (lbl && (!newest || lbl.updatedAt > newest.updatedAt)) newest = lbl;
+    }
+    if (!newest) return null;
+    return newest.props.kept !== false;
+  }
+
+  /**
+   * Put a save on the Shelf or take it off. `kept: null` clears the explicit
+   * state back to the default. Writes the primary key (`itemKeys[0]`) and any
+   * alias already carrying a label, so no stale alias can outvote this write.
+   */
+  async function setKeptState(
+    itemKeys: string[],
+    kept: boolean | null,
+    itemType: ItemLabelType = 'saved'
+  ) {
+    const keys = itemKeys.filter(Boolean);
+    if (keys.length === 0) return;
+    const targets = new Set([keys[0], ...keys.filter((k) => hasLabel(k, 'kept'))]);
+    const now = Date.now();
+    for (const itemKey of targets) {
+      const props: Record<string, unknown> = kept === null ? {} : { kept, keptAt: now };
+      const payload: LabelPayload = { itemKey, itemType, label: 'kept', props };
+      if (kept === null) {
+        if (!hasLabel(itemKey, 'kept')) continue;
+        await deleteLabel(itemKey, 'kept');
+      } else {
+        await putLabel({
+          itemKey,
+          itemType,
+          label: 'kept',
+          props,
+          createdAt: getLabel(itemKey, 'kept')?.createdAt ?? now,
+          updatedAt: now,
+        });
+      }
+      triggerReactivity();
+
+      const op = kept === null ? 'delete' : 'create';
+      if (canReachBackend()) {
+        try {
+          if (kept === null) await api.deleteLabel(itemKey, 'kept', now);
+          else
+            await api.addLabel({
+              itemKey,
+              itemType,
+              label: 'kept',
+              props,
+              updatedAt: now,
+            });
+          continue;
+        } catch (e) {
+          console.error('Failed to sync kept label, queueing for retry:', e);
+        }
+      }
+      await syncQueue.enqueue(op, 'label', `${itemKey}\0kept`, payload);
+    }
   }
 
   // --- Tag mutations ---
@@ -2096,6 +2189,9 @@ function createItemLabelsStore() {
     toggleArchive,
     archiveItem,
     unarchiveItem,
+    // Shelf
+    getKeptState,
+    setKeptState,
     // Tags
     getTagsForItem,
     hasTag,

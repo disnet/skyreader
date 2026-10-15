@@ -340,6 +340,8 @@ export async function cleanupTestData(user: TestUser) {
     `DELETE FROM channels WHERE user_did = '${user.did}'`,
     `DELETE FROM item_labels_cache WHERE user_did = '${user.did}'`,
     `DELETE FROM saved_articles WHERE user_did = '${user.did}'`,
+    `DELETE FROM shelf_collection_items WHERE user_did = '${user.did}'`,
+    `DELETE FROM shelf_collections WHERE user_did = '${user.did}'`,
     `DELETE FROM share_drafts WHERE user_did = '${user.did}'`,
     `DELETE FROM follow_link_shares WHERE user_did = '${user.did}'`,
     `DELETE FROM follow_link_sync WHERE user_did = '${user.did}'`,

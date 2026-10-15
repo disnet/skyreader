@@ -3,6 +3,7 @@ import { getSessionFromRequest } from '../services/oauth';
 import { hasRequiredScopes, insufficientScopesResponse } from './auth';
 import { createPDSClient } from '../services/pds-client';
 import { isValidRkey, invalidRkeyResponse } from '../utils/validation';
+import { removeSavedFromCollections } from './shelf';
 import { getUserTierLimits } from '../services/user-tier';
 import { getUserSettings, type SaveBacking } from './settings';
 import {
@@ -1241,6 +1242,8 @@ export async function handleDeleteSaved(
       .run();
     // An uploaded PDF's original goes with it.
     await deleteSavedFile(env, session.did, rkey);
+    // …and so do its places in Shelf collections.
+    await removeSavedFromCollections(env, session.did, [rkey]);
 
     const settings = await getUserSettings(env, session.did);
     if (settings.backing.provider !== 'skyreader' && row.url_normalized) {
@@ -1316,6 +1319,7 @@ export async function handleDeleteSavedByGuid(
     await env.DB.prepare('DELETE FROM saved_articles WHERE user_did = ? AND item_guid = ?')
       .bind(session.did, guid)
       .run();
+    await removeSavedFromCollections(env, session.did, [row.rkey]);
 
     const settings = await getUserSettings(env, session.did);
     if (settings.backing.provider !== 'skyreader' && row.url_normalized) {

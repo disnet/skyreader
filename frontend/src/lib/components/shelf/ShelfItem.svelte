@@ -1,0 +1,372 @@
+<script lang="ts">
+  // One save on the Shelf, as a cover (grid) or a row (list). The cover is the
+  // save's own image when it has one, else its title set as a plain typographic
+  // cover — books and PDFs rarely carry an image, and a placeholder graphic would
+  // be decoration standing in for the text.
+  import Icon from '$lib/components/Icon.svelte';
+  import PopoverMenu from '$lib/components/PopoverMenu.svelte';
+  import { auth } from '$lib/stores/auth.svelte';
+  import { shelfStore } from '$lib/stores/shelf.svelte';
+  import { decodeEntities } from '$lib/utils/entities';
+  import { formatRelativeTime } from '$lib/utils/date';
+  import { SHELF_KIND_LABEL, shelfKind, type ShelfEntry } from '$lib/utils/shelf';
+
+  interface Props {
+    entry: ShelfEntry;
+    view: 'grid' | 'list';
+    highlightCount: number;
+    /** The collection being shown, when the Shelf is filtered to one. */
+    collectionId?: string | null;
+    /** Offer Move up / Move down (a collection in its own order). */
+    reorderable?: boolean;
+    isFirst?: boolean;
+    isLast?: boolean;
+    onOpen: () => void;
+  }
+
+  let {
+    entry,
+    view,
+    highlightCount,
+    collectionId = null,
+    reorderable = false,
+    isFirst = false,
+    isLast = false,
+    onOpen,
+  }: Props = $props();
+
+  let save = $derived(entry.save);
+  let title = $derived(decodeEntities(save.title || '') || save.domain || save.url || 'Untitled');
+  let byline = $derived(save.author || save.domain || '');
+  let kind = $derived(shelfKind(save));
+  let percent = $derived(entry.progress === null ? null : Math.round(entry.progress * 100));
+  let imageFailed = $state(false);
+  let menuOpen = $state(false);
+
+  let menuItems = $derived.by(() => {
+    const items: {
+      label: string;
+      icon?: string;
+      variant?: 'default' | 'danger';
+      onclick: () => void;
+    }[] = [];
+    if (auth.user) {
+      items.push({
+        label: 'Add to collection',
+        icon: 'folder-plus',
+        onclick: () => shelfStore.openPicker(save),
+      });
+    }
+    if (collectionId && reorderable) {
+      if (!isFirst) {
+        items.push({
+          label: 'Move up',
+          icon: 'arrow-up',
+          onclick: () => void shelfStore.moveItem(collectionId, save.rkey, -1),
+        });
+      }
+      if (!isLast) {
+        items.push({
+          label: 'Move down',
+          icon: 'arrow-down',
+          onclick: () => void shelfStore.moveItem(collectionId, save.rkey, 1),
+        });
+      }
+    }
+    if (collectionId) {
+      items.push({
+        label: 'Remove from collection',
+        icon: 'minus',
+        onclick: () => void shelfStore.removeItem(collectionId, save.rkey),
+      });
+    }
+    items.push({
+      label: 'Take off Shelf',
+      icon: 'shelf',
+      variant: 'danger',
+      onclick: () => void shelfStore.setOnShelf(save, false),
+    });
+    return items;
+  });
+</script>
+
+{#if view === 'grid'}
+  <article class="shelf-card" class:menu-open={menuOpen}>
+    <!-- The cover repeats the title button below it, so it's one tab stop and
+         one name, not two. -->
+    <button class="cover-btn" onclick={onOpen} tabindex="-1" aria-hidden="true">
+      {#if save.image && !imageFailed}
+        <img
+          class="cover-img"
+          src={save.image}
+          alt=""
+          loading="lazy"
+          onerror={() => (imageFailed = true)}
+        />
+      {:else}
+        <div class="cover-type" data-kind={kind}>
+          <span class="cover-title">{title}</span>
+          {#if save.author}<span class="cover-author">{save.author}</span>{/if}
+        </div>
+      {/if}
+      {#if percent !== null}
+        <span class="progress" aria-label={`${percent}% read`}>
+          <span class="progress-fill" style="width: {percent}%"></span>
+        </span>
+      {/if}
+    </button>
+    <div class="card-body">
+      <button class="card-title" onclick={onOpen}>{title}</button>
+      <div class="card-meta">
+        <span class="kind">{SHELF_KIND_LABEL[kind]}</span>
+        {#if byline}<span class="byline">{byline}</span>{/if}
+      </div>
+      <div class="card-menu">
+        <PopoverMenu items={menuItems} bind:open={menuOpen} />
+      </div>
+    </div>
+  </article>
+{:else}
+  <article class="row" class:menu-open={menuOpen}>
+    <button class="row-main" onclick={onOpen}>
+      <span class="row-icon" aria-hidden="true">
+        <Icon name={kind === 'article' ? 'file-text' : 'book-open'} size={16} />
+      </span>
+      <span class="row-text">
+        <span class="row-title">{title}</span>
+        <span class="row-meta">
+          <span class="kind">{SHELF_KIND_LABEL[kind]}</span>
+          {#if byline}<span>{byline}</span>{/if}
+          {#if percent !== null}<span>{percent}% read</span>{/if}
+          {#if highlightCount > 0}
+            <span class="hl"
+              ><Icon name="highlighter" size={11} />
+              {highlightCount}</span
+            >
+          {/if}
+          {#if entry.lastActivityAt > 0}
+            <span>Opened {formatRelativeTime(entry.lastActivityAt)}</span>
+          {/if}
+        </span>
+      </span>
+    </button>
+    <div class="row-menu">
+      <PopoverMenu items={menuItems} bind:open={menuOpen} />
+    </div>
+  </article>
+{/if}
+
+<style>
+  /* --- Grid --- */
+  .shelf-card {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .cover-btn {
+    position: relative;
+    display: block;
+    width: 100%;
+    aspect-ratio: 2 / 3;
+    padding: 0;
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--color-bg-secondary);
+    cursor: pointer;
+  }
+
+  .cover-btn:focus-visible,
+  .card-title:focus-visible,
+  .row-main:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+
+  .cover-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  .cover-type {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.875rem 0.75rem;
+    text-align: left;
+    box-sizing: border-box;
+  }
+
+  /* A book's spine edge: the one quiet cue that this is a book, not a page. */
+  .cover-type[data-kind='book'] {
+    border-left: 6px solid var(--color-border);
+  }
+
+  .cover-title {
+    font-family: var(--font-serif);
+    font-size: var(--text-lg);
+    line-height: var(--leading-tight);
+    color: var(--color-text);
+    display: -webkit-box;
+    -webkit-line-clamp: 6;
+    line-clamp: 6;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+  }
+
+  .cover-author {
+    font-size: var(--text-xs);
+    color: var(--color-text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .progress {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 3px;
+    background: rgba(0, 0, 0, 0.08);
+  }
+
+  .progress-fill {
+    display: block;
+    height: 100%;
+    background: var(--color-primary);
+  }
+
+  .card-body {
+    position: relative;
+    padding: 0.5rem 1.75rem 0 0;
+  }
+
+  .card-title {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    padding: 0;
+    border: none;
+    background: none;
+    text-align: left;
+    font: inherit;
+    font-size: var(--text-md);
+    font-weight: var(--weight-medium);
+    line-height: var(--leading-snug);
+    color: var(--color-text);
+    cursor: pointer;
+    overflow-wrap: anywhere;
+  }
+
+  .card-meta {
+    display: flex;
+    gap: 0.375rem;
+    margin-top: 0.125rem;
+    font-size: var(--text-xs);
+    color: var(--color-text-secondary);
+    min-width: 0;
+  }
+
+  .byline {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .kind {
+    flex-shrink: 0;
+    font-weight: var(--weight-medium);
+  }
+
+  .card-menu {
+    position: absolute;
+    top: 0.25rem;
+    right: -0.25rem;
+  }
+
+  /* --- List --- */
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    border-radius: 8px;
+    transition: background-color 0.15s;
+  }
+
+  .row:hover,
+  .row.menu-open {
+    background: var(--color-bg-secondary);
+  }
+
+  .row-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 0.75rem 0.5rem;
+    border: none;
+    background: none;
+    text-align: left;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+    border-radius: 8px;
+  }
+
+  .row-icon {
+    flex-shrink: 0;
+    margin-top: 0.125rem;
+    color: var(--color-text-secondary);
+  }
+
+  .row-text {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .row-title {
+    font-size: var(--text-lg);
+    font-weight: var(--weight-medium);
+    line-height: var(--leading-snug);
+    color: var(--color-text);
+    overflow-wrap: anywhere;
+  }
+
+  .row-meta {
+    display: flex;
+    flex-wrap: wrap;
+    column-gap: 0.75rem;
+    row-gap: 0.125rem;
+    font-size: var(--text-xs);
+    color: var(--color-text-secondary);
+  }
+
+  .hl {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+  }
+
+  .row-menu {
+    flex-shrink: 0;
+    padding-right: 0.25rem;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .progress {
+      background: rgba(255, 255, 255, 0.12);
+    }
+  }
+</style>

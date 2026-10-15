@@ -1298,6 +1298,26 @@ export interface SavedItem {
   updatedAt?: string | null;
 }
 
+// A Shelf collection: a private, ordered group of saves (GET /api/shelf/collections).
+// Members reference the save by rkey. See docs/plans/SHELF_PLAN.md.
+export interface ShelfCollectionItem {
+  rkey: string;
+  /** unix seconds */
+  addedAt: number;
+}
+
+export interface ShelfCollection {
+  id: string;
+  name: string;
+  description: string | null;
+  position: number;
+  /** unix seconds */
+  createdAt: number;
+  /** unix seconds */
+  updatedAt: number;
+  items: ShelfCollectionItem[];
+}
+
 // From your follows: the links people you follow share on Bluesky, grouped by
 // article. Served by GET /api/v2/following-links. See
 // docs/plans/FOLLOWS_LINKS_PLAN.md.
