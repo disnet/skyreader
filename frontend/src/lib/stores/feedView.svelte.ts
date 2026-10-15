@@ -1758,6 +1758,10 @@ function createFeedViewStore() {
     get effectiveFilters() {
       return effectiveFilters;
     },
+    /** Group key → its members, for every surface that reads a source filter. */
+    get sourceGroups() {
+      return sourceGroups;
+    },
     get filterToolbarOpen() {
       return filterToolbarOpen;
     },

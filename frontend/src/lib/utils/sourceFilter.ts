@@ -12,7 +12,9 @@
 // A key is a concrete source (`rss~{rkey}`, `{rkey}~documents`, `bsky~follows`)
 // or a group key. A group stands for its members as they are when the filter is
 // read, so "only Newsletters" takes in a newsletter subscribed to next week and
-// "everything but Newsletters" keeps leaving it out. The old Type filter was the
+// "everything but Newsletters" keeps leaving it out. A folder of publications is
+// a group too (`group~category~{name}`), so a channel built from one takes in the
+// feeds filed there later. The old Type filter was the
 // same idea, kept on a separate axis; `upgradeChannelFilter` folds it in.
 
 import type { FilteredView, Subscription } from '$lib/types';
@@ -41,6 +43,12 @@ export const GROUP_BOOKMARKS = 'group~bookmarks';
 // "Standard.site Documents" type filter forward exactly.
 export const GROUP_FEEDS = 'group~feeds';
 export const GROUP_DOCUMENTS = 'group~documents';
+/** A folder of publications (`group~category~{name}`): takes in what's filed there later. */
+export const CATEGORY_GROUP_PREFIX = 'group~category~';
+
+export function categoryGroupKey(category: string): string {
+  return CATEGORY_GROUP_PREFIX + category;
+}
 
 export const GROUP_LABELS: Record<string, string> = {
   [GROUP_PUBLICATIONS]: 'Publications',
@@ -55,10 +63,16 @@ export function isGroupKey(key: string): boolean {
   return key.startsWith(GROUP_PREFIX);
 }
 
+/** A group's name as the reader sees it, or undefined for a concrete source. */
+export function groupLabel(key: string): string | undefined {
+  if (key.startsWith(CATEGORY_GROUP_PREFIX)) return key.slice(CATEGORY_GROUP_PREFIX.length);
+  return GROUP_LABELS[key];
+}
+
 /** Group key → the concrete keys it stands for right now. */
 export type SourceGroups = ReadonlyMap<string, readonly string[]>;
 
-type GroupSub = Pick<Subscription, 'rkey' | 'sourceType' | 'feedUrl'>;
+type GroupSub = Pick<Subscription, 'rkey' | 'sourceType' | 'feedUrl' | 'category'>;
 
 /** Which group a subscription's items belong to, by what the reader sees. */
 export function sourceGroupOf(sub: GroupSub): string | null {
@@ -87,6 +101,12 @@ export function buildSourceGroups(subscriptions: readonly GroupSub[]): SourceGro
     groups.get(group)!.push(key);
     if (group === GROUP_PUBLICATIONS) {
       groups.get(sub.sourceType === 'atproto.documents' ? GROUP_DOCUMENTS : GROUP_FEEDS)!.push(key);
+      const category = sub.category?.trim();
+      if (category) {
+        const folder = categoryGroupKey(category);
+        if (!groups.has(folder)) groups.set(folder, []);
+        groups.get(folder)!.push(key);
+      }
     }
   }
   return groups;

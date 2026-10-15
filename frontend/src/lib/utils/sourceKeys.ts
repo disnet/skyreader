@@ -27,6 +27,8 @@ export function documentsSourceKey(rkey: string): string {
  * never counts toward unread badges either way.
  */
 export const FOLLOWS_SOURCE_KEY = 'bsky~follows';
+/** The follows channel's name (see followsChannel.ts). */
+export const FOLLOWS_CHANNEL_NAME = 'From your follows';
 
 // --- Parsing ---
 

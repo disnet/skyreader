@@ -25,6 +25,11 @@ export type AutoRuleOption =
   | 'domain'
   | 'people';
 
+/**
+ * The rules a "Sources that match" channel can follow. A folder isn't one of
+ * them: the source picker takes a whole folder, now and later (see
+ * categoryGroupKey), and an old folder-rule channel opens there.
+ */
 export const AUTO_RULE_OPTIONS: {
   value: AutoRuleOption;
   label: string;
@@ -33,42 +38,37 @@ export const AUTO_RULE_OPTIONS: {
   {
     value: 'frequency:high',
     label: 'Daily Digest',
-    description: 'High-volume feeds that publish 2+ times per day',
+    description: 'Sources that post several times a day',
   },
   {
     value: 'frequency:low',
     label: "Don't Miss",
-    description: 'Infrequent feeds where every post counts',
+    description: 'Sources that post rarely, so every post counts',
   },
   {
     value: 'longReads',
     label: 'Long Reads',
-    description: 'Feeds with in-depth, long-form articles',
+    description: 'Sources that publish long, in-depth pieces',
   },
   {
     value: 'recent',
     label: 'Recently Added',
-    description: 'Sources you added recently',
-  },
-  {
-    value: 'category',
-    label: 'Category',
-    description: 'All sources in a specific folder',
+    description: 'Sources you added lately',
   },
   {
     value: 'subscriptionTag',
-    label: 'Tag',
-    description: 'All sources with a specific tag',
+    label: 'Tagged',
+    description: 'Sources you gave a tag',
   },
   {
     value: 'domain',
-    label: 'Domain',
-    description: 'Sources matching URL patterns',
+    label: 'From a site',
+    description: 'Sources whose address matches a pattern',
   },
   {
     value: 'people',
     label: 'People',
-    description: 'Everyone you follow on AT Protocol',
+    description: 'Writers you follow across the Atmosphere',
   },
 ];
 

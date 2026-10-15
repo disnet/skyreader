@@ -15,6 +15,7 @@
     GROUP_NEWSLETTERS,
     GROUP_PUBLICATIONS,
     buildSourceGroups,
+    categoryGroupKey,
     checkStateOf,
     onlySource,
     setSourceChecked,
@@ -287,8 +288,7 @@
           strong: true,
         })}
         {#each publicationSections.categories as cat (cat.name)}
-          {@const keys = cat.rows.map((r) => r.key)}
-          {@render row(keys, cat.name, {
+          {@render row(categoryGroupKey(cat.name), cat.name, {
             count: cat.rows.length,
             indent: 1,
             expandId: `category:${cat.name}`,

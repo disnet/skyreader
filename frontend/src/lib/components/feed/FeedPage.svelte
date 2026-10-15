@@ -751,12 +751,28 @@
               description="You've read everything your follows shared this week."
             />
           {:else if feedViewStore.viewFilter}
-            <EmptyState
-              title="No matching items"
-              description="This filtered view has no items matching its criteria"
-              actionHref="/"
-              actionText="Show everything"
-            />
+            {@const channel = feedViewStore.activeFilteredView}
+            {#if channel?.id != null}
+              {@const channelId = channel.id}
+              <EmptyState
+                title={feedViewStore.showOnlyUnread ? 'All caught up' : 'Nothing here yet'}
+                description={feedViewStore.showOnlyUnread
+                  ? `Nothing unread in ${channel.name}.`
+                  : `Nothing in ${channel.name} yet. Its sources may not have posted.`}
+                onAction={() =>
+                  mobileStore.isMobile
+                    ? handleEditChannel(channelId)
+                    : sidebarStore.openChannelModal(channelId)}
+                actionText="Edit channel"
+              />
+            {:else}
+              <EmptyState
+                title="Nothing here yet"
+                description="This channel has nothing in it yet."
+                actionHref="/"
+                actionText="Show everything"
+              />
+            {/if}
           {:else if feedViewStore.followingFilter}
             {#if feedViewStore.showOnlyUnread}
               <EmptyState
@@ -886,9 +902,9 @@
         onclose={() => (filterSheetOpen = false)}
         title={filterSheetInitialTab === 'channel'
           ? editingChannelId != null
-            ? 'Edit Channel'
-            : 'New Channel'
-          : 'Filters & Style'}
+            ? 'Edit channel'
+            : 'New channel'
+          : 'View options'}
       >
         <MobileFilterSheet
           expandAllItems={preferences.expandAllItems}

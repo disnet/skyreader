@@ -10,8 +10,10 @@ import {
   GROUP_PUBLICATIONS,
   CHANNEL_FILTER_VERSION,
   buildSourceGroups,
+  categoryGroupKey,
   checkStateOf,
   expandSourceKeys,
+  groupLabel,
   keysOfTypes,
   onlySource,
   setSourceChecked,
@@ -57,6 +59,37 @@ describe('buildSourceGroups', () => {
     ]);
     const later = buildSourceGroups([...subs, sub('mail3', 'email.newsletter', 'newsletter:i/e')]);
     expect(expandSourceKeys([GROUP_NEWSLETTERS], later)).toContain('rss~mail3');
+  });
+});
+
+describe('folder groups', () => {
+  const filed = (rkey: string, category: string) =>
+    ({ ...sub(rkey, 'rss', `https://${rkey}.example/feed`), category }) as Subscription;
+  const library = [...subs, filed('tech1', 'Tech'), filed('tech2', ' Tech '), filed('art', 'Art')];
+  const folders = buildSourceGroups(library);
+  const folderCtx: PickerContext = { groups: folders, followsInEverything: false };
+
+  it('groups publications by folder', () => {
+    expect(folders.get(categoryGroupKey('Tech'))).toEqual(['rss~tech1', 'rss~tech2']);
+    expect(folders.get(categoryGroupKey('Art'))).toEqual(['rss~art']);
+    expect(groupLabel(categoryGroupKey('Tech'))).toBe('Tech');
+  });
+
+  it('takes in a feed filed there later', () => {
+    const filter = onlySource(categoryGroupKey('Tech'));
+    const later = buildSourceGroups([...library, filed('tech3', 'Tech')]);
+    expect(expandSourceKeys(filter.sourceKeys, later)).toContain('rss~tech3');
+  });
+
+  it("checks a folder's feeds, and splits it when one is unchecked", () => {
+    const filter = onlySource(categoryGroupKey('Tech'));
+    expect(checkStateOf(filter, 'rss~tech1', folderCtx)).toBe('on');
+    const less = setSourceChecked(filter, 'rss~tech1', false, folderCtx);
+    expect(less).toEqual({ sourceMode: 'include', sourceKeys: ['rss~tech2'] });
+  });
+
+  it('reads a folder that no longer exists as empty', () => {
+    expect(expandSourceKeys([categoryGroupKey('Gone')], folders)).toEqual([]);
   });
 });
 

@@ -8,11 +8,11 @@
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { goto } from '$app/navigation';
   import { channelPath, FEEDS_PATH } from '$lib/utils/viewNav';
-  import { FOLLOWS_SOURCE_KEY, subscriptionSourceKey } from '$lib/utils/sourceKeys';
-  import { FOLLOWS_CHANNEL_NAME } from '$lib/utils/followsChannel';
+  import { FOLLOWS_SOURCE_KEY } from '$lib/utils/sourceKeys';
   import { auth } from '$lib/stores/auth.svelte';
   import { followLinksStore } from '$lib/stores/followLinks.svelte';
-  import { GROUP_LABELS, type SourceFilter } from '$lib/utils/sourceFilter';
+  import { type SourceFilter } from '$lib/utils/sourceFilter';
+  import { joinNames, sourceFilterName, uniqueChannelName } from '$lib/utils/channelName';
   import {
     SAVED_SOURCE_OPTIONS,
     DATE_PRESET_OPTIONS,
@@ -149,51 +149,16 @@
 
   // --- Auto naming ---
 
-  let sourceTitleByKey = $derived.by(() => {
-    const map = new Map<string, string>(Object.entries(GROUP_LABELS));
-    for (const sub of subscriptionsStore.subscriptions) {
-      const key = subscriptionSourceKey(sub);
-      if (key) map.set(key, sub.customTitle || sub.title);
-    }
-    map.set(FOLLOWS_SOURCE_KEY, FOLLOWS_CHANNEL_NAME);
-    return map;
-  });
-
-  /** Terse label for a list of names: "A", "A & B", "A +2". */
-  function joinNames(names: string[]): string {
-    if (names.length === 1) return names[0];
-    if (names.length === 2) return `${names[0]} & ${names[1]}`;
-    return `${names[0]} +${names.length - 1}`;
-  }
-
-  /** Append " 2", " 3"… so a generated name never collides with an existing channel. */
-  function uniqueChannelName(base: string): string {
-    const taken = new Set(filteredViewsStore.views.map((v) => v.name));
-    if (!taken.has(base)) return base;
-    let n = 2;
-    while (taken.has(`${base} ${n}`)) n++;
-    return `${base} ${n}`;
-  }
-
   /** Describe the current filters well enough to recognise, short enough to read. */
   function autoChannelName(): string {
     const parts: string[] = [];
-    const sourceNames = ef.sourceKeys
-      .filter((k) => ef.sourceMode === 'include' || followsInEverything || k !== FOLLOWS_SOURCE_KEY)
-      .map((k) => sourceTitleByKey.get(k))
-      .filter((n): n is string => !!n);
-
-    if (ef.sourceMode === 'include' && sourceNames.length > 0) {
-      parts.push(joinNames(sourceNames));
-    } else if (ef.sourceMode === 'exclude' && sourceNames.length > 0) {
-      parts.push(`Without ${joinNames(sourceNames)}`);
-    } else if (ef.sourceMode === 'exclude') {
-      parts.push(`Everything + ${FOLLOWS_CHANNEL_NAME}`);
-    }
-
+    const sources = sourceFilterName(ef, subscriptionsStore.subscriptions, followsInEverything);
+    if (sources) parts.push(sources);
     if (activeTagFilter.length > 0) parts.push(joinNames([...activeTagFilter]));
-
-    return uniqueChannelName(parts.join(' \u00b7 ') || 'New channel');
+    return uniqueChannelName(
+      parts.join(' \u00b7 ') || 'New channel',
+      filteredViewsStore.views.map((v) => v.name)
+    );
   }
 
   // --- Rename ---
@@ -385,7 +350,7 @@
           title="Edit channel"
         >
           <Icon name="edit" size={16} />
-          <span class="filter-label">Edit Channel</span>
+          <span class="filter-label">Edit channel</span>
         </button>
       {/if}
     </div>

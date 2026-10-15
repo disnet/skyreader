@@ -70,3 +70,14 @@ test('the margin note editor is at least 16px at the smallest article size', asy
   await expect(page.locator('.marginalia-note textarea')).toBeVisible();
   await expectNoZoomingFields(page, 'the margin note editor');
 });
+
+test('the channel editor is at least 16px, rules included', async ({ authedPage: page }) => {
+  await page.goto('/feeds');
+  await page.getByRole('button', { name: 'Switch feed' }).tap({ timeout: 15_000 });
+  await page.locator('.channel-add-btn').first().tap();
+  await expect(page.locator('#channel-name')).toBeVisible();
+  await page.getByRole('button', { name: /Sources that match/ }).tap();
+  await page.getByRole('radio', { name: /Recently Added/ }).check();
+  await expect(page.locator('#recent-days')).toBeVisible();
+  await expectNoZoomingFields(page, 'the channel editor');
+});
