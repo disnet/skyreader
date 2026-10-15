@@ -28,6 +28,7 @@
   import Icon from '$lib/components/Icon.svelte';
   import { savedAssetUrl, savedFileUrl } from '$lib/services/api';
   import { resolveEpubImages } from '$lib/utils/epubContent';
+  import { epubViewMode, setEpubViewMode } from '$lib/utils/epubViewMode';
   import PdfViewer from '$lib/components/feed/PdfViewer.svelte';
   import PopoverMenu from '$lib/components/PopoverMenu.svelte';
   import TagMenu from '$lib/components/feed/TagMenu.svelte';
@@ -57,7 +58,7 @@
   import CollectionMagazine from '$lib/components/feed/CollectionMagazine.svelte';
   import PagedView, { type PagedController } from '$lib/components/feed/PagedView.svelte';
   import { magazineThemeVars } from '$lib/utils/magazineTheme';
-  import { preferences } from '$lib/stores/preferences.svelte';
+  import { preferences, type ReaderViewMode } from '$lib/stores/preferences.svelte';
   import { mobileStore } from '$lib/stores/mediaQuery.svelte';
   import { tick, onMount, onDestroy, untrack } from 'svelte';
 
@@ -627,7 +628,18 @@
   // progress bar are disabled (see the `enabled`/`!paged` guards below) and the
   // Discussion section is dropped for a focused read.
   // The original PDF view scrolls its pages; paging applies to the text.
-  let paged = $derived(preferences.readerViewMode === 'paged' && !showOriginalPdf);
+  // A saved EPUB opens in pages whatever the reader-wide preference, and a switch
+  // made while reading it is remembered for that book alone (utils/epubViewMode).
+  let epubBook = $derived(epubSave ? epubSave.rkey || epubSave.url : null);
+  // Re-read when another book opens; a switch overrides it until then.
+  let epubMode = $derived<ReaderViewMode>(epubBook ? epubViewMode(epubBook) : 'paged');
+  let viewMode = $derived<ReaderViewMode>(epubBook ? epubMode : preferences.readerViewMode);
+  function setViewMode(mode: ReaderViewMode) {
+    if (!epubBook) return preferences.setReaderViewMode(mode);
+    epubMode = mode;
+    setEpubViewMode(epubBook, mode);
+  }
+  let paged = $derived(viewMode === 'paged' && !showOriginalPdf);
   let pagedController = $state<PagedController>();
   let pagedRestoredForKey: string | null = null;
   let pagedSaveTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1090,7 +1102,7 @@
         <button
           class="action-btn"
           class:active={paged}
-          onclick={() => preferences.toggleReaderViewMode()}
+          onclick={() => setViewMode(viewMode === 'paged' ? 'scroll' : 'paged')}
           title={paged ? 'Switch to scroll view' : 'Switch to paged view'}
         >
           <Icon name={paged ? 'align-justify' : 'book-open'} size={16} />
@@ -1241,7 +1253,7 @@
             <div class="toolbar-wrapper">
               <AppearanceToolbar />
             </div>
-            <ReadingModeToggle />
+            <ReadingModeToggle mode={viewMode} onchange={setViewMode} />
           </div>
 
           <div class="style-sheet-section">
