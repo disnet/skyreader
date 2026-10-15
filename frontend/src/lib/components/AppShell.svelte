@@ -19,6 +19,7 @@
   import { savedSearchStore } from '$lib/stores/savedSearch.svelte';
   import { searchStore } from '$lib/stores/search.svelte';
   import { canUseSearch } from '$lib/utils/search';
+  import { openPdfZoom } from '$lib/utils/pdfZoom';
   import { notificationsStore } from '$lib/stores/notifications.svelte';
   import { feedPath, FEEDS_PATH, SAVED_PATH } from '$lib/utils/viewNav';
   import { completeFollowsGrant } from '$lib/utils/followsChannel';
@@ -282,31 +283,44 @@
       condition: () => auth.isInApp,
     });
 
-    // Font size shortcuts (use resulting character from Shift+key)
+    // Font size shortcuts (use resulting character from Shift+key). With a PDF
+    // open in its Original view, they zoom its pages instead.
     keyboardStore.register({
       key: '+',
       shift: true,
-      description: 'Increase font size',
+      description: 'Increase font size / zoom in PDF',
       category: 'Article',
-      action: () => preferences.increaseFontSize(),
+      action: () => {
+        const pdf = openPdfZoom();
+        if (pdf) pdf.step(1);
+        else preferences.increaseFontSize();
+      },
       condition: () => auth.isAuthenticated,
     });
 
     keyboardStore.register({
       key: '_',
       shift: true,
-      description: 'Decrease font size',
+      description: 'Decrease font size / zoom out PDF',
       category: 'Article',
-      action: () => preferences.decreaseFontSize(),
+      action: () => {
+        const pdf = openPdfZoom();
+        if (pdf) pdf.step(-1);
+        else preferences.decreaseFontSize();
+      },
       condition: () => auth.isAuthenticated,
     });
 
     keyboardStore.register({
       key: ')',
       shift: true,
-      description: 'Reset font size',
+      description: 'Reset font size / PDF zoom',
       category: 'Article',
-      action: () => preferences.resetFontSize(),
+      action: () => {
+        const pdf = openPdfZoom();
+        if (pdf) pdf.reset();
+        else preferences.resetFontSize();
+      },
       condition: () => auth.isAuthenticated,
     });
   });

@@ -19,6 +19,7 @@
     type PdfTextModel,
   } from '$lib/utils/pdfTextModel';
   import { resolvePdfLink, type PdfLinkAnnotation, type PdfLinkTarget } from '$lib/utils/pdfLinks';
+  import { claimPdfZoomShortcuts, pdfZoom, setPdfZoom } from '$lib/utils/pdfZoom';
 
   /**
    * A saved PDF as it was printed: every page drawn by PDF.js, with its text
@@ -61,6 +62,8 @@
     oncommit?: (selector: TextQuoteSelector) => void;
     /** A drawn highlight was tapped. `getRect` is where it is now (null once gone). */
     onhighlight?: (id: string, getRect: () => DOMRect | null) => void;
+    /** Remember the zoom under this key, and open at the zoom it was left at. */
+    zoomKey?: string;
   }
 
   let {
@@ -72,6 +75,7 @@
     onselect,
     oncommit,
     onhighlight,
+    zoomKey,
   }: Props = $props();
 
   const highlighting = $derived(Boolean(highlights || onselect));
@@ -87,7 +91,7 @@
 
   // 1 = fit the column's width. Zoom multiplies it.
   const ZOOM_STEPS = [0.5, 0.75, 1, 1.25, 1.5, 2, 3];
-  let zoom = $state(1);
+  let zoom = $state(rememberedZoom());
   let availableWidth = $state(0);
 
   // Pages are capped at a comfortable reading width on a wide screen; fit-width
@@ -753,6 +757,7 @@
       : 0.5;
 
     zoom = next;
+    if (zoomKey) setPdfZoom(zoomKey, next);
     await tick();
 
     if (anchor && across !== null) {
@@ -762,11 +767,19 @@
     if (pages) pages.scrollLeft = sideways * pages.scrollWidth - pages.clientWidth / 2;
   }
 
+  function rememberedZoom(): number {
+    const remembered = zoomKey ? pdfZoom(zoomKey) : 1;
+    return ZOOM_STEPS.includes(remembered) ? remembered : 1;
+  }
+
   function stepZoom(direction: 1 | -1) {
     const i = ZOOM_STEPS.indexOf(zoom);
     const next = ZOOM_STEPS[Math.min(ZOOM_STEPS.length - 1, Math.max(0, i + direction))];
     if (next !== undefined) void setZoom(next);
   }
+
+  // The font-size shortcuts zoom the pages while this view is open.
+  onMount(() => claimPdfZoomShortcuts({ step: stepZoom, reset: () => void setZoom(1) }));
 </script>
 
 <div class="pdf-viewer" bind:this={containerEl}>
