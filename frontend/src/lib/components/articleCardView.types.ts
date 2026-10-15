@@ -238,6 +238,9 @@ export interface ArticleCardViewProps {
   isOpen: boolean;
   highlighted?: boolean;
   isTruncated?: boolean;
+  /** The body shown is a stand-in for a long one still loading: hold the
+   *  clamped preview's height so the card doesn't grow when it lands. */
+  bodyPending?: boolean;
   /** Whether "More" can expand the card — the clamp overflows, or the body was
    *  dropped at ingest and expanding will extract it. */
   canExpand?: boolean;

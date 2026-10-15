@@ -734,6 +734,19 @@
   });
 
   let hasContent = $derived(Boolean(displayContent));
+
+  // Raw HTML length past which a body certainly fills the clamped preview's
+  // 8 lines, even at the widest column.
+  const LONG_BODY_CHARS = 1500;
+  // Showing the summary while a long stored body is on its way (see bodyPending
+  // in ArticleCardView).
+  let bodyPending = $derived(
+    !!article &&
+      !article.content &&
+      !lazyContent &&
+      displayContent === article.summary &&
+      (article.contentLength ?? 0) > LONG_BODY_CHARS
+  );
   let sanitizedContent = $derived(sanitizeHtml(displayContent, itemUrl));
 
   // Pre-resolved date string for the view (so the view imports no utils).
@@ -1204,6 +1217,7 @@
   {isOpen}
   {highlighted}
   {isTruncated}
+  {bodyPending}
   {canExpand}
   {currentlyShared}
   canShare={showShareAction}

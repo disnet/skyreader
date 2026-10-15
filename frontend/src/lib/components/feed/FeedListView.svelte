@@ -20,6 +20,15 @@
   import { followLinkArticle, markFollowLinkRead, openFollowLink } from '$lib/utils/followLinks';
   import type { Article, FollowLink, SocialDocument } from '$lib/types';
   import { getDocumentEffectiveUrl } from '$lib/utils/linkPost';
+  import { countWork } from '$lib/utils/workCounters';
+
+  // An article card's read state. Each card re-evaluates it only when its own
+  // label changes (itemLabels tracks per key), so the dev-build count is how the
+  // responsiveness spec checks that one mark-read touches one card, not all.
+  function cardIsRead(guid: string): boolean {
+    countWork('cardLabels');
+    return itemLabelsStore.isRead(guid);
+  }
 
   interface Props {
     onToggleSave: (article: Article) => void;
@@ -287,7 +296,7 @@
           siteUrl={sub?.siteUrl || sub?.feedUrl}
           feedTitle={sub?.customTitle || sub?.title}
           feedId={sub?.id}
-          isRead={itemLabelsStore.isRead(article.guid)}
+          isRead={cardIsRead(article.guid)}
           isSaved={itemLabelsStore.isSaved(article.guid)}
           isShared={linkblogStore.isShared(article.url)}
           shareNote={linkblogStore.getNote(article.url)}
@@ -371,7 +380,7 @@
           siteUrl={archiveSub.siteUrl || archiveSub.feedUrl}
           feedTitle={archiveSub.customTitle || archiveSub.title}
           feedId={archiveSub.id}
-          isRead={itemLabelsStore.isRead(article.guid)}
+          isRead={cardIsRead(article.guid)}
           isSaved={itemLabelsStore.isSaved(article.guid)}
           isShared={linkblogStore.isShared(article.url)}
           shareNote={linkblogStore.getNote(article.url)}

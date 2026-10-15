@@ -188,6 +188,10 @@ e2e/
   "Broken pipe" lines). `backend-supervisor.sh` restarts it, and `seed.ts` waits for `/api/health`
   before every D1 call, so a crash costs a pause, not the rest of the shard. A failing shard uploads
   wrangler's full debug log as the `wrangler-logs-<shard>` artifact — that's where the crash's cause is.
+- **Responsiveness budgets:** `responsiveness.spec.ts` budgets _work_, not milliseconds — dev-build
+  counters (`frontend/src/lib/utils/workCounters.ts`, read via `window.__skyreaderWork`) check that
+  one mark-read re-checks a few cards rather than the whole list, plus a CLS check on a return
+  visit. A fail there is a reactivity regression, not a slow runner.
 - **Merge queue:** every PR-check workflow also triggers on `merge_group`, and its concurrency group
   is `${{ github.head_ref || github.ref }}` (`head_ref` is empty in the queue). A new check workflow
   needs both, or a required check never reports and the queue stalls.
