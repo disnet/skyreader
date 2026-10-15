@@ -97,13 +97,13 @@ async function switchToPagedView(page: Page) {
 }
 
 /** Seed one long article, open its reader, and switch to paged mode. */
-async function openPagedReader(page: Page, user: TestUser) {
+async function openPagedReader(page: Page, user: TestUser, content = pagedBody()) {
   await seedSavedArticle(user, {
     url: ARTICLE_URL,
     title: ARTICLE_TITLE,
     domain: 'example.com',
     contentType: 'article',
-    content: pagedBody(),
+    content,
     wordCount: 1200,
   });
 
@@ -744,5 +744,42 @@ test.describe('A selection past the selector length cap', () => {
     await expect(authedPage.getByText('Selection too long to highlight')).toBeVisible();
     await expect(authedPage.getByRole('button', { name: 'Save private highlight' })).toHaveCount(0);
     await expect(marks).toHaveCount(0);
+  });
+});
+
+test.describe('Pictures in paged mode', () => {
+  // Paged mode used to load every picture the moment it opened (lazy loading
+  // can't see pages translated out of the viewport). Now pictures load in
+  // reading order, a couple of pages ahead of the reader.
+  test('a picture far ahead waits until the reader nears it', async ({ authedPage, testUser }) => {
+    // A 1×1 PNG, served for every picture so no request leaves the test.
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=',
+      'base64'
+    );
+    const requested: string[] = [];
+    await authedPage.route('https://images.example.test/**', (route) => {
+      requested.push(new URL(route.request().url()).pathname);
+      return route.fulfill({ status: 200, contentType: 'image/png', body: png });
+    });
+
+    const paragraphs = pagedBody().split('</p>').filter(Boolean);
+    const picture = (name: string) =>
+      `<p><img src="https://images.example.test/${name}.png" alt="${name}" width="40" height="40"></p>`;
+    const content = [picture('near'), ...paragraphs.map((p) => `${p}</p>`), picture('far')].join(
+      ''
+    );
+    await openPagedReader(authedPage, testUser, content);
+
+    await expect.poll(() => requested).toContain('/near.png');
+    const total = Number((await pageLabel(authedPage)).match(/of (\d+)$/)?.[1]);
+    expect(total).toBeGreaterThan(5);
+    expect(requested).not.toContain('/far.png');
+
+    // Turn to within reach of the last page; the far picture loads before it.
+    for (let page = 1; page < total - 2; page++) {
+      await authedPage.keyboard.press('ArrowRight');
+    }
+    await expect.poll(() => requested).toContain('/far.png');
   });
 });
