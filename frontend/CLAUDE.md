@@ -288,7 +288,10 @@ book's markup is already the text, so there is no Original view and no `PdfViewe
 pictures arrive as `<img data-epub-src>` (a path in the kept book), which `SavedReader` points at
 `savedAssetUrl` after sanitizing (`utils/epubContent.ts`); it's sanitized with no base URL, so the
 book's own `#epub-c…` links stay hash links, and `handleFootnoteClick` (`utils/footnoteNav.ts`, run by
-the link interception) jumps to them in place, turning the page in paged mode. It shares
+the link interception) jumps to them in place, turning the page in paged mode. A book opens paged
+whatever the reader-wide `readerViewMode`; a switch made while reading it is remembered for that
+book alone (`utils/epubViewMode.ts`, `localStorage['skyreader-epub-view']`, keyed by rkey), so
+`SavedReader`'s toggles write there, not to the preference, for an EPUB. It shares
 the PDF plan flag (`limits.pdfSaves`) and upload limits, with its own size cap
 (`limits.maxEpubUploadBytes`). An unreadable or plan-gated EPUB link fails as `PdfExtractionError`
 with `format: 'epub'`, saved as the `epub` / `epubUpgrade` note (`utils/saveAnywhere.ts`).

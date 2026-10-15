@@ -1,11 +1,21 @@
 <script lang="ts">
   import Icon from '$lib/components/Icon.svelte';
-  import { preferences } from '$lib/stores/preferences.svelte';
+  import { preferences, type ReaderViewMode } from '$lib/stores/preferences.svelte';
 
   // Scroll vs. Kindle-style pages. On desktop this lives in the reader header as
   // a single toggle button; on mobile it sits here, in the style sheet, next to
   // the font and size controls it belongs with — the bar stays down to five.
-  let paged = $derived(preferences.readerViewMode === 'paged');
+  // A host with its own mode for the open item (a saved EPUB remembers its own)
+  // passes it in; otherwise this is the reader-wide preference.
+  let { mode, onchange }: { mode?: ReaderViewMode; onchange?: (mode: ReaderViewMode) => void } =
+    $props();
+
+  let paged = $derived((mode ?? preferences.readerViewMode) === 'paged');
+
+  function choose(next: ReaderViewMode) {
+    if (onchange) onchange(next);
+    else preferences.setReaderViewMode(next);
+  }
 </script>
 
 <div class="mode-toggle" role="group" aria-label="Reading mode">
@@ -13,7 +23,7 @@
     class="mode-btn"
     class:active={!paged}
     aria-pressed={!paged}
-    onclick={() => preferences.setReaderViewMode('scroll')}
+    onclick={() => choose('scroll')}
   >
     <Icon name="align-justify" size={16} />
     <span>Scroll</span>
@@ -22,7 +32,7 @@
     class="mode-btn"
     class:active={paged}
     aria-pressed={paged}
-    onclick={() => preferences.setReaderViewMode('paged')}
+    onclick={() => choose('paged')}
   >
     <Icon name="book-open" size={16} />
     <span>Pages</span>
