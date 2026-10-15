@@ -569,6 +569,12 @@
       myLinkblogStore.load();
     }
 
+    // Before initialize(), not after: it awaits the network refresh, while the
+    // list is already up from the local cache — so j/k and friends did nothing
+    // until a sync finished (seconds, on a slow connection). Each shortcut
+    // checks for items itself.
+    keyboardShortcuts.register();
+
     if (auth.isInApp) {
       // Use the new centralized app initialization (guests included: the guest
       // branch hydrates and refreshes only the reading stores).
@@ -576,7 +582,6 @@
     }
 
     scrollMarkAsRead.init();
-    keyboardShortcuts.register();
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
     lastVisibleTime = Date.now();
