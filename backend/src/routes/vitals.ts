@@ -64,6 +64,10 @@ const ROUTES = new Set([
   '/search',
   '/subscribe',
   '/save',
+  '/pricing',
+  '/supporter',
+  '/feedback',
+  '/auth',
 ]);
 
 export function bucketFor(metric: Metric, value: number): number {
@@ -120,7 +124,10 @@ export async function handleVitals(
 
   let body: unknown;
   try {
-    body = await request.json();
+    // Content-Length is absent on chunked requests, so cap what was actually read.
+    const text = await request.text();
+    if (text.length > MAX_BODY_BYTES) return json({ error: 'Payload too large' }, 413);
+    body = JSON.parse(text);
   } catch {
     return json({ error: 'Invalid JSON' }, 400);
   }

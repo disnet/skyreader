@@ -155,8 +155,9 @@ export async function loadVitals(db: D1Database, now = Date.now()): Promise<Vita
       bucketRows(db, day(now - 13 * DAY), day(now - 6 * DAY)),
     ]);
     return vitalsPanelFrom(thisWeek, lastWeek);
-  } catch {
-    // No table yet: migration 0092 hasn't been applied to this database.
+  } catch (err) {
+    // Only a missing table means migration 0092 hasn't been applied here.
+    if (!/no such table/i.test(String(err))) throw err;
     return { available: false, metrics: [], routes: [] };
   }
 }
