@@ -45,3 +45,27 @@ export function setPdfZoom(pdf: string, zoom: number): void {
     // Private mode or storage full: the zoom lasts while the PDF is open.
   }
 }
+
+/** Zoom controls for the PDF open in the Original view. */
+export interface PdfZoomControls {
+  step(direction: 1 | -1): void;
+  reset(): void;
+}
+
+let openPdf: PdfZoomControls | null = null;
+
+/**
+ * While a PDF is open, the font-size shortcuts (Shift +, Shift -, Shift 0) zoom
+ * it instead, since its pages have no font size to change. Returns a release.
+ */
+export function claimPdfZoomShortcuts(controls: PdfZoomControls): () => void {
+  openPdf = controls;
+  return () => {
+    if (openPdf === controls) openPdf = null;
+  };
+}
+
+/** The open PDF's zoom controls, if one is open. */
+export function openPdfZoom(): PdfZoomControls | null {
+  return openPdf;
+}

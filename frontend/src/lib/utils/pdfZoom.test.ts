@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from 'vitest';
-import { pdfZoom, setPdfZoom } from './pdfZoom';
+import { claimPdfZoomShortcuts, openPdfZoom, pdfZoom, setPdfZoom } from './pdfZoom';
 
 describe('pdfZoom', () => {
   beforeEach(() => localStorage.clear());
@@ -32,5 +32,20 @@ describe('pdfZoom', () => {
     expect(pdfZoom('pdf-0')).toBe(1);
     expect(pdfZoom('pdf-1')).toBe(2);
     expect(pdfZoom('pdf-200')).toBe(2);
+  });
+});
+
+describe('claimPdfZoomShortcuts', () => {
+  it('hands the shortcuts to the open PDF until it lets go', () => {
+    const first = { step: () => {}, reset: () => {} };
+    const second = { step: () => {}, reset: () => {} };
+    expect(openPdfZoom()).toBeNull();
+    const releaseFirst = claimPdfZoomShortcuts(first);
+    const releaseSecond = claimPdfZoomShortcuts(second);
+    // A stale release (the old view unmounting after the new one mounted) is a no-op.
+    releaseFirst();
+    expect(openPdfZoom()).toBe(second);
+    releaseSecond();
+    expect(openPdfZoom()).toBeNull();
   });
 });

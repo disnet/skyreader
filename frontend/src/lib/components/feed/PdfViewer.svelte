@@ -19,7 +19,7 @@
     type PdfTextModel,
   } from '$lib/utils/pdfTextModel';
   import { resolvePdfLink, type PdfLinkAnnotation, type PdfLinkTarget } from '$lib/utils/pdfLinks';
-  import { pdfZoom, setPdfZoom } from '$lib/utils/pdfZoom';
+  import { claimPdfZoomShortcuts, pdfZoom, setPdfZoom } from '$lib/utils/pdfZoom';
 
   /**
    * A saved PDF as it was printed: every page drawn by PDF.js, with its text
@@ -777,6 +777,9 @@
     const next = ZOOM_STEPS[Math.min(ZOOM_STEPS.length - 1, Math.max(0, i + direction))];
     if (next !== undefined) void setZoom(next);
   }
+
+  // The font-size shortcuts zoom the pages while this view is open.
+  onMount(() => claimPdfZoomShortcuts({ step: stepZoom, reset: () => void setZoom(1) }));
 </script>
 
 <div class="pdf-viewer" bind:this={containerEl}>
