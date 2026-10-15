@@ -217,4 +217,16 @@
       transform: rotate(360deg);
     }
   }
+
+  /* The pull itself follows the finger (that's direct manipulation, not
+     motion); what eases on its own is quieted. */
+  @media (prefers-reduced-motion: reduce) {
+    .arrow {
+      transition: none;
+    }
+
+    .spinner {
+      animation-duration: 1.5s;
+    }
+  }
 </style>

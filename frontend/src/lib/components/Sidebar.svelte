@@ -765,7 +765,9 @@
     display: flex;
     flex-direction: column;
     z-index: 50;
-    transition: width 0.2s ease;
+    /* No width transition: the width only changes while the rail is dragged,
+       and the grid column it sits in follows the pointer at once — easing the
+       rail behind it made it rubber-band. */
     overflow-y: auto;
     padding: 0 0.5rem 0.5rem;
   }
