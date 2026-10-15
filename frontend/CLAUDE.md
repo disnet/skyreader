@@ -75,7 +75,9 @@ There is deliberately **no per-feed loading state** to go with it — `feedStatu
 refresh is one archive-wide request, so nothing per-feed ever arrives to settle a per-feed spinner;
 seeding one at boot left it spinning for the life of the tab. Sync progress belongs to the
 app-level indicators (`RefreshProgressBar`, the header ↻, the mobile bottom-bar rail), which key off
-`appManager.isRefreshing`.
+`appManager.isRefreshing`. Loading indicators wait before they show (`utils/delayedShow.svelte.ts`:
+the feed skeleton 150ms, the progress bar 400ms), so a load that beats the delay shows nothing
+rather than a flash; the skeleton covers a network refresh only when nothing local can be shown.
 
 The legacy per-feed `/api/v2/feeds/batch` path (`fetchAllFeedsViaBatch`, with per-subscription
 `feedCursors`) is kept for one release as a fallback: it runs when the timeline 404s and whenever

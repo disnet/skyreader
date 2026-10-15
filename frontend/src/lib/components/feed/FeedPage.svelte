@@ -25,6 +25,7 @@
   import EmptyState from '$lib/components/EmptyState.svelte';
   import LibraryEmptyState from '$lib/components/LibraryEmptyState.svelte';
   import LoadingState from '$lib/components/LoadingState.svelte';
+  import { delayedShow } from '$lib/utils/delayedShow.svelte';
   import WelcomePage from '$lib/components/feed/WelcomePage.svelte';
   import FeedPageHeader from '$lib/components/feed/FeedPageHeader.svelte';
   import FeedListView from '$lib/components/feed/FeedListView.svelte';
@@ -594,6 +595,23 @@
   // an empty published set is not an empty page.
   let hasLinkblogDrafts = $derived(mode === 'linkblog' && shareDraftsStore.list.length > 0);
 
+  // The list is empty because something is still loading. A network refresh
+  // only counts when there's nothing local to show at all (a first sync, or the
+  // shares view, which has no local cache): a view that's empty because it's all
+  // read showed a skeleton for the whole refresh, then an empty state anyway.
+  let wantSkeleton = $derived(
+    (appManager.isHydrating ||
+      (appManager.isRefreshing &&
+        (feedViewStore.viewMode === 'shares' || articlesStore.allArticles.length === 0)) ||
+      (mode === 'linkblog' && myLinkblogStore.loading && !myLinkblogStore.loaded) ||
+      (feedViewStore.showFollowLinks && !followLinksStore.loaded && !followLinksStore.error)) &&
+      feedViewStore.currentItems.length === 0 &&
+      !hasLinkblogDrafts
+  );
+  // Held back briefly: hydrating from IndexedDB usually beats it, and a skeleton
+  // that flashes for a frame reads as a glitch, not as loading.
+  const showSkeleton = delayedShow(() => wantSkeleton, 150);
+
   // Is a `?read=` link waiting to be honoured? The reader stack lives inside the
   // list views, so a surface that swaps its list for an empty state would
   // swallow the link — a shared or bookmarked article landing on a feed-less or
@@ -704,8 +722,10 @@
         onRefresh={handleRefreshWithToast}
         disabled={!syncStore.isOnline || appManager.isRefreshing}
       >
-        {#if (appManager.isHydrating || appManager.isRefreshing || (mode === 'linkblog' && myLinkblogStore.loading && !myLinkblogStore.loaded) || (feedViewStore.showFollowLinks && !followLinksStore.loaded && !followLinksStore.error)) && feedViewStore.currentItems.length === 0 && !hasLinkblogDrafts}
-          <LoadingState />
+        {#if wantSkeleton}
+          {#if showSkeleton.current}
+            <LoadingState />
+          {/if}
         {:else if !isSavedView && feedViewStore.currentItems.length === 0 && !hasLinkblogDrafts && !readerLinkPending}
           {#if mode === 'linkblog'}
             <!-- Linkblog always shows all shares, so there's no "no unread" case. -->

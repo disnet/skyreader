@@ -1,12 +1,18 @@
 <script lang="ts">
   import { appManager } from '$lib/stores/app.svelte';
   import { bottomRail } from '$lib/stores/bottomRail.svelte';
+  import { delayedShow } from '$lib/utils/delayedShow.svelte';
 
   let visible = $state(false);
   let completing = $state(false);
 
+  // Most refreshes (a tab coming back, the poll) finish in a few hundred ms.
+  // Showing the bar for those meant a flash plus a 400ms completion on every
+  // one; only a refresh that's still going after this is worth a bar.
+  const longRefresh = delayedShow(() => appManager.isRefreshing, 400);
+
   $effect(() => {
-    if (appManager.isRefreshing) {
+    if (longRefresh.current) {
       visible = true;
       completing = false;
     } else if (visible) {
