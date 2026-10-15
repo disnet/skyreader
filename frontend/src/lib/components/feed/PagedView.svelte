@@ -18,6 +18,8 @@
     updateDrag: (dx: number) => void;
     endDrag: (dx: number, velocity: number) => void;
     pageOfElement: (el: HTMLElement) => number;
+    /** Resolves once the pictures loaded so far have arrived, or after `maxMs`. */
+    whenImagesSettled: (maxMs: number) => Promise<void>;
     recalc: () => void;
     readonly currentPage: number;
     readonly totalPages: number;
@@ -99,7 +101,7 @@
   }
 
   /**
-   * The page window as it will be once a turn's transform transition settles,
+   * The page window as it will be once a turn's slide settles,
    * in the current (possibly mid-animation) rect frame. Measuring the live
    * viewport instead would describe a page that is still sliding: one frame
    * into a 340ms turn the old page is barely 5% gone, so the bridge would
@@ -455,18 +457,16 @@
     box-sizing: border-box;
     column-fill: auto;
     transform: translateX(0);
-    /* Physical settle: decelerating ease-out so a committed turn or spring-back
-       glides in and eases to rest (like flicking a page). Disabled inline by the
-       paginator while a finger is actively dragging. */
-    transition: transform 0.34s cubic-bezier(0.22, 1, 0.36, 1);
-    /* Deliberately NOT `will-change: transform`. Promoting this element makes
+    /* No CSS transition: the paginator steps each turn's slide itself (and
+       turns instantly under prefers-reduced-motion). A transform transition on
+       this element made Chrome paint and layerize the whole book at the start
+       and end of every turn — see usePagination.
+       Deliberately NOT `will-change: transform` either. Promoting this element makes
        Chrome paint the whole column flow once, into a composited layer whose
        cull rect is only the viewport plus ~4000px — and because a composited
        transform never repaints, every column past that stayed blank forever.
        Long articles simply stopped mid-sentence a few pages in (the rest of the
-       pages rendered empty) while the page count still counted them. The turn
-       stays smooth without it: Chrome composites the transform for the duration
-       of the transition, and a page turn only paints the cull rect. */
+       pages rendered empty) while the page count still counted them. */
   }
 
   /* Exactly over the page window, but not clipped by it. */
@@ -474,12 +474,6 @@
     position: absolute;
     inset: 0;
     pointer-events: none;
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .paged-content {
-      transition: none;
-    }
   }
 
   /* Keep media and unbreakable blocks whole within a column, and never let a tall
