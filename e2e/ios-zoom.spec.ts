@@ -74,7 +74,7 @@ test('the margin note editor is at least 16px at the smallest article size', asy
 test('the channel editor is at least 16px, rules included', async ({ authedPage: page }) => {
   await page.goto('/feeds');
   await page.getByRole('button', { name: 'Switch feed' }).tap({ timeout: 15_000 });
-  await page.locator('.channel-add-btn').first().tap();
+  await page.locator('.feed-switcher').getByRole('button', { name: 'New channel' }).first().tap();
   await expect(page.locator('#channel-name')).toBeVisible();
   await page.getByRole('button', { name: /Sources that match/ }).tap();
   await page.getByRole('radio', { name: /Recently Added/ }).check();

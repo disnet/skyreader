@@ -3,14 +3,14 @@ import type { Page, Response } from '@playwright/test';
 import { seedSubscription, seedFeedItems, cleanupFeedItems } from './seed';
 import type { TestUser } from './seed';
 
-/** Create a channel via a nav row's + button and the modal form. */
+/** Create a channel via a nav group's New channel button and the modal form. */
 async function createChannel(page: Page, name: string, row: 'Feeds' | 'Saved' = 'Feeds') {
-  // Channels live under the Feeds and Saved nav rows. Click the + add button.
-  const navRow = page.locator('.nav-row', {
-    has: page.locator('.nav-label', { hasText: row }),
+  // Channels live under the Feeds and Saved nav groups, each ending in New channel.
+  const navGroup = page.locator('.nav-group', {
+    has: page.locator('.nav-row .nav-label', { hasText: row }),
   });
-  await expect(navRow).toBeVisible({ timeout: 15_000 });
-  await navRow.locator('.row-add-btn').click({ force: true });
+  await expect(navGroup).toBeVisible({ timeout: 15_000 });
+  await navGroup.locator('.new-channel-btn').click();
 
   // Fill the channel name in the modal
   const nameInput = page.locator('#channel-name');
@@ -61,10 +61,10 @@ test.describe('Channels', () => {
     });
     await authedPage.reload();
 
-    const navRow = authedPage.locator('.nav-row', {
-      has: authedPage.locator('.nav-label', { hasText: 'Feeds' }),
+    const navGroup = authedPage.locator('.nav-group', {
+      has: authedPage.locator('.nav-row .nav-label', { hasText: 'Feeds' }),
     });
-    await navRow.locator('.row-add-btn').click({ force: true });
+    await navGroup.locator('.new-channel-btn').click();
 
     // Nothing is picked yet, so there's nothing to make.
     await authedPage.getByRole('button', { name: 'Create channel' }).click();

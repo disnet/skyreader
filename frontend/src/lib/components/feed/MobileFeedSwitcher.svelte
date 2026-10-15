@@ -600,27 +600,7 @@
           </div>
         {/if}
         {#each items as item}
-          {#if item.type === 'view' && (item.id === 'all' || item.id === 'saved') && onCreateChannel}
-            <div class="nav-item-row" class:active={isItemActive(item)}>
-              <button class="nav-item-main" onclick={() => selectItem(item)}>
-                <span class="item-icon"><Icon name={item.icon} size={18} /></span>
-                <span class="item-label">{item.label}</span>
-              </button>
-              <button
-                class="channel-add-btn"
-                onclick={(e) => {
-                  e.stopPropagation();
-                  onCreateChannel(item.id === 'saved' ? 'saved' : 'feed');
-                }}
-                aria-label="New channel"
-              >
-                <Icon name="plus" size={16} />
-              </button>
-              {#if item.count && item.count > 0}
-                <span class="item-count row-count">{item.count}</span>
-              {/if}
-            </div>
-          {:else if item.type === 'filteredView' && onEditChannel}
+          {#if item.type === 'filteredView' && onEditChannel}
             <div class="nav-item-row" class:active={isItemActive(item)}>
               <button class="nav-item-main" onclick={() => selectItem(item)}>
                 <span class="item-icon"><Icon name={item.icon} size={18} /></span>
@@ -679,25 +659,17 @@
             </button>
           {/if}
         {/each}
-        {#if groupId === 'everything' && !searchQuery}
-          <a
-            href="/channels/discover"
-            class="nav-item more-suggestions-link"
-            onclick={() => onclose()}
-          >
-            <span class="item-icon"><Icon name="arrow-right" size={16} /></span>
-            <span class="item-label">More channel ideas</span>
-          </a>
+        {#if groupId === 'everything' && !searchQuery && onCreateChannel}
+          <button class="nav-item new-channel-btn" onclick={() => onCreateChannel('feed')}>
+            <span class="item-icon"><Icon name="plus" size={16} /></span>
+            <span class="item-label">New channel</span>
+          </button>
         {/if}
-        {#if groupId === 'saved' && !searchQuery}
-          <a
-            href="/channels/discover"
-            class="nav-item more-suggestions-link"
-            onclick={() => onclose()}
-          >
-            <span class="item-icon"><Icon name="arrow-right" size={16} /></span>
-            <span class="item-label">More channel ideas</span>
-          </a>
+        {#if groupId === 'saved' && !searchQuery && onCreateChannel}
+          <button class="nav-item new-channel-btn" onclick={() => onCreateChannel('saved')}>
+            <span class="item-icon"><Icon name="plus" size={16} /></span>
+            <span class="item-label">New channel</span>
+          </button>
         {/if}
       </div>
     {/each}
@@ -790,26 +762,6 @@
     .section-toggle:active {
       background: rgba(255, 255, 255, 0.1);
     }
-  }
-
-  .channel-add-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 2rem;
-    height: 2rem;
-    padding: 0;
-    margin-right: 0.5rem;
-    background: none;
-    border: none;
-    border-radius: 6px;
-    color: var(--color-text-secondary);
-    cursor: pointer;
-    flex-shrink: 0;
-  }
-
-  .channel-add-btn:active {
-    background: var(--color-bg-secondary, #f5f5f5);
   }
 
   .nav-item {
@@ -1006,8 +958,7 @@
     --source-accent: #557f89;
   }
 
-  .more-suggestions-link {
-    text-decoration: none;
+  .new-channel-btn {
     color: var(--color-text-secondary);
     font-size: var(--text-sm);
   }
