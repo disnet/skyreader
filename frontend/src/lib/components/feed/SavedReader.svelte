@@ -312,13 +312,19 @@
   // saved store small); pull the full text back from IndexedDB by rkey when the
   // reader opens. Resets and refetches whenever the reader item changes.
   let lazySavedContent = $state<string | null>(null);
+  // Whether that read has answered (with a body or without one). Until then the
+  // reader shows the description, which paged mode must not restore into.
+  let lazySavedSettled = $state(false);
   $effect(() => {
     lazySavedContent = null;
+    lazySavedSettled = false;
     if (readerItem.type !== 'saved' || !readerItem.item.rkey) return;
     const rkey = readerItem.item.rkey;
     let cancelled = false;
     savesStore.getContent(rkey).then((c) => {
-      if (!cancelled) lazySavedContent = c;
+      if (cancelled) return;
+      lazySavedContent = c;
+      lazySavedSettled = true;
     });
     return () => {
       cancelled = true;
@@ -693,14 +699,21 @@
     }, 500);
   }
 
+  // A saved item's body is still being read back: what's shown is its
+  // description, which has paragraphs of its own to restore into by mistake.
+  let savedBodyPending = $derived(
+    readerItem.type === 'saved' && !!readerItem.item.rkey && !lazySavedSettled
+  );
+
   // Restore the saved page once the paginator has measured. Retries on content
   // settle (lazy bodies) until the paragraphs exist, mirroring the scroll reader's
   // 'partial' handling.
+  let pagedRestoringKey: string | null = null;
   $effect(() => {
     void sanitizedContent;
-    if (!paged || !pagedController || !readerBodyEl) return;
+    if (!paged || !pagedController || !readerBodyEl || savedBodyPending) return;
     const key = itemKey;
-    if (pagedRestoredForKey === key) return;
+    if (pagedRestoredForKey === key || pagedRestoringKey === key) return;
     const saved = itemLabelsStore.getReadProgress(key);
     if (!saved || saved.paragraphIndex <= 0) {
       pagedRestoredForKey = key;
@@ -708,17 +721,24 @@
     }
     const timer = setTimeout(() => {
       const paras = detectReaderParagraphs();
-      if (!paras.length) return; // body not loaded yet — retry on next settle
+      const controller = pagedController;
+      if (!paras.length || !controller) return; // body not loaded yet — retry on next settle
       const idx = Math.min(saved.paragraphIndex, paras.length - 1);
-      pagedController?.goToElement(paras[idx], { instant: true });
-      pagedRestoredForKey = key;
+      controller.goToElement(paras[idx], { instant: true });
+      pagedRestoringKey = key;
+      // Stay hidden while the pictures before this page arrive: each one
+      // reflows the book and moves the page, and shown, that reads as the
+      // book flicking between pages before it settles.
+      void controller.whenImagesSettled(1500).then(() => {
+        if (pagedRestoringKey === key) pagedRestoredForKey = key;
+      });
     }, 300);
     return () => clearTimeout(timer);
   });
 
   // Pages stay hidden until that restore lands, so opening a book partway
-  // through doesn't show its cover (page one) and then slide away from it. A
-  // body that never yields paragraphs is shown anyway after a moment.
+  // through doesn't show its cover (page one) and then jump away from it. A
+  // body that never yields paragraphs is shown anyway a moment after it loads.
   let pagedRevealedForKey = $state<string | null>(null);
   let pagedRestorePending = $derived(
     paged &&
@@ -727,9 +747,9 @@
       (itemLabelsStore.getReadProgress(itemKey)?.paragraphIndex ?? 0) > 0
   );
   $effect(() => {
-    if (!pagedRestorePending) return;
+    if (!pagedRestorePending || savedBodyPending) return;
     const key = itemKey;
-    const timer = setTimeout(() => (pagedRevealedForKey = key), 2000);
+    const timer = setTimeout(() => (pagedRevealedForKey = key), 2500);
     return () => clearTimeout(timer);
   });
 

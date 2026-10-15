@@ -6,7 +6,7 @@ import { seedSavedArticle, type TestUser } from './seed';
 // that a *tap* is never a page turn: taps belong to the text (selection, links,
 // highlights). Only a horizontal swipe and the bottom pager turn pages. That needs
 // the real touch event path, so the context has touch and a phone-sized viewport
-// (one column, many pages). Reduced motion turns pages instantly (see PagedView's
+// (one column, many pages). Reduced motion turns pages instantly (see usePagination's
 // prefers-reduced-motion rule), which keeps the coordinate math free of a
 // mid-transition layout race.
 test.use({ hasTouch: true, viewport: { width: 430, height: 860 }, reducedMotion: 'reduce' });
@@ -125,7 +125,7 @@ async function pageLabel(page: Page): Promise<string> {
 }
 
 /**
- * A page turn slides the column with a CSS transition. Coordinates read mid-slide
+ * A page turn slides the column over a few frames. Coordinates read mid-slide
  * describe a layout that no longer exists by the time we tap, so wait for the
  * transform to hold still first.
  */

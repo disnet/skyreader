@@ -82,6 +82,13 @@ export const harnesses: HarnessEntry[] = [
     components: ['SavedReader', 'Marginalia', 'MarginNote', 'HighlightPopover'],
   },
   {
+    slug: 'book',
+    title: 'Long book, paged',
+    description:
+      'The reader over a generated long EPUB, for timing page turns. ?chapters=N sets the length, ?at=P opens at saved paragraph P, ?pictures=1 adds a picture per chapter.',
+    components: ['SavedReader', 'PagedView'],
+  },
+  {
     slug: 'collections',
     title: 'Collection picker',
     description:

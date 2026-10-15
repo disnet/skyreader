@@ -22,6 +22,19 @@ import { IMAGES_AHEAD_PAGES, loadImagesThrough } from '$lib/utils/pagedImages';
 // wide enough to hold two of these plus a gap (~roughly 950px+).
 const IDEAL_COLUMN_PX = 420;
 
+// A turn's slide: ease-out, decelerating to rest like a flicked page.
+const TURN_MS = 340;
+function easeOutQuint(t: number): number {
+  return 1 - Math.pow(1 - t, 5);
+}
+
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+  );
+}
+
 function computeGap(width: number): number {
   return Math.min(56, Math.max(24, Math.round(width * 0.05)));
 }
@@ -67,6 +80,17 @@ export function usePagination(params: PaginationParams) {
   let images: HTMLImageElement[] = [];
   let imagesLoaded = 0;
   let recalcRaf: number | null = null;
+  // Where the flow is drawn (px), and the slide moving it there, if one is
+  // running. The slide is stepped here rather than left to a CSS transition: a
+  // transform transition makes the flow an animating layer, which Chrome paints
+  // whole (an animating transform gets an unbounded cull rect) and re-layerizes
+  // as the turn starts and ends. In a long book that held every turn ~50-80ms
+  // before it began to move. Set frame by frame, the transform stays an ordinary
+  // one, and each frame paints only the page window.
+  let shownX = 0;
+  let slideRaf: number | null = null;
+  let slideFrom = 0;
+  let slideStart = 0;
   const deferredTimers: Array<ReturnType<typeof setTimeout>> = [];
 
   // Load the pictures up to a couple of pages past the one being read. Called
@@ -81,10 +105,46 @@ export function usePagination(params: PaginationParams) {
     );
   }
 
-  function applyTransform() {
+  function restingX() {
+    return -currentPage * pageStride;
+  }
+
+  function drawAt(x: number) {
     const content = params.getContentEl();
     if (!content) return;
-    content.style.transform = `translateX(${-currentPage * pageStride}px)`;
+    shownX = x;
+    content.style.transform = `translateX(${x}px)`;
+  }
+
+  function stopSlide() {
+    if (slideRaf != null) cancelAnimationFrame(slideRaf);
+    slideRaf = null;
+  }
+
+  /** Put the flow at the current page at once. */
+  function settle() {
+    stopSlide();
+    drawAt(restingX());
+  }
+
+  /**
+   * Slide the flow from wherever it's drawn to the current page. The target is
+   * read every frame, so a re-measure mid-slide (a picture arriving) retargets
+   * it rather than cutting it short.
+   */
+  function slide() {
+    if (prefersReducedMotion()) return settle();
+    slideFrom = shownX;
+    slideStart = performance.now();
+    if (slideRaf == null) slideRaf = requestAnimationFrame(stepSlide);
+  }
+
+  function stepSlide(now: number) {
+    slideRaf = null;
+    const t = Math.max(0, Math.min(1, (now - slideStart) / TURN_MS));
+    const target = restingX();
+    drawAt(t >= 1 ? target : slideFrom + (target - slideFrom) * easeOutQuint(t));
+    if (t < 1) slideRaf = requestAnimationFrame(stepSlide);
   }
 
   function measure() {
@@ -113,6 +173,7 @@ export function usePagination(params: PaginationParams) {
     content.style.setProperty('--paged-col-height', `${H}px`);
 
     const colStride = colWidth + gap;
+    const strideChanged = cols * colStride !== pageStride;
     pageStride = cols * colStride;
 
     // scrollWidth = C*colWidth + (C-1)*gap = C*colStride - gap, so total columns
@@ -130,7 +191,11 @@ export function usePagination(params: PaginationParams) {
       currentPage = Math.max(0, Math.min(totalPages - 1, pageOfElement(pendingElement)));
     }
 
-    applyTransform();
+    // A re-measure never slides: a reflow that moves the page (pictures
+    // arriving ahead of a restored position, the font settling) lands at once,
+    // rather than gliding through every page in between. A turn in progress
+    // keeps sliding, toward the re-measured page.
+    if (slideRaf == null || strideChanged) settle();
     loadNearImages();
     params.onPageChange?.(currentPage, totalPages);
   }
@@ -210,7 +275,7 @@ export function usePagination(params: PaginationParams) {
     if (clamped === currentPage) return;
     const direction = clamped - currentPage;
     currentPage = clamped;
-    applyTransform();
+    slide();
     loadNearImages();
     params.onPageChange?.(currentPage, totalPages);
     params.onTurn?.(direction);
@@ -227,16 +292,32 @@ export function usePagination(params: PaginationParams) {
       currentPage = clamped;
       params.onPageChange?.(currentPage, totalPages);
     }
-    if (opts?.instant) {
-      setTransition(false);
-      applyTransform();
-      const content = params.getContentEl();
-      if (content) void content.offsetWidth; // commit the jump before easing returns
-      setTransition(true);
-    } else {
-      applyTransform();
-    }
+    if (opts?.instant) settle();
+    else slide();
     loadNearImages();
+  }
+
+  /**
+   * Resolves once the pictures let load so far have all arrived (or failed),
+   * and the re-measure each one triggers has run — or after `maxMs`, whichever
+   * comes first. A position restored deep in a book loads every picture before
+   * it, and each arrival reflows the pages ahead of it; a host can wait this
+   * out before showing the page, so the reader doesn't watch it jump.
+   */
+  function whenImagesSettled(maxMs: number): Promise<void> {
+    const deadline = performance.now() + maxMs;
+    return new Promise((resolve) => {
+      const check = () => {
+        const pending = images.slice(0, imagesLoaded).some((img) => !img.complete);
+        if (pending && performance.now() < deadline) {
+          deferredTimers.push(setTimeout(check, 50));
+          return;
+        }
+        // Two frames: the measure an arrival scheduled runs in the first.
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      };
+      check();
+    });
   }
 
   function next() {
@@ -257,14 +338,9 @@ export function usePagination(params: PaginationParams) {
   // Rubber-band factor when dragging past the first/last page.
   const OVERSCROLL_DAMP = 0.35;
 
-  function setTransition(on: boolean) {
-    const content = params.getContentEl();
-    if (content) content.style.transition = on ? '' : 'none';
-  }
-
   function startDrag() {
     pendingElement = null; // the reader is turning by hand — stop pinning
-    setTransition(false); // 1:1 with the finger — no easing lag while dragging
+    stopSlide(); // 1:1 with the finger — no easing lag while dragging
   }
 
   function updateDrag(dx: number) {
@@ -274,15 +350,13 @@ export function usePagination(params: PaginationParams) {
     const atEnd = currentPage >= totalPages - 1;
     // Rubber-band the edges so there's nowhere-to-go feedback rather than a dead stop.
     const offset = (atStart && dx > 0) || (atEnd && dx < 0) ? dx * OVERSCROLL_DAMP : dx;
-    content.style.transform = `translateX(${-currentPage * pageStride + offset}px)`;
+    stopSlide();
+    drawAt(restingX() + offset);
   }
 
   function endDrag(dx: number, velocity: number) {
-    const content = params.getContentEl();
-    setTransition(true); // restore the eased transition for the settle animation
-    if (content) void content.offsetWidth; // reflow so the next transform transitions
     if (pageStride <= 0) {
-      applyTransform();
+      settle();
       return;
     }
     const threshold = pageStride * DRAG_COMMIT_FRACTION;
@@ -291,11 +365,11 @@ export function usePagination(params: PaginationParams) {
     else if (dx > threshold || velocity > FLICK_VELOCITY) target = currentPage - 1;
     target = Math.max(0, Math.min(totalPages - 1, target));
     if (target === currentPage) {
-      applyTransform(); // spring back to the current page
+      slide(); // spring back to the current page
     } else {
       const direction = target - currentPage;
       currentPage = target;
-      applyTransform(); // animate to the committed page
+      slide(); // glide on to the committed page
       loadNearImages();
       params.onPageChange?.(currentPage, totalPages);
       params.onTurn?.(direction);
@@ -328,6 +402,7 @@ export function usePagination(params: PaginationParams) {
 
   onDestroy(() => {
     if (recalcRaf != null) cancelAnimationFrame(recalcRaf);
+    stopSlide();
     resizeObserver?.disconnect();
     mutationObserver?.disconnect();
     for (const cleanup of imgCleanups) cleanup();
@@ -342,7 +417,7 @@ export function usePagination(params: PaginationParams) {
       return totalPages;
     },
     // Horizontal distance between two pages, so a caller can reason about where
-    // the flow will sit once a turn's transform transition settles.
+    // the flow will sit once a turn's slide settles.
     get pageStride() {
       return pageStride;
     },
@@ -359,6 +434,7 @@ export function usePagination(params: PaginationParams) {
     updateDrag,
     endDrag,
     pageOfElement,
+    whenImagesSettled,
     recalc: scheduleMeasure,
   };
 }
