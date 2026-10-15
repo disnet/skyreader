@@ -35,6 +35,14 @@ On the free plan, saving a link to a PDF keeps the link, so you can still open i
 
 Uploaded PDFs are private to you. They stay on Skyreader, and aren't added to a Semble or Margin collection when your saves are backed by one.
 
+### Saving an EPUB
+
+EPUBs are a [Supporter](/supporter/) feature too. Save a link to an EPUB, or upload one: open **+ → Save a link**, then **Upload a file**, or drop the book onto that panel. Skyreader keeps the book's text, chapter by chapter, so you can read, highlight, take notes, and search it like anything else you save.
+
+Skyreader keeps the words and pictures, not the publisher's design. The book's own links work: a footnote marker or a chapter's contents takes you to that place in the text. Skyreader keeps the original of every EPUB you save, by link or upload; its pictures are read from it. If your storage is full when you save a book by link, its text still comes through, but its pictures wait until there's room. A book with DRM can't be read. A very long book keeps its first chapters, and says so at the end.
+
+Limits: an EPUB can be up to 30 MB. EPUBs share the PDF allowances: 200 uploads a month, and 2 GB of kept originals between them; removing a saved EPUB frees its space. Like uploaded PDFs, uploaded EPUBs are private to you and stay on Skyreader.
+
 ### When a site won't let Skyreader read it
 
 Some sites refuse automated readers, so Skyreader's servers can't fetch the article even though it opens fine in your browser. The save still goes through: you get the link (and its title, when Skyreader knows it) with a note in place of the text. To get the full text, open the article and save it with the [Chrome](https://chromewebstore.google.com/detail/skyreader/kdefpnnpmajcclfepekgdkcdiklfooed) or [Firefox](https://addons.mozilla.org/firefox/addon/skyreader/) extension, which reads the page you already have open. That replaces the note.
@@ -45,7 +53,7 @@ Some pages load their text only once they're open in a browser, so Skyreader's s
 
 If you use [Semble](https://semble.so) or [Margin](https://margin.at), you can back your Saved list with one of them (**Settings → Library & privacy → Saved articles**). Your Saved list becomes a collection there: edit it in either app, or in any Atmospheric app, and the two stay in sync.
 
-One thing to know before turning it on: **backing publishes your saves publicly**, because Semble and Margin collections are public. Saved newsletters and uploaded PDFs are the exception: they have no web link to share, so they stay private to Skyreader.
+One thing to know before turning it on: **backing publishes your saves publicly**, because Semble and Margin collections are public. Saved newsletters and uploaded PDFs and EPUBs are the exception: they have no web link to share, so they stay private to Skyreader.
 
 ## Highlights
 

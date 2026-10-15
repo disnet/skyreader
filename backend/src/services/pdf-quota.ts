@@ -58,6 +58,7 @@ export async function chargePdfParse(env: Env, did: string, now = Date.now()): P
 export type PdfAccess = 'ok' | 'not_supporter' | 'quota';
 
 export const PDF_SUPPORTER_MESSAGE = 'Reading PDFs in Skyreader is a Supporter feature.';
+export const EPUB_SUPPORTER_MESSAGE = 'Reading EPUBs in Skyreader is a Supporter feature.';
 export const PDF_QUOTA_MESSAGE = "You've saved a lot of PDFs today. Try again tomorrow.";
 
 export async function pdfAccess(env: Env, did: string, now = Date.now()): Promise<PdfAccess> {

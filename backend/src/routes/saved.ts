@@ -21,7 +21,7 @@ import {
 import { hasIntegrationScopes } from './integrations';
 import { normalizeArticleUrl } from '../utils/url-normalize';
 import { chunkArray } from './reading';
-import { deleteSavedFile, storeLinkedPdfForUrl } from './saved-pdf';
+import { deleteSavedFile, storeLinkedOriginalForUrl } from './saved-pdf';
 
 const COLLECTION = 'app.skyreader.feed.saved';
 
@@ -67,9 +67,9 @@ interface CreateSavedBody {
   publishedAt?: string;
   domain?: string;
   wordCount?: number;
-  // 'pdf' when the extraction came from a PDF (the proxy's ExtractedArticle says
+  // 'pdf' or 'epub' when the extraction came from one (the ExtractedArticle says
   // so). Any other value is ignored: a URL save is otherwise a 'webpage'.
-  contentType?: 'pdf';
+  contentType?: 'pdf' | 'epub';
   // When the URL is already saved, upgrade the existing item's content/metadata
   // with this request's fields instead of returning 409. Used by the browser
   // extension, whose live-DOM extraction can see paywalled/JS-rendered content
@@ -115,11 +115,11 @@ export async function handleCreateSaved(
   // Determine source
   const source: string = body.source || (body.fromFeed ? 'feed' : 'url');
 
-  // A PDF saved by link keeps its original, as an upload does, fetched after the
-  // response so the save itself waits on nothing (routes/saved-pdf.ts).
+  // A PDF or EPUB saved by link keeps its original, as an upload does, fetched
+  // after the response so the save itself waits on nothing (routes/saved-pdf.ts).
   const keepPdfOriginal = (response: Response): Response => {
-    if (response.ok && body.contentType === 'pdf' && body.url) {
-      ctx.waitUntil(storeLinkedPdfForUrl(env, session.did, body.url));
+    if (response.ok && fileContentType(body) && body.url) {
+      ctx.waitUntil(storeLinkedOriginalForUrl(env, session.did, body.url));
     }
     return response;
   };
@@ -357,8 +357,8 @@ async function handleContentUpdate(
        word_count = COALESCE(?, word_count),
        published_at = COALESCE(?, published_at),
        content_type = CASE
-         WHEN ? = 'pdf' THEN 'pdf'
-         WHEN ? IS NOT NULL AND content_type = 'pdf' THEN 'webpage'
+         WHEN ? IS NOT NULL THEN ?
+         WHEN ? IS NOT NULL AND content_type IN ('pdf', 'epub') THEN 'webpage'
          ELSE content_type
        END,
        updated_at = ?
@@ -373,9 +373,10 @@ async function handleContentUpdate(
       body.image || null,
       body.wordCount || null,
       publishedAt,
-      // A PDF body re-types the save as 'pdf'. A non-PDF body replacing a PDF's
-      // is a web page again; any other upgrade keeps the type it had.
-      body.contentType === 'pdf' ? 'pdf' : null,
+      // A PDF or EPUB body re-types the save as one. A web page's body replacing
+      // a file's is a web page again; any other upgrade keeps the type it had.
+      fileContentType(body),
+      fileContentType(body),
       body.content || null,
       Date.now(),
       existing.id,
@@ -393,10 +394,15 @@ async function handleContentUpdate(
   );
 }
 
-// The stored type of a URL save. Only 'pdf' is accepted from the client; the
-// field is otherwise untrusted input and everything else is a web page.
-function urlSaveContentType(body: CreateSavedBody): 'pdf' | 'webpage' {
-  return body.contentType === 'pdf' ? 'pdf' : 'webpage';
+// The file type a save's body came from, when it came from one. Only 'pdf' and
+// 'epub' are accepted from the client; the field is otherwise untrusted input.
+function fileContentType(body: CreateSavedBody): 'pdf' | 'epub' | null {
+  return body.contentType === 'pdf' || body.contentType === 'epub' ? body.contentType : null;
+}
+
+// The stored type of a URL save: a file's type, else a web page.
+function urlSaveContentType(body: CreateSavedBody): 'pdf' | 'epub' | 'webpage' {
+  return fileContentType(body) ?? 'webpage';
 }
 
 async function handleUrlSave(

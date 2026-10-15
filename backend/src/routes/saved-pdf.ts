@@ -3,20 +3,35 @@ import { hasRequiredScopes, insufficientScopesResponse } from './auth';
 import { isValidRkey, invalidRkeyResponse } from '../utils/validation';
 import { getUserTierLimits } from '../services/user-tier';
 import {
+  EPUB_SUPPORTER_MESSAGE,
   PDF_QUOTA_MESSAGE,
   PDF_SUPPORTER_MESSAGE,
   chargePdfParse,
   hasPdfAllowance,
 } from '../services/pdf-quota';
 import { PdfParseError, parsePdf, pdfExtractorConfigured } from '../services/pdf-extractor';
+import {
+  EpubError,
+  epubImageType,
+  looksLikeZip,
+  parseEpub,
+  readStoredEpubEntry,
+} from '../services/epub';
 import { readCapped } from './feedback';
+import { sha256Hex, stagedOriginalKey } from '../services/linked-originals';
 import { log } from '../utils/logger';
 
 /**
- * Uploaded PDFs, and the originals of every saved PDF (Supporter).
+ * Uploaded PDFs and EPUBs, and the originals of every saved PDF (Supporter).
  *
- *   POST /api/saved/pdf?rkey=<tid>&name=<filename>   body: the PDF's bytes
- *   GET  /api/saved/<rkey>/file                      the original, to its owner
+ *   POST /api/saved/pdf?rkey=<tid>&name=<filename>    body: the PDF's bytes
+ *   POST /api/saved/epub?rkey=<tid>&name=<filename>   body: the EPUB's bytes
+ *   GET  /api/saved/<rkey>/file                       the original, to its owner
+ *
+ * An EPUB upload works the same way, except that the book is read here
+ * (services/epub.ts) rather than by the extractor, so it spends no daily parse
+ * allowance; it saves with content_type 'epub'. It shares the PDF limits below:
+ * the monthly upload count and the stored bytes are one budget for both.
  *
  * An upload becomes an ordinary save: a saved_articles row with source 'upload',
  * content_type 'pdf', no URL, and the PDF's text reflowed into reader HTML by the
@@ -49,8 +64,8 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
-export function savedFileKey(did: string, rkey: string): string {
-  return `pdf/${did}/${rkey}.pdf`;
+export function savedFileKey(did: string, rkey: string, kind: UploadKind = 'pdf'): string {
+  return `${kind}/${did}/${rkey}.${kind}`;
 }
 
 /** A display filename: the last path segment, without control characters, capped. */
@@ -65,11 +80,11 @@ export function cleanFilename(raw: string | null): string | null {
   return name || null;
 }
 
-/** The title for an upload whose PDF names none: its filename, less the extension. */
+/** The title for an upload whose file names none: its filename, less the extension. */
 export function titleFromFilename(name: string | null): string | null {
   if (!name) return null;
   const stem = name
-    .replace(/\.pdf$/i, '')
+    .replace(/\.(pdf|epub)$/i, '')
     .replace(/[_]+/g, ' ')
     .trim();
   return stem || null;
@@ -101,11 +116,6 @@ function concatChunks(chunks: Uint8Array[], total: number): ArrayBuffer {
   return bytes.buffer;
 }
 
-async function sha256Hex(bytes: ArrayBuffer): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', bytes);
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
-}
-
 function monthStart(now: Date): number {
   return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
 }
@@ -114,8 +124,93 @@ function nextMonth(now: Date): string {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString();
 }
 
+/** The two kinds of file a reader can upload; each is a save's content_type. */
+export type UploadKind = 'pdf' | 'epub';
+
+const MIME_TYPES: Record<UploadKind, string> = {
+  pdf: 'application/pdf',
+  epub: 'application/epub+zip',
+};
+
+/** What an upload's file reflowed to, whichever parser read it. */
+interface ParsedUpload {
+  title: string | null;
+  author: string | null;
+  description: string | null;
+  content: string | null;
+  published: string | null;
+  wordCount: number;
+  /** Reported back: pages for a PDF, chapters for an EPUB. */
+  extent: Record<string, number>;
+}
+
+type ParseOutcome = ParsedUpload | Response;
+
+// The pdf-extractor Worker reads a PDF, and the reader's daily allowance pays.
+async function parsePdfUpload(env: Env, did: string, bytes: ArrayBuffer): Promise<ParseOutcome> {
+  if (!(await hasPdfAllowance(env, did))) {
+    return json({ error: 'pdf_daily_limit_reached', message: PDF_QUOTA_MESSAGE }, 403);
+  }
+  let pdf;
+  try {
+    pdf = await parsePdf(env, bytes);
+  } catch (err) {
+    if (!(err instanceof PdfParseError)) throw err;
+    if (err.charged) await chargePdfParse(env, did);
+    log.warn('pdf_upload_parse_failed', { message: err.message, size: bytes.byteLength });
+    return json({ error: 'pdf_unreadable', message: err.message }, err.userFacing ? 422 : 502);
+  }
+  await chargePdfParse(env, did);
+  // A scan with no text layer reflows to nothing: there would be nothing to
+  // read or highlight, so it isn't kept.
+  if (!pdf.content || pdf.wordCount === 0) {
+    return json(
+      {
+        error: 'pdf_unreadable',
+        message: 'This PDF has no text Skyreader can read. It may be scanned pages.',
+      },
+      422
+    );
+  }
+  return { ...pdf, extent: { pageCount: pdf.pageCount, pagesKept: pdf.pagesKept } };
+}
+
+// An EPUB is already marked-up text, read here (services/epub.ts): no extractor
+// call, so no daily allowance to spend.
+async function parseEpubUpload(bytes: ArrayBuffer): Promise<ParseOutcome> {
+  let book;
+  try {
+    book = await parseEpub(bytes);
+  } catch (err) {
+    if (!(err instanceof EpubError)) throw err;
+    log.warn('epub_upload_parse_failed', { message: err.message, size: bytes.byteLength });
+    return json({ error: 'epub_unreadable', message: err.message }, 422);
+  }
+  if (!book.content || book.wordCount === 0) {
+    return json(
+      { error: 'epub_unreadable', message: 'This EPUB has no text Skyreader can read.' },
+      422
+    );
+  }
+  return {
+    ...book,
+    extent: { chapterCount: book.chapterCount, chaptersKept: book.chaptersKept },
+  };
+}
+
+const KIND_NAMES: Record<UploadKind, string> = { pdf: 'PDF', epub: 'EPUB' };
+
 // POST /api/saved/pdf
-export async function handleUploadPdf(request: Request, env: Env, session: Session) {
+export function handleUploadPdf(request: Request, env: Env, session: Session) {
+  return handleUpload(request, env, session, 'pdf');
+}
+
+// POST /api/saved/epub
+export function handleUploadEpub(request: Request, env: Env, session: Session) {
+  return handleUpload(request, env, session, 'epub');
+}
+
+async function handleUpload(request: Request, env: Env, session: Session, kind: UploadKind) {
   if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
   if (!hasRequiredScopes(session.grantedScopes)) return insufficientScopesResponse();
 
@@ -123,21 +218,28 @@ export async function handleUploadPdf(request: Request, env: Env, session: Sessi
   const rkey = url.searchParams.get('rkey');
   if (!rkey || !isValidRkey(rkey)) return invalidRkeyResponse();
   const filename = cleanFilename(url.searchParams.get('name'));
+  const kindName = KIND_NAMES[kind];
 
   const limits = await getUserTierLimits(env, session.did);
   if (!limits.pdfSaves) {
-    return json({ error: 'pdf_upgrade_required', message: PDF_SUPPORTER_MESSAGE }, 403);
+    return json(
+      {
+        error: 'pdf_upgrade_required',
+        message: kind === 'pdf' ? PDF_SUPPORTER_MESSAGE : EPUB_SUPPORTER_MESSAGE,
+      },
+      403
+    );
   }
-  if (!pdfExtractorConfigured(env) || !env.SAVED_FILES) {
-    return json({ error: 'Uploading PDFs is not set up on this server' }, 503);
+  if ((kind === 'pdf' && !pdfExtractorConfigured(env)) || !env.SAVED_FILES) {
+    return json({ error: `Uploading ${kindName}s is not set up on this server` }, 503);
   }
 
-  const maxBytes = limits.maxPdfUploadBytes;
+  const maxBytes = kind === 'pdf' ? limits.maxPdfUploadBytes : limits.maxEpubUploadBytes;
   const tooLarge = () =>
     json(
       {
         error: 'pdf_too_large',
-        message: `PDFs up to ${Math.round(maxBytes / (1024 * 1024))} MB can be uploaded.`,
+        message: `${kindName}s up to ${Math.round(maxBytes / (1024 * 1024))} MB can be uploaded.`,
         limit: maxBytes,
       },
       413
@@ -149,8 +251,13 @@ export async function handleUploadPdf(request: Request, env: Env, session: Sessi
   const bytes = await readCapped(request.body, maxBytes);
   if (bytes === null) return tooLarge();
   if (bytes.byteLength === 0) return json({ error: 'Empty file' }, 400);
-  if (!looksLikePdf(bytes)) {
+  if (kind === 'pdf' && !looksLikePdf(bytes)) {
     return json({ error: 'not_a_pdf', message: "That file isn't a PDF." }, 415);
+  }
+  // Any zip gets as far as the parser, which knows an EPUB by its package
+  // document; plenty of tools don't store the `mimetype` entry first.
+  if (kind === 'epub' && !looksLikeZip(new Uint8Array(bytes))) {
+    return json({ error: 'not_an_epub', message: "That file isn't an EPUB." }, 415);
   }
 
   const sha256 = await sha256Hex(bytes);
@@ -166,7 +273,7 @@ export async function handleUploadPdf(request: Request, env: Env, session: Sessi
       rkey
     ),
     // Stored bytes count every kept original; the monthly count, uploads only
-    // (a PDF saved by link counts as a URL save).
+    // (a PDF saved by link counts as a URL save). PDFs and EPUBs share both.
     env.DB.prepare(
       `SELECT COALESCE(SUM(f.size), 0) AS stored,
               COALESCE(SUM(CASE WHEN f.created_at >= ? AND s.source = 'upload' THEN 1 ELSE 0 END), 0) AS this_month
@@ -180,7 +287,7 @@ export async function handleUploadPdf(request: Request, env: Env, session: Sessi
   const dupeRkey = (dupe.results[0] as { rkey: string } | undefined)?.rkey;
   if (dupeRkey) {
     return json(
-      { error: 'already_saved', message: 'This PDF is already saved.', rkey: dupeRkey },
+      { error: 'already_saved', message: `This ${kindName} is already saved.`, rkey: dupeRkey },
       409
     );
   }
@@ -191,7 +298,7 @@ export async function handleUploadPdf(request: Request, env: Env, session: Sessi
     return json(
       {
         error: 'pdf_upload_limit_reached',
-        message: `You've uploaded ${limits.maxPdfUploadsPerMonth} PDFs this month.`,
+        message: `You've uploaded ${limits.maxPdfUploadsPerMonth} files this month.`,
         limit: limits.maxPdfUploadsPerMonth,
         resetsAt: nextMonth(now),
       },
@@ -202,74 +309,58 @@ export async function handleUploadPdf(request: Request, env: Env, session: Sessi
     return json(
       {
         error: 'pdf_storage_full',
-        message: 'Your saved PDFs are using all of your storage. Removing saved PDFs frees space.',
+        message:
+          'Your saved PDFs and EPUBs are using all of your storage. Removing some frees space.',
         limit: limits.maxPdfStorageBytes,
         used: stored,
       },
       403
     );
   }
-  if (!(await hasPdfAllowance(env, session.did))) {
-    return json({ error: 'pdf_daily_limit_reached', message: PDF_QUOTA_MESSAGE }, 403);
-  }
 
-  let pdf;
-  try {
-    pdf = await parsePdf(env, bytes);
-  } catch (err) {
-    if (!(err instanceof PdfParseError)) throw err;
-    if (err.charged) await chargePdfParse(env, session.did);
-    log.warn('pdf_upload_parse_failed', { message: err.message, size: bytes.byteLength });
-    return json({ error: 'pdf_unreadable', message: err.message }, err.userFacing ? 422 : 502);
-  }
-  await chargePdfParse(env, session.did);
+  const parsed =
+    kind === 'pdf' ? await parsePdfUpload(env, session.did, bytes) : await parseEpubUpload(bytes);
+  if (parsed instanceof Response) return parsed;
 
-  // A scan with no text layer reflows to nothing: there would be nothing to
-  // read or highlight, so it isn't kept.
-  if (!pdf.content || pdf.wordCount === 0) {
-    return json(
-      {
-        error: 'pdf_unreadable',
-        message: 'This PDF has no text Skyreader can read. It may be scanned pages.',
-      },
-      422
-    );
-  }
-
-  const title = pdf.title || titleFromFilename(filename) || 'Untitled PDF';
-  const publishedMs = pdf.published ? Date.parse(pdf.published) : NaN;
+  const title =
+    parsed.title ||
+    titleFromFilename(filename) ||
+    (kind === 'pdf' ? 'Untitled PDF' : 'Untitled book');
+  const publishedMs = parsed.published ? Date.parse(parsed.published) : NaN;
   const publishedAt = Number.isFinite(publishedMs) ? publishedMs : null;
   const savedAt = Date.now();
   const recordUri = `at://${session.did}/${COLLECTION}/${rkey}`;
-  const r2Key = savedFileKey(session.did, rkey);
+  const r2Key = savedFileKey(session.did, rkey, kind);
+  const mimeType = MIME_TYPES[kind];
 
   // The file first: a row pointing at a missing file is worse than a stray file.
   await env.SAVED_FILES.put(r2Key, bytes, {
-    httpMetadata: { contentType: 'application/pdf' },
+    httpMetadata: { contentType: mimeType },
     customMetadata: { did: session.did, rkey, ...(filename ? { filename } : {}) },
   });
   try {
     await env.DB.batch([
       env.DB.prepare(
         `INSERT INTO saved_articles (user_did, rkey, record_uri, url, title, author, description, content, content_type, domain, image, word_count, published_at, saved_at, created_at, source)
-         VALUES (?, ?, ?, '', ?, ?, ?, ?, 'pdf', NULL, NULL, ?, ?, ?, ?, 'upload')`
+         VALUES (?, ?, ?, '', ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, 'upload')`
       ).bind(
         session.did,
         rkey,
         recordUri,
         title,
-        pdf.author,
-        pdf.description,
-        pdf.content,
-        pdf.wordCount,
+        parsed.author,
+        parsed.description,
+        parsed.content,
+        kind,
+        parsed.wordCount,
         publishedAt,
         savedAt,
         savedAt
       ),
       env.DB.prepare(
         `INSERT INTO saved_files (user_did, rkey, r2_key, filename, mime_type, size, sha256, created_at)
-         VALUES (?, ?, ?, ?, 'application/pdf', ?, ?, ?)`
-      ).bind(session.did, rkey, r2Key, filename, bytes.byteLength, sha256, savedAt),
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(session.did, rkey, r2Key, filename, mimeType, bytes.byteLength, sha256, savedAt),
     ]);
   } catch (err) {
     // r2Key is derived from (did, rkey): if a concurrent upload with the same
@@ -284,11 +375,10 @@ export async function handleUploadPdf(request: Request, env: Env, session: Sessi
     throw err;
   }
 
-  log.info('pdf_uploaded', {
+  log.info(`${kind}_uploaded`, {
     size: bytes.byteLength,
-    pages: pdf.pageCount,
-    pagesKept: pdf.pagesKept,
-    wordCount: pdf.wordCount,
+    wordCount: parsed.wordCount,
+    ...parsed.extent,
   });
 
   return json(
@@ -297,19 +387,19 @@ export async function handleUploadPdf(request: Request, env: Env, session: Sessi
       uri: recordUri,
       url: '',
       title,
-      author: pdf.author,
-      description: pdf.description,
-      content: pdf.content,
-      contentType: 'pdf',
+      author: parsed.author,
+      description: parsed.description,
+      content: parsed.content,
+      contentType: kind,
       domain: null,
       image: null,
-      wordCount: pdf.wordCount,
+      wordCount: parsed.wordCount,
       publishedAt: publishedAt ? new Date(publishedAt).toISOString() : null,
       savedAt: new Date(savedAt).toISOString(),
       source: 'upload',
-      // Less than pageCount when a cap (300 pages, 1 MB of text) cut the reflow short.
-      pageCount: pdf.pageCount,
-      pagesKept: pdf.pagesKept,
+      // pageCount/pagesKept for a PDF, chapterCount/chaptersKept for an EPUB:
+      // the kept count is less when a cap (1 MB of text) cut the reflow short.
+      ...parsed.extent,
     },
     201
   );
@@ -321,9 +411,14 @@ export async function handleUploadPdf(request: Request, env: Env, session: Sessi
 const MAX_RELAYED_PDF_BYTES = 30 * 1024 * 1024;
 const RELAY_TIMEOUT_MS = 20_000;
 
-function pdfResponse(body: BodyInit, filename: string, size?: number): Response {
+function fileResponse(
+  body: BodyInit,
+  filename: string,
+  size?: number,
+  contentType = 'application/pdf'
+): Response {
   const headers: Record<string, string> = {
-    'Content-Type': 'application/pdf',
+    'Content-Type': contentType,
     // RFC 5987, so a non-ASCII filename survives; the plain one is the fallback.
     'Content-Disposition': `inline; filename="${filename.replace(/[^\x20-\x7e]|"/g, '_')}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
     'Cache-Control': 'private, max-age=3600',
@@ -338,10 +433,10 @@ function pdfResponse(body: BodyInit, filename: string, size?: number): Response 
  * public internet (global_fetch_strictly_public), and the URL is one this reader
  * saved.
  */
-function fetchFromSite(url: string): Promise<Response> {
+function fetchFromSite(url: string, kind: UploadKind = 'pdf'): Promise<Response> {
   return fetch(url, {
     headers: {
-      Accept: 'application/pdf,*/*;q=0.8',
+      Accept: `${MIME_TYPES[kind]},*/*;q=0.8`,
       'User-Agent': 'Mozilla/5.0 (compatible; Skyreader/1.0; +https://skyreader.app)',
     },
     redirect: 'follow',
@@ -349,45 +444,47 @@ function fetchFromSite(url: string): Promise<Response> {
   });
 }
 
-// The filename a PDF saved by link is served under: its URL's last segment.
-function linkedPdfFilename(url: string): string {
+// The filename a file saved by link is served under: its URL's last segment.
+function linkedFilename(url: string, kind: UploadKind = 'pdf'): string {
   let path = new URL(url).pathname;
   try {
     path = decodeURIComponent(path);
   } catch {
     // A malformed escape: name it by the raw path.
   }
-  const name = cleanFilename(path) || 'document.pdf';
-  return /\.pdf$/i.test(name) ? name : `${name}.pdf`;
+  const name = cleanFilename(path) || (kind === 'pdf' ? 'document.pdf' : 'book.epub');
+  return name.toLowerCase().endsWith(`.${kind}`) ? name : `${name}.${kind}`;
 }
 
-interface LinkedPdfSave {
+interface LinkedSave {
   rkey: string;
   url: string;
+  kind: UploadKind;
 }
 
-function isLinkedPdf(
+/** A PDF or EPUB saved by link (not uploaded): which, or null for anything else. */
+function linkedKind(
   row: { url: string; content_type: string | null; source: string | null } | null
-): boolean {
-  return Boolean(
-    row && row.content_type === 'pdf' && row.source !== 'upload' && /^https?:\/\//i.test(row.url)
-  );
+): UploadKind | null {
+  if (!row || row.source === 'upload' || !/^https?:\/\//i.test(row.url)) return null;
+  return row.content_type === 'pdf' || row.content_type === 'epub' ? row.content_type : null;
 }
 
-export type StoreLinkedPdfResult = 'stored' | 'storage_full' | 'unavailable';
+export type StoreLinkedResult = 'stored' | 'storage_full' | 'unavailable';
 
 /**
- * Keep the original of a PDF saved by link in R2, as an upload's is kept. Run
- * after the save (under waitUntil), and again on first open for a save that
- * predates this or whose fetch failed then. Same plan limits as an upload: the
- * file size (the extractor's cap, so any PDF that was read fits) and the stored
- * bytes. It isn't an upload, so the monthly upload count doesn't apply.
+ * Keep the original of a PDF or EPUB saved by link in R2, as an upload's is
+ * kept: a PDF's for the Original view, an EPUB's for its pictures. Run after
+ * the save (under waitUntil), and again on first open for a save that predates
+ * this or whose fetch failed then. Same plan limits as an upload: the file size
+ * (the parse's cap, so any file that was read fits) and the stored bytes. It
+ * isn't an upload, so the monthly upload count doesn't apply.
  */
-async function storeLinkedPdf(
+async function storeLinkedOriginal(
   env: Env,
   did: string,
-  save: LinkedPdfSave
-): Promise<StoreLinkedPdfResult> {
+  save: LinkedSave
+): Promise<StoreLinkedResult> {
   if (!env.SAVED_FILES) return 'unavailable';
   const limits = await getUserTierLimits(env, did);
   if (!limits.pdfSaves) return 'unavailable';
@@ -405,9 +502,14 @@ async function storeLinkedPdf(
   const { stored } = usage.results[0] as { stored: number };
   if (stored >= limits.maxPdfStorageBytes) return 'storage_full';
 
+  if (save.kind === 'epub') {
+    const adopted = await adoptStagedOriginal(env, did, save, stored, limits.maxPdfStorageBytes);
+    if (adopted) return adopted;
+  }
+
   let upstream: Response;
   try {
-    upstream = await fetchFromSite(save.url);
+    upstream = await fetchFromSite(save.url, save.kind);
   } catch {
     return 'unavailable';
   }
@@ -415,20 +517,47 @@ async function storeLinkedPdf(
     await upstream.body?.cancel().catch(() => {});
     return 'unavailable';
   }
-  const bytes = await readCapped(upstream.body, limits.maxPdfUploadBytes).catch(() => null);
-  if (!bytes || bytes.byteLength === 0 || !looksLikePdf(bytes)) return 'unavailable';
+  const maxBytes = save.kind === 'pdf' ? limits.maxPdfUploadBytes : limits.maxEpubUploadBytes;
+  const bytes = await readCapped(upstream.body, maxBytes).catch(() => null);
+  const looksRight =
+    save.kind === 'pdf'
+      ? (b: ArrayBuffer) => looksLikePdf(b)
+      : (b: ArrayBuffer) => looksLikeZip(new Uint8Array(b));
+  if (!bytes || bytes.byteLength === 0 || !looksRight(bytes)) return 'unavailable';
   if (stored + bytes.byteLength > limits.maxPdfStorageBytes) return 'storage_full';
 
-  const r2Key = savedFileKey(did, save.rkey);
-  const filename = linkedPdfFilename(save.url);
+  const r2Key = savedFileKey(did, save.rkey, save.kind);
   await env.SAVED_FILES.put(r2Key, bytes, {
-    httpMetadata: { contentType: 'application/pdf' },
-    customMetadata: { did, rkey: save.rkey, filename },
+    httpMetadata: { contentType: MIME_TYPES[save.kind] },
+    customMetadata: { did, rkey: save.rkey, filename: linkedFilename(save.url, save.kind) },
   });
+  const result = await recordLinkedOriginal(env, did, save, {
+    r2Key,
+    size: bytes.byteLength,
+    sha256: await sha256Hex(bytes),
+  });
+  if (result === 'stored')
+    log.info(`${save.kind}_link_original_stored`, { size: bytes.byteLength });
+  return result;
+}
+
+/**
+ * The saved_files row for a linked save's kept original, once its object is in
+ * R2 at `r2Key`. Undone (the object deleted) when the save went away meanwhile.
+ */
+async function recordLinkedOriginal(
+  env: Env,
+  did: string,
+  save: LinkedSave,
+  file: { r2Key: string; size: number; sha256: string }
+): Promise<StoreLinkedResult> {
+  const { r2Key } = file;
+  const filename = linkedFilename(save.url, save.kind);
+  const mimeType = MIME_TYPES[save.kind];
   // OR IGNORE: two opens racing to store the same save write the same key.
   const inserted = await env.DB.prepare(
     `INSERT OR IGNORE INTO saved_files (user_did, rkey, r2_key, filename, mime_type, size, sha256, created_at)
-     SELECT ?, ?, ?, ?, 'application/pdf', ?, ?, ?
+     SELECT ?, ?, ?, ?, ?, ?, ?, ?
      WHERE EXISTS (SELECT 1 FROM saved_articles WHERE user_did = ? AND rkey = ?)`
   )
     .bind(
@@ -436,8 +565,9 @@ async function storeLinkedPdf(
       save.rkey,
       r2Key,
       filename,
-      bytes.byteLength,
-      await sha256Hex(bytes),
+      mimeType,
+      file.size,
+      file.sha256,
       Date.now(),
       did,
       save.rkey
@@ -451,47 +581,160 @@ async function storeLinkedPdf(
     )
       .bind(did, save.rkey)
       .first();
-    if (!owned) await env.SAVED_FILES.delete(r2Key).catch(() => {});
+    if (!owned) await env.SAVED_FILES?.delete(r2Key).catch(() => {});
     return owned ? 'stored' : 'unavailable';
   }
-  log.info('pdf_link_original_stored', { size: bytes.byteLength });
   return 'stored';
 }
 
 /**
- * After a PDF is saved by link: keep its original. Looked up by URL, since a
- * re-save or a backed save lands on whichever row already holds the URL.
+ * A linked book already read by /api/extract was staged in R2 then
+ * (services/linked-originals.ts): move it into place rather than download it a
+ * second time. Null when nothing is staged (the save fetches the book itself).
  */
-export async function storeLinkedPdfForUrl(env: Env, did: string, url: string): Promise<void> {
+async function adoptStagedOriginal(
+  env: Env,
+  did: string,
+  save: LinkedSave,
+  stored: number,
+  maxStorageBytes: number
+): Promise<StoreLinkedResult | null> {
+  const bucket = env.SAVED_FILES;
+  if (!bucket) return null;
+  const stagedKey = await stagedOriginalKey(did, save.url);
+  const staged = await bucket.get(stagedKey);
+  if (!staged) return null;
+  if (stored + staged.size > maxStorageBytes) {
+    await staged.body.cancel().catch(() => {});
+    return 'storage_full';
+  }
+  const sha256 = staged.customMetadata?.sha256;
+  if (!sha256) {
+    await staged.body.cancel().catch(() => {});
+    return null;
+  }
+  // R2 has no copy: stream it across (a fixed length, as put requires).
+  const r2Key = savedFileKey(did, save.rkey, save.kind);
+  await bucket.put(r2Key, staged.body.pipeThrough(new FixedLengthStream(staged.size)), {
+    httpMetadata: { contentType: MIME_TYPES[save.kind] },
+    customMetadata: { did, rkey: save.rkey, filename: linkedFilename(save.url, save.kind) },
+  });
+  await bucket.delete(stagedKey).catch(() => {});
+  const result = await recordLinkedOriginal(env, did, save, { r2Key, size: staged.size, sha256 });
+  if (result === 'stored') log.info('epub_link_original_adopted', { size: staged.size });
+  return result;
+}
+
+// Opens in this isolate that are already keeping a save's original.
+const keeping = new Map<string, Promise<StoreLinkedResult>>();
+// A minute is long enough for one fetch of the book (RELAY_TIMEOUT_MS).
+const KEEP_CLAIM_WINDOW_MS = 60_000;
+const KEEP_WAIT_MS = 25_000;
+const KEEP_POLL_MS = 1_000;
+
+/**
+ * storeLinkedOriginal for a book's pictures, which all ask at once: one fetch
+ * per save, not one per picture. Requests in this isolate share the attempt;
+ * across isolates a D1 claim (one a minute per save, in rate_limits, swept with
+ * it) picks the one that fetches, and the rest wait for its outcome: the kept
+ * row, or the failure it records. A failed attempt isn't retried until the claim
+ * window turns over, so a site that's gone costs one fetch a minute, not one
+ * per picture per open.
+ */
+async function keepLinkedOriginalOnce(
+  env: Env,
+  did: string,
+  save: LinkedSave
+): Promise<StoreLinkedResult> {
+  const id = `${did} ${save.rkey}`;
+  const pending = keeping.get(id);
+  if (pending) return pending;
+  const attempt = (async (): Promise<StoreLinkedResult> => {
+    const windowStart = Math.floor(Date.now() / KEEP_CLAIM_WINDOW_MS) * KEEP_CLAIM_WINDOW_MS;
+    const claimKey = `epub-original:${save.rkey}`;
+    // The outcome of a failed attempt this window: 1 unavailable, 2 storage full.
+    const outcomeKey = `epub-original-failed:${save.rkey}`;
+    const claim = await env.DB.prepare(
+      `INSERT INTO rate_limits (did, endpoint, window_start, count) VALUES (?, ?, ?, 1)
+       ON CONFLICT(did, endpoint, window_start) DO UPDATE SET count = count + 1
+       RETURNING count`
+    )
+      .bind(did, claimKey, windowStart)
+      .first<{ count: number }>();
+    if ((claim?.count ?? 1) === 1) {
+      const result = await storeLinkedOriginal(env, did, save);
+      if (result !== 'stored') {
+        await env.DB.prepare(
+          `INSERT OR REPLACE INTO rate_limits (did, endpoint, window_start, count) VALUES (?, ?, ?, ?)`
+        )
+          .bind(did, outcomeKey, windowStart, result === 'storage_full' ? 2 : 1)
+          .run();
+      }
+      return result;
+    }
+    // Another request is fetching (or just tried): wait for how it went.
+    const deadline = Date.now() + KEEP_WAIT_MS;
+    for (;;) {
+      const [kept, failed] = await env.DB.batch([
+        env.DB.prepare('SELECT 1 AS x FROM saved_files WHERE user_did = ? AND rkey = ?').bind(
+          did,
+          save.rkey
+        ),
+        env.DB.prepare(
+          'SELECT count FROM rate_limits WHERE did = ? AND endpoint = ? AND window_start = ?'
+        ).bind(did, outcomeKey, windowStart),
+      ]);
+      if (kept.results.length) return 'stored';
+      const outcome = (failed.results[0] as { count: number } | undefined)?.count;
+      if (outcome) return outcome === 2 ? 'storage_full' : 'unavailable';
+      if (Date.now() >= deadline) return 'unavailable';
+      await new Promise((resolve) => setTimeout(resolve, KEEP_POLL_MS));
+    }
+  })();
+  keeping.set(id, attempt);
+  try {
+    return await attempt;
+  } finally {
+    keeping.delete(id);
+  }
+}
+
+/**
+ * After a PDF or EPUB is saved by link: keep its original. Looked up by URL,
+ * since a re-save or a backed save lands on whichever row already holds the URL.
+ */
+export async function storeLinkedOriginalForUrl(env: Env, did: string, url: string): Promise<void> {
   try {
     const row = await env.DB.prepare(
       'SELECT rkey, url, content_type, source FROM saved_articles WHERE user_did = ? AND url = ?'
     )
       .bind(did, url)
       .first<{ rkey: string; url: string; content_type: string | null; source: string | null }>();
-    if (!row || !isLinkedPdf(row)) return;
-    const result = await storeLinkedPdf(env, did, row);
-    if (result !== 'stored') log.info('pdf_link_original_not_stored', { reason: result });
+    const kind = linkedKind(row);
+    if (!row || !kind) return;
+    const result = await storeLinkedOriginal(env, did, { ...row, kind });
+    if (result !== 'stored') log.info(`${kind}_link_original_not_stored`, { reason: result });
   } catch (error) {
-    log.warn('pdf_link_original_store_failed', {
+    log.warn('link_original_store_failed', {
       message: error instanceof Error ? error.message : String(error),
     });
   }
 }
 
 /**
- * The original of a PDF saved by link with no kept file yet. Kept now and served
- * from storage; only when the reader's storage is full is it streamed through
- * from the site instead (the browser can't fetch most PDFs itself: no CORS).
- * Supporter, like PDFs.
+ * The original of a PDF or EPUB saved by link with no kept file yet. Kept now
+ * and served from storage; only when the reader's storage is full is a PDF
+ * streamed through from the site instead (the browser can't fetch most PDFs
+ * itself: no CORS). Supporter, like PDFs.
  */
-async function relayLinkedPdf(env: Env, session: Session, rkey: string): Promise<Response> {
+async function relayLinkedOriginal(env: Env, session: Session, rkey: string): Promise<Response> {
   const save = await env.DB.prepare(
     'SELECT url, content_type, source FROM saved_articles WHERE user_did = ? AND rkey = ?'
   )
     .bind(session.did, rkey)
     .first<{ url: string; content_type: string | null; source: string | null }>();
-  if (!save || !isLinkedPdf(save)) {
+  const kind = linkedKind(save);
+  if (!save || !kind) {
     return json({ error: 'Not found' }, 404);
   }
   if (!(await getUserTierLimits(env, session.did)).pdfSaves) {
@@ -500,11 +743,16 @@ async function relayLinkedPdf(env: Env, session: Session, rkey: string): Promise
 
   // Kept now if it can be (a save from before originals were kept, or one whose
   // fetch failed at save time), then served from storage like any other.
-  const kept = await storeLinkedPdf(env, session.did, { rkey, url: save.url });
+  const kept = await storeLinkedOriginal(env, session.did, { rkey, url: save.url, kind });
   if (kept === 'stored') {
     return (await serveStoredFile(env, session.did, rkey)) ?? json({ error: 'Not found' }, 404);
   }
-  if (kept === 'unavailable') return json({ error: "Couldn't fetch the PDF from its site." }, 502);
+  const kindName = KIND_NAMES[kind];
+  if (kept === 'unavailable') {
+    return json({ error: `Couldn't fetch the ${kindName} from its site.` }, 502);
+  }
+  // A book is only kept, never relayed: its pictures are read out of the kept copy.
+  if (kind === 'epub') return storageFullResponse();
 
   // Storage is full: show it anyway, streamed through without keeping it.
   let upstream: Response;
@@ -576,7 +824,7 @@ async function relayLinkedPdf(env: Env, session: Session, rkey: string): Promise
       return reader.cancel(reason);
     },
   });
-  return pdfResponse(body, linkedPdfFilename(save.url));
+  return fileResponse(body, linkedFilename(save.url));
 }
 
 // GET /api/saved/<rkey>/file — the original, only ever to the reader who saved it:
@@ -586,20 +834,92 @@ export async function handleGetSavedFile(request: Request, env: Env, session: Se
   const rkey = new URL(request.url).pathname.split('/')[3];
   if (!rkey || !isValidRkey(rkey)) return invalidRkeyResponse();
 
-  return (await serveStoredFile(env, session.did, rkey)) ?? relayLinkedPdf(env, session, rkey);
+  return (await serveStoredFile(env, session.did, rkey)) ?? relayLinkedOriginal(env, session, rkey);
+}
+
+// Pictures are served sandboxed: an SVG from a book is the book's markup, and
+// opened directly it must not run as a page on the API's origin.
+const ASSET_HEADERS = {
+  'Cache-Control': 'private, max-age=86400',
+  'X-Content-Type-Options': 'nosniff',
+  'Content-Security-Policy':
+    "default-src 'none'; img-src data:; style-src 'unsafe-inline'; sandbox",
+};
+
+// GET /api/saved/<rkey>/asset?path=<entry> — a picture inside a saved EPUB, read
+// out of its kept original (services/epub.ts readStoredEpubEntry), only ever to
+// the reader who saved it. The reader's text carries each picture's path
+// (`data-epub-src`), and the reader asks for it here.
+export async function handleGetSavedAsset(request: Request, env: Env, session: Session) {
+  if (request.method !== 'GET') return json({ error: 'Method not allowed' }, 405);
+  const url = new URL(request.url);
+  const rkey = url.pathname.split('/')[3];
+  if (!rkey || !isValidRkey(rkey)) return invalidRkeyResponse();
+  const path = url.searchParams.get('path') ?? '';
+  const contentType = epubImageType(path);
+  if (!contentType || !env.SAVED_FILES) return json({ error: 'Not found' }, 404);
+
+  const fileRow = () =>
+    env.DB.prepare('SELECT r2_key, mime_type FROM saved_files WHERE user_did = ? AND rkey = ?')
+      .bind(session.did, rkey)
+      .first<{ r2_key: string; mime_type: string }>();
+  let row = await fileRow();
+  if (!row) {
+    // A book saved by link whose original wasn't kept at save time (the fetch
+    // failed then): keep it now, as opening a PDF's Original does.
+    const save = await env.DB.prepare(
+      'SELECT url, content_type, source FROM saved_articles WHERE user_did = ? AND rkey = ?'
+    )
+      .bind(session.did, rkey)
+      .first<{ url: string; content_type: string | null; source: string | null }>();
+    if (save && linkedKind(save) === 'epub') {
+      const kept = await keepLinkedOriginalOnce(env, session.did, {
+        rkey,
+        url: save.url,
+        kind: 'epub',
+      });
+      // Never relayed (each picture would download the whole book): say why the
+      // pictures are missing, so the reader can tell the reader.
+      if (kept === 'storage_full') return storageFullResponse();
+      row = await fileRow();
+    }
+  }
+  if (!row || row.mime_type !== MIME_TYPES.epub) return json({ error: 'Not found' }, 404);
+
+  let bytes: Uint8Array | null;
+  try {
+    bytes = await readStoredEpubEntry(env.SAVED_FILES, row.r2_key, path);
+  } catch (err) {
+    if (!(err instanceof EpubError)) throw err;
+    log.warn('epub_asset_unreadable', { message: err.message });
+    bytes = null;
+  }
+  if (!bytes) return json({ error: 'Not found' }, 404);
+  return new Response(bytes, {
+    headers: {
+      ...ASSET_HEADERS,
+      'Content-Type': contentType,
+      'Content-Length': String(bytes.byteLength),
+    },
+  });
+}
+
+function storageFullResponse(): Response {
+  return json({ error: 'pdf_storage_full', message: 'Your storage for saved files is full.' }, 403);
 }
 
 // A save's kept original, or null when it has none.
 async function serveStoredFile(env: Env, did: string, rkey: string): Promise<Response | null> {
   const row = await env.DB.prepare(
-    'SELECT r2_key, filename FROM saved_files WHERE user_did = ? AND rkey = ?'
+    'SELECT r2_key, filename, mime_type FROM saved_files WHERE user_did = ? AND rkey = ?'
   )
     .bind(did, rkey)
-    .first<{ r2_key: string; filename: string | null }>();
+    .first<{ r2_key: string; filename: string | null; mime_type: string }>();
   if (!row) return null;
   const object = env.SAVED_FILES ? await env.SAVED_FILES.get(row.r2_key) : null;
   if (!object) return json({ error: 'Not found' }, 404);
-  return pdfResponse(object.body, row.filename || 'document.pdf', object.size);
+  const fallbackName = row.mime_type === MIME_TYPES.epub ? 'book.epub' : 'document.pdf';
+  return fileResponse(object.body, row.filename || fallbackName, object.size, row.mime_type);
 }
 
 /** Drop a save's uploaded file, if it has one. Called after the save's row is deleted. */

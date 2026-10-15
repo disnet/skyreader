@@ -102,7 +102,12 @@ import {
   handleDeleteSavedByGuid,
   handleSetBacking,
 } from './routes/saved';
-import { handleGetSavedFile, handleUploadPdf } from './routes/saved-pdf';
+import {
+  handleGetSavedAsset,
+  handleGetSavedFile,
+  handleUploadEpub,
+  handleUploadPdf,
+} from './routes/saved-pdf';
 import { handleExtract } from './routes/extract';
 import {
   handleCreateRoom,
@@ -179,6 +184,7 @@ import { handleHealth, handleDeepHealth } from './routes/health';
 import { handleTelemetryError, TELEMETRY_PATH } from './routes/telemetry';
 import { resolveSessionFromRequest, updateUserActivity } from './services/oauth';
 import { checkRateLimit, cleanupRateLimits, getRateLimitConfig } from './services/rate-limit';
+import { sweepStagedOriginals } from './services/linked-originals';
 import * as Sentry from '@sentry/cloudflare';
 import { sentryOptions, reportError, tagRequestId } from './observability/sentry';
 import { pingHeartbeat } from './observability/heartbeat';
@@ -799,14 +805,22 @@ async function route(
       if (!session) return unauthorizedResponse(headers);
       response = await handleGetSavedUpdates(request, env);
       break;
-    // Uploaded PDFs (Supporter) — routes/saved-pdf.ts
+    // Uploaded PDFs and EPUBs (Supporter) — routes/saved-pdf.ts
     case url.pathname === '/api/saved/pdf':
       if (!session) return unauthorizedResponse(headers);
       response = await handleUploadPdf(request, env, session);
       break;
+    case url.pathname === '/api/saved/epub':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleUploadEpub(request, env, session);
+      break;
     case /^\/api\/saved\/[^/]+\/file$/.test(url.pathname):
       if (!session) return unauthorizedResponse(headers);
       response = await handleGetSavedFile(request, env, session);
+      break;
+    case /^\/api\/saved\/[^/]+\/asset$/.test(url.pathname):
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleGetSavedAsset(request, env, session);
       break;
     case url.pathname.startsWith('/api/saved/'):
       if (!session) return unauthorizedResponse(headers);
@@ -1372,6 +1386,18 @@ async function runScheduled(
           ...serializeError(error),
         });
         reportError(error, { tags: { source: 'cron', phase: 'share-draft-tombstone-purge' } });
+      }
+
+      // Linked EPUBs read by /api/extract that no save adopted.
+      try {
+        const staged = await sweepStagedOriginals(env, now);
+        if (staged) log.info('cron_staged_originals_swept', { deleted: staged });
+      } catch (error) {
+        log.error('cron_phase_failed', {
+          phase: 'staged-originals-sweep',
+          ...serializeError(error),
+        });
+        reportError(error, { tags: { source: 'cron', phase: 'staged-originals-sweep' } });
       }
 
       // From your follows: shares past the 7-day window.

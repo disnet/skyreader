@@ -767,7 +767,7 @@ export function getSavedSourceTypeSuggestions(
       name: 'Saved Documents',
       desc: 'published documents you bookmarked',
     },
-    { source: 'upload', name: 'Uploaded PDFs', desc: 'PDFs you uploaded' },
+    { source: 'upload', name: 'Uploaded Files', desc: 'PDFs and EPUBs you uploaded' },
   ];
 
   for (const cfg of sourceConfigs) {

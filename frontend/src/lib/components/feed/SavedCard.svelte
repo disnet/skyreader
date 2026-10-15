@@ -343,7 +343,8 @@
   let typeBadge = $derived.by(() => {
     if (displayItem.type === 'saved') {
       if (displayItem.item.domain) return displayItem.item.domain;
-      return displayItem.item.source === 'upload' ? 'PDF' : 'Saved';
+      if (displayItem.item.source !== 'upload') return 'Saved';
+      return displayItem.item.contentType === 'epub' ? 'EPUB' : 'PDF';
     }
     return '';
   });

@@ -54,6 +54,8 @@ export interface User {
     pdfSaves?: boolean;
     /** Largest PDF upload, in bytes. */
     maxPdfUploadBytes?: number;
+    /** Largest EPUB, uploaded or saved by link, in bytes. */
+    maxEpubUploadBytes?: number;
     maxPdfUploadsPerMonth?: number;
     /** Total bytes of uploaded originals kept. */
     maxPdfStorageBytes?: number;
@@ -1283,7 +1285,7 @@ export interface SavedItem {
   wordCount: number | null;
   publishedAt: string | null;
   savedAt: string;
-  // 'upload': a PDF the reader uploaded. It has no URL; its original file is
+  // 'upload': a PDF or EPUB the reader uploaded. It has no URL; its original file is
   // served to them at savedFileUrl(rkey) ($lib/services/api).
   source?: 'url' | 'feed' | 'document' | 'upload';
   itemGuid?: string;

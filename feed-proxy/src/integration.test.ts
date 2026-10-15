@@ -3928,6 +3928,90 @@ describe('POST /extract', () => {
     db.close();
   });
 
+  // An EPUB's first 58 bytes: a zip whose first, stored entry is `mimetype`.
+  function epubHead(): Uint8Array<ArrayBuffer> {
+    const bytes = new Uint8Array(200);
+    bytes.set([0x50, 0x4b, 0x03, 0x04]);
+    bytes.set(new TextEncoder().encode('mimetypeapplication/epub+zip'), 30);
+    return bytes;
+  }
+
+  // A book used to be decoded as text and handed to Defuddle. The backend reads
+  // EPUBs itself, so the proxy only says what it found, and caches nothing.
+  it('hands an EPUB back to the backend, even when served as octet-stream', async () => {
+    const { extractPdf, calls } = fakeExtractor(async () => PARSED);
+    const { db, app } = createTestApp({ extractPdf });
+    fetchMock = mockFetch(
+      () => new Response(epubHead(), { headers: { 'Content-Type': 'application/octet-stream' } })
+    );
+
+    const json = await (await extract(app, 'https://example.com/download?id=7')).json();
+    expect(json).toEqual({
+      error: 'EPUBs are read by the Skyreader API',
+      blocked: false,
+      epub: true,
+    });
+    expect(calls).toHaveLength(0);
+    const cached = db.query('SELECT COUNT(*) AS n FROM extract_cache').get() as { n: number };
+    expect(cached.n).toBe(0);
+
+    db.close();
+  });
+
+  it('hands back a declared EPUB over the page size limit', async () => {
+    const { db, app } = createTestApp();
+    fetchMock = mockFetch(
+      () =>
+        new Response('PK', {
+          headers: {
+            'Content-Type': 'application/epub+zip',
+            'Content-Length': String(20 * 1024 * 1024),
+          },
+        })
+    );
+
+    const json = await (await extract(app, 'https://example.com/book')).json();
+    expect(json.epub).toBe(true);
+    expect(json.pdf).toBeUndefined();
+
+    db.close();
+  });
+
+  it('does not take an ordinary zip for an EPUB', async () => {
+    const { db, app } = createTestApp();
+    const zip = epubHead();
+    zip.set(new TextEncoder().encode('readme.txtxxxxxxxxxxxxxxxxxxxx'), 30);
+    fetchMock = mockFetch(
+      () => new Response(zip, { headers: { 'Content-Type': 'application/zip' } })
+    );
+
+    const json = await (await extract(app, 'https://example.com/archive.zip')).json();
+    expect(json.epub).toBeUndefined();
+
+    db.close();
+  });
+
+  // Not every tool stores `mimetype` first; the path or the container document
+  // still says it's a book, on the ordinary (not-too-large) path too.
+  it('hands back an EPUB whose mimetype entry is not first', async () => {
+    for (const [url, body] of [
+      ['https://example.com/files/book.epub', 'content.opf'],
+      ['https://example.com/download?id=8', 'META-INF/container.xml'],
+    ]) {
+      const { db, app } = createTestApp();
+      const zip = epubHead();
+      zip.set(new TextEncoder().encode(body.padEnd(28, 'x')), 30);
+      fetchMock = mockFetch(
+        () => new Response(zip, { headers: { 'Content-Type': 'application/octet-stream' } })
+      );
+      const json = await (await extract(app, url)).json();
+      expect(json.epub).toBe(true);
+      const cached = db.query('SELECT COUNT(*) AS n FROM extract_cache').get() as { n: number };
+      expect(cached.n).toBe(0);
+      db.close();
+    }
+  });
+
   // Auth runs before the route determines anything, so it keeps its own status.
   it('still answers 401 without the shared secret', async () => {
     const { db, app } = createTestApp();

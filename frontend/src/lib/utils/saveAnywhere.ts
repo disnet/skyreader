@@ -87,13 +87,26 @@ export function blockedSaveAction(): BlockedSaveAction {
  * Why a URL save came back without the article. `blocked` is the site refusing
  * the server's fetcher; `pdf` is a PDF the server couldn't turn into text (too
  * large, password-protected, a failed parse); `pdfUpgrade` is a PDF left unread
- * because the reader's plan doesn't include PDFs (a Supporter feature); `empty`
+ * because the reader's plan doesn't include PDFs (a Supporter feature); `epub`
+ * and `epubUpgrade` are the same two for an EPUB; `empty`
  * is a page fetched fine but with no article text in it (usually one that
  * builds its text with scripts, which the extension sees and the server
  * doesn't); `failed` is anything else that went wrong fetching or extracting
  * the page (a timeout, a broken page, the proxy itself).
  */
-export type SaveFetchFailure = 'blocked' | 'pdf' | 'pdfUpgrade' | 'empty' | 'failed';
+export type SaveFetchFailure =
+  'blocked' | 'pdf' | 'pdfUpgrade' | 'epub' | 'epubUpgrade' | 'empty' | 'failed';
+
+/** The file a failure is about, for one that's about a file (a PDF or an EPUB). */
+function failedFile(reason: SaveFetchFailure): { kind: 'PDF' | 'EPUB'; upgrade: boolean } | null {
+  if (reason === 'pdf' || reason === 'pdfUpgrade') {
+    return { kind: 'PDF', upgrade: reason === 'pdfUpgrade' };
+  }
+  if (reason === 'epub' || reason === 'epubUpgrade') {
+    return { kind: 'EPUB', upgrade: reason === 'epubUpgrade' };
+  }
+  return null;
+}
 
 /**
  * Whether an article body has anything to read: text, or media standing in for
@@ -113,11 +126,12 @@ export function hasReadableContent(html: string | null | undefined): html is str
 
 /**
  * Whether the browser extension is a way to the full text. It reads a web page
- * from the reader's own browser, but a PDF tab can't be scripted, so it sends
- * a PDF through the same server extraction that just failed.
+ * from the reader's own browser, but a PDF tab can't be scripted (and an EPUB
+ * link downloads rather than opens), so it sends a file through the same server
+ * extraction that just failed.
  */
 export function extensionCanHelp(reason: SaveFetchFailure): boolean {
-  return reason !== 'pdf' && reason !== 'pdfUpgrade';
+  return failedFile(reason) === null;
 }
 
 /**
@@ -148,13 +162,14 @@ export function failedSaveBody(url: string, reason: SaveFetchFailure): string {
   } catch {
     // Keep the raw URL as the link text.
   }
+  const file = failedFile(reason);
   const why =
     reason === 'blocked'
       ? "Skyreader couldn't fetch this article: the site blocks automated readers."
-      : reason === 'pdf'
-        ? "Skyreader couldn't read the text of this PDF."
-        : reason === 'pdfUpgrade'
-          ? 'Reading PDFs in Skyreader is a Supporter feature.'
+      : file?.upgrade
+        ? `Reading ${file.kind}s in Skyreader is a Supporter feature.`
+        : file
+          ? `Skyreader couldn't read the text of this ${file.kind}.`
           : reason === 'empty'
             ? "Skyreader couldn't find the article text on this page."
             : "Skyreader couldn't fetch this article.";
@@ -165,8 +180,10 @@ export function failedSaveBody(url: string, reason: SaveFetchFailure): string {
       `<p ${FAILED_SAVE_MARKER}>${why}${reason === 'empty' ? '' : SAVED_LINK_SUFFIX}</p>`,
       `<p>${link(url, `Open it on ${host}`)}</p>`,
       // Saving the link again once they are a Supporter replaces this note.
-      ...(reason === 'pdfUpgrade'
-        ? [`<p>${link('/supporter', 'Become a Supporter')} to read and highlight PDFs here.</p>`]
+      ...(file?.upgrade
+        ? [
+            `<p>${link('/supporter', 'Become a Supporter')} to read and highlight ${file.kind}s here.</p>`,
+          ]
         : []),
     ].join('\n');
   }
@@ -184,8 +201,9 @@ export function failedSaveBody(url: string, reason: SaveFetchFailure): string {
 /** The line a caller shows once a save kept only the link. */
 export function failedSaveLine(reason: SaveFetchFailure): string {
   if (reason === 'blocked') return `Saved the link only. ${BLOCKED_SAVE_LINE}`;
-  if (reason === 'pdf') return "Saved the link only. Skyreader couldn't read this PDF.";
-  if (reason === 'pdfUpgrade') return 'Saved the link only. Reading PDFs is a Supporter feature.';
+  const file = failedFile(reason);
+  if (file?.upgrade) return `Saved the link only. Reading ${file.kind}s is a Supporter feature.`;
+  if (file) return `Saved the link only. Skyreader couldn't read this ${file.kind}.`;
   if (reason === 'empty') return "Saved the link only. Skyreader couldn't find the article text.";
   return "Saved the link only. Skyreader couldn't fetch the article.";
 }

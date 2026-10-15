@@ -20,6 +20,10 @@ const STANDARD_LIMIT: RateLimitConfig = { limit: 100, windowMs: 60000 };
 // Light operations that are cheap to serve
 const LIGHT_LIMIT: RateLimitConfig = { limit: 300, windowMs: 60000 };
 
+// Paths with an id in them share one bucket: a book's pictures all load at once.
+const SAVED_ASSET_PATH = /^\/api\/saved\/[^/]+\/asset$/;
+const SAVED_ASSET_KEY = '/api/saved/:rkey/asset';
+
 const RATE_LIMITS: Record<string, RateLimitConfig> = {
   // Deep health check. Keyed by client IP (not did) since callers are monitors,
   // not users. Sized for a poll every 30s plus retries — anything above that is
@@ -60,6 +64,10 @@ const RATE_LIMITS: Record<string, RateLimitConfig> = {
   // Each upload is up to 10 MB read into memory and one PDF parse; the plan's
   // monthly and daily PDF caps bound the total, this bounds the burst.
   '/api/saved/pdf': { limit: 10, windowMs: 60000 },
+  // Up to 30 MB read into memory and unzipped in the Worker; same burst bound.
+  '/api/saved/epub': { limit: 10, windowMs: 60000 },
+  // One request per picture in a saved EPUB; an illustrated book opens many at once.
+  [SAVED_ASSET_KEY]: LIGHT_LIMIT,
   // The feedback board. Reads are edge-cached and only cost this bucket for a
   // signed-in reader; a POST writes a discussion record to their own repo, which
   // is the reason for the tighter-than-default ceiling. Nobody posts thirty
@@ -127,6 +135,10 @@ const RATE_LIMITS: Record<string, RateLimitConfig> = {
 // Default limit for unspecified endpoints
 const DEFAULT_LIMIT: RateLimitConfig = STANDARD_LIMIT;
 
+function endpointKey(pathname: string): string {
+  return SAVED_ASSET_PATH.test(pathname) ? SAVED_ASSET_KEY : pathname;
+}
+
 /**
  * Check rate limit for a user and endpoint.
  * Uses fixed-window rate limiting with atomic SQL increments.
@@ -134,8 +146,9 @@ const DEFAULT_LIMIT: RateLimitConfig = STANDARD_LIMIT;
 export async function checkRateLimit(
   env: Env,
   did: string,
-  pathname: string
+  rawPathname: string
 ): Promise<RateLimitResult> {
+  const pathname = endpointKey(rawPathname);
   const config = RATE_LIMITS[pathname] || DEFAULT_LIMIT;
   const now = Date.now();
   const windowStart = Math.floor(now / config.windowMs) * config.windowMs;
@@ -238,5 +251,5 @@ function cleanupStatements(env: Env, now: number): D1PreparedStatement[] {
  * Useful for adding rate limit headers to responses.
  */
 export function getRateLimitConfig(pathname: string): RateLimitConfig {
-  return RATE_LIMITS[pathname] || DEFAULT_LIMIT;
+  return RATE_LIMITS[endpointKey(pathname)] || DEFAULT_LIMIT;
 }

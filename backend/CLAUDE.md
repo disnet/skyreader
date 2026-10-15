@@ -121,7 +121,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed documentation.
 | `src/routes/reading.ts`       | Article + document read positions (forward delta)          |
 | `src/routes/labels.ts`        | Unified item labels (read/starred/archived/tags)           |
 | `src/routes/saved.ts`         | Saved articles CRUD                                        |
-| `src/routes/saved-pdf.ts`     | PDFs (Supporter): upload, kept originals, cleanup          |
+| `src/routes/saved-pdf.ts`     | PDFs + EPUBs (Supporter): upload, kept originals, cleanup  |
 | `src/routes/recommends.ts`    | One-tap public recommends (+ standard.site copy)           |
 | `src/routes/integrations.ts`  | Semble/Margin writes to the user's PDS                     |
 | `src/routes/settings.ts`      | User settings                                              |
@@ -155,6 +155,25 @@ PDS or a Semble/Margin backing collection. A PDF saved by link keeps its origina
 `GET /api/saved/<rkey>/file` keeps it on first open for a save that has none (streaming it through
 uncached only when storage is full). Limits: file size, uploads per month (uploads only) and stored
 bytes (every kept original) from the plan, plus the shared daily parse cap.
+
+**EPUBs** ride the same plan flag and the same upload/storage limits (`maxEpubUploadBytes` is their
+own, larger size cap), but are read in this Worker (`src/services/epub.ts`: unzip, walk the OPF
+spine, strip each chapter to reading markup with `HTMLRewriter`, one
+`<section data-epub-chapter="N">` per chapter, capped at 1 MB like a PDF's text), so they spend no
+daily parse allowance. An upload is `POST /api/saved/epub` (`content_type = 'epub'`, original kept in
+R2 like a PDF's). By link, the proxy's `/extract` recognises an EPUB and answers `epub: true`
+without caching; `FeedProxyClient.extract` then fetches and reads the book itself, and the save keeps
+its original like a linked PDF (`storeLinkedOriginalForUrl`). Pictures stay in the book: the text
+carries `<img data-epub-src="<path in zip>">`, and `GET /api/saved/<rkey>/asset?path=` serves one
+entry out of the kept original with four ranged R2 reads (`readStoredEpubEntry`), owner-only and
+sandboxed (an SVG must not run as a page on the API origin); a linked save with no kept original
+keeps it on the first picture asked for — once per save, not per picture (`keepLinkedOriginalOnce`:
+an in-isolate promise plus a one-a-minute D1 claim in `rate_limits`; the other requests wait for its
+row), and answers `pdf_storage_full` when there's no room, which the reader turns into a note. The
+book is downloaded once per save by link: `extractEpub` stages the bytes it read in R2
+(`services/linked-originals.ts`, `staged/epub/<did>/<sha256(url)>.epub`), the save moves that object
+into place instead of fetching again, and the hourly cron sweeps staged books no save adopted. Ids and internal hrefs are scoped by spine position
+(`#epub-c3-note12`, `epubAnchorId`), which the frontend's footnote navigation follows.
 
 **Bluesky likes and bookmarks** are the same kind of private, local-only subscription
 (`bsky-likes:<did>` / `bsky-bookmarks:<did>`, `src/services/bsky-sources.ts`): turned on from

@@ -3,7 +3,7 @@
   import { goto } from '$app/navigation';
   import { savesStore } from '$lib/stores/saves.svelte';
   import { auth } from '$lib/stores/auth.svelte';
-  import { PdfUploadError, ScopeUpgradeError, UrlSaveLimitError } from '$lib/services/api';
+  import { FileUploadError, ScopeUpgradeError, UrlSaveLimitError } from '$lib/services/api';
   import Icon from '$lib/components/Icon.svelte';
   import { grantPermissions, permissionMessage } from '$lib/services/permissions';
   import type { ScopeFeature } from '$lib/types';
@@ -27,10 +27,12 @@
   // so it renders as a notice with a way forward rather than a red line.
   let limitInfo = $state<{ limit: number; resetsAt: string } | null>(null);
 
-  // PDFs (Supporter): uploaded here, or saved by pasting a PDF's link above.
+  // PDFs and EPUBs (Supporter): uploaded here, or saved by pasting a link above.
   let canUploadPdf = $derived(Boolean(auth.user?.limits?.pdfSaves));
   let maxPdfBytes = $derived(auth.user?.limits?.maxPdfUploadBytes ?? 10 * 1024 * 1024);
   let maxPdfMb = $derived(Math.round(maxPdfBytes / (1024 * 1024)));
+  let maxEpubBytes = $derived(auth.user?.limits?.maxEpubUploadBytes ?? 30 * 1024 * 1024);
+  let maxEpubMb = $derived(Math.round(maxEpubBytes / (1024 * 1024)));
   let fileInputEl = $state<HTMLInputElement | null>(null);
   let uploading = $state(false);
   let dragging = $state(false);
@@ -84,30 +86,40 @@
     savesStore.pendingOpenKey = key;
   }
 
-  async function uploadPdf(file: File) {
+  function fileKind(file: File): 'pdf' | 'epub' | null {
+    if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) return 'pdf';
+    if (file.type === 'application/epub+zip' || /\.epub$/i.test(file.name)) return 'epub';
+    return null;
+  }
+
+  async function uploadFile(file: File) {
     error = null;
     limitInfo = null;
-    const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
-    if (!isPdf) {
-      error = "That file isn't a PDF.";
+    const kind = fileKind(file);
+    if (!kind) {
+      error = "That file isn't a PDF or an EPUB.";
       return;
     }
-    if (file.size > maxPdfBytes) {
+    if (kind === 'pdf' && file.size > maxPdfBytes) {
       error = `PDFs up to ${maxPdfMb} MB can be uploaded.`;
+      return;
+    }
+    if (kind === 'epub' && file.size > maxEpubBytes) {
+      error = `EPUBs up to ${maxEpubMb} MB can be uploaded.`;
       return;
     }
     uploading = true;
     try {
-      const saved = await savesStore.uploadPdf(file);
+      const saved = await savesStore.uploadFile(file, kind);
       await openSaved(saved.uri || saved.rkey);
     } catch (err) {
       if (err instanceof ScopeUpgradeError) {
         scopeFeature = err.feature;
         showScopeUpgrade = true;
-      } else if (err instanceof PdfUploadError) {
+      } else if (err instanceof FileUploadError) {
         error = err.message;
       } else {
-        error = err instanceof Error ? err.message : "Couldn't upload that PDF";
+        error = err instanceof Error ? err.message : "Couldn't upload that file";
       }
     } finally {
       uploading = false;
@@ -118,7 +130,7 @@
     const input = e.currentTarget as HTMLInputElement;
     const file = input.files?.[0];
     input.value = '';
-    if (file) void uploadPdf(file);
+    if (file) void uploadFile(file);
   }
 
   function handleDragOver(e: DragEvent) {
@@ -134,7 +146,7 @@
     const file = e.dataTransfer?.files?.[0];
     if (!file) return;
     e.preventDefault();
-    void uploadPdf(file);
+    void uploadFile(file);
   }
 
   function handleKeydown(e: KeyboardEvent) {
@@ -145,12 +157,12 @@
   }
 </script>
 
-<!-- A PDF dropped anywhere on the panel uploads it (Supporter). -->
+<!-- A PDF or EPUB dropped anywhere on the panel uploads it (Supporter). -->
 <div
   class="panel"
   class:dragging
   role="region"
-  aria-label="Save a link or PDF"
+  aria-label="Save a link or file"
   ondragover={handleDragOver}
   ondragleave={() => (dragging = false)}
   ondrop={handleDrop}
@@ -179,7 +191,7 @@
     <div class="form">
       <p class="modal-desc">
         {canUploadPdf
-          ? 'Paste a link or upload a PDF to keep it in Saved, ready to read and highlight.'
+          ? 'Paste a link or upload a PDF or EPUB to keep it in Saved, ready to read and highlight.'
           : 'Paste a link to keep the article in Saved, ready to read.'}
       </p>
       <input
@@ -200,7 +212,7 @@
           <input
             bind:this={fileInputEl}
             type="file"
-            accept="application/pdf,.pdf"
+            accept="application/pdf,.pdf,application/epub+zip,.epub"
             class="file-input"
             onchange={handleFileChange}
             tabindex="-1"
@@ -211,10 +223,10 @@
             type="button"
             onclick={() => fileInputEl?.click()}
             disabled={savesStore.saving || uploading}
-            title="PDFs up to {maxPdfMb} MB. You can also drop one here."
+            title="PDFs up to {maxPdfMb} MB, EPUBs up to {maxEpubMb} MB. You can also drop one here."
           >
             <Icon name="file-text" size={15} />
-            {uploading ? 'Reading PDF…' : 'Upload a PDF'}
+            {uploading ? 'Reading…' : 'Upload a file'}
           </button>
         {/if}
         <button
@@ -231,7 +243,8 @@
       </div>
       {#if !canUploadPdf && auth.user}
         <p class="pdf-upsell">
-          Supporters can save PDFs too, by link or upload, and highlight them like any article.
+          Supporters can save PDFs and EPUBs too, by link or upload, and highlight them like any
+          article.
           <a href="/supporter" onclick={onclose}>Become a Supporter</a>
         </p>
       {/if}

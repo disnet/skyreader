@@ -1,5 +1,9 @@
+import { findEpubAnchor, isEpubAnchorHref } from './epubContent';
+
 /**
- * In-page navigation for the footnotes rendered by `leaflet-renderer.ts`.
+ * In-page navigation for the footnotes rendered by `leaflet-renderer.ts`, and
+ * for a saved EPUB's own links (`#epub-c3-note12`, see `utils/epubContent.ts`),
+ * which a book with no base URL keeps as real hash links.
  *
  * The markers are anchors with `data-footnote-ref` / `data-footnote-backref`
  * rather than real hash links: `sanitizeHtml` rewrites `href="#…"` to the
@@ -87,7 +91,10 @@ export function handleFootnoteClick(
 
   const ref = target.closest<HTMLElement>('a[data-footnote-ref]');
   const backref = ref ? null : target.closest<HTMLElement>('a[data-footnote-backref]');
-  if (!ref && !backref) return 'none';
+  const bookHref =
+    ref || backref ? null : (target.closest('a[href]')?.getAttribute('href') ?? null);
+  const bookLink = isEpubAnchorHref(bookHref);
+  if (!ref && !backref && !bookLink) return 'none';
 
   // The marker is a placeholder link; never follow it.
   e.preventDefault();
@@ -107,6 +114,11 @@ export function handleFootnoteClick(
   if (options.jump === false) return 'suppressed';
 
   e.stopPropagation();
+
+  if (bookLink) {
+    if (container) jumpTo(findEpubAnchor(container, bookHref), options);
+    return 'handled';
+  }
 
   // Numbers are renderer-generated, but keep the selector well-formed regardless.
   const number = (ref?.dataset.footnoteRef ?? backref?.dataset.footnoteBackref ?? '').trim();

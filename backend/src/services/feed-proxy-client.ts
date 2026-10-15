@@ -1,7 +1,16 @@
 import type { Env, FeedItem } from '../types';
 import { getRequestId } from '../utils/request-context';
 import { scrubText } from '../observability/scrub';
-import { PDF_SUPPORTER_MESSAGE, chargePdfParse, pdfAccess } from './pdf-quota';
+import {
+  EPUB_SUPPORTER_MESSAGE,
+  PDF_SUPPORTER_MESSAGE,
+  chargePdfParse,
+  pdfAccess,
+  type PdfAccess,
+} from './pdf-quota';
+import { EpubError, MAX_LINKED_EPUB_BYTES, fetchEpub, parseEpub } from './epub';
+import { getUserTierLimits } from './user-tier';
+import { stageLinkedOriginal } from './linked-originals';
 
 /** Stamp the in-flight request id on an outbound proxy call, when there is one. */
 function setRequestIdHeader(headers: Headers): void {
@@ -59,6 +68,9 @@ export class FeedProxyError extends Error {
   // Set with `pdf` when the PDF wasn't read because the reader's plan doesn't
   // include PDFs (not because it was unreadable): the way through is upgrading.
   upgradeRequired?: boolean;
+  // Set with `pdf` when the file was an EPUB rather than a PDF, so the reader is
+  // told which. `pdf` itself stays the "a file the extension can't help with" flag.
+  format?: 'epub';
   /**
    * HTTP status of the proxy response, when the failure came with one. Kept as a
    * field rather than only interpolated into the message so a log line can be
@@ -87,8 +99,11 @@ export interface ExtractedArticle {
   image: string | null;
   published: string | null;
   wordCount: number;
-  /** 'pdf' when the URL served a PDF (its text, reflowed); absent for a web page. */
-  contentType?: 'pdf';
+  /**
+   * 'pdf' when the URL served a PDF (its text, reflowed), 'epub' for an EPUB
+   * (read here, services/epub.ts); absent for a web page.
+   */
+  contentType?: 'pdf' | 'epub';
 }
 
 export interface ProxyFeedResponse {
@@ -844,6 +859,7 @@ export class FeedProxyClient {
       error?: string;
       blocked?: boolean;
       pdf?: boolean;
+      epub?: boolean;
     };
     const text = await response.text();
     let body: ExtractBody | null;
@@ -870,6 +886,9 @@ export class FeedProxyClient {
     if (!body) {
       throw new FeedProxyError('Failed to extract article: the feed service sent no JSON');
     }
+    // The proxy recognised an EPUB and left it to us: a book is marked-up text
+    // already, read here rather than by the proxy or the extractor Worker.
+    if (body.epub === true) return await this.extractEpub(url, userDid, access);
     if (body.error) {
       // A PDF refused for the plan, not the daily cap: the proxy only knows it
       // was told not to parse, so the reason is put back here.
@@ -886,5 +905,50 @@ export class FeedProxyClient {
     }
 
     return body as ExtractedArticle;
+  }
+
+  /**
+   * An EPUB saved by link: fetched from the Worker (public internet only, per
+   * global_fetch_strictly_public) and read by services/epub.ts. A Supporter
+   * feature like PDFs; it costs no extractor call, so the daily PDF allowance
+   * (`access === 'quota'`) doesn't apply.
+   */
+  private async extractEpub(
+    url: string,
+    userDid: string | undefined,
+    access: PdfAccess
+  ): Promise<ExtractedArticle> {
+    const fail = (message: string, upgradeRequired = false): never => {
+      const err = new FeedProxyError(message);
+      err.pdf = true;
+      err.format = 'epub';
+      err.upgradeRequired = upgradeRequired;
+      throw err;
+    };
+    if (access === 'not_supporter') fail(EPUB_SUPPORTER_MESSAGE, true);
+    const maxBytes = userDid
+      ? (await getUserTierLimits(this.env, userDid)).maxEpubUploadBytes
+      : MAX_LINKED_EPUB_BYTES;
+    try {
+      const bytes = await fetchEpub(url, maxBytes);
+      const book = await parseEpub(bytes);
+      // The save that follows keeps this read as its original rather than
+      // downloading the book again (routes/saved-pdf.ts storeLinkedOriginal).
+      if (userDid && book.content) await stageLinkedOriginal(this.env, userDid, url, bytes);
+      return {
+        title: book.title,
+        author: book.author,
+        description: book.description,
+        content: book.content,
+        domain: new URL(url).hostname.replace(/^www\./, '') || null,
+        image: null,
+        published: book.published,
+        wordCount: book.wordCount,
+        contentType: 'epub',
+      };
+    } catch (err) {
+      if (err instanceof EpubError) return fail(err.message);
+      throw err;
+    }
   }
 }

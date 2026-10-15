@@ -203,7 +203,7 @@ export async function handleXrpcSave(
 // write it onto the saved row. Runs under ctx.waitUntil so the caller isn't blocked on
 // the extraction. The UPDATE itself (content-IS-NULL guard, COALESCE metadata) lives in
 // fillExtractedContent — here we leave content_type alone so a URL save stays 'webpage'
-// (or becomes 'pdf' when the URL served one).
+// (or becomes 'pdf'/'epub' when the URL served one).
 // Best-effort — a URL with nothing to read gets a note in place of its body; one
 // whose extraction fails outright just keeps its title.
 async function extractAndStoreSavedContent(
