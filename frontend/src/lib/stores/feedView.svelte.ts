@@ -493,12 +493,6 @@ function createFeedViewStore() {
       toolbarSourceMode === 'all' ? [] : expandSourceKeys(toolbarSourceKeys, sourceGroups),
   }));
 
-  // Derived: whether any toolbar filter differs from defaults
-  let hasActiveFilters = $derived.by(() => {
-    if (activeFilteredView) return true;
-    return toolbarSourceMode !== 'all';
-  });
-
   // Derived: whether toolbar state differs from the persisted saved view
   let hasUnsavedChanges = $derived.by(() => {
     // The channel is known but its config hasn't been applied to the toolbar
@@ -1856,8 +1850,15 @@ function createFeedViewStore() {
     get sourcePopoverOpen() {
       return sourcePopoverOpen;
     },
+    /**
+     * Whether the filters have been moved off their starting point — what the
+     * Filter toggle (desktop) and View options button (mobile) mark with a dot.
+     * A channel's own config is its starting point; anywhere else it's all
+     * sources, no tags, unread only.
+     */
     get hasActiveFilters() {
-      return hasActiveFilters;
+      if (activeFilteredView) return hasUnsavedChanges;
+      return toolbarSourceMode !== 'all' || toolbarTagFilter.length > 0 || !showOnlyUnread;
     },
     get hasUnsavedChanges() {
       return hasUnsavedChanges;

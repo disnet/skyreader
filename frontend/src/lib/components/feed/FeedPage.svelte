@@ -94,9 +94,7 @@
     appScrollTo({ top: 0, behavior: 'smooth' });
   }
 
-  let hasActiveFilters = $derived(
-    feedViewStore.toolbarTagFilter.length > 0 || feedViewStore.effectiveFilters.sourceMode !== 'all'
-  );
+  let hasActiveFilters = $derived(feedViewStore.hasActiveFilters);
 
   // Profile for sharer filter title
   let sharerProfile = $state<BlueskyProfile | null>(null);

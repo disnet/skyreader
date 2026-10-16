@@ -101,6 +101,9 @@
   // a feed channel, navigating you off the surface entirely.
   let isLinkblogView = $derived(feedViewStore.myLinkblogFilter);
 
+  // Marks the Filter toggle while its toolbar is folded away.
+  let filtersChanged = $derived(feedViewStore.hasActiveFilters);
+
   let menuItems = $derived.by(() => {
     const items: Array<{
       label: string;
@@ -297,10 +300,15 @@
                     feedViewStore.setSourcePopoverOpen(false);
                   }
                 }}
-                aria-label="Toggle filters"
-                title="Filter"
+                aria-label={filtersChanged ? 'Toggle filters (changed)' : 'Toggle filters'}
+                title={filtersChanged ? 'Filter (changed)' : 'Filter'}
               >
-                <Icon name="filter" size={16} />
+                <span class="filter-icon">
+                  <Icon name="filter" size={16} />
+                  {#if filtersChanged}
+                    <span class="filter-dot" aria-hidden="true"></span>
+                  {/if}
+                </span>
                 <span class="btn-label">Filter</span>
               </button>
             {/if}
@@ -494,6 +502,23 @@
 
   .view-toggle button:hover:not(.active) {
     color: var(--color-text);
+  }
+
+  /* Filters moved off their starting point: a small One Blue dot on the icon,
+     the same mark the mobile bar's View options button wears. */
+  .filter-icon {
+    position: relative;
+    display: inline-flex;
+  }
+
+  .filter-dot {
+    position: absolute;
+    top: -2px;
+    right: -3px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--color-primary, #0066cc);
   }
 
   .btn-label {
