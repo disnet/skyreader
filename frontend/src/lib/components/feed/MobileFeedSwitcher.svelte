@@ -6,13 +6,22 @@
   import { getSourceDisplay } from '$lib/utils/sourceDisplay';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
+  import { shelfStore } from '$lib/stores/shelf.svelte';
   import { highlightReviewStore } from '$lib/stores/highlightReview.svelte';
   import { unreadCounts } from '$lib/stores/unreadCounts.svelte';
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
   import { auth } from '$lib/stores/auth.svelte';
-  import { channelPath, feedPath, categoryPath, FEEDS_PATH, SAVED_PATH } from '$lib/utils/viewNav';
+  import {
+    channelPath,
+    collectionPath,
+    feedPath,
+    categoryPath,
+    FEEDS_PATH,
+    SAVED_PATH,
+    SHELF_PATH,
+  } from '$lib/utils/viewNav';
   import { perfBegin, PERF_VIEW_SWITCH } from '$lib/utils/perfMarks';
   import Icon from '$lib/components/Icon.svelte';
   import { canUseSearch } from '$lib/utils/search';
@@ -109,6 +118,7 @@
     | 'highlighter'
     | 'quote'
     | 'heart'
+    | 'layers'
     | 'shelf';
 
   type NavItem =
@@ -154,11 +164,19 @@
         count?: number;
         icon: IconName;
         indent?: boolean;
+      }
+    | {
+        type: 'collection';
+        id: string;
+        label: string;
+        count?: number;
+        icon: IconName;
+        indent?: boolean;
       };
 
   type SectionData = {
     section: string;
-    groupId?: 'home' | 'everything' | 'saved' | 'other' | 'sources';
+    groupId?: 'home' | 'everything' | 'library' | 'other' | 'sources';
     items: NavItem[];
   };
 
@@ -220,12 +238,14 @@
       count: totalUnread,
       icon: 'inbox',
     };
-    const savedItem: NavItem = {
+    // The Library opens the Queue; its children are the Shelf's collections
+    // and the Queue's channels, as in the sidebar.
+    const libraryItem: NavItem = {
       type: 'view',
-      id: 'saved',
-      label: 'Queue',
+      id: 'library',
+      label: 'Library',
       count: savedCount,
-      icon: 'bookmark',
+      icon: 'shelf',
     };
     // Only the account-only destinations (linkblog, Discover) stay out of a
     // guest's switcher (mirroring the sidebar): a guest tapping one would just
@@ -291,15 +311,6 @@
           ]),
     ];
     const otherItems: NavItem[] = [
-      // The Shelf leads the utility group, as it sits just below the Queue in
-      // the sidebar's Library: kept out of the Queue's group so it doesn't read
-      // as a saved channel.
-      {
-        type: 'utility',
-        id: 'shelf',
-        label: 'Shelf',
-        icon: 'shelf' as IconName,
-      },
       ...accountItems,
       {
         type: 'utility',
@@ -348,6 +359,17 @@
         icon: 'newspaper' as const,
         indent: true,
       }));
+
+    // Collections are account-only (held server-side), like the sidebar's.
+    const collectionItems: NavItem[] = auth.isGuest
+      ? []
+      : shelfStore.collections.map((c) => ({
+          type: 'collection' as const,
+          id: c.id,
+          label: c.name,
+          icon: 'layers' as const,
+          indent: true,
+        }));
 
     const savedChannelItems: NavItem[] = filteredViewsStore.views
       .filter((v) => v.mode === 'saved')
@@ -427,10 +449,10 @@
       });
     }
 
-    // Saved group: Saved + saved channels
-    const savedGroup = [savedItem, ...savedChannelItems].filter(filterItem);
-    if (savedGroup.length > 0) {
-      sections.push({ section: '', groupId: 'saved', items: savedGroup });
+    // Library group: Library + Shelf collections + Queue channels
+    const libraryGroup = [libraryItem, ...collectionItems, ...savedChannelItems].filter(filterItem);
+    if (libraryGroup.length > 0) {
+      sections.push({ section: '', groupId: 'library', items: libraryGroup });
     }
 
     // Other utility items
@@ -475,11 +497,15 @@
   let currentFilter = $derived.by(() => {
     const url = $page.url;
     if (url.pathname === '/home') return { type: 'home' };
+    if (url.pathname === SHELF_PATH) {
+      const collection = url.searchParams.get('collection');
+      return collection ? { type: 'collection', id: collection } : { type: 'library' };
+    }
     const onFeeds = url.pathname === FEEDS_PATH;
     const onSaved = url.pathname === SAVED_PATH;
     const view = url.searchParams.get('view');
     if (view && (onFeeds || onSaved)) return { type: 'filteredView', id: view };
-    if (onSaved) return { type: 'saved' };
+    if (onSaved) return { type: 'library' };
     if (!onFeeds) return { type: 'none' };
     const feed = url.searchParams.get('feed');
     const category = url.searchParams.get('category');
@@ -505,8 +531,10 @@
     if (item.type === 'view') {
       if (item.id === 'home' && filter.type === 'home') return true;
       if (item.id === 'all' && filter.type === 'all') return true;
-      if (item.id === 'saved' && filter.type === 'saved') return true;
+      if (item.id === 'library' && filter.type === 'library') return true;
     }
+    if (item.type === 'collection' && filter.type === 'collection' && filter.id === item.id)
+      return true;
     if (item.type === 'feed' && filter.type === 'feed' && filter.id === item.id) return true;
     if (item.type === 'category' && filter.type === 'category' && filter.name === item.id)
       return true;
@@ -525,13 +553,15 @@
     let url = FEEDS_PATH;
     if (item.type === 'view') {
       if (item.id === 'home') url = '/home';
-      else if (item.id === 'saved') url = SAVED_PATH;
+      else if (item.id === 'library') url = SAVED_PATH;
     } else if (item.type === 'feed') {
       url = feedPath(item.id);
     } else if (item.type === 'category') {
       url = categoryPath(item.id);
     } else if (item.type === 'filteredView') {
       url = channelPath(item.id);
+    } else if (item.type === 'collection') {
+      url = collectionPath(item.id);
     } else if (item.type === 'utility') {
       url = `/${item.id}`;
     }
@@ -592,7 +622,7 @@
 
   <div class="items-list">
     {#each filteredItems as { section, groupId, items }}
-      <div class="nav-group" class:tinted={groupId === 'everything' || groupId === 'saved'}>
+      <div class="nav-group" class:tinted={groupId === 'everything' || groupId === 'library'}>
         {#if section && groupId === 'sources' && !searchQuery}
           <button
             class="section-header section-toggle"
@@ -638,7 +668,7 @@
               class:category-item={item.type === 'category'}
               onclick={() => selectItem(item)}
             >
-              {#if item.type === 'view' || item.type === 'utility' || item.type === 'filteredView' || item.type === 'category'}
+              {#if item.type === 'view' || item.type === 'utility' || item.type === 'filteredView' || item.type === 'category' || item.type === 'collection'}
                 <span class="item-icon"><Icon name={item.icon} size={18} /></span>
               {:else if item.type === 'feed'}
                 {#if item.iconUrl}
@@ -675,7 +705,7 @@
             <span class="item-label">New channel</span>
           </button>
         {/if}
-        {#if groupId === 'saved' && !searchQuery && onCreateChannel}
+        {#if groupId === 'library' && !searchQuery && onCreateChannel}
           <button class="nav-item new-channel-btn" onclick={() => onCreateChannel('saved')}>
             <span class="item-icon"><Icon name="plus" size={16} /></span>
             <span class="item-label">New channel</span>

@@ -7,12 +7,20 @@
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
+  import { shelfStore } from '$lib/stores/shelf.svelte';
   import { highlightReviewStore } from '$lib/stores/highlightReview.svelte';
   import { unreadCounts } from '$lib/stores/unreadCounts.svelte';
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
-  import { channelPath, feedPath, FEEDS_PATH, SAVED_PATH } from '$lib/utils/viewNav';
+  import {
+    channelPath,
+    collectionPath,
+    feedPath,
+    FEEDS_PATH,
+    SAVED_PATH,
+    SHELF_PATH,
+  } from '$lib/utils/viewNav';
   import Icon from './Icon.svelte';
   import AddButton from './AddButton.svelte';
   import { canUseSearch } from '$lib/utils/search';
@@ -202,6 +210,14 @@
         label: string;
         icon: IconName;
         indent?: boolean;
+      }
+    | {
+        type: 'collection';
+        id: string;
+        label: string;
+        count?: number;
+        icon: IconName;
+        indent?: boolean;
       };
 
   // Section type with optional icon and click handler for styled section headers
@@ -229,12 +245,14 @@
       count: totalUnread,
       icon: 'inbox',
     };
-    const savedItem: NavItem = {
+    // The Library opens the Queue; its children are the Shelf's collections
+    // and the Queue's channels, as in the sidebar.
+    const libraryItem: NavItem = {
       type: 'view',
-      id: 'saved',
-      label: 'Queue',
+      id: 'library',
+      label: 'Library',
       count: savedCount,
-      icon: 'bookmark',
+      icon: 'shelf',
     };
     // Only the account-only destinations (linkblog, Discover, settings) stay
     // out of a guest's dropdown (mirroring the sidebar): a guest picking one
@@ -367,17 +385,19 @@
       sections.push({ section: '', items: everythingGroup });
     }
 
-    // Library group: the Queue (+ its saved channels) and the Shelf — two ways
-    // of reading the same saves.
-    const shelfItem: NavItem = {
-      type: 'utility',
-      id: 'shelf',
-      label: 'Shelf',
-      icon: 'shelf',
-    };
-    const savedGroup = [savedItem, ...savedChannelItems, shelfItem].filter(filterItem);
-    if (savedGroup.length > 0) {
-      sections.push({ section: '', items: savedGroup });
+    // Library group: Library + Shelf collections (account-only) + Queue channels
+    const collectionItems: NavItem[] = auth.isGuest
+      ? []
+      : shelfStore.collections.map((c) => ({
+          type: 'collection' as const,
+          id: c.id,
+          label: c.name,
+          icon: 'layers' as const,
+          indent: true,
+        }));
+    const libraryGroup = [libraryItem, ...collectionItems, ...savedChannelItems].filter(filterItem);
+    if (libraryGroup.length > 0) {
+      sections.push({ section: '', items: libraryGroup });
     }
 
     // Other views + add action (channels are local-first, so guests get it too)
@@ -442,7 +462,7 @@
     const view = url.searchParams.get('view');
 
     if (view) return { type: 'icon', name: 'filter' };
-    if (saved) return { type: 'icon', name: 'bookmark' };
+    if (saved) return { type: 'icon', name: 'shelf' };
 
     if (feed) {
       const sub = subscriptions.find((s) => s.id === parseInt(feed));
@@ -469,7 +489,11 @@
     const onSaved = url.pathname === SAVED_PATH;
     const view = url.searchParams.get('view');
     if (view && (onFeeds || onSaved)) return { type: 'filteredView', id: view };
-    if (onSaved) return { type: 'saved' };
+    if (onSaved) return { type: 'library' };
+    if (url.pathname === SHELF_PATH) {
+      const collection = url.searchParams.get('collection');
+      return collection ? { type: 'collection', id: collection } : { type: 'library' };
+    }
     if (!onFeeds) return { type: 'none' };
     const feed = url.searchParams.get('feed');
     if (feed) return { type: 'feed', id: parseInt(feed) };
@@ -480,8 +504,10 @@
     const filter = currentFilter;
     if (item.type === 'view') {
       if (item.id === 'all' && filter.type === 'all') return true;
-      if (item.id === 'saved' && filter.type === 'saved') return true;
+      if (item.id === 'library' && filter.type === 'library') return true;
     }
+    if (item.type === 'collection' && filter.type === 'collection' && filter.id === item.id)
+      return true;
     if (item.type === 'feed' && filter.type === 'feed' && filter.id === item.id) return true;
     if (item.type === 'filteredView' && filter.type === 'filteredView' && filter.id === item.id)
       return true;
@@ -554,11 +580,13 @@
     }
     let url = FEEDS_PATH;
     if (item.type === 'view') {
-      if (item.id === 'saved') url = SAVED_PATH;
+      if (item.id === 'library') url = SAVED_PATH;
     } else if (item.type === 'feed') {
       url = feedPath(item.id);
     } else if (item.type === 'filteredView') {
       url = channelPath(item.id);
+    } else if (item.type === 'collection') {
+      url = collectionPath(item.id);
     } else if (item.type === 'utility') {
       url = `/${item.id}`;
     }
@@ -766,7 +794,7 @@
                 onclick={() => selectItem(item)}
                 onmouseenter={() => (highlightedIndex = flatIndex)}
               >
-                {#if item.type === 'view' || item.type === 'utility' || item.type === 'action' || item.type === 'filteredView'}
+                {#if item.type === 'view' || item.type === 'utility' || item.type === 'action' || item.type === 'filteredView' || item.type === 'collection'}
                   <span class="item-icon"><Icon name={item.icon} size={16} /></span>
                 {:else if item.type === 'feed'}
                   {#if item.iconUrl}
@@ -917,7 +945,7 @@
                 onclick={() => selectItem(item)}
                 onmouseenter={() => (highlightedIndex = flatIndex)}
               >
-                {#if item.type === 'view' || item.type === 'utility' || item.type === 'action' || item.type === 'filteredView'}
+                {#if item.type === 'view' || item.type === 'utility' || item.type === 'action' || item.type === 'filteredView' || item.type === 'collection'}
                   <span class="item-icon"><Icon name={item.icon} size={16} /></span>
                 {:else if item.type === 'feed'}
                   {#if item.iconUrl}

@@ -157,5 +157,11 @@ test.describe('Shelf', () => {
       .getByRole('button', { name: 'Structure and Interpretation', exact: true })
       .click();
     await expect(authedPage).toHaveURL(/[?&]read=/);
+
+    // The sidebar lists the collection under Library, and opens it from anywhere.
+    await authedPage.goto('/feeds');
+    await authedPage.locator('.collection-item', { hasText: 'Course reading' }).click();
+    await expect(authedPage).toHaveURL(/\/shelf\?collection=/);
+    await expect(authedPage.getByRole('heading', { name: 'Course reading' })).toBeVisible();
   });
 });

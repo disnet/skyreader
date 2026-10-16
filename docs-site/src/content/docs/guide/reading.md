@@ -17,7 +17,7 @@ Everything starts checked. Uncheck a source, a folder or a whole group to leave 
 
 ### Making a channel
 
-Choose **New channel** under **Feeds** or **Queue**, in the sidebar or the feed switcher on a phone.
+Choose **New channel** under **Feeds** or **Library**, in the sidebar or the feed switcher on a phone.
 
 - **Name** fills itself in from what you choose. Type your own to keep it.
 - **Show** and **Order** set what the channel opens on: unread or everything, newest or oldest first.
