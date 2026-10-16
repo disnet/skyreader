@@ -578,10 +578,18 @@
     background: var(--color-sidebar-active);
   }
 
+  /* Same column as the Queue's .feed-page-body (800px, 0.5rem top on desktop,
+     1rem inset), so the Queue | Shelf switch stays put when you flip between them. */
   .shelf-body {
-    max-width: 1040px;
+    max-width: 800px;
     margin: 0 auto;
-    padding: 0.75rem 1rem 2rem;
+    padding: 0 1rem 2rem;
+  }
+
+  @media (min-width: 1001px) {
+    .shelf-body {
+      padding-top: 0.5rem;
+    }
   }
 
   /* --- Collections --- */
