@@ -26,7 +26,12 @@ import {
   unionHighlightSources,
 } from '$lib/utils/highlightAliases';
 import type { ItemLabel, ItemLabelType, SocialItemType, Highlight, ReviewIntent } from '$lib/types';
-import { isPdfPlace, type PdfPlace, type PdfPlaceProps } from '$lib/utils/pdfPlace';
+import {
+  isPdfPlace,
+  pdfPlaceProgress,
+  type PdfPlace,
+  type PdfPlaceProps,
+} from '$lib/utils/pdfPlace';
 
 const BULK_BATCH_SIZE = 500;
 
@@ -1669,6 +1674,9 @@ function createItemLabelsStore() {
   // `readAt` (finished) or `lastReadAt` (in-progress) timestamp seen across those
   // keys, plus the current scroll progress when one exists. Returns null when the
   // item has never been opened. Drives the Home "Continue reading" lane.
+  // A PDF read in its Original view keeps its place in `pdfPlace` rather than
+  // `readProgress`, so that counts too, and its position is the progress when
+  // it's the more recent of the two (see `pdfPlaceProgress`).
   // Tracks each key, so it stays reactive when called inside a $derived.
   function getReadActivity(itemKeys: string[]): {
     lastActivityAt: number;
@@ -1676,6 +1684,9 @@ function createItemLabelsStore() {
   } | null {
     let lastActivityAt = 0;
     let progress: { paragraphIndex: number; totalParagraphs: number } | null = null;
+    let placeAt = 0;
+    let placeProgress: { paragraphIndex: number; totalParagraphs: number } | null = null;
+    let progressAt = 0;
 
     for (const key of itemKeys) {
       if (!key) continue;
@@ -1694,9 +1705,22 @@ function createItemLabelsStore() {
         const totalParagraphs = rp.props.totalParagraphs as number;
         if (typeof paragraphIndex === 'number' && typeof totalParagraphs === 'number') {
           progress = { paragraphIndex, totalParagraphs };
+          progressAt = Math.max(progressAt, at);
+        }
+      }
+
+      const place = getLabel(key, 'pdfPlace');
+      if (place && isPdfPlace(place.props)) {
+        const at = place.props.lastReadAt || place.updatedAt || 0;
+        if (at > lastActivityAt) lastActivityAt = at;
+        if (at >= placeAt) {
+          placeAt = at;
+          placeProgress = pdfPlaceProgress(place.props);
         }
       }
     }
+
+    if (placeProgress && placeAt >= progressAt) progress = placeProgress;
 
     if (lastActivityAt === 0) return null;
     return { lastActivityAt, progress };
@@ -1742,7 +1766,10 @@ function createItemLabelsStore() {
   /** Where a saved PDF's Original view was left, or null to open at its top. */
   function getPdfPlace(itemKey: string): PdfPlace | null {
     const props = getLabel(itemKey, 'pdfPlace')?.props;
-    return isPdfPlace(props) ? { page: props.page, at: props.at } : null;
+    if (!isPdfPlace(props)) return null;
+    return props.pages
+      ? { page: props.page, at: props.at, pages: props.pages }
+      : { page: props.page, at: props.at };
   }
 
   /**
@@ -1753,11 +1780,19 @@ function createItemLabelsStore() {
     if (!isPdfPlace(place)) return;
     const current = getPdfPlace(itemKey);
     const at = Math.round(place.at * 1000) / 1000;
-    if (current && current.page === place.page && current.at === at) return;
+    if (
+      current &&
+      current.page === place.page &&
+      current.at === at &&
+      current.pages === place.pages
+    ) {
+      return;
+    }
     const now = Date.now();
     const props: Record<string, unknown> = {
       page: place.page,
       at,
+      ...(place.pages ? { pages: place.pages } : {}),
       lastReadAt: now,
     } satisfies PdfPlaceProps;
     await putLabel({

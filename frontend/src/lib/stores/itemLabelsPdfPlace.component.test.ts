@@ -124,6 +124,33 @@ describe('pdfPlace', () => {
     expect(itemLabelsStore.getPdfPlace(PDF)).toEqual({ page: 9, at: 0.75 });
   });
 
+  it('keeps the page count with the place', async () => {
+    await itemLabelsStore.setPdfPlace(PDF, 'saved', { page: 4, at: 0.5, pages: 20 });
+    expect(itemLabelsStore.getPdfPlace(PDF)).toEqual({ page: 4, at: 0.5, pages: 20 });
+    expect(api.addLabel).toHaveBeenCalledWith(
+      expect.objectContaining({ props: expect.objectContaining({ pages: 20 }) })
+    );
+  });
+
+  it('counts reading in the Original view as read activity, with progress', async () => {
+    const key = 'at://did:plc:me/app.skyreader.feed.saved/3kactivity';
+    expect(itemLabelsStore.getReadActivity([key])).toBeNull();
+
+    await itemLabelsStore.setPdfPlace(key, 'saved', { page: 5, at: 0.5, pages: 10 });
+    const activity = itemLabelsStore.getReadActivity([key]);
+    expect(activity?.lastActivityAt).toBeGreaterThan(0);
+    const p = activity!.progress!;
+    expect((p.paragraphIndex + 1) / p.totalParagraphs).toBeCloseTo(0.45);
+  });
+
+  it('a place without a page count is activity, not progress', async () => {
+    const key = 'at://did:plc:me/app.skyreader.feed.saved/3kolder';
+    await itemLabelsStore.setPdfPlace(key, 'saved', { page: 5, at: 0.5 });
+    const activity = itemLabelsStore.getReadActivity([key]);
+    expect(activity?.lastActivityAt).toBeGreaterThan(0);
+    expect(activity?.progress).toBeNull();
+  });
+
   it('ignores a malformed place from the server', async () => {
     await itemLabelsStore.setPdfPlace(PDF, 'saved', { page: 3, at: 0.5 });
     api.getAllLabels.mockResolvedValueOnce({

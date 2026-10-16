@@ -268,7 +268,11 @@ unstored), and at the place it was last read, on any device: the `pdfPlace` item
 save's URI (`itemLabelsStore.getPdfPlace` / `setPdfPlace`, merged by `lastReadAt` like
 `readProgress`), passed in as `place` and reported back through `onplace`. A place is the page in
 the middle of the view and how far down it (`utils/pdfPlace.ts`), so it holds at any zoom or
-width. The viewer follows `place` (once laid out, on resize, and when a sync lands late) until the
+width. It also carries the PDF's page count (`pages`), so `getReadActivity` counts Original-view
+reading: the place's `lastReadAt` is activity, and when it's newer than any `readProgress` its
+position is the progress (`pdfPlaceProgress`, in tenths of a page), so a PDF read only in Original
+reaches Continue reading. A place saved before `pages` existed is activity without progress.
+The viewer follows `place` (once laid out, on resize, and when a sync lands late) until the
 reader scrolls, and reports nothing before that, so opening at the top can't overwrite it. While it's open, AppShell's font-size shortcuts (Shift +, Shift -, Shift 0) zoom it
 instead (`claimPdfZoomShortcuts` / `openPdfZoom`). Harness: `/dev/pdf` (`?sample=jpx` for a JPEG 2000 image; highlighting there is live but local).
 

@@ -807,7 +807,7 @@
       const next = at > 1 ? 1 : at < 0 && middle < rect.top - 32 ? -1 : 0;
       const to = page + next;
       if (next === 0 || next === -step || to < 1 || to > pageSizes.length) {
-        return { page, at: Math.min(1, Math.max(0, at)) };
+        return { page, at: Math.min(1, Math.max(0, at)), pages: pageSizes.length };
       }
       step = next;
       page = to;
