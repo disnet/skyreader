@@ -230,16 +230,11 @@
 
   .setting-select {
     min-width: 9rem;
-    padding: 0.3rem 0.5rem;
-    border: 1px solid var(--color-border);
-    border-radius: 6px;
-    background: var(--color-bg);
-    color: var(--color-text);
+    padding-top: 0.3rem;
+    padding-bottom: 0.3rem;
     font-size: var(--text-sm);
-    cursor: pointer;
   }
 
-  .setting-select:focus-visible,
   .reset-button:focus-visible {
     outline: 2px solid var(--color-primary);
     outline-offset: 1px;

@@ -200,18 +200,10 @@
     font-weight: var(--weight-medium);
   }
   .control select {
-    padding: 0.25rem 0.5rem;
-    border: 1px solid var(--color-border);
-    border-radius: 6px;
-    background: var(--color-bg);
-    color: var(--color-text);
+    padding-top: 0.25rem;
+    padding-bottom: 0.25rem;
     font-size: var(--text-sm);
     font-weight: var(--weight-medium);
-    cursor: pointer;
-  }
-  .control select:focus-visible {
-    outline: 2px solid var(--color-primary);
-    outline-offset: 1px;
   }
   .generate {
     display: inline-flex;

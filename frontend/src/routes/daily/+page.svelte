@@ -666,12 +666,6 @@
   }
   select {
     min-height: 2.25rem;
-    padding: 0.35rem 1.8rem 0.35rem 0.6rem;
-    border: 1px solid var(--color-border);
-    border-radius: 6px;
-    background: var(--color-bg);
-    color: var(--color-text);
-    font: inherit;
   }
   .new-issue {
     min-height: 2.25rem;

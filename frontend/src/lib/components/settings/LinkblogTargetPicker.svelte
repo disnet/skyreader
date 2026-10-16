@@ -555,36 +555,11 @@
     margin-bottom: 0.375rem;
   }
 
-  /* Native selects render differently in every browser; give this one the same
-     box as the text inputs beside it. */
   .format-select {
-    -webkit-appearance: none;
-    appearance: none;
     width: 100%;
     max-width: 22rem;
-    padding: 0.5rem 2rem 0.5rem 0.625rem;
-    border: 1px solid var(--color-border);
-    border-radius: 6px;
-    background-color: var(--color-bg);
-    /* Chevron drawn inline so it inherits nothing from the platform widget. */
-    background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23808080' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: right 0.6rem center;
-    color: var(--color-text);
-    font: inherit;
-    box-sizing: border-box;
-    cursor: pointer;
-    transition: border-color 0.15s ease;
-  }
-
-  .format-select:hover {
-    border-color: var(--color-primary);
-  }
-
-  .format-select:focus-visible {
-    outline: 2px solid var(--color-primary);
-    outline-offset: 1px;
-    border-color: var(--color-primary);
+    padding-top: 0.5rem;
+    padding-bottom: 0.5rem;
   }
 
   .format-hint {
@@ -603,8 +578,7 @@
     .pub-option,
     .pub-radio,
     .pub-radio::after,
-    .pub-open,
-    .format-select {
+    .pub-open {
       transition: none;
     }
   }
