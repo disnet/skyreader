@@ -5,6 +5,7 @@ import {
   matchesPattern,
   evaluatePath,
   RobotsPolicy,
+  isExemptFeedEndpoint,
   MAX_CRAWL_DELAY_MS,
 } from './robots';
 
@@ -138,6 +139,18 @@ describe('evaluatePath', () => {
   });
 });
 
+describe('isExemptFeedEndpoint', () => {
+  it('matches only the exact YouTube feed path on YouTube hosts', () => {
+    expect(isExemptFeedEndpoint(new URL('https://www.youtube.com/feeds/videos.xml?user=x'))).toBe(
+      true
+    );
+    expect(isExemptFeedEndpoint(new URL('https://WWW.YouTube.com/feeds/videos.xml'))).toBe(true);
+    expect(isExemptFeedEndpoint(new URL('https://www.youtube.com/feeds/videos.xml2'))).toBe(false);
+    expect(isExemptFeedEndpoint(new URL('https://www.youtube.com/api/feed'))).toBe(false);
+    expect(isExemptFeedEndpoint(new URL('https://evil.example/feeds/videos.xml'))).toBe(false);
+  });
+});
+
 describe('RobotsPolicy', () => {
   function policy(
     responder: (url: string) => Response | Promise<Response>,
@@ -167,6 +180,25 @@ describe('RobotsPolicy', () => {
       matchedPattern: '/private/',
     });
     expect(calls).toEqual(['https://example.com/robots.txt']);
+  });
+
+  it('exempts YouTube feeds from Disallow but not the rest of youtube.com', async () => {
+    const { p } = policy(
+      () =>
+        new Response(
+          'User-agent: *\nDisallow: /feeds/videos.xml\nDisallow: /feeds/other\nCrawl-delay: 2'
+        )
+    );
+    expect(
+      await p.check('https://www.youtube.com/feeds/videos.xml?channel_id=UC1234567890')
+    ).toEqual({ allowed: true, crawlDelayMs: 2000 });
+    expect((await p.check('https://youtube.com/feeds/videos.xml?playlist_id=PL123')).allowed).toBe(
+      true
+    );
+    expect((await p.check('https://www.youtube.com/feeds/other')).allowed).toBe(false);
+    // Same path on another host is not exempt.
+    const { p: other } = policy(() => new Response('User-agent: *\nDisallow: /feeds/videos.xml'));
+    expect((await other.check('https://example.com/feeds/videos.xml')).allowed).toBe(false);
   });
 
   it('sends the honest identity when fetching robots.txt', async () => {
