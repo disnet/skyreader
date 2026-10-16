@@ -3,7 +3,8 @@
  * holding external-content FTS5 indexes over what they've read, saved and
  * highlighted: one over each item's own text (title, author, feed, body), one
  * over the reader's highlights and notes on it. They're apart so a new highlight
- * rewrites only the notes, never a body that can be a whole book. See
+ * rewrites only the notes, never a body that can be a whole book. A long body
+ * is also indexed as overlapping passages, only to find a snippet in it. See
  * docs/plans/FULL_TEXT_SEARCH.md and the spike in backend/spikes/search-index
  * (why a DO and not D1: per-user size, no cross-user filtering, and D1 can't
  * export a database with an FTS5 table).
@@ -52,6 +53,18 @@ const SEARCH_CATCHUP_MS = 1_500;
 const SAVED_RECONCILE_INTERVAL_MS = 6 * 60 * 60 * 1000;
 /** Recent items get a small ranking lift. */
 const RECENT_MS = 30 * 24 * 60 * 60 * 1000;
+/**
+ * Bodies longer than this (books) are also indexed as passages, for snippets:
+ * FTS5's snippet() slows down faster than linearly as a term recurs in one
+ * text, so on a whole book a common word could take half a second a hit.
+ * Snippets of a long body come from its best-matching passage instead.
+ */
+export const PASSAGE_MIN_CHARS = 64_000;
+const PASSAGE_CHARS = 4_000;
+/** Consecutive passages overlap this much, so a phrase across a cut still fits in one. */
+const PASSAGE_OVERLAP = 400;
+/** Passage rowids are docs.id * PASSAGE_STRIDE + n, so one item's passages are a rowid range. */
+const PASSAGE_STRIDE = 1024;
 /** The UI says "1,000+" past this, so no query counts further. */
 export const SEARCH_COUNT_CAP = 1_000;
 
@@ -148,7 +161,7 @@ export class SearchIndex extends DurableObject<Env> {
     const version = this.getMeta('schema_version');
     if (version === SCHEMA_VERSION) return;
     // A change to the layout drops everything and lets the cursors rebuild it
-    // from zero (2: notes moved out of `fts` into `notes_fts`).
+    // from zero (2: notes moved out of `fts` into `notes_fts`; passages).
     this.dropIndex();
     this.sql.exec(`CREATE TABLE docs (
       id INTEGER PRIMARY KEY,
@@ -185,6 +198,19 @@ export class SearchIndex extends DurableObject<Env> {
       content = 'notes_text', content_rowid = 'id',
       tokenize = 'porter unicode61 remove_diacritics 2'
     )`);
+    // A long body's passages, as spans of it in characters: the text is read
+    // from docs_text through the view, never stored twice.
+    this.sql.exec(
+      `CREATE TABLE passages (id INTEGER PRIMARY KEY, start INTEGER NOT NULL, len INTEGER NOT NULL)`
+    );
+    this.sql.exec(`CREATE VIEW passages_text AS
+      SELECT p.id, substr(t.body, p.start + 1, p.len) AS body
+        FROM passages p JOIN docs_text t ON t.id = p.id / ${PASSAGE_STRIDE}`);
+    this.sql.exec(`CREATE VIRTUAL TABLE passages_fts USING fts5(
+      body,
+      content = 'passages_text', content_rowid = 'id',
+      tokenize = 'porter unicode61 remove_diacritics 2'
+    )`);
     this.setMeta('schema_version', SCHEMA_VERSION);
   }
 
@@ -193,6 +219,9 @@ export class SearchIndex extends DurableObject<Env> {
     this.sql.exec(`DROP TABLE IF EXISTS docs_text`);
     this.sql.exec(`DROP TABLE IF EXISTS notes_fts`);
     this.sql.exec(`DROP TABLE IF EXISTS notes_text`);
+    this.sql.exec(`DROP TABLE IF EXISTS passages_fts`);
+    this.sql.exec(`DROP VIEW IF EXISTS passages_text`);
+    this.sql.exec(`DROP TABLE IF EXISTS passages`);
     this.sql.exec(`DROP TABLE IF EXISTS docs`);
     this.sql.exec(`DELETE FROM meta WHERE key <> 'did'`);
   }
@@ -414,6 +443,7 @@ export class SearchIndex extends DurableObject<Env> {
       // A re-read, a new highlight or a metadata change leaves the item's own
       // text alone: skip its FTS rewrite, which is most of a write's cost.
       if (!unchanged) {
+        this.removePassages(id);
         this.sql.exec(
           `INSERT INTO fts (fts, rowid, title, author, feed, body) VALUES ('delete', ?, ?, ?, ?, ?)`,
           id,
@@ -432,6 +462,7 @@ export class SearchIndex extends DurableObject<Env> {
           id,
           ...text
         );
+        this.writePassages(id, doc.body);
       }
     } else {
       id = this.sql
@@ -462,8 +493,42 @@ export class SearchIndex extends DurableObject<Env> {
         id,
         ...text
       );
+      this.writePassages(id, doc.body);
     }
     this.writeNotes(id, doc.notes);
+  }
+
+  /** Index item `id`'s passages, if its body is long enough to have them. */
+  private writePassages(id: number, body: string) {
+    if (body.length <= PASSAGE_MIN_CHARS) return;
+    const spans = passageSpans(body).slice(0, PASSAGE_STRIDE);
+    spans.forEach(([start, len], n) => {
+      this.sql.exec(
+        `INSERT INTO passages (id, start, len) VALUES (?, ?, ?)`,
+        id * PASSAGE_STRIDE + n,
+        start,
+        len
+      );
+    });
+    this.sql.exec(
+      `INSERT INTO passages_fts (rowid, body)
+       SELECT id, body FROM passages_text WHERE id BETWEEN ? AND ?`,
+      id * PASSAGE_STRIDE,
+      id * PASSAGE_STRIDE + PASSAGE_STRIDE - 1
+    );
+  }
+
+  /** Drop item `id`'s passages. Reads them through docs_text, so call it before the body changes. */
+  private removePassages(id: number) {
+    const lo = id * PASSAGE_STRIDE;
+    const hi = lo + PASSAGE_STRIDE - 1;
+    this.sql.exec(
+      `INSERT INTO passages_fts (passages_fts, rowid, body)
+       SELECT 'delete', id, body FROM passages_text WHERE id BETWEEN ? AND ?`,
+      lo,
+      hi
+    );
+    this.sql.exec(`DELETE FROM passages WHERE id BETWEEN ? AND ?`, lo, hi);
   }
 
   /** Replace item `id`'s notes; empty notes leave no row. */
@@ -510,6 +575,7 @@ export class SearchIndex extends DurableObject<Env> {
       existing.body
     );
     this.writeNotes(id, '');
+    this.removePassages(id);
     this.sql.exec(`DELETE FROM docs_text WHERE id = ?`, id);
     this.sql.exec(`DELETE FROM docs WHERE id = ?`, id);
   }
@@ -592,7 +658,7 @@ export class SearchIndex extends DurableObject<Env> {
     if (ranked.length > 0) {
       const ids = ranked.map((r) => r.id as number);
       const inIds = ids.map(() => '?').join(',');
-      const fromText = this.snippetsFrom('fts', -1, anyPositive, ids, inIds);
+      const fromText = this.textSnippets(anyPositive, ids);
       const fromNotes = this.snippetsFrom('notes_fts', 0, anyPositive, ids, inIds);
       const matches = (segments: SnippetSegment[] | undefined) =>
         segments?.filter((seg) => seg.match).length ?? 0;
@@ -636,8 +702,43 @@ export class SearchIndex extends DurableObject<Env> {
     };
   }
 
+  /**
+   * Snippets from each item's own text. A long body's comes from its
+   * best-matching passage (see PASSAGE_MIN_CHARS); an item whose passages don't
+   * match (its title did) gets its title.
+   */
+  private textSnippets(match: string, ids: number[]): Map<number, SnippetSegment[]> {
+    const long = new Set<number>();
+    for (const id of ids) {
+      const lo = id * PASSAGE_STRIDE;
+      if (this.sql.exec(`SELECT 1 FROM passages WHERE id = ?`, lo).toArray().length) long.add(id);
+    }
+    const short = ids.filter((id) => !long.has(id));
+    const found = short.length
+      ? this.snippetsFrom('fts', -1, match, short, short.map(() => '?').join(','))
+      : new Map<number, SnippetSegment[]>();
+    for (const id of long) {
+      const lo = id * PASSAGE_STRIDE;
+      const best = this.sql
+        .exec(
+          `SELECT rowid FROM passages_fts WHERE passages_fts MATCH ? AND rowid BETWEEN ? AND ?
+            ORDER BY bm25(passages_fts) LIMIT 1`,
+          match,
+          lo,
+          lo + PASSAGE_STRIDE - 1
+        )
+        .toArray()[0];
+      const snippet = best
+        ? this.snippetsFrom('passages_fts', 0, match, [best.rowid as number], '?')
+        : this.snippetsFrom('fts', 0, match, [id], '?');
+      const segments = [...snippet.values()][0];
+      if (segments) found.set(id, segments);
+    }
+    return found;
+  }
+
   private snippetsFrom(
-    table: 'fts' | 'notes_fts',
+    table: 'fts' | 'notes_fts' | 'passages_fts',
     column: number,
     match: string,
     ids: number[],
@@ -658,4 +759,31 @@ export class SearchIndex extends DurableObject<Env> {
     }
     return found;
   }
+}
+
+/**
+ * Overlapping [start, length] spans covering `text`, about PASSAGE_CHARS each,
+ * cut at whitespace where there's some nearby. In characters (code points), as
+ * SQLite's substr() counts them.
+ */
+export function passageSpans(text: string): Array<[number, number]> {
+  const chars = Array.from(text);
+  const isSpace = (i: number) => /\s/.test(chars[i] ?? '');
+  const spans: Array<[number, number]> = [];
+  let start = 0;
+  while (start < chars.length) {
+    let end = Math.min(start + PASSAGE_CHARS, chars.length);
+    if (end < chars.length) {
+      let cut = end;
+      while (cut > start + PASSAGE_CHARS / 2 && !isSpace(cut)) cut--;
+      if (cut > start + PASSAGE_CHARS / 2) end = cut;
+    }
+    spans.push([start, end - start]);
+    if (end >= chars.length) break;
+    let next = end - PASSAGE_OVERLAP;
+    while (next < end && !isSpace(next)) next++;
+    while (next < end && isSpace(next)) next++;
+    start = next;
+  }
+  return spans;
 }

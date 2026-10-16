@@ -3,12 +3,13 @@ import {
   createExecutionContext,
   waitOnExecutionContext,
   runDurableObjectAlarm,
+  runInDurableObject,
 } from 'cloudflare:test';
 import { describe, it, expect, beforeEach } from 'vitest';
 import worker from '../src/index';
 import { parseSearchQuery } from '../src/services/search-query';
 import { htmlToText } from '../src/utils/html-text';
-import { splitSnippet } from '../src/durable-objects/search-index';
+import { passageSpans, splitSnippet } from '../src/durable-objects/search-index';
 import { itemBodyKey } from '../src/routes/item-bodies';
 import {
   CURSOR_LAG_MS,
@@ -213,6 +214,15 @@ interface SearchResultBody {
   index: { items: number; building: boolean };
 }
 
+/** FTS5's own check that each index agrees with the text it was built from. */
+async function expectIndexConsistent(user: TestUser) {
+  await runInDurableObject(searchIndexStub(env, user.did), (_instance, state) => {
+    for (const table of ['fts', 'notes_fts', 'passages_fts']) {
+      state.storage.sql.exec(`INSERT INTO ${table} (${table}, rank) VALUES ('integrity-check', 1)`);
+    }
+  });
+}
+
 async function search(user: TestUser, query: string, extra = ''): Promise<SearchResultBody> {
   const response = await call(user, `/api/search?q=${encodeURIComponent(query)}${extra}`);
   expect(response.status).toBe(200);
@@ -279,6 +289,30 @@ describe('splitSnippet', () => {
       { text: 'climate', match: true },
       { text: ' bill …', match: false },
     ]);
+  });
+});
+
+describe('passageSpans', () => {
+  it('covers the text in overlapping passages cut at spaces', () => {
+    const text = 'word '.repeat(3000); // 15k chars
+    const spans = passageSpans(text);
+    expect(spans[0][0]).toBe(0);
+    const [lastStart, lastLen] = spans[spans.length - 1];
+    expect(lastStart + lastLen).toBe(text.length);
+    for (let i = 1; i < spans.length; i++) {
+      const [start] = spans[i];
+      const [prevStart, prevLen] = spans[i - 1];
+      expect(start).toBeLessThan(prevStart + prevLen); // overlaps
+      expect(text[start]).toBe('w'); // starts on a word
+      expect(prevLen).toBeLessThanOrEqual(4000);
+    }
+  });
+
+  it('counts characters as SQLite does, not UTF-16 units', () => {
+    const text = '😀'.repeat(5000);
+    const spans = passageSpans(text);
+    const [lastStart, lastLen] = spans[spans.length - 1];
+    expect(lastStart + lastLen).toBe(5000);
   });
 });
 
@@ -457,6 +491,34 @@ describe('GET /api/search', () => {
     ]);
   });
 
+  it('snippets a long book from the passage that matches, and drops it cleanly', async () => {
+    const user = await createUser();
+    // Emoji ahead of the match: passages are cut in characters, as SQLite counts them.
+    const filler = `<p>${'quiet 😀 garden morning '.repeat(4000)}</p>`; // ~96k chars
+    await save(user, {
+      rkey: '3ksavedbook0002',
+      url: 'https://books.example/long.pdf',
+      title: 'A long report',
+      content: `${filler}<p>The appendix covers Svalbard in detail.</p>${filler}`,
+      contentType: 'pdf',
+    });
+    const body = await search(user, 'svalbard');
+    expect(body.total).toBe(1);
+    expect(body.results[0].snippet).toContainEqual({ text: 'Svalbard', match: true });
+    expect(body.results[0].snippet.map((s) => s.text).join('')).toContain('appendix covers');
+    // A title-only match still gets a snippet.
+    expect((await search(user, 'report')).results[0].snippet).toContainEqual({
+      text: 'report',
+      match: true,
+    });
+
+    expect((await call(user, '/api/saved/3ksavedbook0002', { method: 'DELETE' })).status).toBe(200);
+    const after = await search(user, 'svalbard');
+    expect(after.total).toBe(0);
+    expect(after.index.items).toBe(0);
+    await expectIndexConsistent(user);
+  });
+
   it('matches terms split between the text and the notes, and keeps notes current', async () => {
     const user = await createUser();
     await save(user, {
@@ -518,6 +580,7 @@ describe('GET /api/search', () => {
     expect((await search(user, 'fjords')).total).toBe(0);
     expect((await search(user, 'valley moraines')).total).toBe(1);
     expect((await search(user, 'meltwater')).total).toBe(1);
+    await expectIndexConsistent(user);
   });
 
   it('files a highlight on a save under the guid the save bridges to', async () => {

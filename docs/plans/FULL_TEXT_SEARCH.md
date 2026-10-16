@@ -48,7 +48,12 @@ Notes that exist only in Margin or Semble are out of scope for v1.
 - Snippets are computed only for the page of results, never inside the ranked SELECT. In the spike
   that was up to 5× slower on common terms. Each hit shows the passage from its text or its notes,
   whichever has more matches.
-- Snippets of a book tokenize its whole body. Measure a page of book hits in staging.
+- **Passages, for book snippets.** FTS5's `snippet()` slows down faster than linearly as a term
+  recurs in one text. On 600k-character bodies, a page of 20 hits on a common word took 10 s locally.
+  So a body over 64k characters is also indexed as overlapping ~4k-character passages
+  (`passages_fts`). A book hit's snippet comes from its best-matching passage, and the same page
+  takes about 30 ms. The passages are spans in a view over `docs_text`, so the text isn't stored
+  twice. They add index rows for books only, written once per book.
 - Counts are capped at 1,000, shown as "1,000+".
 
 ## Keeping it current: pull, don't push
