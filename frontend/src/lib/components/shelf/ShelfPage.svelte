@@ -663,14 +663,19 @@
 
   .edit-name,
   .edit-desc,
-  .search,
-  .sort {
+  .search {
     padding: 0.45rem 0.625rem;
     border: 1px solid var(--color-border);
     border-radius: 6px;
     background: var(--color-bg);
     color: var(--color-text);
     font: inherit;
+    font-size: var(--text-md);
+  }
+
+  .sort {
+    padding-top: 0.45rem;
+    padding-bottom: 0.45rem;
     font-size: var(--text-md);
   }
 
@@ -685,8 +690,7 @@
 
   .edit-name:focus,
   .edit-desc:focus,
-  .search:focus,
-  .sort:focus {
+  .search:focus {
     outline: none;
     border-color: var(--color-primary);
   }

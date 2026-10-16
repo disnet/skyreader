@@ -2526,7 +2526,7 @@
     padding: 0.5rem 0.625rem;
     border: 1px solid var(--color-border);
     border-radius: 6px;
-    background: var(--color-bg);
+    background-color: var(--color-bg);
     color: var(--color-text);
     font: inherit;
     font-size: var(--text-md);
@@ -2548,6 +2548,11 @@
 
   textarea.field {
     resize: vertical;
+  }
+
+  /* Leave the right gutter to the shared select style's chevron. */
+  select.field {
+    padding-right: 2rem;
   }
 
   .form {
