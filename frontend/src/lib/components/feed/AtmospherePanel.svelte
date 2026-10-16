@@ -1048,10 +1048,10 @@
                                 aria-busy={busy}
                                 aria-pressed={saved}
                                 title={saved
-                                  ? 'In your Saved list. Remove it'
+                                  ? 'In your Library. Remove it'
                                   : 'Save to read in Skyreader'}
                                 aria-label={saved
-                                  ? `Remove “${connectionLabel(connection)}” from Saved`
+                                  ? `Remove “${connectionLabel(connection)}” from your Library`
                                   : `Save “${connectionLabel(connection)}” to read in Skyreader`}
                                 onclick={(e) => {
                                   e.stopPropagation();
@@ -1171,11 +1171,9 @@
                           disabled={busy}
                           aria-busy={busy}
                           aria-pressed={saved}
-                          title={saved
-                            ? 'In your Saved list. Remove it'
-                            : 'Save to read in Skyreader'}
+                          title={saved ? 'In your Library. Remove it' : 'Save to read in Skyreader'}
                           aria-label={saved
-                            ? `Remove “${similarLabel(item)}” from Saved`
+                            ? `Remove “${similarLabel(item)}” from your Library`
                             : `Save “${similarLabel(item)}” to read in Skyreader`}
                           onclick={(e) => {
                             e.stopPropagation();

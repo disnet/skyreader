@@ -18,6 +18,7 @@
   import BottomSheet from '$lib/components/common/BottomSheet.svelte';
   import NotificationList from '$lib/components/NotificationList.svelte';
   import ShelfItem from './ShelfItem.svelte';
+  import LibraryIntro from '$lib/components/library/LibraryIntro.svelte';
   import HomeLane from '$lib/components/feed/HomeLane.svelte';
   import type { LaneCardVM } from '$lib/components/feed/homeLane';
   import { savedCoverUrl } from '$lib/services/api';
@@ -27,7 +28,11 @@
   import { shelfStore } from '$lib/stores/shelf.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
-  import { setSavedRowArchived, type FeedDisplayItem } from '$lib/stores/feedView.svelte';
+  import {
+    isSavedRowArchived,
+    setSavedRowArchived,
+    type FeedDisplayItem,
+  } from '$lib/stores/feedView.svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { notificationsStore } from '$lib/stores/notifications.svelte';
@@ -151,9 +156,13 @@
     reader.openReader(displayItemFor(save));
   }
 
+  // Same as the Queue and Home: Archive toggles, and closes the reader. Here the
+  // save stays on the Shelf behind it, now marked Archived.
   function handleReaderArchive() {
     if (!readerItem) return;
-    void setSavedRowArchived(readerItem, true);
+    const item = readerItem;
+    reader.closeReader();
+    void setSavedRowArchived(item, !isSavedRowArchived(item));
   }
 
   function handleReaderRemove() {
@@ -201,7 +210,7 @@
   async function deleteCollection() {
     if (!collection) return;
     const ok = confirm(
-      `Delete the collection “${collection.name}”?\n\nIts items stay on your Shelf and in Saved.`
+      `Delete the collection “${collection.name}”?\n\nIts items stay in your Library.`
     );
     if (!ok) return;
     const id = collection.id;
@@ -272,6 +281,8 @@
   </header>
 
   <div class="shelf-body">
+    <LibraryIntro mode="shelf" />
+
     {#if !auth.isGuest}
       <nav class="collections" aria-label="Collections">
         <button class="chip" class:active={!collectionId} onclick={() => selectCollection(null)}>
@@ -422,12 +433,12 @@
       {:else if collection}
         <EmptyState
           title="This collection is empty"
-          description="Add saves to it from their ⋯ menu, here or in Saved."
+          description="Add to it from any item's ⋯ menu, here or in your Queue."
         />
       {:else}
         <EmptyState
           title="Your Shelf is empty"
-          description="Uploaded books and PDFs land here. Keep anything else from its ⋯ menu in Saved."
+          description="Books and PDFs land here when you save them. Keep anything else from its ⋯ menu in your Queue."
         />
       {/if}
     {:else}
@@ -445,6 +456,8 @@
             isFirst={index === 0}
             isLast={index === entries.length - 1}
             onOpen={() => open(entry.save)}
+            onToggleArchive={(archived) =>
+              void setSavedRowArchived(displayItemFor(entry.save), archived)}
           />
         {/each}
       </div>

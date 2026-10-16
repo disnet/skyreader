@@ -39,7 +39,7 @@ Open an article from the room to read it like any other article. When you finish
 
 ## Adding articles
 
-If the collection allows it, the room carries an add box above its list: paste a link, or search your Saved library as you type. Who may add is the collection's own rule. An open Semble collection takes additions from anyone; a closed one from its owner and collaborators; a Margin collection from its owner only.
+If the collection allows it, the room carries an add box above its list: paste a link, or search your Library as you type. Who may add is the collection's own rule. An open Semble collection takes additions from anyone; a closed one from its owner and collaborators; a Margin collection from its owner only.
 
 An article you add here shows up right away. One added in Semble or Margin directly shows up in the room within about a minute of the next open.
 

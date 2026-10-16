@@ -171,7 +171,7 @@ test.describe('Reader URLs', () => {
     await expect(authedPage.getByText('Article unavailable')).toBeVisible({ timeout: 20_000 });
     await expect(authedPage).toHaveURL(/\/feeds$/);
     await expect(reader(authedPage)).toBeHidden();
-    await expect(authedPage.getByText('Your library is empty')).toBeVisible();
+    await expect(authedPage.getByText("You're not following anything yet")).toBeVisible();
   });
 
   test('the list under the reader keeps its scroll position on close', async ({

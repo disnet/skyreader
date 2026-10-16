@@ -31,6 +31,7 @@ export const HOME_SECTION = {
   follows: 'follows',
   random: 'random',
   recent: 'recent',
+  shelf: 'shelf',
 } as const;
 
 export function roomSectionId(subject: string): string {

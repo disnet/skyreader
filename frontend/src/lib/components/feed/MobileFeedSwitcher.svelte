@@ -223,7 +223,7 @@
     const savedItem: NavItem = {
       type: 'view',
       id: 'saved',
-      label: 'Saved',
+      label: 'Queue',
       count: savedCount,
       icon: 'bookmark',
     };
@@ -291,9 +291,9 @@
           ]),
     ];
     const otherItems: NavItem[] = [
-      // The Shelf leads the utility group, as it sits just below the Saved
-      // group in the sidebar: kept out of that group so it doesn't read as a
-      // saved channel.
+      // The Shelf leads the utility group, as it sits just below the Queue in
+      // the sidebar's Library: kept out of the Queue's group so it doesn't read
+      // as a saved channel.
       {
         type: 'utility',
         id: 'shelf',

@@ -395,13 +395,15 @@
       {/if}
     </div>
 
-    <!-- Saved: top-level filter + nested saved channels (both local-only for
-         a guest; channels migrate to the account at sign-in). -->
+    <!-- Library: the Queue (top-level saved filter + nested saved channels, both
+         local-only for a guest; channels migrate to the account at sign-in) and
+         the Shelf — two ways of reading the same saves (LibraryIntro). -->
+    <div class="nav-section-label">Library</div>
     <div class="nav-group" class:expanded={sidebarStore.expandedSections.saved}>
       <div class="nav-row" class:active={currentFilter().type === 'saved'}>
         <button class="nav-row-main" onclick={() => selectFilter('saved')}>
           <span class="nav-icon"><Icon name="bookmark" /></span>
-          <span class="nav-label">Saved</span>
+          <span class="nav-label">Queue</span>
         </button>
         {#if itemLabelsStore.inboxCount > 0}
           <span class="nav-count">{itemLabelsStore.inboxCount}</span>
@@ -412,7 +414,7 @@
             e.stopPropagation();
             sidebarStore.toggleSection('saved');
           }}
-          aria-label="Toggle saved channels"
+          aria-label="Toggle Queue channels"
         >
           <Icon
             name={sidebarStore.expandedSections.saved ? 'chevron-down' : 'chevron-right'}
@@ -452,7 +454,7 @@
       {/if}
     </div>
 
-    <!-- Shelf: the reference half of Saved — books, PDFs and whatever else the
+    <!-- Shelf: the Library's reference half — books, PDFs and whatever else the
          reader keeps (local for a guest; collections are account-only). -->
     <a
       href="/shelf"
@@ -1003,6 +1005,16 @@
 
   .nav-link {
     text-decoration: none;
+  }
+
+  /* Names the Queue + Shelf pair. Quiet: a caption, not a heading to click. */
+  .nav-section-label {
+    padding: 0.75rem 0.75rem 0.25rem;
+    font-size: var(--text-2xs);
+    font-weight: 500;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--color-text-secondary);
   }
 
   .nav-item.active {

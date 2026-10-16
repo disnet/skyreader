@@ -53,6 +53,7 @@
   import { goto } from '$app/navigation';
   import { channelPath, FEEDS_PATH } from '$lib/utils/viewNav';
   import LinkblogIntro from '$lib/components/feed/LinkblogIntro.svelte';
+  import LibraryIntro from '$lib/components/library/LibraryIntro.svelte';
   import FollowsIntro from '$lib/components/following/FollowsIntro.svelte';
   import LinkblogListView from '$lib/components/feed/LinkblogListView.svelte';
   import { shareDraftsStore } from '$lib/stores/shareDrafts.svelte';
@@ -237,7 +238,7 @@
       const sub = subscriptionsStore.byId.get(parseInt(feedViewStore.feedFilter!));
       return sub?.customTitle || sub?.title || 'Feed';
     }
-    if (feedViewStore.savedFilter) return 'Saved';
+    if (feedViewStore.savedFilter) return 'Queue';
     if (feedViewStore.followingFilter) return 'Following';
     if (feedViewStore.sharerFilter) {
       return sharerProfile?.displayName || sharerProfile?.handle || 'Articles';
@@ -720,6 +721,9 @@
       {#if mode === 'linkblog'}
         <LinkblogIntro />
       {/if}
+      {#if isSavedView && !readerOpen}
+        <div class="library-intro-row"><LibraryIntro mode="queue" /></div>
+      {/if}
       {#if askAboutFollows && !readerOpen}
         <FollowsIntro />
       {/if}
@@ -982,6 +986,11 @@
   .feed-page-body {
     max-width: 800px;
     margin: 0 auto;
+  }
+
+  /* Lines the Library switch up with the cards' own 1rem inset. */
+  .library-intro-row {
+    padding: 0 1rem;
   }
 
   /* Breathing room below the sticky divider so the first card — especially when

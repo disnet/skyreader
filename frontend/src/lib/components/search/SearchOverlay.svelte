@@ -32,6 +32,8 @@
 
   const KINDS: { value: SearchKind | null; label: string }[] = [
     { value: null, label: 'Everything' },
+    // "Saved" here is what a hit is, like Highlighted and Read, not a place:
+    // it matches every save, on the Shelf and archived ones too, not just the Queue.
     { value: 'saved', label: 'Saved' },
     { value: 'highlighted', label: 'Highlighted' },
     { value: 'read', label: 'Read' },

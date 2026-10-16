@@ -23,7 +23,7 @@
     // Views
     { category: 'Views', key: '0', description: 'Home' },
     { category: 'Views', key: '1', description: 'Feeds' },
-    { category: 'Views', key: '2', description: 'Saved' },
+    { category: 'Views', key: '2', description: 'Queue' },
     ...(!preferences.linkblogDisabled
       ? [{ category: 'Views', key: '3', description: 'Linkblog' }]
       : []),

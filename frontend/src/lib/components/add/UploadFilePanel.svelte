@@ -109,7 +109,9 @@
     ondragleave={handleDragLeave}
     ondrop={handleDrop}
   >
-    <p class="modal-desc">Upload a PDF or EPUB to keep it in Saved, ready to read and highlight.</p>
+    <p class="modal-desc">
+      Upload a PDF or EPUB to keep it on your Shelf, ready to read and highlight.
+    </p>
     {#if canUpload}
       <input
         bind:this={fileInputEl}

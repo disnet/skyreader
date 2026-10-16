@@ -40,6 +40,14 @@ export function progressFraction(
 /** Past this, a reference counts as read through, not in progress. */
 export const FINISHED_FRACTION = 0.97;
 
+/**
+ * Started and not yet read through. The one rule behind every "Continue
+ * reading" — Home's and the Shelf's — so the two never disagree about a save.
+ */
+export function isInProgress(fraction: number | null): fraction is number {
+  return fraction !== null && fraction > 0 && fraction < FINISHED_FRACTION;
+}
+
 export interface ShelfEntry {
   save: SavedItem;
   /** epoch ms of the last read activity, 0 when never opened */
@@ -91,13 +99,10 @@ export function filterShelf(
  * Order the Shelf. `collection` keeps the given order (a collection's own); the
  * others are stable on ties so the list doesn't shuffle as labels sync in.
  */
-export function sortShelf(entries: ShelfEntry[], sort: ShelfSort): ShelfEntry[] {
+export function sortShelf<T extends ShelfEntry>(entries: T[], sort: ShelfSort): T[] {
   if (sort === 'collection') return entries;
   const indexed = entries.map((entry, index) => ({ entry, index }));
-  const compare = (
-    a: { entry: ShelfEntry; index: number },
-    b: { entry: ShelfEntry; index: number }
-  ): number => {
+  const compare = (a: { entry: T; index: number }, b: { entry: T; index: number }): number => {
     switch (sort) {
       case 'activity': {
         // Opened most recently first, then never-opened by newest save.
@@ -124,7 +129,7 @@ export function sortShelf(entries: ShelfEntry[], sort: ShelfSort): ShelfEntry[] 
  */
 export function continueReading(entries: ShelfEntry[], limit = 6): ShelfEntry[] {
   return entries
-    .filter((e) => e.progress !== null && e.progress > 0 && e.progress < FINISHED_FRACTION)
+    .filter((e) => isInProgress(e.progress))
     .sort((a, b) => b.lastActivityAt - a.lastActivityAt)
     .slice(0, limit);
 }

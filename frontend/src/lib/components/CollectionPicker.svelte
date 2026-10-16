@@ -535,13 +535,13 @@
           {#if locked}
             <span class="backing-pill">
               <Icon name="bookmark" size={11} />
-              Saved list
+              Library
             </span>
           {/if}
         </span>
         {#if locked}
           <span class="collection-desc">
-            Managed by your Saved list. {checked
+            Managed by your Library. {checked
               ? 'Unsave the article to remove it.'
               : 'Save the article to add it.'}
           </span>

@@ -6,6 +6,8 @@ import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
 
 export const FEEDS_PATH = '/feeds';
 export const SAVED_PATH = '/saved';
+/** The Library's other half: Queue is `SAVED_PATH`, the Shelf is this. */
+export const SHELF_PATH = '/shelf';
 
 /** A single subscription's feed view. */
 export function feedPath(id: string | number): string {

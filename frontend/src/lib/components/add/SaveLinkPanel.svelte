@@ -111,8 +111,8 @@
     <div class="form">
       <p class="modal-desc">
         {canSavePdf
-          ? 'Paste a link to an article, PDF, or EPUB to keep it in Saved, ready to read and highlight.'
-          : 'Paste a link to keep the article in Saved, ready to read.'}
+          ? 'Paste a link to an article, PDF, or EPUB to save it to your Library, ready to read and highlight.'
+          : 'Paste a link to save the article to your Queue, ready to read.'}
       </p>
       <input
         bind:this={inputEl}

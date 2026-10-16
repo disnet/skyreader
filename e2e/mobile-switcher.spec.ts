@@ -50,7 +50,7 @@ test.describe('Mobile switcher', () => {
     );
   });
 
-  test('selecting Saved navigates and marks the row active', async ({ authedPage }) => {
+  test('selecting Queue navigates and marks the row active', async ({ authedPage }) => {
     await authedPage.goto('/feeds');
     await expect(authedPage.getByText('Switcher Article One', { exact: true })).toBeVisible({
       timeout: 15_000,
@@ -59,7 +59,7 @@ test.describe('Mobile switcher', () => {
     await authedPage.getByRole('button', { name: 'Switch feed' }).click();
 
     const savedRow = authedPage.locator('.feed-switcher .nav-item', {
-      has: authedPage.locator('.item-label', { hasText: /^Saved$/ }),
+      has: authedPage.locator('.item-label', { hasText: /^Queue$/ }),
     });
     await expect(savedRow).toBeVisible({ timeout: 5_000 });
     await savedRow.click();
@@ -68,7 +68,7 @@ test.describe('Mobile switcher', () => {
     // still has to land — this is the assertion that the deferral didn't drop it.
     await expect(authedPage).toHaveURL(/\/saved/, { timeout: 10_000 });
 
-    // Reopening shows Saved as the active row.
+    // Reopening shows Queue as the active row.
     await authedPage.getByRole('button', { name: 'Switch feed' }).click();
     await expect(savedRow).toHaveClass(/active/, { timeout: 5_000 });
   });

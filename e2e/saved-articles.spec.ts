@@ -42,7 +42,7 @@ test.describe('Saved Articles', () => {
   test('empty saved view shows empty state', async ({ authedPage }) => {
     await authedPage.goto('/?saved=true');
 
-    await expect(authedPage.getByText('No saved items')).toBeVisible({
+    await expect(authedPage.getByText('Your Queue is empty')).toBeVisible({
       timeout: 15_000,
     });
   });
