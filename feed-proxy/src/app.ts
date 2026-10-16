@@ -467,7 +467,9 @@ export const FEED_PARSER_VERSION = 2;
 //      `<body></body>`), and site sources for script-rendered pages (attie.ai)
 //   5: EPUBs handed back to the backend (`epub: true`) instead of decoded as
 //      text and cached as mojibake
-export const EXTRACTOR_VERSION = 5;
+//   6: a bot filter's interstitial ("Just a moment…", "JavaScript is disabled")
+//      reported as blocked instead of cached as the article
+export const EXTRACTOR_VERSION = 6;
 
 function hostOf(url: string): string | null {
   try {
@@ -609,6 +611,50 @@ export function hasReadableContent(html: string | null | undefined): html is str
       .replace(/<[^>]*>/g, '')
       .replace(/&nbsp;|&#160;/g, ' ')
   );
+}
+
+// Titles of the interstitials bot filters serve with a 200 in place of the page
+// (Cloudflare, Akamai, Imperva, DataDome, Amazon, a bare "enable JavaScript"
+// shell). Matched against the whole title, so an article that merely mentions
+// one of these phrases is left alone.
+const BOT_CHECK_TITLES = [
+  /^(javascript is disabled|please enable javascript|enable javascript( and cookies)? to continue|javascript (is )?required)$/,
+  /^just a moment$/,
+  /^attention required!? \| cloudflare$/,
+  /^access denied$/,
+  /^(you have been blocked|request blocked|blocked)$/,
+  /^(are you a (robot|human)|robot check|bot verification|human verification|security check|captcha)$/,
+  /^(checking your browser( before accessing .*)?|verifying (that )?you are (a )?human)$/,
+  /^pardon our interruption$/,
+  /^ddos-guard$/,
+];
+
+// The most words an interstitial runs to. A real article whose title happens to
+// match is far longer, so it still saves.
+const BOT_CHECK_MAX_WORDS = 150;
+
+// Whether an extraction is a bot filter's interstitial rather than the article:
+// the site answered 200 but sent a challenge page. Reported as `blocked`, like
+// a 403, so the save keeps the link (not "Just a moment…" as its title) and the
+// reader is offered the extension.
+export function isBotCheckPage(article: Pick<ExtractedArticle, 'title' | 'wordCount'>): boolean {
+  if (!article.title || article.wordCount > BOT_CHECK_MAX_WORDS) return false;
+  const title = article.title
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/[\s.…!?]+$/, '');
+  return BOT_CHECK_TITLES.some((re) => re.test(title));
+}
+
+export function describeBotCheck(url: string): string {
+  let host: string;
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    host = url;
+  }
+  return `${host} is ${BLOCKED_MESSAGE_MARKER} (it served a bot check instead of the page)`;
 }
 
 async function extractArticle(html: string, url: string): Promise<ExtractedArticle> {
@@ -2941,6 +2987,9 @@ export function createApp(db: Database, config: AppConfig) {
             }
           } else {
             extracted = await extractArticle(new TextDecoder().decode(bytes), url);
+          }
+          if (extracted.contentType !== 'pdf' && isBotCheckPage(extracted)) {
+            throw new FetchHtmlError(describeBotCheck(url), 502, true);
           }
 
           db.run(

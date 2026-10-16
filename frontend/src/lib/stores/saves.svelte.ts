@@ -21,6 +21,7 @@ import {
   failedSaveBody,
   hasReadableContent,
   isFailedSaveBody,
+  linkTitle,
   type SaveFetchFailure,
 } from '$lib/utils/saveAnywhere';
 import { computeContentStats } from '$lib/services/articleMerge';
@@ -458,7 +459,7 @@ function createSavesStore() {
           fetchFailed = 'empty';
           extracted = {
             ...extracted,
-            title: extracted.title || hint.title?.trim() || null,
+            title: extracted.title || hint.title?.trim() || linkTitle(url),
             content: failedSaveBody(url, 'empty'),
             wordCount: 0,
             contentType: undefined,
@@ -475,7 +476,7 @@ function createSavesStore() {
           // Unreachable for a URL the extract route accepted; leave it unset.
         }
         extracted = {
-          title: hint.title?.trim() || null,
+          title: hint.title?.trim() || linkTitle(url),
           author: null,
           description: null,
           content: failedSaveBody(url, failure),
