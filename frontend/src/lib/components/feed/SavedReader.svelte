@@ -11,6 +11,7 @@
   import { getExternalArticleLink } from '$lib/utils/linkPost';
   import { linkPostContentStore } from '$lib/stores/linkPostContent.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
+  import { shelfStore } from '$lib/stores/shelf.svelte';
   import { integrationSaveStore } from '$lib/stores/integrationSave.svelte';
   import { sembleConnectionStore } from '$lib/stores/sembleConnection.svelte';
   import { mentionLaneItemsStore } from '$lib/stores/mentionLaneItems.svelte';
@@ -542,6 +543,29 @@
       : itemLabelsStore.isSaved(itemKey)
   );
 
+  // The live save behind this item, for the Shelf actions — the same pair the
+  // Saved list's ⋯ menu offers. Looked up by guid/url (never the display key, see
+  // `readerSave.ts`) so it tracks an unsave or a re-save under a new rkey.
+  let shelfSave = $derived.by(() => {
+    if (readerItem.type === 'saved') {
+      const save = readerItem.item;
+      return (
+        (save.itemGuid ? savesStore.find(save.itemGuid) : undefined) ??
+        (save.url ? savesStore.find(save.url) : undefined)
+      );
+    }
+    return savesStore.find(itemKey) ?? (itemUrl ? savesStore.find(itemUrl) : undefined);
+  });
+  let onShelf = $derived(shelfSave ? shelfStore.isOnShelf(shelfSave) : false);
+
+  function toggleShelf() {
+    if (shelfSave) void shelfStore.setOnShelf(shelfSave, !onShelf);
+  }
+
+  function addToCollection() {
+    if (shelfSave) shelfStore.openPicker(shelfSave);
+  }
+
   // ── Share from the reader chrome ────────────────────────────────────────────
   // A share control lives in the bar (desktop and mobile) so sharing is in
   // reach at any scroll position — and on any page in paged mode — instead of
@@ -893,6 +917,22 @@
         icon: 'bookmark',
         onclick: () => onToggleSave!(),
       });
+    }
+
+    if (shelfSave) {
+      items.push({
+        label: onShelf ? 'Take off Shelf' : 'Keep on Shelf',
+        icon: 'shelf',
+        active: onShelf,
+        onclick: toggleShelf,
+      });
+      if (auth.user) {
+        items.push({
+          label: 'Add to collection',
+          icon: 'folder-plus',
+          onclick: addToCollection,
+        });
+      }
     }
 
     if (canSaveToIntegration) {
@@ -1459,6 +1499,30 @@
                   <Icon name="bookmark" size={18} />
                   <span>{isSaved ? 'Unsave' : 'Save'}</span>
                 </button>
+              {/if}
+              {#if shelfSave}
+                <button
+                  class="sheet-action-btn"
+                  onclick={() => {
+                    toggleShelf();
+                    styleSheetOpen = false;
+                  }}
+                >
+                  <Icon name="shelf" size={18} />
+                  <span>{onShelf ? 'Take off Shelf' : 'Keep on Shelf'}</span>
+                </button>
+                {#if auth.user}
+                  <button
+                    class="sheet-action-btn"
+                    onclick={() => {
+                      addToCollection();
+                      styleSheetOpen = false;
+                    }}
+                  >
+                    <Icon name="folder-plus" size={18} />
+                    <span>Add to collection</span>
+                  </button>
+                {/if}
               {/if}
               {#if canSaveToIntegration}
                 <button
