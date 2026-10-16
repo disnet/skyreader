@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { formatReadTime } from '$lib/utils/readTime';
   // PURE presentational article card. Renders entirely from props — no stores,
   // no services, no fetching $effects. All data resolution and interaction logic
   // lives in the container (ArticleCard.svelte). See articleCardView.types.ts.
@@ -377,7 +378,7 @@
         {/if}
         {#if readTimeMinutes > 0}
           <span class="article-read-time"
-            ><Icon name="clock" size={12} /> {readTimeMinutes} min</span
+            ><Icon name="clock" size={12} /> {formatReadTime(readTimeMinutes)}</span
           >
         {/if}
         <span class="article-date">{relativeDate}</span>

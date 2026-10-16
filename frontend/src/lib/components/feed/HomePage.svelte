@@ -1,4 +1,5 @@
 <script lang="ts" module>
+  import { formatReadTime } from '$lib/utils/readTime';
   // Home's "From your saved" sample, kept across visits for the session.
   let sessionSample: string[] | null = null;
 </script>
@@ -151,14 +152,14 @@
     const totalMin = s.wordCount ? Math.max(1, Math.round(s.wordCount / WORDS_PER_MIN)) : null;
 
     let progress: number | null = null;
-    let metaLabel: string | null = totalMin ? `${totalMin} min read` : null;
+    let metaLabel: string | null = totalMin ? `${formatReadTime(totalMin)} read` : null;
 
     const fraction = readFraction(activity);
     if (fraction !== null) {
       progress = fraction;
       if (fraction < 0.98 && totalMin) {
         const left = Math.max(1, Math.round(totalMin * (1 - fraction)));
-        metaLabel = `${left} min left`;
+        metaLabel = `${formatReadTime(left)} left`;
       }
     }
 
