@@ -25,7 +25,7 @@ If the article is already in Semble or Margin, the picker opens on the collectio
 
 PDFs are a [Supporter](/supporter/) feature. Save a link to a PDF (a paper, a report) the same way you save an article, or upload one from your device: open **+ → File**, or drop the file anywhere in Skyreader. Skyreader keeps its text, set as ordinary paragraphs, so you can read, highlight, take notes, and search it like anything else you save.
 
-A saved PDF opens as text, set for reading. For figures, tables, equations, and layout, switch the toggle under the title from **Text** to **Original** to see the pages as printed. Highlight and take notes on either: a passage you mark in one is marked in the other. The PDF's own links work there too: a reference or a contents entry jumps to its page, and the arrow beside the page number takes you back. Skyreader remembers which you prefer and the zoom you left each PDF at, and Original opens where you stopped reading, on any of your devices. In Original, the text-size keys zoom the pages: **Shift +** and **Shift -**, with **Shift 0** to fit the width. Skyreader keeps the original of every PDF you save, by link or upload, so it stays readable even if its site takes it down.
+A saved PDF opens as text, set for reading. For figures, tables, equations, and layout, switch the toggle under the title from **Text** to **Original** to see the pages as printed. Highlight and take notes on either: a passage you mark in one is marked in the other. The PDF's own links work there too: a reference or a contents entry jumps to its page, and the arrow beside the page number takes you back. Skyreader remembers which you prefer and the zoom you left each PDF at, and Original opens where you stopped reading, on any of your devices. Whichever view you read in, a PDF you're partway through shows in **Continue reading**. In Original, the text-size keys zoom the pages: **Shift +** and **Shift -**, with **Shift 0** to fit the width. Skyreader keeps the original of every PDF you save, by link or upload, so it stays readable even if its site takes it down.
 
 A scanned PDF has no text to keep, and a password-protected one can't be read. A very long PDF keeps the text of its first pages, and says so at the end.
 
@@ -63,6 +63,8 @@ Everything you save is in your **Library**, which you can read two ways. Switch 
 - The **Shelf** is what you keep and come back to, like books, papers, and references. Finishing something doesn't take it off.
 
 They're the same saves, so an item can be in both, and the two don't affect each other. Archiving clears an item from the Queue's inbox and leaves it on the Shelf, marked **Archived**. In the Queue, an item that's also on your Shelf is marked **On Shelf**. Each item's **⋯** menu shows both, side by side: **Archive** under Queue, **Keep on Shelf** under Shelf.
+
+![The Shelf: books, papers, and kept articles as covers, with what you're partway through first](../../../assets/screenshots/shelf.png)
 
 Books and PDFs go on the Shelf as soon as you save them. To put anything else there, choose **Keep on Shelf** from its **⋯** menu, or from the **⋯** menu while you're reading it. **Take off Shelf** removes it, and the save stays in your Queue.
 

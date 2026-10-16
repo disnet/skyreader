@@ -142,9 +142,10 @@ test.describe('Sharing and your linkblog', () => {
       .fill('The case for slowness here is really a case for holding more in mind at once.');
 
     // Tick "Posted from Skyreader" so the preview line shows what opting in adds.
-    await composer.locator('.attribution-toggle input').check();
+    const attribution = composer.getByRole('checkbox', { name: 'Posted from Skyreader' });
+    await attribution.check();
     // Park focus so no caret lands in the shot.
-    await composer.locator('.attribution-toggle input').blur();
+    await attribution.blur();
 
     await shootElement(authedPage, composer, 'linkblog-composer.png');
   });
@@ -353,11 +354,63 @@ test.describe('Saving and highlights', () => {
       });
     }
 
+    // A paper and two books, so the Queue shows what's also on the Shelf, and the
+    // Shelf shows a book archived from the Queue that it keeps.
+    const now = Date.now();
+    await seedSavedArticle(testUser, {
+      url: 'https://example.com/papers/close-reading.pdf',
+      title: 'Close Reading in a Distracted Age',
+      author: 'M. Margins',
+      contentType: 'pdf',
+      savedAt: now - 30 * 60_000,
+    });
+    await seedSavedArticle(testUser, {
+      url: 'https://example.com/books/middlemarch.epub',
+      title: 'Middlemarch',
+      author: 'George Eliot',
+      contentType: 'epub',
+      savedAt: now - 26 * 60 * 60_000,
+    });
+    const finished = await seedSavedArticle(testUser, {
+      url: 'https://example.com/books/the-waves.epub',
+      title: 'The Waves',
+      author: 'Virginia Woolf',
+      contentType: 'epub',
+      savedAt: now - 5 * 24 * 60 * 60_000,
+    });
+    const finishedUri = `at://${testUser.did}/app.skyreader.feed.saved/${finished}`;
+    await seedItemLabel(testUser, {
+      itemKey: finishedUri,
+      itemType: 'saved',
+      label: 'archived',
+      props: '{}',
+    });
+    await seedItemLabel(testUser, {
+      itemKey: finishedUri,
+      itemType: 'saved',
+      label: 'readProgress',
+      props: JSON.stringify({ paragraphIndex: 24, totalParagraphs: 60, lastReadAt: now }),
+    });
+
     await prettifyAccount(authedPage);
     await authedPage.goto('/saved');
     await expect(authedPage.getByText(saves[0].title)).toBeVisible({ timeout: 15_000 });
+    await expect(
+      authedPage.locator('.bookmark-card', { hasText: 'Middlemarch' }).getByText('On Shelf')
+    ).toBeVisible();
     await authedPage.evaluate(() => document.fonts.ready);
     await authedPage.screenshot({ path: join(OUT_DIR, 'saved.png'), animations: 'disabled' });
+
+    // The Shelf: the same saves, kept. The archived book stays, marked so.
+    await authedPage.goto('/shelf');
+    await expect(
+      authedPage.locator('.shelf-card', { hasText: 'The Waves' }).getByText('Archived')
+    ).toBeVisible({ timeout: 15_000 });
+    await authedPage.evaluate(() => document.fonts.ready);
+    await authedPage.screenshot({ path: join(OUT_DIR, 'shelf.png'), animations: 'disabled' });
+
+    await authedPage.goto('/saved');
+    await expect(authedPage.getByText(saves[0].title)).toBeVisible({ timeout: 15_000 });
 
     // Into the full-screen reader.
     await authedPage.getByText(saves[0].title).first().click();
@@ -472,13 +525,11 @@ test.describe('Adding sources', () => {
     );
 
     await authedPage.goto('/feeds');
-    await authedPage.locator('button.add-trigger[aria-label="Add source"]').click();
-    const input = authedPage.getByPlaceholder('Paste URL or @handle...');
-    await input.fill('commonplace.example.com');
-    await input.press('Enter');
-
+    await authedPage.locator('button.add-trigger').first().click();
     const modal = authedPage.locator('.modal');
     await expect(modal).toBeVisible({ timeout: 5_000 });
+    await modal.getByRole('tab', { name: /Website/ }).click();
+    await modal.getByLabel('Website or feed URL').fill('commonplace.example.com');
     await modal.locator('button.add-btn', { hasText: 'Add' }).click();
     await expect(modal.getByText('Multiple feeds found')).toBeVisible();
     await authedPage.evaluate(() => document.fonts.ready);
