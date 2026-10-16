@@ -124,6 +124,12 @@
   });
 </script>
 
+{#snippet archivedChip()}
+  {#if archived}
+    <span class="archived" title="Archived in your Queue. It stays on the Shelf.">Archived</span>
+  {/if}
+{/snippet}
+
 {#if view === 'grid'}
   <article class="shelf-card" class:menu-open={menuOpen}>
     <!-- The cover repeats the title button below it, so it's one tab stop and
@@ -156,10 +162,7 @@
         <span class="kind">{SHELF_KIND_LABEL[kind]}</span>
         {#if byline}<span class="byline">{byline}</span>{/if}
       </div>
-      {#if archived}
-        <span class="archived" title="Archived in your Queue. It stays on the Shelf.">Archived</span
-        >
-      {/if}
+      {@render archivedChip()}
       <div class="card-menu">
         <PopoverMenu items={menuItems} bind:open={menuOpen} />
       </div>
@@ -186,11 +189,7 @@
           {#if entry.lastActivityAt > 0}
             <span>Opened {formatRelativeTime(entry.lastActivityAt)}</span>
           {/if}
-          {#if archived}
-            <span class="archived" title="Archived in your Queue. It stays on the Shelf."
-              >Archived</span
-            >
-          {/if}
+          {@render archivedChip()}
         </span>
       </span>
     </button>
