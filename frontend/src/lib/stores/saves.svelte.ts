@@ -1068,7 +1068,11 @@ function createSavesStore() {
       // demand here as a self-healing fallback, and cache it so the next open is local.
       // A guest's saves have no server copy to fall back to.
       if (canReachBackend()) {
-        const { bodies } = await api.getSavedBodies([rkey]);
+        // A failed fetch must not skip the local feed-body fallback below.
+        const bodies = await api
+          .getSavedBodies([rkey])
+          .then((r) => r.bodies)
+          .catch((): Record<string, string | null> => ({}));
         const body = bodies[rkey];
         if (body) {
           if (row) {
