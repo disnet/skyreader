@@ -739,7 +739,7 @@
     </div>
   </header>
 
-  <div class="home-body" data-density={preferences.cardDensity}>
+  <div class="home-body">
     <div class="masthead">
       <div class="masthead-text">
         {#if dateLabel}<p class="masthead-date">{dateLabel}</p>{/if}
@@ -925,40 +925,6 @@
     max-width: 1440px;
     margin: 0 auto;
     padding: 0.5rem 0.75rem 2rem;
-    /* Density tokens for the lane tiles (read by HomeLaneCard / HomeLane skeletons,
-       which inherit them). Base = "cozy"; data-density overrides below. Kept here
-       rather than on each card so the "Cards" control changes one attribute and the
-       whole surface re-flows. */
-    --lane-card-w: 16.5rem;
-    --lane-card-w-m: 9.75rem;
-    --lane-thumb: 3.25rem;
-    --lane-thumb-h: 5.5rem;
-    --lane-pad-x: 0.875rem;
-    --lane-pad-t: 0.75rem;
-    --lane-pad-b: 0.875rem;
-    --lane-gap: 0.75rem;
-  }
-
-  /* Compact tiles are text-only squares (HomeLaneCard drops the thumbnail), so they
-     need a small square footprint — several across the lane. Thumb vars go unused. */
-  .home-body[data-density='compact'] {
-    --lane-card-w: 9rem;
-    --lane-card-w-m: 7.25rem;
-    --lane-pad-x: 0.7rem;
-    --lane-pad-t: 0.6rem;
-    --lane-pad-b: 0.7rem;
-    --lane-gap: 0;
-  }
-
-  .home-body[data-density='comfortable'] {
-    --lane-card-w: 19.5rem;
-    --lane-card-w-m: 11.5rem;
-    --lane-thumb: 4rem;
-    --lane-thumb-h: 6.5rem;
-    --lane-pad-x: 1.05rem;
-    --lane-pad-t: 1rem;
-    --lane-pad-b: 1.05rem;
-    --lane-gap: 0.95rem;
   }
 
   /* Just the greeting on the framed layout — Customize sits up in the toolbar
