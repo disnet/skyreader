@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { formatReadTime } from '$lib/utils/readTime';
   import type { FeedDisplayItem } from '$lib/stores/feedView.svelte';
   import {
     normalizeDisplayItem,
@@ -1553,7 +1554,7 @@
           <span class="reader-date">{formatRelativeDate(publishedAt)}</span>
           <span class="reader-read-time">
             <Icon name="clock" size={12} />
-            {readTimeMinutes} min read
+            {formatReadTime(readTimeMinutes)} read
           </span>
         </div>
         {@render pdfViewToggle()}

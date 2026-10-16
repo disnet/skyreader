@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { formatReadTime } from '$lib/utils/readTime';
   import type { FeedDisplayItem } from '$lib/stores/feedView.svelte';
   import { formatRelativeDate } from '$lib/utils/date';
   import { getFaviconUrl } from '$lib/utils/favicon';
@@ -653,7 +654,7 @@
           {#if readTimeMinutes}
             <span class="meta-read-time">
               <Icon name="clock" size={12} />
-              {readTimeMinutes} min
+              {formatReadTime(readTimeMinutes)}
             </span>
           {/if}
           <span class="meta-date">{formatRelativeDate(publishedAt)}</span>
