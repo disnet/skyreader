@@ -291,6 +291,15 @@
           ]),
     ];
     const otherItems: NavItem[] = [
+      // The Shelf leads the utility group, as it sits just below the Saved
+      // group in the sidebar: kept out of that group so it doesn't read as a
+      // saved channel.
+      {
+        type: 'utility',
+        id: 'shelf',
+        label: 'Shelf',
+        icon: 'shelf' as IconName,
+      },
       ...accountItems,
       {
         type: 'utility',
@@ -419,14 +428,7 @@
     }
 
     // Saved group: Saved + saved channels
-    // The Shelf sits with Saved: it's the reference half of the same pile.
-    const shelfItem: NavItem = {
-      type: 'utility',
-      id: 'shelf',
-      label: 'Shelf',
-      icon: 'shelf',
-    };
-    const savedGroup = [savedItem, ...savedChannelItems, shelfItem].filter(filterItem);
+    const savedGroup = [savedItem, ...savedChannelItems].filter(filterItem);
     if (savedGroup.length > 0) {
       sections.push({ section: '', groupId: 'saved', items: savedGroup });
     }
