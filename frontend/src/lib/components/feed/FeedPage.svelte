@@ -54,6 +54,7 @@
   import { channelPath, FEEDS_PATH } from '$lib/utils/viewNav';
   import LinkblogIntro from '$lib/components/feed/LinkblogIntro.svelte';
   import LibraryIntro from '$lib/components/library/LibraryIntro.svelte';
+  import QueueControls from '$lib/components/library/QueueControls.svelte';
   import FollowsIntro from '$lib/components/following/FollowsIntro.svelte';
   import LinkblogListView from '$lib/components/feed/LinkblogListView.svelte';
   import { shareDraftsStore } from '$lib/stores/shareDrafts.svelte';
@@ -722,7 +723,10 @@
         <LinkblogIntro />
       {/if}
       {#if isSavedView && !readerOpen}
-        <div class="library-intro-row"><LibraryIntro mode="queue" /></div>
+        <div class="library-intro-row">
+          <LibraryIntro mode="queue" />
+          <QueueControls />
+        </div>
       {/if}
       {#if askAboutFollows && !readerOpen}
         <FollowsIntro />

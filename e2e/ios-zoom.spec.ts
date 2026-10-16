@@ -8,7 +8,7 @@ import { PHONE, expectNoZoomingFields } from './ios-zoom';
 // fields show on load goes in PAGES; one behind a tap gets its own test.
 test.use(PHONE);
 
-const PAGES = ['/feeds', '/settings', '/sources', '/discover', '/rooms'];
+const PAGES = ['/feeds', '/saved', '/settings', '/sources', '/discover', '/rooms'];
 
 for (const path of PAGES) {
   test(`text fields on ${path} are at least 16px`, async ({ authedPage: page }) => {

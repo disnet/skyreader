@@ -7,6 +7,7 @@
   // decoration standing in for the text. The text is the cover.
   import Icon from '$lib/components/Icon.svelte';
   import PopoverMenu from '$lib/components/PopoverMenu.svelte';
+  import LibraryChip from '$lib/components/library/LibraryChip.svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import { savedCoverUrl } from '$lib/services/api';
   import { shelfStore } from '$lib/stores/shelf.svelte';
@@ -126,7 +127,7 @@
 
 {#snippet archivedChip()}
   {#if archived}
-    <span class="archived" title="Archived in your Queue. It stays on the Shelf.">Archived</span>
+    <LibraryChip label="Archived" title="Archived in your Queue. It stays on the Shelf." />
   {/if}
 {/snippet}
 
@@ -162,7 +163,7 @@
         <span class="kind">{SHELF_KIND_LABEL[kind]}</span>
         {#if byline}<span class="byline">{byline}</span>{/if}
       </div>
-      {@render archivedChip()}
+      {#if archived}<div class="card-chip">{@render archivedChip()}</div>{/if}
       <div class="card-menu">
         <PopoverMenu items={menuItems} bind:open={menuOpen} />
       </div>
@@ -359,22 +360,9 @@
     font-weight: var(--weight-medium);
   }
 
-  /* Where the save sits in the Queue: a quiet chip, not an alarm. */
-  .archived {
-    align-self: flex-start;
+  .card-chip {
+    display: flex;
     margin-top: 0.25rem;
-    padding: 0 0.4375rem;
-    border-radius: 999px;
-    background: var(--color-bg-secondary);
-    font-size: var(--text-2xs);
-    font-weight: var(--weight-medium);
-    line-height: 1.6;
-    color: var(--color-text-secondary);
-  }
-
-  .row-meta .archived {
-    align-self: center;
-    margin-top: 0;
   }
 
   .card-menu {
