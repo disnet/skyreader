@@ -779,19 +779,35 @@
     };
   });
 
-  /** Where the middle of the scroller's view is, in viewport px. */
-  function middleOf(scroller: Element): number {
-    const top =
-      scroller === document.scrollingElement || scroller === document.documentElement
-        ? 0
-        : scroller.getBoundingClientRect().top + scroller.clientTop;
-    return top + scroller.clientHeight / 2;
+  /** Where the top of the scroller's view is, in viewport px. */
+  function topOf(scroller: Element): number {
+    return scroller === document.scrollingElement || scroller === document.documentElement
+      ? 0
+      : scroller.getBoundingClientRect().top + scroller.clientTop;
   }
 
-  /** The page in the middle of the view, and how far down it the middle is. */
+  /** Where the middle of the scroller's view is, in viewport px. */
+  function middleOf(scroller: Element): number {
+    return topOf(scroller) + scroller.clientHeight / 2;
+  }
+
+  /**
+   * The page in the middle of the view, and how far down it the middle is —
+   * except once the end of the last page is in view, which is the bottom of
+   * the last page: the middle of the view can't get that far, so without this
+   * a PDF read to the end would never count as finished.
+   */
   function placeInView(): PdfPlace | null {
     if (!containerEl || status !== 'ready') return null;
-    const middle = middleOf(scrollerOf(containerEl));
+    const scroller = scrollerOf(containerEl);
+    const last = pageEl(pageSizes.length);
+    if (last) {
+      const rect = last.getBoundingClientRect();
+      if (rect.height > 0 && rect.bottom <= topOf(scroller) + scroller.clientHeight + 1) {
+        return { page: pageSizes.length, at: 1, pages: pageSizes.length };
+      }
+    }
+    const middle = middleOf(scroller);
     // Start from the page the observer last saw there, and step to the one the
     // middle is really on if a fast scroll has outrun it.
     let page = currentPage;
