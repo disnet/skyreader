@@ -101,6 +101,17 @@
   // a feed channel, navigating you off the surface entirely.
   let isLinkblogView = $derived(feedViewStore.myLinkblogFilter);
 
+  // Whether the filters have been moved off their starting point, so the Filter
+  // toggle can say so while its toolbar is folded away. A channel's own config
+  // is its starting point; anywhere else it's all sources, no tags, unread only.
+  let filtersChanged = $derived(
+    feedViewStore.activeFilteredView
+      ? feedViewStore.hasUnsavedChanges
+      : feedViewStore.effectiveFilters.sourceMode !== 'all' ||
+          feedViewStore.toolbarTagFilter.length > 0 ||
+          !feedViewStore.showOnlyUnread
+  );
+
   let menuItems = $derived.by(() => {
     const items: Array<{
       label: string;
@@ -297,10 +308,15 @@
                     feedViewStore.setSourcePopoverOpen(false);
                   }
                 }}
-                aria-label="Toggle filters"
-                title="Filter"
+                aria-label={filtersChanged ? 'Toggle filters (changed)' : 'Toggle filters'}
+                title={filtersChanged ? 'Filter (changed)' : 'Filter'}
               >
-                <Icon name="filter" size={16} />
+                <span class="filter-icon">
+                  <Icon name="filter" size={16} />
+                  {#if filtersChanged}
+                    <span class="filter-dot" aria-hidden="true"></span>
+                  {/if}
+                </span>
                 <span class="btn-label">Filter</span>
               </button>
             {/if}
@@ -494,6 +510,23 @@
 
   .view-toggle button:hover:not(.active) {
     color: var(--color-text);
+  }
+
+  /* Filters moved off their starting point: a small One Blue dot on the icon,
+     the same mark the mobile bar's View options button wears. */
+  .filter-icon {
+    position: relative;
+    display: inline-flex;
+  }
+
+  .filter-dot {
+    position: absolute;
+    top: -2px;
+    right: -3px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--color-primary, #0066cc);
   }
 
   .btn-label {
