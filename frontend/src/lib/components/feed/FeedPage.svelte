@@ -999,7 +999,7 @@
   }
 
   /* The Library switch and the Queue's controls share one row, inset like the
-     cards (1rem); QueueControls swaps its labels for icons when this container gets tight. */
+     cards (1rem): the switch on the left, QueueControls' one menu on the right. */
   .library-intro-row {
     container: library-row / inline-size;
     display: flex;
@@ -1018,8 +1018,8 @@
     margin-bottom: 0;
   }
 
-  /* The smallest phones (320px): even with icons, the switch's padding is
-     what pushes the sort menu off the edge. */
+  /* The smallest phones (320px): the switch's padding is what pushes the
+     menu off the edge. */
   @container library-row (max-width: 21rem) {
     .library-intro-row :global(.library-switch a) {
       padding-inline: 0.625rem;
