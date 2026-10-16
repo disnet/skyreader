@@ -138,11 +138,7 @@
     </p>
     <p>
       For general feedback:
-      <a
-        href="https://userinput.app/s/did:plc:ra4jsemddo2ii4pn5jaf6x4v/3mobgsd6d5n27"
-        target="_blank"
-        rel="noopener">our feedback board on userinput.app</a
-      >
+      <a href="/feedback">Feedback</a>
     </p>
   </section>
 </div>
