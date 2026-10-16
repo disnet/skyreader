@@ -24,7 +24,12 @@
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { profileService } from '$lib/services/profiles';
   import { bskyEmbed } from '$lib/actions/bsky-embed';
-  import { failedSaveBody, hasReadableContent } from '$lib/utils/saveAnywhere';
+  import {
+    failedSaveBody,
+    hasReadableContent,
+    isFailedSaveBody,
+    missingArticleBody,
+  } from '$lib/utils/saveAnywhere';
   import { mathRender } from '$lib/actions/math-render';
   import Icon from '$lib/components/Icon.svelte';
   import { savedAssetUrl, savedFileUrl } from '$lib/services/api';
@@ -348,9 +353,13 @@
   // Whether that body is the user's own saved snapshot rather than the feed's —
   // the display ladder below treats the two differently.
   let lazyArticleIsSavedCopy = $state(false);
+  // Every source of the body has been tried and none had text — the reader
+  // shows a note linking the original rather than a blank page.
+  let lazyArticleMissing = $state(false);
   $effect(() => {
     lazyArticleContent = null;
     lazyArticleIsSavedCopy = false;
+    lazyArticleMissing = false;
     if (readerItem.type !== 'article') return;
     const {
       id,
@@ -388,6 +397,7 @@
         }
         const cachedContent = row?.content ?? '';
         if (!cancelled) lazyArticleContent = cachedContent;
+        if (!cancelled && !cachedContent && !contentTruncated) lazyArticleMissing = true;
         if (!cancelled && !cachedContent && contentTruncated) {
           // The archive dropped the body from the row but may hold it out-of-row
           // (see services/itemBody.ts). Prefer that stored copy — the feed's own
@@ -407,13 +417,15 @@
           // Keep the store's reactive entry map out of this effect's dependency
           // graph. Failed extracts delete their entry so a later open can retry;
           // tracking that deletion here would create an immediate retry loop.
-          if (url) untrack(() => linkPostContentStore.fetch(url));
+          if (url) await untrack(() => linkPostContentStore.fetch(url));
+          if (!cancelled) lazyArticleMissing = true;
         }
       } catch {
         if (!cancelled) lazyArticleContent = '';
         if (!cancelled && contentTruncated && url) {
-          untrack(() => linkPostContentStore.fetch(url));
+          await untrack(() => linkPostContentStore.fetch(url));
         }
+        if (!cancelled) lazyArticleMissing = true;
       }
     })();
     return () => {
@@ -466,6 +478,18 @@
     // Else the feed body for an article rendered via the 'article' path — it was
     // stripped from memory and is read back from IndexedDB above.
     if (readerItem.type === 'article' && lazyArticleContent) return lazyArticleContent;
+    // Nothing anywhere had the text (an article opened from search, say, that
+    // this device never kept): point at the page instead of a blank reader.
+    // Held while an extract is still in flight, since it may yet bring the text.
+    if (
+      readerItem.type === 'article' &&
+      lazyArticleMissing &&
+      itemUrl &&
+      !hasReadableContent(normalized.displayContent) &&
+      !linkPostContentStore.isFetching(itemUrl)
+    ) {
+      return missingArticleBody(itemUrl);
+    }
     // For a stripped document, re-render with the lazily-loaded textContent fed
     // back in — structured `content` still wins inside getDisplayContent, so this
     // only changes the unrecognized-format fallback (description → full text).
@@ -1552,10 +1576,12 @@
             <span class="reader-author">{authorLabel}</span>
           {/if}
           <span class="reader-date">{formatRelativeDate(publishedAt)}</span>
-          <span class="reader-read-time">
-            <Icon name="clock" size={12} />
-            {formatReadTime(readTimeMinutes)} read
-          </span>
+          {#if !isFailedSaveBody(displayContent)}
+            <span class="reader-read-time">
+              <Icon name="clock" size={12} />
+              {formatReadTime(readTimeMinutes)} read
+            </span>
+          {/if}
         </div>
         {@render pdfViewToggle()}
         {#if epubPicturesNote}
