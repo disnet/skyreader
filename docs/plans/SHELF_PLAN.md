@@ -106,8 +106,8 @@ Saved and Shelf became the two halves of one **Library**:
   **Shelf** keeps `/shelf`. The sidebar, the header dropdown and the mobile switcher show one
   **Library** row (it opens the Queue, and stays lit on either half), with the Shelf's collections
   and then the Queue's saved channels nested under it.
-- **`LibraryIntro`** (`components/library/`) opens both pages: a Queue | Shelf switch and one line
-  on what that half is for. It sits in the page body, not the desktop header, so phones get it too.
+- **`LibraryIntro`** (`components/library/`) opens both pages with a Queue | Shelf switch (it
+  first carried a line on what each half is for; that was dropped as noise). It sits in the page body, not the desktop header, so phones get it too.
 - **State shows on the item.** A Queue card that's also on the Shelf says **On Shelf**; a Shelf item
   archived in the Queue says **Archived**. Both item menus group their actions under **Queue**
   (Archive / Move to inbox) and **Shelf** (Keep / Take off, collections) headings
