@@ -160,7 +160,8 @@
     | 'folder'
     | 'users'
     | 'highlighter'
-    | 'quote';
+    | 'quote'
+    | 'shelf';
 
   // Navigation item type
   type NavItem =
@@ -367,7 +368,14 @@
     }
 
     // Saved group: Saved + nested saved channels
-    const savedGroup = [savedItem, ...savedChannelItems].filter(filterItem);
+    // The Shelf sits with Saved: it's the reference half of the same pile.
+    const shelfItem: NavItem = {
+      type: 'utility',
+      id: 'shelf',
+      label: 'Shelf',
+      icon: 'shelf',
+    };
+    const savedGroup = [savedItem, ...savedChannelItems, shelfItem].filter(filterItem);
     if (savedGroup.length > 0) {
       sections.push({ section: '', items: savedGroup });
     }
@@ -422,6 +430,7 @@
     if (pathname === '/daily') return { type: 'icon', name: 'newspaper' };
     if (pathname === '/linkblog') return { type: 'icon', name: 'share' };
     if (pathname === '/highlights') return { type: 'icon', name: 'highlighter' };
+    if (pathname === '/shelf') return { type: 'icon', name: 'shelf' };
     if (pathname === '/discover') return { type: 'icon', name: 'users' };
     if (pathname === '/sources') return { type: 'icon', name: 'rss' };
     if (pathname === '/settings') return { type: 'icon', name: 'settings' };

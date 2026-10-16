@@ -59,7 +59,7 @@
   // bare inside the marketing chrome, with no sidebar and no data layer; bounce them
   // to the marketing landing instead. Public routes (/, /auth/*, /terms, the /save
   // and /subscribe share targets) are left to render.
-  const APP_ROUTES = ['/home', '/feeds', '/saved', '/daily', '/highlights', '/search'];
+  const APP_ROUTES = ['/home', '/feeds', '/saved', '/shelf', '/daily', '/highlights', '/search'];
 
   // Guest mode is the READING surface, and that now includes everything that
   // works from local data: the feeds, home, the saved pile, highlights (+
@@ -70,7 +70,7 @@
   // (read from your own timeline), and account settings. Those are
   // the reason to sign in, so a guest who reaches one gets the sign-in screen
   // (returning here afterwards), not a page whose every load 401s.
-  const GUEST_ROUTES = ['/feeds', '/sources', '/home', '/saved', '/daily', '/highlights'];
+  const GUEST_ROUTES = ['/feeds', '/sources', '/home', '/saved', '/shelf', '/daily', '/highlights'];
   const ACCOUNT_ROUTES = ['/linkblog', '/discover', '/settings', '/rooms', '/following', '/search'];
   function isAccountOnly(pathname: string): boolean {
     if (GUEST_ROUTES.includes(pathname)) return false;

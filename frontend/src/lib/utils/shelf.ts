@@ -1,0 +1,130 @@
+import type { SavedItem } from '$lib/types';
+import { savedAtMs } from './savedPile';
+
+/**
+ * Pure helpers behind the Shelf page (components/shelf/ShelfPage.svelte): what
+ * kind a save is, how far through it the reader is, and the page's filter and
+ * sort. The store answers "what's on the Shelf"; these answer "in what order".
+ */
+
+export type ShelfKind = 'book' | 'pdf' | 'article';
+export type ShelfKindFilter = 'all' | ShelfKind;
+export type ShelfSort = 'activity' | 'saved' | 'title' | 'author' | 'collection';
+
+export function shelfKind(save: Pick<SavedItem, 'contentType'>): ShelfKind {
+  if (save.contentType === 'epub') return 'book';
+  if (save.contentType === 'pdf') return 'pdf';
+  return 'article';
+}
+
+export const SHELF_KIND_LABEL: Record<ShelfKind, string> = {
+  book: 'Book',
+  pdf: 'PDF',
+  article: 'Article',
+};
+
+/**
+ * How far through, 0–1, from a `readProgress` label, or null when there's no
+ * real position: never opened, or only the "opened" sentinel (-1 / 0) that the
+ * combined reading surfaces write.
+ */
+export function progressFraction(
+  progress: { paragraphIndex: number; totalParagraphs: number } | null | undefined
+): number | null {
+  if (!progress) return null;
+  const { paragraphIndex, totalParagraphs } = progress;
+  if (!(totalParagraphs > 0) || !(paragraphIndex >= 0)) return null;
+  return Math.min(1, (paragraphIndex + 1) / totalParagraphs);
+}
+
+/** Past this, a reference counts as read through, not in progress. */
+export const FINISHED_FRACTION = 0.97;
+
+export interface ShelfEntry {
+  save: SavedItem;
+  /** epoch ms of the last read activity, 0 when never opened */
+  lastActivityAt: number;
+  progress: number | null;
+}
+
+/** Title (else URL/domain), lowercased and stripped of a leading article. */
+function titleSortKey(save: SavedItem): string {
+  return (save.title || save.domain || save.url || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^(the|a|an)\s+/, '');
+}
+
+/** "Surname, Given" sorts by surname; a single token sorts as itself. */
+function authorSortKey(save: SavedItem): string {
+  const author = (save.author || '').trim().toLowerCase();
+  if (!author) return '￿';
+  const first = author.split(/\s*(?:,|;|&|\band\b)\s*/)[0];
+  if (author.includes(',')) return first;
+  const parts = first.split(/\s+/);
+  return parts.length > 1 ? `${parts[parts.length - 1]} ${parts.slice(0, -1).join(' ')}` : first;
+}
+
+/**
+ * Narrow by kind and by a free-text query over title, author and site.
+ * Every word must match somewhere, so "knuth art" finds The Art of Computer
+ * Programming by Donald Knuth.
+ */
+export function filterShelf(
+  entries: ShelfEntry[],
+  kind: ShelfKindFilter,
+  query: string
+): ShelfEntry[] {
+  const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  return entries.filter(({ save }) => {
+    if (kind !== 'all' && shelfKind(save) !== kind) return false;
+    if (words.length === 0) return true;
+    const haystack = [save.title, save.author, save.domain, save.description]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    return words.every((w) => haystack.includes(w));
+  });
+}
+
+/**
+ * Order the Shelf. `collection` keeps the given order (a collection's own); the
+ * others are stable on ties so the list doesn't shuffle as labels sync in.
+ */
+export function sortShelf(entries: ShelfEntry[], sort: ShelfSort): ShelfEntry[] {
+  if (sort === 'collection') return entries;
+  const indexed = entries.map((entry, index) => ({ entry, index }));
+  const compare = (
+    a: { entry: ShelfEntry; index: number },
+    b: { entry: ShelfEntry; index: number }
+  ): number => {
+    switch (sort) {
+      case 'activity': {
+        // Opened most recently first, then never-opened by newest save.
+        const diff = b.entry.lastActivityAt - a.entry.lastActivityAt;
+        if (diff !== 0) return diff;
+        return savedAtMs(b.entry.save) - savedAtMs(a.entry.save);
+      }
+      case 'saved':
+        return savedAtMs(b.entry.save) - savedAtMs(a.entry.save);
+      case 'title':
+        return titleSortKey(a.entry.save).localeCompare(titleSortKey(b.entry.save));
+      case 'author': {
+        const diff = authorSortKey(a.entry.save).localeCompare(authorSortKey(b.entry.save));
+        return diff || titleSortKey(a.entry.save).localeCompare(titleSortKey(b.entry.save));
+      }
+    }
+    return 0;
+  };
+  return indexed.sort((a, b) => compare(a, b) || a.index - b.index).map(({ entry }) => entry);
+}
+
+/**
+ * "Continue reading": started, not finished, most recent first.
+ */
+export function continueReading(entries: ShelfEntry[], limit = 6): ShelfEntry[] {
+  return entries
+    .filter((e) => e.progress !== null && e.progress > 0 && e.progress < FINISHED_FRACTION)
+    .sort((a, b) => b.lastActivityAt - a.lastActivityAt)
+    .slice(0, limit);
+}

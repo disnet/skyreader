@@ -108,7 +108,8 @@
     | 'book-open'
     | 'highlighter'
     | 'quote'
-    | 'heart';
+    | 'heart'
+    | 'shelf';
 
   type NavItem =
     | {
@@ -418,7 +419,14 @@
     }
 
     // Saved group: Saved + saved channels
-    const savedGroup = [savedItem, ...savedChannelItems].filter(filterItem);
+    // The Shelf sits with Saved: it's the reference half of the same pile.
+    const shelfItem: NavItem = {
+      type: 'utility',
+      id: 'shelf',
+      label: 'Shelf',
+      icon: 'shelf',
+    };
+    const savedGroup = [savedItem, ...savedChannelItems, shelfItem].filter(filterItem);
     if (savedGroup.length > 0) {
       sections.push({ section: '', groupId: 'saved', items: savedGroup });
     }

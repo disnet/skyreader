@@ -23,6 +23,8 @@
     | 'refresh-cw'
     | 'alert-circle'
     | 'list'
+    | 'grid'
+    | 'shelf'
     | 'newspaper'
     | 'layers'
     | 'activity'
@@ -170,6 +172,16 @@
     <line x1="4" x2="20" y1="6" y2="6" />
     <line x1="4" x2="20" y1="12" y2="12" />
     <line x1="4" x2="20" y1="18" y2="18" />
+  {:else if name === 'grid'}
+    <rect x="3" y="3" width="7" height="7" rx="1" />
+    <rect x="14" y="3" width="7" height="7" rx="1" />
+    <rect x="3" y="14" width="7" height="7" rx="1" />
+    <rect x="14" y="14" width="7" height="7" rx="1" />
+  {:else if name === 'shelf'}
+    <path d="m16 6 4 14" />
+    <path d="M12 6v14" />
+    <path d="M8 8v12" />
+    <path d="M4 4v16" />
   {:else if name === 'newspaper'}
     <path
       d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"
