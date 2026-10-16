@@ -396,6 +396,13 @@
       isHorizontal = Math.abs(dx) > Math.abs(dy);
     }
 
+    // Hold the page still while the card moves sideways. Cancel from the very
+    // first horizontal-leaning move, before the 10px lock, since iOS won't
+    // stop a scroll that has already started.
+    if (directionLocked ? isHorizontal : Math.abs(dx) > Math.abs(dy)) {
+      if (e.cancelable) e.preventDefault();
+    }
+
     if (!directionLocked || !isHorizontal) return;
 
     // Only allow left swipe (negative offset)
@@ -406,6 +413,14 @@
       thresholdTriggered = true;
       navigator.vibrate?.(10);
     }
+  }
+
+  // Svelte registers ontouchmove as passive, which can't preventDefault.
+  function nonPassiveTouchMove(node: HTMLElement) {
+    node.addEventListener('touchmove', handleTouchMove, { passive: false });
+    return {
+      destroy: () => node.removeEventListener('touchmove', handleTouchMove),
+    };
   }
 
   function handleTouchEnd() {
@@ -642,7 +657,7 @@
     if (e.key === 'Enter') onOpen?.();
   }}
   ontouchstart={handleTouchStart}
-  ontouchmove={handleTouchMove}
+  use:nonPassiveTouchMove
   ontouchend={handleTouchEnd}
 >
   <!-- svelte-ignore a11y_no_static_element_interactions -->
