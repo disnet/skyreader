@@ -33,7 +33,8 @@
   {open}
   {onclose}
   title={editingViewId != null ? 'Edit channel' : 'New channel'}
-  bodyPadding={narrow.current ? '1rem 1rem 0' : '1.5rem 1.5rem 0'}
+  icon="newspaper"
+  bodyPadding="0.25rem var(--modal-inset) 0"
 >
   {#if open}
     <ChannelEditor

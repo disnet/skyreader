@@ -89,7 +89,7 @@
   }
 </script>
 
-<Modal {open} onclose={handleClose} title="Edit Feed">
+<Modal {open} onclose={handleClose} title="Edit feed" icon="rss">
   {#if subscription}
     <form
       class="form"

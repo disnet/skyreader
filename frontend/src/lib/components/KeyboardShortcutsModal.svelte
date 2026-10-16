@@ -66,7 +66,7 @@
 <Modal
   open={keyboardStore.isHelpOpen}
   onclose={() => keyboardStore.closeHelp()}
-  title="Keyboard Shortcuts"
+  title="Keyboard shortcuts"
   maxWidth="600px"
   zIndex={200}
 >

@@ -34,7 +34,14 @@
   }
 </script>
 
-<Modal {open} onclose={oncancel} title="Delete your linkblog?" maxWidth="420px">
+<Modal
+  {open}
+  onclose={oncancel}
+  title="Delete your linkblog?"
+  icon="trash"
+  tone="danger"
+  maxWidth="420px"
+>
   <p class="delete-linkblog-text">
     Every link post will be deleted from your PDS. Your page goes blank and subscribers stop
     receiving it. This cannot be undone.

@@ -5,7 +5,6 @@
   // text, or, with that off, quoted in the text over the article's link card.
   // Without a passage (the discussion's "Add yours") it's a plain link post.
   import Modal from '$lib/components/common/Modal.svelte';
-  import Icon from '$lib/components/Icon.svelte';
   import BlueskyCountRing from './BlueskyCountRing.svelte';
   import QuoteModeToggle from './QuoteModeToggle.svelte';
   import {
@@ -117,15 +116,15 @@
   {/if}
 {/snippet}
 
-<Modal open={Boolean(session)} onclose={composer.close} zIndex={250} maxWidth="520px">
-  {#snippet header()}
-    <div class="head">
-      <h2 class="title">Post to Bluesky</h2>
-      <button type="button" class="close" onclick={composer.close} aria-label="Close">
-        <Icon name="x" size={18} />
-      </button>
-    </div>
-  {/snippet}
+<Modal
+  open={Boolean(session)}
+  onclose={composer.close}
+  title="Post to Bluesky"
+  icon="bluesky"
+  zIndex={250}
+  maxWidth="520px"
+  bodyPadding="0"
+>
   {#if session}
     <div class="body">
       <!-- Shaped like the post it becomes: who's posting on the left, the words
@@ -210,45 +209,11 @@
 </Modal>
 
 <style>
-  .head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0.875rem 0.75rem 0 1.25rem;
-  }
-
-  .title {
-    margin: 0;
-    font-size: var(--text-lg);
-    font-weight: var(--weight-semibold);
-    color: var(--color-text);
-  }
-
-  .close {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 2rem;
-    height: 2rem;
-    padding: 0;
-    border: none;
-    border-radius: 0.375rem;
-    background: none;
-    color: var(--color-text-secondary);
-    cursor: pointer;
-  }
-
-  .close:hover {
-    background: var(--color-bg-secondary);
-    color: var(--color-text);
-  }
-
-  /* The modal pads its body; this surface wants its footer to run edge to edge,
-     so it takes the padding back and sets its own. */
+  /* The body runs edge to edge (bodyPadding="0") so the footer can; the post
+     sets its own inset. */
   .body {
     display: flex;
     flex-direction: column;
-    margin: -1.5rem;
   }
 
   .post {
