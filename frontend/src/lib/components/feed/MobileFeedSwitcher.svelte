@@ -361,6 +361,8 @@
       }));
 
     // Collections are account-only (held server-side), like the sidebar's.
+    // They sit flush with the Queue's channels; the layers icon (vs. the
+    // channels' bookmark) is what tells them apart.
     const collectionItems: NavItem[] = auth.isGuest
       ? []
       : shelfStore.collections.map((c) => ({
@@ -368,7 +370,6 @@
           id: c.id,
           label: c.name,
           icon: 'layers' as const,
-          indent: true,
         }));
 
     const savedChannelItems: NavItem[] = filteredViewsStore.views
