@@ -149,13 +149,6 @@ export function isFailedSaveBody(html: string | null | undefined): boolean {
 }
 
 /**
- * The body of a save whose article couldn't be fetched. The link is still worth
- * keeping, so the save goes through with this note in place of the text: what
- * happened, a way to the page itself, and the way through (the extension reads
- * the page from the reader's own browser, and re-saving from it replaces this
- * note with the full text).
- */
-/**
  * The body of a feed article opened with no text to show: the feed sent none
  * this device kept, and neither the archive nor an extract of the page had any
  * (an article reached from search can be all three). It points at the page
@@ -175,6 +168,13 @@ export function missingArticleBody(url: string): string {
   ].join('\n');
 }
 
+/**
+ * The body of a save whose article couldn't be fetched. The link is still worth
+ * keeping, so the save goes through with this note in place of the text: what
+ * happened, a way to the page itself, and the way through (the extension reads
+ * the page from the reader's own browser, and re-saving from it replaces this
+ * note with the full text).
+ */
 export function failedSaveBody(url: string, reason: SaveFetchFailure): string {
   let host = url;
   try {
