@@ -62,11 +62,11 @@ Everything you save is in your **Library**, which you can read two ways. **Libra
 - The **Queue** is what to read next, newest first. Read something, choose **Archive**, and it moves from the inbox to the archive.
 - The **Shelf** is what you keep and come back to, like books, papers, and references. Finishing something doesn't take it off.
 
-They're the same saves, so an item can be in both, and the two don't affect each other. Archiving clears an item from the Queue's inbox and leaves it on the Shelf, marked **Archived**. In the Queue, an item that's also on your Shelf is marked **On Shelf**. Each item's **⋯** menu shows both, side by side: **Archive** under Queue, **Keep on Shelf** under Shelf.
+They're the same saves, so an item can be in both, and the two don't affect each other. Archiving clears an item from the Queue's inbox and leaves it on the Shelf, marked **Archived**. In the Queue, an item that's also on your Shelf is marked **On Shelf**. Each item's **⋯** menu shows both, side by side: **Archive** under Queue, **Add to Shelf** under Shelf.
 
 ![The Shelf: books, papers, and kept articles as covers, with what you're partway through first](../../../assets/screenshots/shelf.png)
 
-Books and PDFs go on the Shelf as soon as you save them. To put anything else there, choose **Keep on Shelf** from its **⋯** menu, or from the **⋯** menu while you're reading it. **Take off Shelf** removes it, and the save stays in your Queue.
+Books and PDFs go on the Shelf as soon as you save them. To put anything else there, choose **Add to Shelf** from its **⋯** menu, or from the **⋯** menu while you're reading it. **Take off Shelf** removes it, and the save stays in your Queue.
 
 The Shelf opens on **Continue reading**, the things you're partway through. Below that is everything on it, as covers or as a list. Filter by title or author, show only books, PDFs, or articles, and sort by what you read last, what you saved last, title, or author.
 

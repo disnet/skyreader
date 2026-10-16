@@ -451,7 +451,7 @@
       {:else}
         <EmptyState
           title="Your Shelf is empty"
-          description="Books and PDFs land here when you save them. Keep anything else from its ⋯ menu in your Queue."
+          description="Books and PDFs land here when you save them. Add anything else from its ⋯ menu in your Queue."
         />
       {/if}
     {:else}

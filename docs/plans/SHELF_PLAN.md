@@ -92,7 +92,7 @@ deferred (see below).
   - **Covers** (grid) or **List**, remembered per device (`localStorage['skyreader-shelf-view']`).
     A cover is the save's image, or its title set typographically. Books get a spine edge.
   - Items open in the shared reader stack (`?read=`), same as Saved.
-- **Saved cards** gain **Keep on Shelf / Take off Shelf** and **Add to collection**.
+- **Saved cards** gain **Add to Shelf / Take off Shelf** and **Add to collection**.
 - **Add to collection** is one picker (`ShelfCollectionPicker`, mounted in `AppShell`, driven by
   `shelfStore.openPicker`). Checkboxes apply at once, and a collection can be created from it.
 - Nav: **Shelf** sits under Saved in the sidebar, the dropdown and the mobile switcher.
@@ -133,7 +133,7 @@ Ordered by how much they add to "reading should add up":
 
 1. **Item hub page.** A reference's own page: metadata, every highlight and note grouped by
    chapter/page, resume. This is where the Shelf becomes sensemaking rather than storage.
-2. ~~**Keep from the reader.**~~ Shipped: the reader bar's Keep on Shelf button and ⋯ menu.
+2. ~~**Keep from the reader.**~~ Shipped: the reader bar's Add to Shelf button and ⋯ menu.
 3. ~~**Collections in the sidebar.**~~ Shipped: nested under Library, beside the saved channels.
    Drag to reorder is still to do.
 4. **Better metadata.** ISBN, authors, year from EPUB OPF metadata, and DOI/title/authors from PDF

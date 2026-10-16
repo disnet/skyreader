@@ -45,7 +45,7 @@ test.describe('Shelf', () => {
       (r) => r.url().includes('/api/labels') && r.request().method() === 'POST'
     );
     await card.locator('.menu-trigger').click();
-    await authedPage.getByRole('menuitem', { name: 'Keep on Shelf' }).click();
+    await authedPage.getByRole('menuitem', { name: 'Add to Shelf' }).click();
     await keep;
 
     await authedPage.goto('/shelf');

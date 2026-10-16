@@ -1,10 +1,10 @@
 <script lang="ts">
   // Harness for the desktop reader bar: the real SavedReader over a saved
-  // webpage, so the bar's save-dependent controls (Keep on Shelf, which shows
+  // webpage, so the bar's save-dependent controls (Add to Shelf, which shows
   // only when it fits beside the title slot) can be seen and clicked.
   //
   // The bar follows the window (its label breakpoints are viewport media
-  // queries), so resize the window to watch Keep on Shelf come and go. The app's
+  // queries), so resize the window to watch Add to Shelf come and go. The app's
   // CSP forbids framing, so there's no side-by-side gallery. ?actions=all crowds
   // the bar: Archive, Mark read and a signed-in user (Share, Recommend,
   // Semble/Margin); ?shelf=1 opens with the save already on the Shelf.
