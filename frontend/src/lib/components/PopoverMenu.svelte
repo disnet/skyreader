@@ -57,14 +57,15 @@
     // The menu is absolutely positioned relative to .popover-menu
     const menuWidth = menuRect.width;
 
-    // Check if left-aligned menu would go off the right edge of viewport
-    if (buttonRect.left + menuWidth > viewportWidth - 8) {
-      // Right-align instead
-      position.right = 0;
-    } else {
-      // Left-align (menu's left edge aligns with button's left edge)
-      position.left = 0;
-    }
+    // Left-align with the button, or right-align if that would run off the right
+    // edge, then clamp into the viewport so the menu stays reachable even when
+    // the button itself sits at or past an edge.
+    let viewportLeft =
+      buttonRect.left + menuWidth > viewportWidth - 8
+        ? buttonRect.right - menuWidth
+        : buttonRect.left;
+    viewportLeft = Math.max(8, Math.min(viewportLeft, viewportWidth - 8 - menuWidth));
+    position.left = viewportLeft - buttonRect.left;
 
     menuPosition = position;
   }

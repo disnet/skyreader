@@ -756,10 +756,12 @@
     transition: background-color 0.15s;
   }
 
+  /* The track is the card's width; the reveal hangs off its right edge and the
+     card's overflow clips it. Sizing the track to its content instead let one
+     long unbreakable title (a bare URL) widen the row past the screen, taking
+     the ⋯ trigger, and the menu anchored to it, off with it. */
   .swipe-track {
     display: flex;
-    width: fit-content;
-    min-width: 100%;
   }
 
   .swipe-track.snapping {
@@ -794,6 +796,11 @@
   .bookmark-card.menu-open {
     z-index: 10;
     overflow: visible;
+  }
+
+  /* Unclipped, the reveal would stick out past the screen edge. */
+  .bookmark-card.menu-open .swipe-reveal {
+    display: none;
   }
 
   .bookmark-card.selected {
@@ -835,6 +842,8 @@
     margin: 0;
     padding-right: 2rem;
     line-height: var(--leading-snug);
+    /* A URL standing in for a title has no break points. */
+    overflow-wrap: anywhere;
     overflow: hidden;
     text-overflow: ellipsis;
     display: -webkit-box;
