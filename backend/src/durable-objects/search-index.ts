@@ -1,9 +1,12 @@
 /**
  * One reader's full-text search index: a SQLite-backed Durable Object per DID,
- * holding an external-content FTS5 index over what they've read, saved and
- * highlighted. See docs/plans/FULL_TEXT_SEARCH.md and the spike in
- * backend/spikes/search-index (why a DO and not D1: per-user size, no
- * cross-user filtering, and D1 can't export a database with an FTS5 table).
+ * holding external-content FTS5 indexes over what they've read, saved and
+ * highlighted: one over each item's own text (title, author, feed, body), one
+ * over the reader's highlights and notes on it. They're apart so a new highlight
+ * rewrites only the notes, never a body that can be a whole book. See
+ * docs/plans/FULL_TEXT_SEARCH.md and the spike in backend/spikes/search-index
+ * (why a DO and not D1: per-user size, no cross-user filtering, and D1 can't
+ * export a database with an FTS5 table).
  *
  * Everything here is derived, so it can be dropped and rebuilt (`reset`). It is
  * kept current by pulling: `sync` walks cursors over D1 (services/search-index.ts)
@@ -26,9 +29,10 @@ import {
   type IndexDoc,
   type SyncCursors,
 } from '../services/search-index';
+import type { SearchTerms } from '../services/search-query';
 import { log, serializeError } from '../utils/logger';
 
-const SCHEMA_VERSION = '1';
+const SCHEMA_VERSION = '2';
 /** Debounce between a write's nudge and the sync it schedules. */
 const NUDGE_DELAY_MS = 2_000;
 /** Changed keys per sync round (each round is a handful of D1 queries). */
@@ -143,8 +147,8 @@ export class SearchIndex extends DurableObject<Env> {
     this.sql.exec(`CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
     const version = this.getMeta('schema_version');
     if (version === SCHEMA_VERSION) return;
-    // No prior version to upgrade from yet; a future change to the layout
-    // drops everything and lets the cursors rebuild it from zero.
+    // A change to the layout drops everything and lets the cursors rebuild it
+    // from zero (2: notes moved out of `fts` into `notes_fts`).
     this.dropIndex();
     this.sql.exec(`CREATE TABLE docs (
       id INTEGER PRIMARY KEY,
@@ -166,13 +170,19 @@ export class SearchIndex extends DurableObject<Env> {
       title TEXT NOT NULL,
       author TEXT NOT NULL,
       feed TEXT NOT NULL,
-      body TEXT NOT NULL,
-      notes TEXT NOT NULL
+      body TEXT NOT NULL
     )`);
-    // Column order is the bm25() weight order in search(): title, author, feed, body, notes.
+    // Column order is the bm25() weight order in query(): title, author, feed, body.
     this.sql.exec(`CREATE VIRTUAL TABLE fts USING fts5(
-      title, author, feed, body, notes,
+      title, author, feed, body,
       content = 'docs_text', content_rowid = 'id',
+      tokenize = 'porter unicode61 remove_diacritics 2'
+    )`);
+    // Highlight text and notes, only for items that have some; rowid = docs.id.
+    this.sql.exec(`CREATE TABLE notes_text (id INTEGER PRIMARY KEY, notes TEXT NOT NULL)`);
+    this.sql.exec(`CREATE VIRTUAL TABLE notes_fts USING fts5(
+      notes,
+      content = 'notes_text', content_rowid = 'id',
       tokenize = 'porter unicode61 remove_diacritics 2'
     )`);
     this.setMeta('schema_version', SCHEMA_VERSION);
@@ -181,6 +191,8 @@ export class SearchIndex extends DurableObject<Env> {
   private dropIndex() {
     this.sql.exec(`DROP TABLE IF EXISTS fts`);
     this.sql.exec(`DROP TABLE IF EXISTS docs_text`);
+    this.sql.exec(`DROP TABLE IF EXISTS notes_fts`);
+    this.sql.exec(`DROP TABLE IF EXISTS notes_text`);
     this.sql.exec(`DROP TABLE IF EXISTS docs`);
     this.sql.exec(`DELETE FROM meta WHERE key <> 'did'`);
   }
@@ -225,7 +237,7 @@ export class SearchIndex extends DurableObject<Env> {
     }
   }
 
-  async search(did: string, match: string, opts: SearchOptions): Promise<SearchResponse> {
+  async search(did: string, terms: SearchTerms, opts: SearchOptions): Promise<SearchResponse> {
     this.rememberDid(did);
     // Catch up on whatever changed since the last sync, but never let a backlog
     // (a first build) hold the answer: past the budget, answer from what's
@@ -237,7 +249,7 @@ export class SearchIndex extends DurableObject<Env> {
     ]);
     const building = outcome === null || outcome.more;
     if (building) await this.ensureAlarm(0);
-    return { ...this.query(match, opts), building, indexedItems: this.indexedItems() };
+    return { ...this.query(terms, opts), building, indexedItems: this.indexedItems() };
   }
 
   async stats(): Promise<IndexStats> {
@@ -366,17 +378,18 @@ export class SearchIndex extends DurableObject<Env> {
 
   private upsert(doc: IndexDoc) {
     const touchedAt = Math.max(doc.readAt ?? 0, doc.savedAt ?? 0, doc.highlightedAt ?? 0);
-    const text = [doc.title, doc.author, doc.feedTitle, doc.body, doc.notes] as const;
+    const text = [doc.title, doc.author, doc.feedTitle, doc.body] as const;
     const existing = this.sql
       .exec(
-        `SELECT d.id, t.title, t.author, t.feed, t.body, t.notes
+        `SELECT d.id, t.title, t.author, t.feed, t.body
            FROM docs d JOIN docs_text t ON t.id = d.id WHERE d.item_key = ?`,
         doc.key
       )
       .toArray()[0];
 
+    let id: number;
     if (existing) {
-      const id = existing.id as number;
+      id = existing.id as number;
       this.sql.exec(
         `UPDATE docs SET item_type = ?, url = ?, feed_url = ?, feed_title = ?, title = ?, kinds = ?,
                 read_at = ?, saved_at = ?, highlighted_at = ?, touched_at = ?
@@ -397,111 +410,174 @@ export class SearchIndex extends DurableObject<Env> {
         existing.title === text[0] &&
         existing.author === text[1] &&
         existing.feed === text[2] &&
-        existing.body === text[3] &&
-        existing.notes === text[4];
-      // A re-read or a metadata change leaves the text alone: skip the FTS
-      // rewrite, which is most of a write's cost.
-      if (unchanged) return;
+        existing.body === text[3];
+      // A re-read, a new highlight or a metadata change leaves the item's own
+      // text alone: skip its FTS rewrite, which is most of a write's cost.
+      if (!unchanged) {
+        this.sql.exec(
+          `INSERT INTO fts (fts, rowid, title, author, feed, body) VALUES ('delete', ?, ?, ?, ?, ?)`,
+          id,
+          existing.title,
+          existing.author,
+          existing.feed,
+          existing.body
+        );
+        this.sql.exec(
+          `UPDATE docs_text SET title = ?, author = ?, feed = ?, body = ? WHERE id = ?`,
+          ...text,
+          id
+        );
+        this.sql.exec(
+          `INSERT INTO fts (rowid, title, author, feed, body) VALUES (?, ?, ?, ?, ?)`,
+          id,
+          ...text
+        );
+      }
+    } else {
+      id = this.sql
+        .exec(
+          `INSERT INTO docs (item_key, item_type, url, feed_url, feed_title, title, kinds,
+                             read_at, saved_at, highlighted_at, touched_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+          doc.key,
+          doc.itemType,
+          doc.url,
+          doc.feedUrl,
+          doc.feedTitle,
+          doc.title,
+          doc.kinds,
+          doc.readAt,
+          doc.savedAt,
+          doc.highlightedAt,
+          touchedAt
+        )
+        .one().id as number;
       this.sql.exec(
-        `INSERT INTO fts (fts, rowid, title, author, feed, body, notes) VALUES ('delete', ?, ?, ?, ?, ?, ?)`,
-        id,
-        existing.title,
-        existing.author,
-        existing.feed,
-        existing.body,
-        existing.notes
-      );
-      this.sql.exec(
-        `UPDATE docs_text SET title = ?, author = ?, feed = ?, body = ?, notes = ? WHERE id = ?`,
-        ...text,
-        id
-      );
-      this.sql.exec(
-        `INSERT INTO fts (rowid, title, author, feed, body, notes) VALUES (?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO docs_text (id, title, author, feed, body) VALUES (?, ?, ?, ?, ?)`,
         id,
         ...text
       );
+      this.sql.exec(
+        `INSERT INTO fts (rowid, title, author, feed, body) VALUES (?, ?, ?, ?, ?)`,
+        id,
+        ...text
+      );
+    }
+    this.writeNotes(id, doc.notes);
+  }
+
+  /** Replace item `id`'s notes; empty notes leave no row. */
+  private writeNotes(id: number, notes: string) {
+    const existing = this.sql.exec(`SELECT notes FROM notes_text WHERE id = ?`, id).toArray()[0];
+    const old = (existing?.notes as string | undefined) ?? '';
+    if (old === notes) return;
+    if (existing) {
+      this.sql.exec(
+        `INSERT INTO notes_fts (notes_fts, rowid, notes) VALUES ('delete', ?, ?)`,
+        id,
+        old
+      );
+    }
+    if (!notes) {
+      this.sql.exec(`DELETE FROM notes_text WHERE id = ?`, id);
       return;
     }
-
-    const id = this.sql
-      .exec(
-        `INSERT INTO docs (item_key, item_type, url, feed_url, feed_title, title, kinds,
-                           read_at, saved_at, highlighted_at, touched_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
-        doc.key,
-        doc.itemType,
-        doc.url,
-        doc.feedUrl,
-        doc.feedTitle,
-        doc.title,
-        doc.kinds,
-        doc.readAt,
-        doc.savedAt,
-        doc.highlightedAt,
-        touchedAt
-      )
-      .one().id as number;
     this.sql.exec(
-      `INSERT INTO docs_text (id, title, author, feed, body, notes) VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO notes_text (id, notes) VALUES (?, ?)
+       ON CONFLICT(id) DO UPDATE SET notes = excluded.notes`,
       id,
-      ...text
+      notes
     );
-    this.sql.exec(
-      `INSERT INTO fts (rowid, title, author, feed, body, notes) VALUES (?, ?, ?, ?, ?, ?)`,
-      id,
-      ...text
-    );
+    this.sql.exec(`INSERT INTO notes_fts (rowid, notes) VALUES (?, ?)`, id, notes);
   }
 
   private remove(key: string) {
     const existing = this.sql
       .exec(
-        `SELECT d.id, t.title, t.author, t.feed, t.body, t.notes
+        `SELECT d.id, t.title, t.author, t.feed, t.body
            FROM docs d JOIN docs_text t ON t.id = d.id WHERE d.item_key = ?`,
         key
       )
       .toArray()[0];
     if (!existing) return;
+    const id = existing.id as number;
     this.sql.exec(
-      `INSERT INTO fts (fts, rowid, title, author, feed, body, notes) VALUES ('delete', ?, ?, ?, ?, ?, ?)`,
-      existing.id,
+      `INSERT INTO fts (fts, rowid, title, author, feed, body) VALUES ('delete', ?, ?, ?, ?, ?)`,
+      id,
       existing.title,
       existing.author,
       existing.feed,
-      existing.body,
-      existing.notes
+      existing.body
     );
-    this.sql.exec(`DELETE FROM docs_text WHERE id = ?`, existing.id);
-    this.sql.exec(`DELETE FROM docs WHERE id = ?`, existing.id);
+    this.writeNotes(id, '');
+    this.sql.exec(`DELETE FROM docs_text WHERE id = ?`, id);
+    this.sql.exec(`DELETE FROM docs WHERE id = ?`, id);
   }
 
   // --- query -------------------------------------------------------------------
 
   private query(
-    match: string,
+    terms: SearchTerms,
     opts: SearchOptions
   ): Omit<SearchResponse, 'building' | 'indexedItems'> {
     const recentSince = Date.now() - RECENT_MS;
-    // Rank every match without snippet(), then snippet only the page: snippet()
-    // in the ranked SELECT runs for every matching row before the sort (up to
-    // 5x slower on common terms in the spike).
+    const allPositive = terms.positives.join(' ');
+    const anyPositive = terms.positives.join(' OR ');
+    const anyNegative = terms.negatives.join(' OR ');
+
+    // An item matches when every positive term is in its own text or its notes,
+    // and no negative term is in either. Most matches have every term in the
+    // text (`main`); the rest must have a note matching some term, so only those
+    // few notes (`noted`) are checked term by term. bm25 per table, summed, with
+    // notes weighted 5 against the body's 1. Snippets come later, for the page
+    // only: snippet() here would run for every match before the sort (up to 5x
+    // slower on common terms in the spike).
+    const perTerm = terms.positives
+      .map(
+        () => `(EXISTS (SELECT 1 FROM fts WHERE fts MATCH ? AND rowid = noted.id)
+             OR EXISTS (SELECT 1 FROM notes_fts WHERE notes_fts MATCH ? AND rowid = noted.id))`
+      )
+      .join(' AND ');
+    const hits = `
+      WITH main AS MATERIALIZED (
+             SELECT rowid AS id, bm25(fts, 10.0, 3.0, 2.0, 1.0) AS s FROM fts WHERE fts MATCH ?),
+           noted AS MATERIALIZED (
+             SELECT rowid AS id, 5.0 * bm25(notes_fts) AS s FROM notes_fts WHERE notes_fts MATCH ?),
+           hits AS (
+             SELECT id FROM main
+             UNION
+             SELECT id FROM noted WHERE ${perTerm}
+             ${
+               anyNegative
+                 ? `EXCEPT SELECT rowid FROM fts WHERE fts MATCH ?
+                    EXCEPT SELECT rowid FROM notes_fts WHERE notes_fts MATCH ?`
+                 : ''
+             })`;
+    const hitsParams = [
+      allPositive,
+      anyPositive,
+      ...terms.positives.flatMap((term) => [term, term]),
+      ...(anyNegative ? [anyNegative, anyNegative] : []),
+    ];
+
     const ranked = this.sql
       .exec(
-        `SELECT d.id, d.item_key, d.item_type, d.url, d.title, d.feed_title, d.feed_url, d.kinds,
+        `${hits}
+         SELECT d.id, d.item_key, d.item_type, d.url, d.title, d.feed_title, d.feed_url, d.kinds,
                 d.read_at, d.saved_at, d.highlighted_at,
-                bm25(fts, 10.0, 3.0, 2.0, 1.0, 5.0)
+                COALESCE(main.s, 0) + COALESCE(noted.s, 0)
                   - (CASE WHEN d.kinds & ${KIND_HIGHLIGHTED} THEN 2.0
                           WHEN d.kinds & ${KIND_SAVED} THEN 1.0 ELSE 0 END)
                   - (CASE WHEN d.touched_at >= ? THEN 0.5 ELSE 0 END) AS score
-           FROM fts JOIN docs d ON d.id = fts.rowid
-          WHERE fts MATCH ?
-            AND (? = 0 OR d.kinds & ? != 0)
+           FROM hits JOIN docs d ON d.id = hits.id
+           LEFT JOIN main ON main.id = hits.id
+           LEFT JOIN noted ON noted.id = hits.id
+          WHERE (? = 0 OR d.kinds & ? != 0)
             AND d.touched_at >= ?
           ORDER BY score
           LIMIT ? OFFSET ?`,
+        ...hitsParams,
         recentSince,
-        match,
         opts.kinds,
         opts.kinds,
         opts.since,
@@ -510,30 +586,31 @@ export class SearchIndex extends DurableObject<Env> {
       )
       .toArray();
 
+    // Each hit's best passage from its text or its notes, whichever shows more
+    // of the query (the text on a tie).
     const snippets = new Map<number, SnippetSegment[]>();
     if (ranked.length > 0) {
       const ids = ranked.map((r) => r.id as number);
-      for (const row of this.sql
-        .exec(
-          `SELECT rowid, snippet(fts, -1, ?, ?, '…', 24) AS s
-             FROM fts WHERE fts MATCH ? AND rowid IN (${ids.map(() => '?').join(',')})`,
-          MARK_OPEN,
-          MARK_CLOSE,
-          match,
-          ...ids
-        )
-        .toArray()) {
-        snippets.set(row.rowid as number, splitSnippet((row.s as string) ?? ''));
+      const inIds = ids.map(() => '?').join(',');
+      const fromText = this.snippetsFrom('fts', -1, anyPositive, ids, inIds);
+      const fromNotes = this.snippetsFrom('notes_fts', 0, anyPositive, ids, inIds);
+      const matches = (segments: SnippetSegment[] | undefined) =>
+        segments?.filter((seg) => seg.match).length ?? 0;
+      for (const id of ids) {
+        const text = fromText.get(id);
+        const notes = fromNotes.get(id);
+        snippets.set(id, (matches(notes) > matches(text) ? notes : text) ?? []);
       }
     }
 
     const total = this.sql
       .exec(
-        `SELECT count(*) AS n FROM (
-           SELECT 1 FROM fts JOIN docs d ON d.id = fts.rowid
-            WHERE fts MATCH ? AND (? = 0 OR d.kinds & ? != 0) AND d.touched_at >= ?
+        `${hits}
+         SELECT count(*) AS n FROM (
+           SELECT 1 FROM hits JOIN docs d ON d.id = hits.id
+            WHERE (? = 0 OR d.kinds & ? != 0) AND d.touched_at >= ?
             LIMIT ?)`,
-        match,
+        ...hitsParams,
         opts.kinds,
         opts.kinds,
         opts.since,
@@ -557,5 +634,28 @@ export class SearchIndex extends DurableObject<Env> {
       })),
       total,
     };
+  }
+
+  private snippetsFrom(
+    table: 'fts' | 'notes_fts',
+    column: number,
+    match: string,
+    ids: number[],
+    inIds: string
+  ): Map<number, SnippetSegment[]> {
+    const found = new Map<number, SnippetSegment[]>();
+    for (const row of this.sql
+      .exec(
+        `SELECT rowid, snippet(${table}, ${column}, ?, ?, '…', 24) AS s
+           FROM ${table} WHERE ${table} MATCH ? AND rowid IN (${inIds})`,
+        MARK_OPEN,
+        MARK_CLOSE,
+        match,
+        ...ids
+      )
+      .toArray()) {
+      found.set(row.rowid as number, splitSnippet((row.s as string) ?? ''));
+    }
+    return found;
   }
 }

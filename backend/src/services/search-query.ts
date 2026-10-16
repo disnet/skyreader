@@ -16,8 +16,20 @@
  * so a reader's habits carry over.
  */
 
-export interface ParsedSearchQuery {
-  /** The FTS5 MATCH expression. */
+/**
+ * The query as quoted FTS5 terms. The index matches each against the item's own
+ * text and its notes separately (they're two FTS5 tables), so it needs the terms
+ * rather than one expression.
+ */
+export interface SearchTerms {
+  /** Every one must appear, in the item's text or its notes. */
+  positives: string[];
+  /** None may appear, in either. */
+  negatives: string[];
+}
+
+export interface ParsedSearchQuery extends SearchTerms {
+  /** The same query as one FTS5 MATCH expression. */
   match: string;
   /** The positive words/phrases, unquoted, for the client to highlight. */
   terms: string[];
@@ -68,5 +80,5 @@ export function parseSearchQuery(raw: string): ParsedSearchQuery | null {
 
   if (positives.length === 0) return null;
   const match = [positives.join(' '), ...negatives.map((n) => `NOT ${n}`)].join(' ');
-  return { match, terms };
+  return { match, terms, positives, negatives };
 }

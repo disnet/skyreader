@@ -25,6 +25,7 @@ Searching for "glacier" also finds "glaciers".
 ## What's searched
 
 - **Saved and highlighted articles:** the whole text.
+- **Saved PDFs and books:** the whole text, up to about 100,000 words.
 - **Articles you've only read:** the title and the opening of the article.
 - **Your highlights and notes:** every word, and a match there ranks higher.
 

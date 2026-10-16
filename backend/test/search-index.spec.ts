@@ -143,11 +143,18 @@ async function markRead(user: TestUser, guid: string, extra: Record<string, unkn
 
 async function save(
   user: TestUser,
-  opts: { rkey: string; url: string; title: string; content: string; itemGuid?: string }
+  opts: {
+    rkey: string;
+    url: string;
+    title: string;
+    content: string;
+    itemGuid?: string;
+    contentType?: 'pdf' | 'epub';
+  }
 ) {
   await env.DB.prepare(
-    `INSERT INTO saved_articles (user_did, rkey, record_uri, url, url_normalized, title, content, saved_at, source, item_guid)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO saved_articles (user_did, rkey, record_uri, url, url_normalized, title, content, saved_at, source, item_guid, content_type)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       user.did,
@@ -159,7 +166,8 @@ async function save(
       opts.content,
       SETTLED_SEC * 1000,
       opts.itemGuid ? 'feed' : 'url',
-      opts.itemGuid ?? null
+      opts.itemGuid ?? null,
+      opts.contentType ?? null
     )
     .run();
 }
@@ -228,6 +236,13 @@ describe('parseSearchQuery', () => {
     expect(parseSearchQuery('"unfinished phrase')?.match).toBe('"unfinished phrase"');
     expect(parseSearchQuery('it"s')?.match).toBe('"its"');
     expect(parseSearchQuery('a* ***')?.match).toBe('"a"');
+  });
+
+  it('returns the quoted terms separately for the index', () => {
+    expect(parseSearchQuery('"carbon tax" levy* -opinion')).toMatchObject({
+      positives: ['"carbon tax"', '"levy"*'],
+      negatives: ['"opinion"'],
+    });
   });
 
   it('puts exclusions after the positive terms', () => {
@@ -418,6 +433,91 @@ describe('GET /api/search', () => {
     expect(permafrost.results).toHaveLength(1);
     expect(permafrost.results[0]).toMatchObject({ itemKey: 'g-long', highlighted: true });
     expect((await search(user, 'tundra')).results[0]?.itemKey).toBe('g-long');
+  });
+
+  it('indexes a whole saved book, but only the first 64k of a saved web page', async () => {
+    const user = await createUser();
+    const filler = `<p>${'chapter text goes on '.repeat(4000)}</p>`; // ~84k chars
+    await save(user, {
+      rkey: '3ksavedbook0001',
+      url: 'https://books.example/novel.epub',
+      title: 'A novel',
+      content: `${filler}<p>The epilogue is set in Reykjavik.</p>`,
+      contentType: 'epub',
+    });
+    await save(user, {
+      rkey: '3ksavedpage0001',
+      url: 'https://web.example/long-page',
+      title: 'A long page',
+      content: `${filler}<p>The footer mentions Reykjavik.</p>`,
+    });
+    const body = await search(user, 'reykjavik');
+    expect(body.results.map((r) => r.itemKey)).toEqual([
+      `at://${user.did}/app.skyreader.feed.saved/3ksavedbook0001`,
+    ]);
+  });
+
+  it('matches terms split between the text and the notes, and keeps notes current', async () => {
+    const user = await createUser();
+    await save(user, {
+      rkey: '3ksavednotes001',
+      url: 'https://web.example/glaciers',
+      title: 'Glaciers retreating',
+      content: '<p>Meltwater carves the valley.</p>',
+    });
+    const key = `at://${user.did}/app.skyreader.feed.saved/3ksavednotes001`;
+    await addLabel(
+      user,
+      key,
+      'highlights',
+      {
+        highlights: [
+          {
+            id: 'h1',
+            selector: { exact: 'Meltwater' },
+            note: 'compare with fjords',
+            createdAt: SETTLED_SEC * 1000,
+          },
+        ],
+      },
+      { updatedAt: SETTLED_SEC + 1 }
+    );
+
+    // One term in the body, one only in the note.
+    const split = await search(user, 'valley fjords');
+    expect(split.results).toHaveLength(1);
+    expect(split.results[0].snippet.some((s) => s.match)).toBe(true);
+    expect((await search(user, 'fjords')).results[0]?.snippet).toContainEqual({
+      text: 'fjords',
+      match: true,
+    });
+    // An exclusion that only the note contains drops the item.
+    expect((await search(user, 'valley -fjords')).total).toBe(0);
+    expect((await search(user, 'valley -tundra')).total).toBe(1);
+
+    // Editing the note replaces its words.
+    await env.DB.prepare(
+      `UPDATE item_labels_cache SET props = ?, updated_at = ? WHERE user_did = ? AND item_key = ?`
+    )
+      .bind(
+        JSON.stringify({
+          highlights: [
+            {
+              id: 'h1',
+              selector: { exact: 'Meltwater' },
+              note: 'compare with moraines',
+              createdAt: SETTLED_SEC * 1000,
+            },
+          ],
+        }),
+        SETTLED_SEC + 2,
+        user.did,
+        key
+      )
+      .run();
+    expect((await search(user, 'fjords')).total).toBe(0);
+    expect((await search(user, 'valley moraines')).total).toBe(1);
+    expect((await search(user, 'meltwater')).total).toBe(1);
   });
 
   it('files a highlight on a save under the guid the save bridges to', async () => {

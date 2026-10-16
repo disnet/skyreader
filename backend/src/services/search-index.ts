@@ -27,6 +27,14 @@ export const KIND_HIGHLIGHTED = 4;
 export const READ_BODY_CHARS = 2_000;
 /** Body text kept for a saved or highlighted item: the whole article, within reason. */
 export const FULL_BODY_CHARS = 64_000;
+/**
+ * Body text kept for a saved PDF or EPUB: about 100k words, so the whole of nearly
+ * every book (their stored extraction stops at 1 MB of HTML anyway). The cap keeps
+ * an index row under the Durable Object's 2 MB row limit even for text that takes
+ * 3 bytes a character in UTF-8. Affordable because a book's text is written once:
+ * a highlight or a note rewrites only the item's notes (durable-objects/search-index.ts).
+ */
+export const BOOK_BODY_CHARS = 600_000;
 const MAX_NOTES_CHARS = 16_000;
 
 /** Operator switch, a `sync_state` row: only an explicit '1' turns search on. */
@@ -304,6 +312,7 @@ interface SavedRow extends SavedKeyRow {
   author: string | null;
   description: string | null;
   content: string | null;
+  content_type: string | null;
   saved_at: number;
 }
 
@@ -361,7 +370,7 @@ export async function buildIndexDocs(
   const canonicalOf = new Map<string, string>();
   for (const keys of chunk(rawKeys, IN_CHUNK / 2)) {
     const rows = await env.DB.prepare(
-      `SELECT id, rkey, record_uri, item_guid, url, title, author, description, content, saved_at
+      `SELECT id, rkey, record_uri, item_guid, url, title, author, description, content, content_type, saved_at
          FROM saved_articles
         WHERE user_did = ? AND (item_guid IN (${placeholders(keys.length)})
                                 OR record_uri IN (${placeholders(keys.length)}))`
@@ -380,7 +389,7 @@ export async function buildIndexDocs(
   for (const key of rawKeys) {
     if (!key.startsWith('saved:') || savedByCanonical.has(key)) continue;
     const row = await env.DB.prepare(
-      `SELECT id, rkey, record_uri, item_guid, url, title, author, description, content, saved_at
+      `SELECT id, rkey, record_uri, item_guid, url, title, author, description, content, content_type, saved_at
          FROM saved_articles WHERE user_did = ? AND rkey = ?`
     )
       .bind(did, key.slice('saved:'.length))
@@ -508,7 +517,8 @@ export async function buildIndexDocs(
   const upserts: IndexDoc[] = [];
   for (const d of drafts) {
     const full = (d.kinds & (KIND_SAVED | KIND_HIGHLIGHTED)) !== 0;
-    const bodyChars = full ? FULL_BODY_CHARS : READ_BODY_CHARS;
+    const book = d.saved?.content_type === 'pdf' || d.saved?.content_type === 'epub';
+    const bodyChars = book ? BOOK_BODY_CHARS : full ? FULL_BODY_CHARS : READ_BODY_CHARS;
     const feedRow = feedItems.get(d.key);
     const item = feedRow ? parseJson<FeedItem>(feedRow.item_json) : null;
     const doc = documents.get(d.key);

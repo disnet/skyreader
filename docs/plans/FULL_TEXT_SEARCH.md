@@ -12,7 +12,7 @@ index of 100k items, from a keyboard-reachable search surface (`/`).
 
 **One index per reader.** Each reader gets a SQLite-backed Durable Object (`SearchIndex`,
 `backend/src/durable-objects/search-index.ts`) holding an external-content FTS5 index. D1 was ruled
-out by the spike in `backend/spikes/search-index`, for three reasons:
+out by the spike in `backend/spikes/search-index`, for three reasons (the index layout is below):
 
 - Per-user indexes total far more than D1's 10 GB.
 - A shared index has to filter every match by user.
@@ -21,20 +21,34 @@ out by the spike in `backend/spikes/search-index`, for three reasons:
 **What gets indexed.** Only items the reader has touched. How much text is kept depends on the
 item:
 
-| Item                | Title, author, feed | Body                                                    | Notes column             |
-| ------------------- | ------------------- | ------------------------------------------------------- | ------------------------ |
-| Read only           | yes                 | the first 2 KB (`READ_BODY_CHARS`)                      | —                        |
-| Saved / highlighted | yes                 | full text up to 64 KB, from the save, R2 or the archive | highlight text and notes |
+| Item                | Title, author, feed | Body                                                     | Notes                    |
+| ------------------- | ------------------- | -------------------------------------------------------- | ------------------------ |
+| Read only           | yes                 | the first 2 KB (`READ_BODY_CHARS`)                       | —                        |
+| Saved / highlighted | yes                 | full text up to 64 KB, from the save, R2 or the archive  | highlight text and notes |
+| Saved PDF / EPUB    | yes                 | up to 600k characters (`BOOK_BODY_CHARS`), from the save | highlight text and notes |
+
+600k characters is about 100k words, so nearly every book is indexed whole. It also keeps a row
+under the Durable Object's 2 MB row limit at 3 bytes a character.
+
+**Two tables.** An item's own text (title, author, feed, body) is in `fts`, and its highlights and
+notes are in `notes_fts`, keyed by the same id. A new highlight or note rewrites only the item's
+`notes_fts` row. With one table it re-indexed the whole body, roughly $0.001 each time for a book.
 
 Notes that exist only in Margin or Semble are out of scope for v1.
 
 **Ranking.**
 
-- bm25 with column weights: title 10, author 3, feed 2, body 1, notes 5.
+- An item matches when every term is in its text or its notes, and no excluded term is in either.
+  Items with every term in their text come from one `fts` query. Only items with a note matching
+  some term are checked term by term.
+- bm25 per table, summed, with column weights title 10, author 3, feed 2, body 1, and notes 5.
+  An item matched partly through its notes ranks on its notes alone.
 - A lift for highlighted items (2) and saved items (1), and for items touched in the last 30 days
   (0.5).
 - Snippets are computed only for the page of results, never inside the ranked SELECT. In the spike
-  that was up to 5× slower on common terms.
+  that was up to 5× slower on common terms. Each hit shows the passage from its text or its notes,
+  whichever has more matches.
+- Snippets of a book tokenize its whole body. Measure a page of book hits in staging.
 - Counts are capped at 1,000, shown as "1,000+".
 
 ## Keeping it current: pull, don't push
