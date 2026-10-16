@@ -32,7 +32,9 @@
 
   const KINDS: { value: SearchKind | null; label: string }[] = [
     { value: null, label: 'Everything' },
-    { value: 'saved', label: 'Queue' },
+    // "Saved" here is what a hit is, like Highlighted and Read, not a place:
+    // it matches every save, on the Shelf and archived ones too, not just the Queue.
+    { value: 'saved', label: 'Saved' },
     { value: 'highlighted', label: 'Highlighted' },
     { value: 'read', label: 'Read' },
   ];
@@ -296,7 +298,7 @@
                       {#if hit.highlighted}
                         <span class="tag"><Icon name="highlighter" size={12} />Highlighted</span>
                       {:else if hit.saved}
-                        <span class="tag"><Icon name="bookmark" size={12} />Queue</span>
+                        <span class="tag"><Icon name="bookmark" size={12} />Saved</span>
                       {/if}
                     </span>
                   </button>
