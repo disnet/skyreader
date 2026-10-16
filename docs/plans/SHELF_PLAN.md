@@ -110,7 +110,7 @@ Saved and Shelf became the two halves of one **Library**:
   first carried a line on what each half is for; that was dropped as noise). It sits in the page body, not the desktop header, so phones get it too.
 - **State shows on the item.** A Queue card that's also on the Shelf says **On Shelf**; a Shelf item
   archived in the Queue says **Archived**. Both item menus group their actions under **Queue**
-  (Archive / Move to inbox) and **Shelf** (Keep / Take off, collections) headings
+  (Archive / Move to inbox) and **Shelf** (Add / Take off, collections) headings
   (`PopoverMenu`'s `section`), so the two read as independent. Archive behaves the same everywhere:
   it toggles and closes the reader.
 - **Home points into the Library.** "Recently saved" links to the Queue, and a new **From your
