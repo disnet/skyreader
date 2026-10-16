@@ -15,7 +15,7 @@
 
 <!-- zIndex above the full-screen daily reader (.daily-reader is z-index: 100) so
      the modal isn't painted behind it. -->
-<Modal {open} {onclose} title="Archive this issue?" maxWidth="400px" zIndex={300}>
+<Modal {open} {onclose} title="Archive this issue?" icon="archive" maxWidth="400px" zIndex={300}>
   <p class="prompt">
     This issue drops off Home. You can also archive its {count}
     article{count === 1 ? '' : 's'} to clear them from your saved inbox.

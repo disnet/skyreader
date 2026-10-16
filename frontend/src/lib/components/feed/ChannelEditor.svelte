@@ -223,11 +223,16 @@
         followsInEverything,
       })
   );
+  // A segmented control holds this many before it would have to wrap.
+  const MAX_SEGMENTS = 4;
+
   let feedSortOptions = $derived(
     includesFollows
       ? FOLLOWS_SORT_OPTIONS
       : FOLLOWS_SORT_OPTIONS.filter((o) => o.value !== 'popular')
   );
+
+  let sortOptions = $derived(channelType === 'saved' ? SAVED_SORT_OPTIONS : feedSortOptions);
 
   let availableTags = $derived(
     [
@@ -460,7 +465,7 @@
     <div class="section show-row">
       <div class="show-group">
         <span class="section-label">Show</span>
-        <div class="chip-row">
+        <div class="chip-row segmented">
           {#if channelType === 'saved'}
             <button
               type="button"
@@ -498,20 +503,35 @@
         </div>
       </div>
       <div class="show-group">
-        <span class="section-label">Order</span>
-        <div class="chip-row">
-          {#each channelType === 'saved' ? SAVED_SORT_OPTIONS : feedSortOptions as opt (opt.value)}
-            <button
-              type="button"
-              class="chip"
-              class:active={sortOrder === opt.value}
-              aria-pressed={sortOrder === opt.value}
-              onclick={() => (sortOrder = opt.value)}
-            >
-              {opt.label}
-            </button>
-          {/each}
-        </div>
+        <label id="channel-order-label" class="section-label" for="channel-order">Order</label>
+        {#if sortOptions.length > MAX_SEGMENTS}
+          <!-- Too many to sit side by side (a saved channel has eight): a
+               dropdown, not a segmented control that wraps. -->
+          <select id="channel-order" class="select-input" bind:value={sortOrder}>
+            {#each sortOptions as opt (opt.value)}
+              <option value={opt.value}>{opt.label}</option>
+            {/each}
+          </select>
+        {:else}
+          <div
+            class="chip-row segmented"
+            id="channel-order"
+            role="group"
+            aria-labelledby="channel-order-label"
+          >
+            {#each sortOptions as opt (opt.value)}
+              <button
+                type="button"
+                class="chip"
+                class:active={sortOrder === opt.value}
+                aria-pressed={sortOrder === opt.value}
+                onclick={() => (sortOrder = opt.value)}
+              >
+                {opt.label}
+              </button>
+            {/each}
+          </div>
+        {/if}
       </div>
     </div>
   {/if}
@@ -707,6 +727,11 @@
   {/if}
 
   <div class="actions" class:pinned={pinActions}>
+    {#if isEditing}
+      <button type="button" class="delete-btn" onclick={handleDelete} disabled={saving}>
+        Delete channel
+      </button>
+    {/if}
     {#if oncancel}
       <button type="button" class="btn-secondary" onclick={oncancel} disabled={saving}>
         Cancel
@@ -722,18 +747,13 @@
       {/if}
     </button>
   </div>
-  {#if isEditing}
-    <button type="button" class="delete-btn" onclick={handleDelete} disabled={saving}>
-      Delete channel
-    </button>
-  {/if}
 </form>
 
 <style>
   .channel-editor {
     display: flex;
     flex-direction: column;
-    gap: 1rem;
+    gap: 1.25rem;
   }
 
   .section {
@@ -742,18 +762,12 @@
     gap: 0.5rem;
   }
 
-  .section + .section {
-    padding-top: 1rem;
-    border-top: 1px solid var(--color-border);
-  }
-
+  /* Sections part by space alone; a label in Ink is enough of a heading. */
   .section-label {
-    font-size: var(--text-2xs);
+    font-size: var(--text-md);
     font-weight: var(--weight-semibold);
-    color: var(--color-text-secondary);
-    text-transform: uppercase;
-    letter-spacing: var(--tracking-wider);
-    padding-left: 0.25rem;
+    color: var(--color-text);
+    line-height: var(--leading-snug);
   }
 
   /* Show and Order share a row; Order wraps under Show when the chips don't fit. */
@@ -765,6 +779,8 @@
   }
 
   .show-group {
+    min-width: 0;
+    max-width: 100%;
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
@@ -772,30 +788,32 @@
 
   .row-label {
     margin-top: 0.25rem;
-    padding-left: 0.25rem;
     font-size: var(--text-xs);
     color: var(--color-text-secondary);
   }
 
   .hint {
     margin: 0;
-    padding-left: 0.25rem;
     font-size: var(--text-xs);
     color: var(--color-text-secondary);
   }
 
   .text-input {
-    padding: 0.625rem 0.75rem;
+    padding: 0.5rem 0.75rem;
     border: 1px solid var(--color-border);
-    border-radius: 8px;
+    border-radius: 6px;
     background: var(--color-bg);
     color: var(--color-text);
-    font-size: var(--text-base);
+    font-size: var(--text-lg);
     outline: none;
+    transition:
+      border-color 0.15s,
+      box-shadow 0.15s;
   }
 
   .text-input:focus {
     border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px var(--color-sidebar-active);
   }
 
   .text-input::placeholder {
@@ -860,7 +878,7 @@
     flex-direction: column;
     gap: 0.125rem;
     padding: 0.625rem 0.75rem;
-    border: 1.5px solid var(--color-border);
+    border: 1px solid var(--color-border);
     border-radius: 8px;
     background: var(--color-bg);
     text-align: left;
@@ -876,6 +894,7 @@
 
   .option-card.selected {
     border-color: var(--color-primary);
+    box-shadow: inset 0 0 0 1px var(--color-primary);
     background: var(--color-sidebar-active, rgba(0, 102, 204, 0.06));
   }
 
@@ -933,6 +952,72 @@
     color: var(--color-primary);
   }
 
+  /* Show and Order are one-of choices: a segmented control, the chosen segment
+     a raised thumb on a sunken track. */
+  .segmented {
+    flex-wrap: nowrap;
+    align-self: flex-start;
+    gap: 0.125rem;
+    padding: 0.1875rem;
+    border-radius: 8px;
+    background: var(--color-bg-secondary);
+  }
+
+  .segmented .chip {
+    padding: 0.3125rem 0.875rem;
+    border: none;
+    border-radius: 6px;
+    background: none;
+    white-space: nowrap;
+  }
+
+  .segmented .chip:hover:not(.active) {
+    color: var(--color-text);
+  }
+
+  .segmented .chip.active {
+    background: var(--color-bg);
+    color: var(--color-text);
+    box-shadow:
+      0 1px 2px rgba(0, 0, 0, 0.08),
+      0 0 0 1px rgba(0, 0, 0, 0.04);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .segmented .chip.active {
+      background: var(--color-border);
+      box-shadow: none;
+    }
+  }
+
+  /* Sized to sit beside the segmented Show control: same height, same radius. */
+  .select-input {
+    align-self: flex-start;
+    height: 2.125rem;
+    padding: 0 2rem 0 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    background: var(--color-bg)
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")
+      no-repeat right 0.625rem center;
+    color: var(--color-text);
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+    appearance: none;
+    -webkit-appearance: none;
+    cursor: pointer;
+  }
+
+  .select-input:hover {
+    border-color: var(--color-text-secondary);
+  }
+
+  .select-input:focus-visible {
+    outline: none;
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px var(--color-sidebar-active);
+  }
+
   .inline-input {
     display: flex;
     align-items: center;
@@ -981,27 +1066,34 @@
 
   .actions {
     display: flex;
+    align-items: center;
+    justify-content: flex-end;
     gap: 0.5rem;
   }
 
-  /* Rides the bottom of the sheet's scroll area, opaque so rows scroll under it. */
+  /* Rides the bottom of the scroll area, opaque so rows scroll under it. In the
+     modal it borrows the dialog's inset and footer band, so it reads as the
+     modal's own footer; in the sheet both fall back to plain. */
   .actions.pinned {
     position: sticky;
     bottom: 0;
     z-index: 1;
-    padding: 0.75rem 0;
-    background: var(--color-bg, #fff);
+    margin-inline: calc(var(--modal-inset, 0px) * -1);
+    padding: 0.75rem var(--modal-inset, 0px);
+    background: var(--modal-footer-bg, var(--color-bg));
     border-top: 1px solid var(--color-border);
   }
 
   .btn-primary,
   .btn-secondary {
-    flex: 1;
-    padding: 0.75rem;
-    border-radius: 8px;
+    padding: 0.5rem 1rem;
+    border-radius: 6px;
     font-size: var(--text-md);
     font-weight: var(--weight-medium);
     cursor: pointer;
+    transition:
+      background-color 0.15s,
+      border-color 0.15s;
   }
 
   .btn-primary {
@@ -1010,10 +1102,18 @@
     color: white;
   }
 
+  .btn-primary:hover:not(:disabled) {
+    background: var(--color-primary-dark);
+  }
+
   .btn-secondary {
     border: 1px solid var(--color-border);
     background: var(--color-bg);
     color: var(--color-text);
+  }
+
+  .btn-secondary:hover:not(:disabled) {
+    border-color: var(--color-text-secondary);
   }
 
   .btn-primary:disabled,
@@ -1022,9 +1122,11 @@
     opacity: 0.6;
   }
 
+  /* First in the row and pushed left, away from Save. */
   .delete-btn {
-    align-self: center;
-    padding: 0.5rem 1rem;
+    margin-right: auto;
+    margin-left: -0.5rem;
+    padding: 0.5rem;
     border: none;
     background: none;
     color: var(--color-text-secondary);
@@ -1037,9 +1139,29 @@
     color: var(--color-error);
   }
 
+  /* A phone: the two buttons share the width, and Delete takes a line of its own. */
+  @media (max-width: 640px) {
+    .actions {
+      flex-wrap: wrap;
+    }
+
+    .btn-primary,
+    .btn-secondary {
+      flex: 1;
+      padding: 0.625rem 1rem;
+    }
+
+    .delete-btn {
+      order: 1;
+      flex-basis: 100%;
+      margin: 0;
+    }
+  }
+
   /* iOS Safari zooms the viewport when a focused input is smaller than 16px. */
   @media (hover: none) and (pointer: coarse) {
     .text-input,
+    .select-input,
     .days-input {
       font-size: 1rem;
     }

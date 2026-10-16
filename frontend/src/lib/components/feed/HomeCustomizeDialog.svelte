@@ -136,7 +136,7 @@
   onpointercancel={dragId ? endDrag : undefined}
 />
 
-<Modal {open} {onclose} title="Customize Home" maxWidth="440px">
+<Modal {open} {onclose} title="Customize Home" icon="sliders" maxWidth="440px">
   <div class="settings">
     <label class="setting">
       <span class="setting-label">Opens to</span>

@@ -305,6 +305,7 @@
   onclose={() => sembleConnectionStore.close()}
   maxWidth="520px"
   title="Connect on Semble"
+  icon="semble"
 >
   <div class="connect-body">
     {#if hasScope === false}

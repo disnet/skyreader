@@ -16,7 +16,15 @@
   let { open, onMargin, onclose, onRemove }: Props = $props();
 </script>
 
-<Modal {open} {onclose} title="Remove this highlight?" maxWidth="400px" zIndex={300}>
+<Modal
+  {open}
+  {onclose}
+  title="Remove this highlight?"
+  icon="highlighter"
+  tone="danger"
+  maxWidth="400px"
+  zIndex={300}
+>
   <p class="prompt">
     {#if onMargin}
       This also removes it from Margin. The note on your PDS is deleted.

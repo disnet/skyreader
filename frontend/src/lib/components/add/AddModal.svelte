@@ -75,35 +75,29 @@
   }
 </script>
 
-<Modal {open} onclose={close} maxWidth="520px">
-  {#snippet header()}
-    <div class="add-header">
-      <div class="title-row">
-        <h2>Add to Skyreader</h2>
-        <button class="close-btn" onclick={close} aria-label="Close">&times;</button>
+<Modal {open} onclose={close} title="Add to Skyreader" icon="plus" maxWidth="520px">
+  {#snippet headerExtra()}
+    {#if !auth.isGuest}
+      <div class="tabs" role="tablist" aria-label="What to add" tabindex="-1">
+        {#each TABS as t (t.id)}
+          <button
+            bind:this={tabEls[t.id]}
+            id="add-tab-{t.id}"
+            class="tab"
+            class:active={tab === t.id}
+            role="tab"
+            aria-selected={tab === t.id}
+            aria-controls="add-tabpanel"
+            tabindex={tab === t.id ? 0 : -1}
+            onclick={() => selectTab(t.id)}
+            onkeydown={handleTabKeydown}
+          >
+            <Icon name={t.icon} size={15} />
+            <span>{t.label}</span>
+          </button>
+        {/each}
       </div>
-      {#if !auth.isGuest}
-        <div class="tabs" role="tablist" aria-label="What to add" tabindex="-1">
-          {#each TABS as t (t.id)}
-            <button
-              bind:this={tabEls[t.id]}
-              id="add-tab-{t.id}"
-              class="tab"
-              class:active={tab === t.id}
-              role="tab"
-              aria-selected={tab === t.id}
-              aria-controls="add-tabpanel"
-              tabindex={tab === t.id ? 0 : -1}
-              onclick={() => selectTab(t.id)}
-              onkeydown={handleTabKeydown}
-            >
-              <Icon name={t.icon} size={15} />
-              <span>{t.label}</span>
-            </button>
-          {/each}
-        </div>
-      {/if}
-    </div>
+    {/if}
   {/snippet}
 
   {#if auth.isGuest}
@@ -164,41 +158,11 @@
 <ImportOPMLModal open={showImport} onclose={() => (showImport = false)} />
 
 <style>
-  .add-header {
-    padding: 1.25rem 1.5rem 0;
-    border-bottom: 1px solid var(--color-border);
-  }
-
-  .title-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 0.75rem;
-  }
-
-  .title-row h2 {
-    font-size: var(--text-xl);
-    margin: 0;
-  }
-
-  .close-btn {
-    background: none;
-    border: none;
-    font-size: var(--text-3xl);
-    color: var(--color-text-secondary);
-    padding: 0;
-    line-height: var(--leading-none);
-    cursor: pointer;
-  }
-
-  .close-btn:hover {
-    color: var(--color-text);
-  }
-
   /* Four equal columns: every kind of source is on screen at once, at any width. */
   .tabs {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
+    padding: 0 0.75rem;
     margin-bottom: -1px;
   }
 
@@ -305,10 +269,6 @@
   }
 
   @media (max-width: 480px) {
-    .add-header {
-      padding: 1rem 1rem 0;
-    }
-
     /* Phone: icon over label, so four tabs fit a 360px screen. */
     .tab {
       flex-direction: column;

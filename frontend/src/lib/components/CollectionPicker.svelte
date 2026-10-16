@@ -845,7 +845,7 @@
     {/snippet}
   </BottomSheet>
 {:else}
-  <Modal {open} {onclose} maxWidth="520px" bodyPadding="0.75rem 1.5rem 1rem">
+  <Modal {open} {onclose} maxWidth="520px" bodyPadding="0.75rem var(--modal-inset) 1rem">
     {#snippet header()}
       {@render headerRow()}
     {/snippet}
@@ -986,7 +986,7 @@
     align-items: center;
     gap: 0.5rem;
     min-width: 0;
-    padding: 0.75rem 0.625rem 0 1.5rem;
+    padding: 0.875rem 0.75rem 0 var(--modal-inset, 1.5rem);
   }
 
   .head-mark {

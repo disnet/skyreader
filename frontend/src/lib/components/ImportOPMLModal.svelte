@@ -146,7 +146,7 @@
   });
 </script>
 
-<Modal {open} onclose={handleClose} title="Import Feeds" maxWidth="520px">
+<Modal {open} onclose={handleClose} title="Import feeds" icon="arrow-down" maxWidth="520px">
   {#if modalState === 'select'}
     <p class="description">Select an OPML file or a text file with one feed URL per line.</p>
     <input

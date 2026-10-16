@@ -134,6 +134,7 @@
   {open}
   onclose={oncancel}
   title="Share to your linkblog?"
+  icon="share-2"
   maxWidth={picking ? '520px' : '420px'}
   {zIndex}
 >

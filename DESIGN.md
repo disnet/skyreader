@@ -183,8 +183,8 @@ components:
   modal:
     backgroundColor: '{colors.bg}'
     textColor: '{colors.text}'
-    rounded: '{rounded.lg}'
-    padding: '24px'
+    rounded: '{rounded.xl}'
+    padding: '20px'
     width: '100%'
     size: '480px'
   bottom-sheet:
@@ -447,7 +447,7 @@ cap, since the reader's chosen size determines the effective measure.
 
 **Spacing rhythm.** 8px is the workhorse (roughly twice as common as any other step), with 12px and
 4px next, and 6px for tight icon gaps. 16px is the standard card and section inset; 24px and 32px
-handle page-level separation. Modals use a 24px header and body inset with a 16px/24px footer.
+handle page-level separation. Modals use a 20px inset (`--modal-inset`) everywhere, with a 12px-tall footer band.
 
 **Container queries over viewport queries for components.** The article card declares
 `container: card / inline-size` and responds to the column width it is handed, not the viewport, so
@@ -503,8 +503,8 @@ affordance without replacing it.
 - **2px** (`xs`): The bottom-sheet grab handle and other hairline affordances.
 - **4px** (`sm`): Micro surfaces. Unread count badges, inline code spans, small tags.
 - **6px** (`md`): Controls. Buttons, inputs, tooltips, icon-button hit targets.
-- **8px** (`lg`): Containers. Cards, modals, popover menus, and the feed row's hover tint.
-- **12px** (`xl`): Sidebar navigation rows. Deliberately _larger_ than a card, which is the one
+- **8px** (`lg`): Containers. Cards, popover menus, and the feed row's hover tint.
+- **12px** (`xl`): Modals (a surface that size needs the softer corner) and sidebar navigation rows. Deliberately _larger_ than a card, which is the one
   intentional inversion in the ladder: a softer pill makes selection read as a resting state inside
   the rail rather than as a box drawn around a link.
 - **16px** (`sheet`): The bottom sheet's top corners only, where the radius reads as the sheet
@@ -577,10 +577,15 @@ bouncy motion. They are reliable and unobtrusive, and the UI never competes with
 ### Overlays
 
 - **Modal** (`common/Modal.svelte`): Portaled to `<body>` so it escapes ancestor stacking contexts.
-  Surface background, 8px radius, 480px default max-width, `80vh` max-height, Dialog shadow, over a
-  `rgba(0,0,0,0.5)` backdrop. Header and body inset 24px, footer `16px 24px` with a 12px gap, both
-  divided by 1px Divider rules. Header title is Headline; the close control is a bare glyph in Muted
-  Ink.
+  Surface background, 12px radius, 480px default max-width, `80vh` max-height, Dialog shadow (night: a
+  1px Divider ring instead), over a `rgba(0,0,0,0.4)` backdrop (night `0.6`). One horizontal measure,
+  `--modal-inset` (20px, 16px on a phone), lines up header, body and footer. The header is a compact
+  title row: an optional 32px Sunken icon tile (`icon`; `tone="danger"` tints it Error), the title at
+  18px semibold (15px on a phone), an optional muted `description` line, and a 32px icon-button close
+  (Lucide `x`, Sunken on hover). No rule under the header at rest: it fades in once the body scrolls
+  beneath, and stays for `headerExtra` content such as tabs. The body tucks up 4px under the title.
+  The footer is a Sunken band over a 1px Divider, `12px` by the inset, right-aligned with an 8px gap,
+  buttons at Label size. Entrance is a 240ms fade-and-rise (opacity only under reduced motion).
 - **BottomSheet** (`common/BottomSheet.svelte`): The mobile counterpart. Bottom-anchored, 16px top
   corners, Sheet shadow, a 36x4px Divider grab handle, `env(safe-area-inset-bottom)` padding, and a
   `translateY(100%)` to `0` entrance.

@@ -7,10 +7,15 @@
   import StateView from '$lib/components/common/StateView.svelte';
   import InfiniteScrollSentinel from '$lib/components/common/InfiniteScrollSentinel.svelte';
   import UserCard from '$lib/components/common/UserCard.svelte';
+  import FilteredViewModal from '$lib/components/FilteredViewModal.svelte';
   import Showcase from '../_harness/Showcase.svelte';
   import Case from '../_harness/Case.svelte';
 
   let modalOpen = $state(false);
+  let iconModalOpen = $state(false);
+  let dangerModalOpen = $state(false);
+  let longModalOpen = $state(false);
+  let channelModalOpen = $state(false);
   let sheetOpen = $state(false);
 
   // StateView toggles between its three branches.
@@ -32,6 +37,63 @@
         <button class="btn" onclick={() => (modalOpen = false)}>Save</button>
       {/snippet}
     </Modal>
+  </Case>
+
+  <Case
+    name="Modal variants"
+    note="icon + description; tone=danger; a long body (the header rule comes in on scroll); the real channel editor."
+    pad
+    frame
+  >
+    <div class="row">
+      <button class="btn" onclick={() => (iconModalOpen = true)}>Icon + description</button>
+      <button class="btn" onclick={() => (dangerModalOpen = true)}>Danger confirm</button>
+      <button class="btn" onclick={() => (longModalOpen = true)}>Long body</button>
+      <button class="btn" onclick={() => (channelModalOpen = true)}>New channel</button>
+    </div>
+    <Modal
+      open={iconModalOpen}
+      onclose={() => (iconModalOpen = false)}
+      title="Edit feed"
+      icon="rss"
+      description="Changes stay on this device until you sync."
+    >
+      <p>Body content tucks up under the title row.</p>
+      {#snippet footer()}
+        <button class="btn ghost" onclick={() => (iconModalOpen = false)}>Cancel</button>
+        <button class="btn" onclick={() => (iconModalOpen = false)}>Save</button>
+      {/snippet}
+    </Modal>
+    <Modal
+      open={dangerModalOpen}
+      onclose={() => (dangerModalOpen = false)}
+      title="Remove this highlight?"
+      icon="highlighter"
+      tone="danger"
+      maxWidth="400px"
+    >
+      <p style="margin: 0;">The highlight and its note are removed from this article.</p>
+      {#snippet footer()}
+        <button class="btn ghost" onclick={() => (dangerModalOpen = false)}>Cancel</button>
+        <button class="btn" onclick={() => (dangerModalOpen = false)}>Remove</button>
+      {/snippet}
+    </Modal>
+    <Modal
+      open={longModalOpen}
+      onclose={() => (longModalOpen = false)}
+      title="Keyboard shortcuts"
+      maxWidth="600px"
+    >
+      {#each Array(30) as _, i}
+        <p>Row {i + 1}: scroll to bring the header rule in.</p>
+      {/each}
+    </Modal>
+    <FilteredViewModal
+      open={channelModalOpen}
+      editingViewId={null}
+      initialChannelType="saved"
+      onclose={() => (channelModalOpen = false)}
+    />
   </Case>
 
   <Case
