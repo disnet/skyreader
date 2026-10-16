@@ -42,7 +42,7 @@ Notes that exist only in Margin or Semble are out of scope for v1.
   Items with every term in their text come from one `fts` query. Only items with a note matching
   some term are checked term by term.
 - bm25 per table, summed, with column weights title 10, author 3, feed 2, body 1, and notes 5.
-  An item matched partly through its notes ranks on its notes alone.
+  An item matched partly through its notes also scores whichever terms its own text has.
 - A lift for highlighted items (2) and saved items (1), and for items touched in the last 30 days
   (0.5).
 - Snippets are computed only for the page of results, never inside the ranked SELECT. In the spike
@@ -53,7 +53,15 @@ Notes that exist only in Margin or Semble are out of scope for v1.
   So a body over 64k characters is also indexed as overlapping ~4k-character passages
   (`passages_fts`). A book hit's snippet comes from its best-matching passage, and the same page
   takes about 30 ms. The passages are spans in a view over `docs_text`, so the text isn't stored
-  twice. They add index rows for books only, written once per book.
+  twice. Passage text is bound from the body in memory when written or deleted. Reading it back
+  through the view would load the whole body once per passage. Passages overlap by 400
+  characters, including in text with no spaces, so a word cut at one passage's end is whole in the
+  next. They add index rows for books only, written once per book.
+- **Body versions.** A save's body is built from its stored text, so the index records which
+  version it built from: the save's id, `updated_at`, length, type, and the cap applied. When a
+  highlight or read changes an item but not its save, the builder sees the same version and doesn't
+  reload or re-strip the text, and the index keeps the body it has. Locally, a search right after
+  highlighting a book takes about 11 ms.
 - Counts are capped at 1,000, shown as "1,000+".
 
 ## Keeping it current: pull, don't push

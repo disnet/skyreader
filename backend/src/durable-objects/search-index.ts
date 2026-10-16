@@ -184,7 +184,9 @@ export class SearchIndex extends DurableObject<Env> {
       read_at INTEGER,
       saved_at INTEGER,
       highlighted_at INTEGER,
-      touched_at INTEGER NOT NULL
+      touched_at INTEGER NOT NULL,
+      -- What the body was built from (IndexDoc.bodyVersion); null when unknown.
+      body_version TEXT
     )`);
     this.sql.exec(`CREATE INDEX docs_touched ON docs(touched_at)`);
     this.sql.exec(`CREATE TABLE docs_text (
@@ -210,7 +212,11 @@ export class SearchIndex extends DurableObject<Env> {
     // A long body's passages, as spans of it in characters: the text is read
     // from docs_text through the view, never stored twice.
     this.sql.exec(
-      `CREATE TABLE passages (id INTEGER PRIMARY KEY, start INTEGER NOT NULL, len INTEGER NOT NULL)`
+      `CREATE TABLE passages (
+         id INTEGER PRIMARY KEY,
+         start INTEGER NOT NULL, len INTEGER NOT NULL,  -- characters, for the view's substr()
+         cu_from INTEGER NOT NULL, cu_to INTEGER NOT NULL  -- the same span in UTF-16 units
+       )`
     );
     this.sql.exec(`CREATE VIEW passages_text AS
       SELECT p.id, substr(t.body, p.start + 1, p.len) AS body
@@ -259,6 +265,12 @@ export class SearchIndex extends DurableObject<Env> {
     const raw = this.getMeta('cursors');
     return raw ? (JSON.parse(raw) as SyncCursors) : ZERO_CURSORS;
   }
+
+  /** The body version indexed under `key`, for buildIndexDocs. */
+  private indexedVersion = (key: string): string | null => {
+    const row = this.sql.exec(`SELECT body_version FROM docs WHERE item_key = ?`, key).toArray()[0];
+    return (row?.body_version as string | null | undefined) ?? null;
+  };
 
   /** Keys a build deferred, waiting for the next round. */
   private pendingKeys(): string[] {
@@ -369,7 +381,7 @@ export class SearchIndex extends DurableObject<Env> {
       // Keys a build deferred (too much saved text for one) go before new pages.
       const pending = this.pendingKeys();
       if (pending.length > 0) {
-        const built = await buildIndexDocs(this.env, did, pending);
+        const built = await buildIndexDocs(this.env, did, pending, this.indexedVersion);
         this.ctx.storage.transactionSync(() => {
           for (const doc of built.upserts) this.upsert(doc);
           for (const key of built.deletes) this.remove(key);
@@ -384,7 +396,7 @@ export class SearchIndex extends DurableObject<Env> {
       const page = await collectChangedKeys(this.env, did, cursors, ROUND_KEYS);
       let deferred = 0;
       if (page.keys.length > 0) {
-        const built = await buildIndexDocs(this.env, did, page.keys);
+        const built = await buildIndexDocs(this.env, did, page.keys, this.indexedVersion);
         this.ctx.storage.transactionSync(() => {
           for (const doc of built.upserts) this.upsert(doc);
           for (const key of built.deletes) this.remove(key);
@@ -427,7 +439,7 @@ export class SearchIndex extends DurableObject<Env> {
       .filter((key) => !live.has(key));
     if (stale.length > 0) {
       // The item may still be read or highlighted, so rebuild rather than delete.
-      const built = await buildIndexDocs(this.env, did, stale);
+      const built = await buildIndexDocs(this.env, did, stale, this.indexedVersion);
       this.ctx.storage.transactionSync(() => {
         for (const doc of built.upserts) this.upsert(doc);
         for (const key of built.deletes) this.remove(key);
@@ -442,69 +454,23 @@ export class SearchIndex extends DurableObject<Env> {
 
   private upsert(doc: IndexDoc) {
     const touchedAt = Math.max(doc.readAt ?? 0, doc.savedAt ?? 0, doc.highlightedAt ?? 0);
-    const text = [doc.title, doc.author, doc.feedTitle, doc.body] as const;
+    // The body isn't read here: for a book it's megabytes, and most upserts
+    // (a read, a highlight) don't touch it.
     const existing = this.sql
       .exec(
-        `SELECT d.id, t.title, t.author, t.feed, t.body
+        `SELECT d.id, d.body_version, t.title, t.author, t.feed
            FROM docs d JOIN docs_text t ON t.id = d.id WHERE d.item_key = ?`,
         doc.key
       )
       .toArray()[0];
 
-    let id: number;
-    if (existing) {
-      id = existing.id as number;
-      this.sql.exec(
-        `UPDATE docs SET item_type = ?, url = ?, feed_url = ?, feed_title = ?, title = ?, kinds = ?,
-                read_at = ?, saved_at = ?, highlighted_at = ?, touched_at = ?
-          WHERE id = ?`,
-        doc.itemType,
-        doc.url,
-        doc.feedUrl,
-        doc.feedTitle,
-        doc.title,
-        doc.kinds,
-        doc.readAt,
-        doc.savedAt,
-        doc.highlightedAt,
-        touchedAt,
-        id
-      );
-      const unchanged =
-        existing.title === text[0] &&
-        existing.author === text[1] &&
-        existing.feed === text[2] &&
-        existing.body === text[3];
-      // A re-read, a new highlight or a metadata change leaves the item's own
-      // text alone: skip its FTS rewrite, which is most of a write's cost.
-      if (!unchanged) {
-        this.removePassages(id);
-        this.sql.exec(
-          `INSERT INTO fts (fts, rowid, title, author, feed, body) VALUES ('delete', ?, ?, ?, ?, ?)`,
-          id,
-          existing.title,
-          existing.author,
-          existing.feed,
-          existing.body
-        );
-        this.sql.exec(
-          `UPDATE docs_text SET title = ?, author = ?, feed = ?, body = ? WHERE id = ?`,
-          ...text,
-          id
-        );
-        this.sql.exec(
-          `INSERT INTO fts (rowid, title, author, feed, body) VALUES (?, ?, ?, ?, ?)`,
-          id,
-          ...text
-        );
-        this.writePassages(id, doc.body);
-      }
-    } else {
-      id = this.sql
+    if (!existing) {
+      const body = doc.body ?? '';
+      const id = this.sql
         .exec(
           `INSERT INTO docs (item_key, item_type, url, feed_url, feed_title, title, kinds,
-                             read_at, saved_at, highlighted_at, touched_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+                             read_at, saved_at, highlighted_at, touched_at, body_version)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
           doc.key,
           doc.itemType,
           doc.url,
@@ -515,9 +481,11 @@ export class SearchIndex extends DurableObject<Env> {
           doc.readAt,
           doc.savedAt,
           doc.highlightedAt,
-          touchedAt
+          touchedAt,
+          doc.bodyVersion
         )
         .one().id as number;
+      const text = [doc.title, doc.author, doc.feedTitle, body] as const;
       this.sql.exec(
         `INSERT INTO docs_text (id, title, author, feed, body) VALUES (?, ?, ?, ?, ?)`,
         id,
@@ -528,12 +496,79 @@ export class SearchIndex extends DurableObject<Env> {
         id,
         ...text
       );
-      this.writePassages(id, doc.body);
+      this.writePassages(id, body);
+      this.writeNotes(id, doc.notes);
+      return;
+    }
+
+    const id = existing.id as number;
+    // A null body means the builder saw the same version of the text this index
+    // already holds (IndexDoc.bodyVersion), and didn't load it.
+    const bodyKept =
+      doc.body === null || (doc.bodyVersion !== null && doc.bodyVersion === existing.body_version);
+    this.sql.exec(
+      `UPDATE docs SET item_type = ?, url = ?, feed_url = ?, feed_title = ?, title = ?, kinds = ?,
+              read_at = ?, saved_at = ?, highlighted_at = ?, touched_at = ?,
+              body_version = CASE WHEN ? THEN body_version ELSE ? END
+        WHERE id = ?`,
+      doc.itemType,
+      doc.url,
+      doc.feedUrl,
+      doc.feedTitle,
+      doc.title,
+      doc.kinds,
+      doc.readAt,
+      doc.savedAt,
+      doc.highlightedAt,
+      touchedAt,
+      doc.body === null ? 1 : 0,
+      doc.bodyVersion,
+      id
+    );
+    const metaSame =
+      existing.title === doc.title &&
+      existing.author === doc.author &&
+      existing.feed === doc.feedTitle;
+    // A re-read, a new highlight or a metadata change leaves the item's own
+    // text alone: skip its FTS rewrite, which is most of a write's cost.
+    if (!(metaSame && bodyKept)) {
+      const oldBody = this.sql.exec(`SELECT body FROM docs_text WHERE id = ?`, id).one()
+        .body as string;
+      const body = doc.body ?? oldBody;
+      if (!(metaSame && body === oldBody)) {
+        this.sql.exec(
+          `INSERT INTO fts (fts, rowid, title, author, feed, body) VALUES ('delete', ?, ?, ?, ?, ?)`,
+          id,
+          existing.title,
+          existing.author,
+          existing.feed,
+          oldBody
+        );
+        const text = [doc.title, doc.author, doc.feedTitle, body] as const;
+        this.sql.exec(
+          `UPDATE docs_text SET title = ?, author = ?, feed = ?, body = ? WHERE id = ?`,
+          ...text,
+          id
+        );
+        this.sql.exec(
+          `INSERT INTO fts (rowid, title, author, feed, body) VALUES (?, ?, ?, ?, ?)`,
+          id,
+          ...text
+        );
+        if (body !== oldBody) {
+          this.removePassages(id, oldBody);
+          this.writePassages(id, body);
+        }
+      }
     }
     this.writeNotes(id, doc.notes);
   }
 
-  /** Index item `id`'s passages, if its body is long enough to have them. */
+  /**
+   * Index item `id`'s passages, if its body is long enough to have them. The
+   * text is bound from `body`, not read back through passages_text: that view
+   * loads the whole body for every passage it yields.
+   */
   private writePassages(id: number, body: string) {
     if (body.length <= PASSAGE_MIN_CHARS) return;
     let spans = passageSpans(body);
@@ -542,33 +577,39 @@ export class SearchIndex extends DurableObject<Env> {
       log.warn('search_index_passages_capped', { passages: spans.length });
       spans = spans.slice(0, PASSAGE_STRIDE);
     }
-    spans.forEach(([start, len], n) => {
+    spans.forEach((span, n) => {
+      const rowid = id * PASSAGE_STRIDE + n;
       this.sql.exec(
-        `INSERT INTO passages (id, start, len) VALUES (?, ?, ?)`,
-        id * PASSAGE_STRIDE + n,
-        start,
-        len
+        `INSERT INTO passages (id, start, len, cu_from, cu_to) VALUES (?, ?, ?, ?, ?)`,
+        rowid,
+        span.start,
+        span.len,
+        span.from,
+        span.to
+      );
+      this.sql.exec(
+        `INSERT INTO passages_fts (rowid, body) VALUES (?, ?)`,
+        rowid,
+        body.slice(span.from, span.to)
       );
     });
-    this.sql.exec(
-      `INSERT INTO passages_fts (rowid, body)
-       SELECT id, body FROM passages_text WHERE id BETWEEN ? AND ?`,
-      id * PASSAGE_STRIDE,
-      id * PASSAGE_STRIDE + PASSAGE_STRIDE - 1
-    );
   }
 
-  /** Drop item `id`'s passages. Reads them through docs_text, so call it before the body changes. */
-  private removePassages(id: number) {
+  /** Drop item `id`'s passages, given the body they were cut from. */
+  private removePassages(id: number, body: string) {
     const lo = id * PASSAGE_STRIDE;
     const hi = lo + PASSAGE_STRIDE - 1;
-    this.sql.exec(
-      `INSERT INTO passages_fts (passages_fts, rowid, body)
-       SELECT 'delete', id, body FROM passages_text WHERE id BETWEEN ? AND ?`,
-      lo,
-      hi
-    );
-    this.sql.exec(`DELETE FROM passages WHERE id BETWEEN ? AND ?`, lo, hi);
+    const rows = this.sql
+      .exec(`SELECT id, cu_from, cu_to FROM passages WHERE id BETWEEN ? AND ?`, lo, hi)
+      .toArray();
+    for (const row of rows) {
+      this.sql.exec(
+        `INSERT INTO passages_fts (passages_fts, rowid, body) VALUES ('delete', ?, ?)`,
+        row.id,
+        body.slice(row.cu_from as number, row.cu_to as number)
+      );
+    }
+    if (rows.length) this.sql.exec(`DELETE FROM passages WHERE id BETWEEN ? AND ?`, lo, hi);
   }
 
   /** Replace item `id`'s notes; empty notes leave no row. */
@@ -615,7 +656,7 @@ export class SearchIndex extends DurableObject<Env> {
       existing.body
     );
     this.writeNotes(id, '');
-    this.removePassages(id);
+    this.removePassages(id, existing.body as string);
     this.sql.exec(`DELETE FROM docs_text WHERE id = ?`, id);
     this.sql.exec(`DELETE FROM docs WHERE id = ?`, id);
   }
@@ -635,7 +676,8 @@ export class SearchIndex extends DurableObject<Env> {
     // and no negative term is in either. Most matches have every term in the
     // text (`main`); the rest must have a note matching some term, so only those
     // few notes (`noted`) are checked term by term. bm25 per table, summed, with
-    // notes weighted 5 against the body's 1. Snippets come later, for the page
+    // notes weighted 5 against the body's 1; an item matched through its notes
+    // still scores whichever terms its own text has. Snippets come later, for the page
     // only: snippet() here would run for every match before the sort (up to 5x
     // slower on common terms in the spike).
     const perTerm = terms.positives
@@ -671,7 +713,12 @@ export class SearchIndex extends DurableObject<Env> {
         `${hits}
          SELECT d.id, d.item_key, d.item_type, d.url, d.title, d.feed_title, d.feed_url, d.kinds,
                 d.read_at, d.saved_at, d.highlighted_at,
-                COALESCE(main.s, 0) + COALESCE(noted.s, 0)
+                COALESCE(
+                  main.s,
+                  -- Matched through its notes: score whichever terms its text has.
+                  (SELECT bm25(fts, 10.0, 3.0, 2.0, 1.0) FROM fts
+                    WHERE fts MATCH ? AND rowid = hits.id),
+                  0) + COALESCE(noted.s, 0)
                   - (CASE WHEN d.kinds & ${KIND_HIGHLIGHTED} THEN 2.0
                           WHEN d.kinds & ${KIND_SAVED} THEN 1.0 ELSE 0 END)
                   - (CASE WHEN d.touched_at >= ? THEN 0.5 ELSE 0 END) AS score,
@@ -684,6 +731,7 @@ export class SearchIndex extends DurableObject<Env> {
           ORDER BY score
           LIMIT ? OFFSET ?`,
         ...hitsParams,
+        anyPositive,
         recentSince,
         opts.kinds,
         opts.kinds,
@@ -698,9 +746,8 @@ export class SearchIndex extends DurableObject<Env> {
     const snippets = new Map<number, SnippetSegment[]>();
     if (ranked.length > 0) {
       const ids = ranked.map((r) => r.id as number);
-      const inIds = ids.map(() => '?').join(',');
       const fromText = this.textSnippets(anyPositive, ids);
-      const fromNotes = this.snippetsFrom('notes_fts', 0, anyPositive, ids, inIds);
+      const fromNotes = this.snippetsFrom('notes_fts', 0, anyPositive, ids);
       const matches = (segments: SnippetSegment[] | undefined) =>
         segments?.filter((seg) => seg.match).length ?? 0;
       for (const id of ids) {
@@ -757,19 +804,25 @@ export class SearchIndex extends DurableObject<Env> {
 
   /**
    * Snippets from each item's own text. A long body's comes from its
-   * best-matching passage (see PASSAGE_MIN_CHARS). One whose passages don't
-   * match matched in its title, author or feed: the first of those with a match
-   * (one column at a time, so snippet() never reads the body).
+   * best-matching passage (see PASSAGE_MIN_CHARS). When no passage matches,
+   * the first of title, author, feed with a match, one column at a time so
+   * snippet() doesn't read the body; and only if none has one (a term cut
+   * between passages), the body itself.
    */
   private textSnippets(match: string, ids: number[]): Map<number, SnippetSegment[]> {
-    const long = new Set<number>();
-    for (const id of ids) {
-      const lo = id * PASSAGE_STRIDE;
-      if (this.sql.exec(`SELECT 1 FROM passages WHERE id = ?`, lo).toArray().length) long.add(id);
-    }
+    const long = new Set(
+      this.sql
+        .exec(
+          `SELECT id / ${PASSAGE_STRIDE} AS doc FROM passages
+            WHERE id IN (${ids.map(() => '?').join(',')})`,
+          ...ids.map((id) => id * PASSAGE_STRIDE)
+        )
+        .toArray()
+        .map((row) => row.doc as number)
+    );
     const short = ids.filter((id) => !long.has(id));
     const found = short.length
-      ? this.snippetsFrom('fts', -1, match, short, short.map(() => '?').join(','))
+      ? this.snippetsFrom('fts', -1, match, short)
       : new Map<number, SnippetSegment[]>();
     for (const id of long) {
       const lo = id * PASSAGE_STRIDE;
@@ -783,36 +836,46 @@ export class SearchIndex extends DurableObject<Env> {
         )
         .toArray()[0];
       if (best) {
-        const segments = this.snippetsFrom('passages_fts', 0, match, [best.rowid as number], '?');
-        const passage = [...segments.values()][0];
-        if (passage) found.set(id, passage);
+        const passage = this.snippetsFrom('passages_fts', 0, match, [best.rowid as number]);
+        const segments = passage.get(best.rowid as number);
+        if (segments) found.set(id, segments);
         continue;
       }
-      // Columns of fts: title, author, feed.
-      for (const column of [0, 1, 2]) {
-        const segments = this.snippetsFrom('fts', column, match, [id], '?').get(id);
+      // Columns of fts: title, author, feed, body.
+      for (const column of [0, 1, 2, 3]) {
+        const segments = this.snippetsFrom('fts', column, match, [id]).get(id);
         if (segments?.some((seg) => seg.match)) {
           found.set(id, segments);
           break;
         }
         if (column === 0 && segments) found.set(id, segments);
+        // The body only when it matched: snippet() would otherwise tokenize a
+        // book for nothing (a match through the notes alone).
+        if (column === 2 && !this.bodyMatches(match, id)) break;
       }
     }
     return found;
+  }
+
+  private bodyMatches(match: string, id: number): boolean {
+    return (
+      this.sql
+        .exec(`SELECT 1 FROM fts WHERE fts MATCH ? AND rowid = ?`, `body : (${match})`, id)
+        .toArray().length > 0
+    );
   }
 
   private snippetsFrom(
     table: 'fts' | 'notes_fts' | 'passages_fts',
     column: number,
     match: string,
-    ids: number[],
-    inIds: string
+    ids: number[]
   ): Map<number, SnippetSegment[]> {
     const found = new Map<number, SnippetSegment[]>();
     for (const row of this.sql
       .exec(
         `SELECT rowid, snippet(${table}, ${column}, ?, ?, '…', 24) AS s
-           FROM ${table} WHERE ${table} MATCH ? AND rowid IN (${inIds})`,
+           FROM ${table} WHERE ${table} MATCH ? AND rowid IN (${ids.map(() => '?').join(',')})`,
         MARK_OPEN,
         MARK_CLOSE,
         match,
@@ -825,29 +888,78 @@ export class SearchIndex extends DurableObject<Env> {
   }
 }
 
+/** A passage: [from, to) in `text` (UTF-16 units), and the same span in characters for SQLite. */
+export interface PassageSpan {
+  from: number;
+  to: number;
+  /** Code points before `from`; substr() counts characters, not UTF-16 units. */
+  start: number;
+  /** Code points in [from, to). */
+  len: number;
+}
+
+const isSpaceAt = (text: string, i: number) => /\s/.test(text[i] ?? '');
+const isLowSurrogate = (text: string, i: number) => {
+  const c = text.charCodeAt(i);
+  return c >= 0xdc00 && c <= 0xdfff;
+};
+/** The second half of a surrogate pair: not a character of its own. */
+const isPairTail = (text: string, i: number) => {
+  if (i === 0 || !isLowSurrogate(text, i)) return false;
+  const c = text.charCodeAt(i - 1);
+  return c >= 0xd800 && c <= 0xdbff;
+};
+
 /**
- * Overlapping [start, length] spans covering `text`, about PASSAGE_CHARS each,
- * cut at whitespace where there's some nearby. In characters (code points), as
- * SQLite's substr() counts them.
+ * Overlapping spans covering `text`, about PASSAGE_CHARS each. A cut goes at
+ * whitespace when there is some in the passage's second half, and the next
+ * passage starts after a space in the last PASSAGE_OVERLAP units, so words
+ * survive the cut. Text with no spaces there (Chinese, Japanese, Thai, a long
+ * URL) still overlaps by PASSAGE_OVERLAP, so a word cut at one passage's end is
+ * whole in the next. Never splits a surrogate pair.
  */
-export function passageSpans(text: string): Array<[number, number]> {
-  const chars = Array.from(text);
-  const isSpace = (i: number) => /\s/.test(chars[i] ?? '');
-  const spans: Array<[number, number]> = [];
-  let start = 0;
-  while (start < chars.length) {
-    let end = Math.min(start + PASSAGE_CHARS, chars.length);
-    if (end < chars.length) {
-      let cut = end;
-      while (cut > start + PASSAGE_CHARS / 2 && !isSpace(cut)) cut--;
-      if (cut > start + PASSAGE_CHARS / 2) end = cut;
+export function passageSpans(text: string): PassageSpan[] {
+  const n = text.length;
+  const half = PASSAGE_CHARS / 2;
+  const cuts: Array<[number, number]> = [];
+  let from = 0;
+  while (from < n) {
+    let to = Math.min(from + PASSAGE_CHARS, n);
+    if (to < n) {
+      let cut = to;
+      while (cut > from + half && !isSpaceAt(text, cut)) cut--;
+      to = cut > from + half ? cut : to;
+      if (isPairTail(text, to)) to--;
     }
-    spans.push([start, end - start]);
-    if (end >= chars.length) break;
-    let next = end - PASSAGE_OVERLAP;
-    while (next < end && !isSpace(next)) next++;
-    while (next < end && isSpace(next)) next++;
-    start = next;
+    cuts.push([from, to]);
+    if (to >= n) break;
+    let next = to - PASSAGE_OVERLAP;
+    let space = next;
+    while (space < to && !isSpaceAt(text, space)) space++;
+    if (space < to) {
+      while (space < to && isSpaceAt(text, space)) space++;
+      next = space;
+    } else if (isPairTail(text, next)) {
+      next--;
+    }
+    from = next;
   }
-  return spans;
+  // Code-point offsets. Starts and ends each only move forward, so one running
+  // count apiece walks the text once.
+  const hasPairs = /[\ud800-\udbff][\udc00-\udfff]/.test(text);
+  const counter = () => {
+    let at = 0;
+    let points = 0;
+    return (to: number) => {
+      for (; at < to; at++) if (!isPairTail(text, at)) points++;
+      return points;
+    };
+  };
+  const pointsBeforeStart = counter();
+  const pointsBeforeEnd = counter();
+  return cuts.map(([from, to]) => {
+    if (!hasPairs) return { from, to, start: from, len: to - from };
+    const start = pointsBeforeStart(from);
+    return { from, to, start, len: pointsBeforeEnd(to) - start };
+  });
 }

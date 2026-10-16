@@ -296,19 +296,31 @@ describe('splitSnippet', () => {
 });
 
 describe('passageSpans', () => {
+  // What SQLite's substr() returns for a span: it counts characters.
+  const bySqlite = (text: string, start: number, len: number) =>
+    Array.from(text)
+      .slice(start, start + len)
+      .join('');
+
   it('covers the text in overlapping passages cut at spaces', () => {
     const text = 'word '.repeat(3000); // 15k chars
     const spans = passageSpans(text);
-    expect(spans[0][0]).toBe(0);
-    const [lastStart, lastLen] = spans[spans.length - 1];
-    expect(lastStart + lastLen).toBe(text.length);
+    expect(spans[0].from).toBe(0);
+    expect(spans[spans.length - 1].to).toBe(text.length);
     for (let i = 1; i < spans.length; i++) {
-      const [start] = spans[i];
-      const [prevStart, prevLen] = spans[i - 1];
-      expect(start).toBeLessThan(prevStart + prevLen); // overlaps
-      expect(text[start]).toBe('w'); // starts on a word
-      expect(prevLen).toBeLessThanOrEqual(4000);
+      expect(spans[i].from).toBeLessThan(spans[i - 1].to); // overlaps
+      expect(text[spans[i].from]).toBe('w'); // starts on a word
+      expect(spans[i - 1].to - spans[i - 1].from).toBeLessThanOrEqual(4000);
     }
+  });
+
+  it('still overlaps text with no spaces, so a word cut at one end is whole in the next', () => {
+    const text = '日本語の文章'.repeat(2000); // 12k chars, no whitespace
+    const spans = passageSpans(text);
+    for (let i = 1; i < spans.length; i++) {
+      expect(spans[i - 1].to - spans[i].from).toBe(400);
+    }
+    expect(spans[spans.length - 1].to).toBe(text.length);
   });
 
   it('never makes more passages than an item has rowids for', () => {
@@ -320,11 +332,11 @@ describe('passageSpans', () => {
     }
   });
 
-  it('counts characters as SQLite does, not UTF-16 units', () => {
-    const text = '😀'.repeat(5000);
-    const spans = passageSpans(text);
-    const [lastStart, lastLen] = spans[spans.length - 1];
-    expect(lastStart + lastLen).toBe(5000);
+  it('gives character offsets that select the same text in SQLite', () => {
+    const text = `${'a 😀 b '.repeat(1500)}${'😀'.repeat(3000)}`;
+    for (const span of passageSpans(text)) {
+      expect(bySqlite(text, span.start, span.len)).toBe(text.slice(span.from, span.to));
+    }
   });
 });
 
@@ -528,6 +540,37 @@ describe('GET /api/search', () => {
     const body = await search(user, 'svalbard');
     expect(body.total).toBe(1);
     expect(body.results[0]).toMatchObject({ highlighted: true, saved: true });
+
+    // Rebuilding it with the version the index holds doesn't load the text again.
+    const key = `at://${user.did}/app.skyreader.feed.saved/3ksavedbook0002`;
+    const first = await buildIndexDocs(env, user.did, [key]);
+    expect(first.upserts[0].bodyVersion).toBeTruthy();
+    const again = await buildIndexDocs(env, user.did, [key], () => first.upserts[0].bodyVersion);
+    expect(again.upserts[0].body).toBeNull();
+
+    // A second highlight later keeps the book's text, and the note is searchable.
+    await env.DB.prepare(
+      `UPDATE item_labels_cache SET props = ?, updated_at = ? WHERE user_did = ? AND item_key = ?`
+    )
+      .bind(
+        JSON.stringify({
+          highlights: [
+            { id: 'h', selector: { exact: 'quiet' }, createdAt: SETTLED_SEC * 1000 },
+            {
+              id: 'h2',
+              selector: { exact: 'garden' },
+              note: 'walrus',
+              createdAt: SETTLED_SEC * 1000,
+            },
+          ],
+        }),
+        SETTLED_SEC + 2,
+        user.did,
+        key
+      )
+      .run();
+    expect((await search(user, 'svalbard walrus')).total).toBe(1);
+    await expectIndexConsistent(user);
     expect(body.results[0].snippet).toContainEqual({ text: 'Svalbard', match: true });
     expect(body.results[0].snippet.map((s) => s.text).join('')).toContain('appendix covers');
     // A title-only match still gets a snippet.
@@ -551,6 +594,62 @@ describe('GET /api/search', () => {
     expect(after.total).toBe(0);
     expect(after.index.items).toBe(1);
     await expectIndexConsistent(user);
+  });
+
+  it('ranks an item matched partly through a note on its own text too', async () => {
+    const user = await createUser();
+    await save(user, {
+      rkey: '3ksavedrank0001',
+      url: 'https://web.example/keynes',
+      title: 'Keynes and the general theory',
+      content: '<p>A chapter on employment.</p>',
+    });
+    await addLabel(
+      user,
+      `at://${user.did}/app.skyreader.feed.saved/3ksavedrank0001`,
+      'highlights',
+      {
+        highlights: [
+          {
+            id: 'h',
+            selector: { exact: 'employment' },
+            note: 'liquidity',
+            createdAt: SETTLED_SEC * 1000,
+          },
+        ],
+      },
+      { updatedAt: SETTLED_SEC + 1 }
+    );
+    await save(user, {
+      rkey: '3ksavedrank0002',
+      url: 'https://web.example/other',
+      title: 'Monetary history',
+      content: `<p>${'Background on central banking. '.repeat(200)} Keynes wrote on liquidity.</p>`,
+    });
+    // Highlighted too, so the two differ only in what matched.
+    await addLabel(
+      user,
+      `at://${user.did}/app.skyreader.feed.saved/3ksavedrank0002`,
+      'highlights',
+      {
+        highlights: [{ id: 'h', selector: { exact: 'Background' }, createdAt: SETTLED_SEC * 1000 }],
+      },
+      { updatedAt: SETTLED_SEC + 1 }
+    );
+    // Enough other items that bm25's term weights mean something.
+    for (let n = 0; n < 8; n++) {
+      await save(user, {
+        rkey: `3ksavedfill000${n}`,
+        url: `https://web.example/fill-${n}`,
+        title: `Unrelated ${n}`,
+        content: '<p>Gardening notes.</p>',
+      });
+    }
+    const body = await search(user, 'keynes liquidity');
+    expect(body.results.map((r) => r.title)).toEqual([
+      'Keynes and the general theory',
+      'Monetary history',
+    ]);
   });
 
   it('defers saves past the per-build text budget, and the sync drains them', async () => {
