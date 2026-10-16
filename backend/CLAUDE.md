@@ -242,7 +242,7 @@ returns a permission set expanded (`repo?collection=…`), so every check goes t
 | `src/services/rate-limit.ts`         | Per-user per-endpoint rate limiting (D1-backed)              |
 | `src/services/user-tier.ts`          | Tier lookup (free/supporter)                                 |
 | `src/services/search-index.ts`       | Search index change feed + document builder (reads D1/R2)    |
-| `src/services/search-query.ts`       | Reader query → safe FTS5 MATCH expression                    |
+| `src/services/search-query.ts`       | Reader query → safe, quoted FTS5 terms                       |
 | `src/services/newsletters.ts`        | Newsletter inboxes + the `email()` handler (inbound mail)    |
 | `src/services/newsletter-email.ts`   | Parse one newsletter email into a feed item                  |
 | `src/services/bsky-sources.ts`       | Bluesky likes/bookmarks as private sources (walk + ingest)   |

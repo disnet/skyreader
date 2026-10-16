@@ -3,17 +3,25 @@ import {
   createExecutionContext,
   waitOnExecutionContext,
   runDurableObjectAlarm,
+  runInDurableObject,
 } from 'cloudflare:test';
 import { describe, it, expect, beforeEach } from 'vitest';
 import worker from '../src/index';
 import { parseSearchQuery } from '../src/services/search-query';
 import { htmlToText } from '../src/utils/html-text';
-import { splitSnippet } from '../src/durable-objects/search-index';
+import {
+  MAX_PASSAGES,
+  PASSAGE_STRIDE,
+  passageSpans,
+  splitSnippet,
+} from '../src/durable-objects/search-index';
 import { itemBodyKey } from '../src/routes/item-bodies';
 import {
+  BOOK_BODY_CHARS,
   CURSOR_LAG_MS,
   SEARCH_ENABLED_KEY,
   ZERO_CURSORS,
+  buildIndexDocs,
   collectChangedKeys,
   searchIndexStub,
 } from '../src/services/search-index';
@@ -143,11 +151,18 @@ async function markRead(user: TestUser, guid: string, extra: Record<string, unkn
 
 async function save(
   user: TestUser,
-  opts: { rkey: string; url: string; title: string; content: string; itemGuid?: string }
+  opts: {
+    rkey: string;
+    url: string;
+    title: string;
+    content: string;
+    itemGuid?: string;
+    contentType?: 'pdf' | 'epub';
+  }
 ) {
   await env.DB.prepare(
-    `INSERT INTO saved_articles (user_did, rkey, record_uri, url, url_normalized, title, content, saved_at, source, item_guid)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO saved_articles (user_did, rkey, record_uri, url, url_normalized, title, content, saved_at, source, item_guid, content_type)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       user.did,
@@ -159,7 +174,8 @@ async function save(
       opts.content,
       SETTLED_SEC * 1000,
       opts.itemGuid ? 'feed' : 'url',
-      opts.itemGuid ?? null
+      opts.itemGuid ?? null,
+      opts.contentType ?? null
     )
     .run();
 }
@@ -205,6 +221,15 @@ interface SearchResultBody {
   index: { items: number; building: boolean };
 }
 
+/** FTS5's own check that each index agrees with the text it was built from. */
+async function expectIndexConsistent(user: TestUser) {
+  await runInDurableObject(searchIndexStub(env, user.did), (_instance, state) => {
+    for (const table of ['fts', 'notes_fts', 'passages_fts']) {
+      state.storage.sql.exec(`INSERT INTO ${table} (${table}, rank) VALUES ('integrity-check', 1)`);
+    }
+  });
+}
+
 async function search(user: TestUser, query: string, extra = ''): Promise<SearchResultBody> {
   const response = await call(user, `/api/search?q=${encodeURIComponent(query)}${extra}`);
   expect(response.status).toBe(200);
@@ -212,26 +237,29 @@ async function search(user: TestUser, query: string, extra = ''): Promise<Search
 }
 
 describe('parseSearchQuery', () => {
+  const parse = (q: string) => {
+    const parsed = parseSearchQuery(q);
+    return parsed && { positives: parsed.positives, negatives: parsed.negatives };
+  };
+
   it('quotes every term so FTS5 operators are literal', () => {
-    expect(parseSearchQuery('climate AND policy')?.match).toBe('"climate" "AND" "policy"');
-    expect(parseSearchQuery('title:foo NEAR(bar)')?.match).toBe('"title:foo" "NEAR(bar)"');
+    expect(parse('climate AND policy')?.positives).toEqual(['"climate"', '"AND"', '"policy"']);
+    expect(parse('title:foo NEAR(bar)')?.positives).toEqual(['"title:foo"', '"NEAR(bar)"']);
   });
 
   it('keeps phrases, prefixes and exclusions', () => {
-    expect(parseSearchQuery('"carbon tax" levy* -opinion')?.match).toBe(
-      '"carbon tax" "levy"* NOT "opinion"'
-    );
+    expect(parse('"carbon tax" levy* -opinion')).toEqual({
+      positives: ['"carbon tax"', '"levy"*'],
+      negatives: ['"opinion"'],
+    });
     expect(parseSearchQuery('"carbon tax" levy* -opinion')?.terms).toEqual(['carbon tax', 'levy']);
   });
 
   it('tolerates unbalanced quotes and stray stars', () => {
-    expect(parseSearchQuery('"unfinished phrase')?.match).toBe('"unfinished phrase"');
-    expect(parseSearchQuery('it"s')?.match).toBe('"its"');
-    expect(parseSearchQuery('a* ***')?.match).toBe('"a"');
-  });
-
-  it('puts exclusions after the positive terms', () => {
-    expect(parseSearchQuery('-"x" ok')?.match).toBe('"ok" NOT "x"');
+    expect(parse('"unfinished phrase')?.positives).toEqual(['"unfinished phrase"']);
+    expect(parse('it"s')?.positives).toEqual(['"its"']);
+    expect(parse('a* ***')?.positives).toEqual(['"a"']);
+    expect(parse('-"x" ok')).toEqual({ positives: ['"ok"'], negatives: ['"x"'] });
   });
 
   it('returns null when nothing searchable remains', () => {
@@ -264,6 +292,51 @@ describe('splitSnippet', () => {
       { text: 'climate', match: true },
       { text: ' bill …', match: false },
     ]);
+  });
+});
+
+describe('passageSpans', () => {
+  // What SQLite's substr() returns for a span: it counts characters.
+  const bySqlite = (text: string, start: number, len: number) =>
+    Array.from(text)
+      .slice(start, start + len)
+      .join('');
+
+  it('covers the text in overlapping passages cut at spaces', () => {
+    const text = 'word '.repeat(3000); // 15k chars
+    const spans = passageSpans(text);
+    expect(spans[0].from).toBe(0);
+    expect(spans[spans.length - 1].to).toBe(text.length);
+    for (let i = 1; i < spans.length; i++) {
+      expect(spans[i].from).toBeLessThan(spans[i - 1].to); // overlaps
+      expect(text[spans[i].from]).toBe('w'); // starts on a word
+      expect(spans[i - 1].to - spans[i - 1].from).toBeLessThanOrEqual(4000);
+    }
+  });
+
+  it('still overlaps text with no spaces, so a word cut at one end is whole in the next', () => {
+    const text = '日本語の文章'.repeat(2000); // 12k chars, no whitespace
+    const spans = passageSpans(text);
+    for (let i = 1; i < spans.length; i++) {
+      expect(spans[i - 1].to - spans[i].from).toBe(400);
+    }
+    expect(spans[spans.length - 1].to).toBe(text.length);
+  });
+
+  it('never makes more passages than an item has rowids for', () => {
+    expect(MAX_PASSAGES).toBeLessThanOrEqual(PASSAGE_STRIDE);
+    // Spaces just past the halfway point make every cut as early as it can be.
+    const worst = `${'x'.repeat(2001)} `.repeat(Math.ceil(BOOK_BODY_CHARS / 2002));
+    for (const text of [worst.slice(0, BOOK_BODY_CHARS), 'y'.repeat(BOOK_BODY_CHARS)]) {
+      expect(passageSpans(text).length).toBeLessThanOrEqual(MAX_PASSAGES);
+    }
+  });
+
+  it('gives character offsets that select the same text in SQLite', () => {
+    const text = `${'a 😀 b '.repeat(1500)}${'😀'.repeat(3000)}`;
+    for (const span of passageSpans(text)) {
+      expect(bySqlite(text, span.start, span.len)).toBe(text.slice(span.from, span.to));
+    }
   });
 });
 
@@ -418,6 +491,306 @@ describe('GET /api/search', () => {
     expect(permafrost.results).toHaveLength(1);
     expect(permafrost.results[0]).toMatchObject({ itemKey: 'g-long', highlighted: true });
     expect((await search(user, 'tundra')).results[0]?.itemKey).toBe('g-long');
+  });
+
+  it('indexes a whole saved book, but only the first 64k of a saved web page', async () => {
+    const user = await createUser();
+    const filler = `<p>${'chapter text goes on '.repeat(4000)}</p>`; // ~84k chars
+    await save(user, {
+      rkey: '3ksavedbook0001',
+      url: 'https://books.example/novel.epub',
+      title: 'A novel',
+      content: `${filler}<p>The epilogue is set in Reykjavik.</p>`,
+      contentType: 'epub',
+    });
+    await save(user, {
+      rkey: '3ksavedpage0001',
+      url: 'https://web.example/long-page',
+      title: 'A long page',
+      content: `${filler}<p>The footer mentions Reykjavik.</p>`,
+    });
+    const body = await search(user, 'reykjavik');
+    expect(body.results.map((r) => r.itemKey)).toEqual([
+      `at://${user.did}/app.skyreader.feed.saved/3ksavedbook0001`,
+    ]);
+  });
+
+  it('snippets a long book from the passage that matches, and drops it cleanly', async () => {
+    const user = await createUser();
+    // Emoji ahead of the match: passages are cut in characters, as SQLite counts them.
+    const filler = `<p>${'quiet 😀 garden morning '.repeat(4000)}</p>`; // ~96k chars
+    await save(user, {
+      rkey: '3ksavedbook0002',
+      url: 'https://books.example/long.pdf',
+      title: 'A long report',
+      content: `${filler}<p>The appendix covers Svalbard in detail.</p>${filler}`,
+      contentType: 'pdf',
+    });
+    await env.DB.prepare(`UPDATE saved_articles SET author = 'Ingrid Lindqvist' WHERE rkey = ?`)
+      .bind('3ksavedbook0002')
+      .run();
+    // A highlight, filed under the save's URI, keeps the whole book indexed.
+    await addLabel(
+      user,
+      `at://${user.did}/app.skyreader.feed.saved/3ksavedbook0002`,
+      'highlights',
+      { highlights: [{ id: 'h', selector: { exact: 'quiet' }, createdAt: SETTLED_SEC * 1000 }] },
+      { updatedAt: SETTLED_SEC + 1 }
+    );
+    const body = await search(user, 'svalbard');
+    expect(body.total).toBe(1);
+    expect(body.results[0]).toMatchObject({ highlighted: true, saved: true });
+
+    // Rebuilding it with the version the index holds doesn't load the text again.
+    const key = `at://${user.did}/app.skyreader.feed.saved/3ksavedbook0002`;
+    const first = await buildIndexDocs(env, user.did, [key]);
+    expect(first.upserts[0].bodyVersion).toBeTruthy();
+    const again = await buildIndexDocs(env, user.did, [key], () => first.upserts[0].bodyVersion);
+    expect(again.upserts[0].body).toBeNull();
+
+    // A second highlight later keeps the book's text, and the note is searchable.
+    await env.DB.prepare(
+      `UPDATE item_labels_cache SET props = ?, updated_at = ? WHERE user_did = ? AND item_key = ?`
+    )
+      .bind(
+        JSON.stringify({
+          highlights: [
+            { id: 'h', selector: { exact: 'quiet' }, createdAt: SETTLED_SEC * 1000 },
+            {
+              id: 'h2',
+              selector: { exact: 'garden' },
+              note: 'walrus',
+              createdAt: SETTLED_SEC * 1000,
+            },
+          ],
+        }),
+        SETTLED_SEC + 2,
+        user.did,
+        key
+      )
+      .run();
+    expect((await search(user, 'svalbard walrus')).total).toBe(1);
+    await expectIndexConsistent(user);
+    expect(body.results[0].snippet).toContainEqual({ text: 'Svalbard', match: true });
+    expect(body.results[0].snippet.map((s) => s.text).join('')).toContain('appendix covers');
+    // A title-only match still gets a snippet.
+    expect((await search(user, 'report')).results[0].snippet).toContainEqual({
+      text: 'report',
+      match: true,
+    });
+    // So does an author-only match.
+    expect((await search(user, 'lindqvist')).results[0].snippet).toContainEqual({
+      text: 'Lindqvist',
+      match: true,
+    });
+    // A page past the last match still reports the total.
+    const past = await search(user, 'svalbard', '&offset=5');
+    expect(past.results).toHaveLength(0);
+    expect(past.total).toBe(1);
+
+    expect((await call(user, '/api/saved/3ksavedbook0002', { method: 'DELETE' })).status).toBe(200);
+    // Still highlighted, so still indexed, but its text went with the save.
+    const after = await search(user, 'svalbard');
+    expect(after.total).toBe(0);
+    expect(after.index.items).toBe(1);
+    await expectIndexConsistent(user);
+  });
+
+  it('builds kept text again when its row went away during the build', async () => {
+    const user = await createUser();
+    await save(user, {
+      rkey: '3ksavedgone0001',
+      url: 'https://books.example/gone.pdf',
+      title: 'A vanishing report',
+      content: '<p>The appendix covers Svalbard in detail.</p>',
+      contentType: 'pdf',
+    });
+    const key = `at://${user.did}/app.skyreader.feed.saved/3ksavedgone0001`;
+    const first = await buildIndexDocs(env, user.did, [key]);
+    const version = first.upserts[0].bodyVersion;
+    // Built as though the index held the text, then written to an index that doesn't.
+    const kept = await buildIndexDocs(env, user.did, [key], () => version);
+    expect(kept.upserts[0].body).toBeNull();
+    await runInDurableObject(searchIndexStub(env, user.did), (instance, state) => {
+      const apply = (instance as unknown as { apply(b: typeof kept): string[] }).apply.bind(
+        instance
+      );
+      expect(apply(kept)).toEqual([key]);
+      expect(state.storage.sql.exec(`SELECT count(*) AS n FROM docs`).one().n).toBe(0);
+    });
+    expect((await search(user, 'svalbard')).total).toBe(1);
+  });
+
+  it('versions only text built from the save itself', async () => {
+    const user = await createUser();
+    // Extracts to nothing, so the body falls back to the description.
+    await save(user, {
+      rkey: '3ksavedlead0001',
+      url: 'https://blog.example/lead',
+      title: 'Only a lead',
+      content: '<script>tracking()</script>',
+    });
+    await env.DB.prepare(`UPDATE saved_articles SET description = 'About walruses' WHERE rkey = ?`)
+      .bind('3ksavedlead0001')
+      .run();
+    const built = await buildIndexDocs(env, user.did, [
+      `at://${user.did}/app.skyreader.feed.saved/3ksavedlead0001`,
+    ]);
+    expect(built.upserts[0].body).toContain('walruses');
+    expect(built.upserts[0].bodyVersion).toBeNull();
+  });
+
+  it('ranks an item matched partly through a note on its own text too', async () => {
+    const user = await createUser();
+    await save(user, {
+      rkey: '3ksavedrank0001',
+      url: 'https://web.example/keynes',
+      title: 'Keynes and the general theory',
+      content: '<p>A chapter on employment.</p>',
+    });
+    await addLabel(
+      user,
+      `at://${user.did}/app.skyreader.feed.saved/3ksavedrank0001`,
+      'highlights',
+      {
+        highlights: [
+          {
+            id: 'h',
+            selector: { exact: 'employment' },
+            note: 'liquidity',
+            createdAt: SETTLED_SEC * 1000,
+          },
+        ],
+      },
+      { updatedAt: SETTLED_SEC + 1 }
+    );
+    await save(user, {
+      rkey: '3ksavedrank0002',
+      url: 'https://web.example/other',
+      title: 'Monetary history',
+      content: `<p>${'Background on central banking. '.repeat(200)} Keynes wrote on liquidity.</p>`,
+    });
+    // Highlighted too, so the two differ only in what matched.
+    await addLabel(
+      user,
+      `at://${user.did}/app.skyreader.feed.saved/3ksavedrank0002`,
+      'highlights',
+      {
+        highlights: [{ id: 'h', selector: { exact: 'Background' }, createdAt: SETTLED_SEC * 1000 }],
+      },
+      { updatedAt: SETTLED_SEC + 1 }
+    );
+    // Enough other items that bm25's term weights mean something.
+    for (let n = 0; n < 8; n++) {
+      await save(user, {
+        rkey: `3ksavedfill000${n}`,
+        url: `https://web.example/fill-${n}`,
+        title: `Unrelated ${n}`,
+        content: '<p>Gardening notes.</p>',
+      });
+    }
+    const body = await search(user, 'keynes liquidity');
+    expect(body.results.map((r) => r.title)).toEqual([
+      'Keynes and the general theory',
+      'Monetary history',
+    ]);
+  });
+
+  it('defers saves past the per-build text budget, and the sync drains them', async () => {
+    const user = await createUser();
+    const book = (n: number) =>
+      `<p>Opening ${n} mentions halibut.</p><p>${'long book body text '.repeat(45_000)}</p>`; // ~900k
+    for (let n = 0; n < 6; n++) {
+      await save(user, {
+        rkey: `3kbudgetbook00${n}`,
+        url: `https://books.example/${n}.epub`,
+        title: `Book ${n}`,
+        content: book(n),
+        contentType: 'epub',
+      });
+    }
+    const keys = Array.from(
+      { length: 6 },
+      (_, n) => `at://${user.did}/app.skyreader.feed.saved/3kbudgetbook00${n}`
+    );
+    const built = await buildIndexDocs(env, user.did, keys);
+    expect(built.upserts.length).toBeGreaterThan(0);
+    expect(built.deferred.length).toBeGreaterThan(0);
+    expect([...built.upserts.map((d) => d.key), ...built.deferred].sort()).toEqual(keys.sort());
+
+    const stub = searchIndexStub(env, user.did);
+    await stub.nudge(user.did);
+    for (let i = 0; i < 10 && (await runDurableObjectAlarm(stub)); i++) {
+      // drain
+    }
+    expect((await stub.stats()).indexedItems).toBe(6);
+    const body = await search(user, 'halibut');
+    expect(body.total).toBe(6);
+    expect(body.index.building).toBe(false);
+  });
+
+  it('matches terms split between the text and the notes, and keeps notes current', async () => {
+    const user = await createUser();
+    await save(user, {
+      rkey: '3ksavednotes001',
+      url: 'https://web.example/glaciers',
+      title: 'Glaciers retreating',
+      content: '<p>Meltwater carves the valley.</p>',
+    });
+    const key = `at://${user.did}/app.skyreader.feed.saved/3ksavednotes001`;
+    await addLabel(
+      user,
+      key,
+      'highlights',
+      {
+        highlights: [
+          {
+            id: 'h1',
+            selector: { exact: 'Meltwater' },
+            note: 'compare with fjords',
+            createdAt: SETTLED_SEC * 1000,
+          },
+        ],
+      },
+      { updatedAt: SETTLED_SEC + 1 }
+    );
+
+    // One term in the body, one only in the note.
+    const split = await search(user, 'valley fjords');
+    expect(split.results).toHaveLength(1);
+    expect(split.results[0].snippet.some((s) => s.match)).toBe(true);
+    expect((await search(user, 'fjords')).results[0]?.snippet).toContainEqual({
+      text: 'fjords',
+      match: true,
+    });
+    // An exclusion that only the note contains drops the item.
+    expect((await search(user, 'valley -fjords')).total).toBe(0);
+    expect((await search(user, 'valley -tundra')).total).toBe(1);
+
+    // Editing the note replaces its words.
+    await env.DB.prepare(
+      `UPDATE item_labels_cache SET props = ?, updated_at = ? WHERE user_did = ? AND item_key = ?`
+    )
+      .bind(
+        JSON.stringify({
+          highlights: [
+            {
+              id: 'h1',
+              selector: { exact: 'Meltwater' },
+              note: 'compare with moraines',
+              createdAt: SETTLED_SEC * 1000,
+            },
+          ],
+        }),
+        SETTLED_SEC + 2,
+        user.did,
+        key
+      )
+      .run();
+    expect((await search(user, 'fjords')).total).toBe(0);
+    expect((await search(user, 'valley moraines')).total).toBe(1);
+    expect((await search(user, 'meltwater')).total).toBe(1);
+    await expectIndexConsistent(user);
   });
 
   it('files a highlight on a save under the guid the save bridges to', async () => {

@@ -27,7 +27,20 @@ export const KIND_HIGHLIGHTED = 4;
 export const READ_BODY_CHARS = 2_000;
 /** Body text kept for a saved or highlighted item: the whole article, within reason. */
 export const FULL_BODY_CHARS = 64_000;
+/**
+ * Body text kept for a saved PDF or EPUB: about 100k words, so the whole of nearly
+ * every book (their stored extraction stops at 1 MB of HTML anyway). The cap keeps
+ * an index row under the Durable Object's 2 MB row limit even for text that takes
+ * 3 bytes a character in UTF-8. Affordable because a book's text is written once:
+ * a highlight or a note rewrites only the item's notes (durable-objects/search-index.ts).
+ */
+export const BOOK_BODY_CHARS = 600_000;
 const MAX_NOTES_CHARS = 16_000;
+/**
+ * Part of every body version: bump it when htmlToText or stripControlChars
+ * changes what a body extracts to, so kept bodies are re-extracted.
+ */
+const BODY_EXTRACTOR_VERSION = 1;
 
 /** Operator switch, a `sync_state` row: only an explicit '1' turns search on. */
 export const SEARCH_ENABLED_KEY = 'search_enabled';
@@ -38,6 +51,12 @@ const IN_CHUNK = 80;
 const GUID_CHUNK = 40;
 /** R2 reads per build, for saved/highlighted feed items whose full body is in R2. */
 const MAX_R2_BODIES_PER_BUILD = 25;
+/**
+ * Saved HTML one build loads, in characters. A saved book's is up to 1 MB, so a
+ * batch of fresh uploads would otherwise hold tens of MB of it (twice that as JS
+ * strings) in a 128 MB isolate. Past this, the rest of the batch is deferred.
+ */
+const MAX_BUILD_CONTENT_CHARS = 4_000_000;
 
 export interface SavedCursor {
   at: number;
@@ -65,7 +84,16 @@ export interface IndexDoc {
   feedTitle: string;
   title: string;
   author: string;
-  body: string;
+  /**
+   * Null when `bodyVersion` matches what the index already holds (from
+   * `indexedVersion`): the text didn't change, so it wasn't loaded.
+   */
+  body: string | null;
+  /**
+   * What the body was built from, for a save with stored text: its id, edit
+   * time, length, type and the cap applied. Null for anything else.
+   */
+  bodyVersion: string | null;
   notes: string;
   kinds: number;
   readAt: number | null;
@@ -77,6 +105,11 @@ export interface BuildResult {
   upserts: IndexDoc[];
   /** Keys whose document should be removed: nothing touched them any more, or they were aliases. */
   deletes: string[];
+  /**
+   * Canonical keys left for another call: the saves' text this call would have
+   * had to load ran past MAX_BUILD_CONTENT_CHARS. Never all of the keys.
+   */
+  deferred: string[];
 }
 
 function chunk<T>(items: T[], size: number): T[][] {
@@ -303,7 +336,11 @@ interface SavedRow extends SavedKeyRow {
   title: string | null;
   author: string | null;
   description: string | null;
-  content: string | null;
+  /** Not in the first read: loaded per batch by loadSavedContent, within a budget. */
+  content?: string | null;
+  content_chars: number | null;
+  content_type: string | null;
+  updated_at: number | null;
   saved_at: number;
 }
 
@@ -351,9 +388,11 @@ interface DocumentRow {
 export async function buildIndexDocs(
   env: Env,
   did: string,
-  rawKeys: string[]
+  rawKeys: string[],
+  /** The body version the index holds for a canonical key, so unchanged text isn't reloaded. */
+  indexedVersion: (key: string) => string | null = () => null
 ): Promise<BuildResult> {
-  if (rawKeys.length === 0) return { upserts: [], deletes: [] };
+  if (rawKeys.length === 0) return { upserts: [], deletes: [], deferred: [] };
   const deletes = new Set<string>();
 
   // 1. Saves touching these keys, by either of the keys a save can be filed under.
@@ -361,7 +400,7 @@ export async function buildIndexDocs(
   const canonicalOf = new Map<string, string>();
   for (const keys of chunk(rawKeys, IN_CHUNK / 2)) {
     const rows = await env.DB.prepare(
-      `SELECT id, rkey, record_uri, item_guid, url, title, author, description, content, saved_at
+      `SELECT id, rkey, record_uri, item_guid, url, title, author, description, length(content) AS content_chars, content_type, updated_at, saved_at
          FROM saved_articles
         WHERE user_did = ? AND (item_guid IN (${placeholders(keys.length)})
                                 OR record_uri IN (${placeholders(keys.length)}))`
@@ -380,7 +419,7 @@ export async function buildIndexDocs(
   for (const key of rawKeys) {
     if (!key.startsWith('saved:') || savedByCanonical.has(key)) continue;
     const row = await env.DB.prepare(
-      `SELECT id, rkey, record_uri, item_guid, url, title, author, description, content, saved_at
+      `SELECT id, rkey, record_uri, item_guid, url, title, author, description, length(content) AS content_chars, content_type, updated_at, saved_at
          FROM saved_articles WHERE user_did = ? AND rkey = ?`
     )
       .bind(did, key.slice('saved:'.length))
@@ -504,28 +543,71 @@ export async function buildIndexDocs(
     ...new Set([...feedItems.values()].map((r) => r.feed_url)),
   ]);
 
-  let r2Budget = MAX_R2_BODIES_PER_BUILD;
-  const upserts: IndexDoc[] = [];
-  for (const d of drafts) {
+  // A save whose text the index already holds isn't loaded: a highlight on a
+  // book would otherwise re-read and re-strip a megabyte of HTML.
+  const bodyCharsOf = (d: Draft) => {
     const full = (d.kinds & (KIND_SAVED | KIND_HIGHLIGHTED)) !== 0;
-    const bodyChars = full ? FULL_BODY_CHARS : READ_BODY_CHARS;
+    const book = d.saved?.content_type === 'pdf' || d.saved?.content_type === 'epub';
+    return book ? BOOK_BODY_CHARS : full ? FULL_BODY_CHARS : READ_BODY_CHARS;
+  };
+  const versions = new Map<string, string>();
+  const kept = new Set<string>();
+  for (const d of drafts) {
+    const saved = d.saved;
+    // A document's body comes from its record's text, not the save's HTML.
+    if (!saved?.content_chars || d.itemType === 'document') continue;
+    const version = [
+      BODY_EXTRACTOR_VERSION,
+      saved.id,
+      saved.updated_at ?? '',
+      saved.content_chars,
+      saved.content_type ?? '',
+      bodyCharsOf(d),
+    ].join(':');
+    versions.set(d.key, version);
+    if (indexedVersion(d.key) === version) {
+      kept.add(d.key);
+      saved.content = null; // never loaded
+    }
+  }
+
+  let r2Budget = MAX_R2_BODIES_PER_BUILD;
+  let contentBudget = MAX_BUILD_CONTENT_CHARS;
+  const upserts: IndexDoc[] = [];
+  const deferred: string[] = [];
+  for (const [i, d] of drafts.entries()) {
+    if (d.saved && d.saved.content === undefined) {
+      if (i > 0 && (d.saved.content_chars ?? 0) > contentBudget) {
+        deferred.push(...drafts.slice(i).map((rest) => rest.key));
+        break;
+      }
+      contentBudget -= await loadSavedContent(env, did, drafts.slice(i), contentBudget);
+    }
+    const full = (d.kinds & (KIND_SAVED | KIND_HIGHLIGHTED)) !== 0;
+    const bodyChars = bodyCharsOf(d);
     const feedRow = feedItems.get(d.key);
     const item = feedRow ? parseJson<FeedItem>(feedRow.item_json) : null;
     const doc = documents.get(d.key);
 
-    let html = d.saved?.content || '';
-    if (!html && item) {
-      if (full && item.bodyStored && env.ITEM_BODIES && r2Budget > 0) {
-        r2Budget--;
-        html = (await readStoredBody(env, feedRow!.feed_url, d.key)) ?? '';
+    let body: string | null = null;
+    if (!kept.has(d.key)) {
+      let html = d.saved?.content || '';
+      if (d.saved) d.saved.content = null; // done with it; don't hold a book for the batch
+      if (!html && item) {
+        if (full && item.bodyStored && env.ITEM_BODIES && r2Budget > 0) {
+          r2Budget--;
+          html = (await readStoredBody(env, feedRow!.feed_url, d.key)) ?? '';
+        }
+        html ||= item.content || item.contentLead || '';
       }
-      html ||= item.content || item.contentLead || '';
+      const lead = d.saved?.description || item?.summary || doc?.description || '';
+      const bodyText = doc?.text_content
+        ? truncateText(doc.text_content, bodyChars)
+        : htmlToText(html, bodyChars);
+      body = stripControlChars(bodyText || htmlToText(lead, bodyChars));
+      // Fell back to the lead: the version describes the save's HTML, not this.
+      if (!bodyText) versions.delete(d.key);
     }
-    const lead = d.saved?.description || item?.summary || doc?.description || '';
-    const bodyText = doc?.text_content
-      ? truncateText(doc.text_content, bodyChars)
-      : htmlToText(html, bodyChars);
-    const body = stripControlChars(bodyText || htmlToText(lead, bodyChars));
 
     upserts.push({
       key: d.key,
@@ -538,6 +620,7 @@ export async function buildIndexDocs(
       ),
       author: stripControlChars(truncateText(d.saved?.author || item?.author || '', 200)),
       body,
+      bodyVersion: versions.get(d.key) ?? null,
       notes: stripControlChars(d.notes),
       kinds: d.kinds,
       readAt: d.readAt,
@@ -546,7 +629,40 @@ export async function buildIndexDocs(
     });
   }
 
-  return { upserts, deletes: [...deletes] };
+  return { upserts, deletes: [...deletes], deferred };
+}
+
+/**
+ * Load the saved HTML for the saves among `drafts`, in order, while it fits in
+ * `budget` characters (the first always loads). Returns the characters loaded.
+ */
+async function loadSavedContent(
+  env: Env,
+  did: string,
+  drafts: { saved: SavedRow | undefined }[],
+  budget: number
+): Promise<number> {
+  const batch: SavedRow[] = [];
+  let used = 0;
+  for (const { saved } of drafts) {
+    if (!saved || saved.content !== undefined) continue;
+    const chars = saved.content_chars ?? 0;
+    if (batch.length > 0 && used + chars > budget) break;
+    used += chars;
+    if (chars === 0) saved.content = null;
+    else batch.push(saved);
+    if (batch.length >= IN_CHUNK) break;
+  }
+  if (batch.length === 0) return used;
+  const rows = await env.DB.prepare(
+    `SELECT id, content FROM saved_articles
+      WHERE user_did = ? AND id IN (${placeholders(batch.length)})`
+  )
+    .bind(did, ...batch.map((saved) => saved.id))
+    .all<{ id: number; content: string | null }>();
+  const contentById = new Map((rows.results ?? []).map((row) => [row.id, row.content]));
+  for (const saved of batch) saved.content = contentById.get(saved.id) ?? null;
+  return used;
 }
 
 /**
