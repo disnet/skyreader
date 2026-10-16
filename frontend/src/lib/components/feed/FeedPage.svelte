@@ -999,8 +999,32 @@
   }
 
   /* Lines the Library switch up with the cards' own 1rem inset. */
+  /* The Library switch and the Queue's controls share one row; QueueControls
+     swaps its labels for icons when this container gets tight. */
   .library-intro-row {
-    padding: 0 1rem;
+    container: library-row / inline-size;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem 0.75rem;
+  }
+
+  .library-intro-row > :global(.library-intro) {
+    padding: 0;
+  }
+
+  .library-intro-row > :global(.queue-controls) {
+    flex: 1;
+    flex-wrap: nowrap;
+    margin-bottom: 0;
+  }
+
+  /* The smallest phones (320px): even with icons, the switch's padding is
+     what pushes the sort menu off the edge. */
+  @container library-row (max-width: 21rem) {
+    .library-intro-row :global(.library-switch a) {
+      padding-inline: 0.625rem;
+    }
   }
 
   /* Breathing room below the sticky divider so the first card — especially when
