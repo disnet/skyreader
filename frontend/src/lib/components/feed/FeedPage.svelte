@@ -717,7 +717,7 @@
       />
     {/if}
 
-    <div class="feed-page-body">
+    <div class="feed-page-body" class:library={isSavedView}>
       {#if mode === 'linkblog'}
         <LinkblogIntro />
       {/if}
@@ -986,6 +986,12 @@
   .feed-page-body {
     max-width: 800px;
     margin: 0 auto;
+  }
+
+  /* The Queue shares the Shelf's wider column (ShelfPage's .shelf-body), so the
+     Queue | Shelf switch stays put when you flip between them. */
+  .feed-page-body.library {
+    max-width: 1040px;
   }
 
   /* Lines the Library switch up with the cards' own 1rem inset. */

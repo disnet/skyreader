@@ -56,7 +56,6 @@
      (mobile, where the header is replaced by the bottom bar). Flat, one row,
      no shadow — it's part of the page, not floating over it. */
   .search-row {
-    max-width: 800px;
     margin: 0 auto;
     padding: 0 1rem 0.625rem;
   }
