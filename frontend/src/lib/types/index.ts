@@ -1296,6 +1296,9 @@ export interface SavedItem {
   // upgraded the body); null/absent when never edited since the save. A cached
   // body whose updatedAt differs from the server's is stale.
   updatedAt?: string | null;
+  // A book's cover picture (its path in the EPUB), read off its body when the
+  // in-memory list drops it (saves store toLightSaved); never sent by the server.
+  coverPath?: string | null;
 }
 
 // A Shelf collection: a private, ordered group of saves (GET /api/shelf/collections).

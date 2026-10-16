@@ -105,6 +105,10 @@ export async function buildEpub(
     extra?: [string, string | Uint8Array][];
     /** An EPUB 2 NCX, stored at OEBPS/toc.ncx and named on the spine. */
     ncx?: string;
+    /** More `<item>` elements for the manifest, verbatim. */
+    manifest?: string[];
+    /** More metadata markup (an EPUB 2 `<meta name="cover">`), verbatim. */
+    metadata?: string;
   } = {}
 ): Promise<Uint8Array> {
   const chapters = opts.chapters ?? [
@@ -115,6 +119,7 @@ export async function buildEpub(
     ...(opts.creators ?? []).map((c) => `<dc:creator>${c}</dc:creator>`),
     opts.date ? `<dc:date>${opts.date}</dc:date>` : '',
     opts.description ? `<dc:description>${opts.description}</dc:description>` : '',
+    opts.metadata ?? '',
   ].join('\n');
   const opf = `<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id">
@@ -129,6 +134,7 @@ export async function buildEpub(
           `<item id="${c.id}" href="text/${c.id}.xhtml" media-type="application/xhtml+xml"${c.nav ? ' properties="nav"' : ''}/>`
       )
       .join('\n    ')}
+    ${(opts.manifest ?? []).join('\n    ')}
     ${opts.ncx ? '<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>' : ''}
   </manifest>
   <spine${opts.ncx ? ' toc="ncx"' : ''}>

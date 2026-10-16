@@ -109,6 +109,75 @@ describe('parseEpub', () => {
     expect(html).not.toMatch(/missing|data:image|a\.css|class=|\ssrc=/);
   });
 
+  describe('the cover', () => {
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+    const coverSection =
+      '<section data-epub-cover="" id="epub-cover">\n<p><img data-epub-src="OEBPS/images/front.png" alt="Cover"></p>\n</section>';
+
+    it('puts an EPUB 3 cover-image the spine leaves out first', async () => {
+      const book = await parseEpub(
+        await buildEpub({
+          chapters: [{ id: 'ch1', body: '<p>The text.</p>' }],
+          manifest: [
+            '<item id="img" href="images/front.png" media-type="image/png" properties="cover-image"/>',
+          ],
+          extra: [['OEBPS/images/front.png', png]],
+        })
+      );
+      expect(book.coverPath).toBe('OEBPS/images/front.png');
+      expect(book.content!.startsWith(coverSection)).toBe(true);
+      expect(book.chaptersKept).toBe(1);
+      expect(book.wordCount).toBe(2);
+    });
+
+    it('reads an EPUB 2 cover from <meta name="cover">, past a non-linear cover page', async () => {
+      const book = await parseEpub(
+        await buildEpub({
+          chapters: [
+            { id: 'titlepage', body: '<img src="../images/front.png" alt=""/>', linear: false },
+            { id: 'ch1', body: '<p>The text.</p>' },
+          ],
+          metadata: '<meta name="cover" content="front-img"/>',
+          manifest: ['<item id="front-img" href="images/front.png" media-type="image/png"/>'],
+          extra: [['OEBPS/images/front.png', png]],
+        })
+      );
+      expect(book.coverPath).toBe('OEBPS/images/front.png');
+      expect(book.content!.startsWith(coverSection)).toBe(true);
+    });
+
+    it('is not repeated when a chapter already shows it', async () => {
+      const book = await parseEpub(
+        await buildEpub({
+          chapters: [
+            { id: 'cover', body: '<img src="../images/front.png" alt=""/>' },
+            { id: 'ch1', body: '<p>The text.</p>' },
+          ],
+          manifest: [
+            '<item id="img" href="images/front.png" media-type="image/png" properties="cover-image"/>',
+          ],
+          extra: [['OEBPS/images/front.png', png]],
+        })
+      );
+      expect(book.content).not.toContain('data-epub-cover');
+      expect(book.content!.match(/front\.png/g)).toHaveLength(1);
+      expect(book.content!.startsWith('<section data-epub-chapter="1"')).toBe(true);
+    });
+
+    it('is left out when the book names a picture it doesn’t hold', async () => {
+      const book = await parseEpub(
+        await buildEpub({
+          chapters: [{ id: 'ch1', body: '<p>The text.</p>' }],
+          manifest: [
+            '<item id="img" href="images/front.png" media-type="image/png" properties="cover-image"/>',
+          ],
+        })
+      );
+      expect(book.coverPath).toBeNull();
+      expect(book.content).not.toContain('data-epub-cover');
+    });
+  });
+
   it('skips non-linear items, the nav document and chapters with nothing kept', async () => {
     const book = await parseEpub(
       await buildEpub({

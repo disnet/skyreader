@@ -1,11 +1,12 @@
 <script lang="ts">
   // One save on the Shelf, as a cover (grid) or a row (list). The cover is the
-  // save's own image when it has one, else its title set as a plain typographic
+  // save's own image (a book's own cover) when it has one, else its title set as a plain typographic
   // cover — books and PDFs rarely carry an image, and a placeholder graphic would
   // be decoration standing in for the text.
   import Icon from '$lib/components/Icon.svelte';
   import PopoverMenu from '$lib/components/PopoverMenu.svelte';
   import { auth } from '$lib/stores/auth.svelte';
+  import { savedCoverUrl } from '$lib/services/api';
   import { shelfStore } from '$lib/stores/shelf.svelte';
   import { decodeEntities } from '$lib/utils/entities';
   import { formatRelativeTime } from '$lib/utils/date';
@@ -40,6 +41,7 @@
   let byline = $derived(save.author || save.domain || '');
   let kind = $derived(shelfKind(save));
   let percent = $derived(entry.progress === null ? null : Math.round(entry.progress * 100));
+  let image = $derived(savedCoverUrl(save));
   let imageFailed = $state(false);
   let menuOpen = $state(false);
 
@@ -95,10 +97,10 @@
     <!-- The cover repeats the title button below it, so it's one tab stop and
          one name, not two. -->
     <button class="cover-btn" onclick={onOpen} tabindex="-1" aria-hidden="true">
-      {#if save.image && !imageFailed}
+      {#if image && !imageFailed}
         <img
           class="cover-img"
-          src={save.image}
+          src={image}
           alt=""
           loading="lazy"
           onerror={() => (imageFailed = true)}

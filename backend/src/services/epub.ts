@@ -30,6 +30,8 @@ export interface EpubExtraction {
   chapterCount: number;
   /** Chapters in `content`; less than chapterCount when the size cap cut it short. */
   chaptersKept: number;
+  /** The cover picture's path in the zip, when the book names one that exists. */
+  coverPath: string | null;
 }
 
 /** The book, not the service: not a zip, no package document, DRM, too big. */
@@ -309,6 +311,8 @@ interface Package {
   /** The book's table of contents: the EPUB 3 navigation document's path, else the EPUB 2 NCX's. */
   tocPath: string | null;
   tocKind: 'nav' | 'ncx' | null;
+  /** The cover picture the package names, as a path in the zip. */
+  coverPath: string | null;
 }
 
 function readPackage(opfPath: string, opf: string): Package {
@@ -330,6 +334,31 @@ function readPackage(opfPath: string, opf: string): Package {
     if (!navPath && /\bnav\b/.test(item.props) && /html/.test(item.type)) navPath = item.path;
     if (!ncxPath && item.type === 'application/x-dtbncx+xml') ncxPath = item.path;
   }
+  // The cover picture: EPUB 3 marks its manifest item `cover-image`; EPUB 2
+  // names it in `<meta name="cover" content="<item id>">` (some generators put
+  // the href there instead). Failing both, an image item called cover.
+  const images = [...manifest.entries()].filter(([, item]) => epubImageType(item.path));
+  let coverPath = images.find(([, item]) => /\bcover-image\b/.test(item.props))?.[1].path ?? null;
+  if (!coverPath) {
+    for (const m of opf.matchAll(/<(?:[\w-]+:)?meta\b([^>]*)>/gi)) {
+      const a = attrs(m[1]);
+      if (a.name?.toLowerCase() !== 'cover' || !a.content) continue;
+      const byId = manifest.get(a.content);
+      const href = resolvePath(opfPath, a.content);
+      coverPath =
+        (byId && epubImageType(byId.path) ? byId.path : null) ??
+        images.find(([, item]) => item.path === href)?.[1].path ??
+        null;
+      break;
+    }
+  }
+  if (!coverPath) {
+    coverPath =
+      images.find(
+        ([id, item]) => /^cover\b/i.test(id) || /^cover\b/i.test(item.path.split('/').pop() ?? '')
+      )?.[1].path ?? null;
+  }
+
   // EPUB 2 names its NCX on the spine.
   const spineToc = attrs(opf.match(/<(?:[\w-]+:)?spine\b([^>]*)>/i)?.[1] ?? '').toc;
   if (spineToc && manifest.has(spineToc)) ncxPath = manifest.get(spineToc)!.path;
@@ -357,6 +386,7 @@ function readPackage(opfPath: string, opf: string): Package {
     chapters,
     tocPath: navPath ?? ncxPath,
     tocKind: navPath ? 'nav' : ncxPath ? 'ncx' : null,
+    coverPath,
   };
 }
 
@@ -907,8 +937,15 @@ export async function parseEpub(
   // whose target didn't survive the cleanup, marks the section.
   const sectionFor = (n: number, spineIndex: number, html: string, mark?: TocMark) =>
     `<section data-epub-chapter="${n}" id="${epubAnchorId(spineIndex)}"${tocAttributes(mark)}>\n${html}\n</section>`;
+  // The cover, when the reading order leaves it out (a non-linear cover page, or
+  // none: the picture only in the manifest), goes first as a page of its own.
+  // Its room is set aside now and given back if a chapter shows it after all.
+  const coverPath = pkg.coverPath && entries.has(pkg.coverPath) ? pkg.coverPath : null;
+  const coverSection = coverPath
+    ? `<section data-epub-cover="" id="epub-cover">\n<p><img data-epub-src="${escapeAttribute(coverPath)}" alt="Cover"></p>\n</section>`
+    : '';
   const sections: string[] = [];
-  let size = 0;
+  let size = coverSection ? byteLength(coverSection) + 1 : 0;
   let chaptersKept = 0;
   let wordCount = 0;
   let chapterCut = false;
@@ -949,6 +986,11 @@ export async function parseEpub(
     wordCount += countWords(kept);
     if (chapterCut) break;
   }
+  if (coverPath) {
+    const shown = `data-epub-src="${escapeAttribute(coverPath)}"`;
+    if (!sections.some((s) => s.includes(shown))) sections.unshift(coverSection);
+  }
+
   // A book read to the end counts the chapters it kept. One cut short never
   // opens the rest, so its total is the spine's length (blank separators and all).
   const chapterCount = stoppedEarly || chapterCut ? pkg.chapters.length : chaptersKept;
@@ -981,5 +1023,6 @@ export async function parseEpub(
     wordCount,
     chapterCount,
     chaptersKept,
+    coverPath,
   };
 }

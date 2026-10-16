@@ -179,7 +179,11 @@ into place instead of fetching again, and the hourly cron sweeps staged books no
 own table of contents (the EPUB 3 nav's `toc`, else the EPUB 2 NCX) rides the text as
 `data-toc-title` / `data-toc-level` on the element each entry lands on (its chapter's section when
 the entry names the chapter, or its target didn't survive the cleanup), which the reader's
-Contents list reads.
+Contents list reads. The cover the package names (EPUB 3 `cover-image`, EPUB 2
+`<meta name="cover">`, else an image item called cover) opens the text as
+`<section data-epub-cover>` when no kept chapter already shows it; the frontend reads the book's
+first picture-only section off its body (`epubCoverPath`) for the Shelf and Home cards, so no
+column holds it and older books whose spine opens on a cover page get one too.
 
 **Bluesky likes and bookmarks** are the same kind of private, local-only subscription
 (`bsky-likes:<did>` / `bsky-bookmarks:<did>`, `src/services/bsky-sources.ts`): turned on from

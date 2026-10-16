@@ -27,6 +27,7 @@ import {
 import { computeContentStats } from '$lib/services/articleMerge';
 import { savedSearchStore } from './savedSearch.svelte';
 import { compareSavedNewestFirst } from '$lib/utils/savedPile';
+import { epubCoverPath } from '$lib/utils/epubContent';
 import type { Article, SavedItem } from '$lib/types';
 
 /**
@@ -61,10 +62,12 @@ function wordCountFrom(...texts: (string | null | undefined)[]): number | null {
 // uses the stored `wordCount`). Drop it from the in-memory list so the store
 // doesn't hold every body at once — the full text stays in IndexedDB and is
 // pulled back per-item by getContent() when the reader opens.
+// A book keeps its cover's path, read off the body on the way, for its card.
 function toLightSaved(item: SavedItem): SavedItem {
   if (item.content == null) return item;
-  const { content: _content, ...rest } = item;
-  return { ...rest, content: null };
+  const { content, ...rest } = item;
+  const coverPath = item.contentType === 'epub' ? epubCoverPath(content) : null;
+  return { ...rest, content: null, ...(coverPath ? { coverPath } : {}) };
 }
 
 function createSavesStore() {

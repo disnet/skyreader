@@ -48,6 +48,7 @@
   import { goto } from '$app/navigation';
   import type { LaneCardVM } from '$lib/components/feed/homeLane';
   import { savesStore } from '$lib/stores/saves.svelte';
+  import { savedCoverUrl } from '$lib/services/api';
   import { roomsStore } from '$lib/stores/rooms.svelte';
   import { followLinksStore } from '$lib/stores/followLinks.svelte';
   import {
@@ -169,7 +170,7 @@
       displayItem: { type: 'saved', item: s, key },
       title: decodeEntities(s.title || '') || s.url,
       domain: s.domain || hostnameOf(s.url),
-      image: s.image,
+      image: savedCoverUrl(s),
       faviconUrl: s.url ? getFaviconUrl(s.url) : '',
       metaLabel,
       progress,
