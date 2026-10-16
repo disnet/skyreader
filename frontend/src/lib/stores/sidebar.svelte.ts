@@ -15,7 +15,7 @@ function clampRailWidth(px: number): number {
 
 /* The tabs of the "+" Add modal (AddModal): one place for every way something
    comes into the reader. */
-export type AddTab = 'web' | 'atmosphere' | 'newsletters' | 'save';
+export type AddTab = 'web' | 'atmosphere' | 'newsletters' | 'save' | 'file';
 
 interface SidebarState {
   isOpen: boolean; // For mobile overlay
