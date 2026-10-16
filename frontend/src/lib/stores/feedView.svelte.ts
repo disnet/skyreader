@@ -2115,7 +2115,11 @@ function createFeedViewStore() {
       } else {
         pendingViewKey = null;
         resetToolbarFilters();
-        if (isEverythingUrl(filters)) restoreEverythingFilters();
+        if (isEverythingUrl(filters)) {
+          // Nothing stored must not inherit a channel's "all" read filter.
+          showOnlyUnread = true;
+          restoreEverythingFilters();
+        }
       }
     },
     /**
