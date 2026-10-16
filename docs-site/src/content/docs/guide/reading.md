@@ -13,7 +13,7 @@ The **Sources** filter lists everything that brings you things to read, grouped:
 - **Newsletters**: every sender, together or one by one.
 - **Publications**: your feeds, by folder.
 
-Everything starts checked. Uncheck a source, a folder or a whole group to leave it out. Choose **only** beside one to see just that. **Show everything** puts it all back. A group or folder stays whole as it grows: hide **Newsletters** and a newsletter that arrives tomorrow stays hidden too. Choose **Save** (on a phone, **Save as channel**) to keep a filter as a channel.
+Everything starts checked. Uncheck a source, a folder or a whole group to leave it out. Choose **only** beside one to see just that. **Show everything** puts it all back. A group or folder stays whole as it grows: hide **Newsletters** and a newsletter that arrives tomorrow stays hidden too. On **Feeds**, the filter and the unread/all choice stay put when you come back or reload, on that device. Choose **Save** (on a phone, **Save as channel**) to keep a filter as a channel.
 
 ### Making a channel
 
