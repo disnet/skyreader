@@ -9,6 +9,7 @@ import { preferences } from './preferences.svelte';
 import { filteredViewsStore } from './filteredViews.svelte';
 import { followLinksStore } from './followLinks.svelte';
 import { mobileStore } from './mediaQuery.svelte';
+import { auth } from './auth.svelte';
 import { liveDb } from '$lib/services/liveDb.svelte';
 import type {
   Article,
@@ -24,6 +25,11 @@ import type {
 } from '$lib/types';
 import { htmlToText, normalize, searchRank } from '$lib/services/savedSearch';
 import { sameUrlFilters, type UrlFilters } from '$lib/utils/urlFilters';
+import {
+  isEverythingUrl,
+  loadEverythingFilters,
+  saveEverythingFilters,
+} from '$lib/utils/everythingFilters';
 import { isSavedItemArchived, savedAtMs, setSavedItemArchived } from '$lib/utils/savedPile';
 import { urlKey } from '$lib/utils/urlKey';
 import { followLinkReadKey, markFollowLinkRead } from '$lib/utils/followLinks';
@@ -383,6 +389,11 @@ function createFeedViewStore() {
   // Identity of the saved surface the current search belongs to (`saved` param
   // + channel id). Non-reactive — it only gates the reset in setFilters.
   let currentSavedKey = '';
+
+  // Whether `setFilters` has applied a URL yet. The first call always runs in
+  // full, even for the plain Everything URL that matches the initial state, so
+  // the filters Everything was left with on this device are restored on load.
+  let urlFiltersApplied = false;
 
   // URL filters (set by component from $page store)
   let feedFilter = $state<string | null>(null);
@@ -1681,9 +1692,54 @@ function createFeedViewStore() {
     pendingViewKey = null;
   }
 
+  // Whose remembered Everything filters apply: source keys are per account.
+  function everythingOwner(): string | null {
+    return auth.user?.did ?? (auth.isGuest ? 'guest' : null);
+  }
+
+  // The plain Everything river: no URL filter, no channel, not the linkblog.
+  function onEverythingUrl(): boolean {
+    return (
+      !myLinkblogFilter &&
+      isEverythingUrl({
+        feed: feedFilter,
+        saved: savedFilter,
+        sharer: sharerFilter,
+        following: followingFilter,
+        feeds: feedsFilter,
+        contentType: contentTypeFilter,
+        view: viewFilter,
+        category: categoryFilter,
+      })
+    );
+  }
+
+  /**
+   * Remember Everything's filters on this device after a gesture changed them.
+   * Only from gesture-driven mutators: restoring or resetting on navigation
+   * must not overwrite what the reader chose.
+   */
+  function rememberEverythingFilters() {
+    if (!onEverythingUrl()) return;
+    saveEverythingFilters(everythingOwner(), {
+      sourceMode: toolbarSourceMode,
+      sourceKeys: toolbarSourceKeys,
+      showOnlyUnread,
+    });
+  }
+
+  function restoreEverythingFilters() {
+    const saved = loadEverythingFilters(everythingOwner());
+    if (!saved) return;
+    toolbarSourceMode = saved.sourceMode;
+    toolbarSourceKeys = [...saved.sourceKeys];
+    showOnlyUnread = saved.showOnlyUnread;
+  }
+
   function toggleUnreadFilter() {
     cancelPendingView();
     showOnlyUnread = !showOnlyUnread;
+    rememberEverythingFilters();
   }
 
   // Track an item as "seen this session" so it stays visible after being marked read
@@ -1874,6 +1930,7 @@ function createFeedViewStore() {
     setShowOnlyUnread(value: boolean) {
       cancelPendingView();
       showOnlyUnread = value;
+      rememberEverythingFilters();
     },
     setFilterToolbarOpen(open: boolean) {
       filterToolbarOpen = open;
@@ -1945,6 +2002,7 @@ function createFeedViewStore() {
       cancelPendingView();
       toolbarSourceMode = mode;
       toolbarSourceKeys = keys;
+      rememberEverythingFilters();
     },
     toggleToolbarSourceKey(key: string) {
       cancelPendingView();
@@ -1952,6 +2010,7 @@ function createFeedViewStore() {
         ? toolbarSourceKeys.filter((k) => k !== key)
         : [...toolbarSourceKeys, key];
       toolbarSourceKeys = keys;
+      rememberEverythingFilters();
     },
     setSortOrder(order: SortOrder) {
       if (viewFilter) {
@@ -1972,6 +2031,7 @@ function createFeedViewStore() {
     resetToolbarFilters() {
       cancelPendingView();
       resetToolbarFilters();
+      rememberEverythingFilters();
     },
     syncToolbarToSavedView,
     setSavedView(view: 'inbox' | 'archive') {
@@ -2011,8 +2071,9 @@ function createFeedViewStore() {
           view: viewFilter,
           category: categoryFilter,
         };
-        if (sameUrlFilters(filters, current)) return;
+        if (urlFiltersApplied && sameUrlFilters(filters, current)) return;
       }
+      urlFiltersApplied = true;
       // Any URL-driven filter change exits the "Your Linkblog" view.
       myLinkblogFilter = false;
       // Search is ephemeral session state, scoped to one saved surface, so
@@ -2054,6 +2115,7 @@ function createFeedViewStore() {
       } else {
         pendingViewKey = null;
         resetToolbarFilters();
+        if (isEverythingUrl(filters)) restoreEverythingFilters();
       }
     },
     /**
