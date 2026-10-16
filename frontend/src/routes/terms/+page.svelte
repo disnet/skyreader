@@ -138,9 +138,7 @@
     </p>
     <p>
       For general feedback:
-      <a href="https://github.com/disnet/skyreader/issues" target="_blank" rel="noopener"
-        >GitHub Issues</a
-      >
+      <a href="/feedback">Feedback</a>
     </p>
   </section>
 </div>
