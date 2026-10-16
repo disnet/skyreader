@@ -86,6 +86,10 @@ Details that matter:
 - **Cursor lag.** `updated_at` has one-second resolution, so a row re-written within the same
   second as the cursor would never be seen again. Cursors stay 2 s behind now. Newer rows are
   indexed but not passed, and a settle pass is scheduled for them.
+- **Saved-text budget.** A build reads saves' HTML in a second pass, up to 4M characters
+  (`MAX_BUILD_CONTENT_CHARS`). A batch of fresh book uploads would otherwise hold tens of MB in a
+  128 MB isolate. Keys past the budget come back as `deferred`. The index stores them as
+  `pending_keys`, advances its cursors, and builds them first on the next round.
 - **Hard-deleted saves.** Saves are deleted outright, so no cursor sees a removal. A saved DELETE
   asks the index to diff its saved set against D1, and the diff also runs every 6 h.
 - **Aliases.** A highlight on a saved feed article may be filed under the save's AT-URI. Following

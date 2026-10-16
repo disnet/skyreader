@@ -1,5 +1,5 @@
 /**
- * What a reader types into search, turned into an FTS5 MATCH expression.
+ * What a reader types into search, turned into quoted FTS5 terms.
  *
  * FTS5's query syntax is a small language: bare `AND`/`OR`/`NOT`/`NEAR`, `:` column
  * filters, `^`, parentheses and unbalanced quotes are all operators or errors. A
@@ -29,8 +29,6 @@ export interface SearchTerms {
 }
 
 export interface ParsedSearchQuery extends SearchTerms {
-  /** The same query as one FTS5 MATCH expression. */
-  match: string;
   /** The positive words/phrases, unquoted, for the client to highlight. */
   terms: string[];
 }
@@ -79,6 +77,5 @@ export function parseSearchQuery(raw: string): ParsedSearchQuery | null {
   }
 
   if (positives.length === 0) return null;
-  const match = [positives.join(' '), ...negatives.map((n) => `NOT ${n}`)].join(' ');
-  return { match, terms, positives, negatives };
+  return { terms, positives, negatives };
 }

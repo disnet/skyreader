@@ -71,12 +71,16 @@ export async function handleSearch(
     kinds |= bit;
   }
 
-  const result = await searchIndexStub(env, session.did).search(session.did, parsed, {
-    kinds,
-    since: intParam(url.searchParams.get('since'), 0, 0, Number.MAX_SAFE_INTEGER),
-    limit: intParam(url.searchParams.get('limit'), DEFAULT_LIMIT, 1, MAX_LIMIT),
-    offset: intParam(url.searchParams.get('offset'), 0, 0, SEARCH_COUNT_CAP),
-  });
+  const result = await searchIndexStub(env, session.did).search(
+    session.did,
+    { positives: parsed.positives, negatives: parsed.negatives },
+    {
+      kinds,
+      since: intParam(url.searchParams.get('since'), 0, 0, Number.MAX_SAFE_INTEGER),
+      limit: intParam(url.searchParams.get('limit'), DEFAULT_LIMIT, 1, MAX_LIMIT),
+      offset: intParam(url.searchParams.get('offset'), 0, 0, SEARCH_COUNT_CAP),
+    }
+  );
 
   return json({
     terms: parsed.terms,

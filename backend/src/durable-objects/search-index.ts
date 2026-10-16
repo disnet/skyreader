@@ -20,6 +20,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import type { Env } from '../types';
 import {
+  BOOK_BODY_CHARS,
   CURSOR_LAG_MS,
   KIND_HIGHLIGHTED,
   KIND_SAVED,
@@ -65,6 +66,14 @@ const PASSAGE_CHARS = 4_000;
 const PASSAGE_OVERLAP = 400;
 /** Passage rowids are docs.id * PASSAGE_STRIDE + n, so one item's passages are a rowid range. */
 const PASSAGE_STRIDE = 1024;
+/**
+ * The most passages a body can have: each one starts at least
+ * PASSAGE_CHARS / 2 - PASSAGE_OVERLAP characters after the last (passageSpans),
+ * and no body is longer than BOOK_BODY_CHARS. Must fit in PASSAGE_STRIDE, which
+ * a test holds.
+ */
+export const MAX_PASSAGES = Math.ceil(BOOK_BODY_CHARS / (PASSAGE_CHARS / 2 - PASSAGE_OVERLAP)) + 1;
+export { PASSAGE_STRIDE };
 /** The UI says "1,000+" past this, so no query counts further. */
 export const SEARCH_COUNT_CAP = 1_000;
 
@@ -251,6 +260,12 @@ export class SearchIndex extends DurableObject<Env> {
     return raw ? (JSON.parse(raw) as SyncCursors) : ZERO_CURSORS;
   }
 
+  /** Keys a build deferred, waiting for the next round. */
+  private pendingKeys(): string[] {
+    const raw = this.getMeta('pending_keys');
+    return raw ? (JSON.parse(raw) as string[]) : [];
+  }
+
   private indexedItems(): number {
     return this.sql.exec(`SELECT count(*) AS n FROM docs`).one().n as number;
   }
@@ -351,16 +366,34 @@ export class SearchIndex extends DurableObject<Env> {
 
     let cursors = this.cursors();
     do {
+      // Keys a build deferred (too much saved text for one) go before new pages.
+      const pending = this.pendingKeys();
+      if (pending.length > 0) {
+        const built = await buildIndexDocs(this.env, did, pending);
+        this.ctx.storage.transactionSync(() => {
+          for (const doc of built.upserts) this.upsert(doc);
+          for (const key of built.deletes) this.remove(key);
+          this.setMeta('pending_keys', JSON.stringify(built.deferred));
+        });
+        outcome.upserts += built.upserts.length;
+        outcome.deletes += built.deletes.length;
+        outcome.rounds++;
+        outcome.more = true; // whatever is left, and then the next page
+        continue;
+      }
       const page = await collectChangedKeys(this.env, did, cursors, ROUND_KEYS);
+      let deferred = 0;
       if (page.keys.length > 0) {
         const built = await buildIndexDocs(this.env, did, page.keys);
         this.ctx.storage.transactionSync(() => {
           for (const doc of built.upserts) this.upsert(doc);
           for (const key of built.deletes) this.remove(key);
+          this.setMeta('pending_keys', JSON.stringify(built.deferred));
           this.setMeta('cursors', JSON.stringify(page.cursors));
         });
         outcome.upserts += built.upserts.length;
         outcome.deletes += built.deletes.length;
+        deferred = built.deferred.length;
       } else {
         this.setMeta('cursors', JSON.stringify(page.cursors));
       }
@@ -370,7 +403,7 @@ export class SearchIndex extends DurableObject<Env> {
       outcome.unsettled ||= page.unsettled;
       // A page of nothing but unsettled rows can't move the cursors: stop and
       // let the settle pass below pick up from here.
-      outcome.more = page.more && progressed;
+      outcome.more = (page.more && progressed) || deferred > 0;
     } while (outcome.more && Date.now() < deadline && outcome.rounds < MAX_ROUNDS_PER_SYNC);
     // The rows held back by the cursor lag get one more pass once they settle,
     // so a read-then-unread inside one second converges without another write.
@@ -398,6 +431,8 @@ export class SearchIndex extends DurableObject<Env> {
       this.ctx.storage.transactionSync(() => {
         for (const doc of built.upserts) this.upsert(doc);
         for (const key of built.deletes) this.remove(key);
+        const pending = new Set([...this.pendingKeys(), ...built.deferred]);
+        this.setMeta('pending_keys', JSON.stringify([...pending]));
       });
     }
     this.setMeta('saved_reconciled_at', String(Date.now()));
@@ -501,7 +536,12 @@ export class SearchIndex extends DurableObject<Env> {
   /** Index item `id`'s passages, if its body is long enough to have them. */
   private writePassages(id: number, body: string) {
     if (body.length <= PASSAGE_MIN_CHARS) return;
-    const spans = passageSpans(body).slice(0, PASSAGE_STRIDE);
+    let spans = passageSpans(body);
+    if (spans.length > PASSAGE_STRIDE) {
+      // Out of the item's rowid range; can't happen within MAX_PASSAGES.
+      log.warn('search_index_passages_capped', { passages: spans.length });
+      spans = spans.slice(0, PASSAGE_STRIDE);
+    }
     spans.forEach(([start, len], n) => {
       this.sql.exec(
         `INSERT INTO passages (id, start, len) VALUES (?, ?, ?)`,
@@ -634,7 +674,8 @@ export class SearchIndex extends DurableObject<Env> {
                 COALESCE(main.s, 0) + COALESCE(noted.s, 0)
                   - (CASE WHEN d.kinds & ${KIND_HIGHLIGHTED} THEN 2.0
                           WHEN d.kinds & ${KIND_SAVED} THEN 1.0 ELSE 0 END)
-                  - (CASE WHEN d.touched_at >= ? THEN 0.5 ELSE 0 END) AS score
+                  - (CASE WHEN d.touched_at >= ? THEN 0.5 ELSE 0 END) AS score,
+                count(*) OVER () AS total
            FROM hits JOIN docs d ON d.id = hits.id
            LEFT JOIN main ON main.id = hits.id
            LEFT JOIN noted ON noted.id = hits.id
@@ -669,20 +710,14 @@ export class SearchIndex extends DurableObject<Env> {
       }
     }
 
-    const total = this.sql
-      .exec(
-        `${hits}
-         SELECT count(*) AS n FROM (
-           SELECT 1 FROM hits JOIN docs d ON d.id = hits.id
-            WHERE (? = 0 OR d.kinds & ? != 0) AND d.touched_at >= ?
-            LIMIT ?)`,
-        ...hitsParams,
-        opts.kinds,
-        opts.kinds,
-        opts.since,
-        SEARCH_COUNT_CAP + 1
-      )
-      .one().n as number;
+    // Every match is ranked to sort the page, so the ranked query counts them
+    // too. Only a page past the end has no row to carry the count.
+    const total =
+      ranked.length > 0
+        ? Math.min(ranked[0].total as number, SEARCH_COUNT_CAP + 1)
+        : opts.offset === 0
+          ? 0
+          : this.countHits(hits, hitsParams, opts);
 
     return {
       hits: ranked.map((r) => ({
@@ -702,10 +737,29 @@ export class SearchIndex extends DurableObject<Env> {
     };
   }
 
+  /** Matches for `hits` (capped), for a page past the last one. */
+  private countHits(hits: string, hitsParams: string[], opts: SearchOptions): number {
+    return this.sql
+      .exec(
+        `${hits}
+         SELECT count(*) AS n FROM (
+           SELECT 1 FROM hits JOIN docs d ON d.id = hits.id
+            WHERE (? = 0 OR d.kinds & ? != 0) AND d.touched_at >= ?
+            LIMIT ?)`,
+        ...hitsParams,
+        opts.kinds,
+        opts.kinds,
+        opts.since,
+        SEARCH_COUNT_CAP + 1
+      )
+      .one().n as number;
+  }
+
   /**
    * Snippets from each item's own text. A long body's comes from its
-   * best-matching passage (see PASSAGE_MIN_CHARS); an item whose passages don't
-   * match (its title did) gets its title.
+   * best-matching passage (see PASSAGE_MIN_CHARS). One whose passages don't
+   * match matched in its title, author or feed: the first of those with a match
+   * (one column at a time, so snippet() never reads the body).
    */
   private textSnippets(match: string, ids: number[]): Map<number, SnippetSegment[]> {
     const long = new Set<number>();
@@ -728,11 +782,21 @@ export class SearchIndex extends DurableObject<Env> {
           lo + PASSAGE_STRIDE - 1
         )
         .toArray()[0];
-      const snippet = best
-        ? this.snippetsFrom('passages_fts', 0, match, [best.rowid as number], '?')
-        : this.snippetsFrom('fts', 0, match, [id], '?');
-      const segments = [...snippet.values()][0];
-      if (segments) found.set(id, segments);
+      if (best) {
+        const segments = this.snippetsFrom('passages_fts', 0, match, [best.rowid as number], '?');
+        const passage = [...segments.values()][0];
+        if (passage) found.set(id, passage);
+        continue;
+      }
+      // Columns of fts: title, author, feed.
+      for (const column of [0, 1, 2]) {
+        const segments = this.snippetsFrom('fts', column, match, [id], '?').get(id);
+        if (segments?.some((seg) => seg.match)) {
+          found.set(id, segments);
+          break;
+        }
+        if (column === 0 && segments) found.set(id, segments);
+      }
     }
     return found;
   }

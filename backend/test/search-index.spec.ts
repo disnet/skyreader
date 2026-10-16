@@ -9,12 +9,19 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import worker from '../src/index';
 import { parseSearchQuery } from '../src/services/search-query';
 import { htmlToText } from '../src/utils/html-text';
-import { passageSpans, splitSnippet } from '../src/durable-objects/search-index';
+import {
+  MAX_PASSAGES,
+  PASSAGE_STRIDE,
+  passageSpans,
+  splitSnippet,
+} from '../src/durable-objects/search-index';
 import { itemBodyKey } from '../src/routes/item-bodies';
 import {
+  BOOK_BODY_CHARS,
   CURSOR_LAG_MS,
   SEARCH_ENABLED_KEY,
   ZERO_CURSORS,
+  buildIndexDocs,
   collectChangedKeys,
   searchIndexStub,
 } from '../src/services/search-index';
@@ -230,33 +237,29 @@ async function search(user: TestUser, query: string, extra = ''): Promise<Search
 }
 
 describe('parseSearchQuery', () => {
+  const parse = (q: string) => {
+    const parsed = parseSearchQuery(q);
+    return parsed && { positives: parsed.positives, negatives: parsed.negatives };
+  };
+
   it('quotes every term so FTS5 operators are literal', () => {
-    expect(parseSearchQuery('climate AND policy')?.match).toBe('"climate" "AND" "policy"');
-    expect(parseSearchQuery('title:foo NEAR(bar)')?.match).toBe('"title:foo" "NEAR(bar)"');
+    expect(parse('climate AND policy')?.positives).toEqual(['"climate"', '"AND"', '"policy"']);
+    expect(parse('title:foo NEAR(bar)')?.positives).toEqual(['"title:foo"', '"NEAR(bar)"']);
   });
 
   it('keeps phrases, prefixes and exclusions', () => {
-    expect(parseSearchQuery('"carbon tax" levy* -opinion')?.match).toBe(
-      '"carbon tax" "levy"* NOT "opinion"'
-    );
+    expect(parse('"carbon tax" levy* -opinion')).toEqual({
+      positives: ['"carbon tax"', '"levy"*'],
+      negatives: ['"opinion"'],
+    });
     expect(parseSearchQuery('"carbon tax" levy* -opinion')?.terms).toEqual(['carbon tax', 'levy']);
   });
 
   it('tolerates unbalanced quotes and stray stars', () => {
-    expect(parseSearchQuery('"unfinished phrase')?.match).toBe('"unfinished phrase"');
-    expect(parseSearchQuery('it"s')?.match).toBe('"its"');
-    expect(parseSearchQuery('a* ***')?.match).toBe('"a"');
-  });
-
-  it('returns the quoted terms separately for the index', () => {
-    expect(parseSearchQuery('"carbon tax" levy* -opinion')).toMatchObject({
-      positives: ['"carbon tax"', '"levy"*'],
-      negatives: ['"opinion"'],
-    });
-  });
-
-  it('puts exclusions after the positive terms', () => {
-    expect(parseSearchQuery('-"x" ok')?.match).toBe('"ok" NOT "x"');
+    expect(parse('"unfinished phrase')?.positives).toEqual(['"unfinished phrase"']);
+    expect(parse('it"s')?.positives).toEqual(['"its"']);
+    expect(parse('a* ***')?.positives).toEqual(['"a"']);
+    expect(parse('-"x" ok')).toEqual({ positives: ['"ok"'], negatives: ['"x"'] });
   });
 
   it('returns null when nothing searchable remains', () => {
@@ -305,6 +308,15 @@ describe('passageSpans', () => {
       expect(start).toBeLessThan(prevStart + prevLen); // overlaps
       expect(text[start]).toBe('w'); // starts on a word
       expect(prevLen).toBeLessThanOrEqual(4000);
+    }
+  });
+
+  it('never makes more passages than an item has rowids for', () => {
+    expect(MAX_PASSAGES).toBeLessThanOrEqual(PASSAGE_STRIDE);
+    // Spaces just past the halfway point make every cut as early as it can be.
+    const worst = `${'x'.repeat(2001)} `.repeat(Math.ceil(BOOK_BODY_CHARS / 2002));
+    for (const text of [worst.slice(0, BOOK_BODY_CHARS), 'y'.repeat(BOOK_BODY_CHARS)]) {
+      expect(passageSpans(text).length).toBeLessThanOrEqual(MAX_PASSAGES);
     }
   });
 
@@ -502,8 +514,20 @@ describe('GET /api/search', () => {
       content: `${filler}<p>The appendix covers Svalbard in detail.</p>${filler}`,
       contentType: 'pdf',
     });
+    await env.DB.prepare(`UPDATE saved_articles SET author = 'Ingrid Lindqvist' WHERE rkey = ?`)
+      .bind('3ksavedbook0002')
+      .run();
+    // A highlight, filed under the save's URI, keeps the whole book indexed.
+    await addLabel(
+      user,
+      `at://${user.did}/app.skyreader.feed.saved/3ksavedbook0002`,
+      'highlights',
+      { highlights: [{ id: 'h', selector: { exact: 'quiet' }, createdAt: SETTLED_SEC * 1000 }] },
+      { updatedAt: SETTLED_SEC + 1 }
+    );
     const body = await search(user, 'svalbard');
     expect(body.total).toBe(1);
+    expect(body.results[0]).toMatchObject({ highlighted: true, saved: true });
     expect(body.results[0].snippet).toContainEqual({ text: 'Svalbard', match: true });
     expect(body.results[0].snippet.map((s) => s.text).join('')).toContain('appendix covers');
     // A title-only match still gets a snippet.
@@ -511,12 +535,55 @@ describe('GET /api/search', () => {
       text: 'report',
       match: true,
     });
+    // So does an author-only match.
+    expect((await search(user, 'lindqvist')).results[0].snippet).toContainEqual({
+      text: 'Lindqvist',
+      match: true,
+    });
+    // A page past the last match still reports the total.
+    const past = await search(user, 'svalbard', '&offset=5');
+    expect(past.results).toHaveLength(0);
+    expect(past.total).toBe(1);
 
     expect((await call(user, '/api/saved/3ksavedbook0002', { method: 'DELETE' })).status).toBe(200);
+    // Still highlighted, so still indexed, but its text went with the save.
     const after = await search(user, 'svalbard');
     expect(after.total).toBe(0);
-    expect(after.index.items).toBe(0);
+    expect(after.index.items).toBe(1);
     await expectIndexConsistent(user);
+  });
+
+  it('defers saves past the per-build text budget, and the sync drains them', async () => {
+    const user = await createUser();
+    const book = (n: number) =>
+      `<p>Opening ${n} mentions halibut.</p><p>${'long book body text '.repeat(45_000)}</p>`; // ~900k
+    for (let n = 0; n < 6; n++) {
+      await save(user, {
+        rkey: `3kbudgetbook00${n}`,
+        url: `https://books.example/${n}.epub`,
+        title: `Book ${n}`,
+        content: book(n),
+        contentType: 'epub',
+      });
+    }
+    const keys = Array.from(
+      { length: 6 },
+      (_, n) => `at://${user.did}/app.skyreader.feed.saved/3kbudgetbook00${n}`
+    );
+    const built = await buildIndexDocs(env, user.did, keys);
+    expect(built.upserts.length).toBeGreaterThan(0);
+    expect(built.deferred.length).toBeGreaterThan(0);
+    expect([...built.upserts.map((d) => d.key), ...built.deferred].sort()).toEqual(keys.sort());
+
+    const stub = searchIndexStub(env, user.did);
+    await stub.nudge(user.did);
+    for (let i = 0; i < 10 && (await runDurableObjectAlarm(stub)); i++) {
+      // drain
+    }
+    expect((await stub.stats()).indexedItems).toBe(6);
+    const body = await search(user, 'halibut');
+    expect(body.total).toBe(6);
+    expect(body.index.building).toBe(false);
   });
 
   it('matches terms split between the text and the notes, and keeps notes current', async () => {
