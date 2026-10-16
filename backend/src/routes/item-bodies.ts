@@ -177,16 +177,15 @@ export async function handleItemBody(
   }
 
   const bucket = env.ITEM_BODIES;
-  if (!bucket) return json({ error: 'Not found' }, 404);
-
   const [object, row] = await Promise.all([
-    bucket.get(await itemBodyKey(feedUrl, guid)),
+    bucket ? bucket.get(await itemBodyKey(feedUrl, guid)) : null,
     env.DB.prepare(
-      `SELECT content_hash, json_extract(item_json, '$.bodyStored') AS body_stored
+      `SELECT content_hash, json_extract(item_json, '$.bodyStored') AS body_stored,
+              json_extract(item_json, '$.content') AS content
          FROM feed_items WHERE feed_url = ? AND guid = ?`
     )
       .bind(feedUrl, guid)
-      .first<{ content_hash: string; body_stored: number | null }>(),
+      .first<{ content_hash: string; body_stored: number | null; content: string | null }>(),
   ]);
   // Serve only the body of the row as it stands now. An edit whose new body
   // never reached R2 (failed put, over the ceiling) leaves the row pointing at
@@ -197,8 +196,16 @@ export async function handleItemBody(
     object != null &&
     row?.body_stored === 1 &&
     object.customMetadata?.contentHash === row.content_hash;
-  // A miss is an ordinary answer (small item, pre-R2 row, oversized body), so
-  // it's cacheable briefly too — the client memoizes it per session anyway.
+  // A body small enough to stay in the row is served from there. A reader that
+  // still holds the row never asks, but one that doesn't (an article opened from
+  // search after it left the device) has nothing else: without this, the page
+  // extract was its only way to the text, and a site that blocks automated
+  // readers left it blank though the archive held the whole article.
+  if (!current && typeof row?.content === 'string' && row.content) {
+    return json({ content: row.content }, 200, { 'Cache-Control': 'private, max-age=3600' });
+  }
+  // A miss is an ordinary answer (pre-R2 row, oversized body), so it's
+  // cacheable briefly too — the client memoizes it per session anyway.
   if (!object || !current) {
     return json({ error: 'Not found' }, 404, { 'Cache-Control': 'private, max-age=60' });
   }

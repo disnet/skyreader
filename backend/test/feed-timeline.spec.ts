@@ -557,6 +557,15 @@ describe('feed timeline (D1 ingest + serve)', () => {
       expect(await storedBody('huge')).toBeNull();
     });
 
+    it('serves an inline body from the row', async () => {
+      await ingest(FEED_A, [
+        { item: item('short', { content: '<p>tiny</p>' }), contentHash: 'h1' },
+      ]);
+      const res = await handleItemBody(bodyRequest(FEED_A, 'short'), env);
+      expect(res.status).toBe(200);
+      expect(((await res.json()) as { content: string }).content).toBe('<p>tiny</p>');
+    });
+
     it('never serves a body that no longer matches its row', async () => {
       await ingest(FEED_A, [{ item: item('long', { content: LONG }), contentHash: 'h1' }]);
       // The row moves on (an edit) while the old object stays under the key.
