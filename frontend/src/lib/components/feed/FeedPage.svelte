@@ -998,9 +998,8 @@
     max-width: 1040px;
   }
 
-  /* Lines the Library switch up with the cards' own 1rem inset. */
-  /* The Library switch and the Queue's controls share one row; QueueControls
-     swaps its labels for icons when this container gets tight. */
+  /* The Library switch and the Queue's controls share one row, inset like the
+     cards (1rem); QueueControls swaps its labels for icons when this container gets tight. */
   .library-intro-row {
     container: library-row / inline-size;
     display: flex;

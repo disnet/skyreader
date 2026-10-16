@@ -153,5 +153,10 @@
       padding-right: 1.75rem;
       color: transparent;
     }
+
+    /* The open list inherits the select's colour on some platforms. */
+    .sort option {
+      color: var(--color-text);
+    }
   }
 </style>
