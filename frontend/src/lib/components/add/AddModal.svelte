@@ -14,19 +14,23 @@
   import AddHandlePanel from './AddHandlePanel.svelte';
   import NewsletterPanel from './NewsletterPanel.svelte';
   import SaveLinkPanel from './SaveLinkPanel.svelte';
+  import UploadFilePanel from './UploadFilePanel.svelte';
 
   // The one place anything comes into the reader, reached from every "+".
   // Each tab is a different kind of thing, so each gets its own input rather
   // than one field that guesses: a site (RSS/Atom or standard.site), an
-  // Atmosphere account, newsletters by email, or a single article to keep.
+  // Atmosphere account, newsletters by email, a single article to keep, or a
+  // PDF or EPUB from the reader's device.
   // Panels mount fresh whenever their tab is shown, so a half-finished flow in
   // one tab never leaks into another.
 
-  const TABS: { id: AddTab; label: string; icon: IconName }[] = [
+  // `short` stands in on a phone, where five tabs share a 360px row.
+  const TABS: { id: AddTab; label: string; short?: string; icon: IconName }[] = [
     { id: 'web', label: 'Website', icon: 'rss' },
     { id: 'atmosphere', label: 'Atmosphere', icon: 'at-sign' },
-    { id: 'newsletters', label: 'Newsletter', icon: 'mail' },
-    { id: 'save', label: 'Save a link', icon: 'bookmark' },
+    { id: 'newsletters', label: 'Newsletter', short: 'Email', icon: 'mail' },
+    { id: 'save', label: 'Link', icon: 'bookmark' },
+    { id: 'file', label: 'File', icon: 'file-text' },
   ];
 
   let tab = $derived(sidebarStore.addModalTab);
@@ -75,7 +79,7 @@
   }
 </script>
 
-<Modal {open} onclose={close} title="Add to Skyreader" icon="plus" maxWidth="520px">
+<Modal {open} onclose={close} title="Add to Skyreader" icon="plus" maxWidth="560px">
   {#snippet headerExtra()}
     {#if !auth.isGuest}
       <div class="tabs" role="tablist" aria-label="What to add" tabindex="-1">
@@ -93,7 +97,12 @@
             onkeydown={handleTabKeydown}
           >
             <Icon name={t.icon} size={15} />
-            <span>{t.label}</span>
+            {#if t.short}
+              <span class="label-full">{t.label}</span>
+              <span class="label-short" aria-hidden="true">{t.short}</span>
+            {:else}
+              <span>{t.label}</span>
+            {/if}
           </button>
         {/each}
       </div>
@@ -129,6 +138,8 @@
           <AddHandlePanel onclose={close} {initialValue} />
         {:else if tab === 'newsletters'}
           <NewsletterPanel onclose={close} />
+        {:else if tab === 'file'}
+          <UploadFilePanel onclose={close} />
         {:else}
           <SaveLinkPanel onclose={close} {initialValue} />
         {/if}
@@ -158,10 +169,10 @@
 <ImportOPMLModal open={showImport} onclose={() => (showImport = false)} />
 
 <style>
-  /* Four equal columns: every kind of source is on screen at once, at any width. */
+  /* Equal columns: every kind of source is on screen at once, at any width. */
   .tabs {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(5, 1fr);
     padding: 0 0.75rem;
     margin-bottom: -1px;
   }
@@ -172,7 +183,7 @@
     justify-content: center;
     gap: 0.375rem;
     min-width: 0;
-    padding: 0.5rem 0.625rem 0.625rem;
+    padding: 0.5rem 0.25rem 0.625rem;
     border: none;
     border-bottom: 2px solid transparent;
     background: none;
@@ -184,6 +195,10 @@
     transition:
       color 0.15s,
       border-color 0.15s;
+  }
+
+  .label-short {
+    display: none;
   }
 
   .tab:hover {
@@ -269,12 +284,30 @@
   }
 
   @media (max-width: 480px) {
-    /* Phone: icon over label, so four tabs fit a 360px screen. */
+    /* Phone: icon over label, edge to edge, so five tabs fit a 360px screen. */
+    .tabs {
+      padding: 0;
+    }
+
     .tab {
       flex-direction: column;
       gap: 0.25rem;
-      padding-inline: 0.25rem;
+      padding-inline: 0;
       font-size: var(--text-xs);
+    }
+
+    /* The full label stays for screen readers. */
+    .label-full {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+
+    .label-short {
+      display: inline;
     }
   }
 </style>

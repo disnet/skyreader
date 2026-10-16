@@ -1,8 +1,8 @@
 <script lang="ts">
   // A PDF or EPUB dropped anywhere in the app saves it (Supporter), and opens it
-  // in Saved — the same upload the Add panel's "Upload a file" runs. Listens on
-  // the window, so no surface has to opt in; a surface with its own drop target
-  // (the Add panel) handles the drop first and marks it handled.
+  // in Saved — the same upload the Add panel's File tab runs. Listens on the
+  // window, so no surface has to opt in; a surface with its own drop target
+  // (the File tab) handles the drop first and marks it handled.
   import { goto } from '$app/navigation';
   import { auth } from '$lib/stores/auth.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
@@ -108,8 +108,8 @@
   ondragend={reset}
 />
 
-<!-- The Add panel draws its own target while it's open. -->
-{#if dragging && sidebarStore.addModalTab === null}
+<!-- The File tab draws its own target while it's open. -->
+{#if dragging && sidebarStore.addModalTab !== 'file'}
   <div class="drop-overlay" aria-hidden="true">
     <div class="drop-card">
       {#if canUpload}

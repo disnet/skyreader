@@ -11,7 +11,7 @@ Skyreader reads three kinds of sources:
 
 ## Add a feed
 
-The **+** button (or the **a** key) opens **Add to Skyreader**, with a tab for each kind of thing you can bring in: **Website**, **Atmosphere**, **Newsletter**, and **Save a link**. It reopens on the tab you used last.
+The **+** button (or the **a** key) opens **Add to Skyreader**, with a tab for each kind of thing you can bring in: **Website**, **Atmosphere**, **Newsletter**, **Link** (an article to save), and **File** (a PDF or EPUB to upload). It reopens on the tab you used last.
 
 On **Website**, paste any page URL, or just a domain; Skyreader finds the feeds on that page. One match subscribes you directly, several gives you a picker. When a site publishes both a standard.site publication and an RSS feed, the publication is listed first, since it usually carries the full text.
 
