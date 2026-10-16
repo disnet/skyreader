@@ -89,6 +89,13 @@ export const harnesses: HarnessEntry[] = [
     components: ['SavedReader', 'PagedView'],
   },
   {
+    slug: 'reader-bar',
+    title: 'Reader bar',
+    description:
+      'The desktop reader bar over a saved webpage: resize the window to see where Keep on Shelf fits. ?actions=all crowds the bar; ?shelf=1 starts on the Shelf.',
+    components: ['SavedReader'],
+  },
+  {
     slug: 'collections',
     title: 'Collection picker',
     description:
