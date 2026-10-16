@@ -101,16 +101,8 @@
   // a feed channel, navigating you off the surface entirely.
   let isLinkblogView = $derived(feedViewStore.myLinkblogFilter);
 
-  // Whether the filters have been moved off their starting point, so the Filter
-  // toggle can say so while its toolbar is folded away. A channel's own config
-  // is its starting point; anywhere else it's all sources, no tags, unread only.
-  let filtersChanged = $derived(
-    feedViewStore.activeFilteredView
-      ? feedViewStore.hasUnsavedChanges
-      : feedViewStore.effectiveFilters.sourceMode !== 'all' ||
-          feedViewStore.toolbarTagFilter.length > 0 ||
-          !feedViewStore.showOnlyUnread
-  );
+  // Marks the Filter toggle while its toolbar is folded away.
+  let filtersChanged = $derived(feedViewStore.hasActiveFilters);
 
   let menuItems = $derived.by(() => {
     const items: Array<{
