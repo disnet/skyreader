@@ -36,6 +36,11 @@ export const FULL_BODY_CHARS = 64_000;
  */
 export const BOOK_BODY_CHARS = 600_000;
 const MAX_NOTES_CHARS = 16_000;
+/**
+ * Part of every body version: bump it when htmlToText or stripControlChars
+ * changes what a body extracts to, so kept bodies are re-extracted.
+ */
+const BODY_EXTRACTOR_VERSION = 1;
 
 /** Operator switch, a `sync_state` row: only an explicit '1' turns search on. */
 export const SEARCH_ENABLED_KEY = 'search_enabled';
@@ -549,8 +554,10 @@ export async function buildIndexDocs(
   const kept = new Set<string>();
   for (const d of drafts) {
     const saved = d.saved;
-    if (!saved?.content_chars) continue;
+    // A document's body comes from its record's text, not the save's HTML.
+    if (!saved?.content_chars || d.itemType === 'document') continue;
     const version = [
+      BODY_EXTRACTOR_VERSION,
       saved.id,
       saved.updated_at ?? '',
       saved.content_chars,
@@ -598,6 +605,8 @@ export async function buildIndexDocs(
         ? truncateText(doc.text_content, bodyChars)
         : htmlToText(html, bodyChars);
       body = stripControlChars(bodyText || htmlToText(lead, bodyChars));
+      // Fell back to the lead: the version describes the save's HTML, not this.
+      if (!bodyText) versions.delete(d.key);
     }
 
     upserts.push({

@@ -28,6 +28,7 @@ import {
   buildIndexDocs,
   collectChangedKeys,
   listSavedKeys,
+  type BuildResult,
   type IndexDoc,
   type SyncCursors,
 } from '../services/search-index';
@@ -383,9 +384,7 @@ export class SearchIndex extends DurableObject<Env> {
       if (pending.length > 0) {
         const built = await buildIndexDocs(this.env, did, pending, this.indexedVersion);
         this.ctx.storage.transactionSync(() => {
-          for (const doc of built.upserts) this.upsert(doc);
-          for (const key of built.deletes) this.remove(key);
-          this.setMeta('pending_keys', JSON.stringify(built.deferred));
+          this.setMeta('pending_keys', JSON.stringify(this.apply(built)));
         });
         outcome.upserts += built.upserts.length;
         outcome.deletes += built.deletes.length;
@@ -398,14 +397,13 @@ export class SearchIndex extends DurableObject<Env> {
       if (page.keys.length > 0) {
         const built = await buildIndexDocs(this.env, did, page.keys, this.indexedVersion);
         this.ctx.storage.transactionSync(() => {
-          for (const doc of built.upserts) this.upsert(doc);
-          for (const key of built.deletes) this.remove(key);
-          this.setMeta('pending_keys', JSON.stringify(built.deferred));
+          const again = this.apply(built);
+          this.setMeta('pending_keys', JSON.stringify(again));
           this.setMeta('cursors', JSON.stringify(page.cursors));
+          deferred = again.length;
         });
         outcome.upserts += built.upserts.length;
         outcome.deletes += built.deletes.length;
-        deferred = built.deferred.length;
       } else {
         this.setMeta('cursors', JSON.stringify(page.cursors));
       }
@@ -441,9 +439,7 @@ export class SearchIndex extends DurableObject<Env> {
       // The item may still be read or highlighted, so rebuild rather than delete.
       const built = await buildIndexDocs(this.env, did, stale, this.indexedVersion);
       this.ctx.storage.transactionSync(() => {
-        for (const doc of built.upserts) this.upsert(doc);
-        for (const key of built.deletes) this.remove(key);
-        const pending = new Set([...this.pendingKeys(), ...built.deferred]);
+        const pending = new Set([...this.pendingKeys(), ...this.apply(built)]);
         this.setMeta('pending_keys', JSON.stringify([...pending]));
       });
     }
@@ -452,7 +448,19 @@ export class SearchIndex extends DurableObject<Env> {
     return stale.length;
   }
 
-  private upsert(doc: IndexDoc) {
+  /** Write a build's results. Returns the keys to build again. */
+  private apply(built: BuildResult): string[] {
+    const again = [...built.deferred];
+    for (const doc of built.upserts) if (!this.upsert(doc)) again.push(doc.key);
+    for (const key of built.deletes) this.remove(key);
+    return again;
+  }
+
+  /**
+   * Returns false when the doc can't be written: its text was left unloaded
+   * because the index held it, but the row went away while the build ran.
+   */
+  private upsert(doc: IndexDoc): boolean {
     const touchedAt = Math.max(doc.readAt ?? 0, doc.savedAt ?? 0, doc.highlightedAt ?? 0);
     // The body isn't read here: for a book it's megabytes, and most upserts
     // (a read, a highlight) don't touch it.
@@ -465,7 +473,9 @@ export class SearchIndex extends DurableObject<Env> {
       .toArray()[0];
 
     if (!existing) {
-      const body = doc.body ?? '';
+      // Writing an empty body under the matching version would keep it empty for good.
+      if (doc.body === null) return false;
+      const body = doc.body;
       const id = this.sql
         .exec(
           `INSERT INTO docs (item_key, item_type, url, feed_url, feed_title, title, kinds,
@@ -498,7 +508,7 @@ export class SearchIndex extends DurableObject<Env> {
       );
       this.writePassages(id, body);
       this.writeNotes(id, doc.notes);
-      return;
+      return true;
     }
 
     const id = existing.id as number;
@@ -562,6 +572,7 @@ export class SearchIndex extends DurableObject<Env> {
       }
     }
     this.writeNotes(id, doc.notes);
+    return true;
   }
 
   /**

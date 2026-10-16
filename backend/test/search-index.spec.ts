@@ -596,6 +596,50 @@ describe('GET /api/search', () => {
     await expectIndexConsistent(user);
   });
 
+  it('builds kept text again when its row went away during the build', async () => {
+    const user = await createUser();
+    await save(user, {
+      rkey: '3ksavedgone0001',
+      url: 'https://books.example/gone.pdf',
+      title: 'A vanishing report',
+      content: '<p>The appendix covers Svalbard in detail.</p>',
+      contentType: 'pdf',
+    });
+    const key = `at://${user.did}/app.skyreader.feed.saved/3ksavedgone0001`;
+    const first = await buildIndexDocs(env, user.did, [key]);
+    const version = first.upserts[0].bodyVersion;
+    // Built as though the index held the text, then written to an index that doesn't.
+    const kept = await buildIndexDocs(env, user.did, [key], () => version);
+    expect(kept.upserts[0].body).toBeNull();
+    await runInDurableObject(searchIndexStub(env, user.did), (instance, state) => {
+      const apply = (instance as unknown as { apply(b: typeof kept): string[] }).apply.bind(
+        instance
+      );
+      expect(apply(kept)).toEqual([key]);
+      expect(state.storage.sql.exec(`SELECT count(*) AS n FROM docs`).one().n).toBe(0);
+    });
+    expect((await search(user, 'svalbard')).total).toBe(1);
+  });
+
+  it('versions only text built from the save itself', async () => {
+    const user = await createUser();
+    // Extracts to nothing, so the body falls back to the description.
+    await save(user, {
+      rkey: '3ksavedlead0001',
+      url: 'https://blog.example/lead',
+      title: 'Only a lead',
+      content: '<script>tracking()</script>',
+    });
+    await env.DB.prepare(`UPDATE saved_articles SET description = 'About walruses' WHERE rkey = ?`)
+      .bind('3ksavedlead0001')
+      .run();
+    const built = await buildIndexDocs(env, user.did, [
+      `at://${user.did}/app.skyreader.feed.saved/3ksavedlead0001`,
+    ]);
+    expect(built.upserts[0].body).toContain('walruses');
+    expect(built.upserts[0].bodyVersion).toBeNull();
+  });
+
   it('ranks an item matched partly through a note on its own text too', async () => {
     const user = await createUser();
     await save(user, {
