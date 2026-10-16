@@ -32,6 +32,8 @@
   import SavedListView from '$lib/components/feed/SavedListView.svelte';
   import SavedSearchBar from '$lib/components/feed/SavedSearchBar.svelte';
   import EditFeedModal from '$lib/components/EditFeedModal.svelte';
+  import FeedErrorNotice from '$lib/components/feed/FeedErrorNotice.svelte';
+  import { feedStatusStore } from '$lib/stores/feedStatus.svelte';
   import MobileBottomBar from '$lib/components/feed/MobileBottomBar.svelte';
   import MobileFeedSwitcher from '$lib/components/feed/MobileFeedSwitcher.svelte';
   import { perfBegin, PERF_SHEET_OPEN } from '$lib/utils/perfMarks';
@@ -241,6 +243,14 @@
       return sharerProfile?.displayName || sharerProfile?.handle || 'Articles';
     }
     return 'Feeds';
+  });
+
+  // The crawler's error for the single feed being viewed (e.g. the site blocks
+  // the fetcher), so a broken feed says so here, not only in Manage Sources.
+  let feedErrorDetails = $derived.by(() => {
+    if (mode === 'linkblog' || !feedViewStore.feedFilter) return null;
+    const feedUrl = subscriptionsStore.byId.get(parseInt(feedViewStore.feedFilter))?.feedUrl;
+    return feedUrl ? feedStatusStore.getErrorDetails(feedUrl) : null;
   });
 
   // Get unread count for the current view
@@ -721,6 +731,10 @@
         <SavedSearchBar />
       {/if}
 
+      {#if feedErrorDetails && !readerOpen}
+        <FeedErrorNotice errorDetails={feedErrorDetails} />
+      {/if}
+
       <PullToRefresh
         onRefresh={handleRefreshWithToast}
         disabled={!syncStore.isOnline || appManager.isRefreshing}
@@ -817,7 +831,9 @@
               />
             {/if}
           {:else if feedViewStore.feedFilter}
-            {#if feedViewStore.showOnlyUnread}
+            {#if feedErrorDetails}
+              <!-- The error notice above already explains why it's empty. -->
+            {:else if feedViewStore.showOnlyUnread}
               <EmptyState
                 title="No unread articles"
                 description="You're all caught up on this feed"
