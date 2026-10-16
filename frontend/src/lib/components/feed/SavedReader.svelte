@@ -566,6 +566,41 @@
     if (shelfSave) shelfStore.openPicker(shelfSave);
   }
 
+  // The bar offers Keep on Shelf as its own button only when there's room for
+  // it beside the title slot; otherwise it stays in the ⋯ menu alone. A button
+  // that doesn't fit is taken out of flow but still rendered, so its width can
+  // be measured without the bar flickering between the two layouts.
+  const SHELF_MIN_TITLE_ROOM = 160;
+  let headerBarEl = $state<HTMLDivElement | undefined>(undefined);
+  let actionsLeftEl = $state<HTMLDivElement | undefined>(undefined);
+  let actionsRightEl = $state<HTMLDivElement | undefined>(undefined);
+  let shelfBtnEl = $state<HTMLButtonElement | undefined>(undefined);
+  let shelfBtnFits = $state(false);
+
+  $effect(() => {
+    const bar = headerBarEl;
+    const left = actionsLeftEl;
+    const right = actionsRightEl;
+    const btn = shelfBtnEl;
+    if (!bar || !left || !right || !btn) return;
+    const measure = () => {
+      const barStyle = getComputedStyle(bar);
+      const inner =
+        bar.clientWidth - parseFloat(barStyle.paddingLeft) - parseFloat(barStyle.paddingRight);
+      const barGap = parseFloat(barStyle.columnGap) || 0;
+      const rightGap = parseFloat(getComputedStyle(right).columnGap) || 0;
+      const btnWidth = btn.offsetWidth;
+      const inFlow = getComputedStyle(btn).position !== 'absolute';
+      const rightWithout = right.offsetWidth - (inFlow ? btnWidth + rightGap : 0);
+      const room = inner - left.offsetWidth - rightWithout - btnWidth - rightGap - 2 * barGap;
+      shelfBtnFits = room >= SHELF_MIN_TITLE_ROOM;
+    };
+    const observer = new ResizeObserver(measure);
+    for (const el of [bar, left, right, btn]) observer.observe(el);
+    measure();
+    return () => observer.disconnect();
+  });
+
   // ── Share from the reader chrome ────────────────────────────────────────────
   // A share control lives in the bar (desktop and mobile) so sharing is in
   // reach at any scroll position — and on any page in paged mode — instead of
@@ -1269,8 +1304,8 @@
        the reading column, so it frames the page identically in scroll and paged
        mode (which use different content widths). -->
   <header class="reader-header desktop-only" class:hidden={headerHidden} bind:this={headerRef}>
-    <div class="reader-header-bar">
-      <div class="reader-actions-left">
+    <div class="reader-header-bar" bind:this={headerBarEl}>
+      <div class="reader-actions-left" bind:this={actionsLeftEl}>
         <button class="action-btn" onclick={onClose} title="Back (Escape)">
           <Icon name="arrow-left" size={16} />
           <span class="action-label">Back</span>
@@ -1298,7 +1333,7 @@
         {/if}
       </div>
 
-      <div class="reader-actions-right">
+      <div class="reader-actions-right" bind:this={actionsRightEl}>
         <button
           class="action-btn"
           class:active={styleMenuOpen}
@@ -1374,6 +1409,23 @@
           >
             <Icon name="bookmark" size={16} />
             <span class="action-label">{isSaved ? 'Unsave' : 'Save'}</span>
+          </button>
+        {/if}
+
+        {#if shelfSave}
+          <button
+            class="action-btn"
+            class:active={onShelf}
+            class:unfit={!shelfBtnFits}
+            aria-pressed={onShelf}
+            aria-hidden={!shelfBtnFits}
+            tabindex={shelfBtnFits ? undefined : -1}
+            onclick={toggleShelf}
+            title={onShelf ? 'Take off Shelf' : 'Keep on Shelf'}
+            bind:this={shelfBtnEl}
+          >
+            <Icon name="shelf" size={16} />
+            <span class="action-label">{onShelf ? 'On Shelf' : 'Keep on Shelf'}</span>
           </button>
         {/if}
 
@@ -2160,6 +2212,15 @@
   .action-btn.active:disabled {
     background: none;
     color: var(--color-primary);
+  }
+
+  /* No room in the bar: out of flow and unseen, but still laid out so its
+     width can be measured (see shelfBtnFits). */
+  .action-btn.unfit {
+    position: absolute;
+    right: 0;
+    visibility: hidden;
+    pointer-events: none;
   }
 
   .overflow-menu-wrapper {
