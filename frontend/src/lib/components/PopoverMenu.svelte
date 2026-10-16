@@ -205,7 +205,11 @@
 
   .menu-dropdown {
     position: absolute;
+    /* Size to the labels, not the 32px trigger wrapper it's positioned in,
+       which otherwise squeezes it to min-width and wraps every label. */
+    width: max-content;
     min-width: 140px;
+    max-width: calc(100vw - 16px);
     background: var(--color-bg);
     border: 1px solid var(--color-border);
     border-radius: 8px;
