@@ -21,6 +21,8 @@
 //   - Crawl-delay is honoured per host up to MAX_CRAWL_DELAY_MS, and a fetch
 //     whose turn is further off than the caller's patience is deferred to the
 //     next crawl cycle rather than slept on (see reserveSlot).
+//   - A short list of public feed endpoints is exempt from Disallow (see
+//     isExemptFeedEndpoint). Crawl-delay still applies to them.
 import { safeFetch } from './ssrf-guard';
 
 export interface RobotsRule {
@@ -61,6 +63,23 @@ const DEFAULT_MAX_ENTRIES = 5000;
 // slot, and anything above it is almost always a typo or a "go away" — which
 // robots.txt already has a proper spelling for (Disallow).
 export const MAX_CRAWL_DELAY_MS = 60 * 1000;
+
+// Public feed endpoints whose host disallows them for every crawler, aimed at
+// search indexing rather than feed readers: the site publishes and links these
+// feeds for people to subscribe to, and every mainstream reader polls them.
+// Each one is here because a reader subscribed to it, so we treat the Disallow
+// the way Google's Feedfetcher does for user-subscribed feeds. Keep this list
+// to exact, known feed paths; it is not a general robots.txt bypass.
+const EXEMPT_FEED_ENDPOINTS: ReadonlyArray<{ hosts: readonly string[]; path: string }> = [
+  // YouTube channel/playlist/user feeds: /feeds/videos.xml?channel_id=… etc.
+  // youtube.com/robots.txt has `Disallow: /feeds/videos.xml` under `*`.
+  { hosts: ['www.youtube.com', 'youtube.com', 'm.youtube.com'], path: '/feeds/videos.xml' },
+];
+
+export function isExemptFeedEndpoint(url: URL): boolean {
+  const host = url.hostname.toLowerCase();
+  return EXEMPT_FEED_ENDPOINTS.some((e) => e.path === url.pathname && e.hosts.includes(host));
+}
 
 function stripComment(line: string): string {
   const hash = line.indexOf('#');
@@ -279,7 +298,8 @@ export class RobotsPolicy {
       return { allowed: true, crawlDelayMs: 0 };
     }
     const entry = await this.entryFor(parsed.origin);
-    const verdict = evaluatePath(entry.group, robotsPathOf(parsed));
+    let verdict = evaluatePath(entry.group, robotsPathOf(parsed));
+    if (!verdict.allowed && isExemptFeedEndpoint(parsed)) verdict = { allowed: true };
     const delaySeconds = entry.group?.crawlDelaySeconds ?? 0;
     const crawlDelayMs = Math.min(Math.max(0, delaySeconds) * 1000, MAX_CRAWL_DELAY_MS);
     return { ...verdict, crawlDelayMs };

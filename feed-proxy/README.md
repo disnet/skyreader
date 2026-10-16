@@ -392,6 +392,13 @@ typed a site into Subscribe). Deliberately lenient: an _unavailable_ robots.txt
 (5xx, timeout) is treated as no restrictions and re-probed after an hour, where the
 RFC would allow assuming a full disallow.
 
+A short list of public feed endpoints is exempt from `Disallow` (Crawl-delay still
+applies): sites that publish feeds for readers but disallow the path for every
+crawler, aimed at search indexing. Today that's YouTube's `/feeds/videos.xml`
+(`isExemptFeedEndpoint` in `src/robots.ts`). Every crawled feed is one a reader
+subscribed to, the same grounds Google's Feedfetcher uses. Keep the list to exact
+feed paths.
+
 ## Ingest push (crawler mode)
 
 With `INGEST_URL` set, this proxy stops being a read path for the reader and becomes the crawler
