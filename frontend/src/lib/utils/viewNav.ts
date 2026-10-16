@@ -9,6 +9,11 @@ export const SAVED_PATH = '/saved';
 /** The Library's other half: Queue is `SAVED_PATH`, the Shelf is this. */
 export const SHELF_PATH = '/shelf';
 
+/** One Shelf collection. */
+export function collectionPath(id: string): string {
+  return `${SHELF_PATH}?collection=${encodeURIComponent(id)}`;
+}
+
 /** A single subscription's feed view. */
 export function feedPath(id: string | number): string {
   return `${FEEDS_PATH}?feed=${id}`;

@@ -57,7 +57,7 @@ One thing to know before turning it on: **backing publishes your saves publicly*
 
 ## Your Library: Queue and Shelf
 
-Everything you save is in your **Library**, which you can read two ways. Switch between them with **Queue** and **Shelf** at the top of either, or in the sidebar.
+Everything you save is in your **Library**, which you can read two ways. **Library** in the sidebar opens the Queue; switch between them with **Queue** and **Shelf** at the top of either.
 
 - The **Queue** is what to read next, newest first. Read something, choose **Archive**, and it moves from the inbox to the archive.
 - The **Shelf** is what you keep and come back to, like books, papers, and references. Finishing something doesn't take it off.
@@ -72,7 +72,7 @@ The Shelf opens on **Continue reading**, the things you're partway through. Belo
 
 ### Collections
 
-Collections group what's on your Shelf, like a course's readings or a project's sources. Create one with **New collection**, then add items with **Add to collection**, from their **⋯** menu in the Queue or on the Shelf, or from the reader's **⋯** menu. An item can be in more than one collection. A collection keeps its own order (**Move up** and **Move down** in the item menu) and can carry a short description.
+Collections group what's on your Shelf, like a course's readings or a project's sources. Create one with **New collection**, then add items with **Add to collection**, from their **⋯** menu in the Queue or on the Shelf, or from the reader's **⋯** menu. An item can be in more than one collection. A collection keeps its own order (**Move up** and **Move down** in the item menu) and can carry a short description. Your collections are also listed under **Library** in the sidebar and the feed switcher, so you can open one from anywhere.
 
 Collections are private to Skyreader and need an account and a connection.
 

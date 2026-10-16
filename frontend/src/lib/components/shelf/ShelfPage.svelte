@@ -82,10 +82,21 @@
   let sortChoice = $state<ShelfSort | null>(null);
   let sort = $derived<ShelfSort>(sortChoice ?? (collection ? 'collection' : 'activity'));
 
+  // A different collection starts fresh, whatever moved the URL: the chips here,
+  // the sidebar or switcher's Library children, or Back. `prevCollectionId` is a
+  // plain variable so this effect doesn't track its own edge state.
+  let prevCollectionId: string | null | undefined;
+  $effect(() => {
+    const id = collectionId;
+    if (prevCollectionId !== undefined && id !== prevCollectionId) {
+      sortChoice = null;
+      editing = false;
+      loadedCount = PAGE_SIZE;
+    }
+    prevCollectionId = id;
+  });
+
   function selectCollection(id: string | null) {
-    sortChoice = null;
-    editing = false;
-    loadedCount = PAGE_SIZE;
     const url = new URL(page.url);
     url.searchParams.delete('read');
     if (id) url.searchParams.set('collection', id);

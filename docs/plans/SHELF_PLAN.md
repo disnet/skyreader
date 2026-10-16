@@ -103,8 +103,9 @@ Three surfaces showed the same saves (Home, Saved, Shelf) and nothing said how t
 Saved and Shelf became the two halves of one **Library**:
 
 - **Queue** is the new name for Saved (`/saved`, unchanged route): Inbox / Archive, newest first.
-  **Shelf** keeps `/shelf`. The sidebar groups both under a "Library" caption; saved channels nest
-  under Queue.
+  **Shelf** keeps `/shelf`. The sidebar, the header dropdown and the mobile switcher show one
+  **Library** row (it opens the Queue, and stays lit on either half), with the Shelf's collections
+  and then the Queue's saved channels nested under it.
 - **`LibraryIntro`** (`components/library/`) opens both pages: a Queue | Shelf switch and one line
   on what that half is for. It sits in the page body, not the desktop header, so phones get it too.
 - **State shows on the item.** A Queue card that's also on the Shelf says **On Shelf**; a Shelf item
@@ -133,7 +134,8 @@ Ordered by how much they add to "reading should add up":
 1. **Item hub page.** A reference's own page: metadata, every highlight and note grouped by
    chapter/page, resume. This is where the Shelf becomes sensemaking rather than storage.
 2. ~~**Keep from the reader.**~~ Shipped: the reader bar's Keep on Shelf button and ⋯ menu.
-3. **Collections in the sidebar** (nested under Shelf, like saved channels), and drag to reorder.
+3. ~~**Collections in the sidebar.**~~ Shipped: nested under Library, beside the saved channels.
+   Drag to reorder is still to do.
 4. **Better metadata.** ISBN, authors, year from EPUB OPF metadata, and DOI/title/authors from PDF
    info, with author/year sorting that doesn't depend on the extractor's byline. EPUB cover images.
 5. **Share a collection.** Export to Semble/Margin (public) or open as a reading room. Uploads have no

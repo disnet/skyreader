@@ -2,7 +2,15 @@
   import { isArchiveFeedSource } from '$lib/utils/newsletters';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
-  import { channelPath, feedPath, categoryPath, FEEDS_PATH, SAVED_PATH } from '$lib/utils/viewNav';
+  import {
+    channelPath,
+    collectionPath,
+    feedPath,
+    categoryPath,
+    FEEDS_PATH,
+    SAVED_PATH,
+    SHELF_PATH,
+  } from '$lib/utils/viewNav';
   import { auth } from '$lib/stores/auth.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
@@ -11,6 +19,7 @@
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
+  import { shelfStore } from '$lib/stores/shelf.svelte';
   import { highlightReviewStore } from '$lib/stores/highlightReview.svelte';
   import { syncAutoRuleChannels } from '$lib/stores/channelAutoUpdate.svelte';
   import { onMount, onDestroy } from 'svelte';
@@ -21,6 +30,7 @@
   import AddModal from './add/AddModal.svelte';
   import NavSection from './sidebar/NavSection.svelte';
   import ViewItem from './sidebar/ViewItem.svelte';
+  import CollectionItem from './sidebar/CollectionItem.svelte';
   import ContextMenu from './sidebar/ContextMenu.svelte';
   import FeedItem from './sidebar/FeedItem.svelte';
   import Icon from './Icon.svelte';
@@ -122,6 +132,15 @@
     }
     return { type: 'none' as const };
   });
+
+  // The open Shelf collection, if any. The Library row is lit on either half of
+  // the Library unless one of its children (a collection or channel) is.
+  let activeCollectionId = $derived(
+    $page.url.pathname === SHELF_PATH ? $page.url.searchParams.get('collection') : null
+  );
+  let libraryActive = $derived(
+    currentFilter().type === 'saved' || ($page.url.pathname === SHELF_PATH && !activeCollectionId)
+  );
 
   // View context menu state
   let viewContextMenu = $state<{ x: number; y: number; viewId: number } | null>(null);
@@ -395,15 +414,15 @@
       {/if}
     </div>
 
-    <!-- Library: the Queue (top-level saved filter + nested saved channels, both
-         local-only for a guest; channels migrate to the account at sign-in) and
-         the Shelf — two ways of reading the same saves (LibraryIntro). -->
-    <div class="nav-section-label">Library</div>
+    <!-- Library: the saves, read two ways (LibraryIntro switches between the
+         Queue and the Shelf). The row opens the Queue and stays lit on either
+         half; under it, the Shelf's collections (account-only) and the Queue's
+         channels (local for a guest; they migrate to the account at sign-in). -->
     <div class="nav-group" class:expanded={sidebarStore.expandedSections.saved}>
-      <div class="nav-row" class:active={currentFilter().type === 'saved'}>
+      <div class="nav-row" class:active={libraryActive}>
         <button class="nav-row-main" onclick={() => selectFilter('saved')}>
-          <span class="nav-icon"><Icon name="bookmark" /></span>
-          <span class="nav-label">Queue</span>
+          <span class="nav-icon"><Icon name="shelf" /></span>
+          <span class="nav-label">Library</span>
         </button>
         {#if itemLabelsStore.inboxCount > 0}
           <span class="nav-count">{itemLabelsStore.inboxCount}</span>
@@ -414,7 +433,7 @@
             e.stopPropagation();
             sidebarStore.toggleSection('saved');
           }}
-          aria-label="Toggle Queue channels"
+          aria-label="Toggle Library collections and channels"
         >
           <Icon
             name={sidebarStore.expandedSections.saved ? 'chevron-down' : 'chevron-right'}
@@ -425,6 +444,16 @@
       </div>
       {#if sidebarStore.expandedSections.saved}
         <div class="nav-children">
+          {#if !auth.isGuest}
+            {#each shelfStore.collections as c (c.id)}
+              <CollectionItem
+                name={c.name}
+                href={collectionPath(c.id)}
+                isActive={activeCollectionId === c.id}
+                onSelect={() => sidebarStore.closeMobile()}
+              />
+            {/each}
+          {/if}
           {#each savedChannels as view (view.uuid)}
             <ViewItem
               {view}
@@ -453,18 +482,6 @@
         </div>
       {/if}
     </div>
-
-    <!-- Shelf: the Library's reference half — books, PDFs and whatever else the
-         reader keeps (local for a guest; collections are account-only). -->
-    <a
-      href="/shelf"
-      class="nav-item nav-link"
-      class:active={$page.url.pathname === '/shelf'}
-      onclick={() => sidebarStore.closeMobile()}
-    >
-      <span class="nav-icon"><Icon name="shelf" /></span>
-      <span class="nav-label">Shelf</span>
-    </a>
 
     <!-- Bottom nav. The linkblog entry hides once the user deletes their
          linkblog; the rest of the nav is unrelated to it and always shows. -->
@@ -1005,16 +1022,6 @@
 
   .nav-link {
     text-decoration: none;
-  }
-
-  /* Names the Queue + Shelf pair. Quiet: a caption, not a heading to click. */
-  .nav-section-label {
-    padding: 0.75rem 0.75rem 0.25rem;
-    font-size: var(--text-2xs);
-    font-weight: 500;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-    color: var(--color-text-secondary);
   }
 
   .nav-item.active {

@@ -4,8 +4,8 @@ import { seedSubscription, seedFeedItems, cleanupFeedItems } from './seed';
 import type { TestUser } from './seed';
 
 /** Create a channel via a nav group's New channel button and the modal form. */
-async function createChannel(page: Page, name: string, row: 'Feeds' | 'Queue' = 'Feeds') {
-  // Channels live under the Feeds and Queue nav groups, each ending in New channel.
+async function createChannel(page: Page, name: string, row: 'Feeds' | 'Library' = 'Feeds') {
+  // Channels live under the Feeds and Library nav groups, each ending in New channel.
   const navGroup = page.locator('.nav-group', {
     has: page.locator('.nav-row .nav-label', { hasText: row }),
   });
@@ -94,7 +94,7 @@ test.describe('Channels', () => {
     // the header. That button used to resolve the channel with
     // `parseInt(viewFilter)` — but `viewFilter` is the uuid, so it passed NaN
     // and the editor opened blank, with its Save writing to no row at all.
-    await createChannel(authedPage, 'Edit From Header', 'Queue');
+    await createChannel(authedPage, 'Edit From Header', 'Library');
     await expect(authedPage).toHaveURL(/\/saved\?view=/);
 
     await authedPage.getByRole('button', { name: 'Edit channel' }).click();

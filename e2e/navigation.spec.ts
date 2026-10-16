@@ -5,14 +5,13 @@ test.describe('Navigation', () => {
     await expect(authedPage.locator('.nav-label', { hasText: 'Feeds' })).toBeVisible({
       timeout: 15_000,
     });
-    await expect(authedPage.locator('.nav-label', { hasText: 'Queue' })).toBeVisible();
-    await expect(authedPage.locator('.nav-label', { hasText: 'Shelf' })).toBeVisible();
+    await expect(authedPage.locator('.nav-label', { hasText: 'Library' })).toBeVisible();
     await expect(authedPage.locator('.nav-label', { hasText: 'Manage Sources' })).toBeVisible();
     await expect(authedPage.locator('.nav-label', { hasText: 'Settings' })).toBeVisible();
   });
 
-  test('clicking Queue opens the saved list', async ({ authedPage }) => {
-    await authedPage.locator('.nav-label', { hasText: 'Queue' }).click();
+  test('clicking Library opens the Queue', async ({ authedPage }) => {
+    await authedPage.locator('.nav-label', { hasText: 'Library' }).click();
     await expect(authedPage).toHaveURL(/\/saved/);
   });
 
