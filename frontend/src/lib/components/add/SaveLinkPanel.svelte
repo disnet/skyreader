@@ -9,6 +9,7 @@
   import type { ScopeFeature } from '$lib/types';
   import LimitNotice from '$lib/components/LimitNotice.svelte';
   import { saveLimitLine } from '$lib/utils/limitCopy';
+  import { checkUpload, uploadLimitsMb } from '$lib/utils/fileUpload';
 
   interface Props {
     /** Called once the save landed, just before the panel navigates to it. */
@@ -29,10 +30,7 @@
 
   // PDFs and EPUBs (Supporter): uploaded here, or saved by pasting a link above.
   let canUploadPdf = $derived(Boolean(auth.user?.limits?.pdfSaves));
-  let maxPdfBytes = $derived(auth.user?.limits?.maxPdfUploadBytes ?? 10 * 1024 * 1024);
-  let maxPdfMb = $derived(Math.round(maxPdfBytes / (1024 * 1024)));
-  let maxEpubBytes = $derived(auth.user?.limits?.maxEpubUploadBytes ?? 30 * 1024 * 1024);
-  let maxEpubMb = $derived(Math.round(maxEpubBytes / (1024 * 1024)));
+  let maxMb = $derived(uploadLimitsMb(auth.user?.limits));
   let fileInputEl = $state<HTMLInputElement | null>(null);
   let uploading = $state(false);
   let dragging = $state(false);
@@ -86,31 +84,17 @@
     savesStore.pendingOpenKey = key;
   }
 
-  function fileKind(file: File): 'pdf' | 'epub' | null {
-    if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) return 'pdf';
-    if (file.type === 'application/epub+zip' || /\.epub$/i.test(file.name)) return 'epub';
-    return null;
-  }
-
   async function uploadFile(file: File) {
     error = null;
     limitInfo = null;
-    const kind = fileKind(file);
-    if (!kind) {
-      error = "That file isn't a PDF or an EPUB.";
-      return;
-    }
-    if (kind === 'pdf' && file.size > maxPdfBytes) {
-      error = `PDFs up to ${maxPdfMb} MB can be uploaded.`;
-      return;
-    }
-    if (kind === 'epub' && file.size > maxEpubBytes) {
-      error = `EPUBs up to ${maxEpubMb} MB can be uploaded.`;
+    const checked = checkUpload(file, auth.user?.limits);
+    if ('error' in checked) {
+      error = checked.error;
       return;
     }
     uploading = true;
     try {
-      const saved = await savesStore.uploadFile(file, kind);
+      const saved = await savesStore.uploadFile(file, checked.kind);
       await openSaved(saved.uri || saved.rkey);
     } catch (err) {
       if (err instanceof ScopeUpgradeError) {
@@ -223,7 +207,7 @@
             type="button"
             onclick={() => fileInputEl?.click()}
             disabled={savesStore.saving || uploading}
-            title="PDFs up to {maxPdfMb} MB, EPUBs up to {maxEpubMb} MB. You can also drop one here."
+            title="PDFs up to {maxMb.pdf} MB, EPUBs up to {maxMb.epub} MB. You can also drop one anywhere."
           >
             <Icon name="file-text" size={15} />
             {uploading ? 'Reading…' : 'Upload a file'}

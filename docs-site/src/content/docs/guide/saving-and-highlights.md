@@ -23,7 +23,7 @@ If the article is already in Semble or Margin, the picker opens on the collectio
 
 ### Saving a PDF
 
-PDFs are a [Supporter](/supporter/) feature. Save a link to a PDF (a paper, a report) the same way you save an article, or upload one from your device: open **+ → Save a link**, then **Upload a PDF**, or drop the file onto that panel. Skyreader keeps its text, set as ordinary paragraphs, so you can read, highlight, take notes, and search it like anything else you save.
+PDFs are a [Supporter](/supporter/) feature. Save a link to a PDF (a paper, a report) the same way you save an article, or upload one from your device: open **+ → Save a link**, then **Upload a file**, or drop the file anywhere in Skyreader. Skyreader keeps its text, set as ordinary paragraphs, so you can read, highlight, take notes, and search it like anything else you save.
 
 A saved PDF opens as text, set for reading. For figures, tables, equations, and layout, switch the toggle under the title from **Text** to **Original** to see the pages as printed. Highlight and take notes on either: a passage you mark in one is marked in the other. The PDF's own links work there too: a reference or a contents entry jumps to its page, and the arrow beside the page number takes you back. Skyreader remembers which you prefer and the zoom you left each PDF at, and Original opens where you stopped reading, on any of your devices. In Original, the text-size keys zoom the pages: **Shift +** and **Shift -**, with **Shift 0** to fit the width. Skyreader keeps the original of every PDF you save, by link or upload, so it stays readable even if its site takes it down.
 
@@ -37,7 +37,7 @@ Uploaded PDFs are private to you. They stay on Skyreader, and aren't added to a 
 
 ### Saving an EPUB
 
-EPUBs are a [Supporter](/supporter/) feature too. Save a link to an EPUB, or upload one: open **+ → Save a link**, then **Upload a file**, or drop the book onto that panel. Skyreader keeps the book's text, chapter by chapter, so you can read, highlight, take notes, and search it like anything else you save. A book opens in pages; switch to scrolling and Skyreader remembers that for the book.
+EPUBs are a [Supporter](/supporter/) feature too. Save a link to an EPUB, or upload one: open **+ → Save a link**, then **Upload a file**, or drop the book anywhere in Skyreader. Skyreader keeps the book's text, chapter by chapter, so you can read, highlight, take notes, and search it like anything else you save. A book opens in pages; switch to scrolling and Skyreader remembers that for the book.
 
 Skyreader keeps the words and pictures, not the publisher's design. A book opens on its cover, which also stands for it on your Shelf. The book's own links work: a footnote marker or a chapter's contents takes you to that place in the text. Skyreader keeps the original of every EPUB you save, by link or upload; its pictures are read from it. If your storage is full when you save a book by link, its text still comes through, but its pictures wait until there's room. A book with DRM can't be read. A very long book keeps its first chapters, and says so at the end.
 

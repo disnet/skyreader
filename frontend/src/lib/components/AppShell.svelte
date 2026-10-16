@@ -38,6 +38,7 @@
   import SembleConnectionDialog from '$lib/components/feed/SembleConnectionDialog.svelte';
   import SyncLimitBanner from '$lib/components/SyncLimitBanner.svelte';
   import SearchOverlay from '$lib/components/search/SearchOverlay.svelte';
+  import GlobalFileDrop from '$lib/components/GlobalFileDrop.svelte';
 
   let { children }: { children: Snippet } = $props();
 
@@ -503,6 +504,7 @@
 <IntegrationSaveDialog />
 <ShelfCollectionPicker />
 <SembleConnectionDialog />
+<GlobalFileDrop />
 
 {#if searchStore.isOpen}
   <SearchOverlay />
