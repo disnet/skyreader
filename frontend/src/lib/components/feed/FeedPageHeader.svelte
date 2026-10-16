@@ -176,8 +176,8 @@
       <div class="control-right">
         {#if isSavedView}
           <div class="view-toggle" role="group" aria-label="Saved view">
-            <!-- Inbox / Archive and the sort live in the page body
-                 (library/QueueControls), laid out like the Shelf's. -->
+            <!-- Inbox / Archive and the sort share one menu in the page body
+                 (library/QueueControls). -->
             <button
               class:active={savedSearchStore.open || savedSearchStore.active}
               onclick={() => savedSearchStore.toggle()}
