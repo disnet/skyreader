@@ -198,6 +198,30 @@ export function failedSaveBody(url: string, reason: SaveFetchFailure): string {
   ].join('\n');
 }
 
+const LINK_TITLE_MAX = 80;
+
+/**
+ * A title for a save kept as a link only, when nothing better is known: the URL
+ * without its scheme, `www.`, query or fragment, cut to a line. Better in a list
+ * than a blank, and far better than whatever a bot check called itself.
+ */
+export function linkTitle(url: string): string {
+  let text = url;
+  try {
+    const u = new URL(url);
+    text = u.hostname.replace(/^www\./, '') + u.pathname.replace(/\/+$/, '');
+  } catch {
+    // Not a URL we can take apart: trim the raw string instead.
+  }
+  try {
+    text = decodeURI(text);
+  } catch {
+    // Malformed escapes: keep it encoded.
+  }
+  const chars = Array.from(text); // by code point, so a surrogate pair isn't split
+  return chars.length > LINK_TITLE_MAX ? `${chars.slice(0, LINK_TITLE_MAX - 1).join('')}…` : text;
+}
+
 /** The line a caller shows once a save kept only the link. */
 export function failedSaveLine(reason: SaveFetchFailure): string {
   if (reason === 'blocked') return `Saved the link only. ${BLOCKED_SAVE_LINE}`;

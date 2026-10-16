@@ -326,7 +326,9 @@ describe('savesStore.saveFromUrl when the article cannot be fetched', () => {
     const saved = await savesStore.saveFromUrl('https://example.com/broken');
 
     expect(saved.fetchFailed).toBe('failed');
-    expect(saved.title).toBeNull();
+    // No title to go on: the trimmed URL stands in rather than a blank.
+    expect(saved.title).toBe('example.com/broken');
+    expect(api.saveFromUrl.mock.calls[0][2].title).toBe('example.com/broken');
     expect(api.saveFromUrl.mock.calls[0][2].content).not.toContain('blocks automated readers');
   });
 

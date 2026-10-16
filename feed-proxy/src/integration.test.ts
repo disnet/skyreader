@@ -8,6 +8,7 @@ import {
   hashFeedBody,
   classifyError,
   describeFetchFailure,
+  isBotCheckPage,
   calculateBackoff,
   FEED_PARSER_VERSION,
   FEED_ITEMS_CAP,
@@ -1108,6 +1109,33 @@ describe('Integration Tests', () => {
     it('falls back to the raw url when it cannot be parsed as a host', () => {
       const { error } = describeFetchFailure(500, 'not-a-url');
       expect(error).toBe('Failed to fetch not-a-url: HTTP 500');
+    });
+  });
+
+  describe('isBotCheckPage', () => {
+    it('recognises the interstitials bot filters serve', () => {
+      for (const title of [
+        'JavaScript is disabled',
+        'Just a moment...',
+        'Just a moment…',
+        'Attention Required! | Cloudflare',
+        'Access Denied',
+        'Are you a robot?',
+        'Pardon Our Interruption',
+        'Enable JavaScript and cookies to continue',
+      ]) {
+        expect(isBotCheckPage({ title, wordCount: 30 })).toBe(true);
+      }
+    });
+
+    it('leaves real articles alone', () => {
+      expect(
+        isBotCheckPage({ title: 'Why JavaScript is disabled on my phone', wordCount: 30 })
+      ).toBe(false);
+      expect(isBotCheckPage({ title: 'A Piece', wordCount: 30 })).toBe(false);
+      expect(isBotCheckPage({ title: null, wordCount: 0 })).toBe(false);
+      // A long article that happens to share the title is the article.
+      expect(isBotCheckPage({ title: 'Access Denied', wordCount: 2000 })).toBe(false);
     });
   });
 
@@ -3596,6 +3624,33 @@ describe('POST /extract', () => {
     expect(res.status).toBe(200);
     expect(json.blocked).toBe(false);
     expect(json.error).toContain('HTTP 500');
+
+    db.close();
+  });
+
+  // A bot filter that answers 200 with a challenge page is as much a refusal as
+  // a 403: saved as-is, the reader got "JavaScript is disabled" as the title.
+  it('marks a 200 bot-check interstitial as blocked and does not cache it', async () => {
+    const { db, app } = createTestApp();
+    fetchMock = mockFetch(
+      () =>
+        new Response(
+          '<!DOCTYPE html><html><head><title>JavaScript is disabled</title></head><body><p>In order to continue, we need to verify that you are not a robot. This requires JavaScript. Enable JavaScript and then reload the page.</p></body></html>',
+          { headers: { 'Content-Type': 'text/html' } }
+        )
+    );
+
+    const res = await extract(app, 'https://example.com/guarded');
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.blocked).toBe(true);
+    expect(json.error).toContain('blocking automated access');
+    expect(json.title).toBeUndefined();
+    const cached = db
+      .query<{ n: number }, [string]>('SELECT COUNT(*) AS n FROM extract_cache WHERE url_hash = ?')
+      .get(hashUrl('https://example.com/guarded'));
+    expect(cached?.n).toBe(0);
 
     db.close();
   });

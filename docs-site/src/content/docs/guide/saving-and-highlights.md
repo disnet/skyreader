@@ -45,7 +45,7 @@ Limits: an EPUB can be up to 30 MB. EPUBs share the PDF allowances: 200 uploads 
 
 ### When a site won't let Skyreader read it
 
-Some sites refuse automated readers, so Skyreader's servers can't fetch the article even though it opens fine in your browser. The save still goes through: you get the link (and its title, when Skyreader knows it) with a note in place of the text. To get the full text, open the article and save it with the [Chrome](https://chromewebstore.google.com/detail/skyreader/kdefpnnpmajcclfepekgdkcdiklfooed) or [Firefox](https://addons.mozilla.org/firefox/addon/skyreader/) extension, which reads the page you already have open. That replaces the note.
+Some sites refuse automated readers, or show them a bot check instead of the article, so Skyreader's servers can't fetch it even though it opens fine in your browser. The save still goes through: you get the link (titled with the article's title when Skyreader knows it, the address when it doesn't) with a note in place of the text. To get the full text, open the article and save it with the [Chrome](https://chromewebstore.google.com/detail/skyreader/kdefpnnpmajcclfepekgdkcdiklfooed) or [Firefox](https://addons.mozilla.org/firefox/addon/skyreader/) extension, which reads the page you already have open. That replaces the note.
 
 Some pages load their text only once they're open in a browser, so Skyreader's servers find nothing to read. Those saves get the same note, and the extension gets the text the same way.
 

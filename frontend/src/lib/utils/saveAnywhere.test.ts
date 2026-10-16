@@ -19,6 +19,7 @@ import {
   failedSaveLine,
   hasReadableContent,
   isFailedSaveBody,
+  linkTitle,
 } from './saveAnywhere';
 
 const CHROME_USER_AGENT =
@@ -181,5 +182,24 @@ describe("failedSaveBody 'empty'", () => {
     expect(body).toContain("couldn't find the article text");
     expect(body).toContain('Save this page');
     expect(isFailedSaveBody(body)).toBe(true);
+  });
+});
+
+describe('linkTitle', () => {
+  it('drops the scheme, www, query and fragment', () => {
+    expect(linkTitle('https://www.example.com/2026/10/a-piece/?utm_source=x#top')).toBe(
+      'example.com/2026/10/a-piece'
+    );
+  });
+
+  it('is just the host for a site root', () => {
+    expect(linkTitle('https://example.com/')).toBe('example.com');
+  });
+
+  it('decodes escapes and cuts a long path to a line', () => {
+    expect(linkTitle('https://example.com/caf%C3%A9')).toBe('example.com/café');
+    const long = linkTitle(`https://example.com/${'a'.repeat(200)}`);
+    expect(long).toHaveLength(80);
+    expect(long.endsWith('…')).toBe(true);
   });
 });
