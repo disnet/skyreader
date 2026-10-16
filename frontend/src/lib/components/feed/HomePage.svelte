@@ -369,7 +369,12 @@
   // Reading rooms you've joined: one lane per room, its articles as tiles,
   // served from roomsStore's session cache so a repeat Home mount refetches
   // nothing. Account-only — the store no-ops for a guest.
-  onMount(() => void roomsStore.load());
+  onMount(() => {
+    void roomsStore.load();
+    // Collection membership puts a save on the Shelf, so the "From your Shelf" lane
+    // and Continue reading need it even when the Shelf page was never opened.
+    void shelfStore.load();
+  });
 
   function roomReadLabel(item: RoomItem): string | null {
     // The tile's check marker already says "you read this"; the label carries
