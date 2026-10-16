@@ -785,3 +785,71 @@ describe('savesStore.uploadFile', () => {
     expect(saved).toMatchObject({ source: 'upload', contentType: 'epub' });
   });
 });
+
+// A feed save with no body of its own (saved offline, or the stored-body read
+// failed at save time) opened as a `'saved'` row — from Home, say — used to
+// show only its description, while the Saved list, which renders it as its
+// feed article, fell back to the feed's body. getContent now falls back too.
+describe('savesStore.getContent for a feed save with no body', () => {
+  const baseSave: SavedItem = {
+    rkey: 'nobody1',
+    uri: 'at://did:plc:me/app.skyreader.feed.saved/nobody1',
+    url: '',
+    title: 'Weekly letter',
+    author: null,
+    description: 'Preview text',
+    content: null,
+    contentType: 'article',
+    domain: null,
+    image: null,
+    wordCount: null,
+    publishedAt: null,
+    savedAt: new Date().toISOString(),
+    source: 'feed',
+    itemGuid: 'nl-guid',
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    savedRows.clear();
+    articleRows.length = 0;
+    authState.isGuest = false;
+    syncState.isOnline = true;
+    api.getSavedBodies.mockResolvedValue({ bodies: { [baseSave.rkey]: null } });
+  });
+
+  it("reads the feed item's archived body when the save has none", async () => {
+    savedRows.set(baseSave.rkey, { ...baseSave });
+    articleRows.push({
+      id: 9,
+      guid: 'nl-guid',
+      subscriptionId: 7,
+      content: null,
+      contentTruncated: true,
+    });
+    loadStoredBody.mockResolvedValueOnce({ status: 'found', content: '<p>Full letter</p>' });
+
+    expect(await savesStore.getContent(baseSave.rkey)).toBe('<p>Full letter</p>');
+    expect(loadStoredBody).toHaveBeenCalledWith(
+      { id: 9, guid: 'nl-guid', subscriptionId: 7 },
+      'https://news.example/feed',
+      { guest: false }
+    );
+  });
+
+  it("uses the feed item's local body offline", async () => {
+    syncState.isOnline = false;
+    savedRows.set('nobody2', { ...baseSave, rkey: 'nobody2' });
+    articleRows.push({ guid: 'nl-guid', subscriptionId: 7, content: '<p>Local body</p>' });
+
+    expect(await savesStore.getContent('nobody2')).toBe('<p>Local body</p>');
+    expect(api.getSavedBodies).not.toHaveBeenCalled();
+  });
+
+  it('keeps an empty body when the feed item is gone', async () => {
+    savedRows.set('nobody3', { ...baseSave, rkey: 'nobody3', content: '' });
+    api.getSavedBodies.mockResolvedValue({ bodies: {} });
+
+    expect(await savesStore.getContent('nobody3')).toBe('');
+  });
+});
