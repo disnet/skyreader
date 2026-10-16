@@ -366,10 +366,12 @@ select option {
   }
 }
 
-/* iOS Safari zooms the viewport when a focused input is smaller than 16px. */
+/* iOS Safari zooms the viewport when a focused input is smaller than 16px.
+   !important because components size their selects with a class selector,
+   which would otherwise beat this floor. */
 @media (hover: none) and (pointer: coarse) {
   select {
-    font-size: 1rem;
+    font-size: 1rem !important;
   }
 }
 
