@@ -1,8 +1,10 @@
 <script lang="ts">
   // One save on the Shelf, as a cover (grid) or a row (list). The cover is the
-  // save's own image (a book's own cover) when it has one, else its title set as a plain typographic
-  // cover — books and PDFs rarely carry an image, and a placeholder graphic would
-  // be decoration standing in for the text.
+  // save's own image (a book's own cover) when it has one, else a plain typographic
+  // cover: its title over the opening of its own text (a paper's abstract, an
+  // article's summary), fading out down the page, with who wrote it at the foot.
+  // Books and PDFs rarely carry an image, and a placeholder graphic would be
+  // decoration standing in for the text. The text is the cover.
   import Icon from '$lib/components/Icon.svelte';
   import PopoverMenu from '$lib/components/PopoverMenu.svelte';
   import { auth } from '$lib/stores/auth.svelte';
@@ -40,6 +42,15 @@
   let title = $derived(decodeEntities(save.title || '') || save.domain || save.url || 'Untitled');
   let byline = $derived(save.author || save.domain || '');
   let kind = $derived(shelfKind(save));
+  // The save's own summary, unless it only repeats the title.
+  let excerpt = $derived.by(() => {
+    const text = decodeEntities(save.description || '').trim();
+    if (!text) return '';
+    const norm = (t: string) => t.toLowerCase().replace(/\W+/g, '');
+    return norm(text) === norm(title) ? '' : text;
+  });
+  // The cover's foot: a PDF's or book's author, else the article's site.
+  let coverByline = $derived(kind === 'article' ? save.domain || save.author : save.author);
   let percent = $derived(entry.progress === null ? null : Math.round(entry.progress * 100));
   let image = $derived(savedCoverUrl(save));
   let imageFailed = $state(false);
@@ -106,9 +117,10 @@
           onerror={() => (imageFailed = true)}
         />
       {:else}
-        <div class="cover-type" data-kind={kind}>
+        <div class="cover-type" data-kind={kind} class:has-excerpt={!!excerpt}>
           <span class="cover-title">{title}</span>
-          {#if save.author}<span class="cover-author">{save.author}</span>{/if}
+          {#if excerpt}<span class="cover-excerpt">{excerpt}</span>{/if}
+          {#if coverByline}<span class="cover-author">{coverByline}</span>{/if}
         </div>
       {/if}
       {#if percent !== null}
@@ -197,11 +209,15 @@
     height: 100%;
     display: flex;
     flex-direction: column;
-    justify-content: space-between;
     gap: 0.5rem;
     padding: 0.875rem 0.75rem;
     text-align: left;
     box-sizing: border-box;
+  }
+
+  /* A PDF is a printed page: white, like the page it opens to. */
+  .cover-type[data-kind='pdf'] {
+    background: var(--color-bg);
   }
 
   /* A book's spine edge: the one quiet cue that this is a book, not a page. */
@@ -220,9 +236,34 @@
     -webkit-box-orient: vertical;
     overflow: hidden;
     overflow-wrap: anywhere;
+    flex-shrink: 0;
+  }
+
+  /* With text under it, the title steps down so the page has room to start. */
+  .has-excerpt .cover-title {
+    font-size: var(--text-md);
+    -webkit-line-clamp: 4;
+    line-clamp: 4;
+  }
+
+  /* The opening of the save's own text, running off the bottom of the page. */
+  .cover-excerpt {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow: hidden;
+    font-family: var(--font-serif);
+    font-size: var(--text-xs);
+    line-height: var(--leading-normal);
+    color: var(--color-text-secondary);
+    overflow-wrap: anywhere;
+    hyphens: auto;
+    -webkit-mask-image: linear-gradient(to bottom, #000 55%, transparent);
+    mask-image: linear-gradient(to bottom, #000 55%, transparent);
   }
 
   .cover-author {
+    margin-top: auto;
+    flex-shrink: 0;
     font-size: var(--text-xs);
     color: var(--color-text-secondary);
     overflow: hidden;
