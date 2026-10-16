@@ -394,36 +394,38 @@
     {/if}
 
     {#if allEntries.length > 0}
-      <div class="controls">
-        <input
-          class="search"
-          type="search"
-          placeholder="Filter by title or author"
-          bind:value={query}
-          aria-label="Filter the Shelf"
-        />
-        <div class="kinds" role="group" aria-label="Kind">
-          {#each KIND_OPTIONS as option (option.value)}
-            <button
-              class="kind-btn"
-              class:active={kind === option.value}
-              aria-pressed={kind === option.value}
-              onclick={() => (kind = option.value)}>{option.label}</button
-            >
-          {/each}
+      <div class="controls-wrap">
+        <div class="controls">
+          <input
+            class="search"
+            type="search"
+            placeholder="Title or author"
+            bind:value={query}
+            aria-label="Filter the Shelf"
+          />
+          <div class="kinds" role="group" aria-label="Kind">
+            {#each KIND_OPTIONS as option (option.value)}
+              <button
+                class="kind-btn"
+                class:active={kind === option.value}
+                aria-pressed={kind === option.value}
+                onclick={() => (kind = option.value)}>{option.label}</button
+              >
+            {/each}
+          </div>
+          <select
+            class="sort"
+            aria-label="Sort"
+            value={sort}
+            onchange={(e) => (sortChoice = e.currentTarget.value as ShelfSort)}
+          >
+            {#if collection}<option value="collection">Collection order</option>{/if}
+            <option value="activity">Recently read</option>
+            <option value="saved">Recently saved</option>
+            <option value="title">Title</option>
+            <option value="author">Author</option>
+          </select>
         </div>
-        <select
-          class="sort"
-          aria-label="Sort"
-          value={sort}
-          onchange={(e) => (sortChoice = e.currentTarget.value as ShelfSort)}
-        >
-          {#if collection}<option value="collection">Collection order</option>{/if}
-          <option value="activity">Recently read</option>
-          <option value="saved">Recently saved</option>
-          <option value="title">Title</option>
-          <option value="author">Author</option>
-        </select>
       </div>
     {/if}
 
@@ -810,16 +812,22 @@
   }
 
   /* --- Controls --- */
-  .controls {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.5rem;
+  /* One row when there's room (search | kinds | sort). When narrow, search and
+     sort share the first row and the kinds span the second as a full-width
+     segmented control, so the sort never strands on a line of its own. */
+  .controls-wrap {
+    container-type: inline-size;
     margin-bottom: 1rem;
   }
 
+  .controls {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
   .search {
-    flex: 1 1 14rem;
     min-width: 0;
   }
 
@@ -846,6 +854,22 @@
   .kind-btn.active {
     color: var(--color-primary);
     background: var(--color-sidebar-active);
+  }
+
+  @container (max-width: 36rem) {
+    .controls {
+      grid-template-columns: minmax(0, 1fr) auto;
+    }
+
+    .kinds {
+      grid-column: 1 / -1;
+      order: 1;
+      display: flex;
+    }
+
+    .kind-btn {
+      flex: 1;
+    }
   }
 
   /* --- Items --- */
