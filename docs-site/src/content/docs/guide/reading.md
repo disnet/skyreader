@@ -1,11 +1,11 @@
 ---
 title: Reading
-description: The library, channels, the reader, paged mode, the daily magazine, and offline reading.
+description: Feeds, channels, the reader, paged mode, the daily magazine, and offline reading.
 ---
 
-## The library
+## Feeds
 
-**Feeds** shows everything you follow in one chronological stream. The sidebar lists your sources and channels; **channels** are saved views over the library, filtered by source or read state, so "Newsletters" or "Slow reads" is one click away.
+**Feeds** shows everything you follow in one chronological stream. The sidebar lists your sources and channels; **channels** are saved views over your feeds, filtered by source or read state, so "Newsletters" or "Slow reads" is one click away.
 
 The **Sources** filter lists everything that brings you things to read, grouped:
 
@@ -17,7 +17,7 @@ Everything starts checked. Uncheck a source, a folder or a whole group to leave 
 
 ### Making a channel
 
-Choose **New channel** under **Feeds** or **Saved**, in the sidebar or the feed switcher on a phone.
+Choose **New channel** under **Feeds** or **Queue**, in the sidebar or the feed switcher on a phone.
 
 - **Name** fills itself in from what you choose. Type your own to keep it.
 - **Show** and **Order** set what the channel opens on: unread or everything, newest or oldest first.
@@ -32,7 +32,7 @@ To change a channel later, open it and choose **Edit channel**, or right-click i
 
 Items you scroll past can be marked read automatically (a toggle in **Settings → Reading**).
 
-**Home** is the calmer front page: pick up where you left off, recent saves, your daily magazine.
+**Home** is the calmer front page: pick up where you left off, recent saves, a few things from your Shelf, your daily magazine. It draws on your [Library](/guide/saving-and-highlights/#your-library-queue-and-shelf), and each lane links to where it comes from. **Continue reading** follows the same rule as the Shelf's: anything you've started and not finished, including a book you archived halfway through that's still on your Shelf.
 
 To change Home, choose **Customize** at the top of it. Pick where the app opens and how large
 the cards are, hide any section, or drag one by its handle to reorder. Changes apply right away

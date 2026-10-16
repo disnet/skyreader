@@ -175,7 +175,7 @@ test.describe('Saved search', () => {
     await expect(authedPage.getByRole('listbox')).toHaveCount(0);
 
     // And coming back is a clean list, not the query from last time.
-    await authedPage.getByRole('button', { name: 'Saved' }).first().click();
+    await authedPage.getByRole('button', { name: 'Queue' }).first().click();
     await expect(
       authedPage
         .getByLabel('Recently saved', { exact: true })

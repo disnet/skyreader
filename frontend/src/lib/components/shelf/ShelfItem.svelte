@@ -10,6 +10,8 @@
   import { auth } from '$lib/stores/auth.svelte';
   import { savedCoverUrl } from '$lib/services/api';
   import { shelfStore } from '$lib/stores/shelf.svelte';
+  import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
+  import { isSavedItemArchived } from '$lib/utils/savedPile';
   import { decodeEntities } from '$lib/utils/entities';
   import { formatRelativeTime } from '$lib/utils/date';
   import { SHELF_KIND_LABEL, shelfKind, type ShelfEntry } from '$lib/utils/shelf';
@@ -25,6 +27,8 @@
     isFirst?: boolean;
     isLast?: boolean;
     onOpen: () => void;
+    /** Archive it in the Queue, or move it back to the inbox. It stays on the Shelf either way. */
+    onToggleArchive: (archived: boolean) => void;
   }
 
   let {
@@ -36,6 +40,7 @@
     isFirst = false,
     isLast = false,
     onOpen,
+    onToggleArchive,
   }: Props = $props();
 
   let save = $derived(entry.save);
@@ -55,18 +60,30 @@
   let image = $derived(savedCoverUrl(save));
   let imageFailed = $state(false);
   let menuOpen = $state(false);
+  // Done with in the Queue. Archiving never takes a save off the Shelf, so the
+  // mark is how the Shelf shows where the same save sits in the Queue.
+  let archived = $derived(isSavedItemArchived(save, itemLabelsStore.isArchived));
 
   let menuItems = $derived.by(() => {
     const items: {
       label: string;
       icon?: string;
       variant?: 'default' | 'danger';
+      section?: string;
       onclick: () => void;
-    }[] = [];
+    }[] = [
+      {
+        label: archived ? 'Move to inbox' : 'Archive',
+        icon: archived ? 'inbox' : 'archive',
+        section: 'Queue',
+        onclick: () => onToggleArchive(!archived),
+      },
+    ];
     if (auth.user) {
       items.push({
         label: 'Add to collection',
         icon: 'folder-plus',
+        section: 'Shelf',
         onclick: () => shelfStore.openPicker(save),
       });
     }
@@ -75,6 +92,7 @@
         items.push({
           label: 'Move up',
           icon: 'arrow-up',
+          section: 'Shelf',
           onclick: () => void shelfStore.moveItem(collectionId, save.rkey, -1),
         });
       }
@@ -82,6 +100,7 @@
         items.push({
           label: 'Move down',
           icon: 'arrow-down',
+          section: 'Shelf',
           onclick: () => void shelfStore.moveItem(collectionId, save.rkey, 1),
         });
       }
@@ -90,6 +109,7 @@
       items.push({
         label: 'Remove from collection',
         icon: 'minus',
+        section: 'Shelf',
         onclick: () => void shelfStore.removeItem(collectionId, save.rkey),
       });
     }
@@ -97,6 +117,7 @@
       label: 'Take off Shelf',
       icon: 'shelf',
       variant: 'danger',
+      section: 'Shelf',
       onclick: () => void shelfStore.setOnShelf(save, false),
     });
     return items;
@@ -135,6 +156,10 @@
         <span class="kind">{SHELF_KIND_LABEL[kind]}</span>
         {#if byline}<span class="byline">{byline}</span>{/if}
       </div>
+      {#if archived}
+        <span class="archived" title="Archived in your Queue. It stays on the Shelf.">Archived</span
+        >
+      {/if}
       <div class="card-menu">
         <PopoverMenu items={menuItems} bind:open={menuOpen} />
       </div>
@@ -160,6 +185,11 @@
           {/if}
           {#if entry.lastActivityAt > 0}
             <span>Opened {formatRelativeTime(entry.lastActivityAt)}</span>
+          {/if}
+          {#if archived}
+            <span class="archived" title="Archived in your Queue. It stays on the Shelf."
+              >Archived</span
+            >
           {/if}
         </span>
       </span>
@@ -328,6 +358,24 @@
   .kind {
     flex-shrink: 0;
     font-weight: var(--weight-medium);
+  }
+
+  /* Where the save sits in the Queue: a quiet chip, not an alarm. */
+  .archived {
+    align-self: flex-start;
+    margin-top: 0.25rem;
+    padding: 0 0.4375rem;
+    border-radius: 999px;
+    background: var(--color-bg-secondary);
+    font-size: var(--text-2xs);
+    font-weight: var(--weight-medium);
+    line-height: 1.6;
+    color: var(--color-text-secondary);
+  }
+
+  .row-meta .archived {
+    align-self: center;
+    margin-top: 0;
   }
 
   .card-menu {

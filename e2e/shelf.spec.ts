@@ -1,10 +1,11 @@
 import { test, expect } from './fixtures';
 import { seedSavedArticle } from './seed';
 
-// The Shelf: the reference half of Saved. Books and PDFs are on it by default,
-// anything else is kept from its menu, and collections group what's there.
+// The Shelf: the reference half of the Library (the Queue is the other). Books
+// and PDFs are on it by default, anything else is kept from its menu, and
+// collections group what's there.
 test.describe('Shelf', () => {
-  test('books and PDFs are on the Shelf by default; a webpage is kept from Saved', async ({
+  test('books and PDFs are on the Shelf by default; a webpage is kept from the Queue', async ({
     authedPage,
     testUser,
   }) => {
@@ -36,7 +37,7 @@ test.describe('Shelf', () => {
     ).toBeVisible();
     await expect(authedPage.getByText('A Plain Webpage')).toHaveCount(0);
 
-    // Keep the webpage from its Saved menu.
+    // Keep the webpage from its Queue menu.
     await authedPage.goto('/saved');
     const card = authedPage.locator('.bookmark-card', { hasText: 'A Plain Webpage' });
     await expect(card).toBeVisible({ timeout: 15_000 });
@@ -62,6 +63,40 @@ test.describe('Shelf', () => {
     await expect(
       authedPage.getByRole('button', { name: 'A Plain Webpage', exact: true })
     ).toHaveCount(0);
+  });
+
+  test('archiving in the Queue keeps a save on the Shelf, marked Archived', async ({
+    authedPage,
+    testUser,
+  }) => {
+    await seedSavedArticle(testUser, {
+      url: 'https://example.com/finished.pdf',
+      title: 'A Finished Paper',
+      contentType: 'pdf',
+    });
+
+    // In the Queue, a PDF says it's also on the Shelf.
+    await authedPage.goto('/saved');
+    const card = authedPage.locator('.bookmark-card', { hasText: 'A Finished Paper' });
+    await expect(card).toBeVisible({ timeout: 15_000 });
+    await expect(card.getByText('On Shelf')).toBeVisible();
+
+    const archive = authedPage.waitForResponse(
+      (r) => r.url().includes('/api/labels') && r.request().method() === 'POST'
+    );
+    await card.locator('.menu-trigger').click();
+    await authedPage.getByRole('menuitem', { name: 'Archive', exact: true }).click();
+    await archive;
+    await expect(card).toHaveCount(0);
+
+    // It's still on the Shelf, and says where it sits in the Queue.
+    await authedPage
+      .getByRole('navigation', { name: 'Library' })
+      .getByRole('link', { name: 'Shelf' })
+      .click();
+    const item = authedPage.locator('.shelf-card', { hasText: 'A Finished Paper' });
+    await expect(item).toBeVisible({ timeout: 15_000 });
+    await expect(item.getByText('Archived', { exact: true })).toBeVisible();
   });
 
   test('a collection is created, filled and survives a reload', async ({

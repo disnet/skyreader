@@ -181,7 +181,7 @@
 
     keyboardStore.register({
       key: '2',
-      description: 'Saved',
+      description: 'Queue',
       category: 'Views',
       action: () => goto(SAVED_PATH),
       condition: () => auth.isInApp,

@@ -5,9 +5,9 @@ description: Read as a guest, sign in with your Atmosphere account, and install 
 
 ## Read first, sign in later
 
-On [skyreader.app](https://skyreader.app), **Start Reading** opens a guest library: a curated set of feeds you can read right away, no account needed. As a guest you can read, mark things read, save articles, highlight, and build a daily magazine. Everything stays on your device.
+On [skyreader.app](https://skyreader.app), **Start Reading** opens a guest reader: a curated set of feeds you can read right away, no account needed. As a guest you can read, mark things read, save articles, highlight, and build a daily magazine. Everything stays on your device.
 
-![The Skyreader start page, with a Start Reading button that opens a guest library, no account needed](../../assets/screenshots/welcome.png)
+![The Skyreader start page, with a Start Reading button that opens a guest reader, no account needed](../../assets/screenshots/welcome.png)
 
 Logging in with an account allows you to add your own feeds, sync across devices, share to your linkblog, and save articles to Semble or Margin.
 
@@ -24,8 +24,8 @@ Sign-in asks only for the basics. When you first turn on a feature that writes t
 ## Finding your way around
 
 - **Home** is the front page: your reading, resumable where you left off. On a new account, it starts with the links people you follow are sharing, and ways to add your own sources.
-- **Feeds** is the full library, with the sidebar of sources and channels.
-- **Saved** holds articles you've saved, from your feeds or from anywhere on the web.
+- **Feeds** is everything you follow, with the sidebar of sources and channels.
+- **Library** holds everything you've saved, from your feeds or from anywhere on the web. Read it two ways: the **Queue** is what to read next, and the **Shelf** is what you keep and come back to, like books and PDFs. See [Your Library](/guide/saving-and-highlights/#your-library-queue-and-shelf).
 - **Daily** is your magazine, built from your saves. See [Reading](/guide/reading/).
 - **Highlights** collects every passage you've highlighted, with a review deck.
 - **Linkblog** is where your shared links live. See [Sharing](/guide/sharing-and-your-linkblog/).

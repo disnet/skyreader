@@ -241,7 +241,7 @@
         <span class="engine-info">
           <span class="engine-name">{providerLabel(provider)}</span>
           <span class="engine-desc">
-            Your Saved list becomes a {providerLabel(provider)} collection. Edit it in
+            Your Library becomes a {providerLabel(provider)} collection. Edit it in
             {providerLabel(provider)} or any Atmospheric app.
           </span>
         </span>

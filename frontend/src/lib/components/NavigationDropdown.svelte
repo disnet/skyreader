@@ -232,7 +232,7 @@
     const savedItem: NavItem = {
       type: 'view',
       id: 'saved',
-      label: 'Saved',
+      label: 'Queue',
       count: savedCount,
       icon: 'bookmark',
     };
@@ -367,8 +367,8 @@
       sections.push({ section: '', items: everythingGroup });
     }
 
-    // Saved group: Saved + nested saved channels
-    // The Shelf sits with Saved: it's the reference half of the same pile.
+    // Library group: the Queue (+ its saved channels) and the Shelf — two ways
+    // of reading the same saves.
     const shelfItem: NavItem = {
       type: 'utility',
       id: 'shelf',

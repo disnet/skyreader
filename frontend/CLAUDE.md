@@ -204,7 +204,8 @@ See [`docs/RUNBOOK.md`](../docs/RUNBOOK.md) for sampling and recovery details.
 | `/starred`           | Starred articles                                |
 | `/feeds`             | Manage feed subscriptions                       |
 | `/discover`          | Discover new feeds                              |
-| `/shelf`             | Shelf: kept saves, books, PDFs; collections     |
+| `/saved`             | Library › Queue: Inbox / Archive of saves       |
+| `/shelf`             | Library › Shelf: kept saves, books, PDFs; colls |
 | `/highlights`        | Every highlight, grouped by source article      |
 | `/highlights/review` | Review deck — a few highlights, one at a time   |
 | `/search`            | Legacy link: opens the search overlay           |
@@ -306,9 +307,16 @@ text-view only. Text the extractor dropped (running headers, page numbers) can b
 the pages but won't show in the text. If you change how the extractor joins lines, change
 `buildPdfTextModel` to match, or cross-view highlights stop lining up.
 
-#### The Shelf
+#### The Library: Queue and Shelf
 
-`/shelf` is the reference half of Saved: a view over the same saves, not a second pile
+The **Library** is the saves read two ways: the **Queue** (`/saved`, Inbox / Archive) and the
+**Shelf** (`/shelf`). `components/library/LibraryIntro.svelte` opens both with a Queue | Shelf
+switch; a Queue card on the Shelf says **On Shelf**, a Shelf item archived in the Queue says
+**Archived**, and both item menus group their actions under Queue / Shelf headings
+(`PopoverMenu`'s `section`). Home's Continue reading shares the Shelf's `isInProgress` rule and
+counts an archived save still on the Shelf. See `docs/plans/SHELF_PLAN.md` § The Library.
+
+`/shelf` is the reference half of the Library: a view over the same saves, not a second pile
 (`stores/shelf.svelte.ts`, `components/shelf/`). A save is on it when its `kept` label says so
 (`props.kept` true/false, read across every alias via `itemLabelsStore.getKeptState`), else by kind
 (PDFs and EPUBs default on, webpages off), or when it's in a collection. Collections are private,

@@ -53,7 +53,7 @@ plus:
   - Atmospheric sync covers **subscriptions only**, and makes them backed up, portable, and
     **publicly visible**. Always surface the public-visibility tradeoff.
   - **Saves never live on the PDS.** They are private to Skyreader unless the user backs them with
-    Semble or Margin, which makes the whole Saved list a public collection.
+    Semble or Margin, which makes the whole Library (their saves) a public collection.
 - **Docs ride feature PRs.** A behavior change and its doc change belong in the same PR. When a
   feature described here changes, update the page in the same commit.
 - Pages the app links to (via the frontend's help-link constants) must keep their URLs stable;

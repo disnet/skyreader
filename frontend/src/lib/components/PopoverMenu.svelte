@@ -8,6 +8,9 @@
     variant?: 'default' | 'danger';
     active?: boolean;
     keepOpen?: boolean;
+    /** Groups consecutive items under a quiet heading (e.g. "Queue", "Shelf"); a
+     *  rule separates the group from the ungrouped items after it. */
+    section?: string;
     onclick: () => void;
   }
 
@@ -143,7 +146,13 @@
         ? `left: ${menuPosition.left}px;`
         : ''} {menuPosition.right !== undefined ? `right: ${menuPosition.right}px;` : ''}"
     >
-      {#each items as item}
+      {#each items as item, i}
+        {@const prev = items[i - 1]}
+        {#if item.section && item.section !== prev?.section}
+          <div class="menu-section" role="presentation">{item.section}</div>
+        {:else if !item.section && prev?.section}
+          <div class="menu-rule" role="separator"></div>
+        {/if}
         <button
           class="menu-item"
           class:danger={item.variant === 'danger'}
@@ -234,6 +243,22 @@
 
   .menu-item.danger:hover {
     background: rgba(244, 67, 54, 0.1);
+  }
+
+  .menu-section {
+    padding: 0.5rem 0.875rem 0.125rem;
+    font-size: var(--text-xs);
+    color: var(--color-text-secondary);
+  }
+
+  .menu-section:not(:first-child) {
+    margin-top: 0.25rem;
+    border-top: 1px solid var(--color-border);
+  }
+
+  .menu-rule {
+    margin: 0.25rem 0;
+    border-top: 1px solid var(--color-border);
   }
 
   .item-icon {

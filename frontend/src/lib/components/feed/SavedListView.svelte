@@ -161,11 +161,14 @@
       />
     {:else if feedViewStore.savedView === 'inbox'}
       <EmptyState
-        title="No saved items"
-        description="Save articles, shares, or documents to save them for later"
+        title="Your Queue is empty"
+        description="Save an article, share, or document and it waits here to be read."
       />
     {:else}
-      <EmptyState title="No archived items" description="Archived items will appear here" />
+      <EmptyState
+        title="Nothing archived yet"
+        description="Archive what you've read and it moves here. Anything on your Shelf stays there too."
+      />
     {/if}
   {/if}
 

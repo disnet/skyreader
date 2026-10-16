@@ -34,7 +34,7 @@ Either way, you can walk away with your list at any time: **Settings → Library
 
 Saves live on Skyreader, private to you. They are **not** stored on your PDS.
 
-The one way a save becomes public is choosing it: backing your Saved list with **Semble or Margin** (**Settings → Library & privacy → Saved articles**) turns the list into a public collection in that app. Saved newsletters and uploaded PDFs and EPUBs stay private either way.
+The one way a save becomes public is choosing it: backing your Library with **Semble or Margin** (**Settings → Library & privacy → Saved articles**) turns the list into a public collection in that app. Saved newsletters and uploaded PDFs and EPUBs stay private either way.
 
 ## Highlights and notes
 

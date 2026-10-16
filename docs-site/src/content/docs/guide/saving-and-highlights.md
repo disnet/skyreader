@@ -1,13 +1,13 @@
 ---
 title: Saving and highlights
-description: Save articles from anywhere, keep references on your Shelf, highlight passages, and review what you keep.
+description: Save articles from anywhere, read through your Queue, keep references on your Shelf, highlight passages, and review what you keep.
 ---
 
 ## Saving
 
-Save an article from its card or from the reader, or from outside Skyreader entirely: the [Chrome extension](https://chromewebstore.google.com/detail/skyreader/kdefpnnpmajcclfepekgdkcdiklfooed), the bookmarklet, the iOS shortcut, or the Android share sheet (see [Adding sources](/guide/adding-sources/#save-and-subscribe-from-anywhere)). Saves keep the full article text, so they read fine offline.
+Save an article from its card or from the reader, or from outside Skyreader entirely: the [Chrome extension](https://chromewebstore.google.com/detail/skyreader/kdefpnnpmajcclfepekgdkcdiklfooed), the bookmarklet, the iOS shortcut, or the Android share sheet (see [Adding sources](/guide/adding-sources/#save-and-subscribe-from-anywhere)). Saves keep the full article text, so they read fine offline. Everything you save lands in your [Library](#your-library-queue-and-shelf).
 
-![The Saved list: articles kept with their full text, newest first](../../../assets/screenshots/saved.png)
+![The Queue: articles kept with their full text, newest first](../../../assets/screenshots/saved.png)
 
 Saves are **private to Skyreader** by default. Nothing is published.
 
@@ -31,7 +31,7 @@ A scanned PDF has no text to keep, and a password-protected one can't be read. A
 
 Limits: a PDF can be up to 10 MB. You can upload 200 PDFs a month and keep up to 2 GB of PDF originals; removing a saved PDF frees its space. Up to 100 PDFs a day come through as text, by link or upload; past that, a saved link keeps just the link, and saving it again the next day brings in the text.
 
-On the free plan, saving a link to a PDF keeps the link, so you can still open it from your Saved list.
+On the free plan, saving a link to a PDF keeps the link, so you can still open it from your Queue.
 
 Uploaded PDFs are private to you. They stay on Skyreader, and aren't added to a Semble or Margin collection when your saves are backed by one.
 
@@ -51,21 +51,26 @@ Some pages load their text only once they're open in a browser, so Skyreader's s
 
 ### Backing your saves with Semble or Margin
 
-If you use [Semble](https://semble.so) or [Margin](https://margin.at), you can back your Saved list with one of them (**Settings → Library & privacy → Saved articles**). Your Saved list becomes a collection there: edit it in either app, or in any Atmospheric app, and the two stay in sync.
+If you use [Semble](https://semble.so) or [Margin](https://margin.at), you can back your Library with one of them (**Settings → Library & privacy → Saved articles**). Your saves become a collection there: edit it in either app, or in any Atmospheric app, and the two stay in sync.
 
 One thing to know before turning it on: **backing publishes your saves publicly**, because Semble and Margin collections are public. Saved newsletters and uploaded PDFs and EPUBs are the exception: they have no web link to share, so they stay private to Skyreader.
 
-## The Shelf
+## Your Library: Queue and Shelf
 
-Saved is a reading queue: read something, archive it, and it leaves. The **Shelf** is for what you keep and come back to, like books, papers, and references. It shows the same saves, so an item can be in both: archiving it clears it from Saved and leaves it on the Shelf.
+Everything you save is in your **Library**, which you can read two ways. Switch between them with **Queue** and **Shelf** at the top of either, or in the sidebar.
 
-Books and PDFs go on the Shelf as soon as you save them. To put anything else there, choose **Keep on Shelf** from its **⋯** menu in Saved, or from the **⋯** menu while you're reading it. **Take off Shelf** removes it, and the save stays in Saved.
+- The **Queue** is what to read next, newest first. Read something, choose **Archive**, and it moves from the inbox to the archive.
+- The **Shelf** is what you keep and come back to, like books, papers, and references. Finishing something doesn't take it off.
+
+They're the same saves, so an item can be in both, and the two don't affect each other. Archiving clears an item from the Queue's inbox and leaves it on the Shelf, marked **Archived**. In the Queue, an item that's also on your Shelf is marked **On Shelf**. Each item's **⋯** menu shows both, side by side: **Archive** under Queue, **Keep on Shelf** under Shelf.
+
+Books and PDFs go on the Shelf as soon as you save them. To put anything else there, choose **Keep on Shelf** from its **⋯** menu, or from the **⋯** menu while you're reading it. **Take off Shelf** removes it, and the save stays in your Queue.
 
 The Shelf opens on **Continue reading**, the things you're partway through. Below that is everything on it, as covers or as a list. Filter by title or author, show only books, PDFs, or articles, and sort by what you read last, what you saved last, title, or author.
 
 ### Collections
 
-Collections group what's on your Shelf, like a course's readings or a project's sources. Create one with **New collection**, then add items with **Add to collection**, from their **⋯** menu in Saved or on the Shelf, or from the reader's **⋯** menu. An item can be in more than one collection. A collection keeps its own order (**Move up** and **Move down** in the item menu) and can carry a short description.
+Collections group what's on your Shelf, like a course's readings or a project's sources. Create one with **New collection**, then add items with **Add to collection**, from their **⋯** menu in the Queue or on the Shelf, or from the reader's **⋯** menu. An item can be in more than one collection. A collection keeps its own order (**Move up** and **Move down** in the item menu) and can carry a short description.
 
 Collections are private to Skyreader and need an account and a connection.
 

@@ -3,6 +3,7 @@ import type { SavedItem } from '$lib/types';
 import {
   continueReading,
   filterShelf,
+  isInProgress,
   progressFraction,
   shelfKind,
   sortShelf,
@@ -56,6 +57,20 @@ describe('progressFraction', () => {
   it('counts the current paragraph as read and caps at 1', () => {
     expect(progressFraction({ paragraphIndex: 0, totalParagraphs: 4 })).toBe(0.25);
     expect(progressFraction({ paragraphIndex: 9, totalParagraphs: 4 })).toBe(1);
+  });
+});
+
+describe('isInProgress', () => {
+  it('is started and not read through', () => {
+    expect(isInProgress(0.4)).toBe(true);
+    expect(isInProgress(0.96)).toBe(true);
+  });
+
+  it('excludes never-opened, the opened sentinel and finished', () => {
+    expect(isInProgress(null)).toBe(false);
+    expect(isInProgress(0)).toBe(false);
+    expect(isInProgress(0.97)).toBe(false);
+    expect(isInProgress(1)).toBe(false);
   });
 });
 

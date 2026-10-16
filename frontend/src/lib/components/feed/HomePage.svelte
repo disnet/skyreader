@@ -80,6 +80,9 @@
     savedItemLabelKeys,
   } from '$lib/utils/savedPile';
   import { preferences } from '$lib/stores/preferences.svelte';
+  import { shelfStore } from '$lib/stores/shelf.svelte';
+  import { isInProgress, progressFraction, sortShelf } from '$lib/utils/shelf';
+  import { SAVED_PATH, SHELF_PATH } from '$lib/utils/viewNav';
   import {
     datePresetToMs,
     isSavedRowArchived,
@@ -92,6 +95,7 @@
   const CONTINUE_CAP = 12;
   const RANDOM_CAP = 12;
   const RECENT_CAP = 12;
+  const SHELF_CAP = 12;
   const CHANNEL_CAP = 12;
   const WORDS_PER_MIN = 200;
 
@@ -135,15 +139,11 @@
 
   // Fraction of the article actually scrolled through, or null if it was never
   // opened in the reader (a bare `read` label from marking-read in a feed list
-  // carries no scroll progress).
+  // carries no scroll progress). The Shelf's rule, so both agree.
   function readFraction(
     activity: { progress: { paragraphIndex: number; totalParagraphs: number } | null } | null
   ): number | null {
-    const p = activity?.progress;
-    if (p && p.totalParagraphs > 0) {
-      return Math.min(1, (p.paragraphIndex + 1) / p.totalParagraphs);
-    }
-    return null;
+    return progressFraction(activity?.progress);
   }
 
   function toVM(
@@ -158,7 +158,7 @@
     const fraction = readFraction(activity);
     if (fraction !== null) {
       progress = fraction;
-      if (fraction < 0.98 && totalMin) {
+      if (isInProgress(fraction) && totalMin) {
         const left = Math.max(1, Math.round(totalMin * (1 - fraction)));
         metaLabel = `${formatReadTime(left)} left`;
       }
@@ -202,13 +202,14 @@
 
   // Continue reading: only items actually started in the reader and not yet
   // finished — newest activity first. A bare `read` label (marked-read from a
-  // feed list, never opened) has no scroll progress and doesn't qualify.
+  // feed list, never opened) has no scroll progress and doesn't qualify. The
+  // same rule as the Shelf's lane: a save archived from the Queue but still on
+  // the Shelf (a book put down halfway) is still in progress, so it counts.
   let continueEnriched = $derived.by(() =>
-    enriched
-      .filter((e) => {
-        const fraction = readFraction(e.activity);
-        return fraction !== null && fraction < 0.98;
-      })
+    savesStore.articles
+      .filter((s) => !isSavedItemArchived(s, itemLabelsStore.isArchived) || shelfStore.isOnShelf(s))
+      .map((s): Enriched => ({ s, activity: itemLabelsStore.getReadActivity(keysFor(s)) }))
+      .filter((e) => isInProgress(readFraction(e.activity)))
       .sort((a, b) => (b.activity!.lastActivityAt ?? 0) - (a.activity!.lastActivityAt ?? 0))
       .slice(0, CONTINUE_CAP)
   );
@@ -226,6 +227,26 @@
       .slice(0, RECENT_CAP)
       .map((e) => toVM(e.s, null))
   );
+
+  // From your Shelf: the top of the Shelf in its own default order (what was
+  // read last), less what Continue reading already shows. Archived saves are
+  // included — finishing something in the Queue doesn't take it off the Shelf.
+  let shelfItems = $derived.by(() => {
+    const entries = shelfStore.items
+      .filter((s) => !continueSet.has(s.rkey))
+      .map((s) => {
+        const activity = itemLabelsStore.getReadActivity(keysFor(s));
+        return {
+          save: s,
+          activity,
+          lastActivityAt: activity?.lastActivityAt ?? 0,
+          progress: progressFraction(activity?.progress),
+        };
+      });
+    return sortShelf(entries, 'activity')
+      .slice(0, SHELF_CAP)
+      .map((e) => toVM(e.save, e.activity));
+  });
 
   // From your saved: a rotating random sample. It only re-rolls on demand
   // (Shuffle) — not on every reactive tick, and not on every visit: the sample is
@@ -461,6 +482,7 @@
     continueItems.length > 0 ||
       randomItems.length > 0 ||
       recentItems.length > 0 ||
+      shelfItems.length > 0 ||
       channelLanes.length > 0 ||
       roomLanes.length > 0
   );
@@ -522,6 +544,7 @@
       : []),
     { id: HOME_SECTION.random, label: 'Random picks', icon: 'layers' },
     { id: HOME_SECTION.recent, label: 'Recently saved', icon: 'bookmark' },
+    { id: HOME_SECTION.shelf, label: 'From your Shelf', icon: 'shelf' },
     ...roomsStore.rooms.map((room): HomeSectionOption => ({
       id: roomSectionId(room.subject),
       label: room.name ?? 'Untitled room',
@@ -561,6 +584,8 @@
         return randomItems.length > 0;
       case HOME_SECTION.recent:
         return recentItems.length > 0;
+      case HOME_SECTION.shelf:
+        return shelfItems.length > 0;
       default:
         return roomLaneById.has(id) || channelLaneById.has(id);
     }
@@ -697,7 +722,18 @@
         title="Recently saved"
         icon="bookmark"
         items={recentItems}
-        action={{ kind: 'link', label: 'View all', href: '/saved' }}
+        action={{ kind: 'link', label: 'View all in Queue', href: SAVED_PATH }}
+        onOpen={openLaneItem}
+        onHover={handlePrefetch}
+      />
+    {/if}
+  {:else if id === HOME_SECTION.shelf}
+    {#if shelfItems.length > 0}
+      <HomeLane
+        title="From your Shelf"
+        icon="shelf"
+        items={shelfItems}
+        action={{ kind: 'link', label: 'Open Shelf', href: SHELF_PATH }}
         onOpen={openLaneItem}
         onHover={handlePrefetch}
       />

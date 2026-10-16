@@ -121,7 +121,7 @@
 </script>
 
 <div class="library-empty">
-  <h2>Your library is empty</h2>
+  <h2>You're not following anything yet</h2>
 
   {#if auth.isGuest}
     <!-- A guest who removed the starter channels. Adding feeds, OPML import and
@@ -203,8 +203,8 @@
     <div class="portability">
       <h3>Where your saves live</h3>
       <p>
-        Your saves stay private on Skyreader. To turn your whole Saved list into a collection you
-        can edit in another app, back it with Semble or Margin. That collection is public. You can
+        Your saves stay private on Skyreader. To turn your whole Library into a collection you can
+        edit in another app, back it with Semble or Margin. That collection is public. You can
         change this anytime.
       </p>
       <SaveBackingPicker allowExport={false} returnUrl="/" />

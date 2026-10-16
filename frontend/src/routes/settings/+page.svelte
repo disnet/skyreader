@@ -133,7 +133,7 @@
   const defaultViewOptions: { value: DefaultView; label: string }[] = [
     { value: 'home', label: 'Home' },
     { value: 'feeds', label: 'Feeds' },
-    { value: 'saved', label: 'Saved' },
+    { value: 'saved', label: 'Queue' },
   ];
 
   let showImportModal = $state(false);

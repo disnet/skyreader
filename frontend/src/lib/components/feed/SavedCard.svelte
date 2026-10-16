@@ -530,19 +530,16 @@
       variant?: 'default' | 'danger';
       active?: boolean;
       onclick: () => void;
+      section?: string;
     }[] = [
+      // Queue and Shelf are independent: archiving leaves the queue and keeps
+      // the Shelf, so the two sit side by side under their own headings.
       {
         label: isArchived ? 'Move to inbox' : 'Archive',
         icon: isArchived ? 'inbox' : 'archive',
+        section: 'Queue',
         onclick: () => {
           onArchive?.();
-        },
-      },
-      {
-        label: 'Tag',
-        icon: 'tag',
-        onclick: () => {
-          tagMenuOpenLocal = true;
         },
       },
     ];
@@ -552,6 +549,7 @@
         label: onShelf ? 'Take off Shelf' : 'Keep on Shelf',
         icon: 'shelf',
         active: onShelf,
+        section: 'Shelf',
         onclick: () => {
           void shelfStore.setOnShelf(save, !onShelf);
         },
@@ -560,10 +558,18 @@
         items.push({
           label: 'Add to collection',
           icon: 'folder-plus',
+          section: 'Shelf',
           onclick: () => shelfStore.openPicker(save),
         });
       }
     }
+    items.push({
+      label: 'Tag',
+      icon: 'tag',
+      onclick: () => {
+        tagMenuOpenLocal = true;
+      },
+    });
     if (canShare) {
       items.push({
         label: isShared
@@ -685,6 +691,12 @@
             </span>
           {/if}
           <span class="meta-date">{formatRelativeDate(publishedAt)}</span>
+          {#if onShelf}
+            <span class="meta-shelf" title="Also on your Shelf">
+              <Icon name="shelf" size={12} />
+              On Shelf
+            </span>
+          {/if}
           {#each tags as tag, i}
             {#if i === 0}<span class="meta-dot" aria-hidden="true">·</span>{/if}
             <span class="tag-chip">{tag}</span>
@@ -864,7 +876,8 @@
     color: var(--color-primary, #2563eb);
   }
 
-  .meta-read-time {
+  .meta-read-time,
+  .meta-shelf {
     display: inline-flex;
     align-items: center;
     gap: 0.2rem;

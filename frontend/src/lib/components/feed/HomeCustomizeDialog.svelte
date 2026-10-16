@@ -25,7 +25,7 @@
   const defaultViewOptions: { value: DefaultView; label: string }[] = [
     { value: 'home', label: 'Home' },
     { value: 'feeds', label: 'Feeds' },
-    { value: 'saved', label: 'Saved' },
+    { value: 'saved', label: 'Queue' },
   ];
   const densityOptions: { value: CardDensity; label: string }[] = [
     { value: 'compact', label: 'Compact' },

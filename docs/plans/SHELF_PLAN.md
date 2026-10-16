@@ -97,13 +97,34 @@ deferred (see below).
   `shelfStore.openPicker`). Checkboxes apply at once, and a collection can be created from it.
 - Nav: **Shelf** sits under Saved in the sidebar, the dropdown and the mobile switcher.
 
+## The Library (second slice, shipped)
+
+Three surfaces showed the same saves (Home, Saved, Shelf) and nothing said how they related, so
+Saved and Shelf became the two halves of one **Library**:
+
+- **Queue** is the new name for Saved (`/saved`, unchanged route): Inbox / Archive, newest first.
+  **Shelf** keeps `/shelf`. The sidebar groups both under a "Library" caption; saved channels nest
+  under Queue.
+- **`LibraryIntro`** (`components/library/`) opens both pages: a Queue | Shelf switch and one line
+  on what that half is for. It sits in the page body, not the desktop header, so phones get it too.
+- **State shows on the item.** A Queue card that's also on the Shelf says **On Shelf**; a Shelf item
+  archived in the Queue says **Archived**. Both item menus group their actions under **Queue**
+  (Archive / Move to inbox) and **Shelf** (Keep / Take off, collections) headings
+  (`PopoverMenu`'s `section`), so the two read as independent. Archive behaves the same everywhere:
+  it toggles and closes the reader.
+- **Home points into the Library.** "Recently saved" links to the Queue, and a new **From your
+  Shelf** lane (`HOME_SECTION.shelf`) shows the top of the Shelf in its own order and links to it.
+  **Continue reading** uses the Shelf's rule (`isInProgress` in `utils/shelf.ts`): started, under
+  97%, and not archived unless it's on the Shelf, so a book put down halfway stays resumable.
+
 Pure helpers (`utils/shelf.ts`: kind, progress, filter, sort, continue reading) are unit-tested.
 The page is covered by `e2e/shelf.spec.ts` and the API by `backend/test/shelf-collections.spec.ts`.
 
 ### Naming
 
-"Library" already means the feed library in the app and docs (and "Library & privacy" in
-Settings), so the surface is the **Shelf** and its groups are **Collections**.
+The surface is the **Shelf** and its groups are **Collections**. "Library" now names the saves as a
+whole (Queue + Shelf); the feed stream is just **Feeds** in copy, so the two don't collide.
+"Library & privacy" in Settings covers the same saves.
 
 ## Next
 
@@ -111,8 +132,7 @@ Ordered by how much they add to "reading should add up":
 
 1. **Item hub page.** A reference's own page: metadata, every highlight and note grouped by
    chapter/page, resume. This is where the Shelf becomes sensemaking rather than storage.
-2. **Keep from the reader.** A Keep / Add to collection control in `SavedReader`'s toolbar, not just
-   on cards.
+2. ~~**Keep from the reader.**~~ Shipped: the reader bar's Keep on Shelf button and ⋯ menu.
 3. **Collections in the sidebar** (nested under Shelf, like saved channels), and drag to reorder.
 4. **Better metadata.** ISBN, authors, year from EPUB OPF metadata, and DOI/title/authors from PDF
    info, with author/year sorting that doesn't depend on the extractor's byline. EPUB cover images.
