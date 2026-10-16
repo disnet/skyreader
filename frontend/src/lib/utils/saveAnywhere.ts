@@ -149,26 +149,6 @@ export function isFailedSaveBody(html: string | null | undefined): boolean {
 }
 
 /**
- * The body of a feed article opened with no text to show: the feed sent none
- * this device kept, and neither the archive nor an extract of the page had any
- * (an article reached from search can be all three). It points at the page
- * rather than leaving a blank reader. Marked like failedSaveBody, so it reads
- * as a note, not as article text.
- */
-export function missingArticleBody(url: string): string {
-  let host = url;
-  try {
-    host = new URL(url).hostname.replace(/^www\./, '');
-  } catch {
-    // Keep the raw URL as the link text.
-  }
-  return [
-    `<p ${FAILED_SAVE_MARKER}>Skyreader doesn't have the text of this article.</p>`,
-    `<p><a href="${escapeHtml(url)}">Read it on ${escapeHtml(host)}</a></p>`,
-  ].join('\n');
-}
-
-/**
  * The body of a save whose article couldn't be fetched. The link is still worth
  * keeping, so the save goes through with this note in place of the text: what
  * happened, a way to the page itself, and the way through (the extension reads

@@ -24,12 +24,7 @@
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { profileService } from '$lib/services/profiles';
   import { bskyEmbed } from '$lib/actions/bsky-embed';
-  import {
-    failedSaveBody,
-    hasReadableContent,
-    isFailedSaveBody,
-    missingArticleBody,
-  } from '$lib/utils/saveAnywhere';
+  import { failedSaveBody, hasReadableContent, isFailedSaveBody } from '$lib/utils/saveAnywhere';
   import { mathRender } from '$lib/actions/math-render';
   import Icon from '$lib/components/Icon.svelte';
   import { savedAssetUrl, savedFileUrl } from '$lib/services/api';
@@ -488,7 +483,7 @@
       !hasReadableContent(normalized.displayContent) &&
       !linkPostContentStore.isFetching(itemUrl)
     ) {
-      return missingArticleBody(itemUrl);
+      return failedSaveBody(itemUrl, 'empty');
     }
     // For a stripped document, re-render with the lazily-loaded textContent fed
     // back in — structured `content` still wins inside getDisplayContent, so this

@@ -16,7 +16,6 @@ import {
   saveAnywhereUrl,
   extensionCanHelp,
   failedSaveBody,
-  missingArticleBody,
   failedSaveLine,
   hasReadableContent,
   isFailedSaveBody,
@@ -97,15 +96,6 @@ describe('saveAnywhereHint', () => {
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/140.0.0.0 Safari/537.36 Edg/140.0.0.0';
     expect(saveAnywhereUrl(edge)).toBe(SAVE_ANYWHERE_SETTINGS_URL);
     expect(saveAnywhereHint(edge)).not.toContain('extension');
-  });
-});
-
-describe('missingArticleBody', () => {
-  it('links the original page, escaped, and reads as a note', () => {
-    const body = missingArticleBody('https://www.theroot.com/?p=1&q="2"');
-    expect(body).toContain('href="https://www.theroot.com/?p=1&amp;q=&quot;2&quot;"');
-    expect(body).toContain('Read it on theroot.com');
-    expect(isFailedSaveBody(body)).toBe(true);
   });
 });
 
