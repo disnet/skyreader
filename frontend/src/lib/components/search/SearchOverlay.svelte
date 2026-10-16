@@ -32,7 +32,7 @@
 
   const KINDS: { value: SearchKind | null; label: string }[] = [
     { value: null, label: 'Everything' },
-    { value: 'saved', label: 'Saved' },
+    { value: 'saved', label: 'Queue' },
     { value: 'highlighted', label: 'Highlighted' },
     { value: 'read', label: 'Read' },
   ];
@@ -296,7 +296,7 @@
                       {#if hit.highlighted}
                         <span class="tag"><Icon name="highlighter" size={12} />Highlighted</span>
                       {:else if hit.saved}
-                        <span class="tag"><Icon name="bookmark" size={12} />Saved</span>
+                        <span class="tag"><Icon name="bookmark" size={12} />Queue</span>
                       {/if}
                     </span>
                   </button>
