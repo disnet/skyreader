@@ -28,6 +28,7 @@ import { normalizeArticleUrl } from './url-normalize';
 import { Semaphore, OverloadError } from './semaphore';
 import { safeFetch } from './ssrf-guard';
 import type { RobotsPolicy } from './robots';
+import { parseYouTubeFeedUrl, type YouTubeFeedSource } from './youtube-api';
 import { signRequestHeaders, signedDirectory, type WebBotAuth } from './web-bot-auth';
 import { reportError, VERSION } from './instrument';
 import { siteSourceFor } from './site-sources';
@@ -127,6 +128,11 @@ export interface AppConfig {
   // upstream fetch is signed and GET /http-message-signatures-directory serves
   // the public key. Unset ⇒ unsigned (local/dev, or before the key is provisioned).
   webBotAuth?: WebBotAuth | null;
+  // YouTube feeds via the Data API (youtube-api.ts). Set ⇒ youtube.com/feeds
+  // URLs are answered by the API instead of fetched, since YouTube 404s those
+  // to datacenter IPs. Unset ⇒ fetched directly like any feed. index.ts wires
+  // one in when YOUTUBE_API_KEY is set.
+  youtube?: YouTubeFeedSource | null;
 }
 
 export interface CacheRow {
@@ -1557,11 +1563,41 @@ async function runDiscover(siteUrl: string): Promise<DiscoverResult> {
   }
 }
 
+// Marks a failure the YouTube Data API path recorded, as opposed to one from a
+// direct fetch of youtube.com/feeds (which 404s from datacenter IPs).
+const YOUTUBE_API_ERROR_PREFIX = 'YouTube API: ';
+
+/**
+ * Lift the backoff on YouTube feeds whose last failure came from fetching
+ * youtube.com directly (a 404, or the old robots.txt disallow), so they're due
+ * again now that the Data API answers them, instead of after a backoff of up to
+ * 7 days. Failures the API path recorded keep their backoff. Run once at boot
+ * when the API is configured; a no-op after the first.
+ */
+export function releaseYouTubeBackoffs(db: Database): number {
+  const result = db.run(
+    `UPDATE cache SET next_retry_at = NULL
+      WHERE url LIKE '%youtube.com/feeds/videos.xml%'
+        AND next_retry_at IS NOT NULL
+        AND error_count > 0
+        AND (last_error IS NULL OR last_error NOT LIKE ?)`,
+    [`${YOUTUBE_API_ERROR_PREFIX}%`]
+  );
+  if (result.changes > 0) {
+    console.log(
+      `[Proxy] YouTube API: released ${result.changes} feed(s) from direct-fetch backoff`
+    );
+  }
+  return result.changes;
+}
+
 export function createApp(db: Database, config: AppConfig) {
   const { proxySecret, cacheTtlMs, staleTtlMs, defaultLimit } = config;
   const batchInlineFetchBudgetMs = config.batchInlineFetchBudgetMs ?? BATCH_INLINE_FETCH_BUDGET_MS;
   const firehoseRelistMs = config.firehoseRelistMs ?? FIREHOSE_RELIST_MS;
   const robots = config.robots ?? null;
+  const youtube = config.youtube ?? null;
+  if (youtube) releaseYouTubeBackoffs(db);
   if (config.webBotAuth !== undefined) configureWebBotAuth(config.webBotAuth);
 
   // The durable-log generation token, read once (minted in initDatabase). Stable
@@ -1754,6 +1790,20 @@ export function createApp(db: Database, config: AppConfig) {
       ]);
     }
 
+    // A YouTube feed answered by the Data API spends quota on every refresh, so
+    // a success parks it until youtube.minRefreshMs from now (next_retry_at with
+    // error_count 0): the warm loop's due-scan and the backoff check above both
+    // already honour that, so neither the crawl nor a reader's request re-asks
+    // sooner, and the feed doesn't sit at the front of every due-scan.
+    const youtubeTarget = youtube ? parseYouTubeFeedUrl(url) : null;
+    const scheduleYouTubeRefresh = (): void => {
+      if (!youtube || !youtubeTarget) return;
+      db.run('UPDATE cache SET next_retry_at = ? WHERE url_hash = ?', [
+        now + youtube.minRefreshMs,
+        urlHash,
+      ]);
+    };
+
     // robots.txt: the crawl is Skyreader acting on its own schedule, so it asks
     // first. A disallow is recorded like a site-side block (same marker the
     // reader UI keys on) and re-checked after ROBOTS_DISALLOW_RETRY_MS. The
@@ -1768,7 +1818,8 @@ export function createApp(db: Database, config: AppConfig) {
       });
     };
 
-    if (robots) {
+    // (An API-backed YouTube feed fetches nothing from youtube.com.)
+    if (robots && !youtubeTarget) {
       const verdict = await robots.check(url);
       if (!verdict.allowed) {
         recordRobotsDisallow(describeRobotsDisallow(url, verdict.matchedPattern));
@@ -1797,23 +1848,25 @@ export function createApp(db: Database, config: AppConfig) {
     }
 
     try {
-      const response = await fetchUpstream(url, headers, {
-        // A redirect leaves the URL robots.txt was consulted for, and the
-        // target's own rules are the ones that govern it — without this a feed
-        // that 301s into a disallowed path (or onto another host entirely) is
-        // crawled anyway, which is exactly the standing this whole path exists
-        // to keep. Crawl-delay is deliberately not re-applied per hop: the slot
-        // for this fetch is already reserved, and sleeping mid-redirect would
-        // hold a warm worker well past the budget that reservation bought.
-        onRedirect: robots
-          ? async (target) => {
-              const verdict = await robots.check(target);
-              if (!verdict.allowed) {
-                throw new RobotsDisallowedError(target, verdict.matchedPattern);
-              }
-            }
-          : undefined,
-      });
+      const response = youtubeTarget
+        ? await youtube!.fetchFeed(youtubeTarget, url)
+        : await fetchUpstream(url, headers, {
+            // A redirect leaves the URL robots.txt was consulted for, and the
+            // target's own rules are the ones that govern it — without this a feed
+            // that 301s into a disallowed path (or onto another host entirely) is
+            // crawled anyway, which is exactly the standing this whole path exists
+            // to keep. Crawl-delay is deliberately not re-applied per hop: the slot
+            // for this fetch is already reserved, and sleeping mid-redirect would
+            // hold a warm worker well past the budget that reservation bought.
+            onRedirect: robots
+              ? async (target) => {
+                  const verdict = await robots.check(target);
+                  if (!verdict.allowed) {
+                    throw new RobotsDisallowedError(target, verdict.matchedPattern);
+                  }
+                }
+              : undefined,
+          });
 
       if (response.status === 304 && cached) {
         // Success: reset error tracking
@@ -1833,7 +1886,11 @@ export function createApp(db: Database, config: AppConfig) {
         // message so the reader UI can say so. Other statuses keep the compact
         // "HTTP n" form (downstream classifies them by code).
         const failure = describeFetchFailure(response.status, url);
-        const errorMessage = failure.blocked ? failure.error : `HTTP ${response.status}`;
+        const errorMessage = youtubeTarget
+          ? `${YOUTUBE_API_ERROR_PREFIX}HTTP ${response.status}`
+          : failure.blocked
+            ? failure.error
+            : `HTTP ${response.status}`;
 
         let nextRetryAt: number;
         if (errorType === 'permanent') {
@@ -1876,6 +1933,7 @@ export function createApp(db: Database, config: AppConfig) {
             WHERE url_hash = ?`,
           [now, etag, lastModified, urlHash]
         );
+        scheduleYouTubeRefresh();
         return wantParsed && cached.parsed_json
           ? (JSON.parse(cached.parsed_json) as ParsedFeed)
           : null;
@@ -1949,6 +2007,7 @@ export function createApp(db: Database, config: AppConfig) {
         now,
         cached !== undefined && cached.parser_version !== FEED_PARSER_VERSION
       );
+      scheduleYouTubeRefresh();
 
       return parsed;
     } catch (error) {
@@ -2503,7 +2562,9 @@ export function createApp(db: Database, config: AppConfig) {
       .get();
     const inBackoff = db
       .query<{ count: number }, [number]>(
-        'SELECT COUNT(*) as count FROM cache WHERE next_retry_at > ?'
+        // error_count > 0: an API-backed YouTube feed parks its next refresh in
+        // next_retry_at after a success, and that isn't a backoff.
+        'SELECT COUNT(*) as count FROM cache WHERE next_retry_at > ? AND error_count > 0'
       )
       .get(now);
     const permanentErrors = db
@@ -2566,6 +2627,7 @@ export function createApp(db: Database, config: AppConfig) {
           ? { keyid: webBotAuth.keyid, signatureAgent: webBotAuth.signatureAgent }
           : null,
         robots: robots ? { cachedOrigins: robots.cachedOrigins } : null,
+        youtubeApi: youtube ? youtube.stats : null,
       },
       // Observed crawl cycle — how long a full pass over the active feed set is
       // actually taking. This is the freshness number that means something now

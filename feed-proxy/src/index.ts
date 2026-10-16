@@ -5,6 +5,7 @@ import { Database } from 'bun:sqlite';
 import { mkdirSync } from 'fs';
 import { createApp, initDatabase, cleanupCache, HONEST_UA } from './app';
 import { RobotsPolicy } from './robots';
+import { YouTubeFeedSource } from './youtube-api';
 import { loadWebBotAuth, type WebBotAuth } from './web-bot-auth';
 import { DocumentFirehose } from './jetstream';
 import { pingHeartbeat } from './heartbeat';
@@ -149,6 +150,13 @@ const ROBOTS_ENABLED = (process.env.ROBOTS_ENABLED ?? 'true') !== 'false';
 // environments share ONE identity: the same key and the same agent origin.
 const WEB_BOT_AUTH_KEY = process.env.WEB_BOT_AUTH_KEY;
 const WEB_BOT_AUTH_SIGNATURE_AGENT = process.env.WEB_BOT_AUTH_SIGNATURE_AGENT;
+// YouTube Data API key (a Fly secret). Set ⇒ YouTube feeds are read through the
+// API, since youtube.com/feeds 404s to datacenter IPs (src/youtube-api.ts).
+// YOUTUBE_API_REFRESH_SECONDS caps how often each one spends quota.
+const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
+const YOUTUBE_API_REFRESH_MS = process.env.YOUTUBE_API_REFRESH_SECONDS
+  ? parseInt(process.env.YOUTUBE_API_REFRESH_SECONDS, 10) * 1000
+  : undefined;
 
 // Jetstream document firehose: keeps standard.site documents fresh via the AT
 // Proto firehose (push) instead of re-listing every active author (pull). The
@@ -205,6 +213,13 @@ console.log(
   `[Proxy] robots.txt: ${robots ? 'honoured on the crawl path' : 'DISABLED (ROBOTS_ENABLED=false)'}`
 );
 
+const youtube = YOUTUBE_API_KEY
+  ? new YouTubeFeedSource({ apiKey: YOUTUBE_API_KEY, minRefreshMs: YOUTUBE_API_REFRESH_MS })
+  : null;
+console.log(
+  `[Proxy] YouTube feeds: ${youtube ? `Data API (refresh ≤ every ${youtube.minRefreshMs / 60000} min)` : 'fetched directly (YOUTUBE_API_KEY unset)'}`
+);
+
 // The document firehose is created just below, but createApp's serve path needs
 // its status now — close over the binding so the accessor reads it lazily.
 let firehose: DocumentFirehose | null = null;
@@ -243,6 +258,7 @@ const { app, warmStaleFeeds, warmStaleDocuments } = createApp(db, {
       : undefined,
   robots,
   webBotAuth,
+  youtube,
 });
 
 // Document firehose: push-based freshness for standard.site documents.

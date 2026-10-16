@@ -288,25 +288,27 @@ curl "/feed?url=...&since_guids=old-guid&limit=50"
 
 ## Configuration
 
-| Environment Variable           | Default  | Description                                             |
-| ------------------------------ | -------- | ------------------------------------------------------- |
-| `PROXY_SECRET`                 | (none)   | Shared secret for `X-Proxy-Secret` (inbound + outbound) |
-| `DATA_DIR`                     | `./data` | SQLite database location                                |
-| `CACHE_TTL_SECONDS`            | `900`    | Fresh cache duration (15 min)                           |
-| `STALE_TTL_SECONDS`            | `3600`   | Stale cache max age (1 hour)                            |
-| `PORT`                         | `3000`   | HTTP server port                                        |
-| `INGEST_URL`                   | (none)   | Paired Worker base URL. **Unset ⇒ ingest disabled**     |
-| `PDF_EXTRACTOR_URL`            | (none)   | pdf-extractor Worker. **Unset ⇒ PDFs can't be saved**   |
-| `PDF_EXTRACTOR_SECRET`         | (none)   | Its `EXTRACT_SECRET` (Fly secret)                       |
-| `INGEST_INTERVAL_SECONDS`      | `15`     | Push cycle                                              |
-| `INGEST_BATCH_SIZE`            | `100`    | Items per push request                                  |
-| `CRAWL_SET_INTERVAL_SECONDS`   | `300`    | How often to pull the crawl set                         |
-| `SENTRY_DSN`                   | (none)   | Error reporting; unset ⇒ no-op                          |
-| `WARM_HEARTBEAT_URL`           | (none)   | Dead-man ping after each successful warm tick           |
-| `GIT_COMMIT_SHA`               | `dev`    | Build stamp, reported by `/health`                      |
-| `WEB_BOT_AUTH_KEY`             | (none)   | Private Ed25519 JWK; set ⇒ upstream fetches are signed  |
-| `WEB_BOT_AUTH_SIGNATURE_AGENT` | (none)   | https origin publishing the public key (`fly.toml`)     |
-| `ROBOTS_ENABLED`               | `true`   | Honour robots.txt on the crawl path (`false` = debug)   |
+| Environment Variable           | Default  | Description                                                        |
+| ------------------------------ | -------- | ------------------------------------------------------------------ |
+| `PROXY_SECRET`                 | (none)   | Shared secret for `X-Proxy-Secret` (inbound + outbound)            |
+| `DATA_DIR`                     | `./data` | SQLite database location                                           |
+| `CACHE_TTL_SECONDS`            | `900`    | Fresh cache duration (15 min)                                      |
+| `STALE_TTL_SECONDS`            | `3600`   | Stale cache max age (1 hour)                                       |
+| `PORT`                         | `3000`   | HTTP server port                                                   |
+| `INGEST_URL`                   | (none)   | Paired Worker base URL. **Unset ⇒ ingest disabled**                |
+| `PDF_EXTRACTOR_URL`            | (none)   | pdf-extractor Worker. **Unset ⇒ PDFs can't be saved**              |
+| `PDF_EXTRACTOR_SECRET`         | (none)   | Its `EXTRACT_SECRET` (Fly secret)                                  |
+| `INGEST_INTERVAL_SECONDS`      | `15`     | Push cycle                                                         |
+| `INGEST_BATCH_SIZE`            | `100`    | Items per push request                                             |
+| `CRAWL_SET_INTERVAL_SECONDS`   | `300`    | How often to pull the crawl set                                    |
+| `SENTRY_DSN`                   | (none)   | Error reporting; unset ⇒ no-op                                     |
+| `WARM_HEARTBEAT_URL`           | (none)   | Dead-man ping after each successful warm tick                      |
+| `GIT_COMMIT_SHA`               | `dev`    | Build stamp, reported by `/health`                                 |
+| `WEB_BOT_AUTH_KEY`             | (none)   | Private Ed25519 JWK; set ⇒ upstream fetches are signed             |
+| `WEB_BOT_AUTH_SIGNATURE_AGENT` | (none)   | https origin publishing the public key (`fly.toml`)                |
+| `ROBOTS_ENABLED`               | `true`   | Honour robots.txt on the crawl path (`false` = debug)              |
+| `YOUTUBE_API_KEY`              | (none)   | YouTube Data API key (Fly secret); set ⇒ YouTube feeds via the API |
+| `YOUTUBE_API_REFRESH_SECONDS`  | `2700`   | Min interval between API refreshes of one YouTube feed             |
 
 Observability setup and incident procedures live in [`docs/RUNBOOK.md`](../docs/RUNBOOK.md).
 
@@ -398,6 +400,27 @@ crawler, aimed at search indexing. Today that's YouTube's `/feeds/videos.xml`
 (`isExemptFeedEndpoint` in `src/robots.ts`). Every crawled feed is one a reader
 subscribed to, the same grounds Google's Feedfetcher uses. Keep the list to exact
 feed paths.
+
+## YouTube feeds (Data API)
+
+`youtube.com/feeds/videos.xml` answers 404 to datacenter IPs, ours included, while the same URL
+works in a browser. With `YOUTUBE_API_KEY` set, the crawl answers those URLs from the YouTube Data
+API v3 instead (`src/youtube-api.ts`): subscriptions keep their `feeds/videos.xml` URL, and the
+API's answer is rendered as the Atom document YouTube would have served, so parsing, item guids
+(`yt:video:<id>`) and the ingest push are unchanged. No request goes to youtube.com, so robots.txt
+doesn't apply. Without a key, YouTube feeds are fetched directly as before.
+
+Quota: the default allowance is 10,000 units a day. A channel feed costs 1 unit per refresh, a
+playlist 2, a legacy `user=` feed 3. A successful refresh parks the feed in `next_retry_at` (with
+`error_count` 0) for `YOUTUBE_API_REFRESH_SECONDS`, 45 min by default: about 32 units per channel
+per day, so roughly 300 channels per key. Keep it under `WARM_TARGET_CYCLE_SECONDS` or the
+crawl-cycle warning fires. If the quota runs out, API calls pause for an hour and the feeds back off
+as on a 429. `/stats` → `crawler.youtubeApi` reports calls made and any pause. Staging and
+production should use separate keys (separate Google Cloud projects), or they share one quota.
+
+On boot with a key, YouTube feeds still in backoff from a direct-fetch failure (a 404, or the old
+robots.txt disallow) are released so they're fetched again at once; failures the API path recorded
+(`YouTube API: …`) keep their backoff.
 
 ## Ingest push (crawler mode)
 
