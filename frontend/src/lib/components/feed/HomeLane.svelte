@@ -71,7 +71,7 @@
   });
 </script>
 
-<section class="lane" aria-label={title}>
+<section class="lane" data-density={density} aria-label={title}>
   <div class="lane-header">
     <h2 class="lane-title">
       <span class="lane-icon"><Icon name={icon} size={16} /></span>
@@ -146,6 +146,39 @@
 <style>
   .lane {
     margin-bottom: 1.75rem;
+    /* Density tokens for the tiles (read by HomeLaneCard and the skeletons below).
+       Base = "cozy"; data-density overrides. They live on the lane, not the page,
+       so the lane sizes itself wherever it's used (Home, the Shelf). */
+    --lane-card-w: 16.5rem;
+    --lane-card-w-m: 9.75rem;
+    --lane-thumb: 3.25rem;
+    --lane-thumb-h: 5.5rem;
+    --lane-pad-x: 0.875rem;
+    --lane-pad-t: 0.75rem;
+    --lane-pad-b: 0.875rem;
+    --lane-gap: 0.75rem;
+  }
+
+  /* Compact tiles are text-only squares (HomeLaneCard drops the thumbnail), so they
+     need a small square footprint — several across the lane. Thumb vars go unused. */
+  .lane[data-density='compact'] {
+    --lane-card-w: 9rem;
+    --lane-card-w-m: 7.25rem;
+    --lane-pad-x: 0.7rem;
+    --lane-pad-t: 0.6rem;
+    --lane-pad-b: 0.7rem;
+    --lane-gap: 0;
+  }
+
+  .lane[data-density='comfortable'] {
+    --lane-card-w: 19.5rem;
+    --lane-card-w-m: 11.5rem;
+    --lane-thumb: 4rem;
+    --lane-thumb-h: 6.5rem;
+    --lane-pad-x: 1.05rem;
+    --lane-pad-t: 1rem;
+    --lane-pad-b: 1.05rem;
+    --lane-gap: 0.95rem;
   }
 
   .lane-header {

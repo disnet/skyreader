@@ -18,6 +18,12 @@
   import BottomSheet from '$lib/components/common/BottomSheet.svelte';
   import NotificationList from '$lib/components/NotificationList.svelte';
   import ShelfItem from './ShelfItem.svelte';
+  import HomeLane from '$lib/components/feed/HomeLane.svelte';
+  import type { LaneCardVM } from '$lib/components/feed/homeLane';
+  import { savedCoverUrl } from '$lib/services/api';
+  import { decodeEntities } from '$lib/utils/entities';
+  import { getFaviconUrl } from '$lib/utils/favicon';
+  import { formatReadTime } from '$lib/utils/readTime';
   import { shelfStore } from '$lib/stores/shelf.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
@@ -33,6 +39,7 @@
     continueReading,
     filterShelf,
     progressFraction,
+    shelfKind,
     sortShelf,
     type ShelfEntry,
     type ShelfKindFilter,
@@ -97,6 +104,33 @@
     !collection && kind === 'all' && !query.trim() ? continueReading(allEntries) : []
   );
   let filtering = $derived(kind !== 'all' || query.trim().length > 0);
+
+  // Continue reading as a Home-style lane: one swipeable row of tiles instead of a
+  // stack of full-width cards pushing the Shelf itself below the fold on a phone.
+  // A book or PDF is credited to its author; an article to its site.
+  const WORDS_PER_MIN = 200;
+  let inProgressByKey = $derived(new Map(inProgress.map((e) => [e.save.rkey, e])));
+  let continueItems = $derived(
+    inProgress.map((entry): LaneCardVM => {
+      const save = entry.save;
+      const isArticle = shelfKind(save) === 'article';
+      const fraction = entry.progress ?? 0;
+      const totalMin = save.wordCount
+        ? Math.max(1, Math.round(save.wordCount / WORDS_PER_MIN))
+        : null;
+      return {
+        key: save.rkey,
+        title: decodeEntities(save.title || '') || save.url || 'Untitled',
+        domain: (isArticle ? save.domain || save.author : save.author) || null,
+        image: savedCoverUrl(save),
+        faviconUrl: isArticle && save.url ? getFaviconUrl(save.url) : '',
+        metaLabel: totalMin
+          ? `${formatReadTime(Math.max(1, Math.round(totalMin * (1 - fraction))))} left`
+          : `${Math.round(fraction * 100)}% read`,
+        progress: fraction,
+      };
+    })
+  );
 
   let loadedCount = $state(PAGE_SIZE);
   let displayed = $derived(entries.slice(0, loadedCount));
@@ -335,21 +369,17 @@
       </section>
     {/if}
 
-    {#if inProgress.length > 0}
-      <section class="continue" aria-labelledby="continue-heading">
-        <h2 id="continue-heading" class="section-label">Continue reading</h2>
-        <div class="continue-row">
-          {#each inProgress as entry (entry.save.rkey)}
-            <button class="continue-item" onclick={() => open(entry.save)}>
-              <span class="continue-title">{entry.save.title || entry.save.url || 'Untitled'}</span>
-              <span class="continue-meta">{Math.round((entry.progress ?? 0) * 100)}% read</span>
-              <span class="continue-bar">
-                <span style="width: {Math.round((entry.progress ?? 0) * 100)}%"></span>
-              </span>
-            </button>
-          {/each}
-        </div>
-      </section>
+    {#if continueItems.length > 0}
+      <HomeLane
+        title="Continue reading"
+        icon="clock"
+        items={continueItems}
+        onOpen={(vm) => {
+          const entry = inProgressByKey.get(vm.key);
+          if (entry) open(entry.save);
+        }}
+        onHover={(vm) => void savesStore.prefetchContent(vm.key)}
+      />
     {/if}
 
     {#if allEntries.length > 0}
@@ -748,7 +778,7 @@
     cursor: default;
   }
 
-  /* --- Continue reading --- */
+  /* --- Section labels --- */
   .section-label {
     margin: 0 0 0.5rem;
     font-size: var(--text-2xs);
@@ -756,61 +786,6 @@
     letter-spacing: var(--tracking-wider);
     text-transform: uppercase;
     color: var(--color-text-secondary);
-  }
-
-  .continue {
-    margin-bottom: 1.25rem;
-  }
-
-  .continue-row {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-    gap: 0.5rem;
-  }
-
-  .continue-item {
-    display: flex;
-    flex-direction: column;
-    gap: 0.375rem;
-    padding: 0.625rem 0.75rem;
-    border: 1px solid var(--color-border);
-    border-radius: 8px;
-    background: none;
-    text-align: left;
-    font: inherit;
-    cursor: pointer;
-    min-width: 0;
-  }
-
-  .continue-item:hover {
-    border-color: var(--color-text-secondary);
-  }
-
-  .continue-title {
-    font-size: var(--text-md);
-    font-weight: var(--weight-medium);
-    color: var(--color-text);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .continue-meta {
-    font-size: var(--text-xs);
-    color: var(--color-text-secondary);
-  }
-
-  .continue-bar {
-    height: 3px;
-    border-radius: 2px;
-    background: var(--color-bg-secondary);
-    overflow: hidden;
-  }
-
-  .continue-bar > span {
-    display: block;
-    height: 100%;
-    background: var(--color-primary);
   }
 
   /* --- Controls --- */
