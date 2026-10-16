@@ -316,9 +316,13 @@ the pages but won't show in the text. If you change how the extractor joins line
 The **Library** is the saves read two ways: the **Queue** (`/saved`, Inbox / Archive) and the
 **Shelf** (`/shelf`). `components/library/LibraryIntro.svelte` opens both with a Queue | Shelf
 switch; a Queue card on the Shelf says **On Shelf**, a Shelf item archived in the Queue says
-**Archived**, and both item menus group their actions under Queue / Shelf headings
+**Archived** (one `library/LibraryChip` for both), and both item menus group their actions under Queue / Shelf headings
 (`PopoverMenu`'s `section`). Home's Continue reading shares the Shelf's `isInProgress` rule and
-counts an archived save still on the Shelf. See `docs/plans/SHELF_PLAN.md` § The Library.
+counts an archived save still on the Shelf. The two halves share a layout: a Queue row
+(`feed/SavedCard`) has the Shelf list row's anatomy (an icon beside the title; the kind for a book or
+PDF, then source and author), and the Queue's Inbox / Archive and sort sit in the body under the
+switch (`library/QueueControls`), where the Shelf keeps its own controls. The header keeps only
+Search and Add. See `docs/plans/SHELF_PLAN.md` § The Library.
 
 `/shelf` is the reference half of the Library: a view over the same saves, not a second pile
 (`stores/shelf.svelte.ts`, `components/shelf/`). A save is on it when its `kept` label says so

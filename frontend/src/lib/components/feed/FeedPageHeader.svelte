@@ -176,42 +176,8 @@
       <div class="control-right">
         {#if isSavedView}
           <div class="view-toggle" role="group" aria-label="Saved view">
-            <button
-              class:active={feedViewStore.savedView === 'inbox'}
-              onclick={() => feedViewStore.setSavedView('inbox')}
-              aria-label="Inbox"
-              title="Inbox"
-            >
-              <Icon name="inbox" size={16} />
-              <span class="btn-label">Inbox</span>
-            </button>
-            <button
-              class:active={feedViewStore.savedView === 'archive'}
-              onclick={() => feedViewStore.setSavedView('archive')}
-              aria-label="Archive"
-              title="Archive"
-            >
-              <Icon name="archive" size={16} />
-              <span class="btn-label">Archive</span>
-            </button>
-            {#if !feedViewStore.isSavedChannel}
-              <span class="toggle-divider"></span>
-              <button
-                onclick={() => feedViewStore.toggleSortOrder()}
-                title={feedViewStore.currentSortOrder === 'newest'
-                  ? 'Newest first'
-                  : 'Oldest first'}
-              >
-                <Icon
-                  name={feedViewStore.currentSortOrder === 'newest' ? 'arrow-down' : 'arrow-up'}
-                  size={16}
-                />
-                <span class="btn-label"
-                  >{feedViewStore.currentSortOrder === 'newest' ? 'New' : 'Old'}</span
-                >
-              </button>
-            {/if}
-            <span class="toggle-divider"></span>
+            <!-- Inbox / Archive and the sort live in the page body
+                 (library/QueueControls), laid out like the Shelf's. -->
             <button
               class:active={savedSearchStore.open || savedSearchStore.active}
               onclick={() => savedSearchStore.toggle()}

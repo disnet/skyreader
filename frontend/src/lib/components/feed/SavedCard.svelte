@@ -30,6 +30,8 @@
   import PopoverMenu from '$lib/components/PopoverMenu.svelte';
   import TagMenu from '$lib/components/feed/TagMenu.svelte';
   import { shelfStore } from '$lib/stores/shelf.svelte';
+  import { SHELF_KIND_LABEL, shelfKind } from '$lib/utils/shelf';
+  import LibraryChip from '$lib/components/library/LibraryChip.svelte';
   import { isFailedSaveBody } from '$lib/utils/saveAnywhere';
 
   let {
@@ -341,12 +343,20 @@
     };
   });
 
-  // Type badge
-  let typeBadge = $derived.by(() => {
-    if (displayItem.type === 'saved') {
-      if (displayItem.item.domain) return displayItem.item.domain;
-      if (displayItem.item.source !== 'upload') return 'Saved';
-      return displayItem.item.contentType === 'epub' ? 'EPUB' : 'PDF';
+  // What the save is, in the Shelf's words: a book or a PDF says so (and
+  // wears the Shelf's icon for it); anything else is read by where it's from.
+  let kind = $derived(displayItem.type === 'saved' ? shelfKind(displayItem.item) : 'article');
+  let kindLabel = $derived(kind === 'article' ? '' : SHELF_KIND_LABEL[kind]);
+
+  // Where it's from: the feed or publication, else the saved page's site.
+  let source = $derived.by(() => {
+    if (displayItem.type === 'saved') return displayItem.item.domain || '';
+    return feedTitle;
+  });
+
+  let author = $derived.by(() => {
+    if (displayItem.type === 'article' || displayItem.type === 'saved') {
+      return displayItem.item.author || '';
     }
     return '';
   });
@@ -653,54 +663,49 @@
           onOpen?.();
         }}
       >
-        <h3 class="bookmark-title">
-          {#each titleParts as part}{#if part.mark}<mark>{part.text}</mark
-              >{:else}{part.text}{/if}{/each}
-        </h3>
-        {#if bodyMatchOnly && searchSnippet}
-          <p class="bookmark-summary">
-            {searchSnippet.truncatedStart ? '…' : ''}{searchSnippet.before}<mark
-              >{searchSnippet.match}</mark
-            >{searchSnippet.after}{searchSnippet.truncatedEnd ? '…' : ''}
-          </p>
-        {:else if bodyMatchOnly}
-          <p class="bookmark-summary match-caption">Matches article text</p>
-        {:else if summaryText}
-          <p class="bookmark-summary">{summaryText}</p>
-        {/if}
-        <div class="bookmark-meta">
-          <span class="meta-icon">
-            {#if faviconUrl}
-              <img src={faviconUrl} alt="" class="favicon" />
-            {:else}
-              <Icon name={itemType === 'document' ? 'standard-site' : 'rss'} size={14} />
+        <span class="row-icon" aria-hidden="true">
+          {#if kindLabel}
+            <Icon name="book-open" size={16} />
+          {:else if faviconUrl}
+            <img src={faviconUrl} alt="" class="favicon" />
+          {:else}
+            <Icon name={itemType === 'document' ? 'standard-site' : 'file-text'} size={16} />
+          {/if}
+        </span>
+        <div class="row-text">
+          <h3 class="bookmark-title">
+            {#each titleParts as part}{#if part.mark}<mark>{part.text}</mark
+                >{:else}{part.text}{/if}{/each}
+          </h3>
+          {#if bodyMatchOnly && searchSnippet}
+            <p class="bookmark-summary">
+              {searchSnippet.truncatedStart ? '…' : ''}{searchSnippet.before}<mark
+                >{searchSnippet.match}</mark
+              >{searchSnippet.after}{searchSnippet.truncatedEnd ? '…' : ''}
+            </p>
+          {:else if bodyMatchOnly}
+            <p class="bookmark-summary match-caption">Matches article text</p>
+          {:else if summaryText}
+            <p class="bookmark-summary">{summaryText}</p>
+          {/if}
+          <div class="bookmark-meta">
+            {#if kindLabel}<span class="meta-kind">{kindLabel}</span>{/if}
+            {#if source}<span class="meta-source">{source}</span>{/if}
+            {#if author && author !== source}<span class="meta-author">{author}</span>{/if}
+            {#if readTimeMinutes}
+              <span class="meta-read-time">
+                <Icon name="clock" size={12} />
+                {formatReadTime(readTimeMinutes)}
+              </span>
             {/if}
-          </span>
-          {#if typeBadge}
-            <span class="meta-type-badge">{typeBadge}</span>
-          {:else if feedTitle}
-            <span class="meta-feed">{feedTitle}</span>
-          {/if}
-          {#if displayItem.type === 'article' && displayItem.item.author}
-            <span class="meta-author">{displayItem.item.author}</span>
-          {/if}
-          {#if readTimeMinutes}
-            <span class="meta-read-time">
-              <Icon name="clock" size={12} />
-              {formatReadTime(readTimeMinutes)}
-            </span>
-          {/if}
-          <span class="meta-date">{formatRelativeDate(publishedAt)}</span>
-          {#if onShelf}
-            <span class="meta-shelf" title="Also on your Shelf">
-              <Icon name="shelf" size={12} />
-              On Shelf
-            </span>
-          {/if}
-          {#each tags as tag, i}
-            {#if i === 0}<span class="meta-dot" aria-hidden="true">·</span>{/if}
-            <span class="tag-chip">{tag}</span>
-          {/each}
+            <span class="meta-date">{formatRelativeDate(publishedAt)}</span>
+            {#if onShelf}
+              <LibraryChip label="On Shelf" title="Also on your Shelf" />
+            {/if}
+            {#each tags as tag}
+              <span class="tag-chip">{tag}</span>
+            {/each}
+          </div>
         </div>
       </div>
 
@@ -780,17 +785,18 @@
     background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.03));
   }
 
-  .meta-icon {
+  /* The Shelf list row's anatomy (shelf/ShelfItem.svelte): an icon beside the
+     title, the text in one column next to it. */
+  .row-icon {
     display: inline-flex;
-    align-items: center;
-    justify-content: center;
     flex-shrink: 0;
+    margin-top: 0.1875rem;
     color: var(--color-text-secondary);
   }
 
-  .meta-icon::before {
-    content: none;
-    margin-right: 0;
+  .row-text {
+    flex: 1;
+    min-width: 0;
   }
 
   .favicon {
@@ -800,6 +806,9 @@
   }
 
   .bookmark-content {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
     flex: 1;
     min-width: 0;
   }
@@ -850,34 +859,19 @@
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 0.375rem;
-    margin-top: 0.375rem;
+    column-gap: 0.75rem;
+    row-gap: 0.125rem;
+    margin-top: 0.25rem;
     font-size: var(--text-xs);
     color: var(--color-text-secondary);
   }
 
-  .bookmark-meta > :not(:first-child)::before {
-    content: '·';
-    margin-right: 0.375rem;
-    opacity: 0.5;
-  }
-
-  .bookmark-meta > .meta-icon + :not(:first-child)::before {
-    content: none;
-    margin-right: 0;
-  }
-
-  .meta-feed {
+  .meta-kind,
+  .meta-source {
     font-weight: var(--weight-medium);
   }
 
-  .meta-type-badge {
-    font-weight: var(--weight-medium);
-    color: var(--color-primary, #2563eb);
-  }
-
-  .meta-read-time,
-  .meta-shelf {
+  .meta-read-time {
     display: inline-flex;
     align-items: center;
     gap: 0.2rem;
@@ -889,24 +883,9 @@
     padding: 0.0625rem 0.375rem;
     font-size: var(--text-2xs);
     font-weight: var(--weight-medium);
-    background: rgba(37, 99, 235, 0.08);
-    color: var(--color-primary, #2563eb);
+    background: rgba(0, 102, 204, 0.08);
+    color: var(--color-primary);
     border-radius: 999px;
-  }
-
-  .bookmark-meta > .meta-dot,
-  .bookmark-meta > .tag-chip {
-    margin-right: 0;
-  }
-
-  .bookmark-meta > .meta-dot::before,
-  .bookmark-meta > .tag-chip::before {
-    content: none;
-    margin-right: 0;
-  }
-
-  .meta-dot {
-    opacity: 0.5;
   }
 
   .card-actions {
