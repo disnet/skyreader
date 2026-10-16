@@ -154,8 +154,9 @@ const WEB_BOT_AUTH_SIGNATURE_AGENT = process.env.WEB_BOT_AUTH_SIGNATURE_AGENT;
 // API, since youtube.com/feeds 404s to datacenter IPs (src/youtube-api.ts).
 // YOUTUBE_API_REFRESH_SECONDS caps how often each one spends quota.
 const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
-const YOUTUBE_API_REFRESH_MS = process.env.YOUTUBE_API_REFRESH_SECONDS
-  ? parseInt(process.env.YOUTUBE_API_REFRESH_SECONDS, 10) * 1000
+const YOUTUBE_API_REFRESH_SECONDS = parseInt(process.env.YOUTUBE_API_REFRESH_SECONDS ?? '', 10);
+const YOUTUBE_API_REFRESH_MS = Number.isFinite(YOUTUBE_API_REFRESH_SECONDS)
+  ? YOUTUBE_API_REFRESH_SECONDS * 1000
   : undefined;
 
 // Jetstream document firehose: keeps standard.site documents fresh via the AT

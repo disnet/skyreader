@@ -2033,7 +2033,9 @@ export function createApp(db: Database, config: AppConfig) {
       const nextRetryAt = isTooLarge
         ? now + PERMANENT_ERROR_DELAY_MS
         : now + calculateBackoff(newErrorCount);
-      const errorMessage = isTooLarge ? msg : `Network error: ${msg}`;
+      const errorMessage = isTooLarge
+        ? msg
+        : `${youtubeTarget ? YOUTUBE_API_ERROR_PREFIX : ''}Network error: ${msg}`;
 
       recordFetchFailure(url, urlHash, cached, {
         errorCount: newErrorCount,

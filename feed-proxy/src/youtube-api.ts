@@ -293,6 +293,9 @@ function bestThumbnail(thumbnails: any): string | undefined {
 
 function escapeXml(s: string): string {
   return s
+    // Control characters are illegal in XML 1.0 and would fail the whole feed's parse.
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/g, '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
