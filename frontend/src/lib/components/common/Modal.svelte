@@ -46,6 +46,11 @@
   // The header sits flush on the body with no rule under it; the rule comes in
   // once content scrolls beneath, which is the only time it separates anything.
   let scrolled = $state(false);
+  // The component outlives each open, so a rule earned by scrolling must not
+  // carry over to the next time the dialog opens at the top.
+  $effect(() => {
+    if (!open) scrolled = false;
+  });
 
   function handleBackdropClick(e: MouseEvent) {
     if (e.target === e.currentTarget) {

@@ -503,7 +503,7 @@
         </div>
       </div>
       <div class="show-group">
-        <label class="section-label" for="channel-order">Order</label>
+        <label id="channel-order-label" class="section-label" for="channel-order">Order</label>
         {#if sortOptions.length > MAX_SEGMENTS}
           <!-- Too many to sit side by side (a saved channel has eight): a
                dropdown, not a segmented control that wraps. -->
@@ -513,7 +513,12 @@
             {/each}
           </select>
         {:else}
-          <div class="chip-row segmented" id="channel-order" role="group" aria-label="Order">
+          <div
+            class="chip-row segmented"
+            id="channel-order"
+            role="group"
+            aria-labelledby="channel-order-label"
+          >
             {#each sortOptions as opt (opt.value)}
               <button
                 type="button"
@@ -1134,7 +1139,6 @@
     color: var(--color-error);
   }
 
-  /* iOS Safari zooms the viewport when a focused input is smaller than 16px. */
   /* A phone: the two buttons share the width, and Delete takes a line of its own. */
   @media (max-width: 640px) {
     .actions {
@@ -1154,6 +1158,7 @@
     }
   }
 
+  /* iOS Safari zooms the viewport when a focused input is smaller than 16px. */
   @media (hover: none) and (pointer: coarse) {
     .text-input,
     .select-input,
