@@ -218,7 +218,8 @@ export function linkTitle(url: string): string {
   } catch {
     // Malformed escapes: keep it encoded.
   }
-  return text.length > LINK_TITLE_MAX ? `${text.slice(0, LINK_TITLE_MAX - 1)}…` : text;
+  const chars = Array.from(text); // by code point, so a surrogate pair isn't split
+  return chars.length > LINK_TITLE_MAX ? `${chars.slice(0, LINK_TITLE_MAX - 1).join('')}…` : text;
 }
 
 /** The line a caller shows once a save kept only the link. */
