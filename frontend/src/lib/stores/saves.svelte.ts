@@ -1027,6 +1027,28 @@ function createSavesStore() {
     }
   }
 
+  // A feed save with no body of its own can still be read from its feed item:
+  // the row in db.articles, or — for a long body the archive kept out-of-row (a
+  // newsletter, usually) — the archive's stored copy. A save made offline, or
+  // whose stored-body read failed at save time, lands with no body; without this
+  // the reader shows only its description. Best effort: null when the feed item
+  // is gone from this device.
+  async function feedBodyFor(guid: string | null | undefined): Promise<string | null> {
+    if (!guid) return null;
+    const row = await db.articles.where('guid').equals(guid).first();
+    if (!row) return null;
+    if (row.content) return row.content;
+    if (!row.contentTruncated) return null;
+    const feedUrl = subscriptionsStore.getById(row.subscriptionId)?.feedUrl;
+    if (!feedUrl) return null;
+    const stored = await loadStoredBody(
+      { id: row.id, guid, subscriptionId: row.subscriptionId },
+      feedUrl,
+      { guest: auth.isGuest }
+    );
+    return stored.status === 'found' ? stored.content : null;
+  }
+
   // Read a saved item's full body back from IndexedDB by rkey. The in-memory
   // list drops bodies (see toLightSaved); the reader calls this on open.
   async function getContent(rkey: string): Promise<string | null> {
@@ -1034,7 +1056,7 @@ function createSavesStore() {
     if (cached != null) return cached;
     try {
       const row = await db.saved.get(rkey);
-      if (row?.content != null) {
+      if (row?.content) {
         contentCache.set(rkey, row.content);
         return row.content;
       }
@@ -1045,16 +1067,33 @@ function createSavesStore() {
       // the incremental refresh won't revisit an already-cached row. Fetch it on
       // demand here as a self-healing fallback, and cache it so the next open is local.
       // A guest's saves have no server copy to fall back to.
-      if (!canReachBackend()) return null;
-      const { bodies } = await api.getSavedBodies([rkey]);
-      const body = bodies[rkey] ?? null;
-      if (body != null && row) {
-        const filled = { ...row, content: body };
-        await safePut(db.saved, filled);
-        savedSearchStore.upsert(filled);
+      if (canReachBackend()) {
+        // A failed fetch must not skip the local feed-body fallback below.
+        const bodies = await api
+          .getSavedBodies([rkey])
+          .then((r) => r.bodies)
+          .catch((): Record<string, string | null> => ({}));
+        const body = bodies[rkey];
+        if (body) {
+          if (row) {
+            const filled = { ...row, content: body };
+            await safePut(db.saved, filled);
+            savedSearchStore.upsert(filled);
+          }
+          contentCache.set(rkey, body);
+          return body;
+        }
       }
-      if (body != null) contentCache.set(rkey, body);
-      return body;
+
+      // Not cached here (only the save's own body is), so a later backfill of
+      // the save still wins on the next open.
+      const itemGuid = row?.itemGuid ?? articles.find((a) => a.rkey === rkey)?.itemGuid;
+      const feedBody = await feedBodyFor(itemGuid).catch(() => null);
+      if (feedBody) return feedBody;
+
+      // An empty body is still an answer: the reader turns it into the
+      // link-only note for a URL save.
+      return row?.content ?? null;
     } catch {
       return null;
     }
