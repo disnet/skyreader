@@ -46,4 +46,26 @@ test.describe('Saved Articles', () => {
       timeout: 15_000,
     });
   });
+
+  test('one menu switches the Queue between Inbox and Archive and sets the sort', async ({
+    authedPage,
+  }) => {
+    await authedPage.goto('/saved');
+    await expect(authedPage.getByText('Your Queue is empty')).toBeVisible({ timeout: 15_000 });
+
+    const trigger = authedPage.getByRole('button', { name: 'Showing Inbox, newest first' });
+    await trigger.click();
+    await authedPage.getByRole('button', { name: 'Archive', exact: true }).click();
+    await expect(authedPage.getByText('Nothing archived yet')).toBeVisible();
+
+    await authedPage.getByRole('button', { name: 'Showing Archive, newest first' }).click();
+    await authedPage.getByRole('button', { name: 'Oldest first', exact: true }).click();
+    await expect(
+      authedPage.getByRole('button', { name: 'Showing Archive, oldest first' })
+    ).toBeVisible();
+    // Choosing closes the menu.
+    await expect(authedPage.getByRole('button', { name: 'Newest first', exact: true })).toHaveCount(
+      0
+    );
+  });
 });
