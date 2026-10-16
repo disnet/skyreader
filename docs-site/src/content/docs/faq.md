@@ -17,7 +17,7 @@ Sign-in only asks for what Skyreader needs to keep your reading in order. Featur
 
 ## A feed hasn't shown anything new in a while. Is it broken?
 
-Usually the feed just hasn't published. Skyreader crawls feeds continuously and surfaces new items within minutes of them appearing. If a site moved or removed its feed, the feed's row in **Manage sources** is the place to check and update it.
+Usually the feed just hasn't published. Skyreader crawls feeds continuously and surfaces new items within minutes of them appearing. If Skyreader can't fetch a feed, for example because the site blocks automated access, opening the feed shows why at the top. If a site moved or removed its feed, the feed's row in **Manage sources** is the place to check and update it.
 
 If you notice a live feed that isn't working in Skyreader, please open a [feedback](https://skyreader.app/feedback).
 
