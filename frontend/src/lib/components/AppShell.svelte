@@ -128,7 +128,7 @@
 
   // Shelf collections: once the app is up, per account (shelfStore.load is a
   // no-op on a second call for the same DID). Membership puts a save on the
-  // Shelf, so the Saved list's "Keep on Shelf" state needs them too.
+  // Shelf, so the Saved list's "Add to Shelf" state needs them too.
   $effect(() => {
     const did = auth.user?.did;
     if (!did || auth.isGuest || $page.url.pathname.startsWith('/dev')) return;

@@ -1,8 +1,7 @@
 <script lang="ts">
-  // The top of the Library: the Queue | Shelf switch and one line on what the
-  // half you're in is for. Queue (`/saved`) and Shelf (`/shelf`) are two ways of
-  // reading the same saves, not two piles (docs/plans/SHELF_PLAN.md), and this is
-  // the one place that says so. It sits in the page body rather than the desktop
+  // The top of the Library: the Queue | Shelf switch. Queue (`/saved`) and Shelf
+  // (`/shelf`) are two ways of reading the same saves, not two piles
+  // (docs/plans/SHELF_PLAN.md). It sits in the page body rather than the desktop
   // header so it shows on a phone too, where the header gives way to the bottom bar.
   import { SAVED_PATH, SHELF_PATH } from '$lib/utils/viewNav';
 
@@ -26,21 +25,11 @@
       aria-current={mode === 'shelf' ? 'page' : undefined}>Shelf</a
     >
   </nav>
-  <p class="library-desc">
-    {#if mode === 'queue'}
-      To read next. Archive what you're done with; anything on your Shelf stays there.
-    {:else}
-      What you keep and come back to. Books and PDFs land here; keep anything else from its ⋯ menu.
-    {/if}
-  </p>
 </div>
 
 <style>
   .library-intro {
     display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.5rem 0.875rem;
     padding: 0.5rem 0 0.75rem;
   }
 
@@ -77,12 +66,5 @@
   .library-switch a:focus-visible {
     outline: 2px solid var(--color-primary);
     outline-offset: 1px;
-  }
-
-  .library-desc {
-    flex: 1 1 16rem;
-    margin: 0;
-    font-size: var(--text-sm);
-    color: var(--color-text-secondary);
   }
 </style>

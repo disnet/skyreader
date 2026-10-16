@@ -571,7 +571,7 @@
     if (shelfSave) {
       const save = shelfSave;
       items.push({
-        label: onShelf ? 'Take off Shelf' : 'Keep on Shelf',
+        label: onShelf ? 'Take off Shelf' : 'Add to Shelf',
         icon: 'shelf',
         active: onShelf,
         section: 'Shelf',

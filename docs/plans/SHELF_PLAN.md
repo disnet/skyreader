@@ -92,7 +92,7 @@ deferred (see below).
   - **Covers** (grid) or **List**, remembered per device (`localStorage['skyreader-shelf-view']`).
     A cover is the save's image, or its title set typographically. Books get a spine edge.
   - Items open in the shared reader stack (`?read=`), same as Saved.
-- **Saved cards** gain **Keep on Shelf / Take off Shelf** and **Add to collection**.
+- **Saved cards** gain **Add to Shelf / Take off Shelf** and **Add to collection**.
 - **Add to collection** is one picker (`ShelfCollectionPicker`, mounted in `AppShell`, driven by
   `shelfStore.openPicker`). Checkboxes apply at once, and a collection can be created from it.
 - Nav: **Shelf** sits under Saved in the sidebar, the dropdown and the mobile switcher.
@@ -106,11 +106,11 @@ Saved and Shelf became the two halves of one **Library**:
   **Shelf** keeps `/shelf`. The sidebar, the header dropdown and the mobile switcher show one
   **Library** row (it opens the Queue, and stays lit on either half), with the Shelf's collections
   and then the Queue's saved channels nested under it.
-- **`LibraryIntro`** (`components/library/`) opens both pages: a Queue | Shelf switch and one line
-  on what that half is for. It sits in the page body, not the desktop header, so phones get it too.
+- **`LibraryIntro`** (`components/library/`) opens both pages with a Queue | Shelf switch (it
+  first carried a line on what each half is for; that was dropped as noise). It sits in the page body, not the desktop header, so phones get it too.
 - **State shows on the item.** A Queue card that's also on the Shelf says **On Shelf**; a Shelf item
   archived in the Queue says **Archived**. Both item menus group their actions under **Queue**
-  (Archive / Move to inbox) and **Shelf** (Keep / Take off, collections) headings
+  (Archive / Move to inbox) and **Shelf** (Add / Take off, collections) headings
   (`PopoverMenu`'s `section`), so the two read as independent. Archive behaves the same everywhere:
   it toggles and closes the reader.
 - **Home points into the Library.** "Recently saved" links to the Queue, and a new **From your
@@ -133,7 +133,7 @@ Ordered by how much they add to "reading should add up":
 
 1. **Item hub page.** A reference's own page: metadata, every highlight and note grouped by
    chapter/page, resume. This is where the Shelf becomes sensemaking rather than storage.
-2. ~~**Keep from the reader.**~~ Shipped: the reader bar's Keep on Shelf button and ⋯ menu.
+2. ~~**Keep from the reader.**~~ Shipped: the reader bar's Add to Shelf button and ⋯ menu.
 3. ~~**Collections in the sidebar.**~~ Shipped: nested under Library, beside the saved channels.
    Drag to reorder is still to do.
 4. **Better metadata.** ISBN, authors, year from EPUB OPF metadata, and DOI/title/authors from PDF

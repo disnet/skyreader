@@ -566,7 +566,7 @@
     if (shelfSave) shelfStore.openPicker(shelfSave);
   }
 
-  // The bar offers Keep on Shelf as its own button only when there's room for
+  // The bar offers Add to Shelf as its own button only when there's room for
   // it beside the title slot; otherwise it stays in the ⋯ menu alone. A button
   // that doesn't fit is taken out of flow but still rendered, so its width can
   // be measured without the bar flickering between the two layouts.
@@ -956,7 +956,7 @@
 
     if (shelfSave) {
       items.push({
-        label: onShelf ? 'Take off Shelf' : 'Keep on Shelf',
+        label: onShelf ? 'Take off Shelf' : 'Add to Shelf',
         icon: 'shelf',
         active: onShelf,
         onclick: toggleShelf,
@@ -1421,11 +1421,11 @@
             aria-hidden={!shelfBtnFits}
             tabindex={shelfBtnFits ? undefined : -1}
             onclick={toggleShelf}
-            title={onShelf ? 'Take off Shelf' : 'Keep on Shelf'}
+            title={onShelf ? 'Take off Shelf' : 'Add to Shelf'}
             bind:this={shelfBtnEl}
           >
             <Icon name="shelf" size={16} />
-            <span class="action-label">{onShelf ? 'On Shelf' : 'Keep on Shelf'}</span>
+            <span class="action-label">{onShelf ? 'On Shelf' : 'Add to Shelf'}</span>
           </button>
         {/if}
 
@@ -1561,7 +1561,7 @@
                   }}
                 >
                   <Icon name="shelf" size={18} />
-                  <span>{onShelf ? 'Take off Shelf' : 'Keep on Shelf'}</span>
+                  <span>{onShelf ? 'Take off Shelf' : 'Add to Shelf'}</span>
                 </button>
                 {#if auth.user}
                   <button
