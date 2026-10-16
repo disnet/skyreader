@@ -332,6 +332,10 @@ book alone (`utils/epubViewMode.ts`, `localStorage['skyreader-epub-view']`, keye
 the PDF plan flag (`limits.pdfSaves`) and upload limits, with its own size cap
 (`limits.maxEpubUploadBytes`). An unreadable or plan-gated EPUB link fails as `PdfExtractionError`
 with `format: 'epub'`, saved as the `epub` / `epubUpgrade` note (`utils/saveAnywhere.ts`).
+A book's cover is the picture-only section its text opens with (the backend puts the package's
+cover there): `toLightSaved` reads its path off the body (`epubCoverPath`) into `coverPath` before
+dropping the body, and `savedCoverUrl` turns it into the Shelf cover and Home card image. It's an
+owner-only asset URL, so it never goes into `image` or a share.
 
 #### Contents (table of contents)
 

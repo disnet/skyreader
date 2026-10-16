@@ -47,6 +47,19 @@ function keepEpubLinksInPlace(html: string): string {
   );
 }
 
+/**
+ * A book's cover: the picture its text opens with, when the first section is
+ * only that (the cover the backend puts first, or the book's own cover page).
+ * Its path in the book, or null.
+ */
+export function epubCoverPath(html: string): string | null {
+  const first = html.slice(0, 4000).match(/^\s*<section\b[^>]*>([\s\S]*?)<\/section>/);
+  if (!first) return null;
+  const src = first[1].match(/<img\b[^>]*\sdata-epub-src="([^"]*)"/);
+  if (!src || first[1].replace(/<[^>]*>/g, '').trim()) return null;
+  return decodeAttribute(src[1]) || null;
+}
+
 /** Whether a link's href is one of a book's own anchors. */
 export function isEpubAnchorHref(href: string | null): href is string {
   return Boolean(href && /^#epub-c\d+/.test(href));

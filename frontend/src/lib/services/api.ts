@@ -151,6 +151,18 @@ export function savedAssetUrl(rkey: string, path: string): string {
   return `${API_BASE}/api/saved/${encodeURIComponent(rkey)}/asset?path=${encodeURIComponent(path)}`;
 }
 
+/**
+ * The picture a save shows on its card or Shelf cover: its own image, else a
+ * book's cover out of its kept original. For this reader only: the cover is
+ * owner-only, so it never goes into a share.
+ */
+export function savedCoverUrl(
+  save: Pick<SavedItem, 'rkey' | 'image' | 'coverPath'>
+): string | null {
+  if (save.image) return save.image;
+  return save.coverPath ? savedAssetUrl(save.rkey, save.coverPath) : null;
+}
+
 export class UrlSaveLimitError extends Error {
   limit: number;
   current: number;

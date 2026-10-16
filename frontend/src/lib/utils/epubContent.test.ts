@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
-import { findEpubAnchor, isEpubAnchorHref, resolveEpubImages } from './epubContent';
+import { epubCoverPath, findEpubAnchor, isEpubAnchorHref, resolveEpubImages } from './epubContent';
 
 describe('resolveEpubImages', () => {
   it("keeps the book's own links in this tab", () => {
@@ -27,6 +27,29 @@ describe('resolveEpubImages', () => {
   it('leaves other pictures alone', () => {
     const html = '<img src="https://example.com/a.png" alt="">';
     expect(resolveEpubImages(html, assetUrl)).toBe(html);
+  });
+});
+
+describe('epubCoverPath', () => {
+  it('reads the cover the backend puts first', () => {
+    const html =
+      '<section data-epub-cover="" id="epub-cover">\n<p><img data-epub-src="OEBPS/images/a&amp;b.png" alt="Cover"></p>\n</section>\n<section data-epub-chapter="1" id="epub-c1"><p>Text.</p></section>';
+    expect(epubCoverPath(html)).toBe('OEBPS/images/a&b.png');
+  });
+
+  it('reads a book’s own cover page', () => {
+    const html =
+      '<section data-epub-chapter="1" id="epub-c1">\n<div><img data-epub-src="OEBPS/cover.jpg" alt=""></div>\n</section><section data-epub-chapter="2"><p>Text.</p></section>';
+    expect(epubCoverPath(html)).toBe('OEBPS/cover.jpg');
+  });
+
+  it('is null when the book opens with words', () => {
+    expect(
+      epubCoverPath(
+        '<section data-epub-chapter="1"><p>Chapter one</p><img data-epub-src="OEBPS/fig.png" alt=""></section>'
+      )
+    ).toBeNull();
+    expect(epubCoverPath('<p>Just an article.</p>')).toBeNull();
   });
 });
 
