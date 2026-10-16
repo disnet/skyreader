@@ -126,11 +126,12 @@
 
   function handleDrop(e: DragEvent) {
     dragging = false;
-    if (!canUploadPdf || uploading) return;
+    if (!canUploadPdf) return;
     const file = e.dataTransfer?.files?.[0];
     if (!file) return;
+    // Mark it handled even mid-upload, or GlobalFileDrop starts a second one.
     e.preventDefault();
-    void uploadFile(file);
+    if (!uploading) void uploadFile(file);
   }
 
   function handleKeydown(e: KeyboardEvent) {
