@@ -324,10 +324,17 @@ function plainTextToHtml(text: string): string {
     .trim()
     .split(/\n\s*\n/)
     .map((para) => {
-      const html = escapeHtml(para.trim()).replace(
-        URL_IN_TEXT_PATTERN,
-        (href) => `<a href="${href}">${href}</a>`
-      );
+      // Link on the raw text, then escape each piece: matching URLs in already
+      // escaped text would swallow entities such as the &gt; after "<https://…>".
+      const raw = para.trim();
+      let html = '';
+      let last = 0;
+      for (const m of raw.matchAll(URL_IN_TEXT_PATTERN)) {
+        const href = escapeHtml(m[0]);
+        html += escapeHtml(raw.slice(last, m.index)) + `<a href="${href}">${href}</a>`;
+        last = m.index + m[0].length;
+      }
+      html += escapeHtml(raw.slice(last));
       return `<p>${html.replace(/\n/g, '<br>')}</p>`;
     })
     .join('');

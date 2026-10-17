@@ -159,6 +159,20 @@ Sources: https://example.com/a.</media:description>
       );
     });
 
+    it('does not pull angle brackets into a linked description URL', () => {
+      const atom = `<?xml version="1.0"?>
+<feed xmlns:yt="http://www.youtube.com/xml/schemas/2015" xmlns:media="http://search.yahoo.com/mrss/" xmlns="http://www.w3.org/2005/Atom">
+ <entry>
+  <id>yt:video:dQw4w9WgXcQ</id><yt:videoId>dQw4w9WgXcQ</yt:videoId><title>T</title>
+  <media:group><media:description>See &lt;https://example.com/a?x=1&amp;y=2&gt; now</media:description></media:group>
+ </entry>
+</feed>`;
+      const [item] = parseFeed(atom, 'https://www.youtube.com/feeds/videos.xml?channel_id=x').items;
+      expect(item.content).toContain(
+        '<p>See &lt;<a href="https://example.com/a?x=1&amp;y=2">https://example.com/a?x=1&amp;y=2</a>&gt; now</p>'
+      );
+    });
+
     it('leaves non-YouTube Atom entries without a media body', () => {
       const atom = `<?xml version="1.0"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
