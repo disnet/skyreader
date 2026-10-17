@@ -477,7 +477,9 @@ export const FEED_PARSER_VERSION = 3;
 //      text and cached as mojibake
 //   6: a bot filter's interstitial ("Just a moment…", "JavaScript is disabled")
 //      reported as blocked instead of cached as the article
-export const EXTRACTOR_VERSION = 6;
+//   7: lazy-loaded iframes (`data-src`, no `src`) get their real src back, so
+//      an embedded video survives into the reader instead of being stripped
+export const EXTRACTOR_VERSION = 7;
 
 function hostOf(url: string): string | null {
   try {
@@ -607,6 +609,38 @@ export function restoreCollapsedMathML(sourceHtml: string, content: string): str
   });
 }
 
+const IFRAME_TAG_RE = /<iframe\b[^>]*>/gi;
+// Where lazy-load scripts (lazysizes, WP Rocket, LiteSpeed, a3 Lazy Load…) park
+// an iframe's real URL until it scrolls into view.
+const LAZY_SRC_ATTRS = ['data-src', 'data-lazy-src', 'data-litespeed-src', 'data-original'];
+
+function attrValue(tag: string, name: string): string | null {
+  const m = tag.match(new RegExp(`\\s${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i'));
+  return m ? (m[1] ?? m[2] ?? m[3] ?? '') : null;
+}
+
+// Lazy-loaded iframes ship a placeholder `src` (a 1px data: SVG, about:blank)
+// and the real embed URL in a data attribute. Defuddle drops the placeholder,
+// leaving an iframe with no src, which the reader's sanitizer then strips: an
+// embedded video vanishes and the article reads as just its intro. Put the
+// real URL back in `src`.
+export function restoreLazyIframes(content: string): string {
+  if (!/<iframe\b/i.test(content)) return content;
+  return content.replace(IFRAME_TAG_RE, (tag) => {
+    const src = attrValue(tag, 'src');
+    if (src && /^\s*https?:|^\s*\/\//i.test(src)) return tag;
+    const lazy = LAZY_SRC_ATTRS.map((a) => attrValue(tag, a)).find(
+      (v) => v && /^\s*(https?:)?\/\//i.test(v)
+    );
+    if (!lazy) return tag;
+    const withoutSrc = tag.replace(/\ssrc\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/i, '');
+    return withoutSrc.replace(
+      /^<iframe\b/i,
+      `<iframe src="${lazy.trim().replace(/"/g, '&quot;')}"`
+    );
+  });
+}
+
 // Whether an extracted body has anything to read: text, or media standing in
 // for it (an image post, an embedded video). A page that builds its article
 // with scripts extracts as an empty shell (`<body></body>`), which is no article.
@@ -672,7 +706,7 @@ async function extractArticle(html: string, url: string): Promise<ExtractedArtic
   // Nothing to read is reported as no body, so every caller sees one shape for
   // it — the reader is told the text couldn't be found, never shown a blank page.
   const content = hasReadableContent(result.content)
-    ? restoreCollapsedMathML(html, result.content)
+    ? restoreLazyIframes(restoreCollapsedMathML(html, result.content))
     : null;
   return {
     title: result.title || null,
