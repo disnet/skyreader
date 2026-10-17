@@ -457,7 +457,9 @@ export const PDF_QUOTA_MESSAGE = "You've saved a lot of PDFs today. Try this one
 //   2: summary derived from an over-cap body when the feed supplies none —
 //      without the re-parse, items already in the archive keep the empty body
 //      they were stored with, since an unchanged hash is never re-pushed
-export const FEED_PARSER_VERSION = 2;
+//   3: YouTube entries get a body (embedded player + description), summary and
+//      thumbnail from <media:group>; they had only a title before
+export const FEED_PARSER_VERSION = 3;
 
 // Version tag for extractArticle's output. A cached extraction is only reused
 // when its stored version matches this constant, so bumping it here retires

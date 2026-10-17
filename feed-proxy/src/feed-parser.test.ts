@@ -125,6 +125,64 @@ describe('parseFeed', () => {
       expect(result.items[0].summary).toBe('Short summary');
     });
 
+    it('gives a YouTube entry a player, description and thumbnail from media:group', () => {
+      const atom = `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns:yt="http://www.youtube.com/xml/schemas/2015" xmlns:media="http://search.yahoo.com/mrss/" xmlns="http://www.w3.org/2005/Atom">
+ <title>Wendover Productions</title>
+ <entry>
+  <id>yt:video:dQw4w9WgXcQ</id>
+  <yt:videoId>dQw4w9WgXcQ</yt:videoId>
+  <title>Why Texas Wins</title>
+  <link rel="alternate" href="https://www.youtube.com/watch?v=dQw4w9WgXcQ"/>
+  <published>2026-08-01T12:00:00+00:00</published>
+  <media:group>
+   <media:title>Why Texas Wins</media:title>
+   <media:thumbnail url="https://i4.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg" width="480" height="360"/>
+   <media:description>Texas &amp; growth &lt;3
+Line two.
+
+Sources: https://example.com/a.</media:description>
+  </media:group>
+ </entry>
+</feed>`;
+
+      const [item] = parseFeed(atom, 'https://www.youtube.com/feeds/videos.xml?channel_id=x').items;
+
+      expect(item.imageUrl).toBe('https://i4.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg');
+      expect(item.content).toBe(
+        '<iframe src="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ" width="560" height="315" frameborder="0" allowfullscreen></iframe>' +
+          '<p>Texas &amp; growth &lt;3<br>Line two.</p>' +
+          '<p>Sources: <a href="https://example.com/a">https://example.com/a</a>.</p>'
+      );
+      expect(item.summary).toBe(
+        'Texas &amp; growth &lt;3 Line two. Sources: https://example.com/a.'
+      );
+    });
+
+    it('does not pull angle brackets into a linked description URL', () => {
+      const atom = `<?xml version="1.0"?>
+<feed xmlns:yt="http://www.youtube.com/xml/schemas/2015" xmlns:media="http://search.yahoo.com/mrss/" xmlns="http://www.w3.org/2005/Atom">
+ <entry>
+  <id>yt:video:dQw4w9WgXcQ</id><yt:videoId>dQw4w9WgXcQ</yt:videoId><title>T</title>
+  <media:group><media:description>See &lt;https://example.com/a?x=1&amp;y=2&gt; now</media:description></media:group>
+ </entry>
+</feed>`;
+      const [item] = parseFeed(atom, 'https://www.youtube.com/feeds/videos.xml?channel_id=x').items;
+      expect(item.content).toContain(
+        '<p>See &lt;<a href="https://example.com/a?x=1&amp;y=2">https://example.com/a?x=1&amp;y=2</a>&gt; now</p>'
+      );
+    });
+
+    it('leaves non-YouTube Atom entries without a media body', () => {
+      const atom = `<?xml version="1.0"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <entry><title>Post</title><id>p</id><updated>2024-01-01T12:00:00Z</updated></entry>
+</feed>`;
+      const [item] = parseFeed(atom, 'https://example.com/feed.xml').items;
+      expect(item.content).toBeUndefined();
+      expect(item.imageUrl).toBeUndefined();
+    });
+
     it('converts arXiv dollar-delimited TeX to native MathML', () => {
       const rss = `<?xml version="1.0"?>
 <rss version="2.0">
