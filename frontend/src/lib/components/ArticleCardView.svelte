@@ -8,6 +8,7 @@
   import CollectionReader from '$lib/components/feed/CollectionReader.svelte';
   import { bskyEmbed } from '$lib/actions/bsky-embed';
   import { mathRender } from '$lib/actions/math-render';
+  import { imageLightbox } from '$lib/actions/image-lightbox';
   import { videoTranscript } from '$lib/actions/video-transcript';
   import { overlapShadow } from '$lib/actions/overlap-shadow';
   import { appScrollElement } from '$lib/utils/appScroll';
@@ -458,6 +459,7 @@
             use:bskyEmbed
             use:mathRender
             use:videoTranscript={{ follow: true }}
+            use:imageLightbox={{ enabled: selected && !bodyClamped }}
           >
             {@html sanitizedContent}
           </div>

@@ -1345,3 +1345,9 @@ iframe.video-pinned {
 .website-preview p.website-preview__site {
   font-size: 0.75em;
 }
+
+/* Article images open in the lightbox (see `imageLightbox`); a linked image
+   still follows its link. */
+.image-lightbox:not(.image-lightbox-off) img:not(a img) {
+  cursor: zoom-in;
+}

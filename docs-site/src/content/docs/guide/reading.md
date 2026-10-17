@@ -54,6 +54,7 @@ leaving content out. Members-only sections stay on their publication.
 - **Contents**: an article with sections, a PDF or a book lists them under **Contents**: beside **Back** on a wide screen, in the bar at the bottom on a phone, or press **c**. The section you're in is marked; choose another to go there. A PDF or a book lists its own table of contents where it has one, in either view of a PDF.
 - **Light and dark**: Skyreader follows your device's setting. To keep it light or dark regardless, pick a theme in **Settings → Reading → Appearance**.
 - **Highlighting**: double-click a paragraph or select text. See [Saving and highlights](/guide/saving-and-highlights/).
+- **Images**: click an image to see it full screen. Click again or press **Esc** to close it.
 
 ![Paged mode: the same article flowed into two side-by-side columns, turned a page at a time](../../../assets/screenshots/paged-reader.png)
 
