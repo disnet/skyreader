@@ -32,7 +32,7 @@ To change a channel later, open it and choose **Edit channel**, or right-click i
 
 Items you scroll past can be marked read automatically (a toggle in **Settings → Reading**).
 
-**Home** is the calmer front page: pick up where you left off, recent saves, a few things from your Shelf, your daily magazine. It draws on your [Library](/guide/saving-and-highlights/#your-library-queue-and-shelf), and each lane links to where it comes from. **Continue reading** follows the same rule as the Shelf's: anything you've started and not finished, including a book you archived halfway through that's still on your Shelf.
+**Home** is the calmer front page: pick up where you left off, recent saves, a few things from your Shelf, your daily magazine. It draws on your [Library](/guide/saving-and-highlights/#your-library-queue-and-shelf), and each lane links to where it comes from. **Continue reading** shows anything you've started and not finished, leaving out what you've archived. The Shelf's own Continue reading still includes a book you archived halfway through.
 
 To change Home, choose **Customize** at the top of it. Pick where the app opens and how large
 the cards are, hide any section, or drag one by its handle to reorder. Changes apply right away
