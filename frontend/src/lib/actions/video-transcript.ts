@@ -86,6 +86,9 @@ function lineStamp(p: HTMLElement): { stamp: HTMLElement; start: number } | null
 
 /** Find a YouTube player and the transcript that follows it under `root`. */
 export function findTranscript(root: ParentNode): Transcript | null {
+  // Most bodies carry no player; skip the paragraph scan (it re-runs on every DOM
+  // mutation, e.g. each highlight) unless there's an iframe to wire to.
+  if (!root.querySelector('iframe')) return null;
   const lines: TranscriptLine[] = [];
   for (const p of root.querySelectorAll<HTMLElement>('p')) {
     const found = lineStamp(p);
