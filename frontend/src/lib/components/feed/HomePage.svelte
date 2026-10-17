@@ -202,13 +202,11 @@
 
   // Continue reading: only items actually started in the reader and not yet
   // finished — newest activity first. A bare `read` label (marked-read from a
-  // feed list, never opened) has no scroll progress and doesn't qualify. The
-  // same rule as the Shelf's lane: a save archived from the Queue but still on
-  // the Shelf (a book put down halfway) is still in progress, so it counts.
+  // feed list, never opened) has no scroll progress and doesn't qualify.
+  // Archived saves are left out: archiving says "done with this for now", so
+  // it shouldn't keep surfacing here (the Shelf's own lane still shows it).
   let continueEnriched = $derived.by(() =>
-    savesStore.articles
-      .filter((s) => !isSavedItemArchived(s, itemLabelsStore.isArchived) || shelfStore.isOnShelf(s))
-      .map((s): Enriched => ({ s, activity: itemLabelsStore.getReadActivity(keysFor(s)) }))
+    enriched
       .filter((e) => isInProgress(readFraction(e.activity)))
       .sort((a, b) => (b.activity!.lastActivityAt ?? 0) - (a.activity!.lastActivityAt ?? 0))
       .slice(0, CONTINUE_CAP)
