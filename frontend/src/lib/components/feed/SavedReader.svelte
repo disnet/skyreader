@@ -27,6 +27,7 @@
   import { bskyEmbed } from '$lib/actions/bsky-embed';
   import { failedSaveBody, hasReadableContent, isFailedSaveBody } from '$lib/utils/saveAnywhere';
   import { mathRender } from '$lib/actions/math-render';
+  import { videoTranscript } from '$lib/actions/video-transcript';
   import Icon from '$lib/components/Icon.svelte';
   import { savedAssetUrl, savedFileUrl } from '$lib/services/api';
   import { resolveEpubImages } from '$lib/utils/epubContent';
@@ -137,6 +138,9 @@
   let overlayEl: HTMLElement | undefined = $state();
   let readerBodyEl: HTMLElement | undefined = $state();
   let headerRef = $state<HTMLElement | undefined>(undefined);
+  // A playing video pins beneath the desktop bar, and rises to the top when the
+  // bar slides away (0 on mobile, where the bar isn't shown).
+  let headerHeight = $state(0);
 
   // Reading-progress indicator: fills left-to-right as the reader scrolls through
   // the article body. Scroll-driven (not paragraph-driven) for smooth
@@ -1303,7 +1307,12 @@
   <!-- Desktop: top bar — full-bleed, spanning the viewport rather than tracking
        the reading column, so it frames the page identically in scroll and paged
        mode (which use different content widths). -->
-  <header class="reader-header desktop-only" class:hidden={headerHidden} bind:this={headerRef}>
+  <header
+    class="reader-header desktop-only"
+    class:hidden={headerHidden}
+    bind:this={headerRef}
+    bind:offsetHeight={headerHeight}
+  >
     <div class="reader-header-bar" bind:this={headerBarEl}>
       <div class="reader-actions-left" bind:this={actionsLeftEl}>
         <button class="action-btn" onclick={onClose} title="Back (Escape)">
@@ -1725,8 +1734,10 @@
           <div
             class="reader-body marginalia-ink"
             bind:this={readerBodyEl}
+            style:--video-pin-top={headerHidden ? '0px' : `${headerHeight}px`}
             use:bskyEmbed
             use:mathRender
+            use:videoTranscript={{ pin: !paged, follow: !paged }}
           >
             {@html sanitizedContent}
           </div>

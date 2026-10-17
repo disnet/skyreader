@@ -43,6 +43,10 @@ Skyreader keeps the words and pictures, not the publisher's design. A book opens
 
 Limits: an EPUB can be up to 30 MB. EPUBs share the PDF allowances: 200 uploads a month, and 2 GB of kept originals between them; removing a saved EPUB frees its space. Like uploaded PDFs, uploaded EPUBs are private to you and stay on Skyreader.
 
+### Saving a YouTube video
+
+Save a YouTube link and Skyreader keeps the video, its description, and its transcript when YouTube has one, so you can read, highlight, and search what was said. Each line of the transcript starts with its time: tap one and the video plays from there. While it plays, the line being spoken is marked, and the transcript keeps pace as long as you're reading along. Scroll away and it stays where you left it. The video stays at the top of the page while it plays, so you can watch and read together.
+
 ### When a site won't let Skyreader read it
 
 Some sites refuse automated readers, or show them a bot check instead of the article, so Skyreader's servers can't fetch it even though it opens fine in your browser. The save still goes through: you get the link (titled with the article's title when Skyreader knows it, the address when it doesn't) with a note in place of the text. To get the full text, open the article and save it with the [Chrome](https://chromewebstore.google.com/detail/skyreader/kdefpnnpmajcclfepekgdkcdiklfooed) or [Firefox](https://addons.mozilla.org/firefox/addon/skyreader/) extension, which reads the page you already have open. That replaces the note.
