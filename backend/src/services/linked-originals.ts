@@ -1,5 +1,6 @@
 import type { Env } from '../types';
 import { log } from '../utils/logger';
+import { sha256Hex } from '../utils/sha256';
 
 /**
  * The bytes of an EPUB saved by link, kept from the read that extracted it.
@@ -15,11 +16,6 @@ import { log } from '../utils/logger';
 const STAGED_PREFIX = 'staged/';
 /** How long a staged book waits for its save before the sweep removes it. */
 const STAGED_TTL_MS = 24 * 60 * 60 * 1000;
-
-export async function sha256Hex(bytes: ArrayBuffer | Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', bytes);
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
-}
 
 /** Where a reader's read of the book at `url` is staged. */
 export async function stagedOriginalKey(did: string, url: string): Promise<string> {

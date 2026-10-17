@@ -18,7 +18,8 @@ import {
   readStoredEpubEntry,
 } from '../services/epub';
 import { readCapped } from './feedback';
-import { sha256Hex, stagedOriginalKey } from '../services/linked-originals';
+import { stagedOriginalKey } from '../services/linked-originals';
+import { sha256Hex } from '../utils/sha256';
 import { log } from '../utils/logger';
 
 /**
