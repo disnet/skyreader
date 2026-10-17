@@ -238,8 +238,11 @@ function parseAtomFeed(feed: any, feedUrl: string): ParsedFeed {
     const url = getAtomLink(entry.link, 'alternate') || '';
     const guid = getText(entry.id) || url || generateGuid(title);
     const author = entry.author?.name ? getText(entry.author.name) : undefined;
-    const content = convertLatexToMathML(getText(entry.content) || getText(entry.summary));
-    const summary = resolveSummary(convertLatexToMathML(getText(entry.summary)), content);
+    const video = youtubeVideo(entry);
+    const content =
+      convertLatexToMathML(getText(entry.content) || getText(entry.summary)) ?? video?.content;
+    const summary =
+      resolveSummary(convertLatexToMathML(getText(entry.summary)), content) ?? video?.summary;
     const updated = getText(entry.updated) || getText(entry.published);
 
     items.push({
@@ -249,6 +252,7 @@ function parseAtomFeed(feed: any, feedUrl: string): ParsedFeed {
       author,
       content,
       summary,
+      imageUrl: video?.imageUrl,
       publishedAt: updated ? new Date(updated).toISOString() : new Date().toISOString(),
     });
   }
@@ -300,6 +304,64 @@ function parseRdfFeed(rdf: any, feedUrl: string): ParsedFeed {
     imageUrl: rdf.image?.url ? getText(rdf.image.url) : undefined,
     items,
     fetchedAt: Date.now(),
+  };
+}
+
+const YOUTUBE_VIDEO_ID_RE = /^[A-Za-z0-9_-]{11}$/;
+const URL_IN_TEXT_PATTERN = /https?:\/\/[^\s<>"']+[^\s<>"'.,;:!?)\]]/g;
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/** Plain text (a video description) as paragraphs, with bare URLs linked. */
+function plainTextToHtml(text: string): string {
+  return text
+    .trim()
+    .split(/\n\s*\n/)
+    .map((para) => {
+      const html = escapeHtml(para.trim()).replace(
+        URL_IN_TEXT_PATTERN,
+        (href) => `<a href="${href}">${href}</a>`
+      );
+      return `<p>${html.replace(/\n/g, '<br>')}</p>`;
+    })
+    .join('');
+}
+
+/**
+ * A YouTube Atom entry (youtube.com/feeds/videos.xml, or the Data API's
+ * rendering of one) has no <content> or <summary>: the video lives in
+ * <yt:videoId> and <media:group>. Without this the reader gets a bare title, so
+ * the body becomes an embedded player plus the description, and the thumbnail
+ * the item's image.
+ */
+function youtubeVideo(
+  entry: any
+): { content: string; summary?: string; imageUrl?: string } | undefined {
+  const videoId = getText(entry['yt:videoId']);
+  if (!videoId || !YOUTUBE_VIDEO_ID_RE.test(videoId)) return undefined;
+  const group = Array.isArray(entry['media:group'])
+    ? entry['media:group'][0]
+    : entry['media:group'];
+  const thumb = Array.isArray(group?.['media:thumbnail'])
+    ? group['media:thumbnail'][0]
+    : group?.['media:thumbnail'];
+  const imageUrl = thumb?.['@_url'] ? decodeHtmlEntities(thumb['@_url']) : undefined;
+  const description = getText(group?.['media:description'])?.trim();
+
+  const player =
+    `<iframe src="https://www.youtube-nocookie.com/embed/${videoId}" ` +
+    'width="560" height="315" frameborder="0" allowfullscreen></iframe>';
+  const body = description ? plainTextToHtml(description) : '';
+  return {
+    content: player + body,
+    summary: description ? excerptFromContent(escapeHtml(description)) || undefined : undefined,
+    imageUrl,
   };
 }
 
