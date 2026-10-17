@@ -19,7 +19,7 @@
 // Margin's at.margin.note. Snapshots have no rows yet; their shape is in the plan.
 
 import type { CborValue } from './dag-cbor';
-import { sha256Hex } from '../linked-originals';
+import { sha256Hex } from '../../utils/sha256';
 
 export const SAVE_COLLECTION = 'app.skyreader.archive.save';
 export const HIGHLIGHT_COLLECTION = 'app.skyreader.archive.highlight';
@@ -36,11 +36,12 @@ export function isRecordKey(value: unknown): value is string {
 
 // The atproto datetime range: year 0000 through 9999, which toISOString renders
 // as a plain four-digit year that Date.parse reads back to the same millisecond.
+const MIN_DATETIME_MS = -62167219200000;
 const MAX_DATETIME_MS = 253402300799999;
 
 function msToDatetime(value: unknown): string | undefined {
   return Number.isSafeInteger(value) &&
-    (value as number) >= 0 &&
+    (value as number) >= MIN_DATETIME_MS &&
     (value as number) <= MAX_DATETIME_MS
     ? new Date(value as number).toISOString()
     : undefined;
@@ -83,6 +84,30 @@ function decodeValue(kind: FieldKind, value: unknown, field: string): Json {
   }
 }
 
+// JSON with every object's keys sorted, so the same content is always the same
+// string (and the record the same CID) whatever order its keys arrived in. A
+// non-finite number has no JSON form (JSON.stringify writes null, which wouldn't
+// decode back), so it throws.
+function canonicalJson(value: unknown): string {
+  if (typeof value === 'number' && !Number.isFinite(value)) {
+    throw new TypeError(`archive row: ${value} has no JSON form`);
+  }
+  if (Array.isArray(value)) return '[' + value.map(canonicalJson).join(',') + ']';
+  if (typeof value === 'object' && value !== null) {
+    const entries = Object.entries(value)
+      .filter(([, item]) => item !== undefined)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    return (
+      '{' + entries.map(([k, v]) => JSON.stringify(k) + ':' + canonicalJson(v)).join(',') + '}'
+    );
+  }
+  return JSON.stringify(value);
+}
+
+function writeExtra(target: RecordObject, extra: object): void {
+  if (Object.keys(extra).length > 0) target.extra = canonicalJson(extra);
+}
+
 function parseExtra(record: RecordObject): Record<string, Json> {
   if (record.extra === undefined) return {};
   if (typeof record.extra !== 'string')
@@ -91,8 +116,11 @@ function parseExtra(record: RecordObject): Record<string, Json> {
   if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
     throw new TypeError('archive record: extra is not an object');
   }
-  // toRecord never writes an empty extra, so one isn't a record it produced.
+  // toRecord never writes an empty or non-canonical extra, so neither is a record it produced.
   if (Object.keys(parsed).length === 0) throw new TypeError('archive record: extra is empty');
+  if (canonicalJson(parsed) !== record.extra) {
+    throw new TypeError('archive record: extra is not canonical JSON');
+  }
   return parsed as Record<string, Json>;
 }
 
@@ -243,12 +271,12 @@ function decodeColumns<Row extends object>(
   return row as Row;
 }
 
-export interface SaveRecord {
+export interface ArchiveRecord {
   rkey: string;
   record: RecordObject;
 }
 
-export function saveToRecord(row: SaveRow, file?: SavedFileRow | null): SaveRecord {
+export function saveToRecord(row: SaveRow, file?: SavedFileRow | null): ArchiveRecord {
   if (!isRecordKey(row.rkey)) throw new TypeError(`save rkey ${row.rkey} is not a record key`);
   const record: RecordObject = { $type: SAVE_COLLECTION };
   const extra: Record<string, unknown> = {};
@@ -257,10 +285,10 @@ export function saveToRecord(row: SaveRow, file?: SavedFileRow | null): SaveReco
     const fileRecord: RecordObject = {};
     const fileExtra: Record<string, unknown> = {};
     encodeColumns(file, FILE_FIELDS, fileRecord, fileExtra);
-    if (Object.keys(fileExtra).length > 0) fileRecord.extra = JSON.stringify(fileExtra);
+    writeExtra(fileRecord, fileExtra);
     record.file = fileRecord;
   }
-  if (Object.keys(extra).length > 0) record.extra = JSON.stringify(extra);
+  writeExtra(record, extra);
   return { rkey: row.rkey, record };
 }
 
@@ -344,30 +372,36 @@ function isPlainSelector(value: unknown): value is Record<string, string> {
  */
 export async function highlightRkey(id: string): Promise<string> {
   if (isRecordKey(id)) return id;
-  return 'h-' + (await sha256Hex(new TextEncoder().encode(id))).slice(0, 32);
+  // Hash the id's JSON form: it escapes a lone surrogate, where UTF-8 would turn
+  // every one into U+FFFD and give two different ids the same key.
+  return 'h-' + (await sha256Hex(new TextEncoder().encode(JSON.stringify(id)))).slice(0, 32);
 }
 
-export interface HighlightRecord {
-  rkey: string;
-  record: RecordObject;
-}
+const SUBJECT_FIELDS: ColumnSpec<Pick<HighlightEntry, 'itemKey' | 'itemType'>>[] = [
+  ['itemKey', 'itemKey', 'string', 'required'],
+  ['itemType', 'itemType', 'string', 'required'],
+];
+const SUBJECT_RECORD_KEYS = new Set(['extra', 'itemKey', 'itemType']);
 
-export async function highlightToRecord(entry: HighlightEntry): Promise<HighlightRecord> {
+export async function highlightToRecord(entry: HighlightEntry): Promise<ArchiveRecord> {
   const { highlight } = entry;
   if (typeof highlight.id !== 'string' || !highlight.id) {
     throw new TypeError('highlight has no string id');
   }
-  const record: RecordObject = {
-    $type: HIGHLIGHT_COLLECTION,
-    subject: { itemKey: entry.itemKey, itemType: entry.itemType },
-  };
+  // The subject is two columns, so it carries a string it can't hold natively (an
+  // item key cut mid-emoji) in its own extra, as a save's file does.
+  const subject: RecordObject = {};
+  const subjectExtra: Record<string, unknown> = {};
+  encodeColumns(entry, SUBJECT_FIELDS, subject, subjectExtra);
+  writeExtra(subject, subjectExtra);
+  const record: RecordObject = { $type: HIGHLIGHT_COLLECTION, subject };
   const extra: Record<string, Json> = {};
   for (const [key, value] of Object.entries(highlight)) {
     const encoded = encodeHighlightField(key, value);
     if (encoded === undefined) setField(extra, key, value);
     else setField(record, key, encoded);
   }
-  if (Object.keys(extra).length > 0) record.extra = JSON.stringify(extra);
+  writeExtra(record, extra);
   return { rkey: await highlightRkey(highlight.id), record };
 }
 
@@ -376,17 +410,12 @@ export async function highlightFromRecord(
   record: RecordObject
 ): Promise<HighlightEntry> {
   assertType(record, HIGHLIGHT_COLLECTION);
-  const subject = record.subject as RecordObject | undefined;
-  if (
-    typeof subject !== 'object' ||
-    subject === null ||
-    Array.isArray(subject) ||
-    typeof subject.itemKey !== 'string' ||
-    typeof subject.itemType !== 'string'
-  ) {
-    throw new TypeError('archive record: subject needs itemKey and itemType');
+  const subjectRecord = record.subject as RecordObject | undefined;
+  if (typeof subjectRecord !== 'object' || subjectRecord === null || Array.isArray(subjectRecord)) {
+    throw new TypeError('archive record: subject is not an object');
   }
-  assertKnownKeys(subject, new Set(['itemKey', 'itemType']), 'subject');
+  assertKnownKeys(subjectRecord, SUBJECT_RECORD_KEYS, 'subject');
+  const subject = decodeColumns(subjectRecord, SUBJECT_FIELDS, parseExtra(subjectRecord));
   const highlight: { [key: string]: Json } = {};
   for (const [key, value] of Object.entries(record)) {
     if (key === '$type' || key === 'subject' || key === 'extra' || value === undefined) continue;
@@ -417,14 +446,20 @@ export async function highlightFromRecord(
 }
 
 /**
- * Every highlight in one `highlights` label row's props. A row whose props
- * aren't the expected shape yields nothing: there's no highlight in it to keep.
+ * Every highlight in one `highlights` label row's props. A soft-deleted row
+ * (`deleted_at` set; DELETE /api/labels keeps its props) yields nothing, nor does
+ * a row whose props aren't the expected shape: there's no highlight in it to keep.
+ * The mapping is per highlight, not per row; see "Highlights" in the plan.
  */
 export function highlightEntriesFromLabel(row: {
   item_key: string;
   item_type: string;
   props: string | null;
+  deleted_at: number | null;
 }): HighlightEntry[] {
+  // Unselected is a caller's bug, not a live row: guessing would resurrect deletions.
+  if (row.deleted_at === undefined) throw new TypeError('archive row: missing column deleted_at');
+  if (row.deleted_at !== null) return [];
   let props: unknown;
   try {
     props = row.props ? JSON.parse(row.props) : null;

@@ -63,12 +63,25 @@ frontend (`Highlight` in `frontend/src/lib/types`). Its record is:
   marginRkey?, lastReviewedAt?, reviewIntent?, sourceUrl?, sourceTitle?, extra? }
 ```
 
-`subject` is the label row's `item_key` and `item_type`. The record key is the highlight's `id`.
-Every id Skyreader mints (`Date.now()` base36 + a random suffix) and every Margin import id
+`subject` is the label row's `item_key` and `item_type` (plus its own `extra` for one that isn't
+well-formed text, as on a save's `file`). The record key is the highlight's `id`. Every id
+Skyreader mints (`Date.now()` base36 + a random suffix) and every Margin import id
 (`margin:<rkey>`) is already a valid record key. An id that isn't one gets
-`h-<first 16 bytes of sha256(id), hex>`. That key is deterministic, so every device and every sync
-pass derives the same one. The record always carries `id`, so nothing depends on which form the
-key took.
+`h-<first 16 bytes of sha256(JSON.stringify(id)), hex>`. That key is deterministic, so every device
+and every sync pass derives the same one; hashing the JSON form keeps two ids that differ only in a
+lone surrogate apart. The record always carries `id`, so nothing depends on which form the key
+took.
+
+**Soft-deleted rows.** `DELETE /api/labels` sets `deleted_at` and keeps `props`, so a tombstoned
+row still holds the highlights the reader deleted. `highlightEntriesFromLabel` takes `deleted_at`
+and yields nothing for such a row; the sync job must select the column.
+
+**Per highlight, not per row.** The mapping covers each highlight element, not the label row
+around it. The row's `created_at` / `updated_at` / `client_updated_at` are D1 bookkeeping that the
+labels write path stamps afresh, the array's order isn't carried (rebuild a row in a fixed order,
+e.g. by `createdAt` then `id`), and `props` keys other than `highlights` aren't carried (the
+merge upsert already rebuilds props as `{ highlights }` alone). A non-object array element has no
+`id` to key a record by and is skipped; the frontend's merge can't hold one either.
 
 **Alias rows.** One article can have highlight rows under more than one key (its guid and its save
 uri, `utils/highlightAliases.ts`), and the client merges them by id. So the same id can appear in
@@ -87,6 +100,8 @@ includes values the record shape can't carry natively:
 - A highlight can carry keys a newer client added, or a `null` where a string belongs.
 
 Any such value goes verbatim into `extra`, a JSON string, instead of being dropped or coerced.
+`extra` is canonical JSON (every object's keys sorted), so the same content always gives the same
+string and CID, whatever order its keys arrived in.
 Decoding applies `extra` last. On real rows `extra` should almost never appear. It exists so the
 mapping is total and the round-trip claim holds unconditionally. It also means a highlight field
 the frontend adds later is preserved before this module learns about it.
@@ -97,6 +112,8 @@ Encoding throws in only these cases, none of them a row the app can address:
 - a save row missing a column, or NULL in a NOT NULL one (a caller's query bug, not data)
 - a highlight element with no string `id` (the frontend merges by id, and the merge path already
   refuses id-less elements)
+- a non-finite number (`Infinity` in a REAL column): JSON has no form for it, so it can't ride in
+  `extra`, and SQLite stores NaN as NULL anyway
 
 Decoding is the exact inverse and accepts nothing else, so re-encoding a decoded record gives back
 the same record and CID, and the CID-equality sync never churns. It rejects:
@@ -106,6 +123,7 @@ the same record and CID, and the CID-equality sync never churns. It rejects:
 - a missing NOT NULL column (`url`, `savedAt`, `createdAt`, `source`; on a file, every column but
   `filename`)
 - a datetime not in the exact form encoding writes (`toISOString`: millisecond precision, `Z`)
+- an `extra` that isn't the canonical JSON encoding writes
 - an `extra` key that encoding wouldn't have put there: an unknown column, a column also present
   natively, or a value its native field could carry. So `extra` can't set `rkey`, `id`,
   `user_did` or any other column the record shape doesn't have; the caller's `rkey` always wins.
@@ -114,8 +132,9 @@ the same record and CID, and the CID-equality sync never churns. It rejects:
 ## Content hashes
 
 `recordCid(record)` is the CIDv1 (dag-cbor, sha2-256, base32) a PDS would report for the record,
-computed locally from a minimal DAG-CBOR encoder. The test checks its output byte-for-byte against
-`@ipld/dag-cbor` + `multiformats`. The sync job's diff is CID equality: compare a row's CID with
+computed locally with `@ipld/dag-cbor` + `multiformats`, behind a check that the value fits the
+atproto data model (no floats, no lone surrogates). The test pins bytes and CIDs, so a library
+upgrade that changed either fails there rather than churning every record. The sync job's diff is CID equality: compare a row's CID with
 the space record's CID, and write only on a mismatch. The hash is computed on demand, not stored.
 A stored hash would need every write path (there are many) to keep it current, and computing one
 is cheap.

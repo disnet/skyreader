@@ -16,8 +16,8 @@ import {
 
 const hex = (bytes: Uint8Array) => [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
 
-// Expected bytes and CIDs below were produced by @ipld/dag-cbor + multiformats
-// (the reference implementation) from the same values.
+// Expected bytes and CIDs below are pinned, so a library upgrade that changed
+// either would fail here rather than churn every record.
 describe('DAG-CBOR + CID', () => {
   it('matches the reference encoding: key order, integer widths, UTF-8, nesting', async () => {
     const value = {
@@ -146,12 +146,13 @@ describe('saves', () => {
       {
         ...baseSave,
         word_count: 12.5,
-        published_at: -86400000,
+        published_at: -62167219200001,
         saved_at: 9e15,
         title: 42 as unknown as string,
       },
       { ...file, size: 1.5, created_at: -1 },
     ],
+    ['dates before 1970', { ...baseSave, published_at: -86400000 }, null],
     ['non-ASCII text', { ...baseSave, title: 'Ünïcødé — 日本語 🐦', content: '\u0000￿' }, null],
     ['a lone surrogate', { ...baseSave, title: 'cut mid-emoji \ud83d' }, null],
   ];
@@ -168,6 +169,19 @@ describe('saves', () => {
       expect(saveToRecord(again.row, again.file).record).toEqual(stored);
     });
   }
+
+  it('carries a pre-1970 date natively, down to year 0000', () => {
+    expect(saveToRecord({ ...baseSave, published_at: -86400000 }).record.publishedAt).toBe(
+      '1969-12-31T00:00:00.000Z'
+    );
+    expect(saveToRecord({ ...baseSave, published_at: -62167219200000 }).record.publishedAt).toBe(
+      '0000-01-01T00:00:00.000Z'
+    );
+  });
+
+  it('refuses a non-finite number, which has no JSON form to carry it in', () => {
+    expect(() => saveToRecord({ ...baseSave, word_count: Infinity })).toThrow(/no JSON form/);
+  });
 
   it('carries what it cannot represent in extra, not in the native field', () => {
     const { record } = saveToRecord({ ...baseSave, word_count: 12.5 });
@@ -218,6 +232,9 @@ describe('saves', () => {
     ).toThrow(/belongs in url/);
     expect(() => saveFromRecord(rkey, withExtra({ title: null }))).toThrow(/belongs in title/);
     expect(() => saveFromRecord(rkey, withExtra({}))).toThrow(/empty/);
+    expect(() =>
+      saveFromRecord(rkey, { ...record, title: undefined, extra: '{ "title": 42 }' })
+    ).toThrow(/canonical/);
   });
 
   it('rejects a record missing a NOT NULL column', () => {
@@ -292,6 +309,26 @@ describe('highlights and their notes', () => {
     expect(await highlightRkey('has spaces/and slashes')).toBe(key);
   });
 
+  it('derives different keys for ids that differ only in a lone surrogate', async () => {
+    expect(await highlightRkey('a\ud800')).not.toBe(await highlightRkey('a\ud801'));
+    expect(await highlightRkey('a\ud800')).not.toBe(await highlightRkey('a\ufffd'));
+  });
+
+  it('encodes the same highlight to the same record whatever its key order', async () => {
+    const a = await highlightToRecord({
+      itemKey: 'k',
+      itemType: 'article',
+      highlight: { id: 'x1', color: 'yellow', weights: [1, 2.5], meta: { b: 1, a: 2 } },
+    });
+    const b = await highlightToRecord({
+      itemKey: 'k',
+      itemType: 'article',
+      highlight: { meta: { a: 2, b: 1 }, weights: [1, 2.5], color: 'yellow', id: 'x1' },
+    });
+    expect(a.record.extra).toBe(b.record.extra);
+    expect(await recordCid(a.record)).toBe(await recordCid(b.record));
+  });
+
   const cases: [string, Record<string, unknown>][] = [
     ['a full highlight', highlight],
     [
@@ -305,6 +342,18 @@ describe('highlights and their notes', () => {
     ['a lone surrogate', { ...highlight, note: 'cut \ud83d' }],
     ['a __proto__ key', JSON.parse('{"id":"p1","createdAt":0,"__proto__":{"id":"x"}}')],
   ];
+  const subjects: [string, string, string][] = [
+    ['an item key cut mid-emoji', 'guid-\ud83d', 'article'],
+  ];
+  for (const [name, itemKey, itemType] of subjects) {
+    it(`round-trips losslessly: ${name}`, async () => {
+      const entry = { itemKey, itemType, highlight };
+      const { rkey, record } = await highlightToRecord(entry);
+      const stored = JSON.parse(JSON.stringify(record));
+      await recordCid(stored);
+      expect(await highlightFromRecord(rkey, stored)).toEqual(entry);
+    });
+  }
 
   for (const [name, value] of cases) {
     it(`round-trips losslessly: ${name}`, async () => {
@@ -328,11 +377,27 @@ describe('highlights and their notes', () => {
       item_key: 'guid-1',
       item_type: 'article',
       props: JSON.stringify({ highlights: [highlight, { ...highlight, id: 'two' }] }),
+      deleted_at: null,
     });
     expect(entries.map((entry) => entry.highlight.id)).toEqual(['mkx1q2w3e4r5t6', 'two']);
-    expect(highlightEntriesFromLabel({ item_key: 'k', item_type: 'article', props: null })).toEqual(
-      []
-    );
+    expect(
+      highlightEntriesFromLabel({
+        item_key: 'k',
+        item_type: 'article',
+        props: null,
+        deleted_at: null,
+      })
+    ).toEqual([]);
+  });
+
+  it('reads nothing out of a soft-deleted label row, though its props remain', () => {
+    const row = {
+      item_key: 'guid-1',
+      item_type: 'article',
+      props: JSON.stringify({ highlights: [highlight] }),
+    };
+    expect(highlightEntriesFromLabel({ ...row, deleted_at: 1767312000 })).toEqual([]);
+    expect(() => highlightEntriesFromLabel(row as never)).toThrow(/deleted_at/);
   });
 
   it('treats prototype keys as unknown fields', async () => {
