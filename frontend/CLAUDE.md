@@ -317,8 +317,8 @@ The **Library** is the saves read two ways: the **Queue** (`/saved`, Inbox / Arc
 **Shelf** (`/shelf`). `components/library/LibraryIntro.svelte` opens both with a Queue | Shelf
 switch; a Queue card on the Shelf says **On Shelf**, a Shelf item archived in the Queue says
 **Archived** (one `library/LibraryChip` for both), and both item menus group their actions under Queue / Shelf headings
-(`PopoverMenu`'s `section`). Home's Continue reading shares the Shelf's `isInProgress` rule and
-counts an archived save still on the Shelf. The two halves share a layout: a Queue row
+(`PopoverMenu`'s `section`). Home's Continue reading shares the Shelf's `isInProgress` rule but
+leaves out archived saves (the Shelf's lane keeps them). The two halves share a layout: a Queue row
 (`feed/SavedCard`) has the Shelf list row's anatomy (an icon beside the title; the kind for a book or
 PDF, then source and author), and the Queue's Inbox / Archive and sort share one menu on the
 switch's row (`library/QueueControls`), where the Shelf keeps its own controls. The header keeps only
