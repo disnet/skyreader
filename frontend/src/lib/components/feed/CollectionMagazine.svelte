@@ -9,6 +9,7 @@
   import { footnoteNav, type FootnotePagedController } from '$lib/utils/footnoteNav';
   import { bskyEmbed } from '$lib/actions/bsky-embed';
   import { mathRender } from '$lib/actions/math-render';
+  import { imageLightbox } from '$lib/actions/image-lightbox';
   import Icon from '$lib/components/Icon.svelte';
   import type { ReaderCollection, ReaderCollectionItem, SocialDocument } from '$lib/types';
 
@@ -251,7 +252,9 @@
                href (rewritten by sanitizeHtml to the source article) would open
                the original in a new tab. In paged mode the jump turns the page
                rather than scrolling the paged viewport out of sync. -->
-          <div class="piece-content" use:footnoteNav={{ pagedController }}>{@html st.html}</div>
+          <div class="piece-content" use:footnoteNav={{ pagedController }} use:imageLightbox>
+            {@html st.html}
+          </div>
         {/if}
       </article>
     {/each}

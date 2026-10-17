@@ -10,6 +10,7 @@
   import { useRegisterSW } from 'virtual:pwa-register/svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import Toast from '$lib/components/Toast.svelte';
+  import ImageLightbox from '$lib/components/ImageLightbox.svelte';
   import Logo from '$lib/assets/logo.svg';
   import { docsUrl } from '$lib/constants/docs';
   import '../app.css';
@@ -221,6 +222,7 @@
 </svelte:head>
 
 <Toast />
+<ImageLightbox />
 
 {#if $needRefresh}
   <div class="update-banner">
