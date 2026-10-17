@@ -113,13 +113,15 @@ describe('videoTranscript', () => {
   it('seeks and plays once the player answers, marking the line and pinning the player', () => {
     const { iframe, host, action, reply, commands, stamp } = setup();
     stamp('1:23').click();
-    // Nothing goes to a player that hasn't booted yet...
+    // Nothing goes to a player that hasn't booted, and nothing is marked or pinned...
     expect(commands()).toEqual([]);
+    expect(host.querySelector('.is-current')).toBeNull();
+    expect(iframe.classList.contains('video-pinned')).toBe(false);
+
+    // ...until it answers: the queue drains to its origin and the tap lands.
+    reply({ playerState: -1 });
     expect(host.querySelector('.is-current')?.textContent).toContain('Second bit');
     expect(iframe.classList.contains('video-pinned')).toBe(true);
-
-    // ...and the queue drains to the origin it answered from.
-    reply({ playerState: -1 });
     expect(commands()).toEqual([
       expect.objectContaining({
         func: 'seekTo',
@@ -171,12 +173,46 @@ describe('videoTranscript', () => {
   });
 
   it('leaves a drag-select that ends on a time alone', () => {
-    const { host, action, stamp } = setup();
+    const { host, action, commands, stamp } = setup();
     const range = document.createRange();
-    range.selectNodeContents(host.querySelector('h2')!);
+    range.setStart(host.querySelector('h2')!, 0);
+    range.setEnd(stamp('1:23').firstChild!, 1);
     window.getSelection()!.addRange(range);
     stamp('1:23').click();
-    expect(host.querySelector('.is-current')).toBeNull();
+    expect(commands()).toEqual([]);
     action.destroy();
+  });
+
+  it('still seeks when an unrelated selection is left behind', () => {
+    const { host, action, reply, commands, stamp } = setup();
+    const range = document.createRange();
+    range.selectNodeContents(host.querySelector('h2')!);
+    window.getSelection()!.removeAllRanges();
+    window.getSelection()!.addRange(range);
+    stamp('1:23').click();
+    reply({ playerState: -1 });
+    expect(commands().map((c) => c.func)).toEqual(['seekTo', 'playVideo']);
+    action.destroy();
+  });
+
+  it('sends only the last tapped time once the player answers', () => {
+    const { action, reply, commands, stamp } = setup();
+    stamp('1:23').click();
+    stamp('1:23').click();
+    reply({ playerState: -1 });
+    expect(commands().map((c) => c.func)).toEqual(['seekTo', 'playVideo']);
+    action.destroy();
+  });
+
+  it('keeps a time that a highlight wraps', () => {
+    const { host, action, stamp } = setup();
+    const el = stamp('1:23');
+    const mark = document.createElement('mark');
+    el.replaceWith(mark);
+    mark.append(el);
+    return Promise.resolve().then(() => {
+      expect(host.querySelector('mark strong')?.getAttribute('role')).toBe('button');
+      action.destroy();
+    });
   });
 });

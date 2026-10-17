@@ -66,14 +66,25 @@ function isYouTubePlayer(iframe: HTMLIFrameElement): boolean {
   }
 }
 
+/** Nothing but whitespace comes before `child` within `parent`. */
+function hasOnlyBlankBefore(parent: Element, child: Element): boolean {
+  for (let node = parent.firstChild; node && node !== child; node = node.nextSibling) {
+    if (node.nodeType !== Node.TEXT_NODE || node.textContent?.trim()) return false;
+  }
+  return true;
+}
+
 /** The line's leading `<strong>` time, when the line is a transcript line. */
 function lineStamp(p: HTMLElement): { stamp: HTMLElement; start: number } | null {
-  const first = p.firstElementChild;
-  if (!first || (first.tagName !== 'STRONG' && first.tagName !== 'B')) return null;
-  // Nothing but whitespace may come before the time.
-  for (let node = p.firstChild; node && node !== first; node = node.nextSibling) {
-    if (node.nodeType !== Node.TEXT_NODE || node.textContent?.trim()) return null;
+  // A highlight may wrap the time, so walk down through leading wrappers to it.
+  let first: Element | null = p.firstElementChild;
+  let parent: Element = p;
+  while (first && first.tagName !== 'STRONG' && first.tagName !== 'B') {
+    if (!hasOnlyBlankBefore(parent, first)) return null;
+    parent = first;
+    first = first.firstElementChild;
   }
+  if (!first || !hasOnlyBlankBefore(parent, first)) return null;
   const stampText = first.textContent ?? '';
   const start = parseTimestamp(stampText);
   if (start === null) return null;
@@ -156,10 +167,17 @@ class PlayerBridge {
     this.handshake();
   }
 
+  get ready(): boolean {
+    return this.origin !== null;
+  }
+
   command(func: string, args: unknown[] = []): void {
     if (this.origin) {
       this.post({ event: 'command', func, args }, this.origin);
     } else {
+      // Only the latest of each command matters; replaying every tap would seek
+      // through each one in turn.
+      this.queue = this.queue.filter(([queued]) => queued !== func);
       this.queue.push([func, args]);
       // A lazy embed below the fold hasn't loaded at all; a command means the
       // reader wants it now.
@@ -237,6 +255,8 @@ export function videoTranscript(node: HTMLElement, options: VideoTranscriptOptio
   let current: TranscriptLine | null = null;
   let started = false;
   let playing = false;
+  // A tap made before the player answered; applied once it does.
+  let pendingSeek: TranscriptLine | null = null;
 
   const reduceMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
@@ -281,6 +301,17 @@ export function videoTranscript(node: HTMLElement, options: VideoTranscriptOptio
 
   function onInfo(info: PlayerInfo) {
     if (!transcript) return;
+    if (pendingSeek) {
+      const line = pendingSeek;
+      pendingSeek = null;
+      if (transcript.lines.includes(line)) {
+        started = true;
+        setPinned(true);
+        // Mark the line tapped rather than the player's pre-seek position.
+        setCurrent(line);
+        return;
+      }
+    }
     if (typeof info.playerState === 'number') {
       playing = info.playerState === PLAYING;
       if (playing) {
@@ -301,6 +332,12 @@ export function videoTranscript(node: HTMLElement, options: VideoTranscriptOptio
     if (!bridge) return;
     bridge.command('seekTo', [line.start, true]);
     bridge.command('playVideo');
+    // An embed that never answers (blocked, offline) must not leave the player
+    // pinned with a line marked; wait for it before changing anything.
+    if (!bridge.ready) {
+      pendingSeek = line;
+      return;
+    }
     started = true;
     setPinned(true);
     // Mark it now rather than on the player's next report, so the click lands.
@@ -340,6 +377,7 @@ export function videoTranscript(node: HTMLElement, options: VideoTranscriptOptio
     current = null;
     started = false;
     playing = false;
+    pendingSeek = null;
   }
 
   function stampFrom(event: Event): TranscriptLine | null {
@@ -350,9 +388,18 @@ export function videoTranscript(node: HTMLElement, options: VideoTranscriptOptio
   function onClick(event: MouseEvent) {
     const line = stampFrom(event);
     if (!line) return;
-    // A drag that ends on a time is a selection to highlight, not a seek.
+    // A drag that ends on a time is a selection to highlight, not a seek. A
+    // leftover selection elsewhere is not: the tap should still play.
     const selection = window.getSelection();
-    if (selection && !selection.isCollapsed && selection.toString().trim()) return;
+    const stamp = (event.target as Element).closest('.transcript-time');
+    if (
+      selection &&
+      !selection.isCollapsed &&
+      selection.toString().trim() &&
+      stamp?.contains(selection.focusNode)
+    ) {
+      return;
+    }
     event.preventDefault();
     // The card behind a feed item treats a body tap as open/close.
     event.stopPropagation();
