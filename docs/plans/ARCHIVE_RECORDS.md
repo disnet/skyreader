@@ -153,9 +153,19 @@ The record key is a TID, so a save can hold several captures. The page body is a
 inline string. Its D1 row should mirror that: `(user_did, rkey, save_rkey, captured_at, sha256,
 r2_key, …)`, keyed by its own TID. The mapping then follows the same pattern as `saved_files`.
 
-## Not yet verified against production
+## Checked against production
 
-Rkey validity and id presence are enforced on every write path in the code. The Skyreader D1
-database wasn't reachable from the session that wrote this, so production rows haven't been
-checked yet. Before the sync job ships, run the mapping over every row once (counting throws and
-rows that needed `extra`) and fix whatever turns up.
+A read-only SQL pass over production D1 (2026-10-17) found nothing that throws and nothing that
+needs `extra`, across 2,668 `saved_articles` rows, 6 `saved_files` rows and 1,416 live highlights:
+
+- saves: every `rkey` is a valid record key; `word_count` is always an integer or NULL; every
+  timestamp is an in-range integer or NULL; no NOT NULL column is NULL
+- files: `size` and `created_at` are integers; no NOT NULL column is NULL
+- highlights: every element is an object with a non-empty string `id` that is already a record key
+  (no `h-` keys needed); `createdAt` and `lastReviewedAt` are integers where set; `selector` is
+  always an object
+
+SQL can't see three things: lone surrogates in text columns (likely impossible, since D1 stores
+UTF-8), selector or highlight keys the record shape doesn't know, and values that are present but
+the wrong type on the other string fields. Run the JS mapping itself over every row once before
+the sync job ships, to cover those.
