@@ -45,6 +45,11 @@ describe('DAG-CBOR + CID', () => {
   it('refuses floats, which the atproto data model does not have', () => {
     expect(() => encodeDagCbor({ a: 1.5 })).toThrow(/safe integer/);
   });
+
+  it('refuses a lone surrogate rather than hashing it as U+FFFD', () => {
+    expect(() => encodeDagCbor({ a: 'cut \ud83d' })).toThrow(/surrogate/);
+    expect(() => encodeDagCbor({ ['\udc00']: 1 })).toThrow(/surrogate/);
+  });
 });
 
 const baseSave: SaveRow = {
@@ -148,6 +153,7 @@ describe('saves', () => {
       { ...file, size: 1.5, created_at: -1 },
     ],
     ['non-ASCII text', { ...baseSave, title: 'Ünïcødé — 日本語 🐦', content: '\u0000￿' }, null],
+    ['a lone surrogate', { ...baseSave, title: 'cut mid-emoji \ud83d' }, null],
   ];
 
   for (const [name, row, savedFile] of cases) {
@@ -157,6 +163,9 @@ describe('saves', () => {
       const stored = JSON.parse(JSON.stringify(record));
       await recordCid(stored);
       expect(saveFromRecord(rkey, stored)).toEqual({ row, file: savedFile });
+      // Decoding is the exact inverse, so the record (and its CID) is stable.
+      const again = saveFromRecord(rkey, stored);
+      expect(saveToRecord(again.row, again.file).record).toEqual(stored);
     });
   }
 
@@ -171,6 +180,70 @@ describe('saves', () => {
     expect(() => saveFromRecord(rkey, { ...record, $type: HIGHLIGHT_COLLECTION })).toThrow();
     expect(() => saveFromRecord(rkey, { ...record, savedAt: 'yesterday' })).toThrow(/datetime/);
     expect(() => saveFromRecord(rkey, { ...record, wordCount: '1' })).toThrow(/integer/);
+  });
+
+  it('accepts only the datetime form it writes', () => {
+    const { rkey, record } = saveToRecord(baseSave);
+    for (const savedAt of [
+      'Jan 2 2026',
+      '2026-01-02T00:00:00',
+      '2026-01-02T00:00:00Z',
+      '+275760-09-13T00:00:00.000Z',
+    ]) {
+      expect(() => saveFromRecord(rkey, { ...record, savedAt })).toThrow(/datetime/);
+    }
+  });
+
+  it('keeps extra to columns it could not carry natively, and the rkey to the one given', () => {
+    const { rkey, record } = saveToRecord(baseSave);
+    const withExtra = (extra: object) => ({ ...record, extra: JSON.stringify(extra) });
+    expect(() => saveFromRecord(rkey, withExtra({ rkey: '../x' }))).toThrow(/unknown column rkey/);
+    expect(() => saveFromRecord(rkey, withExtra({ user_did: 'did:plc:other' }))).toThrow(
+      /unknown column/
+    );
+    expect(() => saveFromRecord(rkey, withExtra({ id: 1 }))).toThrow(/unknown column/);
+    expect(() =>
+      saveFromRecord(
+        rkey,
+        JSON.parse('{"$type":"' + SAVE_COLLECTION + '","extra":"{\\"__proto__\\":1}"}')
+      )
+    ).toThrow(/unknown column __proto__/);
+    // A column already in the record, or one its field could carry, isn't extra.
+    expect(() => saveFromRecord(rkey, withExtra({ url: 'https://other.example' }))).toThrow(
+      /belongs in url/
+    );
+    const { url: _url, ...noUrl } = record;
+    expect(() =>
+      saveFromRecord(rkey, { ...noUrl, extra: JSON.stringify({ url: 'https://other.example' }) })
+    ).toThrow(/belongs in url/);
+    expect(() => saveFromRecord(rkey, withExtra({ title: null }))).toThrow(/belongs in title/);
+    expect(() => saveFromRecord(rkey, withExtra({}))).toThrow(/empty/);
+  });
+
+  it('rejects a record missing a NOT NULL column', () => {
+    const { rkey, record } = saveToRecord(baseSave, file);
+    for (const field of ['url', 'savedAt', 'createdAt', 'source']) {
+      const { [field]: _dropped, ...rest } = record;
+      expect(() => saveFromRecord(rkey, rest)).toThrow(new RegExp(`${field} is missing`));
+    }
+    const { sha256: _sha, ...fileRest } = record.file as Record<string, unknown>;
+    expect(() => saveFromRecord(rkey, { ...record, file: fileRest as never })).toThrow(
+      /sha256 is missing/
+    );
+  });
+
+  it('rejects a field it does not know, as highlights do', () => {
+    const { rkey, record } = saveToRecord(baseSave, file);
+    expect(() => saveFromRecord(rkey, { ...record, readingProgress: 3 })).toThrow(/unknown save/);
+    expect(() =>
+      saveFromRecord(rkey, { ...record, file: { ...(record.file as object), pages: 3 } })
+    ).toThrow(/unknown file/);
+  });
+
+  it('refuses a row missing a column, rather than reading it as NULL', () => {
+    const { url_normalized: _omitted, ...partial } = baseSave;
+    expect(() => saveToRecord(partial as SaveRow)).toThrow(/missing column url_normalized/);
+    expect(() => saveToRecord({ ...baseSave, source: null as never })).toThrow(/source is null/);
   });
 });
 
@@ -229,6 +302,8 @@ describe('highlights and their notes', () => {
     ['a null where a string belongs', { ...highlight, note: null }],
     ['a float timestamp', { ...highlight, createdAt: 1767312000123.5 }],
     ['a selector with extra keys', { ...highlight, selector: { type: 'X', exact: 'y', start: 3 } }],
+    ['a lone surrogate', { ...highlight, note: 'cut \ud83d' }],
+    ['a __proto__ key', JSON.parse('{"id":"p1","createdAt":0,"__proto__":{"id":"x"}}')],
   ];
 
   for (const [name, value] of cases) {
@@ -238,10 +313,13 @@ describe('highlights and their notes', () => {
         itemType: 'saved',
         highlight: value as never,
       };
-      const { record } = await highlightToRecord(entry);
+      const { rkey, record } = await highlightToRecord(entry);
       const stored = JSON.parse(JSON.stringify(record));
       await recordCid(stored);
-      expect(highlightFromRecord(stored)).toEqual(entry);
+      const decoded = await highlightFromRecord(rkey, stored);
+      expect(decoded).toEqual(entry);
+      expect(Object.getPrototypeOf(decoded.highlight)).toBe(Object.prototype);
+      expect((await highlightToRecord(decoded)).record).toEqual(stored);
     });
   }
 
@@ -255,6 +333,43 @@ describe('highlights and their notes', () => {
     expect(highlightEntriesFromLabel({ item_key: 'k', item_type: 'article', props: null })).toEqual(
       []
     );
+  });
+
+  it('treats prototype keys as unknown fields', async () => {
+    const { rkey, record } = await highlightToRecord({
+      itemKey: 'k',
+      itemType: 'article',
+      highlight,
+    });
+    await expect(highlightFromRecord(rkey, { ...record, constructor: 'x' })).rejects.toThrow(
+      /unknown highlight field constructor/
+    );
+    const { record: withToString } = await highlightToRecord({
+      itemKey: 'k',
+      itemType: 'article',
+      highlight: { ...highlight, toString: 'x' },
+    });
+    expect(Object.hasOwn(withToString, 'toString')).toBe(false);
+    expect(JSON.parse(withToString.extra as string)).toEqual({ toString: 'x' });
+  });
+
+  it('rejects extra that shadows or could be a native field', async () => {
+    const { rkey, record } = await highlightToRecord({
+      itemKey: 'k',
+      itemType: 'article',
+      highlight,
+    });
+    await expect(
+      highlightFromRecord(rkey, { ...record, extra: JSON.stringify({ id: 'other' }) })
+    ).rejects.toThrow(/extra.id/);
+    await expect(
+      highlightFromRecord(rkey, { ...record, extra: JSON.stringify({ color: 'yellow' }) })
+    ).resolves.toBeTruthy();
+  });
+
+  it('rejects a record stored under a key its id does not derive', async () => {
+    const { record } = await highlightToRecord({ itemKey: 'k', itemType: 'article', highlight });
+    await expect(highlightFromRecord('abc', record)).rejects.toThrow(/not keyed abc/);
   });
 
   it('refuses a highlight without an id', async () => {

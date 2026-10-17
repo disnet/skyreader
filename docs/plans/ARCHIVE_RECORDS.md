@@ -81,6 +81,9 @@ The contract is `fromRecord(toRecord(row))` deep-equals `row` for any row D1 can
 includes values the record shape can't carry natively:
 
 - The atproto data model has no floats, and a datetime is limited to years 0000–9999.
+- A string with a lone UTF-16 surrogate (text cut mid-emoji) has no UTF-8 form. `JSON.stringify`
+  escapes it, so it rides in `extra`; the DAG-CBOR encoder refuses one rather than hashing it as
+  U+FFFD.
 - A highlight can carry keys a newer client added, or a `null` where a string belongs.
 
 Any such value goes verbatim into `extra`, a JSON string, instead of being dropped or coerced.
@@ -88,11 +91,25 @@ Decoding applies `extra` last. On real rows `extra` should almost never appear. 
 mapping is total and the round-trip claim holds unconditionally. It also means a highlight field
 the frontend adds later is preserved before this module learns about it.
 
-The mapping throws in only two cases, and neither is a row the app can address:
+Encoding throws in only these cases, none of them a row the app can address:
 
 - a save whose `rkey` isn't a record key (every write path validates rkeys)
+- a save row missing a column, or NULL in a NOT NULL one (a caller's query bug, not data)
 - a highlight element with no string `id` (the frontend merges by id, and the merge path already
   refuses id-less elements)
+
+Decoding is the exact inverse and accepts nothing else, so re-encoding a decoded record gives back
+the same record and CID, and the CID-equality sync never churns. It rejects:
+
+- an unknown field (on a save, its `file`, a highlight, or its `subject`): a field from a newer
+  writer fails loudly rather than being dropped and written back without it
+- a missing NOT NULL column (`url`, `savedAt`, `createdAt`, `source`; on a file, every column but
+  `filename`)
+- a datetime not in the exact form encoding writes (`toISOString`: millisecond precision, `Z`)
+- an `extra` key that encoding wouldn't have put there: an unknown column, a column also present
+  natively, or a value its native field could carry. So `extra` can't set `rkey`, `id`,
+  `user_did` or any other column the record shape doesn't have; the caller's `rkey` always wins.
+- a highlight whose record key isn't the one its `id` derives
 
 ## Content hashes
 

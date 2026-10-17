@@ -4,7 +4,8 @@
 // Only the slice of DAG-CBOR the atproto data model needs: maps with string keys,
 // arrays, strings, safe integers, booleans, null, and bytes. Floats are not part
 // of the data model, so a non-integer number throws rather than encoding as a
-// float a PDS would reject. Map keys sort by encoded length, then bytewise, as
+// float a PDS would reject. A string with a lone surrogate has no UTF-8 form, so
+// it throws rather than hashing as U+FFFD text it isn't. Map keys sort by encoded length, then bytewise, as
 // DAG-CBOR requires; an `undefined` value is dropped, like an absent field.
 //
 // Cross-checked against @ipld/dag-cbor + multiformats in
@@ -70,6 +71,11 @@ function compareKeys(a: Uint8Array, b: Uint8Array): number {
   return 0;
 }
 
+function encodeString(value: string): Uint8Array {
+  if (!value.isWellFormed()) throw new TypeError('DAG-CBOR: string has a lone surrogate');
+  return utf8.encode(value);
+}
+
 function write(w: Writer, value: CborValue): void {
   if (value === null) {
     w.push(Uint8Array.of(0xf6));
@@ -84,7 +90,7 @@ function write(w: Writer, value: CborValue): void {
     if (value >= 0) w.head(0, value);
     else w.head(1, -1 - value);
   } else if (typeof value === 'string') {
-    const bytes = utf8.encode(value);
+    const bytes = encodeString(value);
     w.head(3, bytes.length);
     w.push(bytes);
   } else if (value instanceof Uint8Array) {
@@ -96,7 +102,7 @@ function write(w: Writer, value: CborValue): void {
   } else if (typeof value === 'object') {
     const entries = Object.entries(value)
       .filter((entry): entry is [string, CborValue] => entry[1] !== undefined)
-      .map(([key, item]) => ({ key: utf8.encode(key), item }))
+      .map(([key, item]) => ({ key: encodeString(key), item }))
       .sort((a, b) => compareKeys(a.key, b.key));
     w.head(5, entries.length);
     for (const { key, item } of entries) {
