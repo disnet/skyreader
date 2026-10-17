@@ -8,6 +8,7 @@
   import CollectionReader from '$lib/components/feed/CollectionReader.svelte';
   import { bskyEmbed } from '$lib/actions/bsky-embed';
   import { mathRender } from '$lib/actions/math-render';
+  import { videoTranscript } from '$lib/actions/video-transcript';
   import { overlapShadow } from '$lib/actions/overlap-shadow';
   import { appScrollElement } from '$lib/utils/appScroll';
   import type { ArticleCardViewProps } from './articleCardView.types';
@@ -456,6 +457,7 @@
             class:body-pending={bodyPending}
             use:bskyEmbed
             use:mathRender
+            use:videoTranscript={{ follow: true }}
           >
             {@html sanitizedContent}
           </div>

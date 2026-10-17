@@ -1227,6 +1227,64 @@ section.footnotes {
   border-radius: 4px;
 }
 
+/* A saved video's transcript, wired to its player by actions/video-transcript.ts.
+   Each line's time is a control (seek and play); the line being spoken carries a
+   One-Blue rule in the gutter rather than a fill, so it never reads as a
+   highlight the reader made. */
+.transcript-time {
+  color: var(--color-primary, #0066cc);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  border-radius: 2px;
+}
+
+.transcript-time:hover {
+  text-decoration: underline;
+}
+
+.transcript-time:focus-visible {
+  outline: 2px solid var(--color-primary, #0066cc);
+  outline-offset: 2px;
+}
+
+.transcript-line {
+  position: relative;
+}
+
+.transcript-line::before {
+  content: '';
+  position: absolute;
+  left: -0.75rem;
+  top: 0.15em;
+  bottom: 0.15em;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--color-primary, #0066cc);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.transcript-line.is-current::before {
+  opacity: 1;
+}
+
+/* A playing video stays in view while the transcript scrolls beneath it. It
+   keeps its place in the flow (sticky, not fixed), so pinning moves nothing.
+   `--video-pin-top` clears the reader's own top bar while that bar is shown. */
+iframe.video-pinned {
+  position: sticky;
+  top: calc(var(--video-pin-top, 0px) + env(safe-area-inset-top, 0px));
+  z-index: 5;
+  transition: top 0.25s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .transcript-line::before,
+  iframe.video-pinned {
+    transition: none;
+  }
+}
+
 .op-tasklist {
   padding-left: 0;
 }

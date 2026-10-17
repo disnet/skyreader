@@ -18,6 +18,37 @@ const LAYOUT_TABLE_TAGS = new Set(['TABLE', 'TD', 'TH', 'TR', 'COL', 'COLGROUP']
 const VIDEO_IFRAME_ALLOW =
   'accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen';
 
+const YOUTUBE_HOSTS = new Set([
+  'www.youtube.com',
+  'youtube.com',
+  'www.youtube-nocookie.com',
+  'youtube-nocookie.com',
+]);
+
+/**
+ * Opens a YouTube embed to the reader's own controls (actions/video-transcript.ts:
+ * a transcript's timestamps seek the player). `enablejsapi` turns on its
+ * postMessage API, and `origin` is the page allowed to drive it. `autoplay` in
+ * the permission list is what lets a timestamp click start playback in a
+ * cross-origin frame; the `autoplay=0` the URL is forced to still keeps the video
+ * from starting on its own.
+ */
+function enableYouTubeApi(iframe: Element, src: string): void {
+  let url: URL;
+  try {
+    url = new URL(src);
+  } catch {
+    return;
+  }
+  if (!YOUTUBE_HOSTS.has(url.hostname.toLowerCase())) return;
+  url.searchParams.set('enablejsapi', '1');
+  if (typeof location !== 'undefined' && /^https?:$/.test(location.protocol)) {
+    url.searchParams.set('origin', location.origin);
+  }
+  iframe.setAttribute('src', url.href);
+  iframe.setAttribute('allow', `${VIDEO_IFRAME_ALLOW}; autoplay`);
+}
+
 function disableIframeAutoplay(url: URL): void {
   url.searchParams.set('autoplay', '0');
 
@@ -209,6 +240,7 @@ export function sanitizeHtml(html: string, baseUrl?: string): string {
       node.setAttribute('allow', VIDEO_IFRAME_ALLOW);
       node.setAttribute('allowfullscreen', '');
       node.setAttribute('referrerpolicy', 'strict-origin-when-cross-origin');
+      enableYouTubeApi(node, normalized);
       // Drop fixed dimensions so the responsive CSS wrapper controls sizing.
       node.removeAttribute('width');
       node.removeAttribute('height');
