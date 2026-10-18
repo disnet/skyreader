@@ -30,6 +30,8 @@ import {
   type SnapshotMethod,
 } from '../services/archive/snapshots';
 import { exactDoi } from '../services/export/identifiers';
+import { findSnapshotImage, snapshotImageUrl } from '../services/archive/snapshot-images';
+import { storeFor } from '../services/saved-file-store';
 
 const COLLECTION = 'app.skyreader.feed.saved';
 
@@ -587,9 +589,15 @@ async function handleBackedSave(
   // tombstone for this URL (a re-save of something just unsaved). record_uri is NULL:
   // a backed save has no app.skyreader.feed.saved export.
   await env.DB.batch([
-    // The upsert moves an existing row to this save's rkey; its snapshots move with it.
+    // The upsert moves an existing row to this save's rkey; its snapshots (and
+    // their pictures) move with it.
     env.DB.prepare(
       `UPDATE saved_snapshots SET save_rkey = ?
+       WHERE user_did = ? AND save_rkey IN (
+         SELECT rkey FROM saved_articles WHERE user_did = ? AND url_normalized = ?)`
+    ).bind(body.rkey, session.did, session.did, urlNormalized),
+    env.DB.prepare(
+      `UPDATE saved_snapshot_images SET save_rkey = ?
        WHERE user_did = ? AND save_rkey IN (
          SELECT rkey FROM saved_articles WHERE user_did = ? AND url_normalized = ?)`
     ).bind(body.rkey, session.did, session.did, urlNormalized),
@@ -1472,5 +1480,46 @@ export async function handleGetSavedSnapshots(
       size: row.size,
       method: row.method,
     })),
+  });
+}
+
+// GET /api/saved/:rkey/snapshot-image?url=… — the copy of a picture a save's
+// snapshot kept, by the address its body gives (services/archive/snapshot-images.ts).
+// The reader asks when the site's own picture fails to load. Owner-only, and
+// sandboxed like a book's pictures.
+export async function handleGetSnapshotImage(
+  request: Request,
+  env: Env,
+  session: Session
+): Promise<Response> {
+  const notFound = () =>
+    new Response(JSON.stringify({ error: 'Not found' }), {
+      status: 404,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  if (request.method !== 'GET') {
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+      status: 405,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  const url = new URL(request.url);
+  const rkey = url.pathname.split('/')[3];
+  if (!rkey || !isValidRkey(rkey)) return invalidRkeyResponse();
+  const imageUrl = snapshotImageUrl(url.searchParams.get('url') ?? '', '');
+  if (!imageUrl) return notFound();
+
+  const image = await findSnapshotImage(env, session.did, rkey, imageUrl);
+  const object = image ? await storeFor(env, image.ref)?.get(image.ref) : null;
+  if (!image || !object) return notFound();
+  return new Response(object.body, {
+    headers: {
+      'Content-Type': image.contentType,
+      'Content-Length': String(object.size),
+      // A kept picture never changes; a later capture with other bytes is a new row.
+      'Cache-Control': 'private, max-age=86400',
+      'X-Content-Type-Options': 'nosniff',
+      'Content-Security-Policy': "default-src 'none'; sandbox",
+    },
   });
 }

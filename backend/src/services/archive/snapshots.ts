@@ -7,8 +7,9 @@
 // from the save's latest one is a new snapshot, so a save can hold several.
 //
 // Rows are shaped as the future app.skyreader.archive.snapshot record
-// (records.ts, docs/plans/ARCHIVE_RECORDS.md). A capture never fails the save that
-// carries it: callers run it under waitUntil, and errors are logged here.
+// (records.ts, docs/plans/ARCHIVE_RECORDS.md). The pictures the body shows are
+// kept with it (snapshot-images.ts). A capture never fails the save that carries
+// it: callers run it under waitUntil, and errors are logged here.
 
 import type { Env } from '../../types';
 import { generateTid } from '../../utils/tid';
@@ -16,6 +17,13 @@ import { sha256Hex } from '../../utils/sha256';
 import { log } from '../../utils/logger';
 import { reportError } from '../../observability/sentry';
 import type { SnapshotRow } from './records';
+import {
+  captureSnapshotImages,
+  deleteSnapshotImageRows,
+  keptImagesByUrl,
+  pruneSnapshotImages,
+} from './snapshot-images';
+import type { StoredFileRef } from '../saved-file-store';
 
 export const SNAPSHOT_METHODS = ['live-dom', 'server', 'feed', 'record', 'upload'] as const;
 export type SnapshotMethod = (typeof SNAPSHOT_METHODS)[number];
@@ -68,17 +76,26 @@ export async function captureSnapshot(env: Env, input: CaptureInput): Promise<Sn
       .bind(did, saveRkey)
       .first<{ sha256: string; n: number }>();
     if (latest?.sha256 === sha256) return null;
+    // Read before the cap below can drop any: the pictures this capture shares
+    // with an earlier one are reused, not downloaded again.
+    const keptImages = await keptImagesByUrl(env, did, saveRkey);
+    // Pictures only the replaced capture showed, dropped once this one has
+    // taken what it reuses.
+    let replacedImages: StoredFileRef[] = [];
     if (latest && latest.n >= MAX_SNAPSHOTS_PER_SAVE) {
       log.warn('snapshot_cap_reached', { method });
       const newest = await env.DB.prepare(
         `DELETE FROM saved_snapshots WHERE user_did = ?1 AND rkey = (
            SELECT rkey FROM saved_snapshots WHERE user_did = ?1 AND save_rkey = ?2
            ORDER BY captured_at DESC, rkey DESC LIMIT 1)
-         RETURNING r2_key`
+         RETURNING rkey, r2_key`
       )
         .bind(did, saveRkey)
-        .first<{ r2_key: string }>();
-      if (newest) await env.SAVED_FILES.delete(newest.r2_key);
+        .first<{ rkey: string; r2_key: string }>();
+      if (newest) {
+        await env.SAVED_FILES.delete(newest.r2_key);
+        replacedImages = await deleteSnapshotImageRows(env, did, { snapshotRkey: newest.rkey });
+      }
     }
 
     const rkey = generateTid();
@@ -120,6 +137,22 @@ export async function captureSnapshot(env: Env, input: CaptureInput): Promise<Sn
       await env.SAVED_FILES.delete(row.r2_key).catch(() => {});
       throw err;
     }
+    // Its pictures. A failure here keeps the text snapshot, which stands alone.
+    let images = 0;
+    try {
+      images = await captureSnapshotImages(env, {
+        did,
+        saveRkey,
+        snapshotRkey: rkey,
+        pageUrl: url,
+        body,
+        kept: keptImages,
+      });
+    } catch (error) {
+      log.error('snapshot_images_failed', { method, error: String(error) });
+      reportError(error, { tags: { op: 'snapshot_images' } });
+    }
+    await pruneSnapshotImages(env, did, replacedImages);
     // The save may have been deleted while this ran (a capture runs after the
     // response). Its snapshots went with it, so this one must too.
     const save = await env.DB.prepare(
@@ -131,7 +164,7 @@ export async function captureSnapshot(env: Env, input: CaptureInput): Promise<Sn
       await deleteSnapshots(env, did, [saveRkey]);
       return null;
     }
-    log.info('snapshot_captured', { method, size: row.size });
+    log.info('snapshot_captured', { method, size: row.size, images });
     return row;
   } catch (error) {
     log.error('snapshot_capture_failed', { method, error: String(error) });
@@ -156,7 +189,7 @@ export async function listSnapshots(
   return rows.results;
 }
 
-/** Drop every snapshot of these saves. Called after the saves' rows are deleted. */
+/** Drop every snapshot of these saves, and their pictures. Called after the saves' rows are deleted. */
 export async function deleteSnapshots(env: Env, did: string, saveRkeys: string[]): Promise<void> {
   for (const saveRkey of saveRkeys) {
     const rows = await env.DB.prepare(
@@ -168,8 +201,10 @@ export async function deleteSnapshots(env: Env, did: string, saveRkeys: string[]
     await env.DB.prepare('DELETE FROM saved_snapshots WHERE user_did = ? AND save_rkey = ?')
       .bind(did, saveRkey)
       .run();
+    const images = await deleteSnapshotImageRows(env, did, { saveRkey });
     try {
       await env.SAVED_FILES?.delete(rows.results.map((r) => r.r2_key));
+      await pruneSnapshotImages(env, did, images);
     } catch (error) {
       // The rows are gone; an orphaned object costs storage, not correctness.
       log.error('snapshot_delete_failed', { error: String(error) });

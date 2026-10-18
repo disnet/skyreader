@@ -161,8 +161,9 @@ bytes (every kept original) from the plan, plus the shared daily parse cap.
 Every read, write and delete of a kept original goes through `SavedFileStore`
 (`src/services/saved-file-store.ts`), never the bucket directly: `saved_files.storage` names the
 store holding each file (`'r2'`, the only one today, located by `r2_key`), with `blob_cid` /
-`record_uri` reserved for a file kept as a blob in the reader's atproto space. Snapshot bodies and
-staged linked books are not kept originals and still use `SAVED_FILES` directly.
+`record_uri` reserved for a file kept as a blob in the reader's atproto space. The pictures a
+snapshot keeps go through it too (`putImage`). Snapshot bodies and staged linked books are not kept
+originals and still use `SAVED_FILES` directly.
 
 **EPUBs** ride the same plan flag and the same upload/storage limits (`maxEpubUploadBytes` is their
 own, larger size cap), but are read in this Worker (`src/services/epub.ts`: unzip, walk the OPF
@@ -233,30 +234,31 @@ returns a permission set expanded (`repo?collection=…`), so every check goes t
 
 ### Services
 
-| File                                 | Purpose                                                      |
-| ------------------------------------ | ------------------------------------------------------------ |
-| `src/services/oauth.ts`              | PKCE, DPoP, handle resolution, session management            |
-| `src/services/feed-parser.ts`        | RSS/Atom/RDF parsing                                         |
-| `src/services/feed-proxy-client.ts`  | Client for Fly.io feed proxy                                 |
-| `src/services/standard-site.ts`      | standard.site record mapping, digest, publication cache      |
-| `src/services/document-store.ts`     | The D1 document store: apply, backfill, reconcile, serve     |
-| `src/services/document-flags.ts`     | `documents_v2_enabled` / `documents_ingest_enabled` switches |
-| `src/services/pds-client.ts`         | PDS API client                                               |
-| `src/services/client-auth.ts`        | Confidential client auth helpers                             |
-| `src/services/share-sync.ts`         | Push/delete shares to/from PDS                               |
-| `src/services/subscription-sync.ts`  | Sync subscriptions to/from PDS                               |
-| `src/services/rate-limit.ts`         | Per-user per-endpoint rate limiting (D1-backed)              |
-| `src/services/user-tier.ts`          | Tier lookup (free/supporter)                                 |
-| `src/services/search-index.ts`       | Search index change feed + document builder (reads D1/R2)    |
-| `src/services/search-query.ts`       | Reader query → safe, quoted FTS5 terms                       |
-| `src/services/newsletters.ts`        | Newsletter inboxes + the `email()` handler (inbound mail)    |
-| `src/services/newsletter-email.ts`   | Parse one newsletter email into a feed item                  |
-| `src/services/bsky-sources.ts`       | Bluesky likes/bookmarks as private sources (walk + ingest)   |
-| `src/services/local-only-sources.ts` | The one "private, never crawled, never on the PDS" predicate |
-| `src/services/saved-file-store.ts`   | `SavedFileStore`: every read/write/delete of a kept original |
-| `src/services/archive/records.ts`    | Saves/highlights/snapshots ↔ their future space records      |
-| `src/services/archive/snapshots.ts`  | Capture each body a save gets as an immutable R2 snapshot    |
-| `src/services/export/`               | Export over those records; DOI/arXiv ids; Markdown, BibTeX   |
+| File                                      | Purpose                                                      |
+| ----------------------------------------- | ------------------------------------------------------------ |
+| `src/services/oauth.ts`                   | PKCE, DPoP, handle resolution, session management            |
+| `src/services/feed-parser.ts`             | RSS/Atom/RDF parsing                                         |
+| `src/services/feed-proxy-client.ts`       | Client for Fly.io feed proxy                                 |
+| `src/services/standard-site.ts`           | standard.site record mapping, digest, publication cache      |
+| `src/services/document-store.ts`          | The D1 document store: apply, backfill, reconcile, serve     |
+| `src/services/document-flags.ts`          | `documents_v2_enabled` / `documents_ingest_enabled` switches |
+| `src/services/pds-client.ts`              | PDS API client                                               |
+| `src/services/client-auth.ts`             | Confidential client auth helpers                             |
+| `src/services/share-sync.ts`              | Push/delete shares to/from PDS                               |
+| `src/services/subscription-sync.ts`       | Sync subscriptions to/from PDS                               |
+| `src/services/rate-limit.ts`              | Per-user per-endpoint rate limiting (D1-backed)              |
+| `src/services/user-tier.ts`               | Tier lookup (free/supporter)                                 |
+| `src/services/search-index.ts`            | Search index change feed + document builder (reads D1/R2)    |
+| `src/services/search-query.ts`            | Reader query → safe, quoted FTS5 terms                       |
+| `src/services/newsletters.ts`             | Newsletter inboxes + the `email()` handler (inbound mail)    |
+| `src/services/newsletter-email.ts`        | Parse one newsletter email into a feed item                  |
+| `src/services/bsky-sources.ts`            | Bluesky likes/bookmarks as private sources (walk + ingest)   |
+| `src/services/local-only-sources.ts`      | The one "private, never crawled, never on the PDS" predicate |
+| `src/services/saved-file-store.ts`        | `SavedFileStore`: every read/write/delete of a kept original |
+| `src/services/archive/records.ts`         | Saves/highlights/snapshots ↔ their future space records      |
+| `src/services/archive/snapshots.ts`       | Capture each body a save gets as an immutable R2 snapshot    |
+| `src/services/archive/snapshot-images.ts` | Keep the pictures each snapshot's body shows                 |
+| `src/services/export/`                    | Export over those records; DOI/arXiv ids; Markdown, BibTeX   |
 
 ### Observability
 
@@ -353,6 +355,9 @@ Key tables:
 - `saved_articles` - Saved/bookmarked articles
 - `saved_snapshots` - One row per capture of a save's body (hash, URL, time, method); the body is
   in R2 (`SAVED_FILES`). Deleted with the save. See `docs/plans/ARCHIVE_RECORDS.md` § Snapshots
+- `saved_snapshot_images` - One row per picture a snapshot kept (address, type, hash, store); the
+  bytes are in the save's `SavedFileStore`, shared by captures that show the same picture. The
+  reader falls back to them at `GET /api/saved/<rkey>/snapshot-image?url=` when the site's fails
 - `shelf_collections` / `shelf_collection_items` - Shelf collections and their members (by saved
   rkey); private, never on the PDS. See `docs/plans/SHELF_PLAN.md`
 - `social_read_positions_cache` - Legacy social read tracking (superseded; document

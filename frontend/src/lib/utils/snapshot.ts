@@ -42,3 +42,39 @@ export function captureLine(snapshot: SavedSnapshot): string {
   const how = snapshot.method ? METHOD_PHRASES[snapshot.method] : null;
   return `Captured on ${when}${how ? `, ${how}` : ''}.`;
 }
+
+/**
+ * A picture's address as a save's snapshot kept it: its `src`, or the first
+ * `srcset` candidate when it has none (backend snapshotImageUrls).
+ */
+function keptImageAddress(img: HTMLImageElement): string | null {
+  const src = img.getAttribute('src')?.trim();
+  // A candidate's address runs to its first space: it may hold commas itself.
+  const candidate = src || img.getAttribute('srcset')?.trim().split(/\s+/)[0]?.replace(/,$/, '');
+  return candidate && /^https?:\/\//i.test(candidate) ? candidate : null;
+}
+
+/**
+ * Point a saved article's picture that failed to load at the copy its snapshot
+ * kept (`keptUrl`, the owner-only GET /api/saved/<rkey>/snapshot-image), so a
+ * save keeps its pictures after the site loses them. Once per picture: if no
+ * copy was kept, that request fails too and the picture stays as it was.
+ * Returns whether it switched.
+ */
+export function fallBackToKeptImage(
+  img: HTMLImageElement,
+  keptUrl: (address: string) => string
+): boolean {
+  if (img.dataset.snapshotFallback) return false;
+  const address = keptImageAddress(img);
+  if (!address) return false;
+  img.dataset.snapshotFallback = '1';
+  // A srcset, or a <picture>'s sources, would win over the new src.
+  img.removeAttribute('srcset');
+  img.removeAttribute('sizes');
+  if (img.parentElement?.tagName === 'PICTURE') {
+    for (const source of img.parentElement.querySelectorAll('source')) source.remove();
+  }
+  img.setAttribute('src', keptUrl(address));
+  return true;
+}
