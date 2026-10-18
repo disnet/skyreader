@@ -210,7 +210,7 @@ describe('save snapshots', () => {
     expect(await env.SAVED_FILES.head(row!.r2_key)).toBeNull();
   });
 
-  it('stops keeping captures of one save past the cap, keeping the first ones', async () => {
+  it('at the cap, keeps the first captures and replaces the newest', async () => {
     await call(
       request('/api/saved', 'POST', { url: URL, rkey: 'aaaaaaaaaaaaa', content: '<p>0</p>' })
     );
@@ -227,6 +227,10 @@ describe('save snapshots', () => {
     const list = await snapshots('aaaaaaaaaaaaa');
     expect(list).toHaveLength(MAX_SNAPSHOTS_PER_SAVE);
     expect(list[0].sha256).toBe(await sha256Hex(new TextEncoder().encode('<p>0</p>')));
+    const last = `<p>${MAX_SNAPSHOTS_PER_SAVE}</p>`;
+    expect(list.at(-1).sha256).toBe(await sha256Hex(new TextEncoder().encode(last)));
+    const objects = await env.SAVED_FILES.list({ prefix: `snapshots/${DID}/` });
+    expect(objects.objects).toHaveLength(MAX_SNAPSHOTS_PER_SAVE);
   });
 
   it('deletes the snapshots of every save under a guid', async () => {

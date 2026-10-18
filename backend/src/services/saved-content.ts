@@ -73,7 +73,7 @@ export async function fillExtractedContent(
   const whereClause = 'id' in where ? 'id = ?' : 'user_did = ? AND rkey = ?';
   const whereBinds = 'id' in where ? [where.id] : [where.userDid, where.rkey];
 
-  const result = await env.DB.prepare(
+  const row = await env.DB.prepare(
     `UPDATE saved_articles SET
          content = ?,
          word_count = COALESCE(word_count, ?),
@@ -84,7 +84,8 @@ export async function fillExtractedContent(
          domain = COALESCE(domain, ?),
          published_at = COALESCE(published_at, ?),
          updated_at = ?${contentTypeClause}
-       WHERE ${whereClause} AND content IS NULL`
+       WHERE ${whereClause} AND content IS NULL
+       RETURNING user_did, rkey, url`
   )
     .bind(
       // Non-null either way: marks the row as extracted so backfill passes skip it.
@@ -99,16 +100,10 @@ export async function fillExtractedContent(
       Date.now(),
       ...whereBinds
     )
-    .run();
+    .first<{ user_did: string; rkey: string; url: string }>();
 
   // A body this fill wrote is the save's capture; a note is not.
-  if (!hasBody || !result.meta.changes) return;
-  const row = await env.DB.prepare(
-    `SELECT user_did, rkey, url FROM saved_articles WHERE ${whereClause}`
-  )
-    .bind(...whereBinds)
-    .first<{ user_did: string; rkey: string; url: string }>();
-  if (row) {
+  if (hasBody && row) {
     await captureSnapshot(env, {
       did: row.user_did,
       saveRkey: row.rkey,

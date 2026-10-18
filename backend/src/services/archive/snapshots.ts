@@ -31,7 +31,9 @@ const FAILED_CAPTURE_MARKER = 'data-skyreader-note="fetch-failed"';
 
 // Captures kept per save. Re-saving with new text skips the monthly save limit,
 // so without a ceiling one save could grow without bound. The first captures are
-// the ones worth keeping (the page as it was), so later ones past the cap are dropped.
+// the ones worth keeping (the page as it was), so at the cap the newest capture
+// replaces the previous newest: the snapshot list always ends with the body the
+// reader is reading.
 export const MAX_SNAPSHOTS_PER_SAVE = 20;
 
 export function snapshotR2Key(did: string, saveRkey: string, rkey: string): string {
@@ -68,7 +70,15 @@ export async function captureSnapshot(env: Env, input: CaptureInput): Promise<Sn
     if (latest?.sha256 === sha256) return null;
     if (latest && latest.n >= MAX_SNAPSHOTS_PER_SAVE) {
       log.warn('snapshot_cap_reached', { method });
-      return null;
+      const newest = await env.DB.prepare(
+        `DELETE FROM saved_snapshots WHERE user_did = ?1 AND rkey = (
+           SELECT rkey FROM saved_snapshots WHERE user_did = ?1 AND save_rkey = ?2
+           ORDER BY captured_at DESC, rkey DESC LIMIT 1)
+         RETURNING r2_key`
+      )
+        .bind(did, saveRkey)
+        .first<{ r2_key: string }>();
+      if (newest) await env.SAVED_FILES.delete(newest.r2_key);
     }
 
     const rkey = generateTid();
