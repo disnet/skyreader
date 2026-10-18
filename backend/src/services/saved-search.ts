@@ -121,7 +121,9 @@ export function extractSavedQuery(configJson: string): SavedQueryConfig | null {
     : [];
   return {
     query,
-    ftsQuery: parsed.match,
+    // The percolator matches one scratch table, so the terms join into one
+    // MATCH expression (the same one `/` search used before it split text/notes).
+    ftsQuery: [parsed.positives.join(' '), ...parsed.negatives.map((n) => `NOT ${n}`)].join(' '),
     sourceMode,
     sourceKeys: sourceMode === 'all' ? [] : [...new Set(sourceKeys)].sort(),
     digest: config.digest === 'daily' ? 'daily' : 'off',
