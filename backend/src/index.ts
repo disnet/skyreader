@@ -138,6 +138,8 @@ import {
   handleUnblockNewsletterSender,
 } from './routes/newsletters';
 import { handleSearch } from './routes/search';
+import { handleChannelItems } from './routes/channel-items';
+import { nudgePercolator } from './services/saved-search';
 import { nudgeSearchIndex, searchNudgeFor } from './services/search-index';
 import { handleInboundEmail } from './services/newsletters';
 import {
@@ -206,6 +208,7 @@ import { classifyRoute, runWithRequestContext, setContextDid } from './utils/req
 
 export { JetstreamPoller } from './durable-objects/jetstream-poller';
 export { SearchIndex } from './durable-objects/search-index';
+export { Percolator } from './durable-objects/percolator';
 
 function corsHeaders(origin: string | null, env: Env): HeadersInit {
   const allowedOrigins = env.ALLOWED_ORIGINS
@@ -1090,6 +1093,10 @@ async function route(
         });
       }
       break;
+    case /^\/api\/channels\/[^/]+\/items$/.test(url.pathname):
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleChannelItems(request, env, session, url.pathname.split('/')[3]);
+      break;
     case url.pathname.startsWith('/api/channels/'): {
       if (!session) return unauthorizedResponse(headers);
       const channelUuid = url.pathname.split('/').pop()!;
@@ -1299,6 +1306,15 @@ async function runScheduled(
     } catch (error) {
       log.error('cron_phase_failed', { phase: 'documents-cold-start', ...serializeError(error) });
       reportError(error, { tags: { source: 'cron', phase: 'documents-cold-start' } });
+    }
+
+    // Phase 1d: wake the saved-search matcher. It pulls new items itself and
+    // reschedules while it has a backlog; this only guarantees a pass a minute.
+    try {
+      await nudgePercolator(env);
+    } catch (error) {
+      log.error('cron_phase_failed', { phase: 'percolator-nudge', ...serializeError(error) });
+      reportError(error, { tags: { source: 'cron', phase: 'percolator-nudge' } });
     }
 
     // Phase 2: Clean up rate limit records
