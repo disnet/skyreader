@@ -185,6 +185,23 @@
   // Only once the stream has actually settled: while it is idle or loading,
   // `shown` is 0 for reasons that have nothing to do with how many there are.
   const settled = $derived(!stream.idle && !stream.loading);
+  // ── Arriving once, not in pieces ────────────────────────────────────────
+  // The stream is assembled from several lookups that land at different times:
+  // the counts, each network's people, Semble's notes and tabs, your follows.
+  // Drawn as each arrived, the section popped in a row at a time and reordered
+  // under the reader. So it holds its skeleton until the first time it settles,
+  // then shows whole. After that it stays shown: a lane that turns up late
+  // joins the list rather than blanking it back to a skeleton.
+  let revealed = $state(false);
+  let revealedFor: string | undefined = undefined;
+  $effect(() => {
+    if (itemUrl !== revealedFor) {
+      revealedFor = itemUrl;
+      revealed = false;
+    }
+    if (settled) revealed = true;
+  });
+  const showStream = $derived(revealed || settled);
   const undisclosed = $derived(
     activeFilter === 'all' && settled && total > shown ? total - shown : 0
   );
@@ -459,6 +476,26 @@
     return monogram(entry.displayName?.trim() || entry.handle || entry.did.replace('did:plc:', ''));
   }
 
+  // A stable, muted hue per person, so a row of monograms reads as different
+  // people rather than a column of grey discs. The tint itself lives in CSS
+  // (both schemes); this only picks where on the wheel it sits.
+  function hueFor(seed: string): number {
+    let h = 0;
+    for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) % 360;
+    return h;
+  }
+
+  // The faces beside the heading: the first few people in the stream, once it
+  // is shown. A glance says who is here before a word of it is read.
+  const FACE_PILE = 4;
+  const faces = $derived(
+    showStream && activeFilter === 'all'
+      ? [...stream.entries, ...linkOnly]
+          .filter((entry, i, all) => all.findIndex((e) => e.did === entry.did) === i)
+          .slice(0, FACE_PILE)
+      : []
+  );
+
   // A broken avatar URL (a deleted blob, a CDN miss) hides the image and lets the
   // monogram underneath stand in, rather than leaving a torn-image box.
   function hideBrokenAvatar(event: Event) {
@@ -481,6 +518,7 @@
   <button
     type="button"
     class="entry-avatar"
+    style:--hue={hueFor(did)}
     title="Follow {handle || did} in Skyreader"
     aria-label="Follow {label} in Skyreader"
     onclick={(e) => {
@@ -525,16 +563,44 @@
   </button>
 {/snippet}
 
-{#if lanesOpen && (total > 0 || hasComposeRow || showStandaloneConnect || hasConnectionsTab || hasRelatedTab)}
-  <section class="discussion" class:no-heading={!showHeading} id={panelId} aria-label="Discussion">
+<!-- While it is still arriving the section holds its place, so nothing below it
+     jumps when it lands. Under an article (the heading) it stays even when it
+     settles empty: the empty state says so, rather than the section vanishing. -->
+{#if lanesOpen && (!showStream || showHeading || total > 0 || hasComposeRow || showStandaloneConnect || hasConnectionsTab || hasRelatedTab)}
+  <section
+    class="discussion"
+    class:no-heading={!showHeading}
+    class:roomy={showHeading}
+    id={panelId}
+    aria-label="Discussion"
+  >
     {#if showHeading}
       <div class="discussion-head">
         <h2 class="discussion-title">Discussion</h2>
+        {#if faces.length > 0}
+          <span class="discussion-faces" aria-hidden="true">
+            {#each faces as face (face.key)}
+              <span class="face" style:--hue={hueFor(face.did)}>
+                <span class="face-monogram">{monogramFor(face)}</span>
+                {#if face.avatar}
+                  <img
+                    class="face-photo"
+                    src={face.avatar}
+                    alt=""
+                    loading="lazy"
+                    decoding="async"
+                    onerror={hideBrokenAvatar}
+                  />
+                {/if}
+              </span>
+            {/each}
+          </span>
+        {/if}
         <!-- The total and the Conversation tab's count are the same number, and
              two lines apart they read as two facts that don't add up. Where
              there is a tab row it carries every count; where there isn't, the
              heading keeps the one it always had. -->
-        {#if total > 0 && !showTabs}
+        {#if showStream && total > 0 && !showTabs}
           <span class="discussion-total"
             >{total}{capped ? '+' : ''}
             {total === 1 ? 'reference' : 'references'} across the Atmosphere</span
@@ -547,7 +613,7 @@
          selected one: enough to say these are modes, quiet enough that the
          article above it stays the loudest thing on the page. It only appears
          once there is more than one kind to choose between. -->
-    {#if showTabs}
+    {#if showStream && showTabs}
       <div
         class="discussion-tabs"
         role="tablist"
@@ -587,7 +653,7 @@
            them. `All` is the resting state; a lane narrows to its own network.
            They live here and nowhere else: "which network" is a fact about a
            row, and only this tab is made of rows. -->
-        {#if showFilters}
+        {#if showStream && showFilters}
           <div class="discussion-filters" role="group" aria-label="Filter by source">
             {#each filters as filter (filter.id)}
               {@const isActive = activeFilter === filter.id}
@@ -618,8 +684,8 @@
           </div>
         {/if}
 
-        {#if sembleNotes.length > 0 || visibleEntries.length > 0}
-          <ul class="discussion-stream">
+        {#if showStream && (sembleNotes.length > 0 || visibleEntries.length > 0)}
+          <ul class="discussion-stream arriving">
             {#each sembleNotes as note (note.id)}
               <li class="entry">
                 {@render person(
@@ -747,7 +813,7 @@
           </ul>
         {/if}
 
-        {#if visibleEntries.length > 0}
+        {#if showStream && visibleEntries.length > 0}
           {#if foldedEntries > 0}
             <button
               type="button"
@@ -777,7 +843,7 @@
 
         <!-- People are still resolving. Show the shape of what's coming rather than
          the word "Loading" — the stream is the content here. -->
-        {#if stream.loading}
+        {#if !showStream || stream.loading}
           <ul class="discussion-stream skeletons" aria-hidden="true">
             {#each [0, 1, 2] as row (row)}
               <li class="entry skeleton-entry">
@@ -796,8 +862,8 @@
          Each of these used to take a full row with an empty body; as one line
          they read as what they are — distribution, not discussion — and the
          people who said something keep the stream to themselves. -->
-        {#if linkOnly.length > 0}
-          <div class="also-linked" class:leading={visibleEntries.length === 0}>
+        {#if showStream && linkOnly.length > 0}
+          <div class="also-linked arriving" class:leading={visibleEntries.length === 0}>
             <span class="also-linked-label">Also linked by</span>
             {#each visibleLinks as entry (entry.key)}
               {@const label = displayNameFor(entry)}
@@ -816,7 +882,7 @@
                   title={hint}
                   onclick={(e) => e.stopPropagation()}
                 >
-                  <span class="also-avatar">
+                  <span class="also-avatar" style:--hue={hueFor(entry.did)}>
                     <span class="also-monogram" aria-hidden="true">{monogramFor(entry)}</span>
                     {#if entry.avatar}
                       <img
@@ -833,7 +899,7 @@
                 </a>
               {:else}
                 <span class="also-link" title={hint}>
-                  <span class="also-avatar">
+                  <span class="also-avatar" style:--hue={hueFor(entry.did)}>
                     <span class="also-monogram" aria-hidden="true">{monogramFor(entry)}</span>
                     {#if entry.avatar}
                       <img
@@ -913,7 +979,7 @@
            own — and this is the case where drawing an edge matters most: the
            reader has just finished something nobody else has connected, so the
            edge they can make is the only one there is. -->
-        {#if showStandaloneConnect}
+        {#if showStream && showStandaloneConnect}
           <div class="semble-connect-standalone">{@render connectCta()}</div>
         {/if}
 
@@ -1219,9 +1285,132 @@
 
 <style>
   .discussion {
+    /* The panel's two grounds: the one it sits on (the source glyph and the face
+       pile knock out of it) and the one its pills sit on. A surface that gives
+       the panel a ground of its own swaps both. */
+    --discussion-ground: var(--color-bg);
+    --discussion-pill: var(--color-bg-secondary);
     display: flex;
     flex-direction: column;
     min-width: 0;
+  }
+
+  /* Under a finished article the discussion is its own room: a sunken band with
+     the article's column edges, so it reads as a new movement after the text
+     rather than more of it. Flat — a change of ground, never a shadow. */
+  .discussion.roomy {
+    --discussion-ground: var(--color-bg-secondary);
+    --discussion-pill: var(--color-bg);
+    padding: 1.25rem 1.25rem 1rem;
+    border-radius: 12px;
+    background: var(--discussion-ground);
+    /* Paged mode can break the band across columns; each piece keeps its own
+       padding and corners rather than reading as a torn edge. */
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+  }
+
+  .discussion.roomy .discussion-title {
+    font-size: 1.125rem;
+    letter-spacing: -0.01em;
+  }
+
+  .discussion.roomy .discussion-head {
+    align-items: center;
+    margin-bottom: 0.875rem;
+  }
+
+  .discussion.roomy .discussion-stream:not(.skeletons) {
+    gap: 1.125rem;
+  }
+
+  .discussion.roomy .entry {
+    gap: 0.75rem;
+  }
+
+  .discussion.roomy .entry-avatar {
+    width: 34px;
+    height: 34px;
+  }
+
+  /* What people said is the substance, so under an article it reads at a size
+     meant for reading rather than at the metadata size of the line above it. */
+  .discussion.roomy .entry-note {
+    margin-top: 0.25rem;
+    font-size: var(--text-lg);
+  }
+
+  /* A highlighted passage is the article's own words, so it wears the article's
+     face, set on the page's ground like a slip of the text itself. */
+  .discussion.roomy .entry-quote {
+    margin-top: 0.4375rem;
+    padding: 0.4375rem 0.75rem;
+    border-radius: 6px;
+    background: var(--color-bg);
+    font-family: var(
+      --article-font,
+      Charter,
+      'Bitstream Charter',
+      'Iowan Old Style',
+      Georgia,
+      serif
+    );
+    font-size: var(--text-md);
+    line-height: var(--leading-normal);
+    color: var(--color-text);
+  }
+
+  /* The first few faces, overlapped beside the heading. */
+  .discussion-faces {
+    display: inline-flex;
+    align-items: center;
+    padding-left: 0.375rem;
+  }
+
+  .face {
+    position: relative;
+    width: 22px;
+    height: 22px;
+    margin-left: -6px;
+    border-radius: 50%;
+    box-shadow: 0 0 0 2px var(--discussion-ground);
+    background: hsl(var(--hue, 210) 42% 89%);
+  }
+
+  .face-monogram {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: var(--text-3xs);
+    font-weight: var(--weight-semibold);
+    color: hsl(var(--hue, 210) 32% 32%);
+    user-select: none;
+  }
+
+  .face-photo {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    border-radius: 50%;
+    object-fit: cover;
+  }
+
+  /* The stream arrives once, whole, so it may as well arrive gently. */
+  .arriving {
+    animation: discussion-arrive 0.28s ease-out;
+  }
+
+  @keyframes discussion-arrive {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
   }
 
   /* In the card's sticky footer there is no heading to open the section, so the
@@ -1269,7 +1458,7 @@
     padding: 0.25rem 0.5625rem;
     border: none;
     border-radius: 999px;
-    background: var(--color-bg-secondary);
+    background: var(--discussion-pill);
     font: inherit;
     font-size: var(--text-sm);
     font-weight: var(--weight-medium);
@@ -1764,9 +1953,10 @@
     align-items: center;
     justify-content: center;
     border-radius: 50%;
+    background: hsl(var(--hue, 210) 42% 89%);
     font-size: var(--text-sm);
     font-weight: var(--weight-semibold);
-    color: var(--color-text-secondary);
+    color: hsl(var(--hue, 210) 32% 32%);
     user-select: none;
   }
 
@@ -1793,8 +1983,8 @@
     /* Knocked out of the page's own ground, so the glyph reads as pinned to the
        avatar rather than floating over it. A border, not a shadow — nothing here
        has left the page plane. */
-    border: 1.5px solid var(--color-bg);
-    background: var(--color-bg);
+    border: 1.5px solid var(--discussion-ground);
+    background: var(--discussion-ground);
     color: var(--color-text-secondary);
   }
 
@@ -1981,7 +2171,7 @@
     max-width: 100%;
     padding: 0.125rem 0.5rem 0.125rem 0.1875rem;
     border-radius: 999px;
-    background: var(--color-bg-secondary);
+    background: var(--discussion-pill);
     font-size: var(--text-sm);
     color: var(--color-text-secondary);
     text-decoration: none;
@@ -2006,10 +2196,10 @@
     align-items: center;
     justify-content: center;
     border-radius: 50%;
-    background: var(--color-bg);
+    background: hsl(var(--hue, 210) 42% 89%);
     font-size: var(--text-3xs);
     font-weight: var(--weight-semibold);
-    color: var(--color-text-secondary);
+    color: hsl(var(--hue, 210) 32% 32%);
     user-select: none;
   }
 
@@ -2255,7 +2445,25 @@
     }
   }
 
+  @media (prefers-color-scheme: dark) {
+    .entry-monogram,
+    .also-monogram,
+    .face {
+      background: hsl(var(--hue, 210) 20% 27%);
+    }
+
+    .entry-monogram,
+    .also-monogram,
+    .face-monogram {
+      color: hsl(var(--hue, 210) 45% 80%);
+    }
+  }
+
   @media (max-width: 640px) {
+    .discussion.roomy {
+      padding: 1rem 1rem 0.875rem;
+    }
+
     /* On a phone the head line has no room for both names. The avatar and the
        display name identify the person; the handle is the part that goes. Where
        there is no display name the handle IS the name, so it stays. */
@@ -2300,7 +2508,8 @@
       transition: none;
     }
 
-    .skeleton-block {
+    .skeleton-block,
+    .arriving {
       animation: none;
     }
   }

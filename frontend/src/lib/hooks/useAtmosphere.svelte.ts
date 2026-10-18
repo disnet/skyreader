@@ -368,7 +368,16 @@ export function useAtmosphere(opts: UseAtmosphereOptions): AtmosphereApi {
 
     const titles = [opts.itemTitle?.(), opts.sourceTitle?.()];
     const entries: DiscussionEntryVM[] = [];
-    let loading = false;
+    // Still loading until the stream knows its own shape: which lanes have people
+    // (the counts), whether Semble has notes to lead with or tabs to add, and
+    // which of your follows shared it (they sort first). Settling before any of
+    // those lands would show an empty state, or a list that then reorders under
+    // the reader's eyes.
+    const url = opts.itemUrl();
+    let loading =
+      articleMentionsStore.status(url) === 'pending' ||
+      (activeFilter === 'all' && Boolean(laneItems.get('semble')?.loading)) ||
+      followLinkSharersStore.get(url).loading;
     let failed = false;
     // `following` cuts across every lane, so it reads them all and narrows after.
     const laneFilter = activeFilter === 'following' ? 'all' : activeFilter;

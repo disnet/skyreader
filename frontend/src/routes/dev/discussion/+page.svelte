@@ -594,7 +594,7 @@
 
   <Case
     name="Not asked yet"
-    note="The reader hasn't reached the section, so nothing has been requested. Silhouettes would promise people who aren't coming and an empty line would claim there are none — so the panel shows only the ways to add yours until it opens."
+    note="The reader hasn't reached the section yet, so the people haven't been asked for. They will be (the section opens as the reader nears it), so the panel holds their place with the same silhouettes as Resolving: the section keeps its height, and nothing below it jumps when they land."
     width="800px"
     pad
   >

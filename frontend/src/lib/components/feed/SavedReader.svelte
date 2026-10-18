@@ -1819,7 +1819,7 @@
       <!-- Share-to-linkblog + discussion rails. Part of the shared content so they
            sit at the end in scroll mode and flow onto the final page(s) when
            paged. -->
-      <ReaderDiscussion {readerItem} />
+      <ReaderDiscussion {readerItem} eager />
     {/snippet}
 
     <!-- Paged, it hangs over the page window rather than the column flow, so the
