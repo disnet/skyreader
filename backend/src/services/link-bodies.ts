@@ -14,7 +14,6 @@ import type { Env } from '../types';
 import { FeedProxyClient, FeedProxyError } from './feed-proxy-client';
 import { htmlToText, stripControlChars } from '../utils/html-text';
 import { sha256Hex } from '../utils/sha256';
-import { log, serializeError } from '../utils/logger';
 
 const KEY_PREFIX = 'link_bodies/v1/';
 
@@ -22,16 +21,15 @@ export async function linkBodyKey(urlNormalized: string): Promise<string> {
   return `${KEY_PREFIX}${await sha256Hex(new TextEncoder().encode(urlNormalized))}`;
 }
 
-/** The stored text of a link's article, or null when none is stored (or R2 failed). */
+/**
+ * The stored text of a link's article, or null when none is stored. Throws when
+ * R2 fails, so a caller can keep the readers waiting rather than take a failed
+ * read for an empty article.
+ */
 export async function readLinkBody(env: Env, urlNormalized: string): Promise<string | null> {
   if (!env.ITEM_BODIES) return null;
-  try {
-    const object = await env.ITEM_BODIES.get(await linkBodyKey(urlNormalized));
-    return object ? await object.text() : null;
-  } catch (error) {
-    log.warn('link_body_read_failed', serializeError(error));
-    return null;
-  }
+  const object = await env.ITEM_BODIES.get(await linkBodyKey(urlNormalized));
+  return object ? await object.text() : null;
 }
 
 export type LinkExtractResult =

@@ -426,8 +426,14 @@ export class Percolator extends DurableObject<Env> {
         .toArray()[0] as { state: string; waiters: string } | undefined;
       if (row?.state === 'done' && budget.r2.left > 0) {
         budget.r2.left--;
-        const text = await readLinkBody(this.env, urlNormalized);
-        if (text) bodies.set(urlNormalized, text);
+        try {
+          const text = await readLinkBody(this.env, urlNormalized);
+          if (text) bodies.set(urlNormalized, text);
+        } catch (error) {
+          // Matched on the card for now, and against the article on a re-check.
+          log.warn('link_body_read_failed', serializeError(error));
+          this.addWaiters(urlNormalized, row.waiters, link.readers);
+        }
       } else if (row?.state === 'done' || row?.state === 'pending') {
         // Not read yet, or stored but past this pass's R2 reads: these readers
         // are re-checked against the article by readLinks.
@@ -585,7 +591,14 @@ export class Percolator extends DurableObject<Env> {
           row.waiters
         );
       } catch (error) {
+        // Kept waiting, behind the rest, so one link that keeps failing can't
+        // hold up everyone else's re-checks.
         log.warn('percolator_link_recheck_failed', serializeError(error));
+        this.sql.exec(
+          `UPDATE link_bodies SET settled_at = ? WHERE url_normalized = ?`,
+          Date.now(),
+          urlNormalized
+        );
       }
     }
 

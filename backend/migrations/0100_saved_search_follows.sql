@@ -13,6 +13,19 @@ CREATE INDEX IF NOT EXISTS idx_follow_link_shares_first_seen
 -- it starts, 'done' after, otherwise the last share it finished (JSON).
 ALTER TABLE saved_queries ADD COLUMN backfill_follows_after TEXT NOT NULL DEFAULT '';
 
+-- Queries that already take in follows links backfill their stored week of
+-- shares once. Their feed and author cursors are already at the end, so the
+-- backfill goes straight to the shares. (Matches resolveQueryScope: include
+-- naming bsky~follows, exclude not naming it, all when follows show in
+-- Everything.)
+UPDATE saved_queries SET backfill_state = 'pending'
+ WHERE CASE source_mode
+         WHEN 'include' THEN EXISTS (SELECT 1 FROM json_each(source_keys) WHERE value = 'bsky~follows')
+         WHEN 'exclude' THEN NOT EXISTS (SELECT 1 FROM json_each(source_keys) WHERE value = 'bsky~follows')
+         ELSE EXISTS (SELECT 1 FROM follow_link_sync fs
+                       WHERE fs.user_did = saved_queries.user_did AND fs.in_everything = 1)
+       END;
+
 -- A follows link matched on its post text and card only, because the reader's
 -- daily extraction budget was spent before its article could be read.
 ALTER TABLE channel_matches ADD COLUMN body_skipped INTEGER NOT NULL DEFAULT 0;
