@@ -118,11 +118,10 @@ card. Body matching means extracting the article, which today happens only when 
 - **Don't wait on extraction.** A link that fails to extract, or isn't extracted yet, matches on
   post text and card immediately. It is re-checked once against the body when the body lands.
 
-Follows links are refreshed on read today (`FOLLOWS_LINKS_PLAN.md`: "no cron"). A reader with a
-query covering `bsky~follows` needs a background refresh, or nothing arrives while they're away.
-Extend the minute cron to refresh those readers' follows on the existing gate, about every 30 min.
-That is a deliberate change to the follows design, limited to Pro readers who opted in by saving
-such a query.
+Follows links were refreshed on read only. A reader with a query covering `bsky~follows` needs a
+background refresh, or nothing arrives while they're away. _Built:_ the background refresh
+(`FOLLOWS_LINKS_PLAN.md`, "Background refresh") polls such readers every 30 minutes, alongside
+anyone who opened follows links in the last week.
 
 **Excerpt-only feeds.** Some RSS feeds ship only a summary. "Full body" means the full text the
 source delivers. Skyreader doesn't fetch the page behind every feed item, and v1 doesn't start.
@@ -151,7 +150,6 @@ Each pass does this:
      written in the same millisecond with a smaller URI is never passed.
 2. **Find candidate queries.** Join the page's sources to readers with a `saved_queries` row that
    covers them:
-
    - RSS and newsletters via `subscriptions_cache`;
    - documents via the documents subscription scope (`resolveDocScopes` logic, ported server-side);
    - follows via the share row's `user_did`.
@@ -249,7 +247,6 @@ predicates, and the backfill bounds the cost.
 Never push by default (PRODUCT.md, plan principle "Calm stays true").
 
 1. **v1: in-app.**
-
    - A query channel can be marked "Include in my daily digest" (`saved_queries.digest = 'daily'`).
    - `/daily` gains a "Your searches" section: matches since the last digest, grouped by channel, top
      5 each with a count of the rest.
@@ -287,8 +284,8 @@ Never push by default (PRODUCT.md, plan principle "Calm stays true").
    _Next:_ verify on staging. Seed queries, then compare their matches against `/api/search` over
    the same items.
 
-2. **Follows links.** Background refresh for opted-in readers, shared extraction cache in R2, the
-   per-reader budget, then the follows stream.
+2. **Follows links.** Background refresh for opted-in readers (_built_), shared extraction cache
+   in R2, the per-reader budget, then the follows stream.
 3. **Frontend.** The query field in the channel editor with its live preview, the query-channel
    view and unread counts, and the `/daily` section. Add a docs-site page
    (`docs-site/src/content/docs/guide/saved-searches.md`) and its sidebar entry.

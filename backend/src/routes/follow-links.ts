@@ -27,6 +27,7 @@ import {
   setFollowLinksSettings,
   type FollowLinksWindow,
 } from '../services/follow-links-store';
+import { markFollowLinksSeen, SEEN_STAMP_MS } from '../services/follow-links-background';
 import { hasRequiredScopes } from './auth';
 import { grantsScopes } from '../services/scope-check';
 import { normalizeArticleUrl } from '../utils/url-normalize';
@@ -97,6 +98,16 @@ export async function handleGetFollowLinks(
       return json({ scopeRequired: true, inEverything, allLinks, links: [], sync: null });
     }
     force = now - sync.lastPollAt >= SCOPE_RETRY_MS;
+  }
+
+  // Opening follows links keeps the reader in the background refresh. A reader
+  // with no row yet gets one from the refresh below, and is stamped on a re-poll.
+  if (sync && (sync.lastSeenAt ?? 0) < now - SEEN_STAMP_MS) {
+    ctx.waitUntil(
+      markFollowLinksSeen(env, session.did, now).catch((error) => {
+        log.warn('follow_links_seen_failed', { did: session.did, ...serializeError(error) });
+      })
+    );
   }
 
   const refreshing = force || followLinksNeedRefresh(sync, now);
