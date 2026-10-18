@@ -490,7 +490,7 @@
   /* Keep the share-to-linkblog control and each discussion row whole rather
      than split across a column break where it can. */
   .paged-content :global(.reader-share-cta),
-  .paged-content :global(.discussion li) {
+  .paged-content :global(.reader-discussion li) {
     break-inside: avoid;
   }
 

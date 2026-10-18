@@ -133,7 +133,7 @@
   // article opens: by the time the reader reaches the end, the section already
   // knows its shape.
   $effect(() => {
-    atmosphere.enterViewport();
+    if (eager) atmosphere.enterViewport();
   });
 
   // How long a reader has to stay on an article before the people resolve
@@ -164,7 +164,7 @@
       // full-viewport overlay that scrolls itself, so the viewport IS its
       // scroller's box. Rooting this on the app pane instead reports no
       // intersection at all and the stream never opens.
-      { rootMargin: '1200px 0px' }
+      { rootMargin: '600px 0px' }
     );
     observer.observe(node);
     return {

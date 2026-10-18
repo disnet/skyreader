@@ -203,7 +203,7 @@
   });
   const showStream = $derived(revealed || settled);
   const undisclosed = $derived(
-    activeFilter === 'all' && settled && total > shown ? total - shown : 0
+    activeFilter === 'all' && showStream && total > shown ? total - shown : 0
   );
   // The source filter lives inside Conversation and reaches every row in it,
   // Semble's own standalone notes included.
@@ -472,7 +472,7 @@
     return `${count} ${count === 1 ? 'like' : 'likes'}`;
   }
 
-  function monogramFor(entry: DiscussionEntryVM): string {
+  function monogramFor(entry: Pick<DiscussionEntryVM, 'did' | 'handle' | 'displayName'>): string {
     return monogram(entry.displayName?.trim() || entry.handle || entry.did.replace('did:plc:', ''));
   }
 
@@ -490,8 +490,18 @@
   const FACE_PILE = 4;
   const faces = $derived(
     showStream && activeFilter === 'all'
-      ? [...stream.entries, ...linkOnly]
-          .filter((entry, i, all) => all.findIndex((e) => e.did === entry.did) === i)
+      ? [
+          ...sembleNotes.map((note) => ({
+            key: `note|${note.id}`,
+            did: note.author.did,
+            handle: note.author.handle,
+            displayName: note.author.name,
+            avatar: note.author.avatarUrl,
+          })),
+          ...stream.entries,
+          ...linkOnly,
+        ]
+          .filter((face, i, all) => all.findIndex((e) => e.did === face.did) === i)
           .slice(0, FACE_PILE)
       : []
   );
@@ -566,7 +576,7 @@
 <!-- While it is still arriving the section holds its place, so nothing below it
      jumps when it lands. Under an article (the heading) it stays even when it
      settles empty: the empty state says so, rather than the section vanishing. -->
-{#if lanesOpen && (!showStream || showHeading || total > 0 || hasComposeRow || showStandaloneConnect || hasConnectionsTab || hasRelatedTab)}
+{#if lanesOpen && (showHeading || total > 0 || hasComposeRow || showStandaloneConnect || hasConnectionsTab || hasRelatedTab)}
   <section
     class="discussion"
     class:no-heading={!showHeading}

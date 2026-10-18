@@ -71,6 +71,8 @@ function createArticleMentionsStore() {
 
     const all = [...pending.entries()];
     const batch = all.slice(0, MAX_BATCH);
+    // Asking again: whatever stopped the last attempt is no longer the answer.
+    for (const [url] of batch) unavailable.delete(url);
     pending = new Map(all.slice(MAX_BATCH));
     if (pending.size > 0) scheduleFlush();
 
@@ -108,7 +110,9 @@ function createArticleMentionsStore() {
             coldRetries.set(item.url, attempts + 1);
             // Empty and still enriching is "not yet", not "nobody". A non-zero
             // answer is shown as it stands; only an empty one waits for the re-poll.
-            if (item.pending && item.total === 0) enriching.add(item.url);
+            // Only the first re-poll is waited for, so a slow enrichment costs
+            // seconds of skeleton, not the whole retry ladder.
+            if (item.pending && item.total === 0 && attempts === 0) enriching.add(item.url);
             setTimeout(() => requeue(item.url), COLD_RETRY_MS * (attempts + 1));
           }
         }
@@ -152,6 +156,7 @@ function createArticleMentionsStore() {
     const addsDocUri = Boolean(docUri) && !docUrisByUrl.has(url);
     if (requested.has(url) && !addsDocUri) return;
     requested.add(url);
+    unavailable.delete(url);
     if (docUri) docUrisByUrl.set(url, docUri);
     pending.set(url, docUri);
     scheduleFlush();
