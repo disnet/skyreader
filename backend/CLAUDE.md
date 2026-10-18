@@ -123,6 +123,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed documentation.
 | `src/routes/saved.ts`         | Saved articles CRUD                                        |
 | `src/routes/saved-pdf.ts`     | PDFs + EPUBs (Supporter): upload, kept originals, cleanup  |
 | `src/routes/shelf.ts`         | Shelf collections: private, ordered groups of saves        |
+| `src/routes/export.ts`        | `GET /api/export` — saves + highlights as Markdown/BibTeX  |
 | `src/routes/recommends.ts`    | One-tap public recommends (+ standard.site copy)           |
 | `src/routes/integrations.ts`  | Semble/Margin writes to the user's PDS                     |
 | `src/routes/settings.ts`      | User settings                                              |
@@ -248,6 +249,7 @@ returns a permission set expanded (`repo?collection=…`), so every check goes t
 | `src/services/bsky-sources.ts`       | Bluesky likes/bookmarks as private sources (walk + ingest)   |
 | `src/services/local-only-sources.ts` | The one "private, never crawled, never on the PDS" predicate |
 | `src/services/archive/records.ts`    | Saves/highlights ↔ their future space records (+ CIDs)       |
+| `src/services/export/`               | Export over those records; DOI/arXiv ids; Markdown, BibTeX   |
 
 ### Observability
 

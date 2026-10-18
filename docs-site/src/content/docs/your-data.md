@@ -42,6 +42,8 @@ Highlights are private to Skyreader and sync across your devices through Skyread
 
 If you'd like to share a highlight publicly, you can share an individual highlight to **Margin**, which publishes that one highlight to your public PDS.
 
+You can take your saves, highlights, and notes with you at any time, as Markdown or BibTeX: see [Exporting](/guide/saving-and-highlights/#exporting).
+
 ## Your linkblog
 
 Shared links are always public. That's their point: a linkblog is a publication in your PDS, readable across the Atmosphere, with a public page and RSS feed. See [Sharing](/guide/sharing-and-your-linkblog/).
