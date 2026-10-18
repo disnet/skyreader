@@ -81,6 +81,10 @@ describe('hasSearchableTerm', () => {
     expect(hasSearchableTerm('-"a phrase"')).toBe(false);
     expect(hasSearchableTerm('""')).toBe(false);
     expect(hasSearchableTerm('— …')).toBe(false);
+    // Past the server's 16 terms nothing counts.
+    const exclusions = Array.from({ length: 16 }, (_, i) => `-x${i}`).join(' ');
+    expect(hasSearchableTerm(`${exclusions} word`)).toBe(false);
+    expect(hasSearchableTerm(`${exclusions.split(' ').slice(1).join(' ')} word`)).toBe(true);
   });
 });
 

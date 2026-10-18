@@ -666,6 +666,21 @@
     });
   });
 
+  // A page of matches the read filter empties isn't the end of the search:
+  // fetch the next until something shows or nothing's left.
+  $effect(() => {
+    if (
+      feedViewStore.isSearchChannel &&
+      feedViewStore.currentItems.length === 0 &&
+      searchChannelsStore.loaded &&
+      searchChannelsStore.hasMore &&
+      !searchChannelsStore.loadingMore &&
+      !searchChannelsStore.moreFailed
+    ) {
+      untrack(() => void searchChannelsStore.loadMore());
+    }
+  });
+
   // Reset selection when any filter changes
   $effect(() => {
     const _ = [

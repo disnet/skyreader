@@ -3,13 +3,13 @@ title: Saved searches
 description: Keep a search as a channel that fills on its own as matching items arrive.
 ---
 
-A saved search is a channel that keeps watch for you. Give it a few words, and everything new from your sources that mentions them lands there: a story in a feed, a newsletter, a standard.site post, or a link someone you follow shared.
+A saved search is a channel that keeps watch for you. Give it a few words, and everything new from your sources that mentions them lands there: a story in a feed, a newsletter, a standard.site post, or, if the channel includes them, a link someone you follow shared.
 
 Saved searches are part of the [Supporter plan](/supporter/), which includes up to 25.
 
 ## Making one
 
-Choose **New channel** under **Feeds**, type what to watch for under **Matching**, and pick the sources it covers, or **Show everything**. Saved searches use the same words as [search](/guide/search/):
+Choose **New channel** under **Feeds**, type what to watch for under **Matching**, and pick the sources it covers, or **Show everything** (which takes in your follows' links when you show them in Everything). Saved searches use the same words as [search](/guide/search/):
 
 | Type             | Matches                             |
 | ---------------- | ----------------------------------- |
@@ -18,9 +18,9 @@ Choose **New channel** under **Feeds**, type what to watch for under **Matching*
 | `tid*`           | words starting with "tid"           |
 | `energy -wind`   | items with "energy" but not "wind"  |
 
-While you type, Skyreader shows a few things you've already read that the search would have caught, so you can tell whether it's too broad or too narrow.
+Where search is on, Skyreader shows, while you type, a few things you've already read that the search would have caught, so you can tell whether it's too broad or too narrow.
 
-Any channel can become a saved search: open it with **Edit channel** and add words under **Matching**. Take them out again and it goes back to being an ordinary channel.
+Any feed channel can become a saved search: open it with **Edit channel** and add words under **Matching**. Take them out again and it goes back to being an ordinary channel.
 
 ## What lands in it
 

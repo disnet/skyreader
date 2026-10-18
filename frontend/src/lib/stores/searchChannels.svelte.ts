@@ -58,6 +58,8 @@ function createSearchChannelsStore() {
   let loaded = $state(false);
   let loading = $state(false);
   let loadingMore = $state(false);
+  // The last page request failed; scrolling asks again, the auto-fill doesn't.
+  let moreFailed = $state(false);
   let error = $state<SearchChannelError | null>(null);
 
   // Unread per saved search, by uuid; the sidebar's badges.
@@ -92,7 +94,10 @@ function createSearchChannelsStore() {
 
   function apply(res: ChannelItemsResponse) {
     // A refresh replaces the first page and keeps what was paged in below it.
-    if (matches.length > res.items.length && res.nextCursor && nextCursor !== null) {
+    // The cursor goes back to the first page's end all the same: the look back
+    // can land a match between there and the old cursor, and paging on picks
+    // it up (already-held matches are skipped).
+    if (matches.length > res.items.length && res.nextCursor) {
       const fresh = new Set(res.items.map(matchId));
       const last = res.items.at(-1);
       const tail = matches.filter(
@@ -101,8 +106,8 @@ function createSearchChannelsStore() {
       matches = [...res.items, ...tail];
     } else {
       matches = res.items;
-      nextCursor = res.nextCursor;
     }
+    nextCursor = res.nextCursor;
     status = res.status;
     backfilling = res.backfilling;
     error = null;
@@ -130,7 +135,9 @@ function createSearchChannelsStore() {
         return;
       }
       apply(res);
-      setCount(id, res, matches);
+      // Counted against this page alone: its read flags are as fresh as the
+      // count, where a tail paged in earlier carries older ones.
+      setCount(id, res, res.items);
       void setMetadata<CachedPage>(cacheKey(id), {
         query: q,
         response: { ...res, items: res.items.slice(0, PAGE_SIZE) },
@@ -140,9 +147,9 @@ function createSearchChannelsStore() {
     } catch (e) {
       if (gen !== generation) return;
       const kind = classifyChannelItemsError(e);
-      // Offline with something cached: keep showing it.
-      if (kind === 'offline' && loaded) return;
+      // Offline with something cached: keep showing it, and say so.
       error = kind;
+      if (kind === 'offline' && loaded) return;
       if (kind === 'not_ready') schedulePoll(MAX_SETUP_POLLS);
       if (kind === 'off' || kind === 'upgrade') counts.delete(id);
     } finally {
@@ -166,6 +173,8 @@ function createSearchChannelsStore() {
     loaded = false;
     error = null;
     loadingMore = false;
+    moreFailed = false;
+    pageInFlight = null;
     if (sameChannel) {
       // An edited query: the server clears and re-runs it, so the old count is wrong too.
       counts.delete(id);
@@ -188,31 +197,47 @@ function createSearchChannelsStore() {
     nextCursor = null;
     loaded = false;
     error = null;
+    pageInFlight = null;
   }
 
   /** Try the open channel again, after a failure or a give-up. */
   async function retry(): Promise<void> {
+    clearPoll();
     polls = 0;
     error = null;
     await fetchFirst();
   }
 
-  async function loadMore(): Promise<void> {
+  // The page in flight, so a second caller (mark-all-read behind a scroll)
+  // waits for it rather than taking an early return for a failure.
+  let pageInFlight: Promise<void> | null = null;
+
+  function loadMore(): Promise<void> {
+    if (pageInFlight) return pageInFlight;
     const id = uuid;
     const before = nextCursor;
-    if (!id || !before || loadingMore) return;
+    if (!id || !before) return Promise.resolve();
+    pageInFlight = loadPage(id, before).finally(() => (pageInFlight = null));
+    return pageInFlight;
+  }
+
+  async function loadPage(id: string, before: string): Promise<void> {
     const gen = generation;
     loadingMore = true;
     try {
       const res = await api.getChannelItems(id, { before, limit: PAGE_SIZE });
       if (gen !== generation) return;
       const seen = new Set(matches.map(matchId));
-      matches = [...matches, ...res.items.filter((m) => !seen.has(matchId(m)))];
+      const added = res.items.filter((m) => !seen.has(matchId(m)));
+      // A page re-walked after a refresh can fill a gap above the tail.
+      matches = [...matches, ...added].sort((a, b) => b.publishedAt - a.publishedAt);
       nextCursor = res.nextCursor;
+      moreFailed = false;
       const count = counts.get(id);
       if (count) counts.set(id, { ...count, served: matches });
     } catch (e) {
       console.warn('Saved search: loading more failed:', e);
+      if (gen === generation) moreFailed = true;
     } finally {
       if (gen === generation) loadingMore = false;
     }
@@ -236,10 +261,7 @@ function createSearchChannelsStore() {
     const live = new Set(channels.map((c) => c.uuid));
     for (const id of [...counts.keys()]) if (!live.has(id)) counts.delete(id);
 
-    if (uuid && live.has(uuid)) {
-      polls = 0;
-      await fetchFirst();
-    }
+    const openFetch = uuid && live.has(uuid) ? ((polls = 0), fetchFirst()) : Promise.resolve();
     const rest = channels.filter((c) => c.uuid !== uuid);
     let next = 0;
     async function worker() {
@@ -258,15 +280,18 @@ function createSearchChannelsStore() {
         }
       }
     }
-    await Promise.all(
-      Array.from({ length: Math.min(COUNT_CONCURRENCY, rest.length) }, () => worker())
-    );
+    await Promise.all([
+      openFetch,
+      ...Array.from({ length: Math.min(COUNT_CONCURRENCY, rest.length) }, () => worker()),
+    ]);
   }
 
   /** A saved search's unread count, or undefined when none has been served. */
   function unreadFor(id: string, isRead: (match: ChannelMatch) => boolean): number | undefined {
     const count = counts.get(id);
     if (!count) return undefined;
+    // Past the cap the true count is unknown, so there's nothing to correct.
+    if (count.capped) return count.unread;
     return searchChannelUnread(count.unread, count.served, isRead);
   }
 
@@ -300,6 +325,9 @@ function createSearchChannelsStore() {
     },
     get loadingMore() {
       return loadingMore;
+    },
+    get moreFailed() {
+      return moreFailed;
     },
     get error() {
       return error;

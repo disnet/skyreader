@@ -244,11 +244,13 @@
   // A segmented control holds this many before it would have to wrap.
   const MAX_SEGMENTS = 4;
 
-  // A saved search is the server's matches, newest first; it can't rank by shares.
+  // A saved search is the server's matches, newest first, so it has no other order.
   let feedSortOptions = $derived(
-    includesFollows && !trimmedQuery
-      ? FOLLOWS_SORT_OPTIONS
-      : FOLLOWS_SORT_OPTIONS.filter((o) => o.value !== 'popular')
+    trimmedQuery
+      ? FOLLOWS_SORT_OPTIONS.filter((o) => o.value === 'newest')
+      : includesFollows
+        ? FOLLOWS_SORT_OPTIONS
+        : FOLLOWS_SORT_OPTIONS.filter((o) => o.value !== 'popular')
   );
 
   let sortOptions = $derived(channelType === 'saved' ? SAVED_SORT_OPTIONS : feedSortOptions);
@@ -422,8 +424,8 @@
               readFilter,
               // Ranking by shares needs your follows' links in the channel.
               sortOrder:
-                sortOrder === 'oldest' ||
-                (sortOrder === 'popular' && includesFollows && !trimmedQuery)
+                !trimmedQuery &&
+                (sortOrder === 'oldest' || (sortOrder === 'popular' && includesFollows))
                   ? sortOrder
                   : ('newest' as const),
             };
@@ -530,37 +532,39 @@
           {/if}
         </div>
       </div>
-      <div class="show-group">
-        <label id="channel-order-label" class="section-label" for="channel-order">Order</label>
-        {#if sortOptions.length > MAX_SEGMENTS}
-          <!-- Too many to sit side by side (a saved channel has eight): a
+      {#if sortOptions.length > 1}
+        <div class="show-group">
+          <label id="channel-order-label" class="section-label" for="channel-order">Order</label>
+          {#if sortOptions.length > MAX_SEGMENTS}
+            <!-- Too many to sit side by side (a saved channel has eight): a
                dropdown, not a segmented control that wraps. -->
-          <select id="channel-order" class="select-input" bind:value={sortOrder}>
-            {#each sortOptions as opt (opt.value)}
-              <option value={opt.value}>{opt.label}</option>
-            {/each}
-          </select>
-        {:else}
-          <div
-            class="chip-row segmented"
-            id="channel-order"
-            role="group"
-            aria-labelledby="channel-order-label"
-          >
-            {#each sortOptions as opt (opt.value)}
-              <button
-                type="button"
-                class="chip"
-                class:active={sortOrder === opt.value}
-                aria-pressed={sortOrder === opt.value}
-                onclick={() => (sortOrder = opt.value)}
-              >
-                {opt.label}
-              </button>
-            {/each}
-          </div>
-        {/if}
-      </div>
+            <select id="channel-order" class="select-input" bind:value={sortOrder}>
+              {#each sortOptions as opt (opt.value)}
+                <option value={opt.value}>{opt.label}</option>
+              {/each}
+            </select>
+          {:else}
+            <div
+              class="chip-row segmented"
+              id="channel-order"
+              role="group"
+              aria-labelledby="channel-order-label"
+            >
+              {#each sortOptions as opt (opt.value)}
+                <button
+                  type="button"
+                  class="chip"
+                  class:active={sortOrder === opt.value}
+                  aria-pressed={sortOrder === opt.value}
+                  onclick={() => (sortOrder = opt.value)}
+                >
+                  {opt.label}
+                </button>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      {/if}
     </div>
   {/if}
 

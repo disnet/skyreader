@@ -162,6 +162,7 @@ export function searchChannelUnread(
 
 /** The server reads this much of a query (backend search-query.ts). */
 export const MAX_QUERY_CHARS = 200;
+const MAX_QUERY_TERMS = 16;
 
 /**
  * Whether a query has something to look for: a word or phrase that isn't an
@@ -170,10 +171,16 @@ export const MAX_QUERY_CHARS = 200;
  * silently isn't.
  */
 export function hasSearchableTerm(query: string): boolean {
+  let terms = 0;
   for (const match of query.slice(0, MAX_QUERY_CHARS).matchAll(/(-?)"([^"]*)"?|(-?)(\S+)/g)) {
+    // The server reads the first 16 terms and no further.
+    if (terms >= MAX_QUERY_TERMS) break;
     const isPhrase = match[2] !== undefined;
     const negated = (isPhrase ? match[1] : match[3]) === '-';
-    if (!negated && /[\p{L}\p{N}]/u.test(isPhrase ? match[2] : match[4])) return true;
+    const text = isPhrase ? match[2] : match[4];
+    if (!/[\p{L}\p{N}]/u.test(text)) continue;
+    if (!negated) return true;
+    terms++;
   }
   return false;
 }

@@ -44,6 +44,11 @@
       onAction={() => void searchChannelsStore.retry()}
       actionText="Try again"
     />
+  {:else if searchChannelsStore.status === 'over_limit'}
+    <EmptyState
+      title="Past your plan's saved searches"
+      description={`Your plan keeps ${limit} saved ${limit === 1 ? 'search' : 'searches'}, so nothing new lands here.`}
+    />
   {:else if lookingBack}
     <EmptyState
       title="Looking back through the last 30 days"

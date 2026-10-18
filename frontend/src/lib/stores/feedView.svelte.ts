@@ -471,6 +471,9 @@ function createFeedViewStore() {
     let docs: Map<string, SocialDocument> | null = null;
     const now = Date.now();
     const rows: SearchChannelRow[] = [];
+    // Two feeds can share a guid; the server keys them apart by URL, but a row
+    // key (and read state) here is the guid, so the first one wins.
+    const seen = new Set<string>();
     for (const match of matches) {
       const row = matchToRow(match, {
         subscriptionIdFor: (feedUrl) => subIds.get(feedUrl),
@@ -480,7 +483,9 @@ function createFeedViewStore() {
         },
         now,
       });
-      if (row) rows.push(row);
+      if (!row || seen.has(`${row.type}:${row.key}`)) continue;
+      seen.add(`${row.type}:${row.key}`);
+      rows.push(row);
     }
     return rows;
   });
@@ -492,10 +497,6 @@ function createFeedViewStore() {
     searchRows.flatMap((r) => (r.type === 'document' ? [r.item] : []))
   );
   let searchLinks = $derived(searchRows.flatMap((r) => (r.type === 'link' ? [r.item] : [])));
-
-  function inSortOrder<T>(items: T[]): T[] {
-    return effectiveFilters.sortOrder === 'oldest' ? [...items].reverse() : items;
-  }
 
   // Helper to get current subscription rkeys, ID→rkey map, and follow DIDs for migration
   function getAllSubRkeys(): string[] {
@@ -666,7 +667,8 @@ function createFeedViewStore() {
     const fv = effectiveFilters;
 
     // A saved search: the server already matched the channel's sources.
-    if (isSearchChannel) return inSortOrder(searchArticles);
+    // Newest first only: the server pages its matches that way.
+    if (isSearchChannel) return searchArticles;
 
     // If no articles are allowed by source filter, return empty
     if (!showArticles) return [];
@@ -780,7 +782,7 @@ function createFeedViewStore() {
       return mine;
     }
 
-    if (isSearchChannel) return inSortOrder(searchDocuments);
+    if (isSearchChannel) return searchDocuments;
 
     // If documents are not shown by source filter, return empty
     if (!showDocuments) return [];
@@ -1912,6 +1914,11 @@ function createFeedViewStore() {
     },
     get isSearchChannel() {
       return isSearchChannel;
+    },
+    /** The open saved search's article or document under a reader key, for `?read=`. */
+    searchRowFor(key: string): FeedDisplayItem | null {
+      const row = searchRows.find((r) => r.key === key);
+      return row && row.type !== 'link' ? row : null;
     },
     get activeFilteredView() {
       return activeFilteredView;
