@@ -308,6 +308,8 @@ async function performSave(url, { fallbackTitle, extractTabId } = {}) {
     // scripted, so a PDF tab always lands here via extractViaBackend.
     contentType: extracted?.contentType || undefined,
     captureMethod: hasBody ? captureMethod : undefined,
+    // The DOI the page declared in its <head>, for citing it in an export.
+    doi: extracted?.doi || undefined,
   };
 
   let res;

@@ -1,5 +1,5 @@
 import { env, createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import worker from '../src/index';
 
 const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
@@ -164,6 +164,37 @@ describe('/api/shelf/collections', () => {
       (await call('PUT', `/api/shelf/collections/${C1}/items`, { rkeys: [R3, unknown, R1] })).status
     ).toBe(200);
     expect((await list())[0].items.map((i) => i.rkey)).toEqual([R3, R1, R2]);
+  });
+
+  it('reorders a collection at the item cap', async () => {
+    await call('POST', '/api/shelf/collections', { id: C1, name: 'Books' });
+    const rkeys = Array.from({ length: 2000 }, (_, i) => `3kbulkrkey${String(i).padStart(4, '0')}`);
+    // Seed directly: 2000 POSTs would be slow, and the add path isn't under test.
+    await env.DB.prepare(
+      `INSERT INTO shelf_collection_items (user_did, collection_id, saved_rkey, position, added_at)
+       SELECT ?, ?, value, key, 0 FROM json_each(?)`
+    )
+      .bind(TEST_DID, C1, JSON.stringify(rkeys))
+      .run();
+    const reversed = [...rkeys].reverse();
+    // The local runtime doesn't enforce D1's 1,000 queries per invocation, so
+    // count them: one statement per member is what broke this in production.
+    const prepare = vi.spyOn(env.DB, 'prepare');
+    const batch = vi.spyOn(env.DB, 'batch');
+    try {
+      expect(
+        (await call('PUT', `/api/shelf/collections/${C1}/items`, { rkeys: reversed })).status
+      ).toBe(200);
+      expect(prepare.mock.calls.length).toBeLessThan(20);
+      // D1 bills by rows read: the write should touch each member once, not scan
+      // the whole order per member.
+      const [update] = await batch.mock.results[0].value;
+      expect(update.meta.rows_read).toBeLessThan(3 * rkeys.length);
+    } finally {
+      prepare.mockRestore();
+      batch.mockRestore();
+    }
+    expect((await list())[0].items.map((i) => i.rkey)).toEqual(reversed);
   });
 
   it('deletes a collection with its memberships', async () => {

@@ -532,6 +532,8 @@ export interface ExtractedArticle {
   wordCount: number;
   /** 'pdf' or 'epub' when the URL served one (its text, reflowed); absent for a web page. */
   contentType?: 'pdf' | 'epub';
+  /** The DOI the page named in its <head> (citation_doi and kin), if any. */
+  doi?: string | null;
 }
 
 // How many times a single request transparently retries a transient
@@ -2225,6 +2227,8 @@ class ApiClient {
       domain?: string;
       wordCount?: number;
       contentType?: 'pdf' | 'epub';
+      // The page's declared DOI (ExtractedArticle.doi), kept for exports.
+      doi?: string;
       // Replace an existing save of this URL's content instead of a 409.
       updateContent?: boolean;
       // How `content` was captured, recorded on the save's snapshot.

@@ -1,3 +1,4 @@
+import { env } from 'cloudflare:test';
 import { describe, it, expect } from 'vitest';
 import { encodeDagCbor, recordCid } from '../src/services/archive/dag-cbor';
 import {
@@ -75,6 +76,7 @@ const baseSave: SaveRow = {
   updated_at: null,
   source: 'url',
   item_guid: null,
+  doi: null,
 };
 
 const file: SavedFileRow = {
@@ -142,6 +144,7 @@ describe('saves', () => {
         updated_at: 1767312999000,
         source: 'feed',
         item_guid: 'guid-1',
+        doi: '10.1145/3290605.3300233',
       },
       { ...file, filename: null },
     ],
@@ -265,6 +268,23 @@ describe('saves', () => {
     const { url_normalized: _omitted, ...partial } = baseSave;
     expect(() => saveToRecord(partial as SaveRow)).toThrow(/missing column url_normalized/);
     expect(() => saveToRecord({ ...baseSave, source: null as never })).toThrow(/source is null/);
+  });
+
+  // The contract covers every column D1 has: a column added to saved_articles
+  // but not to the record would be silently dropped by a space sync.
+  it('carries every saved_articles column', async () => {
+    const columns = (
+      await env.DB.prepare('SELECT name FROM pragma_table_info(?)').bind('saved_articles').all<{
+        name: string;
+      }>()
+    ).results.map((c) => c.name);
+    const own = ['id', 'user_did'];
+    const row = Object.fromEntries(
+      columns.filter((c) => !own.includes(c)).map((c) => [c, c.endsWith('_at') ? 1 : 'x'])
+    ) as unknown as SaveRow;
+    row.rkey = '3mwhuiodre72s';
+    const { rkey, record } = saveToRecord(row);
+    expect(saveFromRecord(rkey, record).row).toEqual(row);
   });
 });
 

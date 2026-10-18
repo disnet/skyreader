@@ -55,6 +55,7 @@ export interface SavedPayload {
   image?: string;
   publishedAt?: string;
   domain?: string;
+  doi?: string;
 }
 
 export interface IntegrationPayload {
@@ -614,6 +615,7 @@ class SyncQueue {
           image: payload.image,
           publishedAt: payload.publishedAt,
           domain: payload.domain,
+          doi: payload.doi,
         });
         break;
       case 'delete':

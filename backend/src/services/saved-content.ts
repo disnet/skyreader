@@ -2,6 +2,7 @@ import type { Env } from '../types';
 import type { ExtractedArticle } from './feed-proxy-client';
 import { escapeHtml, htmlToText } from '../utils/html-text';
 import { captureSnapshot } from './archive/snapshots';
+import { exactDoi } from './export/identifiers';
 
 // Whether an extracted body has anything to read: text, or media standing in for
 // it. A page that builds its article with scripts extracts as an empty shell.
@@ -83,6 +84,7 @@ export async function fillExtractedContent(
          image = COALESCE(image, ?),
          domain = COALESCE(domain, ?),
          published_at = COALESCE(published_at, ?),
+         doi = COALESCE(doi, ?),
          updated_at = ?${contentTypeClause}
        WHERE ${whereClause} AND content IS NULL
        RETURNING user_did, rkey, url`
@@ -97,6 +99,7 @@ export async function fillExtractedContent(
       article.image ?? null,
       article.domain ?? null,
       article.published ? new Date(article.published).getTime() : null,
+      exactDoi(article.doi) ?? null,
       Date.now(),
       ...whereBinds
     )

@@ -47,6 +47,7 @@ repo the record lives in. The `rkey` is the record key, not a field.
 | `published_at`, `saved_at`, `created_at`, `updated_at` | `…At`                | ms → datetime string                                     |
 | `source`                                               | `source`             | `url` / `feed` / `document` / `upload`                   |
 | `item_guid`                                            | `itemGuid`           |                                                          |
+| `doi`                                                  | `doi`                | the DOI the page declared in its `<head>` at save time   |
 | `saved_files.*`                                        | `file`               | `{ r2Key, filename, mimeType, size, sha256, createdAt }` |
 
 A NULL column is an absent field. `content` (the extracted body) rides inline for now. Before a

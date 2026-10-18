@@ -104,6 +104,8 @@ export interface ExtractedArticle {
    * (read here, services/epub.ts); absent for a web page.
    */
   contentType?: 'pdf' | 'epub';
+  /** The DOI the page named in its <head> (citation_doi, dc.identifier, prism.doi). */
+  doi?: string | null;
 }
 
 export interface ProxyFeedResponse {

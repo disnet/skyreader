@@ -169,6 +169,7 @@ export interface SaveRow {
   updated_at: number | null;
   source: string;
   item_guid: string | null;
+  doi: string | null;
 }
 
 /** The saved_files row behind an uploaded or kept-original save, less `user_did` and `rkey`. */
@@ -204,6 +205,7 @@ const SAVE_FIELDS: ColumnSpec<Omit<SaveRow, 'rkey'>>[] = [
   ['updated_at', 'updatedAt', 'datetime'],
   ['source', 'source', 'string', 'required'],
   ['item_guid', 'itemGuid', 'string'],
+  ['doi', 'doi', 'string'],
 ];
 
 const FILE_FIELDS: ColumnSpec<SavedFileRow>[] = [

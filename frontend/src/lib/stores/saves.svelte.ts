@@ -516,6 +516,7 @@ function createSavesStore() {
         wordCount: wordCount || undefined,
         contentType: extracted.contentType,
         captureMethod: 'server',
+        doi: extracted.doi || undefined,
       });
 
       const savedItem: SavedItem = {
@@ -697,6 +698,9 @@ function createSavesStore() {
       savedSearchStore.upsert(savedItem);
 
       if (canReachBackend()) {
+        // The page's declared DOI is the article's whichever body is kept, and
+        // rides a queued retry too.
+        let doi: string | undefined;
         try {
           // Prefer a clean, full-text extraction of the article (same source as
           // URL saves) over the RSS body. Keep the RSS body when extraction
@@ -722,6 +726,7 @@ function createSavesStore() {
           try {
             if (extraction.status === 'rejected') throw extraction.reason;
             const extracted = extraction.value;
+            doi = extracted?.doi || undefined;
             if (extracted && preferExtractedBody(rssBody, extracted.content)) {
               content = extracted.content;
               wordCount = extracted.wordCount || null;
@@ -747,6 +752,7 @@ function createSavesStore() {
             publishedAt: article.publishedAt,
             domain: domain ?? undefined,
             wordCount: wordCount ?? undefined,
+            doi,
           });
 
           // Update with extracted content + server response
@@ -782,6 +788,7 @@ function createSavesStore() {
             wordCount: wordCountFrom(rssBody) ?? undefined,
             image: article.imageUrl,
             publishedAt: article.publishedAt,
+            doi,
           } as SavedPayload);
           return savedItem;
         }
