@@ -37,8 +37,15 @@ export interface TierLimits {
   maxEpubUploadBytes: number;
   /** Uploads (PDF or EPUB) per calendar month (UTC). URL saves count as URL saves instead. */
   maxPdfUploadsPerMonth: number;
-  /** Total bytes of originals kept in R2 (PDFs uploaded or saved by link, uploaded EPUBs). Deleting a save frees its file. */
+  /** Total bytes of originals kept in R2 (PDFs uploaded or saved by link, uploaded EPUBs), plus the pictures snapshots keep. Deleting a save frees its file and pictures. */
   maxPdfStorageBytes: number;
+  /**
+   * Keeping the pictures a saved article shows with its snapshot
+   * (services/archive/snapshot-images.ts), counted against maxPdfStorageBytes.
+   * Checked at each capture, so a lapsed plan keeps the pictures it captured but
+   * captures no new ones; text snapshots are on every plan.
+   */
+  snapshotImages: boolean;
 }
 
 const MB = 1024 * 1024;
@@ -55,6 +62,7 @@ const TIER_MAP: Record<string, TierLimits> = {
     maxEpubUploadBytes: 0,
     maxPdfUploadsPerMonth: 0,
     maxPdfStorageBytes: 0,
+    snapshotImages: false,
   },
   supporter: {
     maxSubscriptions: 1000,
@@ -68,6 +76,7 @@ const TIER_MAP: Record<string, TierLimits> = {
     maxEpubUploadBytes: 30 * MB,
     maxPdfUploadsPerMonth: 200,
     maxPdfStorageBytes: 2048 * MB,
+    snapshotImages: true,
   },
 };
 

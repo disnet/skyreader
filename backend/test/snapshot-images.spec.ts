@@ -4,11 +4,13 @@ import worker from '../src/index';
 import { GRANULAR_SCOPES } from '../src/config/scopes';
 import { sha256Hex } from '../src/utils/sha256';
 import { MAX_SNAPSHOTS_PER_SAVE } from '../src/services/archive/snapshots';
+import { getLimitsForTier } from '../src/config/tier-limits';
 import {
   MAX_IMAGES_PER_SNAPSHOT,
   MAX_IMAGE_BYTES,
   captureSnapshotImages,
   snapshotImageUrls,
+  storedFileBytes,
 } from '../src/services/archive/snapshot-images';
 
 // A snapshot keeps the pictures its body shows, so a save's images outlive the
@@ -54,14 +56,19 @@ async function reset() {
     const listing = await env.SAVED_FILES.list({ prefix });
     if (listing.objects.length) await env.SAVED_FILES.delete(listing.objects.map((o) => o.key));
   }
-  for (const table of ['saved_snapshot_images', 'saved_snapshots', 'saved_articles']) {
+  for (const table of [
+    'saved_snapshot_images',
+    'saved_snapshots',
+    'saved_articles',
+    'saved_files',
+  ]) {
     await env.DB.prepare(`DELETE FROM ${table} WHERE user_did = ?`).bind(DID).run();
   }
   await env.DB.prepare('DELETE FROM sessions WHERE did = ?').bind(DID).run();
   await env.DB.prepare('DELETE FROM user_settings WHERE user_did = ?').bind(DID).run();
   await env.DB.prepare('DELETE FROM users WHERE did = ?').bind(DID).run();
   await env.DB.prepare(
-    `INSERT INTO users (did, handle, pds_url, tier, created_at) VALUES (?, 'img.bsky.social', 'https://pds.test', 'free', unixepoch())`
+    `INSERT INTO users (did, handle, pds_url, tier, created_at) VALUES (?, 'img.bsky.social', 'https://pds.test', 'supporter', unixepoch())`
   )
     .bind(DID)
     .run();
@@ -260,5 +267,32 @@ describe('snapshot pictures', () => {
     expect(kept).toBe(0);
     expect(await imageRows()).toEqual([]);
     expect(await imageObjects()).toEqual([]);
+  });
+
+  it('keeps no pictures on the free plan, only the text', async () => {
+    await env.DB.prepare(`UPDATE users SET tier = 'free' WHERE did = ?`).bind(DID).run();
+    await save('aaaaaaaaaaaaa', '<p>Story</p><img src="a.png">');
+    expect(fetched).toEqual([]);
+    expect(await imageRows()).toEqual([]);
+    const snapshots = await env.DB.prepare(
+      'SELECT COUNT(*) AS n FROM saved_snapshots WHERE user_did = ?'
+    )
+      .bind(DID)
+      .first<{ n: number }>();
+    expect(snapshots!.n).toBe(1);
+  });
+
+  it("counts pictures against the plan's storage, and keeps none past it", async () => {
+    const max = getLimitsForTier('supporter').maxPdfStorageBytes;
+    await env.DB.prepare(
+      `INSERT INTO saved_files (user_did, rkey, r2_key, mime_type, size, sha256, created_at)
+       VALUES (?, 'fileefileefil', 'pdf/x.pdf', 'application/pdf', ?, 'h', 1)`
+    )
+      .bind(DID, max - 5)
+      .run();
+    await save('aaaaaaaaaaaaa', '<img src="a.png"><img src="/c.png">');
+    // Five bytes are left: the 3-byte picture fits, the 7-byte one doesn't.
+    expect((await imageRows()).map((r) => r.url)).toEqual(['https://example.com/c.png']);
+    expect(await storedFileBytes(env, DID)).toBe(max - 2);
   });
 });

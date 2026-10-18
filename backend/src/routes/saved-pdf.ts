@@ -33,6 +33,7 @@ import {
 import { sha256Hex } from '../utils/sha256';
 import { log } from '../utils/logger';
 import { captureSnapshot } from '../services/archive/snapshots';
+import { storedFileBytes } from '../services/archive/snapshot-images';
 
 /**
  * Uploaded PDFs and EPUBs, and the originals of every saved PDF (Supporter).
@@ -65,7 +66,8 @@ import { captureSnapshot } from '../services/archive/snapshots';
  * URL-less save (services/backing/sync.ts listBackedSaved).
  *
  * Limits, from the plan (config/tier-limits.ts): the file size, uploads per
- * month, total bytes stored (every kept original, however it was saved). A
+ * month, total bytes stored (every kept original, however it was saved, and
+ * every picture a snapshot kept: services/archive/snapshot-images.ts). A
  * parse also spends the reader's daily PDF allowance (services/pdf-quota.ts),
  * shared with PDFs saved by URL.
  */
@@ -286,11 +288,10 @@ async function handleUpload(request: Request, env: Env, session: Session, kind: 
       session.did,
       rkey
     ),
-    // Stored bytes count every kept original; the monthly count, uploads only
-    // (a PDF saved by link counts as a URL save). PDFs and EPUBs share both.
+    // The monthly count is uploads only (a PDF saved by link counts as a URL
+    // save). PDFs and EPUBs share it.
     env.DB.prepare(
-      `SELECT COALESCE(SUM(f.size), 0) AS stored,
-              COALESCE(SUM(CASE WHEN f.created_at >= ? AND s.source = 'upload' THEN 1 ELSE 0 END), 0) AS this_month
+      `SELECT COALESCE(SUM(CASE WHEN f.created_at >= ? AND s.source = 'upload' THEN 1 ELSE 0 END), 0) AS this_month
        FROM saved_files f
        LEFT JOIN saved_articles s ON s.user_did = f.user_did AND s.rkey = f.rkey
        WHERE f.user_did = ?`
@@ -307,7 +308,9 @@ async function handleUpload(request: Request, env: Env, session: Session, kind: 
   }
   if (rkeyTaken.results.length > 0) return json({ error: 'rkey already in use' }, 409);
 
-  const { stored, this_month } = usage.results[0] as { stored: number; this_month: number };
+  const { this_month } = usage.results[0] as { this_month: number };
+  // Stored bytes count every kept original and every snapshot picture.
+  const stored = await storedFileBytes(env, session.did);
   if (this_month >= limits.maxPdfUploadsPerMonth) {
     return json(
       {
@@ -324,7 +327,7 @@ async function handleUpload(request: Request, env: Env, session: Session, kind: 
       {
         error: 'pdf_storage_full',
         message:
-          'Your saved PDFs and EPUBs are using all of your storage. Removing some frees space.',
+          'Your saved PDFs, EPUBs and article pictures are using all of your storage. Removing some saves frees space.',
         limit: limits.maxPdfStorageBytes,
         used: stored,
       },
@@ -519,17 +522,13 @@ async function storeLinkedOriginal(
   const limits = await getUserTierLimits(env, did);
   if (!limits.pdfSaves) return 'unavailable';
 
-  const [existing, usage] = await env.DB.batch([
-    env.DB.prepare('SELECT 1 AS x FROM saved_files WHERE user_did = ? AND rkey = ?').bind(
-      did,
-      save.rkey
-    ),
-    env.DB.prepare(
-      'SELECT COALESCE(SUM(size), 0) AS stored FROM saved_files WHERE user_did = ?'
-    ).bind(did),
-  ]);
-  if (existing.results.length > 0) return 'stored';
-  const { stored } = usage.results[0] as { stored: number };
+  const existing = await env.DB.prepare(
+    'SELECT 1 AS x FROM saved_files WHERE user_did = ? AND rkey = ?'
+  )
+    .bind(did, save.rkey)
+    .first();
+  if (existing) return 'stored';
+  const stored = await storedFileBytes(env, did);
   if (stored >= limits.maxPdfStorageBytes) return 'storage_full';
 
   if (save.kind === 'epub') {

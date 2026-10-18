@@ -8,13 +8,14 @@
 // site's own picture and asks for the kept copy only when that fails
 // (GET /api/saved/<rkey>/snapshot-image?url=…).
 //
-// Bounded per capture (count, bytes per picture, bytes in all, time), and gated
-// by plan (SNAPSHOT_IMAGE_TIERS) at capture time only: what was captured stays
-// readable whatever the plan later becomes.
+// A Supporter feature (TierLimits.snapshotImages) whose bytes count against the
+// plan's storage for saved files (storedFileBytes). Bounded per capture (count,
+// bytes per picture, bytes in all), per save and per invocation. The plan is
+// checked at capture time only: what was captured stays readable whatever the
+// plan later becomes.
 
 import type { Env } from '../../types';
-import { getUserTier } from '../user-tier';
-import { isValidTier } from '../../config/tier-limits';
+import { getUserTierLimits } from '../user-tier';
 import { readCapped } from '../../routes/feedback';
 import {
   STORED_FILE_COLUMNS,
@@ -28,15 +29,6 @@ import { sha256Hex } from '../../utils/sha256';
 import { log } from '../../utils/logger';
 import { decodeEntities } from '../../utils/html-text';
 import { getRequestContext } from '../../utils/request-context';
-
-/**
- * The plans whose captures keep pictures: every plan, for now. Whether picture
- * capture should be a Supporter feature (and count against its storage) is
- * undecided; making it one is taking 'free' out of this set (or moving it to a
- * TierLimits flag, which pins supporter above free). A plan left out still gets
- * text snapshots.
- */
-export const SNAPSHOT_IMAGE_TIERS: ReadonlySet<string> = new Set(['free', 'supporter']);
 
 /** Pictures kept per capture: an article's figures, not a gallery's every thumbnail. */
 export const MAX_IMAGES_PER_SNAPSHOT = 30;
@@ -172,6 +164,23 @@ async function fetchImage(url: string, deadline: number): Promise<Fetched> {
   }
 }
 
+/**
+ * Bytes a reader keeps against their plan's storage for saved files: every kept
+ * original (saved_files) plus every distinct picture their snapshots kept.
+ */
+export async function storedFileBytes(env: Env, did: string): Promise<number> {
+  const row = await env.DB.prepare(
+    `SELECT
+       (SELECT COALESCE(SUM(size), 0) FROM saved_files WHERE user_did = ?1) +
+       (SELECT COALESCE(SUM(size), 0) FROM (
+          SELECT MAX(size) AS size FROM saved_snapshot_images WHERE user_did = ?1 GROUP BY r2_key
+        )) AS stored`
+  )
+    .bind(did)
+    .first<{ stored: number }>();
+  return row?.stored ?? 0;
+}
+
 export interface ImageCaptureInput {
   did: string;
   saveRkey: string;
@@ -193,9 +202,8 @@ export async function captureSnapshotImages(env: Env, input: ImageCaptureInput):
   const urls = snapshotImageUrls(body, pageUrl);
   const store = savedFileStore(env);
   if (urls.length === 0 || !store) return 0;
-  const tier = await getUserTier(env, did);
-  // An unknown tier reads as free, as getLimitsForTier reads it.
-  if (!SNAPSHOT_IMAGE_TIERS.has(isValidTier(tier) ? tier : 'free')) return 0;
+  const limits = await getUserTierLimits(env, did);
+  if (!limits.snapshotImages) return 0;
 
   // Shared by every capture in this invocation; a capture outside one (a test
   // calling in directly) gets its own.
@@ -210,7 +218,9 @@ export async function captureSnapshotImages(env: Env, input: ImageCaptureInput):
   const saveBytes = new Map([...kept.values()].map((row) => [row.r2_key, row.size]));
   let bytesLeft = Math.min(
     MAX_SNAPSHOT_IMAGE_BYTES,
-    MAX_SAVE_IMAGE_BYTES - [...saveBytes.values()].reduce((a, b) => a + b, 0)
+    MAX_SAVE_IMAGE_BYTES - [...saveBytes.values()].reduce((a, b) => a + b, 0),
+    // Pictures share the plan's storage with kept originals.
+    limits.maxPdfStorageBytes - (await storedFileBytes(env, did))
   );
 
   const rows: SnapshotImageRow[] = [];

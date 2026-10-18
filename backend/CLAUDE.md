@@ -157,7 +157,8 @@ PDS or a Semble/Margin backing collection. A PDF saved by link keeps its origina
 `storeLinkedPdfForUrl` fetches it from the URL under `waitUntil` after the save, and
 `GET /api/saved/<rkey>/file` keeps it on first open for a save that has none (streaming it through
 uncached only when storage is full). Limits: file size, uploads per month (uploads only) and stored
-bytes (every kept original) from the plan, plus the shared daily parse cap.
+bytes (every kept original plus every snapshot picture, `storedFileBytes`) from the plan, plus the
+shared daily parse cap. Snapshot pictures are Supporter-only too (`TierLimits.snapshotImages`).
 Every read, write and delete of a kept original goes through `SavedFileStore`
 (`src/services/saved-file-store.ts`), never the bucket directly: `saved_files.storage` names the
 store holding each file (`'r2'`, the only one today, located by `r2_key`), with `blob_cid` /

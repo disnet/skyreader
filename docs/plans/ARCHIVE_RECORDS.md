@@ -182,9 +182,9 @@ invocation (a backfill captures many saves in one) 60 downloads within 20 second
 WebP and AVIF only (an SVG can carry script). Rows take their save from the snapshot row at insert,
 so a snapshot deleted or moved mid-download leaves nothing behind. The body is never rewritten: the reader loads the site's picture and, when
 that fails online, asks `GET /api/saved/<rkey>/snapshot-image?url=<address>` for the kept copy. Pictures
-go with their snapshot (at the cap, only those no other capture shows) and with the save. Every
-plan captures them for now (`SNAPSHOT_IMAGE_TIERS`); whether they become a Supporter feature that
-counts against storage is undecided. At the space write each row becomes an entry in the
+go with their snapshot (at the cap, only those no other capture shows) and with the save. Picture capture is a Supporter
+feature (`TierLimits.snapshotImages`), and the pictures count against the plan's storage for saved
+files beside kept originals (`storedFileBytes`). At the space write each row becomes an entry in the
 snapshot record's `images` array (`{ url, contentType, sha256, size, blob }`).
 
 **Not captured yet:** saves made before snapshots existed (no backfill: a body captured at an
