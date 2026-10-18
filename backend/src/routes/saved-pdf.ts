@@ -18,7 +18,17 @@ import {
   readStoredEpubEntry,
 } from '../services/epub';
 import { readCapped } from './feedback';
-import { stagedOriginalKey } from '../services/linked-originals';
+import { readStagedOriginal } from '../services/linked-originals';
+import {
+  STORED_FILE_COLUMNS,
+  savedFileStore,
+  storeFor,
+  storedFileBindings,
+  storedFileRef,
+  type SavedFileStore,
+  type StoredFileColumns,
+  type StoredFileRef,
+} from '../services/saved-file-store';
 import { sha256Hex } from '../utils/sha256';
 import { log } from '../utils/logger';
 import { captureSnapshot } from '../services/archive/snapshots';
@@ -40,7 +50,9 @@ import { captureSnapshot } from '../services/archive/snapshots';
  * pdf-extractor Worker — so highlights, notes, search and read state work on it
  * exactly as on any other save (they key on the save's record uri). The original
  * file is kept in R2 (SAVED_FILES), private to the reader, for the figures and
- * equations a reflow can't carry; saved_files says where it is.
+ * equations a reflow can't carry; saved_files says which store holds it
+ * (services/saved-file-store.ts, the only way a kept original is read, written
+ * or deleted).
  *
  * A PDF saved by link keeps its original the same way (storeLinkedPdf): fetched
  * from its URL right after the save, so the reader needn't know or care which
@@ -66,9 +78,7 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
-export function savedFileKey(did: string, rkey: string, kind: UploadKind = 'pdf'): string {
-  return `${kind}/${did}/${rkey}.${kind}`;
-}
+export { savedFileKey } from '../services/saved-file-store';
 
 /** A display filename: the last path segment, without control characters, capped. */
 export function cleanFilename(raw: string | null): string | null {
@@ -232,7 +242,8 @@ async function handleUpload(request: Request, env: Env, session: Session, kind: 
       403
     );
   }
-  if ((kind === 'pdf' && !pdfExtractorConfigured(env)) || !env.SAVED_FILES) {
+  const store = savedFileStore(env);
+  if ((kind === 'pdf' && !pdfExtractorConfigured(env)) || !store) {
     return json({ error: `Uploading ${kindName}s is not set up on this server` }, 503);
   }
 
@@ -332,14 +343,10 @@ async function handleUpload(request: Request, env: Env, session: Session, kind: 
   const publishedAt = Number.isFinite(publishedMs) ? publishedMs : null;
   const savedAt = Date.now();
   const recordUri = `at://${session.did}/${COLLECTION}/${rkey}`;
-  const r2Key = savedFileKey(session.did, rkey, kind);
   const mimeType = MIME_TYPES[kind];
 
   // The file first: a row pointing at a missing file is worse than a stray file.
-  await env.SAVED_FILES.put(r2Key, bytes, {
-    httpMetadata: { contentType: mimeType },
-    customMetadata: { did: session.did, rkey, ...(filename ? { filename } : {}) },
-  });
+  const file = await store.put({ did: session.did, rkey, kind, mimeType, filename }, bytes);
   try {
     await env.DB.batch([
       env.DB.prepare(
@@ -360,20 +367,29 @@ async function handleUpload(request: Request, env: Env, session: Session, kind: 
         savedAt
       ),
       env.DB.prepare(
-        `INSERT INTO saved_files (user_did, rkey, r2_key, filename, mime_type, size, sha256, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-      ).bind(session.did, rkey, r2Key, filename, mimeType, bytes.byteLength, sha256, savedAt),
+        `INSERT INTO saved_files (user_did, rkey, ${STORED_FILE_COLUMNS}, filename, mime_type, size, sha256, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(
+        session.did,
+        rkey,
+        ...storedFileBindings(file),
+        filename,
+        mimeType,
+        bytes.byteLength,
+        sha256,
+        savedAt
+      ),
     ]);
   } catch (err) {
-    // r2Key is derived from (did, rkey): if a concurrent upload with the same
-    // rkey won the insert, the object now belongs to its row, so keep it.
+    // A save's file always lands in the same place: if a concurrent upload with
+    // the same rkey won the insert, the file now belongs to its row, so keep it.
     const winner = await env.DB.prepare(
       'SELECT 1 AS x FROM saved_files WHERE user_did = ? AND rkey = ?'
     )
       .bind(session.did, rkey)
       .first()
       .catch(() => null);
-    if (!winner) await env.SAVED_FILES.delete(r2Key).catch(() => {});
+    if (!winner) await store.delete(file).catch(() => {});
     throw err;
   }
 
@@ -497,7 +513,8 @@ async function storeLinkedOriginal(
   did: string,
   save: LinkedSave
 ): Promise<StoreLinkedResult> {
-  if (!env.SAVED_FILES) return 'unavailable';
+  const store = savedFileStore(env);
+  if (!store) return 'unavailable';
   const limits = await getUserTierLimits(env, did);
   if (!limits.pdfSaves) return 'unavailable';
 
@@ -515,7 +532,14 @@ async function storeLinkedOriginal(
   if (stored >= limits.maxPdfStorageBytes) return 'storage_full';
 
   if (save.kind === 'epub') {
-    const adopted = await adoptStagedOriginal(env, did, save, stored, limits.maxPdfStorageBytes);
+    const adopted = await adoptStagedOriginal(
+      env,
+      store,
+      did,
+      save,
+      stored,
+      limits.maxPdfStorageBytes
+    );
     if (adopted) return adopted;
   }
 
@@ -538,13 +562,9 @@ async function storeLinkedOriginal(
   if (!bytes || bytes.byteLength === 0 || !looksRight(bytes)) return 'unavailable';
   if (stored + bytes.byteLength > limits.maxPdfStorageBytes) return 'storage_full';
 
-  const r2Key = savedFileKey(did, save.rkey, save.kind);
-  await env.SAVED_FILES.put(r2Key, bytes, {
-    httpMetadata: { contentType: MIME_TYPES[save.kind] },
-    customMetadata: { did, rkey: save.rkey, filename: linkedFilename(save.url, save.kind) },
-  });
-  const result = await recordLinkedOriginal(env, did, save, {
-    r2Key,
+  const file = await store.put(linkedFileMeta(did, save), bytes);
+  const result = await recordLinkedOriginal(env, store, did, save, {
+    ref: file,
     size: bytes.byteLength,
     sha256: await sha256Hex(bytes),
   });
@@ -553,29 +573,40 @@ async function storeLinkedOriginal(
   return result;
 }
 
+/** How a linked save's original is labelled in its store. */
+function linkedFileMeta(did: string, save: LinkedSave) {
+  return {
+    did,
+    rkey: save.rkey,
+    kind: save.kind,
+    mimeType: MIME_TYPES[save.kind],
+    filename: linkedFilename(save.url, save.kind),
+  };
+}
+
 /**
- * The saved_files row for a linked save's kept original, once its object is in
- * R2 at `r2Key`. Undone (the object deleted) when the save went away meanwhile.
+ * The saved_files row for a linked save's kept original, once it's in `store`
+ * at `file.ref`. Undone (the file deleted) when the save went away meanwhile.
  */
 async function recordLinkedOriginal(
   env: Env,
+  store: SavedFileStore,
   did: string,
   save: LinkedSave,
-  file: { r2Key: string; size: number; sha256: string }
+  file: { ref: StoredFileRef; size: number; sha256: string }
 ): Promise<StoreLinkedResult> {
-  const { r2Key } = file;
   const filename = linkedFilename(save.url, save.kind);
   const mimeType = MIME_TYPES[save.kind];
-  // OR IGNORE: two opens racing to store the same save write the same key.
+  // OR IGNORE: two opens racing to store the same save write the same place.
   const inserted = await env.DB.prepare(
-    `INSERT OR IGNORE INTO saved_files (user_did, rkey, r2_key, filename, mime_type, size, sha256, created_at)
-     SELECT ?, ?, ?, ?, ?, ?, ?, ?
+    `INSERT OR IGNORE INTO saved_files (user_did, rkey, ${STORED_FILE_COLUMNS}, filename, mime_type, size, sha256, created_at)
+     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
      WHERE EXISTS (SELECT 1 FROM saved_articles WHERE user_did = ? AND rkey = ?)`
   )
     .bind(
       did,
       save.rkey,
-      r2Key,
+      ...storedFileBindings(file.ref),
       filename,
       mimeType,
       file.size,
@@ -587,52 +618,44 @@ async function recordLinkedOriginal(
     .run();
   if (!inserted.meta.changes) {
     // Deleted while we fetched: don't leave its file behind. (A lost race to
-    // another store keeps the key, which that row now owns.)
+    // another keep leaves the file, which that row now owns.)
     const owned = await env.DB.prepare(
       'SELECT 1 AS x FROM saved_files WHERE user_did = ? AND rkey = ?'
     )
       .bind(did, save.rkey)
       .first();
-    if (!owned) await env.SAVED_FILES?.delete(r2Key).catch(() => {});
+    if (!owned) await store.delete(file.ref).catch(() => {});
     return owned ? 'stored' : 'unavailable';
   }
   return 'stored';
 }
 
 /**
- * A linked book already read by /api/extract was staged in R2 then
+ * A linked book already read by /api/extract was staged then
  * (services/linked-originals.ts): move it into place rather than download it a
  * second time. Null when nothing is staged (the save fetches the book itself).
  */
 async function adoptStagedOriginal(
   env: Env,
+  store: SavedFileStore,
   did: string,
   save: LinkedSave,
   stored: number,
   maxStorageBytes: number
 ): Promise<StoreLinkedResult | null> {
-  const bucket = env.SAVED_FILES;
-  if (!bucket) return null;
-  const stagedKey = await stagedOriginalKey(did, save.url);
-  const staged = await bucket.get(stagedKey);
+  const staged = await readStagedOriginal(env, did, save.url);
   if (!staged) return null;
   if (stored + staged.size > maxStorageBytes) {
     await staged.body.cancel().catch(() => {});
     return 'storage_full';
   }
-  const sha256 = staged.customMetadata?.sha256;
-  if (!sha256) {
-    await staged.body.cancel().catch(() => {});
-    return null;
-  }
-  // R2 has no copy: stream it across (a fixed length, as put requires).
-  const r2Key = savedFileKey(did, save.rkey, save.kind);
-  await bucket.put(r2Key, staged.body.pipeThrough(new FixedLengthStream(staged.size)), {
-    httpMetadata: { contentType: MIME_TYPES[save.kind] },
-    customMetadata: { did, rkey: save.rkey, filename: linkedFilename(save.url, save.kind) },
+  const file = await store.put(linkedFileMeta(did, save), staged);
+  await staged.remove().catch(() => {});
+  const result = await recordLinkedOriginal(env, store, did, save, {
+    ref: file,
+    size: staged.size,
+    sha256: staged.sha256,
   });
-  await bucket.delete(stagedKey).catch(() => {});
-  const result = await recordLinkedOriginal(env, did, save, { r2Key, size: staged.size, sha256 });
   if (result === 'stored') log.info('epub_link_original_adopted', { size: staged.size });
   return result;
 }
@@ -869,12 +892,14 @@ export async function handleGetSavedAsset(request: Request, env: Env, session: S
   if (!rkey || !isValidRkey(rkey)) return invalidRkeyResponse();
   const path = url.searchParams.get('path') ?? '';
   const contentType = epubImageType(path);
-  if (!contentType || !env.SAVED_FILES) return json({ error: 'Not found' }, 404);
+  if (!contentType || !savedFileStore(env)) return json({ error: 'Not found' }, 404);
 
   const fileRow = () =>
-    env.DB.prepare('SELECT r2_key, mime_type FROM saved_files WHERE user_did = ? AND rkey = ?')
+    env.DB.prepare(
+      `SELECT ${STORED_FILE_COLUMNS}, mime_type FROM saved_files WHERE user_did = ? AND rkey = ?`
+    )
       .bind(session.did, rkey)
-      .first<{ r2_key: string; mime_type: string }>();
+      .first<StoredFileColumns & { mime_type: string }>();
   let row = await fileRow();
   if (!row) {
     // A book saved by link whose original wasn't kept at save time (the fetch
@@ -897,10 +922,19 @@ export async function handleGetSavedAsset(request: Request, env: Env, session: S
     }
   }
   if (!row || row.mime_type !== MIME_TYPES.epub) return json({ error: 'Not found' }, 404);
+  const ref = storedFileRef(row);
+  const store = storeFor(env, ref);
+  if (!store) return json({ error: 'Not found' }, 404);
 
   let bytes: Uint8Array | null;
   try {
-    bytes = await readStoredEpubEntry(env.SAVED_FILES, row.r2_key, path);
+    bytes = await readStoredEpubEntry(
+      {
+        size: () => store.size(ref),
+        read: (offset, length) => store.readRange(ref, offset, length),
+      },
+      path
+    );
   } catch (err) {
     if (!(err instanceof EpubError)) throw err;
     log.warn('epub_asset_unreadable', { message: err.message });
@@ -923,12 +957,13 @@ function storageFullResponse(): Response {
 // A save's kept original, or null when it has none.
 async function serveStoredFile(env: Env, did: string, rkey: string): Promise<Response | null> {
   const row = await env.DB.prepare(
-    'SELECT r2_key, filename, mime_type FROM saved_files WHERE user_did = ? AND rkey = ?'
+    `SELECT ${STORED_FILE_COLUMNS}, filename, mime_type FROM saved_files WHERE user_did = ? AND rkey = ?`
   )
     .bind(did, rkey)
-    .first<{ r2_key: string; filename: string | null; mime_type: string }>();
+    .first<StoredFileColumns & { filename: string | null; mime_type: string }>();
   if (!row) return null;
-  const object = env.SAVED_FILES ? await env.SAVED_FILES.get(row.r2_key) : null;
+  const ref = storedFileRef(row);
+  const object = (await storeFor(env, ref)?.get(ref)) ?? null;
   if (!object) return json({ error: 'Not found' }, 404);
   const fallbackName = row.mime_type === MIME_TYPES.epub ? 'book.epub' : 'document.pdf';
   return fileResponse(object.body, row.filename || fallbackName, object.size, row.mime_type);
@@ -936,15 +971,18 @@ async function serveStoredFile(env: Env, did: string, rkey: string): Promise<Res
 
 /** Drop a save's uploaded file, if it has one. Called after the save's row is deleted. */
 export async function deleteSavedFile(env: Env, did: string, rkey: string): Promise<void> {
-  const row = await env.DB.prepare('SELECT r2_key FROM saved_files WHERE user_did = ? AND rkey = ?')
+  const row = await env.DB.prepare(
+    `SELECT ${STORED_FILE_COLUMNS} FROM saved_files WHERE user_did = ? AND rkey = ?`
+  )
     .bind(did, rkey)
-    .first<{ r2_key: string }>();
+    .first<StoredFileColumns>();
   if (!row) return;
+  const ref = storedFileRef(row);
   await env.DB.prepare('DELETE FROM saved_files WHERE user_did = ? AND rkey = ?')
     .bind(did, rkey)
     .run();
   try {
-    await env.SAVED_FILES?.delete(row.r2_key);
+    await storeFor(env, ref)?.delete(ref);
   } catch (error) {
     // The row is gone, so the bytes no longer count against the reader; an
     // orphaned object costs storage, not correctness.

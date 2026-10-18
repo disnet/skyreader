@@ -149,7 +149,13 @@ describe('POST /api/saved/pdf', () => {
     const file = await env.DB.prepare('SELECT * FROM saved_files WHERE user_did = ?')
       .bind(DID)
       .first<{ size: number; filename: string; r2_key: string }>();
-    expect(file).toMatchObject({ size: PDF.byteLength, filename: 'paper.pdf' });
+    expect(file).toMatchObject({
+      size: PDF.byteLength,
+      filename: 'paper.pdf',
+      storage: 'r2',
+      blob_cid: null,
+      record_uri: null,
+    });
     const object = await env.SAVED_FILES.get(file!.r2_key);
     expect(new Uint8Array(await object!.arrayBuffer())).toEqual(PDF);
 
@@ -311,6 +317,21 @@ describe('GET /api/saved/<rkey>/file and deleting the save', () => {
       .first();
     expect(row).toBeNull();
     expect((await call(request(`/api/saved/${RKEY}/file`))).status).toBe(404);
+  });
+
+  it("answers 404 for a file in a store this server can't reach, and still deletes the save", async () => {
+    await env.DB.prepare(
+      "UPDATE saved_files SET storage = 'space', blob_cid = 'bafy', record_uri = 'at://x' WHERE user_did = ?"
+    )
+      .bind(DID)
+      .run();
+    expect((await call(request(`/api/saved/${RKEY}/file`))).status).toBe(404);
+    const { status } = await call(request(`/api/saved/${RKEY}`, 'DELETE'));
+    expect(status).toBe(200);
+    const row = await env.DB.prepare('SELECT 1 FROM saved_files WHERE user_did = ? AND rkey = ?')
+      .bind(DID, RKEY)
+      .first();
+    expect(row).toBeNull();
   });
 });
 
