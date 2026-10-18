@@ -308,17 +308,20 @@ async function reorderItems(
   const named = unique.filter((r) => memberSet.has(r));
   const namedSet = new Set(named);
   const finalOrder = [...named, ...members.filter((r) => !namedSet.has(r))];
-  // One UPDATE for the whole order, each row's position its index in the JSON
-  // array: D1 counts every statement in a batch against its 1,000 queries per
-  // invocation, so a statement per member failed past ~999. A member added since
-  // the SELECT isn't in the array and keeps its position.
+  // One UPDATE for the whole order: D1 counts every statement in a batch against
+  // its 1,000 queries per invocation, so a statement per member failed past ~999.
+  // Positions ride as a {rkey: index} object looked up by path (rkeys are TIDs,
+  // safe in a quoted path), which reads each row once; a json_each join would
+  // scan the whole array per row. A member added since the SELECT isn't in the
+  // object and keeps its position.
+  const positions = JSON.stringify(Object.fromEntries(finalOrder.map((r, i) => [r, i])));
   await env.DB.batch([
     env.DB.prepare(
       `UPDATE shelf_collection_items
-          SET position = (SELECT key FROM json_each(?3) WHERE value = saved_rkey)
+          SET position = json_extract(?3, '$."' || saved_rkey || '"')
         WHERE user_did = ?1 AND collection_id = ?2
-          AND saved_rkey IN (SELECT value FROM json_each(?3))`
-    ).bind(did, id, JSON.stringify(finalOrder)),
+          AND json_extract(?3, '$."' || saved_rkey || '"') IS NOT NULL`
+    ).bind(did, id, positions),
     env.DB.prepare(
       'UPDATE shelf_collections SET updated_at = ? WHERE user_did = ? AND id = ?'
     ).bind(now, did, id),

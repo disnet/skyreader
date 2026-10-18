@@ -180,11 +180,20 @@ describe('/api/shelf/collections', () => {
     // The local runtime doesn't enforce D1's 1,000 queries per invocation, so
     // count them: one statement per member is what broke this in production.
     const prepare = vi.spyOn(env.DB, 'prepare');
-    expect(
-      (await call('PUT', `/api/shelf/collections/${C1}/items`, { rkeys: reversed })).status
-    ).toBe(200);
-    expect(prepare.mock.calls.length).toBeLessThan(20);
-    prepare.mockRestore();
+    const batch = vi.spyOn(env.DB, 'batch');
+    try {
+      expect(
+        (await call('PUT', `/api/shelf/collections/${C1}/items`, { rkeys: reversed })).status
+      ).toBe(200);
+      expect(prepare.mock.calls.length).toBeLessThan(20);
+      // D1 bills by rows read: the write should touch each member once, not scan
+      // the whole order per member.
+      const [update] = await batch.mock.results[0].value;
+      expect(update.meta.rows_read).toBeLessThan(3 * rkeys.length);
+    } finally {
+      prepare.mockRestore();
+      batch.mockRestore();
+    }
     expect((await list())[0].items.map((i) => i.rkey)).toEqual(reversed);
   });
 
