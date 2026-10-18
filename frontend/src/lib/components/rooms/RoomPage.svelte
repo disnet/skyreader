@@ -684,7 +684,7 @@
               {#each members.slice(0, 8) as member (member.did)}
                 <a
                   class="room-avatar"
-                  href={`https://linkblogs.skyreader.app/${member.handle}/`}
+                  href={`https://bsky.app/profile/${member.did}`}
                   target="_blank"
                   rel="noopener"
                   title={member.displayName || member.handle}
