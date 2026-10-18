@@ -515,6 +515,7 @@ function createSavesStore() {
         publishedAt: extracted.published || undefined,
         wordCount: wordCount || undefined,
         contentType: extracted.contentType,
+        captureMethod: 'server',
         doi: extracted.doi || undefined,
       });
 

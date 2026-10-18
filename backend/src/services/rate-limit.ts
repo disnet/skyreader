@@ -23,6 +23,9 @@ const LIGHT_LIMIT: RateLimitConfig = { limit: 300, windowMs: 60000 };
 // Paths with an id in them share one bucket: a book's pictures all load at once.
 const SAVED_ASSET_PATH = /^\/api\/saved\/[^/]+\/asset$/;
 const SAVED_ASSET_KEY = '/api/saved/:rkey/asset';
+// A save's captures are read on every open, one rkey per article: one bucket for all.
+const SAVED_SNAPSHOTS_PATH = /^\/api\/saved\/[^/]+\/snapshots$/;
+const SAVED_SNAPSHOTS_KEY = '/api/saved/:rkey/snapshots';
 
 const RATE_LIMITS: Record<string, RateLimitConfig> = {
   // Deep health check. Keyed by client IP (not did) since callers are monitors,
@@ -142,7 +145,9 @@ const RATE_LIMITS: Record<string, RateLimitConfig> = {
 const DEFAULT_LIMIT: RateLimitConfig = STANDARD_LIMIT;
 
 function endpointKey(pathname: string): string {
-  return SAVED_ASSET_PATH.test(pathname) ? SAVED_ASSET_KEY : pathname;
+  if (SAVED_ASSET_PATH.test(pathname)) return SAVED_ASSET_KEY;
+  if (SAVED_SNAPSHOTS_PATH.test(pathname)) return SAVED_SNAPSHOTS_KEY;
+  return pathname;
 }
 
 /**

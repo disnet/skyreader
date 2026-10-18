@@ -1,6 +1,7 @@
 import type { Env } from '../types';
 import type { ExtractedArticle } from './feed-proxy-client';
 import { escapeHtml, htmlToText } from '../utils/html-text';
+import { captureSnapshot } from './archive/snapshots';
 import { exactDoi } from './export/identifiers';
 
 // Whether an extracted body has anything to read: text, or media standing in for
@@ -53,7 +54,8 @@ export function emptyExtractionNote(url: string | undefined): string {
  * to 'pdf'/'epub' either way: the body is the file's text, whatever the row was typed before.
  *
  * Stamps `updated_at` so a client that already cached the empty row picks up the
- * body through GET /api/saved/updates.
+ * body through GET /api/saved/updates, and keeps the body it wrote as the save's
+ * snapshot.
  */
 export async function fillExtractedContent(
   env: Env,
@@ -72,7 +74,7 @@ export async function fillExtractedContent(
   const whereClause = 'id' in where ? 'id = ?' : 'user_did = ? AND rkey = ?';
   const whereBinds = 'id' in where ? [where.id] : [where.userDid, where.rkey];
 
-  await env.DB.prepare(
+  const row = await env.DB.prepare(
     `UPDATE saved_articles SET
          content = ?,
          word_count = COALESCE(word_count, ?),
@@ -84,7 +86,8 @@ export async function fillExtractedContent(
          published_at = COALESCE(published_at, ?),
          doi = COALESCE(doi, ?),
          updated_at = ?${contentTypeClause}
-       WHERE ${whereClause} AND content IS NULL`
+       WHERE ${whereClause} AND content IS NULL
+       RETURNING user_did, rkey, url`
   )
     .bind(
       // Non-null either way: marks the row as extracted so backfill passes skip it.
@@ -100,5 +103,16 @@ export async function fillExtractedContent(
       Date.now(),
       ...whereBinds
     )
-    .run();
+    .first<{ user_did: string; rkey: string; url: string }>();
+
+  // A body this fill wrote is the save's capture; a note is not.
+  if (hasBody && row) {
+    await captureSnapshot(env, {
+      did: row.user_did,
+      saveRkey: row.rkey,
+      url: row.url,
+      body: article.content,
+      method: 'server',
+    });
+  }
 }

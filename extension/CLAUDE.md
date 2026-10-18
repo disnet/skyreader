@@ -59,7 +59,9 @@ with one upgrade — extraction is **live-DOM first**:
    `updated: true`) instead of 409 — the paywall fix for items saved earlier
    from a truncated feed or server stub. Backend: `handleContentUpdate` in
    `backend/src/routes/saved.ts`; tests in
-   `backend/test/saved-content-update.spec.ts`.
+   `backend/test/saved-content-update.spec.ts`. The body also carries
+   `captureMethod` (`'live-dom'` when the text came from the tab, `'server'` from
+   `/api/extract`), which the backend records on the save's snapshot.
 
 Auth is the browser's existing `session_id` cookie (`Domain=.skyreader.app`
 covers the API host; MV3 host permissions exempt extension fetches from

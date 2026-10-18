@@ -101,6 +101,7 @@ import {
   handleDeleteSaved,
   handleDeleteSavedByGuid,
   handleSetBacking,
+  handleGetSavedSnapshots,
 } from './routes/saved';
 import { handleShelfCollections } from './routes/shelf';
 import { handleExport } from './routes/export';
@@ -825,6 +826,10 @@ async function route(
     case /^\/api\/saved\/[^/]+\/file$/.test(url.pathname):
       if (!session) return unauthorizedResponse(headers);
       response = await handleGetSavedFile(request, env, session);
+      break;
+    case /^\/api\/saved\/[^/]+\/snapshots$/.test(url.pathname):
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleGetSavedSnapshots(request, env, session);
       break;
     case /^\/api\/saved\/[^/]+\/asset$/.test(url.pathname):
       if (!session) return unauthorizedResponse(headers);

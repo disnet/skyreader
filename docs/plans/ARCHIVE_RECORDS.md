@@ -8,7 +8,8 @@ source of truth is a sync job (write each row's record, compare CIDs) rather tha
 migration.
 
 The code is `backend/src/services/archive/` (`records.ts` for the mapping, `dag-cbor.ts` for the
-content hash). `backend/test/archive-records.spec.ts` covers it.
+content hash, `snapshots.ts` for capturing snapshots). `backend/test/archive-records.spec.ts` and
+`backend/test/saved-snapshots.spec.ts` cover it.
 
 ## What this does not change
 
@@ -22,11 +23,11 @@ content hash). `backend/test/archive-records.spec.ts` covers it.
 
 ## Collections
 
-| Collection                        | One record per                                  | Record key                            |
-| --------------------------------- | ----------------------------------------------- | ------------------------------------- |
-| `app.skyreader.archive.save`      | `saved_articles` row (+ its `saved_files` row)  | the save's `rkey` (a TID)             |
-| `app.skyreader.archive.highlight` | element of a `highlights` label's props array   | the highlight's `id`                  |
-| `app.skyreader.archive.snapshot`  | captured snapshot (no rows yet; proposed below) | the save's `rkey`, plus a capture TID |
+| Collection                        | One record per                                 | Record key                |
+| --------------------------------- | ---------------------------------------------- | ------------------------- |
+| `app.skyreader.archive.save`      | `saved_articles` row (+ its `saved_files` row) | the save's `rkey` (a TID) |
+| `app.skyreader.archive.highlight` | element of a `highlights` label's props array  | the highlight's `id`      |
+| `app.skyreader.archive.snapshot`  | `saved_snapshots` row (one capture of a body)  | the capture's own TID     |
 
 **Notes are not a collection.** A note is a highlight's `note` field, as on Margin's
 `at.margin.note`, where the note is the annotation's body. It moves with its highlight.
@@ -140,19 +141,39 @@ the space record's CID, and write only on a mismatch. The hash is computed on de
 A stored hash would need every write path (there are many) to keep it current, and computing one
 is cheap.
 
-## Snapshots (proposed)
+## Snapshots
 
-There are no snapshot rows yet. "Snapshot every save at capture time" adds them. To land in this
-shape, a snapshot should be its own record:
+A snapshot is one capture of a save's body, kept as it was. `saved_articles.content` is the body
+the reader reads, and a later capture can replace it (the extension's live-DOM upgrade of a paywall
+stub); the snapshot of the earlier body stays. Every path that writes a body captures it
+(`captureSnapshot`, under `waitUntil` so it never fails or slows the save): URL, feed and document
+saves, the `updateContent` upgrade, backed saves, background extraction (`fillExtractedContent`)
+and uploads. A body identical to the save's latest snapshot (same SHA-256) isn't stored again, and
+the failed-fetch note (`data-skyreader-note="fetch-failed"`) is never a capture. A save keeps at most 20 captures (`MAX_SNAPSHOTS_PER_SAVE`): past that, a new one replaces the newest, so the first captures stay and the last always matches what the reader shows. Snapshots are
+deleted with their save.
+
+The row is `saved_snapshots (user_did, rkey, save_rkey, captured_at, url, content_type, sha256,
+size, r2_key, method)`, keyed by its own TID, so a save holds several. The body is in R2
+(`SAVED_FILES`, `snapshots/<did>/<save rkey>/<rkey>.html`), not inline. The record:
 
 ```
 app.skyreader.archive.snapshot
-{ $type, save: <save rkey>, capturedAt, url, contentType, body: blob, sha256, extractor? }
+{ $type, save: <save rkey>, capturedAt, url, contentType, sha256, size, r2Key, method? }
 ```
 
-The record key is a TID, so a save can hold several captures. The page body is a blob, not an
-inline string. Its D1 row should mirror that: `(user_did, rkey, save_rkey, captured_at, sha256,
-r2_key, …)`, keyed by its own TID. The mapping then follows the same pattern as `saved_files`.
+`r2Key` becomes a `body` blob ref at the space write, as a save's `file.r2Key` does.
+`snapshotToRecord` / `snapshotFromRecord` follow the save mapping's rules. `method` says how the
+body was captured: `live-dom` (the extension, from the open tab), `server` (Skyreader fetched the
+page), `feed`, `record` (a standard.site document) or `upload`; absent when unknown. A client can
+claim only `live-dom` or `server`.
+
+`GET /api/saved/<rkey>/snapshots` lists a save's captures (no bodies), and the reader shows the
+latest under the article ("Captured on …"). A save whose capture failed links to the Wayback
+Machine's copy nearest its save time instead.
+
+**Not captured yet:** images (a snapshot's body still points at the page's own image URLs) and
+saves made before snapshots existed (no backfill: a body captured at an unknown time would claim a
+capture time it doesn't have). A PDF's or EPUB's original is already kept in `saved_files`.
 
 ## Not yet verified against production
 
