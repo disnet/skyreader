@@ -1036,7 +1036,8 @@ export function matchInsertStatements(
              FROM (VALUES ${values}) AS v
             WHERE EXISTS (SELECT 1 FROM saved_queries
                            WHERE user_did = ? AND channel_uuid = ? AND updated_at = ?)
-           ON CONFLICT (user_did, channel_uuid, dedup_key) DO NOTHING`
+           ON CONFLICT (user_did, channel_uuid, dedup_key) DO UPDATE SET body_skipped = 0
+             WHERE excluded.body_skipped = 0 AND channel_matches.body_skipped = 1`
         ).bind(
           userDid,
           channelUuid,

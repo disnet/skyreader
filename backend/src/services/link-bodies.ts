@@ -55,8 +55,8 @@ export async function extractLinkBody(
     const article = await new FeedProxyClient(env).extract(url, { articleOnly: true });
     text = stripControlChars(htmlToText(article.content ?? '', maxChars));
   } catch (error) {
-    const blocked = error instanceof FeedProxyError && error.blocked === true;
-    return { ok: false, retry: !blocked, error: String((error as Error)?.message ?? error) };
+    const message = String((error as Error)?.message ?? error);
+    return { ok: false, retry: worthRetrying(error, message), error: message };
   }
   // An empty article is an answer, not a failure: it's stored so it isn't asked for again.
   try {
@@ -67,6 +67,17 @@ export async function extractLinkBody(
     return { ok: false, retry: true, error: String((error as Error)?.message ?? error) };
   }
   return { ok: true, text };
+}
+
+/**
+ * Only a failure to get an answer is worth another try: the proxy unreachable,
+ * an edge error, a timeout. Anything the proxy determined (the site refused,
+ * not found, too large, a PDF) would only be said again.
+ */
+function worthRetrying(error: unknown, message: string): boolean {
+  if (!(error instanceof FeedProxyError)) return true;
+  if (error.blocked || error.pdf) return false;
+  return message.startsWith('Failed to extract article') || message.startsWith('That article took');
 }
 
 /** Drop stored articles whose shares have aged out. */

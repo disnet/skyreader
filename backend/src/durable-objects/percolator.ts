@@ -78,9 +78,10 @@ const R2_BODIES_PER_PASS = 50;
 const DOC_SETTLE_MS = 2_000;
 /**
  * Shares, likewise. Their clock is read when a refresh builds a page's batch,
- * before D1 commits it, so they wait longer.
+ * before D1 commits it, so they wait much longer: a minute costs nothing
+ * against the five-minute target and covers a slow commit.
  */
-const SHARE_SETTLE_MS = 10_000;
+const SHARE_SETTLE_MS = 60_000;
 /** Pending backfills advanced per pass, and how much of each per step. */
 const BACKFILL_QUERIES_PER_PASS = 4;
 const BACKFILL_SOURCES_PER_STEP = 10;
@@ -94,6 +95,8 @@ const LINK_EXTRACTIONS_PER_PASS = 8;
 /** Tries per link, and how long a failed one waits for its next. */
 const LINK_EXTRACT_ATTEMPTS = 2;
 const LINK_RETRY_DELAY_MS = 10 * 60 * 1000;
+/** Batches of 1,000 expired articles dropped per retention run (every 6 hours). */
+const LINK_RETENTION_ROUNDS = 20;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const RETENTION_INTERVAL_MS = 6 * 60 * 60 * 1000;
 /** DO SQLite binds at most 100 parameters per statement. */
@@ -421,21 +424,15 @@ export class Percolator extends DurableObject<Env> {
       const row = this.sql
         .exec(`SELECT state, waiters FROM link_bodies WHERE url_normalized = ?`, urlNormalized)
         .toArray()[0] as { state: string; waiters: string } | undefined;
-      if (row?.state === 'done') {
-        if (budget.r2.left <= 0) {
-          r2Skipped++;
-          continue;
-        }
+      if (row?.state === 'done' && budget.r2.left > 0) {
         budget.r2.left--;
         const text = await readLinkBody(this.env, urlNormalized);
         if (text) bodies.set(urlNormalized, text);
-      } else if (row?.state === 'pending') {
-        const waiters = new Set([...(JSON.parse(row.waiters) as string[]), ...link.readers]);
-        this.sql.exec(
-          `UPDATE link_bodies SET waiters = ? WHERE url_normalized = ?`,
-          JSON.stringify([...waiters]),
-          urlNormalized
-        );
+      } else if (row?.state === 'done' || row?.state === 'pending') {
+        // Not read yet, or stored but past this pass's R2 reads: these readers
+        // are re-checked against the article by readLinks.
+        if (row.state === 'done') r2Skipped++;
+        this.addWaiters(urlNormalized, row.waiters, link.readers);
       } else if (!row) {
         // Read once for everyone; it costs the first of these readers with budget left.
         if ([...link.readers].some((did) => this.spendExtraction(did, day))) {
@@ -459,6 +456,15 @@ export class Percolator extends DurableObject<Env> {
     return buildShareDocs(shares, bodies, skipped);
   }
 
+  private addWaiters(urlNormalized: string, current: string, readers: Iterable<string>) {
+    const waiters = new Set([...(JSON.parse(current) as string[]), ...readers]);
+    this.sql.exec(
+      `UPDATE link_bodies SET waiters = ? WHERE url_normalized = ?`,
+      JSON.stringify([...waiters]),
+      urlNormalized
+    );
+  }
+
   /** Charge one article read to `did` today; false when their budget is spent. */
   private spendExtraction(did: string, day: number): boolean {
     const row = this.sql
@@ -475,9 +481,11 @@ export class Percolator extends DurableObject<Env> {
   }
 
   /**
-   * Read the next few queued articles, all at once, and re-check each waiting
-   * reader's shares of a link against its article. Returns whether more are
-   * ready to read now.
+   * Read the next few queued articles, all at once, then re-check the readers
+   * waiting on stored articles: each one's shares of the link, matched against
+   * the article. A link's waiters are cleared only once its re-check has been
+   * written, so a failed write is retried by the next pass. Returns whether
+   * more articles are ready to read now.
    */
   private async readLinks(
     queries: ActiveQuery[],
@@ -487,29 +495,37 @@ export class Percolator extends DurableObject<Env> {
     const now = Date.now();
     const rows = this.sql
       .exec(
-        `SELECT url_normalized, url, attempts, waiters FROM link_bodies
+        `SELECT url_normalized, url, attempts FROM link_bodies
           WHERE state = 'pending' AND next_at <= ?
           ORDER BY requested_at LIMIT ?`,
         now,
         LINK_EXTRACTIONS_PER_PASS
       )
-      .toArray() as { url_normalized: string; url: string; attempts: number; waiters: string }[];
-    if (rows.length === 0) return false;
+      .toArray() as { url_normalized: string; url: string; attempts: number }[];
 
-    const results = await Promise.all(
-      rows.map((r) => extractLinkBody(this.env, r.url, r.url_normalized, MATCH_BODY_CHARS))
-    );
-    // A proxy round-trip and an R2 write each.
-    budget.subrequests -= rows.length * 2;
-
-    const windowStart = Date.now() - MATCH_WINDOW_MS;
-    for (const [i, row] of rows.entries()) {
-      const result = results[i];
-      const settledAt = Date.now();
-      if (!result.ok) {
-        outcome.extractFailed++;
+    const texts = new Map<string, string>();
+    if (rows.length > 0) {
+      const results = await Promise.all(
+        rows.map((r) => extractLinkBody(this.env, r.url, r.url_normalized, MATCH_BODY_CHARS))
+      );
+      // A proxy round-trip and an R2 write each.
+      budget.subrequests -= rows.length * 2;
+      for (const [i, row] of rows.entries()) {
+        const result = results[i];
+        const settledAt = Date.now();
         const attempts = row.attempts + 1;
-        if (!result.retry || attempts >= LINK_EXTRACT_ATTEMPTS) {
+        if (result.ok) {
+          outcome.extracted++;
+          texts.set(row.url_normalized, result.text);
+          this.sql.exec(
+            `UPDATE link_bodies SET state = 'done', attempts = ?, settled_at = ?
+              WHERE url_normalized = ?`,
+            attempts,
+            settledAt,
+            row.url_normalized
+          );
+        } else if (!result.retry || attempts >= LINK_EXTRACT_ATTEMPTS) {
+          outcome.extractFailed++;
           this.sql.exec(
             `UPDATE link_bodies SET state = 'failed', attempts = ?, waiters = '[]', settled_at = ?
               WHERE url_normalized = ?`,
@@ -518,6 +534,7 @@ export class Percolator extends DurableObject<Env> {
             row.url_normalized
           );
         } else {
+          outcome.extractFailed++;
           this.sql.exec(
             `UPDATE link_bodies SET attempts = ?, next_at = ? WHERE url_normalized = ?`,
             attempts,
@@ -525,32 +542,53 @@ export class Percolator extends DurableObject<Env> {
             row.url_normalized
           );
         }
-        continue;
       }
-      outcome.extracted++;
-      this.sql.exec(
-        `UPDATE link_bodies SET state = 'done', attempts = ?, waiters = '[]', settled_at = ?
-          WHERE url_normalized = ?`,
-        row.attempts + 1,
-        settledAt,
-        row.url_normalized
-      );
-
-      // The re-check: only readers who still have a query over follows links.
-      const waiting = new Set(JSON.parse(row.waiters) as string[]);
-      const recheck = queries.filter((q) => q.coversFollows && waiting.has(q.userDid));
-      if (recheck.length === 0 || !result.text) continue;
-      const shares = await readSharesOfUrl(
-        this.env,
-        [...new Set(recheck.map((q) => q.userDid))],
-        row.url_normalized,
-        windowStart
-      );
-      budget.subrequests -= 1;
-      const docs = buildShareDocs(shares, new Map([[row.url_normalized, result.text]]), new Set());
-      outcome.candidates += docs.length;
-      outcome.hits += await this.writeHits(this.match(docs, recheck), budget);
     }
+
+    const waiting = this.sql
+      .exec(
+        `SELECT url_normalized, waiters FROM link_bodies
+          WHERE state = 'done' AND waiters <> '[]' ORDER BY settled_at LIMIT ?`,
+        LINK_EXTRACTIONS_PER_PASS * 2
+      )
+      .toArray() as { url_normalized: string; waiters: string }[];
+    const windowStart = Date.now() - MATCH_WINDOW_MS;
+    for (const row of waiting) {
+      if (budget.subrequests < 100) break;
+      const urlNormalized = row.url_normalized;
+      try {
+        const readers = new Set(JSON.parse(row.waiters) as string[]);
+        // Only readers who still have a query over follows links.
+        const recheck = queries.filter((q) => q.coversFollows && readers.has(q.userDid));
+        let text = texts.get(urlNormalized);
+        if (recheck.length > 0 && text === undefined) {
+          budget.subrequests -= 1;
+          text = (await readLinkBody(this.env, urlNormalized)) ?? '';
+        }
+        if (recheck.length > 0 && text) {
+          const shares = await readSharesOfUrl(
+            this.env,
+            [...new Set(recheck.map((q) => q.userDid))],
+            urlNormalized,
+            windowStart
+          );
+          budget.subrequests -= 1;
+          const docs = buildShareDocs(shares, new Map([[urlNormalized, text]]), new Set());
+          outcome.candidates += docs.length;
+          outcome.hits += await this.writeHits(this.match(docs, recheck), budget);
+        }
+        // Only the waiters this re-check covered: shareDocs can't add any
+        // mid-loop (a pass is one at a time), but keep the update exact anyway.
+        this.sql.exec(
+          `UPDATE link_bodies SET waiters = '[]' WHERE url_normalized = ? AND waiters = ?`,
+          urlNormalized,
+          row.waiters
+        );
+      } catch (error) {
+        log.warn('percolator_link_recheck_failed', serializeError(error));
+      }
+    }
+
     const more = this.sql
       .exec(
         `SELECT 1 FROM link_bodies WHERE state = 'pending' AND next_at <= ? LIMIT 1`,
@@ -707,20 +745,30 @@ export class Percolator extends DurableObject<Env> {
       this.env.DB.prepare(`DELETE FROM channel_match_sources WHERE matched_at < ?`).bind(cutoff),
     ]);
 
-    // Stored articles go when the shares that wanted them do.
+    // Stored articles go when the shares that wanted them do. A failure here
+    // leaves them for the next run rather than failing the pass.
     const linkCutoff = Date.now() - FOLLOW_LINKS_RETENTION_MS;
-    const expired = this.sql
-      .exec(
-        `SELECT url_normalized, state FROM link_bodies WHERE requested_at < ? LIMIT 1000`,
-        linkCutoff
-      )
-      .toArray() as { url_normalized: string; state: string }[];
-    await deleteLinkBodies(
-      this.env,
-      expired.filter((r) => r.state === 'done').map((r) => r.url_normalized)
-    );
-    for (const row of expired) {
-      this.sql.exec(`DELETE FROM link_bodies WHERE url_normalized = ?`, row.url_normalized);
+    try {
+      for (let round = 0; round < LINK_RETENTION_ROUNDS; round++) {
+        const expired = this.sql
+          .exec(
+            `SELECT url_normalized, state FROM link_bodies WHERE requested_at < ? LIMIT 1000`,
+            linkCutoff
+          )
+          .toArray() as { url_normalized: string; state: string }[];
+        if (expired.length === 0) break;
+        await deleteLinkBodies(
+          this.env,
+          expired.filter((r) => r.state === 'done').map((r) => r.url_normalized)
+        );
+        this.ctx.storage.transactionSync(() => {
+          for (const row of expired) {
+            this.sql.exec(`DELETE FROM link_bodies WHERE url_normalized = ?`, row.url_normalized);
+          }
+        });
+      }
+    } catch (error) {
+      log.warn('percolator_link_retention_failed', serializeError(error));
     }
     this.sql.exec(`DELETE FROM extract_budget WHERE day < ?`, Math.floor(Date.now() / DAY_MS) - 1);
     this.setMeta('retention_at', String(Date.now()));

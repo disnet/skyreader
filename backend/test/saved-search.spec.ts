@@ -655,7 +655,7 @@ async function addShare(
       `Sharer ${shareSeq}`,
       share.sharedAt ?? Date.now() - 60_000,
       // Settled past the matcher's write-clock lag.
-      share.firstSeenAt === undefined ? Date.now() - 15_000 : share.firstSeenAt
+      share.firstSeenAt === undefined ? Date.now() - 90_000 : share.firstSeenAt
     )
     .run();
   return postUri;
@@ -806,6 +806,22 @@ describe('Percolator: follows links', () => {
       .bind(user.did, uuid)
       .first<{ body_skipped: number }>();
     expect(row?.body_skipped).toBe(1);
+
+    // A new day: someone else shares the link, its article is read, and the
+    // match no longer says it was skipped.
+    await runInDurableObject(percolatorStub(env), (_instance, state) => {
+      state.storage.sql.exec(`DELETE FROM extract_budget WHERE user_did = ?`, user.did);
+    });
+    vi.restoreAllMocks();
+    stubExtract({ [onCard]: '<p>Permafrost, at length.</p>' });
+    await addShare(user, { url: onCard, text: 'again' });
+    await drain();
+    const after = await env.DB.prepare(
+      `SELECT body_skipped FROM channel_matches WHERE user_did = ? AND channel_uuid = ?`
+    )
+      .bind(user.did, uuid)
+      .first<{ body_skipped: number }>();
+    expect(after?.body_skipped).toBe(0);
   });
 
   it('backfills the stored week of shares, and lists who shared each story', async () => {

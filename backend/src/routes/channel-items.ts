@@ -6,7 +6,7 @@
 
 import type { Env, FeedItem, Session } from '../types';
 import { splitSnippet } from '../durable-objects/search-index';
-import { getSavedSearchAccess } from '../services/saved-search';
+import { getSavedSearchAccess, type LinkCard, type Sharer } from '../services/saved-search';
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 100;
@@ -47,14 +47,6 @@ interface SharerRow {
   source_ref: string;
   item_key: string;
   meta_json: string | null;
-}
-
-interface Sharer {
-  did: string;
-  postUri: string;
-  handle: string | null;
-  name: string | null;
-  avatar: string | null;
 }
 
 function parseJson<T>(raw: string | null): T | null {
@@ -207,12 +199,7 @@ export async function handleChannelItems(
         item: { ...item, seq: row.feed_seq, feedUrl: row.source_ref, read: row.read === 1 },
       });
     } else if (row.source_kind === 'follows') {
-      const link = parseJson<{
-        url: string;
-        title: string | null;
-        description: string | null;
-        thumb: string | null;
-      }>(row.link_json);
+      const link = parseJson<LinkCard>(row.link_json);
       if (!link?.url) continue;
       items.push({
         ...base,
