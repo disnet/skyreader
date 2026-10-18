@@ -264,6 +264,11 @@ directly, no concept tournament.
         >Save by link or upload; read and highlight them like any article.</span
       >
     </li>
+    <li class="benefit">
+      <span class="benefit-figure">Pictures kept</span>
+      <span class="benefit-desc">A saved article keeps its pictures, so they outlast the site.</span
+      >
+    </li>
     {#if searchLive}
       <li class="benefit">
         <span class="benefit-figure">Search everything you’ve read</span>
@@ -379,6 +384,13 @@ directly, no concept tournament.
             <span class="feature-text">
               PDFs and EPUBs, by link or upload
               <span class="feature-sub">papers, reports and books, read and highlighted here</span>
+            </span>
+          </li>
+          <li>
+            <span class="feature-check"><Icon name="check" size={16} strokeWidth={2.5} /></span>
+            <span class="feature-text">
+              Pictures kept with saved articles
+              <span class="feature-sub">so they still show after the site loses them</span>
             </span>
           </li>
           {#if searchLive}
