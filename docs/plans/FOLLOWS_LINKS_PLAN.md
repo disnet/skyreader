@@ -156,7 +156,8 @@ follows links are also refreshed in the background
 (`backend/src/services/follow-links-background.ts`):
 
 - **Who.** Anyone who opened follows links in the last 7 days (`follow_link_sync.last_seen_at`,
-  stamped by `GET /api/v2/following-links` at most hourly), plus Supporters who turned follows
+  stamped by `GET /api/v2/following-links` at most hourly; Home's lane and the feed page call it,
+  so in practice this is anyone who used the app this week with the permission granted), plus Supporters who turned follows
   links on and have a saved search whose sources take in `bsky~follows`. Nobody else is polled: a
   reader who drifts away stops costing anything after a week, and their sessions lapse as before.
   A saved-search reader's session is kept refreshed for as long as the query covers follows links;

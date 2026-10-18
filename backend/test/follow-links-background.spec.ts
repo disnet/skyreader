@@ -297,6 +297,88 @@ describe('follow links background refresh', () => {
       expect(await getBackgroundSession(env, A, () => false)).toBeNull();
     });
 
+    it('refreshes a localhost session as a public client, with no assertion', async () => {
+      await seedUser(A);
+      const localId =
+        'http://localhost?redirect_uri=http%3A%2F%2F127.0.0.1%3A8787%2Fapi%2Fauth%2Fcallback&scope=atproto';
+      await seedSession(A, { clientId: localId, expiresAt: Date.now() + MINUTE });
+      const tokenBodies: URLSearchParams[] = [];
+      const auth = stubAuthServer(tokenBodies);
+      globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const res = await auth(new URL(String(input)), init);
+        if (!res) throw new Error(`Unexpected fetch: ${input}`);
+        return res;
+      }) as unknown as typeof fetch;
+
+      expect((await getBackgroundSession(env, A, () => true))?.accessToken).toBe('new-access');
+      expect(tokenBodies[0].get('client_id')).toBe(localId);
+      expect(tokenBodies[0].get('client_assertion')).toBeNull();
+    });
+
+    it('never makes the transient failure that deletes a session', async () => {
+      await seedUser(A);
+      await seedSession(A, { expiresAt: Date.now() - MINUTE });
+      await env.DB.prepare('UPDATE sessions SET refresh_failures = 3 WHERE did = ?').bind(A).run();
+      const auth = stubAuthServer([]);
+      globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const u = new URL(String(input));
+        if (u.href === `${AUTH}/oauth/token`) return new Response('upstream down', { status: 503 });
+        const res = await auth(u, init);
+        if (!res) throw new Error(`Unexpected fetch: ${input}`);
+        return res;
+      }) as unknown as typeof fetch;
+
+      // The fourth failure is recorded; at four, the background stops trying.
+      expect(await getBackgroundSession(env, A, () => true)).toBeNull();
+      await env.DB.prepare('UPDATE sessions SET refresh_locked_until = NULL WHERE did = ?')
+        .bind(A)
+        .run();
+      expect(await getBackgroundSession(env, A, () => true)).toBeNull();
+      const row = await env.DB.prepare('SELECT refresh_failures FROM sessions WHERE did = ?')
+        .bind(A)
+        .first<{ refresh_failures: number }>();
+      expect(row?.refresh_failures).toBe(4);
+    });
+
+    it('leaves a refresh token rotated under it alone instead of sending the old one', async () => {
+      await seedUser(A);
+      await seedSession(A, { expiresAt: Date.now() - MINUTE });
+      globalThis.fetch = vi.fn(async () => {
+        throw new Error('no fetch expected');
+      }) as unknown as typeof fetch;
+      // A request-side refresh lands between the session read and the lock.
+      const prepare = env.DB.prepare.bind(env.DB);
+      let fired = false;
+      vi.spyOn(env.DB, 'prepare').mockImplementation((sql: string) => {
+        if (!fired && /SET refresh_in_progress = \?/.test(sql)) {
+          fired = true;
+          return {
+            bind: (...args: unknown[]) => ({
+              run: async () => {
+                await prepare(
+                  `UPDATE sessions SET refresh_token = 'rotated', access_token = 'fresh', expires_at = ? WHERE did = ?`
+                )
+                  .bind(Date.now() + 3600000, A)
+                  .run();
+                return prepare(sql)
+                  .bind(...args)
+                  .run();
+              },
+            }),
+          } as unknown as D1PreparedStatement;
+        }
+        return prepare(sql);
+      });
+
+      expect(await getBackgroundSession(env, A, () => true)).toBeNull();
+      const row = await prepare('SELECT refresh_token FROM sessions WHERE did = ?')
+        .bind(A)
+        .first<{ refresh_token: string }>();
+      expect(row?.refresh_token).toBe('rotated');
+      // The old token never went to the auth server.
+      expect(globalThis.fetch).not.toHaveBeenCalled();
+    });
+
     it('has nothing for a session that predates the stored client', async () => {
       await seedUser(A);
       await seedSession(A, { clientId: null });

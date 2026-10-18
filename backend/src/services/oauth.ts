@@ -898,7 +898,10 @@ export async function getBackgroundSession(
       WHERE did = ? AND client_id IS NOT NULL AND COALESCE(refresh_failures, 0) < ?
       ORDER BY expires_at DESC`
   )
-    .bind(did, MAX_REFRESH_FAILURES)
+    // One short of the cap: the failure that deletes a session after transient
+    // errors is left to a request, so an auth-server outage can't sign out a
+    // reader who's away. (A permanent error still deletes it, as it would anyway.)
+    .bind(did, MAX_REFRESH_FAILURES - 1)
     .all<{ session_id: string; client_id: string; granted_scopes: string | null }>();
   const row = (rows.results ?? []).find((r) => usable(r.granted_scopes ?? undefined));
   if (!row) return null;
@@ -937,9 +940,13 @@ async function refreshSession(
     SET refresh_in_progress = ?
     WHERE session_id = ?
     AND (refresh_in_progress IS NULL OR refresh_in_progress < ?)
+    AND refresh_token = ?
   `
   )
-    .bind(lockAcquireTime, sessionId, staleThreshold)
+    // The refresh token this caller read: if a concurrent refresh rotated it
+    // since, sending the old one would come back invalid_grant and delete the
+    // session. Not taking the lock leaves the caller to pick up the new tokens.
+    .bind(lockAcquireTime, sessionId, staleThreshold, session.refreshToken)
     .run();
 
   if (!lockResult.meta?.changes || lockResult.meta.changes === 0) {
@@ -1060,9 +1067,14 @@ async function refreshSession(
       body: refreshBody,
     });
 
+    // A failed response's body, read once: the nonce check and the failure
+    // handling below both need it, and a body can only be read once.
+    let failureText: string | null = null;
+
     // Handle DPoP nonce requirement
     if (!tokenResponse.ok) {
       const errorText = await tokenResponse.text();
+      failureText = errorText;
       const errorData = (() => {
         try {
           return JSON.parse(errorText) as { error?: string };
@@ -1106,12 +1118,13 @@ async function refreshSession(
           },
           body: retryBody,
         });
+        failureText = null;
       }
     }
 
     // Handle refresh failure with resilience
     if (!tokenResponse.ok) {
-      const errorText = await tokenResponse.text();
+      const errorText = failureText ?? (await tokenResponse.text());
       const errorData = (() => {
         try {
           return JSON.parse(errorText) as { error?: string };
