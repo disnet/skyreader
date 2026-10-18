@@ -4,6 +4,7 @@ import worker from '../src/index';
 import { GRANULAR_SCOPES } from '../src/config/scopes';
 import { sha256Hex } from '../src/utils/sha256';
 import { fillExtractedContent } from '../src/services/saved-content';
+import { MAX_SNAPSHOTS_PER_SAVE } from '../src/services/archive/snapshots';
 
 // A save keeps what it captured: each new body becomes an immutable snapshot in
 // R2 with its hash, page, time and method (services/archive/snapshots.ts).
@@ -207,6 +208,53 @@ describe('save snapshots', () => {
       .first<{ n: number }>();
     expect(left!.n).toBe(0);
     expect(await env.SAVED_FILES.head(row!.r2_key)).toBeNull();
+  });
+
+  it('stops keeping captures of one save past the cap, keeping the first ones', async () => {
+    await call(
+      request('/api/saved', 'POST', { url: URL, rkey: 'aaaaaaaaaaaaa', content: '<p>0</p>' })
+    );
+    for (let i = 1; i <= MAX_SNAPSHOTS_PER_SAVE; i++) {
+      await call(
+        request('/api/saved', 'POST', {
+          url: URL,
+          rkey: 'bbbbbbbbbbbbb',
+          content: `<p>${i}</p>`,
+          updateContent: true,
+        })
+      );
+    }
+    const list = await snapshots('aaaaaaaaaaaaa');
+    expect(list).toHaveLength(MAX_SNAPSHOTS_PER_SAVE);
+    expect(list[0].sha256).toBe(await sha256Hex(new TextEncoder().encode('<p>0</p>')));
+  });
+
+  it('deletes the snapshots of every save under a guid', async () => {
+    for (const rkey of ['aaaaaaaaaaaaa', 'bbbbbbbbbbbbb']) {
+      await env.DB.prepare(
+        `INSERT INTO saved_articles (user_did, rkey, url, saved_at, created_at, source, item_guid)
+         VALUES (?, ?, '', 1, 1, 'feed', 'g-dup')`
+      )
+        .bind(DID, rkey)
+        .run();
+      await fillExtractedContent(env, { content: `<p>${rkey}</p>`, wordCount: 1 } as any, {
+        userDid: DID,
+        rkey,
+      });
+    }
+    const before = await env.DB.prepare(
+      'SELECT COUNT(*) AS n FROM saved_snapshots WHERE user_did = ?'
+    )
+      .bind(DID)
+      .first<{ n: number }>();
+    expect(before!.n).toBe(2);
+    expect((await call(request('/api/saved/by-guid/g-dup', 'DELETE'))).status).toBe(200);
+    const after = await env.DB.prepare(
+      'SELECT COUNT(*) AS n FROM saved_snapshots WHERE user_did = ?'
+    )
+      .bind(DID)
+      .first<{ n: number }>();
+    expect(after!.n).toBe(0);
   });
 
   it("answers 404 for a save that isn't the reader's", async () => {

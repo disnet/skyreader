@@ -51,6 +51,7 @@
   import { useHighlights } from '$lib/hooks/useHighlights.svelte';
   import { useCommunityHighlights } from '$lib/hooks/useCommunityHighlights.svelte';
   import { auth } from '$lib/stores/auth.svelte';
+  import { syncStore } from '$lib/stores/sync.svelte';
   import { linkblogStore } from '$lib/stores/linkblog.svelte';
   import { shareComposerStore } from '$lib/stores/shareComposer.svelte';
   import { shareDraftsStore } from '$lib/stores/shareDrafts.svelte';
@@ -450,7 +451,7 @@
   $effect(() => {
     captures = [];
     const rkey = captureSaveRkey;
-    if (!rkey || !auth.user || !navigator.onLine) return;
+    if (!rkey || !auth.user || !syncStore.isOnline) return;
     let cancelled = false;
     api
       .getSavedSnapshots(rkey)

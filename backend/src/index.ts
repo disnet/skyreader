@@ -829,7 +829,7 @@ async function route(
       break;
     case /^\/api\/saved\/[^/]+\/snapshots$/.test(url.pathname):
       if (!session) return unauthorizedResponse(headers);
-      response = await handleGetSavedSnapshots(request, env);
+      response = await handleGetSavedSnapshots(request, env, session);
       break;
     case /^\/api\/saved\/[^/]+\/asset$/.test(url.pathname):
       if (!session) return unauthorizedResponse(headers);

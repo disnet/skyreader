@@ -1367,6 +1367,12 @@ export async function handleDeleteSavedByGuid(
   }
 
   try {
+    // Every save under this guid goes (normally one), and each one's snapshots with it.
+    const guidRkeys = await env.DB.prepare(
+      'SELECT rkey FROM saved_articles WHERE user_did = ? AND item_guid = ?'
+    )
+      .bind(session.did, guid)
+      .all<{ rkey: string }>();
     const row = await env.DB.prepare(
       'SELECT rkey, record_uri, item_guid, url_normalized FROM saved_articles WHERE user_did = ? AND item_guid = ?'
     )
@@ -1389,7 +1395,11 @@ export async function handleDeleteSavedByGuid(
     await env.DB.prepare('DELETE FROM saved_articles WHERE user_did = ? AND item_guid = ?')
       .bind(session.did, guid)
       .run();
-    await deleteSnapshots(env, session.did, [row.rkey]);
+    await deleteSnapshots(
+      env,
+      session.did,
+      guidRkeys.results.map((r) => r.rkey)
+    );
     await removeSavedFromCollections(env, session.did, [row.rkey]);
 
     const settings = await getUserSettings(env, session.did);
@@ -1413,15 +1423,17 @@ export async function handleDeleteSavedByGuid(
 
 // GET /api/saved/:rkey/snapshots — the captures of a save's body, oldest first:
 // when, from where, how, and the body's hash. The bodies themselves stay in R2.
-export async function handleGetSavedSnapshots(request: Request, env: Env): Promise<Response> {
+export async function handleGetSavedSnapshots(
+  request: Request,
+  env: Env,
+  session: Session
+): Promise<Response> {
   const json = (body: unknown, status = 200) =>
     new Response(JSON.stringify(body), {
       status,
       headers: { 'Content-Type': 'application/json' },
     });
   if (request.method !== 'GET') return json({ error: 'Method not allowed' }, 405);
-  const session = await getSessionFromRequest(request, env);
-  if (!session) return json({ error: 'Unauthorized' }, 401);
 
   const rkey = new URL(request.url).pathname.split('/')[3];
   if (!rkey || !isValidRkey(rkey)) return invalidRkeyResponse();

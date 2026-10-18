@@ -14,6 +14,7 @@ import type { Env } from '../../types';
 import { generateTid } from '../../utils/tid';
 import { sha256Hex } from '../../utils/sha256';
 import { log } from '../../utils/logger';
+import { reportError } from '../../observability/sentry';
 import type { SnapshotRow } from './records';
 
 export const SNAPSHOT_METHODS = ['live-dom', 'server', 'feed', 'record', 'upload'] as const;
@@ -27,6 +28,11 @@ export function isSnapshotMethod(value: unknown): value is SnapshotMethod {
 // emptyExtractionNote, frontend failedSaveBody, the extension's noTextNote). It
 // is not a capture of the page, so it is never kept as one.
 const FAILED_CAPTURE_MARKER = 'data-skyreader-note="fetch-failed"';
+
+// Captures kept per save. Re-saving with new text skips the monthly save limit,
+// so without a ceiling one save could grow without bound. The first captures are
+// the ones worth keeping (the page as it was), so later ones past the cap are dropped.
+export const MAX_SNAPSHOTS_PER_SAVE = 20;
 
 export function snapshotR2Key(did: string, saveRkey: string, rkey: string): string {
   return `snapshots/${did}/${saveRkey}/${rkey}.html`;
@@ -53,12 +59,17 @@ export async function captureSnapshot(env: Env, input: CaptureInput): Promise<Sn
     const bytes = new TextEncoder().encode(body);
     const sha256 = await sha256Hex(bytes);
     const latest = await env.DB.prepare(
-      `SELECT sha256 FROM saved_snapshots WHERE user_did = ? AND save_rkey = ?
+      `SELECT sha256, (SELECT COUNT(*) FROM saved_snapshots WHERE user_did = ?1 AND save_rkey = ?2) AS n
+       FROM saved_snapshots WHERE user_did = ?1 AND save_rkey = ?2
        ORDER BY captured_at DESC, rkey DESC LIMIT 1`
     )
       .bind(did, saveRkey)
-      .first<{ sha256: string }>();
+      .first<{ sha256: string; n: number }>();
     if (latest?.sha256 === sha256) return null;
+    if (latest && latest.n >= MAX_SNAPSHOTS_PER_SAVE) {
+      log.warn('snapshot_cap_reached', { method });
+      return null;
+    }
 
     const rkey = generateTid();
     const row: SnapshotRow = {
@@ -114,6 +125,7 @@ export async function captureSnapshot(env: Env, input: CaptureInput): Promise<Sn
     return row;
   } catch (error) {
     log.error('snapshot_capture_failed', { method, error: String(error) });
+    reportError(error, { tags: { op: 'snapshot_capture' } });
     return null;
   }
 }
@@ -151,6 +163,7 @@ export async function deleteSnapshots(env: Env, did: string, saveRkeys: string[]
     } catch (error) {
       // The rows are gone; an orphaned object costs storage, not correctness.
       log.error('snapshot_delete_failed', { error: String(error) });
+      reportError(error, { tags: { op: 'snapshot_delete' } });
     }
   }
 }
