@@ -302,3 +302,56 @@ describe('POST /api/saved — content type of a URL save', () => {
     expect((await getRow()).content_type).toBe('webpage');
   });
 });
+
+describe('POST /api/saved — the page’s declared DOI', () => {
+  beforeEach(() => reset());
+
+  it('stores a DOI on a URL save, and keeps it when an upgrade names none', async () => {
+    await call(
+      post({
+        url: URL,
+        rkey: 'aaaaaaaaaaaaa',
+        content: '<p>Text</p>',
+        doi: '10.1145/3290605.3300233',
+      })
+    );
+    expect((await getRow()).doi).toBe('10.1145/3290605.3300233');
+
+    await call(
+      post({ url: URL, rkey: 'bbbbbbbbbbbbb', updateContent: true, content: '<p>Better</p>' })
+    );
+    expect((await getRow()).doi).toBe('10.1145/3290605.3300233');
+
+    await call(
+      post({
+        url: URL,
+        rkey: 'ccccccccccccc',
+        updateContent: true,
+        content: '<p>Best</p>',
+        doi: '10.1145/3290605.3300234',
+      })
+    );
+    expect((await getRow()).doi).toBe('10.1145/3290605.3300234');
+  });
+
+  it('stores it on a feed save', async () => {
+    await call(
+      post({ url: URL, rkey: 'aaaaaaaaaaaaa', fromFeed: true, itemGuid: 'g1', doi: '10.1000/xyz' })
+    );
+    expect((await getRow()).doi).toBe('10.1000/xyz');
+  });
+
+  it('drops anything that is not a DOI and nothing more', async () => {
+    for (const [i, doi] of [
+      'see 10.1000/xyz',
+      '10.1000/xyz.',
+      'https://doi.org/10.1000/xyz',
+      `10.1000/${'x'.repeat(400)}`,
+      42,
+    ].entries()) {
+      await reset();
+      await call(post({ url: URL, rkey: `aaaaaaaaaaaa${i}`, content: '<p>Text</p>', doi }));
+      expect((await getRow()).doi).toBeNull();
+    }
+  });
+});

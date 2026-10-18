@@ -515,6 +515,7 @@ function createSavesStore() {
         publishedAt: extracted.published || undefined,
         wordCount: wordCount || undefined,
         contentType: extracted.contentType,
+        doi: extracted.doi || undefined,
       });
 
       const savedItem: SavedItem = {
@@ -718,9 +719,12 @@ function createSavesStore() {
           let content = rssBody;
           let wordCount: number | null = null;
           let domain: string | null = null;
+          // The page's declared DOI is the article's whichever body is kept.
+          let doi: string | undefined;
           try {
             if (extraction.status === 'rejected') throw extraction.reason;
             const extracted = extraction.value;
+            doi = extracted?.doi || undefined;
             if (extracted && preferExtractedBody(rssBody, extracted.content)) {
               content = extracted.content;
               wordCount = extracted.wordCount || null;
@@ -746,6 +750,7 @@ function createSavesStore() {
             publishedAt: article.publishedAt,
             domain: domain ?? undefined,
             wordCount: wordCount ?? undefined,
+            doi,
           });
 
           // Update with extracted content + server response

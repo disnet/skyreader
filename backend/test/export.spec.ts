@@ -108,6 +108,25 @@ describe('identifiers on a PDF first page', () => {
     expect(
       scholarlyIds({ url: 'https://example.com/post', contentType: 'webpage', firstPageHtml: html })
     ).toEqual({});
+    // The DOI the page declared comes first, its URL's arXiv id still counts.
+    expect(scholarlyIds({ url: 'https://example.com/paper', doi: '10.1234/declared' })).toEqual({
+      doi: '10.1234/declared',
+    });
+    expect(
+      scholarlyIds({
+        url: 'https://dl.acm.org/doi/10.1145/url',
+        doi: '10.1145/declared',
+        contentType: 'pdf',
+        firstPageHtml: html,
+      })
+    ).toEqual({ doi: '10.1145/declared' });
+    expect(
+      scholarlyIds({ url: 'https://arxiv.org/abs/1706.03762', doi: '10.5555/3295222.3295349' })
+    ).toEqual({ doi: '10.5555/3295222.3295349', arxivId: '1706.03762' });
+    expect(
+      scholarlyIds({ url: 'https://example.com/p', doi: '10.48550/arXiv.1706.03762' })
+    ).toEqual({ doi: '10.48550/arXiv.1706.03762', arxivId: '1706.03762' });
+    expect(scholarlyIds({ url: 'https://example.com/p', doi: 'not a doi' })).toEqual({});
     // An arXiv PDF's page DOI is its journal version: kept alongside the id.
     expect(
       scholarlyIds({
@@ -368,11 +387,12 @@ async function save(
     contentType?: string;
     content?: string;
     source?: string;
+    doi?: string;
   }
 ) {
   await env.DB.prepare(
-    `INSERT INTO saved_articles (user_did, rkey, record_uri, url, title, content, saved_at, source, item_guid, content_type)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO saved_articles (user_did, rkey, record_uri, url, title, content, saved_at, source, item_guid, content_type, doi)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       user.did,
@@ -384,7 +404,8 @@ async function save(
       opts.savedAt,
       opts.source ?? (opts.itemGuid ? 'feed' : 'url'),
       opts.itemGuid ?? null,
-      opts.contentType ?? null
+      opts.contentType ?? null,
+      opts.doi ?? null
     )
     .run();
 }
@@ -570,6 +591,19 @@ describe('GET /api/export', () => {
     expect(md).not.toContain('Untitled');
     // B has no save time of its own, so it carries none.
     expect(md.slice(md.indexOf('## Backed only B'))).not.toContain('Saved:');
+  });
+
+  it('cites a save by the DOI its page declared', async () => {
+    const user = await createUser();
+    await save(user, {
+      rkey: '3mwhuiodre74s',
+      url: 'https://www.nature.example/articles/nature12373',
+      title: 'Declared',
+      savedAt: 1_000,
+      doi: '10.1038/nature12373',
+    });
+    const bib = await (await exportAs(user, 'bibtex')).text();
+    expect(bib).toContain('doi = {10.1038/nature12373}');
   });
 
   it('exports an empty library', async () => {

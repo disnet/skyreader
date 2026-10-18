@@ -32,6 +32,7 @@ import { parseYouTubeFeedUrl, type YouTubeFeedSource } from './youtube-api';
 import { signRequestHeaders, signedDirectory, type WebBotAuth } from './web-bot-auth';
 import { reportError, VERSION } from './instrument';
 import { siteSourceFor } from './site-sources';
+import { doiFromMetaTags } from './citation-ids';
 import {
   isDeclaredEpub,
   isDeclaredPdf,
@@ -479,7 +480,8 @@ export const FEED_PARSER_VERSION = 3;
 //      reported as blocked instead of cached as the article
 //   7: lazy-loaded iframes (`data-src`, `data-lazy-src`…) get their real src
 //      before Defuddle runs, so an embedded video survives into the reader
-export const EXTRACTOR_VERSION = 7;
+//   8: the DOI a page declares in its <head> (`doi`, citation-ids.ts)
+export const EXTRACTOR_VERSION = 8;
 
 function hostOf(url: string): string | null {
   try {
@@ -547,6 +549,8 @@ export interface ExtractedArticle {
   wordCount: number;
   /** Set when the source was a PDF; absent for a web page. */
   contentType?: 'pdf';
+  /** The DOI the page named in its <head>, if any (citation-ids.ts). */
+  doi?: string | null;
 }
 
 // Coerce a Defuddle date string to a valid ISO timestamp, rejecting obviously
@@ -724,6 +728,7 @@ export async function extractArticle(html: string, url: string): Promise<Extract
     image: result.image || null,
     published: toValidISODate(result.published),
     wordCount: result.wordCount || 0,
+    doi: doiFromMetaTags(result.metaTags),
   };
 }
 
