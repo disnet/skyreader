@@ -22,7 +22,16 @@ const DOI_META_NAMES = [
 ];
 
 // A bare DOI, or one written as doi:…, info:doi/… or a doi.org link.
-const DOI_VALUE = /^(?:doi:\s*|info:doi\/|https?:\/\/(?:dx\.)?doi\.org\/)?(10\.\d{4,9}\/\S+)$/i;
+const DOI_VALUE =
+  /^(?:doi:\s*|info:doi\/|https?:\/\/(?:dx\.|www\.)?doi\.org\/)?(10\.\d{4,9}\/\S+)$/i;
+
+function decodeOr(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
 
 export function doiFromMetaTags(tags: readonly MetaTag[] | null | undefined): string | null {
   if (!tags) return null;
@@ -30,7 +39,10 @@ export function doiFromMetaTags(tags: readonly MetaTag[] | null | undefined): st
     for (const tag of tags) {
       const key = (tag.name || tag.property || '').trim().toLowerCase();
       if (key !== wanted) continue;
-      const match = tag.content?.trim().match(DOI_VALUE);
+      const raw = tag.content?.trim();
+      if (!raw) continue;
+      // A doi.org link's DOI may be percent-encoded, as any URL path may.
+      const match = (/^https?:/i.test(raw) ? decodeOr(raw) : raw).match(DOI_VALUE);
       if (match) return match[1];
     }
   }

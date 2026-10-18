@@ -108,21 +108,21 @@ describe('identifiers on a PDF first page', () => {
     expect(
       scholarlyIds({ url: 'https://example.com/post', contentType: 'webpage', firstPageHtml: html })
     ).toEqual({});
-    // The DOI the page declared comes first, its URL's arXiv id still counts.
+    // The DOI the page declared fills what the URL didn't name, ahead of a PDF's page.
     expect(scholarlyIds({ url: 'https://example.com/paper', doi: '10.1234/declared' })).toEqual({
       doi: '10.1234/declared',
     });
     expect(
       scholarlyIds({
-        url: 'https://dl.acm.org/doi/10.1145/url',
+        url: 'https://example.com/paper.pdf',
         doi: '10.1145/declared',
         contentType: 'pdf',
         firstPageHtml: html,
       })
     ).toEqual({ doi: '10.1145/declared' });
     expect(
-      scholarlyIds({ url: 'https://arxiv.org/abs/1706.03762', doi: '10.5555/3295222.3295349' })
-    ).toEqual({ doi: '10.5555/3295222.3295349', arxivId: '1706.03762' });
+      scholarlyIds({ url: 'https://doi.org/10.5281/zenodo.123', doi: '10.5281/zenodo.100' })
+    ).toEqual({ doi: '10.5281/zenodo.123' });
     expect(
       scholarlyIds({ url: 'https://example.com/p', doi: '10.48550/arXiv.1706.03762' })
     ).toEqual({ doi: '10.48550/arXiv.1706.03762', arxivId: '1706.03762' });

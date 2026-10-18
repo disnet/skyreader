@@ -121,7 +121,7 @@ The **Highlights** page collects every highlight, grouped by article. Its **Revi
 - **Markdown**, for notes apps like Obsidian: each save, with its link, its highlights as quotes, and your notes under them. Pages you highlighted without saving come after your saves.
 - **BibTeX**, for reference managers like Zotero and for LaTeX: one entry per save, with your highlights and notes in its `annote` field.
 
-When a save is a paper, the export carries its DOI and arXiv id. Skyreader reads them from the page's own citation details when you save it, from the link (doi.org, arXiv, bioRxiv, and publisher `/doi/` pages) and, for a saved PDF, from its first page.
+When a save is a paper, the export carries its DOI and arXiv id. Skyreader reads the DOI from the page's own citation details when you save it, and both from the link (doi.org, arXiv, bioRxiv, and publisher `/doi/` pages) and, for a saved PDF, from its first page.
 
 ## Limits
 

@@ -25,6 +25,8 @@ describe('doiFromMetaTags', () => {
       'info:doi/10.1038/nature12373',
       'https://doi.org/10.1038/nature12373',
       'http://dx.doi.org/10.1038/nature12373',
+      'https://www.doi.org/10.1038/nature12373',
+      'https://doi.org/10.1038%2Fnature12373',
     ]) {
       expect(doiFromMetaTags([{ name: 'citation_doi', content }])).toBe('10.1038/nature12373');
     }

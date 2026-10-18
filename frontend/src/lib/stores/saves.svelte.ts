@@ -697,6 +697,9 @@ function createSavesStore() {
       savedSearchStore.upsert(savedItem);
 
       if (canReachBackend()) {
+        // The page's declared DOI is the article's whichever body is kept, and
+        // rides a queued retry too.
+        let doi: string | undefined;
         try {
           // Prefer a clean, full-text extraction of the article (same source as
           // URL saves) over the RSS body. Keep the RSS body when extraction
@@ -719,8 +722,6 @@ function createSavesStore() {
           let content = rssBody;
           let wordCount: number | null = null;
           let domain: string | null = null;
-          // The page's declared DOI is the article's whichever body is kept.
-          let doi: string | undefined;
           try {
             if (extraction.status === 'rejected') throw extraction.reason;
             const extracted = extraction.value;
@@ -786,6 +787,7 @@ function createSavesStore() {
             wordCount: wordCountFrom(rssBody) ?? undefined,
             image: article.imageUrl,
             publishedAt: article.publishedAt,
+            doi,
           } as SavedPayload);
           return savedItem;
         }

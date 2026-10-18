@@ -163,10 +163,9 @@ export function idsFromFirstPage(text: string): ScholarlyIds {
 }
 
 /**
- * A save's identifiers. The DOI its page declared (`doi`, stored at save time)
- * comes first: it is the publisher's own word on what the page is. Then its
- * URL, which names the thing saved, then (for a PDF) its first page.
- * `firstPageHtml` is the head of the save's body.
+ * A save's identifiers: from its URL first, which names the thing saved, then
+ * the DOI its page declared (`doi`, stored at save time), then (for a PDF) its
+ * first page. `firstPageHtml` is the head of the save's body.
  */
 export function scholarlyIds(save: {
   url: string;
@@ -175,7 +174,9 @@ export function scholarlyIds(save: {
   firstPageHtml?: string | null;
 }): ScholarlyIds {
   const fromUrl = idsFromUrl(save.url);
-  const declared = exactDoi(save.doi);
+  // A doi.org link is exactly what was saved; the page it lands on can declare
+  // another (a Zenodo concept DOI, a journal issue's), so it only fills a gap.
+  const declared = fromUrl.doi ? undefined : exactDoi(save.doi);
   if (declared) {
     fromUrl.doi = declared;
     fromUrl.arxivId ??= arxivIdFromDoi(declared);
