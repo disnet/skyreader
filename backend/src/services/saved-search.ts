@@ -141,6 +141,7 @@ interface SavedQueryRow {
   backfill_state: 'pending' | 'done';
   backfill_feed_after: string;
   backfill_doc_after: string;
+  backfill_follows_after: string;
   created_at: number;
   updated_at: number;
 }
@@ -218,7 +219,7 @@ export async function syncSavedQueries(env: Env, did: string, uuids: string[]): 
             `UPDATE saved_queries
                 SET query = ?, fts_query = ?, source_mode = ?, source_keys = ?, digest = ?,
                     backfill_state = 'pending', backfill_feed_after = '', backfill_doc_after = '',
-                    updated_at = ?
+                    backfill_follows_after = '', updated_at = ?
               WHERE user_did = ? AND channel_uuid = ?`
           ).bind(
             want.query,
@@ -230,9 +231,7 @@ export async function syncSavedQueries(env: Env, did: string, uuids: string[]): 
             did,
             uuid
           ),
-          env.DB.prepare(
-            `DELETE FROM channel_matches WHERE user_did = ? AND channel_uuid = ?`
-          ).bind(did, uuid)
+          ...clearMatchStatements(env, did, uuid)
         );
       } else if (have.digest !== want.digest || have.query !== want.query) {
         statements.push(
@@ -255,10 +254,19 @@ function dropStatements(env: Env, did: string, uuid: string): D1PreparedStatemen
       did,
       uuid
     ),
+    ...clearMatchStatements(env, did, uuid),
+  ];
+}
+
+function clearMatchStatements(env: Env, did: string, uuid: string): D1PreparedStatement[] {
+  return [
     env.DB.prepare(`DELETE FROM channel_matches WHERE user_did = ? AND channel_uuid = ?`).bind(
       did,
       uuid
     ),
+    env.DB.prepare(
+      `DELETE FROM channel_match_sources WHERE user_did = ? AND channel_uuid = ?`
+    ).bind(did, uuid),
   ];
 }
 
@@ -279,11 +287,18 @@ export interface ActiveQuery {
   backfillState: 'pending' | 'done';
   backfillFeedAfter: string;
   backfillDocAfter: string;
+  /** '' before the follows backfill starts, 'done' after, else its JSON cursor. */
+  backfillFollowsAfter: string;
   /** Feed URLs (RSS and newsletters) the query covers. */
   feedUrls: Set<string>;
   /** standard.site document scopes the query covers. */
   docScopes: DocScope[];
+  /** Whether the query takes in the links the reader's follows share. */
+  coversFollows: boolean;
 }
+
+/** The channel source key for follows links (frontend utils/sourceKeys.ts). */
+export const FOLLOWS_SOURCE_KEY = 'bsky~follows';
 
 interface SubscriptionRow {
   user_did: string;
@@ -318,15 +333,25 @@ function docScopeOf(sub: SubscriptionRow): DocScope | null {
 
 /**
  * Resolve one query's source selection against the reader's live subscriptions.
- * Keys that name no subscription (an unsubscribed feed, `bsky~follows` until
- * follows matching lands) cover nothing.
+ * Keys that name no subscription (an unsubscribed feed) cover nothing. Follows
+ * links aren't a subscription: 'include' takes them in by naming them, 'exclude'
+ * by not naming them, and 'all' only when the reader shows them in Everything
+ * (frontend utils/sourceFilter.ts isSourceShown).
  */
 export function resolveQueryScope(
   sourceMode: SourceMode,
   sourceKeys: string[],
-  subs: SubscriptionRow[]
-): { feedUrls: Set<string>; docScopes: DocScope[] } {
+  subs: SubscriptionRow[],
+  followsInEverything = false
+): { feedUrls: Set<string>; docScopes: DocScope[]; coversFollows: boolean } {
   const keys = new Set(sourceKeys);
+  const followsNamed = keys.has(FOLLOWS_SOURCE_KEY);
+  const coversFollows =
+    sourceMode === 'all'
+      ? followsInEverything
+      : sourceMode === 'include'
+        ? followsNamed
+        : !followsNamed;
   const feedUrls = new Set<string>();
   const docScopes: DocScope[] = [];
   for (const sub of subs) {
@@ -344,7 +369,7 @@ export function resolveQueryScope(
       if (scope) docScopes.push(scope);
     }
   }
-  return { feedUrls, docScopes };
+  return { feedUrls, docScopes, coversFollows };
 }
 
 export function docInAnyScope(
@@ -354,10 +379,21 @@ export function docInAnyScope(
   return scopes.some((s) => doc.authorDid === s.did && (!s.pub || doc.siteUri === s.pub));
 }
 
+/** Whether `doc` comes from a source `query` covers. */
+export function queryCovers(query: ActiveQuery, doc: MatchDoc): boolean {
+  if (doc.kind === 'feed') return query.feedUrls.has(doc.sourceRef);
+  if (doc.kind === 'document') {
+    return docInAnyScope({ authorDid: doc.sourceRef, siteUri: doc.siteUri }, query.docScopes);
+  }
+  return query.coversFollows && doc.ownerDid === query.userDid;
+}
+
 /** Tiers whose plan includes saved searches, for filtering in SQL. */
 export function entitledTiers(): string[] {
   return ALL_TIERS.filter((tier) => getLimitsForTier(tier).maxSavedSearches > 0);
 }
+
+type LoadedQueryRow = SavedQueryRow & { tier: string; follows_in_everything: number | null };
 
 /**
  * Every saved query that should match right now: its reader's plan includes
@@ -369,14 +405,16 @@ export async function loadActiveQueries(env: Env): Promise<ActiveQuery[]> {
   const tiers = entitledTiers();
   if (tiers.length === 0) return [];
   const rows = await env.DB.prepare(
-    `SELECT q.*, u.tier FROM saved_queries q JOIN users u ON u.did = q.user_did
+    `SELECT q.*, u.tier, fs.in_everything AS follows_in_everything
+       FROM saved_queries q JOIN users u ON u.did = q.user_did
+       LEFT JOIN follow_link_sync fs ON fs.user_did = q.user_did
       WHERE u.tier IN (${placeholders(tiers.length)})
       ORDER BY q.user_did, q.created_at, q.channel_uuid`
   )
     .bind(...tiers)
-    .all<SavedQueryRow & { tier: string }>();
+    .all<LoadedQueryRow>();
 
-  const byUser = new Map<string, (SavedQueryRow & { tier: string })[]>();
+  const byUser = new Map<string, LoadedQueryRow[]>();
   for (const row of rows.results ?? []) {
     const list = byUser.get(row.user_did) ?? [];
     if (list.length < getLimitsForTier(row.tier).maxSavedSearches) list.push(row);
@@ -407,7 +445,8 @@ export async function loadActiveQueries(env: Env): Promise<ActiveQuery[]> {
       const scope = resolveQueryScope(
         q.source_mode,
         parseJson<string[]>(q.source_keys) ?? [],
-        subs
+        subs,
+        q.follows_in_everything === 1
       );
       active.push({
         userDid: did,
@@ -417,6 +456,7 @@ export async function loadActiveQueries(env: Env): Promise<ActiveQuery[]> {
         backfillState: q.backfill_state,
         backfillFeedAfter: q.backfill_feed_after,
         backfillDocAfter: q.backfill_doc_after,
+        backfillFollowsAfter: q.backfill_follows_after,
         ...scope,
       });
     }
@@ -428,9 +468,10 @@ export async function loadActiveQueries(env: Env): Promise<ActiveQuery[]> {
 
 /** One item, as the matcher indexes it. */
 export interface MatchDoc {
-  kind: 'feed' | 'document';
+  kind: 'feed' | 'document' | 'follows';
+  /** What read state is filed under: guid, document URI, or a link's normalized URL. */
   itemKey: string;
-  /** feed_url for feed items, the author DID for documents. */
+  /** feed_url for feed items, the author DID for documents, the first sharer's DID for links. */
   sourceRef: string;
   /** Documents only: the `site` the record names, for publication scoping. */
   siteUri: string;
@@ -441,6 +482,29 @@ export interface MatchDoc {
   sourceTitle: string;
   body: string;
   publishedAt: number | null;
+  /** Follows links only: whose timeline the shares are in. */
+  ownerDid?: string;
+  /** Follows links only: everyone in that timeline who shared it. */
+  sharers?: Sharer[];
+  /** Follows links only: the link card, kept on the match (shares expire in a week). */
+  link?: LinkCard;
+  /** Follows links only: matched without the article, the reader's extraction budget being spent. */
+  bodySkipped?: boolean;
+}
+
+export interface Sharer {
+  did: string;
+  postUri: string;
+  handle: string | null;
+  name: string | null;
+  avatar: string | null;
+}
+
+export interface LinkCard {
+  url: string;
+  title: string | null;
+  description: string | null;
+  thumb: string | null;
 }
 
 export interface FeedHead {
@@ -462,35 +526,85 @@ export interface DocCursor {
   uri: string;
 }
 
-/** The newest positions of both streams, where a fresh matcher starts. */
-export async function streamHeads(env: Env): Promise<{ seq: number; doc: DocCursor }> {
-  const [seq, doc] = await env.DB.batch([
+/** A follows-link share as the matcher reads it, from one reader's timeline. */
+export interface ShareHead {
+  user_did: string;
+  post_uri: string;
+  sharer_did: string;
+  url: string;
+  url_normalized: string;
+  post_text: string | null;
+  card_title: string | null;
+  card_description: string | null;
+  card_thumb: string | null;
+  sharer_handle: string | null;
+  sharer_name: string | null;
+  sharer_avatar: string | null;
+  shared_at: number;
+  first_seen_at: number | null;
+}
+
+/** Position in the share stream: `(first_seen_at, user_did, post_uri, sharer_did)`. */
+export interface ShareCursor {
+  at: number;
+  user: string;
+  post: string;
+  sharer: string;
+}
+
+const SHARE_COLUMNS = `user_did, post_uri, sharer_did, url, url_normalized, post_text, card_title,
+  card_description, card_thumb, sharer_handle, sharer_name, sharer_avatar, shared_at, first_seen_at`;
+
+export interface StreamCursors {
+  seq: number;
+  doc: DocCursor;
+  /** Absent in cursors saved before follows matching; it starts at the head. */
+  share?: ShareCursor;
+}
+
+/** The newest positions of every stream, where a fresh matcher starts. */
+export async function streamHeads(
+  env: Env
+): Promise<{ seq: number; doc: DocCursor; share: ShareCursor }> {
+  const [seq, doc, share] = await env.DB.batch([
     env.DB.prepare(`SELECT COALESCE(MAX(seq), 0) AS seq FROM feed_items`),
     env.DB.prepare(
       `SELECT indexed_at AS at, record_uri AS uri FROM documents_v2
         ORDER BY indexed_at DESC, record_uri DESC LIMIT 1`
     ),
+    env.DB.prepare(
+      `SELECT first_seen_at AS at, user_did AS user, post_uri AS post, sharer_did AS sharer
+         FROM follow_link_shares WHERE first_seen_at IS NOT NULL
+        ORDER BY first_seen_at DESC, user_did DESC, post_uri DESC, sharer_did DESC LIMIT 1`
+    ),
   ]);
-  const docRow = (doc.results ?? [])[0] as { at: number; uri: string } | undefined;
+  const docRow = (doc.results ?? [])[0] as DocCursor | undefined;
+  const shareRow = (share.results ?? [])[0] as ShareCursor | undefined;
   return {
     seq: ((seq.results ?? [])[0] as { seq: number } | undefined)?.seq ?? 0,
     doc: docRow ?? { at: 0, uri: '' },
+    share: shareRow ?? { at: 0, user: '', post: '', sharer: '' },
   };
 }
 
 /**
- * The next page of both streams: cheap columns only, so items no query covers
- * are skipped before their bodies are read. Documents stay `settleMs` behind
- * now: `indexed_at` is a write-time clock, and a row written in the same
- * millisecond as the cursor with a smaller URI would otherwise be passed.
+ * The next page of every stream: cheap columns only, so items no query covers
+ * are skipped before their bodies are read. Documents stay a little behind
+ * now (`settledBefore`): `indexed_at` is a write-time clock, and a row written
+ * in the same millisecond as the cursor with a smaller URI would otherwise be
+ * passed. Shares stay further behind (`sharesSettledBefore`), since their
+ * clock is read before the batch that writes them is sent. A share row is
+ * small (the sharer's words are truncated), so it comes whole.
  */
 export async function readStreamPage(
   env: Env,
-  cursors: { seq: number; doc: DocCursor },
+  cursors: { seq: number; doc: DocCursor; share: ShareCursor },
   pageSize: number,
-  settledBefore: number
-): Promise<{ feeds: FeedHead[]; docs: DocHead[] }> {
-  const [feeds, docs] = await env.DB.batch([
+  settledBefore: number,
+  sharesSettledBefore: number
+): Promise<{ feeds: FeedHead[]; docs: DocHead[]; shares: ShareHead[] }> {
+  const c = cursors.share;
+  const [feeds, docs, shares] = await env.DB.batch([
     env.DB.prepare(
       `SELECT seq, feed_url, published_at FROM feed_items WHERE seq > ? ORDER BY seq LIMIT ?`
     ).bind(cursors.seq, pageSize),
@@ -499,11 +613,152 @@ export async function readStreamPage(
         WHERE (indexed_at > ? OR (indexed_at = ? AND record_uri > ?)) AND indexed_at < ?
         ORDER BY indexed_at, record_uri LIMIT ?`
     ).bind(cursors.doc.at, cursors.doc.at, cursors.doc.uri, settledBefore, pageSize),
+    env.DB.prepare(
+      `SELECT ${SHARE_COLUMNS} FROM follow_link_shares
+        WHERE (first_seen_at, user_did, post_uri, sharer_did) > (?, ?, ?, ?)
+          AND first_seen_at < ?
+        ORDER BY first_seen_at, user_did, post_uri, sharer_did LIMIT ?`
+    ).bind(c.at, c.user, c.post, c.sharer, sharesSettledBefore, pageSize),
   ]);
   return {
     feeds: (feeds.results ?? []) as FeedHead[],
     docs: (docs.results ?? []) as DocHead[],
+    shares: (shares.results ?? []) as ShareHead[],
   };
+}
+
+export function shareCursorOf(share: ShareHead): ShareCursor {
+  return {
+    at: share.first_seen_at ?? 0,
+    user: share.user_did,
+    post: share.post_uri,
+    sharer: share.sharer_did,
+  };
+}
+
+/** Where a follows backfill has got to: the last share it finished, newest first. */
+interface FollowsBackfillCursor {
+  at: number;
+  post: string;
+  sharer: string;
+}
+
+/**
+ * One step of a query's follows backfill: the next page of its reader's stored
+ * shares, newest first, so the extraction budget goes to what's recent.
+ */
+export async function readFollowsBackfillPage(
+  env: Env,
+  query: ActiveQuery,
+  since: number,
+  pageSize: number
+): Promise<{ shares: ShareHead[]; after: string; done: boolean }> {
+  const after = parseJson<FollowsBackfillCursor>(query.backfillFollowsAfter);
+  const rows = await env.DB.prepare(
+    `SELECT ${SHARE_COLUMNS} FROM follow_link_shares
+      WHERE user_did = ?1 AND shared_at >= ?2
+        AND (?3 IS NULL OR (shared_at, post_uri, sharer_did) < (?3, ?4, ?5))
+      ORDER BY shared_at DESC, post_uri DESC, sharer_did DESC LIMIT ?6`
+  )
+    .bind(query.userDid, since, after?.at ?? null, after?.post ?? '', after?.sharer ?? '', pageSize)
+    .all<ShareHead>();
+  const shares = rows.results ?? [];
+  const last = shares.at(-1);
+  const done = shares.length < pageSize;
+  return {
+    shares,
+    after: done
+      ? 'done'
+      : JSON.stringify({ at: last!.shared_at, post: last!.post_uri, sharer: last!.sharer_did }),
+    done,
+  };
+}
+
+/** A reader's shares of one URL, for re-checking them once the article is read. */
+export async function readSharesOfUrl(
+  env: Env,
+  readers: string[],
+  urlNormalized: string,
+  since: number
+): Promise<ShareHead[]> {
+  if (readers.length === 0) return [];
+  const rows = await env.DB.prepare(
+    `SELECT ${SHARE_COLUMNS} FROM follow_link_shares
+      WHERE user_did IN (SELECT value FROM json_each(?)) AND url_normalized = ? AND shared_at >= ?`
+  )
+    .bind(JSON.stringify(readers), urlNormalized, since)
+    .all<ShareHead>();
+  return rows.results ?? [];
+}
+
+/**
+ * One match document per link per reader: every share of a URL in one
+ * reader's timeline indexes together, so a story shared by three follows is
+ * one row, matched on all their words, the card, and the article when it's
+ * been read (`bodies`, by normalized URL).
+ */
+export function buildShareDocs(
+  shares: ShareHead[],
+  bodies: Map<string, string>,
+  bodySkipped: Set<string>
+): MatchDoc[] {
+  const groups = new Map<string, ShareHead[]>();
+  for (const share of shares) {
+    const key = `${share.user_did}\u0000${share.url_normalized}`;
+    const list = groups.get(key) ?? [];
+    list.push(share);
+    groups.set(key, list);
+  }
+  const docs: MatchDoc[] = [];
+  for (const group of groups.values()) {
+    group.sort((a, b) => a.shared_at - b.shared_at || a.post_uri.localeCompare(b.post_uri));
+    const first = group[0];
+    const withCard = group.find((s) => s.card_title) ?? first;
+    const sharers = new Map<string, Sharer>();
+    for (const s of group) {
+      if (sharers.has(s.sharer_did)) continue;
+      sharers.set(s.sharer_did, {
+        did: s.sharer_did,
+        postUri: s.post_uri,
+        handle: s.sharer_handle,
+        name: s.sharer_name,
+        avatar: s.sharer_avatar,
+      });
+    }
+    const words = [...new Set(group.map((s) => s.post_text).filter((t): t is string => !!t))];
+    const body = [...words, withCard.card_description ?? '', bodies.get(first.url_normalized) ?? '']
+      .filter(Boolean)
+      .join('\n\n');
+    docs.push({
+      kind: 'follows',
+      itemKey: first.url_normalized,
+      sourceRef: first.sharer_did,
+      siteUri: '',
+      feedSeq: null,
+      url: first.url,
+      title: clean(withCard.card_title ?? '', 500),
+      author: clean(
+        [...sharers.values()]
+          .map((s) => s.name || s.handle || '')
+          .filter(Boolean)
+          .join(', '),
+        200
+      ),
+      sourceTitle: '',
+      body: stripControlChars(truncateText(body, MATCH_BODY_CHARS)),
+      publishedAt: first.shared_at,
+      ownerDid: first.user_did,
+      sharers: [...sharers.values()],
+      link: {
+        url: first.url,
+        title: withCard.card_title,
+        description: withCard.card_description,
+        thumb: withCard.card_thumb,
+      },
+      bodySkipped: bodySkipped.has(first.url_normalized),
+    });
+  }
+  return docs;
 }
 
 /** One backfill step: recent items from the next few of a query's feeds and authors. */
@@ -705,18 +960,54 @@ export interface MatchHit {
 export type MatchTarget = Pick<ActiveQuery, 'userDid' | 'channelUuid' | 'updatedAt'>;
 
 /** The key one story matches under in a channel: its normalized URL, else the item. */
-export function dedupKey(doc: Pick<MatchDoc, 'url' | 'itemKey'>): string {
+export function dedupKey(doc: Pick<MatchDoc, 'kind' | 'url' | 'itemKey'>): string {
+  // A link's item key already is its normalized URL, as the follows surface keyed it.
+  if (doc.kind === 'follows') return doc.itemKey;
   return (doc.url && normalizeArticleUrl(doc.url)) || `item:${doc.itemKey}`;
 }
 
-// D1 binds at most 100 parameters per statement: 6 shared + 7 per row.
-const MATCH_ROWS_PER_STATEMENT = 13;
+// D1 binds at most 100 parameters per statement: 6 shared + 9 per row.
+const MATCH_ROWS_PER_STATEMENT = 10;
+// 6 shared + 5 per source row.
+const SOURCE_ROWS_PER_STATEMENT = 18;
+
+interface SourceRow {
+  dedupKey: string;
+  kind: MatchDoc['kind'];
+  ref: string;
+  itemKey: string;
+  meta: string | null;
+}
+
+function sourceRowsOf(hit: MatchHit): SourceRow[] {
+  const key = dedupKey(hit.doc);
+  if (hit.doc.kind === 'follows') {
+    return (hit.doc.sharers ?? []).map((s) => ({
+      dedupKey: key,
+      kind: 'follows',
+      ref: s.did,
+      itemKey: s.postUri,
+      meta: JSON.stringify({ handle: s.handle, name: s.name, avatar: s.avatar }),
+    }));
+  }
+  return [
+    {
+      dedupKey: key,
+      kind: hit.doc.kind,
+      ref: hit.doc.sourceRef,
+      itemKey: hit.doc.itemKey,
+      meta: null,
+    },
+  ];
+}
 
 /**
- * Insert statements for `hits`, a few rows each. Every insert is guarded on
- * the query still being the version the matcher loaded: an edit made while a
- * pass was running cleared the channel's matches and restarted its backfill,
- * and must not get hits for the old predicate written back on top.
+ * Insert statements for `hits`, a few rows each: the story's one match row
+ * (the first source to match keeps it), and a row per source it arrived from.
+ * Every insert is guarded on the query still being the version the matcher
+ * loaded: an edit made while a pass was running cleared the channel's matches
+ * and restarted its backfill, and must not get hits for the old predicate
+ * written back on top.
  */
 export function matchInsertStatements(
   env: Env,
@@ -734,18 +1025,19 @@ export function matchInsertStatements(
   for (const group of byQuery.values()) {
     const { userDid, channelUuid, updatedAt } = group[0].query;
     for (const rows of chunk(group, MATCH_ROWS_PER_STATEMENT)) {
-      const values = rows.map(() => '(?, ?, ?, ?, ?, ?, ?)').join(', ');
+      const values = rows.map(() => '(?, ?, ?, ?, ?, ?, ?, ?, ?)').join(', ');
       statements.push(
         env.DB.prepare(
           `INSERT INTO channel_matches
              (user_did, channel_uuid, dedup_key, item_key, source_kind, source_ref, feed_seq,
-              snippet, published_at, matched_at)
+              snippet, published_at, body_skipped, link_json, matched_at)
            SELECT ?, ?, v.column1, v.column2, v.column3, v.column4, v.column5, v.column6,
-                  v.column7, ?
+                  v.column7, v.column8, v.column9, ?
              FROM (VALUES ${values}) AS v
             WHERE EXISTS (SELECT 1 FROM saved_queries
                            WHERE user_did = ? AND channel_uuid = ? AND updated_at = ?)
-           ON CONFLICT (user_did, channel_uuid, dedup_key) DO NOTHING`
+           ON CONFLICT (user_did, channel_uuid, dedup_key) DO UPDATE SET body_skipped = 0
+             WHERE excluded.body_skipped = 0 AND channel_matches.body_skipped = 1`
         ).bind(
           userDid,
           channelUuid,
@@ -759,7 +1051,32 @@ export function matchInsertStatements(
             hit.snippet,
             // Undated items sort by when they matched, so every row has a place in the list.
             hit.doc.publishedAt ?? now,
+            hit.doc.bodySkipped ? 1 : 0,
+            hit.doc.link ? JSON.stringify(hit.doc.link) : null,
           ]),
+          userDid,
+          channelUuid,
+          updatedAt
+        )
+      );
+    }
+    for (const rows of chunk(group.flatMap(sourceRowsOf), SOURCE_ROWS_PER_STATEMENT)) {
+      const values = rows.map(() => '(?, ?, ?, ?, ?)').join(', ');
+      statements.push(
+        env.DB.prepare(
+          `INSERT INTO channel_match_sources
+             (user_did, channel_uuid, dedup_key, source_kind, source_ref, item_key, meta_json,
+              matched_at)
+           SELECT ?, ?, v.column1, v.column2, v.column3, v.column4, v.column5, ?
+             FROM (VALUES ${values}) AS v
+            WHERE EXISTS (SELECT 1 FROM saved_queries
+                           WHERE user_did = ? AND channel_uuid = ? AND updated_at = ?)
+           ON CONFLICT (user_did, channel_uuid, dedup_key, source_kind, source_ref) DO NOTHING`
+        ).bind(
+          userDid,
+          channelUuid,
+          now,
+          ...rows.flatMap((r) => [r.dedupKey, r.kind, r.ref, r.itemKey, r.meta]),
           userDid,
           channelUuid,
           updatedAt

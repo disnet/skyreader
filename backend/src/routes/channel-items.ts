@@ -6,7 +6,7 @@
 
 import type { Env, FeedItem, Session } from '../types';
 import { splitSnippet } from '../durable-objects/search-index';
-import { getSavedSearchAccess } from '../services/saved-search';
+import { getSavedSearchAccess, type LinkCard, type Sharer } from '../services/saved-search';
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 100;
@@ -23,7 +23,7 @@ function json(body: unknown, status = 200): Response {
 interface MatchRow {
   dedup_key: string;
   item_key: string;
-  source_kind: 'feed' | 'document';
+  source_kind: 'feed' | 'document' | 'follows';
   source_ref: string;
   feed_seq: number | null;
   snippet: string;
@@ -35,6 +35,27 @@ interface MatchRow {
   doc_url: string | null;
   doc_title: string | null;
   doc_description: string | null;
+  body_skipped: number;
+  link_json: string | null;
+}
+
+/** Sharers shown per story; the rest are a count. */
+const SHARERS_SHOWN = 3;
+
+interface SharerRow {
+  dedup_key: string;
+  source_ref: string;
+  item_key: string;
+  meta_json: string | null;
+}
+
+function parseJson<T>(raw: string | null): T | null {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
 }
 
 // A match is read when its item carries the reader's read label, under the
@@ -92,7 +113,7 @@ export async function handleChannelItems(
   const [page, unread] = await env.DB.batch([
     env.DB.prepare(
       `SELECT m.dedup_key, m.item_key, m.source_kind, m.source_ref, m.feed_seq, m.snippet,
-              m.published_at, m.matched_at, ${READ_SQL} AS read,
+              m.published_at, m.matched_at, m.body_skipped, m.link_json, ${READ_SQL} AS read,
               fi.item_json,
               d.site_uri AS doc_site_uri, d.canonical_url AS doc_url,
               json_extract(d.record_json, '$.title') AS doc_title,
@@ -123,8 +144,36 @@ export async function handleChannelItems(
 
   const rows = (page.results ?? []) as MatchRow[];
   const hasMore = rows.length > limit;
+  const pageRows = rows.slice(0, limit);
+
+  // Who among the reader's follows shared each story, whichever source matched first.
+  const sharers = new Map<string, Sharer[]>();
+  if (pageRows.length > 0) {
+    const shared = await env.DB.prepare(
+      `SELECT dedup_key, source_ref, item_key, meta_json FROM channel_match_sources
+        WHERE user_did = ? AND channel_uuid = ? AND source_kind = 'follows'
+          AND dedup_key IN (SELECT value FROM json_each(?))
+        ORDER BY matched_at, source_ref`
+    )
+      .bind(session.did, uuid, JSON.stringify(pageRows.map((r) => r.dedup_key)))
+      .all<SharerRow>();
+    for (const row of shared.results ?? []) {
+      const meta = parseJson<Omit<Sharer, 'did' | 'postUri'>>(row.meta_json);
+      const list = sharers.get(row.dedup_key) ?? [];
+      list.push({
+        did: row.source_ref,
+        postUri: row.item_key,
+        handle: meta?.handle ?? null,
+        name: meta?.name ?? null,
+        avatar: meta?.avatar ?? null,
+      });
+      sharers.set(row.dedup_key, list);
+    }
+  }
+
   const items = [];
-  for (const row of rows.slice(0, limit)) {
+  for (const row of pageRows) {
+    const sharedBy = sharers.get(row.dedup_key) ?? [];
     const base = {
       kind: row.source_kind,
       itemKey: row.item_key,
@@ -132,6 +181,8 @@ export async function handleChannelItems(
       matchedAt: row.matched_at,
       read: row.read === 1,
       snippet: splitSnippet(row.snippet),
+      sharedBy: sharedBy.slice(0, SHARERS_SHOWN),
+      sharedByCount: sharedBy.length,
     };
     if (row.source_kind === 'feed') {
       // The item can outlive its row only through the archive's sanity trim;
@@ -146,6 +197,17 @@ export async function handleChannelItems(
       items.push({
         ...base,
         item: { ...item, seq: row.feed_seq, feedUrl: row.source_ref, read: row.read === 1 },
+      });
+    } else if (row.source_kind === 'follows') {
+      const link = parseJson<LinkCard>(row.link_json);
+      if (!link?.url) continue;
+      items.push({
+        ...base,
+        // Read state is filed under the normalized URL, as on the follows surface.
+        link: { ...link, urlNormalized: row.item_key },
+        // Matched on the sharers' words and the card only: the reader's daily
+        // article budget was spent before this one could be read.
+        bodySkipped: row.body_skipped === 1,
       });
     } else {
       if (row.doc_title === null && row.doc_url === null) continue;
@@ -162,7 +224,7 @@ export async function handleChannelItems(
       });
     }
   }
-  const last = rows[Math.min(rows.length, limit) - 1];
+  const last = pageRows.at(-1);
   const unreadCount = ((unread.results ?? [])[0] as { n: number } | undefined)?.n ?? 0;
 
   return json({

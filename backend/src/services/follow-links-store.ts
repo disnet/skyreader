@@ -451,8 +451,8 @@ function upsertShare(env: Env, did: string, s: LinkShare, now: number) {
     `INSERT INTO follow_link_shares
        (user_did, post_uri, sharer_did, kind, url, url_normalized, post_text,
         card_title, card_description, card_thumb, sharer_handle, sharer_name, sharer_avatar, shared_at,
-        like_count, likes_checked_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        like_count, likes_checked_at, first_seen_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(user_did, post_uri, sharer_did) DO UPDATE SET
        like_count = COALESCE(excluded.like_count, like_count),
        likes_checked_at = COALESCE(excluded.likes_checked_at, likes_checked_at),
@@ -479,7 +479,10 @@ function upsertShare(env: Env, did: string, s: LinkShare, now: number) {
     s.sharer.avatar ?? null,
     Number.isFinite(sharedAt) ? sharedAt : Date.now(),
     s.likeCount,
-    s.likeCount === null ? null : now
+    s.likeCount === null ? null : now,
+    // When the row was written, not when the refresh started: the saved-search
+    // matcher walks new shares by it, a little behind the clock.
+    Date.now()
   );
 }
 

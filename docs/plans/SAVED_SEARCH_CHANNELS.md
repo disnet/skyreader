@@ -118,6 +118,22 @@ card. Body matching means extracting the article, which today happens only when 
 - **Don't wait on extraction.** A link that fails to extract, or isn't extracted yet, matches on
   post text and card immediately. It is re-checked once against the body when the body lands.
 
+_Built_ (`services/link-bodies.ts`, the Percolator's `link_bodies` and `extract_budget` tables):
+
+- **The stream.** `follow_link_shares.first_seen_at` (migration 0100) is when a share row was
+  written. The matcher walks shares by it, 10 s behind the clock, because `shared_at` is the post's
+  time and a refresh catching up after a gap writes hours-old shares. Rows from before the column
+  are reached only by a query's backfill (the stored week, newest first).
+- **One document per link per reader.** Every share of a URL in a reader's timeline indexes as one
+  row: all the sharers' words, the card, and the article when it's stored.
+- **Extraction** goes through the feed proxy's `/extract` with `articleOnly`, so a PDF or EPUB link
+  is left to its card and never spends a parse. Up to 8 a pass, two tries each. The text is kept in
+  `ITEM_BODIES` under `link_bodies/v1/<sha256(url_normalized)>`, and dropped with its bookkeeping
+  after 7 days.
+- **The budget** is charged to the first reader with budget left who needs the link, in UTC days.
+  A link nobody can pay for matches on its card, and its match has `body_skipped = 1`.
+- **Read state** for a follows match is the normalized URL, as the follows surface files it.
+
 Follows links were refreshed on read only. A reader with a query covering `bsky~follows` needs a
 background refresh, or nothing arrives while they're away. _Built:_ the background refresh
 (`FOLLOWS_LINKS_PLAN.md`, "Background refresh") polls such readers every 30 minutes, alongside
@@ -191,8 +207,10 @@ that quotes it, and three follows sharing it. `channel_matches` keys on
 `(channel, url_normalized)`, so a story matches **once per channel**.
 
 - **Order of arrival.** The first source that matches creates the row, and later matches of the same
-  URL never add a row. Recording them as extra sources, in a small `channel_match_sources` side
-  table, lands with follows links (rollout step 2), where it first matters.
+  URL never add a row. Every source that matched, the first included, is a row in
+  `channel_match_sources`: a feed, an author, or a sharer (with their handle, name and avatar, since
+  shares expire after a week and matches are kept for 90 days). A follows match keeps its link
+  card on the match (`link_json`) for the same reason.
 - **Display.** The channel shows one card per story: "from _Feed name_ · shared by Maya and 2
   others".
 
@@ -204,7 +222,9 @@ the later goal _Mute rules and story deduplication_.
 - **API.** `GET /api/channels/:uuid/items?before=&limit=` (`backend/src/routes/channel-items.ts`)
   returns the channel's matches, newest first, joined to their items.
   - A feed match carries the item in the timeline's shape. A document match carries its URI, URL,
-    title and description.
+    title and description. A follows match carries its link (`url`, `urlNormalized`, `title`,
+    `description`, `thumb`) and `bodySkipped`.
+  - Every match carries `sharedBy` (up to 3 of the follows who shared it) and `sharedByCount`.
   - Every match carries its stored snippet, as `/api/search`'s `{ text, match }` runs.
   - The response also carries:
     - the unread count, capped at 1,000;
@@ -284,8 +304,9 @@ Never push by default (PRODUCT.md, plan principle "Calm stays true").
    _Next:_ verify on staging. Seed queries, then compare their matches against `/api/search` over
    the same items.
 
-2. **Follows links.** Background refresh for opted-in readers (_built_), shared extraction cache
-   in R2, the per-reader budget, then the follows stream.
+2. **Follows links.** _Built:_ background refresh for opted-in readers, the shared extraction
+   cache in R2, the per-reader budget, the follows stream and its backfill, and
+   `channel_match_sources`.
 3. **Frontend.** The query field in the channel editor with its live preview, the query-channel
    view and unread counts, and the `/daily` section. Add a docs-site page
    (`docs-site/src/content/docs/guide/saved-searches.md`) and its sidebar entry.

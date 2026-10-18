@@ -1,5 +1,10 @@
-import { env, createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
-import { describe, it, expect, beforeEach } from 'vitest';
+import {
+  env,
+  createExecutionContext,
+  runInDurableObject,
+  waitOnExecutionContext,
+} from 'cloudflare:test';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import worker from '../src/index';
 import { itemBodyKey } from '../src/routes/item-bodies';
 import {
@@ -10,6 +15,8 @@ import {
   resolveQueryScope,
   type MatchDoc,
 } from '../src/services/saved-search';
+import { linkBodyKey } from '../src/services/link-bodies';
+import { LINK_EXTRACTIONS_PER_READER_PER_DAY } from '../src/durable-objects/percolator';
 
 const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
 
@@ -608,5 +615,286 @@ describe('GET /api/channels/:uuid/items', () => {
     const notSaved = await call(user, `/api/channels/${plain}/items`);
     expect(notSaved.status).toBe(404);
     expect(((await notSaved.json()) as { code: string }).code).toBe('not_saved_search');
+  });
+});
+
+// --- follows links -------------------------------------------------------------
+
+let shareSeq = 0;
+
+/** One share in the reader's follows timeline; written "now" unless told otherwise. */
+async function addShare(
+  user: TestUser,
+  share: {
+    url: string;
+    text?: string;
+    cardTitle?: string;
+    sharer?: string;
+    sharedAt?: number;
+    firstSeenAt?: number | null;
+  }
+) {
+  shareSeq++;
+  const sharer = share.sharer ?? `did:plc:sharer${shareSeq}`;
+  const postUri = `at://${sharer}/app.bsky.feed.post/p${shareSeq}`;
+  await env.DB.prepare(
+    `INSERT INTO follow_link_shares
+       (user_did, post_uri, sharer_did, kind, url, url_normalized, post_text, card_title,
+        sharer_handle, sharer_name, shared_at, first_seen_at)
+     VALUES (?, ?, ?, 'post', ?, ?, ?, ?, ?, ?, ?, ?)`
+  )
+    .bind(
+      user.did,
+      postUri,
+      sharer,
+      share.url,
+      share.url,
+      share.text ?? null,
+      share.cardTitle ?? null,
+      `${sharer.slice(8)}.bsky.social`,
+      `Sharer ${shareSeq}`,
+      share.sharedAt ?? Date.now() - 60_000,
+      // Settled past the matcher's write-clock lag.
+      share.firstSeenAt === undefined ? Date.now() - 90_000 : share.firstSeenAt
+    )
+    .run();
+  return postUri;
+}
+
+async function followsInEverything(user: TestUser, on: boolean) {
+  await env.DB.prepare(
+    `INSERT INTO follow_link_sync (user_did, in_everything, complete) VALUES (?, ?, 1)
+     ON CONFLICT(user_did) DO UPDATE SET in_everything = excluded.in_everything`
+  )
+    .bind(user.did, on ? 1 : 0)
+    .run();
+}
+
+/** The proxy's /extract, answering with `articles[url]`; counts its calls. */
+function stubExtract(articles: Record<string, string>) {
+  const calls: string[] = [];
+  vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+    const href = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    if (!href.endsWith('/extract')) throw new Error(`unexpected fetch ${href}`);
+    const { url } = JSON.parse(String(init?.body)) as { url: string };
+    calls.push(url);
+    const content = articles[url];
+    return Response.json(
+      content === undefined
+        ? { error: 'The site refused', blocked: true }
+        : { title: 'T', content, wordCount: 10 }
+    );
+  });
+  return calls;
+}
+
+function uniqueUrl(name: string) {
+  return `https://${name}${Math.random().toString(36).slice(2, 8)}.example/story`;
+}
+
+describe('Percolator: follows links', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('matches a share on its words at once, and on the article once it is read', async () => {
+    const user = await createUser();
+    const uuid = newUuid();
+    await putChannel(user, uuid, {
+      sourceMode: 'include',
+      sourceKeys: ['bsky~follows'],
+      query: 'aquifer',
+    });
+    await settle();
+
+    const byWords = uniqueUrl('words');
+    const byBody = uniqueUrl('body');
+    const neither = uniqueUrl('neither');
+    const calls = stubExtract({
+      [byWords]: '<p>Unrelated.</p>',
+      [byBody]: '<p>Deep in the piece: the aquifer is drying up.</p>',
+      [neither]: '<p>Nothing here.</p>',
+    });
+    await addShare(user, { url: byWords, text: 'Worth reading on the aquifer' });
+    await addShare(user, { url: byBody, text: 'Good read', cardTitle: 'Water' });
+    await addShare(user, { url: neither, text: 'Something else' });
+    await drain();
+
+    expect(await matchedKeys(user, uuid)).toEqual([byBody, byWords].sort());
+    // Each article was read once, and kept.
+    expect(calls.sort()).toEqual([byBody, byWords, neither].sort());
+    const stored = await env.ITEM_BODIES.get(await linkBodyKey(byBody));
+    expect(await stored?.text()).toContain('aquifer');
+  });
+
+  it('reads an article once however many readers follow someone who shared it', async () => {
+    const a = await createUser();
+    const b = await createUser();
+    const uuidA = newUuid();
+    const uuidB = newUuid();
+    for (const [user, uuid] of [
+      [a, uuidA],
+      [b, uuidB],
+    ] as const) {
+      await followsInEverything(user, true);
+      await putChannel(user, uuid, { query: 'glacier' });
+    }
+    await settle();
+
+    const url = uniqueUrl('shared');
+    const calls = stubExtract({ [url]: '<p>The glacier retreats.</p>' });
+    await addShare(a, { url, text: 'Look' });
+    await addShare(b, { url, text: 'Look at this' });
+    await drain();
+
+    expect(calls).toEqual([url]);
+    expect(await matchedKeys(a, uuidA)).toEqual([url]);
+    expect(await matchedKeys(b, uuidB)).toEqual([url]);
+  });
+
+  it('covers follows links only where the channel takes them in', async () => {
+    const hidden = await createUser();
+    await followsInEverything(hidden, false);
+    const allUuid = newUuid();
+    await putChannel(hidden, allUuid, { query: 'tundra' });
+    const excluded = await createUser();
+    const exUuid = newUuid();
+    await putChannel(excluded, exUuid, {
+      sourceMode: 'exclude',
+      sourceKeys: ['bsky~follows'],
+      query: 'tundra',
+    });
+    await settle();
+
+    stubExtract({});
+    await addShare(hidden, { url: uniqueUrl('t1'), text: 'tundra' });
+    await addShare(excluded, { url: uniqueUrl('t2'), text: 'tundra' });
+    await drain();
+
+    expect(await matchedKeys(hidden, allUuid)).toEqual([]);
+    expect(await matchedKeys(excluded, exUuid)).toEqual([]);
+  });
+
+  it("matches on the card alone once the reader has spent the day's budget", async () => {
+    const user = await createUser();
+    await followsInEverything(user, true);
+    const uuid = newUuid();
+    await putChannel(user, uuid, { query: 'permafrost' });
+    await settle();
+    const day = Math.floor(Date.now() / DAY);
+    await runInDurableObject(percolatorStub(env), (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO extract_budget (user_did, day, used) VALUES (?, ?, ?)`,
+        user.did,
+        day,
+        LINK_EXTRACTIONS_PER_READER_PER_DAY
+      );
+    });
+
+    const onCard = uniqueUrl('card');
+    const inBody = uniqueUrl('inbody');
+    const calls = stubExtract({ [inBody]: '<p>permafrost</p>' });
+    await addShare(user, { url: onCard, cardTitle: 'Permafrost thaw' });
+    await addShare(user, { url: inBody, text: 'read this' });
+    await drain();
+
+    expect(calls).toEqual([]);
+    expect(await matchedKeys(user, uuid)).toEqual([onCard]);
+    const row = await env.DB.prepare(
+      `SELECT body_skipped FROM channel_matches WHERE user_did = ? AND channel_uuid = ?`
+    )
+      .bind(user.did, uuid)
+      .first<{ body_skipped: number }>();
+    expect(row?.body_skipped).toBe(1);
+
+    // A new day: someone else shares the link, its article is read, and the
+    // match no longer says it was skipped.
+    await runInDurableObject(percolatorStub(env), (_instance, state) => {
+      state.storage.sql.exec(`DELETE FROM extract_budget WHERE user_did = ?`, user.did);
+    });
+    vi.restoreAllMocks();
+    stubExtract({ [onCard]: '<p>Permafrost, at length.</p>' });
+    await addShare(user, { url: onCard, text: 'again' });
+    await drain();
+    const after = await env.DB.prepare(
+      `SELECT body_skipped FROM channel_matches WHERE user_did = ? AND channel_uuid = ?`
+    )
+      .bind(user.did, uuid)
+      .first<{ body_skipped: number }>();
+    expect(after?.body_skipped).toBe(0);
+  });
+
+  it('backfills the stored week of shares, and lists who shared each story', async () => {
+    const user = await createUser();
+    await followsInEverything(user, true);
+    await subscribe(user, FEED_A);
+    const url = uniqueUrl('back');
+    // Written before follows matching: no first_seen_at, so only the backfill sees them.
+    await addShare(user, {
+      url,
+      text: 'On wetlands',
+      sharer: 'did:plc:maya',
+      sharedAt: Date.now() - 2 * DAY,
+      firstSeenAt: null,
+    });
+    await addShare(user, {
+      url,
+      text: 'Also this',
+      sharer: 'did:plc:sam',
+      sharedAt: Date.now() - DAY,
+      firstSeenAt: null,
+    });
+    await addShare(user, {
+      url: uniqueUrl('old'),
+      text: 'wetlands',
+      sharedAt: Date.now() - 9 * DAY,
+      firstSeenAt: null,
+    });
+    // The same story through a feed.
+    await ingest(FEED_A, { title: 'Wetlands, restored', url }, Date.now() - 3 * DAY);
+    await settle();
+    stubExtract({});
+
+    const uuid = newUuid();
+    await putChannel(user, uuid, { query: 'wetlands' });
+    await drain();
+
+    expect((await savedQuery(user, uuid))?.backfill_state).toBe('done');
+    const response = await call(user, `/api/channels/${uuid}/items`);
+    const body = (await response.json()) as {
+      items: {
+        kind: string;
+        itemKey: string;
+        sharedBy: { did: string }[];
+        sharedByCount: number;
+      }[];
+    };
+    // One story: the feed matched first, and both follows who shared it are listed.
+    expect(body.items).toHaveLength(1);
+    expect(body.items[0].kind).toBe('feed');
+    expect(body.items[0].sharedBy.map((s) => s.did).sort()).toEqual([
+      'did:plc:maya',
+      'did:plc:sam',
+    ]);
+    expect(body.items[0].sharedByCount).toBe(2);
+  });
+
+  it('serves a story only follows shared as a link', async () => {
+    const user = await createUser();
+    await followsInEverything(user, true);
+    const uuid = newUuid();
+    await putChannel(user, uuid, { query: 'estuary' });
+    await settle();
+    const url = uniqueUrl('link');
+    stubExtract({});
+    await addShare(user, { url, text: 'The estuary', cardTitle: 'Tides' });
+    await drain();
+
+    const body = (await (await call(user, `/api/channels/${uuid}/items`)).json()) as {
+      items: { kind: string; link?: { url: string; title: string; urlNormalized: string } }[];
+    };
+    expect(body.items).toHaveLength(1);
+    expect(body.items[0].kind).toBe('follows');
+    expect(body.items[0].link).toMatchObject({ url, title: 'Tides', urlNormalized: url });
   });
 });
