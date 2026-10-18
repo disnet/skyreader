@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { channelQuery } from '$lib/utils/searchChannels';
   import { isArchiveFeedSource } from '$lib/utils/newsletters';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
@@ -110,6 +111,7 @@
     | 'filter'
     | 'plus'
     | 'newspaper'
+    | 'search'
     | 'rss'
     | 'file-text'
     | 'folder'
@@ -356,7 +358,7 @@
         id: v.uuid,
         label: v.name,
         count: v.id != null ? (unreadCounts.channelCounts.get(v.id) ?? 0) : 0,
-        icon: 'newspaper' as const,
+        icon: channelQuery(v) ? ('search' as const) : ('newspaper' as const),
         indent: true,
       }));
 

@@ -39,6 +39,7 @@
     authorAvatar,
     authorDid,
     followSharers,
+    matchSnippet,
     isFollowLink = false,
     followLinkCard,
     keptLinkCard,
@@ -387,6 +388,13 @@
       </button>
     </div>
   </div>
+
+  {#if matchSnippet?.length && !expanded}
+    <p class="match-snippet">
+      {#each matchSnippet as seg, i (i)}{#if seg.match}<mark>{seg.text}</mark
+          >{:else}{seg.text}{/if}{/each}
+    </p>
+  {/if}
 
   {#if isOpen}
     <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
@@ -1416,6 +1424,33 @@
   .feed-title-link:hover {
     color: var(--color-primary);
     text-decoration: underline;
+  }
+
+  /* A saved search's match: the passage under the title, indented to it, its
+     terms in search's lighter highlight yellow (a match, not a mark the reader
+     made). Two lines, then it stops. */
+  .match-snippet {
+    margin: -0.25rem 0 0.5rem;
+    /* The read toggle's 10px dot, its 14px of padding and the row's 2px gap. */
+    padding-left: 26px;
+    font-size: var(--text-sm);
+    line-height: var(--leading-relaxed, 1.6);
+    color: var(--color-text-secondary);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .match-snippet mark {
+    background-color: color-mix(in srgb, #f5c518 22%, transparent);
+    color: var(--color-text);
+    border-radius: 1px;
+  }
+
+  .article-item.read .match-snippet {
+    opacity: 0.7;
   }
 
   .article-content {

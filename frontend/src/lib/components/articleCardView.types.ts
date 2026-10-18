@@ -199,6 +199,8 @@ export interface ArticleCardViewProps {
    * tooltip, and up to three avatars. Absent when none of them shared it.
    */
   followSharers?: FollowSharersVM;
+  /** Where a saved search matched this item: the passage, its terms marked. */
+  matchSnippet?: { text: string; match: boolean }[];
   /** The row is a follows link, not a feed article: its source is a site, not a feed. */
   isFollowLink?: boolean;
   /** A follows link's body until its page is fetched: the sharer's words, then

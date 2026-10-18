@@ -33,6 +33,13 @@
   import { followLinksStore } from '$lib/stores/followLinks.svelte';
   import { FOLLOWS_SOURCE_KEY } from '$lib/utils/sourceKeys';
   import { computeSourceKeys } from '$lib/utils/channelLogic';
+  import {
+    canUseSavedSearches,
+    channelQuery,
+    hasSearchableTerm,
+    MAX_QUERY_CHARS,
+  } from '$lib/utils/searchChannels';
+  import SearchQueryPreview from './SearchQueryPreview.svelte';
   import { joinNames, sourceFilterName, uniqueChannelName } from '$lib/utils/channelName';
   import {
     categoryGroupKey,
@@ -115,6 +122,8 @@
   // A feed channel's tag filter has no control here; it's kept as it was, or as
   // the view it was saved from had it (see ChannelSeed).
   let feedTagFilter = $state<string[]>([]);
+  // A saved search's query; empty for an ordinary channel.
+  let query = $state('');
   let readFilter = $state<'all' | 'unread' | 'read'>('unread');
   let sortOrder = $state<SortOrder>('newest');
   let saving = $state(false);
@@ -153,6 +162,7 @@
       savedDomainFilter = new Set(view.savedDomainFilter ?? []);
       savedTagFilter = new Set(view.tagFilter ?? []);
       feedTagFilter = view.mode === 'saved' ? [] : [...(view.tagFilter ?? [])];
+      query = channelQuery(view) ?? '';
       const upgraded = upgradeChannelFilter(view);
       typeFilter = upgraded.typeFilter;
       const rule = view.autoRule;
@@ -203,6 +213,7 @@
     savedDomainFilter = new Set();
     savedTagFilter = new Set();
     feedTagFilter = [...(initial?.tagFilter ?? [])];
+    query = '';
     readFilter = initial?.readFilter ?? 'unread';
     sortOrder = initial?.sortOrder ?? 'newest';
   }
@@ -212,6 +223,13 @@
     !auth.isGuest && followLinksStore.loaded && !followLinksStore.scopeRequired
   );
   let followsInEverything = $derived(followLinksStore.inEverything === true);
+
+  // A channel that already has a query keeps its field even past a lapsed plan,
+  // so the query can be seen and taken out.
+  let offerQuery = $derived(
+    channelType === 'feed' && (canUseSavedSearches(auth.user) || query.trim() !== '')
+  );
+  let trimmedQuery = $derived(offerQuery ? query.trim() : '');
 
   // Ranking by shares needs the follows source (see canSortByPopularity).
   let includesFollows = $derived(
@@ -226,8 +244,9 @@
   // A segmented control holds this many before it would have to wrap.
   const MAX_SEGMENTS = 4;
 
+  // A saved search is the server's matches, newest first; it can't rank by shares.
   let feedSortOptions = $derived(
-    includesFollows
+    includesFollows && !trimmedQuery
       ? FOLLOWS_SORT_OPTIONS
       : FOLLOWS_SORT_OPTIONS.filter((o) => o.value !== 'popular')
   );
@@ -296,6 +315,8 @@
   /** What a new channel would be called if you don't name it. */
   let suggestedName = $derived.by(() => {
     if (channelType !== 'feed') return '';
+    // A saved search is named for what it looks for.
+    if (trimmedQuery) return trimmedQuery.slice(0, 60);
     if (mode === 'rule') {
       if (ruleType === 'subscriptionTag' && tagValue.trim()) {
         const t = tagValue.trim();
@@ -354,6 +375,10 @@
         return;
       }
     }
+    if (trimmedQuery && !hasSearchableTerm(trimmedQuery)) {
+      error = 'Add a word or phrase to look for';
+      return;
+    }
     if (channelType === 'feed' && mode === 'rule' && !currentRule) {
       error = ruleType === 'subscriptionTag' ? 'Choose a tag' : 'Add a site pattern';
       return;
@@ -392,10 +417,13 @@
               typeFilter: currentRule ? typeFilter : undefined,
               tagFilter: feedTagFilter.length > 0 ? [...feedTagFilter] : undefined,
               filterVersion: CHANNEL_FILTER_VERSION,
+              // Absent rather than empty, so taking a query out leaves an ordinary channel.
+              query: trimmedQuery || undefined,
               readFilter,
               // Ranking by shares needs your follows' links in the channel.
               sortOrder:
-                sortOrder === 'oldest' || (sortOrder === 'popular' && includesFollows)
+                sortOrder === 'oldest' ||
+                (sortOrder === 'popular' && includesFollows && !trimmedQuery)
                   ? sortOrder
                   : ('newest' as const),
             };
@@ -533,6 +561,33 @@
           </div>
         {/if}
       </div>
+    </div>
+  {/if}
+
+  {#if offerQuery}
+    <div class="section">
+      <label class="section-label" for="channel-query">Matching</label>
+      <input
+        id="channel-query"
+        type="search"
+        class="text-input"
+        bind:value={query}
+        maxlength={MAX_QUERY_CHARS}
+        autocomplete="off"
+        spellcheck="false"
+        placeholder="Optional: words to watch for"
+      />
+      <p class="hint">
+        {#if trimmedQuery}
+          Only items from these sources that match, as they arrive. Same as search: words, "a
+          phrase", -leave-out.
+        {:else}
+          Add a search and the channel keeps only what matches it, as it arrives.
+        {/if}
+      </p>
+      {#if trimmedQuery && hasSearchableTerm(trimmedQuery)}
+        <SearchQueryPreview query={trimmedQuery} />
+      {/if}
     </div>
   {/if}
 

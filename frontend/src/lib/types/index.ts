@@ -59,12 +59,19 @@ export interface User {
     maxPdfUploadsPerMonth?: number;
     /** Total bytes of uploaded originals kept. */
     maxPdfStorageBytes?: number;
+    /** How many saved searches the plan matches; 0 = none (Supporter). */
+    maxSavedSearches?: number;
   };
   /**
    * The operator switch for full-text search in this environment. Search is
    * offered only when this and `limits.fullTextSearch` are both true.
    */
   searchEnabled?: boolean;
+  /**
+   * The operator switch for saved searches. A channel can carry a query only
+   * when this is on and `limits.maxSavedSearches` is above zero.
+   */
+  savedSearchEnabled?: boolean;
 }
 
 export type SubscriptionSourceType =
@@ -1243,6 +1250,13 @@ export interface FilteredView {
   savedDateFilter?: DateAddedPreset;
   savedReadingLength?: ReadingLengthFilter[];
   savedDomainFilter?: string[];
+  /**
+   * A saved search: the channel holds what this query matched across its
+   * sources, served by GET /api/channels/:uuid/items rather than filtered here.
+   * Same syntax as search. Feed-mode channels only; empty or absent = none.
+   * See docs/plans/SAVED_SEARCH_CHANNELS.md.
+   */
+  query?: string;
   // Legacy fields (kept for backward compat with existing IndexedDB records)
   showArticles?: boolean;
   showShares?: boolean;

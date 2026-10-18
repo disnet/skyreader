@@ -223,7 +223,10 @@ function createFilteredViewsStore() {
       }
 
       // Update local channels from remote in DB
-      for (const { uuid, data } of ops.updateLocally) {
+      for (const { uuid, data: remote } of ops.updateLocally) {
+        // A query taken out on another device is absent from its config, and a
+        // merge would keep this device's: name it, so the merge clears it.
+        const data = { query: undefined, ...remote };
         const local = updatedViews.find((v) => v.uuid === uuid);
         if (local?.id != null) {
           await safeUpdate(db.filteredViews, local.id, data);
