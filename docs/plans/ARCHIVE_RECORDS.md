@@ -148,7 +148,7 @@ stub); the snapshot of the earlier body stays. Every path that writes a body cap
 (`captureSnapshot`, under `waitUntil` so it never fails or slows the save): URL, feed and document
 saves, the `updateContent` upgrade, backed saves, background extraction (`fillExtractedContent`)
 and uploads. A body identical to the save's latest snapshot (same SHA-256) isn't stored again, and
-the failed-fetch note (`data-skyreader-note="fetch-failed"`) is never a capture. Snapshots are
+the failed-fetch note (`data-skyreader-note="fetch-failed"`) is never a capture. A save keeps at most 20 captures (`MAX_SNAPSHOTS_PER_SAVE`): past that, a new one replaces the newest, so the first captures stay and the last always matches what the reader shows. Snapshots are
 deleted with their save.
 
 The row is `saved_snapshots (user_did, rkey, save_rkey, captured_at, url, content_type, sha256,
