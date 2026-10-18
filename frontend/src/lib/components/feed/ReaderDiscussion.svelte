@@ -29,9 +29,14 @@
   let {
     readerItem,
     panelId = 'reader-discussion-panel',
+    eager = false,
   }: {
     readerItem: FeedDisplayItem;
     panelId?: string;
+    /** The host shows one article at a time (the fullscreen reader), so having
+        it open a few seconds is reason enough to start resolving the discussion.
+        Off where many readers stack on one page (the daily magazine). */
+    eager?: boolean;
   } = $props();
 
   let sub = $derived(
@@ -124,11 +129,27 @@
     canCreate: laneCanCreate,
   });
 
+  // The counts are one batched, proxy-cached lookup, so they start as soon as the
+  // article opens: by the time the reader reaches the end, the section already
+  // knows its shape.
+  $effect(() => {
+    if (eager) atmosphere.enterViewport();
+  });
+
+  // How long a reader has to stay on an article before the people resolve
+  // without waiting for the section to come near. Long enough to skip a skim.
+  const DWELL_MS = 3000;
+
   // Resolving who wrote about this costs a PDS fetch per record, and the section
-  // sits below a whole article — so it waits until the reader is nearly there.
-  // The margin means the stream is usually resolved by the time it's on screen.
+  // sits below a whole article — so it waits until the reader is nearly there,
+  // or (in the fullscreen reader) has stayed a few seconds. The margin alone
+  // used to be the only trigger, and a fast scroll or a page turn outran it:
+  // the section filled in while the reader was looking at it. In paged mode the
+  // observer can't see a page that hasn't been turned to at all.
   function loadWhenNear(node: HTMLElement) {
+    const dwell = eager ? setTimeout(() => atmosphere.openStream(), DWELL_MS) : undefined;
     if (typeof IntersectionObserver === 'undefined') {
+      clearTimeout(dwell);
       atmosphere.openStream();
       return;
     }
@@ -148,6 +169,7 @@
     observer.observe(node);
     return {
       destroy() {
+        clearTimeout(dwell);
         observer.disconnect();
       },
     };
@@ -192,7 +214,6 @@
      has nothing to discuss, share or save out, so the section stays away. -->
 {#if itemUrl}
   <section class="reader-discussion" aria-label="Discussion" use:loadWhenNear>
-    <div class="reader-discussion-divider"></div>
     <AtmospherePanel
       laneRow={atmosphere.laneRow}
       filters={atmosphere.filters}
@@ -242,12 +263,6 @@
 <style>
   .reader-discussion {
     margin-top: 2.5rem;
-  }
-
-  .reader-discussion-divider {
-    height: 1px;
-    margin-bottom: 1.5rem;
-    background: var(--color-border);
   }
 
   /* The linkblog's own control, in the compose row's vocabulary but carrying

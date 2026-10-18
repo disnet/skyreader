@@ -487,10 +487,10 @@
   .paged-content :global(table),
   .paged-content :global(blockquote),
   .paged-content :global(button),
-  /* Keep the share-to-linkblog / discussion rail whole rather than split across
-     a column break where it can. */
+  /* Keep the share-to-linkblog control and each discussion row whole rather
+     than split across a column break where it can. */
   .paged-content :global(.reader-share-cta),
-  .paged-content :global(.reader-discussion-divider) {
+  .paged-content :global(.reader-discussion li) {
     break-inside: avoid;
   }
 

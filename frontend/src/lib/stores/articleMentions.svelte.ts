@@ -14,6 +14,7 @@
 // background, so a first miss — or any answer it flags as still enriching — is
 // retried a couple times shortly after.
 
+import { SvelteSet } from 'svelte/reactivity';
 import { api } from '$lib/services/api';
 import { auth } from '$lib/stores/auth.svelte';
 import type { ArticleMentions } from '$lib/types';
@@ -42,6 +43,12 @@ function createArticleMentionsStore() {
   const coldRetries = new Map<string, number>();
   const docUrisByUrl = new Map<string, string>();
   let pending = new Map<string, string | undefined>();
+  // Why a URL has no answer to show yet, so a surface can tell "still coming"
+  // from "not coming": `enriching` holds a cold URL that came back empty while
+  // the proxy was still enriching it and a re-poll is scheduled; `unavailable`
+  // holds one whose lookup failed or is parked until the browser is online.
+  const enriching = new SvelteSet<string>();
+  const unavailable = new SvelteSet<string>();
   let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
   function scheduleFlush(delay = FLUSH_DELAY_MS) {
@@ -57,12 +64,15 @@ function createArticleMentionsStore() {
 
     // Hold requests until we're online, rather than firing doomed fetches.
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      for (const url of pending.keys()) unavailable.add(url);
       scheduleFlush(OFFLINE_RETRY_MS);
       return;
     }
 
     const all = [...pending.entries()];
     const batch = all.slice(0, MAX_BATCH);
+    // Asking again: whatever stopped the last attempt is no longer the answer.
+    for (const [url] of batch) unavailable.delete(url);
     pending = new Map(all.slice(MAX_BATCH));
     if (pending.size > 0) scheduleFlush();
 
@@ -87,6 +97,8 @@ function createArticleMentionsStore() {
         // FIFO eviction below (delete-then-set moves it to the end).
         next.delete(item.url);
         next.set(item.url, item);
+        unavailable.delete(item.url);
+        enriching.delete(item.url);
         // Re-poll while the proxy says an enrichment is in flight, and on a zero
         // total (which also covers a proxy failure, where nothing is enriching
         // and the field never arrives). A non-zero total is not proof the answer
@@ -96,6 +108,11 @@ function createArticleMentionsStore() {
           const attempts = coldRetries.get(item.url) ?? 0;
           if (attempts < MAX_COLD_RETRIES) {
             coldRetries.set(item.url, attempts + 1);
+            // Empty and still enriching is "not yet", not "nobody". A non-zero
+            // answer is shown as it stands; only an empty one waits for the re-poll.
+            // Only the first re-poll is waited for, so a slow enrichment costs
+            // seconds of skeleton, not the whole retry ladder.
+            if (item.pending && item.total === 0 && attempts === 0) enriching.add(item.url);
             setTimeout(() => requeue(item.url), COLD_RETRY_MS * (attempts + 1));
           }
         }
@@ -109,12 +126,18 @@ function createArticleMentionsStore() {
         requested.delete(oldest);
         coldRetries.delete(oldest);
         docUrisByUrl.delete(oldest);
+        enriching.delete(oldest);
+        unavailable.delete(oldest);
       }
       cache = next;
     } catch (e) {
       // Silent degradation — let these URLs be retried by a later mount.
       console.error('Failed to fetch article mentions:', e);
-      for (const [url] of batch) requested.delete(url);
+      for (const [url] of batch) {
+        requested.delete(url);
+        enriching.delete(url);
+        unavailable.add(url);
+      }
     }
   }
 
@@ -133,6 +156,7 @@ function createArticleMentionsStore() {
     const addsDocUri = Boolean(docUri) && !docUrisByUrl.has(url);
     if (requested.has(url) && !addsDocUri) return;
     requested.add(url);
+    unavailable.delete(url);
     if (docUri) docUrisByUrl.set(url, docUri);
     pending.set(url, docUri);
     scheduleFlush();
@@ -143,7 +167,16 @@ function createArticleMentionsStore() {
     return cache.get(url);
   }
 
-  return { fetch, get };
+  // Whether a URL's answer is still on its way. `ready` once there is an answer
+  // to show; `unavailable` when there won't be one for now (the lookup failed, or
+  // the browser is offline). Reactive.
+  function status(url: string): 'pending' | 'ready' | 'unavailable' {
+    if (unavailable.has(url)) return 'unavailable';
+    if (cache.has(url) && !enriching.has(url)) return 'ready';
+    return 'pending';
+  }
+
+  return { fetch, get, status };
 }
 
 export const articleMentionsStore = createArticleMentionsStore();

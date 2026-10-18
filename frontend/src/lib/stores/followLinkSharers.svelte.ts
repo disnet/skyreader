@@ -40,7 +40,9 @@ function createFollowLinkSharersStore() {
     const prior = byUrl[url];
     if (prior && (prior.loading || Date.now() - prior.at < STALE_MS)) return;
     // Keep showing what we had while asking again.
-    byUrl[url] = { loading: true, sharers: prior?.sharers ?? [], at: 0 };
+    // `at` stays the last answer's time (0 until there is one), so a reader can
+    // tell a first lookup from a refresh.
+    byUrl[url] = { loading: true, sharers: prior?.sharers ?? [], at: prior?.at ?? 0 };
     const did = user.did;
     api
       .getFollowLinkSharers(url)

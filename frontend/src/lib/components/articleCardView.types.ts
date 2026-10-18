@@ -107,8 +107,9 @@ export interface DiscussionStreamVM {
   /**
    * Nobody has asked for the people yet — the host hasn't opened the stream (the
    * card's Discussion toggle, the reader's section scrolling into range). Not the
-   * same as `loading`: there is no request in flight and nothing to say yet, so
-   * the surface renders neither skeletons nor an empty state.
+   * same as `loading`: there is no request in flight. The panel never claims an
+   * empty discussion from it, but holds the stream's place with its skeleton,
+   * since a rendered panel's stream is about to open.
    */
   idle?: boolean;
   /** At least one lane in view is still resolving its people. */

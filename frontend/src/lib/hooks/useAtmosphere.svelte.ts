@@ -199,6 +199,13 @@ export function useAtmosphere(opts: UseAtmosphereOptions): AtmosphereApi {
   let nearViewport = $state(false);
 
   function openStream() {
+    // Ask for Semble and your follows in the same tick the stream opens, so
+    // there's no moment where they read as answered before they were asked.
+    const url = opts.itemUrl();
+    if (url && !streamOpen) {
+      mentionLaneItemsStore.load(url, 'semble');
+      followLinkSharersStore.load(url);
+    }
     streamOpen = true;
   }
 
@@ -361,15 +368,31 @@ export function useAtmosphere(opts: UseAtmosphereOptions): AtmosphereApi {
   // told which lane it came from and cleaned of the titles and links the article
   // already shows, then split into what people SAID and what merely relinked.
   const stream = $derived.by<DiscussionStreamVM>(() => {
-    // Nothing has been asked for yet. Distinct from loading: with no request in
-    // flight, skeletons would promise people who aren't coming, and an empty
-    // state would claim nobody wrote about this. The surface renders neither.
+    // Nothing has been asked for yet. Distinct from loading: no request is in
+    // flight, so the surface never claims an empty discussion from it (it holds
+    // the stream's place until the host opens it).
     if (!streamOpen) return { idle: true, loading: false, entries: [], linkOnly: [] };
 
     const titles = [opts.itemTitle?.(), opts.sourceTitle?.()];
     const entries: DiscussionEntryVM[] = [];
-    let loading = false;
-    let failed = false;
+    // Still loading until the stream knows its own shape: which lanes have people
+    // (the counts), whether Semble has notes to lead with or tabs to add, and
+    // which of your follows shared it (they sort first). Settling before any of
+    // those lands would show an empty state, or a list that then reorders under
+    // the reader's eyes.
+    const url = opts.itemUrl();
+    const counts = articleMentionsStore.status(url);
+    const semble = laneItems.get('semble');
+    // Follows count only until their first answer: a later refresh keeps
+    // showing what came back before rather than putting skeletons back up.
+    const follows = followLinkSharersStore.get(url);
+    let loading =
+      counts === 'pending' ||
+      (activeFilter === 'all' && (!semble || semble.loading)) ||
+      (follows.loading && follows.at === 0);
+    // No counts means no lanes to resolve, which is not the same as nobody
+    // writing about it: say the lookup failed, and let retry ask again.
+    let failed = counts === 'unavailable';
     // `following` cuts across every lane, so it reads them all and narrows after.
     const laneFilter = activeFilter === 'following' ? 'all' : activeFilter;
     for (const lane of laneRow) {
@@ -447,6 +470,7 @@ export function useAtmosphere(opts: UseAtmosphereOptions): AtmosphereApi {
     const url = opts.itemUrl();
     if (!url) return;
     streamOpen = true;
+    articleMentionsStore.fetch(url, opts.itemAtUri?.());
     for (const lane of laneRow) {
       if (lane.count > 0)
         mentionLaneItemsStore.load(url, lane.id, { force: true, docUri: opts.itemAtUri?.() });
