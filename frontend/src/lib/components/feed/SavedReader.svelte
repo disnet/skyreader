@@ -749,9 +749,9 @@
     root.addEventListener('error', onError, true);
     return () => root.removeEventListener('error', onError, true);
   });
-  // A saved article's pictures still load from its site. One that fails (the
-  // site moved it, or is gone) switches to the copy the save's snapshot kept,
-  // when there is one. A book's pictures are its own (above).
+  // A saved article's pictures still load from its site. One that fails online
+  // (the site moved it, or is gone) switches to the copy the save's snapshot
+  // kept, when there is one. A book's pictures are its own (above).
   $effect(() => {
     const rkey = epubSave ? null : captureSaveRkey;
     const root = readerBodyEl;
@@ -759,16 +759,13 @@
     const onError = (e: Event) => {
       const img = e.target;
       if (!(img instanceof HTMLImageElement) || img.dataset.epubSrc) return;
+      // Offline, the kept copy can't load either; the switch is once per picture,
+      // so it waits for a load that could work.
+      if (!syncStore.isOnline) return;
       fallBackToKeptImage(img, (address) => snapshotImageUrl(rkey, address));
     };
     // Image errors don't bubble; listen on the way down.
     root.addEventListener('error', onError, true);
-    // …and catch any that failed before this was listening.
-    for (const img of root.querySelectorAll('img')) {
-      if (img.complete && img.naturalWidth === 0 && img.getAttribute('src')) {
-        onError({ target: img } as unknown as Event);
-      }
-    }
     return () => root.removeEventListener('error', onError, true);
   });
   // A save whose capture failed points at the Wayback Machine's copy from when

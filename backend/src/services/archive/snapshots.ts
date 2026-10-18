@@ -65,6 +65,9 @@ export async function captureSnapshot(env: Env, input: CaptureInput): Promise<Sn
   const { did, saveRkey, url, body, method } = input;
   if (!body || !body.trim() || body.includes(FAILED_CAPTURE_MARKER)) return null;
   if (!env.SAVED_FILES) return null;
+  // Pictures only a capture the cap replaces showed, dropped once this one has
+  // taken what it reuses.
+  let replacedImages: StoredFileRef[] = [];
   try {
     const bytes = new TextEncoder().encode(body);
     const sha256 = await sha256Hex(bytes);
@@ -78,10 +81,7 @@ export async function captureSnapshot(env: Env, input: CaptureInput): Promise<Sn
     if (latest?.sha256 === sha256) return null;
     // Read before the cap below can drop any: the pictures this capture shares
     // with an earlier one are reused, not downloaded again.
-    const keptImages = await keptImagesByUrl(env, did, saveRkey);
-    // Pictures only the replaced capture showed, dropped once this one has
-    // taken what it reuses.
-    let replacedImages: StoredFileRef[] = [];
+    const keptImages = /<img\b/i.test(body) ? await keptImagesByUrl(env, did, saveRkey) : new Map();
     if (latest && latest.n >= MAX_SNAPSHOTS_PER_SAVE) {
       log.warn('snapshot_cap_reached', { method });
       const newest = await env.DB.prepare(
@@ -152,7 +152,6 @@ export async function captureSnapshot(env: Env, input: CaptureInput): Promise<Sn
       log.error('snapshot_images_failed', { method, error: String(error) });
       reportError(error, { tags: { op: 'snapshot_images' } });
     }
-    await pruneSnapshotImages(env, did, replacedImages);
     // The save may have been deleted while this ran (a capture runs after the
     // response). Its snapshots went with it, so this one must too.
     const save = await env.DB.prepare(
@@ -170,6 +169,12 @@ export async function captureSnapshot(env: Env, input: CaptureInput): Promise<Sn
     log.error('snapshot_capture_failed', { method, error: String(error) });
     reportError(error, { tags: { op: 'snapshot_capture' } });
     return null;
+  } finally {
+    // The replaced capture's pictures, now that this one has taken what it
+    // reuses (or failed): those no other capture shows go.
+    await pruneSnapshotImages(env, did, replacedImages).catch((error) =>
+      log.error('snapshot_image_prune_failed', { error: String(error) })
+    );
   }
 }
 

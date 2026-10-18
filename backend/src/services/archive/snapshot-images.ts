@@ -26,6 +26,8 @@ import {
 } from '../saved-file-store';
 import { sha256Hex } from '../../utils/sha256';
 import { log } from '../../utils/logger';
+import { decodeEntities } from '../../utils/html-text';
+import { getRequestContext } from '../../utils/request-context';
 
 /**
  * The plans whose captures keep pictures: every plan, for now. Whether picture
@@ -42,10 +44,24 @@ export const MAX_IMAGES_PER_SNAPSHOT = 30;
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 /** Bytes of pictures kept per capture, all told. */
 export const MAX_SNAPSHOT_IMAGE_BYTES = 20 * 1024 * 1024;
+/**
+ * Bytes of pictures kept per save, across its captures. A re-save with new text
+ * skips the monthly save limit, so this is what bounds one save's pictures.
+ */
+export const MAX_SAVE_IMAGE_BYTES = 40 * 1024 * 1024;
 /** How long one picture's download may take. */
 const IMAGE_TIMEOUT_MS = 8_000;
-/** How long a capture spends on its pictures in all: it runs under waitUntil. */
+/**
+ * How long one invocation spends on pictures, across all its captures: they run
+ * under waitUntil, which ends 30 seconds after the response.
+ */
 const CAPTURE_BUDGET_MS = 20_000;
+/**
+ * Downloads per invocation, across all its captures: each is a fetch and a
+ * store write against the invocation's subrequest ceiling, and a backfill
+ * captures many saves in one. A capture past it keeps its text only.
+ */
+export const MAX_IMAGE_DOWNLOADS_PER_INVOCATION = 60;
 /** Downloads at once. */
 const CONCURRENCY = 4;
 
@@ -63,15 +79,6 @@ export interface SnapshotImageRow extends StoredFileColumns {
 }
 
 const ROW_COLUMNS = `snapshot_rkey, save_rkey, url, content_type, sha256, size, ${STORED_FILE_COLUMNS}`;
-
-function decodeEntities(value: string): string {
-  return value
-    .replace(/&quot;/g, '"')
-    .replace(/&#0*39;|&apos;/g, "'")
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&amp;/g, '&');
-}
 
 /** A picture's address made absolute against the page, or null when it isn't a web address. */
 export function snapshotImageUrl(src: string, pageUrl: string): string | null {
@@ -178,7 +185,7 @@ export interface ImageCaptureInput {
 /**
  * Keep the pictures `body` shows as part of snapshot `snapshotRkey`. A picture
  * the save already kept is reused; a new one is downloaded and kept. One that
- * can't be had (gone, too big, not a picture, out of time) is skipped. Returns
+ * can't be had (gone, too big, not a picture, out of budget) is skipped. Returns
  * how many the snapshot now holds. Throws only on a D1 failure.
  */
 export async function captureSnapshotImages(env: Env, input: ImageCaptureInput): Promise<number> {
@@ -190,28 +197,47 @@ export async function captureSnapshotImages(env: Env, input: ImageCaptureInput):
   // An unknown tier reads as free, as getLimitsForTier reads it.
   if (!SNAPSHOT_IMAGE_TIERS.has(isValidTier(tier) ? tier : 'free')) return 0;
 
-  const deadline = Date.now() + CAPTURE_BUDGET_MS;
+  // Shared by every capture in this invocation; a capture outside one (a test
+  // calling in directly) gets its own.
+  const context = getRequestContext();
+  const budget = context
+    ? (context.snapshotImages ??= {
+        downloads: MAX_IMAGE_DOWNLOADS_PER_INVOCATION,
+        deadline: Date.now() + CAPTURE_BUDGET_MS,
+      })
+    : { downloads: MAX_IMAGE_DOWNLOADS_PER_INVOCATION, deadline: Date.now() + CAPTURE_BUDGET_MS };
+  // What the save's pictures already take, each object once.
+  const saveBytes = new Map([...kept.values()].map((row) => [row.r2_key, row.size]));
+  let bytesLeft = Math.min(
+    MAX_SNAPSHOT_IMAGE_BYTES,
+    MAX_SAVE_IMAGE_BYTES - [...saveBytes.values()].reduce((a, b) => a + b, 0)
+  );
+
   const rows: SnapshotImageRow[] = [];
-  let bytesKept = 0;
+  const written: StoredFileRef[] = [];
+  let downloaded = 0;
   let next = 0;
   const work = async () => {
     while (next < urls.length) {
       const url = urls[next++];
       const reused = kept.get(url);
       if (reused) {
-        rows.push({ ...reused, snapshot_rkey: snapshotRkey, save_rkey: saveRkey });
+        rows.push({ ...reused, snapshot_rkey: snapshotRkey });
         continue;
       }
-      if (bytesKept >= MAX_SNAPSHOT_IMAGE_BYTES) continue;
-      const fetched = await fetchImage(url, deadline);
-      if (!fetched || bytesKept + fetched.bytes.byteLength > MAX_SNAPSHOT_IMAGE_BYTES) continue;
-      bytesKept += fetched.bytes.byteLength;
+      if (bytesLeft <= 0 || budget.downloads <= 0) continue;
+      budget.downloads--;
+      const fetched = await fetchImage(url, budget.deadline);
+      if (!fetched || fetched.bytes.byteLength > bytesLeft) continue;
+      bytesLeft -= fetched.bytes.byteLength;
       const sha256 = await sha256Hex(fetched.bytes);
       try {
         const ref = await store.putImage(
           { did, saveRkey, sha256, mimeType: fetched.contentType },
           fetched.bytes
         );
+        written.push(ref);
+        downloaded++;
         rows.push({
           snapshot_rkey: snapshotRkey,
           save_rkey: saveRkey,
@@ -232,33 +258,43 @@ export async function captureSnapshotImages(env: Env, input: ImageCaptureInput):
   await Promise.all(Array.from({ length: CONCURRENCY }, work));
   if (rows.length === 0) return 0;
 
+  // Each row takes its save from the snapshot as it stands now: a backed re-save
+  // may have moved the snapshot to a new rkey while the pictures downloaded, and
+  // one deleted meanwhile (its save, or the cap) inserts nothing.
   const insert = env.DB.prepare(
     `INSERT OR IGNORE INTO saved_snapshot_images (user_did, ${ROW_COLUMNS})
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+     SELECT ?1, rkey, save_rkey, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9
+     FROM saved_snapshots WHERE user_did = ?1 AND rkey = ?10`
   );
-  await env.DB.batch(
-    rows.map((row) =>
-      insert.bind(
-        did,
-        row.snapshot_rkey,
-        row.save_rkey,
-        row.url,
-        row.content_type,
-        row.sha256,
-        row.size,
-        row.storage,
-        row.r2_key,
-        row.blob_cid,
-        row.record_uri
+  let inserted = 0;
+  try {
+    const results = await env.DB.batch(
+      rows.map((row) =>
+        insert.bind(
+          did,
+          row.url,
+          row.content_type,
+          row.sha256,
+          row.size,
+          row.storage,
+          row.r2_key,
+          row.blob_cid,
+          row.record_uri,
+          snapshotRkey
+        )
       )
-    )
-  );
+    );
+    inserted = results.reduce((n, result) => n + (result.meta?.changes ?? 0), 0);
+  } finally {
+    // Whatever was written but didn't land in a row (the insert failed, or the
+    // snapshot is gone) is let go.
+    await pruneSnapshotImages(env, did, written);
+  }
   log.info('snapshot_images_captured', {
-    count: rows.length,
-    downloaded: rows.length - urls.filter((u) => kept.has(u)).length,
-    bytes: bytesKept,
+    count: inserted,
+    downloaded,
   });
-  return rows.length;
+  return inserted;
 }
 
 /**

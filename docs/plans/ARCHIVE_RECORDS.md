@@ -177,9 +177,11 @@ the same `waitUntil` and kept in the save's `SavedFileStore` (`images/<did>/<sav
 one object per distinct picture in a save). One `saved_snapshot_images` row per picture per
 snapshot (`snapshot_rkey, save_rkey, url, content_type, sha256, size` plus the store columns), so a
 later capture showing the same picture reuses it instead of downloading it again. Bounded per
-capture: 30 pictures, 5 MB each, 20 MB in all, 20 seconds; JPEG, PNG, GIF, WebP and AVIF only (an
-SVG can carry script). The body is never rewritten: the reader loads the site's picture and, when
-that fails, asks `GET /api/saved/<rkey>/snapshot-image?url=<address>` for the kept copy. Pictures
+capture: 30 pictures, 5 MB each, 20 MB in all; 40 MB per save across its captures; and per
+invocation (a backfill captures many saves in one) 60 downloads within 20 seconds. JPEG, PNG, GIF,
+WebP and AVIF only (an SVG can carry script). Rows take their save from the snapshot row at insert,
+so a snapshot deleted or moved mid-download leaves nothing behind. The body is never rewritten: the reader loads the site's picture and, when
+that fails online, asks `GET /api/saved/<rkey>/snapshot-image?url=<address>` for the kept copy. Pictures
 go with their snapshot (at the cap, only those no other capture shows) and with the save. Every
 plan captures them for now (`SNAPSHOT_IMAGE_TIERS`); whether they become a Supporter feature that
 counts against storage is undecided. At the space write each row becomes an entry in the

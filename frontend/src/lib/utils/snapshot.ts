@@ -45,13 +45,15 @@ export function captureLine(snapshot: SavedSnapshot): string {
 
 /**
  * A picture's address as a save's snapshot kept it: its `src`, or the first
- * `srcset` candidate when it has none (backend snapshotImageUrls).
+ * `srcset` candidate when that isn't a web address (backend snapshotImageUrls).
  */
 function keptImageAddress(img: HTMLImageElement): string | null {
-  const src = img.getAttribute('src')?.trim();
-  // A candidate's address runs to its first space: it may hold commas itself.
-  const candidate = src || img.getAttribute('srcset')?.trim().split(/\s+/)[0]?.replace(/,$/, '');
-  return candidate && /^https?:\/\//i.test(candidate) ? candidate : null;
+  const web = (value: string | undefined) => (value && /^https?:\/\//i.test(value) ? value : null);
+  return (
+    web(img.getAttribute('src')?.trim()) ??
+    // A candidate's address runs to its first space: it may hold commas itself.
+    web(img.getAttribute('srcset')?.trim().split(/\s+/)[0]?.replace(/,$/, ''))
+  );
 }
 
 /**

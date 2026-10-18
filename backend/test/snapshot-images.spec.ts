@@ -7,6 +7,7 @@ import { MAX_SNAPSHOTS_PER_SAVE } from '../src/services/archive/snapshots';
 import {
   MAX_IMAGES_PER_SNAPSHOT,
   MAX_IMAGE_BYTES,
+  captureSnapshotImages,
   snapshotImageUrls,
 } from '../src/services/archive/snapshot-images';
 
@@ -138,6 +139,12 @@ describe('snapshotImageUrls', () => {
     ]);
   });
 
+  it('decodes numeric entities as the browser does', () => {
+    expect(snapshotImageUrls('<img src="https://x.test/a.jpg?w=800&#038;h=600">', PAGE)).toEqual([
+      'https://x.test/a.jpg?w=800&h=600',
+    ]);
+  });
+
   it('keeps at most MAX_IMAGES_PER_SNAPSHOT', () => {
     const body = Array.from({ length: 50 }, (_, i) => `<img src="/${i}.png">`).join('');
     expect(snapshotImageUrls(body, PAGE)).toHaveLength(MAX_IMAGES_PER_SNAPSHOT);
@@ -238,5 +245,20 @@ describe('snapshot pictures', () => {
     expect(rows).toHaveLength(MAX_SNAPSHOTS_PER_SAVE);
     expect(await imageObjects()).toEqual([`images/${DID}/aaaaaaaaaaaaa/${await sha256Hex(PNG)}`]);
     expect(fetched.filter((u) => u.endsWith('/a.png'))).toHaveLength(1);
+  });
+
+  it('keeps nothing for a snapshot that went away while its pictures downloaded', async () => {
+    await save('aaaaaaaaaaaaa', '<p>x</p>');
+    const kept = await captureSnapshotImages(env, {
+      did: DID,
+      saveRkey: 'aaaaaaaaaaaaa',
+      snapshotRkey: 'gonegonegone2',
+      pageUrl: PAGE,
+      body: '<img src="a.png">',
+      kept: new Map(),
+    });
+    expect(kept).toBe(0);
+    expect(await imageRows()).toEqual([]);
+    expect(await imageObjects()).toEqual([]);
   });
 });

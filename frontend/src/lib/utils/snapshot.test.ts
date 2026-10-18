@@ -77,6 +77,14 @@ describe('fallBackToKeptImage', () => {
     expect(img.getAttribute('src')).toBe(kept('https://cdn.test/w_500,f_auto/a.jpg'));
   });
 
+  it('reads past a placeholder src to the srcset, as the capture did', () => {
+    const img = image(
+      '<img src="data:image/gif;base64,R0lGOD" srcset="https://example.com/a.jpg 1x">'
+    );
+    expect(fallBackToKeptImage(img, kept)).toBe(true);
+    expect(img.getAttribute('src')).toBe(kept('https://example.com/a.jpg'));
+  });
+
   it('leaves a picture with no web address alone', () => {
     const img = image('<img src="data:image/gif;base64,R0lGOD">');
     expect(fallBackToKeptImage(img, kept)).toBe(false);
