@@ -48,6 +48,15 @@ export type ClientErrorKind =
  */
 const ALWAYS_SEND: ReadonlySet<ClientErrorKind> = new Set(['preload_recovery_failed']);
 
+/**
+ * Crawlers run the app from HTML they fetched earlier, often after the chunks it
+ * names have rotated out, so they trip every deploy-recovery path without a
+ * reader anywhere near it. Named explicitly rather than matched on "bot", which
+ * also matches real phones (CUBOT).
+ */
+const CRAWLER_UA =
+  /Googlebot|GoogleOther|Google-InspectionTool|bingbot|Applebot|YandexBot|DuckDuckBot|Baiduspider|HeadlessChrome/i;
+
 let sent = 0;
 const seen = new Set<string>();
 
@@ -100,6 +109,8 @@ export function reportClientError(kind: ClientErrorKind, error: unknown): void {
     // Offline is not a signal about the app, and holding a report until the
     // network returns is a queue we'd have to reason about. Drop it.
     if (navigator.onLine === false) return;
+    // The question is whether readers are broken; a crawler's failure isn't one.
+    if (CRAWLER_UA.test(navigator.userAgent ?? '')) return;
 
     const { name, message, stack } = describe(error);
 
