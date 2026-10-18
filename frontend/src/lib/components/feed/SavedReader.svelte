@@ -30,8 +30,14 @@
   import { imageLightbox } from '$lib/actions/image-lightbox';
   import { videoTranscript } from '$lib/actions/video-transcript';
   import Icon from '$lib/components/Icon.svelte';
-  import { api, savedAssetUrl, savedFileUrl, type SavedSnapshot } from '$lib/services/api';
-  import { captureLine, withWaybackLink } from '$lib/utils/snapshot';
+  import {
+    api,
+    savedAssetUrl,
+    savedFileUrl,
+    snapshotImageUrl,
+    type SavedSnapshot,
+  } from '$lib/services/api';
+  import { captureLine, fallBackToKeptImage, withWaybackLink } from '$lib/utils/snapshot';
   import { resolveEpubImages } from '$lib/utils/epubContent';
   import { epubViewMode, setEpubViewMode } from '$lib/utils/epubViewMode';
   import PdfViewer from '$lib/components/feed/PdfViewer.svelte';
@@ -738,6 +744,25 @@
           }
         })
         .catch(() => {});
+    };
+    // Image errors don't bubble; listen on the way down.
+    root.addEventListener('error', onError, true);
+    return () => root.removeEventListener('error', onError, true);
+  });
+  // A saved article's pictures still load from its site. One that fails online
+  // (the site moved it, or is gone) switches to the copy the save's snapshot
+  // kept, when there is one. A book's pictures are its own (above).
+  $effect(() => {
+    const rkey = epubSave ? null : captureSaveRkey;
+    const root = readerBodyEl;
+    if (!rkey || !root || !auth.user) return;
+    const onError = (e: Event) => {
+      const img = e.target;
+      if (!(img instanceof HTMLImageElement) || img.dataset.epubSrc) return;
+      // Offline, the kept copy can't load either; the switch is once per picture,
+      // so it waits for a load that could work.
+      if (!syncStore.isOnline) return;
+      fallBackToKeptImage(img, (address) => snapshotImageUrl(rkey, address));
     };
     // Image errors don't bubble; listen on the way down.
     root.addEventListener('error', onError, true);

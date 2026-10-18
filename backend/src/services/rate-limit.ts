@@ -20,8 +20,9 @@ const STANDARD_LIMIT: RateLimitConfig = { limit: 100, windowMs: 60000 };
 // Light operations that are cheap to serve
 const LIGHT_LIMIT: RateLimitConfig = { limit: 300, windowMs: 60000 };
 
-// Paths with an id in them share one bucket: a book's pictures all load at once.
-const SAVED_ASSET_PATH = /^\/api\/saved\/[^/]+\/asset$/;
+// Paths with an id in them share one bucket: a book's pictures all load at once,
+// and so do a saved article's kept pictures when its site is gone.
+const SAVED_ASSET_PATH = /^\/api\/saved\/[^/]+\/(?:asset|snapshot-image)$/;
 const SAVED_ASSET_KEY = '/api/saved/:rkey/asset';
 // A save's captures are read on every open, one rkey per article: one bucket for all.
 const SAVED_SNAPSHOTS_PATH = /^\/api\/saved\/[^/]+\/snapshots$/;

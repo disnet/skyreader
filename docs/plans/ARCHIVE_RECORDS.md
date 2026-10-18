@@ -171,9 +171,25 @@ claim only `live-dom` or `server`.
 latest under the article ("Captured on …"). A save whose capture failed links to the Wayback
 Machine's copy nearest its save time instead.
 
-**Not captured yet:** images (a snapshot's body still points at the page's own image URLs) and
-saves made before snapshots existed (no backfill: a body captured at an unknown time would claim a
-capture time it doesn't have). A PDF's or EPUB's original is already kept in `saved_files`.
+**Pictures** a snapshot's body shows are kept with it (`services/archive/snapshot-images.ts`):
+each `<img>`'s `src` (or first `srcset` candidate), made absolute against the page, downloaded under
+the same `waitUntil` and kept in the save's `SavedFileStore` (`images/<did>/<save rkey>/<sha256>`,
+one object per distinct picture in a save). One `saved_snapshot_images` row per picture per
+snapshot (`snapshot_rkey, save_rkey, url, content_type, sha256, size` plus the store columns), so a
+later capture showing the same picture reuses it instead of downloading it again. Bounded per
+capture: 30 pictures, 5 MB each, 20 MB in all; 40 MB per save across its captures; and per
+invocation (a backfill captures many saves in one) 60 downloads within 20 seconds. JPEG, PNG, GIF,
+WebP and AVIF only (an SVG can carry script). Rows take their save from the snapshot row at insert,
+so a snapshot deleted or moved mid-download leaves nothing behind. The body is never rewritten: the reader loads the site's picture and, when
+that fails online, asks `GET /api/saved/<rkey>/snapshot-image?url=<address>` for the kept copy. Pictures
+go with their snapshot (at the cap, only those no other capture shows) and with the save. Picture capture is a Supporter
+feature (`TierLimits.snapshotImages`), and the pictures count against the plan's storage for saved
+files beside kept originals (`storedFileBytes`). At the space write each row becomes an entry in the
+snapshot record's `images` array (`{ url, contentType, sha256, size, blob }`).
+
+**Not captured yet:** saves made before snapshots existed (no backfill: a body captured at an
+unknown time would claim a capture time it doesn't have), and pictures a body loads some other way
+(CSS backgrounds, `<video>` posters). A PDF's or EPUB's original is already kept in `saved_files`.
 
 ## Not yet verified against production
 

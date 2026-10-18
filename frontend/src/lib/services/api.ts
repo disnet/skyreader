@@ -162,6 +162,14 @@ export function libraryExportUrl(format: 'markdown' | 'bibtex'): string {
   return `${API_BASE}/api/export?format=${format}`;
 }
 
+/**
+ * The copy of a picture (by the address its body gives) that a save's snapshot
+ * kept, served only to its owner.
+ */
+export function snapshotImageUrl(rkey: string, url: string): string {
+  return `${API_BASE}/api/saved/${encodeURIComponent(rkey)}/snapshot-image?url=${encodeURIComponent(url)}`;
+}
+
 /** A picture inside a saved EPUB (its path in the book), served only to its owner. */
 export function savedAssetUrl(rkey: string, path: string): string {
   return `${API_BASE}/api/saved/${encodeURIComponent(rkey)}/asset?path=${encodeURIComponent(path)}`;
