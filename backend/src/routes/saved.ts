@@ -23,6 +23,12 @@ import { hasIntegrationScopes } from './integrations';
 import { normalizeArticleUrl } from '../utils/url-normalize';
 import { chunkArray } from './reading';
 import { deleteSavedFile, storeLinkedOriginalForUrl } from './saved-pdf';
+import {
+  captureSnapshot,
+  deleteSnapshots,
+  listSnapshots,
+  type SnapshotMethod,
+} from '../services/archive/snapshots';
 
 const COLLECTION = 'app.skyreader.feed.saved';
 
@@ -76,6 +82,21 @@ interface CreateSavedBody {
   // extension, whose live-DOM extraction can see paywalled/JS-rendered content
   // the server-side extractor can't.
   updateContent?: boolean;
+  // How the client captured `content`: 'live-dom' (the extension, from the open
+  // tab) or 'server' (via /api/extract). Recorded on the save's snapshot; any
+  // other value is ignored.
+  captureMethod?: 'live-dom' | 'server';
+}
+
+// How a save's body was captured, for its snapshot: the client's word for a URL
+// save, else what the source implies. Unknown is null, never a guess.
+function snapshotMethod(body: CreateSavedBody, source: string): SnapshotMethod | null {
+  if (body.captureMethod === 'live-dom' || body.captureMethod === 'server') {
+    return body.captureMethod;
+  }
+  if (source === 'feed') return 'feed';
+  if (source === 'document') return 'record';
+  return null;
 }
 
 // POST /api/saved — save an item from a URL or feed article
@@ -190,7 +211,7 @@ export async function handleCreateSaved(
       // This is an update of an existing save, so it deliberately runs before —
       // and doesn't count against — the monthly URL-save limit.
       if (body.updateContent && body.content) {
-        return keepPdfOriginal(await handleContentUpdate(env, session, body, existing));
+        return keepPdfOriginal(await handleContentUpdate(env, ctx, session, body, existing));
       }
       return new Response(JSON.stringify({ error: 'Article already saved' }), {
         status: 409,
@@ -236,7 +257,9 @@ export async function handleCreateSaved(
     // on) falls through to the native, D1-only path below.
     const settings = await getUserSettings(env, session.did);
     if (settings.backing.provider !== 'skyreader' && normalizeArticleUrl(body.url)) {
-      return keepPdfOriginal(await handleBackedSave(env, session, body, source, settings.backing));
+      return keepPdfOriginal(
+        await handleBackedSave(env, ctx, session, body, source, settings.backing)
+      );
     }
 
     if (source === 'feed' || source === 'share' || source === 'document') {
@@ -266,7 +289,7 @@ export async function handleCreateSaved(
 async function handleMetadataSave(
   _request: Request,
   env: Env,
-  _ctx: ExecutionContext,
+  ctx: ExecutionContext,
   session: Session,
   body: CreateSavedBody,
   source: string
@@ -311,6 +334,15 @@ async function handleMetadataSave(
       body.itemGuid || null
     )
     .run();
+  ctx.waitUntil(
+    captureSnapshot(env, {
+      did: session.did,
+      saveRkey: body.rkey,
+      url: body.url,
+      body: body.content,
+      method: snapshotMethod(body, source),
+    })
+  );
 
   return new Response(
     JSON.stringify({
@@ -341,6 +373,7 @@ async function handleMetadataSave(
 // same save, with better content.
 async function handleContentUpdate(
   env: Env,
+  ctx: ExecutionContext,
   session: Session,
   body: CreateSavedBody,
   existing: Pick<SavedRow, 'id' | 'rkey' | 'record_uri'>
@@ -384,6 +417,16 @@ async function handleContentUpdate(
       session.did
     )
     .run();
+  // A new capture of the same save: kept beside the earlier one, not over it.
+  ctx.waitUntil(
+    captureSnapshot(env, {
+      did: session.did,
+      saveRkey: existing.rkey,
+      url: body.url,
+      body: body.content,
+      method: snapshotMethod(body, 'url'),
+    })
+  );
 
   return new Response(
     JSON.stringify({
@@ -446,6 +489,15 @@ async function handleUrlSave(
       'url'
     )
     .run();
+  ctx.waitUntil(
+    captureSnapshot(env, {
+      did: session.did,
+      saveRkey: body.rkey,
+      url: body.url,
+      body: body.content,
+      method: snapshotMethod(body, 'url'),
+    })
+  );
 
   return new Response(
     JSON.stringify({
@@ -464,6 +516,7 @@ async function handleUrlSave(
  */
 async function handleBackedSave(
   env: Env,
+  ctx: ExecutionContext,
   session: Session,
   body: CreateSavedBody,
   source: string,
@@ -519,6 +572,12 @@ async function handleBackedSave(
   // tombstone for this URL (a re-save of something just unsaved). record_uri is NULL:
   // a backed save has no app.skyreader.feed.saved export.
   await env.DB.batch([
+    // The upsert moves an existing row to this save's rkey; its snapshots move with it.
+    env.DB.prepare(
+      `UPDATE saved_snapshots SET save_rkey = ?
+       WHERE user_did = ? AND save_rkey IN (
+         SELECT rkey FROM saved_articles WHERE user_did = ? AND url_normalized = ?)`
+    ).bind(body.rkey, session.did, session.did, urlNormalized),
     env.DB.prepare(
       `INSERT INTO saved_articles
          (user_did, rkey, record_uri, url, url_normalized, title, author, description, content,
@@ -588,6 +647,16 @@ async function handleBackedSave(
        WHERE user_did = ? AND external_collection = ? AND url_normalized = ?`
     ).bind(session.did, backing.collectionUri, urlNormalized),
   ]);
+  // The upsert above sets the row's rkey to this save's, so the snapshot keys on it.
+  ctx.waitUntil(
+    captureSnapshot(env, {
+      did: session.did,
+      saveRkey: body.rkey,
+      url,
+      body: body.content,
+      method: snapshotMethod(body, source),
+    })
+  );
 
   return new Response(
     JSON.stringify({
@@ -1240,8 +1309,9 @@ export async function handleDeleteSaved(
     await env.DB.prepare('DELETE FROM saved_articles WHERE user_did = ? AND rkey = ?')
       .bind(session.did, rkey)
       .run();
-    // An uploaded PDF's original goes with it.
+    // An uploaded PDF's original goes with it, and so do its snapshots.
     await deleteSavedFile(env, session.did, rkey);
+    await deleteSnapshots(env, session.did, [rkey]);
     // …and so do its places in Shelf collections.
     await removeSavedFromCollections(env, session.did, [rkey]);
 
@@ -1319,6 +1389,7 @@ export async function handleDeleteSavedByGuid(
     await env.DB.prepare('DELETE FROM saved_articles WHERE user_did = ? AND item_guid = ?')
       .bind(session.did, guid)
       .run();
+    await deleteSnapshots(env, session.did, [row.rkey]);
     await removeSavedFromCollections(env, session.did, [row.rkey]);
 
     const settings = await getUserSettings(env, session.did);
@@ -1338,4 +1409,39 @@ export async function handleDeleteSavedByGuid(
       headers: { 'Content-Type': 'application/json' },
     });
   }
+}
+
+// GET /api/saved/:rkey/snapshots — the captures of a save's body, oldest first:
+// when, from where, how, and the body's hash. The bodies themselves stay in R2.
+export async function handleGetSavedSnapshots(request: Request, env: Env): Promise<Response> {
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  if (request.method !== 'GET') return json({ error: 'Method not allowed' }, 405);
+  const session = await getSessionFromRequest(request, env);
+  if (!session) return json({ error: 'Unauthorized' }, 401);
+
+  const rkey = new URL(request.url).pathname.split('/')[3];
+  if (!rkey || !isValidRkey(rkey)) return invalidRkeyResponse();
+  const save = await env.DB.prepare(
+    'SELECT 1 AS x FROM saved_articles WHERE user_did = ? AND rkey = ?'
+  )
+    .bind(session.did, rkey)
+    .first();
+  if (!save) return json({ error: 'Not found' }, 404);
+
+  const rows = await listSnapshots(env, session.did, rkey);
+  return json({
+    snapshots: rows.map((row) => ({
+      rkey: row.rkey,
+      capturedAt: new Date(row.captured_at).toISOString(),
+      url: row.url,
+      contentType: row.content_type,
+      sha256: row.sha256,
+      size: row.size,
+      method: row.method,
+    })),
+  });
 }

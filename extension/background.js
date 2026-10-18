@@ -271,9 +271,12 @@ async function performSave(url, { fallbackTitle, extractTabId } = {}) {
   // Extraction is best-effort: a failed extraction still saves the bare URL
   // with the tab title.
   let extracted = null;
+  // Recorded on the save's snapshot: read from the open tab, or fetched by Skyreader.
+  let captureMethod = 'server';
   try {
     if (extractTabId != null) extracted = await extractFromTab(extractTabId);
-    if (!extracted) extracted = await extractViaBackend(cfg, url);
+    if (extracted) captureMethod = 'live-dom';
+    else extracted = await extractViaBackend(cfg, url);
   } catch (err) {
     if (err instanceof UnauthorizedError) return { status: 'auth', url };
     // Network/extraction failure — fall through to a bare save.
@@ -304,6 +307,7 @@ async function performSave(url, { fallbackTitle, extractTabId } = {}) {
     // 'pdf' only from the backend extractor: the browser's PDF viewer can't be
     // scripted, so a PDF tab always lands here via extractViaBackend.
     contentType: extracted?.contentType || undefined,
+    captureMethod: hasBody ? captureMethod : undefined,
   };
 
   let res;

@@ -11,6 +11,12 @@ Save an article from its card or from the reader, or from outside Skyreader enti
 
 Saves are **private to Skyreader** by default. Nothing is published.
 
+### What a save keeps
+
+A save keeps the article as it was when you saved it, so it stays readable if the page is later edited or taken down. The end of a saved article says when it was captured and how: from the page in your browser (the extension), fetched by Skyreader, or from the feed. (Saves from before Skyreader kept captures don't show this.) Saving it again with new text, say from the extension, keeps the earlier capture too. Each capture carries a SHA-256 fingerprint of its text, so you can tell later whether two copies match.
+
+When Skyreader couldn't get the text at all, the note in its place links to the Wayback Machine's copy of the page from around the day you saved it.
+
 ### Saving a link from inside an article
 
 Tap a link in an article to see where it goes before you leave. From there you can open it, copy it, save it to Skyreader, or add it to a [Semble](https://semble.so) or [Margin](https://margin.at) collection. Semble and Margin collections are public.

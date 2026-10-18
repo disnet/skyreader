@@ -142,6 +142,17 @@ function isUploadPath(path: string): boolean {
 }
 
 /** The original file behind an uploaded save, served only to its owner. */
+/** One capture of a save's body: when, from where, how, and the body's hash. */
+export interface SavedSnapshot {
+  rkey: string;
+  capturedAt: string;
+  url: string;
+  contentType: string;
+  sha256: string;
+  size: number;
+  method: 'live-dom' | 'server' | 'feed' | 'record' | 'upload' | null;
+}
+
 export function savedFileUrl(rkey: string): string {
   return `${API_BASE}/api/saved/${encodeURIComponent(rkey)}/file`;
 }
@@ -2216,6 +2227,8 @@ class ApiClient {
       contentType?: 'pdf' | 'epub';
       // Replace an existing save of this URL's content instead of a 409.
       updateContent?: boolean;
+      // How `content` was captured, recorded on the save's snapshot.
+      captureMethod?: 'live-dom' | 'server';
     }
   ): Promise<{
     rkey: string;
@@ -2296,6 +2309,11 @@ class ApiClient {
   // Hydrate article bodies for the given rkeys. Returns a map rkey → body (null
   // when the row has no stored content yet, e.g. a backed stub awaiting
   // extraction). The client calls this only for saves it hasn't cached locally.
+  /** The captures of a save's body, oldest first (GET /api/saved/:rkey/snapshots). */
+  async getSavedSnapshots(rkey: string): Promise<{ snapshots: SavedSnapshot[] }> {
+    return this.fetch(`/api/saved/${encodeURIComponent(rkey)}/snapshots`);
+  }
+
   async getSavedBodies(rkeys: string[]): Promise<{ bodies: Record<string, string | null> }> {
     return this.fetch('/api/saved/bodies', {
       method: 'POST',

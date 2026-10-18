@@ -30,7 +30,8 @@
   import { imageLightbox } from '$lib/actions/image-lightbox';
   import { videoTranscript } from '$lib/actions/video-transcript';
   import Icon from '$lib/components/Icon.svelte';
-  import { savedAssetUrl, savedFileUrl } from '$lib/services/api';
+  import { api, savedAssetUrl, savedFileUrl, type SavedSnapshot } from '$lib/services/api';
+  import { captureLine, withWaybackLink } from '$lib/utils/snapshot';
   import { resolveEpubImages } from '$lib/utils/epubContent';
   import { epubViewMode, setEpubViewMode } from '$lib/utils/epubViewMode';
   import PdfViewer from '$lib/components/feed/PdfViewer.svelte';
@@ -434,6 +435,35 @@
     };
   });
 
+  // The save's captures (services/archive/snapshots.ts on the backend): the
+  // reader shows when and how the body it's reading was captured. Account-only
+  // and online-only; a save with none (from before captures were kept, or still
+  // being kept) shows nothing.
+  let captureSaveRkey = $derived(
+    readerItem.type === 'saved'
+      ? readerItem.item.rkey || null
+      : readerItem.type === 'article' && lazyArticleIsSavedCopy
+        ? (savesStore.getByGuid(readerItem.item.guid)?.rkey ?? null)
+        : null
+  );
+  let captures = $state.raw<SavedSnapshot[]>([]);
+  $effect(() => {
+    captures = [];
+    const rkey = captureSaveRkey;
+    if (!rkey || !auth.user || !navigator.onLine) return;
+    let cancelled = false;
+    api
+      .getSavedSnapshots(rkey)
+      .then((res) => {
+        if (!cancelled) captures = res.snapshots;
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  });
+  let latestCapture = $derived(captures.at(-1) ?? null);
+
   // A document's flat text, lazy-loaded for stripped social-feed docs whose body
   // isn't recognized structured content (rare). Resets per reader item.
   let lazyDocText = $state<string | null>(null);
@@ -712,8 +742,19 @@
     root.addEventListener('error', onError, true);
     return () => root.removeEventListener('error', onError, true);
   });
+  // A save whose capture failed points at the Wayback Machine's copy from when
+  // it was saved, beside the note (which already links the live page).
+  let readerBody = $derived(
+    itemUrl && isFailedSaveBody(displayContent)
+      ? withWaybackLink(
+          displayContent,
+          itemUrl,
+          readerItem.type === 'saved' ? readerItem.item.savedAt : null
+        )
+      : displayContent
+  );
   let sanitizedContent = $derived.by(() => {
-    if (!epubSave) return sanitizeHtml(displayContent, itemUrl);
+    if (!epubSave) return sanitizeHtml(readerBody, itemUrl);
     const rkey = epubSave.rkey;
     return resolveEpubImages(sanitizeHtml(displayContent), (path) =>
       rkey ? savedAssetUrl(rkey, path) : ''
@@ -1749,6 +1790,18 @@
         {/if}
       </div>
 
+      {#if latestCapture && !isFailedSaveBody(displayContent)}
+        <p class="reader-capture">
+          {captureLine(latestCapture)}
+          {#if captures.length > 1}
+            {captures.length} captures kept.
+          {/if}
+          <span class="reader-capture-hash" title="SHA-256 {latestCapture.sha256}">
+            SHA-256 {latestCapture.sha256.slice(0, 12)}…
+          </span>
+        </p>
+      {/if}
+
       {#if onMarkRead || markedRead}
         <div class="reader-mark-read">
           {#if markedRead}
@@ -2633,6 +2686,19 @@
 
   .sheet-action-btn.danger :global(.icon) {
     color: var(--color-error, #dc2626);
+  }
+
+  .reader-capture {
+    margin: 2rem 0 0;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--color-border);
+    font-size: var(--text-xs);
+    color: var(--color-text-secondary);
+  }
+
+  .reader-capture-hash {
+    font-family: var(--font-mono, ui-monospace, monospace);
+    white-space: nowrap;
   }
 
   .reader-mark-read {

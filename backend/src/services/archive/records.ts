@@ -16,13 +16,15 @@
 // CID), and a record can't smuggle a key or column the shape doesn't have.
 //
 // Notes are not a record of their own: a note is a highlight's `note`, as on
-// Margin's at.margin.note. Snapshots have no rows yet; their shape is in the plan.
+// Margin's at.margin.note. A snapshot is a record of its own, one per capture of a
+// save's body (services/archive/snapshots.ts writes the rows).
 
 import type { CborValue } from './dag-cbor';
 import { sha256Hex } from '../../utils/sha256';
 
 export const SAVE_COLLECTION = 'app.skyreader.archive.save';
 export const HIGHLIGHT_COLLECTION = 'app.skyreader.archive.highlight';
+export const SNAPSHOT_COLLECTION = 'app.skyreader.archive.snapshot';
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 type RecordObject = { [key: string]: CborValue | undefined };
@@ -313,6 +315,52 @@ export function saveFromRecord(
     file = decodeColumns(fileRecord, FILE_FIELDS, parseExtra(fileRecord));
   }
   return { row, file };
+}
+
+// ─── Snapshots ────────────────────────────────────────────────────────────────
+
+/** A saved_snapshots row, less `user_did`: one capture of a save's body. */
+export interface SnapshotRow {
+  rkey: string;
+  save_rkey: string;
+  captured_at: number;
+  url: string;
+  content_type: string;
+  sha256: string;
+  size: number;
+  r2_key: string;
+  method: string | null;
+}
+
+// `r2Key` becomes the record's `body` blob ref at the space write, as a save's
+// `file.r2Key` does; this is the one place that changes.
+const SNAPSHOT_FIELDS: ColumnSpec<Omit<SnapshotRow, 'rkey'>>[] = [
+  ['save_rkey', 'save', 'string', 'required'],
+  ['captured_at', 'capturedAt', 'datetime', 'required'],
+  ['url', 'url', 'string', 'required'],
+  ['content_type', 'contentType', 'string', 'required'],
+  ['sha256', 'sha256', 'string', 'required'],
+  ['size', 'size', 'int', 'required'],
+  ['r2_key', 'r2Key', 'string', 'required'],
+  ['method', 'method', 'string'],
+];
+
+const SNAPSHOT_RECORD_KEYS = new Set(['$type', 'extra', ...SNAPSHOT_FIELDS.map((f) => f[1])]);
+
+export function snapshotToRecord(row: SnapshotRow): ArchiveRecord {
+  if (!isRecordKey(row.rkey)) throw new TypeError(`snapshot rkey ${row.rkey} is not a record key`);
+  const record: RecordObject = { $type: SNAPSHOT_COLLECTION };
+  const extra: Record<string, unknown> = {};
+  encodeColumns(row, SNAPSHOT_FIELDS, record, extra);
+  writeExtra(record, extra);
+  return { rkey: row.rkey, record };
+}
+
+export function snapshotFromRecord(rkey: string, record: RecordObject): SnapshotRow {
+  assertType(record, SNAPSHOT_COLLECTION);
+  if (!isRecordKey(rkey)) throw new TypeError(`snapshot rkey ${rkey} is not a record key`);
+  assertKnownKeys(record, SNAPSHOT_RECORD_KEYS, 'snapshot');
+  return { ...decodeColumns(record, SNAPSHOT_FIELDS, parseExtra(record)), rkey };
 }
 
 // ─── Highlights (and their notes) ─────────────────────────────────────────────

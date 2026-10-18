@@ -21,6 +21,7 @@ import { readCapped } from './feedback';
 import { stagedOriginalKey } from '../services/linked-originals';
 import { sha256Hex } from '../utils/sha256';
 import { log } from '../utils/logger';
+import { captureSnapshot } from '../services/archive/snapshots';
 
 /**
  * Uploaded PDFs and EPUBs, and the originals of every saved PDF (Supporter).
@@ -375,6 +376,16 @@ async function handleUpload(request: Request, env: Env, session: Session, kind: 
     if (!winner) await env.SAVED_FILES.delete(r2Key).catch(() => {});
     throw err;
   }
+
+  // The text read from the file is the save's first capture; the file itself
+  // is already kept above.
+  await captureSnapshot(env, {
+    did: session.did,
+    saveRkey: rkey,
+    url: '',
+    body: parsed.content,
+    method: 'upload',
+  });
 
   log.info(`${kind}_uploaded`, {
     size: bytes.byteLength,

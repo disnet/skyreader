@@ -10,6 +10,10 @@ import {
   isRecordKey,
   saveFromRecord,
   saveToRecord,
+  SNAPSHOT_COLLECTION,
+  snapshotFromRecord,
+  snapshotToRecord,
+  type SnapshotRow,
   type SaveRow,
   type SavedFileRow,
 } from '../src/services/archive/records';
@@ -441,5 +445,52 @@ describe('highlights and their notes', () => {
     await expect(
       highlightToRecord({ itemKey: 'k', itemType: 'article', highlight: { selector: null } })
     ).rejects.toThrow(/id/);
+  });
+});
+
+describe('snapshots', () => {
+  const snapshot: SnapshotRow = {
+    rkey: '3my4cmz6zes3t',
+    save_rkey: '3mwhuiodre72s',
+    captured_at: 1767312000123,
+    url: 'https://example.com/post',
+    content_type: 'text/html',
+    sha256: 'ab'.repeat(32),
+    size: 1234,
+    r2_key: 'snapshots/did:plc:me/3mwhuiodre72s/3my4cmz6zes3t.html',
+    method: 'live-dom',
+  };
+
+  it('maps a row to the proposed record, keyed by its capture TID', () => {
+    expect(snapshotToRecord(snapshot)).toEqual({
+      rkey: '3my4cmz6zes3t',
+      record: {
+        $type: SNAPSHOT_COLLECTION,
+        save: '3mwhuiodre72s',
+        capturedAt: '2026-01-02T00:00:00.123Z',
+        url: 'https://example.com/post',
+        contentType: 'text/html',
+        sha256: 'ab'.repeat(32),
+        size: 1234,
+        r2Key: 'snapshots/did:plc:me/3mwhuiodre72s/3my4cmz6zes3t.html',
+        method: 'live-dom',
+      },
+    });
+  });
+
+  it('round-trips losslessly, with and without a method or URL', async () => {
+    for (const row of [snapshot, { ...snapshot, method: null, url: '' }]) {
+      const { rkey, record } = snapshotToRecord(row);
+      expect(snapshotFromRecord(rkey, record)).toEqual(row);
+      expect(await recordCid(snapshotToRecord(snapshotFromRecord(rkey, record)).record)).toBe(
+        await recordCid(record)
+      );
+    }
+  });
+
+  it('rejects an unknown field or a missing one', () => {
+    const { rkey, record } = snapshotToRecord(snapshot);
+    expect(() => snapshotFromRecord(rkey, { ...record, body: 'x' })).toThrow(/unknown/);
+    expect(() => snapshotFromRecord(rkey, { ...record, sha256: undefined })).toThrow(/missing/);
   });
 });

@@ -32,7 +32,7 @@ Either way, you can walk away with your list at any time: **Settings → Library
 
 ## Saved articles
 
-Saves live on Skyreader, private to you. They are **not** stored on your PDS.
+Saves live on Skyreader, private to you. They are **not** stored on your PDS. The copy of each article captured when you saved it stays with the save, just as private, and is deleted when you remove the save.
 
 The one way a save becomes public is choosing it: backing your Library with **Semble or Margin** (**Settings → Library & privacy → Saved articles**) turns the list into a public collection in that app. Saved newsletters and uploaded PDFs and EPUBs stay private either way.
 

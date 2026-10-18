@@ -248,7 +248,8 @@ returns a permission set expanded (`repo?collection=…`), so every check goes t
 | `src/services/newsletter-email.ts`   | Parse one newsletter email into a feed item                  |
 | `src/services/bsky-sources.ts`       | Bluesky likes/bookmarks as private sources (walk + ingest)   |
 | `src/services/local-only-sources.ts` | The one "private, never crawled, never on the PDS" predicate |
-| `src/services/archive/records.ts`    | Saves/highlights ↔ their future space records (+ CIDs)       |
+| `src/services/archive/records.ts`    | Saves/highlights/snapshots ↔ their future space records      |
+| `src/services/archive/snapshots.ts`  | Capture each body a save gets as an immutable R2 snapshot    |
 | `src/services/export/`               | Export over those records; DOI/arXiv ids; Markdown, BibTeX   |
 
 ### Observability
@@ -344,6 +345,8 @@ Key tables:
   They stay until the proxy document path is decommissioned
 - `item_labels_cache` - Unified labels (read/starred/archived/tags)
 - `saved_articles` - Saved/bookmarked articles
+- `saved_snapshots` - One row per capture of a save's body (hash, URL, time, method); the body is
+  in R2 (`SAVED_FILES`). Deleted with the save. See `docs/plans/ARCHIVE_RECORDS.md` § Snapshots
 - `shelf_collections` / `shelf_collection_items` - Shelf collections and their members (by saved
   rkey); private, never on the PDS. See `docs/plans/SHELF_PLAN.md`
 - `social_read_positions_cache` - Legacy social read tracking (superseded; document
