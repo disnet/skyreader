@@ -146,6 +146,11 @@ export function savedFileUrl(rkey: string): string {
   return `${API_BASE}/api/saved/${encodeURIComponent(rkey)}/file`;
 }
 
+/** Every save, highlight and note as one Markdown or BibTeX file (GET /api/export). */
+export function libraryExportUrl(format: 'markdown' | 'bibtex'): string {
+  return `${API_BASE}/api/export?format=${format}`;
+}
+
 /** A picture inside a saved EPUB (its path in the book), served only to its owner. */
 export function savedAssetUrl(rkey: string, path: string): string {
   return `${API_BASE}/api/saved/${encodeURIComponent(rkey)}/asset?path=${encodeURIComponent(path)}`;

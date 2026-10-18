@@ -114,6 +114,15 @@ The **Highlights** page collects every highlight, grouped by article. Its **Revi
 
 ![The review deck: one highlight at a time with Next and Later, and single-key shortcuts listed below](../../../assets/screenshots/review-deck.png)
 
+## Exporting
+
+**Settings → Library & privacy → Saved articles → Download a copy** gives you everything you've saved and highlighted as one file, on any plan:
+
+- **Markdown**, for notes apps like Obsidian: each save, with its link, its highlights as quotes, and your notes under them. Pages you highlighted without saving come after your saves.
+- **BibTeX**, for reference managers like Zotero and for LaTeX: one entry per save, with your highlights and notes in its `annote` field.
+
+When a save is a paper, the export carries its DOI and arXiv id. Skyreader reads them from the link (doi.org, arXiv, bioRxiv, and publisher `/doi/` pages) and, for a saved PDF, from its first page.
+
 ## Limits
 
 The free plan includes 100 URL saves a month (saving from the web, your phone, or the extension); Supporters get 1,000. See [Supporter](/supporter/).

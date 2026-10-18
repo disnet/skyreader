@@ -103,6 +103,7 @@ import {
   handleSetBacking,
 } from './routes/saved';
 import { handleShelfCollections } from './routes/shelf';
+import { handleExport } from './routes/export';
 import {
   handleGetSavedAsset,
   handleGetSavedFile,
@@ -836,6 +837,12 @@ async function route(
       } else {
         response = await handleDeleteSaved(request, env, ctx);
       }
+      break;
+
+    // Saves, highlights and notes as Markdown or BibTeX (routes/export.ts)
+    case url.pathname === '/api/export':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleExport(request, env, session.did);
       break;
 
     // Shelf collections — ordered, private groups of saves (routes/shelf.ts)

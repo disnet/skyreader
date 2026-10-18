@@ -69,6 +69,9 @@ const RATE_LIMITS: Record<string, RateLimitConfig> = {
   '/api/saved/pdf': { limit: 10, windowMs: 60000 },
   // Up to 30 MB read into memory and unzipped in the Worker; same burst bound.
   '/api/saved/epub': { limit: 10, windowMs: 60000 },
+  // A whole-library read (every save, highlight and note) rendered to one file.
+  // Someone exports a few times in a row at most, trying each format.
+  '/api/export': { limit: 10, windowMs: 60000 },
   // One request per picture in a saved EPUB; an illustrated book opens many at once.
   [SAVED_ASSET_KEY]: LIGHT_LIMIT,
   // The feedback board. Reads are edge-cached and only cost this bucket for a

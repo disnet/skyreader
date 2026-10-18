@@ -33,6 +33,7 @@
   import { myLinkblogStore } from '$lib/stores/myLinkblog.svelte';
   import { linkblogStore } from '$lib/stores/linkblog.svelte';
   import { downloadOPML } from '$lib/utils/opml-exporter';
+  import { downloadLibraryExport, type LibraryExportFormat } from '$lib/utils/libraryExport';
   import {
     api,
     RateLimitError,
@@ -137,6 +138,20 @@
   ];
 
   let showImportModal = $state(false);
+  let exportingAs = $state<LibraryExportFormat | null>(null);
+  let exportError = $state<string | null>(null);
+
+  async function handleLibraryExport(format: LibraryExportFormat) {
+    exportingAs = format;
+    exportError = null;
+    try {
+      await downloadLibraryExport(format);
+    } catch (err) {
+      exportError = err instanceof Error ? err.message : 'The export didn’t work. Try again.';
+    } finally {
+      exportingAs = null;
+    }
+  }
 
   // "Save from anywhere" — browser bookmarklets + a Share Sheet shortcut.
   // Paste a published iCloud Shortcut link (icloud.com/shortcuts/...) into either
@@ -1224,6 +1239,34 @@
         </div>
         <div class="row">
           <SaveBackingPicker bind:backing allowExport returnUrl="/settings" />
+        </div>
+        <div class="row inline wrap">
+          <div class="row-text">
+            <span class="row-label">Download a copy</span>
+            <span class="row-desc">
+              Your saves, highlights, and notes as one file. Markdown for notes apps, BibTeX for
+              reference managers, with DOI and arXiv ids where a paper has them.
+            </span>
+          </div>
+          <div class="button-row">
+            <button
+              class="btn btn-secondary"
+              onclick={() => handleLibraryExport('markdown')}
+              disabled={exportingAs !== null}
+            >
+              {exportingAs === 'markdown' ? 'Exporting…' : 'Export Markdown'}
+            </button>
+            <button
+              class="btn btn-secondary"
+              onclick={() => handleLibraryExport('bibtex')}
+              disabled={exportingAs !== null}
+            >
+              {exportingAs === 'bibtex' ? 'Exporting…' : 'Export BibTeX'}
+            </button>
+          </div>
+          {#if exportError}
+            <p class="status-error">{exportError}</p>
+          {/if}
         </div>
       </div>
     </section>
