@@ -753,53 +753,50 @@ function shorten(text: string, max = 300): string {
 /** The largest picture served out of a book. */
 export const MAX_EPUB_ASSET_BYTES = 20 * 1024 * 1024;
 
-async function readRange(
-  bucket: R2Bucket,
-  key: string,
-  offset: number,
-  length: number
-): Promise<Uint8Array> {
+/** A kept book read a range at a time (services/saved-file-store.ts). */
+export interface RangedFile {
+  /** Its size in bytes, or null when it's gone. */
+  size(): Promise<number | null>;
+  /** `length` bytes from `offset`, or null when it's gone. */
+  read(offset: number, length: number): Promise<Uint8Array | null>;
+}
+
+async function readRange(file: RangedFile, offset: number, length: number): Promise<Uint8Array> {
   if (length === 0) return new Uint8Array(0);
-  const object = await bucket.get(key, { range: { offset, length } });
-  if (!object) throw new EpubError('This EPUB is damaged.');
-  const bytes = new Uint8Array(await object.arrayBuffer());
-  if (bytes.byteLength !== length) throw new EpubError('This EPUB is damaged.');
+  const bytes = await file.read(offset, length);
+  if (!bytes || bytes.byteLength !== length) throw new EpubError('This EPUB is damaged.');
   return bytes;
 }
 
 /**
- * One file inside a book kept in R2, without reading the whole book: its tail
+ * One file inside a kept book, without reading the whole book: its tail
  * (the central directory's location), the directory, the entry's local header,
  * then its data — four ranged reads. Null when the book has no such entry.
  */
 export async function readStoredEpubEntry(
-  bucket: R2Bucket,
-  key: string,
+  file: RangedFile,
   path: string,
   maxBytes = MAX_EPUB_ASSET_BYTES
 ): Promise<Uint8Array | null> {
-  const head = await bucket.head(key);
-  if (!head) return null;
-  const tailLength = Math.min(head.size, EOCD_SEARCH_BYTES);
-  const tail = await readRange(bucket, key, head.size - tailLength, tailLength);
+  const size = await file.size();
+  if (size === null) return null;
+  const tailLength = Math.min(size, EOCD_SEARCH_BYTES);
+  const tail = await readRange(file, size - tailLength, tailLength);
   const loc = locateCentralDirectory(tail);
-  if (loc.offset + loc.size > head.size) throw new EpubError("This EPUB's file list is damaged.");
-  const entries = parseCentralDirectory(
-    await readRange(bucket, key, loc.offset, loc.size),
-    loc.count
-  );
+  if (loc.offset + loc.size > size) throw new EpubError("This EPUB's file list is damaged.");
+  const entries = parseCentralDirectory(await readRange(file, loc.offset, loc.size), loc.count);
   const entry = entries.get(path);
   if (!entry) return null;
   if (entry.compressedSize > maxBytes) throw new EpubError('This picture is too large.');
-  // The directory is the book's word, not R2's: a range past the end of the
-  // object is a damaged book (a 404 to the reader), not an R2 error.
-  if (entry.localOffset + LOCAL_HEADER_BYTES > head.size) {
+  // The directory is the book's word, not the store's: a range past the end of
+  // the file is a damaged book (a 404 to the reader), not a storage error.
+  if (entry.localOffset + LOCAL_HEADER_BYTES > size) {
     throw new EpubError('This EPUB is damaged.');
   }
-  const local = await readRange(bucket, key, entry.localOffset, LOCAL_HEADER_BYTES);
+  const local = await readRange(file, entry.localOffset, LOCAL_HEADER_BYTES);
   const dataOffset = entryDataOffset(entry, local);
-  if (dataOffset + entry.compressedSize > head.size) throw new EpubError('This EPUB is damaged.');
-  const data = await readRange(bucket, key, dataOffset, entry.compressedSize);
+  if (dataOffset + entry.compressedSize > size) throw new EpubError('This EPUB is damaged.');
+  const data = await readRange(file, dataOffset, entry.compressedSize);
   return inflateEntry(entry, data, maxBytes);
 }
 

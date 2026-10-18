@@ -158,6 +158,11 @@ PDS or a Semble/Margin backing collection. A PDF saved by link keeps its origina
 `GET /api/saved/<rkey>/file` keeps it on first open for a save that has none (streaming it through
 uncached only when storage is full). Limits: file size, uploads per month (uploads only) and stored
 bytes (every kept original) from the plan, plus the shared daily parse cap.
+Every read, write and delete of a kept original goes through `SavedFileStore`
+(`src/services/saved-file-store.ts`), never the bucket directly: `saved_files.storage` names the
+store holding each file (`'r2'`, the only one today, located by `r2_key`), with `blob_cid` /
+`record_uri` reserved for a file kept as a blob in the reader's atproto space. Snapshot bodies and
+staged linked books are not kept originals and still use `SAVED_FILES` directly.
 
 **EPUBs** ride the same plan flag and the same upload/storage limits (`maxEpubUploadBytes` is their
 own, larger size cap), but are read in this Worker (`src/services/epub.ts`: unzip, walk the OPF
@@ -248,6 +253,7 @@ returns a permission set expanded (`repo?collection=…`), so every check goes t
 | `src/services/newsletter-email.ts`   | Parse one newsletter email into a feed item                  |
 | `src/services/bsky-sources.ts`       | Bluesky likes/bookmarks as private sources (walk + ingest)   |
 | `src/services/local-only-sources.ts` | The one "private, never crawled, never on the PDS" predicate |
+| `src/services/saved-file-store.ts`   | `SavedFileStore`: every read/write/delete of a kept original |
 | `src/services/archive/records.ts`    | Saves/highlights/snapshots ↔ their future space records      |
 | `src/services/archive/snapshots.ts`  | Capture each body a save gets as an immutable R2 snapshot    |
 | `src/services/export/`               | Export over those records; DOI/arXiv ids; Markdown, BibTeX   |

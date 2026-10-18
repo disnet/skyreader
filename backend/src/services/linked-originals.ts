@@ -11,6 +11,9 @@ import { sha256Hex } from '../utils/sha256';
  * object as its kept original (routes/saved-pdf.ts storeLinkedOriginal) instead
  * of downloading the book again. An object no save adopts within a day is swept
  * by the hourly cron (sweepStagedOriginals).
+ *
+ * This is scratch for one save, always in R2, wherever the save's original then
+ * goes: adopting copies it into the save's store (services/saved-file-store.ts).
  */
 
 const STAGED_PREFIX = 'staged/';
@@ -46,6 +49,42 @@ export async function stageLinkedOriginal(
       message: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+/** A staged book: its bytes, and a way to let go of it. */
+export interface StagedOriginal {
+  body: ReadableStream<Uint8Array>;
+  size: number;
+  sha256: string;
+  /** Drop the staged object, once its bytes are kept (or not wanted). */
+  remove(): Promise<void>;
+}
+
+/**
+ * The book staged for a reader's save of `url`, or null when none is (or one
+ * is but can't be used: it has no digest). The caller reads or cancels `body`.
+ */
+export async function readStagedOriginal(
+  env: Env,
+  did: string,
+  url: string
+): Promise<StagedOriginal | null> {
+  const bucket = env.SAVED_FILES;
+  if (!bucket) return null;
+  const key = await stagedOriginalKey(did, url);
+  const staged = await bucket.get(key);
+  if (!staged) return null;
+  const sha256 = staged.customMetadata?.sha256;
+  if (!sha256) {
+    await staged.body.cancel().catch(() => {});
+    return null;
+  }
+  return {
+    body: staged.body,
+    size: staged.size,
+    sha256,
+    remove: () => bucket.delete(key),
+  };
 }
 
 /** Remove staged books no save adopted (no saved_files row points at them). */
