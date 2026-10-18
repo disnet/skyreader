@@ -308,18 +308,21 @@ async function reorderItems(
   const named = unique.filter((r) => memberSet.has(r));
   const namedSet = new Set(named);
   const finalOrder = [...named, ...members.filter((r) => !namedSet.has(r))];
-  const statements = finalOrder.map((rkey, index) =>
+  // One UPDATE for the whole order, each row's position its index in the JSON
+  // array: D1 counts every statement in a batch against its 1,000 queries per
+  // invocation, so a statement per member failed past ~999. A member added since
+  // the SELECT isn't in the array and keeps its position.
+  await env.DB.batch([
     env.DB.prepare(
-      `UPDATE shelf_collection_items SET position = ?
-        WHERE user_did = ? AND collection_id = ? AND saved_rkey = ?`
-    ).bind(index, did, id, rkey)
-  );
-  statements.push(
+      `UPDATE shelf_collection_items
+          SET position = (SELECT key FROM json_each(?3) WHERE value = saved_rkey)
+        WHERE user_did = ?1 AND collection_id = ?2
+          AND saved_rkey IN (SELECT value FROM json_each(?3))`
+    ).bind(did, id, JSON.stringify(finalOrder)),
     env.DB.prepare(
       'UPDATE shelf_collections SET updated_at = ? WHERE user_did = ? AND id = ?'
-    ).bind(now, did, id)
-  );
-  await env.DB.batch(statements);
+    ).bind(now, did, id),
+  ]);
   return json({ success: true });
 }
 
