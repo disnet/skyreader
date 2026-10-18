@@ -16,15 +16,19 @@
   import { freeLimits, supporterLimits } from '$lib/constants/tierLimits';
   import { docsUrl } from '$lib/constants/docs';
   import { inkVariant, installMarginaliaInk } from '$lib/utils/marginaliaInk';
+  import { wrapTextRange } from '$lib/utils/wrapTextRange';
 
   let starting = $state(false);
   let startError = $state<string | null>(null);
+  // Which Start Reading button was pressed, so its error shows beside it.
+  let startedFrom = $state<'top' | 'margin' | 'end'>('margin');
 
   // Start Reading: seed the curated starter channels into this browser and open
   // the reader. No account, no network writes — the subscription rows live only
   // in IndexedDB until the reader signs in.
-  async function startReading() {
+  async function startReading(from: typeof startedFrom) {
     if (starting) return;
+    startedFrom = from;
     starting = true;
     startError = null;
     try {
@@ -152,65 +156,23 @@
   let essayEl = $state<HTMLElement | null>(null);
   let noteInputs: Record<string, HTMLTextAreaElement | null> = $state({});
 
-  // A selection waiting for the Highlight button: a touch or keyboard
-  // selection. A mouse selection commits as soon as the button comes up, the
-  // way it reads in a book; on touch that would fight the selection handles,
-  // so it waits to be asked.
+  // A touch or keyboard selection waits for the Highlight button: committing
+  // it on the spot would fight the selection handles. A mouse selection
+  // commits on release, the way a marker works, once a double- or triple-click
+  // has had the chance to finish building it.
   let pending = $state<Range | null>(null);
-  let pointerDown = false;
+  let mouseDown = false;
+  let commitTimer: ReturnType<typeof setTimeout> | undefined;
+  const MULTI_CLICK_MS = 300;
 
-  /** The essay's text nodes a range covers, skipping text already marked. */
-  function textNodesIn(range: Range, root: HTMLElement): Text[] {
-    const nodes: Text[] = [];
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-      acceptNode: (node) =>
-        range.intersectsNode(node) &&
-        node.textContent?.trim() &&
-        !node.parentElement?.closest('mark')
-          ? NodeFilter.FILTER_ACCEPT
-          : NodeFilter.FILTER_REJECT,
-    });
-    while (walker.nextNode()) nodes.push(walker.currentNode as Text);
-    return nodes;
-  }
-
-  /**
-   * Wrap each covered piece of text in its own mark, the way the reader does:
-   * a highlight that crosses paragraphs is several marks, and `data-edge` says
-   * which carry the passage's real ends so the marker's ragged caps land there.
-   */
-  function markRange(range: Range, id: string): HTMLElement[] {
-    if (!essayEl) return [];
-    const marks: HTMLElement[] = [];
-    for (const node of textNodesIn(range, essayEl)) {
-      const start = node === range.startContainer ? range.startOffset : 0;
-      const end = node === range.endContainer ? range.endOffset : node.length;
-      if (start >= end || !node.data.slice(start, end).trim()) continue;
-      let piece = node;
-      if (end < piece.length) piece.splitText(end);
-      if (start > 0) piece = piece.splitText(start);
-      const mark = document.createElement('mark');
-      mark.className = 'highlight';
-      mark.dataset.hl = id;
-      mark.dataset.ink = String(inkVariant(id));
-      piece.replaceWith(mark);
-      mark.appendChild(piece);
-      marks.push(mark);
-    }
-    if (marks.length > 1) {
-      marks.forEach((mark, i) => {
-        mark.dataset.edge = i === 0 ? 'start' : i === marks.length - 1 ? 'end' : 'mid';
-      });
-    }
-    return marks;
-  }
-
-  /** A live selection inside the essay, or null. */
+  /** The live selection, trimmed to the essay, or null if none of it is there. */
   function essaySelection(): Range | null {
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed || !sel.rangeCount || !essayEl) return null;
-    const range = sel.getRangeAt(0);
-    if (!essayEl.contains(range.commonAncestorContainer)) return null;
+    const range = sel.getRangeAt(0).cloneRange();
+    if (!range.intersectsNode(essayEl)) return null;
+    if (!essayEl.contains(range.startContainer)) range.setStart(essayEl, 0);
+    if (!essayEl.contains(range.endContainer)) range.setEnd(essayEl, essayEl.childNodes.length);
     return range.toString().trim() ? range : null;
   }
 
@@ -232,34 +194,53 @@
     }
   }
 
+  function unwrap(mark: HTMLElement) {
+    const parent = mark.parentNode;
+    mark.replaceWith(...mark.childNodes);
+    parent?.normalize();
+  }
+
   function commit(range: Range) {
-    snapToWords(range);
-    const id = `hl-${nextId++}`;
-    const marks = markRange(range, id);
     window.getSelection()?.removeAllRanges();
     pending = null;
+    if (!essayEl) return;
+    snapToWords(range);
+    const text = range.toString().replace(/\s+/g, ' ').trim();
+    if (!text) return;
+    const id = `hl-${nextId++}`;
+    // The reader's own wrapping (utils/wrapTextRange.ts), dressed the way
+    // useHighlights' inkMarks dresses it: a passage crossing paragraphs is
+    // several marks, and data-edge puts the marker's ragged caps on its ends.
+    const marks = wrapTextRange(range, essayEl, () => {
+      const mark = document.createElement('mark');
+      mark.className = 'highlight';
+      mark.dataset.hl = id;
+      mark.dataset.ink = String(inkVariant(id));
+      return mark;
+    }).filter((mark) => mark.textContent?.trim() || (unwrap(mark), false));
     if (marks.length === 0) return;
-    const text = marks
-      .map((m) => m.textContent ?? '')
-      .join(' ')
-      .replace(/\s+/g, ' ')
-      .trim();
+    marks.forEach((mark, i) => {
+      if (marks.length > 1) {
+        mark.dataset.edge = i === 0 ? 'start' : i === marks.length - 1 ? 'end' : 'mid';
+      }
+    });
     highlights.push({ id, text, note: '' });
   }
 
+  let panelHeading = $state<HTMLElement | null>(null);
+
   function removeHighlight(id: string) {
-    essayEl?.querySelectorAll<HTMLElement>(`mark[data-hl="${id}"]`).forEach((mark) => {
-      const parent = mark.parentNode;
-      mark.replaceWith(...mark.childNodes);
-      parent?.normalize();
-    });
+    essayEl?.querySelectorAll<HTMLElement>(`mark[data-hl="${id}"]`).forEach(unwrap);
     highlights = highlights.filter((h) => h.id !== id);
+    // The focused button just went away with its row; don't drop focus to <body>.
+    panelHeading?.focus();
   }
 
   function showPassage(id: string) {
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     essayEl
       ?.querySelector(`mark[data-hl="${id}"]`)
-      ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      ?.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'center' });
   }
 
   // Clicking a passage takes you to its note.
@@ -267,32 +248,37 @@
     const mark = (event.target as HTMLElement).closest<HTMLElement>('mark[data-hl]');
     if (!mark || essaySelection()) return;
     await tick();
-    noteInputs[mark.dataset.hl!]?.focus({ preventScroll: false });
+    noteInputs[mark.dataset.hl!]?.focus();
+  }
+
+  function onPointerDown(event: PointerEvent) {
+    if (event.pointerType !== 'mouse') return;
+    mouseDown = true;
+    clearTimeout(commitTimer);
   }
 
   function onPointerUp(event: PointerEvent) {
-    pointerDown = false;
     if (event.pointerType !== 'mouse') return;
-    // After the browser has settled the selection for this release.
-    setTimeout(() => {
+    mouseDown = false;
+    pending = null;
+    clearTimeout(commitTimer);
+    commitTimer = setTimeout(() => {
       const range = essaySelection();
       if (range) commit(range);
-    }, 0);
+    }, MULTI_CLICK_MS);
   }
 
   function onSelectionChange() {
-    if (pointerDown) return;
-    const range = essaySelection();
-    pending = range ? range.cloneRange() : null;
+    if (mouseDown) return;
+    pending = essaySelection();
   }
 
-  // The fixed button must not take the selection away on press: keep it, then
-  // commit the range it was holding.
-  function keepSelection(event: PointerEvent) {
+  // Commit on press, not click: a tap dismisses the native selection before
+  // its click arrives. preventDefault keeps focus and selection where they are.
+  function onMarkPress(event: PointerEvent) {
     event.preventDefault();
+    if (pending) commit(pending);
   }
-
-  const count = $derived(highlights.length);
 
   onMount(() => {
     // Before the reduced-motion early return: prices load regardless of
@@ -309,12 +295,6 @@
       seed.dataset.ink = String(inkVariant(SEED_ID));
     }
 
-    const down = (e: PointerEvent) => {
-      if (e.pointerType === 'mouse') pointerDown = true;
-    };
-    document.addEventListener('pointerdown', down);
-    document.addEventListener('selectionchange', onSelectionChange);
-
     // Safety net: scroll-reveal enhances reading, but content must never be
     // stuck hidden in a non-scrolling or headless context. Force-reveal
     // anything still pending shortly after load; engaged readers scroll well
@@ -326,19 +306,24 @@
     }, 2500);
     return () => {
       clearTimeout(safety);
-      document.removeEventListener('pointerdown', down);
-      document.removeEventListener('selectionchange', onSelectionChange);
+      clearTimeout(commitTimer);
     };
   });
 </script>
 
-<svelte:document onpointerup={onPointerUp} />
+<svelte:document
+  onpointerdown={onPointerDown}
+  onpointerup={onPointerUp}
+  onpointercancel={() => (mouseDown = false)}
+  ondragend={() => (mouseDown = false)}
+  onselectionchange={onSelectionChange}
+/>
 
 <div class="landing">
   <div class="room">
     <div class="rail" aria-hidden="true">
       <span>3 min read</span>
-      <span>{count} {count === 1 ? 'highlight' : 'highlights'}</span>
+      <span>{highlights.length} {highlights.length === 1 ? 'highlight' : 'highlights'}</span>
     </div>
 
     <article class="essay" aria-labelledby="essay-h">
@@ -348,11 +333,14 @@
       <!-- Phones get the way in up top; the margin, which carries it on wider
            screens, falls below the essay there. -->
       <div class="start-inline">
-        <button class="cta-primary" onclick={startReading} disabled={starting}>
+        <button class="cta-primary" onclick={() => startReading('top')} disabled={starting}>
           {starting ? 'Preparing your reading room…' : 'Start Reading'}
         </button>
         <a href="/auth/login">Sign in</a>
       </div>
+      {#if startError && startedFrom === 'top'}
+        <p class="start-error start-error--top" role="alert">{startError}</p>
+      {/if}
 
       <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
       <div class="essay-body marginalia-ink" bind:this={essayEl} onclick={onEssayClick}>
@@ -365,7 +353,7 @@
         <p>
           Skyreader is a reader built against that. Everything you follow comes into one calm place,
           in the order it was published, with no algorithm choosing for you: feeds and newsletters,
-          your Bluesky likes and bookmarks, videos with their transcripts, PDFs and books.
+          your Bluesky likes and bookmarks, YouTube channels, PDFs and books.
         </p>
         <p>
           When something is worth keeping, you mark it. Highlights stay on the passage, even on the
@@ -410,9 +398,9 @@
 
     <aside class="margin" aria-label="Your highlights and getting started">
       <section class="panel" aria-labelledby="hls-h">
-        <h2 id="hls-h" class="panel-head">
+        <h2 id="hls-h" class="panel-head" tabindex="-1" bind:this={panelHeading}>
           <span>Your highlights</span>
-          <span class="panel-count" aria-live="polite">{count}</span>
+          <span class="panel-count" aria-live="polite">{highlights.length}</span>
         </h2>
         {#if highlights.length}
           <ul class="hls">
@@ -431,7 +419,7 @@
                 <button
                   type="button"
                   class="hl-remove"
-                  aria-label="Remove highlight"
+                  aria-label={`Remove highlight: ${h.text}`}
                   onclick={() => removeHighlight(h.id)}
                 >
                   <Icon name="x" size={14} />
@@ -450,11 +438,11 @@
           This is how everything reads in Skyreader: your sources in full, with your marks and notes
           beside them.
         </p>
-        <button class="cta-primary" onclick={startReading} disabled={starting}>
+        <button class="cta-primary" onclick={() => startReading('margin')} disabled={starting}>
           {starting ? 'Preparing your reading room…' : 'Start Reading'}
           {#if !starting}<Icon name="arrow-right" size={16} />{/if}
         </button>
-        {#if startError}
+        {#if startError && startedFrom === 'margin'}
           <p class="start-error" role="alert">{startError}</p>
         {/if}
         <p class="fine">
@@ -469,7 +457,7 @@
     <button
       type="button"
       class="mark-btn"
-      onpointerdown={keepSelection}
+      onpointerdown={onMarkPress}
       onclick={() => pending && commit(pending)}
     >
       <Icon name="highlighter" size={16} /> Highlight
@@ -487,8 +475,9 @@
         <span class="did-cue">you read an essay</span>
         <h3>Read in one calm place</h3>
         <p>
-          RSS and Atom, Atmosphere publications, Bluesky likes and bookmarks, YouTube with
-          transcripts. Newsletters by email, PDFs and EPUBs with Supporter. In order, no algorithm.
+          RSS and Atom, Atmosphere publications, Bluesky likes and bookmarks, YouTube channels, with
+          transcripts for videos you save. Newsletters by email, PDFs and EPUBs with Supporter. In
+          order, no algorithm.
         </p>
       </li>
       <li>
@@ -516,10 +505,11 @@
         </p>
       </li>
       <li>
-        <span class="did-cue">you'll want that line later</span>
-        <h3>Find any line again <span class="tier">Supporter</span></h3>
+        <span class="did-cue">wherever you find it</span>
+        <h3>Save from anywhere</h3>
         <p>
-          Search every word you've read or saved, every highlight and note, whole PDFs and books.
+          A browser extension for Chrome and Firefox, your phone's share sheet once Skyreader is
+          installed, and offline reading for when the signal drops.
         </p>
       </li>
       <li>
@@ -565,7 +555,7 @@
         </div>
         <p class="plan-desc">
           Raises the limits to {supporterLimits.feeds} feeds and {supporterLimits.saves} saves a month,
-          adds search, newsletters and PDFs, and helps keep Skyreader calm, fast, and independent.
+          adds newsletters and PDFs, and helps keep Skyreader calm, fast, and independent.
         </p>
         {#if offer}
           <!-- The billing line names the amount actually charged, in the same
@@ -596,11 +586,15 @@
       <p>
         Start with a few good sources, no account needed. Sign in when you want it on every device.
       </p>
-      <button class="cta-primary cta-primary--lg" onclick={startReading} disabled={starting}>
+      <button
+        class="cta-primary cta-primary--lg"
+        onclick={() => startReading('end')}
+        disabled={starting}
+      >
         {starting ? 'Preparing your reading room…' : 'Start Reading'}
         {#if !starting}<Icon name="arrow-right" size={18} />{/if}
       </button>
-      {#if startError}
+      {#if startError && startedFrom === 'end'}
         <p class="start-error" role="alert">{startError}</p>
       {/if}
       <p class="fine">
@@ -880,6 +874,9 @@
     color: var(--color-primary);
   }
 
+  .start-error--top {
+    margin: -1.25rem 0 2rem;
+  }
   /* Only ever shown when Start Reading couldn't seed the local library. */
   .start-error {
     margin-top: 0.75rem;
@@ -1000,18 +997,6 @@
     margin-top: 0.4rem;
     color: var(--muted);
     line-height: var(--leading-relaxed);
-  }
-  .tier {
-    margin-left: 0.3rem;
-    padding: 0.05rem 0.4rem;
-    border: 1px solid currentColor;
-    border-radius: 4px;
-    vertical-align: 0.2em;
-    font-family: var(--font-mono);
-    font-size: var(--text-2xs);
-    font-weight: var(--weight-semibold);
-    letter-spacing: 0.04em;
-    color: var(--color-primary);
   }
 
   /* ── Pricing: hairline-ruled ledger rows, matching /supporter's
