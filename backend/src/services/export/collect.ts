@@ -7,7 +7,7 @@
 
 import type { Env } from '../../types';
 import { getUserSettings } from '../../routes/settings';
-import { listBackedSaved } from '../backing/sync';
+import { listBackedSaved, type SavedArticleView } from '../backing/sync';
 import {
   highlightEntriesFromLabel,
   highlightToRecord,
@@ -118,7 +118,8 @@ async function exportHighlight(
   const createdAt = stringField(record, 'createdAt');
   return {
     id: entry.highlight.id as string,
-    createdAt: createdAt ? Date.parse(createdAt) : 0,
+    // A createdAt that rode in extra can be any string; NaN would break the sort.
+    createdAt: (createdAt && Date.parse(createdAt)) || 0,
     entry: {
       text: text ?? '',
       ...(note?.trim() ? { note } : {}),
@@ -136,7 +137,8 @@ const isWebUrl = (value: string | null | undefined): value is string =>
   !!value && /^https?:\/\//i.test(value);
 
 /**
- * Every save on the reader's Saved list, newest first, then every other page
+ * Every save on the reader's Saved list, newest first (a backed collection's
+ * members with no save time last), then every other page
  * they highlighted, most recently highlighted first. Each carries its
  * highlights (with notes) in reading order and any DOI or arXiv id.
  */
@@ -174,34 +176,24 @@ export async function collectExport(env: Env, did: string): Promise<ExportDocume
 
   // With Semble or Margin backing, the Saved list is the collection, and a row
   // whose item left it is enrichment, not a save. Members with no row here
-  // (added in the other app) are on the list too.
+  // (added in the other app) are on the list too. A backed save has no
+  // record_uri, so the client files its highlights under the foreign item's
+  // uri (or its guid): the view's `uri` and `itemGuid` are its keys.
   const settings = await getUserSettings(env, did);
-  let onList: ((rkey: string) => boolean) | null = null;
-  const backedOnly: ExportSource[] = [];
+  let views: SavedArticleView[] | null = null;
   if (settings.backing.provider !== 'skyreader') {
-    const views = await listBackedSaved(env, did, settings.backing);
-    const rkeys = new Set(views.map((v) => v.rkey).filter((k): k is string => !!k));
-    onList = (rkey) => rkeys.has(rkey);
-    for (const view of views) {
-      if (view.rkey) continue;
-      backedOnly.push({
-        kind: 'save',
-        title: view.title ?? undefined,
-        url: view.url || undefined,
-        author: view.author ?? undefined,
-        domain: view.domain ?? undefined,
-        publishedAt: view.publishedAt ?? undefined,
-        savedAt: view.savedAt,
-        contentType: view.contentType,
-        ...idsFromUrl(view.url),
-        highlights: [],
-      });
-    }
+    views = await listBackedSaved(env, did, settings.backing);
   }
+  const viewByRkey = new Map(views?.flatMap((v) => (v.rkey ? [[v.rkey, v] as const] : [])));
 
   // Each save under every key its highlights can be filed under.
   const saves: { source: ExportSource; listed: boolean }[] = [];
   const saveByKey = new Map<string, number>();
+  const addSave = (source: ExportSource, listed: boolean, keys: (string | null | undefined)[]) => {
+    const index = saves.length;
+    saves.push({ source, listed });
+    for (const key of keys) if (key && !saveByKey.has(key)) saveByKey.set(key, index);
+  };
   for (const row of saveRows) {
     const { id: _id, first_page_html, ...saveRow } = row;
     let record: ArchiveRecord;
@@ -212,14 +204,33 @@ export async function collectExport(env: Env, did: string): Promise<ExportDocume
       log.warn('export_save_unreadable', { rkey: row.rkey, error: String(err) });
       continue;
     }
-    const index = saves.length;
-    saves.push({
-      source: sourceFromSaveRecord(record, first_page_html),
-      listed: onList ? onList(row.rkey) : true,
-    });
-    for (const key of [row.item_guid, row.record_uri, `saved:${row.rkey}`]) {
-      if (key && !saveByKey.has(key)) saveByKey.set(key, index);
-    }
+    const view = viewByRkey.get(row.rkey);
+    addSave(sourceFromSaveRecord(record, first_page_html), !views || !!view, [
+      row.item_guid,
+      row.record_uri,
+      `saved:${row.rkey}`,
+      view?.uri,
+      view?.itemGuid,
+    ]);
+  }
+  for (const view of views ?? []) {
+    if (view.rkey) continue;
+    // No row means no save time: the view's savedAt is a stand-in for "now".
+    addSave(
+      {
+        kind: 'save',
+        title: view.title ?? undefined,
+        url: view.url || undefined,
+        author: view.author ?? undefined,
+        domain: view.domain ?? undefined,
+        publishedAt: view.publishedAt ?? undefined,
+        contentType: view.contentType,
+        ...idsFromUrl(view.url),
+        highlights: [],
+      },
+      true,
+      [view.uri, view.itemGuid]
+    );
   }
 
   // Highlights, merged by id across a save's alias rows the way the client
@@ -256,7 +267,6 @@ export async function collectExport(env: Env, did: string): Promise<ExportDocume
       });
     }
   });
-  sources.push(...backedOnly);
 
   // Pages highlighted but not saved: named by the source fields stamped on
   // their highlights, else by the read label the page left, else by the key

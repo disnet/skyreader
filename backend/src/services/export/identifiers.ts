@@ -27,6 +27,9 @@ const ARXIV_OLD = /\b([a-z]+(?:-[a-z]+)*(?:\.[A-Z]{2})?\/\d{7})(?:v\d+)?\b/;
 export function normalizeDoi(raw: string): string | undefined {
   const match = raw.match(DOI_PATTERN);
   if (!match) return undefined;
+  // Cut at a < it can't hold: an old Wiley SICI DOI runs on through <…>, and a
+  // DOI cut short is someone else's DOI or none, worse than no DOI.
+  if (raw[match.index! + match[0].length] === '<') return undefined;
   let doi = match[0];
   // Trailing punctuation belongs to the sentence, and a closing bracket only
   // to the DOI when it opened one inside it (10.1002/(SICI)1097-…).

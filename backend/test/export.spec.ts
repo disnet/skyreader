@@ -61,9 +61,10 @@ describe('identifiers from a URL', () => {
   it('trims sentence punctuation and unbalanced brackets, keeps balanced ones', () => {
     expect(normalizeDoi('10.1000/xyz123.')).toBe('10.1000/xyz123');
     expect(normalizeDoi('(see 10.1000/xyz123)')).toBe('10.1000/xyz123');
-    expect(normalizeDoi('10.1002/(SICI)1097-4571(199806)49:8<693::AID-ASI4>3.0.CO;2-0')).toBe(
-      '10.1002/(SICI)1097-4571(199806)49:8'
-    );
+    // Cut short at its <, a SICI DOI would name nothing: no DOI beats a wrong one.
+    expect(
+      normalizeDoi('10.1002/(SICI)1097-4571(199806)49:8<693::AID-ASI4>3.0.CO;2-0')
+    ).toBeUndefined();
     expect(normalizeDoi('10.1002/(SICI)1097-4571(199806)')).toBe('10.1002/(SICI)1097-4571(199806)');
     expect(normalizeDoi('10.1000/')).toBeUndefined();
   });
@@ -160,6 +161,24 @@ describe('authors and citation keys', () => {
       'untitled',
     ]);
   });
+
+  it("keeps an older source's key when a newer one with the same key arrives", () => {
+    const paper = (savedAt: string): ExportSource => ({
+      kind: 'save',
+      title: 'Attention',
+      author: 'Ashish Vaswani',
+      publishedAt: '2017-01-01T00:00:00.000Z',
+      savedAt,
+      highlights: [],
+    });
+    const old = paper('2026-01-01T00:00:00.000Z');
+    expect(citationKeys([old])).toEqual(['vaswani2017attention']);
+    // Newest first, as the export lists them.
+    expect(citationKeys([paper('2026-05-01T00:00:00.000Z'), old])).toEqual([
+      'vaswani2017attentiona',
+      'vaswani2017attention',
+    ]);
+  });
 });
 
 const doc = (sources: ExportSource[], skipped = 0): ExportDocument => ({
@@ -239,6 +258,18 @@ describe('Markdown', () => {
     expect(md).toContain('(<https://example.com/a%20b%3E>)');
     expect(md).toContain('> \\- not a list\n> 1\\. nor this \\<b\\>tag\\</b\\> \\#tag \\$x\\$');
     expect(md).toContain("1 item couldn't be read and is left out.");
+    // Underlines that would make the line above a heading, a rule, an Obsidian comment.
+    const lines = renderMarkdown(
+      doc([
+        {
+          kind: 'save',
+          title: 'T',
+          highlights: [{ text: 'para\n===\nmore', note: 'line one\n---\n%%hidden%%' }],
+        },
+      ])
+    );
+    expect(lines).toContain('> para\n> \\===\n> more');
+    expect(lines).toContain('**Note:** line one\n\\---\n\\%\\%hidden\\%\\%');
     expect(md).toContain('0 saves and 1 other page you highlighted');
   });
 });
@@ -267,7 +298,7 @@ describe('BibTeX', () => {
         '% Skyreader export, 2026-10-18. 3 entries.',
         '',
         '@misc{vaswani2017costs,',
-        '  title = {{Costs \\& \\{benefits\\} of 100\\% recall\\_rate}},',
+        '  title = {{Costs \\& \\textbraceleft{}benefits\\textbraceright{} of 100\\% recall\\_rate}},',
         '  author = {Ashish Vaswani and Noam Shazeer},',
         '  year = {2017},',
         '  date = {2017-06-12},',
@@ -492,6 +523,53 @@ describe('GET /api/export', () => {
     expect(bib).toContain('% Skyreader export');
     expect(bib).toContain('doi = {10.1234/abc.5}');
     expect(bib.match(/^@misc\{/gm)).toHaveLength(3);
+  });
+
+  it("files a backed save's highlights under its foreign item uri", async () => {
+    const user = await createUser();
+    const collection = `at://${user.did}/network.cosmik.collection/c1`;
+    await env.DB.prepare(
+      `INSERT INTO user_settings (user_did, backing, last_backing_poll, last_successful_backing_poll)
+       VALUES (?, ?, 1, 1)`
+    )
+      .bind(user.did, `semble:${collection}`)
+      .run();
+    // A has a row (a backed save has no record_uri); B was added in Semble.
+    await env.DB.prepare(
+      `INSERT INTO saved_articles (user_did, rkey, record_uri, url, url_normalized, title, saved_at, source)
+       VALUES (?, '3mwhuiodre74s', NULL, 'https://a.test/a', 'https://a.test/a', 'Backed A', 5000, 'url')`
+    )
+      .bind(user.did)
+      .run();
+    for (const [key, uri, metadata] of [
+      ['a', 'at://other/network.cosmik.card/a', null],
+      ['b', 'at://other/network.cosmik.card/b', JSON.stringify({ title: 'Backed only B' })],
+    ]) {
+      await env.DB.prepare(
+        `INSERT INTO backed_collection_members
+           (user_did, external_collection, url_normalized, url, external_provider, external_item_uri, external_link_uri, metadata)
+         VALUES (?, ?, ?, ?, 'semble', ?, ?, ?)`
+      )
+        .bind(
+          user.did,
+          collection,
+          `https://a.test/${key}`,
+          `https://a.test/${key}`,
+          uri,
+          `${uri}-link`,
+          metadata
+        )
+        .run();
+      await label(user, uri!, 'highlights', { highlights: [hl(`h${key}`, `quote on ${key}`, 10)] });
+    }
+
+    const md = await (await exportAs(user)).text();
+    expect(md).toContain('2 saves, with 2 highlights');
+    expect(md).toMatch(/## Backed A\n[\s\S]*> quote on a\n/);
+    expect(md).toMatch(/## Backed only B\n[\s\S]*> quote on b\n/);
+    expect(md).not.toContain('Untitled');
+    // B has no save time of its own, so it carries none.
+    expect(md.slice(md.indexOf('## Backed only B'))).not.toContain('Saved:');
   });
 
   it('exports an empty library', async () => {

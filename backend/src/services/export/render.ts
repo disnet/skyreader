@@ -141,20 +141,40 @@ function baseCitationKey(source: ExportSource): string {
   return key || 'skyreader';
 }
 
+// When a source entered the library, which doesn't change from one export to
+// the next: its save, else its first highlight.
+const addedAt = (source: ExportSource) => source.savedAt ?? source.highlights[0]?.createdAt ?? '';
+
 /**
- * One citation key per source, in order: surname, year, first title word
- * (vaswani2017attention), with a, b, … after a key already taken. The same
- * export always gives the same keys.
+ * One citation key per source: surname, year, first title word
+ * (vaswani2017attention), with a, b, … after a key already taken. Suffixes go
+ * oldest first, so a newer save never takes the key an older one had in an
+ * earlier export, and a \cite written against that export keeps working.
  */
 export function citationKeys(sources: ExportSource[]): string[] {
+  const order = sources
+    .map((source, index) => ({ index, at: addedAt(source), tie: source.url ?? source.title ?? '' }))
+    .sort((a, b) =>
+      a.at !== b.at
+        ? a.at < b.at
+          ? -1
+          : 1
+        : a.tie !== b.tie
+          ? a.tie < b.tie
+            ? -1
+            : 1
+          : a.index - b.index
+    );
   const taken = new Set<string>();
-  return sources.map((source) => {
-    const base = baseCitationKey(source);
+  const keys: string[] = [];
+  for (const { index } of order) {
+    const base = baseCitationKey(sources[index]);
     let key = base;
     for (let n = 0; taken.has(key); n++) key = base + suffix(n);
     taken.add(key);
-    return key;
-  });
+    keys[index] = key;
+  }
+  return keys;
 }
 
 // a … z, then aa, ab, …
@@ -171,13 +191,15 @@ const arxivUrl = (id: string) => `https://arxiv.org/abs/${id}`;
 // Escapes what would change the text's structure, plus `#` (an Obsidian tag)
 // and `$` (math in most note tools).
 function mdText(text: string): string {
-  return text
-    .replace(/[\\`*_[\]<>#$|~]/g, '\\$&')
-    .replace(
-      /^(\s*)([-+=]|\d+[.)])(?=\s|$)/gm,
-      (_, space: string, mark: string) =>
-        `${space}${mark.replace(/^(\d+)([.)])$/, '$1\\$2').replace(/^[-+=]$/, '\\$&')}`
-    );
+  return (
+    text
+      .replace(/[\\`*_[\]<>#$|~%]/g, '\\$&')
+      // A line of only - or = underlines the line above into a heading (or is
+      // a rule); a leading -, +, = or "1." starts a list or a heading.
+      .replace(/^(\s*)([-=])(?=[-=\s]*$)/gm, '$1\\$2')
+      .replace(/^(\s*)([-+=])(?=\s)/gm, '$1\\$2')
+      .replace(/^(\s*)(\d+)([.)])(?=\s|$)/gm, '$1$2\\$3')
+  );
 }
 
 // For a heading or list item: one line, whatever the text held.
@@ -252,8 +274,9 @@ export function renderMarkdown(doc: ExportDocument): string {
 
 const BIBTEX_ESCAPES: Record<string, string> = {
   '\\': '\\textbackslash{}',
-  '{': '\\{',
-  '}': '\\}',
+  // BibTeX counts braces even when escaped, so an unmatched \{ breaks the file.
+  '{': '\\textbraceleft{}',
+  '}': '\\textbraceright{}',
   '%': '\\%',
   '&': '\\&',
   $: '\\$',
