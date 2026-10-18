@@ -329,10 +329,15 @@ only holds what a reader already touched, and alerts are for what they haven't.
 
 - **Channel writes.** A channel config carrying `query` is mirrored into `saved_queries` on every
   channel write (`syncSavedQueries`, which reads the rows back from D1).
-- **Matching.** The `Percolator` DO pulls new `feed_items` (by `seq`) and `documents_v2` rows (by
-  `indexed_at`). It loads full bodies (R2 included) only for items some entitled query covers, and
-  indexes the batch into a scratch FTS5 table with the search tokenizer. It writes hits to
-  `channel_matches`, one per normalized URL per channel.
+- **Matching.** The `Percolator` DO pulls new `feed_items` (by `seq`), `documents_v2` rows (by
+  `indexed_at`) and `follow_link_shares` (by `first_seen_at`). It loads full bodies (R2 included)
+  only for items some entitled query covers, and indexes the batch into a scratch FTS5 table with
+  the search tokenizer. It writes hits to `channel_matches`, one per normalized URL per channel,
+  and every source a story arrived from to `channel_match_sources`.
+- **Follows links.** The article behind a covered link is read once per URL through the proxy's
+  `/extract` (`services/link-bodies.ts`, web pages only) and kept in R2 for 7 days, within a
+  per-reader daily budget. A link matches on its words and card at once, and again on the article
+  when it lands.
 - **Edits.** Inserts are guarded on the query's `updated_at`, so an edit mid-pass can't get stale
   hits written back.
 - **Scheduling.** The minute cron nudges the DO, and new or edited queries backfill 30 days. See
@@ -393,6 +398,7 @@ Key tables:
 - `client_vitals` - Field vitals as daily histogram buckets (counts only, no reports; 90 days)
 - `saved_queries` - Saved-search channels mirrored from channel configs (query, sources, backfill)
 - `channel_matches` - What each saved search matched, one row per story (90-day retention)
+- `channel_match_sources` - Every source each matched story arrived from (feed, author, sharer)
 - `follow_link_sync` / `follow_link_shares` - Follows links: per-reader refresh state and the shares.
   The minute cron refreshes readers who opened them this week (or whose saved search covers them)
   every 30 min, each in its own `FollowLinksPoller`; `sessions.client_id` is what lets a token

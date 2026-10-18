@@ -818,12 +818,19 @@ export class FeedProxyClient {
    * their daily allowance (services/pdf-quota.ts), and once it is spent — or
    * when their plan doesn't include PDFs — the proxy is told not to parse PDFs
    * for them. Every caller acting for a reader passes it.
+   *
+   * `articleOnly` is for background reads no reader asked for (the saved-search
+   * matcher): web pages only, so no PDF parse or EPUB download is ever spent on
+   * them.
    */
-  async extract(url: string, opts: { userDid?: string } = {}): Promise<ExtractedArticle> {
+  async extract(
+    url: string,
+    opts: { userDid?: string; articleOnly?: boolean } = {}
+  ): Promise<ExtractedArticle> {
     const proxyUrl = `${this.proxyUrl}/extract`;
-    const { userDid } = opts;
+    const { userDid, articleOnly } = opts;
     const access = userDid ? await pdfAccess(this.env, userDid) : 'ok';
-    const allowPdf = access === 'ok';
+    const allowPdf = access === 'ok' && !articleOnly;
 
     const headers = new Headers();
     headers.set('X-Proxy-Secret', this.proxySecret);
@@ -890,7 +897,10 @@ export class FeedProxyClient {
     }
     // The proxy recognised an EPUB and left it to us: a book is marked-up text
     // already, read here rather than by the proxy or the extractor Worker.
-    if (body.epub === true) return await this.extractEpub(url, userDid, access);
+    if (body.epub === true) {
+      if (articleOnly) throw new FeedProxyError('Not a web page');
+      return await this.extractEpub(url, userDid, access);
+    }
     if (body.error) {
       // A PDF refused for the plan, not the daily cap: the proxy only knows it
       // was told not to parse, so the reason is put back here.
