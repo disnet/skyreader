@@ -31,7 +31,7 @@ A Semble room can be **closed** or **open**. Closed means only you can add the a
 
 **Join room** on a room page adds you to the people reading along. Joining is public: it writes a record to your PDS, so anyone can see you're reading along, in Skyreader or in any Atmospheric app. **Leave room** deletes that record.
 
-Joining is what puts your avatar on the room page and adds the room to **Home** as its own lane. Someone who follows you will also see the room under **Where people you follow are reading** on their Rooms page.
+Joining is what puts your avatar on the room page and adds the room to **Home** as its own lane. Someone who follows you will also see the room under **Where people you follow are reading** on their Rooms page. Each avatar on a room page opens that reader's Bluesky profile.
 
 ## Reading in a room
 
