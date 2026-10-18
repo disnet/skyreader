@@ -33,6 +33,7 @@ import { page } from '$app/state';
 import { appManager } from '$lib/stores/app.svelte';
 import { articlesStore } from '$lib/stores/articles.svelte';
 import { savesStore } from '$lib/stores/saves.svelte';
+import { searchChannelsStore } from '$lib/stores/searchChannels.svelte';
 import { socialStore } from '$lib/stores/social.svelte';
 import { toastStore } from '$lib/stores/toast.svelte';
 import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
@@ -113,13 +114,22 @@ export function useReaderStack(
     const isColdLoad = depth === 0 && readerStack.length === 0;
     if (!isColdLoad && depth <= readerStack.length) return;
 
-    const item = resolveReaderItem(key, {
-      saves: savesStore.articles,
-      getArticle: (guid) => articlesStore.getByGuid(guid),
-      documents: socialStore.documents,
-    });
+    const item =
+      resolveReaderItem(key, {
+        saves: savesStore.articles,
+        getArticle: (guid) => articlesStore.getByGuid(guid),
+        documents: socialStore.documents,
+      }) ?? feedViewStore.searchRowFor(key);
     if (item) {
       restoreItem(item, isColdLoad);
+      return;
+    }
+    // A saved search's match may be one this device never synced: wait for its page.
+    if (
+      feedViewStore.isSearchChannel &&
+      !searchChannelsStore.loaded &&
+      !searchChannelsStore.error
+    ) {
       return;
     }
 

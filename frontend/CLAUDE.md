@@ -234,6 +234,21 @@ offline the overlay hands the query to Saved search. The signed-in user is cache
 `AppShell` refreshes `/api/auth/me` once per boot — otherwise a plan change or a newly switched-on
 feature would only reach an open session via Settings.
 
+### Saved searches
+
+A channel whose config carries a `query` is a saved search (`utils/searchChannels.ts`'s
+`channelQuery`; feed-mode channels only). Its items are **not** the timeline filtered here: the
+server matches new items from the channel's sources (the Percolator) and serves them from
+`GET /api/channels/:uuid/items`, so a match can be an item this device never loaded. `feedView`
+routes such a channel to `searchChannelsStore` — `scopedArticles`, `scopedDocuments` and
+`displayedFollowLinks` return the matches (`matchToRow`), so the read, tag and sort filters, the
+reader and mark-all-read work unchanged. Read state stays in `itemLabels` under each match's
+`itemKey`; the server's unread count is corrected for reads made here since (`searchChannelUnread`).
+Offered when `auth.user.savedSearchEnabled` and `limits.maxSavedSearches > 0`
+(`canUseSavedSearches`). `FeedPage` opens the active channel in the store; `appManager` refreshes
+every saved search's count after the channel sync. See `docs/plans/SAVED_SEARCH_CHANNELS.md`. Not
+to be confused with `savedSearch.svelte.ts`, which searches the saved library.
+
 ### Highlights
 
 Highlights live in the `highlights` label's opaque `props.highlights` array, merged per-highlight by

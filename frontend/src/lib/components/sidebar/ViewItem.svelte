@@ -2,6 +2,7 @@
   import { tick } from 'svelte';
   import type { FilteredView } from '$lib/types';
   import Icon from '../Icon.svelte';
+  import { channelQuery } from '$lib/utils/searchChannels';
 
   interface Props {
     view: FilteredView;
@@ -66,7 +67,10 @@
   ontouchmove={onTouchMove}
 >
   <span class="view-icon"
-    ><Icon name={view.mode === 'saved' ? 'bookmark' : 'newspaper'} size={14} /></span
+    ><Icon
+      name={view.mode === 'saved' ? 'bookmark' : channelQuery(view) ? 'search' : 'newspaper'}
+      size={14}
+    /></span
   >
   {#if isRenaming}
     <!-- svelte-ignore a11y_autofocus -->

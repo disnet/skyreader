@@ -1,4 +1,6 @@
 import { isArchiveFeedSource } from '$lib/utils/newsletters';
+import { searchChannelsStore } from './searchChannels.svelte';
+import { channelQuery } from '$lib/utils/searchChannels';
 import { buildSourceGroups, expandSourceKeys, upgradeChannelFilter } from '$lib/utils/sourceFilter';
 import { articlesStore } from './articles.svelte';
 import { subscriptionsStore } from './subscriptions.svelte';
@@ -164,6 +166,18 @@ function createUnreadCountsStore() {
     const sourceGroups = buildSourceGroups(subscriptionsStore.subscriptions);
     for (const view of filteredViewsStore.views) {
       if (view.id == null) continue;
+
+      // Saved searches: the server's count of their matches, kept current as
+      // matches are read here (searchChannelsStore).
+      if (channelQuery(view)) {
+        const unread = searchChannelsStore.unreadFor(view.uuid, (m) =>
+          m.kind === 'document'
+            ? itemLabelsStore.isSocialRead(m.itemKey)
+            : itemLabelsStore.isRead(m.itemKey)
+        );
+        counts.set(view.id, unread ?? 0);
+        continue;
+      }
 
       // Saved channels: count non-archived saved items
       if (view.mode === 'saved') {

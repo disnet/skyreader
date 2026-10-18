@@ -307,9 +307,15 @@ Never push by default (PRODUCT.md, plan principle "Calm stays true").
 2. **Follows links.** _Built:_ background refresh for opted-in readers, the shared extraction
    cache in R2, the per-reader budget, the follows stream and its backfill, and
    `channel_match_sources`.
-3. **Frontend.** The query field in the channel editor with its live preview, the query-channel
-   view and unread counts, and the `/daily` section. Add a docs-site page
-   (`docs-site/src/content/docs/guide/saved-searches.md`) and its sidebar entry.
+3. **Frontend.** _Built:_ the query field in the channel editor with its live preview (search over
+   what you've read), the query-channel view (`stores/searchChannels.svelte.ts`: matches with
+   their snippets and sharers, the last first page cached in Dexie, polling while it looks back),
+   sidebar unread counts, and the docs-site page (`guide/saved-searches.md`).
+
+   _Next:_ the digest — a per-channel "Include in my daily digest" toggle and the `/daily` "Your
+   searches" section. It waits on a server answer to "matches since the last digest"; a toggle
+   with nothing behind it would promise more than it does.
+
 4. **Admin.** Per-shard cursor lag, items skipped vs matched, extraction budget use, and a
    per-reader "re-run backfill" action.
 5. **Email digest**, after the _Outbound email_ goal lands.

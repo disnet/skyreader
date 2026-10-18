@@ -16,6 +16,8 @@
   import { unreadCounts } from '$lib/stores/unreadCounts.svelte';
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
   import { followLinksStore } from '$lib/stores/followLinks.svelte';
+  import { searchChannelsStore } from '$lib/stores/searchChannels.svelte';
+  import SearchChannelStatus from '$lib/components/feed/SearchChannelStatus.svelte';
   import { followLinkReadKey, markFollowLinkRead } from '$lib/utils/followLinks';
   import { grantFollowsAccess } from '$lib/utils/followsChannel';
   import { appManager } from '$lib/stores/app.svelte';
@@ -374,6 +376,11 @@
   }
 
   async function markAllAsReadInCurrentView() {
+    // A saved search: every match, not just the pages loaded so far.
+    if (feedViewStore.isSearchChannel && !(await searchChannelsStore.loadAll())) {
+      const id = toastStore.add('');
+      toastStore.update(id, 'error', "Some matches didn't load, so they're still unread.");
+    }
     // Every follows link, not just the pages the river has loaded so far. Two
     // tries: the reader is waiting on this.
     if (feedViewStore.showFollowLinks && !(await followLinksStore.loadEveryLink(1))) {
@@ -619,7 +626,11 @@
       (appManager.isRefreshing &&
         (feedViewStore.viewMode === 'shares' || articlesStore.allArticles.length === 0)) ||
       (mode === 'linkblog' && myLinkblogStore.loading && !myLinkblogStore.loaded) ||
-      (feedViewStore.showFollowLinks && !followLinksStore.loaded && !followLinksStore.error)) &&
+      (feedViewStore.showFollowLinks && !followLinksStore.loaded && !followLinksStore.error) ||
+      (feedViewStore.isSearchChannel &&
+        !searchChannelsStore.loaded &&
+        !searchChannelsStore.error &&
+        syncStore.isOnline)) &&
       feedViewStore.currentItems.length === 0 &&
       !hasLinkblogDrafts
   );
@@ -641,6 +652,33 @@
     void $page.state;
     if (!browser) return false;
     return new URL(location.href).searchParams.has(READ_PARAM);
+  });
+
+  // A saved search's matches come from the server: open the channel's in the
+  // store when it's the one showing, and let go of it when it isn't.
+  $effect(() => {
+    const uuid = feedViewStore.activeFilteredView?.uuid;
+    const query = feedViewStore.searchQuery;
+    const signedIn = auth.isAuthenticated;
+    untrack(() => {
+      if (uuid && query && signedIn) void searchChannelsStore.open(uuid, query);
+      else searchChannelsStore.close();
+    });
+  });
+
+  // A page of matches the read filter empties isn't the end of the search:
+  // fetch the next until something shows or nothing's left.
+  $effect(() => {
+    if (
+      feedViewStore.isSearchChannel &&
+      feedViewStore.currentItems.length === 0 &&
+      searchChannelsStore.loaded &&
+      searchChannelsStore.hasMore &&
+      !searchChannelsStore.loadingMore &&
+      !searchChannelsStore.moreFailed
+    ) {
+      untrack(() => void searchChannelsStore.loadMore());
+    }
   });
 
   // Reset selection when any filter changes
@@ -739,6 +777,10 @@
         <SavedSearchBar />
       {/if}
 
+      {#if feedViewStore.isSearchChannel && !readerOpen && feedViewStore.currentItems.length > 0}
+        <SearchChannelStatus empty={false} />
+      {/if}
+
       {#if feedErrorDetails && !readerOpen}
         <FeedErrorNotice errorDetails={feedErrorDetails} />
       {/if}
@@ -790,6 +832,17 @@
             <EmptyState
               title="All caught up"
               description="You've read everything your follows shared this week."
+            />
+          {:else if feedViewStore.isSearchChannel}
+            {@const channelId = feedViewStore.activeFilteredView?.id}
+            <SearchChannelStatus
+              empty
+              onEdit={channelId == null
+                ? undefined
+                : () =>
+                    mobileStore.isMobile
+                      ? handleEditChannel(channelId)
+                      : sidebarStore.openChannelModal(channelId)}
             />
           {:else if feedViewStore.viewFilter}
             {@const channel = feedViewStore.activeFilteredView}
