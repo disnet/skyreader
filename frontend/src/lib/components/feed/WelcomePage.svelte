@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import Icon from '$lib/components/Icon.svelte';
   import { goto } from '$app/navigation';
   import { auth } from '$lib/stores/auth.svelte';
@@ -15,6 +15,7 @@
   } from '$lib/utils/pricing';
   import { freeLimits, supporterLimits } from '$lib/constants/tierLimits';
   import { docsUrl } from '$lib/constants/docs';
+  import { inkVariant, installMarginaliaInk } from '$lib/utils/marginaliaInk';
 
   let starting = $state(false);
   let startError = $state<string | null>(null);
@@ -89,42 +90,6 @@
     return { destroy: () => io.disconnect() };
   }
 
-  // ── Margin-note popup: keep it on-screen ─────────────────────
-  // The note is centered under its marker, but the marker can wrap close
-  // to a viewport edge (notably on narrow phones), which clipped the popup.
-  // This nudges the centered popup horizontally so it always clears the
-  // viewport by a small gutter, recomputed on hover/focus and resize.
-  function clampPopup(node: HTMLElement) {
-    if (typeof window === 'undefined') return;
-    const gutter = 12;
-    const anchor = node.parentElement; // .note-anchor
-    let nudge = 0;
-    // Measure the popup *with the current nudge applied* and correct only by
-    // the overshoot, so a correctly-placed popup never resets to 0 (which
-    // would otherwise commit a transition start and make it flick on click).
-    const update = () => {
-      const rect = node.getBoundingClientRect();
-      let correction = 0;
-      if (rect.left < gutter) correction = gutter - rect.left;
-      else if (rect.right > window.innerWidth - gutter)
-        correction = window.innerWidth - gutter - rect.right;
-      if (Math.abs(correction) < 0.5) return;
-      nudge = Math.round(nudge + correction);
-      node.style.setProperty('--nudge', `${nudge}px`);
-    };
-    anchor?.addEventListener('pointerenter', update);
-    anchor?.addEventListener('focusin', update);
-    window.addEventListener('resize', update);
-    update();
-    return {
-      destroy() {
-        anchor?.removeEventListener('pointerenter', update);
-        anchor?.removeEventListener('focusin', update);
-        window.removeEventListener('resize', update);
-      },
-    };
-  }
-
   // ── Pricing (live from Polar via the backend) ────────────────
   // Prices are authored in one place, the Polar dashboard, and served by the
   // public /api/billing/products endpoint. The section reads fine without
@@ -160,61 +125,174 @@
       : null
   );
 
-  // ── Hero highlight draw ──────────────────────────────────────
-  let motion = $state(false); // becomes true on mount when motion allowed
-  let heroDrawn = $state(false);
+  // ── The essay you can mark up ────────────────────────────────
+  // The landing page is an article open in the reader, and a visitor can
+  // highlight it for real: select text and it takes the reader's own marker
+  // ink (app.css `.marginalia-ink`, utils/marginaliaInk.ts) and lands in "Your
+  // highlights", where it can carry a note. Nothing is stored — it's a
+  // demonstration, and the page says so by never promising it carries over.
+  //
+  // The essay's markup is static, so Svelte never touches its text nodes after
+  // mount; wrapping them in <mark>s here can't fight a re-render.
+  interface PageHighlight {
+    id: string;
+    text: string;
+    note: string;
+  }
 
-  // ── Live reading demo state (scoped to the demo card only) ───
-  // Light-touch demo: a highlighted phrase, a margin note that reveals on
-  // hover/focus of its marker, and a share box you can type a thought into.
-  let shareNote = $state(''); // linkblog share note draft
+  const SEED_ID = 'hl-seed';
+  let highlights = $state<PageHighlight[]>([
+    {
+      id: SEED_ID,
+      text: 'the page you marked is the page you can still read',
+      note: 'This is the part worth keeping.',
+    },
+  ]);
+  let nextId = 1;
+  let essayEl = $state<HTMLElement | null>(null);
+  let noteInputs: Record<string, HTMLTextAreaElement | null> = $state({});
 
-  const sources = [
-    {
-      icon: 'rss',
-      label: 'RSS feeds',
-      kind: 'blogs, news, anything with a feed',
-      soon: false,
-      more: false,
-    },
-    {
-      icon: 'at-sign',
-      label: 'The Atmosphere',
-      kind: 'standard.site publication across the Atmosphere',
-      soon: false,
-      more: false,
-    },
-    {
-      icon: 'inbox',
-      label: 'Newsletters',
-      kind: 'a private address for your inbox',
-      soon: true,
-      more: false,
-    },
-    {
-      icon: 'bluesky',
-      label: 'Bluesky',
-      kind: 'posts from the accounts you pick',
-      soon: true,
-      more: false,
-    },
-    { icon: 'plus', label: 'More sources', kind: 'coming soon', soon: false, more: true },
-  ] as const;
+  // A selection waiting for the Highlight button: a touch or keyboard
+  // selection. A mouse selection commits as soon as the button comes up, the
+  // way it reads in a book; on touch that would fight the selection handles,
+  // so it waits to be asked.
+  let pending = $state<Range | null>(null);
+  let pointerDown = false;
 
-  const stream = [
-    { title: 'The case for slow software', src: 'Newsletter', time: '2h', unread: true },
-    { title: 'Notes on attention and the open web', src: 'RSS', time: '4h', unread: true },
-    { title: 'A field guide to RSS in 2026', src: 'Blog', time: '6h', unread: false },
-    { title: 'Why I still keep a reading list', src: 'Bluesky', time: '1d', unread: false },
-  ];
+  /** The essay's text nodes a range covers, skipping text already marked. */
+  function textNodesIn(range: Range, root: HTMLElement): Text[] {
+    const nodes: Text[] = [];
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode: (node) =>
+        range.intersectsNode(node) &&
+        node.textContent?.trim() &&
+        !node.parentElement?.closest('mark')
+          ? NodeFilter.FILTER_ACCEPT
+          : NodeFilter.FILTER_REJECT,
+    });
+    while (walker.nextNode()) nodes.push(walker.currentNode as Text);
+    return nodes;
+  }
 
-  // Saved shelf demo: the few pieces pulled out of the stream to read properly.
-  // One is marked available offline to make the read-anywhere promise concrete.
-  const saved = [
-    { title: 'The case for slow software', meta: 'Newsletter · saved 2h ago', offline: true },
-    { title: 'Notes on attention and the open web', meta: 'RSS · saved yesterday', offline: false },
-    { title: 'A field guide to RSS in 2026', meta: 'Blog · saved 3d ago', offline: false },
-  ];
+  /**
+   * Wrap each covered piece of text in its own mark, the way the reader does:
+   * a highlight that crosses paragraphs is several marks, and `data-edge` says
+   * which carry the passage's real ends so the marker's ragged caps land there.
+   */
+  function markRange(range: Range, id: string): HTMLElement[] {
+    if (!essayEl) return [];
+    const marks: HTMLElement[] = [];
+    for (const node of textNodesIn(range, essayEl)) {
+      const start = node === range.startContainer ? range.startOffset : 0;
+      const end = node === range.endContainer ? range.endOffset : node.length;
+      if (start >= end || !node.data.slice(start, end).trim()) continue;
+      let piece = node;
+      if (end < piece.length) piece.splitText(end);
+      if (start > 0) piece = piece.splitText(start);
+      const mark = document.createElement('mark');
+      mark.className = 'highlight';
+      mark.dataset.hl = id;
+      mark.dataset.ink = String(inkVariant(id));
+      piece.replaceWith(mark);
+      mark.appendChild(piece);
+      marks.push(mark);
+    }
+    if (marks.length > 1) {
+      marks.forEach((mark, i) => {
+        mark.dataset.edge = i === 0 ? 'start' : i === marks.length - 1 ? 'end' : 'mid';
+      });
+    }
+    return marks;
+  }
+
+  /** A live selection inside the essay, or null. */
+  function essaySelection(): Range | null {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !sel.rangeCount || !essayEl) return null;
+    const range = sel.getRangeAt(0);
+    if (!essayEl.contains(range.commonAncestorContainer)) return null;
+    return range.toString().trim() ? range : null;
+  }
+
+  const WORD_CHAR = /[\p{L}\p{N}'’-]/u;
+
+  /** Grow a range's ends out to whole words, so a sloppy drag marks clean words. */
+  function snapToWords(range: Range) {
+    const { startContainer: sc, endContainer: ec } = range;
+    if (sc instanceof Text) {
+      let i = range.startOffset;
+      while (i > 0 && WORD_CHAR.test(sc.data[i - 1]) && WORD_CHAR.test(sc.data[i] ?? '')) i--;
+      range.setStart(sc, i);
+    }
+    if (ec instanceof Text) {
+      let i = range.endOffset;
+      while (i < ec.length && WORD_CHAR.test(ec.data[i]) && WORD_CHAR.test(ec.data[i - 1] ?? ''))
+        i++;
+      range.setEnd(ec, i);
+    }
+  }
+
+  function commit(range: Range) {
+    snapToWords(range);
+    const id = `hl-${nextId++}`;
+    const marks = markRange(range, id);
+    window.getSelection()?.removeAllRanges();
+    pending = null;
+    if (marks.length === 0) return;
+    const text = marks
+      .map((m) => m.textContent ?? '')
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    highlights.push({ id, text, note: '' });
+  }
+
+  function removeHighlight(id: string) {
+    essayEl?.querySelectorAll<HTMLElement>(`mark[data-hl="${id}"]`).forEach((mark) => {
+      const parent = mark.parentNode;
+      mark.replaceWith(...mark.childNodes);
+      parent?.normalize();
+    });
+    highlights = highlights.filter((h) => h.id !== id);
+  }
+
+  function showPassage(id: string) {
+    essayEl
+      ?.querySelector(`mark[data-hl="${id}"]`)
+      ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  // Clicking a passage takes you to its note.
+  async function onEssayClick(event: MouseEvent) {
+    const mark = (event.target as HTMLElement).closest<HTMLElement>('mark[data-hl]');
+    if (!mark || essaySelection()) return;
+    await tick();
+    noteInputs[mark.dataset.hl!]?.focus({ preventScroll: false });
+  }
+
+  function onPointerUp(event: PointerEvent) {
+    pointerDown = false;
+    if (event.pointerType !== 'mouse') return;
+    // After the browser has settled the selection for this release.
+    setTimeout(() => {
+      const range = essaySelection();
+      if (range) commit(range);
+    }, 0);
+  }
+
+  function onSelectionChange() {
+    if (pointerDown) return;
+    const range = essaySelection();
+    pending = range ? range.cloneRange() : null;
+  }
+
+  // The fixed button must not take the selection away on press: keep it, then
+  // commit the range it was holding.
+  function keepSelection(event: PointerEvent) {
+    event.preventDefault();
+  }
+
+  const count = $derived(highlights.length);
 
   onMount(() => {
     // Before the reduced-motion early return: prices load regardless of
@@ -224,9 +302,19 @@
       .then(({ products }) => (plans = products))
       .catch(() => {});
 
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-    motion = true;
-    requestAnimationFrame(() => requestAnimationFrame(() => (heroDrawn = true)));
+    installMarginaliaInk();
+    const seed = essayEl?.querySelector<HTMLElement>('[data-seed]');
+    if (seed) {
+      seed.dataset.hl = SEED_ID;
+      seed.dataset.ink = String(inkVariant(SEED_ID));
+    }
+
+    const down = (e: PointerEvent) => {
+      if (e.pointerType === 'mouse') pointerDown = true;
+    };
+    document.addEventListener('pointerdown', down);
+    document.addEventListener('selectionchange', onSelectionChange);
+
     // Safety net: scroll-reveal enhances reading, but content must never be
     // stuck hidden in a non-scrolling or headless context. Force-reveal
     // anything still pending shortly after load; engaged readers scroll well
@@ -236,246 +324,216 @@
         .querySelectorAll('.landing .reveal-init:not(.revealed)')
         .forEach((el) => el.classList.add('revealed'));
     }, 2500);
-    return () => clearTimeout(safety);
+    return () => {
+      clearTimeout(safety);
+      document.removeEventListener('pointerdown', down);
+      document.removeEventListener('selectionchange', onSelectionChange);
+    };
   });
 </script>
 
+<svelte:document onpointerup={onPointerUp} />
+
 <div class="landing">
-  <!-- ── Hero ──────────────────────────────────────────────── -->
-  <header class="hero">
-    <h1 class="hero-title">
-      <span class="line" use:reveal>Read everything from everywhere.</span>
-      <span class="line" use:reveal={{ delay: 90 }}>
-        <mark class="hl" class:animate={motion} class:drawn={heroDrawn || !motion}
-          >Make sense of it all.</mark
-        >
-      </span>
-    </h1>
-    <p class="hero-lead" use:reveal={{ delay: 180 }}>
-      Skyreader gathers your reading from across the internet into one calm place and helps you make
-      sense of it all.
-    </p>
-    <div class="hero-actions" use:reveal={{ delay: 260 }}>
-      <button class="cta-primary" onclick={startReading} disabled={starting}>
-        {starting ? 'Preparing your reading room…' : 'Start Reading'}
-      </button>
-      <a href="#read" class="cta-ghost">
-        See how it reads
-        <Icon name="arrow-down" size={16} />
-      </a>
-    </div>
-    {#if startError}
-      <p class="start-error" role="alert">{startError}</p>
-    {/if}
-    <p class="hero-note" use:reveal={{ delay: 320 }}>
-      Free, in beta. No account needed — <a href="/auth/login">sign in</a> when you want it synced.
-    </p>
-  </header>
-
-  <!-- ── One place ─────────────────────────────────────────── -->
-  <section class="section section--sources" aria-labelledby="sources-h">
-    <div class="section-head" use:reveal>
-      <h2 id="sources-h">Craft your own stream from across the web.</h2>
-      <p>
-        Follow RSS feeds from any website and publications across the Atmosphere, with more sources
-        coming soon. You pick every source, so the stream is yours by design. No algorithm, no
-        reordering, no guessing what you missed.
-      </p>
+  <div class="room">
+    <div class="rail" aria-hidden="true">
+      <span>3 min read</span>
+      <span>{count} {count === 1 ? 'highlight' : 'highlights'}</span>
     </div>
 
-    <div class="merge" use:reveal={{ delay: 80 }}>
-      <ul class="sources" aria-label="Sources Skyreader can read">
-        {#each sources as s}
-          <li class="source-row" class:source-row--more={s.more}>
-            <span class="source-icon"><Icon name={s.icon} size={18} /></span>
-            <span class="source-text">
-              <span class="source-label-row">
-                <span class="source-label">{s.label}</span>
-                {#if s.soon}<span class="soon-badge">Soon</span>{/if}
-              </span>
-              <span class="source-kind">{s.kind}</span>
-            </span>
-          </li>
-        {/each}
-      </ul>
-
-      <div class="merge-arrow" aria-hidden="true">
-        <Icon name="arrow-right" size={22} />
+    <article class="essay" aria-labelledby="essay-h">
+      <p class="essay-meta">skyreader.app · Essay</p>
+      <h1 id="essay-h">The good stuff should stick.</h1>
+      <p class="byline">Skyreader, a reader for everything you follow</p>
+      <!-- Phones get the way in up top; the margin, which carries it on wider
+           screens, falls below the essay there. -->
+      <div class="start-inline">
+        <button class="cta-primary" onclick={startReading} disabled={starting}>
+          {starting ? 'Preparing your reading room…' : 'Start Reading'}
+        </button>
+        <a href="/auth/login">Sign in</a>
       </div>
 
-      <div class="stream" aria-label="Your reading stream">
-        <div class="stream-head">
-          <span class="stream-title">Today</span>
-          <span class="stream-count">4 new</span>
-        </div>
-        <ul class="stream-list">
-          {#each stream as item}
-            <li class="stream-item">
-              <span class="dot" class:dot--unread={item.unread} aria-hidden="true"></span>
-              <span class="stream-item-body">
-                <span class="stream-item-title">{item.title}</span>
-                <span class="stream-item-meta">{item.src} · {item.time}</span>
-              </span>
-            </li>
-          {/each}
-        </ul>
-      </div>
-    </div>
-  </section>
-
-  <!-- ── Save what matters ─────────────────────────────────── -->
-  <section class="section section--save" aria-labelledby="save-h">
-    <div class="section-head" use:reveal>
-      <h2 id="save-h">Save what matters.</h2>
-      <p>
-        Your stream moves fast, and not everything deserves the same attention. Save what matters to
-        you and dive deep.
-      </p>
-    </div>
-
-    <div class="save-demo" use:reveal={{ delay: 80 }}>
-      <!-- The save moment: one item, pulled out of the stream. -->
-      <div class="save-moment">
-        <span class="dot dot--unread" aria-hidden="true"></span>
-        <span class="stream-item-body">
-          <span class="stream-item-title">The case for slow software</span>
-          <span class="stream-item-meta">Newsletter · 2h</span>
-        </span>
-        <span class="save-btn" aria-hidden="true">
-          <Icon name="bookmark" size={16} /> Saved
-        </span>
-      </div>
-
-      <div class="save-flow" aria-hidden="true">
-        <Icon name="arrow-down" size={20} />
-      </div>
-
-      <!-- The shelf: what you chose to read properly, yours and offline-ready. -->
-      <div class="shelf" aria-label="Your saved reading">
-        <div class="shelf-head">
-          <span class="shelf-title"><Icon name="bookmark" size={15} /> To read</span>
-          <span class="shelf-count">3 saved</span>
-        </div>
-        <ul class="shelf-list">
-          {#each saved as item}
-            <li class="stream-item shelf-item">
-              <span class="shelf-mark" aria-hidden="true"><Icon name="bookmark" size={14} /></span>
-              <span class="stream-item-body">
-                <span class="stream-item-title">{item.title}</span>
-                <span class="stream-item-meta">{item.meta}</span>
-              </span>
-              {#if item.offline}
-                <span class="offline-badge"><Icon name="check" size={11} /> Offline</span>
-              {/if}
-            </li>
-          {/each}
-        </ul>
-        <p class="shelf-foot">
-          Saved articles come with you and read offline. Get to them when you have the time.
+      <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+      <div class="essay-body marginalia-ink" bind:this={essayEl} onclick={onEssayClick}>
+        <p>
+          Most of what we read disappears. Not because it was bad, but because it was scattered: a
+          link in a newsletter, a paper in a downloads folder, a post that scrolled past at
+          midnight. By the time it matters, it's gone, or it has changed, or you can't remember
+          where you saw it.
+        </p>
+        <p>
+          Skyreader is a reader built against that. Everything you follow comes into one calm place,
+          in the order it was published, with no algorithm choosing for you: feeds and newsletters,
+          your Bluesky likes and bookmarks, videos with their transcripts, PDFs and books.
+        </p>
+        <p>
+          When something is worth keeping, you mark it. Highlights stay on the passage, even on the
+          original pages of a PDF, and your notes sit in the margin beside them. Every save is
+          snapshotted the moment you keep it, so <mark class="highlight" data-seed
+            >the page you marked is the page you can still read</mark
+          >.
+        </p>
+        <p>
+          You're not reading alone, either. Under an article you can see who else is discussing it
+          on Bluesky and Semble, quietly, without a timeline pulling at you.
+        </p>
+        <p>
+          Later, when you need it, the line is still there, and your highlights and notes go with
+          you as Markdown or BibTeX. That's the point of reading this way: it adds up.
         </p>
       </div>
-    </div>
-  </section>
+      <p class="try">Try it: select any sentence above to highlight it.</p>
 
-  <!-- ── Make sense of it all (read deeply → understanding) ── -->
-  <section id="read" class="section section--sense" aria-labelledby="sense-h">
-    <div class="section-head" use:reveal>
-      <h2 id="sense-h">Reading is how you think.</h2>
-      <p>
-        A clean reading view, free of clutter. Highlight what matters, make notes, and share your
-        thoughts. Engaging with what you read makes it part of how you think.
-      </p>
-    </div>
+      <section class="discussion" aria-labelledby="discussion-h">
+        <h2 id="discussion-h">Discussion</h2>
+        <div class="post">
+          <span class="avatar" aria-hidden="true">M</span>
+          <div>
+            <span class="handle">@mara.example</span>
+            <p>
+              "Every save is snapshotted the moment you keep it." The feature I didn't know I
+              needed.
+            </p>
+          </div>
+        </div>
+        <div class="post">
+          <span class="avatar avatar--b" aria-hidden="true">R</span>
+          <div>
+            <span class="handle">@rui.example</span>
+            <p>Finally, the PDF and the newsletter in the same place.</p>
+          </div>
+        </div>
+        <p class="sample">Sample discussion</p>
+      </section>
+    </article>
 
-    <figure class="reader" use:reveal={{ delay: 80 }}>
-      <div class="reader-body">
-        <p class="reader-meta">
-          <Icon name="rss" size={13} /> from your feeds · 5 min read
+    <aside class="margin" aria-label="Your highlights and getting started">
+      <section class="panel" aria-labelledby="hls-h">
+        <h2 id="hls-h" class="panel-head">
+          <span>Your highlights</span>
+          <span class="panel-count" aria-live="polite">{count}</span>
+        </h2>
+        {#if highlights.length}
+          <ul class="hls">
+            {#each highlights as h (h.id)}
+              <li class="hl-item">
+                <button type="button" class="hl-quote" onclick={() => showPassage(h.id)}>
+                  {h.text}
+                </button>
+                <textarea
+                  class="hl-note"
+                  rows="1"
+                  placeholder="Add a note"
+                  aria-label="Note on this highlight"
+                  bind:value={h.note}
+                  bind:this={noteInputs[h.id]}></textarea>
+                <button
+                  type="button"
+                  class="hl-remove"
+                  aria-label="Remove highlight"
+                  onclick={() => removeHighlight(h.id)}
+                >
+                  <Icon name="x" size={14} />
+                </button>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+        {#if highlights.length < 2}
+          <p class="panel-hint">Select text in the essay to add one.</p>
+        {/if}
+      </section>
+
+      <section class="panel panel--start" aria-label="Get started">
+        <p>
+          This is how everything reads in Skyreader: your sources in full, with your marks and notes
+          beside them.
         </p>
-        <h3 class="reader-title">The quiet web is still out there</h3>
-        <div class="reader-prose">
-          <p>
-            For a while it looked like the open web had been paved over. The feeds went quiet, the
-            readers shut down, and everything funneled into a handful of timelines that decided, on
-            your behalf, what was worth your attention.
-          </p>
-          <p>
-            But the plumbing never left.
-            <mark class="hl reader-hl"
-              >Every site you love still publishes a feed, waiting for a reader patient enough to
-              collect them.
-            </mark><span class="note-anchor">
-              <button
-                type="button"
-                class="note-marker"
-                aria-label="Margin note"
-                aria-describedby="demo-margin-note"
-              >
-                <Icon name="message-circle" size={13} />
-              </button>
-              <span id="demo-margin-note" class="note-popup" role="tooltip" use:clampPopup>
-                Connects to last week's piece on maintenance over novelty. Save for the essay.
-              </span>
-            </span>The web didn't disappear. We just stopped tending it.
-          </p>
-        </div>
+        <button class="cta-primary" onclick={startReading} disabled={starting}>
+          {starting ? 'Preparing your reading room…' : 'Start Reading'}
+          {#if !starting}<Icon name="arrow-right" size={16} />{/if}
+        </button>
+        {#if startError}
+          <p class="start-error" role="alert">{startError}</p>
+        {/if}
+        <p class="fine">
+          Free to read, no account needed. <a href="/auth/login">Sign in</a> when you want it on every
+          device.
+        </p>
+      </section>
+    </aside>
+  </div>
 
-        <!-- Share moment: pass the piece on with a thought of your own. -->
-        <div class="reader-share">
-          <label class="share-label" for="demo-share-note">
-            <Icon name="share-2" size={15} /> Share to your linkblog
-          </label>
-          <blockquote class="share-quote">Every site you love still publishes a feed</blockquote>
-          <textarea
-            id="demo-share-note"
-            class="share-input"
-            rows="2"
-            bind:value={shareNote}
-            placeholder="Add a thought…"></textarea>
-        </div>
-      </div>
-    </figure>
-    <ul class="sense-points" use:reveal={{ delay: 140 }}>
+  {#if pending}
+    <button
+      type="button"
+      class="mark-btn"
+      onpointerdown={keepSelection}
+      onclick={() => pending && commit(pending)}
+    >
+      <Icon name="highlighter" size={16} /> Highlight
+    </button>
+  {/if}
+
+  <!-- ── What you just did ─────────────────────────────────── -->
+  <section class="section" aria-labelledby="did-h">
+    <div class="section-head" use:reveal>
+      <h2 id="did-h">That's the whole idea.</h2>
+      <p>What you just did on this page is what Skyreader does with everything you follow.</p>
+    </div>
+    <ul class="did" use:reveal={{ delay: 80 }}>
       <li>
-        <span class="point-icon"><Icon name="users" size={20} /></span>
-        <div>
-          <h3>Follow people, not algorithms</h3>
-          <p>
-            See what the people you trust are actually reading, through their linkblogs.
-            Recommendations with a name attached.
-          </p>
-        </div>
+        <span class="did-cue">you read an essay</span>
+        <h3>Read in one calm place</h3>
+        <p>
+          RSS and Atom, Atmosphere publications, Bluesky likes and bookmarks, YouTube with
+          transcripts. Newsletters by email, PDFs and EPUBs with Supporter. In order, no algorithm.
+        </p>
       </li>
       <li>
-        <span class="point-icon point-icon--tools">
-          <Icon name="semble" size={18} />
-          <Icon name="margin" size={18} />
-        </span>
-        <div>
-          <h3>Carry ideas further</h3>
-          <p>
-            Send highlights and notes to sensemaking tools like Semble and Margin, and connect what
-            you read across everything else you're thinking about.
-          </p>
-        </div>
+        <span class="did-cue">you highlighted a line</span>
+        <h3>Mark what matters</h3>
+        <p>
+          Highlights and margin notes on any source, a PDF's original pages included, and a review
+          that brings them back.
+        </p>
+      </li>
+      <li>
+        <span class="did-cue">every save is kept</span>
+        <h3>Keep it as you read it</h3>
+        <p>
+          A snapshot of every save, taken the moment you keep it, with the Wayback Machine as a
+          fallback.
+        </p>
+      </li>
+      <li>
+        <span class="did-cue">you saw who else read it</span>
+        <h3>Read alongside others</h3>
+        <p>
+          The discussion around an article from Bluesky and Semble, and linkblogs from people you
+          follow.
+        </p>
+      </li>
+      <li>
+        <span class="did-cue">you'll want that line later</span>
+        <h3>Find any line again <span class="tier">Supporter</span></h3>
+        <p>
+          Search every word you've read or saved, every highlight and note, whole PDFs and books.
+        </p>
+      </li>
+      <li>
+        <span class="did-cue">it's yours</span>
+        <h3>Take it with you</h3>
+        <p>
+          Export saves, highlights and notes as Markdown or BibTeX, DOIs included. Exports are free.
+        </p>
       </li>
     </ul>
   </section>
 
-  <!-- ── Foundation (quiet) ────────────────────────────────── -->
-  <section class="section section--foundation" aria-labelledby="found-h">
-    <div class="foundation-inner" use:reveal>
-      <h2 id="found-h">Yours, and built to last.</h2>
-      <p>
-        Skyreader is built on the Atmosphere, the open network behind Bluesky. Your subscriptions,
-        saved articles, and shares live in your own portable Atmosphere account, so they outlast any
-        app, including this one.
-      </p>
-    </div>
-  </section>
-
   <!-- ── Pricing (a quiet ledger, deliberately not a tier grid) ── -->
-  <section class="section section--pricing" aria-labelledby="pricing-h">
+  <section class="section" aria-labelledby="pricing-h">
     <div class="section-head" use:reveal>
       <h2 id="pricing-h">Free to read. Backed by readers.</h2>
       <p>
@@ -507,7 +565,7 @@
         </div>
         <p class="plan-desc">
           Raises the limits to {supporterLimits.feeds} feeds and {supporterLimits.saves} saves a month,
-          and helps keep Skyreader calm, fast, and independent.
+          adds search, newsletters and PDFs, and helps keep Skyreader calm, fast, and independent.
         </p>
         {#if offer}
           <!-- The billing line names the amount actually charged, in the same
@@ -532,15 +590,20 @@
   </section>
 
   <!-- ── Final CTA ─────────────────────────────────────────── -->
-  <section class="section section--cta" aria-label="Get started">
+  <section class="section section--cta" aria-labelledby="cta-h">
     <div class="cta-inner" use:reveal>
+      <h2 id="cta-h">Read everything like this.</h2>
+      <p>
+        Start with a few good sources, no account needed. Sign in when you want it on every device.
+      </p>
       <button class="cta-primary cta-primary--lg" onclick={startReading} disabled={starting}>
         {starting ? 'Preparing your reading room…' : 'Start Reading'}
+        {#if !starting}<Icon name="arrow-right" size={18} />{/if}
       </button>
       {#if startError}
         <p class="start-error" role="alert">{startError}</p>
       {/if}
-      <p class="hero-note">
+      <p class="fine">
         Want the full tour first? <a href={docsUrl()} target="_blank" rel="noopener noreferrer"
           >Read the docs</a
         >.
@@ -550,25 +613,15 @@
 </div>
 
 <style>
-  /* ── Smooth in-page scroll for the "See how it reads" jump ── */
-  :global(html:has(.landing)) {
-    scroll-behavior: smooth;
-  }
-  @media (prefers-reduced-motion: reduce) {
-    :global(html:has(.landing)) {
-      scroll-behavior: auto;
-    }
-  }
-
   .landing {
-    --measure: 62ch;
     --ink: var(--color-text);
     --muted: var(--color-text-secondary);
     --gold: #f5c518;
-    --space-section: clamp(4.5rem, 9vw, 8.5rem);
+    --space-section: clamp(4.5rem, 9vw, 7.5rem);
+    /* The layout's sticky header, which the margin panel tucks under. */
+    --header-clear: 5rem;
     color: var(--ink);
-    /* Pull to the full main-full width and add the page's own gutters. */
-    padding-inline: clamp(1.25rem, 5vw, 3rem);
+    padding-inline: clamp(1rem, 4vw, 3.5rem);
     padding-bottom: clamp(2rem, 5vw, 4rem);
     overflow-x: clip;
   }
@@ -587,52 +640,243 @@
     transform: none;
   }
 
-  /* ── Hero ────────────────────────────────────────────────── */
-  .hero {
-    max-width: 36rem;
+  /* ── The room: rail · essay · margin, the reader's own shape ── */
+  .room {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 42rem) minmax(16rem, 1fr);
+    gap: clamp(1.25rem, 3vw, 3rem);
+    align-items: start;
+    max-width: 90rem;
     margin: 0 auto;
-    padding-block: clamp(3.5rem, 11vw, 7.5rem) var(--space-section);
-    text-align: center;
+    padding-block: clamp(2.5rem, 7vh, 5.5rem) clamp(3rem, 6vw, 4.5rem);
   }
-  .hero-title {
-    font-size: clamp(2.5rem, 5.8vw, 3.875rem);
-    font-weight: var(--weight-bold);
-    line-height: 1.06;
-    letter-spacing: -0.025em;
-    text-wrap: balance;
-  }
-  .hero-title .line {
-    display: block;
-  }
-  .hero-lead {
-    margin: clamp(1.5rem, 3vw, 2rem) auto 0;
-    max-width: 46ch;
-    font-size: clamp(1.0625rem, 1.4vw, 1.1875rem);
-    line-height: var(--leading-relaxed);
-    color: var(--muted);
-    text-wrap: pretty;
-  }
-  .hero-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.75rem;
-    justify-content: center;
-    align-items: center;
-    margin-top: clamp(1.75rem, 3.5vw, 2.5rem);
-  }
-  .hero-note {
-    margin-top: 1.25rem;
+  .rail {
+    white-space: nowrap;
+    position: sticky;
+    top: var(--header-clear);
+    display: grid;
+    gap: 0.6rem;
+    justify-items: end;
+    padding-top: 0.2rem;
+    font-family: var(--font-mono);
     font-size: var(--text-sm);
     color: var(--muted);
   }
 
-  .hero-note a {
+  .essay {
+    min-width: 0;
+  }
+  .essay-meta {
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    color: var(--muted);
+    margin-bottom: 1rem;
+  }
+  .essay h1 {
+    font-size: clamp(2.75rem, 6vw, 5rem);
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: -0.035em;
+    text-wrap: balance;
+  }
+  .byline {
+    margin: 1rem 0 2rem;
+    font-size: var(--text-lg);
+    color: var(--muted);
+  }
+  .start-inline {
+    display: none;
+    align-items: center;
+    gap: 1.25rem;
+    margin: -0.75rem 0 2rem;
+    font-weight: var(--weight-medium);
+  }
+  .start-inline a {
+    color: var(--ink);
+  }
+  .essay-body {
+    font-family: var(--font-literata);
+    font-size: clamp(1.1875rem, 1.35vw, 1.3125rem);
+    line-height: 1.75;
+  }
+  .essay-body p + p {
+    margin-top: 1.1em;
+  }
+  .try {
+    margin-top: 1.5rem;
+    font-size: var(--text-md);
+    color: var(--muted);
+  }
+  .try::before {
+    content: '';
+    display: inline-block;
+    width: 1.6em;
+    height: 0.55em;
+    margin-right: 0.5em;
+    vertical-align: 0.05em;
+    border-radius: 2px;
+    background: color-mix(in srgb, var(--gold) 55%, transparent);
+  }
+
+  .discussion {
+    margin-top: 2.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--color-border);
+    display: grid;
+    gap: 1rem;
+  }
+  .discussion h2 {
+    font-size: var(--text-2xl);
+    font-weight: var(--weight-bold);
+  }
+  .post {
+    display: grid;
+    grid-template-columns: 2rem 1fr;
+    gap: 0.75rem;
+    font-size: var(--text-lg);
+    line-height: var(--leading-relaxed);
+  }
+  .avatar {
+    display: grid;
+    place-items: center;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--color-primary) 16%, transparent);
+    color: var(--color-primary);
+    font-size: var(--text-sm);
+    font-weight: var(--weight-bold);
+  }
+  .avatar--b {
+    background: color-mix(in srgb, var(--gold) 30%, transparent);
+    color: var(--ink-note);
+  }
+  .handle {
+    font-weight: var(--weight-semibold);
+  }
+  .sample {
+    font-family: var(--font-mono);
+    font-size: var(--text-2xs);
+    color: var(--muted);
+  }
+
+  /* ── The margin ──────────────────────────────────────────── */
+  .margin {
+    position: sticky;
+    top: var(--header-clear);
+    display: grid;
+    gap: 1rem;
+  }
+  .panel {
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    padding: 1rem;
+    background: var(--color-bg);
+  }
+  .panel-head {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 0.75rem;
+    font-size: var(--text-2xs);
+    font-weight: var(--weight-semibold);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .hls {
+    list-style: none;
+    display: grid;
+    gap: 0.85rem;
+    max-height: min(22rem, 45vh);
+    overflow-y: auto;
+  }
+  .hl-item {
+    position: relative;
+    padding: 0.1rem 1.75rem 0.1rem 0.75rem;
+    border-left: 3px solid var(--gold);
+  }
+  .hl-quote {
+    display: -webkit-box;
+    -webkit-line-clamp: 4;
+    line-clamp: 4;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    padding: 0;
+    border: 0;
+    background: none;
+    text-align: left;
+    font-family: var(--font-literata);
+    font-size: var(--text-lg);
+    line-height: 1.45;
+    color: var(--ink);
+    cursor: pointer;
+  }
+  .hl-note {
+    display: block;
+    width: 100%;
+    margin-top: 0.3rem;
+    padding: 0.15rem 0;
+    border: 0;
+    border-bottom: 1px dashed var(--color-border);
+    background: transparent;
+    resize: none;
+    field-sizing: content;
+    font-family: var(--font-hand);
+    font-size: 1rem;
+    line-height: 1.35;
+    color: var(--ink-note);
+  }
+  .hl-note::placeholder {
+    color: var(--ink-note-soft);
+  }
+  .hl-note:focus {
+    outline: none;
+    border-bottom-color: var(--color-primary);
+  }
+  .hl-remove {
+    position: absolute;
+    top: 0;
+    right: 0;
+    display: grid;
+    place-items: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    padding: 0;
+    border: 0;
+    border-radius: 6px;
+    background: none;
+    color: var(--muted);
+    cursor: pointer;
+    opacity: 0.6;
+  }
+  .hl-item:hover .hl-remove,
+  .hl-remove:focus-visible {
+    opacity: 1;
+  }
+  .panel-hint {
+    margin-top: 0.75rem;
+    font-size: var(--text-md);
+    color: var(--muted);
+  }
+  .panel--start p {
+    font-size: var(--text-lg);
+    line-height: 1.5;
+    color: var(--muted);
+    margin-bottom: 1rem;
+  }
+  .panel--start .fine {
+    margin: 0.85rem 0 0;
+  }
+  .fine {
+    font-size: var(--text-sm);
+    color: var(--muted);
+  }
+  .fine a {
     color: inherit;
     text-decoration: underline;
     text-underline-offset: 2px;
   }
-
-  .hero-note a:hover {
+  .fine a:hover {
     color: var(--color-primary);
   }
 
@@ -643,38 +887,34 @@
     color: var(--color-error);
   }
 
-  /* The highlight: a gold marker stroke behind the phrase. Default state
-     is fully drawn (no-JS / reduced motion); `.animate` opts into the draw. */
-  .hl {
-    background-color: transparent;
-    background-image: linear-gradient(
-      to right,
-      color-mix(in srgb, var(--gold) 34%, transparent) 0,
-      color-mix(in srgb, var(--gold) 34%, transparent) 100%
-    );
-    background-repeat: no-repeat;
-    background-position: 0 84%;
-    background-size: 100% 46%;
-    color: inherit;
-    padding-inline: 0.06em;
-    border-radius: 1px;
-    box-decoration-break: clone;
-    -webkit-box-decoration-break: clone;
-  }
-  .hl.animate {
-    background-size: 0% 46%;
-    transition: background-size 0.95s 0.35s cubic-bezier(0.16, 0.84, 0.28, 1);
-  }
-  .hl.animate.drawn {
-    background-size: 100% 46%;
+  /* Touch and keyboard selections: commit on request, clear of the
+     selection's own callout at the top of it. */
+  .mark-btn {
+    position: fixed;
+    left: 50%;
+    bottom: calc(1.25rem + env(safe-area-inset-bottom));
+    z-index: 50;
+    transform: translateX(-50%);
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.7rem 1.15rem;
+    border: 1px solid color-mix(in srgb, var(--gold) 70%, var(--ink));
+    border-radius: 999px;
+    background: var(--gold);
+    color: #1a1a1a;
+    font-weight: var(--weight-semibold);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+    cursor: pointer;
   }
 
   /* ── CTAs ────────────────────────────────────────────────── */
   .cta-primary {
     display: inline-flex;
     align-items: center;
-    gap: 0.55rem;
+    gap: 0.5rem;
     padding: 0.75rem 1.25rem;
+    border: none;
     border-radius: 8px;
     background: var(--color-primary);
     color: #fff;
@@ -694,541 +934,90 @@
     padding: 0.9rem 1.6rem;
     font-size: var(--text-xl);
   }
-  .cta-ghost {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-    padding: 0.75rem 0.5rem;
-    color: var(--ink);
-    font-weight: var(--weight-medium);
-    text-decoration: none;
-  }
-  .cta-ghost:hover {
-    color: var(--color-primary);
-  }
   .cta-primary:focus-visible,
-  .cta-ghost:focus-visible,
-  .note-marker:focus-visible {
+  .hl-quote:focus-visible,
+  .hl-remove:focus-visible,
+  .mark-btn:focus-visible {
     outline: 2px solid var(--color-primary);
     outline-offset: 2px;
     border-radius: 4px;
   }
 
-  /* ── Section scaffolding ─────────────────────────────────── */
+  /* ── Sections below the essay ────────────────────────────── */
   .section {
+    max-width: 68rem;
+    margin: 0 auto;
     padding-block: var(--space-section);
-    scroll-margin-top: 4.5rem;
+    border-top: 1px solid var(--color-border);
   }
   .section-head {
-    max-width: var(--measure);
-    margin: 0 auto clamp(2.5rem, 5vw, 4rem);
-    text-align: center;
+    max-width: 40rem;
+    margin-bottom: clamp(2rem, 4vw, 3rem);
   }
-  .section-head h2,
-  .foundation-inner h2 {
-    font-size: clamp(1.75rem, 3.6vw, 2.5rem);
-    font-weight: var(--weight-bold);
-    line-height: 1.12;
-    letter-spacing: -0.02em;
+  .section h2 {
+    font-size: clamp(2rem, 4vw, 3.25rem);
+    font-weight: 800;
+    line-height: 1.05;
+    letter-spacing: -0.03em;
     text-wrap: balance;
   }
-  .section-head p {
+  .section-head p,
+  .cta-inner > p:not(.fine):not(.start-error) {
     margin-top: 1rem;
+    font-family: var(--font-literata);
     font-size: var(--text-xl);
     line-height: var(--leading-relaxed);
     color: var(--muted);
     text-wrap: pretty;
   }
 
-  /* ── One place: source list merging into a stream ───────── */
-  .merge {
-    display: grid;
-    grid-template-columns: 1fr auto 1fr;
-    align-items: start;
-    gap: clamp(1rem, 3vw, 2.5rem);
-    max-width: 60rem;
-    margin: 0 auto;
-  }
-  .sources {
+  .did {
     list-style: none;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-  .source-row {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 0.7rem 0.85rem;
-    border: 1px solid var(--color-border);
-    border-radius: 10px;
-    background: var(--color-bg);
-  }
-  .source-icon {
     display: grid;
-    place-items: center;
-    width: 2rem;
-    height: 2rem;
-    flex-shrink: 0;
-    border-radius: 8px;
-    background: var(--color-bg-secondary);
-    color: var(--ink);
-  }
-  .source-text {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-  }
-  .source-label-row {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-  .source-label {
-    font-weight: var(--weight-semibold);
-    font-size: var(--text-lg);
-  }
-  .soon-badge {
-    flex-shrink: 0;
-    font-size: var(--text-2xs);
-    font-weight: var(--weight-semibold);
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--muted);
-    background: var(--color-bg-secondary);
-    border: 1px solid var(--color-border);
-    border-radius: 999px;
-    padding: 0.05rem 0.45rem;
-    line-height: 1.55;
-  }
-  .source-kind {
-    font-size: var(--text-sm);
-    color: var(--muted);
-  }
-  /* Forward-looking placeholder row: reads as "not yet", not "broken". */
-  .source-row--more {
-    border-style: dashed;
-    background: transparent;
-  }
-  .source-row--more .source-icon {
-    background: transparent;
-    border: 1px dashed var(--color-border);
-    color: var(--muted);
-  }
-  .source-row--more .source-label {
-    color: var(--muted);
-    font-weight: var(--weight-medium);
-  }
-  .merge-arrow {
-    display: grid;
-    place-items: center;
-    align-self: center;
-    color: var(--muted);
-  }
-  .stream {
-    border: 1px solid var(--color-border);
-    border-radius: 12px;
-    background: var(--color-bg);
-    overflow: hidden;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
-  }
-  .stream-head {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    padding: 0.85rem 1rem;
-    border-bottom: 1px solid var(--color-border);
-  }
-  .stream-title {
-    font-weight: var(--weight-bold);
-    font-size: var(--text-lg);
-  }
-  .stream-count {
-    font-size: var(--text-sm);
-    color: var(--color-primary);
-    font-weight: var(--weight-medium);
-  }
-  .stream-list {
-    list-style: none;
-  }
-  .stream-item {
-    display: flex;
-    align-items: flex-start;
-    gap: 0.65rem;
-    padding: 0.7rem 1rem;
-  }
-  .stream-item + .stream-item {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    column-gap: clamp(1.25rem, 3vw, 2.5rem);
     border-top: 1px solid var(--color-border);
   }
-  .dot {
-    width: 7px;
-    height: 7px;
-    margin-top: 0.5em;
-    border-radius: 50%;
-    background: transparent;
-    border: 1.5px solid var(--color-border);
-    flex-shrink: 0;
-  }
-  .dot--unread {
-    background: var(--color-primary);
-    border-color: var(--color-primary);
-  }
-  .stream-item-body {
-    display: flex;
-    flex-direction: column;
+  .did li {
+    padding: 1.4rem 0 1.5rem;
+    border-bottom: 1px solid var(--color-border);
     min-width: 0;
   }
-  .stream-item-title {
-    font-weight: var(--weight-medium);
-    line-height: var(--leading-snug);
-  }
-  .stream-item-meta {
+  .did-cue {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-family: var(--font-mono);
     font-size: var(--text-sm);
-    color: var(--muted);
-    margin-top: 0.1rem;
-  }
-
-  /* ── Save: a stream item flowing into the "To read" shelf ── */
-  .save-demo {
-    max-width: 26rem;
-    margin: 0 auto;
-  }
-  .save-moment {
-    display: flex;
-    align-items: center;
-    gap: 0.65rem;
-    padding: 0.8rem 1rem;
-    border: 1px solid var(--color-border);
-    border-radius: 12px;
-    background: var(--color-bg);
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
-  }
-  .save-moment .stream-item-body {
-    flex: 1;
-  }
-  .save-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-    flex-shrink: 0;
-    padding: 0.4rem 0.7rem;
-    border: 1px solid var(--color-primary);
-    border-radius: 8px;
-    background: color-mix(in srgb, var(--color-primary) 10%, transparent);
     color: var(--color-primary);
-    font-weight: var(--weight-semibold);
-    font-size: var(--text-sm);
-    white-space: nowrap;
   }
-  .save-flow {
-    display: grid;
-    place-items: center;
-    color: var(--muted);
-    margin-block: 0.5rem;
-  }
-  .shelf {
-    border: 1px solid var(--color-border);
-    border-radius: 12px;
-    background: var(--color-bg);
-    overflow: hidden;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
-  }
-  .shelf-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0.85rem 1rem;
-    border-bottom: 1px solid var(--color-border);
-  }
-  .shelf-title {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.45rem;
+  .did h3 {
+    font-size: var(--text-2xl);
     font-weight: var(--weight-bold);
-    font-size: var(--text-lg);
-  }
-  .shelf-count {
-    font-size: var(--text-sm);
-    color: var(--muted);
-  }
-  .shelf-list {
-    list-style: none;
-  }
-  .shelf-item {
-    align-items: center;
-  }
-  .shelf-item .stream-item-body {
-    flex: 1;
-  }
-  .shelf-mark {
-    display: grid;
-    place-items: center;
-    flex-shrink: 0;
-    color: var(--muted);
-  }
-  .offline-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.2rem;
-    flex-shrink: 0;
-    font-size: var(--text-2xs);
-    font-weight: var(--weight-semibold);
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--muted);
-    background: var(--color-bg-secondary);
-    border: 1px solid var(--color-border);
-    border-radius: 999px;
-    padding: 0.05rem 0.45rem 0.05rem 0.35rem;
-    line-height: 1.55;
-  }
-  .shelf-foot {
-    padding: 0.8rem 1rem;
-    border-top: 1px solid var(--color-border);
-    font-size: var(--text-sm);
-    color: var(--muted);
-    line-height: var(--leading-relaxed);
-  }
-
-  /* ── Reader demo ─────────────────────────────────────────── */
-  .reader {
-    max-width: 44rem;
-    margin: 0 auto;
-    border: 1px solid var(--color-border);
-    border-radius: 14px;
-    background: var(--color-bg);
-    /* No overflow clipping — the margin-note popup needs to escape the card.
-       The body carries the matching radius so the corners still read clean. */
-    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.07);
-    /* Reader surface colors, kept independent of the page theme so the demo
-       always reads as a clean, true-white reading room. */
-    --r-bg: #ffffff;
-    --r-ink: #1a1a1a;
-    --r-muted: #6a6a6a;
-    --r-border: #e6e6e6;
-    --r-gold: 34%;
-    --reader-size: 1.1875rem;
-  }
-
-  .reader-body {
-    position: relative;
-    padding: clamp(1.5rem, 4vw, 2.5rem);
-    background: var(--r-bg);
-    color: var(--r-ink);
-    border-radius: inherit;
-  }
-  .reader-meta {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    font-size: var(--text-sm);
-    color: var(--r-muted);
-    margin-bottom: 0.75rem;
-  }
-  .reader-title {
-    font-family: var(--font-literata);
-    font-size: calc(var(--reader-size) * 1.6);
-    font-weight: 600;
     line-height: 1.2;
     letter-spacing: -0.01em;
-    margin-bottom: 1rem;
   }
-  .reader-prose {
-    font-family: var(--font-literata);
-    font-size: var(--reader-size);
-    line-height: 1.65;
-    max-width: 60ch;
-  }
-  .reader-prose p + p {
-    margin-top: 1rem;
-  }
-
-  /* Static highlight — reads as part of the prose, no interaction. */
-  .reader-hl {
-    background-image: linear-gradient(
-      to right,
-      color-mix(in srgb, var(--gold) var(--r-gold), transparent) 0,
-      color-mix(in srgb, var(--gold) var(--r-gold), transparent) 100%
-    );
-    color: inherit;
-  }
-
-  /* Margin note: a small marker that reveals the note on hover/focus. */
-  .note-anchor {
-    position: relative;
-  }
-  .note-marker {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    vertical-align: baseline;
-    position: relative;
-    top: 0.08em;
-    width: 1.15em;
-    height: 1.15em;
-    margin-left: 0.15em;
-    padding: 0;
-    border: none;
-    background: none;
-    border-radius: 50%;
-    color: #9a7700;
-    cursor: pointer;
-    transition: background-color 0.15s ease;
-  }
-  .note-marker:hover,
-  .note-anchor:focus-within .note-marker {
-    background-color: color-mix(in srgb, var(--gold) 30%, transparent);
-  }
-  .note-popup {
-    /* Centered under the marker so the overhang is balanced on both sides —
-       keeps it clear of the card and viewport edges wherever the marker wraps
-       to. The card no longer clips it (overflow is visible). */
-    position: absolute;
-    top: calc(100% + 8px);
-    left: 50%;
-    z-index: 5;
-    width: max-content;
-    max-width: min(16rem, 72vw);
-    padding: 0.6rem 0.75rem;
-    border: 1px solid var(--r-border);
-    border-radius: 10px;
-    background: var(--r-bg);
-    box-shadow:
-      0 4px 16px rgba(0, 0, 0, 0.15),
-      0 1px 2px rgba(0, 0, 0, 0.08);
-    font-family: var(--font-literata);
-    font-style: italic;
-    font-size: calc(var(--reader-size) * 0.92);
-    line-height: 1.5;
-    color: var(--r-muted);
-    /* Hidden until the marker is hovered or focused. */
-    opacity: 0;
-    transform: translate(calc(-50% + var(--nudge, 0px)), 4px);
-    pointer-events: none;
-    transition:
-      opacity 0.16s ease,
-      transform 0.16s ease;
-  }
-  .note-marker:hover + .note-popup,
-  .note-anchor:focus-within .note-popup {
-    opacity: 1;
-    transform: translate(calc(-50% + var(--nudge, 0px)), 0);
-  }
-
-  /* In-reader share moment: a quote + a box for a thought of your own. */
-  .reader-share {
-    margin-top: clamp(1.5rem, 4vw, 2rem);
-    padding-top: clamp(1.25rem, 3vw, 1.5rem);
-    border-top: 1px solid var(--r-border);
-  }
-  .share-label {
-    display: flex;
-    align-items: center;
-    gap: 0.45rem;
-    font-size: var(--text-sm);
-    font-weight: var(--weight-semibold);
-    color: var(--r-muted);
-  }
-  .share-quote {
-    margin: 0.85rem 0 0;
-    padding-left: 0.85rem;
-    border-left: 2px solid color-mix(in srgb, var(--gold) 55%, transparent);
-    font-family: var(--font-literata);
-    font-style: italic;
-    font-size: calc(var(--reader-size) * 0.95);
-    line-height: 1.5;
-    color: var(--r-ink);
-  }
-  .share-input {
-    width: 100%;
-    box-sizing: border-box;
-    margin-top: 0.85rem;
-    padding: 0.6rem 0.7rem;
-    border: 1px solid var(--r-border);
-    border-radius: 9px;
-    resize: none;
-    font: inherit;
-    font-size: 1rem;
-    line-height: 1.5;
-    color: var(--r-ink);
-    background: var(--r-bg);
-    transition:
-      border-color 0.15s ease,
-      box-shadow 0.15s ease;
-  }
-  .share-input::placeholder {
-    color: var(--r-muted);
-  }
-  .share-input:focus {
-    outline: none;
-    border-color: var(--color-primary);
-    box-shadow: 0 0 0 2px rgba(0, 102, 204, 0.18);
-  }
-
-  /* ── Make sense: two supporting points beneath the reader ── */
-  .sense-points {
-    list-style: none;
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: clamp(1.5rem, 4vw, 2.5rem);
-    max-width: 44rem;
-    margin: clamp(2rem, 5vw, 3rem) auto 0;
-  }
-  .sense-points li {
-    display: flex;
-    gap: 1rem;
-  }
-  .point-icon {
-    display: inline-flex;
-    align-items: center;
-    gap: 2px;
-    justify-content: center;
-    width: 2.75rem;
-    height: 2.75rem;
-    flex-shrink: 0;
-    border-radius: 10px;
-    background: color-mix(in srgb, var(--color-primary) 10%, transparent);
-    color: var(--color-primary);
-  }
-  .point-icon--tools {
-    color: var(--ink);
-  }
-  .sense-points h3 {
-    font-size: var(--text-xl);
-    font-weight: var(--weight-semibold);
-    line-height: 1.25;
-  }
-  .sense-points p {
+  .did p {
     margin-top: 0.4rem;
     color: var(--muted);
     line-height: var(--leading-relaxed);
   }
-
-  /* ── Foundation ──────────────────────────────────────────── */
-  /* A soft, contained panel rather than a hard full-bleed band — matches the
-     rounded card language of the rest of the page. */
-  .foundation-inner {
-    max-width: 46rem;
-    margin: 0 auto;
-    padding: clamp(2.5rem, 6vw, 4rem) clamp(1.75rem, 5vw, 3.5rem);
-    text-align: center;
-    background: var(--color-bg-secondary);
-    border-radius: 20px;
-  }
-  .foundation-inner p {
-    max-width: 52ch;
-    margin: 1.1rem auto 0;
-    font-size: var(--text-xl);
-    line-height: var(--leading-relaxed);
-    color: var(--muted);
-    text-wrap: pretty;
+  .tier {
+    margin-left: 0.3rem;
+    padding: 0.05rem 0.4rem;
+    border: 1px solid currentColor;
+    border-radius: 4px;
+    vertical-align: 0.2em;
+    font-family: var(--font-mono);
+    font-size: var(--text-2xs);
+    font-weight: var(--weight-semibold);
+    letter-spacing: 0.04em;
+    color: var(--color-primary);
   }
 
   /* ── Pricing: hairline-ruled ledger rows, matching /supporter's
      "benefits ledger" voice. Deliberately not a tier-card grid. ── */
   .plans {
-    max-width: 34rem;
-    margin: 0 auto;
+    max-width: 40rem;
     border-top: 1px solid var(--color-border);
   }
   .plan {
@@ -1287,29 +1076,44 @@
   }
 
   /* ── Final CTA ───────────────────────────────────────────── */
-  .section--cta {
-    text-align: center;
+  .cta-inner > p:not(.fine):not(.start-error) {
+    max-width: 40rem;
+    margin-bottom: 1.75rem;
+  }
+  .cta-inner .fine {
+    margin-top: 1.25rem;
   }
 
   /* ── Responsive ──────────────────────────────────────────── */
-  @media (max-width: 780px) {
-    .merge {
-      grid-template-columns: 1fr;
-      gap: 1rem;
-      max-width: 30rem;
+  @media (max-width: 1100px) {
+    .room {
+      grid-template-columns: minmax(0, 1fr) minmax(15rem, 19rem);
     }
-    .merge-arrow {
-      transform: rotate(90deg);
-    }
-    .sense-points {
-      grid-template-columns: 1fr;
-      max-width: 34rem;
+    .rail {
+      display: none;
     }
   }
-
-  @media (prefers-reduced-motion: reduce) {
-    .note-popup {
-      transition: none;
+  @media (max-width: 800px) {
+    .room {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .margin {
+      position: static;
+    }
+    .start-inline {
+      display: flex;
+    }
+    .did {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+  /* iOS Safari zooms the viewport when a focused input is smaller than 16px. */
+  @media (hover: none) and (pointer: coarse) {
+    .hl-note {
+      font-size: max(1rem, 16px);
+    }
+    .hl-remove {
+      opacity: 1;
     }
   }
 </style>
