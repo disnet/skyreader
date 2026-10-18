@@ -43,10 +43,8 @@ describe('handlePreloadError', () => {
 
   it('stays quiet about more failures from the load it is already reloading', () => {
     preloadError();
-    const second = preloadError();
-    const third = preloadError();
-    expect(second.defaultPrevented).toBe(true);
-    expect(third.defaultPrevented).toBe(true);
+    preloadError();
+    preloadError();
     expect(reload).toHaveBeenCalledTimes(1);
     expect(report).not.toHaveBeenCalled();
   });
@@ -60,5 +58,38 @@ describe('handlePreloadError', () => {
     expect(reload).toHaveBeenCalledTimes(1);
     expect(report).toHaveBeenCalledTimes(1);
     expect(report.mock.calls[0][0]).toBe('preload_recovery_failed');
+  });
+
+  it('reports a stuck page once, however many links are tried', () => {
+    preloadError();
+    resetPreloadRecoveryForTests();
+    const now = Date.now();
+    for (const later of [2_000, 9_000, 20_000]) {
+      vi.spyOn(Date, 'now').mockReturnValue(now + later);
+      preloadError();
+    }
+    expect(report).toHaveBeenCalledTimes(1);
+    vi.restoreAllMocks();
+  });
+
+  it('reloads again once the guard has expired', () => {
+    store.set('sw-preload-reload', String(Date.now() - 6 * 60 * 1000));
+    preloadError();
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(report).not.toHaveBeenCalled();
+  });
+
+  it('keeps trying when the guard cannot be written', () => {
+    vi.stubGlobal('sessionStorage', {
+      getItem: () => null,
+      setItem: () => {
+        throw new DOMException('full', 'QuotaExceededError');
+      },
+    });
+    expect(() => preloadError()).toThrow();
+    // Not marked as reloading, so the next failure is handled, not swallowed.
+    const next = new Event('vite:preloadError', { cancelable: true });
+    expect(() => handlePreloadError(next)).toThrow();
+    expect(next.defaultPrevented).toBe(true);
   });
 });

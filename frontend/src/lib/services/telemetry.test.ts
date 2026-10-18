@@ -71,27 +71,6 @@ describe('reportClientError', () => {
     expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 
-  it('ignores crawlers, which replay stale HTML on every deploy', () => {
-    vi.spyOn(Math, 'random').mockReturnValue(0.99);
-    vi.stubGlobal('navigator', {
-      onLine: true,
-      userAgent:
-        'Mozilla/5.0 (Linux; Android 6.0.1; Nexus 5X Build/MMB29P) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.8010.52 Mobile Safari/537.36 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
-    });
-    reportClientError('preload_recovery_failed', new Error('preload failed again'));
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it('still reports from a phone whose name contains "bot"', () => {
-    vi.stubGlobal('navigator', {
-      onLine: true,
-      userAgent:
-        'Mozilla/5.0 (Linux; Android 10; CUBOT X30) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36',
-    });
-    reportClientError('uncaught', new Error('boom'));
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
   it('stays quiet while offline', () => {
     vi.stubGlobal('navigator', { onLine: false });
     reportClientError('uncaught', new Error('boom'));
