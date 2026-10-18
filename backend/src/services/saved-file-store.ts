@@ -29,6 +29,8 @@ export interface StoredFileRef {
 
 /** The saved_files columns a StoredFileRef is read from. */
 export const STORED_FILE_COLUMNS = 'storage, r2_key, blob_cid, record_uri';
+/** One `?` per STORED_FILE_COLUMNS column, for the values storedFileBindings gives. */
+export const STORED_FILE_PLACEHOLDERS = '?, ?, ?, ?';
 
 /** A StoredFileRef as the values bound to STORED_FILE_COLUMNS, in order. */
 export function storedFileBindings(
@@ -87,9 +89,7 @@ function r2Store(bucket: R2Bucket): SavedFileStore {
       const key = savedFileKey(meta.did, meta.rkey, meta.kind);
       // R2 needs a stream's length up front.
       const value =
-        bytes instanceof ArrayBuffer
-          ? bytes
-          : bytes.body.pipeThrough(new FixedLengthStream(bytes.size));
+        'body' in bytes ? bytes.body.pipeThrough(new FixedLengthStream(bytes.size)) : bytes;
       await bucket.put(key, value, {
         httpMetadata: { contentType: meta.mimeType },
         customMetadata: {

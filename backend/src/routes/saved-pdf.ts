@@ -21,6 +21,7 @@ import { readCapped } from './feedback';
 import { readStagedOriginal } from '../services/linked-originals';
 import {
   STORED_FILE_COLUMNS,
+  STORED_FILE_PLACEHOLDERS,
   savedFileStore,
   storeFor,
   storedFileBindings,
@@ -368,7 +369,7 @@ async function handleUpload(request: Request, env: Env, session: Session, kind: 
       ),
       env.DB.prepare(
         `INSERT INTO saved_files (user_did, rkey, ${STORED_FILE_COLUMNS}, filename, mime_type, size, sha256, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ${STORED_FILE_PLACEHOLDERS}, ?, ?, ?, ?, ?)`
       ).bind(
         session.did,
         rkey,
@@ -600,7 +601,7 @@ async function recordLinkedOriginal(
   // OR IGNORE: two opens racing to store the same save write the same place.
   const inserted = await env.DB.prepare(
     `INSERT OR IGNORE INTO saved_files (user_did, rkey, ${STORED_FILE_COLUMNS}, filename, mime_type, size, sha256, created_at)
-     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+     SELECT ?, ?, ${STORED_FILE_PLACEHOLDERS}, ?, ?, ?, ?, ?
      WHERE EXISTS (SELECT 1 FROM saved_articles WHERE user_did = ? AND rkey = ?)`
   )
     .bind(
@@ -982,7 +983,9 @@ export async function deleteSavedFile(env: Env, did: string, rkey: string): Prom
     .bind(did, rkey)
     .run();
   try {
-    await storeFor(env, ref)?.delete(ref);
+    const store = storeFor(env, ref);
+    if (store) await store.delete(ref);
+    else log.warn('saved_file_store_unreachable', { rkey, storage: ref.storage });
   } catch (error) {
     // The row is gone, so the bytes no longer count against the reader; an
     // orphaned object costs storage, not correctness.
