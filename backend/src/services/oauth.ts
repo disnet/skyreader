@@ -6,6 +6,8 @@ import { timedFirst } from '../utils/d1-timing';
 
 // Constants for refresh retry logic
 const MAX_REFRESH_FAILURES = 5;
+// A token this close to expiry is refreshed before use.
+const TOKEN_EXPIRY_BUFFER_MS = 5 * 60 * 1000;
 const BASE_BACKOFF_MS = 60 * 1000; // 1 minute base
 const MAX_BACKOFF_MS = 60 * 60 * 1000; // 1 hour max
 
@@ -468,18 +470,26 @@ export async function deleteOAuthState(env: Env, state: string): Promise<void> {
 }
 
 // Store session in D1
-export async function storeSession(env: Env, sessionId: string, session: Session): Promise<void> {
+// `clientId` is the OAuth client the tokens were issued to, kept so a refresh
+// with no request to read it from (the background follows refresh) can name it.
+export async function storeSession(
+  env: Env,
+  sessionId: string,
+  session: Session,
+  clientId?: string
+): Promise<void> {
   await env.DB.prepare(
     `
-    INSERT INTO sessions (session_id, did, handle, display_name, avatar_url, pds_url, access_token, refresh_token, dpop_private_key, expires_at, granted_scopes)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO sessions (session_id, did, handle, display_name, avatar_url, pds_url, access_token, refresh_token, dpop_private_key, expires_at, granted_scopes, client_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(session_id) DO UPDATE SET
       access_token = excluded.access_token,
       refresh_token = excluded.refresh_token,
       expires_at = excluded.expires_at,
       -- A refresh re-resolves permission sets, so the granted scope can change
       -- without a re-auth; keep the stored one when the response omits it.
-      granted_scopes = COALESCE(excluded.granted_scopes, sessions.granted_scopes)
+      granted_scopes = COALESCE(excluded.granted_scopes, sessions.granted_scopes),
+      client_id = COALESCE(excluded.client_id, sessions.client_id)
   `
   )
     .bind(
@@ -493,7 +503,8 @@ export async function storeSession(env: Env, sessionId: string, session: Session
       session.refreshToken,
       session.dpopPrivateKey,
       session.expiresAt,
-      session.grantedScopes || null
+      session.grantedScopes || null,
+      clientId ?? null
     )
     .run();
 }
@@ -633,12 +644,19 @@ function getBaseUrl(url: URL): string {
 // so they MUST match byte-for-byte what was used at authorization time — otherwise the
 // auth server treats refresh as coming from a different client and rejects it.
 // See: https://atproto.com/specs/oauth#localhost-client-development
+const LOCALHOST_CLIENT_ID_PREFIX = 'http://localhost?';
+
 export function buildLocalhostClientId(redirectUri: string, scope: string): string {
   const params = new URLSearchParams({
     redirect_uri: redirectUri,
     scope: scope,
   });
-  return `http://localhost?${params.toString()}`;
+  return `${LOCALHOST_CLIENT_ID_PREFIX}${params.toString()}`;
+}
+
+// The localhost exception's client_id is the only public one.
+function isLocalhostClientId(clientId: string): boolean {
+  return clientId.startsWith(LOCALHOST_CLIENT_ID_PREFIX);
 }
 
 // Resolve the OAuth client_id (and whether to attach a private_key_jwt assertion) for a
@@ -648,7 +666,12 @@ export function buildLocalhostClientId(redirectUri: string, scope: string): stri
 // assertion, with the client_id reconstructed from the same redirect_uri + scopes as auth.
 // Getting this wrong locally manifests as endless `session_refresh_pending` 503s, because
 // createClientAssertion() throws when CLIENT_SIGNING_KEY is unset.
-function resolveClientIdentity(env: Env, url: URL): { clientId: string; isPublicClient: boolean } {
+interface ClientIdentity {
+  clientId: string;
+  isPublicClient: boolean;
+}
+
+function resolveClientIdentity(env: Env, url: URL): ClientIdentity {
   const baseUrl = getBaseUrl(url);
   const hasSigningKey = !!(env as Env & { CLIENT_SIGNING_KEY?: string }).CLIENT_SIGNING_KEY;
   const isLoopback =
@@ -723,7 +746,7 @@ export async function resolveSessionFromRequest(
   }
 
   // Check if token is expired or about to expire (within 5 minutes)
-  const expiryBuffer = 5 * 60 * 1000; // 5 minutes
+  const expiryBuffer = TOKEN_EXPIRY_BUFFER_MS;
   const timeUntilExpiry = (session.expiresAt || 0) - Date.now();
 
   if (timeUntilExpiry < expiryBuffer) {
@@ -749,7 +772,12 @@ export async function resolveSessionFromRequest(
     );
     // Try to refresh the token
     try {
-      const refreshedSession = await refreshSession(env, sessionId, session, request);
+      const refreshedSession = await refreshSession(
+        env,
+        sessionId,
+        session,
+        resolveClientIdentity(env, new URL(request.url))
+      );
       if (refreshedSession) {
         return { session: refreshedSession };
       }
@@ -853,6 +881,44 @@ export async function findSessionIdForDid(env: Env, did: string): Promise<string
   return row?.session_id ?? null;
 }
 
+// A session for acting on a reader's behalf with no request in hand: the background
+// follows refresh. Picks their freshest session that knows its OAuth client and
+// whose granted scopes pass `usable` (checked before any token refresh, so a
+// session that couldn't do the job is never refreshed for it), and refreshes its
+// token if it's about to expire, under the same lock and backoff a request uses.
+// Never waits on a concurrent refresh: null means "not right now", and the
+// caller tries again on its next pass.
+export async function getBackgroundSession(
+  env: Env,
+  did: string,
+  usable: (grantedScopes: string | undefined) => boolean
+): Promise<Session | null> {
+  const rows = await env.DB.prepare(
+    `SELECT session_id, client_id, granted_scopes FROM sessions
+      WHERE did = ? AND client_id IS NOT NULL AND COALESCE(refresh_failures, 0) < ?
+      ORDER BY expires_at DESC`
+  )
+    // One short of the cap: the failure that deletes a session after transient
+    // errors is left to a request, so an auth-server outage can't sign out a
+    // reader who's away. (A permanent error still deletes it, as it would anyway.)
+    .bind(did, MAX_REFRESH_FAILURES - 1)
+    .all<{ session_id: string; client_id: string; granted_scopes: string | null }>();
+  const row = (rows.results ?? []).find((r) => usable(r.granted_scopes ?? undefined));
+  if (!row) return null;
+
+  const session = await getSessionWithRefreshState(env, row.session_id);
+  if (!session) return null;
+
+  const now = Date.now();
+  if (session.expiresAt - now >= TOKEN_EXPIRY_BUFFER_MS) return session;
+  if (session.refreshLockedUntil && now < session.refreshLockedUntil) return null;
+
+  return refreshSession(env, row.session_id, session, {
+    clientId: row.client_id,
+    isPublicClient: isLocalhostClientId(row.client_id),
+  });
+}
+
 // Lock timeout in milliseconds - if a refresh takes longer than this, the lock is considered stale
 const REFRESH_LOCK_TIMEOUT_MS = 30 * 1000; // 30 seconds
 
@@ -861,7 +927,7 @@ async function refreshSession(
   env: Env,
   sessionId: string,
   session: SessionWithRefreshState,
-  request: Request
+  client: ClientIdentity
 ): Promise<Session | null> {
   // Try to acquire refresh lock using optimistic locking
   // This prevents concurrent refresh requests from racing
@@ -874,9 +940,13 @@ async function refreshSession(
     SET refresh_in_progress = ?
     WHERE session_id = ?
     AND (refresh_in_progress IS NULL OR refresh_in_progress < ?)
+    AND refresh_token = ?
   `
   )
-    .bind(lockAcquireTime, sessionId, staleThreshold)
+    // The refresh token this caller read: if a concurrent refresh rotated it
+    // since, sending the old one would come back invalid_grant and delete the
+    // session. Not taking the lock leaves the caller to pick up the new tokens.
+    .bind(lockAcquireTime, sessionId, staleThreshold, session.refreshToken)
     .run();
 
   if (!lockResult.meta?.changes || lockResult.meta.changes === 0) {
@@ -959,10 +1029,9 @@ async function refreshSession(
     // Get token endpoint
     const authMeta = await fetchAuthServerMetadata(session.pdsUrl);
 
-    // Resolve client identity from the request. In local dev this is a public client
-    // (localhost exception, no assertion); in production it's a confidential client.
-    const url = new URL(request.url);
-    const { clientId, isPublicClient } = resolveClientIdentity(env, url);
+    // In local dev this is a public client (localhost exception, no assertion); in
+    // production it's a confidential client.
+    const { clientId, isPublicClient } = client;
 
     // Create DPoP proof for refresh request
     let dpopProof = await createDPoPProof(
@@ -998,9 +1067,14 @@ async function refreshSession(
       body: refreshBody,
     });
 
+    // A failed response's body, read once: the nonce check and the failure
+    // handling below both need it, and a body can only be read once.
+    let failureText: string | null = null;
+
     // Handle DPoP nonce requirement
     if (!tokenResponse.ok) {
       const errorText = await tokenResponse.text();
+      failureText = errorText;
       const errorData = (() => {
         try {
           return JSON.parse(errorText) as { error?: string };
@@ -1044,12 +1118,13 @@ async function refreshSession(
           },
           body: retryBody,
         });
+        failureText = null;
       }
     }
 
     // Handle refresh failure with resilience
     if (!tokenResponse.ok) {
-      const errorText = await tokenResponse.text();
+      const errorText = failureText ?? (await tokenResponse.text());
       const errorData = (() => {
         try {
           return JSON.parse(errorText) as { error?: string };
@@ -1111,7 +1186,7 @@ async function refreshSession(
     };
 
     // Store updated session and reset failure counters
-    await storeSession(env, sessionId, updatedSession);
+    await storeSession(env, sessionId, updatedSession, clientId);
     await resetRefreshState();
     console.log('Session refreshed successfully for', session.handle);
     return updatedSession;

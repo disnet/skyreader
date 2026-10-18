@@ -331,9 +331,13 @@ describe('token refresh: public client (local dev)', () => {
     expect(body.get('client_assertion_type')).toBeNull();
 
     // The new token was persisted, so subsequent requests are healthy.
-    const row = await env.DB.prepare('SELECT access_token FROM sessions WHERE session_id = ?')
+    const row = await env.DB.prepare(
+      'SELECT access_token, client_id FROM sessions WHERE session_id = ?'
+    )
       .bind('public-refresh')
-      .first<{ access_token: string }>();
+      .first<{ access_token: string; client_id: string | null }>();
     expect(row?.access_token).toBe('fresh-access-token');
+    // Kept for refreshes with no request to read it from (the background follows refresh).
+    expect(row?.client_id).toBe(body.get('client_id'));
   });
 });

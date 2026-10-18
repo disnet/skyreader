@@ -90,6 +90,8 @@ export interface FollowLinksSync {
   lastPollAt: number;
   complete: boolean;
   error: string | null;
+  /** When the reader last opened follows links (follow-links-background.ts). */
+  lastSeenAt?: number | null;
 }
 
 export interface FollowLinksSettings {
@@ -139,12 +141,17 @@ export async function setFollowLinksSettings(
 
 export async function readFollowLinksSync(env: Env, did: string): Promise<FollowLinksSync | null> {
   const row = await env.DB.prepare(
-    'SELECT last_poll_at, newest_seen_at, complete, last_error FROM follow_link_sync WHERE user_did = ?'
+    'SELECT last_poll_at, newest_seen_at, complete, last_error, last_seen_at FROM follow_link_sync WHERE user_did = ?'
   )
     .bind(did)
-    .first<SyncRow>();
+    .first<SyncRow & { last_seen_at: number | null }>();
   if (!row) return null;
-  return { lastPollAt: row.last_poll_at, complete: !!row.complete, error: row.last_error };
+  return {
+    lastPollAt: row.last_poll_at,
+    complete: !!row.complete,
+    error: row.last_error,
+    lastSeenAt: row.last_seen_at,
+  };
 }
 
 export function followLinksNeedRefresh(sync: FollowLinksSync | null, now: number): boolean {

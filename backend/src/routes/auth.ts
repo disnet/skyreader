@@ -962,7 +962,7 @@ export async function handleAuthCallback(
       .run();
 
     // Now store session (after user exists in DB due to FK constraint)
-    await storeSession(env, sessionId, session);
+    await storeSession(env, sessionId, session, clientId);
 
     // A permission upgrade replaces the session it started from. Only ever retire
     // a session of the same account, so a mismatched callback can't sign anyone out.

@@ -309,11 +309,12 @@ procedures: [`docs/RUNBOOK.md`](../docs/RUNBOOK.md).
 
 ### Durable Objects
 
-| File                                      | Purpose                                                            |
-| ----------------------------------------- | ------------------------------------------------------------------ |
-| `src/durable-objects/jetstream-poller.ts` | Two Jetstream streams (subscriptions, documents) drained per alarm |
-| `src/durable-objects/search-index.ts`     | One per reader: FTS5 index over what they read, saved, highlighted |
-| `src/durable-objects/percolator.ts`       | Saved-search matcher: new items × saved queries, via scratch FTS5  |
+| File                                         | Purpose                                                            |
+| -------------------------------------------- | ------------------------------------------------------------------ |
+| `src/durable-objects/jetstream-poller.ts`    | Two Jetstream streams (subscriptions, documents) drained per alarm |
+| `src/durable-objects/search-index.ts`        | One per reader: FTS5 index over what they read, saved, highlighted |
+| `src/durable-objects/percolator.ts`          | Saved-search matcher: new items × saved queries, via scratch FTS5  |
+| `src/durable-objects/follow-links-poller.ts` | One per reader: background follows-links refresh, own budget       |
 
 **Full-text search** (Supporter, behind `sync_state.search_enabled`) is a per-reader DO, not D1:
 D1 can't export a database holding an FTS5 table, and per-user indexes outgrow its 10 GB. The
@@ -392,6 +393,10 @@ Key tables:
 - `client_vitals` - Field vitals as daily histogram buckets (counts only, no reports; 90 days)
 - `saved_queries` - Saved-search channels mirrored from channel configs (query, sources, backfill)
 - `channel_matches` - What each saved search matched, one row per story (90-day retention)
+- `follow_link_sync` / `follow_link_shares` - Follows links: per-reader refresh state and the shares.
+  The minute cron refreshes readers who opened them this week (or whose saved search covers them)
+  every 30 min, each in its own `FollowLinksPoller`; `sessions.client_id` is what lets a token
+  refresh run with no request. See `docs/plans/FOLLOWS_LINKS_PLAN.md`, "Background refresh"
 
 ## Common Tasks
 

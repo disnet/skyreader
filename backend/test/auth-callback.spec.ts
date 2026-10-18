@@ -322,13 +322,14 @@ describe('auth callback after a permission upgrade', () => {
     expect(response.headers.get('Location')).toContain('/auth/callback');
 
     const sessions = await env.DB.prepare(
-      'SELECT session_id, granted_scopes FROM sessions WHERE did = ?'
+      'SELECT session_id, granted_scopes, client_id FROM sessions WHERE did = ?'
     )
       .bind(TEST_DID)
-      .all<{ session_id: string; granted_scopes: string }>();
+      .all<{ session_id: string; granted_scopes: string; client_id: string | null }>();
     expect(sessions.results).toHaveLength(1);
     expect(sessions.results[0].session_id).not.toBe(OLD_SESSION);
     expect(sessions.results[0].granted_scopes).toBe(GRANTED);
+    expect(sessions.results[0].client_id).toBe('http://127.0.0.1/.well-known/client-metadata');
 
     const user = await env.DB.prepare('SELECT oauth_features FROM users WHERE did = ?')
       .bind(TEST_DID)

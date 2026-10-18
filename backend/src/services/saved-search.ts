@@ -355,7 +355,7 @@ export function docInAnyScope(
 }
 
 /** Tiers whose plan includes saved searches, for filtering in SQL. */
-function entitledTiers(): string[] {
+export function entitledTiers(): string[] {
   return ALL_TIERS.filter((tier) => getLimitsForTier(tier).maxSavedSearches > 0);
 }
 

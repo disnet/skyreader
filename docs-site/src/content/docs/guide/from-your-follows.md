@@ -21,6 +21,8 @@ However you allow it, Skyreader makes the **From your follows** channel for you.
 
 Skyreader never posts anything with it. It reads the same timeline you see in Bluesky, so anyone you've muted or blocked stays out.
 
+While you're using Skyreader, it checks your timeline about every half hour, even with the app closed, so new links are waiting when you come back. After a week away, it only checks when you open it.
+
 ## What counts as a share
 
 - A post or quote post with a link in it.
