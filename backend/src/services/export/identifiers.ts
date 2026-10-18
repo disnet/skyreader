@@ -1,10 +1,12 @@
 // Scholarly identifiers for a saved item: its DOI and arXiv id, for citing it.
 //
-// Nothing stores these. They're read off what a save already has, at export
-// time: the URL (doi.org links, publisher /doi/ paths, arXiv and bioRxiv pages),
-// and for a PDF its first page, where publishers print the DOI and arXiv prints
-// its id. An article page's body is never searched: a blog post that links to
-// a paper would otherwise be cited as that paper.
+// A save keeps the DOI its page named in its <head> (citation_doi and kin, read
+// by the extractor at save time: saved_articles.doi). Everything else is read
+// off what a save already has, at export time: the URL (doi.org links,
+// publisher /doi/ paths, arXiv and bioRxiv pages), and for a PDF its first
+// page, where publishers print the DOI and arXiv prints its id. An article
+// page's body is never searched: a blog post that links to a paper would
+// otherwise be cited as that paper.
 
 import { htmlToText } from '../../utils/html-text';
 
@@ -47,6 +49,16 @@ export function normalizeDoi(raw: string): string | undefined {
     break;
   }
   return doi.length > '10.1234/'.length - 1 && !doi.endsWith('/') ? doi : undefined;
+}
+
+// Real DOIs run to a few dozen characters; this only bounds what is stored.
+const MAX_DOI_LENGTH = 300;
+
+/** `value` when it is a DOI and nothing more (as a page's citation_doi is), else undefined. */
+export function exactDoi(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value.length > MAX_DOI_LENGTH) return undefined;
+  const doi = value.trim();
+  return doi && normalizeDoi(doi) === doi ? doi : undefined;
 }
 
 function arxivIdIn(text: string): string | undefined {
@@ -152,14 +164,23 @@ export function idsFromFirstPage(text: string): ScholarlyIds {
 
 /**
  * A save's identifiers: from its URL first, which names the thing saved, then
- * (for a PDF) its first page. `firstPageHtml` is the head of the save's body.
+ * the DOI its page declared (`doi`, stored at save time), then (for a PDF) its
+ * first page. `firstPageHtml` is the head of the save's body.
  */
 export function scholarlyIds(save: {
   url: string;
+  doi?: string | null;
   contentType?: string | null;
   firstPageHtml?: string | null;
 }): ScholarlyIds {
   const fromUrl = idsFromUrl(save.url);
+  // A doi.org link is exactly what was saved; the page it lands on can declare
+  // another (a Zenodo concept DOI, a journal issue's), so it only fills a gap.
+  const declared = fromUrl.doi ? undefined : exactDoi(save.doi);
+  if (declared) {
+    fromUrl.doi = declared;
+    fromUrl.arxivId ??= arxivIdFromDoi(declared);
+  }
   if (fromUrl.doi && fromUrl.arxivId) return fromUrl;
   if (save.contentType !== 'pdf' || !save.firstPageHtml) return fromUrl;
   const fromPage = idsFromFirstPage(firstPdfPageText(save.firstPageHtml));

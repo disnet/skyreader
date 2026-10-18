@@ -422,6 +422,23 @@ describe('savesStore.saveFromUrl when the article cannot be fetched', () => {
     expect(api.saveFromUrl).not.toHaveBeenCalled();
   });
 
+  it("sends the page's declared DOI with the save", async () => {
+    extractArticle.mockResolvedValueOnce({
+      title: 'A paper',
+      author: null,
+      description: null,
+      content: '<p>paper text</p>',
+      domain: 'example.org',
+      image: null,
+      published: null,
+      wordCount: 2,
+      doi: '10.1145/3290605.3300233',
+    });
+    api.saveFromUrl.mockClear();
+    await savesStore.saveFromUrl('https://example.org/paper');
+    expect(api.saveFromUrl.mock.calls[0][2].doi).toBe('10.1145/3290605.3300233');
+  });
+
   it('never asks to replace a save that holds real text', async () => {
     extractArticle.mockResolvedValue({
       title: 'Real',

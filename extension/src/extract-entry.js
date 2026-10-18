@@ -19,6 +19,43 @@ function toValidISODate(value) {
   return new Date(ms).toISOString();
 }
 
+// The DOI a page names for itself in its <head> — same tags, order and value
+// forms as feed-proxy/src/citation-ids.ts. dc.identifier can name anything, so
+// only a DOI-shaped value counts.
+const DOI_META_NAMES = [
+  'citation_doi',
+  'bepress_citation_doi',
+  'prism.doi',
+  'dc.identifier.doi',
+  'dc.identifier',
+];
+const DOI_VALUE =
+  /^(?:doi:\s*|info:doi\/|https?:\/\/(?:dx\.|www\.)?doi\.org\/)?(10\.\d{4,9}\/\S+)$/i;
+
+function decodeOr(value) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function doiFromMetaTags(tags) {
+  if (!tags) return null;
+  for (const wanted of DOI_META_NAMES) {
+    for (const tag of tags) {
+      const key = (tag.name || tag.property || '').trim().toLowerCase();
+      if (key !== wanted) continue;
+      const raw = tag.content?.trim();
+      if (!raw) continue;
+      // A doi.org link's DOI may be percent-encoded, as any URL path may.
+      const match = (/^https?:/i.test(raw) ? decodeOr(raw) : raw).match(DOI_VALUE);
+      if (match) return match[1];
+    }
+  }
+  return null;
+}
+
 globalThis.__skyreaderExtract = function () {
   try {
     // Defuddle clones internally and does not modify the page.
@@ -32,6 +69,7 @@ globalThis.__skyreaderExtract = function () {
       image: result.image || null,
       published: toValidISODate(result.published),
       wordCount: result.wordCount || 0,
+      doi: doiFromMetaTags(result.metaTags),
     };
   } catch (err) {
     return { error: String(err) };

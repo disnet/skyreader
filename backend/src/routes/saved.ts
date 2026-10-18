@@ -23,6 +23,7 @@ import { hasIntegrationScopes } from './integrations';
 import { normalizeArticleUrl } from '../utils/url-normalize';
 import { chunkArray } from './reading';
 import { deleteSavedFile, storeLinkedOriginalForUrl } from './saved-pdf';
+import { exactDoi } from '../services/export/identifiers';
 
 const COLLECTION = 'app.skyreader.feed.saved';
 
@@ -71,6 +72,9 @@ interface CreateSavedBody {
   // 'pdf' or 'epub' when the extraction came from one (the ExtractedArticle says
   // so). Any other value is ignored: a URL save is otherwise a 'webpage'.
   contentType?: 'pdf' | 'epub';
+  // The DOI the page named in its <head> (ExtractedArticle.doi). Stored only
+  // when it reads as one (savedDoi).
+  doi?: string;
   // When the URL is already saved, upgrade the existing item's content/metadata
   // with this request's fields instead of returning 409. Used by the browser
   // extension, whose live-DOM extraction can see paywalled/JS-rendered content
@@ -288,8 +292,8 @@ async function handleMetadataSave(
   // save) is stored here, not in the PDS record — same split as URL saves — so
   // the saved item stays readable after the source article ages out of the feed.
   await env.DB.prepare(
-    `INSERT INTO saved_articles (user_did, rkey, record_uri, url, title, author, description, content, content_type, domain, image, word_count, published_at, saved_at, created_at, source, item_guid)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO saved_articles (user_did, rkey, record_uri, url, title, author, description, content, content_type, domain, image, word_count, published_at, saved_at, created_at, source, item_guid, doi)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       session.did,
@@ -308,7 +312,8 @@ async function handleMetadataSave(
       now,
       now,
       source,
-      body.itemGuid || null
+      body.itemGuid || null,
+      savedDoi(body)
     )
     .run();
 
@@ -357,6 +362,7 @@ async function handleContentUpdate(
        image = COALESCE(?, image),
        word_count = COALESCE(?, word_count),
        published_at = COALESCE(?, published_at),
+       doi = COALESCE(?, doi),
        content_type = CASE
          WHEN ? IS NOT NULL THEN ?
          WHEN ? IS NOT NULL AND content_type IN ('pdf', 'epub') THEN 'webpage'
@@ -374,6 +380,7 @@ async function handleContentUpdate(
       body.image || null,
       body.wordCount || null,
       publishedAt,
+      savedDoi(body),
       // A PDF or EPUB body re-types the save as one. A web page's body replacing
       // a file's is a web page again; any other upgrade keeps the type it had.
       fileContentType(body),
@@ -401,6 +408,13 @@ function fileContentType(body: CreateSavedBody): 'pdf' | 'epub' | null {
   return body.contentType === 'pdf' || body.contentType === 'epub' ? body.contentType : null;
 }
 
+// The DOI a save stores, from the page's own <head> (read by the extractor).
+// The field is untrusted input like every other, so it's kept only when it's
+// a DOI and nothing more.
+function savedDoi(body: CreateSavedBody): string | null {
+  return exactDoi(body.doi) ?? null;
+}
+
 // The stored type of a URL save: a file's type, else a web page.
 function urlSaveContentType(body: CreateSavedBody): 'pdf' | 'epub' | 'webpage' {
   return fileContentType(body) ?? 'webpage';
@@ -424,8 +438,8 @@ async function handleUrlSave(
 
   // Cache in D1 (content is stored here, not in PDS)
   await env.DB.prepare(
-    `INSERT INTO saved_articles (user_did, rkey, record_uri, url, title, author, description, content, content_type, domain, image, word_count, published_at, saved_at, created_at, source)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO saved_articles (user_did, rkey, record_uri, url, title, author, description, content, content_type, domain, image, word_count, published_at, saved_at, created_at, source, doi)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       session.did,
@@ -443,7 +457,8 @@ async function handleUrlSave(
       publishedAt ? new Date(publishedAt).getTime() : null,
       now,
       now,
-      'url'
+      'url',
+      savedDoi(body)
     )
     .run();
 
@@ -522,8 +537,8 @@ async function handleBackedSave(
     env.DB.prepare(
       `INSERT INTO saved_articles
          (user_did, rkey, record_uri, url, url_normalized, title, author, description, content,
-          content_type, domain, image, word_count, published_at, saved_at, created_at, source, item_guid)
-       VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          content_type, domain, image, word_count, published_at, saved_at, created_at, source, item_guid, doi)
+       VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(user_did, url_normalized) DO UPDATE SET
          rkey = excluded.rkey,
          title = COALESCE(excluded.title, title),
@@ -541,6 +556,7 @@ async function handleBackedSave(
          published_at = COALESCE(excluded.published_at, published_at),
          source = excluded.source,
          item_guid = COALESCE(excluded.item_guid, item_guid),
+         doi = COALESCE(excluded.doi, doi),
          -- A body landing on an existing row is an in-place edit the client's
          -- cached copy doesn't have (excluded.saved_at is this request's now).
          updated_at = CASE WHEN excluded.content IS NOT NULL THEN excluded.saved_at ELSE updated_at END,
@@ -562,7 +578,8 @@ async function handleBackedSave(
       now,
       now,
       source,
-      body.itemGuid || canonicalAtUri || null
+      body.itemGuid || canonicalAtUri || null,
+      savedDoi(body)
     ),
     env.DB.prepare(
       `INSERT INTO backed_collection_members
