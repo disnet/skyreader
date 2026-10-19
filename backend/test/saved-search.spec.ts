@@ -335,6 +335,22 @@ describe('resolveQueryScope', () => {
     ]);
   });
 
+  it('expands the source picker group keys to their members', () => {
+    const filed = subs.map((sub, i) => (i === 0 ? { ...sub, category: 'Energy' } : sub));
+    const both = resolveQueryScope('include', ['group~newsletters', 'group~publications'], filed);
+    expect([...both.feedUrls].sort()).toEqual([FEED, 'newsletter:1/x@y'].sort());
+    expect(both.docScopes).toHaveLength(1);
+    expect([...resolveQueryScope('include', ['group~newsletters'], filed).feedUrls]).toEqual([
+      'newsletter:1/x@y',
+    ]);
+    const folder = resolveQueryScope('include', ['group~category~Energy'], filed);
+    expect([...folder.feedUrls]).toEqual([FEED]);
+    expect(folder.docScopes).toEqual([]);
+    const notFeeds = resolveQueryScope('exclude', ['group~feeds'], filed);
+    expect([...notFeeds.feedUrls]).toEqual(['newsletter:1/x@y']);
+    expect(notFeeds.docScopes).toHaveLength(1);
+  });
+
   it('honours include and exclude, including legacy document keys', () => {
     expect([...resolveQueryScope('include', ['rss~r1'], subs).feedUrls]).toEqual([FEED]);
     expect(resolveQueryScope('include', ['did:plc:author~documents'], subs).docScopes).toHaveLength(
