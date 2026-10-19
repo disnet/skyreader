@@ -418,6 +418,28 @@ export interface SearchSnippetSegment {
   match: boolean;
 }
 
+/** A recent item from a saved search's sources that its query matches. */
+export interface SavedSearchPreviewHit {
+  kind: 'feed' | 'document';
+  itemKey: string;
+  title: string;
+  url: string | null;
+  sourceTitle: string;
+  /** Unix ms. */
+  publishedAt: number | null;
+  snippet: SearchSnippetSegment[];
+}
+
+export interface SavedSearchPreview {
+  /** Matches among the items read. */
+  total: number;
+  /** Recent items read from the sources. */
+  scanned: number;
+  /** The sources hold more than was read, so `total` is a floor. */
+  capped: boolean;
+  hits: SavedSearchPreviewHit[];
+}
+
 export interface SearchHit {
   /** Same key as `FeedDisplayItem.key`: guid, save uri, or document at:// uri. */
   itemKey: string;
@@ -2533,6 +2555,23 @@ class ApiClient {
     if (params.limit) query.set('limit', String(params.limit));
     const qs = query.size > 0 ? `?${query}` : '';
     return this.fetch(`/api/channels/${uuid}/items${qs}`, { signal: params.signal });
+  }
+
+  // What a saved search would find among its sources' recent items, read or
+  // not (backend/src/routes/channel-items.ts).
+  async previewSavedSearch(
+    params: {
+      query: string;
+      sourceMode: 'all' | 'include' | 'exclude';
+      sourceKeys: string[];
+    },
+    signal?: AbortSignal
+  ): Promise<SavedSearchPreview> {
+    return this.fetch('/api/channels/preview', {
+      method: 'POST',
+      body: JSON.stringify(params),
+      signal,
+    });
   }
 }
 

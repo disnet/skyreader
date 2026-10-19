@@ -6,7 +6,16 @@
 
 import type { Env, FeedItem, Session } from '../types';
 import { splitSnippet } from '../durable-objects/search-index';
-import { getSavedSearchAccess, type LinkCard, type Sharer } from '../services/saved-search';
+import {
+  MATCH_WINDOW_MS,
+  extractSavedQuery,
+  getSavedSearchAccess,
+  loadReaderScope,
+  percolatorStub,
+  readPreviewHeads,
+  type LinkCard,
+  type Sharer,
+} from '../services/saved-search';
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 100;
@@ -236,5 +245,58 @@ export async function handleChannelItems(
     unread: Math.min(unreadCount, UNREAD_COUNT_CAP),
     unreadCapped: unreadCount > UNREAD_COUNT_CAP,
     nextCursor: hasMore && last ? `${last.published_at}:${last.dedup_key}` : null,
+  });
+}
+
+/** Items a preview reads: the newest this many from the chosen sources. */
+const PREVIEW_ITEMS = 300;
+const PREVIEW_SHOWN = 3;
+
+/**
+ * POST /api/channels/preview — what a saved search being edited would match:
+ * its query over the newest items from the sources picked so far, read or not.
+ * Body: `{ query, sourceMode, sourceKeys }`, the fields a channel config carries.
+ */
+export async function handleChannelPreview(
+  request: Request,
+  env: Env,
+  session: Session
+): Promise<Response> {
+  if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
+  const access = await getSavedSearchAccess(env, session.did);
+  if (!access.enabled) return json({ error: 'Not found' }, 404);
+  if (access.maxSavedSearches === 0) {
+    return json({ error: 'Saved searches are a Supporter feature', code: 'upgrade_required' }, 403);
+  }
+
+  const body = await request.json().catch(() => null);
+  const saved = body && typeof body === 'object' ? extractSavedQuery(JSON.stringify(body)) : null;
+  if (!saved) return json({ error: 'Nothing searchable in the query' }, 400);
+
+  const scope = await loadReaderScope(env, session.did, saved.sourceMode, saved.sourceKeys);
+  const heads = await readPreviewHeads(env, scope, Date.now() - MATCH_WINDOW_MS, PREVIEW_ITEMS);
+  const scanned = heads.feeds.length + heads.docs.length;
+  const hits =
+    scanned === 0
+      ? []
+      : await percolatorStub(env).preview(saved.ftsQuery, heads.feeds, heads.docs, {
+          feedUrls: [...scope.feedUrls],
+          docScopes: scope.docScopes,
+        });
+
+  return json({
+    total: hits.length,
+    scanned,
+    // The sources hold more than the preview read, so the count is a floor.
+    capped: scanned >= PREVIEW_ITEMS,
+    hits: hits.slice(0, PREVIEW_SHOWN).map((hit) => ({
+      kind: hit.kind,
+      itemKey: hit.itemKey,
+      title: hit.title,
+      url: hit.url,
+      sourceTitle: hit.sourceTitle,
+      publishedAt: hit.publishedAt,
+      snippet: splitSnippet(hit.snippet),
+    })),
   });
 }

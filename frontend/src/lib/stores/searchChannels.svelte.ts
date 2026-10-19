@@ -19,6 +19,12 @@ import {
 const PAGE_SIZE = 50;
 /** How often an open channel checks again while it's still filling or setting up. */
 const POLL_MS = 20_000;
+/**
+ * The first polls come quicker: saving a channel starts its look back at once,
+ * so a new one usually fills within seconds and shouldn't sit empty for 20.
+ */
+const FAST_POLL_MS = 3_000;
+const FAST_POLLS = 10;
 /** Polls before giving up on a channel whose query never reaches the server. */
 const MAX_SETUP_POLLS = 15;
 /** Polls while the 30-day look back runs. Ten minutes covers a large one. */
@@ -86,10 +92,13 @@ function createSearchChannelsStore() {
     }
     polls++;
     const gen = generation;
-    pollTimer = setTimeout(() => {
-      pollTimer = null;
-      if (gen === generation) void fetchFirst();
-    }, POLL_MS);
+    pollTimer = setTimeout(
+      () => {
+        pollTimer = null;
+        if (gen === generation) void fetchFirst();
+      },
+      polls <= FAST_POLLS ? FAST_POLL_MS : POLL_MS
+    );
   }
 
   function apply(res: ChannelItemsResponse) {

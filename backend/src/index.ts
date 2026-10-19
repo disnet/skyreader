@@ -138,7 +138,7 @@ import {
   handleUnblockNewsletterSender,
 } from './routes/newsletters';
 import { handleSearch } from './routes/search';
-import { handleChannelItems } from './routes/channel-items';
+import { handleChannelItems, handleChannelPreview } from './routes/channel-items';
 import { nudgePercolator } from './services/saved-search';
 import { dispatchBackgroundFollowLinks } from './services/follow-links-background';
 import { nudgeSearchIndex, searchNudgeFor } from './services/search-index';
@@ -1094,6 +1094,10 @@ async function route(
           headers: { 'Content-Type': 'application/json' },
         });
       }
+      break;
+    case url.pathname === '/api/channels/preview':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleChannelPreview(request, env, session);
       break;
     case /^\/api\/channels\/[^/]+\/items$/.test(url.pathname):
       if (!session) return unauthorizedResponse(headers);

@@ -106,6 +106,18 @@ const ROWID_CHUNK = 90;
 const MARK_OPEN = '\u0002';
 const MARK_CLOSE = '\u0003';
 
+/** One item a preview matched, newest first. */
+export interface PreviewHit {
+  kind: 'feed' | 'document';
+  itemKey: string;
+  title: string;
+  url: string | null;
+  sourceTitle: string;
+  publishedAt: number | null;
+  /** FTS5 snippet with matches wrapped in \u0002…\u0003. */
+  snippet: string;
+}
+
 export interface PercolatorStats {
   cursors: StreamCursors | null;
   lastPassAt: number | null;
@@ -196,6 +208,55 @@ export class Percolator extends DurableObject<Env> {
   async nudge(): Promise<void> {
     const at = await this.ctx.storage.getAlarm();
     if (at == null) await this.ctx.storage.setAlarm(Date.now() + NUDGE_DELAY_MS);
+  }
+
+  /** Wake the matcher now: a saved search was just made or edited, so its look back can start. */
+  async kick(): Promise<void> {
+    const at = await this.ctx.storage.getAlarm();
+    if (at == null || at > Date.now()) await this.ctx.storage.setAlarm(Date.now());
+  }
+
+  /**
+   * What a query would match among these items, for the channel editor's
+   * preview. Bodies kept in R2 aren't read (an item matches on its inline
+   * text), so it's quick and close, not exact. Nothing is written.
+   */
+  async preview(
+    ftsQuery: string,
+    feeds: FeedHead[],
+    docs: DocHead[],
+    scope: { feedUrls: string[]; docScopes: ActiveQuery['docScopes'] }
+  ): Promise<PreviewHit[]> {
+    const loaded = await loadMatchDocs(
+      this.env,
+      feeds.map((f) => f.seq),
+      docs.map((d) => d.record_uri),
+      { left: 0 }
+    );
+    const query: ActiveQuery = {
+      userDid: '',
+      channelUuid: '',
+      ftsQuery,
+      updatedAt: 0,
+      backfillState: 'done',
+      backfillFeedAfter: '',
+      backfillDocAfter: '',
+      backfillFollowsAfter: 'done',
+      feedUrls: new Set(scope.feedUrls),
+      docScopes: scope.docScopes,
+      coversFollows: false,
+    };
+    return this.match(loaded, [query])
+      .map(({ doc, snippet }) => ({
+        kind: doc.kind === 'document' ? ('document' as const) : ('feed' as const),
+        itemKey: doc.itemKey,
+        title: doc.title,
+        url: doc.url,
+        sourceTitle: doc.sourceTitle,
+        publishedAt: doc.publishedAt,
+        snippet,
+      }))
+      .sort((a, b) => (b.publishedAt ?? 0) - (a.publishedAt ?? 0));
   }
 
   /** Run one pass now (tests and the operator); the alarm path is the normal one. */

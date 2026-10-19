@@ -314,6 +314,15 @@
       : []
   );
 
+  // The sources a saved search watches, as the channel will save them; the
+  // preview searches the same ones.
+  let querySourceMode = $derived(currentRule ? ('include' as const) : sourceFilter.sourceMode);
+  let querySourceKeys = $derived(
+    currentRule
+      ? keysOfTypes(matchedSourceKeys, typeFilter, subscriptionsStore.subscriptions)
+      : [...sourceFilter.sourceKeys]
+  );
+
   /** What a new channel would be called if you don't name it. */
   let suggestedName = $derived.by(() => {
     if (channelType !== 'feed') return '';
@@ -411,10 +420,8 @@
           : {
               name: finalName,
               mode: 'feed' as const,
-              sourceMode: currentRule ? ('include' as const) : sourceFilter.sourceMode,
-              sourceKeys: currentRule
-                ? keysOfTypes(matchedSourceKeys, typeFilter, subscriptionsStore.subscriptions)
-                : [...sourceFilter.sourceKeys],
+              sourceMode: querySourceMode,
+              sourceKeys: querySourceKeys,
               autoRule: currentRule,
               typeFilter: currentRule ? typeFilter : undefined,
               tagFilter: feedTagFilter.length > 0 ? [...feedTagFilter] : undefined,
@@ -590,7 +597,11 @@
         {/if}
       </p>
       {#if trimmedQuery && hasSearchableTerm(trimmedQuery)}
-        <SearchQueryPreview query={trimmedQuery} />
+        <SearchQueryPreview
+          query={trimmedQuery}
+          sourceMode={querySourceMode}
+          sourceKeys={querySourceKeys}
+        />
       {/if}
     </div>
   {/if}
