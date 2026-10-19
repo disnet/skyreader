@@ -46,6 +46,9 @@ export interface ProxyStatsValue {
   feedsInBackoff: number;
   feedsPermanentlyFailed: number;
   cacheTtlSeconds: number | null;
+  /** Absent on rows a pre-crawl-cycle backend wrote. */
+  crawlCycleSeconds?: number | null;
+  crawlTargetCycleSeconds?: number | null;
   documentFirehoseHealthy?: boolean | null;
   documentFirehoseConnected?: boolean | null;
   documentAuthorsActive?: number;

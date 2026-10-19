@@ -364,6 +364,7 @@ describe('recordProxyStats', () => {
           inFlight: 2,
           cacheTtlSeconds: 900,
           errors: { total: 7, inBackoff: 3, permanent: 1 },
+          warm: { cycleSeconds: 480, targetCycleSeconds: 3600 },
         })
       )
     );
@@ -376,6 +377,8 @@ describe('recordProxyStats', () => {
     expect(value.freshPct).toBe(75);
     expect(value.feedsInError).toBe(7);
     expect(value.feedsPermanentlyFailed).toBe(1);
+    expect(value.crawlCycleSeconds).toBe(480);
+    expect(value.crawlTargetCycleSeconds).toBe(3600);
 
     const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
     expect(url).toBe('https://proxy.example/stats');
