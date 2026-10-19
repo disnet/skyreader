@@ -480,11 +480,16 @@ describe('writeMetricsSnapshot', () => {
     await writeMetricsSnapshot(env as Env, now);
 
     const row = await env.DB.prepare(
-      'SELECT firehose_lag_ms, feeds_with_errors FROM metrics_snapshots'
-    ).first<{ firehose_lag_ms: number | null; feeds_with_errors: number | null }>();
+      'SELECT firehose_lag_ms, feeds_with_errors, crawl_cycle_s FROM metrics_snapshots'
+    ).first<{
+      firehose_lag_ms: number | null;
+      feeds_with_errors: number | null;
+      crawl_cycle_s: number | null;
+    }>();
     expect(row?.firehose_lag_ms).toBeNull();
     // No proxy row at all: unknown, not "zero feeds are erroring".
     expect(row?.feeds_with_errors).toBeNull();
+    expect(row?.crawl_cycle_s).toBeNull();
   });
 
   it('records no crawl cycle when there were no healthy feeds to measure', async () => {

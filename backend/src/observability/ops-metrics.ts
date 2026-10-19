@@ -500,10 +500,10 @@ export async function recordCronRun(
 }
 
 /**
- * One row per hour: the counts the admin shows as tiles, plus the three health
- * numbers that only exist in `system_status` (firehose lag, proxy cache
- * freshness, feeds the crawler has in error). Same job prunes the tail, so the
- * table can't grow without an owner.
+ * One row per hour: the counts the admin shows as tiles, plus the health
+ * numbers that only exist in `system_status` (firehose lag, crawl cycle, feeds
+ * the crawler has in error, and the retired proxy cache-fresh % kept for its
+ * history). Same job prunes the tail, so the table can't grow without an owner.
  */
 export async function writeMetricsSnapshot(env: Env, now = Date.now()): Promise<void> {
   // Bucket to the top of the hour so a cron that fires twice in one hour replaces
