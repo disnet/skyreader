@@ -78,15 +78,6 @@ function card(
   };
 }
 
-/** The piece that arrives while you watch, from a newsletter. */
-export const arrivingCard = card('The Slow Web Review', {
-  itemTitle: 'What we lose when we skim',
-  relativeDate: 'just now',
-  readTimeMinutes: 6,
-  sanitizedContent:
-    '<p>Skimming optimizes for coverage. Understanding optimizes for collisions between ideas, and collisions take time. This week: three habits for reading fewer things, better.</p>',
-});
-
 /** The piece the tour opens and reads. */
 export const featuredCard = card('The Commonplace', {
   itemTitle: 'Annotation is thinking',
@@ -98,6 +89,13 @@ export const featuredCard = card('The Commonplace', {
 
 export const timelineCards: ArticleCardViewProps[] = [
   featuredCard,
+  card('The Slow Web Review', {
+    itemTitle: 'What we lose when we skim',
+    relativeDate: '2h ago',
+    readTimeMinutes: 6,
+    sanitizedContent:
+      '<p>Skimming optimizes for coverage. Understanding optimizes for collisions between ideas, and collisions take time. This week: three habits for reading fewer things, better.</p>',
+  }),
   card('Library Futures', {
     itemTitle: 'How a library decides what to keep',
     relativeDate: '3h ago',
@@ -232,3 +230,31 @@ export const discussionEntries: DiscussionEntryVM[] = [
     }
   ),
 ];
+
+// ── The Shelf ────────────────────────────────────────────────────────────────
+
+export interface ShowcaseShelfItem {
+  title: string;
+  kind: 'Article' | 'Book' | 'PDF';
+  byline: string;
+  /** A book's spine, a PDF's white page, an article's opening lines. */
+  cover: 'book' | 'pdf' | 'article';
+  excerpt?: string;
+  percent?: number;
+}
+
+/** What's already on the Shelf when the tour keeps the article. */
+export const shelfItems: ShowcaseShelfItem[] = [
+  { title: 'Middlemarch', kind: 'Book', byline: 'George Eliot', cover: 'book', percent: 42 },
+  { title: 'Close Reading in a Distracted Age', kind: 'PDF', byline: 'M. Margins', cover: 'pdf' },
+  { title: 'The Waves', kind: 'Book', byline: 'Virginia Woolf', cover: 'book' },
+];
+
+/** The article, as it lands on the Shelf. */
+export const keptShelfItem: ShowcaseShelfItem = {
+  title: article.title,
+  kind: 'Article',
+  byline: article.author,
+  cover: 'article',
+  excerpt: article.before,
+};

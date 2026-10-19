@@ -16,38 +16,47 @@
   import { bracketPath, inkVariant, installMarginaliaInk } from '$lib/utils/marginaliaInk';
   import type { Subscription } from '$lib/types';
   import {
-    arrivingCard,
     article,
     discussionEntries,
     discussionFilters,
     discussionLanes,
     featuredCard,
+    keptShelfItem,
+    shelfItems,
     sources,
     timelineCards,
   } from './showcaseData';
 
+  // `ms` is how long each step holds the frame. The scene plays inside it and
+  // the rest is a pause to look, so the step's progress bar runs at a steady
+  // rate from empty to full.
   const STEPS = [
-    { id: 'follow', label: 'Follow', caption: 'Everything you follow, in one calm list' },
-    { id: 'read', label: 'Read', caption: 'A clean reader for every piece' },
-    { id: 'mark', label: 'Mark', caption: 'Highlights and notes in the margin' },
-    { id: 'discuss', label: 'Discuss', caption: 'The conversation around it' },
-    { id: 'keep', label: 'Keep', caption: 'Keep what matters' },
+    { id: 'follow', label: 'Follow', caption: 'Everything you follow, in one calm list', ms: 6500 },
+    { id: 'read', label: 'Read', caption: 'A clean reader for every piece', ms: 6000 },
+    { id: 'mark', label: 'Mark', caption: 'Highlights and notes in the margin', ms: 14000 },
+    { id: 'discuss', label: 'Discuss', caption: 'The conversation around it', ms: 8000 },
+    { id: 'keep', label: 'Keep', caption: 'Keep what matters', ms: 7500 },
   ] as const;
   type StepId = (typeof STEPS)[number]['id'];
 
   let step = $state<StepId>('follow');
+  // Watched time spent in the current step, for its progress bar.
+  let elapsed = $state(0);
+  const stepIndex = $derived(STEPS.findIndex((x) => x.id === step));
 
   // ── Scene state ─────────────────────────────────────────────
-  let arrived = $state(false);
   let readerOpen = $state(false);
-  let dragging = $state(false);
-  let selected = $state(false);
+  let selecting = $state(false);
   let popoverRect = $state<DOMRect | null>(null);
   let marked = $state(false);
   let noteChars = $state(0);
   let kept = $state(false);
   let toast = $state(false);
-  let cursor = $state({ x: 0, y: 0, shown: false, down: false, slow: false });
+  // Which page the main column shows: the feed list, or the Shelf the tour ends on.
+  let view = $state<'feeds' | 'shelf'>('feeds');
+  // `text` swaps the arrow for an I-beam over the article; `quick` makes it
+  // track a drag word by word instead of gliding.
+  let cursor = $state({ x: 0, y: 0, shown: false, down: false, text: false, quick: false });
 
   let frameEl = $state<HTMLElement | null>(null);
   let featuredEl = $state<HTMLElement | null>(null);
@@ -55,6 +64,7 @@
   let readerScrollEl = $state<HTMLElement | null>(null);
   let discussionEl = $state<HTMLElement | null>(null);
   let keepBtnEl = $state<HTMLElement | null>(null);
+  let shelfNavEl = $state<HTMLElement | null>(null);
   let passageBlockHeight = $state(0);
 
   const noteText = article.note;
@@ -69,7 +79,7 @@
   let runId = 0;
   let visible = false;
   let hovering = false;
-  let reduceMotion = false;
+  let reduceMotion = $state(false);
 
   async function wait(ms: number, id: number) {
     let left = ms;
@@ -82,7 +92,10 @@
       const watched = (visible && !hovering && !document.hidden) || popoverRect !== null;
       const slice = watched ? Math.min(left, 100) : 400;
       await new Promise((r) => setTimeout(r, slice));
-      if (watched) left -= slice;
+      if (watched && id === runId) {
+        left -= slice;
+        elapsed += slice;
+      }
     }
     if (id !== runId) throw new Stop();
   }
@@ -95,10 +108,10 @@
     return { x: r.left - f.left + r.width / 2 + dx, y: r.top - f.top + r.height / 2 + dy };
   }
 
-  async function moveTo(id: number, p: { x: number; y: number } | null, slow = false) {
+  async function moveTo(id: number, p: { x: number; y: number } | null, text = false) {
     if (!p) return;
-    cursor = { ...cursor, ...p, shown: true, slow };
-    await wait(slow ? 950 : 750, id);
+    cursor = { ...cursor, ...p, shown: true, text, quick: false };
+    await wait(1100, id);
   }
 
   async function press(id: number) {
@@ -110,17 +123,17 @@
   /** Put the frame in the state a step starts from, with no animation owed. */
   function setUp(s: StepId) {
     const at = STEPS.findIndex((x) => x.id === s);
-    arrived = at >= 1;
     readerOpen = at >= 2;
-    dragging = false;
-    selected = false;
+    selecting = false;
+    clearSelection();
     popoverRect = null;
     marked = at >= 3;
     noteChars = at >= 3 ? noteText.length : 0;
     kept = false;
     toast = false;
+    view = 'feeds';
     // A jump can land mid-drag; don't carry a pressed cursor into the next step.
-    cursor = { ...cursor, down: false, slow: false };
+    cursor = { ...cursor, down: false, text: false, quick: false };
     // Keep picks up where Discuss left the page; every other step starts at
     // the top of the article.
     if (readerScrollEl && s !== 'keep') readerScrollEl.scrollTop = 0;
@@ -129,7 +142,6 @@
   /** The state a step ends in: what reduced motion shows for it. */
   function settle(s: StepId) {
     setUp(s);
-    if (s === 'follow') arrived = true;
     if (s === 'read') readerOpen = true;
     if (s === 'mark') {
       marked = true;
@@ -137,7 +149,11 @@
       tick().then(() => scrollToPassage(false));
     }
     if (s === 'discuss') tick().then(() => scrollToDiscussion(false));
-    if (s === 'keep') kept = true;
+    if (s === 'keep') {
+      kept = true;
+      readerOpen = false;
+      view = 'shelf';
+    }
   }
 
   /** Scroll the reader so `el` sits `offset` px below its top edge. */
@@ -161,67 +177,134 @@
     if (below > readerScrollEl.clientHeight * 0.45) scrollReaderTo(block, 72, smooth);
   }
 
+  // ── The drag selection ──────────────────────────────────────
+  // Painted with the CSS Custom Highlight API: a real Range over the passage's
+  // text, drawn the way the reader draws a selection, without touching the
+  // visitor's own selection (the frame is inert, so it couldn't hold one
+  // anyway). Where the API is missing, the whole passage shows as selected
+  // once the drag ends.
+  const SELECTION = 'showcase-selection';
+  const canPaint = typeof CSS !== 'undefined' && 'highlights' in CSS;
+
+  function paintSelection(range: Range | null) {
+    if (!canPaint) return;
+    if (range) CSS.highlights.set(SELECTION, new Highlight(range));
+    else CSS.highlights.delete(SELECTION);
+  }
+  function clearSelection() {
+    paintSelection(null);
+  }
+
+  /** Drag across the passage a word at a time, the cursor on the selection's end. */
+  async function dragSelect(id: number) {
+    const text = passageEl?.firstChild;
+    if (!(text instanceof Text) || !frameEl) return;
+    const f = frameEl.getBoundingClientRect();
+    const range = document.createRange();
+    range.setStart(text, 0);
+    range.setEnd(text, 0);
+    const ends = [...text.data.matchAll(/\S+/g)].map((m) => m.index + m[0].length);
+    cursor = { ...cursor, down: true, quick: true };
+    selecting = true;
+    for (const end of ends) {
+      range.setEnd(text, end);
+      paintSelection(range);
+      const rects = range.getClientRects();
+      const last = rects[rects.length - 1];
+      if (last)
+        cursor = { ...cursor, x: last.right - f.left, y: last.top - f.top + last.height / 2 };
+      await wait(70, id);
+    }
+    cursor = { ...cursor, down: false };
+  }
+
   async function playStep(s: StepId, id: number) {
     step = s;
+    elapsed = 0;
     setUp(s);
     await tick();
     if (id !== runId) throw new Stop();
     if (s === 'follow') {
-      await moveTo(id, pointAt(frameEl, 120, 40));
-      await wait(700, id);
-      arrived = true;
-      await wait(2400, id);
+      // Down the sources, then over to the first piece in the list.
+      const rows = frameEl?.querySelectorAll(
+        '.side-nav > :not(.nav-item):not(.nav-group):not(.side-rule):not(.side-label)'
+      );
+      await moveTo(id, pointAt(rows?.[0] ?? null, -20));
+      await moveTo(id, pointAt(rows?.[rows.length - 1] ?? null, -20));
+      await moveTo(id, pointAt(featuredEl, 0, -40));
     } else if (s === 'read') {
+      await wait(400, id);
       const readerBtn = [...(featuredEl?.querySelectorAll('button') ?? [])].find((b) =>
         b.textContent?.includes('Reader')
       );
       await moveTo(id, pointAt(readerBtn ?? featuredEl));
       await press(id);
       readerOpen = true;
-      await wait(1600, id);
     } else if (s === 'mark') {
       scrollToPassage(true);
-      await wait(900, id);
+      await wait(1200, id);
       const r = passageEl?.getBoundingClientRect();
-      if (!r) return;
-      await moveTo(id, pointAt(passageEl, -r.width / 2 + 4, -r.height / 2 + 12));
-      cursor = { ...cursor, down: true };
-      dragging = true;
-      await moveTo(id, pointAt(passageEl, r.width / 2 - 40, r.height / 2 - 12), true);
-      cursor = { ...cursor, down: false };
-      dragging = false;
-      selected = true;
-      popoverRect = passageEl?.getBoundingClientRect() ?? null;
+      if (!r || !passageEl) return;
+      // To the first word of the passage, then drag through it.
+      const first = document.createRange();
+      first.setStart(passageEl.firstChild!, 0);
+      first.setEnd(passageEl.firstChild!, 1);
+      const fr = first.getBoundingClientRect();
+      await moveTo(
+        id,
+        pointAt(
+          passageEl,
+          fr.left - r.left - r.width / 2,
+          fr.top - r.top - r.height / 2 + fr.height / 2
+        ),
+        true
+      );
+      await wait(300, id);
+      await dragSelect(id);
       await wait(500, id);
+      popoverRect = passageEl?.getBoundingClientRect() ?? null;
+      await wait(700, id);
       await tick();
       if (id !== runId) throw new Stop();
       await moveTo(id, pointAt(document.querySelector('.showcase-popover .popover-btn.highlight')));
       await press(id);
       popoverRect = null;
-      selected = false;
+      selecting = false;
+      clearSelection();
       marked = true;
-      await wait(900, id);
+      cursor = { ...cursor, shown: false };
+      await wait(1000, id);
       for (let i = 1; i <= noteText.length; i++) {
         noteChars = i;
-        await wait(38, id);
+        await wait(55, id);
       }
-      await wait(2000, id);
     } else if (s === 'discuss') {
       cursor = { ...cursor, shown: false };
-      await wait(600, id);
+      await wait(1000, id);
       scrollToDiscussion(true);
-      await wait(3800, id);
     } else if (s === 'keep') {
+      await wait(400, id);
       await moveTo(id, pointAt(keepBtnEl));
       await press(id);
       kept = true;
       toast = true;
-      await wait(1500, id);
+      await wait(1600, id);
       toast = false;
-      cursor = { ...cursor, shown: false };
       readerOpen = false;
-      await wait(2400, id);
+      await wait(1000, id);
+      // Over to the Shelf in the sidebar (on a phone the sidebar is hidden, so
+      // the Shelf simply opens).
+      if (shelfNavEl?.offsetParent) {
+        await moveTo(id, pointAt(shelfNavEl, -30));
+        await press(id);
+      }
+      view = 'shelf';
+      await wait(600, id);
+      cursor = { ...cursor, shown: false };
     }
+    // Hold what the scene left for the rest of the step.
+    const total = STEPS.find((x) => x.id === s)!.ms;
+    await wait(Math.max(total - elapsed, 600), id);
   }
 
   async function play(from: number) {
@@ -259,6 +342,7 @@
     return () => {
       io.disconnect();
       runId++;
+      clearSelection();
     };
   });
 
@@ -267,8 +351,8 @@
 
 <div class="showcase">
   <p class="sr-only">
-    A sample of the Skyreader app: new articles arrive from a blog, a newsletter, YouTube and
-    Bluesky; one opens in the reader; a sentence is highlighted with a note in the margin; the
+    A sample of the Skyreader app: articles from a blog, a newsletter, YouTube and Bluesky in one
+    list; one opens in the reader; a sentence is highlighted with a note in the margin; the
     discussion from Bluesky, blogs and Semble shows underneath; and the article is kept on the
     Shelf.
   </p>
@@ -287,15 +371,17 @@
           <nav class="side-nav">
             <span class="nav-item"><span class="nav-icon"><Icon name="home" /></span>Home</span>
             <div class="nav-group">
-              <span class="nav-row active">
+              <span class="nav-row" class:active={view === 'feeds'}>
                 <span class="nav-icon"><Icon name="inbox" /></span>
                 <span class="nav-label">Feeds</span>
-                <span class="nav-count">{arrived ? 13 : 12}</span>
+                <span class="nav-count">12</span>
               </span>
             </div>
             <span class="nav-item"><span class="nav-icon"><Icon name="bookmark" /></span>Queue</span
             >
-            <span class="nav-item"><span class="nav-icon"><Icon name="shelf" /></span>Shelf</span>
+            <span class="nav-row" class:active={view === 'shelf'} bind:this={shelfNavEl}
+              ><span class="nav-icon"><Icon name="shelf" /></span>Shelf</span
+            >
             <span class="nav-item"
               ><span class="nav-icon"><Icon name="highlighter" /></span>Highlights</span
             >
@@ -304,7 +390,7 @@
             {#each sources as s (s.title)}
               <FeedItem
                 subscription={subscriptionFor(s)}
-                unreadCount={s.unread + (arrived && s.kind === 'Newsletter' ? 1 : 0)}
+                unreadCount={s.unread}
                 isActive={false}
                 onSelect={() => {}}
                 onContextMenu={() => {}}
@@ -319,32 +405,58 @@
         </aside>
 
         <section class="main">
-          <header class="toolbar">
-            <span class="tool-title"><Icon name="inbox" size={18} /> Feeds</span>
-            <span class="tool-status">Updated just now <Icon name="refresh-cw" size={13} /></span>
-            <span class="tool-spacer"></span>
-            <span class="tool-btn"><Icon name="list" size={15} /> List</span>
-            <span class="tool-btn on"><Icon name="newspaper" size={15} /> Expand</span>
-            <span class="tool-btn"><Icon name="type" size={15} /> Style</span>
-          </header>
-          <div class="card-surface">
-            <div class="cards">
-              {#if arrived}
-                <div class="arrive">
-                  <ArticleCardView {...arrivingCard} />
+          {#if view === 'shelf'}
+            <header class="toolbar">
+              <span class="tool-title"><Icon name="shelf" size={18} /> Shelf</span>
+            </header>
+            <div class="card-surface">
+              <div class="shelf">
+                <div class="lib-switch"><span>Queue</span><span class="on">Shelf</span></div>
+                <span class="shelf-chip">Everything {shelfItems.length + 1}</span>
+                <p class="shelf-label">Everything</p>
+                <div class="shelf-grid">
+                  {#each [keptShelfItem, ...shelfItems] as item (item.title)}
+                    <div class="shelf-card" class:fresh={item === keptShelfItem}>
+                      <div class="cover" data-cover={item.cover}>
+                        <span class="cover-title">{item.title}</span>
+                        {#if item.excerpt}<span class="cover-excerpt">{item.excerpt}</span>{/if}
+                        <span class="cover-author">{item.byline}</span>
+                        {#if item.percent}
+                          <span class="cover-progress"
+                            ><span style:width="{item.percent}%"></span></span
+                          >
+                        {/if}
+                      </div>
+                      <span class="shelf-title">{item.title}</span>
+                      <span class="shelf-meta"><b>{item.kind}</b> {item.byline}</span>
+                    </div>
+                  {/each}
                 </div>
-              {/if}
-              {#each timelineCards as c (c.itemUrl)}
-                {#if c === featuredCard}
-                  <div bind:this={featuredEl}>
-                    <ArticleCardView {...c} isSaved={kept && !readerOpen} />
-                  </div>
-                {:else}
-                  <ArticleCardView {...c} />
-                {/if}
-              {/each}
+              </div>
             </div>
-          </div>
+          {:else}
+            <header class="toolbar">
+              <span class="tool-title"><Icon name="inbox" size={18} /> Feeds</span>
+              <span class="tool-status">Updated just now <Icon name="refresh-cw" size={13} /></span>
+              <span class="tool-spacer"></span>
+              <span class="tool-btn"><Icon name="list" size={15} /> List</span>
+              <span class="tool-btn on"><Icon name="newspaper" size={15} /> Expand</span>
+              <span class="tool-btn"><Icon name="type" size={15} /> Style</span>
+            </header>
+            <div class="card-surface">
+              <div class="cards">
+                {#each timelineCards as c (c.itemUrl)}
+                  {#if c === featuredCard}
+                    <div bind:this={featuredEl}>
+                      <ArticleCardView {...c} isSaved={kept && !readerOpen} />
+                    </div>
+                  {:else}
+                    <ArticleCardView {...c} />
+                  {/if}
+                {/each}
+              </div>
+            </div>
+          {/if}
         </section>
       </div>
 
@@ -380,8 +492,10 @@
                   {article.passageLead}{#if marked}<mark
                       class="highlight ink-drawing"
                       data-ink={String(inkVariant(inkId))}>{article.passage}</mark
-                    >{:else}<span class="sel" class:dragging class:selected bind:this={passageEl}
-                      >{article.passage}</span
+                    >{:else}<span
+                      class="sel"
+                      class:fallback={selecting && !canPaint}
+                      bind:this={passageEl}>{article.passage}</span
                     >{/if}{article.passageTail}
                 </p>
                 {#if marked}
@@ -434,18 +548,31 @@
         class="cursor"
         class:shown={cursor.shown}
         class:down={cursor.down}
-        class:slow={cursor.slow}
+        class:quick={cursor.quick}
+        class:text={cursor.text}
         style:transform="translate({cursor.x}px, {cursor.y}px)"
       >
-        <svg viewBox="0 0 24 24" width="22" height="22"
-          ><path
-            d="M5 3l14 8-6.5 1.5L9 19z"
-            fill="#1a1a1a"
-            stroke="#fff"
-            stroke-width="1.5"
-            stroke-linejoin="round"
-          /></svg
-        >
+        {#if cursor.text}
+          <svg class="ibeam" viewBox="0 0 12 24" width="12" height="24"
+            ><path
+              d="M3 3h2.5L6 4l.5-1H9M6 4v16M3 21h2.5L6 20l.5 1H9"
+              fill="none"
+              stroke="#1a1a1a"
+              stroke-width="1.4"
+              stroke-linecap="round"
+            /></svg
+          >
+        {:else}
+          <svg viewBox="0 0 24 24" width="22" height="22"
+            ><path
+              d="M5 3l14 8-6.5 1.5L9 19z"
+              fill="#1a1a1a"
+              stroke="#fff"
+              stroke-width="1.5"
+              stroke-linejoin="round"
+            /></svg
+          >
+        {/if}
       </span>
     </div>
   </div>
@@ -459,6 +586,18 @@
         aria-pressed={step === s.id}
         onclick={() => choose(s.id)}
       >
+        <span class="step-bar" aria-hidden="true">
+          <span
+            class="step-fill"
+            style:transform="scaleX({i < stepIndex
+              ? 1
+              : i === stepIndex
+                ? reduceMotion
+                  ? 1
+                  : Math.min(elapsed / s.ms, 1)
+                : 0})"
+          ></span>
+        </span>
         <span class="step-n">{i + 1}</span>
         <span class="step-text">
           <span class="step-label">{s.label}</span>
@@ -624,20 +763,138 @@
   .cards {
     padding: 0.75rem clamp(0.75rem, 2vw, 1.5rem);
   }
-  .arrive {
-    overflow: clip;
-    animation: arrive 0.7s cubic-bezier(0.2, 0.7, 0.2, 1);
+  /* The Shelf, as shelf/ShelfItem draws its grid. */
+  .shelf {
+    padding: 1rem clamp(0.75rem, 2vw, 1.5rem);
+    animation: fade-in 0.45s ease;
   }
-  @keyframes arrive {
+  .lib-switch {
+    display: inline-flex;
+    gap: 2px;
+    padding: 2px;
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    background: var(--color-bg-secondary);
+    font-size: var(--text-md);
+    font-weight: var(--weight-medium);
+    color: var(--color-text-secondary);
+  }
+  .lib-switch span {
+    padding: 0.3125rem 1rem;
+    border-radius: 6px;
+  }
+  .lib-switch .on {
+    background: var(--color-bg);
+    color: var(--color-text);
+    box-shadow: 0 0 0 1px var(--color-border);
+  }
+  .shelf-chip {
+    display: table;
+    margin-top: 0.75rem;
+    padding: 0.3rem 0.8rem;
+    border: 1px solid var(--color-primary);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+    color: var(--color-primary);
+    font-size: var(--text-sm);
+  }
+  .shelf-label {
+    margin: 1.25rem 0 0.6rem;
+    font-size: var(--text-2xs);
+    font-weight: var(--weight-semibold);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--color-text-secondary);
+  }
+  .shelf-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(8.5rem, 1fr));
+    gap: 1.25rem 1rem;
+  }
+  .shelf-card {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .shelf-card.fresh {
+    animation: shelf-in 0.8s cubic-bezier(0.2, 0.7, 0.2, 1) 0.2s both;
+  }
+  .cover {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    aspect-ratio: 2 / 3;
+    padding: 0.875rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--color-bg-secondary);
+  }
+  .cover[data-cover='pdf'] {
+    background: var(--color-bg);
+  }
+  .cover[data-cover='book'] {
+    border-left: 6px solid var(--color-border);
+  }
+  .cover-title {
+    font-family: var(--font-serif);
+    font-size: var(--text-lg);
+    line-height: var(--leading-tight);
+  }
+  .cover[data-cover='article'] .cover-title {
+    font-size: var(--text-md);
+  }
+  .cover-excerpt {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow: hidden;
+    font-family: var(--font-serif);
+    font-size: var(--text-xs);
+    line-height: var(--leading-normal);
+    color: var(--color-text-secondary);
+    -webkit-mask-image: linear-gradient(to bottom, #000 55%, transparent);
+    mask-image: linear-gradient(to bottom, #000 55%, transparent);
+  }
+  .cover-author {
+    margin-top: auto;
+    font-size: var(--text-xs);
+    color: var(--color-text-secondary);
+  }
+  .cover-progress {
+    position: absolute;
+    inset: auto 0 0 0;
+    height: 3px;
+    background: rgba(0, 0, 0, 0.08);
+  }
+  .cover-progress span {
+    display: block;
+    height: 100%;
+    background: var(--color-primary);
+  }
+  .shelf-title {
+    margin-top: 0.5rem;
+    font-size: var(--text-md);
+    font-weight: var(--weight-medium);
+    line-height: var(--leading-snug);
+  }
+  .shelf-meta {
+    margin-top: 0.125rem;
+    font-size: var(--text-xs);
+    color: var(--color-text-secondary);
+  }
+  .shelf-meta b {
+    font-weight: var(--weight-medium);
+  }
+  @keyframes fade-in {
     from {
       opacity: 0;
-      transform: translateY(-12px);
-      max-height: 0;
     }
-    to {
-      opacity: 1;
-      transform: none;
-      max-height: 20rem;
+  }
+  @keyframes shelf-in {
+    from {
+      opacity: 0;
+      transform: translateY(10px) scale(0.97);
     }
   }
 
@@ -652,8 +909,8 @@
     transform: translateY(100%);
     opacity: 0;
     transition:
-      transform 0.55s cubic-bezier(0.2, 0.7, 0.2, 1),
-      opacity 0.3s ease;
+      transform 0.85s cubic-bezier(0.2, 0.7, 0.2, 1),
+      opacity 0.45s ease;
   }
   .reader.open {
     transform: none;
@@ -737,21 +994,13 @@
   .passage-block {
     position: relative;
   }
-  /* A drag selection, drawn rather than real so the tour never touches the
-     visitor's own selection. */
-  .sel {
-    background-image: linear-gradient(rgba(0, 102, 204, 0.22), rgba(0, 102, 204, 0.22));
-    background-repeat: no-repeat;
-    background-size: 0% 100%;
-    -webkit-box-decoration-break: clone;
-    box-decoration-break: clone;
+  /* The drag selection: the reader's own selection colour (app.css
+     `.marginalia-ink ::selection`), painted over a real Range. */
+  :global(::highlight(showcase-selection)) {
+    background-color: color-mix(in srgb, #f5c518 30%, transparent);
   }
-  .sel.dragging {
-    transition: background-size 0.9s linear;
-    background-size: 100% 100%;
-  }
-  .sel.selected {
-    background-size: 100% 100%;
+  .sel.fallback {
+    background-color: color-mix(in srgb, #f5c518 30%, transparent);
   }
   .note {
     position: absolute;
@@ -808,17 +1057,22 @@
     position: absolute;
     top: 0;
     left: 0;
-    z-index: 20;
+    /* Over the highlight popover (z-index 200), which it reaches for. */
+    z-index: 210;
     pointer-events: none;
     opacity: 0;
     transition:
-      transform 0.7s cubic-bezier(0.45, 0, 0.2, 1),
+      transform 1s cubic-bezier(0.45, 0, 0.2, 1),
       opacity 0.3s;
   }
-  .cursor.slow {
+  .cursor.quick {
     transition:
-      transform 0.9s linear,
+      transform 70ms linear,
       opacity 0.3s;
+  }
+  /* The I-beam's middle sits on the point, as a text cursor's does. */
+  .cursor .ibeam {
+    margin: -12px 0 0 -6px;
   }
   .cursor.shown {
     opacity: 1;
@@ -842,9 +1096,9 @@
   .step {
     display: flex;
     gap: 0.6rem;
+    position: relative;
     padding: 0.75rem 0.5rem 0.25rem;
     border: 0;
-    border-top: 2px solid var(--color-border);
     background: none;
     text-align: left;
     color: var(--color-text-secondary);
@@ -854,8 +1108,24 @@
       border-color 0.2s;
   }
   .step.on {
-    border-top-color: var(--color-primary);
     color: var(--color-text);
+  }
+  .step-bar {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    overflow: hidden;
+    border-radius: 1px;
+    background: var(--color-border);
+  }
+  .step-fill {
+    display: block;
+    height: 100%;
+    background: var(--color-primary);
+    transform-origin: left;
+    transition: transform 100ms linear;
   }
   .step:focus-visible {
     outline: 2px solid var(--color-primary);
@@ -930,6 +1200,13 @@
     }
     .r-title {
       font-size: var(--text-3xl);
+    }
+    .shelf-grid {
+      grid-template-columns: repeat(auto-fill, minmax(6.5rem, 1fr));
+      gap: 1rem 0.75rem;
+    }
+    .cover-excerpt {
+      display: none;
     }
     .steps {
       grid-template-columns: repeat(5, minmax(0, 1fr));
