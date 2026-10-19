@@ -22,7 +22,7 @@ Choose **New channel** under **Feeds** or **Library**, in the sidebar or the fee
 - **Name** fills itself in from what you choose. Type your own to keep it.
 - **Show** and **Order** set what the channel opens on: unread or everything, newest or oldest first.
 - **What's in it**, for a channel of your feeds:
-  - **Sources I pick**: check the sources you want. Check a folder to take in everything filed there, now and later.
+  - **Sources I pick**: a new channel starts with every source checked; uncheck what it should leave out, or choose **Select none** and check the few you want. Check a folder to take in everything filed there, now and later.
   - **Sources that match**: a rule picks them and keeps up as you follow more. **Daily Digest** takes sources that post several times a day, **Don't Miss** the ones that post rarely, and **Long Reads** the ones that write at length. You can also match the sources you added lately, ones you tagged, or ones from a site.
 - **What's in it**, for a channel of saved articles: narrow by kind, when you saved it, length, site or tag. Leave a row empty to take in all of it.
 

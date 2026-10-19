@@ -19,13 +19,7 @@
   let query = $derived(feedViewStore.searchQuery ?? '');
   let limit = $derived(auth.user?.limits?.maxSavedSearches ?? 0);
   let error = $derived(searchChannelsStore.error);
-  // A channel just made has nothing to show until its first answer, which is
-  // part of looking back, not "no matches".
-  let lookingBack = $derived(
-    searchChannelsStore.backfilling ||
-      error === 'not_ready' ||
-      (!searchChannelsStore.loaded && error === null)
-  );
+  let lookingBack = $derived(searchChannelsStore.backfilling || error === 'not_ready');
 </script>
 
 {#if empty}

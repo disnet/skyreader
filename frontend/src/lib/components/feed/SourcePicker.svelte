@@ -17,8 +17,10 @@
     buildSourceGroups,
     categoryGroupKey,
     checkStateOf,
+    everySourceFilter,
     onlySource,
     setSourceChecked,
+    showsNoSource,
     sourceGroupOf,
     type CheckState,
     type PickerContext,
@@ -47,7 +49,10 @@
     bulk = false,
   }: Props = $props();
 
-  let noneChecked = $derived(filter.sourceMode === 'include' && filter.sourceKeys.length === 0);
+  let everySource = $derived(everySourceFilter(showFollows, followsInEverything));
+  let allChecked = $derived(
+    filter.sourceMode === everySource.sourceMode && filter.sourceKeys.length === 0
+  );
 
   let search = $state('');
   let expanded = $state<Set<string>>(new Set());
@@ -55,6 +60,7 @@
   let subscriptions = $derived(subscriptionsStore.subscriptions);
   let groups = $derived(buildSourceGroups(subscriptions));
   let ctx = $derived<PickerContext>({ groups, followsInEverything });
+  let noneChecked = $derived(bulk && showsNoSource(filter, subscriptions, ctx, showFollows));
 
   interface SourceRow {
     key: string;
@@ -251,8 +257,8 @@
         <button
           type="button"
           class="show-all-btn"
-          disabled={filter.sourceMode === 'all'}
-          onclick={() => onchange({ sourceMode: 'all', sourceKeys: [] })}>Select all</button
+          disabled={allChecked}
+          onclick={() => onchange(everySource)}>Select all</button
         >
         <button
           type="button"
