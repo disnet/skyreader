@@ -394,23 +394,32 @@ export class Percolator extends DurableObject<Env> {
         if (!outcome.more) break;
       }
 
-      let backfillFailed = false;
+      // Each pending look back takes a step in turn, and keeps taking them while
+      // the pass has time, subrequests and R2 reads left: one step a pass made a
+      // reader with a hundred sources wait a minute and a half for a new channel.
       const pending = queries.filter((q) => q.backfillState === 'pending');
-      for (const query of pending.slice(0, BACKFILL_QUERIES_PER_PASS)) {
-        if (Date.now() >= deadline || budget.subrequests < 100) break;
-        try {
-          await this.backfillStep(query, budget, outcome);
-          backfillFailed = false;
-        } catch (error) {
-          // Left pending; the minute cron retries, so a failing step can't spin the alarm.
-          backfillFailed = true;
-          log.error('percolator_backfill_failed', {
-            channelUuid: query.channelUuid,
-            ...serializeError(error),
-          });
+      const failed = new Set<ActiveQuery>();
+      // A query's first step runs as before; later ones stop where bodies would go unread.
+      const canStep = (first: boolean) =>
+        Date.now() < deadline && budget.subrequests >= 100 && (first || budget.r2.left > 0);
+      let active = pending.slice(0, BACKFILL_QUERIES_PER_PASS);
+      for (let round = 0; active.length > 0 && canStep(round === 0); round++) {
+        for (const query of active) {
+          if (!canStep(round === 0)) break;
+          try {
+            await this.backfillStep(query, budget, outcome);
+          } catch (error) {
+            // Left pending; the minute cron retries, so a failing step can't spin the alarm.
+            failed.add(query);
+            log.error('percolator_backfill_failed', {
+              channelUuid: query.channelUuid,
+              ...serializeError(error),
+            });
+          }
         }
+        active = active.filter((q) => q.backfillState === 'pending' && !failed.has(q));
       }
-      if (pending.length > 0 && !backfillFailed) outcome.more = true;
+      if (pending.some((q) => q.backfillState === 'pending' && !failed.has(q))) outcome.more = true;
 
       if (Date.now() < deadline && budget.subrequests > 100) {
         try {
@@ -801,7 +810,7 @@ export class Percolator extends DurableObject<Env> {
     outcome.backfillSteps++;
     // Guarded on the version this step matched for: an edit in the meantime
     // already reset the backfill, and this must not mark it done.
-    await this.env.DB.prepare(
+    const saved = await this.env.DB.prepare(
       `UPDATE saved_queries
           SET backfill_feed_after = ?, backfill_doc_after = ?, backfill_follows_after = ?,
               backfill_state = ?
@@ -818,6 +827,13 @@ export class Percolator extends DurableObject<Env> {
       )
       .run();
     budget.subrequests -= 1;
+
+    // Where the next step in this pass starts. An edit since makes this version
+    // stale: stop stepping it, and the edit's own look back takes over.
+    query.backfillFeedAfter = page.feedAfter;
+    query.backfillDocAfter = page.docAfter;
+    query.backfillFollowsAfter = followsAfter;
+    query.backfillState = done || !saved.meta.changes ? 'done' : 'pending';
   }
 
   /**

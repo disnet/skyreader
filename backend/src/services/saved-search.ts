@@ -31,6 +31,8 @@ export const MATCH_BODY_CHARS = 64_000;
 export const MATCH_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 
 const IN_CHUNK = 80;
+/** Stored bodies read from R2 at once. */
+const R2_READ_CONCURRENCY = 10;
 
 function chunk<T>(items: T[], size: number): T[][] {
   const out: T[][] = [];
@@ -981,19 +983,32 @@ export async function loadMatchDocs(
     feedRows.push(...(rows.results ?? []));
   }
   const feedTitles = await lookupFeedTitles(env, [...new Set(feedRows.map((r) => r.feed_url))]);
-  let budgetSkipped = 0;
-  for (const row of feedRows) {
+  const parsed = feedRows.flatMap((row) => {
     const item = parseJson<FeedItem>(row.item_json);
-    if (!item) continue;
-    let html = '';
-    if (item.bodyStored && env.ITEM_BODIES) {
-      if (r2Budget.left > 0) {
-        r2Budget.left--;
-        html = (await readStoredBody(env, row.feed_url, row.guid)) ?? '';
-      } else {
-        budgetSkipped++;
-      }
+    return item ? [{ row, item }] : [];
+  });
+  // Stored bodies are read a few at a time rather than one after another: a
+  // look back over a busy feed reads dozens, and in series they took seconds.
+  let budgetSkipped = 0;
+  const toRead: typeof parsed = [];
+  for (const entry of parsed) {
+    if (!entry.item.bodyStored || !env.ITEM_BODIES) continue;
+    if (r2Budget.left > 0) {
+      r2Budget.left--;
+      toRead.push(entry);
+    } else {
+      budgetSkipped++;
     }
+  }
+  const stored = new Map<number, string>();
+  for (const batch of chunk(toRead, R2_READ_CONCURRENCY)) {
+    const bodies = await Promise.all(
+      batch.map(({ row }) => readStoredBody(env, row.feed_url, row.guid))
+    );
+    batch.forEach(({ row }, i) => stored.set(row.seq, bodies[i] ?? ''));
+  }
+  for (const { row, item } of parsed) {
+    let html = stored.get(row.seq) ?? '';
     html ||= item.content || item.contentLead || '';
     const body =
       htmlToText(html, MATCH_BODY_CHARS) || htmlToText(item.summary ?? '', MATCH_BODY_CHARS);

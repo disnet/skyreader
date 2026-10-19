@@ -502,6 +502,26 @@ describe('Percolator', () => {
     expect((await savedQuery(user, uuid))?.backfill_state).toBe('done');
   });
 
+  it('looks back over many sources in one pass', async () => {
+    const user = await createUser();
+    const suffix = Math.random().toString(36).slice(2, 8);
+    const expected: string[] = [];
+    // Three steps' worth of sources: a pass used to take one step.
+    for (let i = 0; i < 25; i++) {
+      const feed = `https://many${i}x${suffix}.example/feed.xml`;
+      await subscribe(user, feed);
+      expected.push(await ingest(feed, { title: `Microplastics ${i}` }, Date.now() - DAY));
+    }
+    await settle();
+
+    const uuid = newUuid();
+    await putChannel(user, uuid, { query: 'microplastics' });
+    await percolatorStub(env).runPass();
+
+    expect((await savedQuery(user, uuid))?.backfill_state).toBe('done');
+    expect(await matchedKeys(user, uuid)).toEqual(expected.sort());
+  });
+
   it('matches standard.site documents by their text', async () => {
     const user = await createUser();
     const author = `did:plc:author${Math.random().toString(36).slice(2, 8)}`;
