@@ -65,6 +65,7 @@
   import { toastStore } from '$lib/stores/toast.svelte';
   import { shareTargetForDisplayItem } from '$lib/utils/shareTarget';
   import { isSavedItemSaved } from '$lib/utils/readerSave';
+  import { readProgressKeys } from '$lib/utils/readProgressKeys';
   import HighlightPopover from '$lib/components/feed/HighlightPopover.svelte';
   import HighlightHandles from '$lib/components/feed/HighlightHandles.svelte';
   import CommunityHighlightPopover from '$lib/components/feed/CommunityHighlightPopover.svelte';
@@ -172,6 +173,11 @@
   let pagedTotal = $state(1);
 
   let itemKey = $derived(readerItem.key);
+  // Every key this item's place may be filed under (see readProgressKeys).
+  let progressKeys = $derived(readProgressKeys(readerItem, savesStore.find));
+  function savedProgress() {
+    return itemLabelsStore.getLatestReadProgress(progressKeys);
+  }
   let itemTags = $derived(itemLabelsStore.getTagsForItem(itemKey));
 
   let labelItemType = $derived.by((): 'article' | 'document' | 'saved' => readerItem.type);
@@ -806,6 +812,9 @@
   let paged = $derived(viewMode === 'paged' && !showOriginalPdf);
   let pagedController = $state<PagedController>();
   let pagedRestoredForKey = $state<string | null>(null);
+  // Opening an item pulls label deltas (see the effect after the scroll
+  // restore); this keeps flipping quickly between items from re-asking.
+  const OPEN_DELTA_MIN_INTERVAL_MS = 10_000;
   let pagedSaveTimer: ReturnType<typeof setTimeout> | undefined;
 
   // One value feeds both drawings of the rail: scroll fraction while scrolling,
@@ -951,7 +960,7 @@
     if (!paged || !pagedController || !readerBodyEl || savedBodyPending) return;
     const key = itemKey;
     if (pagedRestoredForKey === key || pagedRestoringKey === key) return;
-    const saved = itemLabelsStore.getReadProgress(key);
+    const saved = savedProgress();
     if (!saved || saved.paragraphIndex <= 0) {
       pagedRestoredForKey = key;
       return;
@@ -981,7 +990,7 @@
     paged &&
       pagedRestoredForKey !== itemKey &&
       pagedRevealedForKey !== itemKey &&
-      (itemLabelsStore.getReadProgress(itemKey)?.paragraphIndex ?? 0) > 0
+      (savedProgress()?.paragraphIndex ?? 0) > 0
   );
   $effect(() => {
     if (!pagedRestorePending || savedBodyPending) return;
@@ -1204,6 +1213,7 @@
     scrollRoot: () => overlayEl,
     itemKey: () => itemKey,
     itemType: () => labelItemType,
+    progressKeys: () => progressKeys,
     // Scroll-driven — disabled in paged mode (paged position is tracked by page).
     enabled: () => !paged,
   });
@@ -1287,21 +1297,7 @@
         if (restoredForKey === key) return;
         setTimeout(() => {
           if (restoredForKey === key) return;
-          suppressScrollHide = true;
-          const result = paragraphTracking.restorePosition();
-          // 'exact'/'none' are terminal; 'partial' means retry on the next
-          // content settle (the full body hasn't arrived yet).
-          if (result !== 'partial') restoredForKey = key;
-          if (result !== 'none') {
-            // Wait for smooth scroll to finish before re-enabling header hide
-            setTimeout(() => {
-              if (overlayEl) lastScrollY = overlayEl.scrollTop;
-              suppressScrollHide = false;
-              updateReadingProgress();
-            }, 600);
-          } else {
-            suppressScrollHide = false;
-          }
+          restoreScrollPosition(key);
         }, 100);
       });
     }
@@ -1311,6 +1307,52 @@
       highlightsHook.detach();
       communityHighlightsHook.detach();
     };
+  });
+
+  function restoreScrollPosition(key: string) {
+    suppressScrollHide = true;
+    const result = paragraphTracking.restorePosition();
+    // 'exact'/'none' are terminal; 'partial' means retry on the next
+    // content settle (the full body hasn't arrived yet).
+    restoredForKey = result !== 'partial' ? key : null;
+    if (result !== 'none') {
+      // Wait for smooth scroll to finish before re-enabling header hide
+      setTimeout(() => {
+        if (overlayEl) lastScrollY = overlayEl.scrollTop;
+        suppressScrollHide = false;
+        updateReadingProgress();
+      }, 600);
+    } else {
+      suppressScrollHide = false;
+    }
+  }
+
+  // Another device's place may not have reached this one yet: label deltas are
+  // pulled on a timer and when the tab comes back, and a tab left open on a
+  // laptop may not have asked since the reader put their phone down. So opening
+  // an item asks now, and a newer place that arrives is restored — but only
+  // while the reader hasn't started scrolling or paging here, so a late answer
+  // never moves someone who is already reading.
+  $effect(() => {
+    const key = itemKey;
+    if (!auth.isAuthenticated) return;
+    untrack(() => {
+      const before = savedProgress()?.lastReadAt ?? 0;
+      void itemLabelsStore.pullDelta(OPEN_DELTA_MIN_INTERVAL_MS).then(() => {
+        if (itemKey !== key || (savedProgress()?.lastReadAt ?? 0) <= before) return;
+        if (paged) {
+          // Not yet restored: the paged restore reads the new place itself.
+          if (pagedRestoredForKey !== key || pagedPage > 0) return;
+          pagedRestoringKey = null;
+          pagedRestoredForKey = null;
+          return;
+        }
+        // Not yet restored (or still waiting on the body): that restore reads
+        // the new place when it runs.
+        if (restoredForKey !== key || paragraphTracking.readerMoved) return;
+        restoreScrollPosition(key);
+      });
+    });
   });
 
   let deleteConfirming = $state(false);
