@@ -11,8 +11,9 @@ import {
 
 // Saved searches: a channel with a query shows what the server matched for it
 // (GET /api/channels/:uuid/items), with the matched words marked, and counts its
-// unread matches in the sidebar. The matcher itself (the Percolator) doesn't run
-// under wrangler dev, so the matches are seeded as it would have written them.
+// unread matches in the sidebar. The matcher (the Percolator) runs only when a
+// channel save kicks it, so the first test seeds matches as it would have
+// written them, and the editor test lets the kick do the look back.
 // See docs/plans/SAVED_SEARCH_CHANNELS.md.
 
 const FEED_URL = `https://saved-search-e2e-${Date.now()}.example/feed.xml`;
@@ -103,12 +104,31 @@ test.describe('Saved searches', () => {
     await expect(sidebarRow.locator('.nav-count')).toHaveText('1');
   });
 
-  test('the channel editor saves a query, and the new channel says it is looking back', async ({
+  test('the channel editor previews a query on its sources, and the new channel fills at once', async ({
     authedPage,
     testUser,
   }) => {
     await enableSavedSearchFor(testUser);
     await seedSubscription(testUser, { feedUrl: FEED_URL, title: 'Home Energy Weekly' });
+    const now = Date.now();
+    await seedFeedItems(
+      FEED_URL,
+      [
+        {
+          guid: 'ss-e2e-new-pumps',
+          title: 'Winter with a heat pump',
+          url: 'https://energy.example/new-pumps',
+          publishedAt: new Date(now - 60_000).toISOString(),
+        },
+        {
+          guid: 'ss-e2e-new-podcast',
+          title: 'The heat pump podcast',
+          url: 'https://energy.example/new-podcast',
+          publishedAt: new Date(now - 120_000).toISOString(),
+        },
+      ],
+      { title: 'Home Energy Weekly' }
+    );
     await authedPage.reload();
 
     const navGroup = authedPage.locator('.nav-group', {
@@ -121,6 +141,11 @@ test.describe('Saved searches', () => {
     // Named for what it looks for, until you name it.
     await expect(authedPage.locator('#channel-name')).toHaveValue('"heat pump" -podcast');
     await authedPage.getByRole('button', { name: 'Show everything' }).click();
+    // The preview reads the sources' recent items, unread ones included.
+    await expect(authedPage.locator('.preview')).toContainText(
+      '1 of 2 items from these sources match',
+      { timeout: 10_000 }
+    );
 
     const put = authedPage.waitForResponse(
       (r) => /\/api\/channels\/[0-9a-f-]+$/.test(r.url()) && r.request().method() === 'PUT'
@@ -128,18 +153,19 @@ test.describe('Saved searches', () => {
     await authedPage.getByRole('button', { name: 'Create channel' }).click();
     expect((await put).ok()).toBe(true);
 
-    await expect(
-      authedPage.getByRole('heading', { name: 'Looking back through the last 30 days' })
-    ).toBeVisible({ timeout: 10_000 });
+    // Saving starts the look back at once, so the match shows without a wait.
+    const cards = authedPage.locator('.article-item');
+    await expect(cards.filter({ hasText: 'Winter with a heat pump' })).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(cards.filter({ hasText: 'The heat pump podcast' })).toHaveCount(0);
     await expect(authedPage.locator('.view-item', { hasText: 'heat pump' })).toBeVisible();
 
-    // The server took the query: the channel is a saved search, still backfilling.
     const uuid = new URL(authedPage.url()).searchParams.get('view');
     const res = await authedPage.request.get(`http://127.0.0.1:8787/api/channels/${uuid}/items`);
     expect(res.ok()).toBe(true);
     const body = await res.json();
     expect(body.query).toBe('"heat pump" -podcast');
-    expect(body.backfilling).toBe(true);
   });
 
   test('without the plan, a channel has no query field', async ({ authedPage }) => {

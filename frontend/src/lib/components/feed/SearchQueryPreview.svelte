@@ -57,16 +57,18 @@
 
 {#if available && phase !== 'idle' && phase !== 'failed'}
   <div class="preview" aria-live="polite" class:loading={phase === 'loading'}>
-    {#if phase === 'done' && preview && preview.scanned === 0}
-      <p class="preview-head">Nothing has come in from these sources this past month.</p>
-    {:else if phase === 'done' && preview && preview.total === 0}
-      <p class="preview-head">None of {scannedLabel} from these sources match yet.</p>
+    {#if phase === 'done' && preview && preview.total === 0}
+      <p class="preview-head">
+        {preview.scanned === 0
+          ? 'Nothing has come in from these sources this past month.'
+          : 'Nothing recent from these sources matches yet.'}
+      </p>
     {:else if phase === 'done' && preview}
       <p class="preview-head">
         {preview.total.toLocaleString()} of {scannedLabel} from these sources match:
       </p>
       <ul>
-        {#each preview.hits as hit (hit.itemKey)}
+        {#each preview.hits as hit (`${hit.kind}:${hit.itemKey}`)}
           <li>
             <span class="hit-title"
               >{decodeEntities(hit.title) || domainFromUrl(hit.url) || 'Untitled'}</span
@@ -80,6 +82,9 @@
       </ul>
     {:else}
       <p class="preview-head">Looking through recent items from these sources…</p>
+    {/if}
+    {#if phase === 'done' && preview?.coversFollows}
+      <p class="preview-note">Links people you follow share aren't in this preview.</p>
     {/if}
   </div>
 {/if}
@@ -100,6 +105,11 @@
 
   .preview-head {
     margin: 0;
+  }
+
+  .preview-note {
+    margin: 0.375rem 0 0;
+    font-size: var(--text-xs);
   }
 
   ul {

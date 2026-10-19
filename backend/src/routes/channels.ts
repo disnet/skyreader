@@ -71,14 +71,20 @@ function validateChannelBody(body: ChannelBody, uuid?: string): string | null {
  * channel brings the query back in line.
  */
 async function syncQueries(env: Env, did: string, uuids: string[]): Promise<void> {
+  let lookBack = false;
   try {
-    // A new or edited query starts its look back now rather than at the next
-    // cron minute, so a channel just made doesn't sit empty.
-    if ((await syncSavedQueries(env, did, uuids)) && (await isSavedSearchEnabled(env))) {
-      await percolatorStub(env).kick();
-    }
+    lookBack = await syncSavedQueries(env, did, uuids);
   } catch (error) {
     log.error('saved_query_sync_failed', { channels: uuids.length, ...serializeError(error) });
+    return;
+  }
+  // A new or edited query starts its look back now rather than at the next
+  // cron minute, so a channel just made doesn't sit empty.
+  if (!lookBack) return;
+  try {
+    if (await isSavedSearchEnabled(env)) await percolatorStub(env).kick();
+  } catch (error) {
+    log.warn('saved_query_kick_failed', serializeError(error));
   }
 }
 

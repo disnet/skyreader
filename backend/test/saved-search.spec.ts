@@ -641,6 +641,33 @@ describe('POST /api/channels/preview', () => {
     expect(all.total).toBe(2);
   });
 
+  it('counts a story carried by two feeds once, and says when follows are left out', async () => {
+    const user = await createUser();
+    await subscribe(user, FEED_A);
+    await subscribe(user, FEED_B);
+    const url = `https://site${Math.random().toString(36).slice(2, 8)}.example/p/1`;
+    await ingest(FEED_A, { title: 'PFAS story', url });
+    await ingest(FEED_B, { title: 'PFAS story', url });
+
+    const body = (await (
+      await call(user, '/api/channels/preview', {
+        method: 'POST',
+        body: { query: 'pfas', sourceMode: 'all', sourceKeys: [] },
+      })
+    ).json()) as PreviewBody & { coversFollows: boolean };
+    expect(body.total).toBe(1);
+    expect(body.hits).toHaveLength(1);
+
+    const follows = (await (
+      await call(user, '/api/channels/preview', {
+        method: 'POST',
+        body: { query: 'pfas', sourceMode: 'include', sourceKeys: ['bsky~follows'] },
+      })
+    ).json()) as PreviewBody & { coversFollows: boolean };
+    expect(follows.scanned).toBe(0);
+    expect(follows.coversFollows).toBe(true);
+  });
+
   it('refuses an empty query and readers without saved searches', async () => {
     const user = await createUser();
     const empty = await call(user, '/api/channels/preview', {

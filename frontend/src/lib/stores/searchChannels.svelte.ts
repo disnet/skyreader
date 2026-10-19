@@ -84,7 +84,8 @@ function createSearchChannelsStore() {
 
   function schedulePoll(max: number) {
     clearPoll();
-    if (polls >= max) {
+    // The fast polls come on top of the budget, so its wall-clock span holds.
+    if (polls >= max + FAST_POLLS) {
       // A query the server never picked up: its channel write didn't land, so
       // waiting longer won't help. Saving the channel again sends it again.
       if (error === 'not_ready') error = 'failed';

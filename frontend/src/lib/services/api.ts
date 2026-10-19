@@ -437,6 +437,8 @@ export interface SavedSearchPreview {
   scanned: number;
   /** The sources hold more than was read, so `total` is a floor. */
   capped: boolean;
+  /** The selection takes in links your follows share, which aren't previewed. */
+  coversFollows: boolean;
   hits: SavedSearchPreviewHit[];
 }
 

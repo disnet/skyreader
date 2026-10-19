@@ -18,7 +18,7 @@ Choose **New channel** under **Feeds**, type what to watch for under **Matching*
 | `tid*`           | words starting with "tid"           |
 | `energy -wind`   | items with "energy" but not "wind"  |
 
-While you type, Skyreader checks the search against the last month of items from the sources you picked, read or not, and shows how many match and a few of them, so you can tell whether it's too broad or too narrow.
+While you type, Skyreader checks the search against the last month of items from the sources you picked, read or not, and shows how many match and a few of them, so you can tell whether it's too broad or too narrow. Links shared by people you follow aren't in the preview, though the channel picks them up.
 
 Any feed channel can become a saved search: open it with **Edit channel** and add words under **Matching**. Take them out again and it goes back to being an ordinary channel.
 

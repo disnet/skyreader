@@ -30,6 +30,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import type { Env } from '../types';
 import {
+  dedupKey,
   MATCH_BODY_CHARS,
   MATCH_RETENTION_MS,
   MATCH_WINDOW_MS,
@@ -231,7 +232,7 @@ export class Percolator extends DurableObject<Env> {
       this.env,
       feeds.map((f) => f.seq),
       docs.map((d) => d.record_uri),
-      { left: 0 }
+      { left: 0, quiet: true }
     );
     const query: ActiveQuery = {
       userDid: '',
@@ -246,7 +247,15 @@ export class Percolator extends DurableObject<Env> {
       docScopes: scope.docScopes,
       coversFollows: false,
     };
+    // One hit per story, as the channel keeps one match per story.
+    const seen = new Set<string>();
     return this.match(loaded, [query])
+      .filter(({ doc }) => {
+        const key = dedupKey(doc);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
       .map(({ doc, snippet }) => ({
         kind: doc.kind === 'document' ? ('document' as const) : ('feed' as const),
         itemKey: doc.itemKey,

@@ -11,7 +11,7 @@ import {
   extractSavedQuery,
   getSavedSearchAccess,
   loadReaderScope,
-  percolatorStub,
+  previewStub,
   readPreviewHeads,
   type LinkCard,
   type Sharer,
@@ -250,6 +250,8 @@ export async function handleChannelItems(
 
 /** Items a preview reads: the newest this many from the chosen sources. */
 const PREVIEW_ITEMS = 300;
+/** A channel config is held to 50 KB (routes/channels.ts); the preview takes part of one. */
+const MAX_PREVIEW_BODY = 50_000;
 const PREVIEW_SHOWN = 3;
 
 /**
@@ -269,17 +271,28 @@ export async function handleChannelPreview(
     return json({ error: 'Saved searches are a Supporter feature', code: 'upgrade_required' }, 403);
   }
 
-  const body = await request.json().catch(() => null);
-  const saved = body && typeof body === 'object' ? extractSavedQuery(JSON.stringify(body)) : null;
+  // The body is the query part of a channel config, held to a config's size.
+  const text = await request.text();
+  if (text.length > MAX_PREVIEW_BODY) return json({ error: 'Too large' }, 400);
+  const saved = extractSavedQuery(text);
   if (!saved) return json({ error: 'Nothing searchable in the query' }, 400);
 
   const scope = await loadReaderScope(env, session.did, saved.sourceMode, saved.sourceKeys);
-  const heads = await readPreviewHeads(env, scope, Date.now() - MATCH_WINDOW_MS, PREVIEW_ITEMS);
+  // One past the limit, to tell a selection holding exactly that many from a capped one.
+  const heads = await readPreviewHeads(env, scope, Date.now() - MATCH_WINDOW_MS, PREVIEW_ITEMS + 1);
+  const capped = heads.feeds.length + heads.docs.length > PREVIEW_ITEMS;
+  if (capped) {
+    // Drop the oldest of the two lists' tails.
+    const lastFeed = heads.feeds.at(-1)?.published_at ?? Infinity;
+    const lastDoc = heads.docs.at(-1)?.published_at ?? Infinity;
+    if (lastFeed <= lastDoc) heads.feeds.pop();
+    else heads.docs.pop();
+  }
   const scanned = heads.feeds.length + heads.docs.length;
   const hits =
     scanned === 0
       ? []
-      : await percolatorStub(env).preview(saved.ftsQuery, heads.feeds, heads.docs, {
+      : await previewStub(env).preview(saved.ftsQuery, heads.feeds, heads.docs, {
           feedUrls: [...scope.feedUrls],
           docScopes: scope.docScopes,
         });
@@ -287,8 +300,10 @@ export async function handleChannelPreview(
   return json({
     total: hits.length,
     scanned,
-    // The sources hold more than the preview read, so the count is a floor.
-    capped: scanned >= PREVIEW_ITEMS,
+    // The sources hold more than the preview read.
+    capped,
+    // Links your follows share aren't previewed, though the channel takes them in.
+    coversFollows: scope.coversFollows,
     hits: hits.slice(0, PREVIEW_SHOWN).map((hit) => ({
       kind: hit.kind,
       itemKey: hit.itemKey,
