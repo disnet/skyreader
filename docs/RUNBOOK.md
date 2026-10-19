@@ -598,17 +598,17 @@ The first section of the admin dashboard. It reads two D1 tables the backend cro
 writes (migration `0067_system_status.sql`) — no API token, no production-only
 path, so it works in local dev and staging the moment the cron has run once.
 
-| Tile                     | Source                              | Green               | Amber                                                                         | Red                                                 |
-| ------------------------ | ----------------------------------- | ------------------- | ----------------------------------------------------------------------------- | --------------------------------------------------- |
-| Cron Last Run            | `system_status.cron_last_run`       | <3 min ago          | <10 min ago                                                                   | ≥10 min, or the run failed                          |
-| Firehose Lag             | `poller_status.lagMs`               | <5 min (SLO bar)    | <15 min                                                                       | ≥15 min (= the Sentry alert)                        |
-| Last Poll                | `poller_status.lastPollAt`          | <5 min ago          | never polled                                                                  | ≥5 min ago                                          |
-| Poll Errors (last cycle) | `poller_status.errors`              | 0                   | ≥1                                                                            | —                                                   |
-| Document Stream Lag      | `poller_status.documentsLagMs`      | <5 min              | <15 min, or paused                                                            | ≥15 min (= the Sentry alert)                        |
-| Document Ingest          | `poller_status.documentsCapStreak`  | 0–2 capped cycles   | ≥3 capped cycles                                                              | ≥10 capped, or ingest disabled                      |
-| Crawl Cycle              | `proxy_stats.crawlCycleSeconds`     | ≤ proxy target (1h) | ≤ 2× target                                                                   | > 2× target (= `crawl_stale`), or stats >15 min old |
-| Proxy Feeds in Error     | `proxy_stats.feedsInError`          | <10% failing        | ≥10% of the cache failing (parked feeds excluded)                             | ≥25% failing                                        |
-| Document Sync            | `proxy_stats.documentAuthorsFrozen` | 0 frozen            | 1–2 frozen, or the proxy's document firehose down while it has active authors | ≥3 frozen, or ≥25% of active (= the Sentry alert)   |
+| Tile                     | Source                              | Green               | Amber                                                                         | Red                                                                   |
+| ------------------------ | ----------------------------------- | ------------------- | ----------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| Cron Last Run            | `system_status.cron_last_run`       | <3 min ago          | <10 min ago                                                                   | ≥10 min, or the run failed                                            |
+| Firehose Lag             | `poller_status.lagMs`               | <5 min (SLO bar)    | <15 min                                                                       | ≥15 min (= the Sentry alert)                                          |
+| Last Poll                | `poller_status.lastPollAt`          | <5 min ago          | never polled                                                                  | ≥5 min ago                                                            |
+| Poll Errors (last cycle) | `poller_status.errors`              | 0                   | ≥1                                                                            | —                                                                     |
+| Document Stream Lag      | `poller_status.documentsLagMs`      | <5 min              | <15 min, or paused                                                            | ≥15 min (= the Sentry alert)                                          |
+| Document Ingest          | `poller_status.documentsCapStreak`  | 0–2 capped cycles   | ≥3 capped cycles                                                              | ≥10 capped, or ingest disabled                                        |
+| Crawl Cycle              | `proxy_stats.crawlCycleSeconds`     | ≤ proxy target (1h) | ≤ 2× target                                                                   | > 2× target (= `crawl_stale`), no healthy feeds, or stats >15 min old |
+| Proxy Feeds in Error     | `proxy_stats.feedsInError`          | <10% failing        | ≥10% of the cache failing (parked feeds excluded)                             | ≥25% failing, or ≥50% erroring at all                                 |
+| Document Sync            | `proxy_stats.documentAuthorsFrozen` | 0 frozen            | 1–2 frozen, or the proxy's document firehose down while it has active authors | ≥3 frozen, or ≥25% of active (= the Sentry alert)                     |
 
 **Crawl Cycle** is the proxy's `warm.cycleSeconds`: the age of the oldest healthy,
 in-set feed, i.e. how long one pass over the crawl set takes. It replaced the

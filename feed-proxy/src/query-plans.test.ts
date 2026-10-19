@@ -4,6 +4,7 @@ import {
   initDatabase,
   WARM_DUE_FEEDS_SQL,
   CRAWL_CYCLE_SQL,
+  STATS_PARKED_SQL,
   WARM_DUE_DOCUMENTS_SQL,
   STATS_DOCUMENTS_ACTIVE_SQL,
   STATS_DOCUMENTS_FROZEN_SQL,
@@ -89,6 +90,7 @@ describe('query plans: periodic scans stay on covering indexes', () => {
     expect(
       plan('SELECT COUNT(*) as count FROM cache WHERE next_retry_at > ? AND error_count >= 5')
     ).toContain('COVERING INDEX idx_cache_backoff');
+    expect(plan(STATS_PARKED_SQL)).toContain('COVERING INDEX idx_cache_parked');
   });
 
   it('/stats document counts are covering, not blob row reads', () => {
