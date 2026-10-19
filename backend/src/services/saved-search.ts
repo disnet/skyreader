@@ -225,12 +225,24 @@ export async function syncSavedQueries(env: Env, did: string, uuids: string[]): 
         );
         continue;
       }
-      const predicateChanged =
+      const sourcesChanged =
         have.fts_query !== want.ftsQuery ||
         have.source_mode !== want.sourceMode ||
-        have.source_keys !== sourceKeys ||
-        have.include_saves !== (want.includeSaves ? 1 : 0);
-      if (predicateChanged) {
+        have.source_keys !== sourceKeys;
+      const savesChanged = have.include_saves !== (want.includeSaves ? 1 : 0);
+      if (!sourcesChanged && savesChanged && want.includeSaves) {
+        // Saves added to a query its other matches still answer: only the saves
+        // need a look back. The other sources' cursors stay at their end.
+        lookBack = true;
+        statements.push(
+          env.DB.prepare(
+            `UPDATE saved_queries
+                SET query = ?, digest = ?, include_saves = 1, backfill_state = 'pending',
+                    backfill_saves_after = '', updated_at = ?
+              WHERE user_did = ? AND channel_uuid = ?`
+          ).bind(want.query, want.digest, now, did, uuid)
+        );
+      } else if (sourcesChanged || savesChanged) {
         lookBack = true;
         statements.push(
           env.DB.prepare(
@@ -762,7 +774,8 @@ export async function readStreamPage(
   cursors: { seq: number; doc: DocCursor; share: ShareCursor; save: number },
   pageSize: number,
   settledBefore: number,
-  sharesSettledBefore: number
+  sharesSettledBefore: number,
+  savesSettledBefore: number
 ): Promise<{ feeds: FeedHead[]; docs: DocHead[]; shares: ShareHead[]; saves: SaveHead[] }> {
   const c = cursors.share;
   const [feeds, docs, shares, saves] = await env.DB.batch([
@@ -781,10 +794,15 @@ export async function readStreamPage(
         ORDER BY first_seen_at, user_did, post_uri, sharer_did LIMIT ?`
     ).bind(c.at, c.user, c.post, c.sharer, sharesSettledBefore, pageSize),
     // A save's id is assigned as it's written, so the stream is commit-ordered.
-    env.DB.prepare(`SELECT id, user_did FROM saved_articles WHERE id > ? ORDER BY id LIMIT ?`).bind(
-      cursors.save,
-      pageSize
-    ),
+    // It stops short of a recent save with no body yet, so the cursor doesn't pass
+    // it before its article is read.
+    env.DB.prepare(
+      `SELECT id, user_did FROM saved_articles
+        WHERE id > ?1 AND id < coalesce(
+          (SELECT min(id) FROM saved_articles
+            WHERE id > ?1 AND content IS NULL AND created_at >= ?2), 9223372036854775807)
+        ORDER BY id LIMIT ?3`
+    ).bind(cursors.save, savesSettledBefore, pageSize),
   ]);
   return {
     feeds: (feeds.results ?? []) as FeedHead[],
@@ -843,7 +861,6 @@ export async function readFollowsBackfillPage(
 
 /** Where a saves backfill has got to: the last save it finished, newest first. */
 interface SavesBackfillCursor {
-  at: number;
   id: number;
 }
 
@@ -858,19 +875,18 @@ export async function readSavesBackfillPage(
   pageSize: number
 ): Promise<{ ids: number[]; after: string; done: boolean }> {
   const after = parseJson<SavesBackfillCursor>(query.backfillSavesAfter);
+  // By id, which never changes, rather than saved_at, which a re-save moves.
   const rows = await env.DB.prepare(
-    `SELECT id, saved_at FROM saved_articles
-      WHERE user_did = ?1 AND (?2 IS NULL OR (saved_at, id) < (?2, ?3))
-      ORDER BY saved_at DESC, id DESC LIMIT ?4`
+    `SELECT id FROM saved_articles WHERE user_did = ? AND id < ? ORDER BY id DESC LIMIT ?`
   )
-    .bind(query.userDid, after?.at ?? null, after?.id ?? 0, pageSize)
-    .all<{ id: number; saved_at: number }>();
+    .bind(query.userDid, after?.id ?? Number.MAX_SAFE_INTEGER, pageSize)
+    .all<{ id: number }>();
   const saves = rows.results ?? [];
   const last = saves.at(-1);
   const done = saves.length < pageSize;
   return {
     ids: saves.map((s) => s.id),
-    after: done ? 'done' : JSON.stringify({ at: last!.saved_at, id: last!.id }),
+    after: done ? 'done' : JSON.stringify({ id: last!.id }),
     done,
   };
 }
@@ -1252,6 +1268,11 @@ export interface MatchHit {
 /** Which saved query a hit is for, as of the version the matcher loaded. */
 export type MatchTarget = Pick<ActiveQuery, 'userDid' | 'channelUuid' | 'updatedAt'>;
 
+// The page was saved again, under a new record, after the save that matched it
+// was removed: the match follows the save that's there now.
+const SAVE_MOVED = `(channel_matches.source_kind = 'save' AND excluded.source_kind = 'save'
+     AND channel_matches.item_key <> excluded.item_key)`;
+
 /** The key one story matches under in a channel: its normalized URL, else the item. */
 export function dedupKey(doc: Pick<MatchDoc, 'kind' | 'url' | 'itemKey'>): string {
   // A link's item key already is its normalized URL, as the follows surface keyed it.
@@ -1329,8 +1350,15 @@ export function matchInsertStatements(
              FROM (VALUES ${values}) AS v
             WHERE EXISTS (SELECT 1 FROM saved_queries
                            WHERE user_did = ? AND channel_uuid = ? AND updated_at = ?)
-           ON CONFLICT (user_did, channel_uuid, dedup_key) DO UPDATE SET body_skipped = 0
-             WHERE excluded.body_skipped = 0 AND channel_matches.body_skipped = 1`
+           ON CONFLICT (user_did, channel_uuid, dedup_key) DO UPDATE SET
+             body_skipped = CASE WHEN excluded.body_skipped = 0 THEN 0
+                                 ELSE channel_matches.body_skipped END,
+             item_key = CASE WHEN ${SAVE_MOVED} THEN excluded.item_key
+                             ELSE channel_matches.item_key END,
+             source_ref = CASE WHEN ${SAVE_MOVED} THEN excluded.source_ref
+                               ELSE channel_matches.source_ref END
+             WHERE (excluded.body_skipped = 0 AND channel_matches.body_skipped = 1)
+                OR ${SAVE_MOVED}`
         ).bind(
           userDid,
           channelUuid,

@@ -178,9 +178,10 @@ function createUnreadCountsStore() {
         const unread = searchChannelsStore.unreadFor(view.uuid, (m) => {
           if (m.kind === 'document') return itemLabelsStore.isSocialRead(m.itemKey);
           if (m.kind === 'save') {
-            // Read once archived; a save removed here doesn't count either.
-            const save = savesByRkey().get(m.itemKey);
-            return !save || isSavedItemArchived(save, itemLabelsStore.isArchived);
+            // Read once archived. A save this device doesn't hold yet keeps the
+            // server's word, so the count doesn't dip while saves load.
+            const save = savesByRkey().get(m.save.rkey);
+            return save ? isSavedItemArchived(save, itemLabelsStore.isArchived) : m.read;
           }
           return itemLabelsStore.isRead(m.itemKey);
         });

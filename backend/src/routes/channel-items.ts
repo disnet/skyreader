@@ -48,6 +48,7 @@ interface MatchRow {
   body_skipped: number;
   link_json: string | null;
   save_id: number | null;
+  save_rkey: string | null;
   save_url: string | null;
   save_title: string | null;
   save_description: string | null;
@@ -74,13 +75,21 @@ function parseJson<T>(raw: string | null): T | null {
   }
 }
 
+// The save behind a save match: the one it matched under, or, if that save was
+// removed and the page saved again (or its record moved), the reader's save of
+// the same URL.
+const MATCH_SAVE_ID_SQL = `coalesce(
+    (SELECT x.id FROM saved_articles x WHERE x.user_did = m.user_did AND x.rkey = m.item_key),
+    (SELECT x.id FROM saved_articles x
+      WHERE x.user_did = m.user_did AND x.url_normalized = m.dedup_key))`;
+
 // A match is read when its item carries the reader's read label, under the
 // item type the timeline and the document reader file it under. A save is read
 // once it's archived, under any of the keys its archive label can sit on (the
 // frontend's savedItemLabelKeys).
 const READ_SQL = `CASE WHEN m.source_kind = 'save' THEN EXISTS (
     SELECT 1 FROM saved_articles sa JOIN item_labels_cache il ON il.user_did = sa.user_did
-     WHERE sa.user_did = m.user_did AND sa.rkey = m.item_key
+     WHERE sa.id = ${MATCH_SAVE_ID_SQL}
        AND il.item_key IN (sa.item_guid, sa.record_uri, sa.url, sa.rkey)
        AND il.label = 'archived' AND il.deleted_at IS NULL)
   ELSE EXISTS (
@@ -90,8 +99,7 @@ const READ_SQL = `CASE WHEN m.source_kind = 'save' THEN EXISTS (
        AND il.label = 'read' AND il.deleted_at IS NULL) END`;
 
 // A save match whose save has since been removed isn't served or counted.
-const SAVE_GONE_SQL = `(m.source_kind = 'save' AND NOT EXISTS (
-    SELECT 1 FROM saved_articles sa WHERE sa.user_did = m.user_did AND sa.rkey = m.item_key))`;
+const SAVE_GONE_SQL = `(m.source_kind = 'save' AND ${MATCH_SAVE_ID_SQL} IS NULL)`;
 
 /** `before` is `<publishedAt>:<dedupKey>` from the previous page's `nextCursor`. */
 function parseCursor(raw: string | null): { at: number; key: string } | null {
@@ -145,14 +153,13 @@ export async function handleChannelItems(
               d.site_uri AS doc_site_uri, d.canonical_url AS doc_url,
               json_extract(d.record_json, '$.title') AS doc_title,
               json_extract(d.record_json, '$.description') AS doc_description,
-              sa.id AS save_id, sa.url AS save_url, sa.title AS save_title,
+              sa.id AS save_id, sa.rkey AS save_rkey, sa.url AS save_url, sa.title AS save_title,
               sa.description AS save_description, sa.domain AS save_domain,
               sa.image AS save_image
          FROM channel_matches m
          LEFT JOIN feed_items fi ON m.source_kind = 'feed' AND fi.seq = m.feed_seq
          LEFT JOIN documents_v2 d ON m.source_kind = 'document' AND d.record_uri = m.item_key
-         LEFT JOIN saved_articles sa
-           ON m.source_kind = 'save' AND sa.user_did = m.user_did AND sa.rkey = m.item_key
+         LEFT JOIN saved_articles sa ON m.source_kind = 'save' AND sa.id = ${MATCH_SAVE_ID_SQL}
         WHERE m.user_did = ? AND m.channel_uuid = ? AND NOT ${SAVE_GONE_SQL}
           AND (? IS NULL OR m.published_at < ? OR (m.published_at = ? AND m.dedup_key < ?))
         ORDER BY m.published_at DESC, m.dedup_key DESC
@@ -243,12 +250,12 @@ export async function handleChannelItems(
         bodySkipped: row.body_skipped === 1,
       });
     } else if (row.source_kind === 'save') {
-      if (row.save_id === null) continue;
+      if (row.save_rkey === null) continue;
       items.push({
         ...base,
         // The save itself is on the device; this is enough to find it, or show it.
         save: {
-          rkey: row.item_key,
+          rkey: row.save_rkey,
           url: row.save_url ?? '',
           title: row.save_title ?? '',
           description: row.save_description ?? '',

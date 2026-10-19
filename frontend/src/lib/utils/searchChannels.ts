@@ -84,6 +84,11 @@ export function matchSharers(match: ChannelMatch): FollowLinkSharer[] {
   }));
 }
 
+/** A save's row key in a channel's river, as `feedView` keys the Queue's saves. */
+export function savedRowKey(save: Pick<SavedItem, 'uri' | 'itemGuid' | 'rkey'>): string {
+  return save.uri || save.itemGuid || save.rkey;
+}
+
 /**
  * The river row for a match, keyed as read state is filed (so marking it read
  * here is the same label the timeline, the document reader or the follows
@@ -92,11 +97,6 @@ export function matchSharers(match: ChannelMatch): FollowLinkSharer[] {
  * this device doesn't hold (removed here, or not synced yet): a save row is the
  * save itself, keyed as the Queue keys it.
  */
-/** A save's row key in a channel's river, as `feedView` keys the Queue's saves. */
-export function savedRowKey(save: Pick<SavedItem, 'uri' | 'itemGuid' | 'rkey'>): string {
-  return save.uri || save.itemGuid || save.rkey;
-}
-
 export function matchToRow(match: ChannelMatch, ctx: MatchContext): SearchChannelRow | null {
   const published = new Date(match.publishedAt).toISOString();
   if (match.kind === 'feed') {

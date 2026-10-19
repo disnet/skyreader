@@ -16,6 +16,7 @@ import {
   type MatchDoc,
 } from '../src/services/saved-search';
 import { linkBodyKey } from '../src/services/link-bodies';
+import { normalizeArticleUrl } from '../src/utils/url-normalize';
 import { LINK_EXTRACTIONS_PER_READER_PER_DAY } from '../src/durable-objects/percolator';
 
 const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
@@ -1100,7 +1101,7 @@ describe('Percolator: saves', () => {
   /** Save a page into the reader's Library; returns its rkey. */
   async function save(
     user: TestUser,
-    page: { title: string; content?: string; url?: string; savedAt?: number }
+    page: { title: string; content?: string | null; url?: string; savedAt?: number }
   ): Promise<string> {
     saveSeq++;
     const rkey = `3s${saveSeq}${Math.random().toString(36).slice(2, 10)}`;
@@ -1115,7 +1116,7 @@ describe('Percolator: saves', () => {
         `at://${user.did}/app.skyreader.feed.saved/${rkey}`,
         page.url ?? `https://saved.example/${rkey}`,
         page.title,
-        page.content ?? '',
+        page.content === undefined ? '' : page.content,
         savedAt,
         savedAt
       )
@@ -1222,6 +1223,116 @@ describe('Percolator: saves', () => {
     });
     await settle();
     expect(await matchedKeys(user, uuid)).toEqual([guid]);
+  });
+
+  it('follows a page saved again after its save was removed', async () => {
+    const user = await createUser();
+    const url = 'https://saved.example/heat-pump-again';
+    const first = await save(user, { title: 'Heat pump notes', url });
+    const uuid = newUuid();
+    await putChannel(user, uuid, {
+      mode: 'feed',
+      query: '"heat pump"',
+      sourceMode: 'include',
+      sourceKeys: [],
+      librarySources: ['saves'],
+    });
+    await settle();
+    await env.DB.prepare(`DELETE FROM saved_articles WHERE user_did = ? AND rkey = ?`)
+      .bind(user.did, first)
+      .run();
+    const again = await save(user, { title: 'Heat pump notes', url });
+    await drain();
+
+    const response = await call(user, `/api/channels/${uuid}/items`);
+    const body = (await response.json()) as ItemsBody & {
+      items: { save?: { rkey: string } }[];
+    };
+    expect(body.items.map((i) => i.save?.rkey)).toEqual([again]);
+    expect(body.unread).toBe(1);
+  });
+
+  it('follows a backed save moved to a new record', async () => {
+    const user = await createUser();
+    const url = 'https://saved.example/heat-pump-backed';
+    const first = await save(user, { title: 'Heat pump notes', url });
+    await env.DB.prepare(
+      `UPDATE saved_articles SET url_normalized = ? WHERE user_did = ? AND rkey = ?`
+    )
+      .bind(normalizeArticleUrl(url), user.did, first)
+      .run();
+    const uuid = newUuid();
+    await putChannel(user, uuid, {
+      mode: 'feed',
+      query: '"heat pump"',
+      sourceMode: 'include',
+      sourceKeys: [],
+      librarySources: ['saves'],
+    });
+    await settle();
+    // A Semble or Margin re-save rewrites the rkey in place.
+    await env.DB.prepare(`UPDATE saved_articles SET rkey = 'moved1234567890' WHERE rkey = ?`)
+      .bind(first)
+      .run();
+
+    const response = await call(user, `/api/channels/${uuid}/items`);
+    const body = (await response.json()) as ItemsBody & {
+      items: { save?: { rkey: string } }[];
+    };
+    expect(body.items.map((i) => i.save?.rkey)).toEqual(['moved1234567890']);
+  });
+
+  it('waits for a new save whose article is still being read', async () => {
+    const user = await createUser();
+    const uuid = newUuid();
+    await putChannel(user, uuid, {
+      mode: 'feed',
+      query: '"heat pump"',
+      sourceMode: 'include',
+      sourceKeys: [],
+      librarySources: ['saves'],
+    });
+    await settle();
+    const rkey = await save(user, { title: 'Install notes', content: null });
+    await drain();
+    expect(await matchedKeys(user, uuid)).toEqual([]);
+
+    await env.DB.prepare(`UPDATE saved_articles SET content = ? WHERE user_did = ? AND rkey = ?`)
+      .bind('<p>All about the heat pump.</p>', user.did, rkey)
+      .run();
+    await drain();
+    expect(await matchedKeys(user, uuid)).toEqual([rkey]);
+  });
+
+  it('adding saves to a search keeps the matches it has', async () => {
+    const user = await createUser();
+    const key = await subscribe(user, FEED_A);
+    const guid = await ingest(FEED_A, { title: 'Heat pump story' });
+    const config = {
+      mode: 'feed',
+      query: '"heat pump"',
+      sourceMode: 'include',
+      sourceKeys: [key],
+    };
+    const uuid = newUuid();
+    await putChannel(user, uuid, config);
+    await settle();
+    const before = await env.DB.prepare(
+      `SELECT matched_at FROM channel_matches WHERE user_did = ? AND channel_uuid = ?`
+    )
+      .bind(user.did, uuid)
+      .first<{ matched_at: number }>();
+    const rkey = await save(user, { title: 'Heat pump notes', savedAt: Date.now() - 400 * DAY });
+
+    await putChannel(user, uuid, { ...config, librarySources: ['saves'] });
+    await settle();
+    expect((await matchedKeys(user, uuid)).sort()).toEqual([guid, rkey].sort());
+    const after = await env.DB.prepare(
+      `SELECT matched_at FROM channel_matches WHERE user_did = ? AND channel_uuid = ? AND item_key = ?`
+    )
+      .bind(user.did, uuid, guid)
+      .first<{ matched_at: number }>();
+    expect(after?.matched_at).toBe(before?.matched_at);
   });
 
   it('previews saves beside the sources', async () => {

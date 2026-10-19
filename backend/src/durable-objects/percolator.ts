@@ -87,6 +87,12 @@ const DOC_SETTLE_MS = 2_000;
  * against the five-minute target and covers a slow commit.
  */
 const SHARE_SETTLE_MS = 60_000;
+/**
+ * A save whose article is still being read (a stub from a Semble or Margin
+ * collection, a save from another app) waits this long for its body before it's
+ * matched on its title and description alone.
+ */
+const SAVE_SETTLE_MS = 5 * 60_000;
 /** Pending backfills advanced per pass, and how much of each per step. */
 const BACKFILL_QUERIES_PER_PASS = 4;
 const BACKFILL_SOURCES_PER_STEP = 10;
@@ -98,6 +104,8 @@ const BACKFILL_RESERVE_SUBREQUESTS = 100;
 const FOLLOWS_BACKFILL_PAGE = 200;
 /** Saves per step of a saves backfill (each brings its body, so fewer). */
 const SAVES_BACKFILL_PAGE = 50;
+/** How much of each save a preview reads. */
+const PREVIEW_SAVE_BODY_CHARS = 16_000;
 /** Articles behind follows links read per reader per day; past it a link matches on its card. */
 export const LINK_EXTRACTIONS_PER_READER_PER_DAY = 300;
 /** Articles read per pass, all at once (each is one proxy round-trip). */
@@ -246,7 +254,11 @@ export class Percolator extends DurableObject<Env> {
       { left: 0, quiet: true }
     );
     // After the feeds, so a story both carry previews as the feed item, as it matches.
-    if (saves.ids.length > 0) loaded.push(...(await loadSaveDocs(this.env, saves.ids)));
+    // A save's opening stands in for it, as a feed item's inline text does: a
+    // preview runs on every pause in typing.
+    if (saves.ids.length > 0) {
+      loaded.push(...(await loadSaveDocs(this.env, saves.ids, PREVIEW_SAVE_BODY_CHARS)));
+    }
     const query: ActiveQuery = {
       userDid: saves.did,
       channelUuid: '',
@@ -376,7 +388,8 @@ export class Percolator extends DurableObject<Env> {
           cursors,
           PAGE_SIZE,
           now - DOC_SETTLE_MS,
-          now - SHARE_SETTLE_MS
+          now - SHARE_SETTLE_MS,
+          now - SAVE_SETTLE_MS
         );
         budget.subrequests -= 4;
         outcome.rounds++;
@@ -963,7 +976,8 @@ export class Percolator extends DurableObject<Env> {
           WHERE matched_at < ?
             AND NOT EXISTS (
               SELECT 1 FROM channel_match_sources s
-                JOIN saved_articles sa ON sa.user_did = s.user_did AND sa.rkey = s.source_ref
+                JOIN saved_articles sa ON sa.user_did = s.user_did
+                 AND (sa.rkey = s.source_ref OR sa.url_normalized = s.dedup_key)
                WHERE s.user_did = channel_matches.user_did
                  AND s.channel_uuid = channel_matches.channel_uuid
                  AND s.dedup_key = channel_matches.dedup_key
