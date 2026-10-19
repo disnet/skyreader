@@ -81,6 +81,8 @@
     onCreateConnection,
     isConnectionSaved,
     connectionsNewSince = null,
+    newConnections = 0,
+    onMarkConnectionsSeen,
     viewerDid,
   }: {
     laneRow?: LaneRowVM[];
@@ -111,6 +113,10 @@
     /** The reader opened a save with new Semble connections since this time
      *  (ms): open on Connections, with those first and marked New. */
     connectionsNewSince?: number | null;
+    /** How many new connections the save's badge counts. */
+    newConnections?: number;
+    /** Clear the save's new connections: the badge, and the New marks here. */
+    onMarkConnectionsSeen?: () => void;
     /** The signed-in reader: their own connections are never news to them. */
     viewerDid?: string;
   } = $props();
@@ -276,10 +282,13 @@
   let collectionsExpanded = $state(false);
   let similarExpanded = $state(false);
   // A different article is a different graph: nothing stays open across it.
-  let openedFor: SembleContextVM | undefined = undefined;
+  // Keyed on the article, not the context: the reader refreshes the context in
+  // place (names arriving, its own new edges merged in).
+  let openedFor: unknown = undefined;
   $effect(() => {
-    if (sembleContext !== openedFor) {
-      openedFor = sembleContext;
+    const key = itemUrl ?? sembleContext;
+    if (key !== openedFor) {
+      openedFor = key;
       openGroups = [];
       allGroupsOpen = false;
       collectionsExpanded = false;
@@ -1057,6 +1066,25 @@
            to a collection, one to another article — which is why they share a
            tab and a count. -->
       <div class="discussion-panel graph" {...tabPanelAttrs('connections')}>
+        <!-- Counted as the badge counts, so the badge can always be cleared here. -->
+        {#if onMarkConnectionsSeen && newConnections > 0}
+          <div class="connections-news">
+            <span class="connections-news-count">{newConnections} new</span>
+            <button
+              type="button"
+              class="connections-news-clear"
+              aria-label="Mark {newConnections} new {newConnections === 1
+                ? 'connection'
+                : 'connections'} as seen"
+              onclick={(e) => {
+                e.stopPropagation();
+                // The button goes with the news; keep the reader's place.
+                e.currentTarget.closest<HTMLElement>('.discussion-panel')?.focus();
+                onMarkConnectionsSeen?.();
+              }}>Mark as seen</button
+            >
+          </div>
+        {/if}
         {#if sembleContext}
           {#if sembleContext.collections.length}
             <p class="semble-filed">
@@ -1810,6 +1838,42 @@
     font-size: var(--text-2xs);
     font-weight: var(--weight-medium);
     color: var(--color-primary);
+  }
+
+  /* What's new since the last look, and the one way to say you've seen it:
+     opening the save keeps the marks, so the reader decides when they go. */
+  .connections-news {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+    font-size: var(--text-sm);
+  }
+
+  .connections-news-count {
+    font-weight: var(--weight-medium);
+    color: var(--color-primary);
+  }
+
+  .connections-news-clear {
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+  }
+
+  @media (hover: hover) {
+    .connections-news-clear:hover {
+      color: var(--color-primary);
+    }
+  }
+
+  .connections-news-clear:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+    border-radius: 4px;
   }
 
   /* Quiet at rest and quiet in a column of twenty: the bookmark carries no fill

@@ -74,6 +74,8 @@ function render(
     isConnectionSaved?: (url: string) => boolean;
     onCreateConnection?: () => void;
     connectionsNewSince?: number | null;
+    newConnections?: number;
+    onMarkConnectionsSeen?: () => void;
     viewerDid?: string;
   },
   tab?: 'connections' | 'related'
@@ -92,6 +94,8 @@ function render(
       isConnectionSaved: props.isConnectionSaved,
       onCreateConnection: props.onCreateConnection,
       connectionsNewSince: props.connectionsNewSince,
+      newConnections: props.newConnections,
+      onMarkConnectionsSeen: props.onMarkConnectionsSeen,
       viewerDid: props.viewerDid,
     },
   });
@@ -309,6 +313,32 @@ describe('AtmospherePanel Semble connections', () => {
     expect(rows[0].textContent).toContain('The new piece');
     expect(rows[0].querySelector('.connection-new')?.textContent).toBe('New');
     expect(rows[1].querySelector('.connection-new')).toBeNull();
+  });
+
+  it('offers to mark the new connections seen, counted as the badge counts them', () => {
+    let cleared = 0;
+    // Semble dates this edge before the last look; the badge still counts it,
+    // so the reader can still clear it here.
+    const late = { ...connection('in'), createdAt: '2026-01-01T00:00:00Z' };
+    const target = render({
+      sembleContext: { ...emptyContext, connections: [late] },
+      connectionsNewSince: Date.parse('2026-02-01T00:00:00Z'),
+      newConnections: 2,
+      onMarkConnectionsSeen: () => cleared++,
+    });
+    expect(target.querySelector('.connections-news-count')?.textContent).toBe('2 new');
+    target.querySelector<HTMLButtonElement>('.connections-news-clear')?.click();
+    expect(cleared).toBe(1);
+
+    const nothingNew = render(
+      {
+        sembleContext: { ...emptyContext, connections: [late] },
+        newConnections: 0,
+        onMarkConnectionsSeen: () => cleared++,
+      },
+      'connections'
+    );
+    expect(nothingNew.querySelector('.connections-news')).toBeNull();
   });
 
   it('never marks the reader’s own connection as new', () => {
