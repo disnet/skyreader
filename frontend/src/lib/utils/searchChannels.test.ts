@@ -10,7 +10,7 @@ import {
   searchChannelUnread,
 } from './searchChannels';
 import { ApiError, OfflineError, type ChannelMatch } from '$lib/services/api';
-import type { SocialDocument, User } from '$lib/types';
+import type { SavedItem, SocialDocument, User } from '$lib/types';
 
 const base = {
   itemKey: 'guid-1',
@@ -162,6 +162,23 @@ describe('matchToRow', () => {
     expect(row.item.site).toBe('b.example');
     expect(row.item.sharerCount).toBe(3);
     expect(row.item.sharers[0].name).toBe('Maya');
+  });
+
+  it('turns a save match into this device’s save, keyed as the Queue keys it', () => {
+    const local = { rkey: 'r1', uri: 'at://me/app.skyreader.feed.saved/r1' } as SavedItem;
+    const match = {
+      ...base,
+      itemKey: 'r1',
+      kind: 'save',
+      save: { rkey: 'r1', url: '', title: 'Kept', description: '', domain: '', image: null },
+    } as ChannelMatch;
+    const row = matchToRow(match, {
+      ...ctx,
+      localSave: (rkey) => (rkey === 'r1' ? local : undefined),
+    });
+    expect(row).toEqual({ type: 'saved', item: local, key: local.uri });
+    // Removed on this device: gone from the channel at once.
+    expect(matchToRow(match, ctx)).toBeNull();
   });
 });
 

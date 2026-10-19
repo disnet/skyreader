@@ -5,8 +5,9 @@
  * Searching an index with a query is backwards for alerts, and the per-reader
  * search index only holds what a reader has already read or saved. So this
  * pulls new items from D1 — `feed_items` by `seq` (RSS and newsletters),
- * `documents_v2` by `indexed_at`, and `follow_link_shares` by `first_seen_at`
- * (links the reader's Bluesky follows shared) — loads full bodies only for
+ * `documents_v2` by `indexed_at`, `follow_link_shares` by `first_seen_at`
+ * (links the reader's Bluesky follows shared), and `saved_articles` by `id`
+ * (the reader's own saves, for a channel that takes in the Library) — loads full bodies only for
  * items some live query covers, indexes the batch into a scratch FTS5 table with the search
  * tokenizer, runs each candidate query against just its own sources' rows, and
  * writes the hits to `channel_matches`. Same tokenizer and the same query
@@ -39,10 +40,12 @@ import {
   isSavedSearchEnabled,
   loadActiveQueries,
   loadMatchDocs,
+  loadSaveDocs,
   matchInsertStatements,
   queryCovers,
   readBackfillPage,
   readFollowsBackfillPage,
+  readSavesBackfillPage,
   readSharesOfUrl,
   readStreamPage,
   shareCursorOf,
@@ -52,6 +55,7 @@ import {
   type FeedHead,
   type MatchDoc,
   type MatchHit,
+  type SaveHead,
   type ShareHead,
   type StreamCursors,
 } from '../services/saved-search';
@@ -83,6 +87,12 @@ const DOC_SETTLE_MS = 2_000;
  * against the five-minute target and covers a slow commit.
  */
 const SHARE_SETTLE_MS = 60_000;
+/**
+ * A save whose article is still being read (a stub from a Semble or Margin
+ * collection, a save from another app) waits this long for its body before it's
+ * matched on its title and description alone.
+ */
+const SAVE_SETTLE_MS = 5 * 60_000;
 /** Pending backfills advanced per pass, and how much of each per step. */
 const BACKFILL_QUERIES_PER_PASS = 4;
 const BACKFILL_SOURCES_PER_STEP = 10;
@@ -92,6 +102,10 @@ const BACKFILL_RESERVE_MS = 3_000;
 const BACKFILL_RESERVE_SUBREQUESTS = 100;
 /** Shares per step of a follows backfill. */
 const FOLLOWS_BACKFILL_PAGE = 200;
+/** Saves per step of a saves backfill (each brings its body, so fewer). */
+const SAVES_BACKFILL_PAGE = 50;
+/** How much of each save a preview reads. */
+const PREVIEW_SAVE_BODY_CHARS = 16_000;
 /** Articles behind follows links read per reader per day; past it a link matches on its card. */
 export const LINK_EXTRACTIONS_PER_READER_PER_DAY = 300;
 /** Articles read per pass, all at once (each is one proxy round-trip). */
@@ -112,7 +126,7 @@ const MARK_CLOSE = '\u0003';
 
 /** One item a preview matched, newest first. */
 export interface PreviewHit {
-  kind: 'feed' | 'document';
+  kind: 'feed' | 'document' | 'save';
   itemKey: string;
   title: string;
   url: string | null;
@@ -229,7 +243,9 @@ export class Percolator extends DurableObject<Env> {
     ftsQuery: string,
     feeds: FeedHead[],
     docs: DocHead[],
-    scope: { feedUrls: string[]; docScopes: ActiveQuery['docScopes'] }
+    scope: { feedUrls: string[]; docScopes: ActiveQuery['docScopes'] },
+    /** The reader's saves to look through too, and whose they are. */
+    saves: { did: string; ids: number[] } = { did: '', ids: [] }
   ): Promise<PreviewHit[]> {
     const loaded = await loadMatchDocs(
       this.env,
@@ -237,8 +253,14 @@ export class Percolator extends DurableObject<Env> {
       docs.map((d) => d.record_uri),
       { left: 0, quiet: true }
     );
+    // After the feeds, so a story both carry previews as the feed item, as it matches.
+    // A save's opening stands in for it, as a feed item's inline text does: a
+    // preview runs on every pause in typing.
+    if (saves.ids.length > 0) {
+      loaded.push(...(await loadSaveDocs(this.env, saves.ids, PREVIEW_SAVE_BODY_CHARS)));
+    }
     const query: ActiveQuery = {
-      userDid: '',
+      userDid: saves.did,
       channelUuid: '',
       ftsQuery,
       updatedAt: 0,
@@ -249,6 +271,8 @@ export class Percolator extends DurableObject<Env> {
       feedUrls: new Set(scope.feedUrls),
       docScopes: scope.docScopes,
       coversFollows: false,
+      coversSaves: saves.ids.length > 0,
+      backfillSavesAfter: 'done',
     };
     // One hit per story, as the channel keeps one match per story.
     const seen = new Set<string>();
@@ -260,7 +284,7 @@ export class Percolator extends DurableObject<Env> {
         return true;
       })
       .map(({ doc, snippet }) => ({
-        kind: doc.kind === 'document' ? ('document' as const) : ('feed' as const),
+        kind: doc.kind === 'document' || doc.kind === 'save' ? doc.kind : ('feed' as const),
         itemKey: doc.itemKey,
         title: doc.title,
         url: doc.url,
@@ -340,12 +364,13 @@ export class Percolator extends DurableObject<Env> {
       // and with no queries there is nothing to match: keep up without reading
       // a single body, so turning on the first query doesn't face a backlog.
       cursors = await streamHeads(this.env);
-      budget.subrequests -= 3;
+      budget.subrequests -= 4;
       this.setMeta('cursors', JSON.stringify(cursors));
-    } else if (!saved.share) {
-      // Saved before follows matching: that stream starts at its head.
-      cursors = { ...saved, share: (await streamHeads(this.env)).share };
-      budget.subrequests -= 3;
+    } else if (!saved.share || saved.save === undefined) {
+      // Saved before follows (or saves) matching: that stream starts at its head.
+      const heads = await streamHeads(this.env);
+      cursors = { ...saved, share: saved.share ?? heads.share, save: saved.save ?? heads.save };
+      budget.subrequests -= 4;
       this.setMeta('cursors', JSON.stringify(cursors));
     } else {
       cursors = saved as Required<StreamCursors>;
@@ -363,12 +388,21 @@ export class Percolator extends DurableObject<Env> {
           cursors,
           PAGE_SIZE,
           now - DOC_SETTLE_MS,
-          now - SHARE_SETTLE_MS
+          now - SHARE_SETTLE_MS,
+          now - SAVE_SETTLE_MS
         );
-        budget.subrequests -= 3;
+        budget.subrequests -= 4;
         outcome.rounds++;
-        if (page.feeds.length === 0 && page.docs.length === 0 && page.shares.length === 0) break;
-        outcome.scanned += page.feeds.length + page.docs.length + page.shares.length;
+        if (
+          page.feeds.length === 0 &&
+          page.docs.length === 0 &&
+          page.shares.length === 0 &&
+          page.saves.length === 0
+        ) {
+          break;
+        }
+        outcome.scanned +=
+          page.feeds.length + page.docs.length + page.shares.length + page.saves.length;
 
         const windowStart = now - MATCH_WINDOW_MS;
         const hits = await this.matchHeads(
@@ -377,7 +411,8 @@ export class Percolator extends DurableObject<Env> {
           page.shares,
           queries,
           windowStart,
-          budget
+          budget,
+          page.saves
         );
         outcome.candidates += hits.candidates;
         outcome.hits += await this.writeHits(hits.hits, budget);
@@ -388,12 +423,14 @@ export class Percolator extends DurableObject<Env> {
             ? { at: page.docs.at(-1)!.indexed_at, uri: page.docs.at(-1)!.record_uri }
             : cursors.doc,
           share: page.shares.length ? shareCursorOf(page.shares.at(-1)!) : cursors.share,
+          save: page.saves.at(-1)?.id ?? cursors.save,
         };
         this.setMeta('cursors', JSON.stringify(cursors));
         outcome.more =
           page.feeds.length === PAGE_SIZE ||
           page.docs.length === PAGE_SIZE ||
-          page.shares.length === PAGE_SIZE;
+          page.shares.length === PAGE_SIZE ||
+          page.saves.length === PAGE_SIZE;
         if (!outcome.more) break;
       }
 
@@ -452,14 +489,19 @@ export class Percolator extends DurableObject<Env> {
     return outcome;
   }
 
-  /** Bodies for the covered items among `feeds`/`docs`/`shares`, matched against `queries`. */
+  /**
+   * Bodies for the covered items among `feeds`/`docs`/`shares`/`saves`, matched
+   * against `queries`. Saves aren't held to the window: a save is new when it
+   * reaches the stream, and a look back takes in the whole Library.
+   */
   private async matchHeads(
     feeds: FeedHead[],
     docs: DocHead[],
     shares: ShareHead[],
     queries: ActiveQuery[],
     windowStart: number,
-    budget: PassBudget
+    budget: PassBudget,
+    saves: SaveHead[] = []
   ): Promise<{ hits: MatchHit[]; candidates: number }> {
     // Items no query covers are skipped here, before a body is read: the work
     // follows what saved searches watch, not everything ingested.
@@ -480,7 +522,15 @@ export class Percolator extends DurableObject<Env> {
         s.shared_at >= windowStart &&
         queries.some((q) => q.coversFollows && q.userDid === s.user_did)
     );
-    if (seqs.length === 0 && uris.length === 0 && coveredShares.length === 0) {
+    const saveIds = saves
+      .filter((s) => queries.some((q) => q.coversSaves && q.userDid === s.user_did))
+      .map((s) => s.id);
+    if (
+      seqs.length === 0 &&
+      uris.length === 0 &&
+      coveredShares.length === 0 &&
+      saveIds.length === 0
+    ) {
       return { hits: [], candidates: 0 };
     }
 
@@ -491,6 +541,11 @@ export class Percolator extends DurableObject<Env> {
       budget.subrequests -= Math.ceil(seqs.length / 80) + Math.ceil(uris.length / 80) + 1;
     }
     if (coveredShares.length) loaded.push(...(await this.shareDocs(coveredShares, budget)));
+    // Last, so a story a feed carries too keeps the feed item as its match.
+    if (saveIds.length) {
+      loaded.push(...(await loadSaveDocs(this.env, saveIds)));
+      budget.subrequests -= Math.ceil(saveIds.length / 80);
+    }
     budget.subrequests -= r2Before - budget.r2.left;
     return { hits: this.match(loaded, queries), candidates: loaded.length };
   }
@@ -783,7 +838,8 @@ export class Percolator extends DurableObject<Env> {
 
   /**
    * Advance one pending backfill by a few sources (feeds, then document authors,
-   * then the reader's stored follows shares), then record where it got to.
+   * then the reader's stored follows shares, then their saves), then record
+   * where it got to.
    * 'stale' when the query was edited since it was loaded.
    */
   private async backfillStep(
@@ -825,19 +881,39 @@ export class Percolator extends DurableObject<Env> {
       followsAfter = follows.after;
       done = follows.done;
     }
+    // Then the reader's saves, all of them, newest first.
+    let savesAfter = query.backfillSavesAfter;
+    if (done && query.coversSaves && savesAfter !== 'done') {
+      const saves = await readSavesBackfillPage(this.env, query, SAVES_BACKFILL_PAGE);
+      budget.subrequests -= 1;
+      const matched = await this.matchHeads(
+        [],
+        [],
+        [],
+        [query],
+        since,
+        budget,
+        saves.ids.map((id) => ({ id, user_did: query.userDid }))
+      );
+      outcome.candidates += matched.candidates;
+      outcome.hits += await this.writeHits(matched.hits, budget);
+      savesAfter = saves.after;
+      done = saves.done;
+    }
     outcome.backfillSteps++;
     // Guarded on the version this step matched for: an edit in the meantime
     // already reset the backfill, and this must not mark it done.
     const saved = await this.env.DB.prepare(
       `UPDATE saved_queries
           SET backfill_feed_after = ?, backfill_doc_after = ?, backfill_follows_after = ?,
-              backfill_state = ?
+              backfill_saves_after = ?, backfill_state = ?
         WHERE user_did = ? AND channel_uuid = ? AND updated_at = ?`
     )
       .bind(
         page.feedAfter,
         page.docAfter,
         followsAfter,
+        savesAfter,
         done ? 'done' : 'pending',
         query.userDid,
         query.channelUuid,
@@ -850,6 +926,7 @@ export class Percolator extends DurableObject<Env> {
     query.backfillFeedAfter = page.feedAfter;
     query.backfillDocAfter = page.docAfter;
     query.backfillFollowsAfter = followsAfter;
+    query.backfillSavesAfter = savesAfter;
     query.backfillState = done ? 'done' : 'pending';
     return saved.meta.changes > 0 ? 'stepped' : 'stale';
   }
@@ -878,7 +955,8 @@ export class Percolator extends DurableObject<Env> {
       this.env.DB.prepare(
         `UPDATE saved_queries
             SET backfill_state = 'pending', backfill_feed_after = '', backfill_doc_after = '',
-                backfill_follows_after = '', updated_at = updated_at + 1
+                backfill_follows_after = '', backfill_saves_after = '',
+                updated_at = updated_at + 1
           WHERE ${named}`
       ),
     ]);
@@ -889,9 +967,31 @@ export class Percolator extends DurableObject<Env> {
     const last = Number(this.getMeta('retention_at')) || 0;
     if (Date.now() - last < RETENTION_INTERVAL_MS) return;
     const cutoff = Date.now() - MATCH_RETENTION_MS;
+    // A story one of the reader's saves still matches stays: a save is matched
+    // once, by the look back, and the channel shouldn't forget it while it's kept.
+    // A story's sources go with it.
     await this.env.DB.batch([
-      this.env.DB.prepare(`DELETE FROM channel_matches WHERE matched_at < ?`).bind(cutoff),
-      this.env.DB.prepare(`DELETE FROM channel_match_sources WHERE matched_at < ?`).bind(cutoff),
+      this.env.DB.prepare(
+        `DELETE FROM channel_matches
+          WHERE matched_at < ?
+            AND NOT EXISTS (
+              SELECT 1 FROM channel_match_sources s
+                JOIN saved_articles sa ON sa.user_did = s.user_did
+                 AND (sa.rkey = s.source_ref OR sa.url_normalized = s.dedup_key)
+               WHERE s.user_did = channel_matches.user_did
+                 AND s.channel_uuid = channel_matches.channel_uuid
+                 AND s.dedup_key = channel_matches.dedup_key
+                 AND s.source_kind = 'save')`
+      ).bind(cutoff),
+      this.env.DB.prepare(
+        `DELETE FROM channel_match_sources
+          WHERE matched_at < ?
+            AND NOT EXISTS (
+              SELECT 1 FROM channel_matches m
+               WHERE m.user_did = channel_match_sources.user_did
+                 AND m.channel_uuid = channel_match_sources.channel_uuid
+                 AND m.dedup_key = channel_match_sources.dedup_key)`
+      ).bind(cutoff),
     ]);
 
     // Stored articles go when the shares that wanted them do. A failure here

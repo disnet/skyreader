@@ -18,6 +18,8 @@ import {
   isSavedRowArchived,
 } from './feedView.svelte';
 import { liveDb } from '$lib/services/liveDb.svelte';
+import { isSavedItemArchived } from '$lib/utils/savedPile';
+import type { SavedItem } from '$lib/types';
 import { reportClientError } from '$lib/services/telemetry';
 import {
   isRssSource,
@@ -164,17 +166,25 @@ function createUnreadCountsStore() {
 
     const counts = new Map<number, number>();
     const sourceGroups = buildSourceGroups(subscriptionsStore.subscriptions);
+    // Built once, and only if some saved search has matched a save.
+    let byRkey: Map<string, SavedItem> | null = null;
+    const savesByRkey = () => (byRkey ??= new Map(savesStore.articles.map((a) => [a.rkey, a])));
     for (const view of filteredViewsStore.views) {
       if (view.id == null) continue;
 
       // Saved searches: the server's count of their matches, kept current as
       // matches are read here (searchChannelsStore).
       if (channelQuery(view)) {
-        const unread = searchChannelsStore.unreadFor(view.uuid, (m) =>
-          m.kind === 'document'
-            ? itemLabelsStore.isSocialRead(m.itemKey)
-            : itemLabelsStore.isRead(m.itemKey)
-        );
+        const unread = searchChannelsStore.unreadFor(view.uuid, (m) => {
+          if (m.kind === 'document') return itemLabelsStore.isSocialRead(m.itemKey);
+          if (m.kind === 'save') {
+            // Read once archived. A save this device doesn't hold yet keeps the
+            // server's word, so the count doesn't dip while saves load.
+            const save = savesByRkey().get(m.save.rkey);
+            return save ? isSavedItemArchived(save, itemLabelsStore.isArchived) : m.read;
+          }
+          return itemLabelsStore.isRead(m.itemKey);
+        });
         counts.set(view.id, unread ?? 0);
         continue;
       }

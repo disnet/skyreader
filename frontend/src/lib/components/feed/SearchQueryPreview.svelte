@@ -13,9 +13,11 @@
     query: string;
     sourceMode: 'all' | 'include' | 'exclude';
     sourceKeys: string[];
+    /** Look through every save too. */
+    includeSaves?: boolean;
   }
 
-  let { query, sourceMode, sourceKeys }: Props = $props();
+  let { query, sourceMode, sourceKeys, includeSaves = false }: Props = $props();
 
   const DEBOUNCE_MS = 400;
 
@@ -36,7 +38,12 @@
   });
 
   $effect(() => {
-    const params = { query, sourceMode, sourceKeys: JSON.parse(keysKey) as string[] };
+    const params = {
+      query,
+      sourceMode,
+      sourceKeys: JSON.parse(keysKey) as string[],
+      librarySources: includeSaves ? ['saves' as const] : undefined,
+    };
     if (!available) return;
     const controller = new AbortController();
     const timer = setTimeout(async () => {
@@ -60,12 +67,18 @@
     {#if phase === 'done' && preview && preview.total === 0}
       <p class="preview-head">
         {preview.scanned === 0
-          ? 'Nothing has come in from these sources this past month.'
-          : 'Nothing recent from these sources matches yet.'}
+          ? includeSaves
+            ? 'Nothing has come in from these sources this past month, and you have no saves.'
+            : 'Nothing has come in from these sources this past month.'
+          : includeSaves
+            ? 'Nothing recent from these sources, or in your saves, matches yet.'
+            : 'Nothing recent from these sources matches yet.'}
       </p>
     {:else if phase === 'done' && preview}
       <p class="preview-head">
-        {preview.total.toLocaleString()} of {scannedLabel} from these sources match:
+        {preview.total.toLocaleString()} of {scannedLabel} from these sources{includeSaves
+          ? ' and your saves'
+          : ''} match:
       </p>
       <ul>
         {#each preview.hits as hit (`${hit.kind}:${hit.itemKey}`)}

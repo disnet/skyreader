@@ -330,7 +330,10 @@ only holds what a reader already touched, and alerts are for what they haven't.
 - **Channel writes.** A channel config carrying `query` is mirrored into `saved_queries` on every
   channel write (`syncSavedQueries`, which reads the rows back from D1).
 - **Matching.** The `Percolator` DO pulls new `feed_items` (by `seq`), `documents_v2` rows (by
-  `indexed_at`) and `follow_link_shares` (by `first_seen_at`). It loads full bodies (R2 included)
+  `indexed_at`), `follow_link_shares` (by `first_seen_at`) and, for a query whose channel takes in
+  the reader's saves (`saved_queries.include_saves`, from `librarySources`), `saved_articles` (by
+  `id`). A save is matched on its kept body, looked back over whole (not 30 days), read once
+  archived, served only while it exists, and spared by retention. It loads full bodies (R2 included)
   only for items some entitled query covers, and indexes the batch into a scratch FTS5 table with
   the search tokenizer. It writes hits to `channel_matches`, one per normalized URL per channel,
   and every source a story arrived from to `channel_match_sources`.

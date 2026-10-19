@@ -242,8 +242,10 @@ dropdown's), whatever it reads from. A feed-mode channel can also take in the Li
 your Library" in `SourcePicker`; a new channel defaults to both (not for a guest or a seeded one).
 `feedView`'s `libraryItems` merges those saves into `combinedAll` as `{type: 'saved'}` rows dated
 by `savedAt`, dropping a save of a page the river already shows (by guid or url); an archived save
-counts as read, so the unread filter shows the Queue. Saved-search channels ignore it for now, and
-the server's unread counts don't include saves. Saved-mode channels still open and edit, but the
+counts as read, so the unread filter shows the Queue. In a saved search the server matches saves
+instead (`'saves'` only; the Shelf alone isn't searched), served as `kind: 'save'` matches that
+`matchToRow` turns into this device's save (none if it isn't here), read once archived. Plain
+channels' unread counts don't include saves. Saved-mode channels still open and edit, but the
 editor no longer offers making one; a later change folds them into feed channels.
 
 ### Saved searches

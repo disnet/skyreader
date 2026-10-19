@@ -316,8 +316,11 @@ function createSearchChannelsStore() {
     return searchChannelUnread(count.unread, count.served, isRead);
   }
 
-  // The open channel's snippets and sharers, by row key (a match's itemKey).
-  let byKey = $derived(new Map(matches.map((m) => [m.itemKey, m])));
+  // The open channel's snippets and sharers, by a match's itemKey, or for a save
+  // match its save's rkey (a save row's key isn't one the server knows).
+  let byKey = $derived(
+    new Map(matches.map((m) => [m.kind === 'save' ? m.save.rkey : m.itemKey, m]))
+  );
 
   return {
     get uuid() {

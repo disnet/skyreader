@@ -36,7 +36,12 @@ import {
 import { isSavedItemArchived, savedAtMs, setSavedItemArchived } from '$lib/utils/savedPile';
 import { urlKey } from '$lib/utils/urlKey';
 import { followLinkReadKey, markFollowLinkRead } from '$lib/utils/followLinks';
-import { channelQuery, matchToRow, type SearchChannelRow } from '$lib/utils/searchChannels';
+import {
+  channelQuery,
+  matchToRow,
+  savedRowKey,
+  type SearchChannelRow,
+} from '$lib/utils/searchChannels';
 import { buildSubscriptionIndex } from '$lib/services/timelineSync';
 import {
   isRssSource,
@@ -183,11 +188,6 @@ export function getSavedDate(item: FeedDisplayItem): number {
  */
 function sameKeys(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((k) => b.includes(k));
-}
-
-/** A save's row key in a channel's river. */
-function savedRowKey(save: SavedItem): string {
-  return save.uri || save.itemGuid || save.rkey;
 }
 
 export function isSavedRowArchived(item: FeedDisplayItem): boolean {
@@ -480,6 +480,7 @@ function createFeedViewStore() {
     // This device's copy of a matched document carries its body; looked up
     // only when some match is a document.
     let docs: Map<string, SocialDocument> | null = null;
+    let saves: Map<string, SavedItem> | null = null;
     const now = Date.now();
     const rows: SearchChannelRow[] = [];
     // Two feeds can share a guid; the server keys them apart by URL, but a row
@@ -491,6 +492,10 @@ function createFeedViewStore() {
         localDocument: (uri) => {
           docs ??= new Map(socialStore.documents.map((d) => [d.recordUri, d]));
           return docs.get(uri);
+        },
+        localSave: (rkey) => {
+          saves ??= new Map(savesStore.articles.map((a) => [a.rkey, a]));
+          return saves.get(rkey);
         },
         now,
       });
@@ -508,6 +513,7 @@ function createFeedViewStore() {
     searchRows.flatMap((r) => (r.type === 'document' ? [r.item] : []))
   );
   let searchLinks = $derived(searchRows.flatMap((r) => (r.type === 'link' ? [r.item] : [])));
+  let searchSaves = $derived(searchRows.flatMap((r) => (r.type === 'saved' ? [r.item] : [])));
 
   // Helper to get current subscription rkeys, ID→rkey map, and follow DIDs for migration
   function getAllSubRkeys(): string[] {
@@ -999,10 +1005,10 @@ function createFeedViewStore() {
   let needsEveryFollowLink = $derived(followLinksPaged && !followLinksByDate);
 
   // The parts of the Library the active channel takes in (every save, or the
-  // Shelf). A saved search matches on the server, which doesn't cover saves yet.
+  // Shelf). A saved search's saves come matched from the server instead.
   let channelLibrarySources = $derived.by((): LibrarySource[] => {
     const view = activeFilteredView;
-    if (!view || view.mode === 'saved' || isSearchChannel) return [];
+    if (!view || view.mode === 'saved') return [];
     // The toolbar's source picker has no Library rows, so narrowing it to some
     // sources ("only", or a pick other than the channel's own) means just those.
     if (
@@ -1021,14 +1027,19 @@ function createFeedViewStore() {
     const sources = new Set(channelLibrarySources);
     if (sources.size === 0) return [];
     const readFilter = effectiveFilters.readFilter;
-    const candidates = savesStore.articles.filter((save) => {
-      if (!sources.has('saves') && !(sources.has('shelf') && shelfStore.isOnShelf(save))) {
-        return false;
-      }
+    const shown = (save: SavedItem) => {
       if (readFilter === 'all') return true;
       const archived = isSavedItemArchived(save, itemLabelsStore.isArchived);
       if (readFilter === 'read') return archived;
       return !archived || readArticleGuidsThisSession.has(savedRowKey(save));
+    };
+    // The server matched and deduped these against the channel's other matches.
+    if (isSearchChannel) return sources.has('saves') ? searchSaves.filter(shown) : [];
+    const candidates = savesStore.articles.filter((save) => {
+      if (!sources.has('saves') && !(sources.has('shelf') && shelfStore.isOnShelf(save))) {
+        return false;
+      }
+      return shown(save);
     });
     if (candidates.length === 0) return [];
 

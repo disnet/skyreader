@@ -18,6 +18,7 @@ import type {
   FilteredView,
   FollowLink,
   FollowLinkSharer,
+  SavedItem,
   SocialDocument,
   User,
 } from '$lib/types';
@@ -97,13 +98,16 @@ export function classifyChannelItemsError(error: unknown): SearchChannelError {
 export type SearchChannelRow =
   | { type: 'article'; item: Article; key: string }
   | { type: 'document'; item: SocialDocument; key: string }
-  | { type: 'link'; item: FollowLink; key: string };
+  | { type: 'link'; item: FollowLink; key: string }
+  | { type: 'saved'; item: SavedItem; key: string };
 
 export interface MatchContext {
   /** The local subscription id for a feed URL, if the reader still follows it. */
   subscriptionIdFor: (feedUrl: string) => number | undefined;
   /** This device's copy of a document, which carries its body. */
   localDocument?: (uri: string) => SocialDocument | undefined;
+  /** This device's copy of a save, by rkey. */
+  localSave?: (rkey: string) => SavedItem | undefined;
   now?: number;
 }
 
@@ -122,11 +126,18 @@ export function matchSharers(match: ChannelMatch): FollowLinkSharer[] {
   }));
 }
 
+/** A save's row key in a channel's river, as `feedView` keys the Queue's saves. */
+export function savedRowKey(save: Pick<SavedItem, 'uri' | 'itemGuid' | 'rkey'>): string {
+  return save.uri || save.itemGuid || save.rkey;
+}
+
 /**
  * The river row for a match, keyed as read state is filed (so marking it read
  * here is the same label the timeline, the document reader or the follows
  * surface would write). Null for a feed match whose feed the reader has since
- * left: it has no subscription to file its read state under.
+ * left: it has no subscription to file its read state under, and for a save
+ * this device doesn't hold (removed here, or not synced yet): a save row is the
+ * save itself, keyed as the Queue keys it.
  */
 export function matchToRow(match: ChannelMatch, ctx: MatchContext): SearchChannelRow | null {
   const published = new Date(match.publishedAt).toISOString();
@@ -165,6 +176,11 @@ export function matchToRow(match: ChannelMatch, ctx: MatchContext): SearchChanne
       createdAt: published,
     };
     return { type: 'document', item: document, key: document.recordUri };
+  }
+  if (match.kind === 'save') {
+    const save = ctx.localSave?.(match.save.rkey);
+    if (!save) return null;
+    return { type: 'saved', item: save, key: savedRowKey(save) };
   }
   const link = match.link;
   const followLink: FollowLink = {

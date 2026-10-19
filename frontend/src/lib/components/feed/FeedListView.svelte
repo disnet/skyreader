@@ -297,7 +297,9 @@
   {#each feedViewStore.currentItems as displayItem, index (displayItem.key)}
     <!-- A saved search's match carries the passage it matched on, and who shared it. -->
     {@const match = feedViewStore.isSearchChannel
-      ? searchChannelsStore.matchFor(displayItem.key)
+      ? searchChannelsStore.matchFor(
+          displayItem.type === 'saved' ? displayItem.item.rkey : displayItem.key
+        )
       : undefined}
     <div class="article-item-anchor" bind:this={articleElements[index]}>
       {#if displayItem.type === 'article'}
@@ -384,6 +386,7 @@
         {@const save = displayItem.item}
         <SavedCard
           {displayItem}
+          matchSnippet={match?.snippet}
           selected={feedViewStore.selectedKey === displayItem.key}
           onOpen={() => openReader(displayItem)}
           onArchive={() => {
