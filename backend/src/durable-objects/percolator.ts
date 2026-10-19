@@ -255,6 +255,7 @@ export class Percolator extends DurableObject<Env> {
       more: false,
     };
 
+    await this.redoGroupKeyQueries();
     const queries = await loadActiveQueries(this.env);
     budget.subrequests -= 2;
     outcome.queries = queries.length;
@@ -747,6 +748,37 @@ export class Percolator extends DurableObject<Env> {
       )
       .run();
     budget.subrequests -= 1;
+  }
+
+  /**
+   * Once, on the first pass of a matcher that understands group source keys:
+   * saved searches that name a group were matched by code that read the group
+   * as no source at all, so an include filter matched nothing and an exclude
+   * filter left nothing out. Treat them as edited: clear what they matched and
+   * look back again. Run from here rather than a migration because migrations
+   * apply before the deploy, and the old matcher would finish the look back
+   * over no sources. Bumping updated_at voids an in-flight pass's writes.
+   */
+  private async redoGroupKeyQueries(): Promise<void> {
+    if (this.getMeta('group_keys_redone') === '1') return;
+    const named = `source_mode <> 'all' AND source_keys LIKE '%"group~%'`;
+    await this.env.DB.batch([
+      this.env.DB.prepare(
+        `DELETE FROM channel_matches WHERE (user_did, channel_uuid) IN
+           (SELECT user_did, channel_uuid FROM saved_queries WHERE ${named})`
+      ),
+      this.env.DB.prepare(
+        `DELETE FROM channel_match_sources WHERE (user_did, channel_uuid) IN
+           (SELECT user_did, channel_uuid FROM saved_queries WHERE ${named})`
+      ),
+      this.env.DB.prepare(
+        `UPDATE saved_queries
+            SET backfill_state = 'pending', backfill_feed_after = '', backfill_doc_after = '',
+                backfill_follows_after = '', updated_at = updated_at + 1
+          WHERE ${named}`
+      ),
+    ]);
+    this.setMeta('group_keys_redone', '1');
   }
 
   private async applyRetention(): Promise<void> {

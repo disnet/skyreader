@@ -13,6 +13,8 @@
 import type { Env, FeedItem } from '../types';
 import { ALL_TIERS, getLimitsForTier } from '../config/tier-limits';
 import { parseSearchQuery } from './search-query';
+import { isNewsletterSubscription } from './newsletters';
+import { BSKY_BOOKMARKS_SOURCE_TYPE, BSKY_LIKES_SOURCE_TYPE } from './bsky-sources';
 import { itemBodyKey } from '../routes/item-bodies';
 import { htmlToText, stripControlChars, truncateText } from '../utils/html-text';
 import { normalizeArticleUrl } from '../utils/url-normalize';
@@ -306,6 +308,7 @@ interface SubscriptionRow {
   feed_url: string;
   source_type: string | null;
   subject_did: string | null;
+  category?: string | null;
 }
 
 function rkeyOf(recordUri: string): string {
@@ -321,6 +324,32 @@ function sourceKeyOf(sub: SubscriptionRow): string | null {
   if (isFeedSubscription(sub)) return `rss~${rkeyOf(sub.record_uri)}`;
   if (sub.source_type === 'atproto.documents') return `${rkeyOf(sub.record_uri)}~documents`;
   return null;
+}
+
+/**
+ * The group keys a subscription belongs to, as the frontend's source picker
+ * builds them (frontend utils/sourceFilter.ts, `buildSourceGroups`). A channel
+ * can name a group (`group~newsletters`), which stands for its members as they
+ * are now, so it covers sources subscribed after it was made.
+ */
+function groupKeysOf(sub: SubscriptionRow): string[] {
+  if (isNewsletterSubscription(sub.feed_url, sub.source_type)) return ['group~newsletters'];
+  // In the frontend's order (bskySourceKind): the type first, then the URL.
+  if (sub.source_type === BSKY_LIKES_SOURCE_TYPE || sub.feed_url.startsWith('bsky-likes:')) {
+    return ['group~likes'];
+  }
+  if (
+    sub.source_type === BSKY_BOOKMARKS_SOURCE_TYPE ||
+    sub.feed_url.startsWith('bsky-bookmarks:')
+  ) {
+    return ['group~bookmarks'];
+  }
+  const isDocuments = sub.source_type === 'atproto.documents';
+  if (!isDocuments && !isFeedSubscription(sub)) return [];
+  const groups = ['group~publications', isDocuments ? 'group~documents' : 'group~feeds'];
+  const category = sub.category?.trim();
+  if (category) groups.push(`group~category~${category}`);
+  return groups;
 }
 
 function docScopeOf(sub: SubscriptionRow): DocScope | null {
@@ -345,6 +374,7 @@ export function resolveQueryScope(
   followsInEverything = false
 ): { feedUrls: Set<string>; docScopes: DocScope[]; coversFollows: boolean } {
   const keys = new Set(sourceKeys);
+  const namesGroups = sourceKeys.some((k) => k.startsWith('group~'));
   const followsNamed = keys.has(FOLLOWS_SOURCE_KEY);
   const coversFollows =
     sourceMode === 'all'
@@ -359,7 +389,10 @@ export function resolveQueryScope(
     if (!key) continue;
     // Legacy documents keys name the author DID instead of the subscription.
     const legacyDocKey = sub.subject_did ? `${sub.subject_did}~documents` : null;
-    const named = keys.has(key) || (legacyDocKey !== null && keys.has(legacyDocKey));
+    const named =
+      keys.has(key) ||
+      (legacyDocKey !== null && keys.has(legacyDocKey)) ||
+      (namesGroups && groupKeysOf(sub).some((g) => keys.has(g)));
     const included = sourceMode === 'all' ? true : sourceMode === 'include' ? named : !named;
     if (!included) continue;
     if (isFeedSubscription(sub)) {
@@ -425,7 +458,7 @@ export async function loadActiveQueries(env: Env): Promise<ActiveQuery[]> {
   const subsByUser = new Map<string, SubscriptionRow[]>();
   for (const users of chunk([...byUser.keys()], IN_CHUNK)) {
     const subs = await env.DB.prepare(
-      `SELECT user_did, record_uri, feed_url, source_type, subject_did
+      `SELECT user_did, record_uri, feed_url, source_type, subject_did, category
          FROM subscriptions_cache
         WHERE user_did IN (${placeholders(users.length)}) AND active = 1`
     )
