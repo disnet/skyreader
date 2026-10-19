@@ -3,7 +3,7 @@
   // action) above a scroll-snapping track of compact tiles. Borrows Readwise's
   // lane structure without its loud cover-art carousels. Desktop gets hover
   // chevrons + edge fades when the track overflows; touch scrolls natively.
-  import { onMount } from 'svelte';
+  import { onMount, type Snippet } from 'svelte';
   import Icon from '$lib/components/Icon.svelte';
   import type { IconName } from '$lib/components/Icon.svelte';
   import HomeLaneCard from './HomeLaneCard.svelte';
@@ -22,9 +22,25 @@
     loading?: boolean;
     onOpen: (vm: LaneCardVM) => void;
     onHover?: (vm: LaneCardVM) => void;
+    /** Draws each tile in place of HomeLaneCard, for a lane whose tiles say more
+     *  (the Shelf's New connections). The tile owns its own open and hover. */
+    card?: Snippet<[LaneCardVM]>;
+    /** Snap back to the start when the set changes (a shuffle). Off for a lane
+     *  that loses a tile as it's read, so the reader keeps their place. */
+    resetOnChange?: boolean;
   }
 
-  let { title, icon, items, action, loading = false, onOpen, onHover }: Props = $props();
+  let {
+    title,
+    icon,
+    items,
+    action,
+    loading = false,
+    onOpen,
+    onHover,
+    card,
+    resetOnChange = true,
+  }: Props = $props();
 
   // Skeletons mirror the current density so the loading footprint matches the real
   // tiles (compact = text-only square; see HomeLaneCard).
@@ -66,7 +82,7 @@
   let itemSignature = $derived(items.map((vm) => vm.key).join('|'));
   $effect(() => {
     itemSignature;
-    if (track) track.scrollLeft = 0;
+    if (track && resetOnChange) track.scrollLeft = 0;
     requestAnimationFrame(updateAffordances);
   });
 </script>
@@ -116,17 +132,21 @@
         {/each}
       {:else}
         {#each items as vm (vm.key)}
-          <HomeLaneCard
-            title={vm.title}
-            domain={vm.domain}
-            image={vm.image}
-            faviconUrl={vm.faviconUrl}
-            metaLabel={vm.metaLabel}
-            progress={vm.progress}
-            read={vm.read ?? false}
-            onOpen={() => onOpen(vm)}
-            onHover={() => onHover?.(vm)}
-          />
+          {#if card}
+            {@render card(vm)}
+          {:else}
+            <HomeLaneCard
+              title={vm.title}
+              domain={vm.domain}
+              image={vm.image}
+              faviconUrl={vm.faviconUrl}
+              metaLabel={vm.metaLabel}
+              progress={vm.progress}
+              read={vm.read ?? false}
+              onOpen={() => onOpen(vm)}
+              onHover={() => onHover?.(vm)}
+            />
+          {/if}
         {/each}
       {/if}
     </div>

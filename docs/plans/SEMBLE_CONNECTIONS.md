@@ -45,8 +45,9 @@ a save, or before this shipped, aren't news.
 
 `stores/savedConnections.svelte.ts` loads the list (online, account-only, at most once a minute)
 from the Queue and the Shelf. `library/ConnectionsBadge` marks Queue cards and Shelf items. The
-Shelf adds a **New connections** section over the whole Library (`library/NewConnections`), which
-says who linked each save to what, with their note: curator names come from the public appview
+Shelf adds a **New connections** lane over the whole Library (`library/NewConnections`, drawn
+through `HomeLane`'s `card` snippet): one tile per save, saying who linked it to what for the newest
+connection, with their note and a count of the rest. Curator names come from the public appview
 (`profileService`), and the other end is labelled from its URL (`utils/connectionLabels.ts`), since
 the poller keeps no title. It also adds a **Recently connected** sort.
 Opening a save in the fullscreen reader clears its mark and hands `AtmospherePanel` the time "new" is

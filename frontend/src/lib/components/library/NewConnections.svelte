@@ -1,17 +1,20 @@
 <script lang="ts">
   // The Shelf's New connections: what other people connected to the reader's
-  // saves since they last looked, said in full — who, to what, and their note —
-  // grouped under the save it's about. Semble's notification feed, attached to
-  // the thing it's news about (stores/savedConnections.svelte.ts). Opening the
-  // save reads it in full and clears it from here.
+  // saves since they last looked, as a lane with one tile per save. Each tile
+  // says what happened — who linked it to what, and their note — for the newest
+  // connection, and counts the rest. Semble's notification feed, attached to the
+  // thing it's news about (stores/savedConnections.svelte.ts). Opening the save
+  // reads them all and clears it from here.
+  import { untrack } from 'svelte';
   import Icon from '$lib/components/Icon.svelte';
+  import HomeLane from '$lib/components/feed/HomeLane.svelte';
+  import type { LaneCardVM } from '$lib/components/feed/homeLane';
   import { profileService } from '$lib/services/profiles';
   import { decodeEntities } from '$lib/utils/entities';
   import { getFaviconUrl } from '$lib/utils/favicon';
   import { formatRelativeTime } from '$lib/utils/date';
   import { connectionTargetLabel, connectionTypeLabel } from '$lib/utils/connectionLabels';
   import { shelfKind } from '$lib/utils/shelf';
-  import { untrack } from 'svelte';
   import type { BlueskyProfile, SavedConnectionActivity, SavedItem } from '$lib/types';
 
   interface Entry {
@@ -27,13 +30,23 @@
 
   let { entries, onOpen, onHover }: Props = $props();
 
-  /** Saves shown before "Show more": the lane stays a glance, not a feed. */
-  const PREVIEW = 4;
-  let expanded = $state(false);
-  let shown = $derived(expanded ? entries : entries.slice(0, PREVIEW));
+  let byKey = $derived(new Map(entries.map((entry) => [entry.save.rkey, entry])));
+  // HomeLane wants view-models for its keys and its label; the tiles below draw
+  // from the entry itself.
+  let items = $derived(
+    entries.map(({ save }): LaneCardVM => ({
+      key: save.rkey,
+      title: saveTitle(save),
+      domain: null,
+      image: null,
+      faviconUrl: '',
+      metaLabel: null,
+      progress: null,
+    }))
+  );
 
   // Curators are DIDs on the wire; their names come from the public appview,
-  // after the first paint (a handle-less line still reads).
+  // after the first paint (a name-less line still reads).
   let profiles = $state<Map<string, BlueskyProfile>>(new Map());
   let curatorKey = $derived(
     [...new Set(entries.flatMap((e) => e.activity.newest.map((c) => c.curatorDid)))]
@@ -71,7 +84,7 @@
   }
 
   // As the Shelf's other lanes: a book or PDF is credited to its author, an
-  // article to its site, and only an article wears a favicon.
+  // article to its site.
   function saveSite(save: SavedItem): string | null {
     return (isArticle(save) ? save.domain || save.author : save.author) || null;
   }
@@ -81,204 +94,168 @@
   }
 
   function more(entry: Entry): number {
-    return Math.max(0, entry.activity.unseen - entry.activity.newest.length);
+    return Math.max(0, entry.activity.unseen - 1);
   }
 </script>
 
-<section class="new-connections" aria-label="New connections">
-  <h2 class="title">
-    <span class="title-icon"><Icon name="semble" size={16} /></span>
-    New connections
-  </h2>
-
-  <ul class="saves">
-    {#each shown as entry (entry.save.rkey)}
-      {@const save = entry.save}
-      <li class="save">
-        <button
-          class="save-head"
-          onclick={() => onOpen(save)}
-          onpointerenter={() => onHover?.(save)}
-          onfocus={() => onHover?.(save)}
-        >
-          {#if save.url && isArticle(save)}
-            <img class="favicon" src={getFaviconUrl(save.url)} alt="" loading="lazy" />
-          {/if}
-          <span class="save-title">{saveTitle(save)}</span>
-          {#if saveSite(save)}<span class="save-site">{saveSite(save)}</span>{/if}
-        </button>
-
-        <ul class="edges">
-          {#each entry.activity.newest as connection (connection.uri)}
-            {@const profile = profiles.get(connection.curatorDid)}
-            {@const type = connectionTypeLabel(connection.type)}
-            <li class="edge">
-              <span class="avatar" aria-hidden="true">
-                {#if profile?.avatar}
-                  <img src={profile.avatar} alt="" loading="lazy" />
-                {:else}
-                  <Icon name="user" size={12} />
-                {/if}
-              </span>
-              <div class="edge-body">
-                <p class="edge-line">
-                  <span class="who">{curatorName(connection.curatorDid)}</span>
-                  {#if connection.direction === 'out'}
-                    linked it to
-                    <a
-                      class="other"
-                      href={connection.otherUrl}
-                      target="_blank"
-                      rel="noopener noreferrer">{connectionTargetLabel(connection.otherUrl)}</a
-                    >
-                  {:else}
-                    linked
-                    <a
-                      class="other"
-                      href={connection.otherUrl}
-                      target="_blank"
-                      rel="noopener noreferrer">{connectionTargetLabel(connection.otherUrl)}</a
-                    >
-                    to it
-                  {/if}
-                  <span class="meta">
-                    {#if type && type !== 'related'}· {type}{/if}
-                    · {formatRelativeTime(connection.indexedAt)}
-                  </span>
-                </p>
-                {#if connection.note}
-                  <p class="note">{connection.note}</p>
-                {/if}
-              </div>
-            </li>
-          {/each}
-        </ul>
-
-        {#if more(entry) > 0 || entry.activity.newest.length === 0}
-          <button class="more" onclick={() => onOpen(save)}>
-            {#if entry.activity.newest.length === 0}
-              {entry.activity.unseen} new {entry.activity.unseen === 1
-                ? 'connection'
-                : 'connections'}
-            {:else}
-              and {more(entry)} more
-            {/if}
-          </button>
+{#snippet tile(vm: LaneCardVM)}
+  {@const entry = byKey.get(vm.key)}
+  {#if entry}
+    {@const save = entry.save}
+    {@const connection = entry.activity.newest[0]}
+    {@const type = connection ? connectionTypeLabel(connection.type) : null}
+    {@const avatar = connection ? profiles.get(connection.curatorDid)?.avatar : undefined}
+    <button
+      class="tile"
+      aria-label="{vm.title}, {entry.activity.unseen} new {entry.activity.unseen === 1
+        ? 'connection'
+        : 'connections'}"
+      onclick={() => onOpen(save)}
+      onpointerenter={() => onHover?.(save)}
+      onfocus={() => onHover?.(save)}
+    >
+      <span class="save">
+        {#if save.url && isArticle(save)}
+          <img class="favicon" src={getFaviconUrl(save.url)} alt="" loading="lazy" />
         {/if}
-      </li>
-    {/each}
-  </ul>
+        <span class="save-title">{vm.title}</span>
+      </span>
 
-  {#if entries.length > PREVIEW}
-    <button class="toggle" onclick={() => (expanded = !expanded)}>
-      {expanded ? 'Show fewer' : `Show ${entries.length - PREVIEW} more`}
+      {#if connection}
+        <span class="edge">
+          <span class="avatar" aria-hidden="true">
+            {#if avatar}
+              <img src={avatar} alt="" loading="lazy" />
+            {:else}
+              <Icon name="user" size={11} />
+            {/if}
+          </span>
+          <span class="edge-line">
+            <span class="who">{curatorName(connection.curatorDid)}</span>
+            {#if connection.direction === 'out'}
+              linked it to <span class="other">{connectionTargetLabel(connection.otherUrl)}</span>
+            {:else}
+              linked to it from <span class="other"
+                >{connectionTargetLabel(connection.otherUrl)}</span
+              >
+            {/if}
+          </span>
+        </span>
+        {#if connection.note}
+          <span class="note">{connection.note}</span>
+        {/if}
+        <span class="meta">
+          {#if saveSite(save)}<span class="site">{saveSite(save)}</span><span aria-hidden="true"
+              >·</span
+            >{/if}
+          {#if type && type !== 'related'}<span>{type}</span><span aria-hidden="true">·</span>{/if}
+          <span>{formatRelativeTime(connection.indexedAt)}</span>
+          {#if more(entry) > 0}
+            <span aria-hidden="true">·</span><span class="more">+{more(entry)} more</span>
+          {/if}
+        </span>
+      {:else}
+        <span class="meta">
+          {#if saveSite(save)}<span class="site">{saveSite(save)}</span><span aria-hidden="true"
+              >·</span
+            >{/if}
+          {entry.activity.unseen} new {entry.activity.unseen === 1 ? 'connection' : 'connections'}
+        </span>
+      {/if}
     </button>
   {/if}
-</section>
+{/snippet}
+
+<HomeLane
+  title="New connections"
+  icon="semble"
+  {items}
+  card={tile}
+  resetOnChange={false}
+  onOpen={(vm) => {
+    const entry = byKey.get(vm.key);
+    if (entry) onOpen(entry.save);
+  }}
+/>
 
 <style>
-  .new-connections {
-    margin-bottom: 1.75rem;
-  }
-
-  .title {
+  .tile {
     display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    margin: 0 0 0.625rem;
-    padding: 0 0.25rem;
-    font-size: var(--text-lg);
-    font-weight: var(--weight-semibold);
-    line-height: var(--leading-snug);
+    flex-direction: column;
+    gap: 0.4rem;
+    /* Wider than Continue reading's tiles: these carry a sentence and a note. */
+    width: 19rem;
+    flex-shrink: 0;
+    padding: 0.75rem 0.875rem 0.8rem;
+    background: none;
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    cursor: pointer;
+    text-align: left;
+    font: inherit;
     color: var(--color-text);
+    scroll-snap-align: start;
+    transition:
+      background-color 0.15s ease,
+      border-color 0.15s ease;
   }
 
-  .title-icon {
-    display: inline-flex;
-    color: var(--color-text-secondary);
+  @media (max-width: 640px) {
+    .tile {
+      width: 16rem;
+    }
   }
 
-  .saves {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    border-top: 1px solid var(--color-border);
+  @media (hover: hover) {
+    .tile:hover {
+      background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.025));
+      border-color: var(--color-text-secondary);
+    }
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .tile:hover {
+      background-color: var(--color-bg-hover, rgba(255, 255, 255, 0.03));
+    }
+  }
+
+  .tile:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
   }
 
   .save {
-    padding: 0.75rem 0.25rem;
-    border-bottom: 1px solid var(--color-border);
-  }
-
-  .save-head {
     display: flex;
-    align-items: baseline;
-    gap: 0.5rem;
-    width: 100%;
+    align-items: flex-start;
+    gap: 0.4rem;
     min-width: 0;
-    padding: 0;
-    background: none;
-    border: none;
-    font: inherit;
-    text-align: left;
-    color: var(--color-text);
-    cursor: pointer;
   }
 
   .favicon {
     width: 14px;
     height: 14px;
     flex-shrink: 0;
-    align-self: center;
+    margin-top: 0.2rem;
     border-radius: 3px;
   }
 
   .save-title {
     min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
     font-weight: var(--weight-semibold);
-  }
-
-  .save-site {
-    flex-shrink: 1;
-    min-width: 0;
+    line-height: var(--leading-snug);
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: var(--text-sm);
-    color: var(--color-text-secondary);
-  }
-
-  @media (hover: hover) {
-    .save-head:hover .save-title {
-      color: var(--color-primary);
-    }
-  }
-
-  .save-head:focus-visible,
-  .more:focus-visible,
-  .toggle:focus-visible,
-  .other:focus-visible {
-    outline: 2px solid var(--color-primary);
-    outline-offset: 2px;
-    border-radius: 4px;
-  }
-
-  .edges {
-    list-style: none;
-    margin: 0.5rem 0 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
   }
 
   .edge {
     display: flex;
-    gap: 0.5rem;
     align-items: flex-start;
+    gap: 0.4rem;
+    min-width: 0;
   }
 
   .avatar {
@@ -286,9 +263,8 @@
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
-    width: 20px;
-    height: 20px;
-    margin-top: 0.05rem;
+    width: 18px;
+    height: 18px;
     border-radius: 50%;
     overflow: hidden;
     background: var(--color-bg-secondary);
@@ -301,78 +277,68 @@
     object-fit: cover;
   }
 
-  .edge-body {
-    min-width: 0;
-  }
-
   .edge-line,
-  .note {
-    margin: 0;
+  .note,
+  .meta {
     font-size: var(--text-sm);
     line-height: var(--leading-snug);
   }
 
   .edge-line {
+    min-width: 0;
     color: var(--color-text-secondary);
     overflow-wrap: anywhere;
-  }
-
-  .who {
-    font-weight: var(--weight-medium);
-    color: var(--color-text);
-  }
-
-  .other {
-    color: var(--color-primary);
-    text-decoration: none;
-  }
-
-  @media (hover: hover) {
-    .other:hover {
-      text-decoration: underline;
-    }
-  }
-
-  .meta {
-    white-space: nowrap;
-  }
-
-  .note {
-    margin-top: 0.2rem;
-    overflow-wrap: anywhere;
-    color: var(--color-text);
     display: -webkit-box;
-    -webkit-line-clamp: 3;
-    line-clamp: 3;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
 
-  .more,
-  .toggle {
-    padding: 0.25rem 0;
-    margin-top: 0.375rem;
-    background: none;
-    border: none;
-    font: inherit;
-    font-size: var(--text-sm);
+  .who,
+  .other {
     font-weight: var(--weight-medium);
+    color: var(--color-text);
+  }
+
+  /* The label ends the sentence either way ("linked it to …", "linked to it
+     from …"), so a long one shortens itself and the direction always shows. */
+  .other {
+    display: inline-block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    vertical-align: bottom;
+  }
+
+  .note {
+    color: var(--color-text);
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    margin-top: auto;
     color: var(--color-text-secondary);
-    cursor: pointer;
+  }
+
+  .site {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .more {
-    margin-left: 1.75rem;
-  }
-
-  .toggle {
-    margin-left: 0.25rem;
-  }
-
-  @media (hover: hover) {
-    .more:hover,
-    .toggle:hover {
-      color: var(--color-primary);
-    }
+    color: var(--color-primary);
+    font-weight: var(--weight-medium);
   }
 </style>
