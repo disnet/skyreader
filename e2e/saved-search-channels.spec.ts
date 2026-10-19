@@ -94,7 +94,7 @@ test.describe('Saved searches', () => {
     // The feed's other item is in the timeline, not in the search.
     await expect(cards.filter({ hasText: 'Rooftop solar, a year in' })).toHaveCount(0);
 
-    await expect(authedPage.locator('.search-status')).toContainText('Matching');
+    await expect(authedPage.locator('.search-status')).toContainText('Saved search');
     await expect(authedPage.locator('.search-status q')).toHaveText('heat pump');
     await expect(cards.first().locator('.match-snippet mark').first()).toHaveText('heat');
 

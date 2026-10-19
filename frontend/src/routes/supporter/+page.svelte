@@ -30,6 +30,8 @@
   let keepsGrantIfCancelled = $derived(hasGrantFallback(auth.user));
   // Offered as a benefit only once full-text search is live in this environment.
   let searchLive = $derived(Boolean(auth.user?.searchEnabled));
+  // Likewise saved searches, behind their own operator switch.
+  let savedSearchLive = $derived(Boolean(auth.user?.savedSearchEnabled));
 
   // Plans mirrored from the Polar dashboard. The flow never depends on this
   // fetch: 'failed' falls back to a plain button that uses the backend's
@@ -238,8 +240,8 @@ directly, no concept tournament.
   <StaticPageChrome title="Supporter" />
 {/if}
 
-<!-- Search is shown once it's live in this environment (the operator switch
-     /api/auth/me reports), never ahead of it. -->
+<!-- Search and saved searches are each shown once live in this environment
+     (the operator switches /api/auth/me reports), never ahead of it. -->
 {#snippet benefitsLedger()}
   <ul class="benefits">
     <li class="benefit">
@@ -273,6 +275,14 @@ directly, no concept tournament.
       <li class="benefit">
         <span class="benefit-figure">Search everything you’ve read</span>
         <span class="benefit-desc">Find a passage by its words, across reads, saves and notes.</span
+        >
+      </li>
+    {/if}
+    {#if savedSearchLive}
+      <li class="benefit">
+        <span class="benefit-figure">{supporterLimits.savedSearches} saved keyword searches</span>
+        <span class="benefit-desc"
+          >Channels that fill with whatever matches your keywords, as it arrives.</span
         >
       </li>
     {/if}
@@ -399,6 +409,15 @@ directly, no concept tournament.
               <span class="feature-text">
                 Search everything you’ve read
                 <span class="feature-sub">reads, saves, highlights and your notes</span>
+              </span>
+            </li>
+          {/if}
+          {#if savedSearchLive}
+            <li>
+              <span class="feature-check"><Icon name="check" size={16} strokeWidth={2.5} /></span>
+              <span class="feature-text">
+                {supporterLimits.savedSearches} saved keyword searches
+                <span class="feature-sub">channels that fill with whatever matches</span>
               </span>
             </li>
           {/if}

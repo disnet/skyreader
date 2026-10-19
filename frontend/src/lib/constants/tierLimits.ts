@@ -12,7 +12,12 @@
 const display = (n: number) => n.toLocaleString('en-US');
 
 const FREE = { subscriptions: 100, urlSavesPerMonth: 100, mirroredSubscriptions: 1000 };
-const SUPPORTER = { subscriptions: 1000, urlSavesPerMonth: 1000, mirroredSubscriptions: 5000 };
+const SUPPORTER = {
+  subscriptions: 1000,
+  urlSavesPerMonth: 1000,
+  mirroredSubscriptions: 5000,
+  savedSearches: 25,
+};
 
 export const freeLimits = {
   feeds: display(FREE.subscriptions),
@@ -24,4 +29,5 @@ export const supporterLimits = {
   feeds: display(SUPPORTER.subscriptions),
   saves: display(SUPPORTER.urlSavesPerMonth),
   mirrored: display(SUPPORTER.mirroredSubscriptions),
+  savedSearches: display(SUPPORTER.savedSearches),
 };

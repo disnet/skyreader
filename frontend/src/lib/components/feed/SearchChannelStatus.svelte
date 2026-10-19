@@ -69,7 +69,7 @@
   {/if}
 {:else}
   <p class="search-status" aria-live="polite">
-    <span class="query">Matching <q>{query}</q></span>
+    <span class="query">Saved search: <q>{query}</q></span>
     {#if lookingBack}
       <span class="state"
         ><span class="dot" aria-hidden="true"></span>Still looking back through the last 30 days.</span
