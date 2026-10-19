@@ -240,10 +240,15 @@ export interface ShowcaseShelfItem {
   percent?: number;
 }
 
-/** What's already on the Shelf when the tour keeps the article. */
+/**
+ * What's already in the Library when the tour keeps the article: EPUBs (which
+ * the Shelf calls books, as utils/shelf.ts does) and PDFs.
+ */
 export const shelfItems: ShowcaseShelfItem[] = [
   { title: 'Middlemarch', kind: 'Book', byline: 'George Eliot', cover: 'book', percent: 42 },
   { title: 'Close Reading in a Distracted Age', kind: 'PDF', byline: 'M. Margins', cover: 'pdf' },
+  { title: 'Walden', kind: 'Book', byline: 'Henry David Thoreau', cover: 'book', percent: 12 },
+  { title: 'Notes Toward a History of Marginalia', kind: 'PDF', byline: 'J. Archer', cover: 'pdf' },
   { title: 'The Waves', kind: 'Book', byline: 'Virginia Woolf', cover: 'book' },
 ];
 

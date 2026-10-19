@@ -34,7 +34,7 @@
     { id: 'read', label: 'Read', caption: 'A clean reader for every piece', ms: 6000 },
     { id: 'mark', label: 'Mark', caption: 'Highlights and notes in the margin', ms: 12000 },
     { id: 'discuss', label: 'Discuss', caption: 'The conversation around it', ms: 8000 },
-    { id: 'keep', label: 'Keep', caption: 'Keep what matters', ms: 12000 },
+    { id: 'keep', label: 'Keep', caption: 'Keep what matters', ms: 14000 },
   ] as const;
   type StepId = (typeof STEPS)[number]['id'];
 
@@ -50,7 +50,7 @@
   let kept = $state(false);
   let toast = $state(false);
   // Which page the main column shows: the feed list, or the Shelf the tour ends on.
-  let view = $state<'feeds' | 'shelf'>('feeds');
+  let view = $state<'feeds' | 'queue' | 'shelf'>('feeds');
   // `text` swaps the arrow for an I-beam over the article.
   let cursor = $state({ x: 0, y: 0, shown: false, down: false, text: false });
 
@@ -60,10 +60,13 @@
   let readerScrollEl = $state<HTMLElement | null>(null);
   let discussionEl = $state<HTMLElement | null>(null);
   let keepBtnEl = $state<HTMLElement | null>(null);
-  let shelfNavEl = $state<HTMLElement | null>(null);
+  let libraryNavEl = $state<HTMLElement | null>(null);
+  let shelfTabEl = $state<HTMLElement | null>(null);
   let passageBlockHeight = $state(0);
 
   const noteText = article.note;
+  // The Queue the Library opens on: the kept article and a few other saves.
+  const queueItems = [keptShelfItem, shelfItems[1], shelfItems[0], shelfItems[3]];
   const inkId = 'showcase-highlight';
   const subscriptionFor = (s: (typeof sources)[number]) =>
     ({ title: s.title, customIconUrl: s.favicon, feedUrl: '' }) as unknown as Subscription;
@@ -221,12 +224,18 @@
       toast = false;
       readerOpen = false;
       await wait(1000, id);
-      // Over to the Shelf in the sidebar (on a phone the sidebar is hidden, so
-      // the Shelf simply opens).
-      if (shelfNavEl?.offsetParent) {
-        await moveTo(id, pointAt(shelfNavEl, -30));
+      // Library in the sidebar opens the Queue, as it does in the app; the
+      // switch at its top turns to the Shelf. On a phone the sidebar is hidden,
+      // so the Library simply opens.
+      if (libraryNavEl?.offsetParent) {
+        await moveTo(id, pointAt(libraryNavEl, -30));
         await press(id);
       }
+      view = 'queue';
+      await wait(900, id);
+      await tick();
+      await moveTo(id, pointAt(shelfTabEl));
+      await press(id);
       view = 'shelf';
       await wait(600, id);
       cursor = { ...cursor, shown: false };
@@ -305,11 +314,11 @@
                 <span class="nav-count">12</span>
               </span>
             </div>
-            <span class="nav-item"><span class="nav-icon"><Icon name="bookmark" /></span>Queue</span
-            >
-            <span class="nav-row" class:active={view === 'shelf'} bind:this={shelfNavEl}
-              ><span class="nav-icon"><Icon name="shelf" /></span>Shelf</span
-            >
+            <span class="nav-row" class:active={view !== 'feeds'} bind:this={libraryNavEl}>
+              <span class="nav-icon"><Icon name="shelf" /></span>
+              <span class="nav-label">Library</span>
+              <span class="nav-count">3</span>
+            </span>
             <span class="nav-item"
               ><span class="nav-icon"><Icon name="highlighter" /></span>Highlights</span
             >
@@ -333,33 +342,60 @@
         </aside>
 
         <section class="main">
-          {#if view === 'shelf'}
+          {#if view !== 'feeds'}
             <header class="toolbar">
-              <span class="tool-title"><Icon name="shelf" size={18} /> Shelf</span>
+              <span class="tool-title"
+                ><Icon name={view === 'shelf' ? 'shelf' : 'bookmark'} size={18} />
+                {view === 'shelf' ? 'Shelf' : 'Queue'}</span
+              >
             </header>
             <div class="card-surface">
               <div class="shelf">
-                <div class="lib-switch"><span>Queue</span><span class="on">Shelf</span></div>
-                <span class="shelf-chip">Everything {shelfItems.length + 1}</span>
-                <p class="shelf-label">Everything</p>
-                <div class="shelf-grid">
-                  {#each [keptShelfItem, ...shelfItems] as item (item.title)}
-                    <div class="shelf-card" class:fresh={item === keptShelfItem}>
-                      <div class="cover" data-cover={item.cover}>
-                        <span class="cover-title">{item.title}</span>
-                        {#if item.excerpt}<span class="cover-excerpt">{item.excerpt}</span>{/if}
-                        <span class="cover-author">{item.byline}</span>
-                        {#if item.percent}
-                          <span class="cover-progress"
-                            ><span style:width="{item.percent}%"></span></span
-                          >
-                        {/if}
-                      </div>
-                      <span class="shelf-title">{item.title}</span>
-                      <span class="shelf-meta"><b>{item.kind}</b> {item.byline}</span>
-                    </div>
-                  {/each}
+                <div class="lib-switch">
+                  <span class:on={view === 'queue'}>Queue</span>
+                  <span class:on={view === 'shelf'} bind:this={shelfTabEl}>Shelf</span>
                 </div>
+                {#if view === 'queue'}
+                  <div class="queue">
+                    {#each queueItems as q (q.title)}
+                      <div class="queue-row">
+                        <Icon name={q.kind === 'Article' ? 'file-text' : 'book-open'} size={16} />
+                        <span class="queue-text">
+                          <span class="queue-title">{q.title}</span>
+                          <span class="shelf-meta"><b>{q.kind}</b> {q.byline}</span>
+                        </span>
+                      </div>
+                    {/each}
+                  </div>
+                {:else}
+                  <div class="shelf-filters">
+                    <span class="shelf-chip">Everything {shelfItems.length + 1}</span>
+                    <span class="kind-switch"
+                      ><span class="on">All</span><span>Books</span><span>PDFs</span><span
+                        >Articles</span
+                      ></span
+                    >
+                  </div>
+                  <p class="shelf-label">Everything</p>
+                  <div class="shelf-grid">
+                    {#each [keptShelfItem, ...shelfItems] as item (item.title)}
+                      <div class="shelf-card" class:fresh={item === keptShelfItem}>
+                        <div class="cover" data-cover={item.cover}>
+                          <span class="cover-title">{item.title}</span>
+                          {#if item.excerpt}<span class="cover-excerpt">{item.excerpt}</span>{/if}
+                          <span class="cover-author">{item.byline}</span>
+                          {#if item.percent}
+                            <span class="cover-progress"
+                              ><span style:width="{item.percent}%"></span></span
+                            >
+                          {/if}
+                        </div>
+                        <span class="shelf-title">{item.title}</span>
+                        <span class="shelf-meta"><b>{item.kind}</b> {item.byline}</span>
+                      </div>
+                    {/each}
+                  </div>
+                {/if}
               </div>
             </div>
           {:else}
@@ -699,9 +735,58 @@
     color: var(--color-text);
     box-shadow: 0 0 0 1px var(--color-border);
   }
-  .shelf-chip {
-    display: table;
+  .shelf-filters {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
     margin-top: 0.75rem;
+  }
+  .kind-switch {
+    display: inline-flex;
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    overflow: hidden;
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+  }
+  .kind-switch span {
+    padding: 0.25rem 0.65rem;
+  }
+  .kind-switch span + span {
+    border-left: 1px solid var(--color-border);
+  }
+  .kind-switch .on {
+    background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+    color: var(--color-primary);
+  }
+  .queue {
+    margin-top: 0.75rem;
+    animation: fade-in 0.35s ease;
+  }
+  .queue-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 0.75rem 0.5rem;
+    border-bottom: 1px solid var(--color-border);
+    color: var(--color-text-secondary);
+  }
+  .queue-text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    min-width: 0;
+  }
+  .queue-title {
+    font-size: var(--text-lg);
+    font-weight: var(--weight-medium);
+    line-height: var(--leading-snug);
+    color: var(--color-text);
+  }
+  .shelf-chip {
+    display: inline-block;
     padding: 0.3rem 0.8rem;
     border: 1px solid var(--color-primary);
     border-radius: 999px;
@@ -1099,8 +1184,18 @@
       font-size: var(--text-3xl);
     }
     .shelf-grid {
-      grid-template-columns: repeat(auto-fill, minmax(6.5rem, 1fr));
-      gap: 1rem 0.75rem;
+      grid-template-columns: repeat(auto-fill, minmax(5.25rem, 1fr));
+      gap: 1rem 0.6rem;
+    }
+    .cover {
+      padding: 0.6rem 0.5rem;
+    }
+    .cover-title,
+    .cover[data-cover='article'] .cover-title {
+      font-size: var(--text-sm);
+    }
+    .shelf-title {
+      font-size: var(--text-sm);
     }
     .cover-excerpt {
       display: none;
