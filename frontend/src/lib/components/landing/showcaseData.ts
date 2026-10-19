@@ -186,10 +186,20 @@ export const discussionLanes: LaneRowVM[] = [
 ];
 
 export const discussionFilters: DiscussionFilterVM[] = [
-  { id: 'all', label: 'All', count: 11, capped: false, icon: null },
-  { id: 'bluesky', label: 'Bluesky', count: 6, capped: false, icon: 'bluesky' },
-  { id: 'linkblog', label: 'Blogs', count: 2, capped: false, icon: 'standard-site' },
-  { id: 'semble', label: 'Semble', count: 3, capped: false, icon: 'semble' },
+  {
+    id: 'all',
+    label: 'All',
+    count: discussionLanes.reduce((n, l) => n + l.count, 0),
+    capped: false,
+    icon: null,
+  },
+  ...discussionLanes.map((l) => ({
+    id: l.id,
+    label: l.label,
+    count: l.count,
+    capped: false,
+    icon: l.icon,
+  })),
 ];
 
 export const discussionEntries: DiscussionEntryVM[] = [

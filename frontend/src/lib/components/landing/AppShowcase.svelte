@@ -75,11 +75,14 @@
     let left = ms;
     while (left > 0) {
       if (id !== runId) throw new Stop();
-      const slice = Math.min(left, 100);
-      await new Promise((r) => setTimeout(r, slice));
       // Hold still while nobody's watching: off screen, tab hidden, or a
-      // visitor hovering to read the frame.
-      if (visible && !hovering && !document.hidden) left -= slice;
+      // visitor hovering to read the frame. Except while the highlight popover
+      // is up: it listens on the whole document (Escape, outside presses), so
+      // it never outstays its moment.
+      const watched = (visible && !hovering && !document.hidden) || popoverRect !== null;
+      const slice = watched ? Math.min(left, 100) : 400;
+      await new Promise((r) => setTimeout(r, slice));
+      if (watched) left -= slice;
     }
     if (id !== runId) throw new Stop();
   }
@@ -160,6 +163,7 @@
     step = s;
     setUp(s);
     await tick();
+    if (id !== runId) throw new Stop();
     if (s === 'follow') {
       await moveTo(id, pointAt(frameEl, 120, 40));
       await wait(700, id);
@@ -188,6 +192,7 @@
       popoverRect = passageEl?.getBoundingClientRect() ?? null;
       await wait(500, id);
       await tick();
+      if (id !== runId) throw new Stop();
       await moveTo(id, pointAt(document.querySelector('.showcase-popover .popover-btn.highlight')));
       await press(id);
       popoverRect = null;
@@ -266,183 +271,181 @@
     Shelf.
   </p>
 
+  <!-- The frame is inert, so the pointer never lands on it; hover is read
+       off this wrapper instead. -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div
-    class="frame"
-    bind:this={frameEl}
-    aria-hidden="true"
-    inert
-    onpointerenter={() => (hovering = true)}
-    onpointerleave={() => (hovering = false)}
-  >
-    <div class="shell">
-      <aside class="side">
-        <div class="account">
-          <span class="avatar"></span>
-          <span class="handle">you.bsky.social</span>
-        </div>
-        <nav class="side-nav">
-          <span class="nav-item"><span class="nav-icon"><Icon name="home" /></span>Home</span>
-          <div class="nav-group">
-            <span class="nav-row active">
-              <span class="nav-icon"><Icon name="inbox" /></span>
-              <span class="nav-label">Feeds</span>
-              <span class="nav-count">{arrived ? 13 : 12}</span>
-            </span>
+  <div onpointerenter={() => (hovering = true)} onpointerleave={() => (hovering = false)}>
+    <div class="frame" bind:this={frameEl} aria-hidden="true" inert>
+      <div class="shell">
+        <aside class="side">
+          <div class="account">
+            <span class="avatar"></span>
+            <span class="handle">you.bsky.social</span>
           </div>
-          <span class="nav-item"><span class="nav-icon"><Icon name="bookmark" /></span>Queue</span>
-          <span class="nav-item"><span class="nav-icon"><Icon name="shelf" /></span>Shelf</span>
-          <span class="nav-item"
-            ><span class="nav-icon"><Icon name="highlighter" /></span>Highlights</span
-          >
-          <span class="side-rule"></span>
-          <span class="side-label">Sources</span>
-          {#each sources as s (s.title)}
-            <FeedItem
-              subscription={subscriptionFor(s)}
-              unreadCount={s.unread + (arrived && s.kind === 'Newsletter' ? 1 : 0)}
-              isActive={false}
-              onSelect={() => {}}
-              onContextMenu={() => {}}
-              onTouchStart={() => {}}
-              onTouchEnd={() => {}}
-              onTouchMove={() => {}}
-              onRetry={() => {}}
-              onMoreClick={() => {}}
-            />
-          {/each}
-        </nav>
-      </aside>
-
-      <section class="main">
-        <header class="toolbar">
-          <span class="tool-title"><Icon name="inbox" size={18} /> Feeds</span>
-          <span class="tool-status">Updated just now <Icon name="refresh-cw" size={13} /></span>
-          <span class="tool-spacer"></span>
-          <span class="tool-btn"><Icon name="list" size={15} /> List</span>
-          <span class="tool-btn on"><Icon name="newspaper" size={15} /> Expand</span>
-          <span class="tool-btn"><Icon name="type" size={15} /> Style</span>
-        </header>
-        <div class="card-surface">
-          <div class="cards">
-            {#if arrived}
-              <div class="arrive">
-                <ArticleCardView {...arrivingCard} />
-              </div>
-            {/if}
-            {#each timelineCards as c (c.itemUrl)}
-              {#if c === featuredCard}
-                <div bind:this={featuredEl}>
-                  <ArticleCardView {...c} isSaved={kept && !readerOpen} />
-                </div>
-              {:else}
-                <ArticleCardView {...c} />
-              {/if}
-            {/each}
-          </div>
-        </div>
-      </section>
-    </div>
-
-    <!-- The reader, over the whole window, as it opens in the app. -->
-    <div class="reader" class:open={readerOpen}>
-      <header class="reader-bar">
-        <span class="r-btn"><Icon name="arrow-left" size={16} /><span>Back</span></span>
-        <span class="r-actions">
-          <span class="r-btn"><Icon name="type" size={16} /><span>Style</span></span>
-          <span class="r-btn hide-narrow"><Icon name="share" size={16} /><span>Share</span></span>
-          <span class="r-btn hide-narrow"
-            ><Icon name="thumbs-up" size={16} /><span>Recommend</span></span
-          >
-          <span class="r-btn" class:kept bind:this={keepBtnEl}>
-            <Icon name={kept ? 'check' : 'shelf'} size={16} />
-            <span>{kept ? 'On Shelf' : 'Keep on Shelf'}</span>
-          </span>
-        </span>
-      </header>
-      <div class="reader-scroll" bind:this={readerScrollEl}>
-        <article class="reader-col">
-          <h3 class="r-title">{article.title}</h3>
-          <p class="r-meta">
-            <img src={article.favicon} alt="" class="r-favicon" />
-            <span class="r-source">{article.source}</span>
-            <span>by {article.author}</span>
-            <span><Icon name="clock" size={13} /> {article.readTime}</span>
-          </p>
-          <div class="r-body marginalia-ink">
-            <p>{article.before}</p>
-            <div class="passage-block" bind:clientHeight={passageBlockHeight}>
-              <p>
-                {article.passageLead}{#if marked}<mark
-                    class="highlight ink-drawing"
-                    data-ink={String(inkVariant(inkId))}>{article.passage}</mark
-                  >{:else}<span class="sel" class:dragging class:selected bind:this={passageEl}
-                    >{article.passage}</span
-                  >{/if}{article.passageTail}
-              </p>
-              {#if marked}
-                <div class="note">
-                  <svg
-                    class="bracket"
-                    width="12"
-                    height={Math.max(passageBlockHeight - 8, 20)}
-                    viewBox="0 0 12 {Math.max(passageBlockHeight - 8, 20)}"
-                  >
-                    <path d={bracket} />
-                  </svg>
-                  <p class="note-text">{noteText.slice(0, noteChars)}</p>
-                </div>
-              {/if}
+          <nav class="side-nav">
+            <span class="nav-item"><span class="nav-icon"><Icon name="home" /></span>Home</span>
+            <div class="nav-group">
+              <span class="nav-row active">
+                <span class="nav-icon"><Icon name="inbox" /></span>
+                <span class="nav-label">Feeds</span>
+                <span class="nav-count">{arrived ? 13 : 12}</span>
+              </span>
             </div>
-            <p>{article.after}</p>
+            <span class="nav-item"><span class="nav-icon"><Icon name="bookmark" /></span>Queue</span
+            >
+            <span class="nav-item"><span class="nav-icon"><Icon name="shelf" /></span>Shelf</span>
+            <span class="nav-item"
+              ><span class="nav-icon"><Icon name="highlighter" /></span>Highlights</span
+            >
+            <span class="side-rule"></span>
+            <span class="side-label">Sources</span>
+            {#each sources as s (s.title)}
+              <FeedItem
+                subscription={subscriptionFor(s)}
+                unreadCount={s.unread + (arrived && s.kind === 'Newsletter' ? 1 : 0)}
+                isActive={false}
+                onSelect={() => {}}
+                onContextMenu={() => {}}
+                onTouchStart={() => {}}
+                onTouchEnd={() => {}}
+                onTouchMove={() => {}}
+                onRetry={() => {}}
+                onMoreClick={() => {}}
+              />
+            {/each}
+          </nav>
+        </aside>
+
+        <section class="main">
+          <header class="toolbar">
+            <span class="tool-title"><Icon name="inbox" size={18} /> Feeds</span>
+            <span class="tool-status">Updated just now <Icon name="refresh-cw" size={13} /></span>
+            <span class="tool-spacer"></span>
+            <span class="tool-btn"><Icon name="list" size={15} /> List</span>
+            <span class="tool-btn on"><Icon name="newspaper" size={15} /> Expand</span>
+            <span class="tool-btn"><Icon name="type" size={15} /> Style</span>
+          </header>
+          <div class="card-surface">
+            <div class="cards">
+              {#if arrived}
+                <div class="arrive">
+                  <ArticleCardView {...arrivingCard} />
+                </div>
+              {/if}
+              {#each timelineCards as c (c.itemUrl)}
+                {#if c === featuredCard}
+                  <div bind:this={featuredEl}>
+                    <ArticleCardView {...c} isSaved={kept && !readerOpen} />
+                  </div>
+                {:else}
+                  <ArticleCardView {...c} />
+                {/if}
+              {/each}
+            </div>
           </div>
-          <div class="discussion" bind:this={discussionEl}>
-            <AtmospherePanel
-              laneRow={discussionLanes}
-              filters={discussionFilters}
-              activeFilter="all"
-              stream={{ loading: false, entries: discussionEntries }}
-              lanesOpen
-              itemUrl={featuredCard.itemUrl}
-              showHeading
-            />
-          </div>
-        </article>
+        </section>
       </div>
-      {#if toast}
-        <div class="toast"><Icon name="check" size={14} /> Kept on your Shelf</div>
+
+      <!-- The reader, over the whole window, as it opens in the app. -->
+      <div class="reader" class:open={readerOpen}>
+        <header class="reader-bar">
+          <span class="r-btn"><Icon name="arrow-left" size={16} /><span>Back</span></span>
+          <span class="r-actions">
+            <span class="r-btn"><Icon name="type" size={16} /><span>Style</span></span>
+            <span class="r-btn hide-narrow"><Icon name="share" size={16} /><span>Share</span></span>
+            <span class="r-btn hide-narrow"
+              ><Icon name="thumbs-up" size={16} /><span>Recommend</span></span
+            >
+            <span class="r-btn" class:kept bind:this={keepBtnEl}>
+              <Icon name={kept ? 'check' : 'shelf'} size={16} />
+              <span>{kept ? 'On Shelf' : 'Keep on Shelf'}</span>
+            </span>
+          </span>
+        </header>
+        <div class="reader-scroll" bind:this={readerScrollEl}>
+          <article class="reader-col">
+            <h3 class="r-title">{article.title}</h3>
+            <p class="r-meta">
+              <img src={article.favicon} alt="" class="r-favicon" />
+              <span class="r-source">{article.source}</span>
+              <span>by {article.author}</span>
+              <span><Icon name="clock" size={13} /> {article.readTime}</span>
+            </p>
+            <div class="r-body marginalia-ink">
+              <p>{article.before}</p>
+              <div class="passage-block" bind:clientHeight={passageBlockHeight}>
+                <p>
+                  {article.passageLead}{#if marked}<mark
+                      class="highlight ink-drawing"
+                      data-ink={String(inkVariant(inkId))}>{article.passage}</mark
+                    >{:else}<span class="sel" class:dragging class:selected bind:this={passageEl}
+                      >{article.passage}</span
+                    >{/if}{article.passageTail}
+                </p>
+                {#if marked}
+                  <div class="note">
+                    <svg
+                      class="bracket"
+                      width="12"
+                      height={Math.max(passageBlockHeight - 8, 20)}
+                      viewBox="0 0 12 {Math.max(passageBlockHeight - 8, 20)}"
+                    >
+                      <path d={bracket} />
+                    </svg>
+                    <p class="note-text">{noteText.slice(0, noteChars)}</p>
+                  </div>
+                {/if}
+              </div>
+              <p>{article.after}</p>
+            </div>
+            <div class="discussion" bind:this={discussionEl}>
+              <AtmospherePanel
+                laneRow={discussionLanes}
+                filters={discussionFilters}
+                activeFilter="all"
+                stream={{ loading: false, entries: discussionEntries }}
+                lanesOpen
+                itemUrl={featuredCard.itemUrl}
+                showHeading
+              />
+            </div>
+          </article>
+        </div>
+        {#if toast}
+          <div class="toast"><Icon name="check" size={14} /> Kept on your Shelf</div>
+        {/if}
+      </div>
+
+      {#if popoverRect}
+        <div class="showcase-popover">
+          <HighlightPopover
+            mode="create"
+            anchorRect={popoverRect}
+            getAnchorRect={() => passageEl?.getBoundingClientRect() ?? popoverRect!}
+            onHighlight={() => {}}
+            onClose={() => (popoverRect = null)}
+          />
+        </div>
       {/if}
-    </div>
 
-    {#if popoverRect}
-      <div class="showcase-popover">
-        <HighlightPopover
-          mode="create"
-          anchorRect={popoverRect}
-          getAnchorRect={() => passageEl?.getBoundingClientRect() ?? popoverRect!}
-          onHighlight={() => {}}
-          onClose={() => (popoverRect = null)}
-        />
-      </div>
-    {/if}
-
-    <span
-      class="cursor"
-      class:shown={cursor.shown}
-      class:down={cursor.down}
-      class:slow={cursor.slow}
-      style:transform="translate({cursor.x}px, {cursor.y}px)"
-    >
-      <svg viewBox="0 0 24 24" width="22" height="22"
-        ><path
-          d="M5 3l14 8-6.5 1.5L9 19z"
-          fill="#1a1a1a"
-          stroke="#fff"
-          stroke-width="1.5"
-          stroke-linejoin="round"
-        /></svg
+      <span
+        class="cursor"
+        class:shown={cursor.shown}
+        class:down={cursor.down}
+        class:slow={cursor.slow}
+        style:transform="translate({cursor.x}px, {cursor.y}px)"
       >
-    </span>
+        <svg viewBox="0 0 24 24" width="22" height="22"
+          ><path
+            d="M5 3l14 8-6.5 1.5L9 19z"
+            fill="#1a1a1a"
+            stroke="#fff"
+            stroke-width="1.5"
+            stroke-linejoin="round"
+          /></svg
+        >
+      </span>
+    </div>
   </div>
 
   <div class="steps" role="group" aria-label="Tour of the app">
@@ -620,6 +623,7 @@
     padding: 0.75rem clamp(0.75rem, 2vw, 1.5rem);
   }
   .arrive {
+    overflow: clip;
     animation: arrive 0.7s cubic-bezier(0.2, 0.7, 0.2, 1);
   }
   @keyframes arrive {
@@ -788,7 +792,13 @@
     background: var(--color-text);
     color: var(--color-bg);
     font-size: var(--text-sm);
-    animation: arrive 0.35s ease;
+    animation: toast-in 0.35s ease;
+  }
+  @keyframes toast-in {
+    from {
+      opacity: 0;
+      transform: translate(-50%, 8px);
+    }
   }
 
   /* ── Cursor ──────────────────────────────────────────────── */
@@ -874,6 +884,16 @@
     font-size: var(--text-xs);
     color: var(--color-text-secondary);
     text-align: center;
+  }
+
+  /* Reduced motion gets each step's end state, with nothing sliding there. */
+  @media (prefers-reduced-motion: reduce) {
+    .frame *,
+    .frame *::before,
+    .frame *::after {
+      animation: none !important;
+      transition: none !important;
+    }
   }
 
   @media (max-width: 1000px) {

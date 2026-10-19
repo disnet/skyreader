@@ -132,9 +132,14 @@
   // Discussion panel), so it loads after the headline and the way in have
   // painted. Its placeholder holds the same space, so nothing jumps.
   let AppShowcase = $state<Component | null>(null);
+  let showcaseFailed = $state(false);
 
   onMount(() => {
-    import('$lib/components/landing/AppShowcase.svelte').then((m) => (AppShowcase = m.default));
+    // A failed load (a stale deploy, a dropped connection) just leaves the
+    // shot out; the page reads fine without it.
+    import('$lib/components/landing/AppShowcase.svelte')
+      .then((m) => (AppShowcase = m.default))
+      .catch(() => (showcaseFailed = true));
 
     // Failure is silent by design; see the pricing note.
     api
@@ -178,7 +183,7 @@
   <div class="shot">
     {#if AppShowcase}
       <AppShowcase />
-    {:else}
+    {:else if !showcaseFailed}
       <div class="shot-placeholder" aria-hidden="true"></div>
     {/if}
   </div>
