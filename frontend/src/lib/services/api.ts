@@ -36,6 +36,7 @@ import type {
   FollowLinkSharersResponse,
   User,
   SavedItem,
+  LibrarySource,
 } from '$lib/types';
 import { getLinkPostTitle, isLinkPost } from '$lib/utils/linkPost';
 import type { BskySourceKind } from '$lib/utils/bskySources';
@@ -420,7 +421,7 @@ export interface SearchSnippetSegment {
 
 /** A recent item from a saved search's sources that its query matches. */
 export interface SavedSearchPreviewHit {
-  kind: 'feed' | 'document';
+  kind: 'feed' | 'document' | 'save';
   itemKey: string;
   title: string;
   url: string | null;
@@ -507,6 +508,18 @@ export type ChannelMatch =
       };
       /** Matched on the sharers' words and the card only, not the article. */
       bodySkipped?: boolean;
+    })
+  | (ChannelMatchBase & {
+      /** One of your own saves; `itemKey` is its rkey, and read means archived. */
+      kind: 'save';
+      save: {
+        rkey: string;
+        url: string;
+        title: string;
+        description: string;
+        domain: string;
+        image: string | null;
+      };
     });
 
 export interface ChannelItemsResponse {
@@ -2566,6 +2579,7 @@ class ApiClient {
       query: string;
       sourceMode: 'all' | 'include' | 'exclude';
       sourceKeys: string[];
+      librarySources?: LibrarySource[];
     },
     signal?: AbortSignal
   ): Promise<SavedSearchPreview> {

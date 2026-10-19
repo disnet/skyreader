@@ -283,6 +283,7 @@ describe('extractSavedQuery', () => {
       sourceMode: 'include',
       sourceKeys: ['a', 'b'],
       digest: 'off',
+      includeSaves: false,
     });
   });
 
@@ -1090,5 +1091,209 @@ describe('Percolator: follows links', () => {
     expect(body.items).toHaveLength(1);
     expect(body.items[0].kind).toBe('follows');
     expect(body.items[0].link).toMatchObject({ url, title: 'Tides', urlNormalized: url });
+  });
+});
+
+describe('Percolator: saves', () => {
+  let saveSeq = 0;
+
+  /** Save a page into the reader's Library; returns its rkey. */
+  async function save(
+    user: TestUser,
+    page: { title: string; content?: string; url?: string; savedAt?: number }
+  ): Promise<string> {
+    saveSeq++;
+    const rkey = `3s${saveSeq}${Math.random().toString(36).slice(2, 10)}`;
+    const savedAt = page.savedAt ?? Date.now();
+    await env.DB.prepare(
+      `INSERT INTO saved_articles (user_did, rkey, record_uri, url, title, content, domain, saved_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'saved.example', ?, ?)`
+    )
+      .bind(
+        user.did,
+        rkey,
+        `at://${user.did}/app.skyreader.feed.saved/${rkey}`,
+        page.url ?? `https://saved.example/${rkey}`,
+        page.title,
+        page.content ?? '',
+        savedAt,
+        savedAt
+      )
+      .run();
+    return rkey;
+  }
+
+  it('reads the Library sources off the channel config', () => {
+    const base = { mode: 'feed', query: 'heat pump', sourceMode: 'all' };
+    expect(extractSavedQuery(JSON.stringify(base))?.includeSaves).toBe(false);
+    expect(
+      extractSavedQuery(JSON.stringify({ ...base, librarySources: ['saves', 'shelf'] }))
+        ?.includeSaves
+    ).toBe(true);
+    // The Shelf alone isn't searched yet.
+    expect(
+      extractSavedQuery(JSON.stringify({ ...base, librarySources: ['shelf'] }))?.includeSaves
+    ).toBe(false);
+  });
+
+  it('looks back over every save, however old, and matches new ones as they come', async () => {
+    const user = await createUser();
+    const old = await save(user, {
+      title: 'Kept from last year',
+      content: '<p>Notes on the heat pump install.</p>',
+      savedAt: Date.now() - 400 * DAY,
+    });
+    await save(user, { title: 'Unrelated', content: '<p>Bread.</p>' });
+    const other = await createUser();
+    await save(other, { title: 'Someone else', content: '<p>Their heat pump.</p>' });
+
+    const uuid = newUuid();
+    await putChannel(user, uuid, {
+      mode: 'feed',
+      query: '"heat pump"',
+      sourceMode: 'include',
+      sourceKeys: [],
+      librarySources: ['saves', 'shelf'],
+    });
+    await settle();
+    expect(await matchedKeys(user, uuid)).toEqual([old]);
+
+    const fresh = await save(user, { title: 'A heat pump guide', content: '' });
+    await drain();
+    expect((await matchedKeys(user, uuid)).sort()).toEqual([old, fresh].sort());
+  });
+
+  it("doesn't look through saves unless the channel takes them in", async () => {
+    const user = await createUser();
+    await save(user, { title: 'heat pump', content: '' });
+    const uuid = newUuid();
+    await putChannel(user, uuid, { mode: 'feed', query: '"heat pump"', sourceMode: 'all' });
+    await settle();
+    expect(await matchedKeys(user, uuid)).toEqual([]);
+  });
+
+  it('serves a save as read once archived, and drops it once removed', async () => {
+    const user = await createUser();
+    const kept = await save(user, { title: 'Heat pump notes', content: '' });
+    const gone = await save(user, { title: 'Heat pump draft', content: '' });
+    const uuid = newUuid();
+    await putChannel(user, uuid, {
+      mode: 'feed',
+      query: '"heat pump"',
+      sourceMode: 'include',
+      sourceKeys: [],
+      librarySources: ['saves'],
+    });
+    await settle();
+
+    // Archived under its record uri, as the Queue's `e` files it.
+    await env.DB.prepare(
+      `INSERT INTO item_labels_cache (user_did, item_key, item_type, label, rkey, updated_at)
+       VALUES (?, ?, 'article', 'archived', ?, unixepoch())`
+    )
+      .bind(user.did, `at://${user.did}/app.skyreader.feed.saved/${kept}`, `lbl${kept}`)
+      .run();
+    await env.DB.prepare(`DELETE FROM saved_articles WHERE user_did = ? AND rkey = ?`)
+      .bind(user.did, gone)
+      .run();
+
+    const response = await call(user, `/api/channels/${uuid}/items`);
+    const body = (await response.json()) as ItemsBody & {
+      items: { save?: { rkey: string; title: string } }[];
+    };
+    expect(body.items.map((i) => [i.kind, i.itemKey, i.read])).toEqual([['save', kept, true]]);
+    expect(body.items[0].save?.title).toBe('Heat pump notes');
+    expect(body.unread).toBe(0);
+  });
+
+  it('matches a saved feed story once, as the feed item', async () => {
+    const user = await createUser();
+    const key = await subscribe(user, FEED_A);
+    const url = `${FEED_A.replace('/feed.xml', '')}/story`;
+    const guid = await ingest(FEED_A, { title: 'Heat pump story', url });
+    await save(user, { title: 'Heat pump story', url });
+    const uuid = newUuid();
+    await putChannel(user, uuid, {
+      mode: 'feed',
+      query: '"heat pump"',
+      sourceMode: 'include',
+      sourceKeys: [key],
+      librarySources: ['saves'],
+    });
+    await settle();
+    expect(await matchedKeys(user, uuid)).toEqual([guid]);
+  });
+
+  it('previews saves beside the sources', async () => {
+    const user = await createUser();
+    const rkey = await save(user, {
+      title: 'Old heat pump notes',
+      content: '',
+      savedAt: Date.now() - 200 * DAY,
+    });
+    const response = await call(user, '/api/channels/preview', {
+      method: 'POST',
+      body: {
+        mode: 'feed',
+        query: '"heat pump"',
+        sourceMode: 'include',
+        sourceKeys: [],
+        librarySources: ['saves'],
+      },
+    });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      total: number;
+      hits: { kind: string; itemKey: string }[];
+    };
+    expect(body.total).toBe(1);
+    expect(body.hits[0]).toMatchObject({ kind: 'save', itemKey: rkey });
+  });
+});
+
+describe('Percolator: retention keeps what saves match', () => {
+  it('drops an old match unless a kept save still matches it', async () => {
+    const user = await createUser();
+    const uuid = newUuid();
+    await putChannel(user, uuid, {
+      mode: 'feed',
+      query: '"heat pump"',
+      sourceMode: 'include',
+      sourceKeys: [],
+      librarySources: ['saves'],
+    });
+    const rkey = `3skeep${Math.random().toString(36).slice(2, 9)}`;
+    await env.DB.prepare(
+      `INSERT INTO saved_articles (user_did, rkey, url, title, saved_at) VALUES (?, ?, ?, ?, ?)`
+    )
+      .bind(user.did, rkey, 'https://kept.example/a', 'Heat pump notes', Date.now())
+      .run();
+    const old = Date.now() - 100 * DAY;
+    const insert = (key: string, kind: string, ref: string) =>
+      env.DB.batch([
+        env.DB.prepare(
+          `INSERT INTO channel_matches (user_did, channel_uuid, dedup_key, item_key, source_kind, source_ref, published_at, matched_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        ).bind(user.did, uuid, key, ref, kind, ref, old, old),
+        env.DB.prepare(
+          `INSERT INTO channel_match_sources (user_did, channel_uuid, dedup_key, source_kind, source_ref, item_key, matched_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`
+        ).bind(user.did, uuid, key, kind, ref, ref, old),
+      ]);
+    await insert('https://kept.example/a', 'save', rkey);
+    await insert('https://gone.example/b', 'save', '3sgoneaway000');
+    await insert('https://feed.example/c', 'feed', 'https://feed.example/feed.xml');
+
+    await runInDurableObject(percolatorStub(env), async (instance, state) => {
+      // Retention runs every six hours; this one runs now.
+      state.storage.sql.exec(`DELETE FROM meta WHERE key = 'retention_at'`);
+      await (instance as unknown as { applyRetention(): Promise<void> }).applyRetention();
+    });
+    const rows = await env.DB.prepare(
+      `SELECT dedup_key FROM channel_matches WHERE user_did = ? AND channel_uuid = ?`
+    )
+      .bind(user.did, uuid)
+      .all<{ dedup_key: string }>();
+    expect((rows.results ?? []).map((r) => r.dedup_key)).toEqual(['https://kept.example/a']);
   });
 });

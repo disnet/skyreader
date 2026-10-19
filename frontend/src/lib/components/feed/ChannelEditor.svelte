@@ -397,8 +397,9 @@
       return;
     }
     if (channelType === 'feed' && mode === 'pick') {
-      // A saved search doesn't look through the Library yet, so it needs a feed.
+      // A saved search looks through every save, but not the Shelf on its own.
       if (
+        !librarySources.includes('saves') &&
         (librarySources.length === 0 || trimmedQuery) &&
         showsNoSource(
           sourceFilter,
@@ -451,10 +452,7 @@
               typeFilter: currentRule ? typeFilter : undefined,
               // Absent rather than empty, like the query.
               librarySources:
-                // A saved search doesn't read the Library, so it keeps none.
-                !currentRule && !trimmedQuery && librarySources.length > 0
-                  ? [...librarySources]
-                  : undefined,
+                !currentRule && librarySources.length > 0 ? [...librarySources] : undefined,
               tagFilter: feedTagFilter.length > 0 ? [...feedTagFilter] : undefined,
               filterVersion: CHANNEL_FILTER_VERSION,
               // Absent rather than empty, so taking a query out leaves an ordinary channel.
@@ -627,14 +625,15 @@
           Add a search and the channel keeps only what matches it, as it arrives.
         {/if}
       </p>
-      {#if trimmedQuery && librarySources.length > 0}
-        <p class="hint">A saved search doesn't look through your Library yet.</p>
+      {#if trimmedQuery && librarySources.includes('shelf') && !librarySources.includes('saves')}
+        <p class="hint">A saved search looks through all your saves, not the Shelf alone.</p>
       {/if}
       {#if trimmedQuery && hasSearchableTerm(trimmedQuery)}
         <SearchQueryPreview
           query={trimmedQuery}
           sourceMode={querySourceMode}
           sourceKeys={querySourceKeys}
+          includeSaves={librarySources.includes('saves')}
         />
       {/if}
     </div>

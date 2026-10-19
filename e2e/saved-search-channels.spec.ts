@@ -6,6 +6,7 @@ import {
   enableSavedSearchSwitch,
   seedChannelMatches,
   seedFeedItems,
+  seedSavedArticle,
   seedSearchChannel,
   seedSubscription,
 } from './seed';
@@ -130,6 +131,12 @@ test.describe('Saved searches', () => {
       ],
       { title: 'Home Energy Weekly' }
     );
+    // A save from long ago: a saved search looks through every save.
+    await seedSavedArticle(testUser, {
+      url: 'https://notes.example/install',
+      title: 'Notes on our heat pump install',
+      savedAt: now - 400 * 24 * 60 * 60 * 1000,
+    });
     await authedPage.reload();
 
     const navGroup = authedPage.locator('.nav-group', {
@@ -141,9 +148,9 @@ test.describe('Saved searches', () => {
     await queryInput.fill('"heat pump" -podcast');
     // Named for what it looks for, until you name it.
     await expect(authedPage.locator('#channel-name')).toHaveValue('"heat pump" -podcast');
-    // The preview reads the sources' recent items, unread ones included.
+    // The preview reads the sources' recent items, unread ones included, and the saves.
     await expect(authedPage.locator('.preview')).toContainText(
-      '1 of 2 items from these sources match',
+      '2 of 3 items from these sources and your saves match',
       { timeout: 10_000 }
     );
 
@@ -159,6 +166,9 @@ test.describe('Saved searches', () => {
       timeout: 15_000,
     });
     await expect(cards.filter({ hasText: 'The heat pump podcast' })).toHaveCount(0);
+    await expect(
+      authedPage.locator('.bookmark-card', { hasText: 'Notes on our heat pump install' })
+    ).toBeVisible();
     await expect(authedPage.locator('.view-item', { hasText: 'heat pump' })).toBeVisible();
 
     const uuid = new URL(authedPage.url()).searchParams.get('view');

@@ -147,6 +147,27 @@ channel UI should say plainly when a feed only sends excerpts. See open question
 Sources added later (Bluesky lists, feeds and searches; watched pages) plug in as another row in
 this table: somewhere new items appear, plus somewhere their text lives.
 
+### Saves
+
+A channel can take in the reader's own Library (`librarySources`, frontend), and a saved search
+then looks through their saves too. _Built_ (migration 0101, `include_saves` and
+`backfill_saves_after` on `saved_queries`):
+
+- **Which config.** `librarySources` naming `'saves'`. The Shelf alone isn't searched: it's a view
+  over saves (a `kept` label, a kind default, or a collection), not a stream.
+- **The stream.** `saved_articles` by `id`, which is assigned as the row is written. A save is new
+  when it arrives, so it isn't held to the 30-day window.
+- **The look back** runs after follows, newest first, over every save, not the last 30 days: a
+  Library is read as a whole, and it's one reader's.
+- **Text.** The body kept with the save (inline in D1; a book's first part), else its description.
+- **Keys.** `item_key` and `source_ref` are the save's rkey. A save of a page a feed also carries
+  dedupes on the URL like any source, and loads after the feeds, so the feed item keeps the match.
+- **Read** means archived, under any of the keys an archive label can sit on (the frontend's
+  `savedItemLabelKeys`). A match whose save is gone isn't served or counted.
+- **Retention** spares a story a kept save still matches; a save is only matched once.
+- **Not yet:** a save whose body is filled in after it's written (a late extraction) isn't matched
+  again on the new text.
+
 ### The matcher: a Percolator Durable Object
 
 The matcher is one Durable Object class (`backend/src/durable-objects/percolator.ts`).

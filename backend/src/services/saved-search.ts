@@ -95,6 +95,8 @@ export interface SavedQueryConfig {
   sourceMode: SourceMode;
   sourceKeys: string[];
   digest: 'off' | 'daily';
+  /** Whether it looks through the reader's saves too (`librarySources` naming 'saves'). */
+  includeSaves: boolean;
 }
 
 interface ChannelConfigFields {
@@ -103,6 +105,7 @@ interface ChannelConfigFields {
   sourceMode?: unknown;
   sourceKeys?: unknown;
   digest?: unknown;
+  librarySources?: unknown;
 }
 
 /**
@@ -131,6 +134,8 @@ export function extractSavedQuery(configJson: string): SavedQueryConfig | null {
     sourceMode,
     sourceKeys: sourceMode === 'all' ? [] : [...new Set(sourceKeys)].sort(),
     digest: config.digest === 'daily' ? 'daily' : 'off',
+    // The Shelf alone isn't searched yet: it's a view over saves, not a stream.
+    includeSaves: Array.isArray(config.librarySources) && config.librarySources.includes('saves'),
   };
 }
 
@@ -146,6 +151,8 @@ interface SavedQueryRow {
   backfill_feed_after: string;
   backfill_doc_after: string;
   backfill_follows_after: string;
+  include_saves: number;
+  backfill_saves_after: string;
   created_at: number;
   updated_at: number;
 }
@@ -200,8 +207,9 @@ export async function syncSavedQueries(env: Env, did: string, uuids: string[]): 
         statements.push(
           env.DB.prepare(
             `INSERT INTO saved_queries
-               (user_did, channel_uuid, query, fts_query, source_mode, source_keys, digest, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+               (user_did, channel_uuid, query, fts_query, source_mode, source_keys, digest,
+                include_saves, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
           ).bind(
             did,
             uuid,
@@ -210,6 +218,7 @@ export async function syncSavedQueries(env: Env, did: string, uuids: string[]): 
             want.sourceMode,
             sourceKeys,
             want.digest,
+            want.includeSaves ? 1 : 0,
             now,
             now
           )
@@ -219,15 +228,17 @@ export async function syncSavedQueries(env: Env, did: string, uuids: string[]): 
       const predicateChanged =
         have.fts_query !== want.ftsQuery ||
         have.source_mode !== want.sourceMode ||
-        have.source_keys !== sourceKeys;
+        have.source_keys !== sourceKeys ||
+        have.include_saves !== (want.includeSaves ? 1 : 0);
       if (predicateChanged) {
         lookBack = true;
         statements.push(
           env.DB.prepare(
             `UPDATE saved_queries
                 SET query = ?, fts_query = ?, source_mode = ?, source_keys = ?, digest = ?,
-                    backfill_state = 'pending', backfill_feed_after = '', backfill_doc_after = '',
-                    backfill_follows_after = '', updated_at = ?
+                    include_saves = ?, backfill_state = 'pending', backfill_feed_after = '',
+                    backfill_doc_after = '', backfill_follows_after = '',
+                    backfill_saves_after = '', updated_at = ?
               WHERE user_did = ? AND channel_uuid = ?`
           ).bind(
             want.query,
@@ -235,6 +246,7 @@ export async function syncSavedQueries(env: Env, did: string, uuids: string[]): 
             want.sourceMode,
             sourceKeys,
             want.digest,
+            want.includeSaves ? 1 : 0,
             now,
             did,
             uuid
@@ -304,6 +316,10 @@ export interface ActiveQuery {
   docScopes: DocScope[];
   /** Whether the query takes in the links the reader's follows share. */
   coversFollows: boolean;
+  /** Whether the query looks through the reader's own saves. */
+  coversSaves: boolean;
+  /** '' before the saves backfill starts, 'done' after, else its JSON cursor. */
+  backfillSavesAfter: string;
 }
 
 /** The channel source key for follows links (frontend utils/sourceKeys.ts). */
@@ -511,6 +527,7 @@ export function queryCovers(query: ActiveQuery, doc: MatchDoc): boolean {
   if (doc.kind === 'document') {
     return docInAnyScope({ authorDid: doc.sourceRef, siteUri: doc.siteUri }, query.docScopes);
   }
+  if (doc.kind === 'save') return query.coversSaves && doc.ownerDid === query.userDid;
   return query.coversFollows && doc.ownerDid === query.userDid;
 }
 
@@ -583,6 +600,8 @@ export async function loadActiveQueries(env: Env): Promise<ActiveQuery[]> {
         backfillFeedAfter: q.backfill_feed_after,
         backfillDocAfter: q.backfill_doc_after,
         backfillFollowsAfter: q.backfill_follows_after,
+        coversSaves: q.include_saves === 1,
+        backfillSavesAfter: q.backfill_saves_after,
         ...scope,
       });
     }
@@ -594,10 +613,16 @@ export async function loadActiveQueries(env: Env): Promise<ActiveQuery[]> {
 
 /** One item, as the matcher indexes it. */
 export interface MatchDoc {
-  kind: 'feed' | 'document' | 'follows';
-  /** What read state is filed under: guid, document URI, or a link's normalized URL. */
+  kind: 'feed' | 'document' | 'follows' | 'save';
+  /**
+   * What read state is filed under: guid, document URI, or a link's normalized
+   * URL. A save's is its rkey (read means archived, under any of its aliases).
+   */
   itemKey: string;
-  /** feed_url for feed items, the author DID for documents, the first sharer's DID for links. */
+  /**
+   * feed_url for feed items, the author DID for documents, the first sharer's
+   * DID for links, the rkey for a save.
+   */
   sourceRef: string;
   /** Documents only: the `site` the record names, for publication scoping. */
   siteUri: string;
@@ -608,7 +633,7 @@ export interface MatchDoc {
   sourceTitle: string;
   body: string;
   publishedAt: number | null;
-  /** Follows links only: whose timeline the shares are in. */
+  /** Follows links and saves: whose timeline (or Library) it's in. */
   ownerDid?: string;
   /** Follows links only: everyone in that timeline who shared it. */
   sharers?: Sharer[];
@@ -681,18 +706,26 @@ export interface ShareCursor {
 const SHARE_COLUMNS = `user_did, post_uri, sharer_did, url, url_normalized, post_text, card_title,
   card_description, card_thumb, sharer_handle, sharer_name, sharer_avatar, shared_at, first_seen_at`;
 
+/** A save as the matcher reads it from the stream: cheap columns only. */
+export interface SaveHead {
+  id: number;
+  user_did: string;
+}
+
 export interface StreamCursors {
   seq: number;
   doc: DocCursor;
   /** Absent in cursors saved before follows matching; it starts at the head. */
   share?: ShareCursor;
+  /** saved_articles.id. Absent in cursors saved before saves matching; it starts at the head. */
+  save?: number;
 }
 
 /** The newest positions of every stream, where a fresh matcher starts. */
 export async function streamHeads(
   env: Env
-): Promise<{ seq: number; doc: DocCursor; share: ShareCursor }> {
-  const [seq, doc, share] = await env.DB.batch([
+): Promise<{ seq: number; doc: DocCursor; share: ShareCursor; save: number }> {
+  const [seq, doc, share, save] = await env.DB.batch([
     env.DB.prepare(`SELECT COALESCE(MAX(seq), 0) AS seq FROM feed_items`),
     env.DB.prepare(
       `SELECT indexed_at AS at, record_uri AS uri FROM documents_v2
@@ -703,6 +736,7 @@ export async function streamHeads(
          FROM follow_link_shares WHERE first_seen_at IS NOT NULL
         ORDER BY first_seen_at DESC, user_did DESC, post_uri DESC, sharer_did DESC LIMIT 1`
     ),
+    env.DB.prepare(`SELECT COALESCE(MAX(id), 0) AS id FROM saved_articles`),
   ]);
   const docRow = (doc.results ?? [])[0] as DocCursor | undefined;
   const shareRow = (share.results ?? [])[0] as ShareCursor | undefined;
@@ -710,6 +744,7 @@ export async function streamHeads(
     seq: ((seq.results ?? [])[0] as { seq: number } | undefined)?.seq ?? 0,
     doc: docRow ?? { at: 0, uri: '' },
     share: shareRow ?? { at: 0, user: '', post: '', sharer: '' },
+    save: ((save.results ?? [])[0] as { id: number } | undefined)?.id ?? 0,
   };
 }
 
@@ -724,13 +759,13 @@ export async function streamHeads(
  */
 export async function readStreamPage(
   env: Env,
-  cursors: { seq: number; doc: DocCursor; share: ShareCursor },
+  cursors: { seq: number; doc: DocCursor; share: ShareCursor; save: number },
   pageSize: number,
   settledBefore: number,
   sharesSettledBefore: number
-): Promise<{ feeds: FeedHead[]; docs: DocHead[]; shares: ShareHead[] }> {
+): Promise<{ feeds: FeedHead[]; docs: DocHead[]; shares: ShareHead[]; saves: SaveHead[] }> {
   const c = cursors.share;
-  const [feeds, docs, shares] = await env.DB.batch([
+  const [feeds, docs, shares, saves] = await env.DB.batch([
     env.DB.prepare(
       `SELECT seq, feed_url, published_at FROM feed_items WHERE seq > ? ORDER BY seq LIMIT ?`
     ).bind(cursors.seq, pageSize),
@@ -745,11 +780,17 @@ export async function readStreamPage(
           AND first_seen_at < ?
         ORDER BY first_seen_at, user_did, post_uri, sharer_did LIMIT ?`
     ).bind(c.at, c.user, c.post, c.sharer, sharesSettledBefore, pageSize),
+    // A save's id is assigned as it's written, so the stream is commit-ordered.
+    env.DB.prepare(`SELECT id, user_did FROM saved_articles WHERE id > ? ORDER BY id LIMIT ?`).bind(
+      cursors.save,
+      pageSize
+    ),
   ]);
   return {
     feeds: (feeds.results ?? []) as FeedHead[],
     docs: (docs.results ?? []) as DocHead[],
     shares: (shares.results ?? []) as ShareHead[],
+    saves: (saves.results ?? []) as SaveHead[],
   };
 }
 
@@ -798,6 +839,55 @@ export async function readFollowsBackfillPage(
       : JSON.stringify({ at: last!.shared_at, post: last!.post_uri, sharer: last!.sharer_did }),
     done,
   };
+}
+
+/** Where a saves backfill has got to: the last save it finished, newest first. */
+interface SavesBackfillCursor {
+  at: number;
+  id: number;
+}
+
+/**
+ * One step of a query's saves backfill: the next page of its reader's saves,
+ * newest first. All of them, not the last 30 days: a Library is read as a
+ * whole, and it's one reader's, so it stays small next to the feeds.
+ */
+export async function readSavesBackfillPage(
+  env: Env,
+  query: ActiveQuery,
+  pageSize: number
+): Promise<{ ids: number[]; after: string; done: boolean }> {
+  const after = parseJson<SavesBackfillCursor>(query.backfillSavesAfter);
+  const rows = await env.DB.prepare(
+    `SELECT id, saved_at FROM saved_articles
+      WHERE user_did = ?1 AND (?2 IS NULL OR (saved_at, id) < (?2, ?3))
+      ORDER BY saved_at DESC, id DESC LIMIT ?4`
+  )
+    .bind(query.userDid, after?.at ?? null, after?.id ?? 0, pageSize)
+    .all<{ id: number; saved_at: number }>();
+  const saves = rows.results ?? [];
+  const last = saves.at(-1);
+  const done = saves.length < pageSize;
+  return {
+    ids: saves.map((s) => s.id),
+    after: done ? 'done' : JSON.stringify({ at: last!.saved_at, id: last!.id }),
+    done,
+  };
+}
+
+/** A reader's newest saves, for a preview. */
+export async function readPreviewSaves(
+  env: Env,
+  did: string,
+  limit: number
+): Promise<{ id: number; saved_at: number }[]> {
+  const rows = await env.DB.prepare(
+    `SELECT id, saved_at FROM saved_articles WHERE user_did = ?
+      ORDER BY saved_at DESC, id DESC LIMIT ?`
+  )
+    .bind(did, limit)
+    .all<{ id: number; saved_at: number }>();
+  return rows.results ?? [];
 }
 
 /** A reader's shares of one URL, for re-checking them once the article is read. */
@@ -1059,6 +1149,62 @@ export async function loadMatchDocs(
         sourceTitle: '',
         body: stripControlChars(truncateText(text, MATCH_BODY_CHARS)),
         publishedAt: row.published_at,
+      });
+    }
+  }
+  return docs;
+}
+
+interface SaveRow {
+  id: number;
+  user_did: string;
+  rkey: string;
+  url: string;
+  title: string | null;
+  author: string | null;
+  description: string | null;
+  domain: string | null;
+  content: string | null;
+  saved_at: number;
+}
+
+/**
+ * Text for the given saves: the body kept with the save (inline in D1), else
+ * its description. A book's body can run to a megabyte, so only its first
+ * `bodyChars` (in HTML, read in SQL) are matched.
+ */
+export async function loadSaveDocs(
+  env: Env,
+  ids: number[],
+  bodyChars = MATCH_BODY_CHARS
+): Promise<MatchDoc[]> {
+  const docs: MatchDoc[] = [];
+  // HTML runs longer than its text; this much markup leaves room for the cap.
+  const htmlChars = bodyChars * 3;
+  for (const keys of chunk(ids, IN_CHUNK)) {
+    const rows = await env.DB.prepare(
+      `SELECT id, user_did, rkey, url, title, author, description, domain,
+              substr(content, 1, ?) AS content, saved_at
+         FROM saved_articles WHERE id IN (${placeholders(keys.length)})`
+    )
+      .bind(htmlChars, ...keys)
+      .all<SaveRow>();
+    for (const row of rows.results ?? []) {
+      const body =
+        htmlToText(row.content ?? '', bodyChars) || htmlToText(row.description ?? '', bodyChars);
+      docs.push({
+        kind: 'save',
+        itemKey: row.rkey,
+        sourceRef: row.rkey,
+        siteUri: '',
+        feedSeq: null,
+        url: row.url || null,
+        title: clean(row.title ?? '', 500),
+        author: clean(row.author ?? '', 200),
+        sourceTitle: clean(row.domain ?? '', 300),
+        body: stripControlChars(body),
+        publishedAt: row.saved_at,
+        ownerDid: row.user_did,
       });
     }
   }

@@ -13,6 +13,7 @@ import {
   loadReaderScope,
   previewStub,
   readPreviewHeads,
+  readPreviewSaves,
   type LinkCard,
   type Sharer,
 } from '../services/saved-search';
@@ -32,7 +33,7 @@ function json(body: unknown, status = 200): Response {
 interface MatchRow {
   dedup_key: string;
   item_key: string;
-  source_kind: 'feed' | 'document' | 'follows';
+  source_kind: 'feed' | 'document' | 'follows' | 'save';
   source_ref: string;
   feed_seq: number | null;
   snippet: string;
@@ -46,6 +47,12 @@ interface MatchRow {
   doc_description: string | null;
   body_skipped: number;
   link_json: string | null;
+  save_id: number | null;
+  save_url: string | null;
+  save_title: string | null;
+  save_description: string | null;
+  save_domain: string | null;
+  save_image: string | null;
 }
 
 /** Sharers shown per story; the rest are a count. */
@@ -68,12 +75,23 @@ function parseJson<T>(raw: string | null): T | null {
 }
 
 // A match is read when its item carries the reader's read label, under the
-// item type the timeline and the document reader file it under.
-const READ_SQL = `EXISTS (
+// item type the timeline and the document reader file it under. A save is read
+// once it's archived, under any of the keys its archive label can sit on (the
+// frontend's savedItemLabelKeys).
+const READ_SQL = `CASE WHEN m.source_kind = 'save' THEN EXISTS (
+    SELECT 1 FROM saved_articles sa JOIN item_labels_cache il ON il.user_did = sa.user_did
+     WHERE sa.user_did = m.user_did AND sa.rkey = m.item_key
+       AND il.item_key IN (sa.item_guid, sa.record_uri, sa.url, sa.rkey)
+       AND il.label = 'archived' AND il.deleted_at IS NULL)
+  ELSE EXISTS (
     SELECT 1 FROM item_labels_cache il
      WHERE il.user_did = m.user_did AND il.item_key = m.item_key
        AND il.item_type = CASE m.source_kind WHEN 'document' THEN 'document' ELSE 'article' END
-       AND il.label = 'read' AND il.deleted_at IS NULL)`;
+       AND il.label = 'read' AND il.deleted_at IS NULL) END`;
+
+// A save match whose save has since been removed isn't served or counted.
+const SAVE_GONE_SQL = `(m.source_kind = 'save' AND NOT EXISTS (
+    SELECT 1 FROM saved_articles sa WHERE sa.user_did = m.user_did AND sa.rkey = m.item_key))`;
 
 /** `before` is `<publishedAt>:<dedupKey>` from the previous page's `nextCursor`. */
 function parseCursor(raw: string | null): { at: number; key: string } | null {
@@ -126,11 +144,16 @@ export async function handleChannelItems(
               fi.item_json,
               d.site_uri AS doc_site_uri, d.canonical_url AS doc_url,
               json_extract(d.record_json, '$.title') AS doc_title,
-              json_extract(d.record_json, '$.description') AS doc_description
+              json_extract(d.record_json, '$.description') AS doc_description,
+              sa.id AS save_id, sa.url AS save_url, sa.title AS save_title,
+              sa.description AS save_description, sa.domain AS save_domain,
+              sa.image AS save_image
          FROM channel_matches m
          LEFT JOIN feed_items fi ON m.source_kind = 'feed' AND fi.seq = m.feed_seq
          LEFT JOIN documents_v2 d ON m.source_kind = 'document' AND d.record_uri = m.item_key
-        WHERE m.user_did = ? AND m.channel_uuid = ?
+         LEFT JOIN saved_articles sa
+           ON m.source_kind = 'save' AND sa.user_did = m.user_did AND sa.rkey = m.item_key
+        WHERE m.user_did = ? AND m.channel_uuid = ? AND NOT ${SAVE_GONE_SQL}
           AND (? IS NULL OR m.published_at < ? OR (m.published_at = ? AND m.dedup_key < ?))
         ORDER BY m.published_at DESC, m.dedup_key DESC
         LIMIT ?`
@@ -147,6 +170,7 @@ export async function handleChannelItems(
       `SELECT count(*) AS n FROM (
          SELECT 1 FROM channel_matches m
           WHERE m.user_did = ? AND m.channel_uuid = ? AND NOT ${READ_SQL}
+            AND NOT ${SAVE_GONE_SQL}
           LIMIT ?)`
     ).bind(session.did, uuid, UNREAD_COUNT_CAP + 1),
   ]);
@@ -218,6 +242,20 @@ export async function handleChannelItems(
         // article budget was spent before this one could be read.
         bodySkipped: row.body_skipped === 1,
       });
+    } else if (row.source_kind === 'save') {
+      if (row.save_id === null) continue;
+      items.push({
+        ...base,
+        // The save itself is on the device; this is enough to find it, or show it.
+        save: {
+          rkey: row.item_key,
+          url: row.save_url ?? '',
+          title: row.save_title ?? '',
+          description: row.save_description ?? '',
+          domain: row.save_domain ?? '',
+          image: row.save_image,
+        },
+      });
     } else {
       if (row.doc_title === null && row.doc_url === null) continue;
       items.push({
@@ -250,6 +288,8 @@ export async function handleChannelItems(
 
 /** Items a preview reads: the newest this many from the chosen sources. */
 const PREVIEW_ITEMS = 300;
+/** Saves a preview reads beside them, newest first. Each brings its whole text. */
+const PREVIEW_SAVES = 100;
 /** A channel config is held to 50 KB (routes/channels.ts); the preview takes part of one. */
 const MAX_PREVIEW_BODY = 50_000;
 const PREVIEW_SHOWN = 3;
@@ -257,7 +297,8 @@ const PREVIEW_SHOWN = 3;
 /**
  * POST /api/channels/preview — what a saved search being edited would match:
  * its query over the newest items from the sources picked so far, read or not.
- * Body: `{ query, sourceMode, sourceKeys }`, the fields a channel config carries.
+ * Body: `{ query, sourceMode, sourceKeys, librarySources }`, the fields a channel
+ * config carries.
  */
 export async function handleChannelPreview(
   request: Request,
@@ -288,20 +329,29 @@ export async function handleChannelPreview(
     if (lastFeed <= lastDoc) heads.feeds.pop();
     else heads.docs.pop();
   }
-  const scanned = heads.feeds.length + heads.docs.length;
+  // Saves aren't held to the month: a saved search looks through all of them.
+  const saves = saved.includeSaves
+    ? await readPreviewSaves(env, session.did, PREVIEW_SAVES + 1)
+    : [];
+  const savesCapped = saves.length > PREVIEW_SAVES;
+  if (savesCapped) saves.pop();
+  const scanned = heads.feeds.length + heads.docs.length + saves.length;
   const hits =
     scanned === 0
       ? []
-      : await previewStub(env).preview(saved.ftsQuery, heads.feeds, heads.docs, {
-          feedUrls: [...scope.feedUrls],
-          docScopes: scope.docScopes,
-        });
+      : await previewStub(env).preview(
+          saved.ftsQuery,
+          heads.feeds,
+          heads.docs,
+          { feedUrls: [...scope.feedUrls], docScopes: scope.docScopes },
+          { did: session.did, ids: saves.map((s) => s.id) }
+        );
 
   return json({
     total: hits.length,
     scanned,
     // The sources hold more than the preview read.
-    capped,
+    capped: capped || savesCapped,
     // Links your follows share aren't previewed, though the channel takes them in.
     coversFollows: scope.coversFollows,
     hits: hits.slice(0, PREVIEW_SHOWN).map((hit) => ({
