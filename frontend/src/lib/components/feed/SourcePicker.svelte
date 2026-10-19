@@ -5,7 +5,7 @@
   // shows just it. The model lives in utils/sourceFilter.ts.
   import Icon, { type IconName } from '$lib/components/Icon.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
-  import type { Subscription } from '$lib/types';
+  import { LIBRARY_SOURCES, type LibrarySource, type Subscription } from '$lib/types';
   import { FOLLOWS_SOURCE_KEY, subscriptionSourceKey } from '$lib/utils/sourceKeys';
   import { filterSubscriptionsBySearch, subscriptionIconUrl } from '$lib/utils/subscriptionDisplay';
   import {
@@ -38,6 +38,9 @@
     scroll?: boolean;
     /** Offer Select all and Select none (a channel's sources) in place of Show everything. */
     bulk?: boolean;
+    /** A channel's Library sources; with `onlibrarychange`, the Library rows show. */
+    library?: LibrarySource[];
+    onlibrarychange?: (library: LibrarySource[]) => void;
   }
 
   let {
@@ -47,11 +50,26 @@
     followsInEverything,
     scroll = false,
     bulk = false,
+    library = [],
+    onlibrarychange,
   }: Props = $props();
+
+  const LIBRARY_LABELS: Record<LibrarySource, { label: string; icon: IconName }> = {
+    saves: { label: 'Your saves', icon: 'bookmark' },
+    shelf: { label: 'Your Shelf', icon: 'shelf' },
+  };
+
+  function toggleLibrary(source: LibrarySource) {
+    onlibrarychange?.(
+      library.includes(source) ? library.filter((s) => s !== source) : [...library, source]
+    );
+  }
 
   let everySource = $derived(everySourceFilter(showFollows, followsInEverything));
   let allChecked = $derived(
-    filter.sourceMode === everySource.sourceMode && filter.sourceKeys.length === 0
+    filter.sourceMode === everySource.sourceMode &&
+      filter.sourceKeys.length === 0 &&
+      (!onlibrarychange || LIBRARY_SOURCES.every((s) => library.includes(s)))
   );
 
   let search = $state('');
@@ -60,7 +78,9 @@
   let subscriptions = $derived(subscriptionsStore.subscriptions);
   let groups = $derived(buildSourceGroups(subscriptions));
   let ctx = $derived<PickerContext>({ groups, followsInEverything });
-  let noneChecked = $derived(bulk && showsNoSource(filter, subscriptions, ctx, showFollows));
+  let noneChecked = $derived(
+    bulk && showsNoSource(filter, subscriptions, ctx, showFollows) && library.length === 0
+  );
 
   interface SourceRow {
     key: string;
@@ -160,6 +180,7 @@
 
   function only(item: string | readonly string[]) {
     onchange(onlySource(item));
+    onlibrarychange?.([]);
   }
 
   function toggleExpanded(id: string) {
@@ -258,13 +279,19 @@
           type="button"
           class="show-all-btn"
           disabled={allChecked}
-          onclick={() => onchange(everySource)}>Select all</button
+          onclick={() => {
+            onchange(everySource);
+            onlibrarychange?.([...LIBRARY_SOURCES]);
+          }}>Select all</button
         >
         <button
           type="button"
           class="show-all-btn"
           disabled={noneChecked}
-          onclick={() => onchange({ sourceMode: 'include', sourceKeys: [] })}>Select none</button
+          onclick={() => {
+            onchange({ sourceMode: 'include', sourceKeys: [] });
+            onlibrarychange?.([]);
+          }}>Select none</button
         >
       </span>
     {:else if filter.sourceMode !== 'all'}
@@ -288,6 +315,35 @@
         <div class="no-results">No sources match</div>
       {/if}
     {:else}
+      {#if onlibrarychange}
+        <div class="section-label">From your Library</div>
+        {#each LIBRARY_SOURCES as source (source)}
+          {@const meta = LIBRARY_LABELS[source]}
+          <div class="source-row" style:--indent={0}>
+            <span class="expand-btn" aria-hidden="true"></span>
+            <label class="source-check">
+              <input
+                type="checkbox"
+                checked={library.includes(source)}
+                onchange={() => toggleLibrary(source)}
+              />
+              <Icon name={meta.icon} size={16} />
+              <span class="source-label">{meta.label}</span>
+            </label>
+            <button
+              type="button"
+              class="only-btn"
+              title={`Show only ${meta.label}`}
+              aria-label={`Show only ${meta.label}`}
+              onclick={() => {
+                onchange({ sourceMode: 'include', sourceKeys: [] });
+                onlibrarychange([source]);
+              }}>only</button
+            >
+          </div>
+        {/each}
+      {/if}
+
       {#if blueskyRows.length > 0}
         <div class="section-label">From Bluesky</div>
         {#each blueskyRows as r (r.key)}

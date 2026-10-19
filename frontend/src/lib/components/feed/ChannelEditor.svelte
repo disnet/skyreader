@@ -51,6 +51,7 @@
     CHANNEL_FILTER_VERSION,
     type SourceFilter,
   } from '$lib/utils/sourceFilter';
+  import { LIBRARY_SOURCES, type LibrarySource } from '$lib/types';
   import type {
     ChannelAutoRule,
     DateAddedPreset,
@@ -107,6 +108,8 @@
   let channelType = $state<'feed' | 'saved' | null>('feed');
   let mode = $state<'pick' | 'rule'>('pick');
   let sourceFilter = $state<SourceFilter>({ sourceMode: 'all', sourceKeys: [] });
+  // The parts of the Library a feed channel takes in beside its feeds.
+  let librarySources = $state<LibrarySource[]>([]);
   let ruleType = $state<AutoRuleOption>('frequency:high');
   let recentWithinDays = $state(14);
   let tagValue = $state('');
@@ -164,6 +167,7 @@
       savedDomainFilter = new Set(view.savedDomainFilter ?? []);
       savedTagFilter = new Set(view.tagFilter ?? []);
       feedTagFilter = view.mode === 'saved' ? [] : [...(view.tagFilter ?? [])];
+      librarySources = view.mode === 'saved' ? [] : [...(view.librarySources ?? [])];
       query = channelQuery(view) ?? '';
       loadedQuery = query;
       const upgraded = upgradeChannelFilter(view);
@@ -206,6 +210,8 @@
         }
       : // A new channel starts with every source checked; uncheck what it leaves out.
         everySourceFilter(showFollowsSource, followsInEverything);
+    // Your saves too, unless it's made from a view of your feeds.
+    librarySources = initial || auth.isGuest ? [] : [...LIBRARY_SOURCES];
     ruleType = 'frequency:high';
     recentWithinDays = 14;
     tagValue = '';
@@ -392,6 +398,7 @@
     }
     if (channelType === 'feed' && mode === 'pick') {
       if (
+        librarySources.length === 0 &&
         showsNoSource(
           sourceFilter,
           subscriptionsStore.subscriptions,
@@ -441,6 +448,9 @@
               sourceKeys: querySourceKeys,
               autoRule: currentRule,
               typeFilter: currentRule ? typeFilter : undefined,
+              // Absent rather than empty, like the query.
+              librarySources:
+                !currentRule && librarySources.length > 0 ? [...librarySources] : undefined,
               tagFilter: feedTagFilter.length > 0 ? [...feedTagFilter] : undefined,
               filterVersion: CHANNEL_FILTER_VERSION,
               // Absent rather than empty, so taking a query out leaves an ordinary channel.
@@ -613,6 +623,9 @@
           Add a search and the channel keeps only what matches it, as it arrives.
         {/if}
       </p>
+      {#if trimmedQuery && librarySources.length > 0}
+        <p class="hint">A saved search doesn't look through your Library yet.</p>
+      {/if}
       {#if trimmedQuery && hasSearchableTerm(trimmedQuery)}
         <SearchQueryPreview
           query={trimmedQuery}
@@ -685,6 +698,8 @@
             {followsInEverything}
             scroll={scrollPicker}
             bulk
+            library={auth.isGuest ? undefined : librarySources}
+            onlibrarychange={auth.isGuest ? undefined : (l) => (librarySources = l)}
           />
         </div>
       {:else}

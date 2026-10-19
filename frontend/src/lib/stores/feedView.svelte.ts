@@ -4,6 +4,7 @@ import { itemLabelsStore } from './itemLabels.svelte';
 import { socialStore } from './social.svelte';
 import { myLinkblogStore } from './myLinkblog.svelte';
 import { savesStore } from './saves.svelte';
+import { shelfStore } from './shelf.svelte';
 import { savedSearchStore } from './savedSearch.svelte';
 import { preferences } from './preferences.svelte';
 import { filteredViewsStore } from './filteredViews.svelte';
@@ -23,6 +24,7 @@ import type {
   SortOrder,
   FilteredView,
   FollowLink,
+  LibrarySource,
 } from '$lib/types';
 import { htmlToText, normalize, searchRank } from '$lib/services/savedSearch';
 import { sameUrlFilters, type UrlFilters } from '$lib/utils/urlFilters';
@@ -887,7 +889,10 @@ function createFeedViewStore() {
   /** How many of your follows shared this page; 0 when none did. */
   function followShareCount(item: CombinedFeedItem): number {
     if (item.type === 'link') return item.item.sharerCount;
-    const url = item.type === 'article' ? item.item.url : item.item.canonicalUrl || item.item.path;
+    const url =
+      item.type === 'article' || item.type === 'saved'
+        ? item.item.url
+        : item.item.canonicalUrl || item.item.path;
     return followLinksStore.forUrl(url)?.sharerCount ?? 0;
   }
 
@@ -984,6 +989,48 @@ function createFeedViewStore() {
   });
   let needsEveryFollowLink = $derived(followLinksPaged && !followLinksByDate);
 
+  // The parts of the Library the active channel takes in (every save, or the
+  // Shelf). A saved search matches on the server, which doesn't cover saves yet.
+  let channelLibrarySources = $derived.by((): LibrarySource[] => {
+    const view = activeFilteredView;
+    if (!view || view.mode === 'saved' || isSearchChannel) return [];
+    return view.librarySources ?? [];
+  });
+
+  // The channel's saves, as rows beside its feed items. An archived save reads as
+  // read, so an unread channel shows the Queue. A save of a page the river
+  // already shows (by guid or url) is left to that row.
+  let libraryItems = $derived.by((): SavedItem[] => {
+    const sources = new Set(channelLibrarySources);
+    if (sources.size === 0) return [];
+    const shownGuids = new Set<string>([
+      ...filteredArticles.map((a) => a.guid),
+      ...displayedDocuments.map((d) => d.recordUri),
+    ]);
+    const shownUrls = new Set<string>();
+    for (const url of [
+      ...filteredArticles.map((a) => a.url),
+      ...displayedDocuments.map((d) => d.canonicalUrl || d.path),
+    ]) {
+      const key = url ? urlKey(url) : null;
+      if (key) shownUrls.add(key);
+    }
+    return savesStore.articles.filter((save) => {
+      if (!sources.has('saves') && !(sources.has('shelf') && shelfStore.isOnShelf(save))) {
+        return false;
+      }
+      if (
+        effectiveFilters.readFilter === 'unread' &&
+        isSavedItemArchived(save, itemLabelsStore.isArchived)
+      ) {
+        return false;
+      }
+      if (save.itemGuid && shownGuids.has(save.itemGuid)) return false;
+      const key = save.url ? urlKey(save.url) : null;
+      return !(key && shownUrls.has(key));
+    });
+  });
+
   // Derived: full combined view (articles + documents merged by date),
   // pre-pagination. Merging the complete sets and sorting once means the
   // newest items win regardless of type — no date-window heuristic needed to
@@ -1009,6 +1056,12 @@ function createFeedViewStore() {
         type: 'link' as const,
         item,
         date: new Date(item.firstSharedAt).toISOString(),
+      })),
+      // A save is dated by when you saved it: when it reached you.
+      ...libraryItems.map((item) => ({
+        type: 'saved' as const,
+        item,
+        date: new Date(savedAtMs(item)).toISOString(),
       })),
     ];
 
@@ -1422,6 +1475,12 @@ function createFeedViewStore() {
           };
         } else if (item.type === 'link') {
           return { type: 'link' as const, item: item.item, key: followLinkReadKey(item.item) };
+        } else if (item.type === 'saved') {
+          return {
+            type: 'saved' as const,
+            item: item.item,
+            key: item.item.uri || item.item.itemGuid || item.item.rkey,
+          };
         } else {
           return {
             type: 'document' as const,

@@ -245,8 +245,8 @@
       count: totalUnread,
       icon: 'inbox',
     };
-    // The Library opens the Queue; its children are the Shelf's collections
-    // and the Queue's channels, as in the sidebar.
+    // The Library opens the Queue; its children are the Shelf's collections,
+    // as in the sidebar.
     const libraryItem: NavItem = {
       type: 'view',
       id: 'library',
@@ -304,25 +304,13 @@
           ]),
     ];
 
-    const sourceChannelItems: NavItem[] = filteredViewsStore.views
-      .filter((v) => v.mode !== 'saved')
-      .map((v) => ({
-        type: 'filteredView' as const,
-        id: v.uuid,
-        label: v.name,
-        icon: 'filter' as const,
-        indent: true,
-      }));
-
-    const savedChannelItems: NavItem[] = filteredViewsStore.views
-      .filter((v) => v.mode === 'saved')
-      .map((v) => ({
-        type: 'filteredView' as const,
-        id: v.uuid,
-        label: v.name,
-        icon: 'bookmark' as const,
-        indent: true,
-      }));
+    // Every channel, whatever it reads from, as in the sidebar's Channels section.
+    const channelItems: NavItem[] = filteredViewsStore.views.map((v) => ({
+      type: 'filteredView' as const,
+      id: v.uuid,
+      label: v.name,
+      icon: v.mode === 'saved' ? ('bookmark' as const) : ('filter' as const),
+    }));
 
     const addViewAction: NavItem = {
       type: 'action',
@@ -379,13 +367,12 @@
       sections.push({ section: '', items: homeGroup });
     }
 
-    // Everything group: Everything + nested source channels
-    const everythingGroup = [everythingItem, ...sourceChannelItems].filter(filterItem);
+    const everythingGroup = [everythingItem].filter(filterItem);
     if (everythingGroup.length > 0) {
       sections.push({ section: '', items: everythingGroup });
     }
 
-    // Library group: Library + Shelf collections (account-only) + Queue channels
+    // Library group: Library + Shelf collections (account-only)
     const collectionItems: NavItem[] = auth.isGuest
       ? []
       : shelfStore.collections.map((c) => ({
@@ -395,13 +382,18 @@
           icon: 'layers' as const,
           indent: true,
         }));
-    const libraryGroup = [libraryItem, ...collectionItems, ...savedChannelItems].filter(filterItem);
+    const libraryGroup = [libraryItem, ...collectionItems].filter(filterItem);
     if (libraryGroup.length > 0) {
       sections.push({ section: '', items: libraryGroup });
     }
 
-    // Other views + add action (channels are local-first, so guests get it too)
-    const otherGroup = [...otherViews, addViewAction].filter(filterItem);
+    // Channels + the add action (channels are local-first, so guests get it too)
+    const channelGroup = [...channelItems, addViewAction].filter(filterItem);
+    if (channelGroup.length > 0) {
+      sections.push({ section: 'Channels', icon: 'layers' as IconName, items: channelGroup });
+    }
+
+    const otherGroup = otherViews.filter(filterItem);
     if (otherGroup.length > 0) {
       sections.push({ section: '', items: otherGroup });
     }

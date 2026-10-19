@@ -64,6 +64,7 @@ vi.mock('./social.svelte', () => ({
   },
 }));
 vi.mock('./myLinkblog.svelte', () => ({ myLinkblogStore: { documents: [] } }));
+vi.mock('./shelf.svelte', () => ({ shelfStore: { isOnShelf: () => false } }));
 vi.mock('./saves.svelte', () => ({
   savesStore: { articles: [], find: () => undefined, getByUrl: () => undefined },
 }));

@@ -20,6 +20,7 @@ vi.mock('./auth.svelte', () => ({
 vi.mock('./articles.svelte', () => ({ articlesStore: { allArticles: [] } }));
 vi.mock('./social.svelte', () => ({ socialStore: { documents: [], isLoading: false } }));
 vi.mock('./myLinkblog.svelte', () => ({ myLinkblogStore: { documents: [] } }));
+vi.mock('./shelf.svelte', () => ({ shelfStore: { isOnShelf: () => false } }));
 vi.mock('./saves.svelte', () => ({
   savesStore: {
     articles: [],
