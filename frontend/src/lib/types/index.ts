@@ -1329,6 +1329,17 @@ export interface SavedItem {
   coverPath?: string | null;
 }
 
+// Semble connections other people drew off one save (GET /api/saved/connections).
+// Only saves with at least one appear. Times are ms.
+export interface SavedConnectionActivity {
+  rkey: string;
+  /** Connections since the reader last looked, or since they saved it. */
+  unseen: number;
+  latestAt: number;
+  /** When the reader last looked, or null if never. */
+  seenAt: number | null;
+}
+
 // A Shelf collection: a private, ordered group of saves (GET /api/shelf/collections).
 // Members reference the save by rkey. See docs/plans/SHELF_PLAN.md.
 export interface ShelfCollectionItem {

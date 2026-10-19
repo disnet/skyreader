@@ -20,6 +20,7 @@ import type {
   SaveBacking,
   SembleCollection,
   ShelfCollection,
+  SavedConnectionActivity,
   SembleCard,
   SembleConnectionType,
   SocialContextResult,
@@ -1610,6 +1611,19 @@ class ApiClient {
     return this.fetch('/api/labels', {
       method: 'DELETE',
       body: JSON.stringify({ itemKey, label, updatedAt }),
+    });
+  }
+
+  // --- Semble connections off saves (routes/saved-connections.ts) ---
+
+  async getSavedConnections(): Promise<{ items: SavedConnectionActivity[] }> {
+    return this.fetch('/api/saved/connections');
+  }
+
+  async markSavedConnectionsSeen(rkey: string): Promise<{ success: boolean }> {
+    return this.fetch('/api/saved/connections/seen', {
+      method: 'POST',
+      body: JSON.stringify({ rkey }),
     });
   }
 

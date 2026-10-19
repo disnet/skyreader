@@ -78,7 +78,11 @@ They're the same saves, so an item can be in both, and the two don't affect each
 
 Books and PDFs go on the Shelf as soon as you save them. To put anything else there, choose **Add to Shelf** from its **⋯** menu, or from the **⋯** menu while you're reading it. **Take off Shelf** removes it, and the save stays in your Queue.
 
-The Shelf opens on **Continue reading**, the things you're partway through. Below that is everything on it, as covers or as a list. Filter by title or author, show only books, PDFs, or articles, and sort by what you read last, what you saved last, title, or author.
+The Shelf opens on **Continue reading**, the things you're partway through. Below that is everything on it, as covers or as a list. Filter by title or author, show only books, PDFs, or articles, and sort by what you read last, what was most recently connected, what you saved last, title, or author.
+
+### New connections from Semble
+
+When someone on [Semble](https://semble.so) connects something to an article you've saved, the save shows a small **new** mark in the Queue and on the Shelf. It works for anything in your Library, whether or not you use Semble yourself. The Shelf gathers these under **New connections**. Open the article and its discussion starts on **Connections**, with the new ones marked. That clears the mark. Your own connections never count as new.
 
 ### Collections
 

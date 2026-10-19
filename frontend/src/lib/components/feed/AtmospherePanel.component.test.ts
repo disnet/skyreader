@@ -73,6 +73,7 @@ function render(
     onSaveConnection?: (url: string) => void | Promise<void>;
     isConnectionSaved?: (url: string) => boolean;
     onCreateConnection?: () => void;
+    connectionsNewSince?: number | null;
   },
   tab?: 'connections' | 'related'
 ): HTMLElement {
@@ -89,6 +90,7 @@ function render(
       onSaveConnection: props.onSaveConnection,
       isConnectionSaved: props.isConnectionSaved,
       onCreateConnection: props.onCreateConnection,
+      connectionsNewSince: props.connectionsNewSince,
     },
   });
   flushSync();
@@ -285,6 +287,39 @@ describe('AtmospherePanel Semble connections', () => {
     conversation?.click();
     flushSync();
     expect(held.querySelector('.semble-connect')).toBeNull();
+  });
+
+  it('opens a save with new connections on them, the new ones first and marked', () => {
+    const old = { ...connection('out'), id: 'old', createdAt: '2026-01-01T00:00:00Z' };
+    const fresh = {
+      ...connection('in'),
+      id: 'fresh',
+      createdAt: '2026-03-01T00:00:00Z',
+      other: { ...connection('in').other, title: 'The new piece' },
+    };
+    const target = render({
+      sembleContext: { ...emptyContext, connections: [old, fresh] },
+      connectionsNewSince: Date.parse('2026-02-01T00:00:00Z'),
+    });
+    const tab = target.querySelector('[role="tab"][id$="-tab-connections"]');
+    expect(tab?.getAttribute('aria-selected')).toBe('true');
+    const rows = [...target.querySelectorAll('.connection-row')];
+    expect(rows[0].textContent).toContain('The new piece');
+    expect(rows[0].querySelector('.connection-new')?.textContent).toBe('New');
+    expect(rows[1].querySelector('.connection-new')).toBeNull();
+  });
+
+  it('marks nothing new without a reason to', () => {
+    const target = render(
+      {
+        sembleContext: {
+          ...emptyContext,
+          connections: [{ ...connection('out'), createdAt: '2026-03-01T00:00:00Z' }],
+        },
+      },
+      'connections'
+    );
+    expect(target.querySelector('.connection-new')).toBeNull();
   });
 
   it('keeps the retry when a lane failed and only Semble context came back', () => {

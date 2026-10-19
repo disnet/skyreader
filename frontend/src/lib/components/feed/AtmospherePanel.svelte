@@ -80,6 +80,7 @@
     onSaveConnection,
     onCreateConnection,
     isConnectionSaved,
+    connectionsNewSince = null,
   }: {
     laneRow?: LaneRowVM[];
     filters?: DiscussionFilterVM[];
@@ -106,6 +107,9 @@
     /** Reactive saved-state predicate, so the control reads as state rather than
      *  as an invitation the reader has already accepted. */
     isConnectionSaved?: (url: string) => boolean;
+    /** The reader opened a save with new Semble connections since this time
+     *  (ms): open on Connections, with those first and marked New. */
+    connectionsNewSince?: number | null;
   } = $props();
 
   // The connections whose saves are in flight. A save costs a fetch and an
@@ -247,8 +251,21 @@
           items: [connection],
         });
     }
-    return [...groups.values()];
+    const list = [...groups.values()];
+    if (connectionsNewSince === null) return list;
+    // What the reader came back for leads: new edges first in each group, and
+    // groups holding one ahead of those that don't. Both sorts are stable.
+    const newFirst = (a: SembleConnection, b: SembleConnection) =>
+      Number(isNewConnection(b)) - Number(isNewConnection(a));
+    for (const group of list) group.items.sort(newFirst);
+    return list.sort((a, b) => newFirst(a.items[0], b.items[0]));
   });
+
+  function isNewConnection(connection: SembleConnection): boolean {
+    if (connectionsNewSince === null || !connection.createdAt) return false;
+    const created = Date.parse(connection.createdAt);
+    return Number.isFinite(created) && created > connectionsNewSince;
+  }
 
   let openGroups = $state<string[]>([]);
   let allGroupsOpen = $state(false);
@@ -388,6 +405,21 @@
   // reader moved on) falls back to the conversation rather than showing nothing.
   $effect(() => {
     if (!tabs.some((tab) => tab.id === activeTab)) activeTab = 'conversation';
+  });
+
+  // A save opened for its new connections opens on them, once per article and
+  // only once Semble has resolved a tab to open. Declared after the resets
+  // above so it lands after them.
+  let connectionsOpenedFor: string | null = null;
+  $effect(() => {
+    if (
+      connectionsNewSince !== null &&
+      hasConnectionsTab &&
+      connectionsOpenedFor !== (itemUrl ?? '')
+    ) {
+      connectionsOpenedFor = itemUrl ?? '';
+      activeTab = 'connections';
+    }
   });
 
   // Tabs need ids to point `aria-controls` at. The host supplies one when it has
@@ -1109,6 +1141,8 @@
                               rel="noopener"
                               onclick={(e) => e.stopPropagation()}>{connectionLabel(connection)}</a
                             >
+                            {#if isNewConnection(connection)}<span class="connection-new">New</span
+                              >{/if}
                             <!-- The one thing a reader wants to do with someone
                                else's connected article is keep it. The control
                                stays put rather than appearing on hover: which of
@@ -1762,6 +1796,15 @@
   }
 
   .similar-list .connection-target {
+    color: var(--color-primary);
+  }
+
+  /* Since the reader last looked: a word, in the one blue, beside the title. */
+  .connection-new {
+    flex-shrink: 0;
+    align-self: center;
+    font-size: var(--text-2xs);
+    font-weight: var(--weight-medium);
     color: var(--color-primary);
   }
 

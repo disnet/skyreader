@@ -28,6 +28,7 @@
   import { shelfStore } from '$lib/stores/shelf.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
+  import { savedConnectionsStore } from '$lib/stores/savedConnections.svelte';
   import {
     isSavedRowArchived,
     setSavedRowArchived,
@@ -110,6 +111,7 @@
       save,
       lastActivityAt: activity?.lastActivityAt ?? 0,
       progress: progressFraction(activity?.progress),
+      connectedAt: savedConnectionsStore.latestAt(save.rkey),
     };
   }
 
@@ -144,6 +146,34 @@
           ? `${formatReadTime(Math.max(1, Math.round(totalMin * (1 - fraction))))} left`
           : `${Math.round(fraction * 100)}% read`,
         progress: fraction,
+      };
+    })
+  );
+
+  // New connections: saves anywhere in the Library — Queue or Shelf — that other
+  // people drew Semble connections off since the reader last looked, newest
+  // first. Semble's notification feed, grouped by the thing it's about. Opening
+  // one clears it, so the lane empties as it's read.
+  let connectedSaves = $derived.by(() => {
+    if (collection || kind !== 'all' || query.trim()) return [];
+    const byRkey = new Map(savesStore.articles.map((save) => [save.rkey, save]));
+    return savedConnectionsStore.items
+      .filter((item) => item.unseen > 0 && byRkey.has(item.rkey))
+      .sort((a, b) => b.latestAt - a.latestAt)
+      .map((item) => ({ save: byRkey.get(item.rkey)!, unseen: item.unseen }));
+  });
+  let connectedByKey = $derived(new Map(connectedSaves.map((e) => [e.save.rkey, e.save])));
+  let connectedItems = $derived(
+    connectedSaves.map(({ save, unseen }): LaneCardVM => {
+      const isArticle = shelfKind(save) === 'article';
+      return {
+        key: save.rkey,
+        title: decodeEntities(save.title || '') || save.url || 'Untitled',
+        domain: (isArticle ? save.domain || save.author : save.author) || null,
+        image: savedCoverUrl(save),
+        faviconUrl: isArticle && save.url ? getFaviconUrl(save.url) : '',
+        metaLabel: `${unseen} new ${unseen === 1 ? 'connection' : 'connections'}`,
+        progress: null,
       };
     })
   );
@@ -239,6 +269,7 @@
 
   $effect(() => {
     void shelfStore.load();
+    void savedConnectionsStore.load();
   });
 
   // --- Mobile chrome, matching the other top-level pages ---
@@ -404,6 +435,19 @@
       />
     {/if}
 
+    {#if connectedItems.length > 0}
+      <HomeLane
+        title="New connections"
+        icon="semble"
+        items={connectedItems}
+        onOpen={(vm) => {
+          const save = connectedByKey.get(vm.key);
+          if (save) open(save);
+        }}
+        onHover={(vm) => void savesStore.prefetchContent(vm.key)}
+      />
+    {/if}
+
     {#if allEntries.length > 0}
       <div class="controls-wrap">
         <div class="controls">
@@ -432,6 +476,7 @@
           >
             {#if collection}<option value="collection">Collection order</option>{/if}
             <option value="activity">Recently read</option>
+            <option value="connected">Recently connected</option>
             <option value="saved">Recently saved</option>
             <option value="title">Title</option>
             <option value="author">Author</option>
@@ -455,7 +500,7 @@
         />
       {/if}
     {:else}
-      {#if !collection && inProgress.length > 0}
+      {#if !collection && (inProgress.length > 0 || connectedItems.length > 0)}
         <h2 class="section-label">Everything</h2>
       {/if}
       <div class={view === 'grid' ? 'grid' : 'list'}>

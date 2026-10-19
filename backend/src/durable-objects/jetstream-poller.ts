@@ -2,6 +2,11 @@ import * as Sentry from '@sentry/cloudflare';
 import type { Env } from '../types';
 import { upsertSubscriptionFromFirehose } from '../services/firehose-subscription';
 import {
+  applySembleConnectionCommit,
+  SEMBLE_CONNECTION_COLLECTION,
+  type SembleConnectionRecord,
+} from '../services/semble-connections';
+import {
   createDocumentApplyContext,
   createDocumentDrain,
   createQueryLedger,
@@ -588,6 +593,9 @@ class JetstreamPollerBase implements DurableObject {
 
     const wsUrl = new URL('wss://jetstream2.us-east.bsky.network/subscribe');
     wsUrl.searchParams.append('wantedCollections', 'app.skyreader.feed.subscription');
+    // Semble connections ride this stream: network-wide and collection-filtered
+    // like subscriptions, and low-volume. Kept only when an end is someone's save.
+    wsUrl.searchParams.append('wantedCollections', SEMBLE_CONNECTION_COLLECTION);
 
     let lastCursor: string;
     if (cursor) {
@@ -668,6 +676,15 @@ class JetstreamPollerBase implements DurableObject {
             ) {
               const wasProcessed = await this.processSubscriptionEvent(data, syncEnabledDids);
               if (wasProcessed) processed++;
+            } else if (
+              data.kind === 'commit' &&
+              data.commit?.collection === SEMBLE_CONNECTION_COLLECTION
+            ) {
+              await applySembleConnectionCommit(this.env, data.did, {
+                operation: data.commit.operation,
+                rkey: data.commit.rkey,
+                record: data.commit.record as SembleConnectionRecord | undefined,
+              });
             }
           } catch (error) {
             console.error('[JetstreamPoller] Error processing subscription event:', error);

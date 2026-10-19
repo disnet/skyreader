@@ -133,6 +133,24 @@ describe('sortShelf', () => {
     expect(titles(sorted)).toEqual(['opened', 'new save', 'old save']);
   });
 
+  it('puts the most recently connected first, then recent activity', () => {
+    const sorted = sortShelf(
+      [
+        entry({ title: 'unconnected' }, { lastActivityAt: 9 }),
+        entry({ title: 'older edge' }, { connectedAt: 100 }),
+        entry({ title: 'newer edge' }, { connectedAt: 200 }),
+        entry({ title: 'unconnected, never opened' }),
+      ],
+      'connected'
+    );
+    expect(titles(sorted)).toEqual([
+      'newer edge',
+      'older edge',
+      'unconnected',
+      'unconnected, never opened',
+    ]);
+  });
+
   it('keeps the given order for a collection', () => {
     const list = [entry({ title: 'b' }), entry({ title: 'a' })];
     expect(titles(sortShelf(list, 'collection'))).toEqual(['b', 'a']);

@@ -8,6 +8,8 @@
   import Icon from '$lib/components/Icon.svelte';
   import PopoverMenu from '$lib/components/PopoverMenu.svelte';
   import LibraryChip from '$lib/components/library/LibraryChip.svelte';
+  import ConnectionsBadge from '$lib/components/library/ConnectionsBadge.svelte';
+  import { savedConnectionsStore } from '$lib/stores/savedConnections.svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import { savedCoverUrl } from '$lib/services/api';
   import { shelfStore } from '$lib/stores/shelf.svelte';
@@ -64,6 +66,8 @@
   // Done with in the Queue. Archiving never takes a save off the Shelf, so the
   // mark is how the Shelf shows where the same save sits in the Queue.
   let archived = $derived(isSavedItemArchived(save, itemLabelsStore.isArchived));
+  // Connections other people drew off this save since the reader last looked.
+  let newConnections = $derived(savedConnectionsStore.unseen(save.rkey));
 
   let menuItems = $derived.by(() => {
     const items: {
@@ -163,7 +167,12 @@
         <span class="kind">{SHELF_KIND_LABEL[kind]}</span>
         {#if byline}<span class="byline">{byline}</span>{/if}
       </div>
-      {#if archived}<div class="card-chip">{@render archivedChip()}</div>{/if}
+      {#if newConnections > 0 || archived}
+        <div class="card-chip">
+          {#if newConnections > 0}<ConnectionsBadge count={newConnections} />{/if}
+          {#if archived}{@render archivedChip()}{/if}
+        </div>
+      {/if}
       <div class="card-menu">
         <PopoverMenu items={menuItems} bind:open={menuOpen} />
       </div>
@@ -190,6 +199,7 @@
           {#if entry.lastActivityAt > 0}
             <span>Opened {formatRelativeTime(entry.lastActivityAt)}</span>
           {/if}
+          {#if newConnections > 0}<ConnectionsBadge count={newConnections} />{/if}
           {@render archivedChip()}
         </span>
       </span>
@@ -362,6 +372,8 @@
 
   .card-chip {
     display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
     margin-top: 0.25rem;
   }
 
