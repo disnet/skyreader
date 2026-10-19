@@ -27,13 +27,11 @@ jobs:
   release:
     name: Publish release
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
-          fetch-tags: true
 
       - name: Check the release token
         env:
@@ -44,26 +42,29 @@ jobs:
             exit 1
           fi
 
-      # Staging is what this commit's push to main deployed, so every push run on
-      # it (staging deploys and their tests) must have finished green. Path filters
-      # mean only the packages the commit touched ran; that's the change being shipped.
-      - name: Check staging is green for this commit
+      - name: Check this is main
+        run: |
+          if [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo "::error::Releases ship main. Run this workflow from the main branch."
+            exit 1
+          fi
+
+      - name: Check there's something new to release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$GITHUB_SHA&event=push&per_page=100" \
-            --jq '.workflow_runs[] | "\(.name)\t\(.status)\t\(.conclusion)"')
-          echo "$runs"
-          if [ -z "$runs" ]; then
-            echo "::error::No push runs found for $GITHUB_SHA yet. Wait for main's staging deploys to start, then try again."
+          prev=$(gh release view --json tagName --jq .tagName 2>/dev/null || true)
+          if [ -n "$prev" ] && [ "$(git rev-list -n1 "$prev")" = "$GITHUB_SHA" ]; then
+            echo "::error::$GITHUB_SHA is already released as $prev."
             exit 1
           fi
-          bad=$(echo "$runs" | awk -F'\t' '$2 != "completed" || ($3 != "success" && $3 != "skipped")')
-          if [ -n "$bad" ]; then
-            echo "::error::Staging isn't green for $GITHUB_SHA. Still running or failed:"
-            echo "$bad"
-            exit 1
-          fi
+
+      # A release ships every package at this commit, so each one's staging deploy
+      # must already be green on its latest change; see the script for how.
+      - name: Check staging is green
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/check-staging.sh "$GITHUB_SHA"
 
       - name: Pick the tag
         id: tag
@@ -72,8 +73,12 @@ jobs:
           if ! git rev-parse -q --verify "refs/tags/$base" >/dev/null; then
             tag="$base"
           else
-            last=$(git tag -l "$base.*" | sed "s/^$base\.//" | grep -E '^[0-9]+$' | sort -n | tail -1)
-            tag="$base.$(( ${last:-1} + 1 ))"
+            last=1
+            for t in $(git tag -l "$base.*"); do
+              n=${t#"$base."}
+              if [[ $n =~ ^[0-9]+$ ]] && [ "$n" -gt "$last" ]; then last=$n; fi
+            done
+            tag="$base.$((last + 1))"
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "Releasing $GITHUB_SHA as $tag"
