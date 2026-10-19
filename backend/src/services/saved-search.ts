@@ -155,8 +155,10 @@ interface SavedQueryRow {
  * source selection clears the channel's matches and backfills again; a changed
  * digest setting alone keeps them.
  */
-export async function syncSavedQueries(env: Env, did: string, uuids: string[]): Promise<void> {
+export async function syncSavedQueries(env: Env, did: string, uuids: string[]): Promise<boolean> {
   const now = Date.now();
+  // Whether any query is new or changed, so its look back is waiting.
+  let lookBack = false;
   for (const keys of chunk([...new Set(uuids)], IN_CHUNK / 2)) {
     const [channels, existing] = await env.DB.batch([
       env.DB.prepare(
@@ -192,6 +194,7 @@ export async function syncSavedQueries(env: Env, did: string, uuids: string[]): 
       }
       const sourceKeys = JSON.stringify(want.sourceKeys);
       if (!have) {
+        lookBack = true;
         statements.push(
           env.DB.prepare(
             `INSERT INTO saved_queries
@@ -216,6 +219,7 @@ export async function syncSavedQueries(env: Env, did: string, uuids: string[]): 
         have.source_mode !== want.sourceMode ||
         have.source_keys !== sourceKeys;
       if (predicateChanged) {
+        lookBack = true;
         statements.push(
           env.DB.prepare(
             `UPDATE saved_queries
@@ -248,6 +252,7 @@ export async function syncSavedQueries(env: Env, did: string, uuids: string[]): 
     }
     if (statements.length > 0) await env.DB.batch(statements);
   }
+  return lookBack;
 }
 
 function dropStatements(env: Env, did: string, uuid: string): D1PreparedStatement[] {
@@ -403,6 +408,92 @@ export function resolveQueryScope(
     }
   }
   return { feedUrls, docScopes, coversFollows };
+}
+
+/**
+ * One reader's scope for a source selection, as the matcher would resolve it
+ * for a saved query with these sources (the channel editor's preview).
+ */
+export async function loadReaderScope(
+  env: Env,
+  did: string,
+  sourceMode: SourceMode,
+  sourceKeys: string[]
+): Promise<{ feedUrls: Set<string>; docScopes: DocScope[]; coversFollows: boolean }> {
+  const [subs, follows] = await env.DB.batch([
+    env.DB.prepare(
+      `SELECT user_did, record_uri, feed_url, source_type, subject_did, category
+         FROM subscriptions_cache WHERE user_did = ? AND active = 1`
+    ).bind(did),
+    env.DB.prepare(`SELECT in_everything FROM follow_link_sync WHERE user_did = ?`).bind(did),
+  ]);
+  const inEverything =
+    ((follows.results ?? [])[0] as { in_everything: number | null } | undefined)?.in_everything ===
+    1;
+  return resolveQueryScope(
+    sourceMode,
+    sourceKeys,
+    (subs.results ?? []) as SubscriptionRow[],
+    inEverything
+  );
+}
+
+/**
+ * The newest items (up to `limit`) a scope covers since `since`, for a preview.
+ * Each IN chunk reads its own newest `limit`, so the merge holds the true newest.
+ */
+export async function readPreviewHeads(
+  env: Env,
+  scope: { feedUrls: Set<string>; docScopes: DocScope[] },
+  since: number,
+  limit: number
+): Promise<{ feeds: FeedHead[]; docs: DocHead[] }> {
+  // Publications are matched in SQL, before the LIMIT, so an author's other
+  // sites can't crowd the picked ones out of the newest `limit`.
+  const authors = [...new Set(scope.docScopes.filter((s) => !s.pub).map((s) => s.did))];
+  const sites = [...new Set(scope.docScopes.flatMap((s) => (s.pub ? [s.pub] : [])))];
+  const docSql = (column: string, n: number) =>
+    `SELECT record_uri, author_did, site_uri, published_at, indexed_at FROM documents_v2
+      WHERE ${column} IN (${placeholders(n)}) AND published_at >= ?
+      ORDER BY published_at DESC LIMIT ?`;
+  const feedChunks = chunk([...scope.feedUrls], IN_CHUNK);
+  const statements = [
+    ...feedChunks.map((urls) =>
+      env.DB.prepare(
+        `SELECT seq, feed_url, published_at FROM feed_items
+          WHERE feed_url IN (${placeholders(urls.length)}) AND published_at >= ?
+          ORDER BY published_at DESC LIMIT ?`
+      ).bind(...urls, since, limit)
+    ),
+    ...chunk(authors, IN_CHUNK).map((dids) =>
+      env.DB.prepare(docSql('author_did', dids.length)).bind(...dids, since, limit)
+    ),
+    ...chunk(sites, IN_CHUNK).map((uris) =>
+      env.DB.prepare(docSql('site_uri', uris.length)).bind(...uris, since, limit)
+    ),
+  ];
+  const results = statements.length > 0 ? await env.DB.batch(statements) : [];
+  const docs = new Map<string, DocHead>();
+  for (const r of results.slice(feedChunks.length)) {
+    for (const d of (r.results ?? []) as DocHead[]) {
+      if (docInAnyScope({ authorDid: d.author_did, siteUri: d.site_uri }, scope.docScopes)) {
+        docs.set(d.record_uri, d);
+      }
+    }
+  }
+  const heads = [
+    ...results
+      .slice(0, feedChunks.length)
+      .flatMap((r) => (r.results ?? []) as FeedHead[])
+      .map((head) => ({ at: head.published_at ?? 0, feed: head })),
+    ...[...docs.values()].map((head) => ({ at: head.published_at, doc: head })),
+  ]
+    .sort((a, b) => b.at - a.at)
+    .slice(0, limit);
+  return {
+    feeds: heads.flatMap((h) => ('feed' in h ? [h.feed] : [])),
+    docs: heads.flatMap((h) => ('doc' in h ? [h.doc] : [])),
+  };
 }
 
 export function docInAnyScope(
@@ -874,7 +965,8 @@ export async function loadMatchDocs(
   env: Env,
   seqs: number[],
   documentUris: string[],
-  r2Budget: { left: number }
+  /** `quiet`: skipping stored bodies is expected (the editor's preview), not worth a log. */
+  r2Budget: { left: number; quiet?: boolean }
 ): Promise<MatchDoc[]> {
   const docs: MatchDoc[] = [];
 
@@ -919,7 +1011,9 @@ export async function loadMatchDocs(
       publishedAt: row.published_at,
     });
   }
-  if (budgetSkipped > 0) log.info('saved_search_r2_budget_spent', { budgetSkipped });
+  if (budgetSkipped > 0 && !r2Budget.quiet) {
+    log.info('saved_search_r2_budget_spent', { budgetSkipped });
+  }
 
   for (const keys of chunk(documentUris, IN_CHUNK)) {
     const rows = await env.DB.prepare(
@@ -1121,6 +1215,15 @@ export function matchInsertStatements(
 }
 
 /** The Percolator's stub: one instance today, named so it can be sharded later. */
+/**
+ * The instance the channel editor's previews run on: the same class, kept off
+ * the matcher's own instance so typing never holds up live matching. It never
+ * sets an alarm, so it never matches anything for real.
+ */
+export function previewStub(env: Env) {
+  return env.PERCOLATOR.get(env.PERCOLATOR.idFromName('percolator-preview'));
+}
+
 export function percolatorStub(env: Env) {
   return env.PERCOLATOR.get(env.PERCOLATOR.idFromName('percolator-0'));
 }

@@ -18,13 +18,13 @@ Choose **New channel** under **Feeds**, type what to watch for under **Matching*
 | `tid*`           | words starting with "tid"           |
 | `energy -wind`   | items with "energy" but not "wind"  |
 
-Where search is on, Skyreader shows, while you type, a few things you've already read that the search would have caught, so you can tell whether it's too broad or too narrow.
+While you type, Skyreader checks the search against the last month of items from the sources you picked, read or not, and shows how many match and a few of them, so you can tell whether it's too broad or too narrow. Links shared by people you follow aren't in the preview, though the channel picks them up.
 
 Any feed channel can become a saved search: open it with **Edit channel** and add words under **Matching**. Take them out again and it goes back to being an ordinary channel.
 
 ## What lands in it
 
-A new saved search starts by looking back through the last 30 days of its sources, so it doesn't open empty. After that, new items that match arrive within a few minutes, whether or not Skyreader is open.
+A new saved search starts by looking back through the last 30 days of its sources, so it doesn't open empty. The first matches usually show within seconds of saving. After that, new items that match arrive within a few minutes, whether or not Skyreader is open.
 
 Each item shows the passage it matched, with your words marked. A story that reached you several ways, say in a feed and in a link three people shared, appears once.
 

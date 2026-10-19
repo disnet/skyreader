@@ -238,7 +238,8 @@ the later goal _Mute rules and story deduplication_.
   - `feedView` routes a channel whose config has `query` to this endpoint instead of filtering the
     timeline client-side.
   - The channel editor (`FilteredViewModal.svelte`) gains a query field with a live preview: run the
-    query through `/api/search` to show "this would have matched these items you've read".
+    query and source selection through `POST /api/channels/preview` (the matcher's own FTS over
+    the sources' newest 300 items from the last 30 days, read or not) to show what it would catch.
   - A query channel shows in the sidebar like any channel. Unread counts come from the endpoint.
   - Offline: the last fetched page is cached in Dexie like the timeline.
 
@@ -307,8 +308,8 @@ Never push by default (PRODUCT.md, plan principle "Calm stays true").
 2. **Follows links.** _Built:_ background refresh for opted-in readers, the shared extraction
    cache in R2, the per-reader budget, the follows stream and its backfill, and
    `channel_match_sources`.
-3. **Frontend.** _Built:_ the query field in the channel editor with its live preview (search over
-   what you've read), the query-channel view (`stores/searchChannels.svelte.ts`: matches with
+3. **Frontend.** _Built:_ the query field in the channel editor with its live preview (the matcher
+   over the selected sources' recent items), the query-channel view (`stores/searchChannels.svelte.ts`: matches with
    their snippets and sharers, the last first page cached in Dexie, polling while it looks back),
    sidebar unread counts, and the docs-site page (`guide/saved-searches.md`).
 

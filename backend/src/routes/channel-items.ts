@@ -6,7 +6,16 @@
 
 import type { Env, FeedItem, Session } from '../types';
 import { splitSnippet } from '../durable-objects/search-index';
-import { getSavedSearchAccess, type LinkCard, type Sharer } from '../services/saved-search';
+import {
+  MATCH_WINDOW_MS,
+  extractSavedQuery,
+  getSavedSearchAccess,
+  loadReaderScope,
+  previewStub,
+  readPreviewHeads,
+  type LinkCard,
+  type Sharer,
+} from '../services/saved-search';
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 100;
@@ -236,5 +245,73 @@ export async function handleChannelItems(
     unread: Math.min(unreadCount, UNREAD_COUNT_CAP),
     unreadCapped: unreadCount > UNREAD_COUNT_CAP,
     nextCursor: hasMore && last ? `${last.published_at}:${last.dedup_key}` : null,
+  });
+}
+
+/** Items a preview reads: the newest this many from the chosen sources. */
+const PREVIEW_ITEMS = 300;
+/** A channel config is held to 50 KB (routes/channels.ts); the preview takes part of one. */
+const MAX_PREVIEW_BODY = 50_000;
+const PREVIEW_SHOWN = 3;
+
+/**
+ * POST /api/channels/preview — what a saved search being edited would match:
+ * its query over the newest items from the sources picked so far, read or not.
+ * Body: `{ query, sourceMode, sourceKeys }`, the fields a channel config carries.
+ */
+export async function handleChannelPreview(
+  request: Request,
+  env: Env,
+  session: Session
+): Promise<Response> {
+  if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
+  const access = await getSavedSearchAccess(env, session.did);
+  if (!access.enabled) return json({ error: 'Not found' }, 404);
+  if (access.maxSavedSearches === 0) {
+    return json({ error: 'Saved searches are a Supporter feature', code: 'upgrade_required' }, 403);
+  }
+
+  // The body is the query part of a channel config, held to a config's size.
+  const text = await request.text();
+  if (text.length > MAX_PREVIEW_BODY) return json({ error: 'Too large' }, 400);
+  const saved = extractSavedQuery(text);
+  if (!saved) return json({ error: 'Nothing searchable in the query' }, 400);
+
+  const scope = await loadReaderScope(env, session.did, saved.sourceMode, saved.sourceKeys);
+  // One past the limit, to tell a selection holding exactly that many from a capped one.
+  const heads = await readPreviewHeads(env, scope, Date.now() - MATCH_WINDOW_MS, PREVIEW_ITEMS + 1);
+  const capped = heads.feeds.length + heads.docs.length > PREVIEW_ITEMS;
+  if (capped) {
+    // Drop the oldest of the two lists' tails.
+    const lastFeed = heads.feeds.at(-1)?.published_at ?? Infinity;
+    const lastDoc = heads.docs.at(-1)?.published_at ?? Infinity;
+    if (lastFeed <= lastDoc) heads.feeds.pop();
+    else heads.docs.pop();
+  }
+  const scanned = heads.feeds.length + heads.docs.length;
+  const hits =
+    scanned === 0
+      ? []
+      : await previewStub(env).preview(saved.ftsQuery, heads.feeds, heads.docs, {
+          feedUrls: [...scope.feedUrls],
+          docScopes: scope.docScopes,
+        });
+
+  return json({
+    total: hits.length,
+    scanned,
+    // The sources hold more than the preview read.
+    capped,
+    // Links your follows share aren't previewed, though the channel takes them in.
+    coversFollows: scope.coversFollows,
+    hits: hits.slice(0, PREVIEW_SHOWN).map((hit) => ({
+      kind: hit.kind,
+      itemKey: hit.itemKey,
+      title: hit.title,
+      url: hit.url,
+      sourceTitle: hit.sourceTitle,
+      publishedAt: hit.publishedAt,
+      snippet: splitSnippet(hit.snippet),
+    })),
   });
 }

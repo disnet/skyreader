@@ -1,6 +1,6 @@
 import type { Env } from '../types';
 import { getSessionFromRequest } from '../services/oauth';
-import { syncSavedQueries } from '../services/saved-search';
+import { isSavedSearchEnabled, percolatorStub, syncSavedQueries } from '../services/saved-search';
 import { log, serializeError } from '../utils/logger';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -71,10 +71,20 @@ function validateChannelBody(body: ChannelBody, uuid?: string): string | null {
  * channel brings the query back in line.
  */
 async function syncQueries(env: Env, did: string, uuids: string[]): Promise<void> {
+  let lookBack = false;
   try {
-    await syncSavedQueries(env, did, uuids);
+    lookBack = await syncSavedQueries(env, did, uuids);
   } catch (error) {
     log.error('saved_query_sync_failed', { channels: uuids.length, ...serializeError(error) });
+    return;
+  }
+  // A new or edited query starts its look back now rather than at the next
+  // cron minute, so a channel just made doesn't sit empty.
+  if (!lookBack) return;
+  try {
+    if (await isSavedSearchEnabled(env)) await percolatorStub(env).kick();
+  } catch (error) {
+    log.warn('saved_query_kick_failed', serializeError(error));
   }
 }
 

@@ -603,6 +603,106 @@ describe('Percolator', () => {
   });
 });
 
+interface PreviewBody {
+  total: number;
+  scanned: number;
+  capped: boolean;
+  hits: { kind: string; itemKey: string; title: string; snippet: { match: boolean }[] }[];
+}
+
+describe('POST /api/channels/preview', () => {
+  it('finds unread items from the selected sources only', async () => {
+    const user = await createUser();
+    const keyA = await subscribe(user, FEED_A);
+    await subscribe(user, FEED_B);
+    const hit = await ingest(FEED_A, { title: 'PFAS in rivers' });
+    await ingest(FEED_A, { title: 'Something else' });
+    await ingest(FEED_B, { title: 'PFAS elsewhere' });
+    await ingest(FEED_A, { title: 'Old PFAS news' }, Date.now() - 40 * DAY);
+
+    const response = await call(user, '/api/channels/preview', {
+      method: 'POST',
+      body: { query: 'pfas', sourceMode: 'include', sourceKeys: [keyA] },
+    });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as PreviewBody;
+    expect(body.scanned).toBe(2);
+    expect(body.total).toBe(1);
+    expect(body.capped).toBe(false);
+    expect(body.hits.map((h) => h.itemKey)).toEqual([hit]);
+    expect(body.hits[0].snippet.some((s) => s.match)).toBe(true);
+
+    const all = (await (
+      await call(user, '/api/channels/preview', {
+        method: 'POST',
+        body: { query: 'pfas', sourceMode: 'all', sourceKeys: [] },
+      })
+    ).json()) as PreviewBody;
+    expect(all.total).toBe(2);
+  });
+
+  it('counts a story carried by two feeds once, and says when follows are left out', async () => {
+    const user = await createUser();
+    await subscribe(user, FEED_A);
+    await subscribe(user, FEED_B);
+    const url = `https://site${Math.random().toString(36).slice(2, 8)}.example/p/1`;
+    await ingest(FEED_A, { title: 'PFAS story', url });
+    await ingest(FEED_B, { title: 'PFAS story', url });
+
+    const body = (await (
+      await call(user, '/api/channels/preview', {
+        method: 'POST',
+        body: { query: 'pfas', sourceMode: 'all', sourceKeys: [] },
+      })
+    ).json()) as PreviewBody & { coversFollows: boolean };
+    expect(body.total).toBe(1);
+    expect(body.hits).toHaveLength(1);
+
+    const follows = (await (
+      await call(user, '/api/channels/preview', {
+        method: 'POST',
+        body: { query: 'pfas', sourceMode: 'include', sourceKeys: ['bsky~follows'] },
+      })
+    ).json()) as PreviewBody & { coversFollows: boolean };
+    expect(follows.scanned).toBe(0);
+    expect(follows.coversFollows).toBe(true);
+  });
+
+  it('refuses an empty query and readers without saved searches', async () => {
+    const user = await createUser();
+    const empty = await call(user, '/api/channels/preview', {
+      method: 'POST',
+      body: { query: '-only', sourceMode: 'all', sourceKeys: [] },
+    });
+    expect(empty.status).toBe(400);
+
+    const free = await createUser('free');
+    const refused = await call(free, '/api/channels/preview', {
+      method: 'POST',
+      body: { query: 'pfas', sourceMode: 'all', sourceKeys: [] },
+    });
+    expect(refused.status).toBe(403);
+  });
+});
+
+describe('saving a saved search', () => {
+  it('starts the look back at once, without waiting for the cron', async () => {
+    const user = await createUser();
+    await subscribe(user, FEED_A);
+    const guid = await ingest(FEED_A, { title: 'PFAS in rivers' }, Date.now() - DAY);
+    await settle();
+    const uuid = newUuid();
+    await putChannel(user, uuid, { query: 'pfas' });
+    // The kick sets an alarm for now; the matcher runs on it, not on a pass we drive.
+    await vi.waitFor(
+      async () => {
+        expect(await matchedKeys(user, uuid)).toEqual([guid]);
+      },
+      { timeout: 5000, interval: 50 }
+    );
+  });
+});
+
 describe('GET /api/channels/:uuid/items', () => {
   it('serves matches newest first, with snippets, read state and an unread count', async () => {
     const user = await createUser();

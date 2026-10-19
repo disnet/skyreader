@@ -61,6 +61,10 @@ const RATE_LIMITS: Record<string, RateLimitConfig> = {
   // IndexedDB). One R2 read; nothing fetches a caller-named URL.
   '/api/guest/items/body': { limit: 120, windowMs: 60000 },
 
+  // A saved search's preview in the channel editor: one FTS match over up to
+  // 300 recent items, asked for as the reader pauses typing.
+  '/api/channels/preview': { limit: 60, windowMs: 60000 },
+
   // Expensive operations (external API calls, complex queries)
   '/api/social/feed': EXPENSIVE_LIMIT,
   '/api/social/sync-follows': EXPENSIVE_LIMIT,
