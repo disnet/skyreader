@@ -11,6 +11,8 @@ import { articlesStore } from './articles.svelte';
 import { syncStore } from './sync.svelte';
 import { savesStore } from './saves.svelte';
 import { magazineStore } from './magazine.svelte';
+import { searchChannelsStore } from './searchChannels.svelte';
+import { canUseSavedSearches, channelMatchKey } from '$lib/utils/searchChannels';
 import { fetchAllFeeds, fetchAllDocuments, forceRefreshAllFeeds } from '$lib/services/feedFetcher';
 import { api } from '$lib/services/api';
 import { dedupeRemoteSubscriptionRecords } from '$lib/services/subscriptionDedup';
@@ -161,7 +163,8 @@ function createAppManager() {
         ['magazine', magazineStore.load()],
         ['shareDrafts', shareDraftsStore.sync()],
         ['social', socialStore.loadFeed(true)],
-        ['filteredViews', filteredViewsStore.syncWithBackend()],
+        // Saved searches read their channels' queries, so they follow the channel sync.
+        ['filteredViews', filteredViewsStore.syncWithBackend().then(refreshSearchChannels)],
         // Pull the user's own linkblog so share-state reconciles across devices.
         // Forced each refresh so a share made elsewhere lights up the button here;
         // then reconcile prunes any local share the (complete) pull says is gone.
@@ -212,6 +215,18 @@ function createAppManager() {
     }
 
     return newArticles;
+  }
+
+  /** Every saved search's unread count, and the open one's first page. */
+  async function refreshSearchChannels(): Promise<void> {
+    // Without them (a lapsed plan, the switch off) every count is dropped.
+    const channels = canUseSavedSearches(auth.user)
+      ? filteredViewsStore.views.flatMap((v) => {
+          const key = channelMatchKey(v);
+          return key ? [{ uuid: v.uuid, key }] : [];
+        })
+      : [];
+    await searchChannelsStore.refresh(channels);
   }
 
   // Runs before reconciliation: otherwise syncSubscriptions would interpret the

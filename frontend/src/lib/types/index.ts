@@ -59,12 +59,19 @@ export interface User {
     maxPdfUploadsPerMonth?: number;
     /** Total bytes of uploaded originals kept. */
     maxPdfStorageBytes?: number;
+    /** How many saved searches the plan matches; 0 = none (Supporter). */
+    maxSavedSearches?: number;
   };
   /**
    * The operator switch for full-text search in this environment. Search is
    * offered only when this and `limits.fullTextSearch` are both true.
    */
   searchEnabled?: boolean;
+  /**
+   * The operator switch for saved searches. A channel can carry a query only
+   * when this is on and `limits.maxSavedSearches` is above zero.
+   */
+  savedSearchEnabled?: boolean;
 }
 
 export type SubscriptionSourceType =
@@ -1196,7 +1203,8 @@ export interface FeedItem {
 export type CombinedFeedItem =
   | { type: 'article'; item: Article; date: string }
   | { type: 'document'; item: SocialDocument; date: string }
-  | { type: 'link'; item: FollowLink; date: string };
+  | { type: 'link'; item: FollowLink; date: string }
+  | { type: 'saved'; item: SavedItem; date: string };
 
 /**
  * Auto-update rule for a channel. When set, sourceKeys are automatically
@@ -1226,23 +1234,43 @@ export type SortOrder =
   // Feed channels with the follows source: most shared by your follows first.
   | 'popular';
 
+/**
+ * A part of the Library a channel can take in beside its feeds: every save, or
+ * just the Shelf. An archived save reads as read, so an unread channel shows the
+ * Queue. Opt-in, a separate axis from sourceMode/sourceKeys, so Everything and
+ * every older channel keep meaning what they did.
+ */
+export type LibrarySource = 'saves' | 'shelf';
+
+export const LIBRARY_SOURCES: readonly LibrarySource[] = ['saves', 'shelf'];
+
 export interface FilteredView {
   id?: number;
   uuid: string;
   name: string;
-  // Channel mode: 'feed' (default) shows normal content, 'saved' shows only saved items
+  // 'feed' (default). 'saved' is the old Saved channel, folded into a channel of
+  // your saves as it loads (utils/savesChannel.ts).
   mode?: 'feed' | 'saved';
   // Unified source filter (new format) — applies to feed-mode channels
   sourceMode?: 'all' | 'include' | 'exclude';
   sourceKeys?: string[];
   // Auto-update rule: when set, sourceKeys are kept in sync with subscriptions
   autoRule?: ChannelAutoRule;
-  // Saved channel: filter by save source type (url, feed, share, document)
+  // A channel of your saves: filter by save source type (url, feed, document, upload)
   savedSourceFilter?: SavedSourceType[];
-  // Saved channel filters
+  // A channel of your saves: its other save filters
   savedDateFilter?: DateAddedPreset;
   savedReadingLength?: ReadingLengthFilter[];
   savedDomainFilter?: string[];
+  /** Feed-mode channels: the parts of the Library it takes in too; absent = none. */
+  librarySources?: LibrarySource[];
+  /**
+   * A saved search: the channel holds what this query matched across its
+   * sources, served by GET /api/channels/:uuid/items rather than filtered here.
+   * Same syntax as search. Feed-mode channels only; empty or absent = none.
+   * See docs/plans/SAVED_SEARCH_CHANNELS.md.
+   */
+  query?: string;
   // Legacy fields (kept for backward compat with existing IndexedDB records)
   showArticles?: boolean;
   showShares?: boolean;

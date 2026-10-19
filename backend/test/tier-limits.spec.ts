@@ -20,6 +20,8 @@ describe('Tier Limits Config', () => {
         maxEpubUploadBytes: 0,
         maxPdfUploadsPerMonth: 0,
         maxPdfStorageBytes: 0,
+        snapshotImages: false,
+        maxSavedSearches: 0,
       });
     });
 
@@ -36,6 +38,8 @@ describe('Tier Limits Config', () => {
         maxEpubUploadBytes: 30 * 1024 * 1024,
         maxPdfUploadsPerMonth: 200,
         maxPdfStorageBytes: 2048 * 1024 * 1024,
+        snapshotImages: true,
+        maxSavedSearches: 25,
       });
     });
 
@@ -52,6 +56,8 @@ describe('Tier Limits Config', () => {
         maxEpubUploadBytes: 0,
         maxPdfUploadsPerMonth: 0,
         maxPdfStorageBytes: 0,
+        snapshotImages: false,
+        maxSavedSearches: 0,
       });
     });
 
@@ -68,6 +74,8 @@ describe('Tier Limits Config', () => {
         maxEpubUploadBytes: 0,
         maxPdfUploadsPerMonth: 0,
         maxPdfStorageBytes: 0,
+        snapshotImages: false,
+        maxSavedSearches: 0,
       });
     });
   });
@@ -237,6 +245,8 @@ describe('User Tier Service', () => {
         maxEpubUploadBytes: 0,
         maxPdfUploadsPerMonth: 0,
         maxPdfStorageBytes: 0,
+        snapshotImages: false,
+        maxSavedSearches: 0,
       });
     });
 
@@ -259,6 +269,8 @@ describe('User Tier Service', () => {
         maxEpubUploadBytes: 30 * 1024 * 1024,
         maxPdfUploadsPerMonth: 200,
         maxPdfStorageBytes: 2048 * 1024 * 1024,
+        snapshotImages: true,
+        maxSavedSearches: 25,
       });
     });
 
@@ -275,6 +287,8 @@ describe('User Tier Service', () => {
         maxEpubUploadBytes: 0,
         maxPdfUploadsPerMonth: 0,
         maxPdfStorageBytes: 0,
+        snapshotImages: false,
+        maxSavedSearches: 0,
       });
     });
   });

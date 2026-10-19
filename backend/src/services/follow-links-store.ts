@@ -90,6 +90,8 @@ export interface FollowLinksSync {
   lastPollAt: number;
   complete: boolean;
   error: string | null;
+  /** When the reader last opened follows links (follow-links-background.ts). */
+  lastSeenAt?: number | null;
 }
 
 export interface FollowLinksSettings {
@@ -139,12 +141,17 @@ export async function setFollowLinksSettings(
 
 export async function readFollowLinksSync(env: Env, did: string): Promise<FollowLinksSync | null> {
   const row = await env.DB.prepare(
-    'SELECT last_poll_at, newest_seen_at, complete, last_error FROM follow_link_sync WHERE user_did = ?'
+    'SELECT last_poll_at, newest_seen_at, complete, last_error, last_seen_at FROM follow_link_sync WHERE user_did = ?'
   )
     .bind(did)
-    .first<SyncRow>();
+    .first<SyncRow & { last_seen_at: number | null }>();
   if (!row) return null;
-  return { lastPollAt: row.last_poll_at, complete: !!row.complete, error: row.last_error };
+  return {
+    lastPollAt: row.last_poll_at,
+    complete: !!row.complete,
+    error: row.last_error,
+    lastSeenAt: row.last_seen_at,
+  };
 }
 
 export function followLinksNeedRefresh(sync: FollowLinksSync | null, now: number): boolean {
@@ -444,8 +451,8 @@ function upsertShare(env: Env, did: string, s: LinkShare, now: number) {
     `INSERT INTO follow_link_shares
        (user_did, post_uri, sharer_did, kind, url, url_normalized, post_text,
         card_title, card_description, card_thumb, sharer_handle, sharer_name, sharer_avatar, shared_at,
-        like_count, likes_checked_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        like_count, likes_checked_at, first_seen_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(user_did, post_uri, sharer_did) DO UPDATE SET
        like_count = COALESCE(excluded.like_count, like_count),
        likes_checked_at = COALESCE(excluded.likes_checked_at, likes_checked_at),
@@ -472,7 +479,10 @@ function upsertShare(env: Env, did: string, s: LinkShare, now: number) {
     s.sharer.avatar ?? null,
     Number.isFinite(sharedAt) ? sharedAt : Date.now(),
     s.likeCount,
-    s.likeCount === null ? null : now
+    s.likeCount === null ? null : now,
+    // When the row was written, not when the refresh started: the saved-search
+    // matcher walks new shares by it, a little behind the clock.
+    Date.now()
   );
 }
 

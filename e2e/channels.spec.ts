@@ -1,14 +1,24 @@
 import { test, expect } from './fixtures';
 import type { Page, Response } from '@playwright/test';
-import { seedSubscription, seedFeedItems, cleanupFeedItems } from './seed';
+import {
+  seedSubscription,
+  seedFeedItems,
+  cleanupFeedItems,
+  seedChannel,
+  seedSavedArticle,
+} from './seed';
 import type { TestUser } from './seed';
 
-/** Create a channel via a nav group's New channel button and the modal form. */
-async function createChannel(page: Page, name: string, row: 'Feeds' | 'Library' = 'Feeds') {
-  // Channels live under the Feeds and Library nav groups, each ending in New channel.
-  const navGroup = page.locator('.nav-group', {
-    has: page.locator('.nav-row .nav-label', { hasText: row }),
+/** The sidebar's Channels section, which ends in New channel. */
+function channelsGroup(page: Page) {
+  return page.locator('.nav-group', {
+    has: page.locator('.nav-row .nav-label', { hasText: 'Channels' }),
   });
+}
+
+/** Create a channel via the Channels section's New channel button and the modal form. */
+async function createChannel(page: Page, name: string) {
+  const navGroup = channelsGroup(page);
   await expect(navGroup).toBeVisible({ timeout: 15_000 });
   await navGroup.locator('.new-channel-btn').click();
 
@@ -16,9 +26,6 @@ async function createChannel(page: Page, name: string, row: 'Feeds' | 'Library' 
   const nameInput = page.locator('#channel-name');
   await expect(nameInput).toBeVisible({ timeout: 5_000 });
   await nameInput.fill(name);
-
-  // A new feed channel starts with no sources picked; take them all.
-  if (row === 'Feeds') await page.getByRole('button', { name: 'Show everything' }).click();
 
   await page.getByRole('button', { name: 'Create channel' }).click();
 
@@ -61,12 +68,11 @@ test.describe('Channels', () => {
     });
     await authedPage.reload();
 
-    const navGroup = authedPage.locator('.nav-group', {
-      has: authedPage.locator('.nav-row .nav-label', { hasText: 'Feeds' }),
-    });
-    await navGroup.locator('.new-channel-btn').click();
+    await channelsGroup(authedPage).locator('.new-channel-btn').click();
 
-    // Nothing is picked yet, so there's nothing to make.
+    // A new channel starts with every source; with none, there's nothing to make.
+    await expect(authedPage.getByRole('button', { name: 'Select all' })).toBeDisabled();
+    await authedPage.getByRole('button', { name: 'Select none' }).click();
     await authedPage.getByRole('button', { name: 'Create channel' }).click();
     await expect(authedPage.getByRole('alert')).toHaveText('Pick at least one source');
 
@@ -89,12 +95,28 @@ test.describe('Channels', () => {
     await expect(loose).not.toBeChecked();
   });
 
-  test('the header Edit button opens a saved channel in its editor', async ({ authedPage }) => {
-    // A saved channel routes to /saved?view=<uuid> and puts an Edit button in
-    // the header. That button used to resolve the channel with
+  test('the header Edit button opens a saved channel in its editor', async ({
+    authedPage,
+    testUser,
+  }) => {
+    // A channel of your saves routes to /saved?view=<uuid> and puts an Edit
+    // button in the header. That button used to resolve the channel with
     // `parseInt(viewFilter)` — but `viewFilter` is the uuid, so it passed NaN
     // and the editor opened blank, with its Save writing to no row at all.
-    await createChannel(authedPage, 'Edit From Header', 'Library');
+    // Seeded as an old Saved channel, which now opens as a channel of your saves
+    // with its filter kept.
+    await seedChannel(testUser, {
+      uuid: crypto.randomUUID(),
+      name: 'Edit From Header',
+      config: {
+        mode: 'saved',
+        readFilter: 'unread',
+        sortOrder: 'newest',
+        savedSourceFilter: ['feed'],
+      },
+    });
+    await authedPage.reload();
+    await authedPage.locator('.view-item .nav-label', { hasText: 'Edit From Header' }).click();
     await expect(authedPage).toHaveURL(/\/saved\?view=/);
 
     await authedPage.getByRole('button', { name: 'Edit channel' }).click();
@@ -104,6 +126,10 @@ test.describe('Channels', () => {
       timeout: 5_000,
     });
     await expect(authedPage.locator('#channel-name')).toHaveValue('Edit From Header');
+    await expect(authedPage.getByRole('button', { name: 'Feed Articles' })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    );
   });
 
   test('rename a channel via context menu', async ({ authedPage }) => {
@@ -180,6 +206,35 @@ test.describe('Channels', () => {
 
     // The channel should be active (highlighted)
     await expect(viewItem).toHaveClass(/active/);
+  });
+
+  test('a new channel takes in your saves beside its feeds', async ({ authedPage, testUser }) => {
+    const feedUrl = `https://example.com/mixed-${testUser.did.slice(-8)}.xml`;
+    await seedSubscription(testUser, { feedUrl, title: 'Mixed Feed' });
+    await seedFeedItems(feedUrl, [
+      { guid: `mixed-${testUser.did.slice(-8)}`, title: 'A feed post' },
+    ]);
+    await seedSavedArticle(testUser, {
+      url: 'https://elsewhere.example/kept-page',
+      title: 'A page I saved',
+    });
+    try {
+      await authedPage.reload();
+      await channelsGroup(authedPage).locator('.new-channel-btn').click();
+      // Every source is picked, the Library's included.
+      await expect(
+        authedPage.locator('.source-row', { hasText: 'Your saves' }).getByRole('checkbox')
+      ).toBeChecked();
+      await authedPage.locator('#channel-name').fill('Everything I read');
+      await authedPage.getByRole('button', { name: 'Create channel' }).click();
+
+      await expect(authedPage.getByText('A feed post', { exact: true })).toBeVisible({
+        timeout: 15_000,
+      });
+      await expect(authedPage.getByText('A page I saved', { exact: true })).toBeVisible();
+    } finally {
+      await cleanupFeedItems(feedUrl);
+    }
   });
 
   test('Manage Sources link navigates to /sources', async ({ authedPage }) => {

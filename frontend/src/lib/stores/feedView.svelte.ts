@@ -1,13 +1,16 @@
+import { isSavesChannel } from '$lib/utils/savesChannel';
 import { articlesStore } from './articles.svelte';
 import { subscriptionsStore } from './subscriptions.svelte';
 import { itemLabelsStore } from './itemLabels.svelte';
 import { socialStore } from './social.svelte';
 import { myLinkblogStore } from './myLinkblog.svelte';
 import { savesStore } from './saves.svelte';
+import { shelfStore } from './shelf.svelte';
 import { savedSearchStore } from './savedSearch.svelte';
 import { preferences } from './preferences.svelte';
 import { filteredViewsStore } from './filteredViews.svelte';
 import { followLinksStore } from './followLinks.svelte';
+import { searchChannelsStore } from './searchChannels.svelte';
 import { mobileStore } from './mediaQuery.svelte';
 import { auth } from './auth.svelte';
 import { liveDb } from '$lib/services/liveDb.svelte';
@@ -22,6 +25,7 @@ import type {
   SortOrder,
   FilteredView,
   FollowLink,
+  LibrarySource,
 } from '$lib/types';
 import { htmlToText, normalize, searchRank } from '$lib/services/savedSearch';
 import { sameUrlFilters, type UrlFilters } from '$lib/utils/urlFilters';
@@ -33,6 +37,13 @@ import {
 import { isSavedItemArchived, savedAtMs, setSavedItemArchived } from '$lib/utils/savedPile';
 import { urlKey } from '$lib/utils/urlKey';
 import { followLinkReadKey, markFollowLinkRead } from '$lib/utils/followLinks';
+import {
+  channelQuery,
+  matchToRow,
+  savedRowKey,
+  type SearchChannelRow,
+} from '$lib/utils/searchChannels';
+import { buildSubscriptionIndex } from '$lib/services/timelineSync';
 import {
   isRssSource,
   isDocumentsSource,
@@ -176,6 +187,10 @@ export function getSavedDate(item: FeedDisplayItem): number {
  * made the Saved list and Home's lanes disagree about the same item. Rows with
  * no save behind them fall back to their own key.
  */
+function sameKeys(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((k) => b.includes(k));
+}
+
 export function isSavedRowArchived(item: FeedDisplayItem): boolean {
   // The row's own key first: it's a map hit, and it's the alias most archives
   // land under, so the common case never pays for resolving the save.
@@ -445,11 +460,62 @@ function createFeedViewStore() {
     return lookupView(viewFilter) ?? null;
   });
 
-  // Derived: whether the active channel is a saved-mode channel
-  let isSavedChannel = $derived(activeFilteredView?.mode === 'saved');
+  // Derived: whether the active channel reads only your saves, and so opens as
+  // the Library does (utils/savesChannel.ts)
+  let isSavedChannel = $derived(isSavesChannel(activeFilteredView));
 
   // Derived: whether we're in any saved view (URL param or saved channel)
   let isSavedView = $derived(Boolean(savedFilter) || isSavedChannel);
+
+  // Derived: the active channel's saved query, when it's a saved search. Its
+  // items are the server's matches (searchChannelsStore), not the timeline
+  // filtered here; the read, tag and sort filters still apply on top.
+  let searchQuery = $derived(channelQuery(activeFilteredView));
+  let isSearchChannel = $derived(searchQuery !== null);
+
+  // The open saved search's matches as river rows, in the server's order
+  // (newest first). Empty until the store holds this channel's.
+  let searchRows = $derived.by((): SearchChannelRow[] => {
+    if (!isSearchChannel || searchChannelsStore.uuid !== activeFilteredView?.uuid) return [];
+    const matches = searchChannelsStore.matches;
+    const subIds = buildSubscriptionIndex(subscriptionsStore.subscriptions);
+    // This device's copy of a matched document carries its body; looked up
+    // only when some match is a document.
+    let docs: Map<string, SocialDocument> | null = null;
+    let saves: Map<string, SavedItem> | null = null;
+    const now = Date.now();
+    const rows: SearchChannelRow[] = [];
+    // Two feeds can share a guid; the server keys them apart by URL, but a row
+    // key (and read state) here is the guid, so the first one wins.
+    const seen = new Set<string>();
+    for (const match of matches) {
+      const row = matchToRow(match, {
+        subscriptionIdFor: (feedUrl) => subIds.get(feedUrl),
+        localDocument: (uri) => {
+          docs ??= new Map(socialStore.documents.map((d) => [d.recordUri, d]));
+          return docs.get(uri);
+        },
+        localSave: (rkey) => {
+          saves ??= new Map(savesStore.articles.map((a) => [a.rkey, a]));
+          return saves.get(rkey);
+        },
+        now,
+      });
+      if (!row || seen.has(`${row.type}:${row.key}`)) continue;
+      seen.add(`${row.type}:${row.key}`);
+      rows.push(row);
+    }
+    return rows;
+  });
+
+  // Split by kind for the article, document and link pipelines below, which
+  // merge them back by date as they do the timeline's.
+  let searchArticles = $derived(searchRows.flatMap((r) => (r.type === 'article' ? [r.item] : [])));
+  let searchDocuments = $derived(
+    searchRows.flatMap((r) => (r.type === 'document' ? [r.item] : []))
+  );
+  let searchLinks = $derived(searchRows.flatMap((r) => (r.type === 'link' ? [r.item] : [])));
+  let searchSaves = $derived(searchRows.flatMap((r) => (r.type === 'saved' ? [r.item] : [])));
 
   // Helper to get current subscription rkeys, ID→rkey map, and follow DIDs for migration
   function getAllSubRkeys(): string[] {
@@ -503,13 +569,23 @@ function createFeedViewStore() {
     if (pendingViewKey !== null) return false;
     if (!activeFilteredView) return false;
     const view = activeFilteredView;
-    const currentReadFilter = showOnlyUnread ? 'unread' : 'all';
+    // A channel of your saves keeps Inbox or Archive; any other, unread or all.
+    const currentReadFilter = isSavesChannel(view)
+      ? savedView === 'archive'
+        ? 'read'
+        : 'unread'
+      : showOnlyUnread
+        ? 'unread'
+        : 'all';
     const currentSortOrder = toolbarSortOrder ?? preferences.sortOrder;
 
-    if (currentReadFilter !== view.readFilter) return true;
+    // An Inbox saved as 'all' (by an older toolbar) is still the Inbox.
+    const savedReadFilter =
+      isSavesChannel(view) && view.readFilter !== 'read' ? 'unread' : view.readFilter;
+    if (currentReadFilter !== savedReadFilter) return true;
     if (currentSortOrder !== view.sortOrder) return true;
 
-    if (view.mode === 'saved') {
+    if (isSavesChannel(view)) {
       // Compare saved source filter
       const savedSources = new Set(view.savedSourceFilter ?? []);
       if (toolbarSavedSourceFilter.length !== savedSources.size) return true;
@@ -618,6 +694,10 @@ function createFeedViewStore() {
   // rather than surfacing as an unread row of its own.
   let scopedArticles = $derived.by((): Article[] => {
     const fv = effectiveFilters;
+
+    // A saved search: the server already matched the channel's sources.
+    // Newest first only: the server pages its matches that way.
+    if (isSearchChannel) return searchArticles;
 
     // If no articles are allowed by source filter, return empty
     if (!showArticles) return [];
@@ -731,6 +811,8 @@ function createFeedViewStore() {
       return mine;
     }
 
+    if (isSearchChannel) return searchDocuments;
+
     // If documents are not shown by source filter, return empty
     if (!showDocuments) return [];
 
@@ -815,7 +897,9 @@ function createFeedViewStore() {
   // never does.
   let showFollowLinks = $derived.by((): boolean => {
     const fv = matchFilter;
-    if (isSavedView || viewMode !== 'combined' || categoryFilter) return false;
+    // A saved search's follows matches are its own rows (displayedFollowLinks),
+    // not the follows river, so nothing here waits on that river.
+    if (isSavedView || viewMode !== 'combined' || categoryFilter || isSearchChannel) return false;
     if (fv.sourceMode === 'all') return followLinksStore.inEverything === true;
     const named = fv.sourceKeys.some(isFollowsSource);
     return fv.sourceMode === 'include' ? named : !named;
@@ -832,7 +916,10 @@ function createFeedViewStore() {
   /** How many of your follows shared this page; 0 when none did. */
   function followShareCount(item: CombinedFeedItem): number {
     if (item.type === 'link') return item.item.sharerCount;
-    const url = item.type === 'article' ? item.item.url : item.item.canonicalUrl || item.item.path;
+    const url =
+      item.type === 'article' || item.type === 'saved'
+        ? item.item.url
+        : item.item.canonicalUrl || item.item.path;
     return followLinksStore.forUrl(url)?.sharerCount ?? 0;
   }
 
@@ -842,8 +929,18 @@ function createFeedViewStore() {
   // form) is dropped: that row carries the "shared by" line instead.
   let lastFollowLinks: FollowLink[] = [];
   let displayedFollowLinks = $derived.by((): FollowLink[] => {
-    if (!showFollowLinks) return [];
     const fv = effectiveFilters;
+    if (isSearchChannel) {
+      const links = searchLinks;
+      if (fv.readFilter === 'all') return links;
+      return links.filter((l) => {
+        const key = followLinkReadKey(l);
+        return fv.readFilter === 'unread'
+          ? !itemLabelsStore.isRead(key) || readArticleGuidsThisSession.has(key)
+          : itemLabelsStore.isRead(key);
+      });
+    }
+    if (!showFollowLinks) return [];
 
     // Exact matches first, against every article in the view whatever its age: a
     // link whose read key is an article's guid (feeds that use the permalink as
@@ -919,6 +1016,81 @@ function createFeedViewStore() {
   });
   let needsEveryFollowLink = $derived(followLinksPaged && !followLinksByDate);
 
+  // The parts of the Library the active channel takes in (every save, or the
+  // Shelf). A saved search's saves come matched from the server instead.
+  let channelLibrarySources = $derived.by((): LibrarySource[] => {
+    const view = activeFilteredView;
+    if (!view || isSavesChannel(view)) return [];
+    // The toolbar's source picker has no Library rows, so narrowing it to some
+    // sources ("only", or a pick other than the channel's own) means just those.
+    if (
+      toolbarSourceMode === 'include' &&
+      (view.sourceMode !== 'include' || !sameKeys(toolbarSourceKeys, view.sourceKeys ?? []))
+    ) {
+      return [];
+    }
+    return view.librarySources ?? [];
+  });
+
+  // The channel's saves, as rows beside its feed items. An archived save reads as
+  // read, so an unread channel shows the Queue. A save of a page the river
+  // already shows (by guid or url) is left to that row.
+  let libraryItems = $derived.by((): SavedItem[] => {
+    const sources = new Set(channelLibrarySources);
+    if (sources.size === 0) return [];
+    const readFilter = effectiveFilters.readFilter;
+    const shown = (save: SavedItem) => {
+      if (readFilter === 'all') return true;
+      const archived = isSavedItemArchived(save, itemLabelsStore.isArchived);
+      if (readFilter === 'read') return archived;
+      return !archived || readArticleGuidsThisSession.has(savedRowKey(save));
+    };
+    // The server matched and deduped these against the channel's other matches.
+    if (isSearchChannel) return sources.has('saves') ? searchSaves.filter(shown) : [];
+    const candidates = savesStore.articles.filter((save) => {
+      if (!sources.has('saves') && !(sources.has('shelf') && shelfStore.isOnShelf(save))) {
+        return false;
+      }
+      return shown(save);
+    });
+    if (candidates.length === 0) return [];
+
+    // A save of a page the river already shows, read or not, is that row. Exact
+    // guids and URLs first; URL forms only for recent articles (as for follows
+    // links, so a large archive isn't parsed on every change) and documents.
+    const shownExact = new Set<string>();
+    const shownUrls = new Set<string>();
+    const addUrl = (url: string | undefined) => {
+      const key = url ? urlKey(url) : null;
+      if (key) shownUrls.add(key);
+    };
+    for (const a of scopedArticles) {
+      shownExact.add(a.guid);
+      if (a.url) shownExact.add(a.url);
+    }
+    const cutoff = Date.now() - FOLLOW_DEDUPE_WINDOW_MS;
+    const articles =
+      effectiveFilters.sortOrder === 'oldest' ? [...scopedArticles].reverse() : scopedArticles;
+    for (const a of articles) {
+      if (new Date(a.publishedAt).getTime() < cutoff) break;
+      addUrl(a.url);
+    }
+    for (const d of scopedDocuments) {
+      shownExact.add(d.recordUri);
+      addUrl(d.canonicalUrl || d.path);
+    }
+    for (const l of displayedFollowLinks) {
+      shownExact.add(l.url);
+      addUrl(l.url);
+    }
+    return candidates.filter((save) => {
+      if (save.itemGuid && shownExact.has(save.itemGuid)) return false;
+      if (save.url && shownExact.has(save.url)) return false;
+      const key = save.url ? urlKey(save.url) : null;
+      return !(key && shownUrls.has(key));
+    });
+  });
+
   // Derived: full combined view (articles + documents merged by date),
   // pre-pagination. Merging the complete sets and sorting once means the
   // newest items win regardless of type — no date-window heuristic needed to
@@ -944,6 +1116,12 @@ function createFeedViewStore() {
         type: 'link' as const,
         item,
         date: new Date(item.firstSharedAt).toISOString(),
+      })),
+      // A save is dated by when you saved it: when it reached you.
+      ...libraryItems.map((item) => ({
+        type: 'saved' as const,
+        item,
+        date: new Date(savedAtMs(item)).toISOString(),
       })),
     ];
 
@@ -1357,6 +1535,12 @@ function createFeedViewStore() {
           };
         } else if (item.type === 'link') {
           return { type: 'link' as const, item: item.item, key: followLinkReadKey(item.item) };
+        } else if (item.type === 'saved') {
+          return {
+            type: 'saved' as const,
+            item: item.item,
+            key: savedRowKey(item.item),
+          };
         } else {
           return {
             type: 'document' as const,
@@ -1396,7 +1580,11 @@ function createFeedViewStore() {
     const mode = viewMode;
     if (isSavedView) return loadedArticleCount < savedItemsAll.length;
     if (mode === 'combined') {
-      return loadedArticleCount < combinedAll.length || followLinkFloor !== null;
+      return (
+        loadedArticleCount < combinedAll.length ||
+        followLinkFloor !== null ||
+        (isSearchChannel && searchChannelsStore.hasMore)
+      );
     }
     // 'shares' mode shows documents, which aren't cursor-paginated.
     if (mode === 'shares') return false;
@@ -1406,6 +1594,7 @@ function createFeedViewStore() {
   let isLoadingMore = $derived.by(() => {
     const mode = viewMode;
     if (mode === 'combined' || mode === 'shares') {
+      if (isSearchChannel) return searchChannelsStore.loadingMore;
       return socialStore.isLoading || (mode === 'combined' && followLinksStore.loadingMore);
     }
     return false;
@@ -1433,6 +1622,10 @@ function createFeedViewStore() {
       // the river run on past it.
       if (followLinkFloor !== null && loadedArticleCount >= combinedAll.length) {
         await followLinksStore.loadMoreLinks();
+      }
+      // The next page of a saved search's matches, once the loaded ones are showing.
+      if (isSearchChannel && loadedArticleCount >= combinedAll.length) {
+        await searchChannelsStore.loadMore();
       }
       return;
     }
@@ -1587,11 +1780,17 @@ function createFeedViewStore() {
     if (!fv || fv.id == null) return;
     const id = fv.id;
     const updates: Partial<import('$lib/types').FilteredView> = {
-      readFilter: showOnlyUnread ? 'unread' : 'all',
+      readFilter: isSavesChannel(fv)
+        ? savedView === 'archive'
+          ? 'read'
+          : 'unread'
+        : showOnlyUnread
+          ? 'unread'
+          : 'all',
       sortOrder: toolbarSortOrder ?? preferences.sortOrder,
       tagFilter: toolbarTagFilter.length > 0 ? [...toolbarTagFilter] : undefined,
     };
-    if (fv.mode === 'saved') {
+    if (isSavesChannel(fv)) {
       updates.savedSourceFilter =
         toolbarSavedSourceFilter.length > 0 ? [...toolbarSavedSourceFilter] : undefined;
       updates.savedDateFilter = toolbarDateFilter ?? undefined;
@@ -1616,8 +1815,8 @@ function createFeedViewStore() {
    * lookup hits, and from `applyPendingViewConfig` when it hits late.
    */
   function applyViewConfig(fv: FilteredView) {
-    if (fv.mode === 'saved') {
-      // Saved channel — load saved-specific filters
+    if (isSavesChannel(fv)) {
+      // A channel of your saves — load the save filters
       toolbarSavedSourceFilter = fv.savedSourceFilter ? [...fv.savedSourceFilter] : [];
       toolbarDateFilter = fv.savedDateFilter ?? null;
       toolbarReadingLength = fv.savedReadingLength ? [...fv.savedReadingLength] : [];
@@ -1738,8 +1937,9 @@ function createFeedViewStore() {
 
   // Track an item as "seen this session" so it stays visible after being marked read
   function trackSeenThisSession(item: RiverItem) {
-    if (item.type === 'article' || item.type === 'link') {
-      // A link's key is what it's read under, in the same key space as a guid.
+    if (item.type === 'article' || item.type === 'link' || item.type === 'saved') {
+      // A link's key is what it's read under, in the same key space as a guid;
+      // a save's is its row key (savedRowKey), which libraryItems checks.
       readArticleGuidsThisSession.add(item.key);
       readArticleGuidsThisSession = new Set(readArticleGuidsThisSession);
     } else if (item.type === 'document') {
@@ -1834,6 +2034,18 @@ function createFeedViewStore() {
       return myLinkblogFilter;
     },
     setMyLinkblogMode,
+    /** The active channel's saved query; null unless it's a saved search. */
+    get searchQuery() {
+      return searchQuery;
+    },
+    get isSearchChannel() {
+      return isSearchChannel;
+    },
+    /** The open saved search's article or document under a reader key, for `?read=`. */
+    searchRowFor(key: string): FeedDisplayItem | null {
+      const row = searchRows.find((r) => r.key === key);
+      return row && row.type !== 'link' ? row : null;
+    },
     get activeFilteredView() {
       return activeFilteredView;
     },

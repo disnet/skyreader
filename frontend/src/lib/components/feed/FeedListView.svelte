@@ -4,8 +4,14 @@
   import { tick } from 'svelte';
   import ArticleCard from '$lib/components/ArticleCard.svelte';
   import SavedReader from '$lib/components/feed/SavedReader.svelte';
+  import SavedCard from '$lib/components/feed/SavedCard.svelte';
   import InfiniteScrollSentinel from '$lib/components/common/InfiniteScrollSentinel.svelte';
-  import { feedViewStore, type FeedDisplayItem } from '$lib/stores/feedView.svelte';
+  import {
+    feedViewStore,
+    isSavedRowArchived,
+    setSavedRowArchived,
+    type FeedDisplayItem,
+  } from '$lib/stores/feedView.svelte';
   import { feedArchiveStore } from '$lib/stores/feedArchive.svelte';
   import { MAX_ARTICLES_PER_FEED } from '$lib/services/articleMerge';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
@@ -17,6 +23,8 @@
   import { toggleSavedLink } from '$lib/utils/saveLink';
   import { savesStore } from '$lib/stores/saves.svelte';
   import { followLinksStore } from '$lib/stores/followLinks.svelte';
+  import { searchChannelsStore } from '$lib/stores/searchChannels.svelte';
+  import { matchSharers } from '$lib/utils/searchChannels';
   import { followLinkArticle, markFollowLinkRead, openFollowLink } from '$lib/utils/followLinks';
   import type { Article, FollowLink, SocialDocument } from '$lib/types';
   import { getDocumentEffectiveUrl } from '$lib/utils/linkPost';
@@ -287,6 +295,12 @@
   class:hidden-behind-reader={readerItem !== null}
 >
   {#each feedViewStore.currentItems as displayItem, index (displayItem.key)}
+    <!-- A saved search's match carries the passage it matched on, and who shared it. -->
+    {@const match = feedViewStore.isSearchChannel
+      ? searchChannelsStore.matchFor(
+          displayItem.type === 'saved' ? displayItem.item.rkey : displayItem.key
+        )
+      : undefined}
     <div class="article-item-anchor" bind:this={articleElements[index]}>
       {#if displayItem.type === 'article'}
         {@const article = displayItem.item}
@@ -300,7 +314,9 @@
           isSaved={itemLabelsStore.isSaved(article.guid)}
           isShared={linkblogStore.isShared(article.url)}
           shareNote={linkblogStore.getNote(article.url)}
-          followSharers={followLinksStore.forUrl(article.url)?.sharers}
+          followSharers={followLinksStore.forUrl(article.url)?.sharers ??
+            (match ? matchSharers(match) : undefined)}
+          matchSnippet={match?.snippet}
           selected={preferences.expandAllItems || feedViewStore.selectedKey === displayItem.key}
           expanded={feedViewStore.expandedKey === displayItem.key}
           highlighted={feedViewStore.selectedKey === displayItem.key}
@@ -320,7 +336,9 @@
           feedId={docSub?.id}
           isRead={itemLabelsStore.isSocialRead(doc.recordUri)}
           isSaved={itemLabelsStore.isSaved(doc.recordUri)}
-          followSharers={followLinksStore.forUrl(docUrl)?.sharers}
+          followSharers={followLinksStore.forUrl(docUrl)?.sharers ??
+            (match ? matchSharers(match) : undefined)}
+          matchSnippet={match?.snippet}
           selected={preferences.expandAllItems || feedViewStore.selectedKey === displayItem.key}
           expanded={feedViewStore.expandedKey === displayItem.key}
           highlighted={feedViewStore.selectedKey === displayItem.key}
@@ -347,6 +365,7 @@
           feedTitle={link.site}
           followLink={link}
           followSharers={link.sharers}
+          matchSnippet={match?.snippet}
           isRead={itemLabelsStore.isRead(displayItem.key)}
           isSaved={savesStore.isSaved(link.url)}
           isShared={linkblogStore.isShared(link.url)}
@@ -361,6 +380,22 @@
           onSelect={() => handleSelect(index)}
           onExpand={() => handleExpand(index)}
           onOpenFullscreen={() => void openFollowLink(link, reader)}
+        />
+      {:else if displayItem.type === 'saved'}
+        <!-- A save the channel takes in from the Library: its own card, as in the Queue. -->
+        {@const save = displayItem.item}
+        <SavedCard
+          {displayItem}
+          matchSnippet={match?.snippet}
+          selected={feedViewStore.selectedKey === displayItem.key}
+          onOpen={() => openReader(displayItem)}
+          onArchive={() => {
+            const archived = isSavedRowArchived(displayItem);
+            // Archiving reads it, so it stays put until the view changes.
+            if (!archived) feedViewStore.trackSeenThisSession(displayItem);
+            void setSavedRowArchived(displayItem, !archived);
+          }}
+          onRemove={() => savesStore.remove(save.rkey)}
         />
       {/if}
     </div>

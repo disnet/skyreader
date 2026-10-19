@@ -102,6 +102,7 @@ import {
   handleDeleteSavedByGuid,
   handleSetBacking,
   handleGetSavedSnapshots,
+  handleGetSnapshotImage,
 } from './routes/saved';
 import { handleShelfCollections } from './routes/shelf';
 import { handleExport } from './routes/export';
@@ -137,6 +138,9 @@ import {
   handleUnblockNewsletterSender,
 } from './routes/newsletters';
 import { handleSearch } from './routes/search';
+import { handleChannelItems, handleChannelPreview } from './routes/channel-items';
+import { nudgePercolator } from './services/saved-search';
+import { dispatchBackgroundFollowLinks } from './services/follow-links-background';
 import { nudgeSearchIndex, searchNudgeFor } from './services/search-index';
 import { handleInboundEmail } from './services/newsletters';
 import {
@@ -205,6 +209,8 @@ import { classifyRoute, runWithRequestContext, setContextDid } from './utils/req
 
 export { JetstreamPoller } from './durable-objects/jetstream-poller';
 export { SearchIndex } from './durable-objects/search-index';
+export { Percolator } from './durable-objects/percolator';
+export { FollowLinksPoller } from './durable-objects/follow-links-poller';
 
 function corsHeaders(origin: string | null, env: Env): HeadersInit {
   const allowedOrigins = env.ALLOWED_ORIGINS
@@ -831,6 +837,10 @@ async function route(
       if (!session) return unauthorizedResponse(headers);
       response = await handleGetSavedSnapshots(request, env, session);
       break;
+    case /^\/api\/saved\/[^/]+\/snapshot-image$/.test(url.pathname):
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleGetSnapshotImage(request, env, session);
+      break;
     case /^\/api\/saved\/[^/]+\/asset$/.test(url.pathname):
       if (!session) return unauthorizedResponse(headers);
       response = await handleGetSavedAsset(request, env, session);
@@ -1085,6 +1095,14 @@ async function route(
         });
       }
       break;
+    case url.pathname === '/api/channels/preview':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleChannelPreview(request, env, session);
+      break;
+    case /^\/api\/channels\/[^/]+\/items$/.test(url.pathname):
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleChannelItems(request, env, session, url.pathname.split('/')[3]);
+      break;
     case url.pathname.startsWith('/api/channels/'): {
       if (!session) return unauthorizedResponse(headers);
       const channelUuid = url.pathname.split('/').pop()!;
@@ -1295,6 +1313,28 @@ async function runScheduled(
       log.error('cron_phase_failed', { phase: 'documents-cold-start', ...serializeError(error) });
       reportError(error, { tags: { source: 'cron', phase: 'documents-cold-start' } });
     }
+
+    // Phase 1d: wake the saved-search matcher. It pulls new items itself and
+    // reschedules while it has a backlog; this only guarantees a pass a minute.
+    try {
+      await nudgePercolator(env);
+    } catch (error) {
+      log.error('cron_phase_failed', { phase: 'percolator-nudge', ...serializeError(error) });
+      reportError(error, { tags: { source: 'cron', phase: 'percolator-nudge' } });
+    }
+
+    // Phase 1e: refresh follows links for readers who use them, while they're
+    // away. Each refresh runs in its reader's own poller; this only picks who's
+    // due, so it's left running past the rest of the cron.
+    ctx.waitUntil(
+      dispatchBackgroundFollowLinks(env).catch((error) => {
+        log.error('cron_phase_failed', {
+          phase: 'follow-links-background',
+          ...serializeError(error),
+        });
+        reportError(error, { tags: { source: 'cron', phase: 'follow-links-background' } });
+      })
+    );
 
     // Phase 2: Clean up rate limit records
     let rateLimitDuration = 0;

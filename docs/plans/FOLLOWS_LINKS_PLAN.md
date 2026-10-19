@@ -143,9 +143,40 @@ cron:
 - **Share cap:** at most 600 upserts per refresh (one statement each, against the 1,000
   queries-plus-subrequests invocation budget).
 - **Users who never open the surface cost nothing.** No cron, no per-user background work.
+  _(Superseded: see "Background refresh" below. Readers who don't use it still cost nothing.)_
 
 Heavy-follow accounts can produce more than 2,000 posts in a day. That's fine: the cap bounds cost,
 and the last day or so is exactly the product. Light-follow accounts get the whole week.
+
+### Background refresh
+
+Refresh on read left a reader's links as old as their last visit, and a saved search over follows
+links (`SAVED_SEARCH_CHANNELS.md`) would match nothing while they were away. So readers who use
+follows links are also refreshed in the background
+(`backend/src/services/follow-links-background.ts`):
+
+- **Who.** Anyone who opened follows links in the last 7 days (`follow_link_sync.last_seen_at`,
+  stamped by `GET /api/v2/following-links` at most hourly; Home's lane and the feed page call it,
+  so in practice this is anyone who used the app this week with the permission granted), plus Supporters who turned follows
+  links on and have a saved search whose sources take in `bsky~follows`. Nobody else is polled: a
+  reader who drifts away stops costing anything after a week, and their sessions lapse as before.
+  A saved-search reader's session is kept refreshed for as long as the query covers follows links;
+  saving it is the opt-in.
+- **When.** Every 30 minutes: due means neither `last_poll_at` nor `bg_attempt_at` is within the
+  interval. The minute cron hands off up to 20 due readers, most overdue first (600 readers per
+  interval), and stamps `bg_attempt_at` first so a reader whose session can't refresh right now
+  isn't retried every minute.
+- **How.** Each hand-off is an RPC to that reader's `FollowLinksPoller` Durable Object, which runs
+  the same `refreshFollowLinks` (same claim, so it never doubles up with a read-path refresh) in an
+  invocation of its own, with its own 1,000-query budget.
+- **Tokens.** `getBackgroundSession` (`services/oauth.ts`) picks the reader's freshest session that
+  holds the timeline permission (checked before any refresh) and refreshes its token under the
+  same lock and backoff as a request. A token refresh must name the client_id it was issued to,
+  which a request gives by its URL, so `sessions.client_id` stores it at sign-in and on every
+  request-side refresh. Sessions from before that column are skipped until their owner's next
+  refresh fills it in.
+- **Off switch.** `sync_state.follow_links_background_enabled = '0'` stops it; the read path is
+  untouched.
 
 ### Serving: the aggregate
 

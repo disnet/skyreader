@@ -5,7 +5,7 @@ description: Feeds, channels, the reader, paged mode, the daily magazine, and of
 
 ## Feeds
 
-**Feeds** shows everything you follow in one chronological stream. The sidebar lists your sources and channels; **channels** are saved views over your feeds, filtered by source or read state, so "Newsletters" or "Slow reads" is one click away.
+**Feeds** shows everything you follow in one chronological stream. The sidebar lists your sources, and your channels sit together under **Channels**. A **channel** is a saved view over what you read, your feeds, your saves or both, filtered by source or read state, so "Newsletters" or "Slow reads" is one click away.
 
 The **Sources** filter lists everything that brings you things to read, grouped:
 
@@ -17,14 +17,14 @@ Everything starts checked. Uncheck a source, a folder or a whole group to leave 
 
 ### Making a channel
 
-Choose **New channel** under **Feeds** or **Library**, in the sidebar or the feed switcher on a phone.
+Choose **New channel** under **Channels**, in the sidebar or the feed switcher on a phone.
 
 - **Name** fills itself in from what you choose. Type your own to keep it.
 - **Show** and **Order** set what the channel opens on: unread or everything, newest or oldest first.
-- **What's in it**, for a channel of your feeds:
-  - **Sources I pick**: check the sources you want. Check a folder to take in everything filed there, now and later.
+- **What's in it**:
+  - **Sources I pick**: a new channel starts with every source checked, your Library included; uncheck what it should leave out, or choose **Select none** and check the few you want. Check a folder to take in everything filed there, now and later. Under **From your Library**, **Your saves** takes in everything you've saved, and **Your Shelf** just what's on your Shelf. A save shows by when you saved it, and one you've archived counts as read.
   - **Sources that match**: a rule picks them and keeps up as you follow more. **Daily Digest** takes sources that post several times a day, **Don't Miss** the ones that post rarely, and **Long Reads** the ones that write at length. You can also match the sources you added lately, ones you tagged, or ones from a site.
-- **What's in it**, for a channel of saved articles: narrow by kind, when you saved it, length, site or tag. Leave a row empty to take in all of it.
+- **Which saves**: a channel of your saves alone, with nothing else checked, opens like your Queue, with **Inbox** and **Archive**. Narrow it by kind, when you saved it, length, site or tag, and order it by length or site too. Saved channels made before keep their filters.
 
 To change a channel later, open it and choose **Edit channel**, or right-click it in the sidebar. On a phone, **Edit channel** sits beside **View** in the view options.
 

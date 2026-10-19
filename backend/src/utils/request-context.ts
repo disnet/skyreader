@@ -32,6 +32,10 @@ export interface RequestContext {
   /** Region that served this task's D1 reads. Constant per task, so it is kept
    *  here rather than repeated on every query timing. */
   d1Region?: string;
+  /** What this task's snapshot captures have left for pictures
+   *  (services/archive/snapshot-images.ts): a backfill captures many saves in
+   *  one invocation, which shares one subrequest ceiling and one waitUntil. */
+  snapshotImages?: { downloads: number; deadline: number };
 }
 
 const storage = new AsyncLocalStorage<RequestContext>();

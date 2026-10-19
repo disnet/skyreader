@@ -12,11 +12,13 @@ import {
   buildSourceGroups,
   categoryGroupKey,
   checkStateOf,
+  everySourceFilter,
   expandSourceKeys,
   groupLabel,
   keysOfTypes,
   onlySource,
   setSourceChecked,
+  showsNoSource,
   upgradeChannelFilter,
   type PickerContext,
   type SourceFilter,
@@ -242,5 +244,25 @@ describe('upgradeChannelFilter', () => {
     });
     expect(up.typeFilter).toEqual(['email.newsletter']);
     expect(keysOfTypes(up.sourceKeys, up.typeFilter, subs)).toEqual(['rss~mail1']);
+  });
+});
+
+describe('every source and no source', () => {
+  it('checks your follows too when Everything leaves them out', () => {
+    expect(everySourceFilter(true, false)).toEqual({ sourceMode: 'exclude', sourceKeys: [] });
+    expect(everySourceFilter(true, true)).toEqual({ sourceMode: 'all', sourceKeys: [] });
+    expect(everySourceFilter(false, false)).toEqual({ sourceMode: 'all', sourceKeys: [] });
+  });
+
+  it('sees an exclude filter that unchecks every group as empty', () => {
+    const none: SourceFilter = {
+      sourceMode: 'exclude',
+      sourceKeys: [GROUP_PUBLICATIONS, GROUP_NEWSLETTERS, GROUP_LIKES, GROUP_BOOKMARKS],
+    };
+    expect(showsNoSource(none, subs, ctx, false)).toBe(true);
+    // Your follows' links are still in it, when they're offered.
+    expect(showsNoSource(none, subs, ctx, true)).toBe(false);
+    expect(showsNoSource({ sourceMode: 'all', sourceKeys: [] }, subs, ctx, false)).toBe(false);
+    expect(showsNoSource({ sourceMode: 'include', sourceKeys: [] }, subs, ctx, true)).toBe(true);
   });
 });

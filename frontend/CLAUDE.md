@@ -234,6 +234,41 @@ offline the overlay hands the query to Saved search. The signed-in user is cache
 `AppShell` refreshes `/api/auth/me` once per boot — otherwise a plan change or a newly switched-on
 feature would only reach an open session via Settings.
 
+### Channels and Library sources
+
+Every channel lists under the sidebar's one **Channels** section (and the phone switcher's and the
+dropdown's), whatever it reads from. A feed-mode channel can also take in the Library through
+`FilteredView.librarySources` (`'saves'` every save, `'shelf'` just the Shelf), picked under "From
+your Library" in `SourcePicker`; a new channel defaults to both (not for a guest or a seeded one).
+`feedView`'s `libraryItems` merges those saves into `combinedAll` as `{type: 'saved'}` rows dated
+by `savedAt`, dropping a save of a page the river already shows (by guid or url); an archived save
+counts as read, so the unread filter shows the Queue. In a saved search the server matches saves
+instead (`'saves'` only; the Shelf alone isn't searched), served as `kind: 'save'` matches that
+`matchToRow` turns into this device's save (none if it isn't here), read once archived. Plain
+channels' unread counts don't include saves. A channel of saves alone (`utils/savesChannel.ts`'s
+`isSavesChannel`: `'saves'`, no feeds, no query or rule) opens as the Library does, under `/saved`,
+with Inbox / Archive and the save filters (`savedSourceFilter`, `savedDateFilter`,
+`savedReadingLength`, `savedDomainFilter`) and orders, in the toolbar and in the editor's **Which
+saves**; it counts its unarchived saves and gets a Home lane. That's what the old `mode: 'saved'`
+channels became: `filteredViewsStore` folds one (`foldSavedChannel`) as it loads or syncs in. The
+fold isn't pushed; the server keeps the old config until the next edit, so an older build keeps its
+Saved channel and a stale copy can't outrank a newer edit.
+
+### Saved searches
+
+A channel whose config carries a `query` is a saved search (`utils/searchChannels.ts`'s
+`channelQuery`; feed-mode channels only). Its items are **not** the timeline filtered here: the
+server matches new items from the channel's sources (the Percolator) and serves them from
+`GET /api/channels/:uuid/items`, so a match can be an item this device never loaded. `feedView`
+routes such a channel to `searchChannelsStore` — `scopedArticles`, `scopedDocuments` and
+`displayedFollowLinks` return the matches (`matchToRow`), so the read, tag and sort filters, the
+reader and mark-all-read work unchanged. Read state stays in `itemLabels` under each match's
+`itemKey`; the server's unread count is corrected for reads made here since (`searchChannelUnread`).
+Offered when `auth.user.savedSearchEnabled` and `limits.maxSavedSearches > 0`
+(`canUseSavedSearches`). `FeedPage` opens the active channel in the store; `appManager` refreshes
+every saved search's count after the channel sync. See `docs/plans/SAVED_SEARCH_CHANNELS.md`. Not
+to be confused with `savedSearch.svelte.ts`, which searches the saved library.
+
 ### Highlights
 
 Highlights live in the `highlights` label's opaque `props.highlights` array, merged per-highlight by

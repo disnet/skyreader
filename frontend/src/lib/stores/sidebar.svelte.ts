@@ -26,6 +26,8 @@ interface SidebarState {
     feeds: boolean;
     everything: boolean;
     saved: boolean;
+    /** The Channels section, every channel in one list. */
+    allChannels: boolean;
   };
   showOnlyUnread: {
     shared: boolean;
@@ -49,6 +51,7 @@ function createSidebarStore() {
       feeds: false,
       everything: true,
       saved: true,
+      allChannels: true,
     },
     showOnlyUnread: {
       shared: false,
@@ -78,6 +81,7 @@ function createSidebarStore() {
           feeds: false,
           everything: true,
           saved: true,
+          allChannels: true,
           ...migrated,
         };
         state.showOnlyUnread = parsed.showOnlyUnread ?? {
@@ -133,7 +137,7 @@ function createSidebarStore() {
     state.isOpen = false;
   }
 
-  function toggleSection(section: 'shared' | 'feeds' | 'everything' | 'saved') {
+  function toggleSection(section: 'shared' | 'feeds' | 'everything' | 'saved' | 'allChannels') {
     state.expandedSections[section] = !state.expandedSections[section];
     persist();
   }

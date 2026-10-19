@@ -137,6 +137,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed documentation.
 | `src/routes/newsletters.ts`   | `/api/newsletters/*` — newsletter address + blocked list   |
 | `src/routes/search.ts`        | `GET /api/search` — full-text search (Supporter)           |
 | `src/routes/bsky-sources.ts`  | `/api/v2/bluesky-sources` — Bluesky likes/bookmarks on/off |
+| `src/routes/channel-items.ts` | `GET /api/channels/:uuid/items` — saved-search matches     |
 
 **Email newsletters** (Supporter) arrive through the Worker's `email()` handler, not HTTP:
 Cloudflare Email Routing hands it mail for `NEWSLETTER_EMAIL_DOMAIN`, and each message becomes a
@@ -157,12 +158,14 @@ PDS or a Semble/Margin backing collection. A PDF saved by link keeps its origina
 `storeLinkedPdfForUrl` fetches it from the URL under `waitUntil` after the save, and
 `GET /api/saved/<rkey>/file` keeps it on first open for a save that has none (streaming it through
 uncached only when storage is full). Limits: file size, uploads per month (uploads only) and stored
-bytes (every kept original) from the plan, plus the shared daily parse cap.
+bytes (every kept original plus every snapshot picture, `storedFileBytes`) from the plan, plus the
+shared daily parse cap. Snapshot pictures are Supporter-only too (`TierLimits.snapshotImages`).
 Every read, write and delete of a kept original goes through `SavedFileStore`
 (`src/services/saved-file-store.ts`), never the bucket directly: `saved_files.storage` names the
 store holding each file (`'r2'`, the only one today, located by `r2_key`), with `blob_cid` /
-`record_uri` reserved for a file kept as a blob in the reader's atproto space. Snapshot bodies and
-staged linked books are not kept originals and still use `SAVED_FILES` directly.
+`record_uri` reserved for a file kept as a blob in the reader's atproto space. The pictures a
+snapshot keeps go through it too (`putImage`). Snapshot bodies and staged linked books are not kept
+originals and still use `SAVED_FILES` directly.
 
 **EPUBs** ride the same plan flag and the same upload/storage limits (`maxEpubUploadBytes` is their
 own, larger size cap), but are read in this Worker (`src/services/epub.ts`: unzip, walk the OPF
@@ -233,30 +236,32 @@ returns a permission set expanded (`repo?collection=…`), so every check goes t
 
 ### Services
 
-| File                                 | Purpose                                                      |
-| ------------------------------------ | ------------------------------------------------------------ |
-| `src/services/oauth.ts`              | PKCE, DPoP, handle resolution, session management            |
-| `src/services/feed-parser.ts`        | RSS/Atom/RDF parsing                                         |
-| `src/services/feed-proxy-client.ts`  | Client for Fly.io feed proxy                                 |
-| `src/services/standard-site.ts`      | standard.site record mapping, digest, publication cache      |
-| `src/services/document-store.ts`     | The D1 document store: apply, backfill, reconcile, serve     |
-| `src/services/document-flags.ts`     | `documents_v2_enabled` / `documents_ingest_enabled` switches |
-| `src/services/pds-client.ts`         | PDS API client                                               |
-| `src/services/client-auth.ts`        | Confidential client auth helpers                             |
-| `src/services/share-sync.ts`         | Push/delete shares to/from PDS                               |
-| `src/services/subscription-sync.ts`  | Sync subscriptions to/from PDS                               |
-| `src/services/rate-limit.ts`         | Per-user per-endpoint rate limiting (D1-backed)              |
-| `src/services/user-tier.ts`          | Tier lookup (free/supporter)                                 |
-| `src/services/search-index.ts`       | Search index change feed + document builder (reads D1/R2)    |
-| `src/services/search-query.ts`       | Reader query → safe, quoted FTS5 terms                       |
-| `src/services/newsletters.ts`        | Newsletter inboxes + the `email()` handler (inbound mail)    |
-| `src/services/newsletter-email.ts`   | Parse one newsletter email into a feed item                  |
-| `src/services/bsky-sources.ts`       | Bluesky likes/bookmarks as private sources (walk + ingest)   |
-| `src/services/local-only-sources.ts` | The one "private, never crawled, never on the PDS" predicate |
-| `src/services/saved-file-store.ts`   | `SavedFileStore`: every read/write/delete of a kept original |
-| `src/services/archive/records.ts`    | Saves/highlights/snapshots ↔ their future space records      |
-| `src/services/archive/snapshots.ts`  | Capture each body a save gets as an immutable R2 snapshot    |
-| `src/services/export/`               | Export over those records; DOI/arXiv ids; Markdown, BibTeX   |
+| File                                      | Purpose                                                      |
+| ----------------------------------------- | ------------------------------------------------------------ |
+| `src/services/oauth.ts`                   | PKCE, DPoP, handle resolution, session management            |
+| `src/services/feed-parser.ts`             | RSS/Atom/RDF parsing                                         |
+| `src/services/feed-proxy-client.ts`       | Client for Fly.io feed proxy                                 |
+| `src/services/standard-site.ts`           | standard.site record mapping, digest, publication cache      |
+| `src/services/document-store.ts`          | The D1 document store: apply, backfill, reconcile, serve     |
+| `src/services/document-flags.ts`          | `documents_v2_enabled` / `documents_ingest_enabled` switches |
+| `src/services/pds-client.ts`              | PDS API client                                               |
+| `src/services/client-auth.ts`             | Confidential client auth helpers                             |
+| `src/services/share-sync.ts`              | Push/delete shares to/from PDS                               |
+| `src/services/subscription-sync.ts`       | Sync subscriptions to/from PDS                               |
+| `src/services/rate-limit.ts`              | Per-user per-endpoint rate limiting (D1-backed)              |
+| `src/services/user-tier.ts`               | Tier lookup (free/supporter)                                 |
+| `src/services/search-index.ts`            | Search index change feed + document builder (reads D1/R2)    |
+| `src/services/search-query.ts`            | Reader query → safe, quoted FTS5 terms                       |
+| `src/services/saved-search.ts`            | Saved queries from channels, their scopes, new-item streams  |
+| `src/services/newsletters.ts`             | Newsletter inboxes + the `email()` handler (inbound mail)    |
+| `src/services/newsletter-email.ts`        | Parse one newsletter email into a feed item                  |
+| `src/services/bsky-sources.ts`            | Bluesky likes/bookmarks as private sources (walk + ingest)   |
+| `src/services/local-only-sources.ts`      | The one "private, never crawled, never on the PDS" predicate |
+| `src/services/saved-file-store.ts`        | `SavedFileStore`: every read/write/delete of a kept original |
+| `src/services/archive/records.ts`         | Saves/highlights/snapshots ↔ their future space records      |
+| `src/services/archive/snapshots.ts`       | Capture each body a save gets as an immutable R2 snapshot    |
+| `src/services/archive/snapshot-images.ts` | Keep the pictures each snapshot's body shows                 |
+| `src/services/export/`                    | Export over those records; DOI/arXiv ids; Markdown, BibTeX   |
 
 ### Observability
 
@@ -304,10 +309,12 @@ procedures: [`docs/RUNBOOK.md`](../docs/RUNBOOK.md).
 
 ### Durable Objects
 
-| File                                      | Purpose                                                            |
-| ----------------------------------------- | ------------------------------------------------------------------ |
-| `src/durable-objects/jetstream-poller.ts` | Two Jetstream streams (subscriptions, documents) drained per alarm |
-| `src/durable-objects/search-index.ts`     | One per reader: FTS5 index over what they read, saved, highlighted |
+| File                                         | Purpose                                                            |
+| -------------------------------------------- | ------------------------------------------------------------------ |
+| `src/durable-objects/jetstream-poller.ts`    | Two Jetstream streams (subscriptions, documents) drained per alarm |
+| `src/durable-objects/search-index.ts`        | One per reader: FTS5 index over what they read, saved, highlighted |
+| `src/durable-objects/percolator.ts`          | Saved-search matcher: new items × saved queries, via scratch FTS5  |
+| `src/durable-objects/follow-links-poller.ts` | One per reader: background follows-links refresh, own budget       |
 
 **Full-text search** (Supporter, behind `sync_state.search_enabled`) is a per-reader DO, not D1:
 D1 can't export a database holding an FTS5 table, and per-user indexes outgrow its 10 GB. The
@@ -316,6 +323,28 @@ changed key rebuilt from scratch by `buildIndexDocs` (`src/services/search-index
 only nudges it (after the response, from the one hook at the end of `serveRequest`), a search
 catches up first, and the first sync from zero is the backfill. Saves are hard-deleted, so a saved
 DELETE triggers a diff of the index's saved set. See `docs/plans/FULL_TEXT_SEARCH.md`.
+
+**Saved searches** (Supporter, behind `sync_state.saved_search_enabled`) do NOT use that index: it
+only holds what a reader already touched, and alerts are for what they haven't.
+
+- **Channel writes.** A channel config carrying `query` is mirrored into `saved_queries` on every
+  channel write (`syncSavedQueries`, which reads the rows back from D1).
+- **Matching.** The `Percolator` DO pulls new `feed_items` (by `seq`), `documents_v2` rows (by
+  `indexed_at`), `follow_link_shares` (by `first_seen_at`) and, for a query whose channel takes in
+  the reader's saves (`saved_queries.include_saves`, from `librarySources`), `saved_articles` (by
+  `id`). A save is matched on its kept body, looked back over whole (not 30 days), read once
+  archived, served only while it exists, and spared by retention. It loads full bodies (R2 included)
+  only for items some entitled query covers, and indexes the batch into a scratch FTS5 table with
+  the search tokenizer. It writes hits to `channel_matches`, one per normalized URL per channel,
+  and every source a story arrived from to `channel_match_sources`.
+- **Follows links.** The article behind a covered link is read once per URL through the proxy's
+  `/extract` (`services/link-bodies.ts`, web pages only) and kept in R2 for 7 days, within a
+  per-reader daily budget. A link matches on its words and card at once, and again on the article
+  when it lands.
+- **Edits.** Inserts are guarded on the query's `updated_at`, so an edit mid-pass can't get stale
+  hits written back.
+- **Scheduling.** The minute cron nudges the DO, and new or edited queries backfill 30 days. See
+  `docs/plans/SAVED_SEARCH_CHANNELS.md`.
 
 ### Storage
 
@@ -353,6 +382,9 @@ Key tables:
 - `saved_articles` - Saved/bookmarked articles
 - `saved_snapshots` - One row per capture of a save's body (hash, URL, time, method); the body is
   in R2 (`SAVED_FILES`). Deleted with the save. See `docs/plans/ARCHIVE_RECORDS.md` § Snapshots
+- `saved_snapshot_images` - One row per picture a snapshot kept (address, type, hash, store); the
+  bytes are in the save's `SavedFileStore`, shared by captures that show the same picture. The
+  reader falls back to them at `GET /api/saved/<rkey>/snapshot-image?url=` when the site's fails
 - `shelf_collections` / `shelf_collection_items` - Shelf collections and their members (by saved
   rkey); private, never on the PDS. See `docs/plans/SHELF_PLAN.md`
 - `social_read_positions_cache` - Legacy social read tracking (superseded; document
@@ -367,6 +399,13 @@ Key tables:
 - `system_status` - Cron-written health board (cron liveness, poller lag, proxy stats)
 - `metrics_snapshots` - Hourly trend points behind the admin's sparklines (90-day retention)
 - `client_vitals` - Field vitals as daily histogram buckets (counts only, no reports; 90 days)
+- `saved_queries` - Saved-search channels mirrored from channel configs (query, sources, backfill)
+- `channel_matches` - What each saved search matched, one row per story (90-day retention)
+- `channel_match_sources` - Every source each matched story arrived from (feed, author, sharer)
+- `follow_link_sync` / `follow_link_shares` - Follows links: per-reader refresh state and the shares.
+  The minute cron refreshes readers who opened them this week (or whose saved search covers them)
+  every 30 min, each in its own `FollowLinksPoller`; `sessions.client_id` is what lets a token
+  refresh run with no request. See `docs/plans/FOLLOWS_LINKS_PLAN.md`, "Background refresh"
 
 ## Common Tasks
 

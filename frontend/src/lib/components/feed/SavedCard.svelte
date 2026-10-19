@@ -23,6 +23,7 @@
   import { recommendsStore, isRecommendable } from '$lib/stores/recommends.svelte';
   import { getExternalArticleLink } from '$lib/utils/linkPost';
   import type { Article } from '$lib/types';
+  import type { SearchSnippetSegment } from '$lib/services/api';
   import { db } from '$lib/services/db';
   import { decodeEntities } from '$lib/utils/entities';
   import { extractSembleMetadata, extractMarginMetadata } from '$lib/utils/displayItem';
@@ -41,8 +42,11 @@
     onArchive,
     onRemove,
     onHover,
+    matchSnippet,
   }: {
     displayItem: FeedDisplayItem;
+    /** A saved search's match: the passage it matched on, matches marked. */
+    matchSnippet?: SearchSnippetSegment[];
     selected?: boolean;
     onOpen?: () => void;
     onArchive?: () => void;
@@ -692,7 +696,12 @@
             {#each titleParts as part}{#if part.mark}<mark>{part.text}</mark
                 >{:else}{part.text}{/if}{/each}
           </h3>
-          {#if bodyMatchOnly && searchSnippet}
+          {#if matchSnippet?.length}
+            <p class="bookmark-summary">
+              {#each matchSnippet as seg, i (i)}{#if seg.match}<mark>{seg.text}</mark
+                  >{:else}{seg.text}{/if}{/each}
+            </p>
+          {:else if bodyMatchOnly && searchSnippet}
             <p class="bookmark-summary">
               {searchSnippet.truncatedStart ? '…' : ''}{searchSnippet.before}<mark
                 >{searchSnippet.match}</mark

@@ -151,6 +151,20 @@ function json(body: unknown, status: number): Response {
 }
 
 /**
+ * Crawlers run the app from HTML they fetched earlier, often after the chunks it
+ * names have rotated out, so they trip every deploy-recovery path without a
+ * reader anywhere near it. Filtered here rather than in the client because they
+ * replay old builds, which would never learn a client-side filter. Named
+ * explicitly rather than matched on "bot", which also matches real phones (CUBOT).
+ */
+const CRAWLER_UA =
+  /Googlebot|GoogleOther|Google-InspectionTool|AdsBot-Google|Storebot-Google|Mediapartners-Google|bingbot|Applebot|YandexBot|DuckDuckBot|Baiduspider|PetalBot|Amazonbot|Bytespider|GPTBot|ClaudeBot|facebookexternalhit|Chrome-Lighthouse|HeadlessChrome/i;
+
+export function isCrawler(userAgent: string | null): boolean {
+  return userAgent !== null && CRAWLER_UA.test(userAgent);
+}
+
+/**
  * Accept one client error report.
  *
  * Answers before it does any work whenever it can: a browser is waiting on this
@@ -185,8 +199,12 @@ export async function handleTelemetryError(request: Request, env: Env): Promise<
   const report = parseReport(body);
   if (!report) return json({ error: 'Invalid report' }, 400);
 
+  const userAgent = request.headers.get('User-Agent');
+  const crawler = isCrawler(userAgent);
+
   // Workers Logs gets the full picture (queryable by `event = client_error`);
-  // Sentry gets the grouped, notifiable version.
+  // Sentry gets the grouped, notifiable version — readers only, since a
+  // crawler's failure says nothing about whether readers are broken.
   log.warn('client_error', {
     kind: report.kind,
     errorName: report.name,
@@ -194,7 +212,9 @@ export async function handleTelemetryError(request: Request, env: Env): Promise<
     appVersion: report.appVersion,
     path: report.path,
     sampleRate: report.sampleRate,
+    ...(crawler ? { crawler: true } : {}),
   });
+  if (crawler) return new Response(null, { status: 204 });
 
   reportMessage(`[client] ${report.name}: ${report.message}`, {
     level: 'error',
@@ -213,7 +233,7 @@ export async function handleTelemetryError(request: Request, env: Env): Promise<
       stack: report.stack,
       path: report.path,
       sampleRate: report.sampleRate,
-      userAgent: request.headers.get('User-Agent')?.slice(0, 200),
+      userAgent: userAgent?.slice(0, 200),
     },
   });
 

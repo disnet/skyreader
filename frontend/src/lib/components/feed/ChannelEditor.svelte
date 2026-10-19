@@ -21,6 +21,9 @@
   //   - what's in it: sources you pick (a folder counts, and grows) or sources
   //     that match a rule.
   import { untrack } from 'svelte';
+  import { goto } from '$app/navigation';
+  import { channelPath } from '$lib/utils/viewNav';
+  import { isSavesChannel } from '$lib/utils/savesChannel';
   import { isArchiveFeedSource } from '$lib/utils/newsletters';
   import SourcePicker from './SourcePicker.svelte';
   import DomainPatternInput from '$lib/components/DomainPatternInput.svelte';
@@ -33,15 +36,25 @@
   import { followLinksStore } from '$lib/stores/followLinks.svelte';
   import { FOLLOWS_SOURCE_KEY } from '$lib/utils/sourceKeys';
   import { computeSourceKeys } from '$lib/utils/channelLogic';
+  import {
+    canUseSavedSearches,
+    channelQuery,
+    hasSearchableTerm,
+    MAX_QUERY_CHARS,
+  } from '$lib/utils/searchChannels';
+  import SearchQueryPreview from './SearchQueryPreview.svelte';
   import { joinNames, sourceFilterName, uniqueChannelName } from '$lib/utils/channelName';
   import {
     categoryGroupKey,
+    everySourceFilter,
     isSourceShown,
+    showsNoSource,
     keysOfTypes,
     upgradeChannelFilter,
     CHANNEL_FILTER_VERSION,
     type SourceFilter,
   } from '$lib/utils/sourceFilter';
+  import { LIBRARY_SOURCES, type LibrarySource } from '$lib/types';
   import type {
     ChannelAutoRule,
     DateAddedPreset,
@@ -93,13 +106,12 @@
     ondeleted,
   }: Props = $props();
 
-  const NO_SOURCES: SourceFilter = { sourceMode: 'include', sourceKeys: [] };
-
   let name = $state('');
   let nameEdited = $state(false);
-  let channelType = $state<'feed' | 'saved' | null>('feed');
   let mode = $state<'pick' | 'rule'>('pick');
-  let sourceFilter = $state<SourceFilter>(NO_SOURCES);
+  let sourceFilter = $state<SourceFilter>({ sourceMode: 'all', sourceKeys: [] });
+  // The parts of the Library a feed channel takes in beside its feeds.
+  let librarySources = $state<LibrarySource[]>([]);
   let ruleType = $state<AutoRuleOption>('frequency:high');
   let recentWithinDays = $state(14);
   let tagValue = $state('');
@@ -115,6 +127,10 @@
   // A feed channel's tag filter has no control here; it's kept as it was, or as
   // the view it was saved from had it (see ChannelSeed).
   let feedTagFilter = $state<string[]>([]);
+  // A saved search's query; empty for an ordinary channel.
+  let query = $state('');
+  // The query the channel was opened with: past a lapsed plan, its field stays.
+  let loadedQuery = $state('');
   let readFilter = $state<'all' | 'unread' | 'read'>('unread');
   let sortOrder = $state<SortOrder>('newest');
   let saving = $state(false);
@@ -142,9 +158,9 @@
     error = null;
     saving = false;
     if (view) {
+      loadedSavesOnly = isSavesChannel(view);
       name = view.name;
       nameEdited = true;
-      channelType = view.mode === 'saved' ? 'saved' : 'feed';
       readFilter = view.readFilter;
       sortOrder = view.sortOrder;
       savedSourceFilter = new Set(view.savedSourceFilter ?? []);
@@ -152,7 +168,10 @@
       savedReadingLength = new Set(view.savedReadingLength ?? []);
       savedDomainFilter = new Set(view.savedDomainFilter ?? []);
       savedTagFilter = new Set(view.tagFilter ?? []);
-      feedTagFilter = view.mode === 'saved' ? [] : [...(view.tagFilter ?? [])];
+      feedTagFilter = [...(view.tagFilter ?? [])];
+      librarySources = [...(view.librarySources ?? [])];
+      query = channelQuery(view) ?? '';
+      loadedQuery = query;
       const upgraded = upgradeChannelFilter(view);
       typeFilter = upgraded.typeFilter;
       const rule = view.autoRule;
@@ -182,16 +201,23 @@
       }
       return;
     }
+    loadedSavesOnly = false;
     name = '';
     nameEdited = false;
-    channelType = initial ? 'feed' : type;
     mode = 'pick';
+    // Made from the Library, a channel of your saves alone.
+    const ofSaves = !initial && type === 'saved' && !auth.isGuest;
     sourceFilter = initial
       ? {
           sourceMode: initial.sourceFilter.sourceMode,
           sourceKeys: [...initial.sourceFilter.sourceKeys],
         }
-      : NO_SOURCES;
+      : ofSaves
+        ? { sourceMode: 'include', sourceKeys: [] }
+        : // A new channel starts with every source checked; uncheck what it leaves out.
+          everySourceFilter(showFollowsSource, followsInEverything);
+    // Your saves too, unless it's made from a view of your feeds.
+    librarySources = ofSaves ? ['saves'] : initial || auth.isGuest ? [] : [...LIBRARY_SOURCES];
     ruleType = 'frequency:high';
     recentWithinDays = 14;
     tagValue = '';
@@ -203,6 +229,8 @@
     savedDomainFilter = new Set();
     savedTagFilter = new Set();
     feedTagFilter = [...(initial?.tagFilter ?? [])];
+    query = '';
+    loadedQuery = '';
     readFilter = initial?.readFilter ?? 'unread';
     sortOrder = initial?.sortOrder ?? 'newest';
   }
@@ -213,10 +241,17 @@
   );
   let followsInEverything = $derived(followLinksStore.inEverything === true);
 
+  // A channel that already has a query keeps its field even past a lapsed plan,
+  // so the query can be seen and taken out.
+  let offerQuery = $derived(canUseSavedSearches(auth.user) || loadedQuery !== '');
+  // Where saved searches are on but the plan has none, the field shows, greyed,
+  // so it's clear what Supporter adds.
+  let lockedQuery = $derived(!offerQuery && !auth.isGuest && !!auth.user?.savedSearchEnabled);
+  let trimmedQuery = $derived(offerQuery ? query.trim() : '');
+
   // Ranking by shares needs the follows source (see canSortByPopularity).
   let includesFollows = $derived(
-    channelType === 'feed' &&
-      mode === 'pick' &&
+    mode === 'pick' &&
       sourceFilter.sourceMode !== 'all' &&
       isSourceShown(sourceFilter, FOLLOWS_SOURCE_KEY, {
         groups: feedViewStore.sourceGroups,
@@ -226,13 +261,29 @@
   // A segmented control holds this many before it would have to wrap.
   const MAX_SEGMENTS = 4;
 
+  // A saved search is the server's matches, newest first, so it has no other order.
   let feedSortOptions = $derived(
-    includesFollows
-      ? FOLLOWS_SORT_OPTIONS
-      : FOLLOWS_SORT_OPTIONS.filter((o) => o.value !== 'popular')
+    trimmedQuery
+      ? FOLLOWS_SORT_OPTIONS.filter((o) => o.value === 'newest')
+      : includesFollows
+        ? FOLLOWS_SORT_OPTIONS
+        : FOLLOWS_SORT_OPTIONS.filter((o) => o.value !== 'popular')
   );
 
-  let sortOptions = $derived(channelType === 'saved' ? SAVED_SORT_OPTIONS : feedSortOptions);
+  // A channel of your saves alone (and no search) opens as the Library does, so
+  // it takes the Library's filters, Inbox / Archive and orders (utils/savesChannel.ts).
+  let savesOnly = $derived(
+    mode === 'pick' &&
+      !trimmedQuery &&
+      librarySources.includes('saves') &&
+      sourceFilter.sourceMode === 'include' &&
+      sourceFilter.sourceKeys.length === 0
+  );
+  // Whether the channel opened as one of your saves: its tag and Archive choices
+  // were the saves', and don't carry over if feeds are added.
+  let loadedSavesOnly = $state(false);
+
+  let sortOptions = $derived(savesOnly ? SAVED_SORT_OPTIONS : feedSortOptions);
 
   let availableTags = $derived(
     [
@@ -293,9 +344,19 @@
       : []
   );
 
+  // The sources a saved search watches, as the channel will save them; the
+  // preview searches the same ones.
+  let querySourceMode = $derived(currentRule ? ('include' as const) : sourceFilter.sourceMode);
+  let querySourceKeys = $derived(
+    currentRule
+      ? keysOfTypes(matchedSourceKeys, typeFilter, subscriptionsStore.subscriptions)
+      : [...sourceFilter.sourceKeys]
+  );
+
   /** What a new channel would be called if you don't name it. */
   let suggestedName = $derived.by(() => {
-    if (channelType !== 'feed') return '';
+    // A saved search is named for what it looks for.
+    if (trimmedQuery) return trimmedQuery.slice(0, 60);
     if (mode === 'rule') {
       if (ruleType === 'subscriptionTag' && tagValue.trim()) {
         const t = tagValue.trim();
@@ -319,7 +380,7 @@
   /** The name a new channel gets if you don't type one: never one that's taken. */
   function autoName(): string {
     return uniqueChannelName(
-      suggestedName || (channelType === 'saved' ? 'Saved articles' : 'New channel'),
+      suggestedName || (savesOnly ? 'Saved articles' : 'New channel'),
       filteredViewsStore.views.map((v) => v.name)
     );
   }
@@ -344,17 +405,27 @@
   }
 
   async function handleSave() {
-    if (channelType === null) {
-      error = 'Choose where its items come from';
-      return;
-    }
-    if (channelType === 'feed' && mode === 'pick') {
-      if (sourceFilter.sourceMode === 'include' && sourceFilter.sourceKeys.length === 0) {
+    if (mode === 'pick') {
+      // A saved search looks through every save, but not the Shelf on its own.
+      if (
+        !librarySources.includes('saves') &&
+        (librarySources.length === 0 || trimmedQuery) &&
+        showsNoSource(
+          sourceFilter,
+          subscriptionsStore.subscriptions,
+          { groups: feedViewStore.sourceGroups, followsInEverything },
+          showFollowsSource
+        )
+      ) {
         error = 'Pick at least one source';
         return;
       }
     }
-    if (channelType === 'feed' && mode === 'rule' && !currentRule) {
+    if (trimmedQuery && !hasSearchableTerm(trimmedQuery)) {
+      error = 'Add a word or phrase to look for';
+      return;
+    }
+    if (mode === 'rule' && !currentRule) {
       error = ruleType === 'subscriptionTag' ? 'Choose a tag' : 'Add a site pattern';
       return;
     }
@@ -365,43 +436,67 @@
     error = null;
     saving = true;
     try {
-      const viewData =
-        channelType === 'saved'
-          ? {
-              name: finalName,
-              mode: 'saved' as const,
-              savedSourceFilter: savedSourceFilter.size > 0 ? [...savedSourceFilter] : undefined,
-              savedDateFilter: savedDateFilter || undefined,
-              savedReadingLength: savedReadingLength.size > 0 ? [...savedReadingLength] : undefined,
-              savedDomainFilter: savedDomainFilter.size > 0 ? [...savedDomainFilter] : undefined,
-              tagFilter: savedTagFilter.size > 0 ? [...savedTagFilter] : undefined,
-              readFilter: readFilter === 'all' ? ('unread' as const) : readFilter,
-              // 'popular' (a feed sort) can carry over from before switching to Saved.
-              sortOrder: SAVED_SORT_OPTIONS.some((o) => o.value === sortOrder)
+      const viewData = savesOnly
+        ? {
+            name: finalName,
+            mode: 'feed' as const,
+            sourceMode: 'include' as const,
+            sourceKeys: [],
+            autoRule: undefined,
+            typeFilter: undefined,
+            librarySources: [...librarySources],
+            filterVersion: CHANNEL_FILTER_VERSION,
+            query: undefined,
+            savedSourceFilter: savedSourceFilter.size > 0 ? [...savedSourceFilter] : undefined,
+            savedDateFilter: savedDateFilter || undefined,
+            savedReadingLength: savedReadingLength.size > 0 ? [...savedReadingLength] : undefined,
+            savedDomainFilter: savedDomainFilter.size > 0 ? [...savedDomainFilter] : undefined,
+            tagFilter: savedTagFilter.size > 0 ? [...savedTagFilter] : undefined,
+            readFilter: readFilter === 'all' ? ('unread' as const) : readFilter,
+            // A feed order ('popular') can carry over from before the feeds were unchecked.
+            sortOrder: SAVED_SORT_OPTIONS.some((o) => o.value === sortOrder)
+              ? sortOrder
+              : ('newest' as const),
+          }
+        : {
+            name: finalName,
+            mode: 'feed' as const,
+            sourceMode: querySourceMode,
+            sourceKeys: querySourceKeys,
+            autoRule: currentRule,
+            typeFilter: currentRule ? typeFilter : undefined,
+            // Absent rather than empty, like the query.
+            librarySources:
+              !currentRule && librarySources.length > 0 ? [...librarySources] : undefined,
+            tagFilter:
+              !loadedSavesOnly && feedTagFilter.length > 0 ? [...feedTagFilter] : undefined,
+            filterVersion: CHANNEL_FILTER_VERSION,
+            // Absent rather than empty, so taking a query out leaves an ordinary channel.
+            query: trimmedQuery || undefined,
+            // Archive is a choice for a channel of your saves alone.
+            readFilter:
+              readFilter === 'read' && (loadedSavesOnly || !isEditing) ? 'unread' : readFilter,
+            // Ranking by shares needs your follows' links in the channel.
+            sortOrder:
+              !trimmedQuery &&
+              (sortOrder === 'oldest' || (sortOrder === 'popular' && includesFollows))
                 ? sortOrder
                 : ('newest' as const),
-            }
-          : {
-              name: finalName,
-              mode: 'feed' as const,
-              sourceMode: currentRule ? ('include' as const) : sourceFilter.sourceMode,
-              sourceKeys: currentRule
-                ? keysOfTypes(matchedSourceKeys, typeFilter, subscriptionsStore.subscriptions)
-                : [...sourceFilter.sourceKeys],
-              autoRule: currentRule,
-              typeFilter: currentRule ? typeFilter : undefined,
-              tagFilter: feedTagFilter.length > 0 ? [...feedTagFilter] : undefined,
-              filterVersion: CHANNEL_FILTER_VERSION,
-              readFilter,
-              // Ranking by shares needs your follows' links in the channel.
-              sortOrder:
-                sortOrder === 'oldest' || (sortOrder === 'popular' && includesFollows)
-                  ? sortOrder
-                  : ('newest' as const),
-            };
+          };
 
       if (editingChannelId != null) {
+        const wasSaves = isSavesChannel(filteredViewsStore.getById(editingChannelId));
         await filteredViewsStore.update(editingChannelId, viewData);
+        // A channel that gained or lost its feeds opens elsewhere (the Library or
+        // Feeds), with the other toolbar: if it's the one on screen, go there.
+        const after = filteredViewsStore.getById(editingChannelId);
+        if (
+          after &&
+          feedViewStore.activeFilteredView?.uuid === after.uuid &&
+          wasSaves !== isSavesChannel(after)
+        ) {
+          void goto(channelPath(after.uuid), { replaceState: true });
+        }
         onsaved(null);
       } else {
         onsaved(await filteredViewsStore.create(viewData));
@@ -433,75 +528,47 @@
     />
   </div>
 
-  {#if !isEditing && !initialChannelType && !seed}
-    <div class="section">
-      <span class="section-label">Items from</span>
-      <div class="option-cards">
-        <button
-          type="button"
-          class="option-card"
-          class:selected={channelType === 'feed'}
-          aria-pressed={channelType === 'feed'}
-          onclick={() => (channelType = 'feed')}
-        >
-          <span class="option-title">Your sources</span>
-          <span class="option-desc">New posts from what you follow</span>
-        </button>
-        <button
-          type="button"
-          class="option-card"
-          class:selected={channelType === 'saved'}
-          aria-pressed={channelType === 'saved'}
-          onclick={() => (channelType = 'saved')}
-        >
-          <span class="option-title">Your saved articles</span>
-          <span class="option-desc">What you've kept to read</span>
-        </button>
+  <div class="section show-row">
+    <div class="show-group">
+      <span class="section-label">Show</span>
+      <div class="chip-row segmented">
+        {#if savesOnly}
+          <button
+            type="button"
+            class="chip"
+            class:active={readFilter !== 'read'}
+            aria-pressed={readFilter !== 'read'}
+            onclick={() => (readFilter = 'unread')}>Inbox</button
+          >
+          <button
+            type="button"
+            class="chip"
+            class:active={readFilter === 'read'}
+            aria-pressed={readFilter === 'read'}
+            onclick={() => (readFilter = 'read')}>Archive</button
+          >
+        {:else}
+          <button
+            type="button"
+            class="chip"
+            class:active={readFilter === 'unread'}
+            aria-pressed={readFilter === 'unread'}
+            onclick={() => (readFilter = 'unread')}>Unread</button
+          >
+          <button
+            type="button"
+            class="chip"
+            class:active={readFilter === 'all'}
+            aria-pressed={readFilter === 'all'}
+            onclick={() => (readFilter = 'all')}>All</button
+          >
+          {#if readFilter === 'read'}
+            <button type="button" class="chip active" aria-pressed="true">Read</button>
+          {/if}
+        {/if}
       </div>
     </div>
-  {/if}
-
-  {#if channelType}
-    <div class="section show-row">
-      <div class="show-group">
-        <span class="section-label">Show</span>
-        <div class="chip-row segmented">
-          {#if channelType === 'saved'}
-            <button
-              type="button"
-              class="chip"
-              class:active={readFilter !== 'read'}
-              aria-pressed={readFilter !== 'read'}
-              onclick={() => (readFilter = 'unread')}>Inbox</button
-            >
-            <button
-              type="button"
-              class="chip"
-              class:active={readFilter === 'read'}
-              aria-pressed={readFilter === 'read'}
-              onclick={() => (readFilter = 'read')}>Archive</button
-            >
-          {:else}
-            <button
-              type="button"
-              class="chip"
-              class:active={readFilter === 'unread'}
-              aria-pressed={readFilter === 'unread'}
-              onclick={() => (readFilter = 'unread')}>Unread</button
-            >
-            <button
-              type="button"
-              class="chip"
-              class:active={readFilter === 'all'}
-              aria-pressed={readFilter === 'all'}
-              onclick={() => (readFilter = 'all')}>All</button
-            >
-            {#if readFilter === 'read'}
-              <button type="button" class="chip active" aria-pressed="true">Read</button>
-            {/if}
-          {/if}
-        </div>
-      </div>
+    {#if sortOptions.length > 1}
       <div class="show-group">
         <label id="channel-order-label" class="section-label" for="channel-order">Order</label>
         {#if sortOptions.length > MAX_SEGMENTS}
@@ -533,112 +600,173 @@
           </div>
         {/if}
       </div>
+    {/if}
+  </div>
+
+  {#if offerQuery}
+    <div class="section">
+      <label class="section-label" for="channel-query">Matching</label>
+      <input
+        id="channel-query"
+        type="search"
+        class="text-input"
+        bind:value={query}
+        maxlength={MAX_QUERY_CHARS}
+        autocomplete="off"
+        spellcheck="false"
+        placeholder="Optional: words to watch for"
+      />
+      <p class="hint">
+        {#if trimmedQuery}
+          Only items from these sources that match, as they arrive. Same as search: words, "a
+          phrase", -leave-out.
+        {:else}
+          Add a search and the channel keeps only what matches it, as it arrives.
+        {/if}
+      </p>
+      {#if trimmedQuery && librarySources.includes('shelf') && !librarySources.includes('saves')}
+        <p class="hint">A saved search looks through all your saves, not the Shelf alone.</p>
+      {/if}
+      {#if trimmedQuery && hasSearchableTerm(trimmedQuery)}
+        <SearchQueryPreview
+          query={trimmedQuery}
+          sourceMode={querySourceMode}
+          sourceKeys={querySourceKeys}
+          includeSaves={librarySources.includes('saves')}
+        />
+      {/if}
+    </div>
+  {:else if lockedQuery}
+    <div class="section locked">
+      <div class="label-row">
+        <label class="section-label" for="channel-query">Matching</label>
+        <a
+          class="supporter-pill"
+          href="/supporter"
+          aria-label="Saved searches come with Supporter"
+          onclick={oncancel}>Supporter</a
+        >
+      </div>
+      <input
+        id="channel-query"
+        type="search"
+        class="text-input"
+        disabled
+        aria-describedby="channel-query-locked"
+        placeholder="Optional: words to watch for"
+      />
+      <p class="hint" id="channel-query-locked">
+        With Supporter, a channel can keep only what matches a search, as it arrives.
+      </p>
     </div>
   {/if}
 
-  {#if channelType === 'feed'}
-    <div class="section">
-      <span class="section-label">What's in it</span>
-      <div class="option-cards">
-        <button
-          type="button"
-          class="option-card"
-          class:selected={mode === 'pick'}
-          aria-pressed={mode === 'pick'}
-          onclick={() => (mode = 'pick')}
-        >
-          <span class="option-title">Sources I pick</span>
-          <span class="option-desc">A list you choose</span>
-        </button>
-        <button
-          type="button"
-          class="option-card"
-          class:selected={mode === 'rule'}
-          aria-pressed={mode === 'rule'}
-          onclick={() => (mode = 'rule')}
-        >
-          <span class="option-title">Sources that match</span>
-          <span class="option-desc">Updates as you follow more</span>
-        </button>
-      </div>
-
-      {#if mode === 'pick'}
-        <p class="hint">
-          Checked sources are in this channel. A checked folder also takes in what you add to it
-          later.
-        </p>
-        <div class="picker-box">
-          <SourcePicker
-            filter={sourceFilter}
-            onchange={(f) => (sourceFilter = f)}
-            showFollows={showFollowsSource}
-            {followsInEverything}
-            scroll={scrollPicker}
-          />
-        </div>
-      {:else}
-        <fieldset class="rule-list">
-          <legend class="visually-hidden">Rule</legend>
-          {#each AUTO_RULE_OPTIONS as opt (opt.value)}
-            <label class="rule-row">
-              <input type="radio" name="channel-rule" value={opt.value} bind:group={ruleType} />
-              <span class="rule-text">
-                <span class="rule-title">{opt.label}</span>
-                <span class="option-desc">{opt.description}</span>
-              </span>
-            </label>
-          {/each}
-        </fieldset>
-
-        {#if ruleType === 'recent'}
-          <div class="inline-input">
-            <label for="recent-days" class="input-prefix">Added in the last</label>
-            <input
-              id="recent-days"
-              type="number"
-              bind:value={recentWithinDays}
-              min="1"
-              max="90"
-              class="days-input"
-            />
-            <span class="input-suffix">days</span>
-          </div>
-        {:else if ruleType === 'subscriptionTag'}
-          <input
-            type="text"
-            list="channel-tag-options"
-            class="text-input"
-            aria-label="Tag"
-            bind:value={tagValue}
-            placeholder="Tag, e.g. news"
-          />
-          <datalist id="channel-tag-options">
-            {#each availableTags as tag}
-              <option value={tag}></option>
-            {/each}
-          </datalist>
-        {:else if ruleType === 'domain'}
-          <DomainPatternInput
-            patterns={domainPatterns}
-            {availableDomains}
-            onchange={(p) => (domainPatterns = p)}
-            hint=""
-          />
-        {/if}
-
-        <div class="match-preview" class:empty={matchedSourceKeys.length === 0}>
-          {#if matchedSourceKeys.length > 0}
-            Matches <strong>{matchedSourceKeys.length}</strong>
-            {matchedSourceKeys.length === 1 ? 'source' : 'sources'} today
-          {:else}
-            No sources match this yet
-          {/if}
-        </div>
-      {/if}
+  <div class="section">
+    <span class="section-label">What's in it</span>
+    <div class="option-cards">
+      <button
+        type="button"
+        class="option-card"
+        class:selected={mode === 'pick'}
+        aria-pressed={mode === 'pick'}
+        onclick={() => (mode = 'pick')}
+      >
+        <span class="option-title">Sources I pick</span>
+        <span class="option-desc">A list you choose</span>
+      </button>
+      <button
+        type="button"
+        class="option-card"
+        class:selected={mode === 'rule'}
+        aria-pressed={mode === 'rule'}
+        onclick={() => (mode = 'rule')}
+      >
+        <span class="option-title">Sources that match</span>
+        <span class="option-desc">Updates as you follow more</span>
+      </button>
     </div>
-  {:else if channelType === 'saved'}
+
+    {#if mode === 'pick'}
+      <p class="hint">
+        Checked sources are in this channel. A checked folder also takes in what you add to it
+        later.
+      </p>
+      <div class="picker-box">
+        <SourcePicker
+          filter={sourceFilter}
+          onchange={(f) => (sourceFilter = f)}
+          showFollows={showFollowsSource}
+          {followsInEverything}
+          scroll={scrollPicker}
+          bulk
+          library={auth.isGuest ? undefined : librarySources}
+          onlibrarychange={auth.isGuest ? undefined : (l) => (librarySources = l)}
+        />
+      </div>
+    {:else}
+      <fieldset class="rule-list">
+        <legend class="visually-hidden">Rule</legend>
+        {#each AUTO_RULE_OPTIONS as opt (opt.value)}
+          <label class="rule-row">
+            <input type="radio" name="channel-rule" value={opt.value} bind:group={ruleType} />
+            <span class="rule-text">
+              <span class="rule-title">{opt.label}</span>
+              <span class="option-desc">{opt.description}</span>
+            </span>
+          </label>
+        {/each}
+      </fieldset>
+
+      {#if ruleType === 'recent'}
+        <div class="inline-input">
+          <label for="recent-days" class="input-prefix">Added in the last</label>
+          <input
+            id="recent-days"
+            type="number"
+            bind:value={recentWithinDays}
+            min="1"
+            max="90"
+            class="days-input"
+          />
+          <span class="input-suffix">days</span>
+        </div>
+      {:else if ruleType === 'subscriptionTag'}
+        <input
+          type="text"
+          list="channel-tag-options"
+          class="text-input"
+          aria-label="Tag"
+          bind:value={tagValue}
+          placeholder="Tag, e.g. news"
+        />
+        <datalist id="channel-tag-options">
+          {#each availableTags as tag}
+            <option value={tag}></option>
+          {/each}
+        </datalist>
+      {:else if ruleType === 'domain'}
+        <DomainPatternInput
+          patterns={domainPatterns}
+          {availableDomains}
+          onchange={(p) => (domainPatterns = p)}
+          hint=""
+        />
+      {/if}
+
+      <div class="match-preview" class:empty={matchedSourceKeys.length === 0}>
+        {#if matchedSourceKeys.length > 0}
+          Matches <strong>{matchedSourceKeys.length}</strong>
+          {matchedSourceKeys.length === 1 ? 'source' : 'sources'} today
+        {:else}
+          No sources match this yet
+        {/if}
+      </div>
+    {/if}
+  </div>
+
+  {#if savesOnly}
     <div class="section">
-      <span class="section-label">What's in it</span>
+      <span class="section-label">Which saves</span>
       <p class="hint">Choose nothing in a row to take in all of it.</p>
 
       <span class="row-label">Kind</span>
@@ -750,6 +878,32 @@
 </form>
 
 <style>
+  .label-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .supporter-pill {
+    padding: 0 0.375rem;
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+    font-size: var(--text-xs);
+    font-weight: var(--weight-medium);
+    color: var(--color-text-secondary);
+    text-decoration: none;
+  }
+
+  .supporter-pill:hover {
+    color: var(--color-primary);
+    border-color: var(--color-primary);
+  }
+
+  .locked .text-input {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
   .channel-editor {
     display: flex;
     flex-direction: column;

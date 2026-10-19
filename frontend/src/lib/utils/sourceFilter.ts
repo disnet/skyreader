@@ -359,3 +359,33 @@ export function keysOfTypes(
     return type === undefined || allowed.has(type);
   });
 }
+
+/**
+ * Every source checked: Everything, or, when your follows' links are offered
+ * but left out of Everything, every source with them too.
+ */
+export function everySourceFilter(
+  showFollows: boolean,
+  followsInEverything: boolean
+): SourceFilter {
+  return showFollows && !followsInEverything
+    ? { sourceMode: 'exclude', sourceKeys: [] }
+    : { sourceMode: 'all', sourceKeys: [] };
+}
+
+/** Whether a filter leaves every source you have unchecked, so a channel of it is empty. */
+export function showsNoSource(
+  filter: SourceFilter,
+  subscriptions: readonly Subscription[],
+  ctx: PickerContext,
+  showFollows: boolean
+): boolean {
+  if (filter.sourceMode === 'include') return filter.sourceKeys.length === 0;
+  // Everything, or every source but some, takes in what you follow later.
+  if (filter.sourceMode === 'all' || subscriptions.length === 0) return false;
+  if (showFollows && isSourceShown(filter, FOLLOWS_SOURCE_KEY, ctx)) return false;
+  return !subscriptions.some((sub) => {
+    const key = subscriptionSourceKey(sub);
+    return key != null && isSourceShown(filter, key, ctx);
+  });
+}

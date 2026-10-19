@@ -1,5 +1,7 @@
 import type { Env } from '../types';
 import { getSessionFromRequest } from '../services/oauth';
+import { isSavedSearchEnabled, percolatorStub, syncSavedQueries } from '../services/saved-search';
+import { log, serializeError } from '../utils/logger';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_NAME_LENGTH = 200;
@@ -60,6 +62,30 @@ function validateChannelBody(body: ChannelBody, uuid?: string): string | null {
   if (typeof body.updatedAt !== 'number' || !Number.isFinite(body.updatedAt))
     return 'updatedAt must be a number';
   return null;
+}
+
+/**
+ * Mirror the saved queries these channels carry (services/saved-search.ts).
+ * The channel write already succeeded and the client's copy is the source of
+ * truth, so a failure here is logged, not returned: the next write of the
+ * channel brings the query back in line.
+ */
+async function syncQueries(env: Env, did: string, uuids: string[]): Promise<void> {
+  let lookBack = false;
+  try {
+    lookBack = await syncSavedQueries(env, did, uuids);
+  } catch (error) {
+    log.error('saved_query_sync_failed', { channels: uuids.length, ...serializeError(error) });
+    return;
+  }
+  // A new or edited query starts its look back now rather than at the next
+  // cron minute, so a channel just made doesn't sit empty.
+  if (!lookBack) return;
+  try {
+    if (await isSavedSearchEnabled(env)) await percolatorStub(env).kick();
+  } catch (error) {
+    log.warn('saved_query_kick_failed', serializeError(error));
+  }
 }
 
 function validationError(message: string): Response {
@@ -170,6 +196,11 @@ export async function handleSyncChannels(request: Request, env: Env): Promise<Re
 
     if (statements.length > 0) {
       await env.DB.batch(statements);
+      await syncQueries(
+        env,
+        session.did,
+        body.channels.map((channel) => channel.uuid)
+      );
     }
 
     return new Response(JSON.stringify({ success: true }), {
@@ -235,6 +266,7 @@ export async function handleUpsertChannel(
         body.updatedAt
       )
       .run();
+    await syncQueries(env, session.did, [uuid]);
 
     return new Response(JSON.stringify({ success: true }), {
       headers: { 'Content-Type': 'application/json' },
@@ -275,6 +307,7 @@ export async function handleDeleteChannel(
     )
       .bind(uuid, session.did, now, now, now)
       .run();
+    await syncQueries(env, session.did, [uuid]);
 
     return new Response(JSON.stringify({ success: true }), {
       headers: { 'Content-Type': 'application/json' },

@@ -337,6 +337,9 @@ export async function seedFollowLinks(
 
 export async function cleanupTestData(user: TestUser) {
   await execD1([
+    `DELETE FROM channel_match_sources WHERE user_did = '${user.did}'`,
+    `DELETE FROM channel_matches WHERE user_did = '${user.did}'`,
+    `DELETE FROM saved_queries WHERE user_did = '${user.did}'`,
     `DELETE FROM channels WHERE user_did = '${user.did}'`,
     `DELETE FROM item_labels_cache WHERE user_did = '${user.did}'`,
     `DELETE FROM saved_articles WHERE user_did = '${user.did}'`,
@@ -378,4 +381,107 @@ export async function enableSearchSwitch(): Promise<void> {
 
 export async function disableSearch(): Promise<void> {
   await execD1([`DELETE FROM sync_state WHERE key = 'search_enabled'`]);
+}
+
+/**
+ * Give `user` saved searches: the Supporter plan and the environment's operator
+ * switch (`sync_state.saved_search_enabled`). The switch is global; pair it with
+ * `disableSavedSearch()` in cleanup.
+ */
+export async function enableSavedSearchFor(user: TestUser): Promise<void> {
+  const now = Math.floor(Date.now() / 1000);
+  await execD1([
+    `UPDATE users SET tier = 'supporter' WHERE did = ${sqlString(user.did)}`,
+    `INSERT INTO sync_state (key, value, updated_at) VALUES ('saved_search_enabled', '1', ${now}) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+  ]);
+}
+
+/** Saved searches on here, with the user's plan left as it is. */
+export async function enableSavedSearchSwitch(): Promise<void> {
+  const now = Math.floor(Date.now() / 1000);
+  await execD1([
+    `INSERT INTO sync_state (key, value, updated_at) VALUES ('saved_search_enabled', '1', ${now}) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+  ]);
+}
+
+export async function disableSavedSearch(): Promise<void> {
+  await execD1([`DELETE FROM sync_state WHERE key = 'saved_search_enabled'`]);
+}
+
+export interface SeedSearchChannelOpts {
+  uuid: string;
+  name: string;
+  query: string;
+  /** 'pending' while it's still looking back; the default is done. */
+  backfill?: 'pending' | 'done';
+}
+
+/**
+ * A channel that is a saved search over all sources, as the server holds one
+ * after its write: the channel row and its `saved_queries` mirror. (The PUT the
+ * app sends writes both; seeding goes straight to D1, so it writes both too.)
+ */
+export async function seedSearchChannel(
+  user: TestUser,
+  opts: SeedSearchChannelOpts
+): Promise<void> {
+  const now = Date.now();
+  const config = JSON.stringify({
+    mode: 'feed',
+    sourceMode: 'all',
+    sourceKeys: [],
+    query: opts.query,
+    readFilter: 'all',
+    sortOrder: 'newest',
+    filterVersion: 2,
+  });
+  await execD1([
+    `INSERT OR REPLACE INTO channels (uuid, user_did, name, config, position, created_at, updated_at) VALUES (${sqlString(opts.uuid)}, ${sqlString(user.did)}, ${sqlString(opts.name)}, ${sqlString(config)}, 0, ${now}, ${now})`,
+    `INSERT OR REPLACE INTO saved_queries (user_did, channel_uuid, query, fts_query, source_mode, source_keys, backfill_state, created_at, updated_at) VALUES (${sqlString(user.did)}, ${sqlString(opts.uuid)}, ${sqlString(opts.query)}, ${sqlString(`"${opts.query}"`)}, 'all', '[]', ${sqlString(opts.backfill ?? 'done')}, ${now}, ${now})`,
+  ]);
+}
+
+/** A channel row as the server holds one, with `config` as the app writes it. */
+export async function seedChannel(
+  user: TestUser,
+  opts: { uuid: string; name: string; config: Record<string, unknown> }
+): Promise<void> {
+  const now = Date.now();
+  await execD1([
+    `INSERT OR REPLACE INTO channels (uuid, user_did, name, config, position, created_at, updated_at) VALUES (${sqlString(opts.uuid)}, ${sqlString(user.did)}, ${sqlString(opts.name)}, ${sqlString(JSON.stringify(opts.config))}, 0, ${now}, ${now})`,
+  ]);
+}
+
+export interface SeedChannelMatchOpts {
+  /** A seeded feed item's guid (seedFeedItems), matched in `feedUrl`. */
+  guid: string;
+  feedUrl: string;
+  url: string;
+  /** The passage, with the matched words in [brackets]. */
+  snippet: string;
+  publishedAt: number;
+}
+
+/** What the matcher would have written for these feed items. */
+export async function seedChannelMatches(
+  user: TestUser,
+  channelUuid: string,
+  matches: SeedChannelMatchOpts[]
+): Promise<void> {
+  const now = Date.now();
+  await execD1(
+    matches.map((m) => {
+      // The stored snippet marks matches with \u0002…\u0003, as FTS5's snippet() writes them.
+      const snippet = m.snippet
+        .split(/(\[[^\]]*\])/)
+        .filter(Boolean)
+        .map((part) =>
+          part.startsWith('[')
+            ? `char(2) || ${sqlString(part.slice(1, -1))} || char(3)`
+            : sqlString(part)
+        )
+        .join(' || ');
+      return `INSERT OR REPLACE INTO channel_matches (user_did, channel_uuid, dedup_key, item_key, source_kind, source_ref, feed_seq, snippet, published_at, matched_at) VALUES (${sqlString(user.did)}, ${sqlString(channelUuid)}, ${sqlString(m.url)}, ${sqlString(m.guid)}, 'feed', ${sqlString(m.feedUrl)}, (SELECT seq FROM feed_items WHERE feed_url = ${sqlString(m.feedUrl)} AND guid = ${sqlString(m.guid)}), ${snippet}, ${m.publishedAt}, ${now})`;
+    })
+  );
 }

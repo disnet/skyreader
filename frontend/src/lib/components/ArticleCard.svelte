@@ -14,6 +14,7 @@
     FollowLink,
     FollowLinkSharer,
   } from '$lib/types';
+  import type { SearchSnippetSegment } from '$lib/services/api';
   import { followLinkSaid, sharedByLabel, sharedByPill } from '$lib/utils/followLinks';
   import { formatRelativeDate } from '$lib/utils/date';
   import { getFaviconUrl } from '$lib/utils/favicon';
@@ -85,6 +86,7 @@
     highlighted = false,
     followSharers,
     followLink,
+    matchSnippet,
     onToggleSave,
     onToggleRead,
     onUnshare,
@@ -111,6 +113,8 @@
     /** The follows link this card renders (`article` is its followLinkArticle):
      *  no feed behind it and no body of its own, so it shows as a link card. */
     followLink?: FollowLink;
+    /** A saved search's match: the passage it matched on, shown until the card expands. */
+    matchSnippet?: SearchSnippetSegment[];
     onToggleSave?: () => void;
     onToggleRead?: () => void;
     onUnshare?: () => void;
@@ -1197,6 +1201,7 @@
   {authorAvatar}
   authorDid={document?.authorDid}
   followSharers={followSharersVM}
+  {matchSnippet}
   {isFollowLink}
   followLinkCard={followLinkCardVM}
   keptLinkCard={keptLinkCardVM}

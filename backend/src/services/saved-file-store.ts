@@ -1,8 +1,9 @@
 import type { Env } from '../types';
 
 /**
- * Where a save's kept original lives: an uploaded PDF or EPUB, or the original
- * of one saved by link (routes/saved-pdf.ts).
+ * Where a save's kept files live: an uploaded PDF or EPUB, the original of one
+ * saved by link (routes/saved-pdf.ts), and the pictures a snapshot of its body
+ * captured (services/archive/snapshot-images.ts).
  *
  * Every read, write and delete of a kept original goes through a SavedFileStore,
  * so a file can live somewhere other than R2 without the routes knowing. Each
@@ -55,6 +56,14 @@ export interface SavedFileMeta {
   filename: string | null;
 }
 
+/** A picture a snapshot captured, for the store to label it with. */
+export interface SnapshotImageMeta {
+  did: string;
+  saveRkey: string;
+  sha256: string;
+  mimeType: string;
+}
+
 /** A file's bytes, as a stream of known length. */
 export interface StoredFileBody {
   body: ReadableStream<Uint8Array>;
@@ -68,6 +77,11 @@ export interface SavedFileStore {
    * racing second write of it replaces the first rather than leaving a stray.
    */
   put(meta: SavedFileMeta, bytes: ArrayBuffer | StoredFileBody): Promise<StoredFileRef>;
+  /**
+   * Keep a picture a snapshot captured. Keyed by its digest within the save, so
+   * the same picture captured twice is kept once.
+   */
+  putImage(meta: SnapshotImageMeta, bytes: Uint8Array): Promise<StoredFileRef>;
   /** The whole file, or null when the store no longer has it. */
   get(ref: StoredFileRef): Promise<StoredFileBody | null>;
   /** The file's size in bytes, or null when the store no longer has it. */
@@ -80,6 +94,11 @@ export interface SavedFileStore {
 /** Where an R2-kept original lives: one object per save, by reader and rkey. */
 export function savedFileKey(did: string, rkey: string, kind: 'pdf' | 'epub' = 'pdf'): string {
   return `${kind}/${did}/${rkey}.${kind}`;
+}
+
+/** Where an R2-kept snapshot picture lives: one object per distinct picture in a save. */
+export function snapshotImageKey(did: string, saveRkey: string, sha256: string): string {
+  return `images/${did}/${saveRkey}/${sha256}`;
 }
 
 function r2Store(bucket: R2Bucket): SavedFileStore {
@@ -97,6 +116,14 @@ function r2Store(bucket: R2Bucket): SavedFileStore {
           rkey: meta.rkey,
           ...(meta.filename ? { filename: meta.filename } : {}),
         },
+      });
+      return { storage: 'r2', r2Key: key, blobCid: null, recordUri: null };
+    },
+    async putImage(meta, bytes) {
+      const key = snapshotImageKey(meta.did, meta.saveRkey, meta.sha256);
+      await bucket.put(key, bytes, {
+        httpMetadata: { contentType: meta.mimeType },
+        customMetadata: { did: meta.did, save: meta.saveRkey, sha256: meta.sha256 },
       });
       return { storage: 'r2', r2Key: key, blobCid: null, recordUri: null };
     },

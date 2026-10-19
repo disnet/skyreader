@@ -274,9 +274,10 @@
     sortSources(subscriptionsStore.subscriptions.filter((s) => !s.category))
   );
 
-  // Split channels: source channels live under Everything, saved channels under Saved
-  let sourceChannels = $derived(filteredViewsStore.views.filter((v) => v.mode !== 'saved'));
-  let savedChannels = $derived(filteredViewsStore.views.filter((v) => v.mode === 'saved'));
+  // Every channel, whatever it reads from, lives in the one Channels section.
+  let channels = $derived(filteredViewsStore.views);
+  // The Library row discloses only the Shelf's collections now.
+  let hasCollections = $derived(!auth.isGuest && shelfStore.collections.length > 0);
 
   function handleBackdropClick() {
     sidebarStore.closeMobile();
@@ -358,34 +359,86 @@
       <span class="nav-label">Home</span>
     </a>
 
-    <!-- Everything: top-level filter + nested source channels -->
-    <div class="nav-group" class:expanded={sidebarStore.expandedSections.everything}>
-      <div class="nav-row" class:active={currentFilter().type === 'all'}>
-        <button class="nav-row-main" onclick={() => selectFilter('all')}>
-          <span class="nav-icon"><Icon name="inbox" /></span>
-          <span class="nav-label">Feeds</span>
+    <!-- Feeds: every followed source's river -->
+    <div class="nav-row" class:active={currentFilter().type === 'all'}>
+      <button class="nav-row-main" onclick={() => selectFilter('all')}>
+        <span class="nav-icon"><Icon name="inbox" /></span>
+        <span class="nav-label">Feeds</span>
+      </button>
+      {#if totalUnread > 0}
+        <span class="nav-count">{totalUnread}</span>
+      {/if}
+    </div>
+
+    <!-- Library: the saves, read two ways (LibraryIntro switches between the
+         Queue and the Shelf). The row opens the Queue and stays lit on either
+         half; under it, the Shelf's collections (account-only). -->
+    <div class="nav-group" class:expanded={sidebarStore.expandedSections.saved}>
+      <div class="nav-row" class:active={libraryActive}>
+        <button class="nav-row-main" onclick={() => selectFilter('saved')}>
+          <span class="nav-icon"><Icon name="shelf" /></span>
+          <span class="nav-label">Library</span>
         </button>
-        {#if totalUnread > 0}
-          <span class="nav-count">{totalUnread}</span>
+        {#if itemLabelsStore.inboxCount > 0}
+          <span class="nav-count">{itemLabelsStore.inboxCount}</span>
         {/if}
+        {#if hasCollections}
+          <button
+            class="row-disclosure-btn"
+            onclick={(e) => {
+              e.stopPropagation();
+              sidebarStore.toggleSection('saved');
+            }}
+            aria-label="Toggle Library collections"
+          >
+            <Icon
+              name={sidebarStore.expandedSections.saved ? 'chevron-down' : 'chevron-right'}
+              size={14}
+              strokeWidth={2.5}
+            />
+          </button>
+        {/if}
+      </div>
+      {#if hasCollections && sidebarStore.expandedSections.saved}
+        <div class="nav-children">
+          {#each shelfStore.collections as c (c.id)}
+            <CollectionItem
+              name={c.name}
+              href={collectionPath(c.id)}
+              isActive={activeCollectionId === c.id}
+              onSelect={() => sidebarStore.closeMobile()}
+            />
+          {/each}
+        </div>
+      {/if}
+    </div>
+
+    <!-- Channels: every channel in one list, whatever it reads from (feeds, the
+         Library, or both; see ChannelEditor's source picker). -->
+    <div class="nav-group" class:expanded={sidebarStore.expandedSections.allChannels}>
+      <div class="nav-row">
+        <button class="nav-row-main" onclick={() => sidebarStore.toggleSection('allChannels')}>
+          <span class="nav-icon"><Icon name="layers" /></span>
+          <span class="nav-label">Channels</span>
+        </button>
         <button
           class="row-disclosure-btn"
           onclick={(e) => {
             e.stopPropagation();
-            sidebarStore.toggleSection('everything');
+            sidebarStore.toggleSection('allChannels');
           }}
           aria-label="Toggle channels"
         >
           <Icon
-            name={sidebarStore.expandedSections.everything ? 'chevron-down' : 'chevron-right'}
+            name={sidebarStore.expandedSections.allChannels ? 'chevron-down' : 'chevron-right'}
             size={14}
             strokeWidth={2.5}
           />
         </button>
       </div>
-      {#if sidebarStore.expandedSections.everything}
+      {#if sidebarStore.expandedSections.allChannels}
         <div class="nav-children">
-          {#each sourceChannels as view (view.uuid)}
+          {#each channels as view (view.uuid)}
             <ViewItem
               {view}
               isActive={currentFilter().type === 'view' && currentFilter().id === view.uuid}
@@ -407,75 +460,6 @@
             />
           {/each}
           <button class="new-channel-btn" onclick={() => openChannelModal(null, 'feed')}>
-            <Icon name="plus" size={12} strokeWidth={2} />
-            New channel
-          </button>
-        </div>
-      {/if}
-    </div>
-
-    <!-- Library: the saves, read two ways (LibraryIntro switches between the
-         Queue and the Shelf). The row opens the Queue and stays lit on either
-         half; under it, the Shelf's collections (account-only) and the Queue's
-         channels (local for a guest; they migrate to the account at sign-in). -->
-    <div class="nav-group" class:expanded={sidebarStore.expandedSections.saved}>
-      <div class="nav-row" class:active={libraryActive}>
-        <button class="nav-row-main" onclick={() => selectFilter('saved')}>
-          <span class="nav-icon"><Icon name="shelf" /></span>
-          <span class="nav-label">Library</span>
-        </button>
-        {#if itemLabelsStore.inboxCount > 0}
-          <span class="nav-count">{itemLabelsStore.inboxCount}</span>
-        {/if}
-        <button
-          class="row-disclosure-btn"
-          onclick={(e) => {
-            e.stopPropagation();
-            sidebarStore.toggleSection('saved');
-          }}
-          aria-label="Toggle Library collections and channels"
-        >
-          <Icon
-            name={sidebarStore.expandedSections.saved ? 'chevron-down' : 'chevron-right'}
-            size={14}
-            strokeWidth={2.5}
-          />
-        </button>
-      </div>
-      {#if sidebarStore.expandedSections.saved}
-        <div class="nav-children">
-          {#if !auth.isGuest}
-            {#each shelfStore.collections as c (c.id)}
-              <CollectionItem
-                name={c.name}
-                href={collectionPath(c.id)}
-                isActive={activeCollectionId === c.id}
-                onSelect={() => sidebarStore.closeMobile()}
-              />
-            {/each}
-          {/if}
-          {#each savedChannels as view (view.uuid)}
-            <ViewItem
-              {view}
-              isActive={currentFilter().type === 'view' && currentFilter().id === view.uuid}
-              isRenaming={renamingViewId === view.id}
-              unreadCount={view.id != null ? (unreadCounts.channelCounts.get(view.id) ?? 0) : 0}
-              onSelect={() => selectFilter('view', view.uuid)}
-              onContextMenu={(e) => view.id != null && handleViewContextMenu(e, view.id)}
-              onTouchStart={(e) => view.id != null && handleViewTouchStart(e, view.id)}
-              onTouchEnd={handleViewTouchEnd}
-              onTouchMove={handleViewTouchMove}
-              onMoreClick={(e) => view.id != null && handleViewContextMenu(e, view.id)}
-              onRename={async (name) => {
-                if (view.id != null) {
-                  await filteredViewsStore.update(view.id, { name });
-                }
-                renamingViewId = null;
-              }}
-              onRenameCancel={() => (renamingViewId = null)}
-            />
-          {/each}
-          <button class="new-channel-btn" onclick={() => openChannelModal(null, 'saved')}>
             <Icon name="plus" size={12} strokeWidth={2} />
             New channel
           </button>

@@ -5,7 +5,7 @@ description: Read the links the people you follow on Bluesky are sharing, withou
 
 **From your follows** gathers the links people you follow on Bluesky are sharing and brings them into your reading, one article at a time. Nothing is ranked by engagement, and the list ends.
 
-It's a source, like a feed you subscribe to. Its links arrive in a channel called **From your follows**, under **Feeds** in the sidebar, and the week's most-shared links also show up on **Home** as **Shared by people you follow**.
+It's a source, like a feed you subscribe to. Its links arrive in a channel called **From your follows**, under **Channels** in the sidebar, and the week's most-shared links also show up on **Home** as **Shared by people you follow**.
 
 ## Turning it on
 
@@ -20,6 +20,8 @@ You can also go to **Manage Sources** and find **Links from people you follow**.
 However you allow it, Skyreader makes the **From your follows** channel for you. Delete it and it stays gone.
 
 Skyreader never posts anything with it. It reads the same timeline you see in Bluesky, so anyone you've muted or blocked stays out.
+
+While you're using Skyreader, it checks your timeline about every half hour, even with the app closed, so new links are waiting when you come back. After a week away, it only checks when you open it.
 
 ## What counts as a share
 

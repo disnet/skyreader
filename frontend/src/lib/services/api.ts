@@ -36,6 +36,7 @@ import type {
   FollowLinkSharersResponse,
   User,
   SavedItem,
+  LibrarySource,
 } from '$lib/types';
 import { getLinkPostTitle, isLinkPost } from '$lib/utils/linkPost';
 import type { BskySourceKind } from '$lib/utils/bskySources';
@@ -162,6 +163,14 @@ export function libraryExportUrl(format: 'markdown' | 'bibtex'): string {
   return `${API_BASE}/api/export?format=${format}`;
 }
 
+/**
+ * The copy of a picture (by the address its body gives) that a save's snapshot
+ * kept, served only to its owner.
+ */
+export function snapshotImageUrl(rkey: string, url: string): string {
+  return `${API_BASE}/api/saved/${encodeURIComponent(rkey)}/snapshot-image?url=${encodeURIComponent(url)}`;
+}
+
 /** A picture inside a saved EPUB (its path in the book), served only to its owner. */
 export function savedAssetUrl(rkey: string, path: string): string {
   return `${API_BASE}/api/saved/${encodeURIComponent(rkey)}/asset?path=${encodeURIComponent(path)}`;
@@ -236,11 +245,14 @@ export class SubscriptionLimitError extends Error {
 // works.
 export class ApiError extends Error {
   status: number;
+  /** The body's machine-readable `code`, when it carries one. */
+  code?: string;
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, code?: string) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -407,6 +419,30 @@ export interface SearchSnippetSegment {
   match: boolean;
 }
 
+/** A recent item from a saved search's sources that its query matches. */
+export interface SavedSearchPreviewHit {
+  kind: 'feed' | 'document' | 'save';
+  itemKey: string;
+  title: string;
+  url: string | null;
+  sourceTitle: string;
+  /** Unix ms. */
+  publishedAt: number | null;
+  snippet: SearchSnippetSegment[];
+}
+
+export interface SavedSearchPreview {
+  /** Matches among the items read. */
+  total: number;
+  /** Recent items read from the sources. */
+  scanned: number;
+  /** The sources hold more than was read, so `total` is a floor. */
+  capped: boolean;
+  /** The selection takes in links your follows share, which aren't previewed. */
+  coversFollows: boolean;
+  hits: SavedSearchPreviewHit[];
+}
+
 export interface SearchHit {
   /** Same key as `FeedDisplayItem.key`: guid, save uri, or document at:// uri. */
   itemKey: string;
@@ -423,6 +459,83 @@ export interface SearchHit {
   savedAt: number | null;
   highlightedAt: number | null;
   snippet: SearchSnippetSegment[];
+}
+
+/** Someone you follow who shared a saved-search match. */
+export interface ChannelMatchSharer {
+  did: string;
+  postUri: string;
+  handle: string | null;
+  name: string | null;
+  avatar: string | null;
+}
+
+interface ChannelMatchBase {
+  /** What read state is filed under: guid, document URI, or a link's normalized URL. */
+  itemKey: string;
+  /** Unix ms. */
+  publishedAt: number;
+  matchedAt: number;
+  read: boolean;
+  snippet: SearchSnippetSegment[];
+  /** Up to three of your follows who shared it; `sharedByCount` counts them all. */
+  sharedBy: ChannelMatchSharer[];
+  sharedByCount: number;
+}
+
+/** One story a saved search matched, as GET /api/channels/:uuid/items serves it. */
+export type ChannelMatch =
+  | (ChannelMatchBase & { kind: 'feed'; item: FeedItem & { feedUrl: string; seq: number } })
+  | (ChannelMatchBase & {
+      kind: 'document';
+      document: {
+        uri: string;
+        authorDid: string;
+        siteUri: string;
+        url: string | null;
+        title: string;
+        description: string;
+      };
+    })
+  | (ChannelMatchBase & {
+      kind: 'follows';
+      link: {
+        url: string;
+        urlNormalized: string;
+        title?: string | null;
+        description?: string | null;
+        thumb?: string | null;
+      };
+      /** Matched on the sharers' words and the card only, not the article. */
+      bodySkipped?: boolean;
+    })
+  | (ChannelMatchBase & {
+      /** One of your own saves; `itemKey` is its rkey, and read means archived. */
+      kind: 'save';
+      save: {
+        rkey: string;
+        url: string;
+        title: string;
+        description: string;
+        domain: string;
+        image: string | null;
+      };
+    });
+
+export interface ChannelItemsResponse {
+  query: string;
+  /** The sources the matches are for, as the server stored them. Absent from older servers. */
+  sourceMode?: 'all' | 'include' | 'exclude';
+  sourceKeys?: string[];
+  /** `over_limit`: past the plan's count, so it keeps its matches but gets no new ones. */
+  status: 'active' | 'over_limit';
+  /** Still looking back through the last 30 days. */
+  backfilling: boolean;
+  items: ChannelMatch[];
+  /** Capped at 1,000; `unreadCapped` means more. */
+  unread: number;
+  unreadCapped: boolean;
+  nextCursor: string | null;
 }
 
 export interface SearchResponse {
@@ -695,6 +808,9 @@ class ApiClient {
           const b = body as { message: string; limit: number; current: number };
           throw new SubscriptionLimitError(b.message, b.limit, b.current);
         }
+        if ((body as { code?: string }).code === 'upgrade_required') {
+          throw new ApiError((body as { error: string }).error, 403, 'upgrade_required');
+        }
         throw new Error((body as { error: string }).error || `HTTP ${response.status}`);
       }
 
@@ -734,7 +850,8 @@ class ApiClient {
       }
       throw new ApiError(
         (error as { error: string }).error || `HTTP ${response.status}`,
-        response.status
+        response.status,
+        (error as { code?: string }).code
       );
     }
 
@@ -2442,6 +2559,37 @@ class ApiClient {
   async deleteChannel(uuid: string): Promise<{ success: boolean }> {
     return this.fetch(`/api/channels/${uuid}`, {
       method: 'DELETE',
+    });
+  }
+
+  // What a saved-search channel has matched, newest first
+  // (backend/src/routes/channel-items.ts).
+  async getChannelItems(
+    uuid: string,
+    params: { before?: string | null; limit?: number; signal?: AbortSignal } = {}
+  ): Promise<ChannelItemsResponse> {
+    const query = new URLSearchParams();
+    if (params.before) query.set('before', params.before);
+    if (params.limit) query.set('limit', String(params.limit));
+    const qs = query.size > 0 ? `?${query}` : '';
+    return this.fetch(`/api/channels/${uuid}/items${qs}`, { signal: params.signal });
+  }
+
+  // What a saved search would find among its sources' recent items, read or
+  // not (backend/src/routes/channel-items.ts).
+  async previewSavedSearch(
+    params: {
+      query: string;
+      sourceMode: 'all' | 'include' | 'exclude';
+      sourceKeys: string[];
+      librarySources?: LibrarySource[];
+    },
+    signal?: AbortSignal
+  ): Promise<SavedSearchPreview> {
+    return this.fetch('/api/channels/preview', {
+      method: 'POST',
+      body: JSON.stringify(params),
+      signal,
     });
   }
 }
