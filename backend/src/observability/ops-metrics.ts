@@ -500,10 +500,10 @@ export async function recordCronRun(
 }
 
 /**
- * One row per hour: the counts the admin shows as tiles, plus the three health
- * numbers that only exist in `system_status` (firehose lag, proxy cache
- * freshness, feeds the crawler has in error). Same job prunes the tail, so the
- * table can't grow without an owner.
+ * One row per hour: the counts the admin shows as tiles, plus the health
+ * numbers that only exist in `system_status` (firehose lag, crawl cycle, feeds
+ * the crawler has in error, and the retired proxy cache-fresh % kept for its
+ * history). Same job prunes the tail, so the table can't grow without an owner.
  */
 export async function writeMetricsSnapshot(env: Env, now = Date.now()): Promise<void> {
   // Bucket to the top of the hour so a cron that fires twice in one hour replaces
@@ -538,8 +538,8 @@ export async function writeMetricsSnapshot(env: Env, now = Date.now()): Promise<
   await env.DB.prepare(
     `INSERT OR REPLACE INTO metrics_snapshots
        (captured_at, users, feeds, feed_items, subscriptions, saved_articles,
-        feeds_with_errors, active_sessions, firehose_lag_ms, proxy_fresh_pct)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        feeds_with_errors, active_sessions, firehose_lag_ms, proxy_fresh_pct, crawl_cycle_s)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       capturedAt,
@@ -551,7 +551,10 @@ export async function writeMetricsSnapshot(env: Env, now = Date.now()): Promise<
       feedsWithErrors,
       at(5),
       usable(poller)?.lagMs ?? null,
-      usable(proxy)?.freshPct ?? null
+      usable(proxy)?.freshPct ?? null,
+      // 0 means no healthy feeds to measure (an idle or wholly broken crawl), not
+      // an instant cycle; leave it out of the trend rather than draw a plunge.
+      usable(proxy)?.crawlCycleSeconds || null
     )
     .run();
 

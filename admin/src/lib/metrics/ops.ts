@@ -314,7 +314,9 @@ const seriesDefinitions: { key: keyof SnapshotRow; label: string; unit?: string 
   { key: 'saved_articles', label: 'Saved Articles' },
   { key: 'feed_items', label: 'Feed Items' },
   { key: 'firehose_lag_ms', label: 'Firehose Lag', unit: 'ms' },
-  { key: 'proxy_fresh_pct', label: 'Proxy Cache Fresh', unit: '%' },
+  // The Crawl Cycle tile's number, hour by hour. Replaced proxy_fresh_pct, which
+  // the ~8-minute cycle can't lift past ~55% by design.
+  { key: 'crawl_cycle_s', label: 'Crawl Cycle', unit: 's' },
 ];
 
 const HOUR_MS = 60 * 60 * 1000;

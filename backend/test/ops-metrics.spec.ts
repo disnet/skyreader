@@ -447,17 +447,23 @@ describe('writeMetricsSnapshot', () => {
     await writeSystemStatus(
       env as Env,
       'proxy_stats',
-      { freshPct: 88.5, feedsInError: 7 } as ProxyStatsValue,
+      { freshPct: 88.5, feedsInError: 7, crawlCycleSeconds: 480 } as ProxyStatsValue,
       now - 60_000
     );
 
     await writeMetricsSnapshot(env as Env, now);
 
     const row = await env.DB.prepare(
-      'SELECT firehose_lag_ms, proxy_fresh_pct, feeds_with_errors FROM metrics_snapshots'
-    ).first<{ firehose_lag_ms: number; proxy_fresh_pct: number; feeds_with_errors: number }>();
+      'SELECT firehose_lag_ms, proxy_fresh_pct, feeds_with_errors, crawl_cycle_s FROM metrics_snapshots'
+    ).first<{
+      firehose_lag_ms: number;
+      proxy_fresh_pct: number;
+      feeds_with_errors: number;
+      crawl_cycle_s: number;
+    }>();
     expect(row?.firehose_lag_ms).toBe(42_000);
     expect(row?.proxy_fresh_pct).toBe(88.5);
+    expect(row?.crawl_cycle_s).toBe(480);
     // Per-feed errors come from the crawler now — `feeds` has no error column.
     expect(row?.feeds_with_errors).toBe(7);
   });
@@ -474,11 +480,33 @@ describe('writeMetricsSnapshot', () => {
     await writeMetricsSnapshot(env as Env, now);
 
     const row = await env.DB.prepare(
-      'SELECT firehose_lag_ms, feeds_with_errors FROM metrics_snapshots'
-    ).first<{ firehose_lag_ms: number | null; feeds_with_errors: number | null }>();
+      'SELECT firehose_lag_ms, feeds_with_errors, crawl_cycle_s FROM metrics_snapshots'
+    ).first<{
+      firehose_lag_ms: number | null;
+      feeds_with_errors: number | null;
+      crawl_cycle_s: number | null;
+    }>();
     expect(row?.firehose_lag_ms).toBeNull();
     // No proxy row at all: unknown, not "zero feeds are erroring".
     expect(row?.feeds_with_errors).toBeNull();
+    expect(row?.crawl_cycle_s).toBeNull();
+  });
+
+  it('records no crawl cycle when there were no healthy feeds to measure', async () => {
+    const now = 250 * HOUR_MS;
+    await writeSystemStatus(
+      env as Env,
+      'proxy_stats',
+      { freshPct: 50, feedsInError: 3, crawlCycleSeconds: 0 } as ProxyStatsValue,
+      now - 60_000
+    );
+
+    await writeMetricsSnapshot(env as Env, now);
+
+    const row = await env.DB.prepare('SELECT crawl_cycle_s FROM metrics_snapshots').first<{
+      crawl_cycle_s: number | null;
+    }>();
+    expect(row?.crawl_cycle_s).toBeNull();
   });
 
   it('counts the feeds the crawler ingests into, not the dropped feed_metadata', async () => {

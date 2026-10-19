@@ -614,9 +614,8 @@ path, so it works in local dev and staging the moment the cron has run once.
 in-set feed, i.e. how long one pass over the crawl set takes. It replaced the
 cache-fresh percentage on the tile because the warm loop is deliberately sized to an
 ~8-minute cycle (fly.toml, `WARM_BATCH_CAP`), so "% inside the 5-minute TTL" sat near
-55% at steady state, and it counted broken and abandoned rows as stale too. The
-hourly `proxy_fresh_pct` trend and the §7 crawl-freshness SLO still use the old
-percentage. **Proxy Feeds in Error** shows every erroring feed, but grades only the
+55% at steady state, and it counted broken and abandoned rows as stale too. The hourly trend and
+the §7 crawl-freshness SLO follow the cycle too (`metrics_snapshots.crawl_cycle_s`). **Proxy Feeds in Error** shows every erroring feed, but grades only the
 ones still on the short backoff: a "parked" feed (gone, blocked by the site or its
 robots.txt, or failing for a day, so retried at most daily) is that feed's own
 problem, surfaced to its readers, and a few hundred of them is the resting state.
@@ -729,7 +728,7 @@ shape of most PWA weirdness, and a reload fixes it.
 ## 4d. Ingest health
 
 Feed reads are served from D1, so what a reader sees is only as fresh as the
-crawler's **push**, not the crawler's cache. Proxy cache freshness (§4b) is the
+crawler's **push**, not the crawler's cache. The crawl cycle (§4b) is the
 first hop of two; this section is the second. **None of it is wired to an alert
 yet** — the signals are on the admin and on the proxy, and this is the list to
 walk when the reader looks stale but every tile above is green.
@@ -1229,7 +1228,7 @@ admire, and not promises to anyone outside the project. Their only job is to mak
 | ------------------ | ------------------------------------ | ----------------------------------- | ------- |
 | API availability   | 99.5%                                | Uptime check on `/api/health`       | 30 days |
 | Firehose freshness | lag < 5 min, p95 of hourly snapshots | `metrics_snapshots.firehose_lag_ms` | 30 days |
-| Crawl freshness    | ≥95% fresh, p05 of hourly snapshots  | `metrics_snapshots.proxy_fresh_pct` | 30 days |
+| Crawl freshness    | cycle ≤ 1h, p95 of hourly snapshots  | `metrics_snapshots.crawl_cycle_s`   | 30 days |
 | Cron liveness      | gap < 5 min                          | Heartbeat check history             | 30 days |
 
 99.5% is ~3.6 hours a month. That is a deliberately loose target for a
@@ -1238,20 +1237,29 @@ month is survivable, a daily one is not." Tighten it only if you're also willing
 to change the architecture it's measuring.
 
 **Crawl freshness is the first of two hops, not the whole of feed freshness.**
-`proxy_fresh_pct` says the crawler's own cache is current; since reads moved to D1,
+`crawl_cycle_s` is how long one pass over the healthy crawl set took, which bounds
+how late the crawler picks up a new item. 1h is the proxy's default accepted cycle
+(`WARM_TARGET_CYCLE_SECONDS`, unset in prod; the Crawl Cycle tile's amber line, so
+move the SLO with it if you set one); the warm loop is
+sized to ~8 minutes, so the SLO has headroom on purpose. It replaced
+`proxy_fresh_pct` (% of the cache inside its 5-minute TTL), which that same
+~8-minute cycle holds near 55% by design; the old column is still written, so its
+history stays comparable, but nothing grades it. The cycle says nothing about the
+second hop: since reads moved to D1,
 what a reader actually sees also depends on the push that carries those items into
 `feed_items` (§4d). The second hop has no SLO here because nothing records it
 hourly — the outbox depth lives on the proxy's `/stats` and is read by hand. Making
 it one means recording `ingest.pending` into `metrics_snapshots` beside the numbers
 above; until then, say "crawl freshness" and mean it, rather than claiming a
-reader-facing number this table can't compute.
+reader-facing number this table can't compute. The cycle measures healthy feeds
+only, so feeds that are failing are graded by the Proxy Feeds in Error tile and
+trend, not here; a crawl where nothing is healthy is still a miss (see the query).
 
 Both freshness rows aggregate the **hourly** trend points, not the live tile: the
-tile is a point-in-time reading and "95% fresh right now" says nothing about a
-month. p95 for lag and p05 for freshness are the same statement pointed in
-opposite directions — the worst 5% of hours are allowed to miss, the other 95%
-must hold. Read them at the monthly pruning pass (§8) with the queries below (run
-from `backend/`), which take the percentile by offset because SQLite has no
+tile is a point-in-time reading and "an 8-minute cycle right now" says nothing about a
+month. Both are p95: the worst 5% of hours are allowed to miss, the other 95% must
+hold. Read them at the monthly pruning pass (§8) with the queries below (run
+from the repo root, per §4d's note), which take the percentile by offset because SQLite has no
 percentile function:
 
 ```bash
@@ -1263,13 +1271,15 @@ npx wrangler d1 execute skyreader --remote --command "
   LIMIT 1 OFFSET (SELECT CAST(COUNT(*) * 95 / 100 AS INT) FROM metrics_snapshots
     WHERE captured_at > (unixepoch() - 30*86400) * 1000 AND firehose_lag_ms IS NOT NULL)"
 
-# Crawl freshness (proxy cache), p05 (the 5th-worst-percent hour). Passes if >= 95.
+# Crawl cycle, p95. Passes if <= 3600 (seconds). Graded over the hours the proxy
+# reported; one with no cycle (no healthy feeds: every feed failing) sorts last
+# and counts as a miss, so a crawler-wide outage can't pass by going quiet.
 npx wrangler d1 execute skyreader --remote --command "
-  SELECT proxy_fresh_pct FROM metrics_snapshots
-  WHERE captured_at > (unixepoch() - 30*86400) * 1000 AND proxy_fresh_pct IS NOT NULL
-  ORDER BY proxy_fresh_pct
-  LIMIT 1 OFFSET (SELECT CAST(COUNT(*) * 5 / 100 AS INT) FROM metrics_snapshots
-    WHERE captured_at > (unixepoch() - 30*86400) * 1000 AND proxy_fresh_pct IS NOT NULL)"
+  SELECT COALESCE(crawl_cycle_s, 1e9) AS cycle FROM metrics_snapshots
+  WHERE captured_at > (unixepoch() - 30*86400) * 1000 AND feeds_with_errors IS NOT NULL
+  ORDER BY cycle
+  LIMIT 1 OFFSET (SELECT CAST(COUNT(*) * 95 / 100 AS INT) FROM metrics_snapshots
+    WHERE captured_at > (unixepoch() - 30*86400) * 1000 AND feeds_with_errors IS NOT NULL)"
 ```
 
 An hour with no snapshot row is absent from both queries rather than counted as a
