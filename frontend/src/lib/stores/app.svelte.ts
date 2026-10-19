@@ -12,7 +12,7 @@ import { syncStore } from './sync.svelte';
 import { savesStore } from './saves.svelte';
 import { magazineStore } from './magazine.svelte';
 import { searchChannelsStore } from './searchChannels.svelte';
-import { canUseSavedSearches, channelQuery } from '$lib/utils/searchChannels';
+import { canUseSavedSearches, channelMatchKey } from '$lib/utils/searchChannels';
 import { fetchAllFeeds, fetchAllDocuments, forceRefreshAllFeeds } from '$lib/services/feedFetcher';
 import { api } from '$lib/services/api';
 import { dedupeRemoteSubscriptionRecords } from '$lib/services/subscriptionDedup';
@@ -222,8 +222,8 @@ function createAppManager() {
     // Without them (a lapsed plan, the switch off) every count is dropped.
     const channels = canUseSavedSearches(auth.user)
       ? filteredViewsStore.views.flatMap((v) => {
-          const query = channelQuery(v);
-          return query ? [{ uuid: v.uuid, query }] : [];
+          const key = channelMatchKey(v);
+          return key ? [{ uuid: v.uuid, key }] : [];
         })
       : [];
     await searchChannelsStore.refresh(channels);

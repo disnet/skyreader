@@ -1,10 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import {
   canUseSavedSearches,
+  channelMatchKey,
   channelQuery,
   classifyChannelItemsError,
   hasSearchableTerm,
   matchToRow,
+  responseMatchesKey,
   searchChannelUnread,
 } from './searchChannels';
 import { ApiError, OfflineError, type ChannelMatch } from '$lib/services/api';
@@ -175,5 +177,56 @@ describe('searchChannelUnread', () => {
     readNow.delete('c');
     expect(searchChannelUnread(5, served, (m) => readNow.has(m.itemKey))).toBe(5);
     expect(searchChannelUnread(0, served, () => true)).toBe(0);
+  });
+});
+
+describe('channelMatchKey', () => {
+  const view = { mode: 'feed' as const, query: ' heat ', sourceMode: 'include' as const };
+
+  it('changes when the sources change, in any order or with repeats', () => {
+    const a = channelMatchKey({ ...view, sourceKeys: ['rss~b', 'rss~a'] });
+    expect(channelMatchKey({ ...view, sourceKeys: ['rss~a', 'rss~b', 'rss~a'] })).toBe(a);
+    expect(channelMatchKey({ ...view, sourceKeys: ['rss~a'] })).not.toBe(a);
+    expect(
+      channelMatchKey({ ...view, sourceMode: 'exclude', sourceKeys: ['rss~a', 'rss~b'] })
+    ).not.toBe(a);
+  });
+
+  it('ignores the keys of an all-sources channel, and has none without a query', () => {
+    expect(channelMatchKey({ ...view, sourceMode: 'all', sourceKeys: ['rss~a'] })).toBe(
+      channelMatchKey({ ...view, sourceMode: undefined, sourceKeys: [] })
+    );
+    expect(channelMatchKey({ ...view, query: '  ' })).toBeNull();
+  });
+});
+
+describe('responseMatchesKey', () => {
+  const key = channelMatchKey({
+    mode: 'feed',
+    query: 'heat',
+    sourceMode: 'include',
+    sourceKeys: ['rss~b', 'rss~a'],
+  })!;
+
+  it('matches the stored version and not one from before a sources edit', () => {
+    expect(
+      responseMatchesKey(
+        { query: 'heat', sourceMode: 'include', sourceKeys: ['rss~a', 'rss~b'] },
+        key
+      )
+    ).toBe(true);
+    expect(
+      responseMatchesKey({ query: 'heat', sourceMode: 'include', sourceKeys: ['rss~a'] }, key)
+    ).toBe(false);
+    expect(
+      responseMatchesKey(
+        { query: 'cold', sourceMode: 'include', sourceKeys: ['rss~a', 'rss~b'] },
+        key
+      )
+    ).toBe(false);
+  });
+
+  it('goes by the query alone for a server that does not say its sources', () => {
+    expect(responseMatchesKey({ query: 'heat' }, key)).toBe(true);
   });
 });

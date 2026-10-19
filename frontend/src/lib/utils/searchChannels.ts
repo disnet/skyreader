@@ -7,7 +7,12 @@
 // channel its items aren't filtered from the local timeline — a match can be an
 // item this device never loaded. See docs/plans/SAVED_SEARCH_CHANNELS.md.
 
-import { ApiError, OfflineError, type ChannelMatch } from '$lib/services/api';
+import {
+  ApiError,
+  OfflineError,
+  type ChannelItemsResponse,
+  type ChannelMatch,
+} from '$lib/services/api';
 import type {
   Article,
   FilteredView,
@@ -28,6 +33,34 @@ export function channelQuery(view: Pick<FilteredView, 'mode' | 'query'> | null |
   if (!view || view.mode === 'saved') return null;
   const query = view.query?.trim();
   return query ? query : null;
+}
+
+/**
+ * What a saved search's matches depend on: its query and its sources, in the
+ * form the server stores them (services/saved-search.ts, extractSavedQuery).
+ * An edit to either changes the key, so the open channel reloads for it.
+ */
+export function channelMatchKey(
+  view: Pick<FilteredView, 'mode' | 'query' | 'sourceMode' | 'sourceKeys'> | null | undefined
+): string | null {
+  const query = channelQuery(view);
+  if (!query || !view) return null;
+  const mode =
+    view.sourceMode === 'include' || view.sourceMode === 'exclude' ? view.sourceMode : 'all';
+  const keys = mode === 'all' ? [] : [...new Set(view.sourceKeys ?? [])].sort();
+  return JSON.stringify([query, mode, keys]);
+}
+
+/** Whether a response is for the version of the channel that `key` names. */
+export function responseMatchesKey(
+  res: Pick<ChannelItemsResponse, 'query' | 'sourceMode' | 'sourceKeys'>,
+  key: string
+): boolean {
+  const [query, mode, keys] = JSON.parse(key) as [string, string, string[]];
+  if (res.query.trim() !== query) return false;
+  // A server from before sources were echoed: the query is all it says.
+  if (res.sourceMode === undefined) return true;
+  return res.sourceMode === mode && JSON.stringify(res.sourceKeys ?? []) === JSON.stringify(keys);
 }
 
 /** Why a saved search's items couldn't be read. */

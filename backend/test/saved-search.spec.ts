@@ -755,6 +755,25 @@ describe('saving a saved search', () => {
 });
 
 describe('GET /api/channels/:uuid/items', () => {
+  it('says which sources its matches are for, so a client can tell an edit landed', async () => {
+    const user = await createUser();
+    const keyA = await subscribe(user, FEED_A);
+    const keyB = await subscribe(user, FEED_B);
+    const uuid = newUuid();
+    await putChannel(user, uuid, {
+      query: 'pfas',
+      sourceMode: 'include',
+      sourceKeys: [keyB, keyA],
+    });
+
+    const body = (await (await call(user, `/api/channels/${uuid}/items`)).json()) as ItemsBody & {
+      sourceMode: string;
+      sourceKeys: string[];
+    };
+    expect(body.sourceMode).toBe('include');
+    expect(body.sourceKeys).toEqual([keyA, keyB].sort());
+  });
+
   it('serves matches newest first, with snippets, read state and an unread count', async () => {
     const user = await createUser();
     await subscribe(user, FEED_A);

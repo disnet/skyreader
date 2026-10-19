@@ -100,7 +100,7 @@ export async function handleChannelItems(
   }
 
   const query = await env.DB.prepare(
-    `SELECT q.query, q.backfill_state, q.created_at,
+    `SELECT q.query, q.source_mode, q.source_keys, q.backfill_state, q.created_at,
             (SELECT count(*) FROM saved_queries o
               WHERE o.user_did = q.user_did
                 AND (o.created_at < q.created_at
@@ -108,7 +108,13 @@ export async function handleChannelItems(
        FROM saved_queries q WHERE q.user_did = ? AND q.channel_uuid = ?`
   )
     .bind(session.did, uuid)
-    .first<{ query: string; backfill_state: string; rank: number }>();
+    .first<{
+      query: string;
+      source_mode: string;
+      source_keys: string;
+      backfill_state: string;
+      rank: number;
+    }>();
   if (!query) return json({ error: 'Not a saved search', code: 'not_saved_search' }, 404);
 
   const url = new URL(request.url);
@@ -238,6 +244,9 @@ export async function handleChannelItems(
 
   return json({
     query: query.query,
+    // What the matches are for, so a client can tell an edit hasn't landed yet.
+    sourceMode: query.source_mode,
+    sourceKeys: parseJson<string[]>(query.source_keys) ?? [],
     // Past the plan's count this query keeps its matches but gets no new ones.
     status: query.rank < access.maxSavedSearches ? 'active' : 'over_limit',
     backfilling: query.backfill_state === 'pending',
