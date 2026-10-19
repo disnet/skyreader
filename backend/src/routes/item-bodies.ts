@@ -63,7 +63,7 @@ export interface BodyWrite {
 }
 
 /** Run `fn` over `items` with at most `limit` in flight. */
-async function mapLimited<T, R>(
+export async function mapLimited<T, R>(
   items: T[],
   limit: number,
   fn: (item: T) => Promise<R>

@@ -15,7 +15,7 @@ import { ALL_TIERS, getLimitsForTier } from '../config/tier-limits';
 import { parseSearchQuery } from './search-query';
 import { isNewsletterSubscription } from './newsletters';
 import { BSKY_BOOKMARKS_SOURCE_TYPE, BSKY_LIKES_SOURCE_TYPE } from './bsky-sources';
-import { itemBodyKey } from '../routes/item-bodies';
+import { itemBodyKey, mapLimited } from '../routes/item-bodies';
 import { htmlToText, stripControlChars, truncateText } from '../utils/html-text';
 import { normalizeArticleUrl } from '../utils/url-normalize';
 import { log, serializeError } from '../utils/logger';
@@ -32,7 +32,7 @@ export const MATCH_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 
 const IN_CHUNK = 80;
 /** Stored bodies read from R2 at once. */
-const R2_READ_CONCURRENCY = 10;
+const R2_READ_CONCURRENCY = 6;
 
 function chunk<T>(items: T[], size: number): T[][] {
   const out: T[][] = [];
@@ -900,6 +900,8 @@ export async function readBackfillPage(
   feedAfter: string;
   docAfter: string;
   done: boolean;
+  /** Feed items in this page whose body is kept in R2. */
+  storedBodies: number;
 }> {
   const feedUrls = [...query.feedUrls].sort().filter((u) => u > query.backfillFeedAfter);
   const authors = [...new Set(query.docScopes.map((s) => s.did))]
@@ -912,7 +914,9 @@ export async function readBackfillPage(
   const statements = [
     ...feedStep.map((feedUrl) =>
       env.DB.prepare(
-        `SELECT seq, feed_url, published_at FROM feed_items
+        `SELECT seq, feed_url, published_at,
+                json_extract(item_json, '$.bodyStored') AS body_stored
+           FROM feed_items
           WHERE feed_url = ? AND published_at >= ?
           ORDER BY published_at DESC, seq DESC LIMIT ?`
       ).bind(feedUrl, since, itemsPerSource)
@@ -926,7 +930,9 @@ export async function readBackfillPage(
     ),
   ];
   const results = statements.length > 0 ? await env.DB.batch(statements) : [];
-  const feeds = results.slice(0, feedStep.length).flatMap((r) => (r.results ?? []) as FeedHead[]);
+  const feeds = results
+    .slice(0, feedStep.length)
+    .flatMap((r) => (r.results ?? []) as (FeedHead & { body_stored: unknown })[]);
   const docs = results.slice(feedStep.length).flatMap((r) => (r.results ?? []) as DocHead[]);
   return {
     feeds,
@@ -934,6 +940,7 @@ export async function readBackfillPage(
     feedAfter: feedStep.at(-1) ?? query.backfillFeedAfter,
     docAfter: authorStep.at(-1) ?? query.backfillDocAfter,
     done: feedUrls.length <= feedStep.length && authors.length <= authorStep.length,
+    storedBodies: env.ITEM_BODIES ? feeds.filter((f) => f.body_stored).length : 0,
   };
 }
 
@@ -1000,18 +1007,16 @@ export async function loadMatchDocs(
       budgetSkipped++;
     }
   }
-  const stored = new Map<number, string>();
-  for (const batch of chunk(toRead, R2_READ_CONCURRENCY)) {
-    const bodies = await Promise.all(
-      batch.map(({ row }) => readStoredBody(env, row.feed_url, row.guid))
-    );
-    batch.forEach(({ row }, i) => stored.set(row.seq, bodies[i] ?? ''));
-  }
+  // Kept as matching text, not raw HTML, so a step's bodies aren't all in memory at once.
+  const texts = await mapLimited(toRead, R2_READ_CONCURRENCY, async ({ row }) =>
+    htmlToText((await readStoredBody(env, row.feed_url, row.guid)) ?? '', MATCH_BODY_CHARS)
+  );
+  const stored = new Map(toRead.map(({ row }, i) => [row.seq, texts[i]]));
   for (const { row, item } of parsed) {
-    let html = stored.get(row.seq) ?? '';
-    html ||= item.content || item.contentLead || '';
     const body =
-      htmlToText(html, MATCH_BODY_CHARS) || htmlToText(item.summary ?? '', MATCH_BODY_CHARS);
+      stored.get(row.seq) ||
+      htmlToText(item.content || item.contentLead || '', MATCH_BODY_CHARS) ||
+      htmlToText(item.summary ?? '', MATCH_BODY_CHARS);
     docs.push({
       kind: 'feed',
       itemKey: row.guid,

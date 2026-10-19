@@ -522,6 +522,37 @@ describe('Percolator', () => {
     expect(await matchedKeys(user, uuid)).toEqual(expected.sort());
   });
 
+  it('leaves a look back step for the next pass rather than skip stored bodies', async () => {
+    const user = await createUser();
+    const suffix = Math.random().toString(36).slice(2, 8);
+    const expected: string[] = [];
+    // 60 stored bodies, more than one pass reads: the word is only in them.
+    for (let i = 0; i < 20; i++) {
+      const feed = `https://stored${i}x${suffix}.example/feed.xml`;
+      await subscribe(user, feed);
+      for (let j = 0; j < 3; j++) {
+        const guid = await ingest(
+          feed,
+          { title: `Story ${i}.${j}`, content: '<p>An opening.</p>', bodyStored: true },
+          Date.now() - DAY
+        );
+        await env.ITEM_BODIES.put(
+          await itemBodyKey(feed, guid),
+          '<p>An opening.</p><p>Later, microplastics.</p>'
+        );
+        expected.push(guid);
+      }
+    }
+    await settle();
+
+    const uuid = newUuid();
+    await putChannel(user, uuid, { query: 'microplastics' });
+    await drain();
+
+    expect((await savedQuery(user, uuid))?.backfill_state).toBe('done');
+    expect(await matchedKeys(user, uuid)).toEqual(expected.sort());
+  });
+
   it('matches standard.site documents by their text', async () => {
     const user = await createUser();
     const author = `did:plc:author${Math.random().toString(36).slice(2, 8)}`;
