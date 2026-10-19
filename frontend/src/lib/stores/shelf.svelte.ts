@@ -41,6 +41,7 @@ function sortCollections(list: ShelfCollection[]): ShelfCollection[] {
 
 function createShelfStore() {
   let collections = $state<ShelfCollection[]>([]);
+  let orderSend: Promise<unknown> = Promise.resolve();
   let loadedFor = $state<string | null>(null);
   let loading = $state(false);
   // The save the collection picker (ShelfCollectionPicker, mounted in AppShell)
@@ -241,6 +242,21 @@ function createShelfStore() {
     );
   }
 
+  /** Put the collections in a new order (their ids, top first). */
+  async function reorderCollections(order: string[]) {
+    const index = new Map(order.map((id, i) => [id, i]));
+    return mutate(
+      () => {
+        collections = sortCollections(
+          collections.map((c) => ({ ...c, position: index.get(c.id) ?? order.length + c.position }))
+        );
+      },
+      // One at a time, so two quick moves can't land out of order.
+      () => (orderSend = orderSend.catch(() => {}).then(() => api.reorderShelfCollections(order))),
+      "Couldn't reorder your collections"
+    );
+  }
+
   // --- Shelf membership ---
 
   function collectionIdsFor(save: Pick<SavedItem, 'rkey'>): string[] {
@@ -322,6 +338,7 @@ function createShelfStore() {
     addItem,
     removeItem,
     moveItem,
+    reorderCollections,
     collectionIdsFor,
     isKept,
     isOnShelf,

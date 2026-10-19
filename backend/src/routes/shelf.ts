@@ -270,6 +270,42 @@ async function removeItem(env: Env, did: string, id: string, rkey: string): Prom
   return json({ success: true });
 }
 
+// PUT /api/shelf/collections {ids} — set the collections' order. As with a
+// collection's members: positions are 0..n-1 in the order given, collections
+// not named keep their order after the named ones, and unknown ids are ignored.
+async function reorderCollections(request: Request, env: Env, did: string): Promise<Response> {
+  const body = await readJson(request);
+  if (!body) return badRequest('Invalid JSON body');
+  const ids = body.ids;
+  if (
+    !Array.isArray(ids) ||
+    ids.length > MAX_COLLECTIONS ||
+    ids.some((id) => typeof id !== 'string' || !isValidRkey(id))
+  ) {
+    return badRequest('ids must be an array of valid collection ids');
+  }
+  const current = await env.DB.prepare(
+    `SELECT id FROM shelf_collections WHERE user_did = ? ORDER BY position ASC, created_at ASC`
+  )
+    .bind(did)
+    .all<{ id: string }>();
+  const existing = (current.results ?? []).map((r) => r.id);
+  const existingSet = new Set(existing);
+  const named = [...new Set(ids as string[])].filter((id) => existingSet.has(id));
+  const namedSet = new Set(named);
+  const finalOrder = [...named, ...existing.filter((id) => !namedSet.has(id))];
+  // One UPDATE, positions looked up by path, as in reorderItems.
+  const positions = JSON.stringify(Object.fromEntries(finalOrder.map((id, i) => [id, i])));
+  await env.DB.prepare(
+    `UPDATE shelf_collections
+        SET position = json_extract(?2, '$."' || id || '"')
+      WHERE user_did = ?1 AND json_extract(?2, '$."' || id || '"') IS NOT NULL`
+  )
+    .bind(did, positions)
+    .run();
+  return json({ success: true });
+}
+
 // PUT /api/shelf/collections/:id/items {rkeys} — set the order. Positions are
 // rewritten 0..n-1 in the order given; members not named keep theirs (after the
 // named ones), and names that aren't members are ignored, so a reorder racing
@@ -370,6 +406,7 @@ export async function handleShelfCollections(
     if (parts.length === 0) {
       if (method === 'GET') return await listCollections(env, did);
       if (method === 'POST') return await createCollection(request, env, did);
+      if (method === 'PUT') return await reorderCollections(request, env, did);
       return json({ error: 'Method not allowed' }, 405);
     }
 

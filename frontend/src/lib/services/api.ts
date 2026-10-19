@@ -1655,6 +1655,14 @@ class ApiClient {
     );
   }
 
+  /** Set the order of the collections themselves (their ids, top first). */
+  async reorderShelfCollections(ids: string[]): Promise<{ success: boolean }> {
+    return this.fetch('/api/shelf/collections', {
+      method: 'PUT',
+      body: JSON.stringify({ ids }),
+    });
+  }
+
   async reorderShelfCollection(id: string, rkeys: string[]): Promise<{ success: boolean }> {
     return this.fetch(`/api/shelf/collections/${encodeURIComponent(id)}/items`, {
       method: 'PUT',

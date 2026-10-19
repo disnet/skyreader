@@ -10,8 +10,11 @@
     isActive: boolean;
     isRenaming: boolean;
     unreadCount?: number;
-    /** Being dragged to a new place in the list. */
+    /** Being dragged to a new place in the list (hooks/useListDrag). */
     isLifted?: boolean;
+    /** Where a drag has moved the row, and whether it eases there. */
+    dragOffset?: number;
+    dragEases?: boolean;
     onSelect: () => void;
     onContextMenu: (e: MouseEvent) => void;
     onTouchStart: (e: TouchEvent) => void;
@@ -19,6 +22,8 @@
     onTouchMove: () => void;
     onMoreClick: (e: MouseEvent) => void;
     onPointerDown?: (e: PointerEvent) => void;
+    /** Alt+↑ / Alt+↓: move the row a step. */
+    onMoveKey?: (delta: -1 | 1) => void;
     onRename: (name: string) => void;
     onRenameCancel: () => void;
   }
@@ -29,6 +34,8 @@
     isRenaming,
     unreadCount = 0,
     isLifted = false,
+    dragOffset = 0,
+    dragEases = false,
     onSelect,
     onContextMenu,
     onTouchStart,
@@ -36,6 +43,7 @@
     onTouchMove,
     onMoreClick,
     onPointerDown,
+    onMoveKey,
     onRename,
     onRenameCancel,
   }: Props = $props();
@@ -67,9 +75,18 @@
   class="nav-item view-item"
   class:active={isActive}
   class:lifted={isLifted}
+  class:eases={dragEases}
+  style:transform={dragOffset ? `translateY(${dragOffset}px)` : undefined}
   data-channel-uuid={view.uuid}
   onclick={isRenaming ? undefined : onSelect}
   onpointerdown={isRenaming ? undefined : onPointerDown}
+  onkeydown={(e) => {
+    if (isRenaming || !e.altKey || !onMoveKey) return;
+    const delta = e.key === 'ArrowUp' ? -1 : e.key === 'ArrowDown' ? 1 : 0;
+    if (!delta) return;
+    e.preventDefault();
+    onMoveKey(delta);
+  }}
   oncontextmenu={onContextMenu}
   ontouchstart={onTouchStart}
   ontouchend={onTouchEnd}
@@ -152,15 +169,6 @@
   .nav-item.active {
     background-color: var(--color-sidebar-active, rgba(0, 102, 204, 0.1));
     color: var(--color-primary);
-  }
-
-  /* The one overlapping element while it's in flight, so it's the one that gets a
-     shadow (Flat-By-Default). */
-  .nav-item.lifted {
-    position: relative;
-    z-index: 1;
-    background-color: var(--color-bg-secondary);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
   }
 
   .view-icon {

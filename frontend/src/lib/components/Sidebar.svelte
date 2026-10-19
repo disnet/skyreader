@@ -23,7 +23,8 @@
   import { highlightReviewStore } from '$lib/stores/highlightReview.svelte';
   import { syncAutoRuleChannels } from '$lib/stores/channelAutoUpdate.svelte';
   import { moveChannel } from '$lib/utils/channelSync';
-  import { onMount, onDestroy } from 'svelte';
+  import { useListDrag } from '$lib/hooks/useListDrag.svelte';
+  import { onMount, onDestroy, tick } from 'svelte';
   import EditFeedModal from './EditFeedModal.svelte';
   import type { Subscription } from '$lib/types';
   import FilteredViewModal from './FilteredViewModal.svelte';
@@ -70,6 +71,7 @@
     if (viewContextMenu) {
       closeViewContextMenu();
     }
+    collectionMenu = null;
     if (feedContextMenu) {
       closeFeedContextMenu();
     }
@@ -79,6 +81,9 @@
     if (e.key === 'Escape') {
       if (viewContextMenu) closeViewContextMenu();
       if (feedContextMenu) closeFeedContextMenu();
+      collectionMenu = null;
+      channelDrag.cancel();
+      collectionDrag.cancel();
     }
   }
 
@@ -91,6 +96,7 @@
     document.removeEventListener('click', handleClickOutside);
     document.removeEventListener('keydown', handleKeydown);
     if (viewLongPressTimer) clearTimeout(viewLongPressTimer);
+    if (collectionLongPress) clearTimeout(collectionLongPress);
     document.body.classList.remove('sidebar-open-mobile');
   });
 
@@ -277,68 +283,68 @@
 
   // Every channel, whatever it reads from, lives in the one Channels section.
   let channels = $derived(filteredViewsStore.views);
-  // Reordering channels. With a mouse or pen, drag a row: it lifts after a few
-  // pixels of travel (so a click still opens it), the others make way as it
-  // moves, and the order commits on release. On touch, where a drag would fight
-  // the drawer's scroll, the long-press menu offers Move up / Move down, as does
-  // the ⋯ menu for the keyboard. Move/up are heard on the window, as in
-  // HomeCustomizeDialog: the keyed list moves the row's node mid-gesture.
+  // Reordering channels and collections. With a mouse or pen, drag a row
+  // (hooks/useListDrag: it lifts and follows the pointer, the rest make way). On
+  // touch, where a drag would fight the drawer's scroll, a long-press menu
+  // offers Move up / Move down; so do a channel's ⋯ and right-click menus (a
+  // collection's right-click stays the browser's, as it's a link). From the
+  // keyboard, Alt+↑ / Alt+↓ on a focused row.
   let channelListEl = $state<HTMLDivElement | null>(null);
-  let channelDrag = $state<{
-    uuid: string;
-    order: string[];
-    startY: number;
-    lifted: boolean;
-  } | null>(null);
+  let collectionListEl = $state<HTMLDivElement | null>(null);
 
-  let shownChannels = $derived.by(() => {
-    if (!channelDrag?.lifted) return channels;
-    const byUuid = new Map(channels.map((v) => [v.uuid, v]));
-    return channelDrag.order
-      .map((uuid) => byUuid.get(uuid))
-      .filter((v): v is (typeof channels)[number] => Boolean(v));
+  const channelDrag = useListDrag({
+    ids: () => channels.map((v) => v.uuid),
+    rows: () => [...(channelListEl?.querySelectorAll<HTMLElement>('[data-channel-uuid]') ?? [])],
+    onDrop: (order) => void filteredViewsStore.reorder(order),
   });
+  const collectionDrag = useListDrag({
+    ids: () => shelfStore.collections.map((c) => c.id),
+    rows: () => [
+      ...(collectionListEl?.querySelectorAll<HTMLElement>('[data-collection-id]') ?? []),
+    ],
+    onDrop: (order) => void shelfStore.reorderCollections(order),
+  });
+  let dragging = $derived(channelDrag.active || collectionDrag.active);
 
-  function startChannelDrag(e: PointerEvent, uuid: string) {
-    if (e.pointerType === 'touch' || e.button !== 0 || channels.length < 2) return;
-    channelDrag = { uuid, order: channels.map((v) => v.uuid), startY: e.clientY, lifted: false };
+  let collectionMenu = $state<{ x: number; y: number; id: string } | null>(null);
+  let collectionLongPress: ReturnType<typeof setTimeout> | null = null;
+  let collectionLongPressed = false;
+
+  function handleCollectionTouchStart(e: TouchEvent, id: string) {
+    collectionLongPressed = false;
+    // The menu only moves a collection, so there's nothing to offer for one.
+    if (shelfStore.collections.length < 2) return;
+    const touch = e.touches[0];
+    collectionLongPress = setTimeout(() => {
+      collectionLongPressed = true;
+      collectionMenu = { x: touch.clientX, y: touch.clientY, id };
+    }, 500);
   }
 
-  function moveChannelDrag(e: PointerEvent) {
-    const drag = channelDrag;
-    if (!drag || !channelListEl) return;
-    if (!drag.lifted) {
-      if (Math.abs(e.clientY - drag.startY) < 5) return;
-      drag.lifted = true;
-    }
-    e.preventDefault();
-    // The slot is how many of the other rows' midpoints the pointer is below.
-    let slot = 0;
-    for (const row of channelListEl.querySelectorAll<HTMLElement>('[data-channel-uuid]')) {
-      if (row.dataset.channelUuid === drag.uuid) continue;
-      const rect = row.getBoundingClientRect();
-      if (e.clientY > rect.top + rect.height / 2) slot++;
-    }
-    const next = drag.order.filter((uuid) => uuid !== drag.uuid);
-    next.splice(slot, 0, drag.uuid);
-    if (next.some((uuid, i) => uuid !== drag.order[i])) drag.order = next;
+  function handleCollectionTouchEnd(e: TouchEvent) {
+    if (collectionLongPress) clearTimeout(collectionLongPress);
+    collectionLongPress = null;
+    // The long-press opened the menu; don't let the lift follow the link too.
+    if (collectionLongPressed) e.preventDefault();
   }
 
-  function swallowClick(e: MouseEvent) {
-    e.preventDefault();
-    e.stopPropagation();
+  function handleCollectionTouchMove() {
+    if (collectionLongPress) clearTimeout(collectionLongPress);
+    collectionLongPress = null;
   }
 
-  function endChannelDrag() {
-    const drag = channelDrag;
-    channelDrag = null;
-    if (!drag?.lifted) return;
-    // The release lands as a click on the row, which would open the channel.
-    window.addEventListener('click', swallowClick, { capture: true, once: true });
-    setTimeout(() => window.removeEventListener('click', swallowClick, { capture: true }));
-    if (drag.order.some((uuid, i) => uuid !== channels[i]?.uuid)) {
-      void filteredViewsStore.reorder(drag.order);
-    }
+  function moveCollectionStep(id: string, delta: -1 | 1) {
+    const order = shelfStore.collections.map((c) => c.id);
+    const next = moveChannel(order, id, delta);
+    if (next === order) return;
+    void shelfStore.reorderCollections(next);
+    refocus(`[data-collection-id="${CSS.escape(id)}"]`);
+  }
+
+  // Moving a row's node blurs it; hand focus back so Alt+arrows keep going.
+  function refocus(selector: string) {
+    const had = document.activeElement?.matches(selector);
+    if (had) void tick().then(() => document.querySelector<HTMLElement>(selector)?.focus());
   }
 
   function moveChannelStep(viewId: number, delta: -1 | 1) {
@@ -346,7 +352,9 @@
     if (!uuid) return;
     const order = channels.map((v) => v.uuid);
     const next = moveChannel(order, uuid, delta);
-    if (next !== order) void filteredViewsStore.reorder(next);
+    if (next === order) return;
+    void filteredViewsStore.reorder(next);
+    refocus(`[data-channel-uuid="${CSS.escape(uuid)}"]`);
   }
 
   // The Library row discloses only the Shelf's collections now.
@@ -474,14 +482,30 @@
       </div>
       {#if hasCollections && sidebarStore.expandedSections.saved}
         <div class="nav-children">
-          {#each shelfStore.collections as c (c.id)}
-            <CollectionItem
-              name={c.name}
-              href={collectionPath(c.id)}
-              isActive={activeCollectionId === c.id}
-              onSelect={() => sidebarStore.closeMobile()}
-            />
-          {/each}
+          <div
+            class="drag-list"
+            class:dragging={collectionDrag.lifted}
+            bind:this={collectionListEl}
+          >
+            {#each shelfStore.collections as c, i (c.id)}
+              <CollectionItem
+                id={c.id}
+                name={c.name}
+                href={collectionPath(c.id)}
+                isActive={activeCollectionId === c.id}
+                isLifted={collectionDrag.isLifted(i)}
+                dragOffset={collectionDrag.offset(i)}
+                dragEases={collectionDrag.eases(i)}
+                onSelect={() => sidebarStore.closeMobile()}
+                onPointerDown={(e) => collectionDrag.start(e, c.id)}
+                onMoveKey={(delta) => moveCollectionStep(c.id, delta)}
+                onTouchStart={(e) => handleCollectionTouchStart(e, c.id)}
+                onTouchEnd={handleCollectionTouchEnd}
+                onTouchMove={handleCollectionTouchMove}
+                onTouchCancel={handleCollectionTouchMove}
+              />
+            {/each}
+          </div>
         </div>
       {/if}
     </div>
@@ -511,12 +535,15 @@
       </div>
       {#if sidebarStore.expandedSections.allChannels}
         <div class="nav-children">
-          <div class="channel-list" class:dragging={channelDrag?.lifted} bind:this={channelListEl}>
-            {#each shownChannels as view (view.uuid)}
+          <div class="drag-list" class:dragging={channelDrag.lifted} bind:this={channelListEl}>
+            {#each channels as view, i (view.uuid)}
               <ViewItem
                 {view}
-                isLifted={channelDrag?.lifted === true && channelDrag.uuid === view.uuid}
-                onPointerDown={(e) => startChannelDrag(e, view.uuid)}
+                isLifted={channelDrag.isLifted(i)}
+                dragOffset={channelDrag.offset(i)}
+                dragEases={channelDrag.eases(i)}
+                onPointerDown={(e) => channelDrag.start(e, view.uuid)}
+                onMoveKey={(delta) => view.id != null && moveChannelStep(view.id, delta)}
                 isActive={currentFilter().type === 'view' && currentFilter().id === view.uuid}
                 isRenaming={renamingViewId === view.id}
                 unreadCount={view.id != null ? (unreadCounts.channelCounts.get(view.id) ?? 0) : 0}
@@ -802,11 +829,41 @@
   ondeleted={() => selectFilter('all')}
 />
 
+<!-- Both lists hear every move/up while either drags; an idle one ignores them. -->
 <svelte:window
-  onpointermove={channelDrag ? moveChannelDrag : undefined}
-  onpointerup={channelDrag ? endChannelDrag : undefined}
-  onpointercancel={channelDrag ? () => (channelDrag = null) : undefined}
+  onpointermove={dragging
+    ? (e) => {
+        channelDrag.move(e);
+        collectionDrag.move(e);
+      }
+    : undefined}
+  onpointerup={dragging
+    ? () => {
+        channelDrag.end();
+        collectionDrag.end();
+      }
+    : undefined}
+  onpointercancel={dragging
+    ? () => {
+        channelDrag.cancel();
+        collectionDrag.cancel();
+      }
+    : undefined}
 />
+
+{#if collectionMenu}
+  {@const id = collectionMenu.id}
+  {@const index = shelfStore.collections.findIndex((c) => c.id === id)}
+  <ContextMenu
+    x={collectionMenu.x}
+    y={collectionMenu.y}
+    onMoveUp={index > 0 ? () => moveCollectionStep(id, -1) : undefined}
+    onMoveDown={index !== -1 && index < shelfStore.collections.length - 1
+      ? () => moveCollectionStep(id, 1)
+      : undefined}
+    onClose={() => (collectionMenu = null)}
+  />
+{/if}
 
 {#if viewContextMenu}
   {@const viewId = viewContextMenu.viewId}
@@ -1140,13 +1197,13 @@
     font-style: italic;
   }
 
-  /* A wrapper for hit-testing the drag, not a box of its own: the rows lay out
+  /* A wrapper for finding a drag's rows, not a box of its own: the rows lay out
      as the section's other children do. */
-  .channel-list {
+  .drag-list {
     display: contents;
   }
 
-  .channel-list.dragging {
+  .drag-list.dragging {
     cursor: grabbing;
   }
 

@@ -10,7 +10,7 @@
     /** Reorder a channel a step; left out where it can't move that way. */
     onMoveUp?: () => void;
     onMoveDown?: () => void;
-    onDelete: () => void;
+    onDelete?: () => void;
     onClose: () => void;
     deleteLabel?: string;
   }
@@ -81,7 +81,7 @@
   }
 
   function handleDelete() {
-    onDelete();
+    onDelete?.();
     onClose();
   }
 </script>
@@ -116,10 +116,12 @@
       Move down
     </button>
   {/if}
-  <button class="context-menu-item danger" onclick={handleDelete} role="menuitem">
-    <span class="context-menu-icon"><Icon name="trash" size={16} /></span>
-    {deleteLabel}
-  </button>
+  {#if onDelete}
+    <button class="context-menu-item danger" onclick={handleDelete} role="menuitem">
+      <span class="context-menu-icon"><Icon name="trash" size={16} /></span>
+      {deleteLabel}
+    </button>
+  {/if}
 </div>
 
 <style>

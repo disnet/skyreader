@@ -1351,3 +1351,37 @@ iframe.video-pinned {
 .image-lightbox:not(.image-lightbox-off) img:not(a img) {
   cursor: zoom-in;
 }
+
+/* A sidebar row being dragged to a new place (hooks/useListDrag; ViewItem and
+   CollectionItem). The lifted row follows the pointer, so it doesn't ease, and
+   it's the one overlapping element in flight, so it's the one with a shadow
+   (Flat-By-Default). The rows it passes ease aside. Scoped under the sidebar
+   so these outrank the rows' own hover, active and transition rules. */
+.sidebar .sidebar-nav .nav-item.lifted,
+.sidebar .sidebar-nav .nav-item.lifted:hover {
+  position: relative;
+  z-index: 1;
+  background-color: var(--color-bg);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  cursor: grabbing;
+}
+
+.sidebar .sidebar-nav .nav-item.eases {
+  transition:
+    transform 180ms cubic-bezier(0.2, 0, 0, 1),
+    background-color 0.15s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar .sidebar-nav .nav-item.eases {
+    transition: none;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  .sidebar .sidebar-nav .nav-item.lifted,
+  .sidebar .sidebar-nav .nav-item.lifted:hover {
+    background-color: var(--color-bg-secondary);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  }
+}

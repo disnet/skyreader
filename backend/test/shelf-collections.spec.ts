@@ -166,6 +166,23 @@ describe('/api/shelf/collections', () => {
     expect((await list())[0].items.map((i) => i.rkey)).toEqual([R3, R1, R2]);
   });
 
+  it('reorders the collections themselves, keeping unnamed ones after the named', async () => {
+    const c3 = '3kcollectionc3';
+    for (const [id, name] of [
+      [C1, 'One'],
+      [C2, 'Two'],
+      [c3, 'Three'],
+    ]) {
+      await call('POST', '/api/shelf/collections', { id, name });
+    }
+    expect(
+      (await call('PUT', '/api/shelf/collections', { ids: [c3, '3kunknownrkey9', C1] })).status
+    ).toBe(200);
+    expect((await list()).map((c) => c.name)).toEqual(['Three', 'One', 'Two']);
+
+    expect((await call('PUT', '/api/shelf/collections', { ids: ['bad id'] })).status).toBe(400);
+  });
+
   it('reorders a collection at the item cap', async () => {
     await call('POST', '/api/shelf/collections', { id: C1, name: 'Books' });
     const rkeys = Array.from({ length: 2000 }, (_, i) => `3kbulkrkey${String(i).padStart(4, '0')}`);
