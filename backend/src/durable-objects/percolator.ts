@@ -87,6 +87,9 @@ const SHARE_SETTLE_MS = 60_000;
 const BACKFILL_QUERIES_PER_PASS = 4;
 const BACKFILL_SOURCES_PER_STEP = 10;
 const BACKFILL_ITEMS_PER_SOURCE = 50;
+/** What a look back's later steps leave of a pass for reading follows links. */
+const BACKFILL_RESERVE_MS = 3_000;
+const BACKFILL_RESERVE_SUBREQUESTS = 100;
 /** Shares per step of a follows backfill. */
 const FOLLOWS_BACKFILL_PAGE = 200;
 /** Articles behind follows links read per reader per day; past it a link matches on its card. */
@@ -394,23 +397,42 @@ export class Percolator extends DurableObject<Env> {
         if (!outcome.more) break;
       }
 
-      let backfillFailed = false;
+      // Each pending look back takes a step in turn, and keeps taking them while
+      // the pass has time and subrequests left: one step a pass made a reader
+      // with a hundred sources wait a minute and a half for a new channel.
+      // Later steps leave room for the follows links below.
       const pending = queries.filter((q) => q.backfillState === 'pending');
-      for (const query of pending.slice(0, BACKFILL_QUERIES_PER_PASS)) {
-        if (Date.now() >= deadline || budget.subrequests < 100) break;
-        try {
-          await this.backfillStep(query, budget, outcome);
-          backfillFailed = false;
-        } catch (error) {
-          // Left pending; the minute cron retries, so a failing step can't spin the alarm.
-          backfillFailed = true;
-          log.error('percolator_backfill_failed', {
-            channelUuid: query.channelUuid,
-            ...serializeError(error),
-          });
+      const failed = new Set<ActiveQuery>();
+      // Stale, or a later step that would outrun the R2 reads left: the next pass.
+      const paused = new Set<ActiveQuery>();
+      const canStep = (first: boolean) =>
+        first
+          ? Date.now() < deadline && budget.subrequests >= 100
+          : Date.now() < deadline - BACKFILL_RESERVE_MS &&
+            budget.subrequests >= 100 + BACKFILL_RESERVE_SUBREQUESTS;
+      let active = pending.slice(0, BACKFILL_QUERIES_PER_PASS);
+      for (let round = 0; active.length > 0 && canStep(round === 0); round++) {
+        for (const query of active) {
+          if (!canStep(round === 0)) break;
+          try {
+            const step = await this.backfillStep(query, budget, outcome, round === 0);
+            if (step !== 'stepped') paused.add(query);
+          } catch (error) {
+            // Left pending; the minute cron retries, so a failing step can't spin the alarm.
+            failed.add(query);
+            log.error('percolator_backfill_failed', {
+              channelUuid: query.channelUuid,
+              ...serializeError(error),
+            });
+          }
         }
+        active = active.filter(
+          (q) => q.backfillState === 'pending' && !failed.has(q) && !paused.has(q)
+        );
       }
-      if (pending.length > 0 && !backfillFailed) outcome.more = true;
+      if (paused.size > 0 || pending.some((q) => q.backfillState === 'pending' && !failed.has(q))) {
+        outcome.more = true;
+      }
 
       if (Date.now() < deadline && budget.subrequests > 100) {
         try {
@@ -762,12 +784,14 @@ export class Percolator extends DurableObject<Env> {
   /**
    * Advance one pending backfill by a few sources (feeds, then document authors,
    * then the reader's stored follows shares), then record where it got to.
+   * 'stale' when the query was edited since it was loaded.
    */
   private async backfillStep(
     query: ActiveQuery,
     budget: PassBudget,
-    outcome: PassOutcome
-  ): Promise<void> {
+    outcome: PassOutcome,
+    first: boolean
+  ): Promise<'stepped' | 'stale' | 'deferred'> {
     const since = Date.now() - MATCH_WINDOW_MS;
     const page = await readBackfillPage(
       this.env,
@@ -777,6 +801,9 @@ export class Percolator extends DurableObject<Env> {
       BACKFILL_ITEMS_PER_SOURCE
     );
     budget.subrequests -= BACKFILL_SOURCES_PER_STEP;
+    // A look back doesn't come back to a body it skipped, so a step after the
+    // first waits for the next pass rather than match its stories on a lead.
+    if (!first && page.storedBodies > budget.r2.left) return 'deferred';
     const matched = await this.matchHeads(page.feeds, page.docs, [], [query], since, budget);
     outcome.candidates += matched.candidates;
     outcome.hits += await this.writeHits(matched.hits, budget);
@@ -801,7 +828,7 @@ export class Percolator extends DurableObject<Env> {
     outcome.backfillSteps++;
     // Guarded on the version this step matched for: an edit in the meantime
     // already reset the backfill, and this must not mark it done.
-    await this.env.DB.prepare(
+    const saved = await this.env.DB.prepare(
       `UPDATE saved_queries
           SET backfill_feed_after = ?, backfill_doc_after = ?, backfill_follows_after = ?,
               backfill_state = ?
@@ -818,6 +845,13 @@ export class Percolator extends DurableObject<Env> {
       )
       .run();
     budget.subrequests -= 1;
+
+    // Where the next step in this pass starts.
+    query.backfillFeedAfter = page.feedAfter;
+    query.backfillDocAfter = page.docAfter;
+    query.backfillFollowsAfter = followsAfter;
+    query.backfillState = done ? 'done' : 'pending';
+    return saved.meta.changes > 0 ? 'stepped' : 'stale';
   }
 
   /**
