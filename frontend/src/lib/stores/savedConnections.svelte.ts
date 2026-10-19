@@ -28,7 +28,14 @@ function sameActivity(
   if (a.size !== b.size) return false;
   for (const [rkey, x] of b) {
     const y = a.get(rkey);
-    if (!y || y.unseen !== x.unseen || y.latestAt !== x.latestAt || y.seenAt !== x.seenAt) {
+    if (
+      !y ||
+      y.unseen !== x.unseen ||
+      y.latestAt !== x.latestAt ||
+      y.seenAt !== x.seenAt ||
+      // An edited note or type keeps its uri, so compare the details whole.
+      JSON.stringify(y.newest) !== JSON.stringify(x.newest)
+    ) {
       return false;
     }
   }
@@ -72,12 +79,14 @@ function createSavedConnectionsStore() {
         // An account switch mid-request must not land the old reader's list.
         if (auth.user?.did !== did) return;
         const next = new Map<string, SavedConnectionActivity>();
-        for (const item of items) {
+        for (const raw of items) {
+          // A backend from before `newest` sends none.
+          const item = { ...raw, newest: raw.newest ?? [] };
           const opened = openedAt.get(item.rkey);
           next.set(
             item.rkey,
             opened !== undefined && opened >= startedAt
-              ? { ...item, unseen: 0, seenAt: opened }
+              ? { ...item, unseen: 0, seenAt: opened, newest: [] }
               : item
           );
         }
@@ -116,7 +125,7 @@ function createSavedConnectionsStore() {
     openedSince = new Map(openedSince).set(rkey, since);
     const now = Date.now();
     openedAt.set(rkey, now);
-    byRkey = new Map(byRkey).set(rkey, { ...activity, unseen: 0, seenAt: now });
+    byRkey = new Map(byRkey).set(rkey, { ...activity, unseen: 0, seenAt: now, newest: [] });
     api.markSavedConnectionsSeen(rkey).catch((e) => {
       // The mark comes back on the next load; nothing to roll back here.
       console.error('[savedConnections] Failed to mark seen:', e);

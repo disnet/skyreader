@@ -2,8 +2,8 @@ import { test, expect } from './fixtures';
 import { cleanupSembleConnection, seedSavedArticle, seedSembleConnection } from './seed';
 
 // Semble connections other people drew off a save: a quiet "new" badge on the
-// card in the Queue and on the Shelf, a New connections lane at the top of the
-// Shelf, and opening the save clears both.
+// card in the Queue and on the Shelf, a New connections section at the top of
+// the Shelf saying who connected what, and opening the save clears both.
 test.describe('Semble connections on saves', () => {
   test('a new connection badges the save until the reader opens it', async ({
     authedPage,
@@ -19,7 +19,8 @@ test.describe('Semble connections on saves', () => {
     });
     const uri = await seedSembleConnection(testUser, {
       savedUrl,
-      otherUrl: 'https://elsewhere.example/response',
+      otherUrl: 'https://elsewhere.example/a-careful-response',
+      note: 'Picks up the argument where the essay stops.',
     });
 
     try {
@@ -33,7 +34,12 @@ test.describe('Semble connections on saves', () => {
       await authedPage.goto('/shelf');
       const lane = authedPage.locator('section', { hasText: 'New connections' }).first();
       await expect(lane).toBeVisible({ timeout: 15_000 });
-      await expect(lane.getByText('1 new connection')).toBeVisible();
+      // The lane says what happened: to what, how, and the curator's note.
+      await expect(
+        lane.getByRole('link', { name: 'elsewhere.example · a careful response' })
+      ).toBeVisible();
+      await expect(lane.getByText('supports')).toBeVisible();
+      await expect(lane.getByText('Picks up the argument where the essay stops.')).toBeVisible();
 
       const seen = authedPage.waitForResponse(
         (r) => r.url().includes('/api/saved/connections/seen') && r.request().method() === 'POST'

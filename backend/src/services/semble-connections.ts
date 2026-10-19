@@ -159,7 +159,26 @@ export interface SavedConnectionActivity {
   latestAt: number;
   /** When the reader last looked, or null if never — what "new" is measured from. */
   seenAt: number | null;
+  /** The newest of the unseen connections, newest first, up to NEWEST_PER_SAVE. */
+  newest: SavedConnectionDetail[];
 }
+
+/** One connection someone else drew off a save, as the Shelf's lane shows it. */
+export interface SavedConnectionDetail {
+  uri: string;
+  curatorDid: string;
+  /** 'out': the save is the connection's source; 'in': it is the target. */
+  direction: 'out' | 'in';
+  /** The other end, as the curator wrote it. */
+  otherUrl: string;
+  type: string | null;
+  note: string | null;
+  /** When the poller saw it (ms): what "new" and the order go by. */
+  indexedAt: number;
+}
+
+/** Unseen connections described per save: enough to say what happened. */
+const NEWEST_PER_SAVE = 3;
 
 /**
  * Per-save connection activity for one reader: every save with at least one
@@ -196,12 +215,72 @@ export async function listSavedConnectionActivity(
     .bind(userDid)
     .all<{ rkey: string; unseen: number; latest_at: number; seen_at: number | null }>();
 
+  const newest = new Map<string, SavedConnectionDetail[]>();
+  if (rows.results.some((row) => row.unseen > 0)) {
+    for (const row of await listNewestUnseen(env, userDid)) {
+      const list = newest.get(row.rkey) ?? [];
+      list.push({
+        uri: row.uri,
+        curatorDid: row.curator_did,
+        direction: row.direction,
+        otherUrl: row.other_url,
+        type: row.connection_type,
+        note: row.note,
+        indexedAt: row.indexed_at,
+      });
+      newest.set(row.rkey, list);
+    }
+  }
+
   return rows.results.map((row) => ({
     rkey: row.rkey,
     unseen: row.unseen,
     latestAt: row.latest_at,
     seenAt: row.seen_at,
+    newest: newest.get(row.rkey) ?? [],
   }));
+}
+
+/** The newest few unseen edges of each save, newest first, for the Shelf's details. */
+async function listNewestUnseen(env: Env, userDid: string) {
+  const rows = await env.DB.prepare(
+    `WITH edges AS (
+       SELECT s.rkey, s.saved_at, s.url_key, c.uri, c.curator_did, 'out' AS direction,
+              c.target_url AS other_url, c.connection_type, c.note, c.indexed_at
+       FROM saved_articles s
+       JOIN semble_connections c ON c.source_normalized = s.url_key
+       WHERE s.user_did = ?1 AND c.curator_did != ?1
+       UNION ALL
+       SELECT s.rkey, s.saved_at, s.url_key, c.uri, c.curator_did, 'in' AS direction,
+              c.source_url AS other_url, c.connection_type, c.note, c.indexed_at
+       FROM saved_articles s
+       JOIN semble_connections c ON c.target_normalized = s.url_key
+       WHERE s.user_did = ?1 AND c.curator_did != ?1
+     )
+     SELECT * FROM (
+       SELECT e.rkey, e.uri, e.curator_did, e.direction, e.other_url, e.connection_type,
+              e.note, e.indexed_at,
+              ROW_NUMBER() OVER (PARTITION BY e.rkey ORDER BY e.indexed_at DESC, e.uri) AS n
+       FROM edges e
+       LEFT JOIN semble_connection_seen seen
+         ON seen.user_did = ?1 AND seen.url_key = e.url_key
+       WHERE e.indexed_at > COALESCE(seen.seen_at, e.saved_at)
+     )
+     WHERE n <= ?2
+     ORDER BY rkey, n`
+  )
+    .bind(userDid, NEWEST_PER_SAVE)
+    .all<{
+      rkey: string;
+      uri: string;
+      curator_did: string;
+      direction: 'out' | 'in';
+      other_url: string;
+      connection_type: string | null;
+      note: string | null;
+      indexed_at: number;
+    }>();
+  return rows.results;
 }
 
 /** Mark a save's connections as looked at. False when the reader has no such save. */

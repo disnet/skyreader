@@ -82,7 +82,7 @@ The Shelf opens on **Continue reading**, the things you're partway through. Belo
 
 ### New connections from Semble
 
-When someone on [Semble](https://semble.so) connects something to an article you've saved, the save shows a small **new** mark in the Queue and on the Shelf. It works for anything in your Library, whether or not you use Semble yourself. The Shelf gathers these under **New connections**. Open the article and its discussion starts on **Connections**, with the new ones marked. That clears the mark. Your own connections never count as new.
+When someone on [Semble](https://semble.so) connects something to an article you've saved, the save shows a small **new** mark in the Queue and on the Shelf. It works for anything in your Library, whether or not you use Semble yourself. The Shelf gathers these under **New connections**, saying who connected each one, to what, and their note. Open the article and its discussion starts on **Connections**, with the new ones marked. That clears the mark. Your own connections never count as new.
 
 ### Collections
 

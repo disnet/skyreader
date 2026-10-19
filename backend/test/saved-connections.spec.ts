@@ -100,6 +100,7 @@ async function activity() {
     unseen: number;
     latestAt: number;
     seenAt: number | null;
+    newest: Array<{ uri: string; direction: string; otherUrl: string; note: string | null }>;
   }>;
 }
 
@@ -136,7 +137,7 @@ describe('Semble connections off saves', () => {
         now: 2000,
       })
     ).toBe(true);
-    expect(await activity()).toEqual([{ rkey: R1, unseen: 1, latestAt: 2000, seenAt: null }]);
+    expect(await activity()).toMatchObject([{ rkey: R1, unseen: 1, latestAt: 2000, seenAt: null }]);
   });
 
   it('counts other people’s edges since the save, then since the last look', async () => {
@@ -147,7 +148,7 @@ describe('Semble connections off saves', () => {
     // The reader's own connection is not news to them.
     await connect('3kconnrec00003', URL2, 'https://elsewhere.net/c', { did: TEST_DID, now: 2500 });
 
-    expect(await activity()).toEqual([{ rkey: R1, unseen: 2, latestAt: 3000, seenAt: null }]);
+    expect(await activity()).toMatchObject([{ rkey: R1, unseen: 2, latestAt: 3000, seenAt: null }]);
 
     const seen = await call('POST', '/api/saved/connections/seen', { rkey: R1 });
     expect(seen).toEqual({ status: 200, body: { success: true } });
@@ -159,6 +160,51 @@ describe('Semble connections off saves', () => {
       now: Date.now() + 1000,
     });
     expect((await activity())[0].unseen).toBe(1);
+  });
+
+  it('describes the unseen connections, newest first', async () => {
+    await save(R1, URL1, 1000);
+    await connect('3kconnrec00001', URL1, 'https://elsewhere.net/a', { now: 2000 });
+    await connect('3kconnrec00002', 'https://elsewhere.net/b', URL1, {
+      now: 3000,
+      note: 'A reply to it',
+    });
+    const [item] = await activity();
+    expect(item.newest).toEqual([
+      {
+        uri: `at://${CURATOR}/network.cosmik.connection/3kconnrec00002`,
+        curatorDid: CURATOR,
+        direction: 'in',
+        otherUrl: 'https://elsewhere.net/b',
+        type: 'RELATED',
+        note: 'A reply to it',
+        indexedAt: 3000,
+      },
+      {
+        uri: `at://${CURATOR}/network.cosmik.connection/3kconnrec00001`,
+        curatorDid: CURATOR,
+        direction: 'out',
+        otherUrl: 'https://elsewhere.net/a',
+        type: 'RELATED',
+        note: null,
+        indexedAt: 2000,
+      },
+    ]);
+
+    // At most three per save, the newest.
+    await connect('3kconnrec00003', URL1, 'https://elsewhere.net/c', { now: 4000 });
+    await connect('3kconnrec00004', URL1, 'https://elsewhere.net/d', { now: 5000 });
+    const [busy] = await activity();
+    expect(busy.unseen).toBe(4);
+    expect(busy.newest.map((c) => c.otherUrl)).toEqual([
+      'https://elsewhere.net/d',
+      'https://elsewhere.net/c',
+      'https://elsewhere.net/b',
+    ]);
+
+    // Once looked at, nothing is new to describe.
+    await call('POST', '/api/saved/connections/seen', { rkey: R1 });
+    expect((await activity())[0].newest).toEqual([]);
   });
 
   it('an edge older than the save is not new', async () => {

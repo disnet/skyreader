@@ -343,13 +343,19 @@ export async function seedFollowLinks(
  */
 export async function seedSembleConnection(
   user: TestUser,
-  opts: { savedUrl: string; otherUrl: string; curatorDid?: string; indexedAt?: number }
+  opts: {
+    savedUrl: string;
+    otherUrl: string;
+    curatorDid?: string;
+    indexedAt?: number;
+    note?: string;
+  }
 ): Promise<string> {
   const uri = `at://${opts.curatorDid ?? 'did:plc:e2ecurator'}/network.cosmik.connection/${generateTid()}`;
   const at = opts.indexedAt ?? Date.now();
   await execD1([
     `UPDATE saved_articles SET url_key = url WHERE user_did = ${sqlString(user.did)} AND url = ${sqlString(opts.savedUrl)}`,
-    `INSERT INTO semble_connections (uri, curator_did, source_url, source_normalized, target_url, target_normalized, connection_type, created_at, indexed_at) VALUES (${sqlString(uri)}, ${sqlString(opts.curatorDid ?? 'did:plc:e2ecurator')}, ${sqlString(opts.otherUrl)}, ${sqlString(opts.otherUrl)}, ${sqlString(opts.savedUrl)}, ${sqlString(opts.savedUrl)}, 'RELATED', ${at}, ${at})`,
+    `INSERT INTO semble_connections (uri, curator_did, source_url, source_normalized, target_url, target_normalized, connection_type, note, created_at, indexed_at) VALUES (${sqlString(uri)}, ${sqlString(opts.curatorDid ?? 'did:plc:e2ecurator')}, ${sqlString(opts.otherUrl)}, ${sqlString(opts.otherUrl)}, ${sqlString(opts.savedUrl)}, ${sqlString(opts.savedUrl)}, 'SUPPORTS', ${opts.note ? sqlString(opts.note) : 'NULL'}, ${at}, ${at})`,
   ]);
   return uri;
 }

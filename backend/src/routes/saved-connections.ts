@@ -10,7 +10,8 @@ import {
  * Semble connections other people drew off the reader's saves
  * (services/semble-connections.ts, docs/plans/SEMBLE_CONNECTIONS.md).
  *
- *   GET  /api/saved/connections       — per-save activity: { items: [{ rkey, unseen, latestAt, seenAt }] }
+ *   GET  /api/saved/connections       — per-save activity: { items: [{ rkey, unseen, latestAt, seenAt, newest }] },
+ *                                       `newest` describing a few of the unseen edges
  *   POST /api/saved/connections/seen  — { rkey }: the reader looked at that save's connections
  *
  * Small and whole: only saves with a connection appear, so the client fetches

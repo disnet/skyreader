@@ -36,15 +36,19 @@ a save, or before this shipped, aren't news.
 
 ## API
 
-- `GET /api/saved/connections` → `{ items: [{ rkey, unseen, latestAt, seenAt }] }`, only saves
-  with a connection by someone else.
+- `GET /api/saved/connections` → `{ items: [{ rkey, unseen, latestAt, seenAt, newest }] }`, only
+  saves with a connection by someone else. `newest` describes up to three of the unseen edges per
+  save (`curatorDid`, `direction`, `otherUrl`, `type`, `note`, `indexedAt`), newest first.
 - `POST /api/saved/connections/seen` `{ rkey }`: the reader looked.
 
 ## Frontend
 
 `stores/savedConnections.svelte.ts` loads the list (online, account-only, at most once a minute)
 from the Queue and the Shelf. `library/ConnectionsBadge` marks Queue cards and Shelf items. The
-Shelf adds a **New connections** lane over the whole Library and a **Recently connected** sort.
+Shelf adds a **New connections** section over the whole Library (`library/NewConnections`), which
+says who linked each save to what, with their note: curator names come from the public appview
+(`profileService`), and the other end is labelled from its URL (`utils/connectionLabels.ts`), since
+the poller keeps no title. It also adds a **Recently connected** sort.
 Opening a save in the fullscreen reader clears its mark and hands `AtmospherePanel` the time "new" is
 measured from, so the discussion opens on **Connections** with the new edges first and marked.
 
