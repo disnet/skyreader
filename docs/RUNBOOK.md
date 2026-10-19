@@ -162,6 +162,22 @@ a smoke check fails right after a hand deploy.
 
 `GIT_COMMIT_SHA` is a Docker build arg passed by CI, surfaced on `/health`.
 
+### GitHub Actions (repo secrets)
+
+| Name            | Required     | Notes                                                                                                                                                                      |
+| --------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `RELEASE_TOKEN` | for releases | Fine-grained token on this repo with Contents: read and write. `release.yml` publishes with it because a release made with the built-in token triggers no deploy workflow. |
+
+### Releasing
+
+Production ships when a GitHub release is published: every `*-deploy.yml` runs its
+`deploy-production` job on `release: published`. Don't tag by hand; run the
+**Release** workflow (Actions → Release → Run workflow, or `gh workflow run release.yml`).
+It refuses unless every push run on main's head commit (the staging deploys) finished
+green, then publishes a release named for today's date in UTC (`v2026.10.19`, then
+`v2026.10.19.2` …) with notes listing the PRs merged since the last one. Nothing reads
+the version; deploys, Sentry and the smoke checks key on the commit SHA.
+
 ### Sentry account ownership
 
 The proxy's DSN was provisioned by Fly's Sentry integration

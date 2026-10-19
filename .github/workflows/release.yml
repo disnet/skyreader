@@ -1,0 +1,87 @@
+name: Release
+
+# One click ships main to production: Actions → Release → Run workflow, or
+# `gh workflow run release.yml`. It names the release after today's date (UTC),
+# v2026.10.19, with .2, .3 … for later releases the same day. Nothing reads the
+# version (Sentry and the smoke checks use the commit SHA), so a date only has to
+# say when it shipped. The notes list the PRs merged since the last release.
+#
+# Publishing the release is what deploys: every *-deploy.yml runs its
+# deploy-production job on `release: published`. A release created with the
+# built-in GITHUB_TOKEN triggers no other workflow, so this publishes with the
+# RELEASE_TOKEN secret instead: a fine-grained token on this repo with
+# Contents: read and write.
+
+permissions:
+  contents: read
+  actions: read
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Publish release
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Check the release token
+        env:
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          if [ -z "$RELEASE_TOKEN" ]; then
+            echo "::error::RELEASE_TOKEN is not set. A release published without it deploys nothing; see the comment at the top of release.yml."
+            exit 1
+          fi
+
+      # Staging is what this commit's push to main deployed, so every push run on
+      # it (staging deploys and their tests) must have finished green. Path filters
+      # mean only the packages the commit touched ran; that's the change being shipped.
+      - name: Check staging is green for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$GITHUB_SHA&event=push&per_page=100" \
+            --jq '.workflow_runs[] | "\(.name)\t\(.status)\t\(.conclusion)"')
+          echo "$runs"
+          if [ -z "$runs" ]; then
+            echo "::error::No push runs found for $GITHUB_SHA yet. Wait for main's staging deploys to start, then try again."
+            exit 1
+          fi
+          bad=$(echo "$runs" | awk -F'\t' '$2 != "completed" || ($3 != "success" && $3 != "skipped")')
+          if [ -n "$bad" ]; then
+            echo "::error::Staging isn't green for $GITHUB_SHA. Still running or failed:"
+            echo "$bad"
+            exit 1
+          fi
+
+      - name: Pick the tag
+        id: tag
+        run: |
+          base="v$(date -u +%Y.%-m.%-d)"
+          if ! git rev-parse -q --verify "refs/tags/$base" >/dev/null; then
+            tag="$base"
+          else
+            last=$(git tag -l "$base.*" | sed "s/^$base\.//" | grep -E '^[0-9]+$' | sort -n | tail -1)
+            tag="$base.$(( ${last:-1} + 1 ))"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Releasing $GITHUB_SHA as $tag"
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" --generate-notes
+          echo "### Released [$TAG]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG)" >> "$GITHUB_STEP_SUMMARY"
