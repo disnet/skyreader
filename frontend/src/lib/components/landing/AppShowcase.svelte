@@ -72,7 +72,7 @@
     ({ title: s.title, customIconUrl: s.favicon, feedUrl: '' }) as unknown as Subscription;
 
   // ── Playback ────────────────────────────────────────────────
-  // One run at a time: starting a new one (a step button, or the loop wrapping)
+  // One run at a time: starting a new one (a step button)
   // bumps runId, and any wait belonging to an older run throws Stop.
   class Stop extends Error {}
   let runId = 0;
@@ -248,7 +248,8 @@
   async function play(from: number) {
     const id = ++runId;
     try {
-      for (let i = from; ; i = (i + 1) % STEPS.length) await playStep(STEPS[i].id, id);
+      // Plays through once and stays on the Shelf; a step button replays from there.
+      for (let i = from; i < STEPS.length; i++) await playStep(STEPS[i].id, id);
     } catch (e) {
       if (!(e instanceof Stop)) throw e;
     }
