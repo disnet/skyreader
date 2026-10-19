@@ -569,10 +569,20 @@ function createFeedViewStore() {
     if (pendingViewKey !== null) return false;
     if (!activeFilteredView) return false;
     const view = activeFilteredView;
-    const currentReadFilter = showOnlyUnread ? 'unread' : 'all';
+    // A channel of your saves keeps Inbox or Archive; any other, unread or all.
+    const currentReadFilter = isSavesChannel(view)
+      ? savedView === 'archive'
+        ? 'read'
+        : 'unread'
+      : showOnlyUnread
+        ? 'unread'
+        : 'all';
     const currentSortOrder = toolbarSortOrder ?? preferences.sortOrder;
 
-    if (currentReadFilter !== view.readFilter) return true;
+    // An Inbox saved as 'all' (by an older toolbar) is still the Inbox.
+    const savedReadFilter =
+      isSavesChannel(view) && view.readFilter !== 'read' ? 'unread' : view.readFilter;
+    if (currentReadFilter !== savedReadFilter) return true;
     if (currentSortOrder !== view.sortOrder) return true;
 
     if (isSavesChannel(view)) {
@@ -1770,7 +1780,13 @@ function createFeedViewStore() {
     if (!fv || fv.id == null) return;
     const id = fv.id;
     const updates: Partial<import('$lib/types').FilteredView> = {
-      readFilter: showOnlyUnread ? 'unread' : 'all',
+      readFilter: isSavesChannel(fv)
+        ? savedView === 'archive'
+          ? 'read'
+          : 'unread'
+        : showOnlyUnread
+          ? 'unread'
+          : 'all',
       sortOrder: toolbarSortOrder ?? preferences.sortOrder,
       tagFilter: toolbarTagFilter.length > 0 ? [...toolbarTagFilter] : undefined,
     };

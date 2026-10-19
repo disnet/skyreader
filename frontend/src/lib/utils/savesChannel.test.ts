@@ -72,7 +72,6 @@ describe('foldSavedChannel', () => {
       savedDomainFilter: ['example.com'],
       tagFilter: ['later'],
     });
-    expect(folded.updatedAt).toBeGreaterThan(0);
     expect(isSavesChannel(folded)).toBe(true);
   });
 

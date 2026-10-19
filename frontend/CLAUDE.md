@@ -250,8 +250,9 @@ channels' unread counts don't include saves. A channel of saves alone (`utils/sa
 with Inbox / Archive and the save filters (`savedSourceFilter`, `savedDateFilter`,
 `savedReadingLength`, `savedDomainFilter`) and orders, in the toolbar and in the editor's **Which
 saves**; it counts its unarchived saves and gets a Home lane. That's what the old `mode: 'saved'`
-channels became: `filteredViewsStore` folds one (`foldSavedChannel`) as it loads or syncs in, and
-pushes it back.
+channels became: `filteredViewsStore` folds one (`foldSavedChannel`) as it loads or syncs in. The
+fold isn't pushed; the server keeps the old config until the next edit, so an older build keeps its
+Saved channel and a stale copy can't outrank a newer edit.
 
 ### Saved searches
 

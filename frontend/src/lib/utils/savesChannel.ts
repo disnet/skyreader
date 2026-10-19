@@ -28,6 +28,10 @@ export function isSavesChannel(view: SavesChannelFields | null | undefined): boo
  * An old Saved channel as the channel it now is: one that takes in Your saves
  * and no feeds. Its save filters, sort, tags and Inbox / Archive state carry
  * over as they were. Null for any other channel.
+ *
+ * Applied as a channel is read, never pushed on its own: the server keeps the
+ * old config until the channel is next edited, so a device still on an older
+ * build keeps its Saved channel, and a stale copy can't outrank a newer edit.
  */
 export function foldSavedChannel(view: FilteredView): Partial<FilteredView> | null {
   if (view.mode !== 'saved') return null;
@@ -37,7 +41,10 @@ export function foldSavedChannel(view: FilteredView): Partial<FilteredView> | nu
     sourceKeys: [],
     librarySources: ['saves'],
     filterVersion: CHANNEL_FILTER_VERSION,
-    // A change like any edit, so the folded channel wins the sync.
-    updatedAt: Date.now(),
+    // Never part of a Saved channel; cleared so a stray one can't make it a
+    // saved search or a smart channel.
+    query: undefined,
+    autoRule: undefined,
+    typeFilter: undefined,
   };
 }

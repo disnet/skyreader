@@ -21,6 +21,9 @@
   //   - what's in it: sources you pick (a folder counts, and grows) or sources
   //     that match a rule.
   import { untrack } from 'svelte';
+  import { goto } from '$app/navigation';
+  import { channelPath } from '$lib/utils/viewNav';
+  import { isSavesChannel } from '$lib/utils/savesChannel';
   import { isArchiveFeedSource } from '$lib/utils/newsletters';
   import SourcePicker from './SourcePicker.svelte';
   import DomainPatternInput from '$lib/components/DomainPatternInput.svelte';
@@ -155,6 +158,7 @@
     error = null;
     saving = false;
     if (view) {
+      loadedSavesOnly = isSavesChannel(view);
       name = view.name;
       nameEdited = true;
       readFilter = view.readFilter;
@@ -197,6 +201,7 @@
       }
       return;
     }
+    loadedSavesOnly = false;
     name = '';
     nameEdited = false;
     mode = 'pick';
@@ -271,13 +276,12 @@
     mode === 'pick' &&
       !trimmedQuery &&
       librarySources.includes('saves') &&
-      showsNoSource(
-        sourceFilter,
-        subscriptionsStore.subscriptions,
-        { groups: feedViewStore.sourceGroups, followsInEverything },
-        showFollowsSource
-      )
+      sourceFilter.sourceMode === 'include' &&
+      sourceFilter.sourceKeys.length === 0
   );
+  // Whether the channel opened as one of your saves: its tag and Archive choices
+  // were the saves', and don't carry over if feeds are added.
+  let loadedSavesOnly = $state(false);
 
   let sortOptions = $derived(savesOnly ? SAVED_SORT_OPTIONS : feedSortOptions);
 
@@ -464,11 +468,14 @@
             // Absent rather than empty, like the query.
             librarySources:
               !currentRule && librarySources.length > 0 ? [...librarySources] : undefined,
-            tagFilter: feedTagFilter.length > 0 ? [...feedTagFilter] : undefined,
+            tagFilter:
+              !loadedSavesOnly && feedTagFilter.length > 0 ? [...feedTagFilter] : undefined,
             filterVersion: CHANNEL_FILTER_VERSION,
             // Absent rather than empty, so taking a query out leaves an ordinary channel.
             query: trimmedQuery || undefined,
-            readFilter,
+            // Archive is a choice for a channel of your saves alone.
+            readFilter:
+              readFilter === 'read' && (loadedSavesOnly || !isEditing) ? 'unread' : readFilter,
             // Ranking by shares needs your follows' links in the channel.
             sortOrder:
               !trimmedQuery &&
@@ -478,7 +485,18 @@
           };
 
       if (editingChannelId != null) {
+        const wasSaves = isSavesChannel(filteredViewsStore.getById(editingChannelId));
         await filteredViewsStore.update(editingChannelId, viewData);
+        // A channel that gained or lost its feeds opens elsewhere (the Library or
+        // Feeds), with the other toolbar: if it's the one on screen, go there.
+        const after = filteredViewsStore.getById(editingChannelId);
+        if (
+          after &&
+          feedViewStore.activeFilteredView?.uuid === after.uuid &&
+          wasSaves !== isSavesChannel(after)
+        ) {
+          void goto(channelPath(after.uuid), { replaceState: true });
+        }
         onsaved(null);
       } else {
         onsaved(await filteredViewsStore.create(viewData));

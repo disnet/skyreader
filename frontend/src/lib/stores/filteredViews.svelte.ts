@@ -41,7 +41,7 @@ function createFilteredViewsStore() {
 
     // The old Saved channel type is now a channel that takes in Your saves
     // (utils/savesChannel.ts). First, so the migrations below see a feed channel.
-    const folded: FilteredView[] = [];
+    // Kept here only; the next edit carries it to the server.
     for (const view of all) {
       const updates = foldSavedChannel(view);
       if (!updates) continue;
@@ -49,7 +49,6 @@ function createFilteredViewsStore() {
       if (view.id != null) {
         await safeUpdate(db.filteredViews, view.id, updates);
       }
-      folded.push(view);
     }
 
     // One-time migration: convert legacy views (sourceMode undefined) to new format
@@ -201,7 +200,7 @@ function createFilteredViewsStore() {
     // Propagate the upgrade to the backend so other devices pick it up.
     // syncWithBackend doesn't push updates to channels that already exist on
     // the remote, so we have to do it explicitly here.
-    for (const view of new Set([...folded, ...upgradedViews])) {
+    for (const view of upgradedViews) {
       pushToBackend(view);
     }
   }
@@ -230,41 +229,33 @@ function createFilteredViewsStore() {
         updatedViews = updatedViews.filter((v) => v.uuid !== uuid);
       }
 
-      // A Saved channel from a device that hasn't folded it yet arrives as the
-      // channel it now is, and goes back up that way.
-      const folded: FilteredView[] = [];
-
+      // A Saved channel's config arrives as the channel it now is.
       // Add new channels from remote to DB
       for (const remote of ops.addLocally) {
-        const fold = foldSavedChannel(remote);
-        const parsed = fold ? { ...remote, ...fold } : remote;
+        const parsed = { ...remote, ...foldSavedChannel(remote as FilteredView) };
         const id = await safeAdd(db.filteredViews, parsed);
-        const added = { ...parsed, id: id as number };
-        updatedViews = [...updatedViews, added];
-        if (fold) folded.push(added);
+        updatedViews = [...updatedViews, { ...parsed, id: id as number }];
       }
 
       // Update local channels from remote in DB
       for (const { uuid, data: remote } of ops.updateLocally) {
         // A query (or Library sources) taken out on another device is absent from
         // its config, and a merge would keep this device's: name it, so the merge clears it.
-        const merged = { query: undefined, librarySources: undefined, ...remote };
-        const fold = foldSavedChannel(remote as FilteredView);
-        const data = fold ? { ...merged, ...fold } : merged;
+        const data = {
+          query: undefined,
+          librarySources: undefined,
+          ...remote,
+          ...foldSavedChannel(remote as FilteredView),
+        };
         const local = updatedViews.find((v) => v.uuid === uuid);
         if (local?.id != null) {
           await safeUpdate(db.filteredViews, local.id, data);
         }
         updatedViews = updatedViews.map((v) => (v.uuid === uuid ? { ...v, ...data } : v));
-        if (fold) {
-          const updated = updatedViews.find((v) => v.uuid === uuid);
-          if (updated) folded.push(updated);
-        }
       }
 
       // All DB ops succeeded — commit the in-memory state atomically
       views = updatedViews;
-      for (const view of folded) pushToBackend(view);
 
       // Retry pending deletes (network-only, doesn't affect local state)
       const retriedOk = new Set<string>();
