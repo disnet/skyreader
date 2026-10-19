@@ -280,7 +280,7 @@ directly, no concept tournament.
     {/if}
     {#if savedSearchLive}
       <li class="benefit">
-        <span class="benefit-figure">Saved keyword searches</span>
+        <span class="benefit-figure">{supporterLimits.savedSearches} saved keyword searches</span>
         <span class="benefit-desc"
           >Channels that fill with whatever matches your keywords, as it arrives.</span
         >
@@ -416,7 +416,7 @@ directly, no concept tournament.
             <li>
               <span class="feature-check"><Icon name="check" size={16} strokeWidth={2.5} /></span>
               <span class="feature-text">
-                Saved keyword searches
+                {supporterLimits.savedSearches} saved keyword searches
                 <span class="feature-sub">channels that fill with whatever matches</span>
               </span>
             </li>
