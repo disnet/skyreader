@@ -1,19 +1,35 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { setReadProgress, getReadProgress, getLabel } = vi.hoisted(() => ({
+const {
+  setReadProgress,
+  getReadProgress,
+  getLatestReadProgress,
+  flushReadProgress,
+  getLabel,
+  destroyCallbacks,
+} = vi.hoisted(() => ({
   setReadProgress: vi.fn(),
   getReadProgress: vi.fn(),
+  getLatestReadProgress: vi.fn(),
+  flushReadProgress: vi.fn(),
+  destroyCallbacks: [] as Array<() => void>,
   // The flush-time re-check: whatever is stored when the debounce fires, which
   // a delta may have replaced with another device's newer position since.
   getLabel: vi.fn(),
 }));
 
 vi.mock('$lib/stores/itemLabels.svelte', () => ({
-  itemLabelsStore: { setReadProgress, getReadProgress, getLabel },
+  itemLabelsStore: {
+    setReadProgress,
+    getReadProgress,
+    getLatestReadProgress,
+    flushReadProgress,
+    getLabel,
+  },
 }));
 
-vi.mock('svelte', () => ({ onDestroy: vi.fn() }));
+vi.mock('svelte', () => ({ onDestroy: (fn: () => void) => destroyCallbacks.push(fn) }));
 
 import { useParagraphTracking } from './useParagraphTracking.svelte';
 
@@ -60,6 +76,9 @@ describe('useParagraphTracking', () => {
     setReadProgress.mockReset();
     getReadProgress.mockReset();
     getLabel.mockReset();
+    getLatestReadProgress.mockReset();
+    flushReadProgress.mockReset();
+    destroyCallbacks.length = 0;
     getLabel.mockReturnValue(undefined);
     getReadProgress.mockReturnValue({ paragraphIndex: 8, totalParagraphs: 20 });
     vi.stubGlobal('$state', <T>(value: T) => value);
@@ -200,6 +219,97 @@ describe('useParagraphTracking', () => {
     vi.advanceTimersByTime(600);
 
     expect(setReadProgress).not.toHaveBeenCalled();
+
+    tracking.cleanup();
+  });
+
+  it('restores the newest position filed under any of the item’s keys', () => {
+    // Nothing under the open key: the place was saved under the save's AT-URI.
+    getReadProgress.mockReturnValue(null);
+    getLatestReadProgress.mockReturnValue({
+      paragraphIndex: 12,
+      totalParagraphs: 40,
+      lastReadAt: 1,
+    });
+    const content = renderBody(40);
+    const tracking = useParagraphTracking({
+      contentEl: () => content,
+      scrollRoot: () => null,
+      itemKey: () => 'article-key',
+      itemType: () => 'article',
+      enabled: () => true,
+      progressKeys: () => ['at://did/save/1'],
+    });
+
+    tracking.setupObserver();
+    expect(tracking.restorePosition()).toBe('exact');
+    expect(getLatestReadProgress).toHaveBeenCalledWith(['article-key', 'at://did/save/1']);
+    expect(tracking.currentParagraphIndex).toBe(12);
+
+    tracking.cleanup();
+  });
+
+  it('writes a queued position at once when the page is hidden', () => {
+    getReadProgress.mockReturnValue({ paragraphIndex: 12, totalParagraphs: 40 });
+    const content = renderBody(40);
+    const tracking = track(content);
+
+    tracking.setupObserver();
+    window.dispatchEvent(new Event('scroll'));
+    expect(setReadProgress).not.toHaveBeenCalled();
+
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    document.dispatchEvent(new Event('visibilitychange'));
+
+    expect(setReadProgress).toHaveBeenCalledWith('article-key', 'article', 39, 40);
+    expect(flushReadProgress).toHaveBeenCalled();
+
+    tracking.cleanup();
+  });
+
+  it('writes a queued position when the reader closes instead of dropping it', () => {
+    getReadProgress.mockReturnValue({ paragraphIndex: 12, totalParagraphs: 40 });
+    const content = renderBody(40);
+    const tracking = track(content);
+
+    tracking.setupObserver();
+    window.dispatchEvent(new Event('scroll'));
+    for (const destroy of destroyCallbacks) destroy();
+
+    expect(setReadProgress).toHaveBeenCalledWith('article-key', 'article', 39, 40);
+    expect(setReadProgress).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(1_000);
+    expect(setReadProgress).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports whether the reader has scrolled the open item by hand', () => {
+    getReadProgress.mockReturnValue({ paragraphIndex: 12, totalParagraphs: 40 });
+    const content = renderBody(40);
+    const tracking = track(content);
+
+    tracking.setupObserver();
+    expect(tracking.readerMoved).toBe(false);
+    // A restore is not the reader moving.
+    tracking.restorePosition();
+    expect(tracking.readerMoved).toBe(false);
+
+    vi.advanceTimersByTime(1_100);
+    window.dispatchEvent(new Event('scroll'));
+    expect(tracking.readerMoved).toBe(true);
+
+    tracking.cleanup();
+  });
+
+  it('counts a keyboard step as the reader moving', () => {
+    getReadProgress.mockReturnValue({ paragraphIndex: 12, totalParagraphs: 40 });
+    const content = renderBody(40);
+    const tracking = track(content);
+
+    tracking.setupObserver();
+    tracking.restorePosition();
+    expect(tracking.readerMoved).toBe(false);
+    tracking.nextParagraph();
+    expect(tracking.readerMoved).toBe(true);
 
     tracking.cleanup();
   });

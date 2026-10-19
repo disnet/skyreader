@@ -65,6 +65,7 @@
   import { toastStore } from '$lib/stores/toast.svelte';
   import { shareTargetForDisplayItem } from '$lib/utils/shareTarget';
   import { isSavedItemSaved } from '$lib/utils/readerSave';
+  import { readProgressKeys } from '$lib/utils/readProgressKeys';
   import HighlightPopover from '$lib/components/feed/HighlightPopover.svelte';
   import HighlightHandles from '$lib/components/feed/HighlightHandles.svelte';
   import CommunityHighlightPopover from '$lib/components/feed/CommunityHighlightPopover.svelte';
@@ -172,6 +173,11 @@
   let pagedTotal = $state(1);
 
   let itemKey = $derived(readerItem.key);
+  // Every key this item's place may be filed under (see readProgressKeys).
+  let progressKeys = $derived(readProgressKeys(readerItem, savesStore.find));
+  function savedProgress() {
+    return paragraphTracking.savedProgress();
+  }
   let itemTags = $derived(itemLabelsStore.getTagsForItem(itemKey));
 
   let labelItemType = $derived.by((): 'article' | 'document' | 'saved' => readerItem.type);
@@ -806,7 +812,14 @@
   let paged = $derived(viewMode === 'paged' && !showOriginalPdf);
   let pagedController = $state<PagedController>();
   let pagedRestoredForKey = $state<string | null>(null);
+  // Opening an item pulls label deltas (see the effect after the scroll
+  // restore); this keeps flipping quickly between items from re-asking.
+  const OPEN_DELTA_MIN_INTERVAL_MS = 10_000;
   let pagedSaveTimer: ReturnType<typeof setTimeout> | undefined;
+  let pagedSavePending: (() => void) | null = null;
+  // The page the restore left the reader on, so a place that syncs in later
+  // can tell whether they have turned a page since.
+  let pagedLandedPage = 0;
 
   // One value feeds both drawings of the rail: scroll fraction while scrolling,
   // page position while paged. The bar's bottom edge means the same thing either
@@ -926,14 +939,25 @@
     if (pagedSaveTimer) clearTimeout(pagedSaveTimer);
     const key = itemKey;
     const type = labelItemType;
-    pagedSaveTimer = setTimeout(() => {
+    pagedSavePending = () => {
+      pagedSavePending = null;
       if (!paged || !pagedController || key !== itemKey) return;
       const paras = detectReaderParagraphs();
       if (!paras.length) return;
       const controller = pagedController;
       const furthest = lastIndexOnOrBefore(paras, page, (el) => controller.pageOfElement(el));
       itemLabelsStore.setReadProgress(key, type, furthest, paras.length);
-    }, 500);
+    };
+    pagedSaveTimer = setTimeout(pagedSavePending, 500);
+  }
+
+  /** Write a page turn still waiting out its debounce (closing, or hidden). */
+  function flushPagedSave() {
+    if (pagedSaveTimer) clearTimeout(pagedSaveTimer);
+    pagedSaveTimer = undefined;
+    if (!pagedSavePending) return;
+    pagedSavePending();
+    itemLabelsStore.flushReadProgress();
   }
 
   // A saved item's body is still being read back: what's shown is its
@@ -951,9 +975,10 @@
     if (!paged || !pagedController || !readerBodyEl || savedBodyPending) return;
     const key = itemKey;
     if (pagedRestoredForKey === key || pagedRestoringKey === key) return;
-    const saved = itemLabelsStore.getReadProgress(key);
+    const saved = savedProgress();
     if (!saved || saved.paragraphIndex <= 0) {
       pagedRestoredForKey = key;
+      pagedLandedPage = pagedPage;
       return;
     }
     const timer = setTimeout(() => {
@@ -967,7 +992,10 @@
       // reflows the book and moves the page, and shown, that reads as the
       // book flicking between pages before it settles.
       void controller.whenImagesSettled(1500).then(() => {
-        if (pagedRestoringKey === key) pagedRestoredForKey = key;
+        if (pagedRestoringKey === key) {
+          pagedRestoredForKey = key;
+          pagedLandedPage = pagedPage;
+        }
       });
     }, 300);
     return () => clearTimeout(timer);
@@ -981,7 +1009,7 @@
     paged &&
       pagedRestoredForKey !== itemKey &&
       pagedRevealedForKey !== itemKey &&
-      (itemLabelsStore.getReadProgress(itemKey)?.paragraphIndex ?? 0) > 0
+      (savedProgress()?.paragraphIndex ?? 0) > 0
   );
   $effect(() => {
     if (!pagedRestorePending || savedBodyPending) return;
@@ -990,9 +1018,14 @@
     return () => clearTimeout(timer);
   });
 
-  onDestroy(() => {
-    if (pagedSaveTimer) clearTimeout(pagedSaveTimer);
+  function flushPagedSaveWhenHidden() {
+    if (document.visibilityState === 'hidden') flushPagedSave();
+  }
+  onMount(() => {
+    document.addEventListener('visibilitychange', flushPagedSaveWhenHidden);
+    return () => document.removeEventListener('visibilitychange', flushPagedSaveWhenHidden);
   });
+  onDestroy(flushPagedSave);
 
   let readTimeMinutes = $derived.by(() => {
     const text = displayContent.replace(/<[^>]*>/g, '');
@@ -1204,6 +1237,7 @@
     scrollRoot: () => overlayEl,
     itemKey: () => itemKey,
     itemType: () => labelItemType,
+    progressKeys: () => progressKeys,
     // Scroll-driven — disabled in paged mode (paged position is tracked by page).
     enabled: () => !paged,
   });
@@ -1287,21 +1321,7 @@
         if (restoredForKey === key) return;
         setTimeout(() => {
           if (restoredForKey === key) return;
-          suppressScrollHide = true;
-          const result = paragraphTracking.restorePosition();
-          // 'exact'/'none' are terminal; 'partial' means retry on the next
-          // content settle (the full body hasn't arrived yet).
-          if (result !== 'partial') restoredForKey = key;
-          if (result !== 'none') {
-            // Wait for smooth scroll to finish before re-enabling header hide
-            setTimeout(() => {
-              if (overlayEl) lastScrollY = overlayEl.scrollTop;
-              suppressScrollHide = false;
-              updateReadingProgress();
-            }, 600);
-          } else {
-            suppressScrollHide = false;
-          }
+          restoreScrollPosition(key);
         }, 100);
       });
     }
@@ -1311,6 +1331,52 @@
       highlightsHook.detach();
       communityHighlightsHook.detach();
     };
+  });
+
+  function restoreScrollPosition(key: string) {
+    suppressScrollHide = true;
+    const result = paragraphTracking.restorePosition();
+    // 'exact'/'none' are terminal; 'partial' means retry on the next
+    // content settle (the full body hasn't arrived yet).
+    restoredForKey = result !== 'partial' ? key : null;
+    if (result !== 'none') {
+      // Wait for smooth scroll to finish before re-enabling header hide
+      setTimeout(() => {
+        if (overlayEl) lastScrollY = overlayEl.scrollTop;
+        suppressScrollHide = false;
+        updateReadingProgress();
+      }, 600);
+    } else {
+      suppressScrollHide = false;
+    }
+  }
+
+  // Another device's place may not have reached this one yet: label deltas are
+  // pulled on a timer and when the tab comes back, and a tab left open on a
+  // laptop may not have asked since the reader put their phone down. So opening
+  // an item asks now, and a newer place that arrives is restored — but only
+  // while the reader hasn't started scrolling or paging here, so a late answer
+  // never moves someone who is already reading.
+  $effect(() => {
+    const key = itemKey;
+    if (!auth.isAuthenticated) return;
+    untrack(() => {
+      const before = savedProgress()?.lastReadAt ?? 0;
+      void itemLabelsStore.pullDelta(OPEN_DELTA_MIN_INTERVAL_MS).then(() => {
+        if (itemKey !== key || (savedProgress()?.lastReadAt ?? 0) <= before) return;
+        if (paged) {
+          // Not yet restored: the paged restore reads the new place itself.
+          if (pagedRestoredForKey !== key || pagedPage !== pagedLandedPage) return;
+          pagedRestoringKey = null;
+          pagedRestoredForKey = null;
+          return;
+        }
+        // Not yet restored (or still waiting on the body): that restore reads
+        // the new place when it runs.
+        if (restoredForKey !== key || paragraphTracking.readerMoved) return;
+        restoreScrollPosition(key);
+      });
+    });
   });
 
   let deleteConfirming = $state(false);

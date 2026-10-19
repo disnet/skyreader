@@ -114,9 +114,19 @@ then `triggerReactivity()`, which bumps only what changed — so marking one ite
 card, not every card on screen. A new query method must read through `getLabel`/`hasLabel` (or
 track the label) or it won't update.
 
+**A save's reading position is restored across its aliases.** `readProgress` is written under the
+open reader's display key, which depends on the surface (a save's AT-URI, a link URL, an unsynced
+save's guid or rkey), so the reader restores the newest position across the save's keys
+(`utils/readProgressKeys.ts` → `getLatestReadProgress`), as Home's Continue reading already did. A
+feed article or document keeps its own key: a paragraph index only means something in the body it
+was counted in. Opening an item also pulls the deltas, and restores a place that lands late only if
+the reader hasn't scrolled, stepped or turned a page yet (`readerMoved`, `pagedLandedPage`). A
+queued position is written at once when the page is hidden or the reader closes, and the store
+debounces per item, stamping `lastReadAt` when the position is handed over.
+
 Freshness: `refreshFromBackend` pulls both, plus `itemLabelsStore.pullDelta()` on `online` (after
 the queue drains), on `visibilitychange`, and on a 5-minute while-open timer — all gated to one
-pull a minute. There is deliberately **no push channel**: a no-change delta is one indexed query
+pull a minute — and on opening an item in the reader (gated to one per 10 seconds). There is deliberately **no push channel**: a no-change delta is one indexed query
 returning zero rows, and the product is calm.
 
 ### Guest reading mode

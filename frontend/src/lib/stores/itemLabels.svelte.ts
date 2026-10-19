@@ -1606,17 +1606,26 @@ function createItemLabelsStore() {
 
   // --- Read progress tracking ---
 
-  let readProgressDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+  // One pending write per item. A single shared timer dropped the first item's
+  // last position whenever the reader moved on to another within the debounce.
+  const pendingReadProgress = new Map<
+    string,
+    { timer: ReturnType<typeof setTimeout>; run: () => void }
+  >();
   const READ_PROGRESS_DEBOUNCE_MS = 500;
 
   async function persistReadProgress(
     itemKey: string,
     itemType: ItemLabelType,
     paragraphIndex: number,
-    totalParagraphs: number
+    totalParagraphs: number,
+    // When the reader was there. Stamped when the position is handed over, not
+    // when the debounce fires: the later time made the reader's own next
+    // position, queued in between, look older than this one and get dropped.
+    at = Date.now()
   ) {
     const current = getReadProgress(itemKey);
-    const now = Date.now();
+    const now = at;
     const lbl: ItemLabel = {
       itemKey,
       itemType,
@@ -1666,6 +1675,37 @@ function createItemLabelsStore() {
       paragraphIndex: lbl.props.paragraphIndex as number,
       totalParagraphs: lbl.props.totalParagraphs as number,
     };
+  }
+
+  // The newest saved scroll position across every key one item can be filed
+  // under. The reader writes progress under whichever key the surface that
+  // opened it uses — a feed article's guid, a save's AT-URI, a link's URL — and
+  // a save made a moment ago has no AT-URI yet, so the same article read on two
+  // devices (or opened from two surfaces) can carry its progress under different
+  // keys. Restoring from the one key the reader happens to hold opened it at the
+  // top while Home showed it half read. Newest `lastReadAt` wins, as in
+  // `mergeReadProgress`; the `markOpened` sentinel (index -1) isn't a position.
+  function getLatestReadProgress(
+    itemKeys: string[]
+  ): { paragraphIndex: number; totalParagraphs: number; lastReadAt: number } | null {
+    let best: { paragraphIndex: number; totalParagraphs: number; lastReadAt: number } | null = null;
+    for (const key of new Set(itemKeys)) {
+      if (!key) continue;
+      const lbl = getLabel(key, 'readProgress');
+      if (!lbl) continue;
+      const paragraphIndex = lbl.props.paragraphIndex;
+      const totalParagraphs = lbl.props.totalParagraphs;
+      if (typeof paragraphIndex !== 'number' || paragraphIndex < 0) continue;
+      const lastReadAt = (lbl.props.lastReadAt as number) || lbl.updatedAt || 0;
+      if (!best || lastReadAt > best.lastReadAt) {
+        best = {
+          paragraphIndex,
+          totalParagraphs: typeof totalParagraphs === 'number' ? totalParagraphs : 0,
+          lastReadAt,
+        };
+      }
+    }
+    return best;
   }
 
   // Most recent reading activity for an item, resolved across the several keys a
@@ -1746,11 +1786,27 @@ function createItemLabelsStore() {
     }
 
     // Debounce the actual persist
-    if (readProgressDebounceTimer) clearTimeout(readProgressDebounceTimer);
-    readProgressDebounceTimer = setTimeout(
-      () => void persistReadProgress(itemKey, itemType, paragraphIndex, totalParagraphs),
-      READ_PROGRESS_DEBOUNCE_MS
-    );
+    const pending = pendingReadProgress.get(itemKey);
+    if (pending) clearTimeout(pending.timer);
+    const at = Date.now();
+    const run = () => {
+      pendingReadProgress.delete(itemKey);
+      void persistReadProgress(itemKey, itemType, paragraphIndex, totalParagraphs, at);
+    };
+    pendingReadProgress.set(itemKey, { timer: setTimeout(run, READ_PROGRESS_DEBOUNCE_MS), run });
+  }
+
+  /**
+   * Write every debounced position now. Called when the page is hidden: a phone
+   * locked or switched away from suspends timers, so a position still waiting
+   * out its debounce would reach the server only when the app came back — after
+   * the reader had already picked the article up on another device.
+   */
+  function flushReadProgress() {
+    for (const { timer, run } of [...pendingReadProgress.values()]) {
+      clearTimeout(timer);
+      run();
+    }
   }
 
   // Record that a combined reading surface reached this item without inventing
@@ -2242,8 +2298,10 @@ function createItemLabelsStore() {
     markSocialAsUnread,
     // Read progress
     getReadProgress,
+    getLatestReadProgress,
     getReadActivity,
     setReadProgress,
+    flushReadProgress,
     markOpened,
     // PDF place
     getPdfPlace,

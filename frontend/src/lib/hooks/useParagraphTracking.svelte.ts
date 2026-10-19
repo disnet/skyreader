@@ -16,6 +16,12 @@ interface ParagraphTrackingParams {
   itemKey: () => string;
   itemType: () => ItemLabelType;
   enabled: () => boolean;
+  /**
+   * Other keys this item's progress may be filed under (a save's guid, AT-URI and
+   * URL; the save behind a feed article). Restore reads the newest position
+   * across these and `itemKey`; writes still go to `itemKey` alone.
+   */
+  progressKeys?: () => string[];
 }
 
 export function useParagraphTracking(params: ParagraphTrackingParams) {
@@ -28,9 +34,26 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
   let scrollHandler: (() => void) | null = null;
   let scrollTarget: EventTarget | null = null;
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
+  let pendingSave: (() => void) | null = null;
   let lastScrollTop = 0;
   let programmaticScroll = false;
   let programmaticScrollTimer: ReturnType<typeof setTimeout> | null = null;
+  // The item the reader last scrolled by hand. A position that syncs in after
+  // the reader opened is restored only while this isn't the open item, so a late
+  // delta never yanks someone who has already started reading.
+  let movedKey: string | null = null;
+  let observedKey: string | null = null;
+
+  /** The saved position to restore: the newest across every key the item has. */
+  function savedProgress(): {
+    paragraphIndex: number;
+    totalParagraphs: number;
+    lastReadAt?: number;
+  } | null {
+    const aliases = params.progressKeys?.() ?? [];
+    if (aliases.length === 0) return itemLabelsStore.getReadProgress(params.itemKey());
+    return itemLabelsStore.getLatestReadProgress([params.itemKey(), ...aliases]);
+  }
 
   function detectParagraphs() {
     const el = params.contentEl();
@@ -101,7 +124,10 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     // Persist only in response to an actual scroll. setupObserver also measures
     // the initial position, but doing so must not overwrite progress hydrated
     // from the server while an uncached article body is still loading.
-    if (save) debouncedSave();
+    if (save) {
+      movedKey = params.itemKey();
+      debouncedSave();
+    }
   }
 
   function getOffsetRelativeTo(el: HTMLElement, ancestor: HTMLElement): number {
@@ -161,7 +187,7 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
    * device with a near-zero value.
    */
   function bodyIsPartial(): boolean {
-    const saved = itemLabelsStore.getReadProgress(params.itemKey());
+    const saved = savedProgress();
     if (!saved || saved.paragraphIndex <= 0) return false;
     return saved.paragraphIndex > paragraphs.length - 1;
   }
@@ -191,21 +217,47 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     // newer position; publishing this one afterwards would rewind that device
     // and, worse, republish the older position as authoritative.
     const queuedAt = Date.now();
-    saveTimer = setTimeout(() => {
+    pendingSave = () => {
       saveTimer = null;
+      pendingSave = null;
       // Re-checked at flush time rather than when the save was queued: the full
       // body may have arrived in the meantime, which makes the position real.
       if (bodyIsPartial()) return;
       const stored = itemLabelsStore.getLabel(params.itemKey(), 'readProgress');
       const storedAt = stored?.props.lastReadAt as number | undefined;
       if (typeof storedAt === 'number' && storedAt > queuedAt) return;
+      const aliasAt = params.progressKeys ? savedProgress()?.lastReadAt : undefined;
+      if (typeof aliasAt === 'number' && aliasAt > queuedAt) return;
       itemLabelsStore.setReadProgress(
         params.itemKey(),
         params.itemType(),
         currentParagraphIndex,
         totalParagraphs
       );
-    }, SAVE_DEBOUNCE_MS);
+    };
+    saveTimer = setTimeout(pendingSave, SAVE_DEBOUNCE_MS);
+  }
+
+  /**
+   * Write the debounced position now rather than dropping it: the reader closed,
+   * or the page was hidden (a phone locked or switched away from suspends
+   * timers, so the last stretch of reading would otherwise reach the server only
+   * when the app came back — too late for the device picked up next).
+   */
+  function flushPendingSave() {
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = null;
+    if (!pendingSave) return;
+    pendingSave();
+    itemLabelsStore.flushReadProgress();
+  }
+
+  function handleVisibilityChange() {
+    if (document.visibilityState !== 'hidden') return;
+    flushPendingSave();
+    // The store may still hold this item's last write from a save that already
+    // left the hook's own debounce.
+    itemLabelsStore.flushReadProgress();
   }
 
   function setupObserver() {
@@ -217,11 +269,15 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
 
     paragraphs = detectParagraphs();
     totalParagraphs = paragraphs.length;
+    if (observedKey !== params.itemKey()) {
+      observedKey = params.itemKey();
+      movedKey = null;
+    }
 
     if (paragraphs.length === 0) return;
 
     // Restore saved progress
-    const saved = itemLabelsStore.getReadProgress(params.itemKey());
+    const saved = savedProgress();
     if (saved && saved.paragraphIndex > 0 && !hasRestored) {
       furthestParagraphIndex = saved.paragraphIndex;
       hasRestored = true;
@@ -239,6 +295,7 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     };
 
     scrollTarget.addEventListener('scroll', scrollHandler, { passive: true });
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     // Initial position check
     updateCurrentParagraph(false);
@@ -263,6 +320,8 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     }
     updateHighlight();
     if (persist) {
+      // A step the reader asked for: they're reading here now.
+      movedKey = params.itemKey();
       // The muted scroll handler no longer persists this move for us.
       debouncedSave();
     } else if (saveTimer) {
@@ -271,6 +330,7 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
       // the fallback body was still on screen — flush behind it.
       clearTimeout(saveTimer);
       saveTimer = null;
+      pendingSave = null;
     }
   }
 
@@ -299,7 +359,7 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
    * the user at the top.
    */
   function restorePosition(): 'exact' | 'partial' | 'none' {
-    const saved = itemLabelsStore.getReadProgress(params.itemKey());
+    const saved = savedProgress();
     if (!saved || saved.paragraphIndex <= 0 || paragraphs.length === 0) return 'none';
     const exact = saved.paragraphIndex <= paragraphs.length - 1;
     const targetIdx = Math.min(saved.paragraphIndex, paragraphs.length - 1);
@@ -317,7 +377,7 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
    * demand so it works even when the scroll observer isn't active.
    */
   function restoreTargetElement(): HTMLElement | null {
-    const saved = itemLabelsStore.getReadProgress(params.itemKey());
+    const saved = savedProgress();
     if (!saved || saved.paragraphIndex <= 0) return null;
     const paras = detectParagraphs();
     if (paras.length === 0) return null;
@@ -337,10 +397,12 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
       scrollHandler = null;
       scrollTarget = null;
     }
+    document.removeEventListener('visibilitychange', handleVisibilityChange);
     if (saveTimer) {
       clearTimeout(saveTimer);
       saveTimer = null;
     }
+    pendingSave = null;
     if (programmaticScrollTimer) {
       clearTimeout(programmaticScrollTimer);
       programmaticScrollTimer = null;
@@ -352,7 +414,11 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     }
   }
 
-  onDestroy(cleanup);
+  // Closing the reader is the last moment this item's position is known.
+  onDestroy(() => {
+    flushPendingSave();
+    cleanup();
+  });
 
   return {
     get currentParagraphIndex() {
@@ -363,6 +429,12 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     },
     get totalParagraphs() {
       return totalParagraphs;
+    },
+    /** The position a restore would go to: the newest across the item's keys. */
+    savedProgress,
+    /** Whether the reader has scrolled or stepped this item since it opened. */
+    get readerMoved() {
+      return movedKey === params.itemKey();
     },
     setupObserver,
     scrollToParagraph,
