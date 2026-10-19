@@ -19,7 +19,6 @@
 // Call it once at the top of a component's <script> (during init, so the
 // internal $effect/$derived bind to that component's lifecycle). Read the
 // returned getters in markup; they're reactive.
-import type { IconName } from '$lib/components/Icon.svelte';
 import type {
   LaneId,
   LaneRowVM,
@@ -29,6 +28,7 @@ import type {
   DiscussionStreamVM,
   SembleContextVM,
 } from '$lib/components/articleCardView.types';
+import { LANE_META, LANE_ORDER } from '$lib/constants/laneMeta';
 import { articleMentionsStore } from '$lib/stores/articleMentions.svelte';
 import { mentionLaneItemsStore } from '$lib/stores/mentionLaneItems.svelte';
 import { followLinkSharersStore } from '$lib/stores/followLinkSharers.svelte';
@@ -37,49 +37,10 @@ import { preferences } from '$lib/stores/preferences.svelte';
 import { cleanDiscussionNote } from '$lib/utils/discussionNote';
 import { formatRelativeDate } from '$lib/utils/date';
 
-// Per-lane display metadata. The count + verb come from the network breakdown;
-// this fixes the icon, name, and the create-affordance label per lane.
-export const LANE_META: Record<
-  LaneId,
-  { icon: IconName; label: string; verb: string; noun: string; createLabel: string }
-> = {
-  linkblog: {
-    icon: 'standard-site',
-    label: 'Blogs',
-    verb: 'noted',
-    noun: 'note',
-    createLabel: 'Write a note',
-  },
-  leaflet: {
-    icon: 'leaflet',
-    label: 'Leaflet',
-    verb: 'commented',
-    noun: 'comment',
-    createLabel: 'Comment on Leaflet',
-  },
-  bluesky: {
-    icon: 'bluesky',
-    label: 'Bluesky',
-    verb: 'posted',
-    noun: 'post',
-    createLabel: 'Post on Bluesky',
-  },
-  margin: {
-    icon: 'margin',
-    label: 'margin.at',
-    verb: 'saved',
-    noun: 'save',
-    createLabel: 'Save to Margin',
-  },
-  semble: {
-    icon: 'semble',
-    label: 'Semble',
-    verb: 'referenced',
-    noun: 'save',
-    createLabel: 'Save to Semble',
-  },
-};
-export const LANE_ORDER: LaneId[] = ['linkblog', 'leaflet', 'bluesky', 'margin', 'semble'];
+// Lane display metadata lives in constants/laneMeta.ts so presentational
+// surfaces (the landing page's app showcase) can use it without this module's
+// stores. Re-exported for existing importers.
+export { LANE_META, LANE_ORDER };
 
 export interface UseAtmosphereOptions {
   /** The URL whose Atmosphere references we resolve (reactive getter). */
