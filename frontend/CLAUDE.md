@@ -264,6 +264,12 @@ channels became: `filteredViewsStore` folds one (`foldSavedChannel`) as it loads
 fold isn't pushed; the server keeps the old config until the next edit, so an older build keeps its
 Saved channel and a stale copy can't outrank a newer edit.
 
+Channels list in `position` order everywhere (`channelSync.ts`'s `sortByPosition`, ties by
+`createdAt`). The sidebar reorders them: a mouse or pen drag on a row, or **Move up** / **Move down**
+in the row's menu (the touch path, since a drag would fight the drawer's scroll).
+`filteredViewsStore.reorder` renumbers, writes only the channels whose position changed (stamped
+newer, so the order wins on other devices) and pushes them in one `PUT /api/channels`.
+
 ### Saved searches
 
 A channel whose config carries a `query` is a saved search (`utils/searchChannels.ts`'s

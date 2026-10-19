@@ -1,5 +1,13 @@
 import { describe, it, expect } from 'vitest';
-import { toConfig, fromRemote, computeSyncOperations, type RemoteChannel } from './channelSync';
+import {
+  toConfig,
+  fromRemote,
+  computeSyncOperations,
+  sortByPosition,
+  planReorder,
+  moveChannel,
+  type RemoteChannel,
+} from './channelSync';
 import type { FilteredView } from '$lib/types';
 
 function makeView(overrides: Partial<FilteredView> & { uuid: string }): FilteredView {
@@ -191,5 +199,64 @@ describe('computeSyncOperations', () => {
     expect(ops.pushToRemote).toHaveLength(1);
     expect(ops.pushToRemote[0].uuid).toBe('local-only');
     expect(ops.deleteLocally).toEqual(['to-delete']);
+  });
+});
+
+describe('sortByPosition', () => {
+  it('orders by position, then by when the channel was made', () => {
+    const views = [
+      makeView({ uuid: 'c', position: 1, createdAt: 5 }),
+      makeView({ uuid: 'b', position: 0, createdAt: 9 }),
+      makeView({ uuid: 'a', position: 0, createdAt: 2 }),
+    ];
+    expect(sortByPosition(views).map((v) => v.uuid)).toEqual(['a', 'b', 'c']);
+  });
+});
+
+describe('planReorder', () => {
+  const views = [
+    makeView({ uuid: 'a', position: 0 }),
+    makeView({ uuid: 'b', position: 1 }),
+    makeView({ uuid: 'c', position: 2 }),
+    makeView({ uuid: 'd', position: 3 }),
+  ];
+
+  it('writes only the channels a move shifts', () => {
+    expect(planReorder(views, ['a', 'c', 'b', 'd'])).toEqual([
+      { uuid: 'c', position: 1 },
+      { uuid: 'b', position: 2 },
+    ]);
+  });
+
+  it('is empty when nothing moves', () => {
+    expect(planReorder(views, ['a', 'b', 'c', 'd'])).toEqual([]);
+  });
+
+  it('spreads out channels that share a position', () => {
+    const tied = [makeView({ uuid: 'a', position: 0 }), makeView({ uuid: 'b', position: 0 })];
+    expect(planReorder(tied, ['a', 'b'])).toEqual([{ uuid: 'b', position: 1 }]);
+  });
+
+  it('keeps a channel the order leaves out after the ones it names, and ignores unknown ones', () => {
+    expect(planReorder(views, ['d', 'zzz', 'a', 'b'])).toEqual([
+      { uuid: 'd', position: 0 },
+      { uuid: 'a', position: 1 },
+      { uuid: 'b', position: 2 },
+      { uuid: 'c', position: 3 },
+    ]);
+  });
+});
+
+describe('moveChannel', () => {
+  it('swaps a channel with its neighbour', () => {
+    expect(moveChannel(['a', 'b', 'c'], 'b', -1)).toEqual(['b', 'a', 'c']);
+    expect(moveChannel(['a', 'b', 'c'], 'b', 1)).toEqual(['a', 'c', 'b']);
+  });
+
+  it('returns the same order at an end or for an unknown channel', () => {
+    const order = ['a', 'b'];
+    expect(moveChannel(order, 'a', -1)).toBe(order);
+    expect(moveChannel(order, 'b', 1)).toBe(order);
+    expect(moveChannel(order, 'x', 1)).toBe(order);
   });
 });

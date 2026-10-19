@@ -366,3 +366,55 @@ test.describe('A channel filter survives a reload', () => {
     await expect(authedPage.getByRole('button', { name: 'Update' })).toHaveCount(0);
   });
 });
+
+test.describe('Channel order', () => {
+  test('channels reorder by drag and by the menu, and the order syncs', async ({
+    authedPage,
+    testUser,
+  }) => {
+    const names = ['First', 'Second', 'Third'];
+    const uuids = names.map((_, i) => `00000000-0000-4000-8000-00000000000${i + 1}`);
+    for (const [i, name] of names.entries()) {
+      await seedChannel(testUser, {
+        uuid: uuids[i],
+        name,
+        config: { readFilter: 'all', sortOrder: 'newest', sourceMode: 'exclude', sourceKeys: [] },
+        position: i,
+      });
+    }
+    await authedPage.reload();
+
+    const rows = channelsGroup(authedPage).locator('.view-item .nav-label');
+    await expect(rows).toHaveText(names, { timeout: 15_000 });
+
+    // Drag Third above First with the mouse.
+    const third = (await rows.nth(2).boundingBox())!;
+    const first = (await rows.nth(0).boundingBox())!;
+    await authedPage.mouse.move(third.x + 10, third.y + third.height / 2);
+    await authedPage.mouse.down();
+    await authedPage.mouse.move(first.x + 10, first.y + first.height / 2, { steps: 8 });
+    await authedPage.mouse.move(first.x + 10, first.y + 2, { steps: 2 });
+    const pushed = authedPage.waitForResponse(
+      (r) => r.url().endsWith('/api/channels') && r.request().method() === 'PUT'
+    );
+    await authedPage.mouse.up();
+    await pushed;
+    await expect(rows).toHaveText(['Third', 'First', 'Second']);
+    // The release didn't open the channel it dropped.
+    await expect(authedPage).not.toHaveURL(/view=/);
+
+    // Move Second up a step from its menu.
+    await rows.nth(2).click({ button: 'right' });
+    const pushedAgain = authedPage.waitForResponse(
+      (r) => r.url().endsWith('/api/channels') && r.request().method() === 'PUT'
+    );
+    await authedPage.getByRole('menuitem', { name: 'Move up' }).click();
+    await pushedAgain;
+    await expect(rows).toHaveText(['Third', 'Second', 'First']);
+
+    // The server holds the new order, so another device gets it.
+    const res = await authedPage.request.get('http://127.0.0.1:8787/api/channels');
+    const { channels } = (await res.json()) as { channels: Array<{ name: string }> };
+    expect(channels.map((c) => c.name)).toEqual(['Third', 'Second', 'First']);
+  });
+});

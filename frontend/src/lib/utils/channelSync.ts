@@ -123,3 +123,49 @@ export function computeSyncOperations(
     pendingDeletesAfter,
   };
 }
+
+/**
+ * Channels in their sidebar order: by position, then by when they were made,
+ * so two channels that landed on one position (made on two devices before
+ * either synced) still list the same way everywhere.
+ */
+export function sortByPosition<T extends Pick<FilteredView, 'position' | 'createdAt'>>(
+  views: T[]
+): T[] {
+  return [...views].sort((a, b) => a.position - b.position || a.createdAt - b.createdAt);
+}
+
+/**
+ * The position each channel takes for a new order: its index in `order`.
+ * Returns only the channels whose position changes, so a move writes (and
+ * stamps newer) just the ones it shifted. A channel `order` leaves out keeps
+ * its place after the ones it names.
+ */
+export function planReorder(
+  views: FilteredView[],
+  order: string[]
+): Array<{ uuid: string; position: number }> {
+  const named = new Set(order);
+  const full = [
+    ...order.filter((uuid) => views.some((v) => v.uuid === uuid)),
+    ...sortByPosition(views)
+      .filter((v) => !named.has(v.uuid))
+      .map((v) => v.uuid),
+  ];
+  const changes: Array<{ uuid: string; position: number }> = [];
+  full.forEach((uuid, position) => {
+    const view = views.find((v) => v.uuid === uuid);
+    if (view && view.position !== position) changes.push({ uuid, position });
+  });
+  return changes;
+}
+
+/** `order` with `uuid` moved one step up (-1) or down (1); unchanged at an end. */
+export function moveChannel(order: string[], uuid: string, delta: -1 | 1): string[] {
+  const i = order.indexOf(uuid);
+  const j = i + delta;
+  if (i === -1 || j < 0 || j >= order.length) return order;
+  const next = [...order];
+  [next[i], next[j]] = [next[j], next[i]];
+  return next;
+}

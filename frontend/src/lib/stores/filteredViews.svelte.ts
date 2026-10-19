@@ -10,7 +10,13 @@ import {
   parseSourceKey,
   documentsSourceKey,
 } from '$lib/utils/sourceKeys';
-import { toConfig, fromRemote, computeSyncOperations } from '$lib/utils/channelSync';
+import {
+  toConfig,
+  fromRemote,
+  computeSyncOperations,
+  planReorder,
+  sortByPosition,
+} from '$lib/utils/channelSync';
 import { CHANNEL_FILTER_VERSION, upgradeChannelFilter } from '$lib/utils/sourceFilter';
 import { foldSavedChannel } from '$lib/utils/savesChannel';
 
@@ -195,7 +201,7 @@ function createFilteredViewsStore() {
       upgradedViews.push(view);
     }
 
-    views = all;
+    views = sortByPosition(all);
 
     // Propagate the upgrade to the backend so other devices pick it up.
     // syncWithBackend doesn't push updates to channels that already exist on
@@ -254,8 +260,9 @@ function createFilteredViewsStore() {
         updatedViews = updatedViews.map((v) => (v.uuid === uuid ? { ...v, ...data } : v));
       }
 
-      // All DB ops succeeded — commit the in-memory state atomically
-      views = updatedViews;
+      // All DB ops succeeded — commit the in-memory state atomically. A reorder
+      // made on another device arrives as new positions, so re-sort.
+      views = sortByPosition(updatedViews);
 
       // Retry pending deletes (network-only, doesn't affect local state)
       const retriedOk = new Set<string>();
@@ -336,6 +343,48 @@ function createFilteredViewsStore() {
     if (view) pushToBackend(view);
   }
 
+  /**
+   * Put the channels in a new order (`order` is their uuids, top first). Only
+   * the channels that change place are written, stamped newer so the order
+   * wins on other devices, and pushed together in one request.
+   */
+  async function reorder(order: string[]) {
+    const changes = planReorder(views, order);
+    if (changes.length === 0) return;
+    const now = Date.now();
+    const byUuid = new Map(changes.map((c) => [c.uuid, c.position]));
+    views = sortByPosition(
+      views.map((v) =>
+        byUuid.has(v.uuid) ? { ...v, position: byUuid.get(v.uuid)!, updatedAt: now } : v
+      )
+    );
+    const moved = views.filter((v) => byUuid.has(v.uuid));
+    for (const view of moved) {
+      if (view.id != null) {
+        await safeUpdate(db.filteredViews, view.id, {
+          position: view.position,
+          updatedAt: view.updatedAt,
+        });
+      }
+    }
+    // Guest channels stay local; syncWithBackend pushes them after sign-in.
+    if (auth.isGuest) return;
+    api
+      .syncChannels(
+        moved.map((v) => ({
+          uuid: v.uuid,
+          name: v.name,
+          config: JSON.stringify(toConfig(v)),
+          position: v.position,
+          createdAt: v.createdAt,
+          updatedAt: v.updatedAt,
+        }))
+      )
+      .catch((e) => {
+        console.warn('Failed to push channel order to backend:', e);
+      });
+  }
+
   async function remove(id: number) {
     const view = views.find((v) => v.id === id);
     await db.filteredViews.delete(id);
@@ -385,6 +434,7 @@ function createFilteredViewsStore() {
     syncWithBackend,
     create,
     update,
+    reorder,
     remove,
     getById,
     getByUuid,

@@ -444,11 +444,11 @@ export async function seedSearchChannel(
 /** A channel row as the server holds one, with `config` as the app writes it. */
 export async function seedChannel(
   user: TestUser,
-  opts: { uuid: string; name: string; config: Record<string, unknown> }
+  opts: { uuid: string; name: string; config: Record<string, unknown>; position?: number }
 ): Promise<void> {
   const now = Date.now();
   await execD1([
-    `INSERT OR REPLACE INTO channels (uuid, user_did, name, config, position, created_at, updated_at) VALUES (${sqlString(opts.uuid)}, ${sqlString(user.did)}, ${sqlString(opts.name)}, ${sqlString(JSON.stringify(opts.config))}, 0, ${now}, ${now})`,
+    `INSERT OR REPLACE INTO channels (uuid, user_did, name, config, position, created_at, updated_at) VALUES (${sqlString(opts.uuid)}, ${sqlString(user.did)}, ${sqlString(opts.name)}, ${sqlString(JSON.stringify(opts.config))}, ${opts.position ?? 0}, ${now}, ${now})`,
   ]);
 }
 
