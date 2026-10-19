@@ -88,7 +88,7 @@ describe('query plans: periodic scans stay on covering indexes', () => {
       'COVERING INDEX idx_cache_backoff'
     );
     expect(
-      plan('SELECT COUNT(*) as count FROM cache WHERE next_retry_at > ? AND error_count >= 5')
+      plan('SELECT COUNT(*) as count FROM cache WHERE next_retry_at > ? AND error_count > 0')
     ).toContain('COVERING INDEX idx_cache_backoff');
     expect(plan(STATS_PARKED_SQL)).toContain('COVERING INDEX idx_cache_parked');
   });

@@ -236,16 +236,17 @@ const PROXY_LABELS = ['Crawl Cycle', 'Proxy Feeds in Error', 'Document Sync'] as
  * 5-minute TTL", which the deliberately ~8-minute cycle (fly.toml, WARM_BATCH_CAP)
  * can never satisfy and which counted broken and abandoned rows as stale.
  *
- * Amber past the proxy's accepted cycle, red past twice it — the age at which
- * the crawler starts reporting a feed `crawl_stale`.
+ * Amber past the proxy's accepted cycle, red past twice it — with the default
+ * 1h target, the 2h age at which the crawler reports a feed `crawl_stale`.
  */
 function crawlCycleMetric(proxy: ProxyStatsValue): MetricValue {
   const cycle = proxy.crawlCycleSeconds;
   if (cycle === undefined || cycle === null) {
     return { label: PROXY_LABELS[0], value: 'Not reported', status: 'warning' };
   }
-  // Every in-set feed broken (or nothing in the set): nothing is being crawled.
-  if (cycle === 0) return { label: PROXY_LABELS[0], value: 'No healthy feeds', status: 'error' };
+  // Nothing healthy in the set: an idle crawler (staging, dev) or every feed
+  // broken. The errors tile tells those apart, and goes red for the second.
+  if (cycle === 0) return { label: PROXY_LABELS[0], value: 'No healthy feeds', status: 'warning' };
 
   const target = proxy.crawlTargetCycleSeconds || DEFAULT_TARGET_CYCLE_SECONDS;
   return {
