@@ -173,10 +173,11 @@ a smoke check fails right after a hand deploy.
 Production ships when a GitHub release is published: every `*-deploy.yml` runs its
 `deploy-production` job on `release: published`. Don't tag by hand; run the
 **Release** workflow (Actions → Release → Run workflow, or `gh workflow run release.yml`).
-It refuses unless every push run on main's head commit (the staging deploys) finished
-green, then publishes a release named for today's date in UTC (`v2026.10.19`, then
+It refuses unless every package's staging deploy is green on that package's latest change
+(`scripts/check-staging.sh`), then publishes a release named for today's date in UTC (`v2026.10.19`, then
 `v2026.10.19.2` …) with notes listing the PRs merged since the last one. Nothing reads
-the version; deploys, Sentry and the smoke checks key on the commit SHA.
+the version; deploys, Sentry and the smoke checks key on the commit SHA. A failed staging
+deploy blocks it until that run is re-run green, or a manual dispatch of it passes.
 
 ### Sentry account ownership
 
