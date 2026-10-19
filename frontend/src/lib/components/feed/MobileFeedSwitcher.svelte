@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { isSavesChannel } from '$lib/utils/savesChannel';
   import { channelQuery } from '$lib/utils/searchChannels';
   import { isArchiveFeedSource } from '$lib/utils/newsletters';
   import { goto } from '$app/navigation';
@@ -357,12 +358,11 @@
       id: v.uuid,
       label: v.name,
       count: v.id != null ? (unreadCounts.channelCounts.get(v.id) ?? 0) : 0,
-      icon:
-        v.mode === 'saved'
-          ? ('bookmark' as const)
-          : channelQuery(v)
-            ? ('search' as const)
-            : ('newspaper' as const),
+      icon: isSavesChannel(v)
+        ? ('bookmark' as const)
+        : channelQuery(v)
+          ? ('search' as const)
+          : ('newspaper' as const),
     }));
 
     // Collections are account-only (held server-side), like the sidebar's.

@@ -12,6 +12,7 @@ import {
 } from '$lib/utils/sourceKeys';
 import { toConfig, fromRemote, computeSyncOperations } from '$lib/utils/channelSync';
 import { CHANNEL_FILTER_VERSION, upgradeChannelFilter } from '$lib/utils/sourceFilter';
+import { foldSavedChannel } from '$lib/utils/savesChannel';
 
 const PENDING_DELETES_KEY = 'channelsPendingDelete';
 
@@ -37,6 +38,18 @@ function createFilteredViewsStore() {
     const all = await db.filteredViews.orderBy('position').toArray();
 
     const subscriptions = await db.subscriptions.toArray();
+
+    // The old Saved channel type is now a channel that takes in Your saves
+    // (utils/savesChannel.ts). First, so the migrations below see a feed channel.
+    // Kept here only; the next edit carries it to the server.
+    for (const view of all) {
+      const updates = foldSavedChannel(view);
+      if (!updates) continue;
+      Object.assign(view, updates);
+      if (view.id != null) {
+        await safeUpdate(db.filteredViews, view.id, updates);
+      }
+    }
 
     // One-time migration: convert legacy views (sourceMode undefined) to new format
     const needsLegacyMigration = all.some((v) => v.sourceMode == null);
@@ -165,7 +178,7 @@ function createFilteredViewsStore() {
     // older fix for manual include channels that still carried a type filter.
     const upgradedViews: FilteredView[] = [];
     for (const view of all) {
-      if (view.mode === 'saved' || view.sourceMode == null) continue;
+      if (view.sourceMode == null) continue;
       if ((view.filterVersion ?? 0) >= CHANNEL_FILTER_VERSION) continue;
       const upgraded = upgradeChannelFilter(view);
       const updates: Partial<FilteredView> = {
@@ -216,8 +229,10 @@ function createFilteredViewsStore() {
         updatedViews = updatedViews.filter((v) => v.uuid !== uuid);
       }
 
+      // A Saved channel's config arrives as the channel it now is.
       // Add new channels from remote to DB
-      for (const parsed of ops.addLocally) {
+      for (const remote of ops.addLocally) {
+        const parsed = { ...remote, ...foldSavedChannel(remote as FilteredView) };
         const id = await safeAdd(db.filteredViews, parsed);
         updatedViews = [...updatedViews, { ...parsed, id: id as number }];
       }
@@ -226,7 +241,12 @@ function createFilteredViewsStore() {
       for (const { uuid, data: remote } of ops.updateLocally) {
         // A query (or Library sources) taken out on another device is absent from
         // its config, and a merge would keep this device's: name it, so the merge clears it.
-        const data = { query: undefined, librarySources: undefined, ...remote };
+        const data = {
+          query: undefined,
+          librarySources: undefined,
+          ...remote,
+          ...foldSavedChannel(remote as FilteredView),
+        };
         const local = updatedViews.find((v) => v.uuid === uuid);
         if (local?.id != null) {
           await safeUpdate(db.filteredViews, local.id, data);
@@ -294,7 +314,7 @@ function createFilteredViewsStore() {
     const uuid = crypto.randomUUID();
     const newView: FilteredView = {
       ...view,
-      ...(view.mode === 'saved' ? {} : { filterVersion: CHANNEL_FILTER_VERSION }),
+      filterVersion: CHANNEL_FILTER_VERSION,
       uuid,
       createdAt: now,
       updatedAt: now,

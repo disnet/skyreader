@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { isSavesChannel } from '$lib/utils/savesChannel';
   import { tick } from 'svelte';
   import type { FilteredView } from '$lib/types';
   import Icon from '../Icon.svelte';
@@ -68,7 +69,7 @@
 >
   <span class="view-icon"
     ><Icon
-      name={view.mode === 'saved' ? 'bookmark' : channelQuery(view) ? 'search' : 'newspaper'}
+      name={isSavesChannel(view) ? 'bookmark' : channelQuery(view) ? 'search' : 'newspaper'}
       size={14}
     /></span
   >

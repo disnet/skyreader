@@ -5,6 +5,7 @@
 </script>
 
 <script lang="ts">
+  import { isSavesChannel } from '$lib/utils/savesChannel';
   import { shellToolbar } from '$lib/actions/shell-toolbar';
   import { appScrollTo } from '$lib/utils/appScroll';
   // The Home view: the default landing surface. Not a feed — a composition of
@@ -294,7 +295,7 @@
   // fields the Saved view applies — then sorted by the channel's sort order.
   // Channels whose matches are all archived (or otherwise empty) are dropped so
   // Home doesn't show hollow lanes.
-  let savedChannels = $derived(filteredViewsStore.views.filter((v) => v.mode === 'saved'));
+  let savedChannels = $derived(filteredViewsStore.views.filter((v) => isSavesChannel(v)));
 
   function matchesChannel(s: SavedItem, v: FilteredView): boolean {
     if (v.savedSourceFilter && v.savedSourceFilter.length > 0) {

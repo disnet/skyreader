@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { isSavesChannel } from '$lib/utils/savesChannel';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { tick, onMount, onDestroy } from 'svelte';
@@ -309,7 +310,7 @@
       type: 'filteredView' as const,
       id: v.uuid,
       label: v.name,
-      icon: v.mode === 'saved' ? ('bookmark' as const) : ('filter' as const),
+      icon: isSavesChannel(v) ? ('bookmark' as const) : ('filter' as const),
     }));
 
     const addViewAction: NavItem = {

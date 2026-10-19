@@ -2,6 +2,7 @@
 // with query params; it now has real routes: /home (landing), /feeds (the river,
 // formerly "Everything"), and /saved. Sub-filters (a single feed, a category, a
 // channel, the shared view) still ride as query params on whichever base.
+import { isSavesChannel } from '$lib/utils/savesChannel';
 import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
 
 export const FEEDS_PATH = '/feeds';
@@ -34,6 +35,6 @@ export function channelPath(idOrUuid: string | number): string {
     typeof idOrUuid === 'number'
       ? filteredViewsStore.getById(idOrUuid)
       : (filteredViewsStore.getByUuid(idOrUuid) ?? filteredViewsStore.getById(Number(idOrUuid)));
-  const base = view?.mode === 'saved' ? SAVED_PATH : FEEDS_PATH;
+  const base = isSavesChannel(view) ? SAVED_PATH : FEEDS_PATH;
   return `${base}?view=${view?.uuid ?? idOrUuid}`;
 }

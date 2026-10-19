@@ -1248,16 +1248,17 @@ export interface FilteredView {
   id?: number;
   uuid: string;
   name: string;
-  // Channel mode: 'feed' (default) shows normal content, 'saved' shows only saved items
+  // 'feed' (default). 'saved' is the old Saved channel, folded into a channel of
+  // your saves as it loads (utils/savesChannel.ts).
   mode?: 'feed' | 'saved';
   // Unified source filter (new format) — applies to feed-mode channels
   sourceMode?: 'all' | 'include' | 'exclude';
   sourceKeys?: string[];
   // Auto-update rule: when set, sourceKeys are kept in sync with subscriptions
   autoRule?: ChannelAutoRule;
-  // Saved channel: filter by save source type (url, feed, share, document)
+  // A channel of your saves: filter by save source type (url, feed, document, upload)
   savedSourceFilter?: SavedSourceType[];
-  // Saved channel filters
+  // A channel of your saves: its other save filters
   savedDateFilter?: DateAddedPreset;
   savedReadingLength?: ReadingLengthFilter[];
   savedDomainFilter?: string[];

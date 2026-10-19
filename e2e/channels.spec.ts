@@ -99,14 +99,21 @@ test.describe('Channels', () => {
     authedPage,
     testUser,
   }) => {
-    // A saved channel routes to /saved?view=<uuid> and puts an Edit button in
-    // the header. That button used to resolve the channel with
+    // A channel of your saves routes to /saved?view=<uuid> and puts an Edit
+    // button in the header. That button used to resolve the channel with
     // `parseInt(viewFilter)` — but `viewFilter` is the uuid, so it passed NaN
     // and the editor opened blank, with its Save writing to no row at all.
+    // Seeded as an old Saved channel, which now opens as a channel of your saves
+    // with its filter kept.
     await seedChannel(testUser, {
       uuid: crypto.randomUUID(),
       name: 'Edit From Header',
-      config: { mode: 'saved', readFilter: 'unread', sortOrder: 'newest' },
+      config: {
+        mode: 'saved',
+        readFilter: 'unread',
+        sortOrder: 'newest',
+        savedSourceFilter: ['feed'],
+      },
     });
     await authedPage.reload();
     await authedPage.locator('.view-item .nav-label', { hasText: 'Edit From Header' }).click();
@@ -119,6 +126,10 @@ test.describe('Channels', () => {
       timeout: 5_000,
     });
     await expect(authedPage.locator('#channel-name')).toHaveValue('Edit From Header');
+    await expect(authedPage.getByRole('button', { name: 'Feed Articles' })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    );
   });
 
   test('rename a channel via context menu', async ({ authedPage }) => {

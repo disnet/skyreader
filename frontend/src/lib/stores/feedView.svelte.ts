@@ -1,3 +1,4 @@
+import { isSavesChannel } from '$lib/utils/savesChannel';
 import { articlesStore } from './articles.svelte';
 import { subscriptionsStore } from './subscriptions.svelte';
 import { itemLabelsStore } from './itemLabels.svelte';
@@ -459,8 +460,9 @@ function createFeedViewStore() {
     return lookupView(viewFilter) ?? null;
   });
 
-  // Derived: whether the active channel is a saved-mode channel
-  let isSavedChannel = $derived(activeFilteredView?.mode === 'saved');
+  // Derived: whether the active channel reads only your saves, and so opens as
+  // the Library does (utils/savesChannel.ts)
+  let isSavedChannel = $derived(isSavesChannel(activeFilteredView));
 
   // Derived: whether we're in any saved view (URL param or saved channel)
   let isSavedView = $derived(Boolean(savedFilter) || isSavedChannel);
@@ -567,13 +569,23 @@ function createFeedViewStore() {
     if (pendingViewKey !== null) return false;
     if (!activeFilteredView) return false;
     const view = activeFilteredView;
-    const currentReadFilter = showOnlyUnread ? 'unread' : 'all';
+    // A channel of your saves keeps Inbox or Archive; any other, unread or all.
+    const currentReadFilter = isSavesChannel(view)
+      ? savedView === 'archive'
+        ? 'read'
+        : 'unread'
+      : showOnlyUnread
+        ? 'unread'
+        : 'all';
     const currentSortOrder = toolbarSortOrder ?? preferences.sortOrder;
 
-    if (currentReadFilter !== view.readFilter) return true;
+    // An Inbox saved as 'all' (by an older toolbar) is still the Inbox.
+    const savedReadFilter =
+      isSavesChannel(view) && view.readFilter !== 'read' ? 'unread' : view.readFilter;
+    if (currentReadFilter !== savedReadFilter) return true;
     if (currentSortOrder !== view.sortOrder) return true;
 
-    if (view.mode === 'saved') {
+    if (isSavesChannel(view)) {
       // Compare saved source filter
       const savedSources = new Set(view.savedSourceFilter ?? []);
       if (toolbarSavedSourceFilter.length !== savedSources.size) return true;
@@ -1008,7 +1020,7 @@ function createFeedViewStore() {
   // Shelf). A saved search's saves come matched from the server instead.
   let channelLibrarySources = $derived.by((): LibrarySource[] => {
     const view = activeFilteredView;
-    if (!view || view.mode === 'saved') return [];
+    if (!view || isSavesChannel(view)) return [];
     // The toolbar's source picker has no Library rows, so narrowing it to some
     // sources ("only", or a pick other than the channel's own) means just those.
     if (
@@ -1768,11 +1780,17 @@ function createFeedViewStore() {
     if (!fv || fv.id == null) return;
     const id = fv.id;
     const updates: Partial<import('$lib/types').FilteredView> = {
-      readFilter: showOnlyUnread ? 'unread' : 'all',
+      readFilter: isSavesChannel(fv)
+        ? savedView === 'archive'
+          ? 'read'
+          : 'unread'
+        : showOnlyUnread
+          ? 'unread'
+          : 'all',
       sortOrder: toolbarSortOrder ?? preferences.sortOrder,
       tagFilter: toolbarTagFilter.length > 0 ? [...toolbarTagFilter] : undefined,
     };
-    if (fv.mode === 'saved') {
+    if (isSavesChannel(fv)) {
       updates.savedSourceFilter =
         toolbarSavedSourceFilter.length > 0 ? [...toolbarSavedSourceFilter] : undefined;
       updates.savedDateFilter = toolbarDateFilter ?? undefined;
@@ -1797,8 +1815,8 @@ function createFeedViewStore() {
    * lookup hits, and from `applyPendingViewConfig` when it hits late.
    */
   function applyViewConfig(fv: FilteredView) {
-    if (fv.mode === 'saved') {
-      // Saved channel — load saved-specific filters
+    if (isSavesChannel(fv)) {
+      // A channel of your saves — load the save filters
       toolbarSavedSourceFilter = fv.savedSourceFilter ? [...fv.savedSourceFilter] : [];
       toolbarDateFilter = fv.savedDateFilter ?? null;
       toolbarReadingLength = fv.savedReadingLength ? [...fv.savedReadingLength] : [];
