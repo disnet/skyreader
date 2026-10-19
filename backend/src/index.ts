@@ -184,6 +184,7 @@ import {
   handleGetChannels,
   handleSyncChannels,
   handleUpsertChannel,
+  handleReorderChannels,
   handleDeleteChannel,
 } from './routes/channels';
 import { handleTestExec } from './routes/test-utils';
@@ -1088,6 +1089,17 @@ async function route(
         response = await handleGetChannels(request, env);
       } else if (request.method === 'PUT') {
         response = await handleSyncChannels(request, env);
+      } else {
+        response = new Response(JSON.stringify({ error: 'Method not allowed' }), {
+          status: 405,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      break;
+    case url.pathname === '/api/channels/order':
+      if (!session) return unauthorizedResponse(headers);
+      if (request.method === 'PUT') {
+        response = await handleReorderChannels(request, env);
       } else {
         response = new Response(JSON.stringify({ error: 'Method not allowed' }), {
           status: 405,

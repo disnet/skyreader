@@ -7,12 +7,25 @@
     y: number;
     onEdit?: () => void;
     onRename?: () => void;
+    /** Reorder a channel a step; left out where it can't move that way. */
+    onMoveUp?: () => void;
+    onMoveDown?: () => void;
     onDelete: () => void;
     onClose: () => void;
     deleteLabel?: string;
   }
 
-  let { x, y, onEdit, onRename, onDelete, onClose, deleteLabel = 'Delete' }: Props = $props();
+  let {
+    x,
+    y,
+    onEdit,
+    onRename,
+    onMoveUp,
+    onMoveDown,
+    onDelete,
+    onClose,
+    deleteLabel = 'Delete',
+  }: Props = $props();
 
   let menuRef: HTMLDivElement | null = $state(null);
   let adjustedX = $state(0);
@@ -62,6 +75,11 @@
     onClose();
   }
 
+  function handleMove(move: () => void) {
+    move();
+    onClose();
+  }
+
   function handleDelete() {
     onDelete();
     onClose();
@@ -84,6 +102,18 @@
     <button class="context-menu-item" onclick={handleRename} role="menuitem">
       <span class="context-menu-icon"><Icon name="edit" size={16} /></span>
       Rename
+    </button>
+  {/if}
+  {#if onMoveUp}
+    <button class="context-menu-item" onclick={() => handleMove(onMoveUp)} role="menuitem">
+      <span class="context-menu-icon"><Icon name="arrow-up" size={16} /></span>
+      Move up
+    </button>
+  {/if}
+  {#if onMoveDown}
+    <button class="context-menu-item" onclick={() => handleMove(onMoveDown)} role="menuitem">
+      <span class="context-menu-icon"><Icon name="arrow-down" size={16} /></span>
+      Move down
     </button>
   {/if}
   <button class="context-menu-item danger" onclick={handleDelete} role="menuitem">

@@ -10,11 +10,19 @@ import {
   parseSourceKey,
   documentsSourceKey,
 } from '$lib/utils/sourceKeys';
-import { toConfig, fromRemote, computeSyncOperations } from '$lib/utils/channelSync';
+import {
+  toConfig,
+  fromRemote,
+  computeSyncOperations,
+  planReorder,
+  sortByPosition,
+} from '$lib/utils/channelSync';
 import { CHANNEL_FILTER_VERSION, upgradeChannelFilter } from '$lib/utils/sourceFilter';
 import { foldSavedChannel } from '$lib/utils/savesChannel';
 
 const PENDING_DELETES_KEY = 'channelsPendingDelete';
+/** Set while a reorder made here hasn't reached the server. */
+const ORDER_UNSENT_KEY = 'channelOrderUnsent';
 
 /** Load the set of UUIDs we've deleted locally but may not have confirmed with the backend. */
 async function loadPendingDeletes(): Promise<Set<string>> {
@@ -33,6 +41,7 @@ async function savePendingDeletes(uuids: Set<string>): Promise<void> {
 
 function createFilteredViewsStore() {
   let views = $state<FilteredView[]>([]);
+  let orderPush: Promise<void> = Promise.resolve();
 
   async function load() {
     const all = await db.filteredViews.orderBy('position').toArray();
@@ -195,7 +204,7 @@ function createFilteredViewsStore() {
       upgradedViews.push(view);
     }
 
-    views = all;
+    views = sortByPosition(all);
 
     // Propagate the upgrade to the backend so other devices pick it up.
     // syncWithBackend doesn't push updates to channels that already exist on
@@ -254,8 +263,20 @@ function createFilteredViewsStore() {
         updatedViews = updatedViews.map((v) => (v.uuid === uuid ? { ...v, ...data } : v));
       }
 
-      // All DB ops succeeded — commit the in-memory state atomically
-      views = updatedViews;
+      // All DB ops succeeded — commit the in-memory state atomically. Apply the
+      // sync's changes to the views as they are now, not as they were when it
+      // started, so a reorder or a new channel made meanwhile survives; and
+      // re-sort, since a reorder made on another device arrives as positions.
+      const deleted = new Set(ops.deleteLocally);
+      const fromSync = new Map(updatedViews.map((v) => [v.uuid, v]));
+      const updated = new Set(ops.updateLocally.map((u) => u.uuid));
+      const kept = views
+        .filter((v) => !deleted.has(v.uuid))
+        .map((v) => (updated.has(v.uuid) ? (fromSync.get(v.uuid) ?? v) : v));
+      const keptUuids = new Set(kept.map((v) => v.uuid));
+      const addedUuids = new Set(ops.addLocally.map((a) => a.uuid));
+      const added = updatedViews.filter((v) => addedUuids.has(v.uuid) && !keptUuids.has(v.uuid));
+      views = sortByPosition([...kept, ...added]);
 
       // Retry pending deletes (network-only, doesn't affect local state)
       const retriedOk = new Set<string>();
@@ -269,6 +290,9 @@ function createFilteredViewsStore() {
       }
       for (const uuid of retriedOk) ops.pendingDeletesAfter.delete(uuid);
       await savePendingDeletes(ops.pendingDeletesAfter);
+
+      // A reorder whose push didn't land (offline, a failed request) goes now.
+      if (await getMetadata<boolean>(ORDER_UNSENT_KEY)) void pushOrder();
 
       // Push local-only channels to remote
       if (ops.pushToRemote.length > 0) {
@@ -336,6 +360,58 @@ function createFilteredViewsStore() {
     if (view) pushToBackend(view);
   }
 
+  /**
+   * Put the channels in a new order (`order` is their uuids, top first). Only
+   * the channels that change place are written here, stamped newer so other
+   * devices take the new positions. The server is sent positions alone, so a
+   * stale copy of a channel's name or config never goes with them. Until a push
+   * lands, the order is marked unsent and the next sync sends it again.
+   */
+  async function reorder(order: string[]) {
+    const changes = planReorder(views, order);
+    if (changes.length === 0) return;
+    const now = Date.now();
+    const byUuid = new Map(changes.map((c) => [c.uuid, c.position]));
+    views = sortByPosition(
+      views.map((v) =>
+        byUuid.has(v.uuid) ? { ...v, position: byUuid.get(v.uuid)!, updatedAt: now } : v
+      )
+    );
+    await db.transaction('rw', db.filteredViews, async () => {
+      for (const view of views) {
+        if (view.id != null && byUuid.has(view.uuid)) {
+          await safeUpdate(db.filteredViews, view.id, {
+            position: view.position,
+            updatedAt: view.updatedAt,
+          });
+        }
+      }
+    });
+    // Guest channels stay local; syncWithBackend pushes them after sign-in.
+    if (auth.isGuest) return;
+    await setMetadata(ORDER_UNSENT_KEY, true);
+    void pushOrder();
+  }
+
+  /**
+   * Send every channel's position. One at a time, so two quick moves can't land
+   * out of order and leave the server with the first.
+   */
+  function pushOrder(): Promise<void> {
+    orderPush = orderPush.then(async () => {
+      try {
+        await api.reorderChannels(
+          views.map((v) => ({ uuid: v.uuid, position: v.position })),
+          Math.max(...views.map((v) => v.updatedAt))
+        );
+        await setMetadata(ORDER_UNSENT_KEY, false);
+      } catch (e) {
+        console.warn('Failed to push channel order, will retry on next sync:', e);
+      }
+    });
+    return orderPush;
+  }
+
   async function remove(id: number) {
     const view = views.find((v) => v.id === id);
     await db.filteredViews.delete(id);
@@ -385,6 +461,7 @@ function createFilteredViewsStore() {
     syncWithBackend,
     create,
     update,
+    reorder,
     remove,
     getById,
     getByUuid,

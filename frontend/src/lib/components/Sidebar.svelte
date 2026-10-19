@@ -22,6 +22,7 @@
   import { shelfStore } from '$lib/stores/shelf.svelte';
   import { highlightReviewStore } from '$lib/stores/highlightReview.svelte';
   import { syncAutoRuleChannels } from '$lib/stores/channelAutoUpdate.svelte';
+  import { moveChannel } from '$lib/utils/channelSync';
   import { onMount, onDestroy } from 'svelte';
   import EditFeedModal from './EditFeedModal.svelte';
   import type { Subscription } from '$lib/types';
@@ -276,6 +277,78 @@
 
   // Every channel, whatever it reads from, lives in the one Channels section.
   let channels = $derived(filteredViewsStore.views);
+  // Reordering channels. With a mouse or pen, drag a row: it lifts after a few
+  // pixels of travel (so a click still opens it), the others make way as it
+  // moves, and the order commits on release. On touch, where a drag would fight
+  // the drawer's scroll, the long-press menu offers Move up / Move down, as does
+  // the ⋯ menu for the keyboard. Move/up are heard on the window, as in
+  // HomeCustomizeDialog: the keyed list moves the row's node mid-gesture.
+  let channelListEl = $state<HTMLDivElement | null>(null);
+  let channelDrag = $state<{
+    uuid: string;
+    order: string[];
+    startY: number;
+    lifted: boolean;
+  } | null>(null);
+
+  let shownChannels = $derived.by(() => {
+    if (!channelDrag?.lifted) return channels;
+    const byUuid = new Map(channels.map((v) => [v.uuid, v]));
+    return channelDrag.order
+      .map((uuid) => byUuid.get(uuid))
+      .filter((v): v is (typeof channels)[number] => Boolean(v));
+  });
+
+  function startChannelDrag(e: PointerEvent, uuid: string) {
+    if (e.pointerType === 'touch' || e.button !== 0 || channels.length < 2) return;
+    channelDrag = { uuid, order: channels.map((v) => v.uuid), startY: e.clientY, lifted: false };
+  }
+
+  function moveChannelDrag(e: PointerEvent) {
+    const drag = channelDrag;
+    if (!drag || !channelListEl) return;
+    if (!drag.lifted) {
+      if (Math.abs(e.clientY - drag.startY) < 5) return;
+      drag.lifted = true;
+    }
+    e.preventDefault();
+    // The slot is how many of the other rows' midpoints the pointer is below.
+    let slot = 0;
+    for (const row of channelListEl.querySelectorAll<HTMLElement>('[data-channel-uuid]')) {
+      if (row.dataset.channelUuid === drag.uuid) continue;
+      const rect = row.getBoundingClientRect();
+      if (e.clientY > rect.top + rect.height / 2) slot++;
+    }
+    const next = drag.order.filter((uuid) => uuid !== drag.uuid);
+    next.splice(slot, 0, drag.uuid);
+    if (next.some((uuid, i) => uuid !== drag.order[i])) drag.order = next;
+  }
+
+  function swallowClick(e: MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+  }
+
+  function endChannelDrag() {
+    const drag = channelDrag;
+    channelDrag = null;
+    if (!drag?.lifted) return;
+    // The release lands as a click on the row, which would open the channel.
+    window.addEventListener('click', swallowClick, { capture: true, once: true });
+    setTimeout(() => window.removeEventListener('click', swallowClick, { capture: true }));
+    if (drag.order.some((uuid, i) => uuid !== channels[i]?.uuid)) {
+      void filteredViewsStore.reorder(drag.order);
+    }
+  }
+
+  function moveChannelStep(viewId: number, delta: -1 | 1) {
+    const uuid = filteredViewsStore.getById(viewId)?.uuid;
+    if (!uuid) return;
+    const order = channels.map((v) => v.uuid);
+    const next = moveChannel(order, uuid, delta);
+    if (next !== order) void filteredViewsStore.reorder(next);
+  }
+
   // The Library row discloses only the Shelf's collections now.
   let hasCollections = $derived(!auth.isGuest && shelfStore.collections.length > 0);
 
@@ -438,27 +511,31 @@
       </div>
       {#if sidebarStore.expandedSections.allChannels}
         <div class="nav-children">
-          {#each channels as view (view.uuid)}
-            <ViewItem
-              {view}
-              isActive={currentFilter().type === 'view' && currentFilter().id === view.uuid}
-              isRenaming={renamingViewId === view.id}
-              unreadCount={view.id != null ? (unreadCounts.channelCounts.get(view.id) ?? 0) : 0}
-              onSelect={() => selectFilter('view', view.uuid)}
-              onContextMenu={(e) => view.id != null && handleViewContextMenu(e, view.id)}
-              onTouchStart={(e) => view.id != null && handleViewTouchStart(e, view.id)}
-              onTouchEnd={handleViewTouchEnd}
-              onTouchMove={handleViewTouchMove}
-              onMoreClick={(e) => view.id != null && handleViewContextMenu(e, view.id)}
-              onRename={async (name) => {
-                if (view.id != null) {
-                  await filteredViewsStore.update(view.id, { name });
-                }
-                renamingViewId = null;
-              }}
-              onRenameCancel={() => (renamingViewId = null)}
-            />
-          {/each}
+          <div class="channel-list" class:dragging={channelDrag?.lifted} bind:this={channelListEl}>
+            {#each shownChannels as view (view.uuid)}
+              <ViewItem
+                {view}
+                isLifted={channelDrag?.lifted === true && channelDrag.uuid === view.uuid}
+                onPointerDown={(e) => startChannelDrag(e, view.uuid)}
+                isActive={currentFilter().type === 'view' && currentFilter().id === view.uuid}
+                isRenaming={renamingViewId === view.id}
+                unreadCount={view.id != null ? (unreadCounts.channelCounts.get(view.id) ?? 0) : 0}
+                onSelect={() => selectFilter('view', view.uuid)}
+                onContextMenu={(e) => view.id != null && handleViewContextMenu(e, view.id)}
+                onTouchStart={(e) => view.id != null && handleViewTouchStart(e, view.id)}
+                onTouchEnd={handleViewTouchEnd}
+                onTouchMove={handleViewTouchMove}
+                onMoreClick={(e) => view.id != null && handleViewContextMenu(e, view.id)}
+                onRename={async (name) => {
+                  if (view.id != null) {
+                    await filteredViewsStore.update(view.id, { name });
+                  }
+                  renamingViewId = null;
+                }}
+                onRenameCancel={() => (renamingViewId = null)}
+              />
+            {/each}
+          </div>
           <button class="new-channel-btn" onclick={() => openChannelModal(null, 'feed')}>
             <Icon name="plus" size={12} strokeWidth={2} />
             New channel
@@ -725,13 +802,24 @@
   ondeleted={() => selectFilter('all')}
 />
 
+<svelte:window
+  onpointermove={channelDrag ? moveChannelDrag : undefined}
+  onpointerup={channelDrag ? endChannelDrag : undefined}
+  onpointercancel={channelDrag ? () => (channelDrag = null) : undefined}
+/>
+
 {#if viewContextMenu}
   {@const viewId = viewContextMenu.viewId}
+  {@const index = channels.findIndex((v) => v.id === viewId)}
   <ContextMenu
     x={viewContextMenu.x}
     y={viewContextMenu.y}
     onEdit={() => openChannelModal(viewId)}
     onRename={() => handleRenameView(viewId)}
+    onMoveUp={index > 0 ? () => moveChannelStep(viewId, -1) : undefined}
+    onMoveDown={index !== -1 && index < channels.length - 1
+      ? () => moveChannelStep(viewId, 1)
+      : undefined}
     onDelete={() => handleDeleteView(viewId)}
     onClose={closeViewContextMenu}
   />
@@ -1050,6 +1138,16 @@
     font-size: var(--text-sm);
     color: var(--color-text-secondary);
     font-style: italic;
+  }
+
+  /* A wrapper for hit-testing the drag, not a box of its own: the rows lay out
+     as the section's other children do. */
+  .channel-list {
+    display: contents;
+  }
+
+  .channel-list.dragging {
+    cursor: grabbing;
   }
 
   .new-channel-btn {

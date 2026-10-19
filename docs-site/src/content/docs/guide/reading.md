@@ -28,6 +28,8 @@ Choose **New channel** under **Channels**, in the sidebar or the feed switcher o
 
 To change a channel later, open it and choose **Edit channel**, or right-click it in the sidebar. On a phone, **Edit channel** sits beside **View** in the view options.
 
+To change the order of your channels, drag one up or down the sidebar. Or right-click it (on a phone, press and hold) and choose **Move up** or **Move down**. The order follows you to your other devices.
+
 ![The Feeds view: sources and channels in the sidebar, newest articles first in the stream](../../../assets/screenshots/library.png)
 
 Items you scroll past can be marked read automatically (a toggle in **Settings → Reading**).

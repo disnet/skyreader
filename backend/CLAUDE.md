@@ -138,6 +138,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed documentation.
 | `src/routes/search.ts`        | `GET /api/search` — full-text search (Supporter)           |
 | `src/routes/bsky-sources.ts`  | `/api/v2/bluesky-sources` — Bluesky likes/bookmarks on/off |
 | `src/routes/channel-items.ts` | `GET /api/channels/:uuid/items` — saved-search matches     |
+| `src/routes/channels.ts`      | Channel sync; `PUT /api/channels/order` alone moves a row  |
 
 **Email newsletters** (Supporter) arrive through the Worker's `email()` handler, not HTTP:
 Cloudflare Email Routing hands it mail for `NEWSLETTER_EMAIL_DOMAIN`, and each message becomes a

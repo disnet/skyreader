@@ -2556,6 +2556,17 @@ class ApiClient {
     });
   }
 
+  /** Move channels; the one write that changes an existing channel's position. */
+  async reorderChannels(
+    channels: Array<{ uuid: string; position: number }>,
+    updatedAt: number
+  ): Promise<{ success: boolean }> {
+    return this.fetch('/api/channels/order', {
+      method: 'PUT',
+      body: JSON.stringify({ channels, updatedAt }),
+    });
+  }
+
   async deleteChannel(uuid: string): Promise<{ success: boolean }> {
     return this.fetch(`/api/channels/${uuid}`, {
       method: 'DELETE',
