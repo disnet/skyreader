@@ -301,6 +301,14 @@ export const WARM_DUE_DOCUMENTS_SQL = `SELECT did FROM document_cache
  * index doesn't carry, and document_cache rows hold documents_json blobs — off
  * the covering index, a COUNT here reads hundreds of MB of row pages.
  */
+/**
+ * The /stats parked-feed count (errors.permanent): covered by idx_cache_parked.
+ * A failed fetch leaves the feed's last good parsed_json in place, so reading
+ * these columns off the row would page in every broken feed's blob each call.
+ */
+export const STATS_PARKED_SQL = `SELECT COUNT(*) as count FROM cache
+				  WHERE error_count > 0 AND next_retry_at - last_error_at >= ?`;
+
 export const STATS_DOCUMENTS_ACTIVE_SQL = `SELECT COUNT(*) as count FROM document_cache
 				  WHERE last_requested_at > ?`;
 
@@ -1273,6 +1281,10 @@ export function initDatabase(db: Database): void {
     `CREATE INDEX IF NOT EXISTS idx_cache_backoff ON cache(next_retry_at, error_count)
 	    WHERE next_retry_at IS NOT NULL`
   );
+  db.run(
+    `CREATE INDEX IF NOT EXISTS idx_cache_parked ON cache(error_count, next_retry_at, last_error_at)
+	    WHERE error_count > 0`
+  );
 
   // Durable item log. Unlike `cache` (which mirrors the source feed and is
   // replaced wholesale on each parse), this *retains* every item the proxy has
@@ -2224,9 +2236,10 @@ export function createApp(db: Database, config: AppConfig) {
    * overran, slow upstreams holding concurrency slots, feeds skipped this pass.
    *
    * Two exclusions, both deliberate:
-   *   - Feeds in error backoff. The crawler is declining to fetch those ON
-   *     PURPOSE, and a 7-day permanent backoff would otherwise dominate the
-   *     result and make the cycle look infinite forever.
+   *   - Anything with a pending retry (see CRAWL_CYCLE_SQL): a broken feed's
+   *     fetched_at is its last SUCCESS, so it would read as weeks behind both
+   *     while in backoff and in the minute after it lapses. Erroring feeds are
+   *     the error stats' to count, not the cycle's.
    *   - `fetched_at = 0`, i.e. never fetched. A feed the crawl set registered
    *     seconds ago starts at 0, which would read as "infinitely behind" the
    *     moment anyone subscribes to something new.
@@ -2632,10 +2645,7 @@ export function createApp(db: Database, config: AppConfig) {
     // failure and its retry, which is fixed at write time, rather than by
     // next_retry_at alone, which shrinks as the backoff runs down.
     const permanentErrors = db
-      .query<{ count: number }, [number]>(
-        `SELECT COUNT(*) as count FROM cache
-          WHERE error_count > 0 AND next_retry_at - last_error_at >= ?`
-      )
+      .query<{ count: number }, [number]>(STATS_PARKED_SQL)
       .get(MAX_DELAY_MS);
 
     const activeDocumentCutoff = now - warmActiveWindowMs;

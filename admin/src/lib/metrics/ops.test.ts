@@ -136,7 +136,8 @@ describe('ops tiles', () => {
     expect(cycle(3 * 3600).status).toBe('error');
     // No target reported: the proxy's own default (1h).
     expect(cycle(90 * 60, null).status).toBe('warning');
-    expect(cycle(0).status).toBe('warning');
+    // Nothing healthy left to crawl.
+    expect(cycle(0).status).toBe('error');
     // A row written before the backend recorded the cycle.
     expect(cycle(undefined).value).toBe('Not reported');
   });
@@ -155,6 +156,8 @@ describe('ops tiles', () => {
     // The same count with nothing parked is a crawler-wide problem brewing.
     expect(errors(226, 0).status).toBe('warning');
     expect(errors(900, 155).status).toBe('error');
+    // A crawler-wide 403 parks every feed on the first hit: still red.
+    expect(errors(1876, 1876).status).toBe('error');
   });
 
   it('grades the document stream separately from subscriptions', () => {

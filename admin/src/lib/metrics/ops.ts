@@ -49,6 +49,12 @@ const DEFAULT_TARGET_CYCLE_SECONDS = 60 * 60;
  */
 const ERROR_WARN_RATIO = 0.1;
 const ERROR_ERROR_RATIO = 0.25;
+/**
+ * Half the cache erroring is red even if it's all parked. A crawler-wide 403
+ * (a bad signing key, a WAF on our egress) parks every feed on the first hit,
+ * and a long outage pushes transient errors to the daily cap too.
+ */
+const ERROR_ERROR_RAW_RATIO = 0.5;
 
 /**
  * Frozen document authors worth calling an error rather than a straggler. Keep
@@ -238,7 +244,8 @@ function crawlCycleMetric(proxy: ProxyStatsValue): MetricValue {
   if (cycle === undefined || cycle === null) {
     return { label: PROXY_LABELS[0], value: 'Not reported', status: 'warning' };
   }
-  if (cycle === 0) return { label: PROXY_LABELS[0], value: 'No healthy feeds', status: 'warning' };
+  // Every in-set feed broken (or nothing in the set): nothing is being crawled.
+  if (cycle === 0) return { label: PROXY_LABELS[0], value: 'No healthy feeds', status: 'error' };
 
   const target = proxy.crawlTargetCycleSeconds || DEFAULT_TARGET_CYCLE_SECONDS;
   return {
@@ -253,12 +260,17 @@ function feedErrorsMetric(proxy: ProxyStatsValue): MetricValue {
   const { total, feedsInError, feedsPermanentlyFailed } = proxy;
   const failing = Math.max(feedsInError - feedsPermanentlyFailed, 0);
   const ratio = total > 0 ? failing / total : 0;
+  const rawRatio = total > 0 ? feedsInError / total : 0;
   return {
     label: PROXY_LABELS[1],
     value: feedsInError,
     unit: feedsPermanentlyFailed > 0 ? `${feedsPermanentlyFailed} parked` : undefined,
     status:
-      ratio >= ERROR_ERROR_RATIO ? 'error' : ratio >= ERROR_WARN_RATIO ? 'warning' : 'healthy',
+      ratio >= ERROR_ERROR_RATIO || rawRatio >= ERROR_ERROR_RAW_RATIO
+        ? 'error'
+        : ratio >= ERROR_WARN_RATIO
+          ? 'warning'
+          : 'healthy',
   };
 }
 
