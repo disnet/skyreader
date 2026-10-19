@@ -136,8 +136,8 @@ describe('ops tiles', () => {
     expect(cycle(3 * 3600).status).toBe('error');
     // No target reported: the proxy's own default (1h).
     expect(cycle(90 * 60, null).status).toBe('warning');
-    // Nothing healthy left to crawl.
-    expect(cycle(0).status).toBe('error');
+    // Idle or all broken; the errors tile says which.
+    expect(cycle(0).status).toBe('warning');
     // A row written before the backend recorded the cycle.
     expect(cycle(undefined).value).toBe('Not reported');
   });
