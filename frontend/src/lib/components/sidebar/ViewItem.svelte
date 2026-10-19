@@ -22,6 +22,8 @@
     onTouchMove: () => void;
     onMoreClick: (e: MouseEvent) => void;
     onPointerDown?: (e: PointerEvent) => void;
+    /** Alt+↑ / Alt+↓: move the row a step. */
+    onMoveKey?: (delta: -1 | 1) => void;
     onRename: (name: string) => void;
     onRenameCancel: () => void;
   }
@@ -41,6 +43,7 @@
     onTouchMove,
     onMoreClick,
     onPointerDown,
+    onMoveKey,
     onRename,
     onRenameCancel,
   }: Props = $props();
@@ -77,6 +80,13 @@
   data-channel-uuid={view.uuid}
   onclick={isRenaming ? undefined : onSelect}
   onpointerdown={isRenaming ? undefined : onPointerDown}
+  onkeydown={(e) => {
+    if (isRenaming || !e.altKey || !onMoveKey) return;
+    const delta = e.key === 'ArrowUp' ? -1 : e.key === 'ArrowDown' ? 1 : 0;
+    if (!delta) return;
+    e.preventDefault();
+    onMoveKey(delta);
+  }}
   oncontextmenu={onContextMenu}
   ontouchstart={onTouchStart}
   ontouchend={onTouchEnd}
@@ -159,29 +169,6 @@
   .nav-item.active {
     background-color: var(--color-sidebar-active, rgba(0, 102, 204, 0.1));
     color: var(--color-primary);
-  }
-
-  /* Dragging (hooks/useListDrag): the lifted row follows the pointer, so it
-     doesn't ease, and it's the one overlapping element in flight, so it's the
-     one that gets a shadow (Flat-By-Default). The rows it passes ease aside. */
-  .nav-item.lifted {
-    position: relative;
-    z-index: 1;
-    background-color: var(--color-bg);
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
-    cursor: grabbing;
-  }
-
-  .nav-item.eases {
-    transition:
-      transform 180ms cubic-bezier(0.2, 0, 0, 1),
-      background-color 0.15s;
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .nav-item.eases {
-      transition: none;
-    }
   }
 
   .view-icon {
@@ -275,14 +262,6 @@
   @media (hover: hover) and (prefers-color-scheme: dark) {
     .nav-item:hover {
       background-color: var(--color-bg-hover, rgba(255, 255, 255, 0.05));
-    }
-  }
-
-  @media (prefers-color-scheme: dark) {
-    .nav-item.lifted,
-    .nav-item.lifted:hover {
-      background-color: var(--color-bg-secondary);
-      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
     }
   }
 </style>

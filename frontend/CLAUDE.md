@@ -266,8 +266,9 @@ Saved channel and a stale copy can't outrank a newer edit.
 
 Channels list in `position` order everywhere (`channelSync.ts`'s `sortByPosition`, ties by
 `createdAt`). The sidebar reorders them, and the Library's collections, the same way: a mouse or pen
-drag on a row, or **Move up** / **Move down** in the row's menu (the touch path, since a drag would
-fight the drawer's scroll). The drag is `hooks/useListDrag.svelte.ts`: the row lifts and follows the
+drag on a row, **Move up** / **Move down** in a long-press menu (the touch path, since a drag would
+fight the drawer's scroll; a channel's ⋯ and right-click menus too, while a collection, being a
+link, keeps the browser's), or Alt+↑ / Alt+↓ on a focused row. The drag is `hooks/useListDrag.svelte.ts`: the row lifts and follows the
 pointer, the rows it passes slide aside by a transform, and it settles into the gap before the order
 commits, so the list keeps its DOM order for the whole gesture (`utils/dragReorder.ts` has the
 geometry). Collections' order is `PUT /api/shelf/collections` (`shelfStore.reorderCollections`,

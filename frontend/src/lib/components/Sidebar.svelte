@@ -24,7 +24,7 @@
   import { syncAutoRuleChannels } from '$lib/stores/channelAutoUpdate.svelte';
   import { moveChannel } from '$lib/utils/channelSync';
   import { useListDrag } from '$lib/hooks/useListDrag.svelte';
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, tick } from 'svelte';
   import EditFeedModal from './EditFeedModal.svelte';
   import type { Subscription } from '$lib/types';
   import FilteredViewModal from './FilteredViewModal.svelte';
@@ -82,6 +82,8 @@
       if (viewContextMenu) closeViewContextMenu();
       if (feedContextMenu) closeFeedContextMenu();
       collectionMenu = null;
+      channelDrag.cancel();
+      collectionDrag.cancel();
     }
   }
 
@@ -94,6 +96,7 @@
     document.removeEventListener('click', handleClickOutside);
     document.removeEventListener('keydown', handleKeydown);
     if (viewLongPressTimer) clearTimeout(viewLongPressTimer);
+    if (collectionLongPress) clearTimeout(collectionLongPress);
     document.body.classList.remove('sidebar-open-mobile');
   });
 
@@ -283,23 +286,25 @@
   // Reordering channels and collections. With a mouse or pen, drag a row
   // (hooks/useListDrag: it lifts and follows the pointer, the rest make way). On
   // touch, where a drag would fight the drawer's scroll, a long-press menu
-  // offers Move up / Move down; the ⋯ and right-click menus do too.
+  // offers Move up / Move down; so do a channel's ⋯ and right-click menus (a
+  // collection's right-click stays the browser's, as it's a link). From the
+  // keyboard, Alt+↑ / Alt+↓ on a focused row.
   let channelListEl = $state<HTMLDivElement | null>(null);
   let collectionListEl = $state<HTMLDivElement | null>(null);
 
   const channelDrag = useListDrag({
+    ids: () => channels.map((v) => v.uuid),
     rows: () => [...(channelListEl?.querySelectorAll<HTMLElement>('[data-channel-uuid]') ?? [])],
     onDrop: (order) => void filteredViewsStore.reorder(order),
   });
   const collectionDrag = useListDrag({
+    ids: () => shelfStore.collections.map((c) => c.id),
     rows: () => [
       ...(collectionListEl?.querySelectorAll<HTMLElement>('[data-collection-id]') ?? []),
     ],
     onDrop: (order) => void shelfStore.reorderCollections(order),
   });
-  let activeDrag = $derived(
-    channelDrag.active ? channelDrag : collectionDrag.active ? collectionDrag : null
-  );
+  let dragging = $derived(channelDrag.active || collectionDrag.active);
 
   let collectionMenu = $state<{ x: number; y: number; id: string } | null>(null);
   let collectionLongPress: ReturnType<typeof setTimeout> | null = null;
@@ -307,6 +312,8 @@
 
   function handleCollectionTouchStart(e: TouchEvent, id: string) {
     collectionLongPressed = false;
+    // The menu only moves a collection, so there's nothing to offer for one.
+    if (shelfStore.collections.length < 2) return;
     const touch = e.touches[0];
     collectionLongPress = setTimeout(() => {
       collectionLongPressed = true;
@@ -329,7 +336,15 @@
   function moveCollectionStep(id: string, delta: -1 | 1) {
     const order = shelfStore.collections.map((c) => c.id);
     const next = moveChannel(order, id, delta);
-    if (next !== order) void shelfStore.reorderCollections(next);
+    if (next === order) return;
+    void shelfStore.reorderCollections(next);
+    refocus(`[data-collection-id="${CSS.escape(id)}"]`);
+  }
+
+  // Moving a row's node blurs it; hand focus back so Alt+arrows keep going.
+  function refocus(selector: string) {
+    const had = document.activeElement?.matches(selector);
+    if (had) void tick().then(() => document.querySelector<HTMLElement>(selector)?.focus());
   }
 
   function moveChannelStep(viewId: number, delta: -1 | 1) {
@@ -337,7 +352,9 @@
     if (!uuid) return;
     const order = channels.map((v) => v.uuid);
     const next = moveChannel(order, uuid, delta);
-    if (next !== order) void filteredViewsStore.reorder(next);
+    if (next === order) return;
+    void filteredViewsStore.reorder(next);
+    refocus(`[data-channel-uuid="${CSS.escape(uuid)}"]`);
   }
 
   // The Library row discloses only the Shelf's collections now.
@@ -480,19 +497,12 @@
                 dragOffset={collectionDrag.offset(i)}
                 dragEases={collectionDrag.eases(i)}
                 onSelect={() => sidebarStore.closeMobile()}
-                onPointerDown={(e) =>
-                  collectionDrag.start(
-                    e,
-                    shelfStore.collections.map((col) => col.id),
-                    c.id
-                  )}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  collectionMenu = { x: e.clientX, y: e.clientY, id: c.id };
-                }}
+                onPointerDown={(e) => collectionDrag.start(e, c.id)}
+                onMoveKey={(delta) => moveCollectionStep(c.id, delta)}
                 onTouchStart={(e) => handleCollectionTouchStart(e, c.id)}
                 onTouchEnd={handleCollectionTouchEnd}
                 onTouchMove={handleCollectionTouchMove}
+                onTouchCancel={handleCollectionTouchMove}
               />
             {/each}
           </div>
@@ -532,12 +542,8 @@
                 isLifted={channelDrag.isLifted(i)}
                 dragOffset={channelDrag.offset(i)}
                 dragEases={channelDrag.eases(i)}
-                onPointerDown={(e) =>
-                  channelDrag.start(
-                    e,
-                    channels.map((v) => v.uuid),
-                    view.uuid
-                  )}
+                onPointerDown={(e) => channelDrag.start(e, view.uuid)}
+                onMoveKey={(delta) => view.id != null && moveChannelStep(view.id, delta)}
                 isActive={currentFilter().type === 'view' && currentFilter().id === view.uuid}
                 isRenaming={renamingViewId === view.id}
                 unreadCount={view.id != null ? (unreadCounts.channelCounts.get(view.id) ?? 0) : 0}
@@ -823,10 +829,26 @@
   ondeleted={() => selectFilter('all')}
 />
 
+<!-- Both lists hear every move/up while either drags; an idle one ignores them. -->
 <svelte:window
-  onpointermove={activeDrag ? (e) => activeDrag.move(e) : undefined}
-  onpointerup={activeDrag ? () => activeDrag.end() : undefined}
-  onpointercancel={activeDrag ? () => activeDrag.cancel() : undefined}
+  onpointermove={dragging
+    ? (e) => {
+        channelDrag.move(e);
+        collectionDrag.move(e);
+      }
+    : undefined}
+  onpointerup={dragging
+    ? () => {
+        channelDrag.end();
+        collectionDrag.end();
+      }
+    : undefined}
+  onpointercancel={dragging
+    ? () => {
+        channelDrag.cancel();
+        collectionDrag.cancel();
+      }
+    : undefined}
 />
 
 {#if collectionMenu}

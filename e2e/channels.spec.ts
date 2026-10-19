@@ -419,7 +419,10 @@ test.describe('Channel order', () => {
     expect(channels.map((c) => c.name)).toEqual(['Third', 'Second', 'First']);
   });
 
-  test('Library collections reorder by drag and by the menu', async ({ authedPage, testUser }) => {
+  test('Library collections reorder by drag and from the keyboard', async ({
+    authedPage,
+    testUser,
+  }) => {
     const names = ['Books', 'Papers', 'Essays'];
     for (const [i, name] of names.entries()) {
       await seedShelfCollection(testUser, { id: `3kcollorder00${i}`, name, position: i });
@@ -449,11 +452,12 @@ test.describe('Channel order', () => {
     // The drop didn't follow the link.
     await expect(authedPage).not.toHaveURL(/collection=/);
 
-    await rows.nth(2).click({ button: 'right' });
+    // From the keyboard: Alt+↑ on the focused row.
+    await authedPage.locator('.collection-item', { hasText: 'Papers' }).focus();
     const pushedAgain = authedPage.waitForResponse(
       (r) => r.url().endsWith('/api/shelf/collections') && r.request().method() === 'PUT'
     );
-    await authedPage.getByRole('menuitem', { name: 'Move up' }).click();
+    await authedPage.keyboard.press('Alt+ArrowUp');
     await pushedAgain;
     await expect(rows).toHaveText(['Essays', 'Papers', 'Books']);
 
