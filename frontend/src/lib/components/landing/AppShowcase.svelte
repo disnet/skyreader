@@ -119,6 +119,8 @@
     noteChars = at >= 3 ? noteText.length : 0;
     kept = false;
     toast = false;
+    // A jump can land mid-drag; don't carry a pressed cursor into the next step.
+    cursor = { ...cursor, down: false, slow: false };
     // Keep picks up where Discuss left the page; every other step starts at
     // the top of the article.
     if (readerScrollEl && s !== 'keep') readerScrollEl.scrollTop = 0;
@@ -358,7 +360,7 @@
             >
             <span class="r-btn" class:kept bind:this={keepBtnEl}>
               <Icon name={kept ? 'check' : 'shelf'} size={16} />
-              <span>{kept ? 'On Shelf' : 'Keep on Shelf'}</span>
+              <span>{kept ? 'On Shelf' : 'Add to Shelf'}</span>
             </span>
           </span>
         </header>
@@ -412,7 +414,7 @@
           </article>
         </div>
         {#if toast}
-          <div class="toast"><Icon name="check" size={14} /> Kept on your Shelf</div>
+          <div class="toast"><Icon name="check" size={14} /> Added to your Shelf</div>
         {/if}
       </div>
 
@@ -870,6 +872,7 @@
   }
   .step-text {
     display: grid;
+    align-content: start;
     gap: 0.15rem;
   }
   .step-label {
@@ -939,6 +942,13 @@
     }
     .step-caption {
       display: none;
+    }
+    /* Five labels share a phone's width; the top rule marks the step. */
+    .step-n {
+      display: none;
+    }
+    .step-label {
+      font-size: var(--text-sm);
     }
   }
 </style>

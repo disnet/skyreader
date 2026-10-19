@@ -398,9 +398,15 @@
   .shot-placeholder {
     height: calc(clamp(30rem, 62vh, 42rem) + 7.85rem);
   }
+  /* Captions wrap to a third line in this band. */
+  @media (min-width: 701px) and (max-width: 1000px) {
+    .shot-placeholder {
+      height: calc(clamp(30rem, 62vh, 42rem) + 8.95rem);
+    }
+  }
   @media (max-width: 700px) {
     .shot-placeholder {
-      height: calc(32rem + 6.7rem);
+      height: calc(32rem + 5.25rem);
     }
   }
 
