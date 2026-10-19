@@ -5,6 +5,7 @@ import {
   seedFeedItems,
   cleanupFeedItems,
   seedChannel,
+  seedShelfCollection,
   seedSavedArticle,
 } from './seed';
 import type { TestUser } from './seed';
@@ -416,5 +417,47 @@ test.describe('Channel order', () => {
     const res = await authedPage.request.get('http://127.0.0.1:8787/api/channels');
     const { channels } = (await res.json()) as { channels: Array<{ name: string }> };
     expect(channels.map((c) => c.name)).toEqual(['Third', 'Second', 'First']);
+  });
+
+  test('Library collections reorder by drag and by the menu', async ({ authedPage, testUser }) => {
+    const names = ['Books', 'Papers', 'Essays'];
+    for (const [i, name] of names.entries()) {
+      await seedShelfCollection(testUser, { id: `3kcollorder00${i}`, name, position: i });
+    }
+    await authedPage.reload();
+
+    const rows = authedPage.locator('.collection-item .nav-label');
+    await expect(rows).toHaveText(names, { timeout: 15_000 });
+
+    // Drag Essays above Books. The row follows the pointer while the others
+    // slide aside; nothing reorders until the drop.
+    const essays = (await rows.nth(2).boundingBox())!;
+    const books = (await rows.nth(0).boundingBox())!;
+    await authedPage.mouse.move(essays.x + 10, essays.y + essays.height / 2);
+    await authedPage.mouse.down();
+    await authedPage.mouse.move(books.x + 10, books.y + books.height / 2, { steps: 8 });
+    await authedPage.mouse.move(books.x + 10, books.y + 2, { steps: 2 });
+    await expect(rows).toHaveText(names);
+    const lifted = authedPage.locator('.collection-item.lifted');
+    await expect(lifted).toHaveText('Essays');
+    const pushed = authedPage.waitForResponse(
+      (r) => r.url().endsWith('/api/shelf/collections') && r.request().method() === 'PUT'
+    );
+    await authedPage.mouse.up();
+    await pushed;
+    await expect(rows).toHaveText(['Essays', 'Books', 'Papers']);
+    // The drop didn't follow the link.
+    await expect(authedPage).not.toHaveURL(/collection=/);
+
+    await rows.nth(2).click({ button: 'right' });
+    const pushedAgain = authedPage.waitForResponse(
+      (r) => r.url().endsWith('/api/shelf/collections') && r.request().method() === 'PUT'
+    );
+    await authedPage.getByRole('menuitem', { name: 'Move up' }).click();
+    await pushedAgain;
+    await expect(rows).toHaveText(['Essays', 'Papers', 'Books']);
+
+    await authedPage.reload();
+    await expect(rows).toHaveText(['Essays', 'Papers', 'Books'], { timeout: 15_000 });
   });
 });

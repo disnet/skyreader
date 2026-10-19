@@ -10,8 +10,11 @@
     isActive: boolean;
     isRenaming: boolean;
     unreadCount?: number;
-    /** Being dragged to a new place in the list. */
+    /** Being dragged to a new place in the list (hooks/useListDrag). */
     isLifted?: boolean;
+    /** Where a drag has moved the row, and whether it eases there. */
+    dragOffset?: number;
+    dragEases?: boolean;
     onSelect: () => void;
     onContextMenu: (e: MouseEvent) => void;
     onTouchStart: (e: TouchEvent) => void;
@@ -29,6 +32,8 @@
     isRenaming,
     unreadCount = 0,
     isLifted = false,
+    dragOffset = 0,
+    dragEases = false,
     onSelect,
     onContextMenu,
     onTouchStart,
@@ -67,6 +72,8 @@
   class="nav-item view-item"
   class:active={isActive}
   class:lifted={isLifted}
+  class:eases={dragEases}
+  style:transform={dragOffset ? `translateY(${dragOffset}px)` : undefined}
   data-channel-uuid={view.uuid}
   onclick={isRenaming ? undefined : onSelect}
   onpointerdown={isRenaming ? undefined : onPointerDown}
@@ -154,13 +161,27 @@
     color: var(--color-primary);
   }
 
-  /* The one overlapping element while it's in flight, so it's the one that gets a
-     shadow (Flat-By-Default). */
+  /* Dragging (hooks/useListDrag): the lifted row follows the pointer, so it
+     doesn't ease, and it's the one overlapping element in flight, so it's the
+     one that gets a shadow (Flat-By-Default). The rows it passes ease aside. */
   .nav-item.lifted {
     position: relative;
     z-index: 1;
-    background-color: var(--color-bg-secondary);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+    background-color: var(--color-bg);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+    cursor: grabbing;
+  }
+
+  .nav-item.eases {
+    transition:
+      transform 180ms cubic-bezier(0.2, 0, 0, 1),
+      background-color 0.15s;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .nav-item.eases {
+      transition: none;
+    }
   }
 
   .view-icon {
@@ -254,6 +275,14 @@
   @media (hover: hover) and (prefers-color-scheme: dark) {
     .nav-item:hover {
       background-color: var(--color-bg-hover, rgba(255, 255, 255, 0.05));
+    }
+  }
+
+  @media (prefers-color-scheme: dark) {
+    .nav-item.lifted,
+    .nav-item.lifted:hover {
+      background-color: var(--color-bg-secondary);
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
     }
   }
 </style>

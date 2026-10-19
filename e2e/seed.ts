@@ -452,6 +452,17 @@ export async function seedChannel(
   ]);
 }
 
+/** A Shelf collection with no members, at `position`. */
+export async function seedShelfCollection(
+  user: TestUser,
+  opts: { id: string; name: string; position: number }
+): Promise<void> {
+  const now = Math.floor(Date.now() / 1000);
+  await execD1([
+    `INSERT INTO shelf_collections (user_did, id, name, description, position, created_at, updated_at) VALUES (${sqlString(user.did)}, ${sqlString(opts.id)}, ${sqlString(opts.name)}, NULL, ${opts.position}, ${now}, ${now})`,
+  ]);
+}
+
 export interface SeedChannelMatchOpts {
   /** A seeded feed item's guid (seedFeedItems), matched in `feedUrl`. */
   guid: string;

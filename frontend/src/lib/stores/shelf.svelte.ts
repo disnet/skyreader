@@ -241,6 +241,20 @@ function createShelfStore() {
     );
   }
 
+  /** Put the collections in a new order (their ids, top first). */
+  async function reorderCollections(order: string[]) {
+    const index = new Map(order.map((id, i) => [id, i]));
+    return mutate(
+      () => {
+        collections = sortCollections(
+          collections.map((c) => ({ ...c, position: index.get(c.id) ?? order.length + c.position }))
+        );
+      },
+      () => api.reorderShelfCollections(order),
+      "Couldn't reorder your collections"
+    );
+  }
+
   // --- Shelf membership ---
 
   function collectionIdsFor(save: Pick<SavedItem, 'rkey'>): string[] {
@@ -322,6 +336,7 @@ function createShelfStore() {
     addItem,
     removeItem,
     moveItem,
+    reorderCollections,
     collectionIdsFor,
     isKept,
     isOnShelf,

@@ -265,8 +265,13 @@ fold isn't pushed; the server keeps the old config until the next edit, so an ol
 Saved channel and a stale copy can't outrank a newer edit.
 
 Channels list in `position` order everywhere (`channelSync.ts`'s `sortByPosition`, ties by
-`createdAt`). The sidebar reorders them: a mouse or pen drag on a row, or **Move up** / **Move down**
-in the row's menu (the touch path, since a drag would fight the drawer's scroll).
+`createdAt`). The sidebar reorders them, and the Library's collections, the same way: a mouse or pen
+drag on a row, or **Move up** / **Move down** in the row's menu (the touch path, since a drag would
+fight the drawer's scroll). The drag is `hooks/useListDrag.svelte.ts`: the row lifts and follows the
+pointer, the rows it passes slide aside by a transform, and it settles into the gap before the order
+commits, so the list keeps its DOM order for the whole gesture (`utils/dragReorder.ts` has the
+geometry). Collections' order is `PUT /api/shelf/collections` (`shelfStore.reorderCollections`,
+optimistic and online like the rest of their writes).
 `filteredViewsStore.reorder` renumbers, stamps the channels whose position changed newer (so other
 devices pull the new positions), and sends every position to `PUT /api/channels/order`, which moves
 rows without touching name or config. The channel upserts set a position only on create, so an edit
