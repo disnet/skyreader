@@ -176,7 +176,7 @@
   // Every key this item's place may be filed under (see readProgressKeys).
   let progressKeys = $derived(readProgressKeys(readerItem, savesStore.find));
   function savedProgress() {
-    return itemLabelsStore.getLatestReadProgress(progressKeys);
+    return paragraphTracking.savedProgress();
   }
   let itemTags = $derived(itemLabelsStore.getTagsForItem(itemKey));
 
@@ -816,6 +816,10 @@
   // restore); this keeps flipping quickly between items from re-asking.
   const OPEN_DELTA_MIN_INTERVAL_MS = 10_000;
   let pagedSaveTimer: ReturnType<typeof setTimeout> | undefined;
+  let pagedSavePending: (() => void) | null = null;
+  // The page the restore left the reader on, so a place that syncs in later
+  // can tell whether they have turned a page since.
+  let pagedLandedPage = 0;
 
   // One value feeds both drawings of the rail: scroll fraction while scrolling,
   // page position while paged. The bar's bottom edge means the same thing either
@@ -935,14 +939,25 @@
     if (pagedSaveTimer) clearTimeout(pagedSaveTimer);
     const key = itemKey;
     const type = labelItemType;
-    pagedSaveTimer = setTimeout(() => {
+    pagedSavePending = () => {
+      pagedSavePending = null;
       if (!paged || !pagedController || key !== itemKey) return;
       const paras = detectReaderParagraphs();
       if (!paras.length) return;
       const controller = pagedController;
       const furthest = lastIndexOnOrBefore(paras, page, (el) => controller.pageOfElement(el));
       itemLabelsStore.setReadProgress(key, type, furthest, paras.length);
-    }, 500);
+    };
+    pagedSaveTimer = setTimeout(pagedSavePending, 500);
+  }
+
+  /** Write a page turn still waiting out its debounce (closing, or hidden). */
+  function flushPagedSave() {
+    if (pagedSaveTimer) clearTimeout(pagedSaveTimer);
+    pagedSaveTimer = undefined;
+    if (!pagedSavePending) return;
+    pagedSavePending();
+    itemLabelsStore.flushReadProgress();
   }
 
   // A saved item's body is still being read back: what's shown is its
@@ -963,6 +978,7 @@
     const saved = savedProgress();
     if (!saved || saved.paragraphIndex <= 0) {
       pagedRestoredForKey = key;
+      pagedLandedPage = pagedPage;
       return;
     }
     const timer = setTimeout(() => {
@@ -976,7 +992,10 @@
       // reflows the book and moves the page, and shown, that reads as the
       // book flicking between pages before it settles.
       void controller.whenImagesSettled(1500).then(() => {
-        if (pagedRestoringKey === key) pagedRestoredForKey = key;
+        if (pagedRestoringKey === key) {
+          pagedRestoredForKey = key;
+          pagedLandedPage = pagedPage;
+        }
       });
     }, 300);
     return () => clearTimeout(timer);
@@ -999,9 +1018,14 @@
     return () => clearTimeout(timer);
   });
 
-  onDestroy(() => {
-    if (pagedSaveTimer) clearTimeout(pagedSaveTimer);
+  function flushPagedSaveWhenHidden() {
+    if (document.visibilityState === 'hidden') flushPagedSave();
+  }
+  onMount(() => {
+    document.addEventListener('visibilitychange', flushPagedSaveWhenHidden);
+    return () => document.removeEventListener('visibilitychange', flushPagedSaveWhenHidden);
   });
+  onDestroy(flushPagedSave);
 
   let readTimeMinutes = $derived.by(() => {
     const text = displayContent.replace(/<[^>]*>/g, '');
@@ -1342,7 +1366,7 @@
         if (itemKey !== key || (savedProgress()?.lastReadAt ?? 0) <= before) return;
         if (paged) {
           // Not yet restored: the paged restore reads the new place itself.
-          if (pagedRestoredForKey !== key || pagedPage > 0) return;
+          if (pagedRestoredForKey !== key || pagedPage !== pagedLandedPage) return;
           pagedRestoringKey = null;
           pagedRestoredForKey = null;
           return;

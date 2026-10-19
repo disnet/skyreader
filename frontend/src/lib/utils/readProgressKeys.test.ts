@@ -20,19 +20,16 @@ describe('readProgressKeys', () => {
     expect(keys[0]).toBe('guid-1');
   });
 
-  it('reaches the save behind a feed article', () => {
+  it('keeps a feed article to its own key, since its body is not the save’s', () => {
     const item = {
       type: 'article',
       item: { guid: 'guid-1', url: 'https://example.com/post' },
       key: 'guid-1',
     } as FeedDisplayItem;
-    const keys = readProgressKeys(item, (k) =>
-      k === 'https://example.com/post' ? save : undefined
-    );
-    expect(keys).toEqual(expect.arrayContaining(['guid-1', save.url, save.uri]));
+    expect(readProgressKeys(item, () => save)).toEqual(['guid-1']);
   });
 
-  it('is just the item’s own keys when nothing is saved', () => {
+  it('is just the document’s own key', () => {
     const item = {
       type: 'document',
       item: { recordUri: 'at://did:plc:a/site.standard.document/1' },

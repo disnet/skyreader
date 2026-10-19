@@ -1618,10 +1618,14 @@ function createItemLabelsStore() {
     itemKey: string,
     itemType: ItemLabelType,
     paragraphIndex: number,
-    totalParagraphs: number
+    totalParagraphs: number,
+    // When the reader was there. Stamped when the position is handed over, not
+    // when the debounce fires: the later time made the reader's own next
+    // position, queued in between, look older than this one and get dropped.
+    at = Date.now()
   ) {
     const current = getReadProgress(itemKey);
-    const now = Date.now();
+    const now = at;
     const lbl: ItemLabel = {
       itemKey,
       itemType,
@@ -1784,9 +1788,10 @@ function createItemLabelsStore() {
     // Debounce the actual persist
     const pending = pendingReadProgress.get(itemKey);
     if (pending) clearTimeout(pending.timer);
+    const at = Date.now();
     const run = () => {
       pendingReadProgress.delete(itemKey);
-      void persistReadProgress(itemKey, itemType, paragraphIndex, totalParagraphs);
+      void persistReadProgress(itemKey, itemType, paragraphIndex, totalParagraphs, at);
     };
     pendingReadProgress.set(itemKey, { timer: setTimeout(run, READ_PROGRESS_DEBOUNCE_MS), run });
   }

@@ -299,4 +299,18 @@ describe('useParagraphTracking', () => {
 
     tracking.cleanup();
   });
+
+  it('counts a keyboard step as the reader moving', () => {
+    getReadProgress.mockReturnValue({ paragraphIndex: 12, totalParagraphs: 40 });
+    const content = renderBody(40);
+    const tracking = track(content);
+
+    tracking.setupObserver();
+    tracking.restorePosition();
+    expect(tracking.readerMoved).toBe(false);
+    tracking.nextParagraph();
+    expect(tracking.readerMoved).toBe(true);
+
+    tracking.cleanup();
+  });
 });

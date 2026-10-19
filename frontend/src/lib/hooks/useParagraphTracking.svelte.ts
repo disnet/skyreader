@@ -42,6 +42,7 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
   // the reader opened is restored only while this isn't the open item, so a late
   // delta never yanks someone who has already started reading.
   let movedKey: string | null = null;
+  let observedKey: string | null = null;
 
   /** The saved position to restore: the newest across every key the item has. */
   function savedProgress(): {
@@ -246,12 +247,17 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
   function flushPendingSave() {
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = null;
-    pendingSave?.();
+    if (!pendingSave) return;
+    pendingSave();
     itemLabelsStore.flushReadProgress();
   }
 
   function handleVisibilityChange() {
-    if (document.visibilityState === 'hidden') flushPendingSave();
+    if (document.visibilityState !== 'hidden') return;
+    flushPendingSave();
+    // The store may still hold this item's last write from a save that already
+    // left the hook's own debounce.
+    itemLabelsStore.flushReadProgress();
   }
 
   function setupObserver() {
@@ -263,6 +269,10 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
 
     paragraphs = detectParagraphs();
     totalParagraphs = paragraphs.length;
+    if (observedKey !== params.itemKey()) {
+      observedKey = params.itemKey();
+      movedKey = null;
+    }
 
     if (paragraphs.length === 0) return;
 
@@ -310,6 +320,8 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     }
     updateHighlight();
     if (persist) {
+      // A step the reader asked for: they're reading here now.
+      movedKey = params.itemKey();
       // The muted scroll handler no longer persists this move for us.
       debouncedSave();
     } else if (saveTimer) {
@@ -418,7 +430,9 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     get totalParagraphs() {
       return totalParagraphs;
     },
-    /** Whether the reader has scrolled this item by hand since it opened. */
+    /** The position a restore would go to: the newest across the item's keys. */
+    savedProgress,
+    /** Whether the reader has scrolled or stepped this item since it opened. */
     get readerMoved() {
       return movedKey === params.itemKey();
     },
