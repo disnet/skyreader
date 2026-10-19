@@ -104,15 +104,15 @@
   class Stop extends Error {}
   let runId = 0;
   let visible = false;
-  let hovering = false;
 
   async function wait(ms: number, id: number) {
     let left = ms;
     while (left > 0) {
       if (id !== runId) throw new Stop();
-      // Hold still while nobody's watching: off screen, tab hidden, or a
-      // visitor hovering to read the frame.
-      const watched = visible && !hovering && !document.hidden;
+      // Hold still while nobody's watching: off screen, or tab hidden. (The
+      // visitor sets the pace by scrolling, and their pointer usually rests
+      // on the pinned frame while they do, so hovering doesn't pause it.)
+      const watched = visible && !document.hidden;
       const slice = watched ? Math.min(left, 100) : 400;
       await new Promise((r) => setTimeout(r, slice));
       if (watched && id === runId) {
@@ -292,12 +292,24 @@
     return { start, length: Math.max(trackEl.offsetHeight - pinEl.offsetHeight, 1) };
   }
 
+  // The step scrolling last played, and the one a step button is heading to;
+  // the smooth scroll there passes other stretches without playing them.
+  let played = -1;
+  let seeking: { to: number; until: number } | null = null;
+
   function onScroll() {
     const t = travel();
     if (!t) return;
     progress = Math.min(Math.max((window.scrollY - t.start) / t.length, 0), 1);
     const i = Math.min(Math.floor(progress * STEPS.length), STEPS.length - 1);
-    if (!gathering && STEPS[i].id !== step) playOne(i);
+    if (seeking) {
+      if (i !== seeking.to && performance.now() < seeking.until) return;
+      seeking = null;
+    }
+    if (!gathering && i !== played) {
+      played = i;
+      playOne(i);
+    }
   }
 
   function choose(s: StepId) {
@@ -308,11 +320,17 @@
       settle(s);
       return;
     }
-    // Scroll to the middle of the step's stretch; arriving there plays it.
+    // Play it now, even if it's the current step, and scroll to the middle
+    // of its stretch.
     const t = travel();
-    if (!t) return;
+    if (!t || gathering) return;
+    played = i;
+    playOne(i);
     const at = i === 0 ? 0 : (i + 0.5) / STEPS.length;
-    window.scrollTo({ top: t.start + at * t.length, behavior: 'smooth' });
+    const top = t.start + at * t.length;
+    if (Math.abs(top - window.scrollY) < 2) return;
+    seeking = { to: i, until: performance.now() + 1500 };
+    window.scrollTo({ top, behavior: 'smooth' });
   }
 
   /** The step's progress bar: how far through its stretch of scroll the page is. */
@@ -344,7 +362,11 @@
     // The pinned shot sits just under the site's own sticky header.
     const measure = () => {
       const header = document.querySelector<HTMLElement>('.header-full');
-      pinTop = (header?.offsetHeight ?? 0) + 16;
+      const below = (header?.offsetHeight ?? 0) + 16;
+      // A shot taller than the space under the header sticks with its foot
+      // on screen, so the steps and their progress stay in view.
+      const h = pinEl?.offsetHeight ?? 0;
+      pinTop = Math.min(below, window.innerHeight - h - 8);
       onScroll();
     };
     let frame = 0;
@@ -356,12 +378,23 @@
       });
     };
     measure();
+    // Back on the page partway down (the back button, a restored scroll), the
+    // opening would play behind an already pinned frame: go straight to the tour.
+    const skipOpening = () => {
+      if (!gathering || !trackEl || trackEl.getBoundingClientRect().top >= pinTop) return;
+      frameShown = true;
+      onsettle?.();
+      gathered();
+    };
+    skipOpening();
+    const restored = requestAnimationFrame(skipOpening);
     window.addEventListener('scroll', scrolled, { passive: true });
     window.addEventListener('resize', measure);
     return () => {
       io.disconnect();
       runId++;
       cancelAnimationFrame(frame);
+      cancelAnimationFrame(restored);
       window.removeEventListener('scroll', scrolled);
       window.removeEventListener('resize', measure);
     };
@@ -394,10 +427,7 @@
       />
     {/if}
 
-    <!-- The frame is inert, so the pointer never lands on it; hover is read
-       off this wrapper instead. -->
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div onpointerenter={() => (hovering = true)} onpointerleave={() => (hovering = false)}>
+    <div>
       <div class="frame" bind:this={frameEl} aria-hidden="true" inert>
         <div class="shell">
           <aside class="side">
@@ -628,7 +658,7 @@
       </div>
     </div>
 
-    <div class="steps" role="group" aria-label="Tour of the app">
+    <div class="steps" role="group" aria-label="Tour of the app" inert={!frameShown}>
       {#each STEPS as s, i (s.id)}
         <button
           type="button"

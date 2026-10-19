@@ -120,15 +120,19 @@
     boxes = next;
   }
 
+  function measure() {
+    const next = { ...boxes };
+    for (const p of pieces) {
+      const el = els[p.id];
+      if (el) next[p.id] = { ...next[p.id], height: el.offsetHeight };
+    }
+    boxes = next;
+  }
+
   function play(at: (ms: number, fn: () => void) => void) {
     // Measure the pile's natural heights so the later shrink can animate.
     at(30, () => {
-      const next = { ...boxes };
-      for (const p of pieces) {
-        const el = els[p.id];
-        if (el) next[p.id] = { ...next[p.id], height: el.offsetHeight };
-      }
-      boxes = next;
+      measure();
       phase = 'in';
     });
     at(1800, () => {
@@ -144,7 +148,8 @@
       phase = 'land';
       onland();
     });
-    at(4400, ondone);
+    // After the pieces' fade (0.45s delay + 0.4s) has finished.
+    at(4600, ondone);
   }
 
   onMount(() => {
@@ -162,13 +167,25 @@
       },
       { rootMargin: '0px 0px -40% 0px' }
     );
-    if (layerEl && layerEl.clientWidth < WIDE) io.observe(layerEl);
-    else play(at);
+    if (layerEl && layerEl.clientWidth < WIDE) {
+      io.observe(layerEl);
+      // The headline is complete from the start then; the clutter falls away
+      // when they reach it.
+      onsettle();
+    } else play(at);
 
     // A resize mid-play re-reads the targets; before the settle it re-piles.
+    // Only a change of width moves the pile: a phone's toolbar collapsing as
+    // you scroll resizes the height, and re-piling would drop the measured
+    // heights the strip animates from.
+    let lastWidth = window.innerWidth;
     const onResize = () => {
       if (phase === 'settle' || phase === 'land') settle();
-      else if (phase === 'pile' || phase === 'in') pile();
+      else if (window.innerWidth !== lastWidth) {
+        lastWidth = window.innerWidth;
+        if (phase === 'pile' || phase === 'in') pile();
+        if (phase === 'in') requestAnimationFrame(measure);
+      }
     };
     window.addEventListener('resize', onResize);
     return () => {
@@ -628,7 +645,7 @@
   }
   .mail-from u {
     text-decoration: none;
-    color: #2563eb;
+    color: #0066cc;
   }
   .mail-band {
     padding: 0.75rem;
