@@ -37,12 +37,47 @@ function str(value: unknown, max: number): string | null {
 }
 
 /**
+ * A save's `url_key`: its normalized URL, or '' when it has no web URL (an
+ * upload). Set on every insert so the ingest can match it straight away.
+ */
+export function savedUrlKey(url: string | null | undefined): string {
+  return (url && normalizeArticleUrl(url)) || '';
+}
+
+/** Rows backfilled per call, so one call stays well inside the statement budget. */
+const BACKFILL_BATCH = 400;
+
+/**
+ * Give this reader's older saves a `url_key`, a batch at a time. Saves made
+ * before url_key existed have none, and until they do no connection can match
+ * them. Runs when the reader asks for their connections; a later call finishes
+ * a large Library.
+ */
+export async function backfillSavedUrlKeys(env: Env, userDid: string): Promise<number> {
+  const rows = await env.DB.prepare(
+    `SELECT id, url FROM saved_articles WHERE url_key IS NULL AND user_did = ? LIMIT ?`
+  )
+    .bind(userDid, BACKFILL_BATCH)
+    .all<{ id: number; url: string | null }>();
+  if (rows.results.length === 0) return 0;
+  await env.DB.batch(
+    rows.results.map((row) =>
+      env.DB.prepare('UPDATE saved_articles SET url_key = ? WHERE id = ?').bind(
+        savedUrlKey(row.url),
+        row.id
+      )
+    )
+  );
+  return rows.results.length;
+}
+
+/**
  * Apply one firehose commit. Returns true when it changed a row.
  *
- * One statement either way: an edge is written only when one of its ends is
- * already in someone's saves (`EXISTS` against saved_articles.url_normalized),
- * so the table holds the slice of Semble's graph that touches a Library. Ends
- * that are AT URIs (a card rather than a URL) normalize to null and are skipped.
+ * An edge is written only when one of its ends is already in someone's saves
+ * (`EXISTS` against saved_articles.url_key), so the table holds the slice of
+ * Semble's graph that touches a Library. Ends that are AT URIs (a card rather
+ * than a URL) normalize to null and are skipped.
  */
 export async function applySembleConnectionCommit(
   env: Env,
@@ -52,12 +87,7 @@ export async function applySembleConnectionCommit(
 ): Promise<boolean> {
   const uri = `at://${did}/${SEMBLE_CONNECTION_COLLECTION}/${commit.rkey}`;
 
-  if (commit.operation === 'delete') {
-    const result = await env.DB.prepare('DELETE FROM semble_connections WHERE uri = ?')
-      .bind(uri)
-      .run();
-    return (result.meta.changes ?? 0) > 0;
-  }
+  if (commit.operation === 'delete') return dropConnection(env, uri);
 
   const record = commit.record;
   if (!record) return false;
@@ -65,7 +95,11 @@ export async function applySembleConnectionCommit(
   const targetUrl = str(record.target, 2048);
   const source = sourceUrl ? normalizeArticleUrl(sourceUrl) : null;
   const target = targetUrl ? normalizeArticleUrl(targetUrl) : null;
-  if (!sourceUrl || !targetUrl || !source || !target || source === target) return false;
+  if (!sourceUrl || !targetUrl || !source || !target || source === target) {
+    // An edit that turned an end into something we can't match is gone for us.
+    if (commit.operation === 'update') return dropConnection(env, uri);
+    return false;
+  }
 
   const parsed = typeof record.createdAt === 'string' ? Date.parse(record.createdAt) : NaN;
   // A record can claim any time; a future one would read as new forever.
@@ -79,7 +113,7 @@ export async function applySembleConnectionCommit(
        (uri, curator_did, source_url, source_normalized, target_url, target_normalized,
         connection_type, note, created_at, indexed_at)
      SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-     WHERE EXISTS (SELECT 1 FROM saved_articles WHERE url_normalized IN (?, ?))
+     WHERE EXISTS (SELECT 1 FROM saved_articles WHERE url_key IN (?, ?))
      ON CONFLICT(uri) DO UPDATE SET
        source_url = excluded.source_url,
        source_normalized = excluded.source_normalized,
@@ -102,6 +136,17 @@ export async function applySembleConnectionCommit(
       source,
       target
     )
+    .run();
+  if ((result.meta.changes ?? 0) > 0) return true;
+  // The gate above writes nothing when neither end is saved, so an edit that
+  // moved the edge off a saved URL would leave the old row badging that save.
+  if (commit.operation === 'update') return dropConnection(env, uri);
+  return false;
+}
+
+async function dropConnection(env: Env, uri: string): Promise<boolean> {
+  const result = await env.DB.prepare('DELETE FROM semble_connections WHERE uri = ?')
+    .bind(uri)
     .run();
   return (result.meta.changes ?? 0) > 0;
 }
@@ -128,14 +173,14 @@ export async function listSavedConnectionActivity(
   // Two joins rather than one with an OR, so each side uses its own index.
   const rows = await env.DB.prepare(
     `WITH edges AS (
-       SELECT s.rkey, s.saved_at, s.url_normalized, c.indexed_at
+       SELECT s.rkey, s.saved_at, s.url_key, c.indexed_at
        FROM saved_articles s
-       JOIN semble_connections c ON c.source_normalized = s.url_normalized
+       JOIN semble_connections c ON c.source_normalized = s.url_key
        WHERE s.user_did = ?1 AND c.curator_did != ?1
        UNION ALL
-       SELECT s.rkey, s.saved_at, s.url_normalized, c.indexed_at
+       SELECT s.rkey, s.saved_at, s.url_key, c.indexed_at
        FROM saved_articles s
-       JOIN semble_connections c ON c.target_normalized = s.url_normalized
+       JOIN semble_connections c ON c.target_normalized = s.url_key
        WHERE s.user_did = ?1 AND c.curator_did != ?1
      )
      SELECT e.rkey,
@@ -145,7 +190,7 @@ export async function listSavedConnectionActivity(
             seen.seen_at AS seen_at
      FROM edges e
      LEFT JOIN semble_connection_seen seen
-       ON seen.user_did = ?1 AND seen.url_normalized = e.url_normalized
+       ON seen.user_did = ?1 AND seen.url_key = e.url_key
      GROUP BY e.rkey`
   )
     .bind(userDid)
@@ -167,11 +212,11 @@ export async function markSavedConnectionsSeen(
   now = Date.now()
 ): Promise<boolean> {
   const result = await env.DB.prepare(
-    `INSERT INTO semble_connection_seen (user_did, url_normalized, seen_at)
-     SELECT user_did, url_normalized, ?
+    `INSERT INTO semble_connection_seen (user_did, url_key, seen_at)
+     SELECT user_did, url_key, ?
      FROM saved_articles
-     WHERE user_did = ? AND rkey = ? AND url_normalized IS NOT NULL
-     ON CONFLICT(user_did, url_normalized) DO UPDATE SET seen_at = excluded.seen_at`
+     WHERE user_did = ? AND rkey = ? AND url_key IS NOT NULL AND url_key != ''
+     ON CONFLICT(user_did, url_key) DO UPDATE SET seen_at = excluded.seen_at`
   )
     .bind(now, userDid, rkey)
     .run();

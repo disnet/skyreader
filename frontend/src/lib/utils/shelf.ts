@@ -113,10 +113,12 @@ export function sortShelf<T extends ShelfEntry>(entries: T[], sort: ShelfSort): 
         return savedAtMs(b.entry.save) - savedAtMs(a.entry.save);
       }
       case 'connected': {
-        // Most recently connected first; the unconnected keep the default order.
+        // Most recently connected first; the rest as Recently read orders them.
         const diff = (b.entry.connectedAt ?? 0) - (a.entry.connectedAt ?? 0);
         if (diff !== 0) return diff;
-        return b.entry.lastActivityAt - a.entry.lastActivityAt;
+        const opened = b.entry.lastActivityAt - a.entry.lastActivityAt;
+        if (opened !== 0) return opened;
+        return savedAtMs(b.entry.save) - savedAtMs(a.entry.save);
       }
       case 'saved':
         return savedAtMs(b.entry.save) - savedAtMs(a.entry.save);

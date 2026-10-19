@@ -42,6 +42,7 @@ repo the record lives in. The `rkey` is the record key, not a field.
 | `record_uri`                                           | `legacyUri`          | the old `app.skyreader.feed.saved` uri. Labels key on it |
 | `url`                                                  | `url`                | `''` for an upload                                       |
 | `url_normalized`                                       | `urlNormalized`      | the backed-save dedup key, NULL on most rows             |
+| `url_key`                                              | `urlKey`             | normalized URL for Semble connections; `''` for uploads  |
 | `title` … `image`                                      | same name, camelCase | strings                                                  |
 | `word_count`                                           | `wordCount`          | integer                                                  |
 | `published_at`, `saved_at`, `created_at`, `updated_at` | `…At`                | ms → datetime string                                     |

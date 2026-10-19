@@ -1,6 +1,7 @@
 import type { Env } from '../types';
 import { isValidRkey } from '../utils/validation';
 import {
+  backfillSavedUrlKeys,
   listSavedConnectionActivity,
   markSavedConnectionsSeen,
 } from '../services/semble-connections';
@@ -31,6 +32,9 @@ export async function handleSavedConnections(
 
   if (path === '/api/saved/connections') {
     if (request.method !== 'GET') return json({ error: 'Method not allowed' }, 405);
+    // Older saves get their url_key here, a batch per call, the first times the
+    // reader opens their Library; until then no connection can match them.
+    await backfillSavedUrlKeys(env, userDid);
     const items = await listSavedConnectionActivity(env, userDid);
     return json({ items });
   }

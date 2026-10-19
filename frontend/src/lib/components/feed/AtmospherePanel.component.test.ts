@@ -74,6 +74,7 @@ function render(
     isConnectionSaved?: (url: string) => boolean;
     onCreateConnection?: () => void;
     connectionsNewSince?: number | null;
+    viewerDid?: string;
   },
   tab?: 'connections' | 'related'
 ): HTMLElement {
@@ -91,6 +92,7 @@ function render(
       isConnectionSaved: props.isConnectionSaved,
       onCreateConnection: props.onCreateConnection,
       connectionsNewSince: props.connectionsNewSince,
+      viewerDid: props.viewerDid,
     },
   });
   flushSync();
@@ -307,6 +309,18 @@ describe('AtmospherePanel Semble connections', () => {
     expect(rows[0].textContent).toContain('The new piece');
     expect(rows[0].querySelector('.connection-new')?.textContent).toBe('New');
     expect(rows[1].querySelector('.connection-new')).toBeNull();
+  });
+
+  it('never marks the reader’s own connection as new', () => {
+    const target = render({
+      sembleContext: {
+        ...emptyContext,
+        connections: [{ ...connection('out'), createdAt: '2026-03-01T00:00:00Z' }],
+      },
+      connectionsNewSince: Date.parse('2026-02-01T00:00:00Z'),
+      viewerDid: 'did:plc:curator',
+    });
+    expect(target.querySelector('.connection-new')).toBeNull();
   });
 
   it('marks nothing new without a reason to', () => {

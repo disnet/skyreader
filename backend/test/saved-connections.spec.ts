@@ -2,6 +2,7 @@ import { env, createExecutionContext, waitOnExecutionContext } from 'cloudflare:
 import { describe, it, expect, beforeEach } from 'vitest';
 import worker from '../src/index';
 import { applySembleConnectionCommit } from '../src/services/semble-connections';
+import { GRANULAR_SCOPES } from '../src/config/scopes';
 
 const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
 
@@ -21,8 +22,8 @@ async function setupTestUser() {
     .bind(TEST_DID, 'conn.bsky.social', 'https://test.pds.example')
     .run();
   await env.DB.prepare(
-    `INSERT INTO sessions (session_id, did, handle, pds_url, access_token, refresh_token, dpop_private_key, expires_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO sessions (session_id, did, handle, pds_url, access_token, refresh_token, dpop_private_key, expires_at, granted_scopes)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       TEST_SESSION_ID,
@@ -32,14 +33,15 @@ async function setupTestUser() {
       'test-access-token',
       'test-refresh-token',
       JSON.stringify({ kty: 'EC' }),
-      Date.now() + 3600000
+      Date.now() + 3600000,
+      GRANULAR_SCOPES
     )
     .run();
 }
 
 async function save(rkey: string, url: string, savedAt: number) {
   await env.DB.prepare(
-    `INSERT INTO saved_articles (user_did, rkey, url, url_normalized, saved_at) VALUES (?, ?, ?, ?, ?)`
+    `INSERT INTO saved_articles (user_did, rkey, url, url_key, saved_at) VALUES (?, ?, ?, ?, ?)`
   )
     .bind(TEST_DID, rkey, url, url, savedAt)
     .run();
@@ -180,6 +182,65 @@ describe('Semble connections off saves', () => {
       rkey: '3kconnrec00001',
     });
     expect(await activity()).toEqual([]);
+  });
+
+  it('matches a save made through the API, with no Semble backing', async () => {
+    const saved = await call('POST', '/api/saved', {
+      url: `${URL1}?utm_source=feed`,
+      rkey: R1,
+      source: 'url',
+      title: 'Essay',
+      content: '<p>Body</p>',
+    });
+    expect(saved.status).toBe(200);
+    expect(await connect('3kconnrec00001', 'https://elsewhere.net/a', URL1)).toBe(true);
+    expect((await activity()).map((a) => a.rkey)).toEqual([R1]);
+  });
+
+  it('backfills older saves before listing, so their edges can match', async () => {
+    await env.DB.prepare(
+      `INSERT INTO saved_articles (user_did, rkey, url, saved_at) VALUES (?, ?, ?, ?), (?, ?, '', ?)`
+    )
+      .bind(TEST_DID, R1, `${URL1}#top`, 1000, TEST_DID, R2, 1000)
+      .run();
+    // Nothing to match yet: the ingest only sees keyed saves.
+    expect(await connect('3kconnrec00001', URL1, 'https://elsewhere.net/a')).toBe(false);
+
+    expect(await activity()).toEqual([]);
+    const keys = await env.DB.prepare(
+      'SELECT rkey, url_key FROM saved_articles WHERE user_did = ? ORDER BY rkey'
+    )
+      .bind(TEST_DID)
+      .all();
+    expect(keys.results).toEqual([
+      { rkey: R1, url_key: URL1 },
+      { rkey: R2, url_key: '' },
+    ]);
+    expect(await connect('3kconnrec00002', URL1, 'https://elsewhere.net/b')).toBe(true);
+  });
+
+  it('drops an edge an edit moved off every saved URL', async () => {
+    await save(R1, URL1, 1000);
+    await connect('3kconnrec00001', URL1, 'https://elsewhere.net/a', { now: 2000 });
+    await applySembleConnectionCommit(env, CURATOR, {
+      operation: 'update',
+      rkey: '3kconnrec00001',
+      record: { source: 'https://elsewhere.net/b', target: 'https://elsewhere.net/a' },
+    });
+    expect(await activity()).toEqual([]);
+  });
+
+  it('requires a session', async () => {
+    const ctx = createExecutionContext();
+    const response = await worker.fetch(
+      new IncomingRequest('http://localhost/api/saved/connections', {
+        headers: { Origin: env.FRONTEND_URL },
+      }),
+      env,
+      ctx
+    );
+    await waitOnExecutionContext(ctx);
+    expect(response.status).toBe(401);
   });
 
   it('validates the seen request', async () => {

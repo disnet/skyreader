@@ -337,7 +337,7 @@ export async function seedFollowLinks(
 
 /**
  * A Semble connection someone else drew off one of `user`'s saves, as the
- * JetstreamPoller would have kept it. Sets the save's `url_normalized` (which
+ * JetstreamPoller would have kept it. Sets the save's `url_key` (which
  * `seedSavedArticle` leaves NULL) so the two join. Returns the connection's uri,
  * for `cleanupSembleConnection`.
  */
@@ -348,7 +348,7 @@ export async function seedSembleConnection(
   const uri = `at://${opts.curatorDid ?? 'did:plc:e2ecurator'}/network.cosmik.connection/${generateTid()}`;
   const at = opts.indexedAt ?? Date.now();
   await execD1([
-    `UPDATE saved_articles SET url_normalized = url WHERE user_did = ${sqlString(user.did)} AND url = ${sqlString(opts.savedUrl)}`,
+    `UPDATE saved_articles SET url_key = url WHERE user_did = ${sqlString(user.did)} AND url = ${sqlString(opts.savedUrl)}`,
     `INSERT INTO semble_connections (uri, curator_did, source_url, source_normalized, target_url, target_normalized, connection_type, created_at, indexed_at) VALUES (${sqlString(uri)}, ${sqlString(opts.curatorDid ?? 'did:plc:e2ecurator')}, ${sqlString(opts.otherUrl)}, ${sqlString(opts.otherUrl)}, ${sqlString(opts.savedUrl)}, ${sqlString(opts.savedUrl)}, 'RELATED', ${at}, ${at})`,
   ]);
   return uri;

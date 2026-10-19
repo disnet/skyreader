@@ -2,6 +2,7 @@ import type { Env, Session } from '../types';
 import { getSessionFromRequest } from '../services/oauth';
 import { hasRequiredScopes, insufficientScopesResponse } from './auth';
 import { createPDSClient } from '../services/pds-client';
+import { savedUrlKey } from '../services/semble-connections';
 import { isValidRkey, invalidRkeyResponse } from '../utils/validation';
 import { removeSavedFromCollections } from './shelf';
 import { getUserTierLimits } from '../services/user-tier';
@@ -317,14 +318,15 @@ async function handleMetadataSave(
   // save) is stored here, not in the PDS record — same split as URL saves — so
   // the saved item stays readable after the source article ages out of the feed.
   await env.DB.prepare(
-    `INSERT INTO saved_articles (user_did, rkey, record_uri, url, title, author, description, content, content_type, domain, image, word_count, published_at, saved_at, created_at, source, item_guid, doi)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO saved_articles (user_did, rkey, record_uri, url, url_key, title, author, description, content, content_type, domain, image, word_count, published_at, saved_at, created_at, source, item_guid, doi)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       session.did,
       body.rkey,
       recordUri,
       body.url,
+      savedUrlKey(body.url),
       body.title || null,
       body.author || null,
       body.description || null,
@@ -483,14 +485,15 @@ async function handleUrlSave(
 
   // Cache in D1 (content is stored here, not in PDS)
   await env.DB.prepare(
-    `INSERT INTO saved_articles (user_did, rkey, record_uri, url, title, author, description, content, content_type, domain, image, word_count, published_at, saved_at, created_at, source, doi)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO saved_articles (user_did, rkey, record_uri, url, url_key, title, author, description, content, content_type, domain, image, word_count, published_at, saved_at, created_at, source, doi)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       session.did,
       body.rkey,
       recordUri,
       body.url,
+      savedUrlKey(body.url),
       body.title || null,
       body.author || null,
       body.description || null,
@@ -603,9 +606,9 @@ async function handleBackedSave(
     ).bind(body.rkey, session.did, session.did, urlNormalized),
     env.DB.prepare(
       `INSERT INTO saved_articles
-         (user_did, rkey, record_uri, url, url_normalized, title, author, description, content,
+         (user_did, rkey, record_uri, url, url_normalized, url_key, title, author, description, content,
           content_type, domain, image, word_count, published_at, saved_at, created_at, source, item_guid, doi)
-       VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(user_did, url_normalized) DO UPDATE SET
          rkey = excluded.rkey,
          title = COALESCE(excluded.title, title),
@@ -632,6 +635,7 @@ async function handleBackedSave(
       session.did,
       body.rkey,
       url,
+      urlNormalized,
       urlNormalized,
       body.title || null,
       body.author || null,

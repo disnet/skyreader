@@ -616,6 +616,9 @@ class JetstreamPollerBase implements DurableObject {
         cleanup(exit).catch((e) =>
           console.error('[JetstreamPoller] subscriptions cleanup error:', e)
         );
+      // Connection writes apply one at a time, in stream order: a create and a
+      // delete of the same edge in one burst must not land the wrong way round.
+      let connectionQueue: Promise<unknown> = Promise.resolve();
 
       const pollTimeout = setTimeout(() => cleanupWithCatch('poll-timeout'), POLL_TIMEOUT_MS);
       const idleCheck = setInterval(() => {
@@ -642,6 +645,8 @@ class JetstreamPollerBase implements DurableObject {
           ws = null;
         }
 
+        // Settle the writes already handed out before the cursor moves past them.
+        await connectionQueue;
         await this.state.storage.put('cursor_subscriptions', lastCursor);
         // `opened` matters as much as the exit reason: the idle check starts
         // running before the socket connects, so a Jetstream that never answers
@@ -680,11 +685,18 @@ class JetstreamPollerBase implements DurableObject {
               data.kind === 'commit' &&
               data.commit?.collection === SEMBLE_CONNECTION_COLLECTION
             ) {
-              await applySembleConnectionCommit(this.env, data.did, {
+              const { did } = data;
+              const commit = {
                 operation: data.commit.operation,
                 rkey: data.commit.rkey,
                 record: data.commit.record as SembleConnectionRecord | undefined,
-              });
+              };
+              connectionQueue = connectionQueue
+                .then(() => applySembleConnectionCommit(this.env, did, commit))
+                .catch((error) => {
+                  console.error('[JetstreamPoller] Error applying Semble connection:', error);
+                  errors++;
+                });
             }
           } catch (error) {
             console.error('[JetstreamPoller] Error processing subscription event:', error);

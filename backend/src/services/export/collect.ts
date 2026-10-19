@@ -155,7 +155,7 @@ export async function collectExport(env: Env, did: string): Promise<ExportDocume
   // (for its identifiers) is read as a prefix rather than the whole book.
   const [savesResult, filesResult, labelsResult] = await env.DB.batch([
     env.DB.prepare(
-      `SELECT id, rkey, record_uri, url, url_normalized, title, author, description,
+      `SELECT id, rkey, record_uri, url, url_normalized, url_key, title, author, description,
               NULL AS content, content_type, domain, image, word_count, published_at,
               saved_at, created_at, updated_at, source, item_guid, doi,
               CASE WHEN content_type = 'pdf' THEN substr(content, 1, ?) END AS first_page_html

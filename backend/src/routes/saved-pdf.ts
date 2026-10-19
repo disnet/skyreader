@@ -354,8 +354,8 @@ async function handleUpload(request: Request, env: Env, session: Session, kind: 
   try {
     await env.DB.batch([
       env.DB.prepare(
-        `INSERT INTO saved_articles (user_did, rkey, record_uri, url, title, author, description, content, content_type, domain, image, word_count, published_at, saved_at, created_at, source)
-         VALUES (?, ?, ?, '', ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, 'upload')`
+        `INSERT INTO saved_articles (user_did, rkey, record_uri, url, url_key, title, author, description, content, content_type, domain, image, word_count, published_at, saved_at, created_at, source)
+         VALUES (?, ?, ?, '', '', ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, 'upload')`
       ).bind(
         session.did,
         rkey,

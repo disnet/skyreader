@@ -60,11 +60,13 @@
   });
 
   // Opening a save with new Semble connections clears its badge, and the
-  // discussion then opens on Connections with those marked. Tracked, so a list
-  // that loads after the reader opened still lands here.
-  let savedRkey = $derived(readerItem.type === 'saved' ? readerItem.item.rkey : null);
+  // discussion then opens on Connections with those marked. Only in the
+  // fullscreen reader (`eager`): the daily magazine stacks many readers on one
+  // page, and scrolling past one isn't looking at it. Tracked, so a list that
+  // loads after the reader opened still lands here.
+  let savedRkey = $derived(eager && readerItem.type === 'saved' ? readerItem.item.rkey : null);
   $effect(() => {
-    if (readerItem.type === 'saved') {
+    if (eager && readerItem.type === 'saved') {
       savedConnectionsStore.open(readerItem.item.rkey, readerItem.item.savedAt);
     }
   });
@@ -243,6 +245,7 @@
       onCreateConnection={auth.user && itemUrl ? createConnection : undefined}
       isConnectionSaved={(url) => savesStore.isSaved(url)}
       {connectionsNewSince}
+      viewerDid={auth.user?.did}
       composeLead={canShareLinkblog ? shareControl : undefined}
     />
   </section>

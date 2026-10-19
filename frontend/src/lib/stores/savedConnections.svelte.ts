@@ -21,41 +21,79 @@ import { syncStore } from './sync.svelte';
 /** A list fetched this recently is fresh enough for another page to reuse. */
 const FRESH_MS = 60_000;
 
+function sameActivity(
+  a: Map<string, SavedConnectionActivity>,
+  b: Map<string, SavedConnectionActivity>
+): boolean {
+  if (a.size !== b.size) return false;
+  for (const [rkey, x] of b) {
+    const y = a.get(rkey);
+    if (!y || y.unseen !== x.unseen || y.latestAt !== x.latestAt || y.seenAt !== x.seenAt) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function createSavedConnectionsStore() {
   let byRkey = $state<Map<string, SavedConnectionActivity>>(new Map());
   // rkey → the moment "new" was measured from when the reader opened it this
   // session (their previous look, or the save). Kept after the mark clears so
   // the discussion can still say which connections were the new ones.
   let openedSince = $state<Map<string, number>>(new Map());
+  // rkey → when the reader opened it here. A list fetched before that can't
+  // know about the look, and mustn't bring the badge back.
+  let openedAt = new Map<string, number>();
   let loadedFor: string | null = null;
   let loadedAt = 0;
-  let inFlight: Promise<void> | null = null;
+  let inFlight: { did: string; promise: Promise<void> } | null = null;
+
+  function reset() {
+    byRkey = new Map();
+    openedSince = new Map();
+    openedAt = new Map();
+    loadedFor = null;
+  }
 
   async function load(force = false): Promise<void> {
     const did = auth.user?.did ?? null;
     if (!did || auth.isGuest) {
-      byRkey = new Map();
-      loadedFor = null;
+      if (loadedFor !== null) reset();
       return;
     }
+    if (loadedFor !== null && loadedFor !== did) reset();
     if (!syncStore.isOnline) return;
     if (!force && loadedFor === did && Date.now() - loadedAt < FRESH_MS) return;
-    if (inFlight) return inFlight;
-    inFlight = (async () => {
+    if (inFlight?.did === did) return inFlight.promise;
+    const startedAt = Date.now();
+    const promise = (async () => {
       try {
         const { items } = await api.getSavedConnections();
         // An account switch mid-request must not land the old reader's list.
         if (auth.user?.did !== did) return;
-        byRkey = new Map(items.map((item) => [item.rkey, item]));
+        const next = new Map<string, SavedConnectionActivity>();
+        for (const item of items) {
+          const opened = openedAt.get(item.rkey);
+          next.set(
+            item.rkey,
+            opened !== undefined && opened >= startedAt
+              ? { ...item, unseen: 0, seenAt: opened }
+              : item
+          );
+        }
+        // Every card reads this map, so leave it alone when nothing changed.
+        if (!sameActivity(byRkey, next)) byRkey = next;
         loadedFor = did;
         loadedAt = Date.now();
       } catch (e) {
         console.error('[savedConnections] Failed to load:', e);
       } finally {
-        inFlight = null;
+        // Only one request per account runs at a time, so this one is it.
+        if (inFlight?.did === did) inFlight = null;
       }
     })();
-    return inFlight;
+    inFlight = { did, promise };
+    return promise;
   }
 
   function unseen(rkey: string): number {
@@ -77,6 +115,7 @@ function createSavedConnectionsStore() {
     const since = activity.seenAt ?? (Number.isFinite(saved) ? saved : 0);
     openedSince = new Map(openedSince).set(rkey, since);
     const now = Date.now();
+    openedAt.set(rkey, now);
     byRkey = new Map(byRkey).set(rkey, { ...activity, unseen: 0, seenAt: now });
     api.markSavedConnectionsSeen(rkey).catch((e) => {
       // The mark comes back on the next load; nothing to roll back here.

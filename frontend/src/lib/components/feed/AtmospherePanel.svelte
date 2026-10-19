@@ -81,6 +81,7 @@
     onCreateConnection,
     isConnectionSaved,
     connectionsNewSince = null,
+    viewerDid,
   }: {
     laneRow?: LaneRowVM[];
     filters?: DiscussionFilterVM[];
@@ -110,6 +111,8 @@
     /** The reader opened a save with new Semble connections since this time
      *  (ms): open on Connections, with those first and marked New. */
     connectionsNewSince?: number | null;
+    /** The signed-in reader: their own connections are never news to them. */
+    viewerDid?: string;
   } = $props();
 
   // The connections whose saves are in flight. A save costs a fetch and an
@@ -263,6 +266,7 @@
 
   function isNewConnection(connection: SembleConnection): boolean {
     if (connectionsNewSince === null || !connection.createdAt) return false;
+    if (viewerDid && connection.curator.did === viewerDid) return false;
     const created = Date.parse(connection.createdAt);
     return Number.isFinite(created) && created > connectionsNewSince;
   }
