@@ -17,9 +17,6 @@ async function createChannel(page: Page, name: string, row: 'Feeds' | 'Library' 
   await expect(nameInput).toBeVisible({ timeout: 5_000 });
   await nameInput.fill(name);
 
-  // A new feed channel starts with no sources picked; take them all.
-  if (row === 'Feeds') await page.getByRole('button', { name: 'Show everything' }).click();
-
   await page.getByRole('button', { name: 'Create channel' }).click();
 
   // Wait for the channel to appear in the sidebar
@@ -66,7 +63,9 @@ test.describe('Channels', () => {
     });
     await navGroup.locator('.new-channel-btn').click();
 
-    // Nothing is picked yet, so there's nothing to make.
+    // A new channel starts with every source; with none, there's nothing to make.
+    await expect(authedPage.getByRole('button', { name: 'Select all' })).toBeDisabled();
+    await authedPage.getByRole('button', { name: 'Select none' }).click();
     await authedPage.getByRole('button', { name: 'Create channel' }).click();
     await expect(authedPage.getByRole('alert')).toHaveText('Pick at least one source');
 

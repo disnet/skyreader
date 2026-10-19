@@ -100,13 +100,14 @@
     ondeleted,
   }: Props = $props();
 
-  const NO_SOURCES: SourceFilter = { sourceMode: 'include', sourceKeys: [] };
+  // A new channel starts with every source checked; uncheck what it leaves out.
+  const ALL_SOURCES: SourceFilter = { sourceMode: 'all', sourceKeys: [] };
 
   let name = $state('');
   let nameEdited = $state(false);
   let channelType = $state<'feed' | 'saved' | null>('feed');
   let mode = $state<'pick' | 'rule'>('pick');
-  let sourceFilter = $state<SourceFilter>(NO_SOURCES);
+  let sourceFilter = $state<SourceFilter>(ALL_SOURCES);
   let ruleType = $state<AutoRuleOption>('frequency:high');
   let recentWithinDays = $state(14);
   let tagValue = $state('');
@@ -201,7 +202,7 @@
           sourceMode: initial.sourceFilter.sourceMode,
           sourceKeys: [...initial.sourceFilter.sourceKeys],
         }
-      : NO_SOURCES;
+      : ALL_SOURCES;
     ruleType = 'frequency:high';
     recentWithinDays = 14;
     tagValue = '';
@@ -228,6 +229,11 @@
   // so the query can be seen and taken out.
   let offerQuery = $derived(
     channelType === 'feed' && (canUseSavedSearches(auth.user) || query.trim() !== '')
+  );
+  // Where saved searches are on but the plan has none, the field shows, greyed,
+  // so it's clear what Supporter adds.
+  let lockedQuery = $derived(
+    channelType === 'feed' && !offerQuery && !auth.isGuest && !!auth.user?.savedSearchEnabled
   );
   let trimmedQuery = $derived(offerQuery ? query.trim() : '');
 
@@ -604,6 +610,23 @@
         />
       {/if}
     </div>
+  {:else if lockedQuery}
+    <div class="section locked">
+      <div class="label-row">
+        <label class="section-label" for="channel-query">Matching</label>
+        <a class="supporter-pill" href="/supporter">Supporter</a>
+      </div>
+      <input
+        id="channel-query"
+        type="search"
+        class="text-input"
+        disabled
+        placeholder="Optional: words to watch for"
+      />
+      <p class="hint">
+        With Supporter, a channel can keep only what matches a search, as it arrives.
+      </p>
+    </div>
   {/if}
 
   {#if channelType === 'feed'}
@@ -644,6 +667,7 @@
             showFollows={showFollowsSource}
             {followsInEverything}
             scroll={scrollPicker}
+            bulk
           />
         </div>
       {:else}
@@ -820,6 +844,32 @@
 </form>
 
 <style>
+  .label-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .supporter-pill {
+    padding: 0 0.375rem;
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+    font-size: var(--text-xs);
+    font-weight: var(--weight-medium);
+    color: var(--color-text-secondary);
+    text-decoration: none;
+  }
+
+  .supporter-pill:hover {
+    color: var(--color-primary);
+    border-color: var(--color-primary);
+  }
+
+  .locked .text-input {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
   .channel-editor {
     display: flex;
     flex-direction: column;

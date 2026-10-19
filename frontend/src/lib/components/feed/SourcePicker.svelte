@@ -34,9 +34,20 @@
     followsInEverything: boolean;
     /** Cap the list's height and scroll inside it (a popover); otherwise it grows. */
     scroll?: boolean;
+    /** Offer Select all and Select none (a channel's sources) in place of Show everything. */
+    bulk?: boolean;
   }
 
-  let { filter, onchange, showFollows, followsInEverything, scroll = false }: Props = $props();
+  let {
+    filter,
+    onchange,
+    showFollows,
+    followsInEverything,
+    scroll = false,
+    bulk = false,
+  }: Props = $props();
+
+  let noneChecked = $derived(filter.sourceMode === 'include' && filter.sourceKeys.length === 0);
 
   let search = $state('');
   let expanded = $state<Set<string>>(new Set());
@@ -235,7 +246,22 @@
         bind:value={search}
       />
     {/if}
-    {#if filter.sourceMode !== 'all'}
+    {#if bulk}
+      <span class="bulk-btns">
+        <button
+          type="button"
+          class="show-all-btn"
+          disabled={filter.sourceMode === 'all'}
+          onclick={() => onchange({ sourceMode: 'all', sourceKeys: [] })}>Select all</button
+        >
+        <button
+          type="button"
+          class="show-all-btn"
+          disabled={noneChecked}
+          onclick={() => onchange({ sourceMode: 'include', sourceKeys: [] })}>Select none</button
+        >
+      </span>
+    {:else if filter.sourceMode !== 'all'}
       <button
         type="button"
         class="show-all-btn"
@@ -366,8 +392,24 @@
     white-space: nowrap;
   }
 
-  .show-all-btn:hover {
+  .show-all-btn:hover:not(:disabled) {
     text-decoration: underline;
+  }
+
+  .show-all-btn:disabled {
+    color: var(--color-text-secondary);
+    opacity: 0.6;
+    cursor: default;
+  }
+
+  .bulk-btns {
+    display: flex;
+    gap: 0.75rem;
+    margin-left: auto;
+  }
+
+  .bulk-btns .show-all-btn {
+    margin-left: 0;
   }
 
   .picker-list {

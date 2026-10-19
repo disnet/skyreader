@@ -396,6 +396,14 @@ export async function enableSavedSearchFor(user: TestUser): Promise<void> {
   ]);
 }
 
+/** Saved searches on here, with the user's plan left as it is. */
+export async function enableSavedSearchSwitch(): Promise<void> {
+  const now = Math.floor(Date.now() / 1000);
+  await execD1([
+    `INSERT INTO sync_state (key, value, updated_at) VALUES ('saved_search_enabled', '1', ${now}) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+  ]);
+}
+
 export async function disableSavedSearch(): Promise<void> {
   await execD1([`DELETE FROM sync_state WHERE key = 'saved_search_enabled'`]);
 }

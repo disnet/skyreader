@@ -3,6 +3,7 @@ import {
   cleanupFeedItems,
   disableSavedSearch,
   enableSavedSearchFor,
+  enableSavedSearchSwitch,
   seedChannelMatches,
   seedFeedItems,
   seedSearchChannel,
@@ -140,7 +141,6 @@ test.describe('Saved searches', () => {
     await queryInput.fill('"heat pump" -podcast');
     // Named for what it looks for, until you name it.
     await expect(authedPage.locator('#channel-name')).toHaveValue('"heat pump" -podcast');
-    await authedPage.getByRole('button', { name: 'Show everything' }).click();
     // The preview reads the sources' recent items, unread ones included.
     await expect(authedPage.locator('.preview')).toContainText(
       '1 of 2 items from these sources match',
@@ -168,7 +168,24 @@ test.describe('Saved searches', () => {
     expect(body.query).toBe('"heat pump" -podcast');
   });
 
-  test('without the plan, a channel has no query field', async ({ authedPage }) => {
+  test('without the plan, the query field shows greyed with a Supporter label', async ({
+    authedPage,
+  }) => {
+    await enableSavedSearchSwitch();
+    await authedPage.reload();
+    const navGroup = authedPage.locator('.nav-group', {
+      has: authedPage.locator('.nav-row .nav-label', { hasText: 'Feeds' }),
+    });
+    await expect(navGroup).toBeVisible({ timeout: 15_000 });
+    await navGroup.locator('.new-channel-btn').click();
+    await expect(authedPage.locator('#channel-query')).toBeDisabled();
+    await expect(authedPage.getByRole('link', { name: 'Supporter' })).toHaveAttribute(
+      'href',
+      '/supporter'
+    );
+  });
+
+  test('with saved searches off here, a channel has no query field', async ({ authedPage }) => {
     const navGroup = authedPage.locator('.nav-group', {
       has: authedPage.locator('.nav-row .nav-label', { hasText: 'Feeds' }),
     });
