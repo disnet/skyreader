@@ -127,8 +127,17 @@ export interface ProxyStatsValue {
   inFlight: number;
   feedsInError: number;
   feedsInBackoff: number;
+  /** Feeds the crawler retries at most daily: gone, blocked, or long-failing. */
   feedsPermanentlyFailed: number;
   cacheTtlSeconds: number | null;
+  /**
+   * How long a full pass over the healthy crawl set is taking, and the cycle the
+   * proxy is configured to accept. Since reads moved to D1 this, not `freshPct`,
+   * bounds how late a new item reaches a reader. Null from a proxy that
+   * doesn't report it.
+   */
+  crawlCycleSeconds: number | null;
+  crawlTargetCycleSeconds: number | null;
   documentFirehoseHealthy: boolean | null;
   documentFirehoseConnected: boolean | null;
   documentAuthorsActive: number;
@@ -393,6 +402,7 @@ interface ProxyStatsResponse {
   inFlight?: number;
   cacheTtlSeconds?: number;
   errors?: { total?: number; inBackoff?: number; permanent?: number };
+  warm?: { cycleSeconds?: number; targetCycleSeconds?: number };
   firehose?: { healthy?: boolean; connected?: boolean };
   documents?: { active?: number; frozen?: number; inBackoff?: number };
 }
@@ -432,6 +442,8 @@ export async function recordProxyStats(env: Env, now = Date.now()): Promise<Prox
     feedsInBackoff: stats.errors?.inBackoff ?? 0,
     feedsPermanentlyFailed: stats.errors?.permanent ?? 0,
     cacheTtlSeconds: stats.cacheTtlSeconds ?? null,
+    crawlCycleSeconds: stats.warm?.cycleSeconds ?? null,
+    crawlTargetCycleSeconds: stats.warm?.targetCycleSeconds ?? null,
     documentFirehoseHealthy: stats.firehose?.healthy ?? null,
     documentFirehoseConnected: stats.firehose?.connected ?? null,
     documentAuthorsActive: stats.documents?.active ?? 0,

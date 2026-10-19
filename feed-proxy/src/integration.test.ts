@@ -1338,6 +1338,30 @@ describe('Integration Tests', () => {
       expect(cached?.next_retry_at).toBeGreaterThan(expectedMin);
     });
 
+    it('counts a feed parked on its first permanent failure, not a transient one', async () => {
+      const { app } = createTestApp();
+      fetchMock = spyOn(globalThis, 'fetch').mockImplementation((async (
+        input: RequestInfo | URL
+      ) =>
+        String(input instanceof Request ? input.url : input).includes('gone')
+          ? new Response('Not Found', { status: 404 })
+          : new Response('Unavailable', { status: 503 })) as unknown as typeof fetch);
+
+      for (const path of ['gone.xml', 'flaky.xml']) {
+        await app.request(`/feed?url=https://example.com/${path}`, {
+          headers: { 'X-Proxy-Secret': 'test-secret' },
+        });
+      }
+
+      const res = await app.request('/stats', { headers: { 'X-Proxy-Secret': 'test-secret' } });
+      const json = await res.json();
+
+      expect(json.errors.total).toBe(2);
+      // The 404 is retried weekly from its first hit (error_count 1); the 503 is
+      // backing off on the minute scale and isn't parked.
+      expect(json.errors.permanent).toBe(1);
+    });
+
     it('includes error stats in /stats endpoint', async () => {
       const { db, app } = createTestApp();
 
@@ -2953,6 +2977,15 @@ describe('Self-warming loop', () => {
         lastRequestedAt: now - 5_000,
         errorCount: 5,
         nextRetryAt: now + 7 * 24 * 60 * 60 * 1000,
+      });
+      // Broken for a month, its backoff just lapsed. A failure never moves
+      // fetched_at, so counting it would read as a month-long cycle until the
+      // retry fails again.
+      insertCacheRow(db, 'https://example.com/lapsed-backoff', {
+        fetchedAt: now - 30 * 24 * 60 * 60 * 1000,
+        lastRequestedAt: now - 5_000,
+        errorCount: 3,
+        nextRetryAt: now - 1_000,
       });
       // Registered by the crawl set seconds ago and never fetched (fetched_at 0).
       insertCacheRow(db, 'https://example.com/never-fetched', {

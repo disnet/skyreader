@@ -48,6 +48,8 @@ const status = (overrides: Partial<OpsStatus> = {}): OpsStatus => ({
       feedsInBackoff: 0,
       feedsPermanentlyFailed: 0,
       cacheTtlSeconds: 900,
+      crawlCycleSeconds: 480,
+      crawlTargetCycleSeconds: 3600,
     },
   },
   ...overrides,
@@ -115,21 +117,44 @@ describe('ops tiles', () => {
     const s = status();
     s.proxy!.updatedAt = NOW - 40 * MINUTE;
     const metrics = opsMetricsFrom(s, NOW);
-    expect(tile(metrics, 'Proxy Cache Fresh').status).toBe('error');
-    expect(String(tile(metrics, 'Proxy Cache Fresh').value)).toContain('Stale');
+    expect(tile(metrics, 'Crawl Cycle').status).toBe('error');
+    expect(String(tile(metrics, 'Crawl Cycle').value)).toContain('Stale');
   });
 
-  it('grades cache freshness against the 95% SLO', () => {
-    const fresh = (pct: number | null) => {
+  it('grades the crawl cycle against the target the proxy accepts', () => {
+    const cycle = (seconds: number | null | undefined, target: number | null = 3600) => {
       const s = status();
-      s.proxy!.value.freshPct = pct;
-      return tile(opsMetricsFrom(s, NOW), 'Proxy Cache Fresh').status;
+      s.proxy!.value.crawlCycleSeconds = seconds;
+      s.proxy!.value.crawlTargetCycleSeconds = target;
+      return tile(opsMetricsFrom(s, NOW), 'Crawl Cycle');
     };
-    expect(fresh(99)).toBe('healthy');
-    expect(fresh(90)).toBe('warning');
-    expect(fresh(50)).toBe('error');
-    // An empty cache has no percentage to grade.
-    expect(fresh(null)).toBe('warning');
+    // The deliberate ~8-minute cycle is the healthy steady state, whatever share
+    // of the cache sits inside its 5-minute TTL.
+    expect(cycle(480).status).toBe('healthy');
+    expect(cycle(480).value).toBe('8m');
+    expect(cycle(90 * 60).status).toBe('warning');
+    expect(cycle(3 * 3600).status).toBe('error');
+    // No target reported: the proxy's own default (1h).
+    expect(cycle(90 * 60, null).status).toBe('warning');
+    expect(cycle(0).status).toBe('warning');
+    // A row written before the backend recorded the cycle.
+    expect(cycle(undefined).value).toBe('Not reported');
+  });
+
+  it('grades feed errors on the failing share, not on parked feeds', () => {
+    const errors = (inError: number, parked: number, total = 1876) => {
+      const s = status();
+      s.proxy!.value.total = total;
+      s.proxy!.value.feedsInError = inError;
+      s.proxy!.value.feedsPermanentlyFailed = parked;
+      return tile(opsMetricsFrom(s, NOW), 'Proxy Feeds in Error');
+    };
+    // Production on 2026-10-19: 226 erroring, 155 of them gone or blocked.
+    expect(errors(226, 155).status).toBe('healthy');
+    expect(errors(226, 155).unit).toBe('155 parked');
+    // The same count with nothing parked is a crawler-wide problem brewing.
+    expect(errors(226, 0).status).toBe('warning');
+    expect(errors(900, 155).status).toBe('error');
   });
 
   it('grades the document stream separately from subscriptions', () => {
@@ -182,6 +207,18 @@ describe('ops tiles', () => {
     expect(sync(3, 296)).toBe('error');
     // Small population: two of four is systemic even at a low absolute count.
     expect(sync(2, 4)).toBe('error');
+  });
+
+  it("ignores the proxy's document firehose once nobody reads through it", () => {
+    const sync = (active: number) => {
+      const s = status();
+      s.proxy!.value.documentAuthorsActive = active;
+      s.proxy!.value.documentFirehoseHealthy = false;
+      return tile(opsMetricsFrom(s, NOW), 'Document Sync').status;
+    };
+    // Documents are served from D1, so the proxy has no authors and idles.
+    expect(sync(0)).toBe('healthy');
+    expect(sync(12)).toBe('warning');
   });
 
   it('renders a full set of tiles before the cron has ever run', () => {

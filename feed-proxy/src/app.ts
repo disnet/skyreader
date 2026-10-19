@@ -267,13 +267,22 @@ export const WARM_DUE_FEEDS_SQL = `SELECT url_hash, url FROM cache
 				ORDER BY fetched_at ASC
 				LIMIT ?`;
 
-/** Crawl-cycle stat behind /stats and the saturation warning: idx_cache_warm. */
+/**
+ * Crawl-cycle stat behind /stats and the saturation warning: idx_cache_warm.
+ *
+ * Healthy feeds only (`next_retry_at IS NULL`). A failed fetch never moves
+ * `fetched_at`, so a feed that has been broken for a month carries a month-old
+ * stamp; letting it in the moment its backoff lapses made the cycle read as a
+ * month for the minute it waited to be retried. Broken feeds are counted by the
+ * error stats instead. (A YouTube Data API feed parks its next refresh in
+ * `next_retry_at` after a success, so it sits out too: its cadence is the quota's.)
+ */
 export const CRAWL_CYCLE_SQL = `SELECT MIN(fetched_at) AS oldest, COUNT(*) AS active
 				   FROM cache
 				  WHERE last_requested_at IS NOT NULL
 				    AND last_requested_at > ?
 				    AND fetched_at > 0
-				    AND (next_retry_at IS NULL OR next_retry_at < ?)`;
+				    AND next_retry_at IS NULL`;
 
 /** Document warm due-scan: covered by idx_document_cache_warm. */
 export const WARM_DUE_DOCUMENTS_SQL = `SELECT did FROM document_cache
@@ -2224,8 +2233,8 @@ export function createApp(db: Database, config: AppConfig) {
    */
   function crawlCycle(now: number): { cycleMs: number; active: number } {
     const row = db
-      .query<{ oldest: number | null; active: number }, [number, number]>(CRAWL_CYCLE_SQL)
-      .get(now - warmActiveWindowMs, now);
+      .query<{ oldest: number | null; active: number }, [number]>(CRAWL_CYCLE_SQL)
+      .get(now - warmActiveWindowMs);
     return {
       cycleMs: row?.oldest ? now - row.oldest : 0,
       active: row?.active ?? 0,
@@ -2617,11 +2626,17 @@ export function createApp(db: Database, config: AppConfig) {
         'SELECT COUNT(*) as count FROM cache WHERE next_retry_at > ? AND error_count > 0'
       )
       .get(now);
+    // Parked: feeds the crawler now retries at most daily — a permanent HTTP
+    // error or robots.txt disallow (parked on the first hit), or a transient one
+    // whose backoff has grown to the 24h ceiling. Graded by the gap between the
+    // failure and its retry, which is fixed at write time, rather than by
+    // next_retry_at alone, which shrinks as the backoff runs down.
     const permanentErrors = db
       .query<{ count: number }, [number]>(
-        'SELECT COUNT(*) as count FROM cache WHERE next_retry_at > ? AND error_count >= 5'
+        `SELECT COUNT(*) as count FROM cache
+          WHERE error_count > 0 AND next_retry_at - last_error_at >= ?`
       )
-      .get(now + 6 * 24 * 60 * 60 * 1000); // More than 6 days means it's a permanent error
+      .get(MAX_DELAY_MS);
 
     const activeDocumentCutoff = now - warmActiveWindowMs;
     const activeDocuments = db

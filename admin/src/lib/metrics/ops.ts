@@ -34,9 +34,21 @@ const POLLER_ROW_STALE_MS = 5 * 60 * 1000;
 /** Proxy stats refresh every 5 minutes; past this the numbers are history. */
 const PROXY_STALE_MS = 15 * 60 * 1000;
 
-/** The plan's starter SLO: ≥95% of cached feeds within TTL. */
-const FRESH_WARN_PCT = 95;
-const FRESH_ERROR_PCT = 80;
+/**
+ * The proxy's own default for the crawl cycle it accepts (DEFAULT_WARM_TARGET_CYCLE_MS),
+ * for a row that carries the cycle but not the target.
+ */
+const DEFAULT_TARGET_CYCLE_SECONDS = 60 * 60;
+
+/**
+ * Feeds failing on the short backoff, as a share of the cache. Parked feeds (gone,
+ * blocked, or failing for a day) are left out: each is one feed's own problem,
+ * shown to its readers, and a few hundred of them is a normal resting state. A
+ * crawler-wide fault — DNS, egress, a bad deploy — fails every feed it touches at
+ * once, and that is the shape this catches.
+ */
+const ERROR_WARN_RATIO = 0.1;
+const ERROR_ERROR_RATIO = 0.25;
 
 /**
  * Frozen document authors worth calling an error rather than a straggler. Keep
@@ -198,59 +210,69 @@ function documentSyncMetric(proxy: ProxyStatsValue): MetricValue {
   const active = proxy.documentAuthorsActive ?? 0;
   const systemic =
     frozen >= FROZEN_ERROR_AUTHORS || (active > 0 && frozen / active >= FROZEN_ERROR_RATIO);
+  // With no active authors nobody reads documents through the proxy (they're
+  // served from D1), so its firehose idling disconnected is expected, not news.
+  const firehoseDown = active > 0 && proxy.documentFirehoseHealthy === false;
 
   return {
     label: 'Document Sync',
     value: frozen,
     unit: `${active} active · ${proxy.documentAuthorsInBackoff ?? 0} retrying`,
-    status: systemic
-      ? 'error'
-      : frozen > 0 || proxy.documentFirehoseHealthy === false
-        ? 'warning'
-        : 'healthy',
+    status: systemic ? 'error' : frozen > 0 || firehoseDown ? 'warning' : 'healthy',
+  };
+}
+
+const PROXY_LABELS = ['Crawl Cycle', 'Proxy Feeds in Error', 'Document Sync'] as const;
+
+/**
+ * How long one pass over the healthy crawl set takes: the delay between a feed
+ * publishing and its readers seeing it. This replaced "% of the cache inside its
+ * 5-minute TTL", which the deliberately ~8-minute cycle (fly.toml, WARM_BATCH_CAP)
+ * can never satisfy and which counted broken and abandoned rows as stale.
+ *
+ * Amber past the proxy's accepted cycle, red past twice it — the age at which
+ * the crawler starts reporting a feed `crawl_stale`.
+ */
+function crawlCycleMetric(proxy: ProxyStatsValue): MetricValue {
+  const cycle = proxy.crawlCycleSeconds;
+  if (cycle === undefined || cycle === null) {
+    return { label: PROXY_LABELS[0], value: 'Not reported', status: 'warning' };
+  }
+  if (cycle === 0) return { label: PROXY_LABELS[0], value: 'No healthy feeds', status: 'warning' };
+
+  const target = proxy.crawlTargetCycleSeconds || DEFAULT_TARGET_CYCLE_SECONDS;
+  return {
+    label: PROXY_LABELS[0],
+    value: formatAge(cycle * 1000),
+    unit: `target ${formatAge(target * 1000)}`,
+    status: cycle > 2 * target ? 'error' : cycle > target ? 'warning' : 'healthy',
+  };
+}
+
+function feedErrorsMetric(proxy: ProxyStatsValue): MetricValue {
+  const { total, feedsInError, feedsPermanentlyFailed } = proxy;
+  const failing = Math.max(feedsInError - feedsPermanentlyFailed, 0);
+  const ratio = total > 0 ? failing / total : 0;
+  return {
+    label: PROXY_LABELS[1],
+    value: feedsInError,
+    unit: feedsPermanentlyFailed > 0 ? `${feedsPermanentlyFailed} parked` : undefined,
+    status:
+      ratio >= ERROR_ERROR_RATIO ? 'error' : ratio >= ERROR_WARN_RATIO ? 'warning' : 'healthy',
   };
 }
 
 function proxyMetrics(status: OpsStatus, now: number): MetricValue[] {
   const proxy = status.proxy;
-  if (!proxy)
-    return [
-      unknown('Proxy Cache Fresh'),
-      unknown('Proxy Feeds in Error'),
-      unknown('Document Sync'),
-    ];
+  if (!proxy) return PROXY_LABELS.map((label) => unknown(label));
 
   // Nobody refreshed these, so don't dress them up as current.
   const rowAge = now - proxy.updatedAt;
-  if (rowAge > PROXY_STALE_MS) {
-    return [
-      stale('Proxy Cache Fresh', rowAge),
-      stale('Proxy Feeds in Error', rowAge),
-      stale('Document Sync', rowAge),
-    ];
-  }
+  if (rowAge > PROXY_STALE_MS) return PROXY_LABELS.map((label) => stale(label, rowAge));
 
-  const { freshPct, total, feedsInError, feedsPermanentlyFailed } = proxy.value;
   return [
-    freshPct === null
-      ? { label: 'Proxy Cache Fresh', value: 'Empty cache', status: 'warning' }
-      : {
-          label: 'Proxy Cache Fresh',
-          value: freshPct,
-          unit: `% of ${total}`,
-          status:
-            freshPct < FRESH_ERROR_PCT
-              ? 'error'
-              : freshPct < FRESH_WARN_PCT
-                ? 'warning'
-                : 'healthy',
-        },
-    {
-      label: 'Proxy Feeds in Error',
-      value: feedsInError,
-      unit: feedsPermanentlyFailed > 0 ? `${feedsPermanentlyFailed} permanent` : undefined,
-      status: feedsPermanentlyFailed > 0 ? 'error' : feedsInError > 0 ? 'warning' : 'healthy',
-    },
+    crawlCycleMetric(proxy.value),
+    feedErrorsMetric(proxy.value),
     documentSyncMetric(proxy.value),
   ];
 }
