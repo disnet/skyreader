@@ -271,6 +271,16 @@ describe('trend series', () => {
     ]);
   });
 
+  it('trends the crawl cycle, with hours from before it was recorded as gaps', () => {
+    const cycle = trendsFrom(
+      [row(NOW), row(NOW + HOUR, { crawl_cycle_s: 480 })],
+      NOW + HOUR
+    ).series.find((s) => s.key === 'crawl_cycle_s')!;
+    expect(cycle.label).toBe('Crawl Cycle');
+    // The first row predates migration 0102 and has no column at all.
+    expect(cycle.points).toEqual([null, 480]);
+  });
+
   it('reports the real span of the history it holds', () => {
     const trends = trendsFrom([row(NOW), row(NOW + 5 * HOUR)], NOW + 5 * HOUR);
     expect(trends.from).toBe(NOW);

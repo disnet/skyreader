@@ -101,6 +101,8 @@ export interface SnapshotRow {
   active_sessions: number;
   firehose_lag_ms: number | null;
   proxy_fresh_pct: number | null;
+  /** Seconds per pass over the healthy crawl set. Absent before migration 0102. */
+  crawl_cycle_s?: number | null;
 }
 
 /**
