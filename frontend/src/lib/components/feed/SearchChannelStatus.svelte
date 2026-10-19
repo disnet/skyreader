@@ -50,10 +50,13 @@
       description={`Your plan keeps ${limit} saved ${limit === 1 ? 'search' : 'searches'}, so nothing new lands here.`}
     />
   {:else if lookingBack}
-    <EmptyState
-      title="Looking back through the last 30 days"
-      description={`Anything that matches “${query}” lands here as it's found.`}
-    />
+    <div class="looking" role="status">
+      <span class="sweep" aria-hidden="true"></span>
+      <EmptyState
+        title="Looking back through the last 30 days"
+        description={`Anything that matches “${query}” lands here as it's found.`}
+      />
+    </div>
   {:else if feedViewStore.showOnlyUnread && searchChannelsStore.matches.length > 0}
     <EmptyState title="All caught up" description={`Nothing unread matches “${query}”.`} />
   {:else}
@@ -68,7 +71,9 @@
   <p class="search-status" aria-live="polite">
     <span class="query">Matching <q>{query}</q></span>
     {#if lookingBack}
-      <span class="state">Still looking back through the last 30 days.</span>
+      <span class="state"
+        ><span class="dot" aria-hidden="true"></span>Still looking back through the last 30 days.</span
+      >
     {:else if searchChannelsStore.status === 'over_limit'}
       <span class="state"
         >Past your plan's {limit} saved {limit === 1 ? 'search' : 'searches'}, so nothing new
@@ -93,5 +98,65 @@
 
   .query q {
     color: var(--color-text);
+  }
+
+  /* A slow sweep while the look back runs, so a new channel reads as working. */
+  .looking {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding-top: 2rem;
+  }
+
+  .sweep {
+    position: relative;
+    width: 8rem;
+    height: 2px;
+    border-radius: 1px;
+    overflow: hidden;
+    background: var(--color-border);
+  }
+
+  .sweep::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    width: 40%;
+    border-radius: 1px;
+    background: var(--color-primary);
+    animation: sweep 1.6s ease-in-out infinite;
+  }
+
+  @keyframes sweep {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(250%);
+    }
+  }
+
+  .dot {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    margin-right: 0.375rem;
+    border-radius: 50%;
+    background: var(--color-primary);
+    vertical-align: middle;
+    animation: pulse 1.6s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    50% {
+      opacity: 0.3;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .sweep::after,
+    .dot {
+      animation: none;
+    }
   }
 </style>

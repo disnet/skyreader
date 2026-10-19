@@ -43,7 +43,9 @@
   import { joinNames, sourceFilterName, uniqueChannelName } from '$lib/utils/channelName';
   import {
     categoryGroupKey,
+    everySourceFilter,
     isSourceShown,
+    showsNoSource,
     keysOfTypes,
     upgradeChannelFilter,
     CHANNEL_FILTER_VERSION,
@@ -100,13 +102,11 @@
     ondeleted,
   }: Props = $props();
 
-  const NO_SOURCES: SourceFilter = { sourceMode: 'include', sourceKeys: [] };
-
   let name = $state('');
   let nameEdited = $state(false);
   let channelType = $state<'feed' | 'saved' | null>('feed');
   let mode = $state<'pick' | 'rule'>('pick');
-  let sourceFilter = $state<SourceFilter>(NO_SOURCES);
+  let sourceFilter = $state<SourceFilter>({ sourceMode: 'all', sourceKeys: [] });
   let ruleType = $state<AutoRuleOption>('frequency:high');
   let recentWithinDays = $state(14);
   let tagValue = $state('');
@@ -124,6 +124,8 @@
   let feedTagFilter = $state<string[]>([]);
   // A saved search's query; empty for an ordinary channel.
   let query = $state('');
+  // The query the channel was opened with: past a lapsed plan, its field stays.
+  let loadedQuery = $state('');
   let readFilter = $state<'all' | 'unread' | 'read'>('unread');
   let sortOrder = $state<SortOrder>('newest');
   let saving = $state(false);
@@ -163,6 +165,7 @@
       savedTagFilter = new Set(view.tagFilter ?? []);
       feedTagFilter = view.mode === 'saved' ? [] : [...(view.tagFilter ?? [])];
       query = channelQuery(view) ?? '';
+      loadedQuery = query;
       const upgraded = upgradeChannelFilter(view);
       typeFilter = upgraded.typeFilter;
       const rule = view.autoRule;
@@ -201,7 +204,8 @@
           sourceMode: initial.sourceFilter.sourceMode,
           sourceKeys: [...initial.sourceFilter.sourceKeys],
         }
-      : NO_SOURCES;
+      : // A new channel starts with every source checked; uncheck what it leaves out.
+        everySourceFilter(showFollowsSource, followsInEverything);
     ruleType = 'frequency:high';
     recentWithinDays = 14;
     tagValue = '';
@@ -214,6 +218,7 @@
     savedTagFilter = new Set();
     feedTagFilter = [...(initial?.tagFilter ?? [])];
     query = '';
+    loadedQuery = '';
     readFilter = initial?.readFilter ?? 'unread';
     sortOrder = initial?.sortOrder ?? 'newest';
   }
@@ -227,7 +232,12 @@
   // A channel that already has a query keeps its field even past a lapsed plan,
   // so the query can be seen and taken out.
   let offerQuery = $derived(
-    channelType === 'feed' && (canUseSavedSearches(auth.user) || query.trim() !== '')
+    channelType === 'feed' && (canUseSavedSearches(auth.user) || loadedQuery !== '')
+  );
+  // Where saved searches are on but the plan has none, the field shows, greyed,
+  // so it's clear what Supporter adds.
+  let lockedQuery = $derived(
+    channelType === 'feed' && !offerQuery && !auth.isGuest && !!auth.user?.savedSearchEnabled
   );
   let trimmedQuery = $derived(offerQuery ? query.trim() : '');
 
@@ -381,7 +391,14 @@
       return;
     }
     if (channelType === 'feed' && mode === 'pick') {
-      if (sourceFilter.sourceMode === 'include' && sourceFilter.sourceKeys.length === 0) {
+      if (
+        showsNoSource(
+          sourceFilter,
+          subscriptionsStore.subscriptions,
+          { groups: feedViewStore.sourceGroups, followsInEverything },
+          showFollowsSource
+        )
+      ) {
         error = 'Pick at least one source';
         return;
       }
@@ -604,6 +621,29 @@
         />
       {/if}
     </div>
+  {:else if lockedQuery}
+    <div class="section locked">
+      <div class="label-row">
+        <label class="section-label" for="channel-query">Matching</label>
+        <a
+          class="supporter-pill"
+          href="/supporter"
+          aria-label="Saved searches come with Supporter"
+          onclick={oncancel}>Supporter</a
+        >
+      </div>
+      <input
+        id="channel-query"
+        type="search"
+        class="text-input"
+        disabled
+        aria-describedby="channel-query-locked"
+        placeholder="Optional: words to watch for"
+      />
+      <p class="hint" id="channel-query-locked">
+        With Supporter, a channel can keep only what matches a search, as it arrives.
+      </p>
+    </div>
   {/if}
 
   {#if channelType === 'feed'}
@@ -644,6 +684,7 @@
             showFollows={showFollowsSource}
             {followsInEverything}
             scroll={scrollPicker}
+            bulk
           />
         </div>
       {:else}
@@ -820,6 +861,32 @@
 </form>
 
 <style>
+  .label-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .supporter-pill {
+    padding: 0 0.375rem;
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+    font-size: var(--text-xs);
+    font-weight: var(--weight-medium);
+    color: var(--color-text-secondary);
+    text-decoration: none;
+  }
+
+  .supporter-pill:hover {
+    color: var(--color-primary);
+    border-color: var(--color-primary);
+  }
+
+  .locked .text-input {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
   .channel-editor {
     display: flex;
     flex-direction: column;

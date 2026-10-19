@@ -5,11 +5,11 @@ description: Keep a search as a channel that fills on its own as matching items 
 
 A saved search is a channel that keeps watch for you. Give it a few words, and everything new from your sources that mentions them lands there: a story in a feed, a newsletter, a standard.site post, or, if the channel includes them, a link someone you follow shared.
 
-Saved searches are part of the [Supporter plan](/supporter/), which includes up to 25.
+Saved searches are part of the [Supporter plan](/supporter/), which includes up to 25. Without it, **Matching** shows greyed out in the channel editor.
 
 ## Making one
 
-Choose **New channel** under **Feeds**, type what to watch for under **Matching**, and pick the sources it covers, or **Show everything** (which takes in your follows' links when you show them in Everything). Saved searches use the same words as [search](/guide/search/):
+Choose **New channel** under **Feeds**, type what to watch for under **Matching**, and uncheck any sources it should leave out. A new channel starts with every source checked; **Select none** clears them so you can pick a few. Saved searches use the same words as [search](/guide/search/):
 
 | Type             | Matches                             |
 | ---------------- | ----------------------------------- |
