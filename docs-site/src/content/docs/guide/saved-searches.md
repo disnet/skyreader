@@ -5,11 +5,11 @@ description: Keep a search as a channel that fills on its own as matching items 
 
 A saved search is a channel that keeps watch for you. Give it a few words, and everything new from your sources that mentions them lands there: a story in a feed, a newsletter, a standard.site post, or, if the channel includes them, a link someone you follow shared. It looks through your saves too, old and new.
 
-Saved searches are part of the [Supporter plan](/supporter/), which includes up to 25. Without it, **Matching** shows greyed out in the channel editor.
+Saved searches are part of the [Supporter plan](/supporter/), which includes up to 25. Without it, the **Saved search** field shows greyed out in the channel editor.
 
 ## Making one
 
-Choose **New channel** under **Channels**, type what to watch for under **Matching**, and uncheck any sources it should leave out. A new channel starts with every source checked, your saves included; **Select none** clears them so you can pick a few. A saved search looks through **Your saves** as a whole; **Your Shelf** on its own isn't searched yet. Saved searches use the same words as [search](/guide/search/):
+Choose **New channel** under **Channels**, type keywords under **Saved search**, and uncheck any sources it should leave out. A new channel starts with every source checked, your saves included; **Select none** clears them so you can pick a few. A saved search looks through **Your saves** as a whole; **Your Shelf** on its own isn't searched yet. Saved searches use the same words as [search](/guide/search/):
 
 | Type             | Matches                             |
 | ---------------- | ----------------------------------- |
@@ -20,7 +20,7 @@ Choose **New channel** under **Channels**, type what to watch for under **Matchi
 
 While you type, Skyreader checks the search against the last month of items from the sources you picked, read or not, and your newest saves, and shows how many match and a few of them, so you can tell whether it's too broad or too narrow. Links shared by people you follow aren't in the preview, though the channel picks them up.
 
-Any feed channel can become a saved search: open it with **Edit channel** and add words under **Matching**. Take them out again and it goes back to being an ordinary channel.
+Any feed channel can become a saved search: open it with **Edit channel** and add keywords under **Saved search**. Take them out again and it goes back to being an ordinary channel.
 
 ## What lands in it
 

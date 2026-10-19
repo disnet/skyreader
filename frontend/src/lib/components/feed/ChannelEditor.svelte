@@ -605,7 +605,7 @@
 
   {#if offerQuery}
     <div class="section">
-      <label class="section-label" for="channel-query">Matching</label>
+      <label class="section-label" for="channel-query">Saved search</label>
       <input
         id="channel-query"
         type="search"
@@ -614,14 +614,15 @@
         maxlength={MAX_QUERY_CHARS}
         autocomplete="off"
         spellcheck="false"
-        placeholder="Optional: words to watch for"
+        placeholder="Optional: keywords, like tidal energy"
       />
       <p class="hint">
         {#if trimmedQuery}
           Only items from these sources that match, as they arrive. Same as search: words, "a
           phrase", -leave-out.
         {:else}
-          Add a search and the channel keeps only what matches it, as it arrives.
+          Add keywords and this channel becomes a saved search: it keeps only what matches, as it
+          arrives.
         {/if}
       </p>
       {#if trimmedQuery && librarySources.includes('shelf') && !librarySources.includes('saves')}
@@ -639,7 +640,7 @@
   {:else if lockedQuery}
     <div class="section locked">
       <div class="label-row">
-        <label class="section-label" for="channel-query">Matching</label>
+        <label class="section-label" for="channel-query">Saved search</label>
         <a
           class="supporter-pill"
           href="/supporter"
@@ -653,11 +654,9 @@
         class="text-input"
         disabled
         aria-describedby="channel-query-locked"
-        placeholder="Optional: words to watch for"
+        placeholder="Optional: keywords, like tidal energy"
       />
-      <p class="hint" id="channel-query-locked">
-        With Supporter, a channel can keep only what matches a search, as it arrives.
-      </p>
+      <p class="hint" id="channel-query-locked">Supporters get access to saved keyword searches.</p>
     </div>
   {/if}
 
