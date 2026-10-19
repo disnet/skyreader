@@ -234,6 +234,18 @@ offline the overlay hands the query to Saved search. The signed-in user is cache
 `AppShell` refreshes `/api/auth/me` once per boot — otherwise a plan change or a newly switched-on
 feature would only reach an open session via Settings.
 
+### Channels and Library sources
+
+Every channel lists under the sidebar's one **Channels** section (and the phone switcher's and the
+dropdown's), whatever it reads from. A feed-mode channel can also take in the Library through
+`FilteredView.librarySources` (`'saves'` every save, `'shelf'` just the Shelf), picked under "From
+your Library" in `SourcePicker`; a new channel defaults to both (not for a guest or a seeded one).
+`feedView`'s `libraryItems` merges those saves into `combinedAll` as `{type: 'saved'}` rows dated
+by `savedAt`, dropping a save of a page the river already shows (by guid or url); an archived save
+counts as read, so the unread filter shows the Queue. Saved-search channels ignore it for now, and
+the server's unread counts don't include saves. Saved-mode channels still open and edit, but the
+editor no longer offers making one; a later change folds them into feed channels.
+
 ### Saved searches
 
 A channel whose config carries a `query` is a saved search (`utils/searchChannels.ts`'s

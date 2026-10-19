@@ -27,6 +27,7 @@ function isArchivedKey(key: string): boolean {
   return fixtures.archived.includes(key);
 }
 
+vi.mock('./shelf.svelte', () => ({ shelfStore: { isOnShelf: () => false } }));
 vi.mock('./saves.svelte', () => ({
   savesStore: {
     get articles() {

@@ -192,6 +192,11 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
         feedViewStore.trackSeenThisSession(item);
         markFollowLinkRead(item.item);
       }
+    } else if (item.type === 'saved') {
+      // A save in a channel reads as read once archived.
+      const archived = isSavedRowArchived(item);
+      if (!archived) feedViewStore.trackSeenThisSession(item);
+      void setSavedRowArchived(item, !archived);
     }
   }
 
@@ -243,6 +248,11 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
 
     if (feedViewStore.savedFilter && params.openSavedReader) {
       params.openSavedReader();
+      return;
+    }
+    // A save in a channel has no inline expansion; Enter reads it, as in the Queue.
+    if (getSelectedItem()?.type === 'saved' && params.openFullscreenReader) {
+      params.openFullscreenReader();
       return;
     }
 

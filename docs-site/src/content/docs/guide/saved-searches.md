@@ -9,7 +9,7 @@ Saved searches are part of the [Supporter plan](/supporter/), which includes up 
 
 ## Making one
 
-Choose **New channel** under **Feeds**, type what to watch for under **Matching**, and uncheck any sources it should leave out. A new channel starts with every source checked; **Select none** clears them so you can pick a few. Saved searches use the same words as [search](/guide/search/):
+Choose **New channel** under **Channels**, type what to watch for under **Matching**, and uncheck any sources it should leave out. A new channel starts with every source checked; **Select none** clears them so you can pick a few. A saved search doesn't look through your Library yet. Saved searches use the same words as [search](/guide/search/):
 
 | Type             | Matches                             |
 | ---------------- | ----------------------------------- |

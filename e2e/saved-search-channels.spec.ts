@@ -133,7 +133,7 @@ test.describe('Saved searches', () => {
     await authedPage.reload();
 
     const navGroup = authedPage.locator('.nav-group', {
-      has: authedPage.locator('.nav-row .nav-label', { hasText: 'Feeds' }),
+      has: authedPage.locator('.nav-row .nav-label', { hasText: 'Channels' }),
     });
     await navGroup.locator('.new-channel-btn').click();
     const queryInput = authedPage.locator('#channel-query');
@@ -174,7 +174,7 @@ test.describe('Saved searches', () => {
     await enableSavedSearchSwitch();
     await authedPage.reload();
     const navGroup = authedPage.locator('.nav-group', {
-      has: authedPage.locator('.nav-row .nav-label', { hasText: 'Feeds' }),
+      has: authedPage.locator('.nav-row .nav-label', { hasText: 'Channels' }),
     });
     await expect(navGroup).toBeVisible({ timeout: 15_000 });
     await navGroup.locator('.new-channel-btn').click();
@@ -187,7 +187,7 @@ test.describe('Saved searches', () => {
 
   test('with saved searches off here, a channel has no query field', async ({ authedPage }) => {
     const navGroup = authedPage.locator('.nav-group', {
-      has: authedPage.locator('.nav-row .nav-label', { hasText: 'Feeds' }),
+      has: authedPage.locator('.nav-row .nav-label', { hasText: 'Channels' }),
     });
     await expect(navGroup).toBeVisible({ timeout: 15_000 });
     await navGroup.locator('.new-channel-btn').click();

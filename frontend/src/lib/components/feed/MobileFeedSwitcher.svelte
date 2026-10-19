@@ -178,7 +178,7 @@
 
   type SectionData = {
     section: string;
-    groupId?: 'home' | 'everything' | 'library' | 'other' | 'sources';
+    groupId?: 'home' | 'everything' | 'library' | 'channels' | 'other' | 'sources';
     items: NavItem[];
   };
 
@@ -351,20 +351,21 @@
         : []),
     ];
 
-    const sourceChannelItems: NavItem[] = filteredViewsStore.views
-      .filter((v) => v.mode !== 'saved')
-      .map((v) => ({
-        type: 'filteredView' as const,
-        id: v.uuid,
-        label: v.name,
-        count: v.id != null ? (unreadCounts.channelCounts.get(v.id) ?? 0) : 0,
-        icon: channelQuery(v) ? ('search' as const) : ('newspaper' as const),
-        indent: true,
-      }));
+    // Every channel, whatever it reads from, as in the sidebar's Channels section.
+    const channelItems: NavItem[] = filteredViewsStore.views.map((v) => ({
+      type: 'filteredView' as const,
+      id: v.uuid,
+      label: v.name,
+      count: v.id != null ? (unreadCounts.channelCounts.get(v.id) ?? 0) : 0,
+      icon:
+        v.mode === 'saved'
+          ? ('bookmark' as const)
+          : channelQuery(v)
+            ? ('search' as const)
+            : ('newspaper' as const),
+    }));
 
     // Collections are account-only (held server-side), like the sidebar's.
-    // They sit flush with the Queue's channels; the layers icon (vs. the
-    // channels' bookmark) is what tells them apart.
     const collectionItems: NavItem[] = auth.isGuest
       ? []
       : shelfStore.collections.map((c) => ({
@@ -373,17 +374,6 @@
           label: c.name,
           icon: 'layers' as const,
         }));
-
-    const savedChannelItems: NavItem[] = filteredViewsStore.views
-      .filter((v) => v.mode === 'saved')
-      .map((v) => ({
-        type: 'filteredView' as const,
-        id: v.uuid,
-        label: v.name,
-        count: v.id != null ? (unreadCounts.channelCounts.get(v.id) ?? 0) : 0,
-        icon: 'bookmark' as const,
-        indent: true,
-      }));
 
     const filterItem = (item: NavItem) => {
       if (!query) return true;
@@ -442,8 +432,7 @@
       sections.push({ section: '', groupId: 'home', items: [homeItem] });
     }
 
-    // Everything group: Everything + source channels
-    const everythingGroup = [everythingItem, ...sourceChannelItems].filter(filterItem);
+    const everythingGroup = [everythingItem].filter(filterItem);
     if (everythingGroup.length > 0) {
       sections.push({
         section: '',
@@ -452,10 +441,16 @@
       });
     }
 
-    // Library group: Library + Shelf collections + Queue channels
-    const libraryGroup = [libraryItem, ...collectionItems, ...savedChannelItems].filter(filterItem);
+    // Library group: Library + Shelf collections
+    const libraryGroup = [libraryItem, ...collectionItems].filter(filterItem);
     if (libraryGroup.length > 0) {
       sections.push({ section: '', groupId: 'library', items: libraryGroup });
+    }
+
+    // Channels: shown even when empty (outside a search), for its New channel row.
+    const channelGroup = channelItems.filter(filterItem);
+    if (channelGroup.length > 0 || !query) {
+      sections.push({ section: 'Channels', groupId: 'channels', items: channelGroup });
     }
 
     // Other utility items
@@ -702,14 +697,8 @@
             </button>
           {/if}
         {/each}
-        {#if groupId === 'everything' && !searchQuery && onCreateChannel}
+        {#if groupId === 'channels' && !searchQuery && onCreateChannel}
           <button class="nav-item new-channel-btn" onclick={() => onCreateChannel('feed')}>
-            <span class="item-icon"><Icon name="plus" size={16} /></span>
-            <span class="item-label">New channel</span>
-          </button>
-        {/if}
-        {#if groupId === 'library' && !searchQuery && onCreateChannel}
-          <button class="nav-item new-channel-btn" onclick={() => onCreateChannel('saved')}>
             <span class="item-icon"><Icon name="plus" size={16} /></span>
             <span class="item-label">New channel</span>
           </button>

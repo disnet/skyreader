@@ -5,7 +5,7 @@ description: Read the links the people you follow on Bluesky are sharing, withou
 
 **From your follows** gathers the links people you follow on Bluesky are sharing and brings them into your reading, one article at a time. Nothing is ranked by engagement, and the list ends.
 
-It's a source, like a feed you subscribe to. Its links arrive in a channel called **From your follows**, under **Feeds** in the sidebar, and the week's most-shared links also show up on **Home** as **Shared by people you follow**.
+It's a source, like a feed you subscribe to. Its links arrive in a channel called **From your follows**, under **Channels** in the sidebar, and the week's most-shared links also show up on **Home** as **Shared by people you follow**.
 
 ## Turning it on
 

@@ -4,8 +4,14 @@
   import { tick } from 'svelte';
   import ArticleCard from '$lib/components/ArticleCard.svelte';
   import SavedReader from '$lib/components/feed/SavedReader.svelte';
+  import SavedCard from '$lib/components/feed/SavedCard.svelte';
   import InfiniteScrollSentinel from '$lib/components/common/InfiniteScrollSentinel.svelte';
-  import { feedViewStore, type FeedDisplayItem } from '$lib/stores/feedView.svelte';
+  import {
+    feedViewStore,
+    isSavedRowArchived,
+    setSavedRowArchived,
+    type FeedDisplayItem,
+  } from '$lib/stores/feedView.svelte';
   import { feedArchiveStore } from '$lib/stores/feedArchive.svelte';
   import { MAX_ARTICLES_PER_FEED } from '$lib/services/articleMerge';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
@@ -372,6 +378,21 @@
           onSelect={() => handleSelect(index)}
           onExpand={() => handleExpand(index)}
           onOpenFullscreen={() => void openFollowLink(link, reader)}
+        />
+      {:else if displayItem.type === 'saved'}
+        <!-- A save the channel takes in from the Library: its own card, as in the Queue. -->
+        {@const save = displayItem.item}
+        <SavedCard
+          {displayItem}
+          selected={feedViewStore.selectedKey === displayItem.key}
+          onOpen={() => openReader(displayItem)}
+          onArchive={() => {
+            const archived = isSavedRowArchived(displayItem);
+            // Archiving reads it, so it stays put until the view changes.
+            if (!archived) feedViewStore.trackSeenThisSession(displayItem);
+            void setSavedRowArchived(displayItem, !archived);
+          }}
+          onRemove={() => savesStore.remove(save.rkey)}
         />
       {/if}
     </div>

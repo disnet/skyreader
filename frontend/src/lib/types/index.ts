@@ -1203,7 +1203,8 @@ export interface FeedItem {
 export type CombinedFeedItem =
   | { type: 'article'; item: Article; date: string }
   | { type: 'document'; item: SocialDocument; date: string }
-  | { type: 'link'; item: FollowLink; date: string };
+  | { type: 'link'; item: FollowLink; date: string }
+  | { type: 'saved'; item: SavedItem; date: string };
 
 /**
  * Auto-update rule for a channel. When set, sourceKeys are automatically
@@ -1233,6 +1234,16 @@ export type SortOrder =
   // Feed channels with the follows source: most shared by your follows first.
   | 'popular';
 
+/**
+ * A part of the Library a channel can take in beside its feeds: every save, or
+ * just the Shelf. An archived save reads as read, so an unread channel shows the
+ * Queue. Opt-in, a separate axis from sourceMode/sourceKeys, so Everything and
+ * every older channel keep meaning what they did.
+ */
+export type LibrarySource = 'saves' | 'shelf';
+
+export const LIBRARY_SOURCES: readonly LibrarySource[] = ['saves', 'shelf'];
+
 export interface FilteredView {
   id?: number;
   uuid: string;
@@ -1250,6 +1261,8 @@ export interface FilteredView {
   savedDateFilter?: DateAddedPreset;
   savedReadingLength?: ReadingLengthFilter[];
   savedDomainFilter?: string[];
+  /** Feed-mode channels: the parts of the Library it takes in too; absent = none. */
+  librarySources?: LibrarySource[];
   /**
    * A saved search: the channel holds what this query matched across its
    * sources, served by GET /api/channels/:uuid/items rather than filtered here.
