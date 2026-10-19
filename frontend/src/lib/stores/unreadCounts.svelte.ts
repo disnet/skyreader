@@ -1,3 +1,4 @@
+import { isSavesChannel } from '$lib/utils/savesChannel';
 import { isArchiveFeedSource } from '$lib/utils/newsletters';
 import { searchChannelsStore } from './searchChannels.svelte';
 import { channelQuery } from '$lib/utils/searchChannels';
@@ -190,7 +191,7 @@ function createUnreadCountsStore() {
       }
 
       // Saved channels: count non-archived saved items
-      if (view.mode === 'saved') {
+      if (isSavesChannel(view)) {
         const sourceFilter =
           view.savedSourceFilter && view.savedSourceFilter.length > 0
             ? new Set(view.savedSourceFilter)

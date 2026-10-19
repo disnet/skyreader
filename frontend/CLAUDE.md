@@ -245,8 +245,13 @@ by `savedAt`, dropping a save of a page the river already shows (by guid or url)
 counts as read, so the unread filter shows the Queue. In a saved search the server matches saves
 instead (`'saves'` only; the Shelf alone isn't searched), served as `kind: 'save'` matches that
 `matchToRow` turns into this device's save (none if it isn't here), read once archived. Plain
-channels' unread counts don't include saves. Saved-mode channels still open and edit, but the
-editor no longer offers making one; a later change folds them into feed channels.
+channels' unread counts don't include saves. A channel of saves alone (`utils/savesChannel.ts`'s
+`isSavesChannel`: `'saves'`, no feeds, no query or rule) opens as the Library does, under `/saved`,
+with Inbox / Archive and the save filters (`savedSourceFilter`, `savedDateFilter`,
+`savedReadingLength`, `savedDomainFilter`) and orders, in the toolbar and in the editor's **Which
+saves**; it counts its unarchived saves and gets a Home lane. That's what the old `mode: 'saved'`
+channels became: `filteredViewsStore` folds one (`foldSavedChannel`) as it loads or syncs in, and
+pushes it back.
 
 ### Saved searches
 

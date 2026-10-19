@@ -24,7 +24,7 @@ Choose **New channel** under **Channels**, in the sidebar or the feed switcher o
 - **What's in it**:
   - **Sources I pick**: a new channel starts with every source checked, your Library included; uncheck what it should leave out, or choose **Select none** and check the few you want. Check a folder to take in everything filed there, now and later. Under **From your Library**, **Your saves** takes in everything you've saved, and **Your Shelf** just what's on your Shelf. A save shows by when you saved it, and one you've archived counts as read.
   - **Sources that match**: a rule picks them and keeps up as you follow more. **Daily Digest** takes sources that post several times a day, **Don't Miss** the ones that post rarely, and **Long Reads** the ones that write at length. You can also match the sources you added lately, ones you tagged, or ones from a site.
-- A channel of saved articles made before **Channels** existed keeps its filters: kind, when you saved it, length, site or tag.
+- **Which saves**: a channel of your saves alone, with nothing else checked, opens like your Queue, with **Inbox** and **Archive**. Narrow it by kind, when you saved it, length, site or tag, and order it by length or site too. Saved channels made before keep their filters.
 
 To change a channel later, open it and choose **Edit channel**, or right-click it in the sidebar. On a phone, **Edit channel** sits beside **View** in the view options.
 
