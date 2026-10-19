@@ -112,7 +112,7 @@ export const timelineCards: ArticleCardViewProps[] = [
   }),
 ];
 
-/** The article as it opens in the reader. `passage` is the sentence the tour marks. */
+/** The article as it opens in the reader. `passage` is the paragraph the tour marks. */
 export const article = {
   title: 'Annotation is thinking',
   source: 'The Commonplace',
@@ -121,11 +121,8 @@ export const article = {
   readTime: '4 min read',
   before:
     'Annotation is usually described as something a reader adds to a text, the way a frame is added to a painting. That gets the direction wrong. A note in the margin is not decoration on top of reading; it is the visible part of the reading itself.',
-  passageLead: 'Watch someone read with a pen and you can see the difference. ',
   passage:
-    'Every mark is a small decision about what matters, and the decisions are the understanding.',
-  passageTail:
-    ' Take the pen away and the decisions still happen, but nothing holds them still long enough to be examined.',
+    'Watch someone read with a pen and you can see the difference. Every mark is a small decision about what matters, and the decisions are the understanding. Take the pen away and the decisions still happen, but nothing holds them still long enough to be examined.',
   after:
     'This is why rereading your own marginalia is so strange. You are not reviewing the book; you are reviewing a previous self in conversation with it.',
   note: 'the decisions are the understanding. keep the pen.',

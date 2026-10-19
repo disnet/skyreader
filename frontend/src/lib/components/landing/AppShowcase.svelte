@@ -1,6 +1,6 @@
 <script lang="ts">
   // The landing page's shot of the app: the real feed cards (ArticleCardView),
-  // highlight popover (HighlightPopover), sidebar rows (FeedItem) and Discussion
+  // marker ink (marginaliaInk), sidebar rows (FeedItem) and Discussion
   // panel (AtmospherePanel), fed sample data and driven by a short scripted
   // tour. Every one of those is presentational, so the landing chunk still
   // carries none of the app's data layer (see +layout.svelte).
@@ -11,7 +11,6 @@
   import Icon from '$lib/components/Icon.svelte';
   import ArticleCardView from '$lib/components/ArticleCardView.svelte';
   import AtmospherePanel from '$lib/components/feed/AtmospherePanel.svelte';
-  import HighlightPopover from '$lib/components/feed/HighlightPopover.svelte';
   import FeedItem from '$lib/components/sidebar/FeedItem.svelte';
   import { bracketPath, inkVariant, installMarginaliaInk } from '$lib/utils/marginaliaInk';
   import type { Subscription } from '$lib/types';
@@ -33,9 +32,9 @@
   const STEPS = [
     { id: 'follow', label: 'Follow', caption: 'Everything you follow, in one calm list', ms: 6500 },
     { id: 'read', label: 'Read', caption: 'A clean reader for every piece', ms: 6000 },
-    { id: 'mark', label: 'Mark', caption: 'Highlights and notes in the margin', ms: 14000 },
+    { id: 'mark', label: 'Mark', caption: 'Highlights and notes in the margin', ms: 12000 },
     { id: 'discuss', label: 'Discuss', caption: 'The conversation around it', ms: 8000 },
-    { id: 'keep', label: 'Keep', caption: 'Keep what matters', ms: 7500 },
+    { id: 'keep', label: 'Keep', caption: 'Keep what matters', ms: 12000 },
   ] as const;
   type StepId = (typeof STEPS)[number]['id'];
 
@@ -46,17 +45,14 @@
 
   // ── Scene state ─────────────────────────────────────────────
   let readerOpen = $state(false);
-  let selecting = $state(false);
-  let popoverRect = $state<DOMRect | null>(null);
   let marked = $state(false);
   let noteChars = $state(0);
   let kept = $state(false);
   let toast = $state(false);
   // Which page the main column shows: the feed list, or the Shelf the tour ends on.
   let view = $state<'feeds' | 'shelf'>('feeds');
-  // `text` swaps the arrow for an I-beam over the article; `quick` makes it
-  // track a drag word by word instead of gliding.
-  let cursor = $state({ x: 0, y: 0, shown: false, down: false, text: false, quick: false });
+  // `text` swaps the arrow for an I-beam over the article.
+  let cursor = $state({ x: 0, y: 0, shown: false, down: false, text: false });
 
   let frameEl = $state<HTMLElement | null>(null);
   let featuredEl = $state<HTMLElement | null>(null);
@@ -86,10 +82,8 @@
     while (left > 0) {
       if (id !== runId) throw new Stop();
       // Hold still while nobody's watching: off screen, tab hidden, or a
-      // visitor hovering to read the frame. Except while the highlight popover
-      // is up: it listens on the whole document (Escape, outside presses), so
-      // it never outstays its moment.
-      const watched = (visible && !hovering && !document.hidden) || popoverRect !== null;
+      // visitor hovering to read the frame.
+      const watched = visible && !hovering && !document.hidden;
       const slice = watched ? Math.min(left, 100) : 400;
       await new Promise((r) => setTimeout(r, slice));
       if (watched && id === runId) {
@@ -110,7 +104,7 @@
 
   async function moveTo(id: number, p: { x: number; y: number } | null, text = false) {
     if (!p) return;
-    cursor = { ...cursor, ...p, shown: true, text, quick: false };
+    cursor = { ...cursor, ...p, shown: true, text };
     await wait(1100, id);
   }
 
@@ -124,19 +118,16 @@
   function setUp(s: StepId) {
     const at = STEPS.findIndex((x) => x.id === s);
     readerOpen = at >= 2;
-    selecting = false;
-    clearSelection();
-    popoverRect = null;
     marked = at >= 3;
     noteChars = at >= 3 ? noteText.length : 0;
     kept = false;
     toast = false;
     view = 'feeds';
-    // A jump can land mid-drag; don't carry a pressed cursor into the next step.
-    cursor = { ...cursor, down: false, text: false, quick: false };
-    // Keep picks up where Discuss left the page; every other step starts at
-    // the top of the article.
-    if (readerScrollEl && s !== 'keep') readerScrollEl.scrollTop = 0;
+    // A jump can land mid-press; don't carry a pressed cursor into the next step.
+    cursor = { ...cursor, down: false, text: false };
+    // Discuss scrolls on from where Mark left the article, and Keep from where
+    // Discuss did; the steps before them start at the top.
+    if (readerScrollEl && at < 3) readerScrollEl.scrollTop = 0;
   }
 
   /** The state a step ends in: what reduced motion shows for it. */
@@ -177,47 +168,6 @@
     if (below > readerScrollEl.clientHeight * 0.45) scrollReaderTo(block, 72, smooth);
   }
 
-  // ── The drag selection ──────────────────────────────────────
-  // Painted with the CSS Custom Highlight API: a real Range over the passage's
-  // text, drawn the way the reader draws a selection, without touching the
-  // visitor's own selection (the frame is inert, so it couldn't hold one
-  // anyway). Where the API is missing, the whole passage shows as selected
-  // once the drag ends.
-  const SELECTION = 'showcase-selection';
-  const canPaint = typeof CSS !== 'undefined' && 'highlights' in CSS;
-
-  function paintSelection(range: Range | null) {
-    if (!canPaint) return;
-    if (range) CSS.highlights.set(SELECTION, new Highlight(range));
-    else CSS.highlights.delete(SELECTION);
-  }
-  function clearSelection() {
-    paintSelection(null);
-  }
-
-  /** Drag across the passage a word at a time, the cursor on the selection's end. */
-  async function dragSelect(id: number) {
-    const text = passageEl?.firstChild;
-    if (!(text instanceof Text) || !frameEl) return;
-    const f = frameEl.getBoundingClientRect();
-    const range = document.createRange();
-    range.setStart(text, 0);
-    range.setEnd(text, 0);
-    const ends = [...text.data.matchAll(/\S+/g)].map((m) => m.index + m[0].length);
-    cursor = { ...cursor, down: true, quick: true };
-    selecting = true;
-    for (const end of ends) {
-      range.setEnd(text, end);
-      paintSelection(range);
-      const rects = range.getClientRects();
-      const last = rects[rects.length - 1];
-      if (last)
-        cursor = { ...cursor, x: last.right - f.left, y: last.top - f.top + last.height / 2 };
-      await wait(70, id);
-    }
-    cursor = { ...cursor, down: false };
-  }
-
   async function playStep(s: StepId, id: number) {
     step = s;
     elapsed = 0;
@@ -241,39 +191,18 @@
       await press(id);
       readerOpen = true;
     } else if (s === 'mark') {
+      // Double-click a paragraph to highlight all of it, as in the reader.
       scrollToPassage(true);
       await wait(1200, id);
-      const r = passageEl?.getBoundingClientRect();
-      if (!r || !passageEl) return;
-      // To the first word of the passage, then drag through it.
-      const first = document.createRange();
-      first.setStart(passageEl.firstChild!, 0);
-      first.setEnd(passageEl.firstChild!, 1);
-      const fr = first.getBoundingClientRect();
-      await moveTo(
-        id,
-        pointAt(
-          passageEl,
-          fr.left - r.left - r.width / 2,
-          fr.top - r.top - r.height / 2 + fr.height / 2
-        ),
-        true
-      );
-      await wait(300, id);
-      await dragSelect(id);
+      await moveTo(id, pointAt(passageEl, 0, -8), true);
       await wait(500, id);
-      popoverRect = passageEl?.getBoundingClientRect() ?? null;
-      await wait(700, id);
-      await tick();
-      if (id !== runId) throw new Stop();
-      await moveTo(id, pointAt(document.querySelector('.showcase-popover .popover-btn.highlight')));
       await press(id);
-      popoverRect = null;
-      selecting = false;
-      clearSelection();
+      await wait(90, id);
+      await press(id);
       marked = true;
+      await wait(900, id);
       cursor = { ...cursor, shown: false };
-      await wait(1000, id);
+      await wait(600, id);
       for (let i = 1; i <= noteText.length; i++) {
         noteChars = i;
         await wait(55, id);
@@ -342,7 +271,6 @@
     return () => {
       io.disconnect();
       runId++;
-      clearSelection();
     };
   });
 
@@ -488,15 +416,11 @@
             <div class="r-body marginalia-ink">
               <p>{article.before}</p>
               <div class="passage-block" bind:clientHeight={passageBlockHeight}>
-                <p>
-                  {article.passageLead}{#if marked}<mark
+                <p bind:this={passageEl}>
+                  {#if marked}<mark
                       class="highlight ink-drawing"
                       data-ink={String(inkVariant(inkId))}>{article.passage}</mark
-                    >{:else}<span
-                      class="sel"
-                      class:fallback={selecting && !canPaint}
-                      bind:this={passageEl}>{article.passage}</span
-                    >{/if}{article.passageTail}
+                    >{:else}{article.passage}{/if}
                 </p>
                 {#if marked}
                   <div class="note">
@@ -532,23 +456,10 @@
         {/if}
       </div>
 
-      {#if popoverRect}
-        <div class="showcase-popover">
-          <HighlightPopover
-            mode="create"
-            anchorRect={popoverRect}
-            getAnchorRect={() => passageEl?.getBoundingClientRect() ?? popoverRect!}
-            onHighlight={() => {}}
-            onClose={() => (popoverRect = null)}
-          />
-        </div>
-      {/if}
-
       <span
         class="cursor"
         class:shown={cursor.shown}
         class:down={cursor.down}
-        class:quick={cursor.quick}
         class:text={cursor.text}
         style:transform="translate({cursor.x}px, {cursor.y}px)"
       >
@@ -994,14 +905,6 @@
   .passage-block {
     position: relative;
   }
-  /* The drag selection: the reader's own selection colour (app.css
-     `.marginalia-ink ::selection`), painted over a real Range. */
-  :global(::highlight(showcase-selection)) {
-    background-color: color-mix(in srgb, #f5c518 30%, transparent);
-  }
-  .sel.fallback {
-    background-color: color-mix(in srgb, #f5c518 30%, transparent);
-  }
   .note {
     position: absolute;
     top: 4px;
@@ -1057,17 +960,11 @@
     position: absolute;
     top: 0;
     left: 0;
-    /* Over the highlight popover (z-index 200), which it reaches for. */
-    z-index: 210;
+    z-index: 20;
     pointer-events: none;
     opacity: 0;
     transition:
       transform 1s cubic-bezier(0.45, 0, 0.2, 1),
-      opacity 0.3s;
-  }
-  .cursor.quick {
-    transition:
-      transform 70ms linear,
       opacity 0.3s;
   }
   /* The I-beam's middle sits on the point, as a text cursor's does. */
