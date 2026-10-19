@@ -7,8 +7,14 @@
   //
   // The frame is decoration for sighted visitors: it's inert and hidden from
   // assistive tech, and the step buttons under it carry the tour in words.
-  import { onMount, tick } from 'svelte';
+  //
+  // With `opening`, the shot starts as the web's clutter (WebGather) settling
+  // onto its feed cards. After that, scrolling drives the tour: the shot pins
+  // in place while the page scrolls past it, and each stretch of scroll plays
+  // one step.
+  import { onMount, tick, untrack } from 'svelte';
   import Icon from '$lib/components/Icon.svelte';
+  import WebGather from './WebGather.svelte';
   import ArticleCardView from '$lib/components/ArticleCardView.svelte';
   import AtmospherePanel from '$lib/components/feed/AtmospherePanel.svelte';
   import FeedItem from '$lib/components/sidebar/FeedItem.svelte';
@@ -29,6 +35,14 @@
   // `ms` is how long each step holds the frame. The scene plays inside it and
   // the rest is a pause to look, so the step's progress bar runs at a steady
   // rate from empty to full.
+  interface Props {
+    /** Open on the web's clutter settling onto the feed. */
+    opening?: boolean;
+    /** The clutter is gone; the page can finish its headline. */
+    onsettle?: () => void;
+  }
+  let { opening = false, onsettle }: Props = $props();
+
   const STEPS = [
     { id: 'follow', label: 'Follow', caption: 'Everything you follow, in one calm list', ms: 6500 },
     { id: 'read', label: 'Read', caption: 'A clean reader for every piece', ms: 6000 },
@@ -39,9 +53,19 @@
   type StepId = (typeof STEPS)[number]['id'];
 
   let step = $state<StepId>('follow');
-  // Watched time spent in the current step, for its progress bar.
-  let elapsed = $state(0);
+  // Watched time spent in the current step, so a step holds for its budget.
+  let elapsed = 0;
+  // How far the page has scrolled through the tour, 0 to 1.
+  let progress = $state(0);
   const stepIndex = $derived(STEPS.findIndex((x) => x.id === step));
+  // Under reduced motion each step simply shows its end state.
+  const reduceMotion =
+    typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // While the opening plays, the frame waits underneath, hidden. It plays
+  // once, on mount, so a later change to `opening` means nothing.
+  const playOpening = untrack(() => opening) && !reduceMotion;
+  let gathering = $state(playOpening);
+  let frameShown = $state(!playOpening);
 
   // ── Scene state ─────────────────────────────────────────────
   let readerOpen = $state(false);
@@ -55,7 +79,10 @@
   let cursor = $state({ x: 0, y: 0, shown: false, down: false, text: false });
 
   let frameEl = $state<HTMLElement | null>(null);
-  let featuredEl = $state<HTMLElement | null>(null);
+  let trackEl = $state<HTMLElement | null>(null);
+  let pinEl = $state<HTMLElement | null>(null);
+  let cardEls = $state<(HTMLElement | null)[]>([]);
+  const featuredEl = $derived(cardEls[timelineCards.indexOf(featuredCard)] ?? null);
   let passageEl = $state<HTMLElement | null>(null);
   let readerScrollEl = $state<HTMLElement | null>(null);
   let discussionEl = $state<HTMLElement | null>(null);
@@ -78,7 +105,6 @@
   let runId = 0;
   let visible = false;
   let hovering = false;
-  let reduceMotion = $state(false);
 
   async function wait(ms: number, id: number) {
     let left = ms;
@@ -245,29 +271,64 @@
     await wait(Math.max(total - elapsed, 600), id);
   }
 
-  async function play(from: number) {
+  async function playOne(i: number) {
     const id = ++runId;
     try {
-      // Plays through once and stays on the Shelf; a step button replays from there.
-      for (let i = from; i < STEPS.length; i++) await playStep(STEPS[i].id, id);
+      await playStep(STEPS[i].id, id);
     } catch (e) {
       if (!(e instanceof Stop)) throw e;
     }
   }
 
+  // ── Scroll ──────────────────────────────────────────────────
+  // The track is the pinned shot plus one stretch of scroll per step after the
+  // first; scrolling through a stretch plays that step once.
+  let pinTop = $state(0);
+
+  /** Where the track's travel sits: its start, and how far it runs. */
+  function travel() {
+    if (!trackEl || !pinEl) return null;
+    const start = trackEl.getBoundingClientRect().top + window.scrollY - pinTop;
+    return { start, length: Math.max(trackEl.offsetHeight - pinEl.offsetHeight, 1) };
+  }
+
+  function onScroll() {
+    const t = travel();
+    if (!t) return;
+    progress = Math.min(Math.max((window.scrollY - t.start) / t.length, 0), 1);
+    const i = Math.min(Math.floor(progress * STEPS.length), STEPS.length - 1);
+    if (!gathering && STEPS[i].id !== step) playOne(i);
+  }
+
   function choose(s: StepId) {
+    const i = STEPS.findIndex((x) => x.id === s);
     if (reduceMotion) {
       runId++;
       step = s;
       settle(s);
       return;
     }
-    play(STEPS.findIndex((x) => x.id === s));
+    // Scroll to the middle of the step's stretch; arriving there plays it.
+    const t = travel();
+    if (!t) return;
+    const at = i === 0 ? 0 : (i + 0.5) / STEPS.length;
+    window.scrollTo({ top: t.start + at * t.length, behavior: 'smooth' });
+  }
+
+  /** The step's progress bar: how far through its stretch of scroll the page is. */
+  function fill(i: number) {
+    if (reduceMotion) return i <= stepIndex ? 1 : 0;
+    return Math.min(Math.max(progress * STEPS.length - i, 0), 1);
+  }
+
+  function gathered() {
+    gathering = false;
+    // Someone who scrolled on while the opening played lands on their step.
+    onScroll();
   }
 
   onMount(() => {
     installMarginaliaInk();
-    reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const io = new IntersectionObserver(([e]) => (visible = e.isIntersecting), {
       threshold: 0.35,
     });
@@ -275,19 +336,46 @@
     if (reduceMotion) {
       step = 'mark';
       settle('mark');
-    } else {
-      play(0);
+      onsettle?.();
+      return () => io.disconnect();
     }
+    if (!opening) onsettle?.();
+
+    // The pinned shot sits just under the site's own sticky header.
+    const measure = () => {
+      const header = document.querySelector<HTMLElement>('.header-full');
+      pinTop = (header?.offsetHeight ?? 0) + 16;
+      onScroll();
+    };
+    let frame = 0;
+    const scrolled = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        onScroll();
+      });
+    };
+    measure();
+    window.addEventListener('scroll', scrolled, { passive: true });
+    window.addEventListener('resize', measure);
     return () => {
       io.disconnect();
       runId++;
+      cancelAnimationFrame(frame);
+      window.removeEventListener('scroll', scrolled);
+      window.removeEventListener('resize', measure);
     };
   });
 
   const bracket = $derived(bracketPath(inkId, Math.max(passageBlockHeight - 8, 20)));
 </script>
 
-<div class="showcase">
+<div
+  class="showcase"
+  class:scrolly={!reduceMotion}
+  bind:this={trackEl}
+  style:--pin-top="{pinTop}px"
+>
   <p class="sr-only">
     A sample of the Skyreader app: articles from a blog, a newsletter, YouTube and Bluesky in one
     list; one opens in the reader; a sentence is highlighted with a note in the margin; the
@@ -295,274 +383,310 @@
     Shelf.
   </p>
 
-  <!-- The frame is inert, so the pointer never lands on it; hover is read
-       off this wrapper instead. -->
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div onpointerenter={() => (hovering = true)} onpointerleave={() => (hovering = false)}>
-    <div class="frame" bind:this={frameEl} aria-hidden="true" inert>
-      <div class="shell">
-        <aside class="side">
-          <div class="account">
-            <span class="avatar"></span>
-            <span class="handle">you.bsky.social</span>
-          </div>
-          <nav class="side-nav">
-            <span class="nav-item"><span class="nav-icon"><Icon name="home" /></span>Home</span>
-            <div class="nav-group">
-              <span class="nav-row" class:active={view === 'feeds'}>
-                <span class="nav-icon"><Icon name="inbox" /></span>
-                <span class="nav-label">Feeds</span>
-                <span class="nav-count">12</span>
-              </span>
-            </div>
-            <span class="nav-row" class:active={view !== 'feeds'} bind:this={libraryNavEl}>
-              <span class="nav-icon"><Icon name="shelf" /></span>
-              <span class="nav-label">Library</span>
-              <span class="nav-count">3</span>
-            </span>
-            <span class="nav-item"
-              ><span class="nav-icon"><Icon name="highlighter" /></span>Highlights</span
-            >
-            <span class="side-rule"></span>
-            <span class="side-label">Sources</span>
-            {#each sources as s (s.title)}
-              <FeedItem
-                subscription={subscriptionFor(s)}
-                unreadCount={s.unread}
-                isActive={false}
-                onSelect={() => {}}
-                onContextMenu={() => {}}
-                onTouchStart={() => {}}
-                onTouchEnd={() => {}}
-                onTouchMove={() => {}}
-                onRetry={() => {}}
-                onMoreClick={() => {}}
-              />
-            {/each}
-          </nav>
-        </aside>
+  <div class="pin" class:veiled={!frameShown} bind:this={pinEl}>
+    {#if gathering}
+      <WebGather
+        targets={() => cardEls}
+        frame={() => frameEl}
+        onsettle={() => onsettle?.()}
+        onland={() => (frameShown = true)}
+        ondone={gathered}
+      />
+    {/if}
 
-        <section class="main">
-          {#if view !== 'feeds'}
-            <header class="toolbar">
-              <span class="tool-title"
-                ><Icon name={view === 'shelf' ? 'shelf' : 'bookmark'} size={18} />
-                {view === 'shelf' ? 'Shelf' : 'Queue'}</span
-              >
-            </header>
-            <div class="card-surface">
-              <div class="shelf">
-                <div class="lib-switch">
-                  <span class:on={view === 'queue'}>Queue</span>
-                  <span class:on={view === 'shelf'} bind:this={shelfTabEl}>Shelf</span>
-                </div>
-                {#if view === 'queue'}
-                  <div class="queue">
-                    {#each queueItems as q (q.title)}
-                      <div class="queue-row">
-                        <Icon name={q.kind === 'Article' ? 'file-text' : 'book-open'} size={16} />
-                        <span class="queue-text">
-                          <span class="queue-title">{q.title}</span>
-                          <span class="shelf-meta"><b>{q.kind}</b> {q.byline}</span>
-                        </span>
-                      </div>
-                    {/each}
-                  </div>
-                {:else}
-                  <div class="shelf-filters">
-                    <span class="shelf-chip">Everything {shelfItems.length + 1}</span>
-                    <span class="kind-switch"
-                      ><span class="on">All</span><span>Books</span><span>PDFs</span><span
-                        >Articles</span
-                      ></span
-                    >
-                  </div>
-                  <p class="shelf-label">Everything</p>
-                  <div class="shelf-grid">
-                    {#each [keptShelfItem, ...shelfItems] as item (item.title)}
-                      <div class="shelf-card" class:fresh={item === keptShelfItem}>
-                        <div class="cover" data-cover={item.cover}>
-                          <span class="cover-title">{item.title}</span>
-                          {#if item.excerpt}<span class="cover-excerpt">{item.excerpt}</span>{/if}
-                          <span class="cover-author">{item.byline}</span>
-                          {#if item.percent}
-                            <span class="cover-progress"
-                              ><span style:width="{item.percent}%"></span></span
-                            >
-                          {/if}
-                        </div>
-                        <span class="shelf-title">{item.title}</span>
-                        <span class="shelf-meta"><b>{item.kind}</b> {item.byline}</span>
-                      </div>
-                    {/each}
-                  </div>
-                {/if}
-              </div>
+    <!-- The frame is inert, so the pointer never lands on it; hover is read
+       off this wrapper instead. -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div onpointerenter={() => (hovering = true)} onpointerleave={() => (hovering = false)}>
+      <div class="frame" bind:this={frameEl} aria-hidden="true" inert>
+        <div class="shell">
+          <aside class="side">
+            <div class="account">
+              <span class="avatar"></span>
+              <span class="handle">you.bsky.social</span>
             </div>
-          {:else}
-            <header class="toolbar">
-              <span class="tool-title"><Icon name="inbox" size={18} /> Feeds</span>
-              <span class="tool-status">Updated just now <Icon name="refresh-cw" size={13} /></span>
-              <span class="tool-spacer"></span>
-              <span class="tool-btn"><Icon name="list" size={15} /> List</span>
-              <span class="tool-btn on"><Icon name="newspaper" size={15} /> Expand</span>
-              <span class="tool-btn"><Icon name="type" size={15} /> Style</span>
-            </header>
-            <div class="card-surface">
-              <div class="cards">
-                {#each timelineCards as c (c.itemUrl)}
-                  {#if c === featuredCard}
-                    <div bind:this={featuredEl}>
-                      <ArticleCardView {...c} isSaved={kept && !readerOpen} />
+            <nav class="side-nav">
+              <span class="nav-item"><span class="nav-icon"><Icon name="home" /></span>Home</span>
+              <div class="nav-group">
+                <span class="nav-row" class:active={view === 'feeds'}>
+                  <span class="nav-icon"><Icon name="inbox" /></span>
+                  <span class="nav-label">Feeds</span>
+                  <span class="nav-count">12</span>
+                </span>
+              </div>
+              <span class="nav-row" class:active={view !== 'feeds'} bind:this={libraryNavEl}>
+                <span class="nav-icon"><Icon name="shelf" /></span>
+                <span class="nav-label">Library</span>
+                <span class="nav-count">3</span>
+              </span>
+              <span class="nav-item"
+                ><span class="nav-icon"><Icon name="highlighter" /></span>Highlights</span
+              >
+              <span class="side-rule"></span>
+              <span class="side-label">Sources</span>
+              {#each sources as s (s.title)}
+                <FeedItem
+                  subscription={subscriptionFor(s)}
+                  unreadCount={s.unread}
+                  isActive={false}
+                  onSelect={() => {}}
+                  onContextMenu={() => {}}
+                  onTouchStart={() => {}}
+                  onTouchEnd={() => {}}
+                  onTouchMove={() => {}}
+                  onRetry={() => {}}
+                  onMoreClick={() => {}}
+                />
+              {/each}
+            </nav>
+          </aside>
+
+          <section class="main">
+            {#if view !== 'feeds'}
+              <header class="toolbar">
+                <span class="tool-title"
+                  ><Icon name={view === 'shelf' ? 'shelf' : 'bookmark'} size={18} />
+                  {view === 'shelf' ? 'Shelf' : 'Queue'}</span
+                >
+              </header>
+              <div class="card-surface">
+                <div class="shelf">
+                  <div class="lib-switch">
+                    <span class:on={view === 'queue'}>Queue</span>
+                    <span class:on={view === 'shelf'} bind:this={shelfTabEl}>Shelf</span>
+                  </div>
+                  {#if view === 'queue'}
+                    <div class="queue">
+                      {#each queueItems as q (q.title)}
+                        <div class="queue-row">
+                          <Icon name={q.kind === 'Article' ? 'file-text' : 'book-open'} size={16} />
+                          <span class="queue-text">
+                            <span class="queue-title">{q.title}</span>
+                            <span class="shelf-meta"><b>{q.kind}</b> {q.byline}</span>
+                          </span>
+                        </div>
+                      {/each}
                     </div>
                   {:else}
-                    <ArticleCardView {...c} />
+                    <div class="shelf-filters">
+                      <span class="shelf-chip">Everything {shelfItems.length + 1}</span>
+                      <span class="kind-switch"
+                        ><span class="on">All</span><span>Books</span><span>PDFs</span><span
+                          >Articles</span
+                        ></span
+                      >
+                    </div>
+                    <p class="shelf-label">Everything</p>
+                    <div class="shelf-grid">
+                      {#each [keptShelfItem, ...shelfItems] as item (item.title)}
+                        <div class="shelf-card" class:fresh={item === keptShelfItem}>
+                          <div class="cover" data-cover={item.cover}>
+                            <span class="cover-title">{item.title}</span>
+                            {#if item.excerpt}<span class="cover-excerpt">{item.excerpt}</span>{/if}
+                            <span class="cover-author">{item.byline}</span>
+                            {#if item.percent}
+                              <span class="cover-progress"
+                                ><span style:width="{item.percent}%"></span></span
+                              >
+                            {/if}
+                          </div>
+                          <span class="shelf-title">{item.title}</span>
+                          <span class="shelf-meta"><b>{item.kind}</b> {item.byline}</span>
+                        </div>
+                      {/each}
+                    </div>
                   {/if}
-                {/each}
+                </div>
               </div>
-            </div>
-          {/if}
-        </section>
-      </div>
-
-      <!-- The reader, over the whole window, as it opens in the app. -->
-      <div class="reader" class:open={readerOpen}>
-        <header class="reader-bar">
-          <span class="r-btn"><Icon name="arrow-left" size={16} /><span>Back</span></span>
-          <span class="r-actions">
-            <span class="r-btn"><Icon name="type" size={16} /><span>Style</span></span>
-            <span class="r-btn hide-narrow"><Icon name="share" size={16} /><span>Share</span></span>
-            <span class="r-btn hide-narrow"
-              ><Icon name="thumbs-up" size={16} /><span>Recommend</span></span
-            >
-            <span class="r-btn" class:kept bind:this={keepBtnEl}>
-              <Icon name={kept ? 'check' : 'shelf'} size={16} />
-              <span>{kept ? 'On Shelf' : 'Add to Shelf'}</span>
-            </span>
-          </span>
-        </header>
-        <div class="reader-scroll" bind:this={readerScrollEl}>
-          <article class="reader-col">
-            <h3 class="r-title">{article.title}</h3>
-            <p class="r-meta">
-              <img src={article.favicon} alt="" class="r-favicon" />
-              <span class="r-source">{article.source}</span>
-              <span>by {article.author}</span>
-              <span><Icon name="clock" size={13} /> {article.readTime}</span>
-            </p>
-            <div class="r-body marginalia-ink">
-              <p>{article.before}</p>
-              <div class="passage-block" bind:clientHeight={passageBlockHeight}>
-                <p bind:this={passageEl}>
-                  {#if marked}<mark
-                      class="highlight ink-drawing"
-                      data-ink={String(inkVariant(inkId))}>{article.passage}</mark
-                    >{:else}{article.passage}{/if}
-                </p>
-                {#if marked}
-                  <div class="note">
-                    <svg
-                      class="bracket"
-                      width="12"
-                      height={Math.max(passageBlockHeight - 8, 20)}
-                      viewBox="0 0 12 {Math.max(passageBlockHeight - 8, 20)}"
-                    >
-                      <path d={bracket} />
-                    </svg>
-                    <p class="note-text">{noteText.slice(0, noteChars)}</p>
-                  </div>
-                {/if}
+            {:else}
+              <header class="toolbar">
+                <span class="tool-title"><Icon name="inbox" size={18} /> Feeds</span>
+                <span class="tool-status"
+                  >Updated just now <Icon name="refresh-cw" size={13} /></span
+                >
+                <span class="tool-spacer"></span>
+                <span class="tool-btn"><Icon name="list" size={15} /> List</span>
+                <span class="tool-btn on"><Icon name="newspaper" size={15} /> Expand</span>
+                <span class="tool-btn"><Icon name="type" size={15} /> Style</span>
+              </header>
+              <div class="card-surface">
+                <div class="cards">
+                  {#each timelineCards as c, i (c.itemUrl)}
+                    <div bind:this={cardEls[i]}>
+                      {#if c === featuredCard}
+                        <ArticleCardView {...c} isSaved={kept && !readerOpen} />
+                      {:else}
+                        <ArticleCardView {...c} />
+                      {/if}
+                    </div>
+                  {/each}
+                </div>
               </div>
-              <p>{article.after}</p>
-            </div>
-            <div class="discussion" bind:this={discussionEl}>
-              <AtmospherePanel
-                laneRow={discussionLanes}
-                filters={discussionFilters}
-                activeFilter="all"
-                stream={{ loading: false, entries: discussionEntries }}
-                lanesOpen
-                itemUrl={featuredCard.itemUrl}
-                showHeading
-              />
-            </div>
-          </article>
+            {/if}
+          </section>
         </div>
-        {#if toast}
-          <div class="toast"><Icon name="check" size={14} /> Added to your Shelf</div>
-        {/if}
+
+        <!-- The reader, over the whole window, as it opens in the app. -->
+        <div class="reader" class:open={readerOpen}>
+          <header class="reader-bar">
+            <span class="r-btn"><Icon name="arrow-left" size={16} /><span>Back</span></span>
+            <span class="r-actions">
+              <span class="r-btn"><Icon name="type" size={16} /><span>Style</span></span>
+              <span class="r-btn hide-narrow"
+                ><Icon name="share" size={16} /><span>Share</span></span
+              >
+              <span class="r-btn hide-narrow"
+                ><Icon name="thumbs-up" size={16} /><span>Recommend</span></span
+              >
+              <span class="r-btn" class:kept bind:this={keepBtnEl}>
+                <Icon name={kept ? 'check' : 'shelf'} size={16} />
+                <span>{kept ? 'On Shelf' : 'Add to Shelf'}</span>
+              </span>
+            </span>
+          </header>
+          <div class="reader-scroll" bind:this={readerScrollEl}>
+            <article class="reader-col">
+              <h3 class="r-title">{article.title}</h3>
+              <p class="r-meta">
+                <img src={article.favicon} alt="" class="r-favicon" />
+                <span class="r-source">{article.source}</span>
+                <span>by {article.author}</span>
+                <span><Icon name="clock" size={13} /> {article.readTime}</span>
+              </p>
+              <div class="r-body marginalia-ink">
+                <p>{article.before}</p>
+                <div class="passage-block" bind:clientHeight={passageBlockHeight}>
+                  <p bind:this={passageEl}>
+                    {#if marked}<mark
+                        class="highlight ink-drawing"
+                        data-ink={String(inkVariant(inkId))}>{article.passage}</mark
+                      >{:else}{article.passage}{/if}
+                  </p>
+                  {#if marked}
+                    <div class="note">
+                      <svg
+                        class="bracket"
+                        width="12"
+                        height={Math.max(passageBlockHeight - 8, 20)}
+                        viewBox="0 0 12 {Math.max(passageBlockHeight - 8, 20)}"
+                      >
+                        <path d={bracket} />
+                      </svg>
+                      <p class="note-text">{noteText.slice(0, noteChars)}</p>
+                    </div>
+                  {/if}
+                </div>
+                <p>{article.after}</p>
+              </div>
+              <div class="discussion" bind:this={discussionEl}>
+                <AtmospherePanel
+                  laneRow={discussionLanes}
+                  filters={discussionFilters}
+                  activeFilter="all"
+                  stream={{ loading: false, entries: discussionEntries }}
+                  lanesOpen
+                  itemUrl={featuredCard.itemUrl}
+                  showHeading
+                />
+              </div>
+            </article>
+          </div>
+          {#if toast}
+            <div class="toast"><Icon name="check" size={14} /> Added to your Shelf</div>
+          {/if}
+        </div>
+
+        <span
+          class="cursor"
+          class:shown={cursor.shown}
+          class:down={cursor.down}
+          class:text={cursor.text}
+          style:transform="translate({cursor.x}px, {cursor.y}px)"
+        >
+          {#if cursor.text}
+            <svg class="ibeam" viewBox="0 0 12 24" width="12" height="24"
+              ><path
+                d="M3 3h2.5L6 4l.5-1H9M6 4v16M3 21h2.5L6 20l.5 1H9"
+                fill="none"
+                stroke="#1a1a1a"
+                stroke-width="1.4"
+                stroke-linecap="round"
+              /></svg
+            >
+          {:else}
+            <svg viewBox="0 0 24 24" width="22" height="22"
+              ><path
+                d="M5 3l14 8-6.5 1.5L9 19z"
+                fill="#1a1a1a"
+                stroke="#fff"
+                stroke-width="1.5"
+                stroke-linejoin="round"
+              /></svg
+            >
+          {/if}
+        </span>
       </div>
-
-      <span
-        class="cursor"
-        class:shown={cursor.shown}
-        class:down={cursor.down}
-        class:text={cursor.text}
-        style:transform="translate({cursor.x}px, {cursor.y}px)"
-      >
-        {#if cursor.text}
-          <svg class="ibeam" viewBox="0 0 12 24" width="12" height="24"
-            ><path
-              d="M3 3h2.5L6 4l.5-1H9M6 4v16M3 21h2.5L6 20l.5 1H9"
-              fill="none"
-              stroke="#1a1a1a"
-              stroke-width="1.4"
-              stroke-linecap="round"
-            /></svg
-          >
-        {:else}
-          <svg viewBox="0 0 24 24" width="22" height="22"
-            ><path
-              d="M5 3l14 8-6.5 1.5L9 19z"
-              fill="#1a1a1a"
-              stroke="#fff"
-              stroke-width="1.5"
-              stroke-linejoin="round"
-            /></svg
-          >
-        {/if}
-      </span>
     </div>
-  </div>
 
-  <div class="steps" role="group" aria-label="Tour of the app">
-    {#each STEPS as s, i (s.id)}
-      <button
-        type="button"
-        class="step"
-        class:on={step === s.id}
-        aria-pressed={step === s.id}
-        onclick={() => choose(s.id)}
-      >
-        <span class="step-bar" aria-hidden="true">
-          <span
-            class="step-fill"
-            style:transform="scaleX({i < stepIndex
-              ? 1
-              : i === stepIndex
-                ? reduceMotion
-                  ? 1
-                  : Math.min(elapsed / s.ms, 1)
-                : 0})"
-          ></span>
-        </span>
-        <span class="step-n">{i + 1}</span>
-        <span class="step-text">
-          <span class="step-label">{s.label}</span>
-          <span class="step-caption">{s.caption}</span>
-        </span>
-      </button>
-    {/each}
+    <div class="steps" role="group" aria-label="Tour of the app">
+      {#each STEPS as s, i (s.id)}
+        <button
+          type="button"
+          class="step"
+          class:on={step === s.id}
+          aria-pressed={step === s.id}
+          onclick={() => choose(s.id)}
+        >
+          <span class="step-bar" aria-hidden="true">
+            <span class="step-fill" style:transform="scaleX({fill(i)})"></span>
+          </span>
+          <span class="step-n">{i + 1}</span>
+          <span class="step-text">
+            <span class="step-label">{s.label}</span>
+            <span class="step-caption">{s.caption}</span>
+          </span>
+        </button>
+      {/each}
+    </div>
+    <p class="sample">Sample sources, articles and people.</p>
   </div>
-  <p class="sample">Sample sources, articles and people.</p>
+  {#if !reduceMotion}
+    <!-- The scroll the pinned shot plays its steps over. -->
+    <div class="run" aria-hidden="true"></div>
+  {/if}
 </div>
 
 <style>
   .showcase {
     --frame-h: clamp(30rem, 62vh, 42rem);
+    /* How much scroll each step after the first takes. */
+    --step-span: 60vh;
     width: 100%;
     max-width: 76rem;
     margin: 0 auto;
+  }
+  /* One stretch for each step after the first. A sticky element can't leave
+     its parent's content box, so the run is an element, not padding. */
+  .run {
+    height: calc(4 * var(--step-span));
+  }
+  .scrolly .pin {
+    position: sticky;
+    top: var(--pin-top, 4.5rem);
+  }
+  .pin {
+    position: relative;
+  }
+  /* The frame and its steps wait under the opening, then fade in as it lands. */
+  .pin > div:not(:global(.gather)),
+  .steps,
+  .sample {
+    transition: opacity 0.7s cubic-bezier(0.22, 0.8, 0.24, 1);
+  }
+  .pin.veiled > div:not(:global(.gather)),
+  .veiled .steps,
+  .veiled .sample {
+    opacity: 0;
   }
   .sr-only {
     position: absolute;

@@ -131,15 +131,23 @@
   // The app shot is most of this page's script (the real cards, popover and
   // Discussion panel), so it loads after the headline and the way in have
   // painted. Its placeholder holds the same space, so nothing jumps.
-  let AppShowcase = $state<Component | null>(null);
+  let AppShowcase = $state<Component<{ opening?: boolean; onsettle?: () => void }> | null>(null);
   let showcaseFailed = $state(false);
+  // The headline's second line waits for the opening to clear the clutter
+  // away. Without JS it's simply there; the page only hides it once mounted.
+  let mounted = $state(false);
+  let settled = $state(false);
 
   onMount(() => {
     // A failed load (a stale deploy, a dropped connection) just leaves the
     // shot out; the page reads fine without it.
+    mounted = true;
     import('$lib/components/landing/AppShowcase.svelte')
       .then((m) => (AppShowcase = m.default))
       .catch(() => (showcaseFailed = true));
+    // Never leave the headline half-written: if the shot is slow or fails,
+    // the line arrives on its own.
+    const fallback = setTimeout(() => (settled = true), 6000);
 
     // Failure is silent by design; see the pricing note.
     api
@@ -156,16 +164,22 @@
         .querySelectorAll('.landing .reveal-init:not(.revealed)')
         .forEach((el) => el.classList.add('revealed'));
     }, 2500);
-    return () => clearTimeout(safety);
+    return () => {
+      clearTimeout(safety);
+      clearTimeout(fallback);
+    };
   });
 </script>
 
-<div class="landing">
+<div class="landing" class:mounted>
   <section class="hero" aria-labelledby="hero-h">
-    <h1 id="hero-h">Read everything you follow.<br /> Keep what matters.</h1>
+    <h1 id="hero-h">
+      Everything you read.<br />
+      <span class="then" class:shown={settled}>Nothing else.</span>
+    </h1>
     <p class="lede">
-      Blogs, Bluesky, YouTube and the articles you save, in one calm reader, with highlights, notes
-      and the conversation around every piece.
+      Blogs, newsletters, YouTube, Bluesky and the Atmosphere, gathered into one quiet reader.
+      Highlight what matters, write in the margin, and keep what you want to remember.
     </p>
     <div class="hero-actions">
       <button class="cta-primary" onclick={() => startReading('top')} disabled={starting}>
@@ -182,7 +196,7 @@
 
   <div class="shot">
     {#if AppShowcase}
-      <AppShowcase />
+      <AppShowcase opening onsettle={() => (settled = true)} />
     {:else if !showcaseFailed}
       <div class="shot-placeholder" aria-hidden="true"></div>
     {/if}
@@ -356,22 +370,62 @@
   }
 
   /* ── Hero: the claim, the way in, then the app itself ──────── */
+  /* Left-aligned with the shot below, leaving room to its right for the
+     opening's pile of pages. */
   .hero {
-    max-width: 52rem;
+    max-width: 76rem;
     margin: 0 auto;
     padding-block: clamp(2.5rem, 7vh, 5rem) clamp(2rem, 4vw, 3rem);
-    text-align: center;
   }
   .hero h1 {
-    font-size: clamp(2.5rem, 5.5vw, 4.5rem);
+    font-size: clamp(2.75rem, 6.4vw, 5.5rem);
     font-weight: 800;
-    line-height: 1.02;
-    letter-spacing: -0.035em;
-    text-wrap: balance;
+    line-height: 1;
+    letter-spacing: -0.04em;
+  }
+  /* "Nothing else." arrives once the clutter has gone, marked in the reader's
+     highlighter. */
+  .then {
+    position: relative;
+    z-index: 0;
+    display: inline-block;
+  }
+  .then::before {
+    content: '';
+    position: absolute;
+    z-index: -1;
+    inset: auto -0.08em 0.06em -0.06em;
+    height: 0.4em;
+    background: color-mix(in srgb, #f5c518 45%, transparent);
+  }
+  .mounted .then {
+    opacity: 0;
+    transform: translateY(0.12em);
+    transition:
+      opacity 0.5s cubic-bezier(0.22, 0.8, 0.24, 1),
+      transform 0.6s cubic-bezier(0.22, 0.8, 0.24, 1);
+  }
+  .mounted .then::before {
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform 0.7s 0.3s cubic-bezier(0.22, 0.8, 0.24, 1);
+  }
+  .mounted .then.shown {
+    opacity: 1;
+    transform: none;
+  }
+  .mounted .then.shown::before {
+    transform: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .mounted .then,
+    .mounted .then::before {
+      transition: none;
+    }
   }
   .lede {
     max-width: 38rem;
-    margin: 1.25rem auto 0;
+    margin: 1.5rem 0 0;
     font-size: clamp(1.125rem, 1.6vw, 1.3125rem);
     line-height: var(--leading-relaxed);
     color: var(--muted);
@@ -379,7 +433,6 @@
   }
   .hero-actions {
     display: flex;
-    justify-content: center;
     align-items: center;
     flex-wrap: wrap;
     gap: 0.75rem;

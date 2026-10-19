@@ -103,6 +103,13 @@ export const timelineCards: ArticleCardViewProps[] = [
     sanitizedContent:
       '<p>A walk through the stacks with the people who decide what stays, what goes, and what gets copied before it disappears.</p>',
   }),
+  card('Bluesky bookmarks', {
+    itemTitle: 'Reading slowly on a fast web',
+    relativeDate: '4h ago',
+    readTimeMinutes: 7,
+    sanitizedContent:
+      '<p>Why the best readers still read one thing at a time, and how they make room for it.</p>',
+  }),
   card('Margins & Footnotes', {
     itemTitle: 'A field guide to personal libraries',
     relativeDate: '5h ago',
