@@ -9,9 +9,7 @@
   // assistive tech, and the step buttons under it carry the tour in words.
   //
   // With `opening`, the shot starts as the web's clutter (WebGather) settling
-  // onto its feed cards. After that, scrolling drives the tour: the shot pins
-  // in place while the page scrolls past it, and each stretch of scroll plays
-  // one step.
+  // onto its feed cards, and the tour plays once it has landed.
   import { onMount, tick, untrack } from 'svelte';
   import Icon from '$lib/components/Icon.svelte';
   import WebGather from './WebGather.svelte';
@@ -53,10 +51,8 @@
   type StepId = (typeof STEPS)[number]['id'];
 
   let step = $state<StepId>('follow');
-  // Watched time spent in the current step, so a step holds for its budget.
-  let elapsed = 0;
-  // How far the page has scrolled through the tour, 0 to 1.
-  let progress = $state(0);
+  // Watched time spent in the current step, for its progress bar.
+  let elapsed = $state(0);
   const stepIndex = $derived(STEPS.findIndex((x) => x.id === step));
   // Under reduced motion each step simply shows its end state.
   const reduceMotion =
@@ -79,8 +75,6 @@
   let cursor = $state({ x: 0, y: 0, shown: false, down: false, text: false });
 
   let frameEl = $state<HTMLElement | null>(null);
-  let trackEl = $state<HTMLElement | null>(null);
-  let pinEl = $state<HTMLElement | null>(null);
   let cardEls = $state<(HTMLElement | null)[]>([]);
   const featuredEl = $derived(cardEls[timelineCards.indexOf(featuredCard)] ?? null);
   let passageEl = $state<HTMLElement | null>(null);
@@ -109,9 +103,9 @@
     let left = ms;
     while (left > 0) {
       if (id !== runId) throw new Stop();
-      // Hold still while nobody's watching: off screen, or tab hidden. (The
-      // visitor sets the pace by scrolling, and their pointer usually rests
-      // on the pinned frame while they do, so hovering doesn't pause it.)
+      // Hold still while nobody's watching: off screen or tab hidden. (Not on
+      // hover: a pointer resting mid-screen sits on the frame and would freeze
+      // it with nothing to say so.)
       const watched = visible && !document.hidden;
       const slice = watched ? Math.min(left, 100) : 400;
       await new Promise((r) => setTimeout(r, slice));
@@ -271,79 +265,40 @@
     await wait(Math.max(total - elapsed, 600), id);
   }
 
-  async function playOne(i: number) {
+  async function play(from: number) {
     const id = ++runId;
     try {
-      await playStep(STEPS[i].id, id);
+      // Plays through once and stays on the Shelf; a step button replays from there.
+      for (let i = from; i < STEPS.length; i++) await playStep(STEPS[i].id, id);
     } catch (e) {
       if (!(e instanceof Stop)) throw e;
     }
   }
 
-  // ── Scroll ──────────────────────────────────────────────────
-  // The track is the pinned shot plus one stretch of scroll per step after the
-  // first; scrolling through a stretch plays that step once.
-  let pinTop = $state(0);
-
-  /** Where the track's travel sits: its start, and how far it runs. */
-  function travel() {
-    if (!trackEl || !pinEl) return null;
-    const start = trackEl.getBoundingClientRect().top + window.scrollY - pinTop;
-    return { start, length: Math.max(trackEl.offsetHeight - pinEl.offsetHeight, 1) };
-  }
-
-  // The step scrolling last played, and the one a step button is heading to;
-  // the smooth scroll there passes other stretches without playing them.
-  let played = -1;
-  let seeking: { to: number; until: number } | null = null;
-
-  function onScroll() {
-    const t = travel();
-    if (!t) return;
-    progress = Math.min(Math.max((window.scrollY - t.start) / t.length, 0), 1);
-    const i = Math.min(Math.floor(progress * STEPS.length), STEPS.length - 1);
-    if (seeking) {
-      if (i !== seeking.to && performance.now() < seeking.until) return;
-      seeking = null;
-    }
-    if (!gathering && i !== played) {
-      played = i;
-      playOne(i);
-    }
-  }
-
   function choose(s: StepId) {
-    const i = STEPS.findIndex((x) => x.id === s);
     if (reduceMotion) {
       runId++;
       step = s;
       settle(s);
       return;
     }
-    // Play it now, even if it's the current step, and scroll to the middle
-    // of its stretch.
-    const t = travel();
-    if (!t || gathering) return;
-    played = i;
-    playOne(i);
-    const at = i === 0 ? 0 : (i + 0.5) / STEPS.length;
-    const top = t.start + at * t.length;
-    if (Math.abs(top - window.scrollY) < 2) return;
-    seeking = { to: i, until: performance.now() + 1500 };
-    window.scrollTo({ top, behavior: 'smooth' });
+    if (!gathering) play(STEPS.findIndex((x) => x.id === s));
   }
 
-  /** The step's progress bar: how far through its stretch of scroll the page is. */
+  /** The step's progress bar: done, playing (by watched time), or to come. */
   function fill(i: number) {
-    if (reduceMotion) return i <= stepIndex ? 1 : 0;
-    return Math.min(Math.max(progress * STEPS.length - i, 0), 1);
+    if (i < stepIndex) return 1;
+    if (i > stepIndex) return 0;
+    return reduceMotion ? 1 : Math.min(elapsed / STEPS[i].ms, 1);
   }
 
   function gathered() {
     gathering = false;
-    // Someone who scrolled on while the opening played lands on their step.
-    onScroll();
+    play(0);
   }
+
+  let showcaseEl = $state<HTMLElement | null>(null);
+  let restored = 0;
 
   onMount(() => {
     installMarginaliaInk();
@@ -355,60 +310,32 @@
       step = 'mark';
       settle('mark');
       onsettle?.();
-      return () => io.disconnect();
-    }
-    if (!opening) onsettle?.();
-
-    // The pinned shot sits just under the site's own sticky header.
-    const measure = () => {
-      const header = document.querySelector<HTMLElement>('.header-full');
-      const below = (header?.offsetHeight ?? 0) + 16;
-      // A shot taller than the space under the header sticks with its foot
-      // on screen, so the steps and their progress stay in view.
-      const h = pinEl?.offsetHeight ?? 0;
-      pinTop = Math.min(below, window.innerHeight - h - 8);
-      onScroll();
-    };
-    let frame = 0;
-    const scrolled = () => {
-      if (frame) return;
-      frame = requestAnimationFrame(() => {
-        frame = 0;
-        onScroll();
-      });
-    };
-    measure();
-    // Back on the page partway down (the back button, a restored scroll), the
-    // opening would play behind an already pinned frame: go straight to the tour.
-    const skipOpening = () => {
-      if (!gathering || !trackEl || trackEl.getBoundingClientRect().top >= pinTop) return;
-      frameShown = true;
+    } else if (!opening) {
       onsettle?.();
-      gathered();
-    };
-    skipOpening();
-    const restored = requestAnimationFrame(skipOpening);
-    window.addEventListener('scroll', scrolled, { passive: true });
-    window.addEventListener('resize', measure);
+      play(0);
+    } else {
+      // Back on the page below the top of the shot (the back button, a
+      // restored scroll), the opening would play out of sight: skip to the tour.
+      const skip = () => {
+        if (!gathering || !showcaseEl || showcaseEl.getBoundingClientRect().top >= 0) return;
+        frameShown = true;
+        onsettle?.();
+        gathered();
+      };
+      skip();
+      restored = requestAnimationFrame(skip);
+    }
     return () => {
       io.disconnect();
-      runId++;
-      cancelAnimationFrame(frame);
       cancelAnimationFrame(restored);
-      window.removeEventListener('scroll', scrolled);
-      window.removeEventListener('resize', measure);
+      runId++;
     };
   });
 
   const bracket = $derived(bracketPath(inkId, Math.max(passageBlockHeight - 8, 20)));
 </script>
 
-<div
-  class="showcase"
-  class:scrolly={!reduceMotion}
-  bind:this={trackEl}
-  style:--pin-top="{pinTop}px"
->
+<div class="showcase" bind:this={showcaseEl}>
   <p class="sr-only">
     A sample of the Skyreader app: articles from a blog, a newsletter, YouTube and Bluesky in one
     list; one opens in the reader; a sentence is highlighted with a note in the margin; the
@@ -416,7 +343,7 @@
     Shelf.
   </p>
 
-  <div class="pin" class:veiled={!frameShown} bind:this={pinEl}>
+  <div class="stage" class:veiled={!frameShown}>
     {#if gathering}
       <WebGather
         targets={() => cardEls}
@@ -658,7 +585,7 @@
       </div>
     </div>
 
-    <div class="steps" role="group" aria-label="Tour of the app" inert={!frameShown}>
+    <div class="steps" role="group" aria-label="Tour of the app" inert={gathering}>
       {#each STEPS as s, i (s.id)}
         <button
           type="button"
@@ -680,40 +607,25 @@
     </div>
     <p class="sample">Sample sources, articles and people.</p>
   </div>
-  {#if !reduceMotion}
-    <!-- The scroll the pinned shot plays its steps over. -->
-    <div class="run" aria-hidden="true"></div>
-  {/if}
 </div>
 
 <style>
   .showcase {
     --frame-h: clamp(30rem, 62vh, 42rem);
-    /* How much scroll each step after the first takes. */
-    --step-span: 60vh;
     width: 100%;
     max-width: 76rem;
     margin: 0 auto;
   }
-  /* One stretch for each step after the first. A sticky element can't leave
-     its parent's content box, so the run is an element, not padding. */
-  .run {
-    height: calc(4 * var(--step-span));
-  }
-  .scrolly .pin {
-    position: sticky;
-    top: var(--pin-top, 4.5rem);
-  }
-  .pin {
+  .stage {
     position: relative;
   }
   /* The frame and its steps wait under the opening, then fade in as it lands. */
-  .pin > div:not(:global(.gather)),
+  .stage > div:not(:global(.gather)),
   .steps,
   .sample {
     transition: opacity 0.7s cubic-bezier(0.22, 0.8, 0.24, 1);
   }
-  .pin.veiled > div:not(:global(.gather)),
+  .stage.veiled > div:not(:global(.gather)),
   .veiled .steps,
   .veiled .sample {
     opacity: 0;

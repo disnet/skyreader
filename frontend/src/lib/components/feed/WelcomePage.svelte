@@ -450,17 +450,9 @@
     padding-bottom: var(--space-section);
   }
 
-  /* Same box as AppShowcase's frame, its step row and its sample label, plus
-     the tour's four 60vh stretches of scroll (none under reduced motion). */
+  /* Same box as AppShowcase's frame, its step row and its sample label. */
   .shot-placeholder {
-    box-sizing: content-box;
     height: calc(clamp(30rem, 62vh, 42rem) + 7.85rem);
-    padding-bottom: calc(4 * 60vh);
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .shot-placeholder {
-      padding-bottom: 0;
-    }
   }
   /* Captions wrap to a third line in this band. */
   @media (min-width: 701px) and (max-width: 1000px) {
