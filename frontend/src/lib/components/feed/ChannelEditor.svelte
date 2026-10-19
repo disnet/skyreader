@@ -397,8 +397,9 @@
       return;
     }
     if (channelType === 'feed' && mode === 'pick') {
+      // A saved search doesn't look through the Library yet, so it needs a feed.
       if (
-        librarySources.length === 0 &&
+        (librarySources.length === 0 || trimmedQuery) &&
         showsNoSource(
           sourceFilter,
           subscriptionsStore.subscriptions,
@@ -450,7 +451,10 @@
               typeFilter: currentRule ? typeFilter : undefined,
               // Absent rather than empty, like the query.
               librarySources:
-                !currentRule && librarySources.length > 0 ? [...librarySources] : undefined,
+                // A saved search doesn't read the Library, so it keeps none.
+                !currentRule && !trimmedQuery && librarySources.length > 0
+                  ? [...librarySources]
+                  : undefined,
               tagFilter: feedTagFilter.length > 0 ? [...feedTagFilter] : undefined,
               filterVersion: CHANNEL_FILTER_VERSION,
               // Absent rather than empty, so taking a query out leaves an ordinary channel.

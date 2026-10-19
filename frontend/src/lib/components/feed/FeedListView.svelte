@@ -386,8 +386,12 @@
           {displayItem}
           selected={feedViewStore.selectedKey === displayItem.key}
           onOpen={() => openReader(displayItem)}
-          onHover={() => feedViewStore.select(index)}
-          onArchive={() => void setSavedRowArchived(displayItem, !isSavedRowArchived(displayItem))}
+          onArchive={() => {
+            const archived = isSavedRowArchived(displayItem);
+            // Archiving reads it, so it stays put until the view changes.
+            if (!archived) feedViewStore.trackSeenThisSession(displayItem);
+            void setSavedRowArchived(displayItem, !archived);
+          }}
           onRemove={() => savesStore.remove(save.rkey)}
         />
       {/if}

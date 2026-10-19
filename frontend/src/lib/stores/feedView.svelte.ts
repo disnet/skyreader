@@ -181,6 +181,15 @@ export function getSavedDate(item: FeedDisplayItem): number {
  * made the Saved list and Home's lanes disagree about the same item. Rows with
  * no save behind them fall back to their own key.
  */
+function sameKeys(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((k) => b.includes(k));
+}
+
+/** A save's row key in a channel's river. */
+function savedRowKey(save: SavedItem): string {
+  return save.uri || save.itemGuid || save.rkey;
+}
+
 export function isSavedRowArchived(item: FeedDisplayItem): boolean {
   // The row's own key first: it's a map hit, and it's the alias most archives
   // land under, so the common case never pays for resolving the save.
@@ -994,6 +1003,14 @@ function createFeedViewStore() {
   let channelLibrarySources = $derived.by((): LibrarySource[] => {
     const view = activeFilteredView;
     if (!view || view.mode === 'saved' || isSearchChannel) return [];
+    // The toolbar's source picker has no Library rows, so narrowing it to some
+    // sources ("only", or a pick other than the channel's own) means just those.
+    if (
+      toolbarSourceMode === 'include' &&
+      (view.sourceMode !== 'include' || !sameKeys(toolbarSourceKeys, view.sourceKeys ?? []))
+    ) {
+      return [];
+    }
     return view.librarySources ?? [];
   });
 
@@ -1003,29 +1020,49 @@ function createFeedViewStore() {
   let libraryItems = $derived.by((): SavedItem[] => {
     const sources = new Set(channelLibrarySources);
     if (sources.size === 0) return [];
-    const shownGuids = new Set<string>([
-      ...filteredArticles.map((a) => a.guid),
-      ...displayedDocuments.map((d) => d.recordUri),
-    ]);
-    const shownUrls = new Set<string>();
-    for (const url of [
-      ...filteredArticles.map((a) => a.url),
-      ...displayedDocuments.map((d) => d.canonicalUrl || d.path),
-    ]) {
-      const key = url ? urlKey(url) : null;
-      if (key) shownUrls.add(key);
-    }
-    return savesStore.articles.filter((save) => {
+    const readFilter = effectiveFilters.readFilter;
+    const candidates = savesStore.articles.filter((save) => {
       if (!sources.has('saves') && !(sources.has('shelf') && shelfStore.isOnShelf(save))) {
         return false;
       }
-      if (
-        effectiveFilters.readFilter === 'unread' &&
-        isSavedItemArchived(save, itemLabelsStore.isArchived)
-      ) {
-        return false;
-      }
-      if (save.itemGuid && shownGuids.has(save.itemGuid)) return false;
+      if (readFilter === 'all') return true;
+      const archived = isSavedItemArchived(save, itemLabelsStore.isArchived);
+      if (readFilter === 'read') return archived;
+      return !archived || readArticleGuidsThisSession.has(savedRowKey(save));
+    });
+    if (candidates.length === 0) return [];
+
+    // A save of a page the river already shows, read or not, is that row. Exact
+    // guids and URLs first; URL forms only for recent articles (as for follows
+    // links, so a large archive isn't parsed on every change) and documents.
+    const shownExact = new Set<string>();
+    const shownUrls = new Set<string>();
+    const addUrl = (url: string | undefined) => {
+      const key = url ? urlKey(url) : null;
+      if (key) shownUrls.add(key);
+    };
+    for (const a of scopedArticles) {
+      shownExact.add(a.guid);
+      if (a.url) shownExact.add(a.url);
+    }
+    const cutoff = Date.now() - FOLLOW_DEDUPE_WINDOW_MS;
+    const articles =
+      effectiveFilters.sortOrder === 'oldest' ? [...scopedArticles].reverse() : scopedArticles;
+    for (const a of articles) {
+      if (new Date(a.publishedAt).getTime() < cutoff) break;
+      addUrl(a.url);
+    }
+    for (const d of scopedDocuments) {
+      shownExact.add(d.recordUri);
+      addUrl(d.canonicalUrl || d.path);
+    }
+    for (const l of displayedFollowLinks) {
+      shownExact.add(l.url);
+      addUrl(l.url);
+    }
+    return candidates.filter((save) => {
+      if (save.itemGuid && shownExact.has(save.itemGuid)) return false;
+      if (save.url && shownExact.has(save.url)) return false;
       const key = save.url ? urlKey(save.url) : null;
       return !(key && shownUrls.has(key));
     });
@@ -1479,7 +1516,7 @@ function createFeedViewStore() {
           return {
             type: 'saved' as const,
             item: item.item,
-            key: item.item.uri || item.item.itemGuid || item.item.rkey,
+            key: savedRowKey(item.item),
           };
         } else {
           return {
@@ -1871,8 +1908,9 @@ function createFeedViewStore() {
 
   // Track an item as "seen this session" so it stays visible after being marked read
   function trackSeenThisSession(item: RiverItem) {
-    if (item.type === 'article' || item.type === 'link') {
-      // A link's key is what it's read under, in the same key space as a guid.
+    if (item.type === 'article' || item.type === 'link' || item.type === 'saved') {
+      // A link's key is what it's read under, in the same key space as a guid;
+      // a save's is its row key (savedRowKey), which libraryItems checks.
       readArticleGuidsThisSession.add(item.key);
       readArticleGuidsThisSession = new Set(readArticleGuidsThisSession);
     } else if (item.type === 'document') {
