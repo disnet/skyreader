@@ -395,7 +395,7 @@ test.describe('Channel order', () => {
     await authedPage.mouse.move(first.x + 10, first.y + first.height / 2, { steps: 8 });
     await authedPage.mouse.move(first.x + 10, first.y + 2, { steps: 2 });
     const pushed = authedPage.waitForResponse(
-      (r) => r.url().endsWith('/api/channels') && r.request().method() === 'PUT'
+      (r) => r.url().endsWith('/api/channels/order') && r.request().method() === 'PUT'
     );
     await authedPage.mouse.up();
     await pushed;
@@ -406,7 +406,7 @@ test.describe('Channel order', () => {
     // Move Second up a step from its menu.
     await rows.nth(2).click({ button: 'right' });
     const pushedAgain = authedPage.waitForResponse(
-      (r) => r.url().endsWith('/api/channels') && r.request().method() === 'PUT'
+      (r) => r.url().endsWith('/api/channels/order') && r.request().method() === 'PUT'
     );
     await authedPage.getByRole('menuitem', { name: 'Move up' }).click();
     await pushedAgain;

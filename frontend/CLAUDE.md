@@ -267,8 +267,11 @@ Saved channel and a stale copy can't outrank a newer edit.
 Channels list in `position` order everywhere (`channelSync.ts`'s `sortByPosition`, ties by
 `createdAt`). The sidebar reorders them: a mouse or pen drag on a row, or **Move up** / **Move down**
 in the row's menu (the touch path, since a drag would fight the drawer's scroll).
-`filteredViewsStore.reorder` renumbers, writes only the channels whose position changed (stamped
-newer, so the order wins on other devices) and pushes them in one `PUT /api/channels`.
+`filteredViewsStore.reorder` renumbers, stamps the channels whose position changed newer (so other
+devices pull the new positions), and sends every position to `PUT /api/channels/order`, which moves
+rows without touching name or config. The channel upserts set a position only on create, so an edit
+from a device with a stale order can't move a channel back. A push that fails leaves
+`channelOrderUnsent` set in `metadata`, and the next channel sync sends the order again.
 
 ### Saved searches
 

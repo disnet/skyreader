@@ -180,7 +180,6 @@ export async function handleSyncChannels(request: Request, env: Env): Promise<Re
          ON CONFLICT (user_did, uuid) DO UPDATE SET
            name = excluded.name,
            config = excluded.config,
-           position = excluded.position,
            updated_at = excluded.updated_at
          WHERE deleted_at IS NULL`
       ).bind(
@@ -252,7 +251,6 @@ export async function handleUpsertChannel(
        ON CONFLICT (user_did, uuid) DO UPDATE SET
          name = excluded.name,
          config = excluded.config,
-         position = excluded.position,
          updated_at = excluded.updated_at
        WHERE deleted_at IS NULL`
     )
@@ -274,6 +272,67 @@ export async function handleUpsertChannel(
   } catch (error) {
     console.error('Failed to upsert channel:', error);
     return new Response(JSON.stringify({ error: 'Failed to upsert channel' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+const MAX_REORDER = 500;
+
+// PUT /api/channels/order - The one write that moves an existing channel. The
+// upserts above set position only when they create a row: a device holding a
+// stale copy of a channel must not undo a reorder by editing it, and a reorder
+// must not write a stale name or config back over a newer edit.
+export async function handleReorderChannels(request: Request, env: Env): Promise<Response> {
+  const session = await getSessionFromRequest(request, env);
+  if (!session) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  let body: { channels?: Array<{ uuid: string; position: number }>; updatedAt?: number };
+  try {
+    body = (await request.json()) as typeof body;
+  } catch {
+    return validationError('Invalid JSON body');
+  }
+
+  const { channels, updatedAt } = body;
+  if (!Array.isArray(channels)) return validationError('Missing channels array');
+  if (channels.length > MAX_REORDER) return validationError('Too many channels');
+  if (typeof updatedAt !== 'number' || !Number.isFinite(updatedAt))
+    return validationError('updatedAt must be a number');
+  for (const channel of channels) {
+    const uuidErr = validateUuid(channel?.uuid);
+    if (uuidErr) return validationError(uuidErr);
+    if (
+      typeof channel.position !== 'number' ||
+      !Number.isFinite(channel.position) ||
+      channel.position < 0
+    )
+      return validationError('Position must be a non-negative number');
+  }
+
+  try {
+    if (channels.length > 0) {
+      await env.DB.batch(
+        channels.map((channel) =>
+          env.DB.prepare(
+            `UPDATE channels SET position = ?, updated_at = MAX(updated_at, ?)
+             WHERE user_did = ? AND uuid = ? AND deleted_at IS NULL`
+          ).bind(channel.position, updatedAt, session.did, channel.uuid)
+        )
+      );
+    }
+    return new Response(JSON.stringify({ success: true }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (error) {
+    console.error('Failed to reorder channels:', error);
+    return new Response(JSON.stringify({ error: 'Failed to reorder channels' }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
     });
