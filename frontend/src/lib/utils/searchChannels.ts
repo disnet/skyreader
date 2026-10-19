@@ -51,16 +51,25 @@ export function channelMatchKey(
   return JSON.stringify([query, mode, keys]);
 }
 
-/** Whether a response is for the version of the channel that `key` names. */
-export function responseMatchesKey(
+/**
+ * How a response compares with the version of the channel that `key` names:
+ * the same, for another query, or for the same query over other sources.
+ * A server from before sources were echoed says only its query.
+ */
+export function compareResponseToKey(
   res: Pick<ChannelItemsResponse, 'query' | 'sourceMode' | 'sourceKeys'>,
   key: string
-): boolean {
-  const [query, mode, keys] = JSON.parse(key) as [string, string, string[]];
-  if (res.query.trim() !== query) return false;
-  // A server from before sources were echoed: the query is all it says.
-  if (res.sourceMode === undefined) return true;
-  return res.sourceMode === mode && JSON.stringify(res.sourceKeys ?? []) === JSON.stringify(keys);
+): 'same' | 'query' | 'sources' {
+  const query = channelQuery({ mode: 'feed', query: res.query });
+  if (query === null || (JSON.parse(key) as [string])[0] !== query) return 'query';
+  if (res.sourceMode === undefined) return 'same';
+  const served = channelMatchKey({
+    mode: 'feed',
+    query,
+    sourceMode: res.sourceMode,
+    sourceKeys: res.sourceKeys,
+  });
+  return served === key ? 'same' : 'sources';
 }
 
 /** Why a saved search's items couldn't be read. */

@@ -661,7 +661,7 @@
   $effect(() => {
     const view = feedViewStore.activeFilteredView;
     const uuid = view?.uuid;
-    const key = feedViewStore.isSearchChannel ? channelMatchKey(view) : null;
+    const key = channelMatchKey(view);
     const signedIn = auth.isAuthenticated;
     untrack(() => {
       if (uuid && key && signedIn) void searchChannelsStore.open(uuid, key);

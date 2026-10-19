@@ -4,9 +4,9 @@ import {
   channelMatchKey,
   channelQuery,
   classifyChannelItemsError,
+  compareResponseToKey,
   hasSearchableTerm,
   matchToRow,
-  responseMatchesKey,
   searchChannelUnread,
 } from './searchChannels';
 import { ApiError, OfflineError, type ChannelMatch } from '$lib/services/api';
@@ -200,7 +200,7 @@ describe('channelMatchKey', () => {
   });
 });
 
-describe('responseMatchesKey', () => {
+describe('compareResponseToKey', () => {
   const key = channelMatchKey({
     mode: 'feed',
     query: 'heat',
@@ -208,25 +208,16 @@ describe('responseMatchesKey', () => {
     sourceKeys: ['rss~b', 'rss~a'],
   })!;
 
-  it('matches the stored version and not one from before a sources edit', () => {
-    expect(
-      responseMatchesKey(
-        { query: 'heat', sourceMode: 'include', sourceKeys: ['rss~a', 'rss~b'] },
-        key
-      )
-    ).toBe(true);
-    expect(
-      responseMatchesKey({ query: 'heat', sourceMode: 'include', sourceKeys: ['rss~a'] }, key)
-    ).toBe(false);
-    expect(
-      responseMatchesKey(
-        { query: 'cold', sourceMode: 'include', sourceKeys: ['rss~a', 'rss~b'] },
-        key
-      )
-    ).toBe(false);
+  it('tells the stored version from one before a query or sources edit', () => {
+    const sources = { sourceMode: 'include' as const, sourceKeys: ['rss~a', 'rss~b'] };
+    expect(compareResponseToKey({ query: 'heat ', ...sources }, key)).toBe('same');
+    expect(compareResponseToKey({ query: 'heat', ...sources, sourceKeys: ['rss~a'] }, key)).toBe(
+      'sources'
+    );
+    expect(compareResponseToKey({ query: 'cold', ...sources }, key)).toBe('query');
   });
 
   it('goes by the query alone for a server that does not say its sources', () => {
-    expect(responseMatchesKey({ query: 'heat' }, key)).toBe(true);
+    expect(compareResponseToKey({ query: 'heat' }, key)).toBe('same');
   });
 });

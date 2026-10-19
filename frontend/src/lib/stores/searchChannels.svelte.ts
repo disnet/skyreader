@@ -3,7 +3,7 @@ import { api, type ChannelItemsResponse, type ChannelMatch } from '$lib/services
 import { getMetadata, setMetadata } from '$lib/services/db';
 import {
   classifyChannelItemsError,
-  responseMatchesKey,
+  compareResponseToKey,
   searchChannelUnread,
   type SearchChannelError,
 } from '$lib/utils/searchChannels';
@@ -139,7 +139,11 @@ function createSearchChannelsStore() {
     try {
       const res = await api.getChannelItems(id, { limit: PAGE_SIZE });
       if (gen !== generation) return;
-      if (!responseMatchesKey(res, k)) {
+      const version = compareResponseToKey(res, k);
+      // Sources the server hasn't caught up with are waited on only briefly:
+      // a channel whose sources here never reached it (an edit made offline)
+      // shows what the server has rather than nothing.
+      if (version === 'query' || (version === 'sources' && polls < FAST_POLLS)) {
         // The server still holds the query or sources from before this edit:
         // the channel write is on its way. Its matches are for the old version,
         // so show none.
@@ -287,7 +291,7 @@ function createSearchChannelsStore() {
         try {
           const res = await api.getChannelItems(id, { limit: 1 });
           // An edit still on its way: the count is the old version's.
-          if (!responseMatchesKey(res, k)) counts.delete(id);
+          if (compareResponseToKey(res, k) === 'query') counts.delete(id);
           else setCount(id, res, res.items);
         } catch (e) {
           const kind = classifyChannelItemsError(e);
