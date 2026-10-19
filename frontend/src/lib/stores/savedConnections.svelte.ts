@@ -51,6 +51,8 @@ function createSavedConnectionsStore() {
   // rkey → when the reader cleared it here. A list fetched before that can't
   // know about it, and mustn't bring the badge back.
   let clearedAt = new Map<string, number>();
+  // Clears the server hasn't recorded yet.
+  const pending = new Set<string>();
   let loadedFor: string | null = null;
   let loadedAt = 0;
   let inFlight: { did: string; promise: Promise<void> } | null = null;
@@ -59,6 +61,7 @@ function createSavedConnectionsStore() {
     byRkey = new Map();
     clearedNewest = new Map();
     clearedAt = new Map();
+    pending.clear();
     loadedFor = null;
   }
 
@@ -83,9 +86,10 @@ function createSavedConnectionsStore() {
           // A backend from before `newest` sends none.
           const item = { ...raw, newest: raw.newest ?? [] };
           const cleared = clearedAt.get(item.rkey);
+          // A list from before the clear, or from before the server recorded it.
           next.set(
             item.rkey,
-            cleared !== undefined && cleared >= startedAt
+            cleared !== undefined && (cleared >= startedAt || pending.has(item.rkey))
               ? { ...item, unseen: 0, seenAt: cleared, newest: [] }
               : item
           );
@@ -133,27 +137,39 @@ function createSavedConnectionsStore() {
     return clearedNewest.get(rkey) ?? [];
   }
 
-  /** The reader is done with this save's new connections: clear them here and on the server. */
-  function markSeen(rkey: string): void {
-    const activity = byRkey.get(rkey);
-    if (!activity || activity.unseen === 0) return;
+  /** Clear these saves' new connections, here and on the server. */
+  function clear(rkeys: string[]): void {
+    if (!rkeys.some((rkey) => (byRkey.get(rkey)?.unseen ?? 0) > 0)) return;
     const now = Date.now();
-    clearedAt.set(rkey, now);
-    if (activity.newest.length > 0) {
-      clearedNewest = new Map(clearedNewest).set(rkey, activity.newest);
+    const nextActivity = new Map(byRkey);
+    const nextNewest = new Map(clearedNewest);
+    for (const rkey of rkeys) {
+      const activity = byRkey.get(rkey);
+      if (!activity || activity.unseen === 0) continue;
+      clearedAt.set(rkey, now);
+      if (activity.newest.length > 0) nextNewest.set(rkey, activity.newest);
+      nextActivity.set(rkey, { ...activity, unseen: 0, seenAt: now, newest: [] });
+      pending.add(rkey);
+      api
+        .markSavedConnectionsSeen(rkey)
+        .catch((e) => {
+          // The mark comes back on the next load; nothing to roll back here.
+          console.error('[savedConnections] Failed to mark seen:', e);
+        })
+        .finally(() => pending.delete(rkey));
     }
-    byRkey = new Map(byRkey).set(rkey, { ...activity, unseen: 0, seenAt: now, newest: [] });
-    api.markSavedConnectionsSeen(rkey).catch((e) => {
-      // The mark comes back on the next load; nothing to roll back here.
-      console.error('[savedConnections] Failed to mark seen:', e);
-    });
+    byRkey = nextActivity;
+    clearedNewest = nextNewest;
+  }
+
+  /** The reader is done with this save's new connections. */
+  function markSeen(rkey: string): void {
+    clear([rkey]);
   }
 
   /** Clear every save's new connections. */
   function markAllSeen(): void {
-    for (const activity of [...byRkey.values()]) {
-      if (activity.unseen > 0) markSeen(activity.rkey);
-    }
+    clear([...byRkey.values()].filter((a) => a.unseen > 0).map((a) => a.rkey));
   }
 
   return {

@@ -6,6 +6,7 @@
 // panel must agree, so the edges Skyreader already holds are added to what
 // Semble returned, skipping any Semble already has.
 
+import { urlKey } from './urlKey';
 import type { BlueskyProfile, SavedConnectionDetail, SembleContext } from '$lib/types';
 
 type Connection = SembleContext['connections'][number];
@@ -22,19 +23,15 @@ const EMPTY: SembleContext = {
   cardUrl: null,
 };
 
-/** Loose enough that Semble's copy of the same edge matches ours. */
-function urlKey(url: string): string {
-  try {
-    const parsed = new URL(url);
-    const host = parsed.hostname.replace(/^www\./, '');
-    return `${host}${parsed.pathname.replace(/\/+$/, '')}`.toLowerCase();
-  } catch {
-    return url.toLowerCase();
-  }
+// Semble's copy of an edge carries the record uri as its id; a match on the
+// edge itself covers a copy that doesn't.
+function edgeKey(curatorDid: string, direction: string, type: string | null, url: string): string {
+  return `${curatorDid}|${direction}|${type ?? ''}|${urlKey(url) ?? url}`;
 }
 
-function edgeKey(curatorDid: string, direction: string, url: string): string {
-  return `${curatorDid}|${direction}|${urlKey(url)}`;
+/** As the proxy writes Semble's types: "LEADS_TO" → "leads to". */
+function typeLabel(type: string | null): string | null {
+  return type ? type.replaceAll('_', ' ').toLowerCase() : null;
 }
 
 export function withLocalConnections(
@@ -44,20 +41,36 @@ export function withLocalConnections(
 ): SembleContext | undefined {
   if (details.length === 0) return context;
   const base = context ?? EMPTY;
-  const known = new Set(
-    base.connections.map((c) => edgeKey(c.curator.did, c.direction, c.other.url))
-  );
+  const byKey = new Map<string, number>();
+  base.connections.forEach((c, i) => {
+    byKey.set(c.id, i);
+    byKey.set(edgeKey(c.curator.did, c.direction, c.type, c.other.url), i);
+  });
+  // A copy Semble already has keeps Semble's details, but is dated by when the
+  // poller saw it, as the badge is: a record published late still reads as new.
+  let existing = base.connections;
   const added: Connection[] = [];
   for (const detail of details) {
-    const key = edgeKey(detail.curatorDid, detail.direction, detail.otherUrl);
-    if (known.has(key)) continue;
-    known.add(key);
+    const type = typeLabel(detail.type);
+    const key = edgeKey(detail.curatorDid, detail.direction, type, detail.otherUrl);
+    const indexedAt = new Date(detail.indexedAt).toISOString();
+    const match = byKey.get(detail.uri) ?? byKey.get(key);
+    if (match !== undefined) {
+      if (match < 0) continue;
+      const createdAt = existing[match].createdAt;
+      if (!createdAt || Date.parse(createdAt) < Date.parse(indexedAt)) {
+        if (existing === base.connections) existing = [...existing];
+        existing[match] = { ...existing[match], createdAt: indexedAt };
+      }
+      continue;
+    }
+    byKey.set(detail.uri, -1);
+    byKey.set(key, -1);
     const profile = profiles.get(detail.curatorDid);
     added.push({
       id: detail.uri,
       direction: detail.direction,
-      // As the proxy writes Semble's types: "LEADS_TO" → "leads to".
-      type: detail.type ? detail.type.replaceAll('_', ' ').toLowerCase() : null,
+      type,
       note: detail.note,
       curator: {
         did: detail.curatorDid,
@@ -65,7 +78,7 @@ export function withLocalConnections(
         name: profile?.displayName ?? null,
         avatarUrl: profile?.avatar ?? null,
       },
-      createdAt: new Date(detail.indexedAt).toISOString(),
+      createdAt: indexedAt,
       other: {
         url: detail.otherUrl,
         title: null,
@@ -75,6 +88,6 @@ export function withLocalConnections(
       },
     });
   }
-  if (added.length === 0) return context;
-  return { ...base, connections: [...added, ...base.connections] };
+  if (added.length === 0 && existing === base.connections) return context;
+  return { ...base, connections: [...added, ...existing] };
 }

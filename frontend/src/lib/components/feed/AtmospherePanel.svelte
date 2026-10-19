@@ -81,6 +81,7 @@
     onCreateConnection,
     isConnectionSaved,
     connectionsNewSince = null,
+    newConnections = 0,
     onMarkConnectionsSeen,
     viewerDid,
   }: {
@@ -112,6 +113,8 @@
     /** The reader opened a save with new Semble connections since this time
      *  (ms): open on Connections, with those first and marked New. */
     connectionsNewSince?: number | null;
+    /** How many new connections the save's badge counts. */
+    newConnections?: number;
     /** Clear the save's new connections: the badge, and the New marks here. */
     onMarkConnectionsSeen?: () => void;
     /** The signed-in reader: their own connections are never news to them. */
@@ -274,21 +277,18 @@
     return Number.isFinite(created) && created > connectionsNewSince;
   }
 
-  const newConnectionCount = $derived(
-    connectionsNewSince === null
-      ? 0
-      : (sembleContext?.connections ?? []).filter(isNewConnection).length
-  );
-
   let openGroups = $state<string[]>([]);
   let allGroupsOpen = $state(false);
   let collectionsExpanded = $state(false);
   let similarExpanded = $state(false);
   // A different article is a different graph: nothing stays open across it.
-  let openedFor: SembleContextVM | undefined = undefined;
+  // Keyed on the article, not the context: the reader refreshes the context in
+  // place (names arriving, its own new edges merged in).
+  let openedFor: unknown = undefined;
   $effect(() => {
-    if (sembleContext !== openedFor) {
-      openedFor = sembleContext;
+    const key = itemUrl ?? sembleContext;
+    if (key !== openedFor) {
+      openedFor = key;
       openGroups = [];
       allGroupsOpen = false;
       collectionsExpanded = false;
@@ -1066,14 +1066,20 @@
            to a collection, one to another article — which is why they share a
            tab and a count. -->
       <div class="discussion-panel graph" {...tabPanelAttrs('connections')}>
-        {#if onMarkConnectionsSeen && newConnectionCount > 0}
+        <!-- Counted as the badge counts, so the badge can always be cleared here. -->
+        {#if onMarkConnectionsSeen && newConnections > 0}
           <div class="connections-news">
-            <span class="connections-news-count">{newConnectionCount} new</span>
+            <span class="connections-news-count">{newConnections} new</span>
             <button
               type="button"
               class="connections-news-clear"
+              aria-label="Mark {newConnections} new {newConnections === 1
+                ? 'connection'
+                : 'connections'} as seen"
               onclick={(e) => {
                 e.stopPropagation();
+                // The button goes with the news; keep the reader's place.
+                e.currentTarget.closest<HTMLElement>('.discussion-panel')?.focus();
                 onMarkConnectionsSeen?.();
               }}>Mark as seen</button
             >

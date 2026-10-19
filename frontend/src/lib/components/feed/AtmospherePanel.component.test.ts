@@ -74,6 +74,7 @@ function render(
     isConnectionSaved?: (url: string) => boolean;
     onCreateConnection?: () => void;
     connectionsNewSince?: number | null;
+    newConnections?: number;
     onMarkConnectionsSeen?: () => void;
     viewerDid?: string;
   },
@@ -93,6 +94,7 @@ function render(
       isConnectionSaved: props.isConnectionSaved,
       onCreateConnection: props.onCreateConnection,
       connectionsNewSince: props.connectionsNewSince,
+      newConnections: props.newConnections,
       onMarkConnectionsSeen: props.onMarkConnectionsSeen,
       viewerDid: props.viewerDid,
     },
@@ -313,22 +315,25 @@ describe('AtmospherePanel Semble connections', () => {
     expect(rows[1].querySelector('.connection-new')).toBeNull();
   });
 
-  it('offers to mark the new connections seen, and only when there are some', () => {
+  it('offers to mark the new connections seen, counted as the badge counts them', () => {
     let cleared = 0;
-    const fresh = { ...connection('in'), createdAt: '2026-03-01T00:00:00Z' };
+    // Semble dates this edge before the last look; the badge still counts it,
+    // so the reader can still clear it here.
+    const late = { ...connection('in'), createdAt: '2026-01-01T00:00:00Z' };
     const target = render({
-      sembleContext: { ...emptyContext, connections: [fresh] },
+      sembleContext: { ...emptyContext, connections: [late] },
       connectionsNewSince: Date.parse('2026-02-01T00:00:00Z'),
+      newConnections: 2,
       onMarkConnectionsSeen: () => cleared++,
     });
-    expect(target.querySelector('.connections-news-count')?.textContent).toBe('1 new');
+    expect(target.querySelector('.connections-news-count')?.textContent).toBe('2 new');
     target.querySelector<HTMLButtonElement>('.connections-news-clear')?.click();
     expect(cleared).toBe(1);
 
     const nothingNew = render(
       {
-        sembleContext: { ...emptyContext, connections: [fresh] },
-        connectionsNewSince: Date.parse('2026-04-01T00:00:00Z'),
+        sembleContext: { ...emptyContext, connections: [late] },
+        newConnections: 0,
         onMarkConnectionsSeen: () => cleared++,
       },
       'connections'

@@ -80,10 +80,15 @@
   // behind the badge; the edges Skyreader already holds fill the gap.
   let localConnections = $derived(savedItem ? savedConnectionsStore.newest(savedItem.rkey) : []);
   let curatorProfiles = $state<Map<string, BlueskyProfile>>(new Map());
+  // Asked once each: a DID the appview doesn't know shouldn't be asked again.
+  const askedCurators = new Set<string>();
   $effect(() => {
     const dids = [...new Set(localConnections.map((c) => c.curatorDid))];
-    const missing = untrack(() => dids.filter((did) => !curatorProfiles.has(did)));
+    const missing = untrack(() =>
+      dids.filter((did) => !askedCurators.has(did) && !curatorProfiles.has(did))
+    );
     if (missing.length === 0) return;
+    for (const did of missing) askedCurators.add(did);
     profileService
       .getProfiles(missing)
       .then((found) => {
@@ -273,6 +278,7 @@
       onCreateConnection={auth.user && itemUrl ? createConnection : undefined}
       isConnectionSaved={(url) => savesStore.isSaved(url)}
       {connectionsNewSince}
+      newConnections={savedItem ? savedConnectionsStore.unseen(savedItem.rkey) : 0}
       onMarkConnectionsSeen={savedItem
         ? () => savedConnectionsStore.markSeen(savedItem.rkey)
         : undefined}

@@ -6,7 +6,7 @@ import { cleanupSembleConnection, seedSavedArticle, seedSembleConnection } from 
 // Shelf whose tiles say who connected what, and both stay until the reader
 // marks them seen in the save's discussion.
 test.describe('Semble connections on saves', () => {
-  test('a new connection badges the save until the reader opens it', async ({
+  test('a new connection badges the save until the reader marks it seen', async ({
     authedPage,
     testUser,
   }) => {
@@ -44,7 +44,7 @@ test.describe('Semble connections on saves', () => {
       // the new one there (from Skyreader's own record, ahead of Semble's index),
       // until the reader marks it seen.
       await lane.getByText('A Connected Essay').click();
-      const markSeen = authedPage.getByRole('button', { name: 'Mark as seen' });
+      const markSeen = authedPage.getByRole('button', { name: /as seen/ });
       await expect(markSeen).toBeVisible({ timeout: 15_000 });
       await expect(
         authedPage.locator('.connection-row', { hasText: 'elsewhere.example' }).first()
