@@ -62,6 +62,7 @@ const baseSave: SaveRow = {
   record_uri: 'at://did:plc:me/app.skyreader.feed.saved/3mwhuiodre72s',
   url: 'https://example.com/post',
   url_normalized: null,
+  url_key: null,
   title: 'A post',
   author: null,
   description: '',
@@ -139,6 +140,7 @@ describe('saves', () => {
       {
         ...baseSave,
         url_normalized: 'example.com/post',
+        url_key: 'https://example.com/post',
         author: 'Ada',
         image: 'https://example.com/i.png',
         updated_at: 1767312999000,

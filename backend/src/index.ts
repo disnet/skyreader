@@ -105,6 +105,7 @@ import {
   handleGetSnapshotImage,
 } from './routes/saved';
 import { handleShelfCollections } from './routes/shelf';
+import { handleSavedConnections } from './routes/saved-connections';
 import { handleExport } from './routes/export';
 import {
   handleGetSavedAsset,
@@ -820,6 +821,12 @@ async function route(
     case url.pathname === '/api/saved/updates':
       if (!session) return unauthorizedResponse(headers);
       response = await handleGetSavedUpdates(request, env);
+      break;
+    // Semble connections drawn off the reader's saves (routes/saved-connections.ts)
+    case url.pathname === '/api/saved/connections' ||
+      url.pathname === '/api/saved/connections/seen':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleSavedConnections(request, env, session.did);
       break;
     // Uploaded PDFs and EPUBs (Supporter) — routes/saved-pdf.ts
     case url.pathname === '/api/saved/pdf':

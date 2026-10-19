@@ -33,6 +33,8 @@
   import { shelfStore } from '$lib/stores/shelf.svelte';
   import { SHELF_KIND_LABEL, shelfKind } from '$lib/utils/shelf';
   import LibraryChip from '$lib/components/library/LibraryChip.svelte';
+  import ConnectionsBadge from '$lib/components/library/ConnectionsBadge.svelte';
+  import { savedConnectionsStore } from '$lib/stores/savedConnections.svelte';
   import { isFailedSaveBody } from '$lib/utils/saveAnywhere';
 
   let {
@@ -551,6 +553,7 @@
     return savesStore.find(itemKey) ?? (url ? savesStore.find(url) : undefined);
   });
   let onShelf = $derived(shelfSave ? shelfStore.isOnShelf(shelfSave) : false);
+  let newConnections = $derived(shelfSave ? savedConnectionsStore.unseen(shelfSave.rkey) : 0);
 
   let popoverMenuItems = $derived.by(() => {
     const items: {
@@ -723,6 +726,9 @@
               </span>
             {/if}
             <span class="meta-date">{formatRelativeDate(publishedAt)}</span>
+            {#if newConnections > 0}
+              <ConnectionsBadge count={newConnections} />
+            {/if}
             {#if onShelf}
               <LibraryChip label="On Shelf" title="Also on your Shelf" />
             {/if}

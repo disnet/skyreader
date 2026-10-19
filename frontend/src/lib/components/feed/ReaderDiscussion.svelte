@@ -13,6 +13,7 @@
   import { integrationSaveStore } from '$lib/stores/integrationSave.svelte';
   import { blueskyComposerStore } from '$lib/stores/blueskyComposer.svelte';
   import { sembleConnectionStore } from '$lib/stores/sembleConnection.svelte';
+  import { savedConnectionsStore } from '$lib/stores/savedConnections.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
   import { useAtmosphere } from '$lib/hooks/useAtmosphere.svelte';
   import { getExternalArticleLink } from '$lib/utils/linkPost';
@@ -57,6 +58,19 @@
   $effect(() => {
     if (linkPostUrl) linkPostContentStore.fetch(linkPostUrl);
   });
+
+  // Opening a save with new Semble connections clears its badge, and the
+  // discussion then opens on Connections with those marked. Only in the
+  // fullscreen reader (`eager`): the daily magazine stacks many readers on one
+  // page, and scrolling past one isn't looking at it. Tracked, so a list that
+  // loads after the reader opened still lands here.
+  let savedRkey = $derived(eager && readerItem.type === 'saved' ? readerItem.item.rkey : null);
+  $effect(() => {
+    if (eager && readerItem.type === 'saved') {
+      savedConnectionsStore.open(readerItem.item.rkey, readerItem.item.savedAt);
+    }
+  });
+  let connectionsNewSince = $derived(savedRkey ? savedConnectionsStore.newSince(savedRkey) : null);
 
   let linkPostArticle = $derived(
     linkPostUrl && readerItem.type === 'document'
@@ -230,6 +244,8 @@
       onSaveConnection={auth.user ? toggleSavedLink : undefined}
       onCreateConnection={auth.user && itemUrl ? createConnection : undefined}
       isConnectionSaved={(url) => savesStore.isSaved(url)}
+      {connectionsNewSince}
+      viewerDid={auth.user?.did}
       composeLead={canShareLinkblog ? shareControl : undefined}
     />
   </section>

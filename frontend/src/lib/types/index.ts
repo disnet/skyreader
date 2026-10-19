@@ -1329,6 +1329,32 @@ export interface SavedItem {
   coverPath?: string | null;
 }
 
+// Semble connections other people drew off one save (GET /api/saved/connections).
+// Only saves with at least one appear. Times are ms.
+export interface SavedConnectionActivity {
+  rkey: string;
+  /** Connections since the reader last looked, or since they saved it. */
+  unseen: number;
+  latestAt: number;
+  /** When the reader last looked, or null if never. */
+  seenAt: number | null;
+  /** The newest few of the unseen connections, newest first. */
+  newest: SavedConnectionDetail[];
+}
+
+// One connection someone else drew off a save, for the Shelf's New connections.
+export interface SavedConnectionDetail {
+  uri: string;
+  curatorDid: string;
+  /** 'out': the save is the connection's source; 'in': its target. */
+  direction: 'out' | 'in';
+  otherUrl: string;
+  type: string | null;
+  note: string | null;
+  /** When Skyreader saw it (ms), which is what "new" goes by. */
+  indexedAt: number;
+}
+
 // A Shelf collection: a private, ordered group of saves (GET /api/shelf/collections).
 // Members reference the save by rkey. See docs/plans/SHELF_PLAN.md.
 export interface ShelfCollectionItem {

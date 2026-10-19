@@ -9,7 +9,7 @@ import { savedAtMs } from './savedPile';
 
 export type ShelfKind = 'book' | 'pdf' | 'article';
 export type ShelfKindFilter = 'all' | ShelfKind;
-export type ShelfSort = 'activity' | 'saved' | 'title' | 'author' | 'collection';
+export type ShelfSort = 'activity' | 'connected' | 'saved' | 'title' | 'author' | 'collection';
 
 export function shelfKind(save: Pick<SavedItem, 'contentType'>): ShelfKind {
   if (save.contentType === 'epub') return 'book';
@@ -53,6 +53,8 @@ export interface ShelfEntry {
   /** epoch ms of the last read activity, 0 when never opened */
   lastActivityAt: number;
   progress: number | null;
+  /** epoch ms of the newest Semble connection someone drew off it, 0 when none */
+  connectedAt?: number;
 }
 
 /** Title (else URL/domain), lowercased and stripped of a leading article. */
@@ -108,6 +110,14 @@ export function sortShelf<T extends ShelfEntry>(entries: T[], sort: ShelfSort): 
         // Opened most recently first, then never-opened by newest save.
         const diff = b.entry.lastActivityAt - a.entry.lastActivityAt;
         if (diff !== 0) return diff;
+        return savedAtMs(b.entry.save) - savedAtMs(a.entry.save);
+      }
+      case 'connected': {
+        // Most recently connected first; the rest as Recently read orders them.
+        const diff = (b.entry.connectedAt ?? 0) - (a.entry.connectedAt ?? 0);
+        if (diff !== 0) return diff;
+        const opened = b.entry.lastActivityAt - a.entry.lastActivityAt;
+        if (opened !== 0) return opened;
         return savedAtMs(b.entry.save) - savedAtMs(a.entry.save);
       }
       case 'saved':

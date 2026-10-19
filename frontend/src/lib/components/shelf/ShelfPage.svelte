@@ -19,6 +19,7 @@
   import NotificationList from '$lib/components/NotificationList.svelte';
   import ShelfItem from './ShelfItem.svelte';
   import LibraryIntro from '$lib/components/library/LibraryIntro.svelte';
+  import NewConnections from '$lib/components/library/NewConnections.svelte';
   import HomeLane from '$lib/components/feed/HomeLane.svelte';
   import type { LaneCardVM } from '$lib/components/feed/homeLane';
   import { savedCoverUrl } from '$lib/services/api';
@@ -28,6 +29,7 @@
   import { shelfStore } from '$lib/stores/shelf.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
+  import { savedConnectionsStore } from '$lib/stores/savedConnections.svelte';
   import {
     isSavedRowArchived,
     setSavedRowArchived,
@@ -110,6 +112,7 @@
       save,
       lastActivityAt: activity?.lastActivityAt ?? 0,
       progress: progressFraction(activity?.progress),
+      connectedAt: savedConnectionsStore.latestAt(save.rkey),
     };
   }
 
@@ -147,6 +150,20 @@
       };
     })
   );
+
+  // New connections: saves anywhere in the Library — Queue or Shelf — that other
+  // people drew Semble connections off since the reader last looked, newest
+  // first, each with who connected it to what. Semble's notification feed,
+  // grouped by the thing it's about. Opening one clears it, so the section
+  // empties as it's read.
+  let connectedSaves = $derived.by(() => {
+    if (collection || kind !== 'all' || query.trim()) return [];
+    const byRkey = new Map(savesStore.articles.map((save) => [save.rkey, save]));
+    return savedConnectionsStore.items
+      .filter((activity) => activity.unseen > 0 && byRkey.has(activity.rkey))
+      .sort((a, b) => b.latestAt - a.latestAt)
+      .map((activity) => ({ save: byRkey.get(activity.rkey)!, activity }));
+  });
 
   let loadedCount = $state(PAGE_SIZE);
   let displayed = $derived(entries.slice(0, loadedCount));
@@ -239,6 +256,7 @@
 
   $effect(() => {
     void shelfStore.load();
+    void savedConnectionsStore.load();
   });
 
   // --- Mobile chrome, matching the other top-level pages ---
@@ -404,6 +422,14 @@
       />
     {/if}
 
+    {#if connectedSaves.length > 0}
+      <NewConnections
+        entries={connectedSaves}
+        onOpen={open}
+        onHover={(save) => void savesStore.prefetchContent(save.rkey)}
+      />
+    {/if}
+
     {#if allEntries.length > 0}
       <div class="controls-wrap">
         <div class="controls">
@@ -432,6 +458,7 @@
           >
             {#if collection}<option value="collection">Collection order</option>{/if}
             <option value="activity">Recently read</option>
+            <option value="connected">Recently connected</option>
             <option value="saved">Recently saved</option>
             <option value="title">Title</option>
             <option value="author">Author</option>
@@ -455,7 +482,7 @@
         />
       {/if}
     {:else}
-      {#if !collection && inProgress.length > 0}
+      {#if !collection && (inProgress.length > 0 || connectedSaves.length > 0)}
         <h2 class="section-label">Everything</h2>
       {/if}
       <div class={view === 'grid' ? 'grid' : 'list'}>

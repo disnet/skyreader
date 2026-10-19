@@ -107,38 +107,39 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed documentation.
 
 ### Routes
 
-| File                          | Purpose                                                    |
-| ----------------------------- | ---------------------------------------------------------- |
-| `src/routes/auth.ts`          | OAuth flow (login, upgrade, callback, logout, metadata)    |
-| `src/routes/timeline.ts`      | `GET /api/v2/timeline` — the whole refresh, one query      |
-| `src/routes/ingest.ts`        | Crawler endpoints: item ingest, crawl set, feed health     |
-| `src/routes/documents.ts`     | Document backfill + proxy-vs-D1 shadow compare (internal)  |
-| `src/routes/feeds-v2.ts`      | Single-feed read (D1 + pull-through), discover, docs       |
-| `src/routes/social.ts`        | Social feed, popular, grouped, detect-content              |
-| `src/routes/shares.ts`        | User shares CRUD (with PDS sync)                           |
-| `src/routes/subscriptions.ts` | Subscription CRUD (with PDS sync)                          |
-| `src/routes/records.ts`       | PDS record listing                                         |
-| `src/routes/reading.ts`       | Article + document read positions (forward delta)          |
-| `src/routes/labels.ts`        | Unified item labels (read/starred/archived/tags)           |
-| `src/routes/saved.ts`         | Saved articles CRUD                                        |
-| `src/routes/saved-pdf.ts`     | PDFs + EPUBs (Supporter): upload, kept originals, cleanup  |
-| `src/routes/shelf.ts`         | Shelf collections: private, ordered groups of saves        |
-| `src/routes/export.ts`        | `GET /api/export` — saves + highlights as Markdown/BibTeX  |
-| `src/routes/recommends.ts`    | One-tap public recommends (+ standard.site copy)           |
-| `src/routes/integrations.ts`  | Semble/Margin writes to the user's PDS                     |
-| `src/routes/settings.ts`      | User settings                                              |
-| `src/routes/sync.ts`          | PDS full sync, subscription sync, sync status              |
-| `src/routes/lexicons.ts`      | Serve lexicon schemas at /.well-known/lexicons             |
-| `src/routes/health.ts`        | `/api/health` (shallow) + `/api/health/deep` (gated)       |
-| `src/routes/telemetry.ts`     | `/api/telemetry/error` — sampled client error reports      |
-| `src/routes/vitals.ts`        | `/api/telemetry/vitals` — field vitals → daily histograms  |
-| `src/routes/guest.ts`         | `/api/guest/*` — the unauthenticated reading surface       |
-| `src/routes/feedback.ts`      | `/api/v2/feedback` — userinput.app board read + post       |
-| `src/routes/newsletters.ts`   | `/api/newsletters/*` — newsletter address + blocked list   |
-| `src/routes/search.ts`        | `GET /api/search` — full-text search (Supporter)           |
-| `src/routes/bsky-sources.ts`  | `/api/v2/bluesky-sources` — Bluesky likes/bookmarks on/off |
-| `src/routes/channel-items.ts` | `GET /api/channels/:uuid/items` — saved-search matches     |
-| `src/routes/channels.ts`      | Channel sync; `PUT /api/channels/order` alone moves a row  |
+| File                              | Purpose                                                    |
+| --------------------------------- | ---------------------------------------------------------- |
+| `src/routes/auth.ts`              | OAuth flow (login, upgrade, callback, logout, metadata)    |
+| `src/routes/timeline.ts`          | `GET /api/v2/timeline` — the whole refresh, one query      |
+| `src/routes/ingest.ts`            | Crawler endpoints: item ingest, crawl set, feed health     |
+| `src/routes/documents.ts`         | Document backfill + proxy-vs-D1 shadow compare (internal)  |
+| `src/routes/feeds-v2.ts`          | Single-feed read (D1 + pull-through), discover, docs       |
+| `src/routes/social.ts`            | Social feed, popular, grouped, detect-content              |
+| `src/routes/shares.ts`            | User shares CRUD (with PDS sync)                           |
+| `src/routes/subscriptions.ts`     | Subscription CRUD (with PDS sync)                          |
+| `src/routes/records.ts`           | PDS record listing                                         |
+| `src/routes/reading.ts`           | Article + document read positions (forward delta)          |
+| `src/routes/labels.ts`            | Unified item labels (read/starred/archived/tags)           |
+| `src/routes/saved.ts`             | Saved articles CRUD                                        |
+| `src/routes/saved-pdf.ts`         | PDFs + EPUBs (Supporter): upload, kept originals, cleanup  |
+| `src/routes/shelf.ts`             | Shelf collections: private, ordered groups of saves        |
+| `src/routes/saved-connections.ts` | Semble connections other people drew off saves (badges)    |
+| `src/routes/export.ts`            | `GET /api/export` — saves + highlights as Markdown/BibTeX  |
+| `src/routes/recommends.ts`        | One-tap public recommends (+ standard.site copy)           |
+| `src/routes/integrations.ts`      | Semble/Margin writes to the user's PDS                     |
+| `src/routes/settings.ts`          | User settings                                              |
+| `src/routes/sync.ts`              | PDS full sync, subscription sync, sync status              |
+| `src/routes/lexicons.ts`          | Serve lexicon schemas at /.well-known/lexicons             |
+| `src/routes/health.ts`            | `/api/health` (shallow) + `/api/health/deep` (gated)       |
+| `src/routes/telemetry.ts`         | `/api/telemetry/error` — sampled client error reports      |
+| `src/routes/vitals.ts`            | `/api/telemetry/vitals` — field vitals → daily histograms  |
+| `src/routes/guest.ts`             | `/api/guest/*` — the unauthenticated reading surface       |
+| `src/routes/feedback.ts`          | `/api/v2/feedback` — userinput.app board read + post       |
+| `src/routes/newsletters.ts`       | `/api/newsletters/*` — newsletter address + blocked list   |
+| `src/routes/search.ts`            | `GET /api/search` — full-text search (Supporter)           |
+| `src/routes/bsky-sources.ts`      | `/api/v2/bluesky-sources` — Bluesky likes/bookmarks on/off |
+| `src/routes/channel-items.ts`     | `GET /api/channels/:uuid/items` — saved-search matches     |
+| `src/routes/channels.ts`          | Channel sync; `PUT /api/channels/order` alone moves a row  |
 
 **Email newsletters** (Supporter) arrive through the Worker's `email()` handler, not HTTP:
 Cloudflare Email Routing hands it mail for `NEWSLETTER_EMAIL_DOMAIN`, and each message becomes a
@@ -390,6 +391,9 @@ Key tables:
   rkey); private, never on the PDS. See `docs/plans/SHELF_PLAN.md`
 - `social_read_positions_cache` - Legacy social read tracking (superseded; document
   reads now live in `item_labels_cache` as `item_type='document'`/`label='read'`)
+- `semble_connections` / `semble_connection_seen` - Semble connections (`network.cosmik.connection`)
+  the poller kept because an end is someone's save, and when each reader last looked. See
+  `docs/plans/SEMBLE_CONNECTIONS.md`
 - `user_settings` - User preferences
 - `rate_limits` - Per-user rate limiting
 - `sync_state` - Jetstream cursor, the archive generation token, the crawler heartbeat,

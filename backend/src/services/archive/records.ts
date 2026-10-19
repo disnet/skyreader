@@ -155,6 +155,7 @@ export interface SaveRow {
   record_uri: string | null;
   url: string;
   url_normalized: string | null;
+  url_key: string | null;
   title: string | null;
   author: string | null;
   description: string | null;
@@ -191,6 +192,7 @@ const SAVE_FIELDS: ColumnSpec<Omit<SaveRow, 'rkey'>>[] = [
   ['record_uri', 'legacyUri', 'string'],
   ['url', 'url', 'string', 'required'],
   ['url_normalized', 'urlNormalized', 'string'],
+  ['url_key', 'urlKey', 'string'],
   ['title', 'title', 'string'],
   ['author', 'author', 'string'],
   ['description', 'description', 'string'],

@@ -145,14 +145,15 @@ export async function pollBackedMembership(
     batch.push(
       env.DB.prepare(
         `INSERT INTO saved_articles
-           (user_did, rkey, record_uri, url, url_normalized, title, author, description, image,
-            content_type, source, item_guid, saved_at, created_at)
-         VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, 'webpage', 'url', ?, ?, ?)
+           (user_did, rkey, record_uri, url, url_normalized, url_key, title, author, description,
+            image, content_type, source, item_guid, saved_at, created_at)
+         VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, 'webpage', 'url', ?, ?, ?)
          ON CONFLICT(user_did, url_normalized) DO NOTHING`
       ).bind(
         userDid,
         generateTid(),
         m.url,
+        m.urlNormalized,
         m.urlNormalized,
         m.title ?? null,
         m.author ?? null,
