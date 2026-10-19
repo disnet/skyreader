@@ -14,11 +14,7 @@ import type { Env, FeedItem } from '../types';
 import { ALL_TIERS, getLimitsForTier } from '../config/tier-limits';
 import { parseSearchQuery } from './search-query';
 import { isNewsletterSubscription } from './newsletters';
-import {
-  BSKY_BOOKMARKS_SOURCE_TYPE,
-  BSKY_LIKES_SOURCE_TYPE,
-  parseBskySourceFeedUrl,
-} from './bsky-sources';
+import { BSKY_BOOKMARKS_SOURCE_TYPE, BSKY_LIKES_SOURCE_TYPE } from './bsky-sources';
 import { itemBodyKey } from '../routes/item-bodies';
 import { htmlToText, stripControlChars, truncateText } from '../utils/html-text';
 import { normalizeArticleUrl } from '../utils/url-normalize';
@@ -338,9 +334,14 @@ function sourceKeyOf(sub: SubscriptionRow): string | null {
  */
 function groupKeysOf(sub: SubscriptionRow): string[] {
   if (isNewsletterSubscription(sub.feed_url, sub.source_type)) return ['group~newsletters'];
-  const bsky = parseBskySourceFeedUrl(sub.feed_url)?.kind;
-  if (bsky === 'likes' || sub.source_type === BSKY_LIKES_SOURCE_TYPE) return ['group~likes'];
-  if (bsky === 'bookmarks' || sub.source_type === BSKY_BOOKMARKS_SOURCE_TYPE) {
+  // In the frontend's order (bskySourceKind): the type first, then the URL.
+  if (sub.source_type === BSKY_LIKES_SOURCE_TYPE || sub.feed_url.startsWith('bsky-likes:')) {
+    return ['group~likes'];
+  }
+  if (
+    sub.source_type === BSKY_BOOKMARKS_SOURCE_TYPE ||
+    sub.feed_url.startsWith('bsky-bookmarks:')
+  ) {
     return ['group~bookmarks'];
   }
   const isDocuments = sub.source_type === 'atproto.documents';
@@ -373,6 +374,7 @@ export function resolveQueryScope(
   followsInEverything = false
 ): { feedUrls: Set<string>; docScopes: DocScope[]; coversFollows: boolean } {
   const keys = new Set(sourceKeys);
+  const namesGroups = sourceKeys.some((k) => k.startsWith('group~'));
   const followsNamed = keys.has(FOLLOWS_SOURCE_KEY);
   const coversFollows =
     sourceMode === 'all'
@@ -390,7 +392,7 @@ export function resolveQueryScope(
     const named =
       keys.has(key) ||
       (legacyDocKey !== null && keys.has(legacyDocKey)) ||
-      groupKeysOf(sub).some((g) => keys.has(g));
+      (namesGroups && groupKeysOf(sub).some((g) => keys.has(g)));
     const included = sourceMode === 'all' ? true : sourceMode === 'include' ? named : !named;
     if (!included) continue;
     if (isFeedSubscription(sub)) {

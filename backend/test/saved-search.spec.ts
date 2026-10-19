@@ -346,6 +346,33 @@ describe('resolveQueryScope', () => {
     const folder = resolveQueryScope('include', ['group~category~Energy'], filed);
     expect([...folder.feedUrls]).toEqual([FEED]);
     expect(folder.docScopes).toEqual([]);
+    const bsky = [
+      ...filed,
+      {
+        ...subs[0],
+        record_uri: 'at://d/c/r4',
+        feed_url: 'bsky-likes:d',
+        source_type: 'bsky.likes',
+      },
+      {
+        ...subs[0],
+        record_uri: 'at://d/c/r5',
+        feed_url: 'bsky-bookmarks:d',
+        source_type: 'bsky.bookmarks',
+      },
+    ];
+    expect([...resolveQueryScope('include', ['group~likes'], bsky).feedUrls]).toEqual([
+      'bsky-likes:d',
+    ]);
+    expect([...resolveQueryScope('include', ['group~bookmarks'], bsky).feedUrls]).toEqual([
+      'bsky-bookmarks:d',
+    ]);
+    expect([...resolveQueryScope('include', ['group~publications'], bsky).feedUrls]).toEqual([
+      FEED,
+    ]);
+    const docsOnly = resolveQueryScope('include', ['group~documents'], bsky);
+    expect([...docsOnly.feedUrls]).toEqual([]);
+    expect(docsOnly.docScopes).toHaveLength(1);
     const notFeeds = resolveQueryScope('exclude', ['group~feeds'], filed);
     expect([...notFeeds.feedUrls]).toEqual(['newsletter:1/x@y']);
     expect(notFeeds.docScopes).toHaveLength(1);
