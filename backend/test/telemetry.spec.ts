@@ -1,6 +1,6 @@
 import { SELF } from 'cloudflare:test';
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { fingerprintMessage } from '../src/routes/telemetry';
+import { fingerprintMessage, isCrawler } from '../src/routes/telemetry';
 
 // Phase 3: the client can finally say "I broke". Everything it says is untrusted,
 // so these pin the boundary — what is accepted, what is capped, and what never
@@ -56,6 +56,18 @@ describe('POST /api/telemetry/error', () => {
     });
     // Correlatable with the rest of the request, like every other line.
     expect(line!.requestId).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it("logs a crawler's report but marks it, so it stays out of Sentry", async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const response = await post(report({ kind: 'preload_recovery_failed' }), {
+      'User-Agent':
+        'Mozilla/5.0 (Linux; Android 6.0.1; Nexus 5X Build/MMB29P) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.8010.52 Mobile Safari/537.36 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)',
+    });
+
+    expect(response.status).toBe(204);
+    expect(clientErrorLine(warn)).toMatchObject({ kind: 'preload_recovery_failed', crawler: true });
   });
 
   it('rejects a kind it does not recognise', async () => {
@@ -130,6 +142,33 @@ describe('POST /api/telemetry/error', () => {
 // message splits one bug across many issues. These are the real messages that
 // did it: ten `unread_count_drift` issues in a day, a fresh chunk-load issue per
 // deploy, and "0s"/"1s" filed apart.
+describe('isCrawler', () => {
+  it('names the crawlers that replay stale builds', () => {
+    expect(
+      isCrawler('Mozilla/5.0 (compatible; bingbot/2.0; +http://www.bing.com/bingbot.htm)')
+    ).toBe(true);
+    expect(
+      isCrawler(
+        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 HeadlessChrome/120.0 Safari/537.36'
+      )
+    ).toBe(true);
+  });
+
+  it('leaves real browsers alone, including phones whose name contains "bot"', () => {
+    expect(
+      isCrawler(
+        'Mozilla/5.0 (Linux; Android 10; CUBOT X30) AppleWebKit/537.36 Chrome/120.0 Mobile Safari/537.36'
+      )
+    ).toBe(false);
+    expect(
+      isCrawler(
+        'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1'
+      )
+    ).toBe(false);
+    expect(isCrawler(null)).toBe(false);
+  });
+});
+
 describe('fingerprintMessage', () => {
   const groupsTogether = (...messages: string[]) =>
     new Set(messages.map(fingerprintMessage)).size === 1;
