@@ -3,8 +3,8 @@
   // saves since they last looked, as a lane with one tile per save. Each tile
   // says what happened — who linked it to what, and their note — for the newest
   // connection, and counts the rest. Semble's notification feed, attached to the
-  // thing it's news about (stores/savedConnections.svelte.ts). Opening the save
-  // reads them all and clears it from here.
+  // thing it's news about (stores/savedConnections.svelte.ts). A tile stays
+  // until the reader marks it seen, in the save's discussion or all at once here.
   import { untrack } from 'svelte';
   import Icon from '$lib/components/Icon.svelte';
   import HomeLane from '$lib/components/feed/HomeLane.svelte';
@@ -26,9 +26,11 @@
     entries: Entry[];
     onOpen: (save: SavedItem) => void;
     onHover?: (save: SavedItem) => void;
+    /** Clear every save's new connections. */
+    onClearAll?: () => void;
   }
 
-  let { entries, onOpen, onHover }: Props = $props();
+  let { entries, onOpen, onHover, onClearAll }: Props = $props();
 
   let byKey = $derived(new Map(entries.map((entry) => [entry.save.rkey, entry])));
   // HomeLane wants view-models for its keys and its label; the tiles below draw
@@ -172,6 +174,7 @@
   {items}
   card={tile}
   resetOnChange={false}
+  action={onClearAll ? { kind: 'button', label: 'Mark all seen', onClick: onClearAll } : undefined}
   onOpen={(vm) => {
     const entry = byKey.get(vm.key);
     if (entry) onOpen(entry.save);

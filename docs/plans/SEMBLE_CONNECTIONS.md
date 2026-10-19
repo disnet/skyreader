@@ -5,7 +5,7 @@
 Semble's notification feed shows the connections other people draw off the cards you have. That's
 news about something you already keep, so in Skyreader it belongs on the item, not in a feed of its
 own. A save shows a quiet **new** mark when someone connects something to it, the Shelf gathers
-those saves under **New connections**, and opening the save clears the mark.
+those saves under **New connections**, and the mark stays until the reader marks it seen.
 
 ## Data
 
@@ -50,13 +50,18 @@ through `HomeLane`'s `card` snippet): one tile per save, saying who linked it to
 connection, with their note and a count of the rest. Curator names come from the public appview
 (`profileService`), and the other end is labelled from its URL (`utils/connectionLabels.ts`), since
 the poller keeps no title. It also adds a **Recently connected** sort.
-Opening a save in the fullscreen reader clears its mark and hands `AtmospherePanel` the time "new" is
-measured from, so the discussion opens on **Connections** with the new edges first and marked.
+Opening a save in the fullscreen reader hands `AtmospherePanel` the time "new" is measured from, so
+the discussion opens on **Connections** with the new edges first and marked. Opening doesn't clear:
+the panel's **Mark as seen** clears one save, and the lane's **Mark all seen** clears them all.
+The panel's connections come from Semble through the feed proxy's cache, which can lag the poller,
+so the reader also merges the save's `newest` edges into them (`utils/localSembleConnections.ts`,
+deduped by curator, direction and URL); a cleared save keeps them for the rest of the session.
 
 ## Known gaps
 
 - Matching is on `saved_articles` rows, so a backed save with no enrichment row yet gets no badge.
-- Only the fullscreen reader clears a mark; a save read in the daily magazine keeps it.
+- Only the fullscreen reader can clear one save's mark; a save read in the daily magazine keeps it
+  until **Mark all seen**.
 - "New" in the panel compares the record's `createdAt` with the last look, while the badge counts
   by `indexed_at`; the two agree except for records published late.
 - Later: a connections section in the periodic reading brief (atplan, "A periodic reading brief,

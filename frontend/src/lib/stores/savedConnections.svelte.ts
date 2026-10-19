@@ -1,5 +1,5 @@
 import { api } from '$lib/services/api';
-import type { SavedConnectionActivity } from '$lib/types';
+import type { SavedConnectionActivity, SavedConnectionDetail } from '$lib/types';
 import { auth } from './auth.svelte';
 import { syncStore } from './sync.svelte';
 
@@ -10,9 +10,9 @@ import { syncStore } from './sync.svelte';
  *
  * It isn't a feed: news about something you already have belongs on that thing.
  * Saved and Shelf cards show a quiet "new" mark, the Shelf can put recently
- * connected items first, and opening a save clears its mark and hands the
- * reader's discussion the time "new" is measured from, so it can open on the
- * Connections tab with the new ones marked.
+ * connected items first, and an opened save's discussion opens on Connections
+ * with the new ones marked. The mark stays until the reader clears it (in the
+ * discussion, or every save at once from the Shelf), not merely on opening.
  *
  * Online-only and uncached: the list is small, and a stale badge offline is
  * worse than none.
@@ -44,21 +44,21 @@ function sameActivity(
 
 function createSavedConnectionsStore() {
   let byRkey = $state<Map<string, SavedConnectionActivity>>(new Map());
-  // rkey → the moment "new" was measured from when the reader opened it this
-  // session (their previous look, or the save). Kept after the mark clears so
-  // the discussion can still say which connections were the new ones.
-  let openedSince = $state<Map<string, number>>(new Map());
-  // rkey → when the reader opened it here. A list fetched before that can't
-  // know about the look, and mustn't bring the badge back.
-  let openedAt = new Map<string, number>();
+  // rkey → the new connections a save had when the reader cleared it this
+  // session, so the discussion can keep showing them while Semble's own index
+  // (which the panel reads, through a cache) catches up.
+  let clearedNewest = $state<Map<string, SavedConnectionDetail[]>>(new Map());
+  // rkey → when the reader cleared it here. A list fetched before that can't
+  // know about it, and mustn't bring the badge back.
+  let clearedAt = new Map<string, number>();
   let loadedFor: string | null = null;
   let loadedAt = 0;
   let inFlight: { did: string; promise: Promise<void> } | null = null;
 
   function reset() {
     byRkey = new Map();
-    openedSince = new Map();
-    openedAt = new Map();
+    clearedNewest = new Map();
+    clearedAt = new Map();
     loadedFor = null;
   }
 
@@ -82,11 +82,11 @@ function createSavedConnectionsStore() {
         for (const raw of items) {
           // A backend from before `newest` sends none.
           const item = { ...raw, newest: raw.newest ?? [] };
-          const opened = openedAt.get(item.rkey);
+          const cleared = clearedAt.get(item.rkey);
           next.set(
             item.rkey,
-            opened !== undefined && opened >= startedAt
-              ? { ...item, unseen: 0, seenAt: opened, newest: [] }
+            cleared !== undefined && cleared >= startedAt
+              ? { ...item, unseen: 0, seenAt: cleared, newest: [] }
               : item
           );
         }
@@ -114,17 +114,34 @@ function createSavedConnectionsStore() {
   }
 
   /**
-   * The reader opened this save. If it had new connections, remember what they
-   * were new since and clear the mark here and on the server.
+   * What "new" means for this save's connections while it has any: the
+   * reader's last clear, or the save itself. Null once cleared. Opening a save
+   * doesn't clear it; the reader says when they're done (`markSeen`).
    */
-  function open(rkey: string, savedAt: string | null | undefined): void {
+  function newSince(rkey: string, savedAt: string | null | undefined): number | null {
+    const activity = byRkey.get(rkey);
+    if (!activity || activity.unseen === 0) return null;
+    if (activity.seenAt !== null) return activity.seenAt;
+    const saved = savedAt ? Date.parse(savedAt) : NaN;
+    return Number.isFinite(saved) ? saved : 0;
+  }
+
+  /** The new connections to show for this save: unseen ones, or the ones just cleared. */
+  function newest(rkey: string): SavedConnectionDetail[] {
+    const activity = byRkey.get(rkey);
+    if (activity && activity.unseen > 0) return activity.newest;
+    return clearedNewest.get(rkey) ?? [];
+  }
+
+  /** The reader is done with this save's new connections: clear them here and on the server. */
+  function markSeen(rkey: string): void {
     const activity = byRkey.get(rkey);
     if (!activity || activity.unseen === 0) return;
-    const saved = savedAt ? Date.parse(savedAt) : NaN;
-    const since = activity.seenAt ?? (Number.isFinite(saved) ? saved : 0);
-    openedSince = new Map(openedSince).set(rkey, since);
     const now = Date.now();
-    openedAt.set(rkey, now);
+    clearedAt.set(rkey, now);
+    if (activity.newest.length > 0) {
+      clearedNewest = new Map(clearedNewest).set(rkey, activity.newest);
+    }
     byRkey = new Map(byRkey).set(rkey, { ...activity, unseen: 0, seenAt: now, newest: [] });
     api.markSavedConnectionsSeen(rkey).catch((e) => {
       // The mark comes back on the next load; nothing to roll back here.
@@ -132,17 +149,21 @@ function createSavedConnectionsStore() {
     });
   }
 
-  /** What "new" means for this save's connections in the open reader, or null. */
-  function newSince(rkey: string): number | null {
-    return openedSince.get(rkey) ?? null;
+  /** Clear every save's new connections. */
+  function markAllSeen(): void {
+    for (const activity of [...byRkey.values()]) {
+      if (activity.unseen > 0) markSeen(activity.rkey);
+    }
   }
 
   return {
     load,
     unseen,
     latestAt,
-    open,
     newSince,
+    newest,
+    markSeen,
+    markAllSeen,
     /** Saves with connections by other people. */
     get items(): SavedConnectionActivity[] {
       return [...byRkey.values()];

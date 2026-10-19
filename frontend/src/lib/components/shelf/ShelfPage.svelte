@@ -154,8 +154,8 @@
   // New connections: saves anywhere in the Library — Queue or Shelf — that other
   // people drew Semble connections off since the reader last looked, newest
   // first, each with who connected it to what. Semble's notification feed,
-  // grouped by the thing it's about. Opening one clears it, so the section
-  // empties as it's read.
+  // grouped by the thing it's about. A save leaves the lane once the reader
+  // marks its connections seen.
   let connectedSaves = $derived.by(() => {
     if (collection || kind !== 'all' || query.trim()) return [];
     const byRkey = new Map(savesStore.articles.map((save) => [save.rkey, save]));
@@ -427,6 +427,7 @@
         entries={connectedSaves}
         onOpen={open}
         onHover={(save) => void savesStore.prefetchContent(save.rkey)}
+        onClearAll={() => savedConnectionsStore.markAllSeen()}
       />
     {/if}
 

@@ -74,6 +74,7 @@ function render(
     isConnectionSaved?: (url: string) => boolean;
     onCreateConnection?: () => void;
     connectionsNewSince?: number | null;
+    onMarkConnectionsSeen?: () => void;
     viewerDid?: string;
   },
   tab?: 'connections' | 'related'
@@ -92,6 +93,7 @@ function render(
       isConnectionSaved: props.isConnectionSaved,
       onCreateConnection: props.onCreateConnection,
       connectionsNewSince: props.connectionsNewSince,
+      onMarkConnectionsSeen: props.onMarkConnectionsSeen,
       viewerDid: props.viewerDid,
     },
   });
@@ -309,6 +311,29 @@ describe('AtmospherePanel Semble connections', () => {
     expect(rows[0].textContent).toContain('The new piece');
     expect(rows[0].querySelector('.connection-new')?.textContent).toBe('New');
     expect(rows[1].querySelector('.connection-new')).toBeNull();
+  });
+
+  it('offers to mark the new connections seen, and only when there are some', () => {
+    let cleared = 0;
+    const fresh = { ...connection('in'), createdAt: '2026-03-01T00:00:00Z' };
+    const target = render({
+      sembleContext: { ...emptyContext, connections: [fresh] },
+      connectionsNewSince: Date.parse('2026-02-01T00:00:00Z'),
+      onMarkConnectionsSeen: () => cleared++,
+    });
+    expect(target.querySelector('.connections-news-count')?.textContent).toBe('1 new');
+    target.querySelector<HTMLButtonElement>('.connections-news-clear')?.click();
+    expect(cleared).toBe(1);
+
+    const nothingNew = render(
+      {
+        sembleContext: { ...emptyContext, connections: [fresh] },
+        connectionsNewSince: Date.parse('2026-04-01T00:00:00Z'),
+        onMarkConnectionsSeen: () => cleared++,
+      },
+      'connections'
+    );
+    expect(nothingNew.querySelector('.connections-news')).toBeNull();
   });
 
   it('never marks the reader’s own connection as new', () => {

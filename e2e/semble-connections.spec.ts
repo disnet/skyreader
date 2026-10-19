@@ -3,7 +3,8 @@ import { cleanupSembleConnection, seedSavedArticle, seedSembleConnection } from 
 
 // Semble connections other people drew off a save: a quiet "new" badge on the
 // card in the Queue and on the Shelf, a New connections lane at the top of the
-// Shelf whose tiles say who connected what, and opening the save clears both.
+// Shelf whose tiles say who connected what, and both stay until the reader
+// marks them seen in the save's discussion.
 test.describe('Semble connections on saves', () => {
   test('a new connection badges the save until the reader opens it', async ({
     authedPage,
@@ -39,11 +40,21 @@ test.describe('Semble connections on saves', () => {
       await expect(lane.getByText('supports')).toBeVisible();
       await expect(lane.getByText('Picks up the argument where the essay stops.')).toBeVisible();
 
+      // Opening the save keeps the news: its discussion opens on Connections with
+      // the new one there (from Skyreader's own record, ahead of Semble's index),
+      // until the reader marks it seen.
+      await lane.getByText('A Connected Essay').click();
+      const markSeen = authedPage.getByRole('button', { name: 'Mark as seen' });
+      await expect(markSeen).toBeVisible({ timeout: 15_000 });
+      await expect(
+        authedPage.locator('.connection-row', { hasText: 'elsewhere.example' }).first()
+      ).toBeVisible();
       const seen = authedPage.waitForResponse(
         (r) => r.url().includes('/api/saved/connections/seen') && r.request().method() === 'POST'
       );
-      await lane.getByText('A Connected Essay').click();
+      await markSeen.click();
       expect((await seen).ok()).toBe(true);
+      await expect(markSeen).toHaveCount(0);
 
       // Back on the Queue the badge is gone, and stays gone after a reload.
       await authedPage.goto('/saved');

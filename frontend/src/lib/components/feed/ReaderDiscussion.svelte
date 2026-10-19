@@ -1,5 +1,6 @@
 <script lang="ts">
-  import type { Article } from '$lib/types';
+  import { untrack } from 'svelte';
+  import type { Article, BlueskyProfile } from '$lib/types';
   import type { FeedDisplayItem } from '$lib/stores/feedView.svelte';
   import type { LaneId } from '$lib/components/articleCardView.types';
   import { auth } from '$lib/stores/auth.svelte';
@@ -14,6 +15,8 @@
   import { blueskyComposerStore } from '$lib/stores/blueskyComposer.svelte';
   import { sembleConnectionStore } from '$lib/stores/sembleConnection.svelte';
   import { savedConnectionsStore } from '$lib/stores/savedConnections.svelte';
+  import { profileService } from '$lib/services/profiles';
+  import { withLocalConnections } from '$lib/utils/localSembleConnections';
   import { preferences } from '$lib/stores/preferences.svelte';
   import { useAtmosphere } from '$lib/hooks/useAtmosphere.svelte';
   import { getExternalArticleLink } from '$lib/utils/linkPost';
@@ -59,18 +62,40 @@
     if (linkPostUrl) linkPostContentStore.fetch(linkPostUrl);
   });
 
-  // Opening a save with new Semble connections clears its badge, and the
-  // discussion then opens on Connections with those marked. Only in the
-  // fullscreen reader (`eager`): the daily magazine stacks many readers on one
-  // page, and scrolling past one isn't looking at it. Tracked, so a list that
-  // loads after the reader opened still lands here.
-  let savedRkey = $derived(eager && readerItem.type === 'saved' ? readerItem.item.rkey : null);
+  // A save with new Semble connections opens its discussion on Connections with
+  // those marked, and they stay marked until the reader clears them there. Only
+  // in the fullscreen reader (`eager`): the daily magazine stacks many readers
+  // on one page, and scrolling past one isn't looking at it. Opening one
+  // refreshes the list (at most once a minute), so news that came in while the
+  // reader was elsewhere lands here too.
+  let savedItem = $derived(eager && readerItem.type === 'saved' ? readerItem.item : null);
   $effect(() => {
-    if (eager && readerItem.type === 'saved') {
-      savedConnectionsStore.open(readerItem.item.rkey, readerItem.item.savedAt);
-    }
+    if (savedItem) void savedConnectionsStore.load();
   });
-  let connectionsNewSince = $derived(savedRkey ? savedConnectionsStore.newSince(savedRkey) : null);
+  let connectionsNewSince = $derived(
+    savedItem ? savedConnectionsStore.newSince(savedItem.rkey, savedItem.savedAt) : null
+  );
+
+  // Semble's own index, which the panel reads through a cache, can be minutes
+  // behind the badge; the edges Skyreader already holds fill the gap.
+  let localConnections = $derived(savedItem ? savedConnectionsStore.newest(savedItem.rkey) : []);
+  let curatorProfiles = $state<Map<string, BlueskyProfile>>(new Map());
+  $effect(() => {
+    const dids = [...new Set(localConnections.map((c) => c.curatorDid))];
+    const missing = untrack(() => dids.filter((did) => !curatorProfiles.has(did)));
+    if (missing.length === 0) return;
+    profileService
+      .getProfiles(missing)
+      .then((found) => {
+        if (found.size === 0) return;
+        const next = new Map(curatorProfiles);
+        for (const [did, profile] of found) next.set(did, profile);
+        curatorProfiles = next;
+      })
+      .catch(() => {
+        // Names are adornment; the edge reads without them.
+      });
+  });
 
   let linkPostArticle = $derived(
     linkPostUrl && readerItem.type === 'document'
@@ -142,6 +167,9 @@
     isShared: () => sharedNow,
     canCreate: laneCanCreate,
   });
+  let sembleContext = $derived(
+    withLocalConnections(atmosphere.sembleContext, localConnections, curatorProfiles)
+  );
 
   // The counts are one batched, proxy-cached lookup, so they start as soon as the
   // article opens: by the time the reader reaches the end, the section already
@@ -233,7 +261,7 @@
       filters={atmosphere.filters}
       activeFilter={atmosphere.activeFilter}
       stream={atmosphere.stream}
-      sembleContext={atmosphere.sembleContext}
+      {sembleContext}
       lanesOpen={true}
       {panelId}
       {itemUrl}
@@ -245,6 +273,9 @@
       onCreateConnection={auth.user && itemUrl ? createConnection : undefined}
       isConnectionSaved={(url) => savesStore.isSaved(url)}
       {connectionsNewSince}
+      onMarkConnectionsSeen={savedItem
+        ? () => savedConnectionsStore.markSeen(savedItem.rkey)
+        : undefined}
       viewerDid={auth.user?.did}
       composeLead={canShareLinkblog ? shareControl : undefined}
     />
