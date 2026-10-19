@@ -3,6 +3,7 @@ import { api, type ChannelItemsResponse, type ChannelMatch } from '$lib/services
 import { getMetadata, setMetadata } from '$lib/services/db';
 import {
   classifyChannelItemsError,
+  compareResponseToKey,
   searchChannelUnread,
   type SearchChannelError,
 } from '$lib/utils/searchChannels';
@@ -37,7 +38,8 @@ const MAX_PAGES_FOR_ALL = 20;
 const cacheKey = (uuid: string) => `searchChannel:${uuid}`;
 
 interface CachedPage {
-  query: string;
+  /** channelMatchKey of the version these matches are for. */
+  key: string;
   response: ChannelItemsResponse;
 }
 
@@ -53,9 +55,9 @@ function matchId(m: ChannelMatch): string {
 }
 
 function createSearchChannelsStore() {
-  // The open channel.
+  // The open channel, and its query and sources (channelMatchKey).
   let uuid = $state<string | null>(null);
-  let query = $state<string | null>(null);
+  let key = $state<string | null>(null);
   let matches = $state.raw<ChannelMatch[]>([]);
   let nextCursor = $state<string | null>(null);
   let status = $state<ChannelItemsResponse['status']>('active');
@@ -130,16 +132,21 @@ function createSearchChannelsStore() {
 
   async function fetchFirst(): Promise<void> {
     const id = uuid;
-    const q = query;
-    if (!id || !q) return;
+    const k = key;
+    if (!id || !k) return;
     const gen = generation;
     loading = true;
     try {
       const res = await api.getChannelItems(id, { limit: PAGE_SIZE });
       if (gen !== generation) return;
-      if (res.query.trim() !== q) {
-        // The server still holds the query from before this edit: the channel
-        // write is on its way. Its matches are for the old query, so show none.
+      const version = compareResponseToKey(res, k);
+      // Sources the server hasn't caught up with are waited on only briefly:
+      // a channel whose sources here never reached it (an edit made offline)
+      // shows what the server has rather than nothing.
+      if (version === 'query' || (version === 'sources' && polls < FAST_POLLS)) {
+        // The server still holds the query or sources from before this edit:
+        // the channel write is on its way. Its matches are for the old version,
+        // so show none.
         error = 'not_ready';
         schedulePoll(MAX_SETUP_POLLS);
         return;
@@ -149,7 +156,7 @@ function createSearchChannelsStore() {
       // count, where a tail paged in earlier carries older ones.
       setCount(id, res, res.items);
       void setMetadata<CachedPage>(cacheKey(id), {
-        query: q,
+        key: k,
         response: { ...res, items: res.items.slice(0, PAGE_SIZE) },
       }).catch(() => {});
       if (res.backfilling) schedulePoll(MAX_BACKFILL_POLLS);
@@ -167,15 +174,18 @@ function createSearchChannelsStore() {
     }
   }
 
-  /** Show a saved search. A no-op when it's already the open one. */
-  async function open(id: string, q: string): Promise<void> {
-    if (uuid === id && query === q) return;
+  /**
+   * Show a saved search; `k` is its channelMatchKey. A no-op when it's already
+   * the open one, unedited.
+   */
+  async function open(id: string, k: string): Promise<void> {
+    if (uuid === id && key === k) return;
     generation++;
     clearPoll();
     polls = 0;
     const sameChannel = uuid === id;
     uuid = id;
-    query = q;
+    key = k;
     matches = [];
     nextCursor = null;
     status = 'active';
@@ -186,13 +196,13 @@ function createSearchChannelsStore() {
     moreFailed = false;
     pageInFlight = null;
     if (sameChannel) {
-      // An edited query: the server clears and re-runs it, so the old count is wrong too.
+      // An edited query or sources: the server clears and re-runs it, so the old count is wrong too.
       counts.delete(id);
     } else {
       const gen = generation;
       const cached = await getMetadata<CachedPage>(cacheKey(id)).catch(() => null);
       if (gen !== generation) return;
-      if (cached && cached.query === q && !loaded) apply(cached.response);
+      if (cached && cached.key === k && !loaded) apply(cached.response);
     }
     await fetchFirst();
   }
@@ -202,7 +212,7 @@ function createSearchChannelsStore() {
     generation++;
     clearPoll();
     uuid = null;
-    query = null;
+    key = null;
     matches = [];
     nextCursor = null;
     loaded = false;
@@ -265,9 +275,10 @@ function createSearchChannelsStore() {
 
   /**
    * Refresh the open channel and every saved search's unread count. `channels`
-   * is every channel carrying a query; counts for any other are dropped.
+   * is every channel carrying a query, with its channelMatchKey; counts for any
+   * other are dropped.
    */
-  async function refresh(channels: Array<{ uuid: string; query: string }>): Promise<void> {
+  async function refresh(channels: Array<{ uuid: string; key: string }>): Promise<void> {
     const live = new Set(channels.map((c) => c.uuid));
     for (const id of [...counts.keys()]) if (!live.has(id)) counts.delete(id);
 
@@ -276,11 +287,11 @@ function createSearchChannelsStore() {
     let next = 0;
     async function worker() {
       while (next < rest.length) {
-        const { uuid: id, query: q } = rest[next++];
+        const { uuid: id, key: k } = rest[next++];
         try {
           const res = await api.getChannelItems(id, { limit: 1 });
-          // An edit still on its way: the count is the old query's.
-          if (res.query.trim() !== q) counts.delete(id);
+          // An edit still on its way: the count is the old version's.
+          if (compareResponseToKey(res, k) === 'query') counts.delete(id);
           else setCount(id, res, res.items);
         } catch (e) {
           const kind = classifyChannelItemsError(e);
@@ -312,8 +323,8 @@ function createSearchChannelsStore() {
     get uuid() {
       return uuid;
     },
-    get query() {
-      return query;
+    get key() {
+      return key;
     },
     get matches() {
       return matches;

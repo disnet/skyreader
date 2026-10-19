@@ -7,7 +7,12 @@
 // channel its items aren't filtered from the local timeline — a match can be an
 // item this device never loaded. See docs/plans/SAVED_SEARCH_CHANNELS.md.
 
-import { ApiError, OfflineError, type ChannelMatch } from '$lib/services/api';
+import {
+  ApiError,
+  OfflineError,
+  type ChannelItemsResponse,
+  type ChannelMatch,
+} from '$lib/services/api';
 import type {
   Article,
   FilteredView,
@@ -28,6 +33,43 @@ export function channelQuery(view: Pick<FilteredView, 'mode' | 'query'> | null |
   if (!view || view.mode === 'saved') return null;
   const query = view.query?.trim();
   return query ? query : null;
+}
+
+/**
+ * What a saved search's matches depend on: its query and its sources, in the
+ * form the server stores them (services/saved-search.ts, extractSavedQuery).
+ * An edit to either changes the key, so the open channel reloads for it.
+ */
+export function channelMatchKey(
+  view: Pick<FilteredView, 'mode' | 'query' | 'sourceMode' | 'sourceKeys'> | null | undefined
+): string | null {
+  const query = channelQuery(view);
+  if (!query || !view) return null;
+  const mode =
+    view.sourceMode === 'include' || view.sourceMode === 'exclude' ? view.sourceMode : 'all';
+  const keys = mode === 'all' ? [] : [...new Set(view.sourceKeys ?? [])].sort();
+  return JSON.stringify([query, mode, keys]);
+}
+
+/**
+ * How a response compares with the version of the channel that `key` names:
+ * the same, for another query, or for the same query over other sources.
+ * A server from before sources were echoed says only its query.
+ */
+export function compareResponseToKey(
+  res: Pick<ChannelItemsResponse, 'query' | 'sourceMode' | 'sourceKeys'>,
+  key: string
+): 'same' | 'query' | 'sources' {
+  const query = channelQuery({ mode: 'feed', query: res.query });
+  if (query === null || (JSON.parse(key) as [string])[0] !== query) return 'query';
+  if (res.sourceMode === undefined) return 'same';
+  const served = channelMatchKey({
+    mode: 'feed',
+    query,
+    sourceMode: res.sourceMode,
+    sourceKeys: res.sourceKeys,
+  });
+  return served === key ? 'same' : 'sources';
 }
 
 /** Why a saved search's items couldn't be read. */

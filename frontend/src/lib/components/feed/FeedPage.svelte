@@ -17,6 +17,7 @@
   import { filteredViewsStore } from '$lib/stores/filteredViews.svelte';
   import { followLinksStore } from '$lib/stores/followLinks.svelte';
   import { searchChannelsStore } from '$lib/stores/searchChannels.svelte';
+  import { channelMatchKey } from '$lib/utils/searchChannels';
   import SearchChannelStatus from '$lib/components/feed/SearchChannelStatus.svelte';
   import { followLinkReadKey, markFollowLinkRead } from '$lib/utils/followLinks';
   import { grantFollowsAccess } from '$lib/utils/followsChannel';
@@ -655,13 +656,15 @@
   });
 
   // A saved search's matches come from the server: open the channel's in the
-  // store when it's the one showing, and let go of it when it isn't.
+  // store when it's the one showing, again when its query or sources are
+  // edited, and let go of it when it isn't showing.
   $effect(() => {
-    const uuid = feedViewStore.activeFilteredView?.uuid;
-    const query = feedViewStore.searchQuery;
+    const view = feedViewStore.activeFilteredView;
+    const uuid = view?.uuid;
+    const key = channelMatchKey(view);
     const signedIn = auth.isAuthenticated;
     untrack(() => {
-      if (uuid && query && signedIn) void searchChannelsStore.open(uuid, query);
+      if (uuid && key && signedIn) void searchChannelsStore.open(uuid, key);
       else searchChannelsStore.close();
     });
   });

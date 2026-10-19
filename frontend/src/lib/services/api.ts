@@ -511,6 +511,9 @@ export type ChannelMatch =
 
 export interface ChannelItemsResponse {
   query: string;
+  /** The sources the matches are for, as the server stored them. Absent from older servers. */
+  sourceMode?: 'all' | 'include' | 'exclude';
+  sourceKeys?: string[];
   /** `over_limit`: past the plan's count, so it keeps its matches but gets no new ones. */
   status: 'active' | 'over_limit';
   /** Still looking back through the last 30 days. */

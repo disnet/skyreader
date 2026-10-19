@@ -1,8 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import {
   canUseSavedSearches,
+  channelMatchKey,
   channelQuery,
   classifyChannelItemsError,
+  compareResponseToKey,
   hasSearchableTerm,
   matchToRow,
   searchChannelUnread,
@@ -175,5 +177,47 @@ describe('searchChannelUnread', () => {
     readNow.delete('c');
     expect(searchChannelUnread(5, served, (m) => readNow.has(m.itemKey))).toBe(5);
     expect(searchChannelUnread(0, served, () => true)).toBe(0);
+  });
+});
+
+describe('channelMatchKey', () => {
+  const view = { mode: 'feed' as const, query: ' heat ', sourceMode: 'include' as const };
+
+  it('changes when the sources change, in any order or with repeats', () => {
+    const a = channelMatchKey({ ...view, sourceKeys: ['rss~b', 'rss~a'] });
+    expect(channelMatchKey({ ...view, sourceKeys: ['rss~a', 'rss~b', 'rss~a'] })).toBe(a);
+    expect(channelMatchKey({ ...view, sourceKeys: ['rss~a'] })).not.toBe(a);
+    expect(
+      channelMatchKey({ ...view, sourceMode: 'exclude', sourceKeys: ['rss~a', 'rss~b'] })
+    ).not.toBe(a);
+  });
+
+  it('ignores the keys of an all-sources channel, and has none without a query', () => {
+    expect(channelMatchKey({ ...view, sourceMode: 'all', sourceKeys: ['rss~a'] })).toBe(
+      channelMatchKey({ ...view, sourceMode: undefined, sourceKeys: [] })
+    );
+    expect(channelMatchKey({ ...view, query: '  ' })).toBeNull();
+  });
+});
+
+describe('compareResponseToKey', () => {
+  const key = channelMatchKey({
+    mode: 'feed',
+    query: 'heat',
+    sourceMode: 'include',
+    sourceKeys: ['rss~b', 'rss~a'],
+  })!;
+
+  it('tells the stored version from one before a query or sources edit', () => {
+    const sources = { sourceMode: 'include' as const, sourceKeys: ['rss~a', 'rss~b'] };
+    expect(compareResponseToKey({ query: 'heat ', ...sources }, key)).toBe('same');
+    expect(compareResponseToKey({ query: 'heat', ...sources, sourceKeys: ['rss~a'] }, key)).toBe(
+      'sources'
+    );
+    expect(compareResponseToKey({ query: 'cold', ...sources }, key)).toBe('query');
+  });
+
+  it('goes by the query alone for a server that does not say its sources', () => {
+    expect(compareResponseToKey({ query: 'heat' }, key)).toBe('same');
   });
 });
