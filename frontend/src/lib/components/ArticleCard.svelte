@@ -48,6 +48,7 @@
   import { blueskyComposerStore } from '$lib/stores/blueskyComposer.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
   import { isFailedSaveBody } from '$lib/utils/saveAnywhere';
+  import { readProgressKeys } from '$lib/utils/readProgressKeys';
   import { integrationSaveStore } from '$lib/stores/integrationSave.svelte';
   import { sembleConnectionStore } from '$lib/stores/sembleConnection.svelte';
   import { toggleSavedLink } from '$lib/utils/saveLink';
@@ -288,7 +289,8 @@
     // If the reader explicitly fetched the original article, that full extraction
     // wins over the feed body — RSS entries are often just an excerpt. Keyed on
     // the article URL via the shared extract cache (same path link posts use).
-    const fetchedOriginal = article ? linkPostContentStore.get(itemUrl) : undefined;
+    // Not for a save: its kept copy is what its highlights are anchored in.
+    const fetchedOriginal = article && !save ? linkPostContentStore.get(itemUrl) : undefined;
     if (fetchedOriginal?.content) return fetchedOriginal.content;
 
     // For articles, use existing logic. The in-memory article is "light" (its
@@ -602,12 +604,20 @@
     const { id, guid, subscriptionId } = article;
     let cancelled = false;
     if (save) {
-      // A save's body is its kept copy, in the saves store, not db.articles. A
-      // link-only save's note isn't the article, so the description stands.
+      // A save's body is its kept copy in db.saved, read as the card nears the
+      // screen (Expand opens every card) and never held past it, unlike the saves
+      // store's reader cache. A book or a PDF is read in the reader, not inline,
+      // and a link-only save's note isn't the article: the description stands.
+      if (!reachedViewport) return;
+      if (save.contentType === 'epub' || save.contentType === 'pdf') {
+        lazyContent = '';
+        return;
+      }
       const rkey = save.rkey;
-      savesStore
-        .getContent(rkey)
-        .then((body) => {
+      db.saved
+        .get(rkey)
+        .then((row) => {
+          const body = row?.content;
           if (!cancelled) lazyContent = body && !isFailedSaveBody(body) ? body : '';
         })
         .catch(() => {
@@ -798,11 +808,17 @@
       !linkPostContentStore.get(itemUrl)?.content
   );
   let readTimeMinutes = $derived(
-    (isFollowLink && !linkPostContentStore.get(itemUrl)?.content) || showingPartialBody
-      ? 0
-      : bodyWordCount > 0
-        ? Math.max(1, Math.round(bodyWordCount / 200))
+    // A save knows its length before its body is read, and a book or PDF is
+    // never read inline.
+    save && !lazyContent
+      ? save.wordCount
+        ? Math.max(1, Math.round(save.wordCount / 200))
         : 0
+      : (isFollowLink && !linkPostContentStore.get(itemUrl)?.content) || showingPartialBody
+        ? 0
+        : bodyWordCount > 0
+          ? Math.max(1, Math.round(bodyWordCount / 200))
+          : 0
   );
 
   // A follows link, until its page is fetched, is what its sharer posted: their
@@ -1039,6 +1055,9 @@
     itemKey: () => itemGuid,
     itemType: () => itemTagType as ItemLabelType,
     enabled: () => expanded && hasContent,
+    // A save's place may be filed under any of its aliases (see readProgressKeys).
+    progressKeys: () =>
+      save ? readProgressKeys({ type: 'saved', item: save, key: itemGuid }, savesStore.find) : [],
   });
 
   // Link interception for showing context menu on link clicks

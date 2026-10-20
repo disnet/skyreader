@@ -400,10 +400,7 @@
     </div>
   </div>
 
-  <!-- The passage it matched on stands in for the body: once the body shows
-       (Expand, or an opened card), the snippet would only repeat it. A follows
-       link's card isn't its text, so it keeps the snippet. -->
-  {#if matchSnippet?.length && !(isOpen && hasContent && !followLinkCard && !keptLinkCard)}
+  {#if matchSnippet?.length && !expanded}
     <p class="match-snippet">
       {#each matchSnippet as seg, i (i)}{#if seg.match}<mark>{seg.text}</mark
           >{:else}{seg.text}{/if}{/each}

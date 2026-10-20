@@ -393,12 +393,13 @@
           isSaved={true}
           isShared={linkblogStore.isShared(save.url)}
           shareNote={linkblogStore.getNote(save.url)}
-          followSharers={match ? matchSharers(match) : undefined}
+          followSharers={followLinksStore.forUrl(save.url)?.sharers ??
+            (match ? matchSharers(match) : undefined)}
           matchSnippet={match?.snippet}
           selected={preferences.expandAllItems || feedViewStore.selectedKey === displayItem.key}
           expanded={feedViewStore.expandedKey === displayItem.key}
           highlighted={feedViewStore.selectedKey === displayItem.key}
-          onToggleSave={() => void toggleSavedItemSave(save)}
+          onToggleSave={() => void savesStore.remove(save.rkey)}
           onToggleRead={() => {
             const archived = isSavedRowArchived(displayItem);
             // Archiving reads it, so it stays put until the view changes.
