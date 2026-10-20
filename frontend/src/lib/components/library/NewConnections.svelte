@@ -2,12 +2,18 @@
   // The Shelf's New connections: what other people connected to the reader's
   // saves since they last looked, as a lane with one tile per save. Each tile
   // says what happened — who linked it to what, and their note — for the newest
-  // connection, and counts the rest. Semble's notification feed, attached to the
+  // connections, and counts the rest. Semble's notification feed, attached to the
   // thing it's news about (stores/savedConnections.svelte.ts). A tile stays
-  // until the reader marks it seen, in the save's discussion or all at once here.
+  // until the reader marks it seen: here, in the save's discussion, or all at once.
+  //
+  // The tile isn't one button: what the reader wants from the news is the other
+  // end, not their own save's discussion. So each connection's far end is a link
+  // that opens the reader's usual link menu (open, save, collect), and the save's
+  // title goes back to reading it, at the reader's place.
   import { untrack } from 'svelte';
   import Icon from '$lib/components/Icon.svelte';
   import HomeLane from '$lib/components/feed/HomeLane.svelte';
+  import LinkContextMenu from '$lib/components/feed/LinkContextMenu.svelte';
   import type { LaneCardVM } from '$lib/components/feed/homeLane';
   import { profileService } from '$lib/services/profiles';
   import { decodeEntities } from '$lib/utils/entities';
@@ -26,11 +32,30 @@
     entries: Entry[];
     onOpen: (save: SavedItem) => void;
     onHover?: (save: SavedItem) => void;
+    /** Clear one save's new connections. */
+    onMarkSeen?: (save: SavedItem) => void;
     /** Clear every save's new connections. */
     onClearAll?: () => void;
   }
 
-  let { entries, onOpen, onHover, onClearAll }: Props = $props();
+  let { entries, onOpen, onHover, onMarkSeen, onClearAll }: Props = $props();
+
+  // The server sends the newest three; a tile lists them all.
+  const SHOWN = 3;
+
+  let linkMenu = $state<{ url: string; linkText: string; anchorRect: DOMRect } | null>(null);
+
+  // As links in the reader: a plain tap asks what to do with it, a modified
+  // click (new tab, new window) is the browser's.
+  function openLinkMenu(e: MouseEvent, url: string, linkText: string) {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+    e.preventDefault();
+    linkMenu = {
+      url,
+      linkText,
+      anchorRect: (e.currentTarget as HTMLElement).getBoundingClientRect(),
+    };
+  }
 
   let byKey = $derived(new Map(entries.map((entry) => [entry.save.rkey, entry])));
   // HomeLane wants view-models for its keys and its label; the tiles below draw
@@ -95,8 +120,12 @@
     return shelfKind(save) === 'article';
   }
 
+  function shown(entry: Entry) {
+    return entry.activity.newest.slice(0, SHOWN);
+  }
+
   function more(entry: Entry): number {
-    return Math.max(0, entry.activity.unseen - 1);
+    return Math.max(0, entry.activity.unseen - shown(entry).length);
   }
 </script>
 
@@ -104,67 +133,86 @@
   {@const entry = byKey.get(vm.key)}
   {#if entry}
     {@const save = entry.save}
-    {@const connection = entry.activity.newest[0]}
-    {@const type = connection ? connectionTypeLabel(connection.type) : null}
-    {@const avatar = connection ? profiles.get(connection.curatorDid)?.avatar : undefined}
-    <button
-      class="tile"
-      aria-label="{vm.title}, {entry.activity.unseen} new {entry.activity.unseen === 1
-        ? 'connection'
-        : 'connections'}"
-      onclick={() => onOpen(save)}
-      onpointerenter={() => onHover?.(save)}
-      onfocus={() => onHover?.(save)}
-    >
-      <span class="save">
+    {@const connections = shown(entry)}
+    {@const single = connections.length === 1}
+    {@const type = single ? connectionTypeLabel(connections[0].type) : null}
+    {@const count = `${entry.activity.unseen} new ${entry.activity.unseen === 1 ? 'connection' : 'connections'}`}
+    <div class="tile" role="group" aria-label="{vm.title}, {count}">
+      <button
+        class="save"
+        title="Keep reading"
+        onclick={() => onOpen(save)}
+        onpointerenter={() => onHover?.(save)}
+        onfocus={() => onHover?.(save)}
+      >
         {#if save.url && isArticle(save)}
           <img class="favicon" src={getFaviconUrl(save.url)} alt="" loading="lazy" />
         {/if}
         <span class="save-title">{vm.title}</span>
-      </span>
+      </button>
 
-      {#if connection}
-        <span class="edge">
-          <span class="avatar" aria-hidden="true">
-            {#if avatar}
-              <img src={avatar} alt="" loading="lazy" />
-            {:else}
-              <Icon name="user" size={11} />
-            {/if}
-          </span>
-          <span class="edge-line">
-            <span class="who">{curatorName(connection.curatorDid)}</span>
-            {#if connection.direction === 'out'}
-              linked it to <span class="other">{connectionTargetLabel(connection.otherUrl)}</span>
-            {:else}
-              linked to it from <span class="other"
-                >{connectionTargetLabel(connection.otherUrl)}</span
-              >
-            {/if}
-          </span>
-        </span>
-        {#if connection.note}
-          <span class="note">{connection.note}</span>
-        {/if}
-        <span class="meta">
+      {#if connections.length > 0}
+        <ul class="edges">
+          {#each connections as connection (connection.uri)}
+            {@const avatar = profiles.get(connection.curatorDid)?.avatar}
+            {@const label = connectionTargetLabel(connection.otherUrl)}
+            <li class="edge">
+              <span class="avatar" aria-hidden="true">
+                {#if avatar}
+                  <img src={avatar} alt="" loading="lazy" />
+                {:else}
+                  <Icon name="user" size={11} />
+                {/if}
+              </span>
+              <span class="edge-body">
+                <span class="edge-line">
+                  <span class="who">{curatorName(connection.curatorDid)}</span>
+                  {connection.direction === 'out' ? 'linked it to' : 'linked to it from'}
+                  <a
+                    class="other"
+                    href={connection.otherUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onclick={(e) => openLinkMenu(e, connection.otherUrl, label)}>{label}</a
+                  >
+                </span>
+                {#if connection.note}
+                  <span class="note" class:short={!single}>{connection.note}</span>
+                {/if}
+              </span>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+
+      <span class="meta">
+        <span class="meta-text">
           {#if saveSite(save)}<span class="site">{saveSite(save)}</span><span aria-hidden="true"
               >·</span
             >{/if}
-          {#if type && type !== 'related'}<span>{type}</span><span aria-hidden="true">·</span>{/if}
-          <span>{formatRelativeTime(connection.indexedAt)}</span>
-          {#if more(entry) > 0}
-            <span aria-hidden="true">·</span><span class="more">+{more(entry)} more</span>
+          {#if connections.length === 0}
+            <span>{count}</span>
+          {:else}
+            {#if type && type !== 'related'}<span>{type}</span><span aria-hidden="true">·</span
+              >{/if}
+            <span>{formatRelativeTime(connections[0].indexedAt)}</span>
+            {#if more(entry) > 0}
+              <span aria-hidden="true">·</span><span class="more">+{more(entry)} more</span>
+            {/if}
           {/if}
         </span>
-      {:else}
-        <span class="meta">
-          {#if saveSite(save)}<span class="site">{saveSite(save)}</span><span aria-hidden="true"
-              >·</span
-            >{/if}
-          {entry.activity.unseen} new {entry.activity.unseen === 1 ? 'connection' : 'connections'}
-        </span>
-      {/if}
-    </button>
+        {#if onMarkSeen}
+          <button
+            class="seen"
+            aria-label="Mark {count} on {vm.title} as seen"
+            title="Mark seen"
+            onclick={() => onMarkSeen(save)}
+          >
+            <Icon name="check" size={14} />
+          </button>
+        {/if}
+      </span>
+    </div>
   {/if}
 {/snippet}
 
@@ -181,26 +229,30 @@
   }}
 />
 
+{#if linkMenu}
+  {#key linkMenu.url + linkMenu.anchorRect.top + linkMenu.anchorRect.left}
+    <LinkContextMenu
+      url={linkMenu.url}
+      linkText={linkMenu.linkText}
+      anchorRect={linkMenu.anchorRect}
+      onClose={() => (linkMenu = null)}
+    />
+  {/key}
+{/if}
+
 <style>
   .tile {
     display: flex;
     flex-direction: column;
-    gap: 0.4rem;
-    /* Wider than Continue reading's tiles: these carry a sentence and a note. */
+    gap: 0.5rem;
+    /* Wider than Continue reading's tiles: these carry sentences and notes. */
     width: 19rem;
     flex-shrink: 0;
-    padding: 0.75rem 0.875rem 0.8rem;
-    background: none;
+    padding: 0.75rem 0.875rem 0.6rem;
     border: 1px solid var(--color-border);
     border-radius: 12px;
-    cursor: pointer;
-    text-align: left;
-    font: inherit;
     color: var(--color-text);
     scroll-snap-align: start;
-    transition:
-      background-color 0.15s ease,
-      border-color 0.15s ease;
   }
 
   @media (max-width: 640px) {
@@ -209,22 +261,21 @@
     }
   }
 
-  @media (hover: hover) {
-    .tile:hover {
-      background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.025));
-      border-color: var(--color-text-secondary);
-    }
+  button {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+    text-align: left;
   }
 
-  @media (prefers-color-scheme: dark) {
-    .tile:hover {
-      background-color: var(--color-bg-hover, rgba(255, 255, 255, 0.03));
-    }
-  }
-
-  .tile:focus-visible {
+  button:focus-visible,
+  .other:focus-visible {
     outline: 2px solid var(--color-primary);
     outline-offset: 2px;
+    border-radius: 4px;
   }
 
   .save {
@@ -254,6 +305,23 @@
     overflow: hidden;
   }
 
+  @media (hover: hover) {
+    .save:hover .save-title {
+      text-decoration: underline;
+      text-decoration-color: var(--color-text-secondary);
+      text-underline-offset: 2px;
+    }
+  }
+
+  .edges {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
   .edge {
     display: flex;
     align-items: flex-start;
@@ -280,6 +348,13 @@
     object-fit: cover;
   }
 
+  .edge-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    min-width: 0;
+  }
+
   .edge-line,
   .note,
   .meta {
@@ -291,20 +366,14 @@
     min-width: 0;
     color: var(--color-text-secondary);
     overflow-wrap: anywhere;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
   }
 
-  .who,
-  .other {
+  .who {
     font-weight: var(--weight-medium);
     color: var(--color-text);
   }
 
-  /* The label ends the sentence either way ("linked it to …", "linked to it
+  /* The link ends the sentence either way ("linked it to …", "linked to it
      from …"), so a long one shortens itself and the direction always shows. */
   .other {
     display: inline-block;
@@ -313,6 +382,16 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     vertical-align: bottom;
+    font-weight: var(--weight-medium);
+    color: var(--color-primary);
+    text-decoration: none;
+  }
+
+  @media (hover: hover) {
+    .other:hover {
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
   }
 
   .note {
@@ -325,12 +404,26 @@
     overflow: hidden;
   }
 
+  /* Several connections share the tile: a line of each note. */
+  .note.short {
+    -webkit-line-clamp: 1;
+    line-clamp: 1;
+  }
+
   .meta {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: auto;
+    color: var(--color-text-secondary);
+  }
+
+  .meta-text {
     display: flex;
     flex-wrap: wrap;
     gap: 0.3rem;
-    margin-top: auto;
-    color: var(--color-text-secondary);
+    min-width: 0;
+    flex: 1;
   }
 
   .site {
@@ -341,7 +434,29 @@
   }
 
   .more {
-    color: var(--color-primary);
+    color: var(--color-text);
     font-weight: var(--weight-medium);
+  }
+
+  .seen {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    margin: -4px -6px -4px 0;
+    border-radius: 50%;
+    color: var(--color-text-secondary);
+    transition:
+      background-color 0.15s ease,
+      color 0.15s ease;
+  }
+
+  @media (hover: hover) {
+    .seen:hover {
+      background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.04));
+      color: var(--color-text);
+    }
   }
 </style>

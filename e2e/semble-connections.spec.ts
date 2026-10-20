@@ -4,7 +4,7 @@ import { cleanupSembleConnection, seedSavedArticle, seedSembleConnection } from 
 // Semble connections other people drew off a save: a quiet "new" badge on the
 // card in the Queue and on the Shelf, a New connections lane at the top of the
 // Shelf whose tiles say who connected what, and both stay until the reader
-// marks them seen in the save's discussion.
+// marks them seen, in the save's discussion or on the tile.
 test.describe('Semble connections on saves', () => {
   test('a new connection badges the save until the reader marks it seen', async ({
     authedPage,
@@ -44,7 +44,7 @@ test.describe('Semble connections on saves', () => {
       // the new one there (from Skyreader's own record, ahead of Semble's index),
       // until the reader marks it seen.
       await lane.getByText('A Connected Essay').click();
-      const markSeen = authedPage.getByRole('button', { name: /as seen/ });
+      const markSeen = authedPage.getByRole('button', { name: 'Mark 1 new connection as seen' });
       await expect(markSeen).toBeVisible({ timeout: 15_000 });
       await expect(
         authedPage.locator('.connection-row', { hasText: 'elsewhere.example' }).first()
@@ -62,6 +62,50 @@ test.describe('Semble connections on saves', () => {
       await authedPage.reload();
       await expect(card).toBeVisible({ timeout: 15_000 });
       await expect(card.getByLabel(/new connection/)).toHaveCount(0);
+    } finally {
+      await cleanupSembleConnection(uri);
+    }
+  });
+
+  test("a tile's connection opens the link menu, and the tile clears itself", async ({
+    authedPage,
+    testUser,
+  }) => {
+    const savedUrl = 'https://example.com/tile-essay';
+    const otherUrl = 'https://elsewhere.example/a-tile-response';
+    await seedSavedArticle(testUser, {
+      url: savedUrl,
+      title: 'A Tile Essay',
+      domain: 'example.com',
+      content: '<p>The essay itself.</p>',
+      savedAt: Date.now() - 60_000,
+    });
+    const uri = await seedSembleConnection(testUser, { savedUrl, otherUrl });
+
+    try {
+      await authedPage.goto('/shelf');
+      const tile = authedPage.getByRole('group', { name: /A Tile Essay/ });
+      await expect(tile).toBeVisible({ timeout: 15_000 });
+
+      // The far end is a real link, and a tap asks what to do with it rather than
+      // opening the save's discussion.
+      const link = tile.getByRole('link', { name: 'elsewhere.example · a tile response' });
+      await expect(link).toHaveAttribute('href', otherUrl);
+      await link.click();
+      const menu = authedPage.getByRole('menu', { name: 'Link actions' });
+      await expect(menu.getByRole('menuitem', { name: 'Open in new tab' })).toBeVisible();
+      await expect(menu.getByRole('menuitem', { name: 'Save to Skyreader' })).toBeVisible();
+      await authedPage.keyboard.press('Escape');
+      await expect(menu).toHaveCount(0);
+      await expect(authedPage).toHaveURL(/\/shelf/);
+
+      // The tile clears itself, here and on the server.
+      const seen = authedPage.waitForResponse(
+        (r) => r.url().includes('/api/saved/connections/seen') && r.request().method() === 'POST'
+      );
+      await tile.getByRole('button', { name: /as seen/ }).click();
+      expect((await seen).ok()).toBe(true);
+      await expect(tile).toHaveCount(0);
     } finally {
       await cleanupSembleConnection(uri);
     }

@@ -427,6 +427,7 @@
         entries={connectedSaves}
         onOpen={open}
         onHover={(save) => void savesStore.prefetchContent(save.rkey)}
+        onMarkSeen={(save) => savedConnectionsStore.markSeen(save.rkey)}
         onClearAll={() => savedConnectionsStore.markAllSeen()}
       />
     {/if}
