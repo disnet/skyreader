@@ -13,6 +13,7 @@
  */
 
 import type { Env } from '../types';
+import { DEV_LOG_AUTHOR_DID } from '../config/dev-log';
 import type { ProxyDocument, ProxyDocumentEntry, ProxyReaderCollection } from './feed-proxy-client';
 import {
   DOCUMENT_COLLECTION,
@@ -1334,6 +1335,16 @@ export async function subscribedDocumentAuthors(env: Env): Promise<string[]> {
   // `wantedDids` filter, and one malformed entry is rejected wholesale — closing
   // the socket and silently killing that cycle's drain.
   return (result.results ?? []).map((r) => r.did).filter((did): did is string => isValidDid(did));
+}
+
+/**
+ * The authors the document stream watches: every subscribed author, plus the Dev
+ * Log's, whose posts feed every reader's notification bell (routes/updates.ts)
+ * whether or not anyone subscribes to it.
+ */
+export async function watchedDocumentAuthors(env: Env): Promise<string[]> {
+  const subscribed = await subscribedDocumentAuthors(env);
+  return subscribed.includes(DEV_LOG_AUTHOR_DID) ? subscribed : [...subscribed, DEV_LOG_AUTHOR_DID];
 }
 
 /** One page of the subscribed-author set, in a stable order. */

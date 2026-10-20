@@ -1,18 +1,22 @@
-// The notification inbox (bell + badge), from two sources.
+// The notification inbox (bell + badge), from three sources.
 //
 // @mentions come live from Constellation. Feedback the reader filed on the
 // userinput.app board is polled separately and far more slowly, and turned into
 // events by diffing against the last snapshot this browser saw — see
 // `services/feedbackNotifications.ts` for why that has to be a stored event
-// rather than a computed state.
+// rather than a computed state. "New in Skyreader" is the newest Dev Log posts,
+// served by the backend (routes/updates.ts) and polled as rarely as feedback.
 //
 // The badge polls a cheap source-list (index calls only) on an interval; the
 // full list enriches lazily when the panel opens (author profile + post title/
-// URL). Read-state lives in localStorage as a set of seen source URIs — keyed by
-// globally-unique at:// URIs, so a freshly discovered mention (including one
+// URL). Read-state is a set of seen ids — globally-unique at:// URIs for
+// mentions and Dev Log posts, so a freshly discovered mention (including one
 // authored before signup, which has an old createdAt) reads as unread regardless
-// of timestamp. Degrades silently when offline or a request fails — notifications
-// are adornment, not load-bearing for reading.
+// of timestamp. The set belongs to the account and is synced through the backend
+// (routes/notifications.ts), so something read on one device is read on all of
+// them; localStorage holds a copy for an instant badge and for offline. Degrades
+// silently when offline or a request fails — notifications are adornment, not
+// load-bearing for reading.
 
 import { auth } from '$lib/stores/auth.svelte';
 import { api } from '$lib/services/api';
@@ -29,6 +33,7 @@ import {
   type FeedbackEvent,
   type FeedbackSnapshot,
 } from '$lib/services/feedbackNotifications';
+import type { DevLogUpdate } from '$lib/services/api';
 import type { SkyNotification } from '$lib/types';
 
 const POLL_INTERVAL_MS = 60_000;
@@ -36,10 +41,11 @@ const POLL_INTERVAL_MS = 60_000;
 // didn't ask for. Once on start and rarely after is enough to catch a reply
 // while the tab is open; the rest is caught next time the app boots.
 const FEEDBACK_POLL_INTERVAL_MS = 15 * 60_000;
-const MAX_SEEN = 200; // cap the persisted set; mentions are bounded anyway
-// On the first sync for an account on this browser, mentions older than this
-// start read. Read-state is per-browser, so without it signing in on a second
-// device lights the badge with everything already read on the first.
+// The Dev Log moves in weeks; the feedback cadence is plenty.
+const UPDATES_POLL_INTERVAL_MS = FEEDBACK_POLL_INTERVAL_MS;
+const MAX_SEEN = 500; // cap the cached set, as the server caps its copy
+// On the first sync for an account, mentions older than this start read, so an
+// account that predates the bell doesn't open with a badge full of old news.
 const MENTION_BASELINE_MS = 7 * 24 * 60 * 60 * 1000;
 
 // Per-DID key. Mentions are keyed by globally-unique source URI and two users
@@ -82,17 +88,23 @@ function createNotificationsStore() {
   let sources = $state<MentionSource[]>([]);
   let mentions = $state<SkyNotification[]>([]);
   let feedbackEvents = $state<FeedbackEvent[]>([]);
+  let updates = $state<DevLogUpdate[]>([]);
   let feedbackSnapshot: FeedbackSnapshot | null = null;
   let feedbackDid: string | null = null; // which DID the two above belong to
   let loading = $state(false);
   let loaded = $state(false);
   let seen = $state<Set<string>>(new Set());
   let seenDid: string | null = null; // which DID `seen` was loaded for
-  // Whether this browser has a stored read-state for that DID, as opposed to an
-  // empty one. Only the first sync gets the week's grace below.
-  let seenStored = false;
+  // Whether this account's first sync has run — on any device, once the server
+  // has answered; on this browser alone until then. Only the first sync gets the
+  // week's grace below.
+  let primed = false;
+  // Whether the server's copy of the seen-set has been merged in since `seenDid`
+  // was loaded. Until it has, priming waits: the account may already be primed.
+  let seenSynced = false;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let feedbackTimer: ReturnType<typeof setInterval> | null = null;
+  let updatesTimer: ReturnType<typeof setInterval> | null = null;
   // Display-data cache so reopening the panel (same session) is instant and we
   // only re-fetch newly discovered sources.
   const enrichCache = new Map<string, SkyNotification>();
@@ -122,15 +134,33 @@ function createNotificationsStore() {
     }))
   );
 
+  const updateNotifications = $derived<SkyNotification[]>(
+    updates.map((update) => ({
+      id: update.uri,
+      type: 'update',
+      actorDid: '',
+      actorHandle: null,
+      actorDisplayName: null,
+      actorAvatar: null,
+      sourceUri: update.uri,
+      canonicalUrl: update.url,
+      title: update.title,
+      detail: update.description ?? undefined,
+      createdAt: Date.parse(update.publishedAt) || 0,
+      seen: false,
+    }))
+  );
+
   const notifications = $derived(
-    [...mentions, ...feedbackNotifications]
+    [...mentions, ...feedbackNotifications, ...updateNotifications]
       .map((entry) => ({ ...entry, seen: seen.has(entry.id) }))
       .sort((a, b) => b.createdAt - a.createdAt)
   );
 
   const unreadCount = $derived(
     sources.filter((s) => !seen.has(s.sourceUri)).length +
-      feedbackEvents.filter((event) => !seen.has(event.id)).length
+      feedbackEvents.filter((event) => !seen.has(event.id)).length +
+      updates.filter((update) => !seen.has(update.uri)).length
   );
 
   function isOffline(): boolean {
@@ -144,8 +174,43 @@ function createNotificationsStore() {
     if (seenDid === did) return;
     seenDid = did;
     const stored = loadSeen(did);
-    seenStored = stored !== null;
+    primed = stored !== null;
+    seenSynced = false;
     seen = new Set(stored ?? []);
+  }
+
+  /** Record ids as seen on the server. A failure is fine: the next sync re-sends them. */
+  function pushSeen(ids: string[], markPrimed = false) {
+    if ((ids.length === 0 && !markPrimed) || isOffline()) return;
+    void api.markNotificationsSeen(ids.slice(-200), markPrimed).catch(() => {});
+  }
+
+  /**
+   * Merge the account's seen-set from the server with this browser's copy, both
+   * ways. What this browser saw while offline (or before the server kept read
+   * state at all) goes up; what another device saw comes down. A browser that
+   * had already primed under the old per-browser state primes the account.
+   */
+  async function syncSeen(did: string) {
+    if (isOffline()) return;
+    try {
+      const remote = await api.getNotificationSeen();
+      if (seenDid !== did) return; // the account switched while this was in flight
+      const remoteIds = new Set(remote.ids);
+      // Against the set as it is now, not as it was when the request left: a
+      // markAllSeen in between must survive the merge.
+      const localOnly = [...seen].filter((id) => !remoteIds.has(id));
+      const promote = primed && !remote.primed;
+      primed = primed || remote.primed;
+      seenSynced = true;
+      if (remote.ids.some((id) => !seen.has(id))) {
+        seen = new Set([...seen, ...remote.ids]);
+        saveSeen(did, [...seen]);
+      }
+      pushSeen(localOnly, promote);
+    } catch {
+      // silent — the local copy stands and a later poll retries
+    }
   }
 
   /**
@@ -161,18 +226,26 @@ function createNotificationsStore() {
    * silent one.
    */
   function primeSeen(did: string, discovered: MentionSource[]) {
-    if (seenStored) return;
-    seenStored = true;
+    // Offline, or the server didn't answer: wait rather than guess. Priming
+    // twice is harmless only before anything has been read.
+    if (primed || !seenSynced) return;
+    primed = true;
     const cutoff = Date.now() - MENTION_BASELINE_MS;
     const next = new Set(seen);
+    const added: string[] = [];
     for (const source of discovered) {
       const created = tidToTimestamp(source.rkey);
-      if (created !== null && created < cutoff) next.add(source.sourceUri);
+      if (created !== null && created < cutoff && !next.has(source.sourceUri)) {
+        next.add(source.sourceUri);
+        added.push(source.sourceUri);
+      }
     }
     seen = next;
     // Persisted even when nothing was old enough to add: the write is what
-    // makes this a first sync exactly once.
+    // makes this a first sync exactly once, here and on the account's other
+    // devices.
     saveSeen(did, [...next]);
+    pushSeen(added, true);
   }
 
   // Same idea as the seen-set: the reader's feedback state belongs to a DID,
@@ -217,10 +290,26 @@ function createNotificationsStore() {
     const did = auth.user?.did;
     if (!did || isOffline()) return;
     ensureSeenLoaded(did);
+    // Every poll also picks up what the account's other devices have read, so a
+    // badge cleared on the phone clears here within a poll.
+    const synced = syncSeen(did);
     try {
       const discovered = await fetchMentionSources(did);
+      await synced;
       primeSeen(did, discovered);
       sources = discovered;
+    } catch {
+      // silent — a later poll retries
+    }
+  }
+
+  /** The newest Dev Log posts. Silent on failure, like every other source. */
+  async function refreshUpdates() {
+    const did = auth.user?.did;
+    if (!did || isOffline()) return;
+    try {
+      const { updates: fresh } = await api.getUpdates();
+      if (auth.user?.did === did) updates = fresh;
     } catch {
       // silent — a later poll retries
     }
@@ -237,11 +326,14 @@ function createNotificationsStore() {
     // ones.
     ensureFeedbackLoaded(did);
     void refreshFeedback();
+    void refreshUpdates();
+    const synced = syncSeen(did);
     loading = true;
     try {
       let srcs = sources;
       if (srcs.length === 0) {
         srcs = await fetchMentionSources(did);
+        await synced;
         primeSeen(did, srcs);
       }
       sources = srcs;
@@ -277,17 +369,22 @@ function createNotificationsStore() {
     }
   }
 
-  // Mark everything currently known as seen — purely local, persists to storage.
+  // Mark everything currently known as seen, here and for the account's other
+  // devices.
   function markAllSeen() {
     const did = auth.user?.did;
     if (!did || unreadCount === 0) return;
     ensureSeenLoaded(did);
     ensureFeedbackLoaded(did);
-    const next = new Set(seen);
-    for (const s of sources) next.add(s.sourceUri);
-    for (const event of feedbackEvents) next.add(event.id);
-    seen = next;
-    saveSeen(did, [...next]);
+    const ids = [
+      ...sources.map((source) => source.sourceUri),
+      ...feedbackEvents.map((event) => event.id),
+      ...updates.map((update) => update.uri),
+    ];
+    const added = ids.filter((id) => !seen.has(id));
+    seen = new Set([...seen, ...added]);
+    saveSeen(did, [...seen]);
+    pushSeen(added);
   }
 
   // Begin badge polling (idempotent). Call when an authenticated shell mounts.
@@ -297,8 +394,10 @@ function createNotificationsStore() {
     if (pollTimer) return;
     void refreshSources();
     void refreshFeedback();
+    void refreshUpdates();
     pollTimer = setInterval(() => void refreshSources(), POLL_INTERVAL_MS);
     feedbackTimer = setInterval(() => void refreshFeedback(), FEEDBACK_POLL_INTERVAL_MS);
+    updatesTimer = setInterval(() => void refreshUpdates(), UPDATES_POLL_INTERVAL_MS);
   }
 
   function stop() {
@@ -310,17 +409,23 @@ function createNotificationsStore() {
       clearInterval(feedbackTimer);
       feedbackTimer = null;
     }
+    if (updatesTimer) {
+      clearInterval(updatesTimer);
+      updatesTimer = null;
+    }
     // Drop all per-account state so a later login (possibly a different DID on
     // this browser) starts clean rather than inheriting the singleton's caches.
     sources = [];
     mentions = [];
     feedbackEvents = [];
+    updates = [];
     feedbackSnapshot = null;
     feedbackDid = null;
     loaded = false;
     seen = new Set();
     seenDid = null;
-    seenStored = false;
+    primed = false;
+    seenSynced = false;
     enrichCache.clear();
   }
 

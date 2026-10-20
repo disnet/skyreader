@@ -364,6 +364,15 @@ export interface FeedbackReply {
   votes: { up: number; down: number; net: number };
 }
 
+/** A Dev Log post, shown in the bell as "New in Skyreader" (routes/updates.ts). */
+export interface DevLogUpdate {
+  uri: string;
+  title: string;
+  description: string | null;
+  url: string;
+  publishedAt: string;
+}
+
 /**
  * One of the caller's own posts, reduced to the fields a change shows up in.
  * What the notification inbox polls; see `services/feedbackNotifications.ts`.
@@ -1625,6 +1634,23 @@ class ApiClient {
       method: 'POST',
       body: JSON.stringify({ rkey }),
     });
+  }
+
+  // --- The notification bell (routes/notifications.ts, routes/updates.ts) ---
+
+  async getNotificationSeen(): Promise<{ ids: string[]; primed: boolean }> {
+    return this.fetch('/api/notifications/seen');
+  }
+
+  async markNotificationsSeen(ids: string[], primed = false): Promise<{ success: boolean }> {
+    return this.fetch('/api/notifications/seen', {
+      method: 'POST',
+      body: JSON.stringify(primed ? { ids, primed } : { ids }),
+    });
+  }
+
+  async getUpdates(): Promise<{ updates: DevLogUpdate[] }> {
+    return this.fetch('/api/updates');
   }
 
   // --- Shelf collections (routes/shelf.ts) ---

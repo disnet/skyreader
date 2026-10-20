@@ -106,6 +106,8 @@ import {
 } from './routes/saved';
 import { handleShelfCollections } from './routes/shelf';
 import { handleSavedConnections } from './routes/saved-connections';
+import { handleNotificationSeen } from './routes/notifications';
+import { handleUpdates } from './routes/updates';
 import { handleExport } from './routes/export';
 import {
   handleGetSavedAsset,
@@ -821,6 +823,16 @@ async function route(
     case url.pathname === '/api/saved/updates':
       if (!session) return unauthorizedResponse(headers);
       response = await handleGetSavedUpdates(request, env);
+      break;
+    // The notification bell: synced read-state (routes/notifications.ts) and the
+    // Dev Log's "New in Skyreader" posts (routes/updates.ts)
+    case url.pathname === '/api/notifications/seen':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleNotificationSeen(request, env, session.did);
+      break;
+    case url.pathname === '/api/updates':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleUpdates(request, env, ctx);
       break;
     // Semble connections drawn off the reader's saves (routes/saved-connections.ts)
     case url.pathname === '/api/saved/connections' ||
