@@ -82,7 +82,7 @@ The Shelf opens on **Continue reading**, the things you're partway through. Belo
 
 ### New connections from Semble
 
-When someone on [Semble](https://semble.so) connects something to an article you've saved, the save shows a small **new** mark in the Queue and on the Shelf. It works for anything in your Library, whether or not you use Semble yourself. The Shelf gathers these in a **New connections** lane: each item shows who connected what to it, with their notes. Tap a connection to open it in a new tab or save it, or tap the article's title to keep reading where you left off. The article's discussion also starts on **Connections**, with the new ones marked. They stay marked until you mark them seen: with the check on the item, **Mark as seen** in the discussion, or **Mark all seen** on the Shelf. Your own connections never count as new.
+When someone on [Semble](https://semble.so) connects something to an article you've saved, the save shows a small **new** mark in the Queue and on the Shelf. It works for anything in your Library, whether or not you use Semble yourself. The Shelf gathers these in a **New connections** lane: each item shows who connected what to it, how (supports, opposes, related, and so on), and their notes. The same lane can sit on **Home**. Tap a connection to open it in a new tab or save it, or tap the article's title to keep reading where you left off. The article's discussion also starts on **Connections**, with the new ones marked. They stay marked until you mark them seen: with the check on the item, **Mark as seen** in the discussion, or **Mark all seen** on the Shelf. Your own connections never count as new.
 
 ### Collections
 

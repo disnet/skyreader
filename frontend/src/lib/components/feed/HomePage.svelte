@@ -26,6 +26,7 @@
   import BottomSheet from '$lib/components/common/BottomSheet.svelte';
   import NotificationList from '$lib/components/NotificationList.svelte';
   import HomeLane from '$lib/components/feed/HomeLane.svelte';
+  import NewConnections from '$lib/components/library/NewConnections.svelte';
   import MagazineRail from '$lib/components/feed/MagazineRail.svelte';
   import HighlightReviewCard from '$lib/components/feed/HighlightReviewCard.svelte';
   import GuestModeBanner from '$lib/components/feed/GuestModeBanner.svelte';
@@ -81,6 +82,7 @@
     savedItemLabelKeys,
   } from '$lib/utils/savedPile';
   import { preferences } from '$lib/stores/preferences.svelte';
+  import { savedConnectionsStore } from '$lib/stores/savedConnections.svelte';
   import { shelfStore } from '$lib/stores/shelf.svelte';
   import { isInProgress, progressFraction, sortShelf } from '$lib/utils/shelf';
   import { SAVED_PATH, SHELF_PATH } from '$lib/utils/viewNav';
@@ -480,6 +482,13 @@
     }));
   });
 
+  // The Shelf's New connections lane, over the whole Library: saves other
+  // people connected something to on Semble since the reader last looked.
+  let connectedSaves = $derived(savedConnectionsStore.unseenFor(savesStore.articles));
+  $effect(() => {
+    if (auth.isAuthenticated) void savedConnectionsStore.load();
+  });
+
   // Lanes drawn from the reader's own library (saves, rooms, channels), as
   // opposed to the follows lane, which a new account can have on day one.
   let hasLibraryLane = $derived(
@@ -487,6 +496,7 @@
       randomItems.length > 0 ||
       recentItems.length > 0 ||
       shelfItems.length > 0 ||
+      connectedSaves.length > 0 ||
       channelLanes.length > 0 ||
       roomLanes.length > 0
   );
@@ -539,6 +549,7 @@
     { id: HOME_SECTION.continue, label: 'Continue reading', icon: 'clock' },
     ...(auth.isAuthenticated
       ? [
+          { id: HOME_SECTION.connections, label: 'New connections', icon: 'semble' as const },
           {
             id: HOME_SECTION.follows,
             label: 'Shared by people you follow',
@@ -582,6 +593,8 @@
     switch (id) {
       case HOME_SECTION.continue:
         return continueItems.length > 0;
+      case HOME_SECTION.connections:
+        return connectedSaves.length > 0;
       case HOME_SECTION.follows:
         return followItems.length > 0;
       case HOME_SECTION.random:
@@ -692,6 +705,19 @@
         items={continueItems}
         onOpen={openLaneItem}
         onHover={handlePrefetch}
+      />
+    {/if}
+  {:else if id === HOME_SECTION.connections}
+    {#if connectedSaves.length > 0}
+      <NewConnections
+        entries={connectedSaves}
+        onOpen={(save) => {
+          const key = displayKey(save);
+          reader.openReader({ type: 'saved', item: save, key });
+        }}
+        onHover={(save) => void savesStore.prefetchContent(save.rkey)}
+        onMarkSeen={(save) => savedConnectionsStore.markSeen(save.rkey)}
+        onClearAll={() => savedConnectionsStore.markAllSeen()}
       />
     {/if}
   {:else if id === HOME_SECTION.follows}

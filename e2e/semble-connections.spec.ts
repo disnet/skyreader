@@ -95,6 +95,8 @@ test.describe('Semble connections on saves', () => {
       await expect(tile).toBeVisible({ timeout: 15_000 });
       await expect(tile.getByRole('link')).toHaveCount(3);
       await expect(tile.getByText('+1 more')).toBeVisible();
+      // Each connection says how it connects.
+      await expect(tile.getByText('supports')).toHaveCount(3);
 
       // The far end is a real link, and a tap asks what to do with it rather than
       // opening the save's discussion.
@@ -110,7 +112,9 @@ test.describe('Semble connections on saves', () => {
       // Focus goes back to the link the menu came from.
       await expect(link).toBeFocused();
 
-      // The tile clears itself, here and on the server.
+      // Home carries the same lane; the tile clears itself there, and on the server.
+      await authedPage.goto('/home');
+      await expect(tile).toBeVisible({ timeout: 15_000 });
       const seen = authedPage.waitForResponse(
         (r) => r.url().includes('/api/saved/connections/seen') && r.request().method() === 'POST'
       );

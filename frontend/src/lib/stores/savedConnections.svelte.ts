@@ -1,5 +1,5 @@
 import { api } from '$lib/services/api';
-import type { SavedConnectionActivity, SavedConnectionDetail } from '$lib/types';
+import type { SavedConnectionActivity, SavedConnectionDetail, SavedItem } from '$lib/types';
 import { auth } from './auth.svelte';
 import { syncStore } from './sync.svelte';
 
@@ -181,6 +181,17 @@ function createSavedConnectionsStore() {
     newest,
     markSeen,
     markAllSeen,
+    /**
+     * The saves among `saves` with new connections, most recently connected
+     * first: the New connections lane on the Shelf and on Home.
+     */
+    unseenFor(saves: SavedItem[]): { save: SavedItem; activity: SavedConnectionActivity }[] {
+      const saveByRkey = new Map(saves.map((save) => [save.rkey, save]));
+      return [...byRkey.values()]
+        .filter((activity) => activity.unseen > 0 && saveByRkey.has(activity.rkey))
+        .sort((a, b) => b.latestAt - a.latestAt)
+        .map((activity) => ({ save: saveByRkey.get(activity.rkey)!, activity }));
+    },
     /** Saves with connections by other people. */
     get items(): SavedConnectionActivity[] {
       return [...byRkey.values()];

@@ -158,11 +158,7 @@
   // marks its connections seen.
   let connectedSaves = $derived.by(() => {
     if (collection || kind !== 'all' || query.trim()) return [];
-    const byRkey = new Map(savesStore.articles.map((save) => [save.rkey, save]));
-    return savedConnectionsStore.items
-      .filter((activity) => activity.unseen > 0 && byRkey.has(activity.rkey))
-      .sort((a, b) => b.latestAt - a.latestAt)
-      .map((activity) => ({ save: byRkey.get(activity.rkey)!, activity }));
+    return savedConnectionsStore.unseenFor(savesStore.articles);
   });
 
   let loadedCount = $state(PAGE_SIZE);
