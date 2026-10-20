@@ -157,6 +157,7 @@ vi.mock('./sync.svelte', () => ({
 }));
 
 const { savesStore } = await import('./saves.svelte');
+const { db } = await import('$lib/services/db');
 
 describe('savesStore in guest mode', () => {
   beforeEach(() => {
@@ -568,6 +569,59 @@ describe('savesStore.saveArticle body choice', () => {
     });
 
     expect(saved.content).toBe(extracted);
+  });
+
+  // Saving from the open reader re-reads the body as the save appears, while
+  // extraction is still running — that read must not pin the excerpt.
+  it('serves the extracted body to a reader that opened before extraction landed', async () => {
+    const excerpt = words(30);
+    articleRows.push({ guid: 'post-2', subscriptionId: 7, content: excerpt });
+    const extracted = words(900);
+    let release!: (v: unknown) => void;
+    extractArticle.mockReturnValueOnce(new Promise((r) => (release = r)));
+
+    const pending = savesStore.saveArticle({
+      url: 'https://news.example/p/open',
+      guid: 'post-2',
+      subscriptionId: 7,
+    });
+    await vi.waitFor(() => expect(savesStore.isSaved('post-2')).toBe(true));
+    const rkey = savesStore.getByGuid('post-2')!.rkey;
+    expect(await savesStore.getContent(rkey)).toBe(excerpt);
+
+    release({ content: extracted, wordCount: 900, domain: 'x.com' });
+    await pending;
+    expect(await savesStore.getContent(rkey)).toBe(extracted);
+  });
+
+  it("doesn't cache an excerpt read that was in flight when extraction landed", async () => {
+    const excerpt = words(30);
+    articleRows.push({ guid: 'post-3', subscriptionId: 7, content: excerpt });
+    let release!: (v: unknown) => void;
+    extractArticle.mockReturnValueOnce(new Promise((r) => (release = r)));
+
+    const pending = savesStore.saveArticle({
+      url: 'https://news.example/p/race',
+      guid: 'post-3',
+      subscriptionId: 7,
+    });
+    await vi.waitFor(() => expect(savesStore.isSaved('post-3')).toBe(true));
+    const rkey = savesStore.getByGuid('post-3')!.rkey;
+
+    // A read that sees the optimistic row and only finishes after the save.
+    const optimistic = savedRows.get(rkey);
+    let finishRead!: () => void;
+    const get = db.saved.get;
+    db.saved.get = (() =>
+      new Promise((r) => (finishRead = () => r(optimistic)))) as unknown as typeof db.saved.get;
+    const inFlight = savesStore.getContent(rkey);
+    db.saved.get = get;
+
+    release({ content: words(900), wordCount: 900, domain: 'x.com' });
+    await pending;
+    finishRead();
+    expect(await inFlight).toBe(excerpt);
+    expect(await savesStore.getContent(rkey)).toBe(words(900));
   });
 
   it('recovers an out-of-row body before choosing', async () => {
