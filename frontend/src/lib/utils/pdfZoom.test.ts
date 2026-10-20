@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from 'vitest';
-import { claimPdfZoomShortcuts, openPdfZoom, pdfZoom, setPdfZoom } from './pdfZoom';
+import {
+  clampPdfZoom,
+  claimPdfZoomShortcuts,
+  openPdfZoom,
+  pdfZoom,
+  setPdfZoom,
+  stepPdfZoom,
+} from './pdfZoom';
 
 describe('pdfZoom', () => {
   beforeEach(() => localStorage.clear());
@@ -47,5 +54,30 @@ describe('claimPdfZoomShortcuts', () => {
     expect(openPdfZoom()).toBe(second);
     releaseSecond();
     expect(openPdfZoom()).toBeNull();
+  });
+
+  it('keeps a pinched zoom in range, to the percent, snapping near-fit to fit', () => {
+    expect(clampPdfZoom(1.234)).toBe(1.23);
+    expect(clampPdfZoom(9)).toBe(3);
+    expect(clampPdfZoom(0.1)).toBe(0.5);
+    expect(clampPdfZoom(1.03)).toBe(1);
+    expect(clampPdfZoom(0.96)).toBe(1);
+    expect(clampPdfZoom(Number.NaN)).toBe(1);
+  });
+
+  it('steps to the next stop from anywhere a pinch left it', () => {
+    expect(stepPdfZoom(1, 1)).toBe(1.25);
+    expect(stepPdfZoom(1, -1)).toBe(0.75);
+    expect(stepPdfZoom(1.37, 1)).toBe(1.5);
+    expect(stepPdfZoom(1.37, -1)).toBe(1.25);
+    expect(stepPdfZoom(3, 1)).toBe(3);
+    expect(stepPdfZoom(0.5, -1)).toBe(0.5);
+  });
+
+  it('opens a pinched zoom as it was left, and an out-of-range one clamped', () => {
+    setPdfZoom('pdf-a', 1.37);
+    expect(pdfZoom('pdf-a')).toBe(1.37);
+    localStorage.setItem('skyreader-pdf-zoom', '{"pdf-b":12}');
+    expect(pdfZoom('pdf-b')).toBe(3);
   });
 });

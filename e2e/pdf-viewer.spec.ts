@@ -247,3 +247,61 @@ test.describe('PDF original view', () => {
     await expect(authedPage.getByRole('group', { name: 'Show this PDF as' })).toHaveCount(0);
   });
 });
+
+test.describe('PDF original view on a phone', () => {
+  test.use({ hasTouch: true, isMobile: true, viewport: { width: 400, height: 800 } });
+
+  test('a pinch zooms the pages, not the app', async ({ authedPage, testUser }) => {
+    await makeSupporter(testUser);
+    const rkey = await seedSavedArticle(testUser, {
+      url: '',
+      title: TITLE,
+      source: 'upload',
+      contentType: 'pdf',
+      content: BODY,
+      wordCount: 60,
+    });
+    await authedPage.route(`**/api/saved/${rkey}/file`, (route) =>
+      route.fulfill({ body: pdfBytes(), contentType: 'application/pdf' })
+    );
+    await authedPage.evaluate(() => {
+      localStorage.setItem('skyreader-pdf-view', 'original');
+      localStorage.removeItem('skyreader-pdf-zoom');
+    });
+    await authedPage.goto('/saved');
+    await authedPage.getByText(TITLE).first().click({ timeout: 15_000 });
+    const first = authedPage.locator('.pdf-page').first();
+    await expect(first.locator('canvas')).toBeVisible({ timeout: 15_000 });
+    const fitted = (await first.boundingBox())!.width;
+
+    // Two fingers spreading from 100px apart to 200px, over the page.
+    const cdp = await authedPage.context().newCDPSession(authedPage);
+    const box = (await first.boundingBox())!;
+    const cx = box.x + box.width / 2;
+    const cy = Math.min(box.y + box.height / 2, 500);
+    const fingers = (apart: number) => [
+      { x: cx - apart / 2, y: cy, id: 1 },
+      { x: cx + apart / 2, y: cy, id: 2 },
+    ];
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: fingers(100) });
+    for (let i = 1; i <= 10; i++) {
+      await cdp.send('Input.dispatchTouchEvent', {
+        type: 'touchMove',
+        touchPoints: fingers(100 + i * 10),
+      });
+    }
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+
+    await expect(authedPage.locator('.pdf-fit')).toHaveText('200%');
+    await expect.poll(async () => (await first.boundingBox())!.width).toBeGreaterThan(fitted * 1.9);
+    // The app itself never zoomed.
+    expect(await authedPage.evaluate(() => window.visualViewport?.scale)).toBe(1);
+    // The zoom is remembered for this PDF.
+    expect(
+      await authedPage.evaluate(
+        (key) => JSON.parse(localStorage.getItem('skyreader-pdf-zoom') ?? '{}')[key],
+        rkey
+      )
+    ).toBe(2);
+  });
+});
