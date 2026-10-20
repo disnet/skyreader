@@ -95,6 +95,8 @@ test.describe('Semble connections on saves', () => {
       await expect(tile).toBeVisible({ timeout: 15_000 });
       await expect(tile.getByRole('link')).toHaveCount(3);
       await expect(tile.getByText('+1 more')).toBeVisible();
+      // Each connection says how it connects.
+      await expect(tile.getByText('supports → this')).toHaveCount(3);
 
       // The far end is a real link, and a tap asks what to do with it rather than
       // opening the save's discussion.
@@ -109,6 +111,12 @@ test.describe('Semble connections on saves', () => {
       await expect(authedPage).toHaveURL(/\/shelf/);
       // Focus goes back to the link the menu came from.
       await expect(link).toBeFocused();
+
+      // Home carries the same lane.
+      await authedPage.goto('/home');
+      await expect(tile).toBeVisible({ timeout: 15_000 });
+      await authedPage.goto('/shelf');
+      await expect(tile).toBeVisible({ timeout: 15_000 });
 
       // The tile clears itself, here and on the server.
       const seen = authedPage.waitForResponse(

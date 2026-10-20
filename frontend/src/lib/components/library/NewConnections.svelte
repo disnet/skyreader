@@ -22,7 +22,14 @@
   import { formatRelativeTime } from '$lib/utils/date';
   import { connectionTargetLabel, connectionTypeLabel } from '$lib/utils/connectionLabels';
   import { shelfKind } from '$lib/utils/shelf';
-  import type { BlueskyProfile, SavedConnectionActivity, SavedItem } from '$lib/types';
+  import {
+    NON_DIRECTIONAL_CONNECTION_TYPES,
+    type BlueskyProfile,
+    type SavedConnectionActivity,
+    type SavedConnectionDetail,
+    type SavedItem,
+    type SembleConnectionType,
+  } from '$lib/types';
 
   interface Entry {
     save: SavedItem;
@@ -143,6 +150,19 @@
     return shelfKind(save) === 'article';
   }
 
+  // The relation, the way the discussion's Connections tab says it: an arrow
+  // shows which way a directional one runs ("supports → this": the other piece
+  // supports the save). Related and helpful read the same both ways.
+  function relation(connection: SavedConnectionDetail): string | null {
+    const type = connectionTypeLabel(connection.type);
+    if (!type) return null;
+    const directional = !NON_DIRECTIONAL_CONNECTION_TYPES.includes(
+      connection.type as SembleConnectionType
+    );
+    if (!directional) return type;
+    return connection.direction === 'out' ? `this → ${type}` : `${type} → this`;
+  }
+
   function more(entry: Entry): number {
     return Math.max(0, entry.activity.unseen - entry.activity.newest.length);
   }
@@ -154,7 +174,6 @@
     {@const save = entry.save}
     {@const connections = entry.activity.newest}
     {@const single = connections.length === 1}
-    {@const type = single ? connectionTypeLabel(connections[0].type) : null}
     {@const count = `${entry.activity.unseen} new ${entry.activity.unseen === 1 ? 'connection' : 'connections'}`}
     <div
       class="tile"
@@ -175,6 +194,7 @@
           {#each connections as connection (connection.uri)}
             {@const avatar = profiles.get(connection.curatorDid)?.avatar}
             {@const label = connectionTargetLabel(connection.otherUrl)}
+            {@const rel = relation(connection)}
             <li class="edge">
               <span class="avatar" aria-hidden="true">
                 {#if avatar}
@@ -195,8 +215,10 @@
                     onclick={(e) => openLinkMenu(e, connection.otherUrl)}>{label}</a
                   >
                 </span>
-                {#if connection.note}
-                  <span class="note" class:short={!single}>{connection.note}</span>
+                {#if rel || connection.note}
+                  <span class="note" class:short={!single}
+                    >{#if rel}<span class="type">{rel}</span>{' '}{/if}{connection.note ?? ''}</span
+                  >
                 {/if}
               </span>
             </li>
@@ -212,8 +234,6 @@
           {#if connections.length === 0}
             <span>{count}</span>
           {:else}
-            {#if type && type !== 'related'}<span>{type}</span><span aria-hidden="true">·</span
-              >{/if}
             <span>{formatRelativeTime(connections[0].indexedAt)}</span>
             {#if more(entry) > 0}
               <span aria-hidden="true">·</span><span class="more">+{more(entry)} more</span>
@@ -429,6 +449,20 @@
     line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
+  }
+
+  /* What kind of connection: Semble's relation, as the discussion's
+     Connections tab says it. It leads the note, so the two clamp together. */
+  .type {
+    display: inline-block;
+    margin-right: 0.35rem;
+    padding: 0 0.4375rem;
+    border-radius: 999px;
+    background: var(--color-bg-secondary);
+    font-size: var(--text-xs);
+    line-height: 1.5;
+    color: var(--color-text-secondary);
+    vertical-align: 1px;
   }
 
   /* Several connections share the tile: a line of each note. */

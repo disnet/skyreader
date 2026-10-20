@@ -34,7 +34,7 @@ To change the order of your channels, drag one up or down the sidebar. Or right-
 
 Items you scroll past can be marked read automatically (a toggle in **Settings → Reading**).
 
-**Home** is the calmer front page: pick up where you left off, recent saves, a few things from your Shelf, your daily magazine. It draws on your [Library](/guide/saving-and-highlights/#your-library-queue-and-shelf), and each lane links to where it comes from. **Continue reading** shows anything you've started and not finished, leaving out what you've archived. The Shelf's own Continue reading still includes a book you archived halfway through.
+**Home** is the calmer front page: pick up where you left off, recent saves, a few things from your Shelf, your daily magazine. It draws on your [Library](/guide/saving-and-highlights/#your-library-queue-and-shelf), and each lane links to where it comes from. **Continue reading** shows anything you've started and not finished, leaving out what you've archived. The Shelf's own Continue reading still includes a book you archived halfway through. **New connections** appears when someone on Semble connects something to one of your saves, as it does on the Shelf.
 
 To change Home, choose **Customize** at the top of it. Pick where the app opens and how large
 the cards are, hide any section, or drag one by its handle to reorder. Changes apply right away
