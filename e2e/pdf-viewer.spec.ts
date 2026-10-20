@@ -303,5 +303,29 @@ test.describe('PDF original view on a phone', () => {
         rkey
       )
     ).toBe(2);
+
+    // A pinch whose second finger lands off the pages (on the toolbar) still
+    // zooms them: two fingers closing to half as far apart.
+    const bar = (await authedPage.locator('.pdf-toolbar').boundingBox())!;
+    const onBar = { x: bar.x + bar.width / 2, y: bar.y + bar.height / 2, id: 2 };
+    const onPage = (apart: number) => ({ x: onBar.x, y: onBar.y - apart, id: 1 });
+    await cdp.send('Input.dispatchTouchEvent', {
+      type: 'touchStart',
+      touchPoints: [onPage(200)],
+    });
+    await cdp.send('Input.dispatchTouchEvent', {
+      type: 'touchStart',
+      touchPoints: [onPage(200), onBar],
+    });
+    // (The pinch starts from the first move, at 195px apart; 95px is half that.)
+    for (let i = 1; i <= 21; i++) {
+      await cdp.send('Input.dispatchTouchEvent', {
+        type: 'touchMove',
+        touchPoints: [onPage(200 - i * 5), onBar],
+      });
+    }
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await expect(authedPage.locator('.pdf-fit')).toHaveText('100%');
+    expect(await authedPage.evaluate(() => window.visualViewport?.scale)).toBe(1);
   });
 });

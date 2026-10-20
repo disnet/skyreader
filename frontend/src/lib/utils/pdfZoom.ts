@@ -13,23 +13,26 @@ type Zooms = Record<string, number>;
 
 /** How far the pages zoom out and in; the buttons step through these stops. */
 export const PDF_ZOOM_STEPS = [0.5, 0.75, 1, 1.25, 1.5, 2, 3];
-const MIN_ZOOM = PDF_ZOOM_STEPS[0];
-const MAX_ZOOM = PDF_ZOOM_STEPS[PDF_ZOOM_STEPS.length - 1];
+export const MIN_PDF_ZOOM = PDF_ZOOM_STEPS[0];
+export const MAX_PDF_ZOOM = PDF_ZOOM_STEPS[PDF_ZOOM_STEPS.length - 1];
 // A pinch that ends this close to fit width is fit width.
 const FIT_SNAP = 0.05;
 
 /** A zoom the pages can take: in range, to the percent, near-fit snapped to fit. */
 export function clampPdfZoom(zoom: number): number {
   if (!Number.isFinite(zoom)) return 1;
-  const clamped = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom));
+  const clamped = Math.min(MAX_PDF_ZOOM, Math.max(MIN_PDF_ZOOM, zoom));
   if (Math.abs(clamped - 1) < FIT_SNAP) return 1;
   return Math.round(clamped * 100) / 100;
 }
 
-/** The next stop past `zoom` in `direction`, from anywhere a pinch left it. */
+/**
+ * The next stop past `zoom` in `direction`, from anywhere a pinch left it; a
+ * stop only a hair away is skipped, so a press always visibly zooms.
+ */
 export function stepPdfZoom(zoom: number, direction: 1 | -1): number {
   const stops = direction === 1 ? PDF_ZOOM_STEPS : [...PDF_ZOOM_STEPS].reverse();
-  return stops.find((stop) => (stop - zoom) * direction > 0.001) ?? stops[stops.length - 1];
+  return stops.find((stop) => (stop - zoom) * direction > 0.05) ?? stops[stops.length - 1];
 }
 
 function readZooms(): Zooms {

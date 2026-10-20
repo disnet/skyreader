@@ -20,7 +20,8 @@
   } from '$lib/utils/pdfTextModel';
   import { resolvePdfLink, type PdfLinkAnnotation, type PdfLinkTarget } from '$lib/utils/pdfLinks';
   import {
-    PDF_ZOOM_STEPS,
+    MAX_PDF_ZOOM,
+    MIN_PDF_ZOOM,
     clampPdfZoom,
     claimPdfZoomShortcuts,
     pdfZoom,
@@ -109,8 +110,6 @@
 
   // 1 = fit the column's width. Zoom multiplies it: a button steps through
   // PDF_ZOOM_STEPS, a pinch lands anywhere between the ends.
-  const MIN_ZOOM = PDF_ZOOM_STEPS[0];
-  const MAX_ZOOM = PDF_ZOOM_STEPS[PDF_ZOOM_STEPS.length - 1];
   let zoom = $state(rememberedZoom());
   let availableWidth = $state(0);
 
@@ -913,13 +912,17 @@
 
   type Point = { x: number; y: number };
 
-  /** The page at height `y` on screen, if one is. */
+  /** The page at height `y` on screen, or the nearest one to it (a gap's). */
   function pageAt(y: number): HTMLElement | null {
+    let nearest: HTMLElement | null = null;
+    let best = Infinity;
     for (const page of containerEl?.querySelectorAll<HTMLElement>('.pdf-page') ?? []) {
       const rect = page.getBoundingClientRect();
-      if (y >= rect.top && y <= rect.bottom) return page;
+      const off = Math.max(0, rect.top - y, y - rect.bottom);
+      if (off < best) [nearest, best] = [page, off];
+      if (off === 0) break;
     }
-    return null;
+    return nearest;
   }
 
   /**
@@ -934,6 +937,8 @@
     const pages = pagesEl;
     const fromY = pinchAt?.from.y ?? middleOf(scroller);
     const toY = pinchAt?.to.y ?? fromY;
+    // A pinch is the reader moving: stop holding the view on the saved place.
+    if (pinchAt) following = false;
     const anchor = (pinchAt && pageAt(fromY)) || pageEl(currentPage);
     const before = anchor?.getBoundingClientRect();
     const across = before ? (fromY - before.top) / before.height : null;
@@ -987,20 +992,26 @@
       el.style.transformOrigin = '';
     };
 
-    const onStart = (e: TouchEvent) => {
-      if (e.touches.length !== 2) return;
-      if (e.cancelable) e.preventDefault();
+    // Begun from the first move as well as from a touch landing, since a second
+    // finger that lands off the pages (the toolbar, the gutter) sends its
+    // touchstart elsewhere.
+    const begin = (e: TouchEvent) => {
+      // Not cancelable once a one-finger scroll is under way: the browser has
+      // the gesture, and pans with it (touch-action keeps it from zooming).
+      if (pinch || e.touches.length !== 2 || !e.cancelable) return;
+      e.preventDefault();
       const from = midpoint(e.touches);
       pinch = { distance: Math.max(1, spread(e.touches)), from, to: from, ratio: 1 };
       const rect = el.getBoundingClientRect();
       el.style.transformOrigin = `${from.x - rect.left}px ${from.y - rect.top}px`;
     };
     const onMove = (e: TouchEvent) => {
+      begin(e);
       if (!pinch || e.touches.length < 2) return;
       if (e.cancelable) e.preventDefault();
       const target = Math.min(
-        MAX_ZOOM,
-        Math.max(MIN_ZOOM, (zoom * spread(e.touches)) / pinch.distance)
+        MAX_PDF_ZOOM,
+        Math.max(MIN_PDF_ZOOM, (zoom * spread(e.touches)) / pinch.distance)
       );
       pinch.ratio = target / zoom;
       pinch.to = midpoint(e.touches);
@@ -1020,14 +1031,14 @@
     // Safari's own pinch, which touch-action alone doesn't always stop.
     const onGesture = (e: Event) => e.preventDefault();
 
-    el.addEventListener('touchstart', onStart, { passive: false });
+    el.addEventListener('touchstart', begin, { passive: false });
     el.addEventListener('touchmove', onMove, { passive: false });
     el.addEventListener('touchend', onEnd);
     el.addEventListener('touchcancel', onEnd);
     el.addEventListener('gesturestart', onGesture);
     el.addEventListener('gesturechange', onGesture);
     return () => {
-      el.removeEventListener('touchstart', onStart);
+      el.removeEventListener('touchstart', begin);
       el.removeEventListener('touchmove', onMove);
       el.removeEventListener('touchend', onEnd);
       el.removeEventListener('touchcancel', onEnd);
@@ -1104,7 +1115,7 @@
       <button
         type="button"
         onclick={() => stepZoom(-1)}
-        disabled={zoom <= MIN_ZOOM}
+        disabled={zoom <= MIN_PDF_ZOOM}
         aria-label="Zoom out">−</button
       >
       <button
@@ -1117,7 +1128,7 @@
       <button
         type="button"
         onclick={() => stepZoom(1)}
-        disabled={zoom >= MAX_ZOOM}
+        disabled={zoom >= MAX_PDF_ZOOM}
         aria-label="Zoom in">+</button
       >
       {#if fallbackHref}
