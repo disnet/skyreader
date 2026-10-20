@@ -12,7 +12,8 @@ import { syncStore } from './sync.svelte';
  * Saved and Shelf cards show a quiet "new" mark, the Shelf can put recently
  * connected items first, and an opened save's discussion opens on Connections
  * with the new ones marked. The mark stays until the reader clears it (in the
- * discussion, or every save at once from the Shelf), not merely on opening.
+ * discussion, on its Shelf tile, or every save at once from the Shelf), not
+ * merely on opening.
  *
  * Online-only and uncached: the list is small, and a stale badge offline is
  * worse than none.
