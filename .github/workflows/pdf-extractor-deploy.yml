@@ -18,9 +18,11 @@ on:
   release:
     types: [published]
 
+# Every release shares one production group and queues rather than cancels, so two
+# releases in a row deploy in order instead of racing and leaving the older one live.
 concurrency:
-  group: pdf-extractor-${{ github.head_ref || github.ref }}
-  cancel-in-progress: true
+  group: pdf-extractor-${{ github.event_name == 'release' && 'production' || github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'release' }}
 
 defaults:
   run:

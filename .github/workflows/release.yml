@@ -1,0 +1,92 @@
+name: Release
+
+# One click ships main to production: Actions → Release → Run workflow, or
+# `gh workflow run release.yml`. It names the release after today's date (UTC),
+# v2026.10.19, with .2, .3 … for later releases the same day. Nothing reads the
+# version (Sentry and the smoke checks use the commit SHA), so a date only has to
+# say when it shipped. The notes list the PRs merged since the last release.
+#
+# Publishing the release is what deploys: every *-deploy.yml runs its
+# deploy-production job on `release: published`. A release created with the
+# built-in GITHUB_TOKEN triggers no other workflow, so this publishes with the
+# RELEASE_TOKEN secret instead: a fine-grained token on this repo with
+# Contents: read and write.
+
+permissions:
+  contents: read
+  actions: read
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Publish release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Check the release token
+        env:
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          if [ -z "$RELEASE_TOKEN" ]; then
+            echo "::error::RELEASE_TOKEN is not set. A release published without it deploys nothing; see the comment at the top of release.yml."
+            exit 1
+          fi
+
+      - name: Check this is main
+        run: |
+          if [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo "::error::Releases ship main. Run this workflow from the main branch."
+            exit 1
+          fi
+
+      - name: Check there's something new to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prev=$(gh release view --json tagName --jq .tagName 2>/dev/null || true)
+          if [ -n "$prev" ] && [ "$(git rev-list -n1 "$prev")" = "$GITHUB_SHA" ]; then
+            echo "::error::$GITHUB_SHA is already released as $prev."
+            exit 1
+          fi
+
+      # A release ships every package at this commit, so each one's staging deploy
+      # must already be green on its latest change; see the script for how.
+      - name: Check staging is green
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/check-staging.sh "$GITHUB_SHA"
+
+      - name: Pick the tag
+        id: tag
+        run: |
+          base="v$(date -u +%Y.%-m.%-d)"
+          if ! git rev-parse -q --verify "refs/tags/$base" >/dev/null; then
+            tag="$base"
+          else
+            last=1
+            for t in $(git tag -l "$base.*"); do
+              n=${t#"$base."}
+              if [[ $n =~ ^[0-9]+$ ]] && [ "$n" -gt "$last" ]; then last=$n; fi
+            done
+            tag="$base.$((last + 1))"
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Releasing $GITHUB_SHA as $tag"
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" --generate-notes
+          echo "### Released [$TAG]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG)" >> "$GITHUB_STEP_SUMMARY"

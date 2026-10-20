@@ -218,6 +218,10 @@ Read it before changing anything under `backend/src/observability/`, the health 
 telemetry routes, the client error reporter (`frontend/src/lib/services/telemetry.ts`),
 or a deploy workflow's smoke-check step.
 
+To ship to production, run the **Release** workflow (`gh workflow run release.yml`) rather than
+tagging by hand: it checks staging is green, names the release by date and writes the notes. See
+the runbook's "Releasing" section.
+
 ## Architecture Overview
 
 ```

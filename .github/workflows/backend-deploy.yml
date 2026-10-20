@@ -16,9 +16,11 @@ on:
   release:
     types: [published]
 
+# Every release shares one production group and queues rather than cancels, so two
+# releases in a row deploy in order instead of racing and leaving the older one live.
 concurrency:
-  group: backend-deploy-${{ github.ref }}
-  cancel-in-progress: true
+  group: backend-deploy-${{ github.event_name == 'release' && 'production' || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'release' }}
 
 defaults:
   run:
