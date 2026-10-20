@@ -182,7 +182,7 @@ function createSavesStore() {
           if (it && body != null) {
             it.content = body;
             // Drop any in-memory copy the reader cached — it may be the stale body.
-            contentCache.delete(rkey);
+            invalidateContent(rkey);
             hydrated.push(it);
           }
         }
@@ -545,7 +545,7 @@ function createSavesStore() {
       if (noteSave) {
         articles = articles.map((a) => (a.rkey === noteSave.rkey ? toLightSaved(savedItem) : a));
         // The reader may have cached the note.
-        contentCache.delete(noteSave.rkey);
+        invalidateContent(noteSave.rkey);
       } else {
         articles = [toLightSaved(savedItem), ...articles];
       }
@@ -766,13 +766,14 @@ function createSavesStore() {
           };
           // A reader that opened (or a tile hovered) while extraction ran has
           // cached the optimistic RSS body; it would keep serving that excerpt
-          // for the rest of the session. Swap the cache to the kept body before
-          // the maps change, so a reader re-reading on that change gets it.
-          contentCache.delete(rkey);
-          if (content) contentCache.set(updated.rkey, content);
+          // for the rest of the session. Persist the kept body, then drop the
+          // cache, before the maps change: a reader re-reading on that change
+          // finds the new row.
+          await safePut(db.saved, updated);
+          invalidateContent(rkey);
+          invalidateContent(updated.rkey);
           articles = articles.map((a) => (a.rkey === rkey ? toLightSaved(updated) : a));
           rebuildMaps();
-          await safePut(db.saved, updated);
           // The backend can hand back a different rkey; drop the optimistic key
           // so the corpus doesn't keep a stale copy of the same save.
           if (updated.rkey !== rkey) savedSearchStore.remove(rkey);
@@ -1031,17 +1032,25 @@ function createSavesStore() {
   // Only non-null bodies are cached: a save's extracted text is immutable, but a
   // missing body can later be backfilled, so nulls always re-read. (A feed save
   // is the exception: its optimistic RSS body is replaced once extraction lands,
-  // and saveArticle swaps the entry when it does.) Bounded by the
+  // and saveArticle invalidates the entry when it does.) Bounded by the
   // handful of tiles a user can hover; entries are dropped on item removal.
   const contentCache = new Map<string, string>();
+  // Bumped on every invalidation. A read that began before one may have seen
+  // the old row, so it answers but doesn't cache what it read.
+  let contentEpoch = 0;
+  function invalidateContent(rkey: string) {
+    contentCache.delete(rkey);
+    contentEpoch++;
+  }
 
   // Warm the cache for a saved item ahead of an open (hover prefetch). Cheap and
   // idempotent; failures are non-fatal since getContent re-reads on open.
   async function prefetchContent(rkey: string): Promise<void> {
     if (!rkey || contentCache.has(rkey)) return;
     try {
+      const epoch = contentEpoch;
       const row = await db.saved.get(rkey);
-      if (row?.content) contentCache.set(rkey, row.content);
+      if (row?.content && epoch === contentEpoch) contentCache.set(rkey, row.content);
     } catch {
       // Non-fatal: getContent falls back to a fresh read on open.
     }
@@ -1075,9 +1084,10 @@ function createSavesStore() {
     const cached = contentCache.get(rkey);
     if (cached != null) return cached;
     try {
+      const epoch = contentEpoch;
       const row = await db.saved.get(rkey);
       if (row?.content) {
-        contentCache.set(rkey, row.content);
+        if (epoch === contentEpoch) contentCache.set(rkey, row.content);
         return row.content;
       }
 
