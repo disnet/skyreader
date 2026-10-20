@@ -13,6 +13,7 @@
     ReaderCollectionItem,
     FollowLink,
     FollowLinkSharer,
+    SavedItem,
   } from '$lib/types';
   import type { SearchSnippetSegment } from '$lib/services/api';
   import { followLinkSaid, sharedByLabel, sharedByPill } from '$lib/utils/followLinks';
@@ -46,6 +47,7 @@
   import { auth } from '$lib/stores/auth.svelte';
   import { blueskyComposerStore } from '$lib/stores/blueskyComposer.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
+  import { isFailedSaveBody } from '$lib/utils/saveAnywhere';
   import { integrationSaveStore } from '$lib/stores/integrationSave.svelte';
   import { sembleConnectionStore } from '$lib/stores/sembleConnection.svelte';
   import { toggleSavedLink } from '$lib/utils/saveLink';
@@ -86,6 +88,7 @@
     highlighted = false,
     followSharers,
     followLink,
+    save,
     matchSnippet,
     onToggleSave,
     onToggleRead,
@@ -113,6 +116,9 @@
     /** The follows link this card renders (`article` is its followLinkArticle):
      *  no feed behind it and no body of its own, so it shows as a link card. */
     followLink?: FollowLink;
+    /** The save this card renders, when a channel takes in the Library
+     *  (`article` is its savedItemArticle): its body is the kept copy. */
+    save?: SavedItem;
     /** A saved search's match: the passage it matched on, shown until the card expands. */
     matchSnippet?: SearchSnippetSegment[];
     onToggleSave?: () => void;
@@ -595,6 +601,22 @@
     if (!isOpen || !article || article.content || lazyContent != null) return;
     const { id, guid, subscriptionId } = article;
     let cancelled = false;
+    if (save) {
+      // A save's body is its kept copy, in the saves store, not db.articles. A
+      // link-only save's note isn't the article, so the description stands.
+      const rkey = save.rkey;
+      savesStore
+        .getContent(rkey)
+        .then((body) => {
+          if (!cancelled) lazyContent = body && !isFailedSaveBody(body) ? body : '';
+        })
+        .catch(() => {
+          if (!cancelled) lazyContent = '';
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
     (async () => {
       try {
         let row = id != null ? await db.articles.get(id) : undefined;
@@ -915,8 +937,9 @@
   // Account-only, like the store it drives (extraction needs a session). Hidden
   // rather than offered and refused: a guest's feed is full of truncated RSS
   // bodies, so a dead "Fetch full article" would sit under most of them.
+  // A save's body is already the extracted page.
   let canFetchOriginal = $derived(
-    Boolean(auth.user) && Boolean(article) && Boolean(itemUrl) && !hasFetchedOriginal
+    Boolean(auth.user) && Boolean(article) && !save && Boolean(itemUrl) && !hasFetchedOriginal
   );
 
   // Whether "More" / a content tap can expand the card. Usually that's the
@@ -996,6 +1019,8 @@
 
   let itemTagType = $derived.by((): ItemTags['itemType'] => {
     if (isDocumentMode) return 'document';
+    // Filed as the Queue and the saved reader file a save's tags and highlights.
+    if (save) return 'saved';
     return 'article';
   });
 
@@ -1203,6 +1228,7 @@
   followSharers={followSharersVM}
   {matchSnippet}
   {isFollowLink}
+  isLibrarySave={Boolean(save)}
   followLinkCard={followLinkCardVM}
   keptLinkCard={keptLinkCardVM}
   socialContext={socialContext ? { quoteCount: socialContext.quoteCount } : undefined}

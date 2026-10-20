@@ -8,6 +8,7 @@ import {
   setSavedRowArchived,
   type RiverItem,
 } from '$lib/stores/feedView.svelte';
+import { toggleSavedItemSave } from '$lib/utils/readerSave';
 import { toggleSavedLink } from '$lib/utils/saveLink';
 import { markFollowLinkRead } from '$lib/utils/followLinks';
 import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
@@ -122,6 +123,8 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
       );
     } else if (item.type === 'link') {
       void toggleSavedLink(item.item.url);
+    } else if (item.type === 'saved') {
+      void toggleSavedItemSave(item.item);
     }
   }
 
@@ -250,12 +253,6 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
       params.openSavedReader();
       return;
     }
-    // A save in a channel has no inline expansion; Enter reads it, as in the Queue.
-    if (getSelectedItem()?.type === 'saved' && params.openFullscreenReader) {
-      params.openFullscreenReader();
-      return;
-    }
-
     if (feedViewStore.expandedKey === selectedKey) {
       feedViewStore.collapse();
     } else {

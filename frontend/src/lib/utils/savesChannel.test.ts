@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import type { FilteredView } from '$lib/types';
-import { foldSavedChannel, isSavesChannel } from './savesChannel';
+import type { FilteredView, SavedItem } from '$lib/types';
+import { foldSavedChannel, isSavesChannel, savedItemArticle } from './savesChannel';
 import { CHANNEL_FILTER_VERSION } from './sourceFilter';
 
 function view(overrides: Partial<FilteredView>): FilteredView {
@@ -78,5 +78,36 @@ describe('foldSavedChannel', () => {
   it('leaves every other channel alone', () => {
     expect(foldSavedChannel(view({ mode: 'feed' }))).toBeNull();
     expect(foldSavedChannel(view({}))).toBeNull();
+  });
+});
+
+describe('savedItemArticle', () => {
+  const save: SavedItem = {
+    rkey: 'r1',
+    uri: 'at://did:plc:me/app.skyreader.feed.saved/r1',
+    url: 'https://example.com/a',
+    title: null,
+    author: 'Ann',
+    description: 'A plain guide',
+    content: null,
+    contentType: 'webpage',
+    domain: 'example.com',
+    image: null,
+    wordCount: 1200,
+    publishedAt: '2026-01-01T00:00:00.000Z',
+    savedAt: '2026-10-19T12:00:00.000Z',
+  };
+
+  it('keys the card by the row key and dates it by when it was saved', () => {
+    const article = savedItemArticle(save, save.uri);
+    expect(article.guid).toBe(save.uri);
+    expect(article.publishedAt).toBe(save.savedAt);
+    expect(article.subscriptionId).toBe(-1);
+    expect(article.summary).toBe('A plain guide');
+    expect(article.content).toBeUndefined();
+  });
+
+  it('falls back to the URL for an untitled save', () => {
+    expect(savedItemArticle(save, save.uri).title).toBe(save.url);
   });
 });

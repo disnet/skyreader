@@ -4,7 +4,6 @@
   import { tick } from 'svelte';
   import ArticleCard from '$lib/components/ArticleCard.svelte';
   import SavedReader from '$lib/components/feed/SavedReader.svelte';
-  import SavedCard from '$lib/components/feed/SavedCard.svelte';
   import InfiniteScrollSentinel from '$lib/components/common/InfiniteScrollSentinel.svelte';
   import {
     feedViewStore,
@@ -25,6 +24,7 @@
   import { followLinksStore } from '$lib/stores/followLinks.svelte';
   import { searchChannelsStore } from '$lib/stores/searchChannels.svelte';
   import { matchSharers } from '$lib/utils/searchChannels';
+  import { savedItemArticle } from '$lib/utils/savesChannel';
   import { followLinkArticle, markFollowLinkRead, openFollowLink } from '$lib/utils/followLinks';
   import type { Article, FollowLink, SocialDocument } from '$lib/types';
   import { getDocumentEffectiveUrl } from '$lib/utils/linkPost';
@@ -382,20 +382,33 @@
           onOpenFullscreen={() => void openFollowLink(link, reader)}
         />
       {:else if displayItem.type === 'saved'}
-        <!-- A save the channel takes in from the Library: its own card, as in the Queue. -->
+        <!-- A save the channel takes in from the Library: the same card as the
+             river's, so List / Expand mean the same thing for every row. It's
+             read once archived, as in the Queue. -->
         {@const save = displayItem.item}
-        <SavedCard
-          {displayItem}
+        <ArticleCard
+          article={savedItemArticle(save, displayItem.key)}
+          {save}
+          isRead={isSavedRowArchived(displayItem)}
+          isSaved={true}
+          isShared={linkblogStore.isShared(save.url)}
+          shareNote={linkblogStore.getNote(save.url)}
+          followSharers={match ? matchSharers(match) : undefined}
           matchSnippet={match?.snippet}
-          selected={feedViewStore.selectedKey === displayItem.key}
-          onOpen={() => openReader(displayItem)}
-          onArchive={() => {
+          selected={preferences.expandAllItems || feedViewStore.selectedKey === displayItem.key}
+          expanded={feedViewStore.expandedKey === displayItem.key}
+          highlighted={feedViewStore.selectedKey === displayItem.key}
+          onToggleSave={() => void toggleSavedItemSave(save)}
+          onToggleRead={() => {
             const archived = isSavedRowArchived(displayItem);
             // Archiving reads it, so it stays put until the view changes.
             if (!archived) feedViewStore.trackSeenThisSession(displayItem);
             void setSavedRowArchived(displayItem, !archived);
           }}
-          onRemove={() => savesStore.remove(save.rkey)}
+          onUnshare={() => onUnshare(save.url)}
+          onSelect={() => handleSelect(index)}
+          onExpand={() => handleExpand(index)}
+          onOpenFullscreen={() => openReader(displayItem)}
         />
       {/if}
     </div>
