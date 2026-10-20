@@ -282,6 +282,30 @@ describe('useParagraphTracking', () => {
     expect(setReadProgress).toHaveBeenCalledTimes(1);
   });
 
+  // A host's key is derived from its item prop, which is already null when the
+  // reader closes; the flush must not read it again then.
+  it('writes a queued position on close after the host item is gone', () => {
+    getLatestReadProgress.mockReturnValue({ paragraphIndex: 12, totalParagraphs: 40 });
+    const content = renderBody(40);
+    let item: { key: string } | null = { key: 'article-key' };
+    const tracking = useParagraphTracking({
+      contentEl: () => content,
+      scrollRoot: () => null,
+      itemKey: () => item!.key,
+      itemType: () => 'article',
+      enabled: () => true,
+      progressKeys: () => [item!.key + '#alias'],
+    });
+
+    tracking.setupObserver();
+    window.dispatchEvent(new Event('scroll'));
+    item = null;
+    for (const destroy of destroyCallbacks) destroy();
+
+    expect(getLatestReadProgress).toHaveBeenLastCalledWith(['article-key', 'article-key#alias']);
+    expect(setReadProgress).toHaveBeenCalledWith('article-key', 'article', 39, 40);
+  });
+
   it('reports whether the reader has scrolled the open item by hand', () => {
     getReadProgress.mockReturnValue({ paragraphIndex: 12, totalParagraphs: 40 });
     const content = renderBody(40);
