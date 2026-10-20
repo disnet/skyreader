@@ -166,8 +166,11 @@ test.describe('Saved searches', () => {
       timeout: 15_000,
     });
     await expect(cards.filter({ hasText: 'The heat pump podcast' })).toHaveCount(0);
+    // The save is the same card as the feed's match, marked as from the Library.
     await expect(
-      authedPage.locator('.bookmark-card', { hasText: 'Notes on our heat pump install' })
+      cards.filter({ hasText: 'Notes on our heat pump install' }).filter({
+        hasText: 'From your Library',
+      })
     ).toBeVisible();
     await expect(authedPage.locator('.view-item', { hasText: 'heat pump' })).toBeVisible();
 

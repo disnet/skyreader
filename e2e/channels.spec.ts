@@ -238,6 +238,58 @@ test.describe('Channels', () => {
     }
   });
 
+  test('a save in a mixed channel is the same card, and follows List / Expand', async ({
+    authedPage,
+    testUser,
+  }) => {
+    const feedUrl = `https://example.com/mixed-card-${testUser.did.slice(-8)}.xml`;
+    await seedSubscription(testUser, { feedUrl, title: 'Mixed Feed' });
+    await seedFeedItems(feedUrl, [
+      { guid: `mixed-card-${testUser.did.slice(-8)}`, title: 'A feed post' },
+    ]);
+    await seedSavedArticle(testUser, {
+      url: 'https://elsewhere.example/kept-body',
+      title: 'A page I saved',
+      description: 'The short description.',
+      content: '<p>The kept body of the page I saved, read in place.</p>',
+      wordCount: 10,
+    });
+    const uuid = '5ea4c0de-0000-4000-8000-0000000c4a2d';
+    await seedChannel(testUser, {
+      uuid,
+      name: 'Feeds and saves',
+      config: {
+        mode: 'feed',
+        sourceMode: 'all',
+        sourceKeys: [],
+        librarySources: ['saves'],
+        readFilter: 'all',
+        sortOrder: 'newest',
+        filterVersion: 2,
+      },
+    });
+    try {
+      await authedPage.goto(`/feeds?view=${uuid}`);
+      const card = authedPage.locator('.article-item', { hasText: 'A page I saved' });
+      await expect(card).toBeVisible({ timeout: 15_000 });
+      await expect(card).toContainText('From your Library');
+
+      // Expand shows the kept body inline, as it shows a feed post's.
+      await authedPage.getByRole('button', { name: 'Expanded view' }).click();
+      await expect(card.locator('.article-body')).toContainText('read in place');
+
+      // List folds it back to its title, like every other row.
+      await authedPage.getByRole('button', { name: 'List view' }).click();
+      await expect(card.locator('.article-body')).toHaveCount(0);
+
+      // Its dot is the Inbox: reading it here archives it.
+      await card.locator('.read-toggle').click();
+      await expect(card).toHaveClass(/\bread\b/);
+    } finally {
+      await cleanupFeedItems(feedUrl);
+    }
+  });
+
   test('Manage Sources link navigates to /sources', async ({ authedPage }) => {
     await authedPage.locator('.nav-label', { hasText: 'Manage Sources' }).click();
     await expect(authedPage).toHaveURL(/\/sources/);

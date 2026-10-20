@@ -250,12 +250,6 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
       params.openSavedReader();
       return;
     }
-    // A save in a channel has no inline expansion; Enter reads it, as in the Queue.
-    if (getSelectedItem()?.type === 'saved' && params.openFullscreenReader) {
-      params.openFullscreenReader();
-      return;
-    }
-
     if (feedViewStore.expandedKey === selectedKey) {
       feedViewStore.collapse();
     } else {

@@ -41,6 +41,7 @@
     followSharers,
     matchSnippet,
     isFollowLink = false,
+    isLibrarySave = false,
     followLinkCard,
     keptLinkCard,
     socialContext,
@@ -283,7 +284,13 @@
       <span
         class="read-toggle"
         class:unread={!isRead}
-        title={isRead ? 'Mark unread' : 'Mark read'}
+        title={isLibrarySave
+          ? isRead
+            ? 'Move back to Inbox'
+            : 'Archive'
+          : isRead
+            ? 'Mark unread'
+            : 'Mark read'}
         onclick={(e) => {
           e.stopPropagation();
           onToggleRead?.();
@@ -354,7 +361,11 @@
             <Icon name="layers" size={12} />Edition · {collectionPieceCount}
           </span>
         {/if}
-        {#if displayFeedTitle && isFollowLink}
+        {#if isLibrarySave}
+          <span class="feed-title-label" title="A save from your Library"
+            ><Icon name="bookmark" size={12} />From your Library</span
+          >
+        {:else if displayFeedTitle && isFollowLink}
           <span class="feed-title-label" title="Shared on Bluesky"
             ><Icon name="globe" size={12} />{displayFeedTitle}</span
           >
