@@ -45,14 +45,20 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
   let observedKey: string | null = null;
 
   /** The saved position to restore: the newest across every key the item has. */
-  function savedProgress(): {
+  function savedProgress() {
+    return progressFor(params.itemKey(), params.progressKeys?.() ?? []);
+  }
+
+  function progressFor(
+    key: string,
+    aliases: string[]
+  ): {
     paragraphIndex: number;
     totalParagraphs: number;
     lastReadAt?: number;
   } | null {
-    const aliases = params.progressKeys?.() ?? [];
-    if (aliases.length === 0) return itemLabelsStore.getReadProgress(params.itemKey());
-    return itemLabelsStore.getLatestReadProgress([params.itemKey(), ...aliases]);
+    if (aliases.length === 0) return itemLabelsStore.getReadProgress(key);
+    return itemLabelsStore.getLatestReadProgress([key, ...aliases]);
   }
 
   function detectParagraphs() {
@@ -186,8 +192,7 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
    * partial DOM, so persisting one would replace progress synced from another
    * device with a near-zero value.
    */
-  function bodyIsPartial(): boolean {
-    const saved = savedProgress();
+  function bodyIsPartial(saved: { paragraphIndex: number } | null | undefined): boolean {
     if (!saved || saved.paragraphIndex <= 0) return false;
     return saved.paragraphIndex > paragraphs.length - 1;
   }
@@ -217,23 +222,24 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     // newer position; publishing this one afterwards would rewind that device
     // and, worse, republish the older position as authoritative.
     const queuedAt = Date.now();
+    // The item too: the flush may run as the reader closes, when the host's
+    // item is already gone and its key getter would throw.
+    const key = params.itemKey();
+    const type = params.itemType();
+    const aliases = params.progressKeys?.() ?? [];
     pendingSave = () => {
       saveTimer = null;
       pendingSave = null;
       // Re-checked at flush time rather than when the save was queued: the full
       // body may have arrived in the meantime, which makes the position real.
-      if (bodyIsPartial()) return;
-      const stored = itemLabelsStore.getLabel(params.itemKey(), 'readProgress');
+      const saved = progressFor(key, aliases);
+      if (bodyIsPartial(saved)) return;
+      const stored = itemLabelsStore.getLabel(key, 'readProgress');
       const storedAt = stored?.props.lastReadAt as number | undefined;
       if (typeof storedAt === 'number' && storedAt > queuedAt) return;
-      const aliasAt = params.progressKeys ? savedProgress()?.lastReadAt : undefined;
+      const aliasAt = aliases.length > 0 ? saved?.lastReadAt : undefined;
       if (typeof aliasAt === 'number' && aliasAt > queuedAt) return;
-      itemLabelsStore.setReadProgress(
-        params.itemKey(),
-        params.itemType(),
-        currentParagraphIndex,
-        totalParagraphs
-      );
+      itemLabelsStore.setReadProgress(key, type, currentParagraphIndex, totalParagraphs);
     };
     saveTimer = setTimeout(pendingSave, SAVE_DEBOUNCE_MS);
   }
