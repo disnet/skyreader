@@ -452,7 +452,9 @@
   onMount(() => {
     void followLinksStore.load();
     const onVisible = () => {
-      if (document.visibilityState === 'visible') void followLinksStore.load();
+      if (document.visibilityState !== 'visible') return;
+      void followLinksStore.load();
+      void savedConnectionsStore.load();
     };
     document.addEventListener('visibilitychange', onVisible);
     return () => document.removeEventListener('visibilitychange', onVisible);
@@ -485,8 +487,10 @@
   // The Shelf's New connections lane, over the whole Library: saves other
   // people connected something to on Semble since the reader last looked.
   let connectedSaves = $derived(savedConnectionsStore.unseenFor(savesStore.articles));
+  // Unconditional: for a guest or a signed-out reader, load() is what clears
+  // the last account's news.
   $effect(() => {
-    if (auth.isAuthenticated) void savedConnectionsStore.load();
+    void savedConnectionsStore.load();
   });
 
   // Lanes drawn from the reader's own library (saves, rooms, channels), as

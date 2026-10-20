@@ -186,15 +186,14 @@ function createSavedConnectionsStore() {
      * first: the New connections lane on the Shelf and on Home.
      */
     unseenFor(saves: SavedItem[]): { save: SavedItem; activity: SavedConnectionActivity }[] {
+      const news = [...byRkey.values()].filter((activity) => activity.unseen > 0);
+      // Most of the time there's no news, so skip indexing the whole library.
+      if (news.length === 0) return [];
       const saveByRkey = new Map(saves.map((save) => [save.rkey, save]));
-      return [...byRkey.values()]
-        .filter((activity) => activity.unseen > 0 && saveByRkey.has(activity.rkey))
+      return news
+        .filter((activity) => saveByRkey.has(activity.rkey))
         .sort((a, b) => b.latestAt - a.latestAt)
         .map((activity) => ({ save: saveByRkey.get(activity.rkey)!, activity }));
-    },
-    /** Saves with connections by other people. */
-    get items(): SavedConnectionActivity[] {
-      return [...byRkey.values()];
     },
   };
 }

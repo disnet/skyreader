@@ -22,7 +22,14 @@
   import { formatRelativeTime } from '$lib/utils/date';
   import { connectionTargetLabel, connectionTypeLabel } from '$lib/utils/connectionLabels';
   import { shelfKind } from '$lib/utils/shelf';
-  import type { BlueskyProfile, SavedConnectionActivity, SavedItem } from '$lib/types';
+  import {
+    NON_DIRECTIONAL_CONNECTION_TYPES,
+    type BlueskyProfile,
+    type SavedConnectionActivity,
+    type SavedConnectionDetail,
+    type SavedItem,
+    type SembleConnectionType,
+  } from '$lib/types';
 
   interface Entry {
     save: SavedItem;
@@ -143,6 +150,19 @@
     return shelfKind(save) === 'article';
   }
 
+  // The relation, the way the discussion's Connections tab says it: an arrow
+  // shows which way a directional one runs ("supports → this": the other piece
+  // supports the save). Related and helpful read the same both ways.
+  function relation(connection: SavedConnectionDetail): string | null {
+    const type = connectionTypeLabel(connection.type);
+    if (!type) return null;
+    const directional = !NON_DIRECTIONAL_CONNECTION_TYPES.includes(
+      connection.type as SembleConnectionType
+    );
+    if (!directional) return type;
+    return connection.direction === 'out' ? `this → ${type}` : `${type} → this`;
+  }
+
   function more(entry: Entry): number {
     return Math.max(0, entry.activity.unseen - entry.activity.newest.length);
   }
@@ -174,7 +194,7 @@
           {#each connections as connection (connection.uri)}
             {@const avatar = profiles.get(connection.curatorDid)?.avatar}
             {@const label = connectionTargetLabel(connection.otherUrl)}
-            {@const type = connectionTypeLabel(connection.type)}
+            {@const rel = relation(connection)}
             <li class="edge">
               <span class="avatar" aria-hidden="true">
                 {#if avatar}
@@ -195,9 +215,9 @@
                     onclick={(e) => openLinkMenu(e, connection.otherUrl)}>{label}</a
                   >
                 </span>
-                {#if type || connection.note}
+                {#if rel || connection.note}
                   <span class="note" class:short={!single}
-                    >{#if type}<span class="type">{type}</span>{/if}{connection.note ?? ''}</span
+                    >{#if rel}<span class="type">{rel}</span>{' '}{/if}{connection.note ?? ''}</span
                   >
                 {/if}
               </span>
