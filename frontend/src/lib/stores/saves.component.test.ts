@@ -570,6 +570,29 @@ describe('savesStore.saveArticle body choice', () => {
     expect(saved.content).toBe(extracted);
   });
 
+  // Saving from the open reader re-reads the body as the save appears, while
+  // extraction is still running — that read must not pin the excerpt.
+  it('serves the extracted body to a reader that opened before extraction landed', async () => {
+    const excerpt = words(30);
+    articleRows.push({ guid: 'post-2', subscriptionId: 7, content: excerpt });
+    const extracted = words(900);
+    let release!: (v: unknown) => void;
+    extractArticle.mockReturnValueOnce(new Promise((r) => (release = r)));
+
+    const pending = savesStore.saveArticle({
+      url: 'https://news.example/p/open',
+      guid: 'post-2',
+      subscriptionId: 7,
+    });
+    await vi.waitFor(() => expect(savesStore.isSaved('post-2')).toBe(true));
+    const rkey = savesStore.getByGuid('post-2')!.rkey;
+    expect(await savesStore.getContent(rkey)).toBe(excerpt);
+
+    release({ content: extracted, wordCount: 900, domain: 'x.com' });
+    await pending;
+    expect(await savesStore.getContent(rkey)).toBe(extracted);
+  });
+
   it('recovers an out-of-row body before choosing', async () => {
     const full = words(3000);
     articleRows.push({

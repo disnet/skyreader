@@ -764,6 +764,12 @@ function createSavesStore() {
             uri: result.uri,
             rkey: result.rkey,
           };
+          // A reader that opened (or a tile hovered) while extraction ran has
+          // cached the optimistic RSS body; it would keep serving that excerpt
+          // for the rest of the session. Swap the cache to the kept body before
+          // the maps change, so a reader re-reading on that change gets it.
+          contentCache.delete(rkey);
+          if (content) contentCache.set(updated.rkey, content);
           articles = articles.map((a) => (a.rkey === rkey ? toLightSaved(updated) : a));
           rebuildMaps();
           await safePut(db.saved, updated);
@@ -1023,7 +1029,9 @@ function createSavesStore() {
   // In-memory body cache, primed by prefetchContent() when a tile is hovered, so
   // opening the reader is instant — no IndexedDB roundtrip, no null→content flash.
   // Only non-null bodies are cached: a save's extracted text is immutable, but a
-  // missing body can later be backfilled, so nulls always re-read. Bounded by the
+  // missing body can later be backfilled, so nulls always re-read. (A feed save
+  // is the exception: its optimistic RSS body is replaced once extraction lands,
+  // and saveArticle swaps the entry when it does.) Bounded by the
   // handful of tiles a user can hover; entries are dropped on item removal.
   const contentCache = new Map<string, string>();
 
