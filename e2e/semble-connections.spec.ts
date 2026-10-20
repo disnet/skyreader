@@ -80,12 +80,21 @@ test.describe('Semble connections on saves', () => {
       content: '<p>The essay itself.</p>',
       savedAt: Date.now() - 60_000,
     });
-    const uri = await seedSembleConnection(testUser, { savedUrl, otherUrl });
+    // Four new connections: the server sends the newest three, and the tile
+    // counts the rest.
+    const uris = [
+      await seedSembleConnection(testUser, { savedUrl, otherUrl: 'https://older.example/one' }),
+      await seedSembleConnection(testUser, { savedUrl, otherUrl: 'https://older.example/two' }),
+      await seedSembleConnection(testUser, { savedUrl, otherUrl: 'https://older.example/three' }),
+      await seedSembleConnection(testUser, { savedUrl, otherUrl, indexedAt: Date.now() + 1000 }),
+    ];
 
     try {
       await authedPage.goto('/shelf');
       const tile = authedPage.getByRole('group', { name: /A Tile Essay/ });
       await expect(tile).toBeVisible({ timeout: 15_000 });
+      await expect(tile.getByRole('link')).toHaveCount(3);
+      await expect(tile.getByText('+1 more')).toBeVisible();
 
       // The far end is a real link, and a tap asks what to do with it rather than
       // opening the save's discussion.
@@ -98,6 +107,8 @@ test.describe('Semble connections on saves', () => {
       await authedPage.keyboard.press('Escape');
       await expect(menu).toHaveCount(0);
       await expect(authedPage).toHaveURL(/\/shelf/);
+      // Focus goes back to the link the menu came from.
+      await expect(link).toBeFocused();
 
       // The tile clears itself, here and on the server.
       const seen = authedPage.waitForResponse(
@@ -107,7 +118,7 @@ test.describe('Semble connections on saves', () => {
       expect((await seen).ok()).toBe(true);
       await expect(tile).toHaveCount(0);
     } finally {
-      await cleanupSembleConnection(uri);
+      for (const uri of uris) await cleanupSembleConnection(uri);
     }
   });
 });

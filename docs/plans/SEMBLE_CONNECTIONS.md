@@ -46,13 +46,16 @@ a save, or before this shipped, aren't news.
 `stores/savedConnections.svelte.ts` loads the list (online, account-only, at most once a minute)
 from the Queue and the Shelf. `library/ConnectionsBadge` marks Queue cards and Shelf items. The
 Shelf adds a **New connections** lane over the whole Library (`library/NewConnections`, drawn
-through `HomeLane`'s `card` snippet): one tile per save, saying who linked it to what for the newest
-connection, with their note and a count of the rest. Curator names come from the public appview
+through `HomeLane`'s `card` snippet): one tile per save, saying who linked it to what for each of
+its `newest` connections, with their notes and a count of the rest. Each connection's other end is
+a link that opens the reader's `LinkContextMenu` (open, copy, save, collect), the save's title opens
+it at the reader's place, and a check clears that save. Curator names come from the public appview
 (`profileService`), and the other end is labelled from its URL (`utils/connectionLabels.ts`), since
 the poller keeps no title. It also adds a **Recently connected** sort.
 Opening a save in the fullscreen reader hands `AtmospherePanel` the time "new" is measured from, so
 the discussion opens on **Connections** with the new edges first and marked. Opening doesn't clear:
-the panel's **Mark as seen** clears one save, and the lane's **Mark all seen** clears them all.
+the panel's **Mark as seen** and a tile's check clear one save, and the lane's **Mark all seen**
+clears them all.
 The panel's connections come from Semble through the feed proxy's cache, which can lag the poller,
 so the reader also merges the save's `newest` edges into them (`utils/localSembleConnections.ts`,
 deduped by curator, direction and URL); a cleared save keeps them for the rest of the session.

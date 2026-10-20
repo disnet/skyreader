@@ -10,10 +10,11 @@
   // end, not their own save's discussion. So each connection's far end is a link
   // that opens the reader's usual link menu (open, save, collect), and the save's
   // title goes back to reading it, at the reader's place.
-  import { untrack } from 'svelte';
+  import { tick, untrack } from 'svelte';
   import Icon from '$lib/components/Icon.svelte';
   import HomeLane from '$lib/components/feed/HomeLane.svelte';
   import LinkContextMenu from '$lib/components/feed/LinkContextMenu.svelte';
+  import type { LinkMenuState } from '$lib/hooks/useLinkInterception.svelte';
   import type { LaneCardVM } from '$lib/components/feed/homeLane';
   import { profileService } from '$lib/services/profiles';
   import { decodeEntities } from '$lib/utils/entities';
@@ -40,21 +41,43 @@
 
   let { entries, onOpen, onHover, onMarkSeen, onClearAll }: Props = $props();
 
-  // The server sends the newest three; a tile lists them all.
-  const SHOWN = 3;
-
-  let linkMenu = $state<{ url: string; linkText: string; anchorRect: DOMRect } | null>(null);
+  let linkMenu = $state<LinkMenuState | null>(null);
+  // Where focus goes back to when the menu closes.
+  let linkMenuAnchor: HTMLElement | null = null;
 
   // As links in the reader: a plain tap asks what to do with it, a modified
   // click (new tab, new window) is the browser's.
-  function openLinkMenu(e: MouseEvent, url: string, linkText: string) {
+  // No link text: the label is read off the URL, and the menu would hand it to a
+  // save or a Semble card as the page's title.
+  function openLinkMenu(e: MouseEvent, url: string) {
     if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
     e.preventDefault();
-    linkMenu = {
-      url,
-      linkText,
-      anchorRect: (e.currentTarget as HTMLElement).getBoundingClientRect(),
-    };
+    linkMenuAnchor = e.currentTarget as HTMLElement;
+    linkMenu = { url, linkText: '', anchorRect: linkMenuAnchor.getBoundingClientRect() };
+  }
+
+  // A keyboard close (Escape, or an action) hands focus back to the link; a
+  // click elsewhere keeps it wherever that click put it.
+  function closeLinkMenu() {
+    const active = document.activeElement;
+    const anchor = linkMenuAnchor;
+    const refocus = !active || active === document.body || !!active.closest('[role="menu"]');
+    linkMenu = null;
+    linkMenuAnchor = null;
+    if (refocus && anchor?.isConnected) anchor.focus({ preventScroll: true });
+  }
+
+  // Clearing a tile takes it out of the lane, so focus moves to a neighbour's
+  // title rather than falling back to the top of the page.
+  async function markSeen(e: MouseEvent, save: SavedItem) {
+    const tile = (e.currentTarget as HTMLElement).closest('.tile');
+    const lane = tile?.parentElement?.closest('section');
+    const titles = lane ? [...lane.querySelectorAll<HTMLElement>('[data-tile-title]')] : [];
+    const at = titles.findIndex((t) => tile?.contains(t));
+    const neighbour = titles[at + 1] ?? titles[at - 1];
+    onMarkSeen?.(save);
+    await tick();
+    neighbour?.focus();
   }
 
   let byKey = $derived(new Map(entries.map((entry) => [entry.save.rkey, entry])));
@@ -120,12 +143,8 @@
     return shelfKind(save) === 'article';
   }
 
-  function shown(entry: Entry) {
-    return entry.activity.newest.slice(0, SHOWN);
-  }
-
   function more(entry: Entry): number {
-    return Math.max(0, entry.activity.unseen - shown(entry).length);
+    return Math.max(0, entry.activity.unseen - entry.activity.newest.length);
   }
 </script>
 
@@ -133,18 +152,18 @@
   {@const entry = byKey.get(vm.key)}
   {#if entry}
     {@const save = entry.save}
-    {@const connections = shown(entry)}
+    {@const connections = entry.activity.newest}
     {@const single = connections.length === 1}
     {@const type = single ? connectionTypeLabel(connections[0].type) : null}
     {@const count = `${entry.activity.unseen} new ${entry.activity.unseen === 1 ? 'connection' : 'connections'}`}
-    <div class="tile" role="group" aria-label="{vm.title}, {count}">
-      <button
-        class="save"
-        title="Keep reading"
-        onclick={() => onOpen(save)}
-        onpointerenter={() => onHover?.(save)}
-        onfocus={() => onHover?.(save)}
-      >
+    <div
+      class="tile"
+      role="group"
+      aria-label="{vm.title}, {count}"
+      onpointerenter={() => onHover?.(save)}
+      onfocusin={() => onHover?.(save)}
+    >
+      <button class="save" data-tile-title onclick={() => onOpen(save)}>
         {#if save.url && isArticle(save)}
           <img class="favicon" src={getFaviconUrl(save.url)} alt="" loading="lazy" />
         {/if}
@@ -173,7 +192,7 @@
                     href={connection.otherUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    onclick={(e) => openLinkMenu(e, connection.otherUrl, label)}>{label}</a
+                    onclick={(e) => openLinkMenu(e, connection.otherUrl)}>{label}</a
                   >
                 </span>
                 {#if connection.note}
@@ -206,7 +225,7 @@
             class="seen"
             aria-label="Mark {count} on {vm.title} as seen"
             title="Mark seen"
-            onclick={() => onMarkSeen(save)}
+            onclick={(e) => markSeen(e, save)}
           >
             <Icon name="check" size={14} />
           </button>
@@ -235,7 +254,7 @@
       url={linkMenu.url}
       linkText={linkMenu.linkText}
       anchorRect={linkMenu.anchorRect}
-      onClose={() => (linkMenu = null)}
+      onClose={closeLinkMenu}
     />
   {/key}
 {/if}
@@ -362,10 +381,18 @@
     line-height: var(--leading-snug);
   }
 
+  /* Padded so the clamp doesn't clip the link's focus ring. */
   .edge-line {
     min-width: 0;
+    margin: -3px;
+    padding: 3px;
     color: var(--color-text-secondary);
     overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
 
   .who {
@@ -438,6 +465,11 @@
     font-weight: var(--weight-medium);
   }
 
+  .seen,
+  .seen:focus-visible {
+    border-radius: 50%;
+  }
+
   .seen {
     display: inline-flex;
     align-items: center;
@@ -446,7 +478,6 @@
     width: 28px;
     height: 28px;
     margin: -4px -6px -4px 0;
-    border-radius: 50%;
     color: var(--color-text-secondary);
     transition:
       background-color 0.15s ease,
