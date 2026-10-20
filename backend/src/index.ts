@@ -832,7 +832,7 @@ async function route(
       break;
     case url.pathname === '/api/updates':
       if (!session) return unauthorizedResponse(headers);
-      response = await handleUpdates(request, env, ctx);
+      response = await handleUpdates(request, env);
       break;
     // Semble connections drawn off the reader's saves (routes/saved-connections.ts)
     case url.pathname === '/api/saved/connections' ||

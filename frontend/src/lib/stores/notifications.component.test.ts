@@ -342,6 +342,23 @@ describe('read-state across devices', () => {
   });
 });
 
+describe('read-state traffic', () => {
+  it('sends what the server lacks once per load, not on every poll', async () => {
+    // The server caps its copy; if the browser re-sent everything it held, the
+    // two would trade the overflow back and forth every minute.
+    const now = Date.now();
+    const a = mention('a', now - 60_000);
+    localStorage.setItem('skyreader-mentions-seen:did:plc:reader', JSON.stringify([a.sourceUri]));
+    mentionSources = [a];
+    await boot();
+    expect(markNotificationsSeen).toHaveBeenCalledTimes(1);
+
+    server.ids.delete(a.sourceUri); // evicted by the server's cap
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    expect(markNotificationsSeen).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('New in Skyreader', () => {
   const update: DevLogUpdate = {
     uri: 'at://did:plc:devlog/site.standard.document/3mxqxx7jvec2h',
@@ -368,5 +385,21 @@ describe('New in Skyreader', () => {
     await otherDevice();
     expect(notificationsStore.unreadCount).toBe(0);
     expect(notificationsStore.notifications[0].seen).toBe(true);
+  });
+
+  it('shows a post that is both an update and a mention once', async () => {
+    devLog = [update];
+    mentionSources = [
+      {
+        sourceUri: update.uri,
+        actorDid: 'did:plc:devlog',
+        rkey: tidAt(Date.now() - 60_000),
+      },
+    ];
+    await boot();
+    expect(notificationsStore.unreadCount).toBe(1);
+    await notificationsStore.load();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(notificationsStore.notifications.filter((n) => n.id === update.uri)).toHaveLength(1);
   });
 });

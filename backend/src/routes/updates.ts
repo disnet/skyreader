@@ -1,16 +1,14 @@
 import type { Env } from '../types';
-import { DEV_LOG_AUTHOR_DID, DEV_LOG_PUBLICATION_URI } from '../config/dev-log';
-import { loadAuthorDocuments, scheduleAuthorDocuments } from '../services/document-store';
+import { devLogPublication } from '../config/dev-log';
 
 /**
  * "New in Skyreader": the newest Dev Log posts, for the notification bell.
  *
  *   GET /api/updates → { updates: [{ uri, title, description, url, publishedAt }] }
  *
- * Served from D1. The poller watches the Dev Log's author (config/dev-log.ts), so
- * a new post lands within a cycle of being published; the scheduled walk covers a
- * fresh database or a stream that missed it, and costs one indexed read when the
- * author was listed within the hour.
+ * One small indexed read of D1. The poller watches the Dev Log's author and the
+ * reconcile re-lists them (config/dev-log.ts), so a new post lands within a cycle
+ * of being published; nothing here touches a PDS.
  */
 
 /** Older posts are history, not news: a reader who joins later isn't shown them. */
@@ -25,33 +23,43 @@ export interface DevLogUpdate {
   publishedAt: string;
 }
 
-export async function handleUpdates(
-  request: Request,
-  env: Env,
-  ctx: ExecutionContext
-): Promise<Response> {
+export async function handleUpdates(request: Request, env: Env): Promise<Response> {
   if (request.method !== 'GET') {
     return Response.json({ error: 'Method not allowed' }, { status: 405 });
   }
-  scheduleAuthorDocuments(env, (p) => ctx.waitUntil(p), DEV_LOG_AUTHOR_DID);
+  const devLog = devLogPublication(env);
+  if (!devLog) return Response.json({ updates: [] });
 
-  const documents = await loadAuthorDocuments(env, DEV_LOG_AUTHOR_DID, {
-    siteUri: DEV_LOG_PUBLICATION_URI,
-    readerCollections: false,
-  });
-  const cutoff = Date.now() - UPDATE_WINDOW_MS;
+  const rows = await env.DB.prepare(
+    `SELECT record_uri, published_at, canonical_url, record_json FROM documents_v2
+      WHERE author_did = ? AND site_uri = ? AND published_at >= ?
+      ORDER BY published_at DESC LIMIT ?`
+  )
+    .bind(devLog.authorDid, devLog.uri, Date.now() - UPDATE_WINDOW_MS, MAX_UPDATES)
+    .all<{
+      record_uri: string;
+      published_at: number;
+      canonical_url: string | null;
+      record_json: string;
+    }>();
+
   const updates: DevLogUpdate[] = [];
-  for (const doc of documents) {
-    if (updates.length >= MAX_UPDATES) break;
-    const published = Date.parse(doc.publishedAt);
+  for (const row of rows.results ?? []) {
     // Only a post with an absolute https URL: the bell links straight to it.
-    if (!(published >= cutoff) || !doc.canonicalUrl?.startsWith('https://')) continue;
+    if (!row.canonical_url?.startsWith('https://')) continue;
+    let record: { title?: unknown; description?: unknown };
+    try {
+      record = JSON.parse(row.record_json);
+    } catch {
+      continue;
+    }
+    if (typeof record.title !== 'string' || !record.title.trim()) continue;
     updates.push({
-      uri: doc.recordUri,
-      title: doc.title,
-      description: doc.description ?? null,
-      url: doc.canonicalUrl,
-      publishedAt: doc.publishedAt,
+      uri: row.record_uri,
+      title: record.title,
+      description: typeof record.description === 'string' ? record.description : null,
+      url: row.canonical_url,
+      publishedAt: new Date(row.published_at).toISOString(),
     });
   }
   return Response.json({ updates });

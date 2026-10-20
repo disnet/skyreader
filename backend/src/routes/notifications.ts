@@ -9,7 +9,7 @@ import type { Env } from '../types';
  *
  * `primed` records that the account's first sync ran (mentions older than a week
  * start read once per account, not once per browser). Ids are opaque to the
- * server; only their count and length are checked.
+ * server; only their count and length are checked, and one too long is skipped.
  */
 
 /** Seen ids kept per reader, newest first. The bell only ever shows a few dozen. */
@@ -45,20 +45,25 @@ export async function handleNotificationSeen(
   } catch {
     return json({ error: 'Invalid JSON body' }, 400);
   }
-  const ids = body?.ids ?? [];
-  if (
-    !Array.isArray(ids) ||
-    ids.length > MAX_IDS_PER_POST ||
-    !ids.every((id) => typeof id === 'string' && id.length > 0 && id.length <= MAX_ID_LENGTH)
-  ) {
+  if (typeof body !== 'object' || body === null) return json({ error: 'Invalid JSON body' }, 400);
+  const ids = body.ids ?? [];
+  if (!Array.isArray(ids) || ids.length > MAX_IDS_PER_POST) {
     return json({ error: 'Invalid ids' }, 400);
   }
+  // An id this won't store is skipped, not a reason to refuse the batch: a
+  // mention's URI is someone else's record key, and one too long to keep must
+  // not hold back the rest of the reader's read-state on every retry.
+  const valid = ids.filter(
+    (id): id is string => typeof id === 'string' && id.length > 0 && id.length <= MAX_ID_LENGTH
+  );
 
   const now = Date.now();
-  const statements = [...new Set(ids as string[])].map((id) =>
+  // A re-mark refreshes seen_at, so an old notification that is still showing
+  // isn't the first one the cap evicts.
+  const statements = [...new Set(valid)].map((id) =>
     env.DB.prepare(
       `INSERT INTO notification_seen (user_did, notification_id, seen_at) VALUES (?, ?, ?)
-       ON CONFLICT (user_did, notification_id) DO NOTHING`
+       ON CONFLICT (user_did, notification_id) DO UPDATE SET seen_at = excluded.seen_at`
     ).bind(userDid, id, now)
   );
   if (body.primed === true) {

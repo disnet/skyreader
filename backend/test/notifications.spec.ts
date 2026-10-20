@@ -2,11 +2,15 @@ import { env, createExecutionContext, waitOnExecutionContext } from 'cloudflare:
 import { describe, it, expect, beforeEach } from 'vitest';
 import worker from '../src/index';
 import { GRANULAR_SCOPES } from '../src/config/scopes';
-import { DEV_LOG_AUTHOR_DID, DEV_LOG_PUBLICATION_URI } from '../src/config/dev-log';
 import { MAX_SEEN_PER_USER } from '../src/routes/notifications';
-import { watchedDocumentAuthors } from '../src/services/document-store';
+import { staleDocumentAuthors, watchedDocumentAuthors } from '../src/services/document-store';
 
 const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
+
+const DEV_LOG_AUTHOR_DID = 'did:plc:devlogauthor1';
+const DEV_LOG_PUBLICATION_URI = `at://${DEV_LOG_AUTHOR_DID}/site.standard.publication/3mde2epyylk2s`;
+// The suite's env leaves the Dev Log unset (vitest.config.mts); these tests set it.
+const devLogEnv = { ...env, DEV_LOG_PUBLICATION: DEV_LOG_PUBLICATION_URI } as typeof env;
 
 const TEST_DID = 'did:plc:notif123';
 const OTHER_DID = 'did:plc:notif456';
@@ -39,7 +43,13 @@ async function setupUser(did: string) {
     .run();
 }
 
-async function call(method: string, path: string, body?: unknown, did = TEST_DID) {
+async function call(
+  method: string,
+  path: string,
+  body?: unknown,
+  did = TEST_DID,
+  workerEnv = devLogEnv
+) {
   const headers: Record<string, string> = {
     Origin: env.FRONTEND_URL,
     Cookie: `session_id=${SESSIONS[did]}`,
@@ -52,7 +62,7 @@ async function call(method: string, path: string, body?: unknown, did = TEST_DID
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
     }),
-    env,
+    workerEnv,
     ctx
   );
   await waitOnExecutionContext(ctx);
@@ -94,10 +104,21 @@ describe('notification read-state', () => {
   });
 
   it('rejects malformed ids', async () => {
-    for (const ids of ['nope', [1], [''], ['a'.repeat(513)], Array(201).fill('a')]) {
+    for (const ids of ['nope', Array(201).fill('a')]) {
       const { status } = await call('POST', '/api/notifications/seen', { ids });
       expect(status).toBe(400);
     }
+    expect((await call('POST', '/api/notifications/seen', null)).status).toBe(400);
+  });
+
+  it('skips ids it will not store and keeps the rest', async () => {
+    // A mention's URI carries someone else's record key; one too long must not
+    // hold back the reader's other reads.
+    const { status } = await call('POST', '/api/notifications/seen', {
+      ids: [1, '', 'a'.repeat(513), 'kept'],
+    });
+    expect(status).toBe(200);
+    expect((await call('GET', '/api/notifications/seen')).body.ids).toEqual(['kept']);
   });
 
   it('keeps only the newest ids per reader', async () => {
@@ -224,7 +245,20 @@ describe('Dev Log updates', () => {
     expect(body).toEqual({ updates: [] });
   });
 
-  it('keeps the Dev Log author in the watched set', async () => {
-    expect(await watchedDocumentAuthors(env)).toContain(DEV_LOG_AUTHOR_DID);
+  it('serves nothing where no Dev Log is configured', async () => {
+    await insertDocument('3maaaaaaaaaa7', DEV_LOG_PUBLICATION_URI, 'Recent', Date.now());
+    const { body } = await call('GET', '/api/updates', undefined, TEST_DID, env);
+    expect(body).toEqual({ updates: [] });
+  });
+
+  it('watches and reconciles the Dev Log author like a subscribed one', async () => {
+    expect((await watchedDocumentAuthors(devLogEnv))[0]).toBe(DEV_LOG_AUTHOR_DID);
+    expect(await watchedDocumentAuthors(env)).not.toContain(DEV_LOG_AUTHOR_DID);
+
+    // Listed just now: not stale. A week on, the reconcile picks it up.
+    expect(await staleDocumentAuthors(devLogEnv, 5)).not.toContain(DEV_LOG_AUTHOR_DID);
+    const later = Date.now() + 8 * DAY;
+    expect(await staleDocumentAuthors(devLogEnv, 5, later)).toContain(DEV_LOG_AUTHOR_DID);
+    expect(await staleDocumentAuthors(env, 5, later)).not.toContain(DEV_LOG_AUTHOR_DID);
   });
 });

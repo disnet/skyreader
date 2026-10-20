@@ -44,6 +44,8 @@ const FEEDBACK_POLL_INTERVAL_MS = 15 * 60_000;
 // The Dev Log moves in weeks; the feedback cadence is plenty.
 const UPDATES_POLL_INTERVAL_MS = FEEDBACK_POLL_INTERVAL_MS;
 const MAX_SEEN = 500; // cap the cached set, as the server caps its copy
+const MAX_IDS_PER_PUSH = 200; // the server's per-request limit
+const MAX_ID_LENGTH = 512; // and the longest id it keeps
 // On the first sync for an account, mentions older than this start read, so an
 // account that predates the bell doesn't open with a badge full of old news.
 const MENTION_BASELINE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -102,6 +104,10 @@ function createNotificationsStore() {
   // Whether the server's copy of the seen-set has been merged in since `seenDid`
   // was loaded. Until it has, priming waits: the account may already be primed.
   let seenSynced = false;
+  // Seen ids (and a first-sync mark) the server hasn't taken yet; see pushSeen.
+  let unsent = new Set<string>();
+  let primePending = false;
+  let flushing = false;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let feedbackTimer: ReturnType<typeof setInterval> | null = null;
   let updatesTimer: ReturnType<typeof setInterval> | null = null;
@@ -151,16 +157,29 @@ function createNotificationsStore() {
     }))
   );
 
+  // One entry per id. A Dev Log post that @mentions the reader is both an update
+  // and a mention under the same URI; it shows once, as the update.
   const notifications = $derived(
-    [...mentions, ...feedbackNotifications, ...updateNotifications]
+    [
+      ...new Map(
+        [...mentions, ...feedbackNotifications, ...updateNotifications].map((entry) => [
+          entry.id,
+          entry,
+        ])
+      ).values(),
+    ]
       .map((entry) => ({ ...entry, seen: seen.has(entry.id) }))
       .sort((a, b) => b.createdAt - a.createdAt)
   );
 
   const unreadCount = $derived(
-    sources.filter((s) => !seen.has(s.sourceUri)).length +
-      feedbackEvents.filter((event) => !seen.has(event.id)).length +
-      updates.filter((update) => !seen.has(update.uri)).length
+    new Set(
+      [
+        ...sources.map((source) => source.sourceUri),
+        ...feedbackEvents.map((event) => event.id),
+        ...updates.map((update) => update.uri),
+      ].filter((id) => !seen.has(id))
+    ).size
   );
 
   function isOffline(): boolean {
@@ -176,13 +195,42 @@ function createNotificationsStore() {
     const stored = loadSeen(did);
     primed = stored !== null;
     seenSynced = false;
+    unsent = new Set();
+    primePending = false;
     seen = new Set(stored ?? []);
   }
 
-  /** Record ids as seen on the server. A failure is fine: the next sync re-sends them. */
+  /**
+   * Record ids as seen on the server. They wait in `unsent` until the server
+   * takes them, so a failed write is retried by the next sync rather than lost —
+   * and only these are ever sent, never the whole local set, which the server
+   * (capped) and this browser would otherwise trade back and forth forever.
+   */
   function pushSeen(ids: string[], markPrimed = false) {
-    if ((ids.length === 0 && !markPrimed) || isOffline()) return;
-    void api.markNotificationsSeen(ids.slice(-200), markPrimed).catch(() => {});
+    // The server skips an id longer than it stores; there's no sense sending one.
+    for (const id of ids) if (id.length <= MAX_ID_LENGTH) unsent.add(id);
+    if (markPrimed) primePending = true;
+    void flushSeen();
+  }
+
+  async function flushSeen() {
+    if (flushing || isOffline() || (unsent.size === 0 && !primePending)) return;
+    flushing = true;
+    const owner = seenDid;
+    try {
+      while (seenDid === owner && (unsent.size > 0 || primePending)) {
+        const batch = [...unsent].slice(0, MAX_IDS_PER_PUSH);
+        const markPrimed = primePending;
+        await api.markNotificationsSeen(batch, markPrimed);
+        if (seenDid !== owner) break;
+        for (const id of batch) unsent.delete(id);
+        if (markPrimed) primePending = false;
+      }
+    } catch {
+      // silent — the next sync retries what's left
+    } finally {
+      flushing = false;
+    }
   }
 
   /**
@@ -193,20 +241,31 @@ function createNotificationsStore() {
    */
   async function syncSeen(did: string) {
     if (isOffline()) return;
+    // A background tab needn't keep up with other devices; it catches up when
+    // it's looked at. The first sync still runs, since priming waits on it.
+    if (seenSynced && typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+      return;
+    }
     try {
       const remote = await api.getNotificationSeen();
       if (seenDid !== did) return; // the account switched while this was in flight
-      const remoteIds = new Set(remote.ids);
-      // Against the set as it is now, not as it was when the request left: a
-      // markAllSeen in between must survive the merge.
-      const localOnly = [...seen].filter((id) => !remoteIds.has(id));
+      const firstSync = !seenSynced;
       const promote = primed && !remote.primed;
       primed = primed || remote.primed;
       seenSynced = true;
-      if (remote.ids.some((id) => !seen.has(id))) {
-        seen = new Set([...seen, ...remote.ids]);
+      // The server lists newest first; appended oldest first, so the newest are
+      // the ones the capped local copy keeps.
+      const incoming = remote.ids.filter((id) => !seen.has(id)).reverse();
+      if (incoming.length > 0) {
+        seen = new Set([...seen, ...incoming]);
         saveSeen(did, [...seen]);
       }
+      // Once per load, what this browser holds and the server doesn't goes up:
+      // reads made offline, or before the account kept read state at all.
+      // Against the set as it is now, not as it was when the request left, so a
+      // markAllSeen in between is included.
+      const remoteIds = new Set(remote.ids);
+      const localOnly = firstSync ? [...seen].filter((id) => !remoteIds.has(id)) : [];
       pushSeen(localOnly, promote);
     } catch {
       // silent — the local copy stands and a later poll retries
@@ -426,6 +485,8 @@ function createNotificationsStore() {
     seenDid = null;
     primed = false;
     seenSynced = false;
+    unsent = new Set();
+    primePending = false;
     enrichCache.clear();
   }
 
