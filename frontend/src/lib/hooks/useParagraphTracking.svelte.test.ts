@@ -285,7 +285,7 @@ describe('useParagraphTracking', () => {
   // A host's key is derived from its item prop, which is already null when the
   // reader closes; the flush must not read it again then.
   it('writes a queued position on close after the host item is gone', () => {
-    getReadProgress.mockReturnValue({ paragraphIndex: 12, totalParagraphs: 40 });
+    getLatestReadProgress.mockReturnValue({ paragraphIndex: 12, totalParagraphs: 40 });
     const content = renderBody(40);
     let item: { key: string } | null = { key: 'article-key' };
     const tracking = useParagraphTracking({
@@ -302,6 +302,7 @@ describe('useParagraphTracking', () => {
     item = null;
     for (const destroy of destroyCallbacks) destroy();
 
+    expect(getLatestReadProgress).toHaveBeenLastCalledWith(['article-key', 'article-key#alias']);
     expect(setReadProgress).toHaveBeenCalledWith('article-key', 'article', 39, 40);
   });
 

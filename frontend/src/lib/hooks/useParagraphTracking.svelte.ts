@@ -295,7 +295,8 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     scrollHandler = () => {
       if (programmaticScroll) return;
       requestAnimationFrame(() => {
-        if (programmaticScroll) return;
+        // Gone by the next frame if the reader closed (or re-attached) meanwhile.
+        if (programmaticScroll || !scrollHandler) return;
         updateCurrentParagraph();
       });
     };

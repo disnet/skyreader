@@ -1360,10 +1360,13 @@
   $effect(() => {
     const key = itemKey;
     if (!auth.isAuthenticated) return;
+    // Cleared when the item changes or the reader closes; once closed, the
+    // item prop is gone and reading `itemKey` would throw.
+    let current = true;
     untrack(() => {
       const before = savedProgress()?.lastReadAt ?? 0;
       void itemLabelsStore.pullDelta(OPEN_DELTA_MIN_INTERVAL_MS).then(() => {
-        if (itemKey !== key || (savedProgress()?.lastReadAt ?? 0) <= before) return;
+        if (!current || (savedProgress()?.lastReadAt ?? 0) <= before) return;
         if (paged) {
           // Not yet restored: the paged restore reads the new place itself.
           if (pagedRestoredForKey !== key || pagedPage !== pagedLandedPage) return;
@@ -1377,6 +1380,9 @@
         restoreScrollPosition(key);
       });
     });
+    return () => {
+      current = false;
+    };
   });
 
   let deleteConfirming = $state(false);
