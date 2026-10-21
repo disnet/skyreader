@@ -206,7 +206,9 @@
               <span class="edge-body">
                 <span class="edge-line">
                   <span class="by"
-                    ><span class="who">{curatorName(connection.curatorDid)}</span>
+                    ><span class="who" dir="auto" title={curatorName(connection.curatorDid)}
+                      >{curatorName(connection.curatorDid)}</span
+                    >
                     <span class="verb"
                       >{connection.direction === 'out' ? 'linked it to' : 'linked to it from'}</span
                     ></span
@@ -406,14 +408,14 @@
   }
 
   /* Two lines, each one line long: who and how, then the link. A long name
-     shortens itself rather than pushing the link out of the tile. Padded so
-     the overflow doesn't clip the link's focus ring. */
+     shortens itself rather than pushing the link out of the tile. Padded by
+     the link's focus ring (2px outline, 2px offset) so the overflow can't clip it. */
   .edge-line {
     display: flex;
     flex-direction: column;
     min-width: 0;
-    margin: -3px;
-    padding: 3px;
+    margin: -4px;
+    padding: 4px;
     color: var(--color-text-secondary);
     overflow: hidden;
   }
@@ -440,7 +442,6 @@
   /* The link has its own line, so a long one shortens itself and the
      direction above it always shows. */
   .other {
-    display: block;
     align-self: flex-start;
     max-width: 100%;
     overflow: hidden;
