@@ -205,8 +205,12 @@
               </span>
               <span class="edge-body">
                 <span class="edge-line">
-                  <span class="who">{curatorName(connection.curatorDid)}</span>
-                  {connection.direction === 'out' ? 'linked it to' : 'linked to it from'}
+                  <span class="by"
+                    ><span class="who">{curatorName(connection.curatorDid)}</span>
+                    <span class="verb"
+                      >{connection.direction === 'out' ? 'linked it to' : 'linked to it from'}</span
+                    ></span
+                  >
                   <a
                     class="other"
                     href={connection.otherUrl}
@@ -401,34 +405,47 @@
     line-height: var(--leading-snug);
   }
 
-  /* Padded so the clamp doesn't clip the link's focus ring. */
+  /* Two lines, each one line long: who and how, then the link. A long name
+     shortens itself rather than pushing the link out of the tile. Padded so
+     the overflow doesn't clip the link's focus ring. */
   .edge-line {
+    display: flex;
+    flex-direction: column;
     min-width: 0;
     margin: -3px;
     padding: 3px;
     color: var(--color-text-secondary);
-    overflow-wrap: anywhere;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
-    -webkit-box-orient: vertical;
     overflow: hidden;
   }
 
+  .by {
+    display: flex;
+    gap: 0.25em;
+    min-width: 0;
+    white-space: nowrap;
+  }
+
   .who {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
     font-weight: var(--weight-medium);
     color: var(--color-text);
   }
 
-  /* The link ends the sentence either way ("linked it to …", "linked to it
-     from …"), so a long one shortens itself and the direction always shows. */
+  .verb {
+    flex-shrink: 0;
+  }
+
+  /* The link has its own line, so a long one shortens itself and the
+     direction above it always shows. */
   .other {
-    display: inline-block;
+    display: block;
+    align-self: flex-start;
     max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    vertical-align: bottom;
     font-weight: var(--weight-medium);
     color: var(--color-primary);
     text-decoration: none;
