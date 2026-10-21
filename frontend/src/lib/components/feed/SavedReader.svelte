@@ -1405,12 +1405,13 @@
     if (itemUrl) window.open(itemUrl, '_blank', 'noopener');
   }
 
-  // The address bar already names what's open (the reader is shallow-routed, see
-  // `useReaderStack`), so a link back into Skyreader is just the current location.
+  // Copies the article's own URL. An item with no web copy (an emailed newsletter,
+  // an uploaded PDF) falls back to the Skyreader link, which is just the current
+  // location since the reader is shallow-routed (see `useReaderStack`).
   async function handleCopyLink() {
     const toastId = toastStore.add('Copying link…');
     try {
-      await navigator.clipboard.writeText(window.location.href);
+      await navigator.clipboard.writeText(itemUrl || window.location.href);
       toastStore.update(toastId, 'success', 'Link copied');
     } catch {
       toastStore.update(toastId, 'error', 'Could not copy link');
