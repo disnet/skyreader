@@ -5,7 +5,7 @@
 // reader's own feedback, noticed by polling and diffing. The mention half is
 // stubbed to nothing so each case is about the diff reaching the badge.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { MyFeedbackPost } from '$lib/services/api';
+import type { DevLogUpdate, MyFeedbackPost } from '$lib/services/api';
 
 // A mention source, as the badge poll resolves it. The rkey is a real TID, so
 // the store can date it without fetching the record.
@@ -22,7 +22,29 @@ const getMyFeedback = vi.fn(async () => {
   return { posts: structuredClone(myPosts) };
 });
 
-vi.mock('$lib/services/api', () => ({ api: { getMyFeedback: () => getMyFeedback() } }));
+// The account's read-state as the backend holds it: one copy, shared by every
+// "device" (every reboot with localStorage cleared).
+let server: { ids: Set<string>; primed: boolean } = { ids: new Set(), primed: false };
+let serverDown = false;
+let devLog: DevLogUpdate[] = [];
+const markNotificationsSeen = vi.fn(async (ids: string[], primed = false) => {
+  if (serverDown) throw new Error('backend is down');
+  for (const id of ids) server.ids.add(id);
+  if (primed) server.primed = true;
+  return { success: true };
+});
+
+vi.mock('$lib/services/api', () => ({
+  api: {
+    getMyFeedback: () => getMyFeedback(),
+    getNotificationSeen: async () => {
+      if (serverDown) throw new Error('backend is down');
+      return { ids: [...server.ids], primed: server.primed };
+    },
+    markNotificationsSeen: (ids: string[], primed?: boolean) => markNotificationsSeen(ids, primed),
+    getUpdates: async () => ({ updates: structuredClone(devLog) }),
+  },
+}));
 vi.mock('$lib/services/mentions', () => ({
   fetchMentionSources: vi.fn(async () => structuredClone(mentionSources)),
   enrichMention: vi.fn(async (source: Source) => ({
@@ -82,7 +104,18 @@ beforeEach(() => {
   myPosts = [];
   feedbackFails = false;
   getMyFeedback.mockClear();
+  server = { ids: new Set(), primed: false };
+  serverDown = false;
+  devLog = [];
+  markNotificationsSeen.mockClear();
 });
+
+/** Another device: same account, nothing in this browser's storage. */
+async function otherDevice() {
+  notificationsStore.stop();
+  localStorage.clear();
+  await boot();
+}
 
 afterEach(() => {
   notificationsStore.stop();
@@ -236,5 +269,137 @@ describe('feedback notifications', () => {
     expect(notificationsStore.notifications).toHaveLength(1);
     expect(notificationsStore.notifications[0].seen).toBe(true);
     expect(notificationsStore.unreadCount).toBe(0);
+  });
+});
+
+describe('read-state across devices', () => {
+  const WEEK = 7 * 24 * 60 * 60 * 1000;
+
+  it('carries what was read on one device to the next', async () => {
+    const now = Date.now();
+    mentionSources = [mention('a', now - 60_000), mention('b', now - 30_000)];
+    await boot();
+    expect(notificationsStore.unreadCount).toBe(2);
+
+    notificationsStore.markAllSeen();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(notificationsStore.unreadCount).toBe(0);
+
+    await otherDevice();
+    expect(notificationsStore.unreadCount).toBe(0);
+  });
+
+  it('clears the badge on an open device when another one reads', async () => {
+    const now = Date.now();
+    mentionSources = [mention('a', now - 60_000)];
+    await boot();
+    expect(notificationsStore.unreadCount).toBe(1);
+
+    // Read elsewhere; this tab finds out on its next poll.
+    server.ids.add(mentionSources[0].sourceUri);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(notificationsStore.unreadCount).toBe(0);
+  });
+
+  it('primes the account once, not once per device', async () => {
+    // The first device starts week-old mentions read. A mention that ages past a
+    // week unread must not be silently read by a second device's first sync.
+    const now = Date.now();
+    mentionSources = [mention('recent', now - 60_000)];
+    await boot();
+    expect(server.primed).toBe(true);
+
+    vi.setSystemTime(now + WEEK + 60_000);
+    await otherDevice();
+    expect(notificationsStore.unreadCount).toBe(1);
+  });
+
+  it('uploads what this browser read before the account kept read state', async () => {
+    const now = Date.now();
+    const old = mention('a', now - 60_000);
+    localStorage.setItem('skyreader-mentions-seen:did:plc:reader', JSON.stringify([old.sourceUri]));
+    mentionSources = [old];
+    await boot();
+
+    expect(notificationsStore.unreadCount).toBe(0);
+    expect(server.ids.has(old.sourceUri)).toBe(true);
+    expect(server.primed).toBe(true);
+  });
+
+  it('keeps working from the local copy while the backend is down', async () => {
+    const now = Date.now();
+    mentionSources = [mention('a', now - 60_000)];
+    await boot();
+    serverDown = true;
+    notificationsStore.markAllSeen();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(notificationsStore.unreadCount).toBe(0);
+
+    // Back up: the next poll sends what the failed write didn't.
+    serverDown = false;
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(server.ids.has(mentionSources[0].sourceUri)).toBe(true);
+  });
+});
+
+describe('read-state traffic', () => {
+  it('sends what the server lacks once per load, not on every poll', async () => {
+    // The server caps its copy; if the browser re-sent everything it held, the
+    // two would trade the overflow back and forth every minute.
+    const now = Date.now();
+    const a = mention('a', now - 60_000);
+    localStorage.setItem('skyreader-mentions-seen:did:plc:reader', JSON.stringify([a.sourceUri]));
+    mentionSources = [a];
+    await boot();
+    expect(markNotificationsSeen).toHaveBeenCalledTimes(1);
+
+    server.ids.delete(a.sourceUri); // evicted by the server's cap
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    expect(markNotificationsSeen).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('New in Skyreader', () => {
+  const update: DevLogUpdate = {
+    uri: 'at://did:plc:devlog/site.standard.document/3mxqxx7jvec2h',
+    title: 'Skyreader update - Newsletters and Search',
+    description: 'Read newsletters in Skyreader.',
+    url: 'https://skyreader-dev.leaflet.pub/3mxqxx7jvec2h',
+    publishedAt: new Date().toISOString(),
+  };
+
+  it('shows a Dev Log post unread until it is seen, on every device', async () => {
+    devLog = [update];
+    await boot();
+    expect(notificationsStore.unreadCount).toBe(1);
+    expect(notificationsStore.notifications[0]).toMatchObject({
+      type: 'update',
+      title: update.title,
+      detail: update.description,
+      canonicalUrl: update.url,
+      seen: false,
+    });
+
+    notificationsStore.markAllSeen();
+    await vi.advanceTimersByTimeAsync(0);
+    await otherDevice();
+    expect(notificationsStore.unreadCount).toBe(0);
+    expect(notificationsStore.notifications[0].seen).toBe(true);
+  });
+
+  it('shows a post that is both an update and a mention once', async () => {
+    devLog = [update];
+    mentionSources = [
+      {
+        sourceUri: update.uri,
+        actorDid: 'did:plc:devlog',
+        rkey: tidAt(Date.now() - 60_000),
+      },
+    ];
+    await boot();
+    expect(notificationsStore.unreadCount).toBe(1);
+    await notificationsStore.load();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(notificationsStore.notifications.filter((n) => n.id === update.uri)).toHaveLength(1);
   });
 });

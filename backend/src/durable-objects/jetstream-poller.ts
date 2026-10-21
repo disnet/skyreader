@@ -11,7 +11,7 @@ import {
   createDocumentDrain,
   createQueryLedger,
   ensureAuthorDocuments,
-  subscribedDocumentAuthors,
+  watchedDocumentAuthors,
   CYCLE_BACKFILL_QUERY_BUDGET,
   MAX_CYCLE_BACKFILLS,
   type DocumentCommitEvent,
@@ -735,9 +735,10 @@ class JetstreamPollerBase implements DurableObject {
       return { ...empty, skipped: true };
     }
 
-    // The true active-author set, straight from the subscription table. No
-    // read-traffic inference, and one alarm interval is the most it can be stale.
-    const allAuthors = await subscribedDocumentAuthors(this.env);
+    // The true active-author set, straight from the subscription table (plus the
+    // Dev Log, which every reader's bell reads). No read-traffic inference, and
+    // one alarm interval is the most it can be stale.
+    const allAuthors = await watchedDocumentAuthors(this.env);
     // Jetstream's hard cap on `wantedDids`. Past it the filter would be rejected
     // outright, so watch the first 10k rather than nothing; the per-event re-check
     // still keeps writes correct, and this line is the alert that the set needs
@@ -857,7 +858,7 @@ class JetstreamPollerBase implements DurableObject {
           lastEventTime = Date.now();
           if (viaFrame && ws) {
             // Too many DIDs for the URL. One frame, sent before anything can be
-            // delivered; every DID in it was validated by `subscribedDocumentAuthors`,
+            // delivered; every DID in it was validated by `watchedDocumentAuthors`,
             // because Jetstream rejects the whole frame on one malformed entry and
             // closes the socket.
             try {

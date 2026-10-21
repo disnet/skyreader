@@ -22,6 +22,11 @@
     return n.type === 'feedback-status' || n.type === 'feedback-reply';
   }
 
+  /** A Dev Log post: news about Skyreader itself. */
+  function isUpdate(n: SkyNotification): boolean {
+    return n.type === 'update';
+  }
+
   /**
    * The in-app destination of a notification, or null if it has none.
    *
@@ -42,7 +47,8 @@
   <div class="notif-empty">Loading…</div>
 {:else if notificationsStore.notifications.length === 0}
   <div class="notif-empty">
-    Nothing yet. @mentions in shared articles, and news about feedback you've filed, show up here.
+    Nothing yet. @mentions in shared articles, news about feedback you've filed, and what's new in
+    Skyreader show up here.
   </div>
 {:else}
   <ul class="notif-list">
@@ -61,6 +67,10 @@
             <div class="notif-avatar placeholder icon">
               <Icon name={n.type === 'feedback-reply' ? 'message-circle' : 'activity'} size={14} />
             </div>
+          {:else if isUpdate(n)}
+            <div class="notif-avatar placeholder icon">
+              <Icon name="newspaper" size={14} />
+            </div>
           {:else if n.actorAvatar}
             <img class="notif-avatar" src={n.actorAvatar} alt="" />
           {:else}
@@ -72,11 +82,18 @@
                 <strong>{n.detail}</strong> on your feedback{#if n.title}{' '}<span
                     class="notif-title">{n.title}</span
                   >{/if}
+              {:else if isUpdate(n)}
+                <strong>New in Skyreader</strong>{#if n.title}{' '}<span class="notif-title"
+                    >{n.title}</span
+                  >{/if}
               {:else}
                 <strong>{actorName(n)}</strong> mentioned you{#if n.title}{' '}on
                   <span class="notif-title">{n.title}</span>{/if}
               {/if}
             </div>
+            {#if isUpdate(n) && n.detail}
+              <div class="notif-detail">{n.detail}</div>
+            {/if}
             <div class="notif-time">{formatRelativeTime(n.createdAt)}</div>
           </div>
         </a>
@@ -147,6 +164,17 @@
   }
   .notif-title {
     color: var(--color-text-secondary);
+  }
+  .notif-detail {
+    margin-top: 2px;
+    font-size: var(--text-xs);
+    color: var(--color-text-secondary);
+    line-height: 1.35;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
   .notif-time {
     margin-top: 2px;

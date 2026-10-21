@@ -13,6 +13,7 @@
  */
 
 import type { Env } from '../types';
+import { devLogPublication } from '../config/dev-log';
 import type { ProxyDocument, ProxyDocumentEntry, ProxyReaderCollection } from './feed-proxy-client';
 import {
   DOCUMENT_COLLECTION,
@@ -1336,6 +1337,20 @@ export async function subscribedDocumentAuthors(env: Env): Promise<string[]> {
   return (result.results ?? []).map((r) => r.did).filter((did): did is string => isValidDid(did));
 }
 
+/**
+ * The authors the document stream watches: every subscribed author, plus the Dev
+ * Log's, whose posts feed every reader's notification bell (routes/updates.ts)
+ * whether or not anyone subscribes to it. The reconcile queue
+ * (`staleDocumentAuthors`) carries the same author, so a fresh database or a
+ * missed event heals on the cron like any subscribed author's would.
+ */
+export async function watchedDocumentAuthors(env: Env): Promise<string[]> {
+  const subscribed = await subscribedDocumentAuthors(env);
+  const devLog = devLogPublication(env)?.authorDid;
+  // First, so the Jetstream filter's 10k cap never drops it.
+  return devLog ? [devLog, ...subscribed.filter((did) => did !== devLog)] : subscribed;
+}
+
 /** One page of the subscribed-author set, in a stable order. */
 export interface AuthorPage {
   dids: string[];
@@ -1415,19 +1430,22 @@ export async function staleDocumentAuthors(
   now = Date.now()
 ): Promise<string[]> {
   const cutoff = now - AUTHOR_RECONCILE_INTERVAL_MS;
+  // The Dev Log's author is reconciled like a subscribed one (config/dev-log.ts).
+  const devLog = devLogPublication(env)?.authorDid ?? null;
   const result = await env.DB.prepare(
     `SELECT DISTINCT s.subject_did AS did,
             COALESCE(a.last_listed_at, a.last_error_at, 0) AS staleness
-       FROM subscriptions_cache s
+       FROM (SELECT subject_did FROM subscriptions_cache
+              WHERE source_type IN ('atproto.documents', 'atproto.collection')
+                AND subject_did IS NOT NULL
+             UNION SELECT ? WHERE ? IS NOT NULL) s
        LEFT JOIN document_authors a ON a.author_did = s.subject_did
-      WHERE s.source_type IN ('atproto.documents', 'atproto.collection')
-        AND s.subject_did IS NOT NULL
-        AND (a.last_listed_at IS NULL OR a.last_listed_at < ? OR COALESCE(a.collections_pending, 0) > 0)
+      WHERE (a.last_listed_at IS NULL OR a.last_listed_at < ? OR COALESCE(a.collections_pending, 0) > 0)
         AND (a.last_error_at IS NULL OR a.last_error_at + ${RETRY_BACKOFF_SQL} <= ?)
       ORDER BY staleness ASC
       LIMIT ?`
   )
-    .bind(cutoff, AUTHOR_RETRY_MAX_MS, AUTHOR_RETRY_BASE_MS, now, limit)
+    .bind(devLog, devLog, cutoff, AUTHOR_RETRY_MAX_MS, AUTHOR_RETRY_BASE_MS, now, limit)
     .all<{ did: string }>();
   return (result.results ?? []).map((r) => r.did).filter((did): did is string => isValidDid(did));
 }

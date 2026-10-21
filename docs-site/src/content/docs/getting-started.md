@@ -29,6 +29,7 @@ Sign-in asks only for the basics. When you first turn on a feature that writes t
 - **Daily** is your magazine, built from your saves. See [Reading](/guide/reading/).
 - **Highlights** collects every passage you've highlighted, with a review deck.
 - **Linkblog** is where your shared links live. See [Sharing](/guide/sharing-and-your-linkblog/).
+- **The bell** gathers what's new for you: @mentions in shared articles, news about feedback you've filed, and new posts on the [Skyreader Dev Log](https://skyreader-dev.leaflet.pub). Once you've seen something, it stays seen on all your devices.
 
 ## Installing the app
 

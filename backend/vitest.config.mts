@@ -38,6 +38,10 @@ export default defineConfig({
           // Assertions hardcode the production linkblog base, which only held
           // on a machine with no .dev.vars.
           LINKBLOG_PUBLIC_URL: 'https://linkblogs.skyreader.app',
+          // The Dev Log's author is watched and reconciled like a subscribed one;
+          // left set, every cron test would walk a real PDS. Tests that need it
+          // pass their own env (test/notifications.spec.ts).
+          DEV_LOG_PUBLICATION: '',
           // Polar billing: fixed test values so the webhook signature tests and
           // checkout handler don't depend on the developer's .dev.vars. The
           // secret is an opaque string (its UTF-8 bytes are the HMAC key — see

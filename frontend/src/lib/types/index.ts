@@ -1070,9 +1070,10 @@ export interface SkyNotification {
   id: string;
   /**
    * 'mention' comes from Constellation; the two 'feedback-*' kinds are diffed
-   * from the reader's own posts on the userinput.app board.
+   * from the reader's own posts on the userinput.app board; 'update' is a Dev
+   * Log post ("New in Skyreader").
    */
-  type: 'mention' | 'feedback-status' | 'feedback-reply' | string;
+  type: 'mention' | 'feedback-status' | 'feedback-reply' | 'update' | string;
   actorDid: string;
   actorHandle: string | null;
   actorDisplayName: string | null;
