@@ -19,7 +19,15 @@
     type PdfTextModel,
   } from '$lib/utils/pdfTextModel';
   import { resolvePdfLink, type PdfLinkAnnotation, type PdfLinkTarget } from '$lib/utils/pdfLinks';
-  import { claimPdfZoomShortcuts, pdfZoom, setPdfZoom } from '$lib/utils/pdfZoom';
+  import {
+    MAX_PDF_ZOOM,
+    MIN_PDF_ZOOM,
+    clampPdfZoom,
+    claimPdfZoomShortcuts,
+    pdfZoom,
+    setPdfZoom,
+    stepPdfZoom,
+  } from '$lib/utils/pdfZoom';
   import type { PdfPlace } from '$lib/utils/pdfPlace';
   import { flattenPdfOutline, type PdfOutlineEntry } from '$lib/utils/pdfOutline';
 
@@ -100,8 +108,8 @@
   let pageSizes = $state<{ width: number; height: number }[]>([]);
   let currentPage = $state(1);
 
-  // 1 = fit the column's width. Zoom multiplies it.
-  const ZOOM_STEPS = [0.5, 0.75, 1, 1.25, 1.5, 2, 3];
+  // 1 = fit the column's width. Zoom multiplies it: a button steps through
+  // PDF_ZOOM_STEPS, a pinch lands anywhere between the ends.
   let zoom = $state(rememberedZoom());
   let availableWidth = $state(0);
 
@@ -130,6 +138,7 @@
   }
 
   let containerEl = $state<HTMLDivElement | null>(null);
+  let pagesEl = $state<HTMLDivElement | null>(null);
   const pageEl = (n: number) =>
     containerEl?.querySelector<HTMLDivElement>(`.pdf-page[data-page="${n}"]`) ?? null;
 
@@ -901,15 +910,39 @@
     };
   });
 
-  /** Zoom, keeping what's in the middle of the view in the middle of the view. */
-  async function setZoom(next: number) {
-    if (next === zoom || !containerEl) return;
+  type Point = { x: number; y: number };
+
+  /** The page at height `y` on screen, or the nearest one to it (a gap's). */
+  function pageAt(y: number): HTMLElement | null {
+    let nearest: HTMLElement | null = null;
+    let best = Infinity;
+    for (const page of containerEl?.querySelectorAll<HTMLElement>('.pdf-page') ?? []) {
+      const rect = page.getBoundingClientRect();
+      const off = Math.max(0, rect.top - y, y - rect.bottom);
+      if (off < best) [nearest, best] = [page, off];
+      if (off === 0) break;
+    }
+    return nearest;
+  }
+
+  /**
+   * Zoom, keeping what's in the middle of the view in the middle of the view;
+   * or, for a pinch, moving the point that was under the fingers (`from`) to
+   * where they let go (`to`).
+   */
+  async function setZoom(next: number, pinchAt?: { from: Point; to: Point }) {
+    // A pinch that kept the zoom still moved the pages, so it still places them.
+    if ((next === zoom && !pinchAt) || !containerEl) return;
     const scroller = scrollerOf(containerEl);
-    const pages = containerEl.querySelector<HTMLElement>('.pdf-pages');
-    const middle = middleOf(scroller);
-    const anchor = pageEl(currentPage);
+    const pages = pagesEl;
+    const fromY = pinchAt?.from.y ?? middleOf(scroller);
+    const toY = pinchAt?.to.y ?? fromY;
+    // A pinch is the reader moving: stop holding the view on the saved place.
+    if (pinchAt) following = false;
+    const anchor = (pinchAt && pageAt(fromY)) || pageEl(currentPage);
     const before = anchor?.getBoundingClientRect();
-    const across = before ? (middle - before.top) / before.height : null;
+    const across = before ? (fromY - before.top) / before.height : null;
+    const along = before && pinchAt ? (pinchAt.from.x - before.left) / before.width : null;
     const sideways = pages
       ? (pages.scrollLeft + pages.clientWidth / 2) / Math.max(1, pages.scrollWidth)
       : 0.5;
@@ -920,21 +953,100 @@
 
     if (anchor && across !== null) {
       const after = anchor.getBoundingClientRect();
-      scroller.scrollTop += after.top + across * after.height - middle;
+      scroller.scrollTop += after.top + across * after.height - toY;
     }
-    if (pages) pages.scrollLeft = sideways * pages.scrollWidth - pages.clientWidth / 2;
+    if (!pages) return;
+    if (anchor && along !== null && pinchAt) {
+      const after = anchor.getBoundingClientRect();
+      pages.scrollLeft += after.left + along * after.width - pinchAt.to.x;
+    } else {
+      pages.scrollLeft = sideways * pages.scrollWidth - pages.clientWidth / 2;
+    }
   }
 
   function rememberedZoom(): number {
-    const remembered = zoomKey ? pdfZoom(zoomKey) : 1;
-    return ZOOM_STEPS.includes(remembered) ? remembered : 1;
+    return zoomKey ? pdfZoom(zoomKey) : 1;
   }
 
   function stepZoom(direction: 1 | -1) {
-    const i = ZOOM_STEPS.indexOf(zoom);
-    const next = ZOOM_STEPS[Math.min(ZOOM_STEPS.length - 1, Math.max(0, i + direction))];
-    if (next !== undefined) void setZoom(next);
+    void setZoom(stepPdfZoom(zoom, direction));
   }
+
+  // Pinching the pages zooms them, not the whole app. The pages take no
+  // pinch from the browser (touch-action, and iOS's own gesture events), so
+  // two fingers on them are ours: the pages follow the fingers as a transform
+  // while they move, and the zoom is set, and the pages redrawn, on letting go.
+  $effect(() => {
+    const el = pagesEl;
+    if (!el) return;
+    let pinch: { distance: number; from: Point; to: Point; ratio: number } | null = null;
+
+    const spread = (t: TouchList) =>
+      Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+    const midpoint = (t: TouchList): Point => ({
+      x: (t[0].clientX + t[1].clientX) / 2,
+      y: (t[0].clientY + t[1].clientY) / 2,
+    });
+    const settle = () => {
+      el.style.transform = '';
+      el.style.transformOrigin = '';
+    };
+
+    // Begun from the first move as well as from a touch landing, since a second
+    // finger that lands off the pages (the toolbar, the gutter) sends its
+    // touchstart elsewhere.
+    const begin = (e: TouchEvent) => {
+      // Not cancelable once a one-finger scroll is under way: the browser has
+      // the gesture, and pans with it (touch-action keeps it from zooming).
+      if (pinch || e.touches.length !== 2 || !e.cancelable) return;
+      e.preventDefault();
+      const from = midpoint(e.touches);
+      pinch = { distance: Math.max(1, spread(e.touches)), from, to: from, ratio: 1 };
+      const rect = el.getBoundingClientRect();
+      el.style.transformOrigin = `${from.x - rect.left}px ${from.y - rect.top}px`;
+    };
+    const onMove = (e: TouchEvent) => {
+      begin(e);
+      if (!pinch || e.touches.length < 2) return;
+      if (e.cancelable) e.preventDefault();
+      const target = Math.min(
+        MAX_PDF_ZOOM,
+        Math.max(MIN_PDF_ZOOM, (zoom * spread(e.touches)) / pinch.distance)
+      );
+      pinch.ratio = target / zoom;
+      pinch.to = midpoint(e.touches);
+      const dx = pinch.to.x - pinch.from.x;
+      const dy = pinch.to.y - pinch.from.y;
+      el.style.transform = `translate(${dx}px, ${dy}px) scale(${pinch.ratio})`;
+    };
+    const onEnd = (e: TouchEvent) => {
+      if (!pinch || e.touches.length >= 2) return;
+      const { from, to, ratio } = pinch;
+      pinch = null;
+      // Back to the layout before measuring it: setZoom reads where things are.
+      settle();
+      if (e.type === 'touchcancel') return;
+      void setZoom(clampPdfZoom(zoom * ratio), { from, to });
+    };
+    // Safari's own pinch, which touch-action alone doesn't always stop.
+    const onGesture = (e: Event) => e.preventDefault();
+
+    el.addEventListener('touchstart', begin, { passive: false });
+    el.addEventListener('touchmove', onMove, { passive: false });
+    el.addEventListener('touchend', onEnd);
+    el.addEventListener('touchcancel', onEnd);
+    el.addEventListener('gesturestart', onGesture);
+    el.addEventListener('gesturechange', onGesture);
+    return () => {
+      el.removeEventListener('touchstart', begin);
+      el.removeEventListener('touchmove', onMove);
+      el.removeEventListener('touchend', onEnd);
+      el.removeEventListener('touchcancel', onEnd);
+      el.removeEventListener('gesturestart', onGesture);
+      el.removeEventListener('gesturechange', onGesture);
+      settle();
+    };
+  });
 
   // The font-size shortcuts zoom the pages while this view is open.
   onMount(() => claimPdfZoomShortcuts({ step: stepZoom, reset: () => void setZoom(1) }));
@@ -955,6 +1067,7 @@
          (a tap on a highlight is a pointer shortcut; the passage is text) -->
     <div
       class="pdf-pages"
+      bind:this={pagesEl}
       style:--scale-factor={scale}
       style:--total-scale-factor={scale}
       style:margin-left="{-band.left}px"
@@ -1002,7 +1115,7 @@
       <button
         type="button"
         onclick={() => stepZoom(-1)}
-        disabled={zoom === ZOOM_STEPS[0]}
+        disabled={zoom <= MIN_PDF_ZOOM}
         aria-label="Zoom out">−</button
       >
       <button
@@ -1015,7 +1128,7 @@
       <button
         type="button"
         onclick={() => stepZoom(1)}
-        disabled={zoom === ZOOM_STEPS[ZOOM_STEPS.length - 1]}
+        disabled={zoom >= MAX_PDF_ZOOM}
         aria-label="Zoom in">+</button
       >
       {#if fallbackHref}
@@ -1065,6 +1178,8 @@
     /* A zoom puts the view back itself (setZoom); the browser's own anchoring
        would fight it. */
     overflow-anchor: none;
+    /* A pinch here zooms the pages, not the app (see the touch handlers). */
+    touch-action: pan-x pan-y;
   }
 
   /* A page is paper: white in either theme, the one surface here that floats

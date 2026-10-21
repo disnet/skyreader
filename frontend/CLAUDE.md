@@ -353,6 +353,12 @@ scroll anchoring off on `.pdf-pages`). A page zoomed past the column spills into
 whole width (`band`, the room beside the column less a 16px gutter), centred on the column while
 it fits; only a page wider than all of that scrolls sideways inside `.pdf-pages`.
 
+**Pinch** zooms the pages, not the app: `.pdf-pages` is `touch-action: pan-x pan-y` (and swallows
+iOS's `gesturestart`), so two fingers on it are the viewer's. The pages follow the fingers as a
+CSS transform, and on letting go `setZoom` lands the zoom (`clampPdfZoom`: anywhere from 50% to
+300%, near-fit snapped to fit) with the point that was under the fingers where they let go. The
+buttons and shortcuts step to the next of `PDF_ZOOM_STEPS` from wherever a pinch left it.
+
 **Highlights are shared between the views**, because they are the same `TextQuoteSelector`s.
 `utils/pdfTextModel.ts` reads every page's `getTextContent()` once and joins the runs the way the
 extractor reflowed them (whitespace collapsed, a line-end `[a-z]-` joined to a lowercase
