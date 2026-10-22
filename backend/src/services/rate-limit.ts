@@ -81,6 +81,13 @@ const RATE_LIMITS: Record<string, RateLimitConfig> = {
   '/api/saved/pdf': { limit: 10, windowMs: 60000 },
   // Up to 50 MB streamed to R2 and read back a chapter at a time; same burst bound.
   '/api/saved/epub': { limit: 10, windowMs: 60000 },
+  // A library brought in from another read-later app, a hundred saves a request
+  // (routes/saved-import.ts). A large export is a few dozen requests in a row.
+  '/api/saved/import': { limit: 60, windowMs: 60000 },
+  // The pages fetched for an import: the newest few once per import, then each
+  // imported save as it's first opened, at the pace /api/extract allows.
+  '/api/saved/import:extract': { limit: 1, windowMs: 600000 },
+  '/api/saved/bodies:extract': EXPENSIVE_LIMIT,
   // A whole-library read (every save, highlight and note) rendered to one file.
   // Someone exports a few times in a row at most, trying each format.
   '/api/export': { limit: 10, windowMs: 60000 },

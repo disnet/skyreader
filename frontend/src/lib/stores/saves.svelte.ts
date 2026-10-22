@@ -1161,8 +1161,9 @@ function createSavesStore() {
       // A guest's saves have no server copy to fall back to.
       if (canReachBackend()) {
         // A failed fetch must not skip the local feed-body fallback below.
+        // `extract`: a save imported from another app is fetched the first time it's opened.
         const bodies = await api
-          .getSavedBodies([rkey])
+          .getSavedBodies([rkey], { extract: true })
           .then((r) => r.bodies)
           .catch((): Record<string, string | null> => ({}));
         const body = bodies[rkey];
