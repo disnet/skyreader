@@ -1,6 +1,7 @@
 import { env, createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
+  DOC_ID_BASE,
   handleGReader,
   greaderSubpath,
   longItemId,
@@ -10,6 +11,8 @@ import {
 import { handleAppPasswords } from '../src/routes/app-passwords';
 import { createAppPassword, MAX_APP_PASSWORDS } from '../src/services/app-passwords';
 import { ARTICLE_WINDOW_PER_FEED } from '../src/config/window';
+import { MAX_DOCUMENTS_PER_AUTHOR } from '../src/services/standard-site';
+import { documentHtml } from '../src/services/document-html';
 import { GRANULAR_SCOPES } from '../src/routes/auth';
 import type { Session } from '../src/types';
 
@@ -143,6 +146,7 @@ beforeEach(async () => {
       'DELETE FROM app_passwords',
       'DELETE FROM subscriptions_cache',
       'DELETE FROM feed_items',
+      'DELETE FROM documents_v2',
       'DELETE FROM item_labels_cache',
       'DELETE FROM saved_articles',
       'DELETE FROM sessions',
@@ -390,7 +394,12 @@ describe('items and read state', () => {
     );
     const body = (await res.json()) as { items: Array<{ id: string }>; continuation: string };
     expect(body.items.map((i) => i.id)).toEqual([longItemId(seqs[0]), longItemId(seqs[1])]);
-    expect(body.continuation).toBe(String(seqs[1]));
+    const next = await call(
+      `reader/api/0/stream/contents/${encodeURIComponent(`feed/${FEED_A}`)}?n=2&r=o&c=${body.continuation}`
+    );
+    const rest = (await next.json()) as { items: Array<{ id: string }>; continuation?: string };
+    expect(rest.items.map((i) => i.id)).toEqual([longItemId(seqs[2])]);
+    expect(rest.continuation).toBeUndefined();
   });
 
   it('marks the whole reading list read, including items read before', async () => {
@@ -515,6 +524,305 @@ describe('starred', () => {
     });
     expect(res.status).toBe(403);
     expect((await itemIds(UNREAD)).ids).toEqual([seq]);
+  });
+});
+
+describe('standard.site documents', () => {
+  const AUTHOR = 'did:plc:writer1';
+  const PUB = `at://${AUTHOR}/site.standard.publication/blog`;
+  const OTHER_PUB = `at://${AUTHOR}/site.standard.publication/notes`;
+  const AUTHOR_STREAM = `feed/at://${AUTHOR}`;
+
+  async function addDocSubscription(
+    feedUrl: string,
+    opts: { title?: string; category?: string } = {}
+  ) {
+    await env.DB.prepare(
+      `INSERT INTO subscriptions_cache (user_did, record_uri, feed_url, title, source_type, subject_did, active, category)
+       VALUES (?, ?, ?, ?, 'atproto.documents', ?, 1, ?)`
+    )
+      .bind(
+        DID,
+        `at://${DID}/app.skyreader.feed.subscription/${Math.random().toString(36).slice(2)}`,
+        feedUrl,
+        opts.title ?? 'Writer',
+        AUTHOR,
+        opts.category ?? null
+      )
+      .run();
+  }
+
+  /** Insert `count` documents, oldest first; returns their item ids in the same order. */
+  async function addDocuments(count: number, siteUri = PUB, prefix = 'doc'): Promise<number[]> {
+    const ids: number[] = [];
+    const base = Date.UTC(2026, 1, 1);
+    for (let i = 0; i < count; i++) {
+      const at = base + i * 60_000;
+      const record = {
+        $type: 'site.standard.document',
+        site: siteUri,
+        title: `Essay ${i}`,
+        path: `/${prefix}-${i}`,
+        publishedAt: new Date(at).toISOString(),
+        textContent: `Plain ${i}`,
+        content: {
+          $type: 'pub.leaflet.content',
+          pages: [
+            {
+              $type: 'pub.leaflet.pages.linearDocument',
+              blocks: [
+                {
+                  block: {
+                    $type: 'pub.leaflet.blocks.text',
+                    plaintext: `Hello ${i}`,
+                    facets: [
+                      {
+                        index: { byteStart: 0, byteEnd: 5 },
+                        features: [{ $type: 'pub.leaflet.richtext.facet#bold' }],
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      };
+      const row = await env.DB.prepare(
+        `INSERT INTO documents_v2 (record_uri, author_did, rkey, record_cid, site_uri, published_at, canonical_url, record_json, indexed_at)
+         VALUES (?, ?, ?, 'cid', ?, ?, ?, ?, ?) RETURNING rowid`
+      )
+        .bind(
+          `at://${AUTHOR}/site.standard.document/${prefix}${i}`,
+          AUTHOR,
+          `${prefix}${i}`,
+          siteUri,
+          at,
+          `https://writer.example/${prefix}-${i}`,
+          JSON.stringify(record),
+          at
+        )
+        .first<{ rowid: number }>();
+      ids.push(DOC_ID_BASE + row!.rowid);
+    }
+    return ids;
+  }
+
+  it('lists a followed author and publication as feeds', async () => {
+    await addDocSubscription('', { title: 'Writer', category: 'Essays' });
+    await addDocSubscription(PUB, { title: 'The Blog' });
+    const res = await call('reader/api/0/subscription/list');
+    const body = (await res.json()) as {
+      subscriptions: Array<{ id: string; title: string; categories: Array<{ label: string }> }>;
+    };
+    expect(body.subscriptions.map((s) => [s.id, s.title])).toEqual([
+      [AUTHOR_STREAM, 'Writer'],
+      [`feed/${PUB}`, 'The Blog'],
+    ]);
+    expect(body.subscriptions[0].categories).toEqual([
+      expect.objectContaining({ label: 'Essays' }),
+    ]);
+  });
+
+  it('serves documents in the reading list next to articles, newest first', async () => {
+    await addSubscription(DID, FEED_A);
+    const [seq] = await addItems(FEED_A, 1);
+    await addDocSubscription(PUB);
+    const docs = await addDocuments(2);
+    await addDocuments(1, OTHER_PUB, 'other');
+    // Articles were first seen in January, documents in February.
+    expect((await itemIds(UNREAD)).ids).toEqual([docs[1], docs[0], seq]);
+    expect((await itemIds({ s: `feed/${PUB}` })).ids).toEqual([docs[1], docs[0]]);
+  });
+
+  it('windows each documents subscription to what the web app serves', async () => {
+    await addDocSubscription('');
+    const docs = await addDocuments(MAX_DOCUMENTS_PER_AUTHOR + 2);
+    const { ids } = await itemIds({ ...UNREAD, n: '10000' });
+    expect(ids).toHaveLength(MAX_DOCUMENTS_PER_AUTHOR);
+    expect(ids).not.toContain(docs[0]);
+  });
+
+  it('lists a document once when two subscriptions cover it', async () => {
+    await addDocSubscription('');
+    await addDocSubscription(PUB);
+    const [doc] = await addDocuments(1);
+    expect((await itemIds(UNREAD)).ids).toEqual([doc]);
+    const res = await call(`reader/api/0/stream/items/contents?i=${doc}`);
+    const body = (await res.json()) as { items: Array<{ origin: { streamId: string } }> };
+    expect(body.items[0].origin.streamId).toBe(`feed/${PUB}`);
+  });
+
+  it('renders a document with its link back to the publication', async () => {
+    await addDocSubscription(PUB, { title: 'The Blog' });
+    const [doc] = await addDocuments(1);
+    const res = await call(`reader/api/0/stream/items/contents?i=${longItemId(doc)}`);
+    const body = (await res.json()) as {
+      items: Array<{
+        id: string;
+        title: string;
+        summary: { content: string };
+        alternate: Array<{ href: string }>;
+        origin: { streamId: string; title: string };
+      }>;
+    };
+    const [item] = body.items;
+    expect(item.id).toBe(longItemId(doc));
+    expect(item.title).toBe('Essay 0');
+    expect(item.summary.content).toBe('<p><strong>Hello</strong> 0</p>');
+    expect(item.alternate[0].href).toBe('https://writer.example/doc-0');
+    expect(item.origin).toEqual(
+      expect.objectContaining({ streamId: `feed/${PUB}`, title: 'The Blog' })
+    );
+  });
+
+  it('marks documents read as the web app does, and unread again', async () => {
+    await addDocSubscription(PUB);
+    const [doc, other] = await addDocuments(2);
+    const res = await call('reader/api/0/edit-tag', {
+      form: { i: String(doc), a: 'user/-/state/com.google/read' },
+    });
+    expect(res.status).toBe(200);
+    const label = await env.DB.prepare(
+      `SELECT item_key, item_type, props FROM item_labels_cache
+        WHERE user_did = ? AND label = 'read' AND deleted_at IS NULL`
+    )
+      .bind(DID)
+      .first<{ item_key: string; item_type: string; props: string }>();
+    expect(label).toEqual(
+      expect.objectContaining({
+        item_key: `at://${AUTHOR}/site.standard.document/doc0`,
+        item_type: 'document',
+      })
+    );
+    expect(JSON.parse(label!.props)).toEqual(
+      expect.objectContaining({
+        itemUrl: 'https://writer.example/doc-0',
+        itemTitle: 'Essay 0',
+        authorDid: AUTHOR,
+      })
+    );
+    expect((await itemIds(UNREAD)).ids).toEqual([other]);
+
+    const unread = await call('reader/api/0/unread-count');
+    const counts = (await unread.json()) as { unreadcounts: Array<{ id: string; count: number }> };
+    expect(counts.unreadcounts).toContainEqual(
+      expect.objectContaining({ id: `feed/${PUB}`, count: 1 })
+    );
+
+    await call('reader/api/0/edit-tag', {
+      form: { i: String(doc), r: 'user/-/state/com.google/read' },
+    });
+    expect((await itemIds(UNREAD)).ids).toEqual([other, doc]);
+  });
+
+  it('marks a documents stream read', async () => {
+    await addDocSubscription('');
+    await addDocuments(2);
+    const res = await call('reader/api/0/mark-all-as-read', { form: { s: AUTHOR_STREAM } });
+    expect(res.status).toBe(200);
+    expect((await itemIds(UNREAD)).ids).toEqual([]);
+  });
+
+  it("doesn't serve or mark documents of authors the reader doesn't follow", async () => {
+    const [doc] = await addDocuments(1);
+    expect((await itemIds(UNREAD)).ids).toEqual([]);
+    await call('reader/api/0/edit-tag', {
+      form: { i: String(doc), a: 'user/-/state/com.google/read' },
+    });
+    const label = await env.DB.prepare('SELECT 1 FROM item_labels_cache WHERE user_did = ?')
+      .bind(DID)
+      .first();
+    expect(label).toBeNull();
+    const res = await call(`reader/api/0/stream/items/contents?i=${doc}`);
+    expect(((await res.json()) as { items: unknown[] }).items).toEqual([]);
+  });
+
+  it('stars a document by saving it as the web app does', async () => {
+    await env.DB.prepare(
+      `INSERT INTO sessions (session_id, did, handle, pds_url, access_token, refresh_token, dpop_private_key, expires_at, granted_scopes)
+       VALUES ('greader-session', ?, ?, 'https://pds.test', 'tok', 'rtok', '{}', ?, ?)`
+    )
+      .bind(DID, HANDLE, Date.now() + 3_600_000, GRANULAR_SCOPES)
+      .run();
+    await addDocSubscription(PUB);
+    const [doc] = await addDocuments(1);
+    const star = await call('reader/api/0/edit-tag', {
+      form: { i: String(doc), a: 'user/-/state/com.google/starred' },
+    });
+    expect(star.status).toBe(200);
+    const saved = await env.DB.prepare(
+      'SELECT item_guid, title, source FROM saved_articles WHERE user_did = ?'
+    )
+      .bind(DID)
+      .all<{ item_guid: string; title: string; source: string }>();
+    expect(saved.results).toEqual([
+      {
+        item_guid: `at://${AUTHOR}/site.standard.document/doc0`,
+        title: 'Essay 0',
+        source: 'document',
+      },
+    ]);
+    expect((await itemIds({ s: 'user/-/state/com.google/starred' })).ids).toEqual([doc]);
+
+    await call('reader/api/0/edit-tag', {
+      form: { i: String(doc), r: 'user/-/state/com.google/starred' },
+    });
+    expect((await itemIds({ s: 'user/-/state/com.google/starred' })).ids).toEqual([]);
+  });
+
+  it('renders other formats and plain text safely', () => {
+    expect(
+      documentHtml(
+        {
+          content: {
+            $type: 'pub.leaflet.content',
+            pages: [
+              {
+                blocks: [
+                  { block: { $type: 'pub.leaflet.blocks.header', level: 2, plaintext: 'A <b>' } },
+                  {
+                    block: {
+                      $type: 'pub.leaflet.blocks.text',
+                      plaintext: 'café link',
+                      facets: [
+                        {
+                          index: { byteStart: 6, byteEnd: 10 },
+                          features: [
+                            {
+                              $type: 'pub.leaflet.richtext.facet#link',
+                              uri: 'javascript:alert(1)',
+                            },
+                            { $type: 'pub.leaflet.richtext.facet#italic' },
+                          ],
+                        },
+                      ],
+                    },
+                  },
+                  { block: { $type: 'pub.leaflet.blocks.membersOnlyDelimiter' } },
+                  { block: { $type: 'pub.leaflet.blocks.text', plaintext: 'hidden' } },
+                ],
+              },
+            ],
+          },
+        },
+        AUTHOR
+      )
+    ).toBe('<h2>A &lt;b&gt;</h2>\n<p>café <em>link</em></p>');
+    expect(
+      documentHtml(
+        {
+          content: {
+            $type: 'blog.pckt.content',
+            items: [{ plaintext: 'One' }, { plaintext: 'Two' }],
+          },
+        },
+        AUTHOR
+      )
+    ).toBe('<p>One</p>\n<p>Two</p>');
+    expect(documentHtml({ textContent: 'First\n\nSecond <x>' }, AUTHOR)).toBe(
+      '<p>First</p>\n<p>Second &lt;x&gt;</p>'
+    );
   });
 });
 

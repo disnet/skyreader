@@ -5,7 +5,7 @@ description: Read your Skyreader sources in NetNewsWire, Reeder, ReadKit or Unre
 
 If you already have an RSS app you love, you can keep it. Skyreader works as a sync service for apps that speak the Google Reader API, such as NetNewsWire, Reeder, ReadKit and Unread. The app shows your sources, and what you read or star there is read or saved in Skyreader too.
 
-Your newsletters and Bluesky likes and bookmarks come along with your feeds, since they're sources like any other.
+Your newsletters, Bluesky likes and bookmarks, and the Atmosphere publications you follow (standard.site blogs like Leaflet) come along with your feeds, since they're sources like any other.
 
 ## Connecting an app
 
@@ -24,10 +24,11 @@ An app password only lets an app read your sources and mark items read, unread, 
 
 - **Subscriptions and folders.** Each source appears with its folder. Adding, removing or renaming sources is done in Skyreader; the app picks the change up on its next sync.
 - **Articles.** Each source's newest 100 articles, the same ones Skyreader shows. Older articles stay in Skyreader's archive.
+- **Publications.** Each one you follow appears as a feed, with its newest 100 posts. The app shows the text of each post; for anything richer, open it on the publication.
 - **Read and unread.** Marking an article read or unread in the app does the same in Skyreader, and the other way around. Unread counts match.
 - **Starred.** Starring an article in the app saves it to your Library in Skyreader, and unstarring removes the save. Articles you saved in Skyreader from a source show as starred in the app. If you back your saves with Semble or Margin, a star made in the app lands in that public collection like any other save.
 
-Publications you follow in the Atmosphere (standard.site blogs like Leaflet) don't appear in other apps yet, and neither do articles you saved by link.
+Articles you saved by link don't appear in other apps.
 
 ## If starring doesn't work
 

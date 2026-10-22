@@ -4,6 +4,8 @@ import { rssSubscriptionPredicate } from './ingest';
 import { READ_UPSERT_CONFLICT, UNREAD_UPSERT_CONFLICT, chunkArray } from './reading';
 import { handleCreateSaved, handleDeleteSavedByGuid } from './saved';
 import { itemBodyKey } from './item-bodies';
+import { documentBlobUrl, documentHtml } from '../services/document-html';
+import { MAX_DOCUMENTS_PER_AUTHOR } from '../services/standard-site';
 import {
   touchAppPassword,
   verifyAppPassword,
@@ -22,27 +24,37 @@ import { log } from '../utils/logger';
  * Skyreader as their sync service. A reader points their app at
  * `<api origin>/api/greader` (or the origin itself for apps that append
  * FreshRSS's `/api/greader.php`), signs in with their handle and an app password
- * (services/app-passwords.ts), and gets their subscriptions — newsletters and
- * Bluesky sources included — with read state shared with the web app.
+ * (services/app-passwords.ts), and gets their subscriptions — newsletters,
+ * Bluesky sources and standard.site publications included — with read state
+ * shared with the web app.
  *
  * The model maps onto what the web app already has:
  *
  *  - An item is a `feed_items` row, its id the row's `seq` (decimal in
- *    `stream/items/ids`, the 16-hex-digit long form elsewhere; both accepted).
- *  - Read is the `read` label in `item_labels_cache`, keyed by guid, written
- *    with the same user-time guard as the web app's own read writes.
+ *    `stream/items/ids`, the 16-hex-digit long form elsewhere; both accepted),
+ *    or a standard.site document, its id DOC_ID_BASE plus its `documents_v2`
+ *    rowid. A documents subscription is listed as a feed whose URL is its
+ *    publication's at:// URI, or `at://<did>` when it follows everything the
+ *    author publishes.
+ *  - Read is the `read` label in `item_labels_cache`, keyed by guid (record
+ *    URI for a document, as the web app keys it), written with the same
+ *    user-time guard as the web app's own read writes.
  *  - Starred is saved: the web app's star is its save, so starring delegates to
  *    the save routes (snapshot, limits, Semble/Margin backing and all) as the
  *    stored OAuth session, like the AT Intents endpoints in routes/xrpc.ts.
- *    Matching is by guid, which is how a feed item's save is keyed; an article
- *    saved by link is not starred here even when a feed also carries it.
+ *    Matching is by guid (record URI for a document), which is how the web app
+ *    keys those saves; an article saved by link is not starred here even when
+ *    a feed also carries it.
  *  - The reading list is each subscribed feed's newest ARTICLE_WINDOW_PER_FEED
  *    items, the window the web app shows and counts unread over. Older archive
  *    items stay out, or an app would show a feed's whole history as unread.
- *    The starred stream is not windowed: a save from long ago is still starred.
+ *    A documents subscription's window is its newest MAX_DOCUMENTS_PER_AUTHOR,
+ *    what the web app serves for it. The starred stream is not windowed: a
+ *    save from long ago is still starred.
  *
- * standard.site documents (atproto subscriptions) live outside `feed_items` and
- * aren't served here yet. Subscribing, unsubscribing and folders are managed in
+ * Documents are read from D1 whatever `documents_v2_enabled` says: that flag
+ * picks the web app's source between D1 and the feed proxy, and this API has
+ * no proxy path. Subscribing, unsubscribing and folders are managed in
  * Skyreader; the subscription-editing calls answer 501.
  *
  * Auth is the `Authorization: GoogleLogin auth=<token>` header, never a cookie,
@@ -178,15 +190,59 @@ class Binds {
   }
 }
 
+// A document's item id is this plus its `documents_v2` rowid, so it can't meet
+// a `feed_items` seq. The rowid is stable: an upsert keeps it, and D1 doesn't
+// VACUUM. Every id stays under 2^53.
+export const DOC_ID_BASE = 2 ** 50;
+
+/**
+ * Every query that lists items reads these columns, whichever table the item
+ * came from: `feed_url` is the stream key (a feed URL, or a documents
+ * subscription's key), `item_key` what read state and saves are keyed by, and
+ * `url` the item's link.
+ */
+const ITEM_COLUMNS =
+  'id, kind, feed_url, item_key, first_seen_at, item_json, content_hash, url, author_did';
+
+function articleColumns(fi: string): string {
+  return `${fi}.seq AS id, 'article' AS kind, ${fi}.feed_url, ${fi}.guid AS item_key,
+          ${fi}.first_seen_at, ${fi}.item_json, ${fi}.content_hash,
+          json_extract(${fi}.item_json, '$.url') AS url, NULL AS author_did`;
+}
+
+function documentColumns(d: string, streamKey: string): string {
+  return `${DOC_ID_BASE} + ${d}.rowid AS id, 'document' AS kind, ${streamKey} AS feed_url,
+          ${d}.record_uri AS item_key, ${d}.indexed_at AS first_seen_at,
+          ${d}.record_json AS item_json, '' AS content_hash, ${d}.canonical_url AS url,
+          ${d}.author_did`;
+}
+
+/** The key a documents subscription is listed under: its publication, or its author. */
+function docStreamKey(sc: string): string {
+  return `CASE WHEN COALESCE(${sc}.feed_url, '') = '' THEN 'at://' || ${sc}.subject_did
+               ELSE ${sc}.feed_url END`;
+}
+
+function docSubscriptionPredicate(sc: string): string {
+  return `${sc}.user_did = ?1 AND ${sc}.active = 1
+          AND ${sc}.source_type = 'atproto.documents' AND ${sc}.subject_did IS NOT NULL`;
+}
+
+/** A documents subscription (alias `sc`) covers the document (alias `d`). */
+function docCoveredSql(sc: string, d: string): string {
+  return `${sc}.subject_did = ${d}.author_did
+          AND (COALESCE(${sc}.feed_url, '') = '' OR ${sc}.feed_url = ${d}.site_uri)`;
+}
+
 function readSql(alias: string): string {
   return `EXISTS (SELECT 1 FROM item_labels_cache il
-                   WHERE il.user_did = ?1 AND il.item_key = ${alias}.guid
-                     AND il.item_type = 'article' AND il.label = 'read' AND il.deleted_at IS NULL)`;
+                   WHERE il.user_did = ?1 AND il.item_key = ${alias}.item_key
+                     AND il.item_type = ${alias}.kind AND il.label = 'read' AND il.deleted_at IS NULL)`;
 }
 
 function starredSql(alias: string): string {
   return `EXISTS (SELECT 1 FROM saved_articles sa
-                   WHERE sa.user_did = ?1 AND sa.item_guid = ${alias}.guid)`;
+                   WHERE sa.user_did = ?1 AND sa.item_guid = ${alias}.item_key)`;
 }
 
 /** The reader's active feed subscriptions, as a predicate over `alias.feed_url`. */
@@ -197,38 +253,103 @@ function subscribedSql(alias: string): string {
 }
 
 /**
- * `WITH subs, win`: `win` is the stream's items (seq, feed_url, guid,
- * first_seen_at, item_json, content_hash). Every query that lists items starts here, so the
- * subscription check and the window are in one place.
+ * `WITH ... win`: `win` is the stream's items, in ITEM_COLUMNS. Every query
+ * that lists items starts here, so the subscription check and the window are
+ * in one place.
  */
 function streamCte(stream: Stream, binds: Binds): string {
-  let filter = '';
-  if (stream.kind === 'feed') filter = `AND feed_url = ${binds.add(stream.feedUrl)}`;
-  if (stream.kind === 'label') filter = `AND category = ${binds.add(stream.label)}`;
+  let feedFilter = '';
+  let docFilter = '';
+  if (stream.kind === 'feed') {
+    const key = binds.add(stream.feedUrl);
+    feedFilter = `AND feed_url = ${key}`;
+    docFilter = `AND ${docStreamKey('sc')} = ${key}`;
+  }
+  if (stream.kind === 'label') {
+    const label = binds.add(stream.label);
+    feedFilter = `AND category = ${label}`;
+    docFilter = `AND sc.category = ${label}`;
+  }
   const subs = `subs AS (
       SELECT DISTINCT feed_url FROM subscriptions_cache
        WHERE user_did = ?1 AND active = 1 AND feed_url <> ''
-         AND ${rssSubscriptionPredicate()} ${filter})`;
+         AND ${rssSubscriptionPredicate()} ${feedFilter}),
+    dsubs AS (
+      SELECT DISTINCT sc.subject_did, COALESCE(sc.feed_url, '') AS scope,
+             ${docStreamKey('sc')} AS stream_key
+        FROM subscriptions_cache sc
+       WHERE ${docSubscriptionPredicate('sc')} ${docFilter})`;
+  // A document two subscriptions cover (the author's and one publication's) is
+  // listed once, under the publication: MAX picks the non-empty scope, and the
+  // bare columns come from that row.
+  const docs = (join: string, where = '') => `
+      SELECT ${documentColumns('d', 'dsubs.stream_key')}, MAX(dsubs.scope) AS scope
+        FROM dsubs JOIN documents_v2 d ON ${join}
+       ${where}
+       GROUP BY d.rowid`;
 
   if (stream.kind === 'starred') {
+    const saved = `IN (SELECT item_guid FROM saved_articles WHERE user_did = ?1 AND item_guid IS NOT NULL)`;
     return `WITH ${subs},
+      dwin AS (${docs(
+        `d.author_did = dsubs.subject_did AND (dsubs.scope = '' OR d.site_uri = dsubs.scope)`,
+        `WHERE d.record_uri ${saved}`
+      )}),
       win AS (
-        SELECT fi.seq, fi.feed_url, fi.guid, fi.first_seen_at, fi.item_json, fi.content_hash
+        SELECT ${articleColumns('fi')}
           FROM subs JOIN feed_items fi ON fi.feed_url = subs.feed_url
-         WHERE fi.guid IN (SELECT item_guid FROM saved_articles
-                            WHERE user_did = ?1 AND item_guid IS NOT NULL))`;
+         WHERE fi.guid ${saved}
+        UNION ALL
+        SELECT ${ITEM_COLUMNS} FROM dwin)`;
   }
-  // The newest-K window per feed: a per-feed index seek each, the same slice
-  // the timeline's cold start and unread counts read.
+  // The newest-K window per feed and per documents subscription: an index seek
+  // each, the same slices the web app shows and counts unread over.
   return `WITH ${subs},
-    win AS (
-      SELECT fi.seq, fi.feed_url, fi.guid, fi.first_seen_at, fi.item_json, fi.content_hash
+    dwin AS (${docs(
+      `d.rowid IN (SELECT d2.rowid FROM documents_v2 d2
+                    WHERE d2.author_did = dsubs.subject_did
+                      AND (dsubs.scope = '' OR d2.site_uri = dsubs.scope)
+                    ORDER BY d2.published_at DESC
+                    LIMIT ${MAX_DOCUMENTS_PER_AUTHOR})`
+    )}),
+    items AS (
+      SELECT ${articleColumns('fi')}
         FROM subs JOIN feed_items fi
           ON fi.seq IN (SELECT f2.seq FROM feed_items f2
                          WHERE f2.feed_url = subs.feed_url
                          ORDER BY f2.published_at DESC, f2.seq DESC
                          LIMIT ${ARTICLE_WINDOW_PER_FEED})
-       WHERE 1 = 1 ${stream.kind === 'read' ? `AND ${readSql('fi')}` : ''})`;
+      UNION ALL
+      SELECT ${ITEM_COLUMNS} FROM dwin),
+    win AS (
+      SELECT ${ITEM_COLUMNS} FROM items
+       ${stream.kind === 'read' ? `WHERE ${readSql('items')}` : ''})`;
+}
+
+/**
+ * The given items, in ITEM_COLUMNS, keeping only those in a subscription of the
+ * reader's. Not windowed: an app may ask after an item that has since aged out.
+ */
+function itemsByIdSql(ids: number[], binds: Binds): string {
+  const seqs = ids.filter((id) => id < DOC_ID_BASE);
+  const rowids = ids.filter((id) => id >= DOC_ID_BASE).map((id) => id - DOC_ID_BASE);
+  const parts: string[] = [];
+  if (seqs.length) {
+    parts.push(`SELECT ${articleColumns('fi')} FROM feed_items fi
+                 WHERE fi.seq IN (${seqs.map((seq) => binds.add(seq)).join(',')})
+                   AND ${subscribedSql('fi')}`);
+  }
+  if (rowids.length) {
+    // Listed under the covering subscription's key, a publication's first.
+    const streamKey = `(SELECT ${docStreamKey('sc')} FROM subscriptions_cache sc
+                         WHERE ${docSubscriptionPredicate('sc')} AND ${docCoveredSql('sc', 'd')}
+                         ORDER BY COALESCE(sc.feed_url, '') DESC LIMIT 1)`;
+    parts.push(`SELECT ${ITEM_COLUMNS} FROM (
+                  SELECT ${documentColumns('d', streamKey)} FROM documents_v2 d
+                   WHERE d.rowid IN (${rowids.map((rowid) => binds.add(rowid)).join(',')}))
+                 WHERE feed_url IS NOT NULL`);
+  }
+  return parts.join(' UNION ALL ');
 }
 
 // --- params --------------------------------------------------------------------
@@ -304,19 +425,25 @@ interface SubscriptionRow {
   icon_url: string | null;
 }
 
-/** The reader's feeds, one row per feed URL, keyed by it. */
+/** The reader's feeds and documents subscriptions, one row per stream key, keyed by it. */
 async function loadSubscriptions(env: Env, did: string): Promise<Map<string, SubscriptionRow>> {
   const rows = await env.DB.prepare(
-    `SELECT sc.feed_url,
+    `SELECT sc.id, sc.feed_url,
             COALESCE(NULLIF(sc.custom_title, ''), NULLIF(sc.title, ''), f.title, sc.feed_url) AS title,
             NULLIF(sc.category, '') AS category,
             COALESCE(sc.site_url, f.site_url) AS site_url,
             COALESCE(sc.custom_icon_url, f.image_url) AS icon_url
        FROM subscriptions_cache sc
        LEFT JOIN feeds f ON f.feed_url = sc.feed_url
-      WHERE sc.user_did = ? AND sc.active = 1 AND sc.feed_url <> ''
+      WHERE sc.user_did = ?1 AND sc.active = 1 AND sc.feed_url <> ''
         AND ${rssSubscriptionPredicate('sc')}
-      ORDER BY sc.id`
+     UNION ALL
+     SELECT sc.id, ${docStreamKey('sc')} AS feed_url,
+            COALESCE(NULLIF(sc.custom_title, ''), NULLIF(sc.title, ''), ${docStreamKey('sc')}) AS title,
+            NULLIF(sc.category, '') AS category, sc.site_url, sc.custom_icon_url AS icon_url
+       FROM subscriptions_cache sc
+      WHERE ${docSubscriptionPredicate('sc')}
+      ORDER BY 1`
   )
     .bind(did)
     .all<SubscriptionRow>();
@@ -412,7 +539,7 @@ interface StreamQuery {
   // Unix seconds: `ot` keeps items first seen at or after it, `nt` before it.
   ot: number | null;
   nt: number | null;
-  continuation: number | null;
+  continuation: { at: number; id: number } | null;
   oldestFirst: boolean;
   limit: number;
 }
@@ -433,19 +560,29 @@ function streamQuery(params: URLSearchParams, streamId: string, limit: number): 
     include: states('it'),
     ot: intParam(params, 'ot'),
     nt: intParam(params, 'nt'),
-    continuation: intParam(params, 'c'),
+    continuation: continuationParam(params),
     oldestFirst: params.get('r') === 'o',
     limit,
   };
 }
 
+// A stream is ordered by first-seen time, then id, since articles and
+// documents number their ids apart; the continuation is that pair.
+function continuationParam(params: URLSearchParams): StreamQuery['continuation'] {
+  const match = /^(\d{1,16})_(\d{1,16})$/.exec(params.get('c') ?? '');
+  return match ? { at: Number(match[1]), id: Number(match[2]) } : null;
+}
+
 interface StreamRow {
-  seq: number;
+  id: number;
+  kind: 'article' | 'document';
   feed_url: string;
-  guid: string;
+  item_key: string;
   first_seen_at: number;
   item_json: string;
   content_hash: string;
+  url: string | null;
+  author_did: string | null;
   read: number;
   starred: number;
 }
@@ -468,18 +605,20 @@ async function queryStream(
   if (query.ot !== null) where.push(`win.first_seen_at >= ${binds.add(query.ot * 1000)}`);
   if (query.nt !== null) where.push(`win.first_seen_at < ${binds.add(query.nt * 1000)}`);
   if (query.continuation !== null) {
-    where.push(`win.seq ${query.oldestFirst ? '>' : '<'} ${binds.add(query.continuation)}`);
+    const at = binds.add(query.continuation.at);
+    const id = binds.add(query.continuation.id);
+    where.push(`(win.first_seen_at, win.id) ${query.oldestFirst ? '>' : '<'} (${at}, ${id})`);
   }
   const cte = streamCte(query.stream, binds);
   const columns = withItems
-    ? `win.seq, win.feed_url, win.guid, win.first_seen_at, win.item_json, win.content_hash,
-       ${readSql('win')} AS read, ${starredSql('win')} AS starred`
-    : 'win.seq, win.feed_url, win.first_seen_at';
+    ? `win.*, ${readSql('win')} AS read, ${starredSql('win')} AS starred`
+    : 'win.id, win.first_seen_at';
+  const direction = query.oldestFirst ? 'ASC' : 'DESC';
   const rows = await env.DB.prepare(
     `${cte}
      SELECT ${columns} FROM win
       ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-      ORDER BY win.seq ${query.oldestFirst ? 'ASC' : 'DESC'}
+      ORDER BY win.first_seen_at ${direction}, win.id ${direction}
       LIMIT ${binds.add(query.limit + 1)}`
   )
     .bind(...binds.values)
@@ -487,9 +626,10 @@ async function queryStream(
 
   const hasMore = rows.results.length > query.limit;
   const page = hasMore ? rows.results.slice(0, query.limit) : rows.results;
+  const last = page[page.length - 1];
   return {
     rows: page,
-    continuation: hasMore ? String(page[page.length - 1].seq) : undefined,
+    continuation: hasMore ? `${last.first_seen_at}_${last.id}` : undefined,
   };
 }
 
@@ -503,7 +643,7 @@ async function handleStreamItemIds(env: Env, did: string, params: URLSearchParam
   const { rows, continuation } = await queryStream(env, did, query, false);
   return json({
     itemRefs: rows.map((row) => ({
-      id: String(row.seq),
+      id: String(row.id),
       directStreamIds: [],
       timestampUsec: String(row.first_seen_at * 1000),
     })),
@@ -535,18 +675,16 @@ async function handleStreamContents(
   });
 }
 
-/** Rows for the given seqs that sit in one of the reader's subscribed feeds. */
-async function loadItems(env: Env, did: string, seqs: number[]): Promise<StreamRow[]> {
-  if (seqs.length === 0) return [];
-  const statements = chunkArray(seqs, ID_CHUNK).map((chunk) =>
-    env.DB.prepare(
-      `SELECT fi.seq, fi.feed_url, fi.guid, fi.first_seen_at, fi.item_json, fi.content_hash,
-              ${readSql('fi')} AS read, ${starredSql('fi')} AS starred
-         FROM feed_items fi
-        WHERE fi.seq IN (${chunk.map((_, i) => `?${i + 2}`).join(',')})
-          AND ${subscribedSql('fi')}`
-    ).bind(did, ...chunk)
-  );
+/** Rows for the given ids that sit in one of the reader's subscriptions. */
+async function loadItems(env: Env, did: string, ids: number[]): Promise<StreamRow[]> {
+  if (ids.length === 0) return [];
+  const statements = chunkArray(ids, ID_CHUNK).map((chunk) => {
+    const binds = new Binds(did);
+    return env.DB.prepare(
+      `SELECT x.*, ${readSql('x')} AS read, ${starredSql('x')} AS starred
+         FROM (${itemsByIdSql(chunk, binds)}) x`
+    ).bind(...binds.values);
+  });
   const results = await env.DB.batch<StreamRow>(statements);
   return results.flatMap((result) => result.results ?? []);
 }
@@ -554,12 +692,12 @@ async function loadItems(env: Env, did: string, seqs: number[]): Promise<StreamR
 function itemIdsParam(params: URLSearchParams): number[] | null {
   const raw = params.getAll('i');
   if (raw.length > MAX_ITEM_IDS) return null;
-  const seqs = new Set<number>();
-  for (const id of raw) {
-    const seq = parseItemId(id);
-    if (seq !== null) seqs.add(seq);
+  const ids = new Set<number>();
+  for (const value of raw) {
+    const id = parseItemId(value);
+    if (id !== null) ids.add(id);
   }
-  return [...seqs];
+  return [...ids];
 }
 
 async function handleItemContents(
@@ -567,12 +705,12 @@ async function handleItemContents(
   did: string,
   params: URLSearchParams
 ): Promise<Response> {
-  const seqs = itemIdsParam(params);
-  if (!seqs) return text(`At most ${MAX_ITEM_IDS} ids per request\n`, 400);
-  const [rows, subs] = await Promise.all([loadItems(env, did, seqs), loadSubscriptions(env, did)]);
+  const ids = itemIdsParam(params);
+  if (!ids) return text(`At most ${MAX_ITEM_IDS} ids per request\n`, 400);
+  const [rows, subs] = await Promise.all([loadItems(env, did, ids), loadSubscriptions(env, did)]);
   // In the order asked for, which is what clients expect back.
-  const order = new Map(seqs.map((seq, i) => [seq, i]));
-  rows.sort((a, b) => order.get(a.seq)! - order.get(b.seq)!);
+  const order = new Map(ids.map((id, i) => [id, i]));
+  rows.sort((a, b) => order.get(a.id)! - order.get(b.id)!);
   return json({
     id: READING_LIST,
     updated: Math.floor(Date.now() / 1000),
@@ -582,11 +720,35 @@ async function handleItemContents(
 
 // --- items ---------------------------------------------------------------------
 
-function parseItem(row: Pick<StreamRow, 'item_json' | 'seq'>): FeedItem | null {
+interface DocumentRecordFields {
+  title?: string;
+  description?: string;
+  publishedAt?: string;
+  textContent?: string;
+  content?: unknown;
+  coverImage?: { ref?: { $link?: string } };
+}
+
+/**
+ * The row as a feed item. A document is read into the same shape, carrying the
+ * body it renders to, since it has no stored body to fetch.
+ */
+function parseItem(row: StreamRow): FeedItem | null {
   try {
-    return JSON.parse(row.item_json) as FeedItem;
+    if (row.kind === 'article') return JSON.parse(row.item_json) as FeedItem;
+    const record = JSON.parse(row.item_json) as DocumentRecordFields;
+    const authorDid = row.author_did ?? '';
+    const cover = record.coverImage?.ref?.$link;
+    return {
+      title: record.title ?? '',
+      url: validUrl(row.url ?? ''),
+      publishedAt: record.publishedAt ?? '',
+      summary: record.description,
+      content: documentHtml(record, authorDid),
+      imageUrl: cover ? documentBlobUrl(authorDid, cover) : undefined,
+    } as FeedItem;
   } catch {
-    log.warn('greader_item_unparseable', { seq: row.seq });
+    log.warn('greader_item_unparseable', { id: row.id });
     return null;
   }
 }
@@ -604,7 +766,7 @@ async function itemBody(
   budget: { bytes: number }
 ): Promise<string> {
   if (item.contentTruncated && item.bodyStored && env.ITEM_BODIES && budget.bytes > 0) {
-    const object = await env.ITEM_BODIES.get(await itemBodyKey(row.feed_url, row.guid));
+    const object = await env.ITEM_BODIES.get(await itemBodyKey(row.feed_url, row.item_key));
     if (
       object &&
       object.customMetadata?.contentHash === row.content_hash &&
@@ -658,7 +820,7 @@ function renderItem(
   if (sub?.category) categories.push(labelId(sub.category));
   const links = item.url ? [{ href: item.url, type: 'text/html' }] : [];
   return {
-    id: longItemId(row.seq),
+    id: longItemId(row.id),
     crawlTimeMsec: String(row.first_seen_at),
     timestampUsec: String(row.first_seen_at * 1000),
     published,
@@ -680,31 +842,39 @@ function renderItem(
 
 // --- writes --------------------------------------------------------------------
 
+/**
+ * A read label's props, as the web app writes them (routes/reading.ts): a
+ * document's also names its author.
+ */
+function readPropsSql(alias: string, readAt: string): string {
+  const props = `'readAt', ${readAt}, 'itemUrl', ${alias}.url,
+                 'itemTitle', json_extract(${alias}.item_json, '$.title')`;
+  return `CASE WHEN ${alias}.kind = 'document'
+               THEN json_object(${props}, 'authorDid', ${alias}.author_did)
+               ELSE json_object(${props}) END`;
+}
+
 /** Mark the given items read (or unread) as the reader, now, in one statement per chunk. */
-async function writeReadState(env: Env, did: string, seqs: number[], read: boolean) {
+async function writeReadState(env: Env, did: string, ids: number[], read: boolean) {
   const nowMs = Date.now();
-  const statements = chunkArray(seqs, ID_CHUNK).map((chunk) => {
+  const statements = chunkArray(ids, ID_CHUNK).map((chunk) => {
     const binds = new Binds(did);
     const at = binds.add(nowMs);
     const now = binds.add(Math.floor(nowMs / 1000));
-    const ids = chunk.map((seq) => binds.add(seq)).join(',');
+    const items = itemsByIdSql(chunk, binds);
     // The rkey is a legacy PDS-record key nothing reads for a new row; a random
     // record-key-shaped value keeps the column's shape without a per-row TID.
     const sql = read
       ? `INSERT INTO item_labels_cache
            (user_did, item_key, item_type, label, props, rkey, created_at, updated_at, client_updated_at)
-         SELECT ?1, fi.guid, 'article', 'read',
-                json_object('readAt', ${at}, 'itemUrl', json_extract(fi.item_json, '$.url'),
-                            'itemTitle', json_extract(fi.item_json, '$.title')),
+         SELECT ?1, x.item_key, x.kind, 'read', ${readPropsSql('x', at)},
                 lower(hex(randomblob(8))), ${now}, ${now}, ${at}
-           FROM feed_items fi
-          WHERE fi.seq IN (${ids}) AND ${subscribedSql('fi')}
+           FROM (${items}) x WHERE 1 = 1
          ${READ_UPSERT_CONFLICT}`
       : `INSERT INTO item_labels_cache
            (user_did, item_key, item_type, label, props, rkey, created_at, updated_at, deleted_at, client_updated_at)
-         SELECT ?1, fi.guid, 'article', 'read', NULL, lower(hex(randomblob(8))), ${now}, ${now}, ${now}, ${at}
-           FROM feed_items fi
-          WHERE fi.seq IN (${ids}) AND ${subscribedSql('fi')}
+         SELECT ?1, x.item_key, x.kind, 'read', NULL, lower(hex(randomblob(8))), ${now}, ${now}, ${now}, ${at}
+           FROM (${items}) x WHERE 1 = 1
          ${UNREAD_UPSERT_CONFLICT}`;
     return env.DB.prepare(sql).bind(...binds.values);
   });
@@ -767,9 +937,12 @@ async function writeStarred(
             // dropped rather than failing the save.
             url: validUrl(item.url),
             rkey: generateTid(),
-            source: 'feed',
-            fromFeed: true,
-            itemGuid: row.guid,
+            // A document is saved as the web app saves one: a metadata save
+            // keyed by its record URI, with the body rendered here.
+            ...(row.kind === 'document'
+              ? { source: 'document' }
+              : { source: 'feed', fromFeed: true }),
+            itemGuid: row.item_key,
             title: item.title,
             author: item.author,
             description: item.summary,
@@ -784,7 +957,7 @@ async function writeStarred(
       );
     } else {
       response = await handleDeleteSavedByGuid(
-        new Request(`${origin}/api/saved/by-guid/${encodeURIComponent(row.guid)}`, {
+        new Request(`${origin}/api/saved/by-guid/${encodeURIComponent(row.item_key)}`, {
           method: 'DELETE',
           headers,
         }),
@@ -794,7 +967,7 @@ async function writeStarred(
     }
     // Already saved / already gone is the state that was asked for.
     if (response.ok || response.status === 409 || response.status === 404) continue;
-    log.warn('greader_star_failed', { starred, status: response.status, seq: row.seq });
+    log.warn('greader_star_failed', { starred, status: response.status, id: row.id });
     if (response.status === 401 || response.status === 403) return signInAgain();
     // A request the save route refuses won't succeed on a retry either; leave
     // that item and carry on rather than wedge the client's queue on it.
@@ -818,8 +991,8 @@ async function handleEditTag(
   did: string,
   params: URLSearchParams
 ): Promise<Response> {
-  const seqs = itemIdsParam(params);
-  if (!seqs) return text(`At most ${MAX_ITEM_IDS} ids per request\n`, 400);
+  const ids = itemIdsParam(params);
+  if (!ids) return text(`At most ${MAX_ITEM_IDS} ids per request\n`, 400);
   const add = new Set(params.getAll('a').map(itemState));
   const remove = new Set(params.getAll('r').map(itemState));
 
@@ -834,7 +1007,7 @@ async function handleEditTag(
   let starRows: StreamRow[] = [];
   let sessionId: string | null = null;
   if (star !== unstar) {
-    starRows = (await loadItems(env, did, seqs)).filter((row) => Boolean(row.starred) !== star);
+    starRows = (await loadItems(env, did, ids)).filter((row) => Boolean(row.starred) !== star);
     if (starRows.length > 0) {
       sessionId = await findSessionIdForDid(env, did);
       if (!sessionId) return signInAgain();
@@ -848,8 +1021,8 @@ async function handleEditTag(
     }
   }
 
-  if (markRead) await writeReadState(env, did, seqs, true);
-  else if (markUnread) await writeReadState(env, did, seqs, false);
+  if (markRead) await writeReadState(env, did, ids, true);
+  else if (markUnread) await writeReadState(env, did, ids, false);
 
   if (sessionId) {
     const failure = await writeStarred(env, ctx, request, sessionId, starRows, star);
@@ -883,9 +1056,7 @@ async function handleMarkAllAsRead(
     `${cte}
      INSERT INTO item_labels_cache
        (user_did, item_key, item_type, label, props, rkey, created_at, updated_at, client_updated_at)
-     SELECT ?1, win.guid, 'article', 'read',
-            json_object('readAt', ${readAt}, 'itemUrl', json_extract(win.item_json, '$.url'),
-                        'itemTitle', json_extract(win.item_json, '$.title')),
+     SELECT ?1, win.item_key, win.kind, 'read', ${readPropsSql('win', readAt)},
             lower(hex(randomblob(8))), ${now}, ${now}, ${readAt}
        FROM win
       WHERE win.first_seen_at <= ${before}
