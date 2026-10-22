@@ -17,6 +17,13 @@
 
 import type { SpaceCredential } from './credential';
 import type { XrpcCall } from './client';
+import {
+  encapsulate,
+  formatWantRecordMacHeader,
+  MAC_HEADER,
+  verifyRecordMac,
+  WANT_MAC_HEADER,
+} from './kem';
 
 export class SpaceXrpcError extends Error {
   readonly code: string;
@@ -63,14 +70,40 @@ export function sessionCall(client: SessionXrpcClient): XrpcCall {
  * methods (listRepos, registerNotify, …). The PDS rejects a mismatch with
  * `BadSpaceAudience`, so a client reading several members' repos needs one call
  * per repo.
+ *
+ * `authorKemKey` is the audience repo's `#atproto_kem` key (a P-256 `did:key`
+ * from its DID doc). With it, `getRecord` negotiates a MAC and rejects a
+ * response whose `Atproto-Space-Mac` doesn't check out; without it, the repo
+ * host refuses a credentialed `getRecord` (see kem.ts). listRecords needs none.
  */
 export function credentialCall(
   host: string,
   credential: SpaceCredential,
   audience: string,
-  fetchImpl: typeof fetch = fetch
+  opts: { authorKemKey?: string; fetchImpl?: typeof fetch } = {}
 ): XrpcCall {
-  return httpCall(host, () => credential.authorize(audience), fetchImpl);
+  return httpCall(
+    host,
+    async (endpoint) => {
+      const headers = await credential.authorize(audience);
+      if (!endpoint.startsWith('com.atproto.space.getRecord?') || !opts.authorKemKey) {
+        return { headers };
+      }
+      const { keyShare, sharedSecret } = await encapsulate(opts.authorKemKey);
+      return {
+        headers: { ...headers, [WANT_MAC_HEADER]: formatWantRecordMacHeader(keyShare) },
+        verify: async (response, body) => {
+          const { uri, cid } = (body ?? {}) as { uri?: unknown; cid?: unknown };
+          const ok =
+            typeof uri === 'string' &&
+            typeof cid === 'string' &&
+            (await verifyRecordMac(sharedSecret, response.headers.get(MAC_HEADER), uri, cid));
+          if (!ok) throw new SpaceXrpcError('record MAC did not verify', 'BadSpaceMac');
+        },
+      };
+    },
+    opts.fetchImpl ?? fetch
+  );
 }
 
 /**
@@ -85,20 +118,31 @@ export function bearerCall(
   accessJwt: string,
   fetchImpl: typeof fetch = fetch
 ): XrpcCall {
-  return httpCall(host, async () => ({ Authorization: `Bearer ${accessJwt}` }), fetchImpl);
+  return httpCall(
+    host,
+    async () => ({ headers: { Authorization: `Bearer ${accessJwt}` } }),
+    fetchImpl
+  );
+}
+
+interface PreparedRequest {
+  headers: Record<string, string>;
+  /** Checks a successful response before its body is returned; throws to reject it. */
+  verify?: (response: Response, body: unknown) => Promise<void>;
 }
 
 function httpCall(
   host: string,
-  authorize: (method: string, url: string) => Promise<Record<string, string>>,
+  prepare: (endpoint: string) => Promise<PreparedRequest>,
   fetchImpl: typeof fetch
 ): XrpcCall {
   const base = host.replace(/\/$/, '');
   return async <T>(method: 'GET' | 'POST', endpoint: string, body?: unknown): Promise<T> => {
     const url = `${base}/xrpc/${endpoint}`;
+    const prepared = await prepare(endpoint);
     const headers: Record<string, string> = {
       accept: 'application/json',
-      ...(await authorize(method, url)),
+      ...prepared.headers,
     };
     if (body !== undefined) headers['content-type'] = 'application/json';
 
@@ -122,6 +166,7 @@ function httpCall(
       const message = typeof err.message === 'string' ? err.message : code;
       throw new SpaceXrpcError(message, code, response.status);
     }
+    await prepared.verify?.(response, parsed);
     return parsed as T;
   };
 }

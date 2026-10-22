@@ -275,7 +275,7 @@ async function main() {
 
   console.log('\nportability (the point of the spike)');
 
-  s = step('owner mints a space credential (delegation -> credential -> HTTP signature)');
+  s = step('owner mints a space credential (delegation -> credential bound to credentialKid)');
   let credential;
   try {
     const startedAt = Date.now();
@@ -290,13 +290,51 @@ async function main() {
     s.fail(error);
   }
 
+  // The owner's `#atproto_kem` key is public (it's in their DID doc); reading it
+  // off getRecommendedDidCredentials just avoids a PLC lookup in a sandbox whose
+  // PLC may be local. Until it's published, nobody can sync the owner's space repo.
+  s = step("owner's DID credentials carry an #atproto_kem key");
+  let kemKey;
+  try {
+    const recommended = await xrpc(
+      'GET',
+      'com.atproto.identity.getRecommendedDidCredentials',
+      undefined,
+      { authorization: `Bearer ${owner.accessJwt}` }
+    );
+    kemKey = recommended?.verificationMethods?.atproto_kem;
+    if (typeof kemKey !== 'string') throw new Error('no atproto_kem verification method');
+    s.ok(kemKey);
+  } catch (error) {
+    s.fail(error);
+  }
+
+  s = step('a credentialed getRecord that asks for no MAC is refused');
+  try {
+    if (!credential) throw new Error('no credential');
+    await new SpacesClient(credentialCall(PDS_URL, credential, owner.did)).getRecord({
+      space,
+      repo: owner.did,
+      collection: SAVED_COLLECTION,
+      rkey,
+    });
+    s.fail(new Error('read succeeded without Atproto-Space-Want-Mac'));
+  } catch (error) {
+    if (error.code === 'BadSpaceMac') s.ok(error.code);
+    else s.fail(error);
+  }
+
   s = step('an independent client reads the save with only that credential');
   try {
     if (!credential) throw new Error('no credential');
-    // Nothing of the owner's session is in play here — just the credential and
-    // the key it is bound to. This is the portability claim, executed. The
-    // audience is the repo being read (the owner's), not the PDS.
-    const independent = new SpacesClient(credentialCall(PDS_URL, credential, owner.did));
+    if (!kemKey) throw new Error('no KEM key');
+    // Nothing of the owner's session is in play here — just the credential, the
+    // key it is bound to, and the owner's public KEM key, which the record's MAC
+    // is checked against. This is the portability claim, executed. The audience
+    // is the repo being read (the owner's), not the PDS.
+    const independent = new SpacesClient(
+      credentialCall(PDS_URL, credential, owner.did, { authorKemKey: kemKey })
+    );
     const fetched = await independent.getRecord({
       space,
       repo: owner.did,
@@ -304,7 +342,7 @@ async function main() {
       rkey,
     });
     if (fetched.value?.url !== record.url) throw new Error('record did not match');
-    s.ok(`read "${fetched.value?.title}" out of the space`);
+    s.ok(`read "${fetched.value?.title}" out of the space, record MAC verified`);
   } catch (error) {
     s.fail(error);
   }
