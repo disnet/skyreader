@@ -113,7 +113,7 @@ export function snapshotImageKey(did: string, saveRkey: string, sha256: string):
 const PART_BYTES = 5 * 1024 * 1024;
 
 /** Write a stream of unknown length to `key` as a multipart upload. */
-async function putStream(
+export async function putStream(
   bucket: R2Bucket,
   key: string,
   body: ReadableStream<Uint8Array>,

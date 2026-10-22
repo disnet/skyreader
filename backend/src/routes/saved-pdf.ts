@@ -13,9 +13,9 @@ import { PdfParseError, parsePdf, pdfExtractorConfigured } from '../services/pdf
 import {
   EpubError,
   epubImageType,
-  looksLikeZip,
   parseEpub,
   readStoredEpubEntry,
+  type RangedFile,
 } from '../services/epub';
 import { readStagedOriginal } from '../services/linked-originals';
 import {
@@ -30,7 +30,12 @@ import {
   type StoredFileColumns,
   type StoredFileRef,
 } from '../services/saved-file-store';
-import { hexDigest } from '../utils/sha256';
+import {
+  FileRejected,
+  PDF_SIGNATURE_WINDOW,
+  checkedFile,
+  looksLikePdf,
+} from '../services/checked-file';
 import { log } from '../utils/logger';
 import { captureSnapshot } from '../services/archive/snapshots';
 import { storedFileBytes } from '../services/archive/snapshot-images';
@@ -105,22 +110,6 @@ export function titleFromFilename(name: string | null): string | null {
   return stem || null;
 }
 
-// A PDF starts with `%PDF-`, though the spec lets junk precede it within the
-// first kilobyte (and some generators do).
-const PDF_SIGNATURE_WINDOW = 1024;
-
-function looksLikePdf(bytes: Uint8Array): boolean {
-  const head = bytes.subarray(0, PDF_SIGNATURE_WINDOW);
-  const sig = [0x25, 0x50, 0x44, 0x46, 0x2d];
-  outer: for (let i = 0; i + sig.length <= head.length; i++) {
-    for (let j = 0; j < sig.length; j++) {
-      if (head[i + j] !== sig[j]) continue outer;
-    }
-    return true;
-  }
-  return false;
-}
-
 function concatChunks(chunks: Uint8Array[], total: number): Uint8Array {
   const bytes = new Uint8Array(total);
   let offset = 0;
@@ -152,71 +141,12 @@ async function deleteUnlessOwned(
   if (!owned) await store.delete(file).catch(() => {});
 }
 
-/** Why a file was turned away on its way into the store. */
-class FileRejected extends Error {
-  constructor(readonly reason: 'too_large' | 'wrong_type' | 'empty') {
-    super(`file rejected: ${reason}`);
-    this.name = 'FileRejected';
-  }
-}
-
-/**
- * A file's bytes on their way to the store, checked as they pass, so it is
- * never held whole: past `maxBytes`, empty, or not starting like a `kind`, the
- * stream errors with FileRejected and the store keeps nothing. `done` gives the
- * size and SHA-256 once the last byte has gone through.
- */
-function checkedFile(body: ReadableStream<Uint8Array>, kind: UploadKind, maxBytes: number) {
-  const digest = new crypto.DigestStream('SHA-256');
-  const hasher = digest.getWriter();
-  const head = new Uint8Array(PDF_SIGNATURE_WINDOW);
-  let headBytes = 0;
-  let checked = false;
-  let size = 0;
-  const checkHead = () => {
-    checked = true;
-    const bytes = head.subarray(0, headBytes);
-    if (!(kind === 'pdf' ? looksLikePdf(bytes) : looksLikeZip(bytes))) {
-      throw new FileRejected('wrong_type');
-    }
+/** A kept file, read a range at a time. */
+function rangedFile(store: SavedFileStore, ref: StoredFileRef, knownSize?: number): RangedFile {
+  return {
+    size: async () => knownSize ?? store.size(ref),
+    read: (offset, length) => store.readRange(ref, offset, length),
   };
-  const reader = body.getReader();
-  const step = async (controller: ReadableStreamDefaultController<Uint8Array>) => {
-    const { done, value } = await reader.read();
-    if (done) {
-      if (size === 0) throw new FileRejected('empty');
-      if (!checked) checkHead();
-      await hasher.close();
-      return controller.close();
-    }
-    size += value.byteLength;
-    if (size > maxBytes) throw new FileRejected('too_large');
-    if (!checked) {
-      const n = Math.min(value.byteLength, head.length - headBytes);
-      head.set(value.subarray(0, n), headBytes);
-      headBytes += n;
-      if (headBytes === head.length) checkHead();
-    }
-    await hasher.write(value);
-    controller.enqueue(value);
-  };
-  // Pulled by the store, so it reads the source only as fast as the store writes.
-  const stream = new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      try {
-        await step(controller);
-      } catch (err) {
-        // Refused or failed: stop pulling the source too.
-        await reader.cancel(err).catch(() => {});
-        throw err;
-      }
-    },
-    cancel(reason) {
-      return reader.cancel(reason);
-    },
-  });
-  const done = async () => ({ size, sha256: hexDigest(await digest.digest) });
-  return { stream, done };
 }
 
 function monthStart(now: Date): number {
@@ -276,15 +206,16 @@ async function parsePdfUpload(env: Env, did: string, file: StoredFileBody): Prom
   return { ...pdf, extent: { pageCount: pdf.pageCount, pagesKept: pdf.pagesKept } };
 }
 
-// An EPUB is already marked-up text, read here (services/epub.ts): no extractor
-// call, so no daily allowance to spend.
-async function parseEpubUpload(bytes: ArrayBuffer): Promise<ParseOutcome> {
+// An EPUB is already marked-up text, read here (services/epub.ts) a range at a
+// time from where the upload was kept: no extractor call, so no daily allowance
+// to spend, and never the whole book in memory.
+async function parseEpubUpload(file: RangedFile, size: number): Promise<ParseOutcome> {
   let book;
   try {
-    book = await parseEpub(bytes);
+    book = await parseEpub(file);
   } catch (err) {
     if (!(err instanceof EpubError)) throw err;
-    log.warn('epub_upload_parse_failed', { message: err.message, size: bytes.byteLength });
+    log.warn('epub_upload_parse_failed', { message: err.message, size });
     return json({ error: 'epub_unreadable', message: err.message }, 422);
   }
   if (!book.content || book.wordCount === 0) {
@@ -450,12 +381,13 @@ async function handleUpload(request: Request, env: Env, session: Session, kind: 
 
   let parsed: ParseOutcome;
   try {
-    const kept = await store.get(file);
-    if (!kept) throw new Error('upload missing from the store just after it was kept');
-    parsed =
-      kind === 'pdf'
-        ? await parsePdfUpload(env, session.did, kept)
-        : await parseEpubUpload(await new Response(kept.body).arrayBuffer());
+    if (kind === 'pdf') {
+      const kept = await store.get(file);
+      if (!kept) throw new Error('upload missing from the store just after it was kept');
+      parsed = await parsePdfUpload(env, session.did, kept);
+    } else {
+      parsed = await parseEpubUpload(rangedFile(store, file, size), size);
+    }
   } catch (err) {
     await deleteUnlessOwned(env, store, session.did, rkey, file);
     throw err;
@@ -776,14 +708,22 @@ async function adoptStagedOriginal(
     await staged.body.cancel().catch(() => {});
     return 'storage_full';
   }
-  const file = await store.put(linkedFileMeta(did, save), staged);
+  // Hashed on the way into the store, as any kept original is.
+  const checked = checkedFile(staged.body, 'epub', Number.MAX_SAFE_INTEGER);
+  let file: StoredFileRef;
+  try {
+    file = await store.put(linkedFileMeta(did, save), checked.stream);
+  } catch (err) {
+    // The save downloads the book itself instead.
+    log.warn('epub_link_original_adopt_failed', {
+      message: err instanceof Error ? err.message : String(err),
+    });
+    return null;
+  }
+  const { size, sha256 } = await checked.done();
   await staged.remove().catch(() => {});
-  const result = await recordLinkedOriginal(env, store, did, save, {
-    ref: file,
-    size: staged.size,
-    sha256: staged.sha256,
-  });
-  if (result === 'stored') log.info('epub_link_original_adopted', { size: staged.size });
+  const result = await recordLinkedOriginal(env, store, did, save, { ref: file, size, sha256 });
+  if (result === 'stored') log.info('epub_link_original_adopted', { size });
   return result;
 }
 
@@ -1055,13 +995,7 @@ export async function handleGetSavedAsset(request: Request, env: Env, session: S
 
   let bytes: Uint8Array | null;
   try {
-    bytes = await readStoredEpubEntry(
-      {
-        size: () => store.size(ref),
-        read: (offset, length) => store.readRange(ref, offset, length),
-      },
-      path
-    );
+    bytes = await readStoredEpubEntry(rangedFile(store, ref), path);
   } catch (err) {
     if (!(err instanceof EpubError)) throw err;
     log.warn('epub_asset_unreadable', { message: err.message });

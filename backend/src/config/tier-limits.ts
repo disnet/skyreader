@@ -31,8 +31,8 @@ export interface TierLimits {
   /** Largest PDF upload, in bytes. The pdf-extractor Worker refuses anything bigger. */
   maxPdfUploadBytes: number;
   /**
-   * Largest EPUB, uploaded or saved by link, in bytes. Larger than a PDF's: a
-   * book's images make up most of its size, and only its text is inflated.
+   * Largest EPUB, uploaded or saved by link, in bytes. The same as a PDF's:
+   * both stream into R2 and are read from there, never held whole.
    */
   maxEpubUploadBytes: number;
   /** Uploads (PDF or EPUB) per calendar month (UTC). URL saves count as URL saves instead. */
@@ -80,7 +80,7 @@ const TIER_MAP: Record<string, TierLimits> = {
     pdfSaves: true,
     // The extractor's own cap (pdf-extractor/src/extract.ts MAX_PDF_BYTES).
     maxPdfUploadBytes: 50 * MB,
-    maxEpubUploadBytes: 30 * MB,
+    maxEpubUploadBytes: 50 * MB,
     maxPdfUploadsPerMonth: 200,
     maxPdfStorageBytes: 2048 * MB,
     snapshotImages: true,

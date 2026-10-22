@@ -75,7 +75,7 @@ const RATE_LIMITS: Record<string, RateLimitConfig> = {
   // Each upload is up to 50 MB streamed to R2 and one PDF parse; the plan's
   // monthly and daily PDF caps bound the total, this bounds the burst.
   '/api/saved/pdf': { limit: 10, windowMs: 60000 },
-  // Up to 30 MB read into memory and unzipped in the Worker; same burst bound.
+  // Up to 50 MB streamed to R2 and read back a chapter at a time; same burst bound.
   '/api/saved/epub': { limit: 10, windowMs: 60000 },
   // A whole-library read (every save, highlight and note) rendered to one file.
   // Someone exports a few times in a row at most, trying each format.

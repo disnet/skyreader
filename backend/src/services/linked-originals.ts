@@ -1,6 +1,8 @@
 import type { Env } from '../types';
-import { log } from '../utils/logger';
 import { sha256Hex } from '../utils/sha256';
+import { FileRejected, checkedFile } from './checked-file';
+import { EpubError, epubTooLargeMessage, openEpubFromSite, type RangedFile } from './epub';
+import { putStream } from './saved-file-store';
 
 /**
  * The bytes of an EPUB saved by link, kept from the read that extracted it.
@@ -21,48 +23,89 @@ const STAGED_PREFIX = 'staged/';
 const STAGED_TTL_MS = 24 * 60 * 60 * 1000;
 
 /** Where a reader's read of the book at `url` is staged. */
-export async function stagedOriginalKey(did: string, url: string): Promise<string> {
-  return `${STAGED_PREFIX}epub/${did}/${await sha256Hex(new TextEncoder().encode(url))}.epub`;
+async function stagedPrefix(did: string, url: string): Promise<string> {
+  return `${STAGED_PREFIX}epub/${did}/${await sha256Hex(new TextEncoder().encode(url))}`;
 }
 
 /**
- * Keep a linked book's bytes for the save that follows. Best effort: a failure
- * only means the save fetches the book itself. An object already there (an
- * earlier read, or a save's kept original) is left alone.
+ * Each read stages under its own key (the reader, the URL, then the read), so
+ * two reads of one book at once never touch each other's copy; the save adopts
+ * the newest.
  */
-export async function stageLinkedOriginal(
-  env: Env,
+export async function stagedOriginalKey(did: string, url: string): Promise<string> {
+  return `${await stagedPrefix(did, url)}.${Date.now()}-${crypto.randomUUID()}.epub`;
+}
+
+/** Staging failed on our side (R2), not the site's or the file's. */
+export class StagingError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'StagingError';
+  }
+}
+
+/** A linked book staged in R2, open a range at a time. */
+export interface StagedBook {
+  file: RangedFile;
+  /** Drop it, when the read then failed. */
+  discard(): Promise<void>;
+}
+
+/**
+ * Stream a linked book from its site into its staging place, checked on the way
+ * (services/checked-file.ts), so it's read from R2 a range at a time
+ * (services/epub.ts parseEpub) and never held whole in the Worker; the save
+ * that follows then keeps it rather than downloading it again. Rejects with
+ * StagingError when R2 is the problem, so the read can go on without it.
+ */
+export async function stageLinkedBook(
+  bucket: R2Bucket,
   did: string,
   url: string,
-  bytes: Uint8Array
-): Promise<void> {
-  if (!env.SAVED_FILES) return;
+  maxBytes: number
+): Promise<StagedBook> {
+  const key = await stagedOriginalKey(did, url);
+  const ranged = (size: number): RangedFile => ({
+    size: async () => size,
+    read: async (offset, length) => {
+      const object = await bucket.get(key, { range: { offset, length } });
+      return object ? new Uint8Array(await object.arrayBuffer()) : null;
+    },
+  });
+  const { body } = await openEpubFromSite(url, maxBytes);
+  const checked = checkedFile(body, 'epub', maxBytes);
   try {
-    const key = await stagedOriginalKey(did, url);
-    if (await env.SAVED_FILES.head(key)) return;
-    await env.SAVED_FILES.put(key, bytes, {
+    await putStream(bucket, key, checked.stream, {
       httpMetadata: { contentType: 'application/epub+zip' },
-      customMetadata: { did, sha256: await sha256Hex(bytes) },
+      customMetadata: { did },
     });
-  } catch (error) {
-    log.warn('epub_stage_failed', {
-      message: error instanceof Error ? error.message : String(error),
-    });
+  } catch (err) {
+    if (checked.sourceFailed()) throw new EpubError("Couldn't fetch the EPUB from its site.");
+    if (!(err instanceof FileRejected)) {
+      throw new StagingError(err instanceof Error ? err.message : String(err));
+    }
+    throw new EpubError(
+      err.reason === 'too_large' ? epubTooLargeMessage(maxBytes) : "This file isn't an EPUB."
+    );
   }
+  const { size } = await checked.done();
+  return {
+    file: ranged(size),
+    discard: () => bucket.delete(key).catch(() => {}),
+  };
 }
 
 /** A staged book: its bytes, and a way to let go of it. */
 export interface StagedOriginal {
   body: ReadableStream<Uint8Array>;
   size: number;
-  sha256: string;
   /** Drop the staged object, once its bytes are kept (or not wanted). */
   remove(): Promise<void>;
 }
 
 /**
- * The book staged for a reader's save of `url`, or null when none is (or one
- * is but can't be used: it has no digest). The caller reads or cancels `body`.
+ * The book staged for a reader's save of `url`, or null when none is. The
+ * caller reads or cancels `body`.
  */
 export async function readStagedOriginal(
   env: Env,
@@ -71,19 +114,18 @@ export async function readStagedOriginal(
 ): Promise<StagedOriginal | null> {
   const bucket = env.SAVED_FILES;
   if (!bucket) return null;
-  const key = await stagedOriginalKey(did, url);
-  const staged = await bucket.get(key);
+  const listing = await bucket.list({ prefix: await stagedPrefix(did, url) });
+  const newest = listing.objects.reduce<R2Object | null>(
+    (a, o) => (!a || o.uploaded > a.uploaded ? o : a),
+    null
+  );
+  const staged = newest && (await bucket.get(newest.key));
   if (!staged) return null;
-  const sha256 = staged.customMetadata?.sha256;
-  if (!sha256) {
-    await staged.body.cancel().catch(() => {});
-    return null;
-  }
   return {
     body: staged.body,
     size: staged.size,
-    sha256,
-    remove: () => bucket.delete(key),
+    // Every read's copy goes once the save keeps one.
+    remove: () => bucket.delete(listing.objects.map((o) => o.key)),
   };
 }
 

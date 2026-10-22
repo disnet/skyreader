@@ -214,21 +214,76 @@ export async function inflateEntry(
   return out;
 }
 
-class Inflater {
-  private total = 0;
-  constructor(private readonly bytes: Uint8Array) {}
+/** A book open for reading: its file list, and each file's inflated bytes. */
+interface OpenZip {
+  entries: Map<string, ZipEntry>;
+  read(entry: ZipEntry): Promise<Uint8Array>;
+}
 
-  async read(entry: ZipEntry): Promise<Uint8Array> {
+/** Reads entries' stored data, inflating them within the whole-book budget. */
+function inflater(
+  entries: Map<string, ZipEntry>,
+  storedData: (entry: ZipEntry) => Promise<Uint8Array>
+): OpenZip {
+  let total = 0;
+  return {
+    entries,
+    async read(entry) {
+      return inflateEntry(entry, await storedData(entry), MAX_ENTRY_BYTES, (chunk) => {
+        total += chunk.byteLength;
+        if (total > MAX_TOTAL_INFLATED_BYTES) {
+          throw new EpubError('This EPUB is too large to read.');
+        }
+      });
+    },
+  };
+}
+
+function openZipBytes(bytes: Uint8Array): OpenZip {
+  if (!looksLikeZip(bytes)) throw new EpubError("This file isn't an EPUB.");
+  return inflater(readCentralDirectory(bytes), async (entry) => {
     const at = entry.localOffset;
-    const start = entryDataOffset(entry, this.bytes.subarray(at, at + LOCAL_HEADER_BYTES));
-    const data = this.bytes.subarray(start, start + entry.compressedSize);
-    return inflateEntry(entry, data, MAX_ENTRY_BYTES, (chunk) => {
-      this.total += chunk.byteLength;
-      if (this.total > MAX_TOTAL_INFLATED_BYTES) {
-        throw new EpubError('This EPUB is too large to read.');
-      }
-    });
-  }
+    const start = entryDataOffset(entry, bytes.subarray(at, at + LOCAL_HEADER_BYTES));
+    return bytes.subarray(start, start + entry.compressedSize);
+  });
+}
+
+// A book read by range is read a window at a time: chapters sit side by side in
+// the zip, so one read brings in the next several (and a book split into
+// hundreds of small files costs a few reads, not hundreds). Only the current
+// window is held.
+const READ_WINDOW_BYTES = 1024 * 1024;
+
+/**
+ * A kept book read a range at a time, so it is never held whole: its tail, its
+ * file list, then the windows holding the entries it parses.
+ */
+async function openZipRanged(file: RangedFile): Promise<OpenZip> {
+  const size = await file.size();
+  if (size === null) throw new EpubError("This file isn't an EPUB.");
+  const tailLength = Math.min(size, EOCD_SEARCH_BYTES);
+  const loc = locateCentralDirectory(await readRange(file, size - tailLength, tailLength));
+  if (loc.offset + loc.size > size) throw new EpubError("This EPUB's file list is damaged.");
+  const entries = parseCentralDirectory(await readRange(file, loc.offset, loc.size), loc.count);
+
+  let window: { offset: number; bytes: Uint8Array } = { offset: 0, bytes: new Uint8Array(0) };
+  const read = async (offset: number, length: number): Promise<Uint8Array> => {
+    if (offset + length > size) throw new EpubError('This EPUB is damaged.');
+    const at = offset - window.offset;
+    if (at >= 0 && at + length <= window.bytes.length)
+      return window.bytes.subarray(at, at + length);
+    const span = Math.min(size - offset, Math.max(length, READ_WINDOW_BYTES));
+    window = { offset, bytes: await readRange(file, offset, span) };
+    return window.bytes.subarray(0, length);
+  };
+  return inflater(entries, async (entry) => {
+    // Refused before it's read: the data would be held to inflate it.
+    if (entry.compressedSize > MAX_ENTRY_BYTES || entry.size > MAX_ENTRY_BYTES) {
+      throw new EpubError('This EPUB is too large to read.');
+    }
+    const start = entryDataOffset(entry, await read(entry.localOffset, LOCAL_HEADER_BYTES));
+    return read(start, entry.compressedSize);
+  });
 }
 
 function decodeText(bytes: Uint8Array): string {
@@ -808,11 +863,15 @@ export const MAX_LINKED_EPUB_BYTES = 30 * 1024 * 1024;
 const FETCH_TIMEOUT_MS = 20_000;
 
 /**
- * An EPUB from its URL, for a save by link. The feed proxy recognises one and
- * hands it back (it reads web pages, not books); the Worker's fetch reaches only
- * the public internet (global_fetch_strictly_public).
+ * An EPUB's body from its URL, for a save by link, refused unread when it says
+ * it's over `maxBytes`. The feed proxy recognises one and hands it back (it
+ * reads web pages, not books); the Worker's fetch reaches only the public
+ * internet (global_fetch_strictly_public).
  */
-export async function fetchEpub(url: string, maxBytes: number): Promise<Uint8Array> {
+export async function openEpubFromSite(
+  url: string,
+  maxBytes: number
+): Promise<{ body: ReadableStream<Uint8Array>; declared: number }> {
   let response: Response;
   try {
     response = await fetch(url, {
@@ -830,13 +889,27 @@ export async function fetchEpub(url: string, maxBytes: number): Promise<Uint8Arr
     await response.body?.cancel().catch(() => {});
     throw new EpubError("Couldn't fetch the EPUB from its site.");
   }
-  const tooLarge = `EPUBs up to ${Math.round(maxBytes / (1024 * 1024))} MB can be saved.`;
   const declared = Number(response.headers.get('Content-Length'));
   if (Number.isFinite(declared) && declared > maxBytes) {
     await response.body?.cancel().catch(() => {});
-    throw new EpubError(tooLarge);
+    throw new EpubError(epubTooLargeMessage(maxBytes));
   }
   if (!response.body) throw new EpubError("Couldn't fetch the EPUB from its site.");
+  return { body: response.body, declared };
+}
+
+/** The message for a book over the cap. */
+export function epubTooLargeMessage(maxBytes: number): string {
+  return `EPUBs up to ${Math.round(maxBytes / (1024 * 1024))} MB can be saved.`;
+}
+
+/**
+ * A linked EPUB held whole, for a read with no reader to stage it for (with
+ * one, services/linked-originals.ts stageLinkedBook streams it to R2 instead).
+ */
+export async function fetchEpub(url: string, maxBytes: number): Promise<Uint8Array> {
+  const { body, declared } = await openEpubFromSite(url, maxBytes);
+  const tooLarge = epubTooLargeMessage(maxBytes);
   // Read into one buffer rather than collecting chunks and joining them, which
   // holds the book twice at the peak. Sized by Content-Length when the site
   // sends one, grown by doubling (to the cap) when it doesn't.
@@ -844,7 +917,7 @@ export async function fetchEpub(url: string, maxBytes: number): Promise<Uint8Arr
     Number.isFinite(declared) && declared > 0 ? declared : Math.min(maxBytes, 1024 * 1024)
   );
   let total = 0;
-  const reader = response.body.getReader();
+  const reader = body.getReader();
   try {
     for (;;) {
       const { done, value } = await reader.read();
@@ -872,18 +945,18 @@ export async function fetchEpub(url: string, maxBytes: number): Promise<Uint8Arr
 // ---------------------------------------------------------------------------
 
 export async function parseEpub(
-  input: ArrayBuffer | Uint8Array,
+  input: ArrayBuffer | Uint8Array | RangedFile,
   opts: { maxContentBytes?: number } = {}
 ): Promise<EpubExtraction> {
-  const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
   const maxBytes = opts.maxContentBytes ?? MAX_EPUB_CONTENT_BYTES;
-  if (!looksLikeZip(bytes)) throw new EpubError("This file isn't an EPUB.");
-
-  const entries = readCentralDirectory(bytes);
-  const inflater = new Inflater(bytes);
+  const zip =
+    input instanceof ArrayBuffer || input instanceof Uint8Array
+      ? openZipBytes(input instanceof Uint8Array ? input : new Uint8Array(input))
+      : await openZipRanged(input);
+  const { entries } = zip;
   const readEntry = async (path: string): Promise<string | null> => {
     const entry = entries.get(path);
-    return entry ? decodeText(await inflater.read(entry)) : null;
+    return entry ? decodeText(await zip.read(entry)) : null;
   };
 
   const container = await readEntry('META-INF/container.xml');
