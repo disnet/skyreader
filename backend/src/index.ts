@@ -206,8 +206,10 @@ import {
   recordCronRun,
   writeMetricsSnapshot,
   runRecordingStep,
+  POLLER_PING_TIMEOUT_MS,
 } from './observability/ops-metrics';
 import { log, serializeError } from './utils/logger';
+import { withTimeout } from './utils/with-timeout';
 import { d1Summary } from './utils/d1-timing';
 import { classifyRoute, runWithRequestContext, setContextDid } from './utils/request-context';
 
@@ -1297,7 +1299,11 @@ async function runScheduled(
     try {
       const pollerId = env.JETSTREAM_POLLER.idFromName('main-v2');
       const poller = env.JETSTREAM_POLLER.get(pollerId);
-      const response = await poller.fetch('http://internal/start');
+      const response = await withTimeout<Response>(
+        poller.fetch('http://internal/start'),
+        POLLER_PING_TIMEOUT_MS,
+        'JetstreamPoller /start'
+      );
       const result = (await response.json()) as { status: string };
       log.info('cron_poller_ping', { pollerStatus: result.status });
     } catch (error) {

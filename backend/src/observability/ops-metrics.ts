@@ -1,6 +1,7 @@
 import type { Env } from '../types';
 import { log, serializeError } from '../utils/logger';
 import { reportError, reportMessage } from './sentry';
+import { withTimeout } from '../utils/with-timeout';
 
 // The cron's second job: leave behind what it learned.
 //
@@ -18,6 +19,15 @@ import { reportError, reportMessage } from './sentry';
 //
 // Nothing here may fail the cron. A recording failure is a loss of visibility,
 // not of service; callers log it and move on (see the note at the cron site).
+
+/**
+ * How long the cron waits on the JetstreamPoller DO. Both endpoints answer in
+ * milliseconds, even mid-cycle. When the object itself wedges (2026-10-22: an hour
+ * of alarms killed at the 15-minute limit), a stub fetch hangs until the object
+ * resets, and every cron run hung behind it for up to 11 minutes. Past this, call
+ * it failed and finish the run.
+ */
+export const POLLER_PING_TIMEOUT_MS = 10_000;
 
 export type SystemStatusKey = 'cron_last_run' | 'poller_status' | 'proxy_stats';
 
@@ -298,7 +308,11 @@ export function decideFrozenAlert(
 export async function recordPollerStatus(env: Env, now = Date.now()): Promise<PollerStatusValue> {
   const pollerId = env.JETSTREAM_POLLER.idFromName('main-v2');
   const poller = env.JETSTREAM_POLLER.get(pollerId);
-  const response = await poller.fetch('http://internal/status');
+  const response = await withTimeout<Response>(
+    poller.fetch('http://internal/status'),
+    POLLER_PING_TIMEOUT_MS,
+    'JetstreamPoller /status'
+  );
   if (!response.ok) {
     throw new Error(`JetstreamPoller /status returned ${response.status}`);
   }

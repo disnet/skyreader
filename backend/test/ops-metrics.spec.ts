@@ -9,6 +9,7 @@ import {
   recordCronRun,
   writeMetricsSnapshot,
   runRecordingStep,
+  POLLER_PING_TIMEOUT_MS,
   decideFrozenAlert,
   FIREHOSE_LAG_ALERT_MS,
   FIREHOSE_LAG_REALERT_MS,
@@ -350,6 +351,27 @@ describe('recordPollerStatus', () => {
     } as unknown as Env;
 
     await expect(recordPollerStatus(broken)).rejects.toThrow(/500/);
+  });
+
+  it('gives up on a poller that never answers instead of holding the cron', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const wedged = {
+        ...env,
+        JETSTREAM_POLLER: {
+          idFromName: () => 'stub-id',
+          get: () => ({ fetch: () => new Promise<Response>(() => {}) }),
+        },
+      } as unknown as Env;
+
+      const result = expect(recordPollerStatus(wedged)).rejects.toThrow(
+        new RegExp(`timed out after ${POLLER_PING_TIMEOUT_MS}ms`)
+      );
+      await vi.advanceTimersByTimeAsync(POLLER_PING_TIMEOUT_MS);
+      await result;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
