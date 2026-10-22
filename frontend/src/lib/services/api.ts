@@ -1081,6 +1081,17 @@ class ApiClient {
     return this.fetch(`/api/v2/feeds/discover?url=${encodeURIComponent(url)}`);
   }
 
+  // Feeds at the sites of people you follow: domain handles and bio links
+  // (services/followSites.ts). At most 40 sites a call; answered in order.
+  async discoverSites(
+    sites: string[]
+  ): Promise<{ results: Array<{ site: string; feeds: string[] }> }> {
+    return this.fetch('/api/v2/feeds/discover-sites', {
+      method: 'POST',
+      body: JSON.stringify({ sites }),
+    });
+  }
+
   // Content detection
   async detectContent(did: string): Promise<{
     did: string;

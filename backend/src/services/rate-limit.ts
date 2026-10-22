@@ -70,6 +70,10 @@ const RATE_LIMITS: Record<string, RateLimitConfig> = {
   '/api/social/sync-follows': EXPENSIVE_LIMIT,
   '/api/feeds/fetch': EXPENSIVE_LIMIT,
   '/api/feeds/discover': EXPENSIVE_LIMIT,
+  // Up to 40 sites a call, most answered from the shared D1 cache. Discover walks
+  // a follow graph a page at a time behind the first paint and waits out a 429,
+  // so this paces a cold scan rather than failing it.
+  '/api/v2/feeds/discover-sites': EXPENSIVE_LIMIT,
   '/api/leaflet/resolve': EXPENSIVE_LIMIT,
   '/api/extract': EXPENSIVE_LIMIT,
   // Each upload is up to 50 MB streamed to R2 and one PDF parse; the plan's

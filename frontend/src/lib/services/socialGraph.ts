@@ -32,10 +32,18 @@ export interface FollowLite {
   handle: string | null;
   displayName?: string;
   avatar?: string;
+  // Their Bluesky bio: where links to their blog or newsletter usually are.
+  description?: string;
 }
 
 interface GetFollowsResponse {
-  follows?: Array<{ did: string; handle?: string; displayName?: string; avatar?: string }>;
+  follows?: Array<{
+    did: string;
+    handle?: string;
+    displayName?: string;
+    avatar?: string;
+    description?: string;
+  }>;
   cursor?: string;
 }
 
@@ -67,6 +75,7 @@ export async function fetchFollowsPage(
     handle: f.handle ?? null,
     displayName: f.displayName,
     avatar: f.avatar,
+    description: f.description,
   }));
   return { follows, cursor: data.cursor };
 }

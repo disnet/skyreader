@@ -53,7 +53,10 @@ export interface FollowCacheEntry {
   handle: string | null;
   displayName?: string;
   avatar?: string;
-  // Epoch ms this account's PDS was last scanned for publications (0 = never).
+  // Their Bluesky bio, scanned for links to their blog or newsletter.
+  description?: string;
+  // Epoch ms this account was last scanned for publications and web feeds
+  // (0 = never).
   scannedAt: number;
   // Epoch ms this account's PDS was last scanned for reading rooms (0 = never).
   // Unindexed: the graph is a few thousand rows and both scanners walk it in

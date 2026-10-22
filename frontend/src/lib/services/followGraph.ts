@@ -156,6 +156,12 @@ export async function ensureFollowGraph(
   return inFlight;
 }
 
+/** Mark the cached graph stale, so the next ensureFollowGraph walks it again
+ *  while keeping every row (and its hidden flag) until the walk replaces it. */
+export async function expireFollowGraph(): Promise<void> {
+  await setMetadata(GRAPH_FETCHED_KEY, 0);
+}
+
 /** Drop the cached graph so the next ensureFollowGraph walks it fresh. Callers
  *  clear their own scan results; this only owns `db.follows` and the TTL. */
 export async function resetFollowGraph(): Promise<void> {

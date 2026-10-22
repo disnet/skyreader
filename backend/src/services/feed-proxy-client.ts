@@ -573,14 +573,17 @@ export class FeedProxyClient {
    * Returns RSS/Atom feed URLs as well as any advertised standard.site
    * (AT Protocol) document URIs (at://did/site.standard.document/rkey).
    */
-  async discoverFeeds(siteUrl: string): Promise<{ feeds: string[]; standardSites: string[] }> {
+  async discoverFeeds(
+    siteUrl: string,
+    timeoutMs?: number
+  ): Promise<{ feeds: string[]; standardSites: string[] }> {
     const params = new URLSearchParams({ url: siteUrl });
     const raw = await this.fetch<{
       feeds?: string[];
       standardSites?: string[];
       error?: string;
       blocked?: boolean;
-    }>(`/discover?${params}`);
+    }>(`/discover?${params}`, {}, timeoutMs);
 
     if (raw.error) {
       throw new FeedProxyError(raw.error, undefined, undefined, raw.blocked);

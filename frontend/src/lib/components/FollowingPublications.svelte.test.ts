@@ -214,3 +214,33 @@ describe('FollowingPublications per-account cap', () => {
     expect(target.querySelector('.account-more')).toBeNull();
   });
 });
+
+describe('FollowingPublications web feeds', () => {
+  afterEach(() => {
+    if (component) unmount(component);
+    component = undefined;
+    document.body.innerHTML = '';
+  });
+
+  it('says where a feed came from, and shows it added once subscribed as RSS', () => {
+    const feed: FollowingPublication = {
+      did: 'did:plc:writer',
+      handle: 'writer.example',
+      kind: 'feed',
+      siteSource: 'handle',
+      publicationUri: 'https://writer.example/feed.xml',
+      name: 'writer.example',
+      url: 'https://writer.example',
+    };
+    store.publications = [feed];
+    subs.subscriptions = [{ sourceType: 'rss', feedUrl: feed.publicationUri }];
+    render();
+
+    expect(rows()).toHaveLength(1);
+    expect(target.textContent).toContain('@writer.example · their site');
+    filters.hideAdded = true;
+    flushSync();
+    expect(rows()).toHaveLength(0);
+    filters.hideAdded = false;
+  });
+});

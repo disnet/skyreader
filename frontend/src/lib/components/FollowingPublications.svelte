@@ -10,9 +10,10 @@
   import SourceList from './sources/SourceList.svelte';
   import { SubscriptionLimitError } from '$lib/services/api';
   import { feedLimitLine } from '$lib/utils/limitCopy';
+  import { SITE_SOURCE_LABEL } from '$lib/services/followSites';
 
-  // The Discover page's publications section: standard.site publications owned
-  // by accounts you follow. One source row per publication, whose owner leads
+  // The Discover page's publications section: the writing of accounts you
+  // follow, their standard.site publications and the web feeds at their sites. One source row per publication, whose owner leads
   // the subtitle, rather than an indented block per account; hiding an account
   // is a row action. An account shows at most PER_ACCOUNT rows until asked, so
   // one prolific account can't fill the screen.
@@ -50,12 +51,12 @@
     publications: FollowingPublication[];
   }
 
-  // Publications we already subscribe to — to render an "Added" state.
+  // Publications and web feeds we already subscribe to — to render an "Added"
+  // state. A publication's key is its at:// URI and a feed's is its URL, the
+  // same values the subscriptions carry as feedUrl.
   let subscribedPubUris = $derived(
     new Set(
-      subscriptionsStore.subscriptions
-        .filter((s) => s.sourceType === 'atproto.documents' && s.feedUrl)
-        .map((s) => s.feedUrl as string)
+      subscriptionsStore.subscriptions.filter((s) => s.feedUrl).map((s) => s.feedUrl as string)
     )
   );
 
@@ -70,6 +71,9 @@
 
   function subtitle(p: FollowingPublication): string {
     const who = p.handle ? `@${p.handle}` : accountName(p);
+    if (p.kind === 'feed') {
+      return `${who} · ${SITE_SOURCE_LABEL[p.siteSource ?? 'handle']}`;
+    }
     return p.url ? `${who} · ${formatPublicationUrl(p.url)}` : who;
   }
 
@@ -163,7 +167,7 @@
 
 <section class="following-publications">
   <p class="section-desc">
-    Standard.site blogs run by the accounts you follow on Bluesky.
+    Blogs and newsletters by the people you follow on Bluesky.
     {#if scanning}
       <span class="scanning"><span class="spinner"></span> Finding more</span>
     {/if}
@@ -180,9 +184,9 @@
   {/if}
 
   {#if loading && !loaded}
-    <p class="status">Looking for publications…</p>
+    <p class="status">Looking for blogs and newsletters…</p>
   {:else if publications.length === 0 && loaded && !scanning}
-    <p class="status">No publications found among the people you follow.</p>
+    <p class="status">No blogs or newsletters found among the people you follow.</p>
   {:else if publications.length > 0}
     {#if filtered.length > 0}
       <SourceList>
@@ -196,7 +200,7 @@
               description={p.description}
               subtitle={subtitle(p)}
               href={p.url}
-              fallbackIcon="standard-site"
+              fallbackIcon={p.kind === 'feed' ? 'rss' : 'standard-site'}
               subscribed={false}
               added={subscribedPubUris.has(p.publicationUri)}
               pending={!!pending[p.publicationUri]}

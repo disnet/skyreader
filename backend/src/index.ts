@@ -18,6 +18,7 @@ import {
   handleV2MentionLane,
   handleV2MarginHighlights,
 } from './routes/feeds-v2';
+import { handleDiscoverSites } from './routes/site-feeds';
 import { handleIngest, handleCrawlSet, handleFeedHealth } from './routes/ingest';
 import { handleSignatureDirectory } from './routes/web-bot-auth';
 import { handleDocumentBackfill, handleDocumentShadowCompare } from './routes/documents';
@@ -526,6 +527,11 @@ async function route(
     case url.pathname === '/api/v2/feeds/discover':
       if (!session) return unauthorizedResponse(headers);
       response = await handleV2FeedDiscover(request, env);
+      break;
+    // Feeds at the sites of the people you follow (Discover's publications tab).
+    case url.pathname === '/api/v2/feeds/discover-sites' && request.method === 'POST':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleDiscoverSites(request, env);
       break;
     case url.pathname === '/api/v2/documents/batch':
       if (!session) return unauthorizedResponse(headers);
