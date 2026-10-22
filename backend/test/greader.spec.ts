@@ -147,6 +147,7 @@ beforeEach(async () => {
       'DELETE FROM subscriptions_cache',
       'DELETE FROM feed_items',
       'DELETE FROM documents_v2',
+      'DELETE FROM publications_cache_v2',
       'DELETE FROM item_labels_cache',
       'DELETE FROM saved_articles',
       'DELETE FROM sessions',
@@ -588,9 +589,9 @@ describe('standard.site documents', () => {
           ],
         },
       };
-      const row = await env.DB.prepare(
+      await env.DB.prepare(
         `INSERT INTO documents_v2 (record_uri, author_did, rkey, record_cid, site_uri, published_at, canonical_url, record_json, indexed_at)
-         VALUES (?, ?, ?, 'cid', ?, ?, ?, ?, ?) RETURNING rowid`
+         VALUES (?, ?, ?, 'cid', ?, ?, ?, ?, ?)`
       )
         .bind(
           `at://${AUTHOR}/site.standard.document/${prefix}${i}`,
@@ -602,8 +603,15 @@ describe('standard.site documents', () => {
           JSON.stringify(record),
           at
         )
-        .first<{ rowid: number }>();
-      ids.push(DOC_ID_BASE + row!.rowid);
+        .run();
+      // As the API assigns it on first listing (assignDocumentIds).
+      await env.DB.prepare('INSERT OR IGNORE INTO greader_document_ids (record_uri) VALUES (?)')
+        .bind(`at://${AUTHOR}/site.standard.document/${prefix}${i}`)
+        .run();
+      const row = await env.DB.prepare('SELECT id FROM greader_document_ids WHERE record_uri = ?')
+        .bind(`at://${AUTHOR}/site.standard.document/${prefix}${i}`)
+        .first<{ id: number }>();
+      ids.push(DOC_ID_BASE + row!.id);
     }
     return ids;
   }
@@ -651,6 +659,59 @@ describe('standard.site documents', () => {
     const res = await call(`reader/api/0/stream/items/contents?i=${doc}`);
     const body = (await res.json()) as { items: Array<{ origin: { streamId: string } }> };
     expect(body.items[0].origin.streamId).toBe(`feed/${PUB}`);
+  });
+
+  it("lists a publication's documents only under it, not also the author's feed", async () => {
+    await addDocSubscription('');
+    await addDocSubscription(PUB);
+    const [own] = await addDocuments(1, '', 'loose');
+    const [inPub] = await addDocuments(1);
+    expect((await itemIds({ s: AUTHOR_STREAM })).ids).toEqual([own]);
+    expect((await itemIds({ s: `feed/${PUB}` })).ids).toEqual([inPub]);
+    await call('reader/api/0/mark-all-as-read', { form: { s: AUTHOR_STREAM } });
+    expect((await itemIds(UNREAD)).ids).toEqual([inPub]);
+  });
+
+  it('gives a document an id when it is first listed', async () => {
+    await addDocSubscription('');
+    await addDocuments(1, PUB, 'fresh');
+    await env.DB.prepare('DELETE FROM greader_document_ids').run();
+    const { ids } = await itemIds(UNREAD);
+    const row = await env.DB.prepare('SELECT id FROM greader_document_ids WHERE record_uri = ?')
+      .bind(`at://${AUTHOR}/site.standard.document/fresh0`)
+      .first<{ id: number }>();
+    expect(ids).toEqual([DOC_ID_BASE + row!.id]);
+  });
+
+  it("never gives a deleted document's id to a new one", async () => {
+    await addDocSubscription('');
+    const [first] = await addDocuments(1, PUB, 'gone');
+    await env.DB.prepare('DELETE FROM documents_v2').run();
+    const [second] = await addDocuments(1, PUB, 'new');
+    expect(second).not.toBe(first);
+    expect((await itemIds(UNREAD)).ids).toEqual([second]);
+  });
+
+  it("links to the publication's current address, and only to web links", async () => {
+    await addDocSubscription('');
+    const [moved, unsafe] = await addDocuments(2);
+    await env.DB.prepare(
+      `INSERT INTO publications_cache_v2 (publication_uri, base_url, cached_at) VALUES (?, 'https://new.example', 0)`
+    )
+      .bind(PUB)
+      .run();
+    await env.DB.prepare(
+      `UPDATE documents_v2 SET site_uri = '', canonical_url = 'javascript:alert(1)'
+        WHERE record_uri = ?`
+    )
+      .bind(`at://${AUTHOR}/site.standard.document/doc1`)
+      .run();
+    const res = await call(`reader/api/0/stream/items/contents?i=${moved}&i=${unsafe}`);
+    const body = (await res.json()) as { items: Array<{ alternate: Array<{ href: string }> }> };
+    expect(body.items[0].alternate).toEqual([
+      { href: 'https://new.example/doc-0', type: 'text/html' },
+    ]);
+    expect(body.items[1].alternate).toEqual([]);
   });
 
   it('renders a document with its link back to the publication', async () => {

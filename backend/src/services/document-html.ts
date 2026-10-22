@@ -8,9 +8,10 @@ import { escapeHtml } from '../utils/html-text';
  * links — with bold, italic, code, strikethrough and link formatting, and leaves
  * the rest to the link back to the publication.
  *
- * Leaflet (`pub.leaflet.content`) is read block by block. Any other format that
- * spells its text `plaintext` (pckt, offprint) gets its paragraphs; failing that,
- * the record's `textContent` does. Every string is escaped.
+ * Leaflet (`pub.leaflet.content`) is read block by block. Any other format gets
+ * the record's `textContent` as paragraphs, or failing that the top-level text
+ * blocks of a format that spells its text `plaintext` (pckt, offprint). Every
+ * string is escaped.
  */
 
 interface Facet {
@@ -195,14 +196,16 @@ function paragraphs(text: string): string {
 
 export function documentHtml(record: DocumentRecord, authorDid: string): string {
   const content = record.content;
-  let html = '';
-  if (content && typeof content === 'object') {
-    html =
-      (content as { $type?: string }).$type === 'pub.leaflet.content'
-        ? leafletHtml(content, authorDid)
-        : itemsHtml(content);
-  }
+  const isLeaflet =
+    !!content &&
+    typeof content === 'object' &&
+    (content as { $type?: string }).$type === 'pub.leaflet.content';
+  const html = isLeaflet ? leafletHtml(content, authorDid) : '';
   if (html) return html;
+  // Other formats nest text this doesn't walk, so their full text wins over
+  // the top-level paragraphs itemsHtml can find.
   if (record.textContent) return paragraphs(record.textContent);
+  const items = content && typeof content === 'object' ? itemsHtml(content) : '';
+  if (items) return items;
   return record.description ? paragraphs(record.description) : '';
 }

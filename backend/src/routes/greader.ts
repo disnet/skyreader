@@ -5,7 +5,11 @@ import { READ_UPSERT_CONFLICT, UNREAD_UPSERT_CONFLICT, chunkArray } from './read
 import { handleCreateSaved, handleDeleteSavedByGuid } from './saved';
 import { itemBodyKey } from './item-bodies';
 import { documentBlobUrl, documentHtml } from '../services/document-html';
-import { MAX_DOCUMENTS_PER_AUTHOR } from '../services/standard-site';
+import {
+  MAX_DOCUMENTS_PER_AUTHOR,
+  buildCanonicalUrl,
+  looseSiteMeta,
+} from '../services/standard-site';
 import {
   touchAppPassword,
   verifyAppPassword,
@@ -32,8 +36,8 @@ import { log } from '../utils/logger';
  *
  *  - An item is a `feed_items` row, its id the row's `seq` (decimal in
  *    `stream/items/ids`, the 16-hex-digit long form elsewhere; both accepted),
- *    or a standard.site document, its id DOC_ID_BASE plus its `documents_v2`
- *    rowid. A documents subscription is listed as a feed whose URL is its
+ *    or a standard.site document, its id DOC_ID_BASE plus its
+ *    `greader_document_ids` id. A documents subscription is listed as a feed whose URL is its
  *    publication's at:// URI, or `at://<did>` when it follows everything the
  *    author publishes.
  *  - Read is the `read` label in `item_labels_cache`, keyed by guid (record
@@ -190,31 +194,39 @@ class Binds {
   }
 }
 
-// A document's item id is this plus its `documents_v2` rowid, so it can't meet
-// a `feed_items` seq. The rowid is stable: an upsert keeps it, and D1 doesn't
-// VACUUM. Every id stays under 2^53.
+// A document's item id is this plus its `greader_document_ids` id (migration
+// 0105), so it can't meet a `feed_items` seq and is never given to a second
+// document. Every id stays under 2^53.
 export const DOC_ID_BASE = 2 ** 50;
 
 /**
  * Every query that lists items reads these columns, whichever table the item
  * came from: `feed_url` is the stream key (a feed URL, or a documents
  * subscription's key), `item_key` what read state and saves are keyed by, and
- * `url` the item's link.
+ * `url` the item's link as stored. A document's link is rebuilt from its
+ * publication's `base_url` when that's known (documentUrl).
  */
 const ITEM_COLUMNS =
-  'id, kind, feed_url, item_key, first_seen_at, item_json, content_hash, url, author_did';
+  'id, kind, feed_url, item_key, first_seen_at, item_json, content_hash, url, author_did, site_uri, base_url';
 
 function articleColumns(fi: string): string {
   return `${fi}.seq AS id, 'article' AS kind, ${fi}.feed_url, ${fi}.guid AS item_key,
           ${fi}.first_seen_at, ${fi}.item_json, ${fi}.content_hash,
-          json_extract(${fi}.item_json, '$.url') AS url, NULL AS author_did`;
+          json_extract(${fi}.item_json, '$.url') AS url, NULL AS author_did,
+          NULL AS site_uri, NULL AS base_url`;
 }
 
-function documentColumns(d: string, streamKey: string): string {
-  return `${DOC_ID_BASE} + ${d}.rowid AS id, 'document' AS kind, ${streamKey} AS feed_url,
+function documentColumns(d: string, id: string, streamKey: string): string {
+  return `${DOC_ID_BASE} + ${id} AS id, 'document' AS kind, ${streamKey} AS feed_url,
           ${d}.record_uri AS item_key, ${d}.indexed_at AS first_seen_at,
           ${d}.record_json AS item_json, '' AS content_hash, ${d}.canonical_url AS url,
-          ${d}.author_did`;
+          ${d}.author_did, ${d}.site_uri,
+          (SELECT p.base_url FROM publications_cache_v2 p
+            WHERE p.publication_uri = ${d}.site_uri) AS base_url`;
+}
+
+function documentIdSql(d: string): string {
+  return `(SELECT g.id FROM greader_document_ids g WHERE g.record_uri = ${d}.record_uri)`;
 }
 
 /** The key a documents subscription is listed under: its publication, or its author. */
@@ -228,10 +240,10 @@ function docSubscriptionPredicate(sc: string): string {
           AND ${sc}.source_type = 'atproto.documents' AND ${sc}.subject_did IS NOT NULL`;
 }
 
-/** A documents subscription (alias `sc`) covers the document (alias `d`). */
-function docCoveredSql(sc: string, d: string): string {
-  return `${sc}.subject_did = ${d}.author_did
-          AND (COALESCE(${sc}.feed_url, '') = '' OR ${sc}.feed_url = ${d}.site_uri)`;
+/** A documents subscription's scope (`subject_did`, `scope`) covers the document. */
+function docCoveredSql(subs: string, d: string): string {
+  return `${subs}.subject_did = ${d}.author_did
+          AND (${subs}.scope = '' OR ${subs}.scope = ${d}.site_uri)`;
 }
 
 function readSql(alias: string): string {
@@ -252,6 +264,13 @@ function subscribedSql(alias: string): string {
                      AND ${rssSubscriptionPredicate('sc')})`;
 }
 
+/** The reader's documents subscriptions: who, which publication ('' for all), and where listed. */
+const DSUBS_CTE = `dsubs AS (
+      SELECT DISTINCT sc.subject_did, COALESCE(sc.feed_url, '') AS scope,
+             ${docStreamKey('sc')} AS stream_key, NULLIF(sc.category, '') AS category
+        FROM subscriptions_cache sc
+       WHERE ${docSubscriptionPredicate('sc')})`;
+
 /**
  * `WITH ... win`: `win` is the stream's items, in ITEM_COLUMNS. Every query
  * that lists items starts here, so the subscription check and the window are
@@ -263,55 +282,44 @@ function streamCte(stream: Stream, binds: Binds): string {
   if (stream.kind === 'feed') {
     const key = binds.add(stream.feedUrl);
     feedFilter = `AND feed_url = ${key}`;
-    docFilter = `AND ${docStreamKey('sc')} = ${key}`;
+    docFilter = `WHERE feed_url = ${key}`;
   }
   if (stream.kind === 'label') {
     const label = binds.add(stream.label);
     feedFilter = `AND category = ${label}`;
-    docFilter = `AND sc.category = ${label}`;
+    docFilter = `WHERE category = ${label}`;
   }
   const subs = `subs AS (
       SELECT DISTINCT feed_url FROM subscriptions_cache
        WHERE user_did = ?1 AND active = 1 AND feed_url <> ''
          AND ${rssSubscriptionPredicate()} ${feedFilter}),
-    dsubs AS (
-      SELECT DISTINCT sc.subject_did, COALESCE(sc.feed_url, '') AS scope,
-             ${docStreamKey('sc')} AS stream_key
-        FROM subscriptions_cache sc
-       WHERE ${docSubscriptionPredicate('sc')} ${docFilter})`;
+    ${DSUBS_CTE}`;
   // A document two subscriptions cover (the author's and one publication's) is
   // listed once, under the publication: MAX picks the non-empty scope, and the
-  // bare columns come from that row.
+  // bare columns come from that row. The stream's own filter applies after, so
+  // the author's feed doesn't also list the publication's documents.
   const docs = (join: string, where = '') => `
-      SELECT ${documentColumns('d', 'dsubs.stream_key')}, MAX(dsubs.scope) AS scope
-        FROM dsubs JOIN documents_v2 d ON ${join}
-       ${where}
-       GROUP BY d.rowid`;
+      SELECT ${ITEM_COLUMNS} FROM (
+        SELECT ${documentColumns('d', documentIdSql('d'), 'dsubs.stream_key')},
+               dsubs.category, MAX(dsubs.scope) AS scope
+          FROM dsubs JOIN documents_v2 d ON ${join}
+         ${where}
+         GROUP BY d.record_uri)
+       ${docFilter ? `${docFilter} AND id IS NOT NULL` : 'WHERE id IS NOT NULL'}`;
 
   if (stream.kind === 'starred') {
     const saved = `IN (SELECT item_guid FROM saved_articles WHERE user_did = ?1 AND item_guid IS NOT NULL)`;
     return `WITH ${subs},
-      dwin AS (${docs(
-        `d.author_did = dsubs.subject_did AND (dsubs.scope = '' OR d.site_uri = dsubs.scope)`,
-        `WHERE d.record_uri ${saved}`
-      )}),
       win AS (
         SELECT ${articleColumns('fi')}
           FROM subs JOIN feed_items fi ON fi.feed_url = subs.feed_url
          WHERE fi.guid ${saved}
         UNION ALL
-        SELECT ${ITEM_COLUMNS} FROM dwin)`;
+        ${docs(docCoveredSql('dsubs', 'd'), `WHERE d.record_uri ${saved}`)})`;
   }
   // The newest-K window per feed and per documents subscription: an index seek
   // each, the same slices the web app shows and counts unread over.
   return `WITH ${subs},
-    dwin AS (${docs(
-      `d.rowid IN (SELECT d2.rowid FROM documents_v2 d2
-                    WHERE d2.author_did = dsubs.subject_did
-                      AND (dsubs.scope = '' OR d2.site_uri = dsubs.scope)
-                    ORDER BY d2.published_at DESC
-                    LIMIT ${MAX_DOCUMENTS_PER_AUTHOR})`
-    )}),
     items AS (
       SELECT ${articleColumns('fi')}
         FROM subs JOIN feed_items fi
@@ -320,36 +328,58 @@ function streamCte(stream: Stream, binds: Binds): string {
                          ORDER BY f2.published_at DESC, f2.seq DESC
                          LIMIT ${ARTICLE_WINDOW_PER_FEED})
       UNION ALL
-      SELECT ${ITEM_COLUMNS} FROM dwin),
+      ${docs(
+        `d.rowid IN (SELECT d2.rowid FROM documents_v2 d2
+                      WHERE ${docCoveredSql('dsubs', 'd2')}
+                      ORDER BY d2.published_at DESC
+                      LIMIT ${MAX_DOCUMENTS_PER_AUTHOR})`
+      )}),
     win AS (
       SELECT ${ITEM_COLUMNS} FROM items
        ${stream.kind === 'read' ? `WHERE ${readSql('items')}` : ''})`;
 }
 
 /**
+ * Give every document the reader follows an item id, before a call lists them.
+ * Only documents without one are written, so a sync with nothing new writes
+ * nothing.
+ */
+async function assignDocumentIds(env: Env, did: string): Promise<void> {
+  await env.DB.prepare(
+    `WITH ${DSUBS_CTE}
+     INSERT OR IGNORE INTO greader_document_ids (record_uri)
+     SELECT d.record_uri FROM dsubs JOIN documents_v2 d ON ${docCoveredSql('dsubs', 'd')}
+      WHERE NOT EXISTS (SELECT 1 FROM greader_document_ids g WHERE g.record_uri = d.record_uri)`
+  )
+    .bind(did)
+    .run();
+}
+
+/**
  * The given items, in ITEM_COLUMNS, keeping only those in a subscription of the
  * reader's. Not windowed: an app may ask after an item that has since aged out.
  */
-function itemsByIdSql(ids: number[], binds: Binds): string {
+function itemsByIdSql(ids: number[], binds: Binds): { ctes: string; sql: string } {
   const seqs = ids.filter((id) => id < DOC_ID_BASE);
-  const rowids = ids.filter((id) => id >= DOC_ID_BASE).map((id) => id - DOC_ID_BASE);
+  const docIds = ids.filter((id) => id >= DOC_ID_BASE).map((id) => id - DOC_ID_BASE);
   const parts: string[] = [];
   if (seqs.length) {
     parts.push(`SELECT ${articleColumns('fi')} FROM feed_items fi
                  WHERE fi.seq IN (${seqs.map((seq) => binds.add(seq)).join(',')})
                    AND ${subscribedSql('fi')}`);
   }
-  if (rowids.length) {
-    // Listed under the covering subscription's key, a publication's first.
-    const streamKey = `(SELECT ${docStreamKey('sc')} FROM subscriptions_cache sc
-                         WHERE ${docSubscriptionPredicate('sc')} AND ${docCoveredSql('sc', 'd')}
-                         ORDER BY COALESCE(sc.feed_url, '') DESC LIMIT 1)`;
+  if (docIds.length) {
+    // Listed under the covering subscription's key, a publication's first, as
+    // streamCte lists it.
+    const streamKey = `(SELECT dsubs.stream_key FROM dsubs WHERE ${docCoveredSql('dsubs', 'd')}
+                         ORDER BY dsubs.scope DESC LIMIT 1)`;
     parts.push(`SELECT ${ITEM_COLUMNS} FROM (
-                  SELECT ${documentColumns('d', streamKey)} FROM documents_v2 d
-                   WHERE d.rowid IN (${rowids.map((rowid) => binds.add(rowid)).join(',')}))
+                  SELECT ${documentColumns('d', 'g.id', streamKey)}
+                    FROM greader_document_ids g JOIN documents_v2 d ON d.record_uri = g.record_uri
+                   WHERE g.id IN (${docIds.map((id) => binds.add(id)).join(',')}))
                  WHERE feed_url IS NOT NULL`);
   }
-  return parts.join(' UNION ALL ');
+  return { ctes: `WITH ${DSUBS_CTE}`, sql: parts.join(' UNION ALL ') };
 }
 
 // --- params --------------------------------------------------------------------
@@ -583,6 +613,8 @@ interface StreamRow {
   content_hash: string;
   url: string | null;
   author_did: string | null;
+  site_uri: string | null;
+  base_url: string | null;
   read: number;
   starred: number;
 }
@@ -680,9 +712,11 @@ async function loadItems(env: Env, did: string, ids: number[]): Promise<StreamRo
   if (ids.length === 0) return [];
   const statements = chunkArray(ids, ID_CHUNK).map((chunk) => {
     const binds = new Binds(did);
+    const items = itemsByIdSql(chunk, binds);
     return env.DB.prepare(
-      `SELECT x.*, ${readSql('x')} AS read, ${starredSql('x')} AS starred
-         FROM (${itemsByIdSql(chunk, binds)}) x`
+      `${items.ctes}
+       SELECT x.*, ${readSql('x')} AS read, ${starredSql('x')} AS starred
+         FROM (${items.sql}) x`
     ).bind(...binds.values);
   });
   const results = await env.DB.batch<StreamRow>(statements);
@@ -722,11 +756,22 @@ async function handleItemContents(
 
 interface DocumentRecordFields {
   title?: string;
+  path?: string;
   description?: string;
   publishedAt?: string;
   textContent?: string;
   content?: unknown;
   coverImage?: { ref?: { $link?: string } };
+}
+
+/**
+ * A document's link as the web app builds it (recordToDocument): the
+ * publication's base URL, as last cached, plus the record's path; else the URL
+ * stored when the document was written.
+ */
+function documentUrl(row: StreamRow, record: DocumentRecordFields): string {
+  const baseUrl = looseSiteMeta(row.site_uri ?? '')?.baseUrl ?? row.base_url;
+  return baseUrl ? buildCanonicalUrl(baseUrl, record.path ?? '') : (row.url ?? '');
 }
 
 /**
@@ -741,11 +786,11 @@ function parseItem(row: StreamRow): FeedItem | null {
     const cover = record.coverImage?.ref?.$link;
     return {
       title: record.title ?? '',
-      url: validUrl(row.url ?? ''),
+      url: validUrl(documentUrl(row, record)),
       publishedAt: record.publishedAt ?? '',
       summary: record.description,
       content: documentHtml(record, authorDid),
-      imageUrl: cover ? documentBlobUrl(authorDid, cover) : undefined,
+      imageUrl: cover && /^[a-z0-9]+$/i.test(cover) ? documentBlobUrl(authorDid, cover) : undefined,
     } as FeedItem;
   } catch {
     log.warn('greader_item_unparseable', { id: row.id });
@@ -865,16 +910,18 @@ async function writeReadState(env: Env, did: string, ids: number[], read: boolea
     // The rkey is a legacy PDS-record key nothing reads for a new row; a random
     // record-key-shaped value keeps the column's shape without a per-row TID.
     const sql = read
-      ? `INSERT INTO item_labels_cache
+      ? `${items.ctes}
+         INSERT INTO item_labels_cache
            (user_did, item_key, item_type, label, props, rkey, created_at, updated_at, client_updated_at)
          SELECT ?1, x.item_key, x.kind, 'read', ${readPropsSql('x', at)},
                 lower(hex(randomblob(8))), ${now}, ${now}, ${at}
-           FROM (${items}) x WHERE 1 = 1
+           FROM (${items.sql}) x WHERE 1 = 1
          ${READ_UPSERT_CONFLICT}`
-      : `INSERT INTO item_labels_cache
+      : `${items.ctes}
+         INSERT INTO item_labels_cache
            (user_did, item_key, item_type, label, props, rkey, created_at, updated_at, deleted_at, client_updated_at)
          SELECT ?1, x.item_key, x.kind, 'read', NULL, lower(hex(randomblob(8))), ${now}, ${now}, ${now}, ${at}
-           FROM (${items}) x WHERE 1 = 1
+           FROM (${items.sql}) x WHERE 1 = 1
          ${UNREAD_UPSERT_CONFLICT}`;
     return env.DB.prepare(sql).bind(...binds.values);
   });
@@ -895,11 +942,12 @@ function wordCount(html: string): number | undefined {
   return words || undefined;
 }
 
+/** The URL when it's a web link, else ''. A link can come from a record its author wrote. */
 function validUrl(url: string | undefined): string {
   if (!url) return '';
   try {
-    new URL(url);
-    return url;
+    const { protocol } = new URL(url);
+    return protocol === 'https:' || protocol === 'http:' ? url : '';
   } catch {
     return '';
   }
@@ -1110,6 +1158,14 @@ export async function handleGReader(
   const did = owner.did;
   const isWrite = request.method === 'POST' && (call === 'edit-tag' || call === 'mark-all-as-read');
   const params = await readParams(request, url);
+  if (
+    call === 'unread-count' ||
+    call === 'stream/items/ids' ||
+    call.startsWith('stream/contents') ||
+    (isWrite && call === 'mark-all-as-read')
+  ) {
+    await assignDocumentIds(env, did);
+  }
 
   let response: Response;
   switch (true) {
