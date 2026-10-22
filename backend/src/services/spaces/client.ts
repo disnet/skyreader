@@ -8,7 +8,7 @@
  *                                 delegation/credential exchange.
  *
  * Method names, parameter names and error codes were read off the published alpha
- * SDK (`@atproto/api@0.0.0-spaces-alpha-20261001173819`,
+ * SDK (`@atproto/api@0.0.0-spaces-alpha-20261022141228`,
  * `dist/client/types/com/atproto/{simplespace,space}/*.d.ts`) rather than taken
  * from proposal 0016 — see `experiments/spaces-saves/FINDINGS.md` for the diffs
  * that matters.

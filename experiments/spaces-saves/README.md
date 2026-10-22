@@ -29,13 +29,14 @@ only at a sandbox.
 
 ## What it checks
 
-11 checks, in three groups. The two that decide the spike:
+14 checks, in three groups. The two that decide the spike:
 
 - **privacy** — the outsider is denied both a direct read and a space credential.
   If either succeeds, the "private and portable" claim is false and the spike
   should stop.
-- **portability** — a client holding nothing but a minted credential (no session,
-  no cookie) reads the saved record back out of the space.
+- **portability** — a client holding nothing but a minted credential and the
+  owner's public `#atproto_kem` key (no session, no cookie) reads the saved
+  record back out of the space, and checks the record MAC the host returns.
 
 The rest cover create → get → list → delete and the credential round-trip cost.
 
@@ -54,8 +55,10 @@ Node ≥ 22.18 (type stripping on by default). Node prints a
 ## `--fake` is a harness test, not a protocol result
 
 `fake-pds.mjs` is our own reading of the alpha's behaviour. It verifies real
-`atproto-space` HTTP message signatures (the `keyid` → `cnf.kid` binding, and
-the repo DID as audience on credential reads) and enforces the member list, so a green run means
+`atproto-space-credential` HTTP message signatures (against the `credentialKid`
+bound into `cnf.kid`, with the repo DID as audience on credential reads),
+computes real record MACs against a per-account KEM key, and enforces the member
+list, so a green run means
 the client code, the credential flow, and the script's assertions all work. It
 says nothing about what the real implementation does. Never quote a `--fake` run
 as a finding.

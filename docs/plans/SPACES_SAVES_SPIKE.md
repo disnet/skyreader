@@ -66,10 +66,12 @@ Three findings changed the plan (details and citations in FINDINGS.md):
 
 1. **Writing to your own repo in a space needs no space credential** — plain
    session auth against your own PDS. So the mirror is an ordinary authenticated
-   XRPC POST. The credential flow (delegation → credential → HTTP message
-   signature, 2 round trips, 10-minute reusable credential) is needed only for
-   reading a space from somewhere that isn't the author's session — which is
-   precisely the portability proof.
+   XRPC POST. The credential flow (delegation → key-bound credential → HTTP
+   message signature on every request, 2 round trips, 10-minute reusable
+   credential) is needed only for reading a space from somewhere that isn't the
+   author's session — which is precisely the portability proof. Since Oct 22 a
+   credentialed `getRecord` also negotiates a MAC against the author's
+   `#atproto_kem` DID-doc key, so the second client needs that public key too.
 2. **Space access is requested through a permission set.** As
    `include:<nsid>` naming a **permission-set lexicon** — the reference app's
    shape, though a bare `space:` scope also parses. Ours is committed as
@@ -78,11 +80,13 @@ Three findings changed the plan (details and citations in FINDINGS.md):
 3. **`createSpace` takes no member list** — read/write policies and app access
    only, membership afterwards. A personal space needs no `putMember` call.
 
-The alpha has broken the wire format twice since the spike was written (read/write
-policies and `putMember` in September; `spaceType`, and HTTP message signatures
-replacing DPoP for credentials, in October). The client tracks
-`0.0.0-spaces-alpha-20261001173819`; FINDINGS.md lists each change. That churn is
-itself evidence for the recommendation below.
+The alpha has broken the wire format three times since the spike was written
+(read/write policies and `putMember` in September; `spaceType`, and HTTP message
+signatures replacing DPoP for credentials, on Oct 1; an unsigned credential
+exchange, renamed signature and auth scheme, and MAC-authenticated reads on Oct
+22). The client tracks `0.0.0-spaces-alpha-20261022141228`; FINDINGS.md lists
+each change. Bluesky expects one more, smaller breaking release, then a beta at
+the end of November. That churn is itself evidence for the recommendation below.
 
 ## Demo checklist
 
@@ -91,7 +95,7 @@ design, so the space would look broken).
 
 1. Run a spaces PDS: `docker run -p 2583:2583 ghcr.io/bluesky-social/atproto:pds-spaces-alpha`.
 2. `cd experiments/spaces-saves && SPACES_PDS_URL=http://localhost:2583 npm run lifecycle`
-   — 12/12 is the gate. If the outsider is _not_ denied, stop the spike.
+   — 14/14 is the gate. If the outsider is _not_ denied, stop the spike.
 3. Add `SPACES_SAVES_ENABLED=true` to `backend/.dev.vars`, point a session at the
    spaces PDS, and `./scripts/dev-local.sh`.
 4. Save an article in the reader; delete another.

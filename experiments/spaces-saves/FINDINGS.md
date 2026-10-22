@@ -9,26 +9,34 @@ app's client code — at the pinned versions in the next section. Everything mar
 _unverified_ needs a run of `npm run lifecycle` against a real spaces PDS, which
 has not happened yet: this environment has no Docker and no BPS invite, and
 `@atproto/pds@alpha` will not resolve here. The harness is written and green
-against an in-process fake (`npm run lifecycle:fake`, 12/12 — it writes with `putRecord`, the call the backend mirror uses), so the live run is
+against an in-process fake (`npm run lifecycle:fake`, 14/14 — it writes with `putRecord`, the call the backend mirror uses), so the live run is
 a protocol question, not a "does the script work" question.
 
 ## Pinned versions
 
 | Artifact         | Version / ref                                                                                     |
 | ---------------- | ------------------------------------------------------------------------------------------------- |
-| `@atproto/api`   | `0.0.0-spaces-alpha-20261001173819` (npm tag `alpha`; first read at `…20260818163953`)            |
-| `@atproto/space` | `0.0.0-spaces-alpha-20261001173819`                                                               |
-| `@atproto/pds`   | `0.0.0-spaces-alpha-20261001173819`                                                               |
+| `@atproto/api`   | `0.0.0-spaces-alpha-20261022141228` (npm tag `alpha`; first read at `…20260818163953`)            |
+| `@atproto/space` | `0.0.0-spaces-alpha-20261022141228`                                                               |
+| `@atproto/pds`   | `0.0.0-spaces-alpha-20261022141228`                                                               |
 | Reference app    | `bluesky-social/bulletin`, `main`, read 2026-08-23 (not re-read for the October update)           |
 | Proposal         | `bluesky-social/proposals` `0016-permissioned-data`                                               |
 | PDS image        | `ghcr.io/bluesky-social/atproto:pds-spaces-alpha` (digest not pinned — fill in on first live run) |
 
 The alpha updates on Thursdays with breaking changes, so treat every shape below
 as accurate for that snapshot and nothing later. The spike was first written
-against `…20260818163953`; [what changed since](#what-changed-through-20261001173819)
-is listed at the end, and the client, tests and fake PDS follow the October shape.
+against `…20260818163953`; what changed since is listed at the end
+([through Oct 1](#what-changed-through-20261001173819),
+[Oct 22](#what-changed-in-20261022141228)), and the client, tests and fake PDS
+follow the Oct 22 shape. Bluesky has said one more, smaller breaking release
+follows a week later and is meant to be the last before a beta at the end of
+November.
 There is still no stable release with Spaces: `@atproto/pds@0.5.38` (2026-10-07)
 ships no `space` or `simplespace` handlers.
+
+Note the alpha packages can't be installed from npm as published: their
+manifests still carry `workspace:*` ranges. The cross-checks below load the
+relevant `dist/` files out of the tarballs instead.
 
 ## The API surface, as implemented _(observed)_
 
@@ -60,10 +68,10 @@ attested OAuth `client_id`.
 | ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
 | `createRecord`                                                                                 | `{space, repo, collection, rkey?, validate?, record}` → `{uri, cid, validationStatus?}` |
 | `putRecord` / `deleteRecord` / `applyWrites`                                                   | `{space, repo, collection, rkey, …}`                                                    |
-| `getRecord`                                                                                    | `?space=&repo=&collection=&rkey=`                                                       |
+| `getRecord`                                                                                    | `?space=&repo=&collection=&rkey=`; with a credential, needs `Atproto-Space-Want-Mac`    |
 | `listRecords`                                                                                  | `?space=&repo=&collection?&limit?&cursor?&reverse?&excludeValues?`                      |
 | `getDelegationToken`                                                                           | `?space=` → `{token}`                                                                   |
-| `getSpaceCredential`                                                                           | `{space, clientAttestation?}` → `{credential}`                                          |
+| `getSpaceCredential`                                                                           | `{space, credentialKid, delegationToken?, clientAttestation?}` → `{credential}`         |
 | `listRepoOps`, `getLatestCommit`, `getRepo`, `listRepos`, `listSpaces`, `getBlob`, `listBlobs` | sync/read surface                                                                       |
 | `registerNotify`, `unregisterNotify`, `notifyWrite`, `notifySpaceDeleted`                      | push-style sync                                                                         |
 
@@ -72,7 +80,8 @@ Error codes worth branching on: `SpaceNotFound`, `SpaceDeleted`,
 `InvalidDelegationToken`, `InvalidClientAttestation`, `RecordAlreadyExists`,
 `RecordNotFound`, plus the repo-state family (`RepoNotFound`, `RepoTakendown`,
 `RepoSuspended`, `RepoDeactivated`). Credential auth adds `BadSpaceSignature`,
-`BadSpaceAudience`, `CredentialRevoked`, `JwtReplayed` and `BadJwtCnf`. A
+`BadSpaceAudience`, `CredentialRevoked`, `JwtReplayed` and `BadJwtCnf`, and a
+credentialed read of a commit or record adds `BadSpaceMac`. A
 session reading a repo that isn't its own gets `RepoNotFound` — deliberately the
 same answer as an absent repo.
 
@@ -120,15 +129,48 @@ Space refs are `at://{authorityDid}/space/{type}/{skey}` (string format
    should confirm.
 
 5. **Credentials are bound by HTTP message signatures, not DPoP.** _(observed,
-   October alpha)_ Leg 2 sends `Authorization: Bearer <delegation>` plus an
-   `atproto-space` signature over that header whose `keyid` is a fresh P-256
-   `did:key`; the returned credential names that key in `cnf.kid`. Legs 3+ send
-   `Authorization: Atproto-Space <credential>`, an `atproto-space-audience: <did>`
-   header, and a signature over both (no `keyid`). The audience is the **repo
-   DID** being read for record methods, and the space authority for space-host
-   methods (`listRepos`, `registerNotify`, …) — so one credential reading several
-   members' repos signs once per repo. Until the October alpha this leg was DPoP
-   (`cnf.jkt`, `Authorization: DPoP`, an `ath`-less proof to obtain).
+   Oct 22 alpha)_ Leg 2 (`getSpaceCredential`) is an **unauthenticated** POST
+   whose body carries the space, the delegation token and a fresh P-256
+   `did:key` as `credentialKid`; the returned credential names that key in
+   `cnf.kid`. Nothing is signed to obtain it — possession of the key is proved on
+   first use. Every request after that sends
+   `Authorization: Atproto-Space-Credential <credential>`, an
+   `atproto-space-audience: <did>` header, and an `atproto-space-credential`
+   signature over both, tagged `tag="atproto-space-credential"`. The audience is
+   the **repo DID** being read for record methods, and the space authority for
+   space-host methods (`listRepos`, `registerNotify`, …) — so one credential
+   reading several members' repos signs once per repo. The delegation token is
+   optional in the lexicon: a public space issues credentials without one. Ours
+   is member-list, so it still needs one.
+
+   History: until Oct 1 this was DPoP (`cnf.jkt`). From Oct 1 to Oct 22, leg 2
+   sent `Authorization: Bearer <delegation>` with an `atproto-space` signature
+   carrying `keyid`, and credentials were presented as `Atproto-Space`.
+
+6. **Reading a record with a credential needs a MAC handshake.** _(observed, Oct
+   22 alpha)_ Space-repo commits are no longer signed. Instead each account has
+   an `#atproto_kem` P-256 key in its DID doc, and a credentialed call to
+   `getRecord`, `getRepo`, `getLatestCommit` or `listRepoOps` must send
+   `Atproto-Space-Want-Mac: type="atproto-space-record", ver=1, key_share="did:key:…"`
+   (type `atproto-space-repo` for commits) with a fresh ephemeral key. The host
+   answers with `Atproto-Space-Mac: …, mac=:…:`, an HMAC-SHA256 keyed by an RFC
+   9180 DHKEM(P-256, HKDF-SHA256) secret derived from that key share and the
+   author's KEM key. Without the header the read fails with `BadSpaceMac`.
+   `listRecords` returns neither commits nor MACs and needs no header — and so
+   carries no authentication of the records it returns.
+
+   For us, a second client reading a save now needs the owner's KEM key (public,
+   in their DID doc) as well as a credential. `services/spaces/kem.ts`
+   implements the record MAC on WebCrypto plus `@noble/curves`. It was
+   cross-checked against the alpha's own `decapsulate` / `computeRecordMac` /
+   `parseWantMacHeader` (20/20 random rounds), and `spaces-kem.spec.ts` pins a
+   fixed vector produced by them. Commit MACs aren't implemented: the spike
+   reads no commits.
+
+   Existing accounts get their KEM key from a one-time backfill on PDS startup,
+   which publishes a PLC update per account. did:web accounts must add it by
+   hand. **Until an account's key is published, nobody can sync its space
+   repos.**
 
 ## Token lifetimes and round-trip cost _(observed from `@atproto/space`)_
 
@@ -153,11 +195,15 @@ isolate re-mints, and we never write the bound private key to D1. Persisting the
 key would turn a short-lived token into durable stored key material for an alpha
 protocol. The shorter TTL makes re-mints more frequent, not more dangerous.
 
-Signature details (`dist/http-signature.js`): label `atproto-space`; ES256 only
-(`alg`, if present, must be `ecdsa-p256-sha256`); the signature base is each
-covered header as `"name": value`, then `"@signature-params": <inner list>`,
-newline-joined; the signature is the 64-byte compact `r‖s`, base64 in a
-structured-field byte sequence. No part of the URL or method is signed.
+Signature details (`dist/http-signature.js`): label and `tag` both
+`atproto-space-credential`; covers exactly `("authorization"
+"atproto-space-audience")`, in that order; ES256 only (`alg`, if present, must be
+`ecdsa-p256-sha256`); a `keyid`, if present, must equal `cnf.kid`. The signature
+base is each covered header as `"name": value`, then
+`"@signature-params": <inner list>`, newline-joined; the signature is the 64-byte
+compact `r‖s`, base64 in a structured-field byte sequence. No part of the URL or
+method is signed. `http-signature.ts` was cross-checked against the alpha's
+`verifyCredentialSig` (20/20, and a retargeted audience is rejected).
 
 ## Latency, size limits, sync — _unverified_
 
@@ -172,6 +218,8 @@ Not measurable without a live PDS. A live run should record:
 - whether `listRepoOps` / `getLatestCommit` give a usable incremental cursor for a
   future reconciliation job, and whether `registerNotify` is reachable from
   Workers at all;
+- whether a fresh account on the hosted alpha has its `#atproto_kem` key in its
+  published DID doc straight away, or only after the backfill;
 - whether `getDelegationToken` is issued to any session (as our fake assumes) or
   gated on membership — that determines whether "outsider denied" fails at leg 1
   or leg 2.
@@ -230,5 +278,32 @@ notifications; delivery is now retried for 24h); `listRepos` entries carry
 record URI formats, and own-repo writes on plain session auth. `@atproto/syntax`
 now validates the skey, collection and rkey segments of a space URI strictly.
 
-The Docker image name and whether it tracks the October build are _unverified_
+## What changed in `…20261022141228`
+
+Read by diffing the same tarballs between `…20261001173819` and
+`…20261022141228` (`…20261015143509` in between), alongside Bluesky's Oct 22
+release notes on the Atmosphere forum. Bluesky called it the largest alpha
+release so far.
+
+| Change                                                                                                  | Spec PR / impl         | Where it hit us                                           |
+| ------------------------------------------------------------------------------------------------------- | ---------------------- | --------------------------------------------------------- |
+| Public spaces: `getSpaceCredential` takes `{credentialKid, delegationToken?}` in the body, unsigned     | proposals #120 / #5690 | `exchangeSpaceCredential`, fake                           |
+| Signature label + tag `atproto-space-credential`; auth scheme `Atproto-Space-Credential`                | #120 / #5690           | `http-signature.ts`, `SpaceCredential.authorize`, fake    |
+| Shared-secret commits: per-account `#atproto_kem` key; credentialed record/commit reads need a MAC      | #122 / #5706           | new `kem.ts`; `credentialCall` takes `authorKemKey`, fake |
+| Commit field `hash` → `data` (`listRepos`, `getLatestCommit`); `signedCommit` → unsigned `commit`       | #122 / #5706           | none (no commit reads)                                    |
+| `getRepo` returns a STAR archive, not a CAR; `excludeValues` removed                                    | #114 / #5705           | none (no `getRepo`)                                       |
+| DID doc: space-host signing key and service entry removed; `#atproto_pds` is the host, `#atproto` signs | #123 / #5691           | none (we already address the authority's PDS)             |
+| `notifySpaceDeleted` retried until delivered or the syncer's registration expires                       | #124 / #5697           | none (no syncer)                                          |
+
+Unchanged: everything in `com.atproto.simplespace.*`, the record write methods,
+`listRecords`, `getDelegationToken`, the space/record URI formats, own-repo
+writes on plain session auth, and `@atproto/oauth-scopes`. All spec changes are
+collected in proposals PR #125.
+
+Self-hosting the alpha PDS now needs migrations on both the account-manager and
+actor-store databases plus the KEM backfill; the atproto repo carries an agent
+prompt for it at `alpha-migrations/prompt-10-22-26.md`. The image was also
+rebuilt on a newer Node after the eMudhra CA compromise.
+
+The Docker image name and whether it tracks the latest build are _unverified_
 (the registry tag listing needs auth).

@@ -1,19 +1,25 @@
 /**
- * The space-credential flow: three legs before the first cross-host read.
+ * The space-credential flow: two legs before the first cross-host read.
  *
  *   1. `com.atproto.space.getDelegationToken` on the *user's* PDS, with ordinary
  *      session auth  →  a short-lived, single-use delegation JWT (60s).
- *   2. `com.atproto.space.getSpaceCredential` on the *authority's* PDS, presenting
- *      that delegation as a Bearer token plus an HTTP message signature naming a
- *      fresh P-256 `did:key` as `keyid`  →  a credential JWT bound to that key
- *      through `cnf.kid` (10 min).
- *   3. every subsequent space call: `Authorization: Atproto-Space <credential>`,
- *      an `atproto-space-audience` DID, and a signature over both.
+ *   2. `com.atproto.space.getSpaceCredential` on the *authority's* PDS, an
+ *      unauthenticated POST whose body carries the space, that delegation token
+ *      and a fresh P-256 `did:key` as `credentialKid`  →  a credential JWT bound
+ *      to that key through `cnf.kid` (10 min).
  *
- * TTLs are from `@atproto/space@0.0.0-spaces-alpha-20261001173819`
+ * Then every space call: `Authorization: Atproto-Space-Credential <credential>`,
+ * an `atproto-space-audience` DID, and a signature over both.
+ *
+ * Until `0.0.0-spaces-alpha-20261022141228` leg 2 sent the delegation token as a
+ * Bearer header and proved the key with a `keyid`-carrying HTTP signature; the
+ * delegation token is now optional in the lexicon (a public space issues
+ * credentials without one), but a member-list space like ours still requires it.
+ *
+ * TTLs are from `@atproto/space@0.0.0-spaces-alpha-20261022141228`
  * (`dist/credential.js`, `SPACE_TOKEN_TYPES`): delegation 60s/single-use,
  * credential 600s/reusable (verifiers cap it at 3600s), client attestation
- * 60s/single-use. Until that release the credential was DPoP-bound and lived 2h.
+ * 60s/single-use. Before October the credential was DPoP-bound and lived 2h.
  *
  * Writing to your OWN repo inside a space does not need any of this — the
  * reference app posts `com.atproto.space.createRecord` to its own PDS with plain
@@ -32,6 +38,9 @@ import type { SpaceSigningKey } from './http-signature';
 /** Documented alpha lifetimes; we re-read `exp` from the token rather than assume. */
 export const DELEGATION_TOKEN_TTL_SEC = 60;
 export const SPACE_CREDENTIAL_TTL_SEC = 600;
+
+/** The `Authorization` scheme a credential is presented under (was `Atproto-Space`). */
+export const SPACE_CREDENTIAL_AUTH_SCHEME = 'Atproto-Space-Credential';
 
 /** Refresh this long before `exp` so an in-flight request can't expire mid-call. */
 const EXPIRY_MARGIN_SEC = 60;
@@ -64,7 +73,7 @@ export class SpaceCredential {
    */
   authorize(audience: string): Promise<Record<string, string>> {
     return createSpaceSignatureHeaders(this.key, {
-      authorization: `Atproto-Space ${this.token}`,
+      authorization: `${SPACE_CREDENTIAL_AUTH_SCHEME} ${this.token}`,
       audience,
     });
   }
@@ -100,16 +109,18 @@ export async function exchangeSpaceCredential(input: ExchangeCredentialInput): P
 
   const response = await (input.fetchImpl ?? fetch)(url, {
     method: 'POST',
+    // No auth header and no signature: the method is unauthenticated, and the
+    // credential gets bound to whatever `credentialKid` names. Possession of the
+    // key is proved on first use, when every request must be signed by it.
     headers: {
       accept: 'application/json',
       'content-type': 'application/json',
-      // The delegation token is not itself key-bound: this leg's signature
-      // carries `keyid`, and that is what the credential's `cnf.kid` will name.
-      ...(await createSpaceSignatureHeaders(input.key, {
-        authorization: `Bearer ${input.delegationToken}`,
-      })),
     },
-    body: JSON.stringify({ space: input.space }),
+    body: JSON.stringify({
+      space: input.space,
+      credentialKid: input.key.did,
+      delegationToken: input.delegationToken,
+    }),
   });
 
   const body = (await response.json().catch(() => undefined)) as

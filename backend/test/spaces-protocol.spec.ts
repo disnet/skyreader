@@ -31,7 +31,7 @@ import { SAVED_SPACE_SKEY, SAVED_SPACE_TYPE, savedSpaceRef } from '../src/servic
 
 // Wire-level coverage of the Spaces client: the HTTP message signatures, the
 // credential exchange, and the exact request shapes we send. Method and parameter
-// names are pinned against @atproto/api@0.0.0-spaces-alpha-20261001173819 — if the
+// names are pinned against @atproto/api@0.0.0-spaces-alpha-20261022141228 — if the
 // alpha renames something, these assertions are what notices.
 
 const DID = 'did:plc:spaceproto';
@@ -55,17 +55,18 @@ function didKeyPublicKey(did: string): Uint8Array {
 }
 
 /**
- * The verifier side of `@atproto/space` `verifySpaceSignature`, enough to prove a
- * signature checks out under the key it names.
+ * The verifier side of `@atproto/space` `verifyCredentialSig`, enough to prove a
+ * signature checks out under the key the credential is bound to.
  */
 function verifySignatureHeaders(headers: Record<string, string>, keyDid: string): boolean {
-  const input = headers['signature-input'].replace(/^atproto-space=/, '');
-  const signature = /^atproto-space=:(.+):$/.exec(headers.signature)![1];
-  const lines = [`"authorization": ${headers.authorization}`];
-  if (headers['atproto-space-audience'] !== undefined) {
-    lines.push(`"atproto-space-audience": ${headers['atproto-space-audience']}`);
-  }
-  lines.push(`"@signature-params": ${input}`);
+  const input = headers['signature-input'].replace(/^atproto-space-credential=/, '');
+  expect(input).toBe('("authorization" "atproto-space-audience");tag="atproto-space-credential"');
+  const signature = /^atproto-space-credential=:(.+):$/.exec(headers.signature)![1];
+  const lines = [
+    `"authorization": ${headers.authorization}`,
+    `"atproto-space-audience": ${headers['atproto-space-audience']}`,
+    `"@signature-params": ${input}`,
+  ];
   const sigBytes = Uint8Array.from(atob(signature), (c) => c.charCodeAt(0));
   expect(sigBytes.length).toBe(64);
   return p256.verify(
@@ -85,27 +86,18 @@ describe('space HTTP message signatures', () => {
     expect(() => p256DidKey(new Uint8Array(33))).toThrow();
   });
 
-  it('signs only the authorization header, with keyid, when obtaining a credential', async () => {
-    const key = await generateSpaceSigningKey();
-    const headers = await createSpaceSignatureHeaders(key, { authorization: 'Bearer deleg-1' });
-
-    expect(headers.authorization).toBe('Bearer deleg-1');
-    expect(headers['atproto-space-audience']).toBeUndefined();
-    expect(headers['signature-input']).toBe(`atproto-space=("authorization");keyid="${key.did}"`);
-    expect(verifySignatureHeaders(headers, key.did)).toBe(true);
-  });
-
-  it('signs authorization and audience, without keyid, when presenting one', async () => {
+  it('signs authorization and audience under the atproto-space-credential tag', async () => {
     const key = await generateSpaceSigningKey();
     const headers = await createSpaceSignatureHeaders(key, {
-      authorization: 'Atproto-Space cred-1',
+      authorization: 'Atproto-Space-Credential cred-1',
       audience: DID,
     });
 
     expect(headers['atproto-space-audience']).toBe(DID);
     expect(headers['signature-input']).toBe(
-      'atproto-space=("authorization" "atproto-space-audience")'
+      'atproto-space-credential=("authorization" "atproto-space-audience");tag="atproto-space-credential"'
     );
+    expect(headers['signature-input']).not.toContain('keyid');
     expect(verifySignatureHeaders(headers, key.did)).toBe(true);
     // The audience is covered: retargeting the request breaks the signature.
     expect(
@@ -124,7 +116,7 @@ describe('space HTTP message signatures', () => {
 });
 
 describe('space credential exchange', () => {
-  it('presents the delegation token as Bearer with a keyid-carrying signature', async () => {
+  it('sends the delegation token and credentialKid in the body, unsigned', async () => {
     const key = await generateSpaceSigningKey();
     const seen: { url?: string; init?: RequestInit } = {};
     const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
@@ -144,11 +136,16 @@ describe('space credential exchange', () => {
     expect(credential).toBe('cred-1');
     expect(seen.url).toBe('https://pds.test/xrpc/com.atproto.space.getSpaceCredential');
     const headers = seen.init!.headers as Record<string, string>;
-    expect(headers.authorization).toBe('Bearer deleg-1');
-    expect(headers['signature-input']).toContain(`keyid="${key.did}"`);
-    expect(verifySignatureHeaders(headers, key.did)).toBe(true);
+    // getSpaceCredential is unauthenticated since the Oct 22 alpha: no auth
+    // header, no signature, the key named in the body.
+    expect(headers.authorization).toBeUndefined();
+    expect(headers['signature-input']).toBeUndefined();
     expect(headers.dpop).toBeUndefined();
-    expect(JSON.parse(seen.init!.body as string)).toEqual({ space: SPACE });
+    expect(JSON.parse(seen.init!.body as string)).toEqual({
+      space: SPACE,
+      credentialKid: key.did,
+      delegationToken: 'deleg-1',
+    });
   });
 
   it('surfaces the alpha error code when the exchange is refused', async () => {
@@ -248,7 +245,7 @@ describe('space credential exchange', () => {
     });
 
     const headers = await credential.authorize(DID);
-    expect(headers.authorization).toBe(`Atproto-Space ${token}`);
+    expect(headers.authorization).toBe(`Atproto-Space-Credential ${token}`);
     expect(headers['atproto-space-audience']).toBe(DID);
     expect(verifySignatureHeaders(headers, credential.key.did)).toBe(true);
   });
@@ -372,7 +369,7 @@ describe('transports', () => {
     expect(isSpaceNotFound(error)).toBe(true);
   });
 
-  it('presents the credential as Atproto-Space, addressed to the audience', async () => {
+  it('presents the credential as Atproto-Space-Credential, addressed to the audience', async () => {
     const credential = new SpaceCredential(
       'cred-1',
       await generateSpaceSigningKey(),
@@ -385,12 +382,14 @@ describe('transports', () => {
       return new Response(JSON.stringify({ records: [] }), { status: 200 });
     }) as unknown as typeof fetch;
 
-    const call = credentialCall('https://host.test/', credential, DID, fetchImpl);
+    const call = credentialCall('https://host.test/', credential, DID, { fetchImpl });
     await call('GET', 'com.atproto.space.listRecords?space=x');
 
-    expect(seenHeaders.authorization).toBe('Atproto-Space cred-1');
+    expect(seenHeaders.authorization).toBe('Atproto-Space-Credential cred-1');
     expect(seenHeaders['atproto-space-audience']).toBe(DID);
     expect(verifySignatureHeaders(seenHeaders, credential.key.did)).toBe(true);
+    // listRecords returns no commit or record MAC, so it asks for none.
+    expect(seenHeaders['atproto-space-want-mac']).toBeUndefined();
   });
 
   it('classifies the alpha error codes the spike branches on', async () => {
@@ -409,21 +408,15 @@ describe('transports', () => {
       Date.now() + 60_000
     );
 
-    const deniedError = await credentialCall(
-      'https://host.test',
-      credential,
-      DID,
-      denied
-    )('GET', 'com.atproto.space.listRecords?space=x').catch((e) => e);
+    const deniedError = await credentialCall('https://host.test', credential, DID, {
+      fetchImpl: denied,
+    })('GET', 'com.atproto.space.listRecords?space=x').catch((e) => e);
     expect(isSpaceAccessDenied(deniedError)).toBe(true);
     expect(isSpaceNotFound(deniedError)).toBe(false);
 
-    const missingError = await credentialCall(
-      'https://host.test',
-      credential,
-      DID,
-      missing
-    )('GET', 'com.atproto.simplespace.getSpace?space=x').catch((e) => e);
+    const missingError = await credentialCall('https://host.test', credential, DID, {
+      fetchImpl: missing,
+    })('GET', 'com.atproto.simplespace.getSpace?space=x').catch((e) => e);
     expect(isSpaceNotFound(missingError)).toBe(true);
   });
 });

@@ -2,36 +2,40 @@
  * HTTP message signatures for atproto Spaces credentials.
  *
  * The alpha used DPoP here until `0.0.0-spaces-alpha-20261001173819` (atproto PR
- * #5569), which replaced it with an RFC 9421-style signature under the label
- * `atproto-space`. The key is a P-256 `did:key`; there is no `htu`/`htm`/`ath`,
- * no nonce, and nothing about the request URL is signed — only the
- * `authorization` header and, when presenting a credential, the audience DID:
+ * #5569), which replaced it with an RFC 9421-style signature. The key is a P-256
+ * `did:key`; there is no `htu`/`htm`/`ath`, no nonce, and nothing about the
+ * request URL is signed — only the `authorization` header and the audience DID:
  *
- *   obtaining a credential  Signature-Input: atproto-space=("authorization");keyid="did:key:…"
- *                           (the PDS copies `keyid` into the credential's `cnf.kid`)
- *   presenting one          Signature-Input: atproto-space=("authorization" "atproto-space-audience")
- *                           (no keyid — the verifier takes the key from `cnf.kid`)
+ *   Signature-Input: atproto-space-credential=("authorization" "atproto-space-audience");tag="atproto-space-credential"
  *
- * The signature base is the covered headers, one `"name": value` line each, then
+ * The verifier takes the key from the credential's `cnf.kid`. The signature base
+ * is the covered headers, one `"name": value` line each, then
  * `"@signature-params": <inner list>`. The signature is the 64-byte compact r||s
  * that WebCrypto's ECDSA already produces, base64 in a structured-field byte
  * sequence.
+ *
+ * Since `0.0.0-spaces-alpha-20261022141228` (atproto PR #5690) only *presenting*
+ * a credential is signed. Obtaining one sends the key's `did:key` as
+ * `credentialKid` in the `getSpaceCredential` body instead of signing a
+ * `keyid`-carrying header, and the label, `tag` and auth scheme all became
+ * `atproto-space-credential` / `Atproto-Space-Credential`.
  *
  * This is NOT the OAuth path's DPoP (`services/oauth.ts` `createDPoPProof`), and
  * is kept separate on purpose — folding the two would make the OAuth proof's
  * behaviour depend on a spike flag.
  *
- * Shapes verified against `@atproto/space@0.0.0-spaces-alpha-20261001173819`
- * (`dist/http-signature.js`, `createSpaceSig` / `verifySpaceSignature`).
+ * Shapes verified against `@atproto/space@0.0.0-spaces-alpha-20261022141228`
+ * (`dist/http-signature.js`, `createSpaceSig` / `verifyCredentialSig`).
  *
  * WebCrypto + fetch only, so it runs unchanged on Workers and on Node.
  */
 
-export const SPACE_SIGNATURE_LABEL = 'atproto-space';
+export const SPACE_SIGNATURE_LABEL = 'atproto-space-credential';
+export const SPACE_SIGNATURE_TAG = 'atproto-space-credential';
 
 export interface SpaceSigningKey {
   privateKey: CryptoKey;
-  /** `did:key:z…` of the public half — the `keyid` that ends up in `cnf.kid`. */
+  /** `did:key:z…` of the public half — sent as `credentialKid`, it ends up in `cnf.kid`. */
   did: string;
 }
 
@@ -88,28 +92,24 @@ export interface SpaceSignatureOptions {
   /** The full `Authorization` header value being signed. */
   authorization: string;
   /**
-   * The DID the request is addressed to — set when presenting a credential, never
-   * when obtaining one. For record reads it is the repo DID being read; for
-   * space-host methods (listRepos, registerNotify, …) the space authority.
+   * The DID the request is addressed to. For record reads it is the repo DID
+   * being read; for space-host methods (listRepos, registerNotify, …) the space
+   * authority.
    */
-  audience?: string;
+  audience: string;
 }
 
-/** Build the authorization, audience and signature headers for one space request. */
+/** Build the authorization, audience and signature headers for one credentialed request. */
 export async function createSpaceSignatureHeaders(
   key: SpaceSigningKey,
   opts: SpaceSignatureOptions
 ): Promise<Record<string, string>> {
-  const signatureInput =
-    opts.audience === undefined
-      ? `("authorization");keyid="${key.did}"`
-      : '("authorization" "atproto-space-audience")';
-
-  const lines = [`"authorization": ${opts.authorization.trim()}`];
-  if (opts.audience !== undefined) {
-    lines.push(`"atproto-space-audience": ${opts.audience.trim()}`);
-  }
-  lines.push(`"@signature-params": ${signatureInput}`);
+  const signatureInput = `("authorization" "atproto-space-audience");tag="${SPACE_SIGNATURE_TAG}"`;
+  const lines = [
+    `"authorization": ${opts.authorization.trim()}`,
+    `"atproto-space-audience": ${opts.audience.trim()}`,
+    `"@signature-params": ${signatureInput}`,
+  ];
 
   const signature = new Uint8Array(
     await crypto.subtle.sign(
@@ -121,7 +121,7 @@ export async function createSpaceSignatureHeaders(
 
   return {
     authorization: opts.authorization,
-    ...(opts.audience !== undefined ? { 'atproto-space-audience': opts.audience } : {}),
+    'atproto-space-audience': opts.audience,
     'signature-input': `${SPACE_SIGNATURE_LABEL}=${signatureInput}`,
     signature: `${SPACE_SIGNATURE_LABEL}=:${base64(signature)}:`,
   };
