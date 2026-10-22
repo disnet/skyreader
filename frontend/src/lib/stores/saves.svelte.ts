@@ -1141,8 +1141,13 @@ function createSavesStore() {
   }
 
   // Read a saved item's full body back from IndexedDB by rkey. The in-memory
-  // list drops bodies (see toLightSaved); the reader calls this on open.
-  async function getContent(rkey: string): Promise<string | null> {
+  // list drops bodies (see toLightSaved); the reader calls this on open, with
+  // `opening` so a save imported without its text is fetched then. Cards and
+  // the magazine never pass it: rendering a list mustn't fetch pages.
+  async function getContent(
+    rkey: string,
+    { opening = false }: { opening?: boolean } = {}
+  ): Promise<string | null> {
     const cached = contentCache.get(rkey);
     if (cached != null) return cached;
     try {
@@ -1161,9 +1166,8 @@ function createSavesStore() {
       // A guest's saves have no server copy to fall back to.
       if (canReachBackend()) {
         // A failed fetch must not skip the local feed-body fallback below.
-        // `extract`: a save imported from another app is fetched the first time it's opened.
         const bodies = await api
-          .getSavedBodies([rkey], { extract: true })
+          .getSavedBodies([rkey], { extract: opening })
           .then((r) => r.bodies)
           .catch((): Record<string, string | null> => ({}));
         const body = bodies[rkey];

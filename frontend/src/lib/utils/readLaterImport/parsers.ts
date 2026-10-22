@@ -14,6 +14,7 @@
 
 import { parseCsv } from './csv';
 import { isZip, readZip } from './zip';
+import { decodeEntities } from '$lib/utils/entities';
 
 export type ImportSource = 'pocket' | 'omnivore' | 'instapaper' | 'readwise' | 'matter';
 
@@ -89,17 +90,6 @@ export function toEpochMs(value: unknown): number | undefined {
   const iso = trimmed.replace(/^(\d{4}-\d{2}-\d{2}) (\d)/, '$1T$2').replace(/(\.\d{3})\d+/, '$1');
   const ms = Date.parse(iso);
   return Number.isNaN(ms) ? undefined : ms;
-}
-
-function decodeEntities(text: string): string {
-  return text
-    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
-    .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCodePoint(parseInt(n, 16)))
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;|&apos;/g, "'")
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&amp;/g, '&');
 }
 
 /** Readwise's "['a', 'b']" (a Python list), or JSON, or nothing. */

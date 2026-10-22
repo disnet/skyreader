@@ -368,7 +368,7 @@
     if (readerItem.type !== 'saved' || !readerItem.item.rkey) return;
     const rkey = readerItem.item.rkey;
     let cancelled = false;
-    savesStore.getContent(rkey).then((c) => {
+    savesStore.getContent(rkey, { opening: true }).then((c) => {
       if (cancelled) return;
       lazySavedContent = c;
       lazySavedSettled = true;

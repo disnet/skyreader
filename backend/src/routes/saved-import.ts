@@ -17,10 +17,10 @@ import { savedUrlKey } from '../services/semble-connections';
 import { generateTid } from '../utils/tid';
 import { sha256Hex } from '../utils/sha256';
 import { chunkArray } from './reading';
-import { MERGE_HIGHLIGHTS_CONFLICT } from './labels';
 import { FeedProxyClient } from '../services/feed-proxy-client';
 import { fillExtractedContent } from '../services/saved-content';
 import { checkRateLimit } from '../services/rate-limit';
+import { log, serializeError } from '../utils/logger';
 
 const COLLECTION = 'app.skyreader.feed.saved';
 
@@ -35,11 +35,16 @@ const MAX_TAG_LENGTH = 64;
 const MAX_HIGHLIGHT_LENGTH = 5000;
 const MAX_HIGHLIGHTS_PER_SAVE = 500;
 const MAX_NOTE_LENGTH = 10_000;
+// Characters of highlight text and notes kept per save, well inside D1's 2 MB
+// value limit: a label row past it would fail the whole batch, every retry.
+const MAX_HIGHLIGHT_CHARS_PER_SAVE = 500_000;
 // Bound parameters per IN (...) lookup; two per URL, under D1's cap.
 const LOOKUP_CHUNK = 40;
 // Imported saves extracted in the background after an import: enough that the
-// newest few open ready to read. Everything else is extracted when opened.
-const EXTRACT_AFTER_IMPORT = 20;
+// newest few open ready to read. Everything else is extracted when opened. Two
+// rounds of EXTRACT_CONCURRENCY, so it finishes inside waitUntil's time after
+// the response.
+const EXTRACT_AFTER_IMPORT = 8;
 // Rate-limit buckets (services/rate-limit.ts) for the two ways an import fetches
 // pages: the background pass above, and one save extracted as it's opened.
 export const IMPORT_EXTRACT_RATE_KEY = '/api/saved/import:extract';
@@ -134,6 +139,7 @@ export function cleanImportItem(raw: unknown, now: number): CleanItem | null {
   }
 
   const highlights: ImportHighlight[] = [];
+  let highlightChars = 0;
   if (Array.isArray(item.highlights)) {
     for (const raw of item.highlights) {
       if (typeof raw !== 'object' || raw === null) continue;
@@ -150,6 +156,8 @@ export function cleanImportItem(raw: unknown, now: number): CleanItem | null {
         h.createdAt <= now
           ? Math.floor(h.createdAt)
           : undefined;
+      highlightChars += quote.length + (note?.length ?? 0);
+      if (highlightChars > MAX_HIGHLIGHT_CHARS_PER_SAVE) break;
       highlights.push({
         text: quote,
         ...(note ? { note } : {}),
@@ -173,10 +181,7 @@ export function cleanImportItem(raw: unknown, now: number): CleanItem | null {
   };
 }
 
-/**
- * A highlight's id, from its page and passage: importing the same export twice
- * lands on the same ids, and the merge write unions by id, so nothing doubles.
- */
+/** A highlight's id, from its page and passage, so it's the same on every import. */
 async function importedHighlightId(url: string, quote: string): Promise<string> {
   const digest = await sha256Hex(new TextEncoder().encode(`${url}\0${quote}`));
   return `imp${digest.slice(0, 24)}`;
@@ -227,10 +232,12 @@ async function findExisting(env: Env, did: string, items: CleanItem[]): Promise<
 }
 
 /**
- * Write a batch of imported items. New URLs become saves with their labels;
- * URLs already in the Library keep everything they have and only gain the
- * export's highlights. Returns the counts and the rkeys of the new saves that
- * are still unread, newest first (the ones worth extracting first).
+ * Write a batch of imported items. New URLs become saves with their labels.
+ * URLs already in the Library keep everything they have, and gain the export's
+ * highlights only if they have never had any: a save the reader has highlighted
+ * (or cleared of highlights) is theirs, and importing again must not bring back
+ * what they deleted. Returns the counts and the rkeys of the new saves that are
+ * still unread, newest first (the ones worth extracting first).
  */
 export async function importSaves(
   env: Env,
@@ -256,6 +263,27 @@ export async function importSaves(
   }
   if (items.length === 0) return result;
 
+  // The same article twice in a batch (two URLs that normalize alike) is one
+  // save, with both entries' tags and highlights.
+  const byKey = new Map<string, CleanItem>();
+  for (const item of items) {
+    const key = item.urlKey || item.url;
+    const kept = byKey.get(key);
+    if (!kept) {
+      byKey.set(key, item);
+      continue;
+    }
+    result.duplicates++;
+    kept.archived ||= item.archived;
+    for (const tag of item.tags) {
+      if (kept.tags.length < MAX_TAGS && !kept.tags.includes(tag)) kept.tags.push(tag);
+    }
+    for (const h of item.highlights) {
+      if (!kept.highlights.some((k) => k.text === h.text)) kept.highlights.push(h);
+    }
+  }
+  items.splice(0, items.length, ...byKey.values());
+
   const existing = await findExisting(env, did, items);
   const existingByUrl = new Map<string, ExistingSave>();
   for (const row of existing) {
@@ -264,31 +292,34 @@ export async function importSaves(
   }
 
   const statements: D1PreparedStatement[] = [];
-  const labelInsert = (itemKey: string, label: string, props: unknown, merge = false) =>
+  // DO NOTHING: a new save's key is fresh, and an existing save's labels are the reader's.
+  const labelInsert = (itemKey: string, label: string, props: unknown) =>
     env.DB.prepare(
       `INSERT INTO item_labels_cache (user_did, item_key, item_type, label, props, rkey, created_at, updated_at, client_updated_at)
        VALUES (?, ?, 'saved', ?, ?, ?, ?, ?, ?)
-       ${merge ? MERGE_HIGHLIGHTS_CONFLICT : 'ON CONFLICT(user_did, item_key, label) DO NOTHING'}`
+       ON CONFLICT(user_did, item_key, label) DO NOTHING`
     ).bind(did, itemKey, label, JSON.stringify(props), generateTid(), nowSec, nowSec, now);
+  // Highlight writes, by statement index: counted only if the row was written.
+  const highlightWrites: { index: number; count: number }[] = [];
+  const pushHighlights = async (itemKey: string, item: CleanItem, fallbackCreatedAt: number) => {
+    const highlights = await highlightProps(item, fallbackCreatedAt);
+    highlightWrites.push({ index: statements.length, count: highlights.length });
+    statements.push(labelInsert(itemKey, 'highlights', { highlights }));
+  };
 
   const unread: { rkey: string; savedAt: number }[] = [];
-  const seenInBatch = new Set<string>();
   for (const item of items) {
-    const batchKey = item.urlKey || item.url;
     const match =
       existingByUrl.get(item.url) ?? (item.urlKey ? existingByUrl.get(`key:${item.urlKey}`) : null);
-    if (match || seenInBatch.has(batchKey)) {
+    if (match) {
       result.duplicates++;
       // Highlights from the export still find the save they belong to. A save
       // with no record uri (a Semble/Margin-backed stub) has no key to file them under.
-      if (match?.record_uri && item.highlights.length > 0) {
-        const highlights = await highlightProps(item, now);
-        statements.push(labelInsert(match.record_uri, 'highlights', { highlights }, true));
-        result.highlights += highlights.length;
+      if (match.record_uri && item.highlights.length > 0) {
+        await pushHighlights(match.record_uri, item, now);
       }
       continue;
     }
-    seenInBatch.add(batchKey);
 
     const rkey = generateTid();
     const recordUri = `at://${did}/${COLLECTION}/${rkey}`;
@@ -323,14 +354,15 @@ export async function importSaves(
     if (item.tags.length > 0) {
       statements.push(labelInsert(recordUri, 'tagged', { tags: item.tags }));
     }
-    if (item.highlights.length > 0) {
-      const highlights = await highlightProps(item, item.savedAt);
-      statements.push(labelInsert(recordUri, 'highlights', { highlights }, true));
-      result.highlights += highlights.length;
-    }
+    if (item.highlights.length > 0) await pushHighlights(recordUri, item, item.savedAt);
   }
 
-  if (statements.length > 0) await env.DB.batch(statements);
+  if (statements.length > 0) {
+    const written = await env.DB.batch(statements);
+    for (const { index, count } of highlightWrites) {
+      if ((written[index]?.meta?.changes ?? 0) > 0) result.highlights += count;
+    }
+  }
   result.unreadRkeys = unread.sort((a, b) => b.savedAt - a.savedAt).map((u) => u.rkey);
   return result;
 }
@@ -376,7 +408,7 @@ export async function extractImportedSaves(
         );
         filled++;
       } catch (err) {
-        console.error(`[import] extract failed for ${row.url}:`, err);
+        log.warn('import_extract_failed', { url: row.url, ...serializeError(err) });
       }
     }
   }
@@ -442,7 +474,7 @@ export async function handleImportSaved(
       if (once.allowed) {
         ctx.waitUntil(
           extractImportedSaves(env, session.did, unreadRkeys.slice(0, EXTRACT_AFTER_IMPORT)).catch(
-            (err) => console.error('[import] background extract failed:', err)
+            (err) => log.error('import_background_extract_failed', serializeError(err))
           )
         );
       }
@@ -450,7 +482,7 @@ export async function handleImportSaved(
 
     return json(result);
   } catch (error) {
-    console.error('Failed to import saves:', error);
+    log.error('import_failed', { source, ...serializeError(error) });
     return json({ error: 'Failed to import saves' }, 500);
   }
 }

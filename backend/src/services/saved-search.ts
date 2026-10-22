@@ -795,12 +795,15 @@ export async function readStreamPage(
     ).bind(c.at, c.user, c.post, c.sharer, sharesSettledBefore, pageSize),
     // A save's id is assigned as it's written, so the stream is commit-ordered.
     // It stops short of a recent save with no body yet, so the cursor doesn't pass
-    // it before its article is read.
+    // it before its article is read. Not an imported one: those wait for a reader
+    // to open them (routes/saved-import.ts), and an import of thousands would
+    // hold the stream for everyone meanwhile.
     env.DB.prepare(
       `SELECT id, user_did FROM saved_articles
         WHERE id > ?1 AND id < coalesce(
           (SELECT min(id) FROM saved_articles
-            WHERE id > ?1 AND content IS NULL AND created_at >= ?2), 9223372036854775807)
+            WHERE id > ?1 AND content IS NULL AND created_at >= ?2
+              AND imported_from IS NULL), 9223372036854775807)
         ORDER BY id LIMIT ?3`
     ).bind(cursors.save, savesSettledBefore, pageSize),
   ]);

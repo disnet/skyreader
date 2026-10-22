@@ -220,7 +220,7 @@ const LABEL_UPSERT_CONFLICT = `ON CONFLICT(user_did, item_key, label) DO UPDATE 
  * `updated_at` still advances, so the forward delta re-delivers the merged row
  * to every other device.
  */
-export const MERGE_HIGHLIGHTS_CONFLICT = `ON CONFLICT(user_did, item_key, label) DO UPDATE SET
+const MERGE_HIGHLIGHTS_CONFLICT = `ON CONFLICT(user_did, item_key, label) DO UPDATE SET
          props = json_object('highlights', (
            SELECT json_group_array(json(value)) FROM (
              SELECT value FROM json_each(json_extract(excluded.props, '$.highlights'))

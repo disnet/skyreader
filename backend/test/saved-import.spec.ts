@@ -162,7 +162,7 @@ describe('POST /api/saved/import', () => {
     ]);
   });
 
-  it('adds highlights to a save already in the Library, once however often it is imported', async () => {
+  it('adds highlights to a save already in the Library, once', async () => {
     await importItems([{ url: 'https://example.com/a', tags: ['keep'] }]);
     const [row] = await saves();
     const item = {
@@ -176,7 +176,8 @@ describe('POST /api/saved/import', () => {
       duplicates: 1,
       highlights: 2,
     });
-    await importItems([item]);
+    // Again: nothing new to add.
+    expect((await importItems([item])).body.highlights).toBe(0);
 
     const l = await labels(row.record_uri);
     expect(l.highlights.props.highlights.map((h: any) => h.selector.exact).sort()).toEqual([
@@ -186,6 +187,44 @@ describe('POST /api/saved/import', () => {
     // Only highlights: the save keeps its own tags and stays unarchived.
     expect(l.tagged.props.tags).toEqual(['keep']);
     expect(l.archived).toBeUndefined();
+  });
+
+  it("doesn't bring back highlights the reader deleted from a save", async () => {
+    const item = {
+      url: 'https://example.com/a',
+      highlights: [{ text: 'Kept.' }, { text: 'Gone.' }],
+    };
+    await importItems([item]);
+    const [row] = await saves();
+    const l = await labels(row.record_uri);
+    const kept = l.highlights.props.highlights.filter((h: any) => h.selector.exact === 'Kept.');
+    await env.DB.prepare(
+      `UPDATE item_labels_cache SET props = ? WHERE user_did = ? AND item_key = ? AND label = 'highlights'`
+    )
+      .bind(JSON.stringify({ highlights: kept }), DID, row.record_uri)
+      .run();
+
+    expect((await importItems([item])).body).toMatchObject({ duplicates: 1, highlights: 0 });
+    const after = await labels(row.record_uri);
+    expect(after.highlights.props.highlights.map((h: any) => h.selector.exact)).toEqual(['Kept.']);
+  });
+
+  it('merges two URLs for one article in a batch into one save', async () => {
+    const { body } = await importItems([
+      { url: 'https://example.com/a?utm_source=x', highlights: [{ text: 'From one.' }] },
+      {
+        url: 'https://example.com/a',
+        tags: ['t'],
+        archived: true,
+        highlights: [{ text: 'From two.' }],
+      },
+    ]);
+    expect(body).toEqual({ added: 1, duplicates: 1, invalid: 0, highlights: 2 });
+    const [row] = await saves();
+    const l = await labels(row.record_uri);
+    expect(l.highlights.props.highlights).toHaveLength(2);
+    expect(l.tagged.props.tags).toEqual(['t']);
+    expect(l.archived).toBeDefined();
   });
 
   it('counts items with no web URL as invalid and drops oversized highlights', async () => {
