@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import worker from '../src/index';
 import { GRANULAR_SCOPES } from '../src/config/scopes';
 import { buildEpub, buildZip } from './helpers/epub';
+import { parseEpub } from '../src/services/epub';
+import { readStagedOriginal, stageLinkedBook } from '../src/services/linked-originals';
 
 // EPUBs (Supporter): uploaded to POST /api/saved/epub and read in the Worker
 // (services/epub.ts), or saved by link, where the feed proxy recognises the book
@@ -200,7 +202,7 @@ describe('POST /api/saved/epub', () => {
     expect(body).toMatchObject({ error: 'already_saved', rkey: RKEY });
   });
 
-  it('allows books larger than the PDF cap, up to its own', async () => {
+  it('allows illustrated books past the old 10 MB cap', async () => {
     const images = new Uint8Array(12 * 1024 * 1024);
     crypto.getRandomValues(images.subarray(0, 65536));
     const epub = await buildEpub({ extra: [['OEBPS/images/plate.jpg', images]] });
@@ -264,6 +266,41 @@ describe('POST /api/extract for an EPUB link', () => {
     expect(body).toMatchObject({ pdf: true, format: 'epub', code: 'upgrade_required' });
     // The book itself is never fetched.
     expect(mock).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads the book in memory when staging it in R2 fails', async () => {
+    const book = await BOOK();
+    const mock = stub(book);
+    const spy = vi
+      .spyOn(env.SAVED_FILES!, 'createMultipartUpload')
+      .mockRejectedValue(new Error('R2 is down'));
+    try {
+      const { status, body } = await call(extract());
+      expect(status).toBe(200);
+      expect(body).toMatchObject({ contentType: 'epub', title: 'A Room of One’s Own' });
+      // The proxy, the staged read that failed, then the book again in memory.
+      expect(mock).toHaveBeenCalledTimes(3);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  // Two reads of one book at once (two tabs, a sync) each stage their own copy:
+  // one failing and dropping its copy leaves the other's whole.
+  it("keeps each read's staged copy apart", async () => {
+    const book = await BOOK();
+    stub(book);
+    const a = await stageLinkedBook(env.SAVED_FILES!, DID, BOOK_URL, 50 * 1024 * 1024);
+    const b = await stageLinkedBook(env.SAVED_FILES!, DID, BOOK_URL, 50 * 1024 * 1024);
+    await b.discard();
+    expect((await parseEpub(a.file)).title).toBe('A Room of One’s Own');
+    const staged = await readStagedOriginal(env, DID, BOOK_URL);
+    expect(staged!.size).toBe(book.byteLength);
+    await staged!.body.cancel();
+    await staged!.remove();
+    expect((await env.SAVED_FILES!.list({ prefix: `staged/epub/${DID}/` })).objects).toHaveLength(
+      0
+    );
   });
 
   it('reports an unreadable book as a file the extension cannot help with', async () => {

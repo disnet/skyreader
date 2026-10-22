@@ -57,8 +57,12 @@ export function checkedFile(
     }
   };
   const reader = body.getReader();
+  let sourceFailed = false;
   const step = async (controller: ReadableStreamDefaultController<Uint8Array>) => {
-    const { done, value } = await reader.read();
+    const { done, value } = await reader.read().catch((err) => {
+      sourceFailed = true;
+      throw err;
+    });
     if (done) {
       if (size === 0) throw new FileRejected('empty');
       if (!checked) checkHead();
@@ -92,5 +96,6 @@ export function checkedFile(
     },
   });
   const done = async () => ({ size, sha256: hexDigest(await digest.digest) });
-  return { stream, done };
+  /** Whether reading the source is what failed (a site's connection, say). */
+  return { stream, done, sourceFailed: () => sourceFailed };
 }

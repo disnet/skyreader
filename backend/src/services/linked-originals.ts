@@ -23,8 +23,25 @@ const STAGED_PREFIX = 'staged/';
 const STAGED_TTL_MS = 24 * 60 * 60 * 1000;
 
 /** Where a reader's read of the book at `url` is staged. */
+async function stagedPrefix(did: string, url: string): Promise<string> {
+  return `${STAGED_PREFIX}epub/${did}/${await sha256Hex(new TextEncoder().encode(url))}`;
+}
+
+/**
+ * Each read stages under its own key (the reader, the URL, then the read), so
+ * two reads of one book at once never touch each other's copy; the save adopts
+ * the newest.
+ */
 export async function stagedOriginalKey(did: string, url: string): Promise<string> {
-  return `${STAGED_PREFIX}epub/${did}/${await sha256Hex(new TextEncoder().encode(url))}.epub`;
+  return `${await stagedPrefix(did, url)}.${Date.now()}-${crypto.randomUUID()}.epub`;
+}
+
+/** Staging failed on our side (R2), not the site's or the file's. */
+export class StagingError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'StagingError';
+  }
 }
 
 /** A linked book staged in R2, open a range at a time. */
@@ -38,8 +55,8 @@ export interface StagedBook {
  * Stream a linked book from its site into its staging place, checked on the way
  * (services/checked-file.ts), so it's read from R2 a range at a time
  * (services/epub.ts parseEpub) and never held whole in the Worker; the save
- * that follows then keeps it rather than downloading it again. A book an
- * earlier read staged is replaced, so the save keeps what this read saw.
+ * that follows then keeps it rather than downloading it again. Rejects with
+ * StagingError when R2 is the problem, so the read can go on without it.
  */
 export async function stageLinkedBook(
   bucket: R2Bucket,
@@ -63,8 +80,9 @@ export async function stageLinkedBook(
       customMetadata: { did },
     });
   } catch (err) {
+    if (checked.sourceFailed()) throw new EpubError("Couldn't fetch the EPUB from its site.");
     if (!(err instanceof FileRejected)) {
-      throw new EpubError("Couldn't fetch the EPUB from its site.");
+      throw new StagingError(err instanceof Error ? err.message : String(err));
     }
     throw new EpubError(
       err.reason === 'too_large' ? epubTooLargeMessage(maxBytes) : "This file isn't an EPUB."
@@ -96,13 +114,18 @@ export async function readStagedOriginal(
 ): Promise<StagedOriginal | null> {
   const bucket = env.SAVED_FILES;
   if (!bucket) return null;
-  const key = await stagedOriginalKey(did, url);
-  const staged = await bucket.get(key);
+  const listing = await bucket.list({ prefix: await stagedPrefix(did, url) });
+  const newest = listing.objects.reduce<R2Object | null>(
+    (a, o) => (!a || o.uploaded > a.uploaded ? o : a),
+    null
+  );
+  const staged = newest && (await bucket.get(newest.key));
   if (!staged) return null;
   return {
     body: staged.body,
     size: staged.size,
-    remove: () => bucket.delete(key),
+    // Every read's copy goes once the save keeps one.
+    remove: () => bucket.delete(listing.objects.map((o) => o.key)),
   };
 }
 

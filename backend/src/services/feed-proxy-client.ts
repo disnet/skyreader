@@ -10,7 +10,8 @@ import {
 } from './pdf-quota';
 import { EpubError, MAX_LINKED_EPUB_BYTES, fetchEpub, parseEpub } from './epub';
 import { getUserTierLimits } from './user-tier';
-import { stageLinkedBook, type StagedBook } from './linked-originals';
+import { StagingError, stageLinkedBook, type StagedBook } from './linked-originals';
+import { log } from '../utils/logger';
 
 /** Stamp the in-flight request id on an outbound proxy call, when there is one. */
 function setRequestIdHeader(headers: Headers): void {
@@ -945,15 +946,23 @@ export class FeedProxyClient {
     try {
       // With a reader, the book streams into R2 and is read from there a range
       // at a time, and the save that follows keeps it rather than downloading
-      // it again (routes/saved-pdf.ts storeLinkedOriginal). Without one, it's
-      // held whole, under the smaller default cap.
+      // it again (routes/saved-pdf.ts storeLinkedOriginal). Without one (or
+      // when R2 fails), it's held whole, under the smaller default cap.
       let book;
       if (userDid && this.env.SAVED_FILES) {
-        staged = await stageLinkedBook(this.env.SAVED_FILES, userDid, url, maxBytes);
+        staged = await stageLinkedBook(this.env.SAVED_FILES, userDid, url, maxBytes).catch(
+          (err) => {
+            if (!(err instanceof StagingError)) throw err;
+            log.warn('epub_stage_failed', { message: err.message });
+            return null;
+          }
+        );
+      }
+      if (staged) {
         book = await parseEpub(staged.file);
         if (!book.content) await staged.discard();
       } else {
-        book = await parseEpub(await fetchEpub(url, maxBytes));
+        book = await parseEpub(await fetchEpub(url, Math.min(maxBytes, MAX_LINKED_EPUB_BYTES)));
       }
       return {
         title: book.title,

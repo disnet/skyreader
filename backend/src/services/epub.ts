@@ -49,8 +49,6 @@ export const MAX_EPUB_CONTENT_BYTES = 1_000_000;
 const MAX_ENTRY_BYTES = 8 * 1024 * 1024;
 const MAX_TOTAL_INFLATED_BYTES = 64 * 1024 * 1024;
 const MAX_SPINE_ITEMS = 2000;
-// Chapters read ahead of the one being cleaned, for a book read by range.
-const CHAPTERS_AHEAD = 4;
 
 // ---------------------------------------------------------------------------
 // Sniffing
@@ -250,14 +248,15 @@ function openZipBytes(bytes: Uint8Array): OpenZip {
   });
 }
 
-// A local header's name and extra field usually match the central directory's,
-// so one ranged read with this much room fetches an entry's header and data
-// together; a longer extra field costs a second read.
-const LOCAL_HEADER_SLACK = 1024;
+// A book read by range is read a window at a time: chapters sit side by side in
+// the zip, so one read brings in the next several (and a book split into
+// hundreds of small files costs a few reads, not hundreds). Only the current
+// window is held.
+const READ_WINDOW_BYTES = 1024 * 1024;
 
 /**
  * A kept book read a range at a time, so it is never held whole: its tail, its
- * file list, then one read per entry it parses.
+ * file list, then the windows holding the entries it parses.
  */
 async function openZipRanged(file: RangedFile): Promise<OpenZip> {
   const size = await file.size();
@@ -266,19 +265,24 @@ async function openZipRanged(file: RangedFile): Promise<OpenZip> {
   const loc = locateCentralDirectory(await readRange(file, size - tailLength, tailLength));
   if (loc.offset + loc.size > size) throw new EpubError("This EPUB's file list is damaged.");
   const entries = parseCentralDirectory(await readRange(file, loc.offset, loc.size), loc.count);
+
+  let window: { offset: number; bytes: Uint8Array } = { offset: 0, bytes: new Uint8Array(0) };
+  const read = async (offset: number, length: number): Promise<Uint8Array> => {
+    if (offset + length > size) throw new EpubError('This EPUB is damaged.');
+    const at = offset - window.offset;
+    if (at >= 0 && at + length <= window.bytes.length)
+      return window.bytes.subarray(at, at + length);
+    const span = Math.min(size - offset, Math.max(length, READ_WINDOW_BYTES));
+    window = { offset, bytes: await readRange(file, offset, span) };
+    return window.bytes.subarray(0, length);
+  };
   return inflater(entries, async (entry) => {
-    if (entry.localOffset + LOCAL_HEADER_BYTES > size) throw new EpubError('This EPUB is damaged.');
-    const guess = Math.min(
-      size - entry.localOffset,
-      LOCAL_HEADER_BYTES + entry.name.length * 4 + LOCAL_HEADER_SLACK + entry.compressedSize
-    );
-    const head = await readRange(file, entry.localOffset, guess);
-    const start = entryDataOffset(entry, head.subarray(0, LOCAL_HEADER_BYTES));
-    if (start + entry.compressedSize > size) throw new EpubError('This EPUB is damaged.');
-    const end = start - entry.localOffset + entry.compressedSize;
-    return end <= head.length
-      ? head.subarray(start - entry.localOffset, end)
-      : readRange(file, start, entry.compressedSize);
+    // Refused before it's read: the data would be held to inflate it.
+    if (entry.compressedSize > MAX_ENTRY_BYTES || entry.size > MAX_ENTRY_BYTES) {
+      throw new EpubError('This EPUB is too large to read.');
+    }
+    const start = entryDataOffset(entry, await read(entry.localOffset, LOCAL_HEADER_BYTES));
+    return read(start, entry.compressedSize);
   });
 }
 
@@ -1018,23 +1022,8 @@ export async function parseEpub(
   let stoppedEarly = false;
   // Chapters are cleaned one at a time and the walk stops at the first one that
   // would pass the cap, so a long book never pays for the chapters it drops.
-  // A kept book is read a range at a time, so the next few chapters are fetched
-  // while this one is cleaned. (One left unread when the walk stops is dropped.)
-  const ahead = new Map<number, Promise<string | null>>();
-  const chapterAt = (i: number) => {
-    for (let j = i; j < Math.min(i + CHAPTERS_AHEAD, pkg.chapters.length); j++) {
-      if (!ahead.has(j)) {
-        const read = readEntry(pkg.chapters[j]);
-        read.catch(() => {});
-        ahead.set(j, read);
-      }
-    }
-    const read = ahead.get(i)!;
-    ahead.delete(i);
-    return read;
-  };
   for (const [i, path] of pkg.chapters.entries()) {
-    const xhtml = await chapterAt(i);
+    const xhtml = await readEntry(path);
     if (!xhtml) continue;
     const toc = tocByChapter.get(i + 1);
     const tocFound = new Set<string>();

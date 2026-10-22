@@ -13,7 +13,6 @@ import { PdfParseError, parsePdf, pdfExtractorConfigured } from '../services/pdf
 import {
   EpubError,
   epubImageType,
-  looksLikeZip,
   parseEpub,
   readStoredEpubEntry,
   type RangedFile,
@@ -143,9 +142,9 @@ async function deleteUnlessOwned(
 }
 
 /** A kept file, read a range at a time. */
-function rangedFile(store: SavedFileStore, ref: StoredFileRef): RangedFile {
+function rangedFile(store: SavedFileStore, ref: StoredFileRef, knownSize?: number): RangedFile {
   return {
-    size: () => store.size(ref),
+    size: async () => knownSize ?? store.size(ref),
     read: (offset, length) => store.readRange(ref, offset, length),
   };
 }
@@ -387,7 +386,7 @@ async function handleUpload(request: Request, env: Env, session: Session, kind: 
       if (!kept) throw new Error('upload missing from the store just after it was kept');
       parsed = await parsePdfUpload(env, session.did, kept);
     } else {
-      parsed = await parseEpubUpload(rangedFile(store, file), size);
+      parsed = await parseEpubUpload(rangedFile(store, file, size), size);
     }
   } catch (err) {
     await deleteUnlessOwned(env, store, session.did, rkey, file);
@@ -714,7 +713,11 @@ async function adoptStagedOriginal(
   let file: StoredFileRef;
   try {
     file = await store.put(linkedFileMeta(did, save), checked.stream);
-  } catch {
+  } catch (err) {
+    // The save downloads the book itself instead.
+    log.warn('epub_link_original_adopt_failed', {
+      message: err instanceof Error ? err.message : String(err),
+    });
     return null;
   }
   const { size, sha256 } = await checked.done();

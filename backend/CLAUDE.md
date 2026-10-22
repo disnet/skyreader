@@ -177,7 +177,7 @@ own size cap, 50 MB like a PDF's), but are read in this Worker (`src/services/ep
 spine, strip each chapter to reading markup with `HTMLRewriter`, one
 `<section data-epub-chapter="N">` per chapter, capped at 1 MB like a PDF's text), so they spend no
 daily parse allowance. The book is never held whole: `parseEpub` takes a `RangedFile` and reads the
-zip's tail, its central directory, then one ranged read per entry (a few chapters ahead), so an
+zip's tail, its central directory, then 1 MB windows holding the entries it parses, so an
 upload is parsed from where it was kept and a linked book from where it was staged. An upload is
 `POST /api/saved/epub` (`content_type = 'epub'`, original kept in R2 like a PDF's). By link, the proxy's `/extract` recognises an EPUB and answers `epub: true`
 without caching; `FeedProxyClient.extract` then fetches and reads the book itself, and the save keeps
