@@ -85,8 +85,14 @@ describe('selectGroup', () => {
     expect(g?.crawlDelaySeconds).toBe(2);
   });
 
-  it('falls back to the * group', () => {
-    expect(selectGroup(groups, 'otherbot')?.rules).toEqual([{ allow: false, pattern: '/all' }]);
+  it('takes only Crawl-delay from the * group, and only when no named group sets one', () => {
+    expect(selectGroup(groups, 'otherbot')).toEqual({ agents: ['otherbot'], rules: [] });
+    const g = selectGroup(
+      parseRobotsTxt('User-agent: *\nCrawl-delay: 10\n\nUser-agent: Skyreader\nDisallow: /m/'),
+      'skyreader'
+    );
+    expect(g?.rules).toEqual([{ allow: false, pattern: '/m/' }]);
+    expect(g?.crawlDelaySeconds).toBe(10);
   });
 
   it('returns null when nothing applies', () => {
@@ -116,7 +122,7 @@ describe('matchesPattern', () => {
 describe('evaluatePath', () => {
   it('lets the longest matching rule win, allow winning ties', () => {
     const g = selectGroup(
-      parseRobotsTxt(`User-agent: *\nDisallow: /\nAllow: /feed\nDisallow: /feed/private`),
+      parseRobotsTxt(`User-agent: Skyreader\nDisallow: /\nAllow: /feed\nDisallow: /feed/private`),
       'skyreader'
     );
     expect(evaluatePath(g, '/feed.xml')).toEqual({ allowed: true });
@@ -125,7 +131,10 @@ describe('evaluatePath', () => {
       matchedPattern: '/feed/private',
     });
     expect(evaluatePath(g, '/about')).toEqual({ allowed: false, matchedPattern: '/' });
-    const tie = selectGroup(parseRobotsTxt(`User-agent: *\nDisallow: /f\nAllow: /f`), 'skyreader');
+    const tie = selectGroup(
+      parseRobotsTxt(`User-agent: Skyreader\nDisallow: /f\nAllow: /f`),
+      'skyreader'
+    );
     expect(evaluatePath(tie, '/feed')).toEqual({ allowed: true });
   });
   it('allows everything with no group or no matching rule', () => {

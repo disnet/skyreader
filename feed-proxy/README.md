@@ -364,7 +364,7 @@ Manage Account → Configurations → **Bot Submission Form**; verification meth
 User-Agent `Skyreader/1.0 (+https://skyreader.app)`. Approval lists the crawler in
 Cloudflare Radar's bot directory and exempts it from Bot Fight Mode on every
 Cloudflare-fronted site. Being verified requires the etiquette below — losing it is
-what happens if the crawler ignores robots.txt or crawl-delay.
+what happens if the crawler ignores robots.txt rules addressed to it, or crawl-delay.
 
 **Rotation:** mint a new key, set the secret on both apps, redeploy. Cloudflare
 re-reads the directory (it honours the `max-age=86400`), so expect up to a day of
@@ -382,8 +382,8 @@ are written for search crawlers, and every crawled feed is one a reader subscrib
 to, so their `Disallow` is not applied (the convention Google's Feedfetcher and the
 mainstream readers follow). `Crawl-delay` is honoured from whichever group applies
 (the named one, else `*`), per host up to 60s; a fetch whose turn is more than 15s
-away is deferred to the next cycle rather than slept on. Site owners are pointed at
-docs.skyreader.app/crawler/ for how to block us.
+away is deferred to the next cycle rather than slept on. How to block us is documented
+for site owners at docs.skyreader.app/crawler/.
 
 Redirects are re-checked: a feed that 301s into another path — or another host —
 is judged by the target's own robots.txt, and a disallow there is recorded the

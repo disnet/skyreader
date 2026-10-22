@@ -226,6 +226,25 @@ describe('robots.txt on the crawl path', () => {
     expect(row(db, url)?.error_count).toBe(0);
   });
 
+  it('follows a redirect onto a host whose robots.txt disallows only *', async () => {
+    const { db, app } = createTestApp({
+      robots: robotsPerOrigin({
+        'https://a.example': 'User-agent: *\nDisallow:',
+        'https://b.example': 'User-agent: *\nDisallow: /',
+      }),
+    });
+    const url = 'https://a.example/feed';
+    const target = 'https://b.example/feed.xml';
+    const feedCalls: string[] = [];
+    mockRedirectingFeedFetch(url, target, feedCalls);
+
+    const res = await app.request(`/feed?url=${encodeURIComponent(url)}`, { headers: SECRET });
+
+    expect(res.status).toBe(200);
+    expect(feedCalls).toEqual([url, target]);
+    expect(row(db, url)?.error_count).toBe(0);
+  });
+
   it('does not gate the crawl when no policy is configured', async () => {
     const { app } = createTestApp();
     const feedCalls: string[] = [];

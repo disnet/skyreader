@@ -10,8 +10,8 @@
 // text in by hand.
 //
 // Why at all: honest self-identification is half of what makes a bot
-// "verified" to a CDN (see web-bot-auth.ts); obeying robots.txt and
-// crawl-delay is the other half, and the stated grounds for losing that status.
+// "verified" to a CDN (see web-bot-auth.ts); obeying the robots.txt rules
+// addressed to us, and crawl-delay, is the other half.
 //
 // Deviations from RFC 9309, chosen for a feed reader:
 //   - An UNAVAILABLE robots.txt (5xx, timeout, DNS failure) is treated as
@@ -26,8 +26,9 @@
 //     path fetches is a feed a reader subscribed to, so — like Google's
 //     Feedfetcher and the mainstream readers — we don't treat a blanket
 //     Disallow as aimed at it. A site that wants us out says so by name
-//     (`User-agent: Skyreader`). Crawl-delay from the `*` group still applies:
-//     spacing requests is good manners whoever it was written for.
+//     (`User-agent: Skyreader`). Crawl-delay from the `*` group still applies
+//     when the named group sets none: spacing requests is good manners
+//     whoever it was written for.
 import { safeFetch } from './ssrf-guard';
 
 export interface RobotsRule {
@@ -136,30 +137,25 @@ export function parseRobotsTxt(text: string): RobotsGroup[] {
 }
 
 /**
- * The rules that apply to `productToken`: every group naming it, merged (RFC
- * 9309 §2.2.1); else every `*` group, merged; else null (no restrictions).
- * The merged group's `agents` says which: `[token]` or `['*']`.
+ * What robots.txt asks of `productToken` on the crawl: the Allow/Disallow
+ * rules of every group naming it, merged (RFC 9309 §2.2.1), and a Crawl-delay
+ * from those groups, else from the `*` groups. The `*` groups' Allow/Disallow
+ * are not ours (see file comment). Null when nothing applies.
  */
 export function selectGroup(
   groups: RobotsGroup[],
   productToken = ROBOTS_PRODUCT_TOKEN
 ): RobotsGroup | null {
   const token = productToken.toLowerCase();
-  const merge = (matching: RobotsGroup[], agent: string): RobotsGroup | null => {
-    if (matching.length === 0) return null;
-    const merged: RobotsGroup = { agents: [agent], rules: [] };
-    for (const g of matching) {
-      merged.rules.push(...g.rules);
-      if (g.crawlDelaySeconds !== undefined) merged.crawlDelaySeconds = g.crawlDelaySeconds;
-    }
-    return merged;
-  };
+  const lastDelay = (matching: RobotsGroup[]): number | undefined =>
+    matching.reduce<number | undefined>((d, g) => g.crawlDelaySeconds ?? d, undefined);
   const specific = groups.filter((g) => g.agents.includes(token));
-  if (specific.length > 0) return merge(specific, token);
-  return merge(
-    groups.filter((g) => g.agents.includes('*')),
-    '*'
-  );
+  const star = groups.filter((g) => g.agents.includes('*'));
+  if (specific.length === 0 && star.length === 0) return null;
+  const merged: RobotsGroup = { agents: [token], rules: specific.flatMap((g) => g.rules) };
+  const delay = lastDelay(specific) ?? lastDelay(star);
+  if (delay !== undefined) merged.crawlDelaySeconds = delay;
+  return merged;
 }
 
 /**
@@ -290,9 +286,7 @@ export class RobotsPolicy {
       return { allowed: true, crawlDelayMs: 0 };
     }
     const entry = await this.entryFor(parsed.origin);
-    // Only a group naming us can disallow (see file comment).
-    const namesUs = entry.group?.agents.includes(this.productToken) ?? false;
-    const verdict = namesUs ? evaluatePath(entry.group, robotsPathOf(parsed)) : { allowed: true };
+    const verdict = evaluatePath(entry.group, robotsPathOf(parsed));
     const delaySeconds = entry.group?.crawlDelaySeconds ?? 0;
     const crawlDelayMs = Math.min(Math.max(0, delaySeconds) * 1000, MAX_CRAWL_DELAY_MS);
     return { ...verdict, crawlDelayMs };
