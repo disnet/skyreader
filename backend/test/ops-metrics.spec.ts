@@ -2,6 +2,7 @@ import { env } from 'cloudflare:test';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   decideLagAlert,
+  diagnoseStream,
   readSystemStatus,
   writeSystemStatus,
   recordPollerStatus,
@@ -245,6 +246,30 @@ describe('document cache frozen alerting', () => {
   });
 });
 
+describe('diagnoseStream', () => {
+  // The lag alert's one job beyond "it's late" is to say whose fault it is.
+  it('reads a socket that never opened as Jetstream being unreachable', () => {
+    // 2026-10-22: every cycle on prod and staging, while Jetstream had no data.
+    expect(diagnoseStream('poll-timeout', false)).toBe('unreachable');
+    expect(diagnoseStream('socket-error', false)).toBe('unreachable');
+    // The idle check runs before `open`, so a silent connect idles out too.
+    expect(diagnoseStream('idle', false)).toBe('unreachable');
+  });
+
+  it('separates a backlog from a dropped connection once the socket opened', () => {
+    expect(diagnoseStream('poll-timeout', true)).toBe('behind');
+    expect(diagnoseStream('apply-cap', true)).toBe('behind');
+    expect(diagnoseStream('closed', true)).toBe('dropped');
+    expect(diagnoseStream('socket-error', true)).toBe('dropped');
+    expect(diagnoseStream('idle', true)).toBe('caught-up');
+  });
+
+  it('says unknown when no socket ran', () => {
+    // A cycle that threw before connecting, or a poller from before this field.
+    expect(diagnoseStream(undefined, undefined)).toBe('unknown');
+  });
+});
+
 describe('recordPollerStatus', () => {
   it('stores lag, last-cycle counts and alarm state', async () => {
     const value = await recordPollerStatus(envWithPollerStatus(pollerStatusBody(30_000)), 5000);
@@ -275,6 +300,46 @@ describe('recordPollerStatus', () => {
 
     const row = await readSystemStatus<PollerStatusValue>(env as Env, 'poller_status');
     expect(row?.value.lagAlertAt).toBe(now);
+  });
+
+  it('says on the alert whether Jetstream was reachable', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const body = pollerStatusBody(
+      FIREHOSE_LAG_ALERT_MS + 60_000,
+      {
+        processed: 0,
+        errors: 0,
+        capped: false,
+        capStreak: 0,
+        authors: 7,
+        skipped: false,
+        exit: 'closed',
+        opened: true,
+      },
+      FIREHOSE_LAG_ALERT_MS + 60_000
+    );
+    body.lastStats.subscriptions = {
+      processed: 0,
+      errors: 0,
+      exit: 'poll-timeout',
+      opened: false,
+    } as typeof body.lastStats.subscriptions;
+
+    await recordPollerStatus(envWithPollerStatus(body), 1_000_000_000);
+
+    const byEvent = new Map(
+      errors.mock.calls
+        .map(([entry]) => entry as { event?: string; diagnosis?: string; exit?: string })
+        .map((entry) => [entry?.event, entry])
+    );
+    expect(byEvent.get('firehose_lag_high')).toMatchObject({
+      diagnosis: 'unreachable',
+      exit: 'poll-timeout',
+    });
+    expect(byEvent.get('documents_stream_lag_high')).toMatchObject({
+      diagnosis: 'dropped',
+      exit: 'closed',
+    });
   });
 
   it('records the document stream alongside subscriptions', async () => {

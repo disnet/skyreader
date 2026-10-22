@@ -59,10 +59,21 @@ interface DocumentPollStats {
   authors: number;
   /** The `documents_ingest_enabled` kill switch is off. */
   skipped: boolean;
+  /** Why the socket stopped reading; absent when no socket was opened at all. */
+  exit?: PollExit;
+  /** The socket reached `open`. False with a non-idle exit: Jetstream unreachable. */
+  opened?: boolean;
+}
+
+interface SubscriptionPollStats {
+  processed: number;
+  errors: number;
+  exit?: PollExit;
+  opened?: boolean;
 }
 
 interface PollStats {
-  subscriptions: { processed: number; errors: number };
+  subscriptions: SubscriptionPollStats;
   documents: DocumentPollStats;
   duration: number;
   lastPollAt: number;
@@ -163,7 +174,7 @@ type StreamName = 'subscriptions' | 'documents';
  * Why a poll cycle stopped reading. Only `idle` means "Jetstream had nothing left";
  * `apply-cap` means we deliberately stopped early and carried the cursor.
  */
-type PollExit = 'idle' | 'poll-timeout' | 'closed' | 'socket-error' | 'apply-cap';
+export type PollExit = 'idle' | 'poll-timeout' | 'closed' | 'socket-error' | 'apply-cap';
 
 const CURSOR_KEY = {
   subscriptions: 'cursor_subscriptions',
@@ -485,6 +496,12 @@ class JetstreamPollerBase implements DurableObject {
         documentsCapStreak: stats.documents.capStreak,
         documentsAuthors: stats.documents.authors,
         documentsLagMs,
+        // Why each socket stopped. A lag alert is only actionable once you know
+        // whether we were reading a backlog or never got a connection at all.
+        subscriptionsExit: stats.subscriptions.exit ?? null,
+        subscriptionsOpened: stats.subscriptions.opened ?? null,
+        documentsExit: stats.documents.exit ?? null,
+        documentsOpened: stats.documents.opened ?? null,
         durationMs: stats.duration,
       });
     } catch (error) {
@@ -582,10 +599,7 @@ class JetstreamPollerBase implements DurableObject {
   // --- Subscriptions Stream ---
   // Watches globally (all app.skyreader.feed.subscription events) but only
   // processes events for users who have sync enabled in Skyreader
-  private async pollSubscriptionsStream(): Promise<{
-    processed: number;
-    errors: number;
-  }> {
+  private async pollSubscriptionsStream(): Promise<SubscriptionPollStats> {
     // Fetch sync-enabled DIDs upfront to check before inserting
     const syncEnabledDids = await this.getSyncEnabledDidsSet();
 
@@ -652,7 +666,7 @@ class JetstreamPollerBase implements DurableObject {
         // running before the socket connects, so a Jetstream that never answers
         // would otherwise idle out and be recorded as "caught up".
         if (opened && exit === 'idle') await this.markCaughtUp('subscriptions');
-        resolve({ processed, errors });
+        resolve({ processed, errors, exit, opened });
       };
 
       try {
@@ -838,6 +852,8 @@ class JetstreamPollerBase implements DurableObject {
           capStreak,
           authors: dids.length,
           skipped: false,
+          exit,
+          opened,
         });
       };
 
