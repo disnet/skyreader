@@ -387,13 +387,20 @@ Recovery is silent by design — the admin's Firehose Lag tile goes green and
 (`diagnoseStream` in `backend/src/observability/ops-metrics.ts`; the raw exit is in
 `extra.exit`):
 
-- `unreachable`: the socket never opened. Jetstream is down or unreachable from
-  Cloudflare, and nothing in the poller is wrong. Go straight to **Is it Jetstream?**
-  below.
+- `stalled`: the last finished cycle is more than two minutes old, so the poller has
+  stopped cycling. This is the poller, not Jetstream: see `jetstream_alarm_stuck`
+  above, and redeploy if the next cron tick doesn't revive it.
+- `unreachable`: the socket never opened within the ~2s idle window. Usually Jetstream
+  is down or unreachable from Cloudflare. Confirm with **Is it Jetstream?** below
+  before ruling the poller out: a handshake Jetstream rejects (an over-long URL, a
+  429) looks the same from here.
 - `behind`: it read for the whole poll window, or up to the apply cap, so it is
   draining a backlog. Watch the number fall.
 - `dropped`: it opened and then got closed or errored. Usually Jetstream again, but
   check `jetstream_poll` for errors.
+- `caught-up`: the last cycle drained, which marks the stream current, so this
+  shouldn't arrive with a lag alert. If it does, the caught-up write failed; look for
+  `Error recording ... caught-up time` in the logs.
 - `unknown`: no socket ran. The cycle threw before connecting (look for
   `jetstream_poll_failed`), or the poller is on a build from before the field.
 
@@ -421,9 +428,10 @@ node -e '
 const from = Date.parse(process.argv[1]) * 1000, iso = (us) => new Date(us / 1000).toISOString();
 for (const h of ["jetstream1.us-east", "jetstream2.us-east", "jetstream1.us-west", "jetstream2.us-west"]) {
   const ws = new WebSocket(`wss://${h}.bsky.network/subscribe?wantedCollections=app.skyreader.feed.subscription&cursor=${from}`);
-  let prev = 0, gaps = [];
+  let prev = from, gaps = [];
+  ws.onerror = (e) => console.log(h, "error", e.message);
   ws.onmessage = (e) => { const t = JSON.parse(e.data).time_us; if (prev && t - prev > 60e6) gaps.push(iso(prev) + " -> " + iso(t)); prev = t; };
-  setTimeout(() => { ws.close(); console.log(h, "reached", prev && iso(prev), "gaps", gaps); }, 8000);
+  setTimeout(() => { ws.close(); console.log(h, "reached", iso(prev), "gaps", gaps); }, 8000);
 }' 2026-10-22T21:00:00Z
 ```
 

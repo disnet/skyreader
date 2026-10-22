@@ -22,6 +22,7 @@ import {
   type CronLastRunValue,
 } from '../src/observability/ops-metrics';
 import type { Env } from '../src/types';
+import type { PollExit } from '../src/durable-objects/jetstream-poller';
 
 // Phase 2 of the observability plan: the cron stops discarding what it learns.
 
@@ -248,25 +249,35 @@ describe('document cache frozen alerting', () => {
 
 describe('diagnoseStream', () => {
   // The lag alert's one job beyond "it's late" is to say whose fault it is.
+  const NOW = 1_000_000_000;
+  const fresh = NOW - 30_000;
+  const d = (exit: PollExit | undefined, opened: boolean | undefined, lastPollAt = fresh) =>
+    diagnoseStream({ exit, opened }, lastPollAt, NOW);
+
   it('reads a socket that never opened as Jetstream being unreachable', () => {
-    // 2026-10-22: every cycle on prod and staging, while Jetstream had no data.
-    expect(diagnoseStream('poll-timeout', false)).toBe('unreachable');
-    expect(diagnoseStream('socket-error', false)).toBe('unreachable');
-    // The idle check runs before `open`, so a silent connect idles out too.
-    expect(diagnoseStream('idle', false)).toBe('unreachable');
+    // 2026-10-22: every cycle on prod and staging while Jetstream had no data. The
+    // idle check runs from before `open`, so a silent connect idles out unopened.
+    expect(d('idle', false)).toBe('unreachable');
+    expect(d('socket-error', false)).toBe('unreachable');
   });
 
   it('separates a backlog from a dropped connection once the socket opened', () => {
-    expect(diagnoseStream('poll-timeout', true)).toBe('behind');
-    expect(diagnoseStream('apply-cap', true)).toBe('behind');
-    expect(diagnoseStream('closed', true)).toBe('dropped');
-    expect(diagnoseStream('socket-error', true)).toBe('dropped');
-    expect(diagnoseStream('idle', true)).toBe('caught-up');
+    expect(d('poll-timeout', true)).toBe('behind');
+    expect(d('apply-cap', true)).toBe('behind');
+    expect(d('closed', true)).toBe('dropped');
+    expect(d('socket-error', true)).toBe('dropped');
+    expect(d('idle', true)).toBe('caught-up');
+  });
+
+  it('says stalled when the last cycle is too old to speak for now', () => {
+    // A killed alarm leaves the last good cycle's stats behind; reading them as
+    // current would call a dead poller "caught up".
+    expect(d('idle', true, NOW - 10 * 60_000)).toBe('stalled');
   });
 
   it('says unknown when no socket ran', () => {
-    // A cycle that threw before connecting, or a poller from before this field.
-    expect(diagnoseStream(undefined, undefined)).toBe('unknown');
+    expect(diagnoseStream(undefined, fresh, NOW)).toBe('unknown');
+    expect(d(undefined, undefined)).toBe('unknown');
   });
 });
 
@@ -321,9 +332,10 @@ describe('recordPollerStatus', () => {
     body.lastStats.subscriptions = {
       processed: 0,
       errors: 0,
-      exit: 'poll-timeout',
+      exit: 'idle',
       opened: false,
     } as typeof body.lastStats.subscriptions;
+    body.lastStats.lastPollAt = 1_000_000_000 - 30_000;
 
     await recordPollerStatus(envWithPollerStatus(body), 1_000_000_000);
 
@@ -334,7 +346,7 @@ describe('recordPollerStatus', () => {
     );
     expect(byEvent.get('firehose_lag_high')).toMatchObject({
       diagnosis: 'unreachable',
-      exit: 'poll-timeout',
+      exit: 'idle',
     });
     expect(byEvent.get('documents_stream_lag_high')).toMatchObject({
       diagnosis: 'dropped',
