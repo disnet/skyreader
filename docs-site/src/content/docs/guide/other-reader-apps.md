@@ -31,4 +31,4 @@ Publications you follow in the Atmosphere (standard.site blogs like Leaflet) don
 
 ## If starring doesn't work
 
-Starring saves to your Library as you, so it needs you to have signed in to Skyreader on the web at least once. If the app reports an error when you star, open Skyreader in a browser and sign in, then try again.
+Starring saves to your Library as you, so it uses your Skyreader sign-in on the web. That sign-in lapses after a while unused. If the app reports an error when you star, open Skyreader in a browser and sign in again, then try again.

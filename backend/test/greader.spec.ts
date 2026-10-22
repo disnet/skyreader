@@ -206,6 +206,23 @@ describe('sign-in', () => {
     expect((await call('reader/api/0/user-info')).status).toBe(401);
   });
 
+  it('takes the password only from a POST body', async () => {
+    const query = new URLSearchParams({ Email: HANDLE, Passwd: password });
+    const res = await call(`accounts/ClientLogin?${query}`, { auth: null });
+    expect(res.status).toBe(405);
+  });
+
+  it('throttles guessing on API calls by IP', async () => {
+    const statuses: number[] = [];
+    for (let i = 0; i < 12; i++) {
+      statuses.push(
+        (await call('reader/api/0/user-info', { auth: 'aaaa-bbbb-cccc-dddd-eeee' })).status
+      );
+    }
+    expect(statuses.slice(0, 10).every((s) => s === 401)).toBe(true);
+    expect(statuses.at(-1)).toBe(429);
+  });
+
   it('refuses a call without the GoogleLogin header', async () => {
     expect((await call('reader/api/0/subscription/list', { auth: null })).status).toBe(401);
   });
@@ -376,6 +393,35 @@ describe('items and read state', () => {
     expect(body.continuation).toBe(String(seqs[1]));
   });
 
+  it('marks the whole reading list read, including items read before', async () => {
+    await addSubscription(DID, FEED_A);
+    await addSubscription(DID, FEED_B);
+    const [seqA] = await addItems(FEED_A, 1);
+    await addItems(FEED_B, 1);
+    await call('reader/api/0/edit-tag', {
+      form: { i: String(seqA), a: 'user/-/state/com.google/read' },
+    });
+    const before = await env.DB.prepare(
+      'SELECT client_updated_at FROM item_labels_cache WHERE user_did = ? AND item_key = ?'
+    )
+      .bind(DID, `${FEED_A}#0`)
+      .first<{ client_updated_at: number }>();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    const res = await call('reader/api/0/mark-all-as-read', {
+      form: { s: 'user/-/state/com.google/reading-list' },
+    });
+    expect(res.status).toBe(200);
+    expect((await itemIds(UNREAD)).ids).toEqual([]);
+    // The earlier read is restamped: mark-all is newer intent than anything queued.
+    const after = await env.DB.prepare(
+      'SELECT client_updated_at FROM item_labels_cache WHERE user_did = ? AND item_key = ?'
+    )
+      .bind(DID, `${FEED_A}#0`)
+      .first<{ client_updated_at: number }>();
+    expect(after!.client_updated_at).toBeGreaterThan(before!.client_updated_at);
+  });
+
   it('marks a stream read up to the timestamp given', async () => {
     await addSubscription(DID, FEED_A);
     const seqs = await addItems(FEED_A, 3);
@@ -427,14 +473,48 @@ describe('starred', () => {
     expect((await itemIds({ s: 'user/-/state/com.google/starred' })).ids).toEqual([]);
   });
 
-  it('needs a Skyreader session to star', async () => {
-    await env.DB.prepare('DELETE FROM sessions WHERE did = ?').bind(DID).run();
+  it('reports a star that could not be saved, and writes nothing else', async () => {
+    await env.DB.prepare(`UPDATE sessions SET granted_scopes = 'atproto' WHERE did = ?`)
+      .bind(DID)
+      .run();
     await addSubscription(DID, FEED_A);
     const [seq] = await addItems(FEED_A, 1);
     const res = await call('reader/api/0/edit-tag', {
       form: { i: String(seq), a: 'user/-/state/com.google/starred' },
     });
     expect(res.status).toBe(403);
+    const saved = await env.DB.prepare('SELECT 1 FROM saved_articles WHERE user_did = ?')
+      .bind(DID)
+      .first();
+    expect(saved).toBeNull();
+  });
+
+  it('stars a large batch over several retries', async () => {
+    await addSubscription(DID, FEED_A);
+    const seqs = await addItems(FEED_A, 52);
+    const form = { i: seqs.map(String), a: 'user/-/state/com.google/starred' };
+    expect((await call('reader/api/0/edit-tag', { form })).status).toBe(503);
+    expect((await call('reader/api/0/edit-tag', { form })).status).toBe(200);
+    const count = await env.DB.prepare(
+      'SELECT COUNT(*) AS n FROM saved_articles WHERE user_did = ?'
+    )
+      .bind(DID)
+      .first<{ n: number }>();
+    expect(count!.n).toBe(52);
+  });
+
+  it('needs a Skyreader session to star, and then writes nothing', async () => {
+    await env.DB.prepare('DELETE FROM sessions WHERE did = ?').bind(DID).run();
+    await addSubscription(DID, FEED_A);
+    const [seq] = await addItems(FEED_A, 1);
+    const res = await call('reader/api/0/edit-tag', {
+      form: {
+        i: String(seq),
+        a: ['user/-/state/com.google/starred', 'user/-/state/com.google/read'],
+      },
+    });
+    expect(res.status).toBe(403);
+    expect((await itemIds(UNREAD)).ids).toEqual([seq]);
   });
 });
 

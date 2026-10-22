@@ -395,8 +395,10 @@
     if (!syncStore.isOnline) return;
     try {
       appPasswords = await api.getAppPasswords();
+      appPasswordError = null;
     } catch (error) {
       console.error('Failed to load app passwords:', error);
+      appPasswordError = "Couldn't load your app passwords. Reload the page to try again.";
     }
   }
 
@@ -1702,7 +1704,10 @@
         <div class="panel">
           {#if !appPasswords}
             <div class="row">
-              <p class="loading">{syncStore.isOnline ? 'Loading…' : 'Available when online.'}</p>
+              <p class="loading">
+                {#if !syncStore.isOnline}Available when online.{:else if appPasswordError}Not
+                  loaded.{:else}Loading…{/if}
+              </p>
             </div>
           {:else}
             <div class="row stack">

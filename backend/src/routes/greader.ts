@@ -64,6 +64,7 @@ const STARRED = 'user/-/state/com.google/starred';
 // before there's a reader to key it on.
 export const GREADER_RATE_LIMIT_KEY = '/api/greader';
 export const GREADER_LOGIN_RATE_LIMIT_KEY = '/api/greader:login';
+export const GREADER_STAR_RATE_LIMIT_KEY = '/api/greader:star';
 
 const MAX_ID_REFS = 10_000;
 const DEFAULT_ID_REFS = 1000;
@@ -267,14 +268,21 @@ function nameMatches(email: string, owner: AppPasswordOwner): boolean {
   return name === owner.handle.toLowerCase() || name === owner.did.toLowerCase();
 }
 
-async function handleClientLogin(request: Request, env: Env, url: URL): Promise<Response> {
+function loginRateLimit(request: Request, env: Env) {
   const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
-  const rateLimit = await checkRateLimit(env, `ip:${ip}`, GREADER_LOGIN_RATE_LIMIT_KEY);
+  return checkRateLimit(env, `ip:${ip}`, GREADER_LOGIN_RATE_LIMIT_KEY);
+}
+
+async function handleClientLogin(request: Request, env: Env): Promise<Response> {
+  // POST only, the password in the body: a query string would put the
+  // credential, which is also the bearer token, into request logs.
+  if (request.method !== 'POST') return text('Method not allowed\n', 405);
+  const rateLimit = await loginRateLimit(request, env);
   if (!rateLimit.allowed) {
     return text('Error=RateLimited\n', 429, { 'Retry-After': String(rateLimit.retryAfter ?? 60) });
   }
 
-  const params = await readParams(request, url);
+  const params = new URLSearchParams(await request.text());
   const email = params.get('Email') ?? '';
   const password = params.get('Passwd') ?? '';
   const owner = password ? await verifyAppPassword(env, password) : null;
@@ -597,13 +605,16 @@ async function itemBody(
 ): Promise<string> {
   if (item.contentTruncated && item.bodyStored && env.ITEM_BODIES && budget.bytes > 0) {
     const object = await env.ITEM_BODIES.get(await itemBodyKey(row.feed_url, row.guid));
-    if (object && object.customMetadata?.contentHash === row.content_hash) {
-      if (object.size <= budget.bytes) {
-        budget.bytes -= object.size;
-        return object.text();
-      }
-      await object.body.cancel();
+    if (
+      object &&
+      object.customMetadata?.contentHash === row.content_hash &&
+      object.size <= budget.bytes
+    ) {
+      budget.bytes -= object.size;
+      return object.text();
     }
+    // An unread body holds a connection open; let it go.
+    if (object) await object.body.cancel();
   }
   return item.content || item.contentLead || item.summary || '';
 }
@@ -700,66 +711,104 @@ async function writeReadState(env: Env, did: string, seqs: number[], read: boole
   if (statements.length) await env.DB.batch(statements);
 }
 
+// Star changes carried out per edit-tag request. Each is a save or unsave
+// through the save routes, about eight D1 statements, and an invocation gets
+// 1,000 (backend/CLAUDE.md). Past this the request answers 503; the client's
+// retry finds the first ones done (already starred is skipped) and goes on.
+const MAX_STAR_CHANGES = 50;
+
+function wordCount(html: string): number | undefined {
+  const words = html
+    .replace(/<[^>]*>/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean).length;
+  return words || undefined;
+}
+
+function validUrl(url: string | undefined): string {
+  if (!url) return '';
+  try {
+    new URL(url);
+    return url;
+  } catch {
+    return '';
+  }
+}
+
 /**
  * Star or unstar by delegating to the save routes as the reader's stored
- * session, so a star is a save in every way the web app's is. Returns false
- * when there is no session to act as.
+ * session, so a star is a save in every way the web app's is. Returns an
+ * error response when a change didn't land, so the client keeps it queued.
  */
 async function writeStarred(
   env: Env,
   ctx: ExecutionContext,
   request: Request,
-  did: string,
+  sessionId: string,
   rows: StreamRow[],
   starred: boolean
-): Promise<boolean> {
-  if (rows.length === 0) return true;
-  const sessionId = await findSessionIdForDid(env, did);
-  if (!sessionId) return false;
+): Promise<Response | null> {
   const origin = new URL(request.url).origin;
   const headers = { Authorization: `Bearer ${sessionId}`, 'Content-Type': 'application/json' };
   const budget = { bytes: MAX_BODY_BYTES_PER_RESPONSE };
 
-  for (const row of rows) {
-    if (Boolean(row.starred) === starred) continue;
+  for (const row of rows.slice(0, MAX_STAR_CHANGES)) {
     const item = parseItem(row);
     if (!item) continue;
-    const response = starred
-      ? await handleCreateSaved(
-          new Request(`${origin}/api/saved`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-              url: item.url ?? '',
-              rkey: generateTid(),
-              source: 'feed',
-              fromFeed: true,
-              itemGuid: row.guid,
-              title: item.title,
-              author: item.author,
-              description: item.summary,
-              content: (await itemBody(env, row, item, budget)) || undefined,
-              image: item.imageUrl,
-              publishedAt: item.publishedAt,
-            }),
+    let response: Response;
+    if (starred) {
+      const content = (await itemBody(env, row, item, budget)) || undefined;
+      response = await handleCreateSaved(
+        new Request(`${origin}/api/saved`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            // A feed save is keyed by guid, so a link that won't parse is
+            // dropped rather than failing the save.
+            url: validUrl(item.url),
+            rkey: generateTid(),
+            source: 'feed',
+            fromFeed: true,
+            itemGuid: row.guid,
+            title: item.title,
+            author: item.author,
+            description: item.summary,
+            content,
+            wordCount: content ? wordCount(content) : undefined,
+            image: item.imageUrl,
+            publishedAt: item.publishedAt,
           }),
-          env,
-          ctx
-        )
-      : await handleDeleteSavedByGuid(
-          new Request(`${origin}/api/saved/by-guid/${encodeURIComponent(row.guid)}`, {
-            method: 'DELETE',
-            headers,
-          }),
-          env,
-          ctx
-        );
-    // Already saved / already gone is the state that was asked for.
-    if (!response.ok && response.status !== 409 && response.status !== 404) {
-      log.warn('greader_star_failed', { starred, status: response.status, seq: row.seq });
+        }),
+        env,
+        ctx
+      );
+    } else {
+      response = await handleDeleteSavedByGuid(
+        new Request(`${origin}/api/saved/by-guid/${encodeURIComponent(row.guid)}`, {
+          method: 'DELETE',
+          headers,
+        }),
+        env,
+        ctx
+      );
     }
+    // Already saved / already gone is the state that was asked for.
+    if (response.ok || response.status === 409 || response.status === 404) continue;
+    log.warn('greader_star_failed', { starred, status: response.status, seq: row.seq });
+    if (response.status === 401 || response.status === 403) return signInAgain();
+    // A request the save route refuses won't succeed on a retry either; leave
+    // that item and carry on rather than wedge the client's queue on it.
+    if (response.status === 400) continue;
+    return text('Could not save\n', 502);
   }
-  return true;
+  if (rows.length > MAX_STAR_CHANGES) {
+    return text('More to do; retry\n', 503, { 'Retry-After': '1' });
+  }
+  return null;
+}
+
+function signInAgain(): Response {
+  return text('Sign in to Skyreader on the web again to star from other apps\n', 403);
 }
 
 async function handleEditTag(
@@ -780,14 +829,31 @@ async function handleEditTag(
   const star = add.has('starred');
   const unstar = remove.has('starred');
 
+  // Everything that can refuse the stars is checked before any write, so a
+  // refused request changed nothing.
+  let starRows: StreamRow[] = [];
+  let sessionId: string | null = null;
+  if (star !== unstar) {
+    starRows = (await loadItems(env, did, seqs)).filter((row) => Boolean(row.starred) !== star);
+    if (starRows.length > 0) {
+      sessionId = await findSessionIdForDid(env, did);
+      if (!sessionId) return signInAgain();
+      // Saves have their own bucket on the web (/api/saved); this is theirs here.
+      const rateLimit = await checkRateLimit(env, did, GREADER_STAR_RATE_LIMIT_KEY);
+      if (!rateLimit.allowed) {
+        return text('Rate limit exceeded\n', 429, {
+          'Retry-After': String(rateLimit.retryAfter ?? 60),
+        });
+      }
+    }
+  }
+
   if (markRead) await writeReadState(env, did, seqs, true);
   else if (markUnread) await writeReadState(env, did, seqs, false);
 
-  if (star !== unstar) {
-    const rows = await loadItems(env, did, seqs);
-    if (!(await writeStarred(env, ctx, request, did, rows, star))) {
-      return text('Sign in to Skyreader on the web once to star from other apps\n', 403);
-    }
+  if (sessionId) {
+    const failure = await writeStarred(env, ctx, request, sessionId, starRows, star);
+    if (failure) return failure;
   }
   return text('OK');
 }
@@ -810,7 +876,9 @@ async function handleMarkAllAsRead(
   const now = binds.add(Math.floor(nowMs / 1000));
   const before = binds.add(beforeMs);
   // One statement however many feeds: per-row statements would spend the
-  // invocation's query budget on a large library.
+  // invocation's query budget on a large library. Items already read are
+  // rewritten too, as the web app's mark-feed-read does: this is fresh intent
+  // and must beat an older unread still queued on another device.
   await env.DB.prepare(
     `${cte}
      INSERT INTO item_labels_cache
@@ -820,7 +888,7 @@ async function handleMarkAllAsRead(
                         'itemTitle', json_extract(win.item_json, '$.title')),
             lower(hex(randomblob(8))), ${now}, ${now}, ${readAt}
        FROM win
-      WHERE win.first_seen_at <= ${before} AND NOT ${readSql('win')}
+      WHERE win.first_seen_at <= ${before}
      ${READ_UPSERT_CONFLICT}`
   )
     .bind(...binds.values)
@@ -841,11 +909,21 @@ export async function handleGReader(
   subpath: string
 ): Promise<Response> {
   const url = new URL(request.url);
-  if (subpath === 'accounts/ClientLogin') return handleClientLogin(request, env, url);
+  if (subpath === 'accounts/ClientLogin') return handleClientLogin(request, env);
 
   const token = authToken(request);
   const owner = token ? await verifyAppPassword(env, token) : null;
-  if (!owner) return unauthorized();
+  if (!owner) {
+    // A wrong token spends the same per-IP allowance as a wrong sign-in, so
+    // the API calls aren't an unthrottled way around it.
+    const rateLimit = token ? await loginRateLimit(request, env) : null;
+    if (rateLimit && !rateLimit.allowed) {
+      return text('Rate limit exceeded\n', 429, {
+        'Retry-After': String(rateLimit.retryAfter ?? 60),
+      });
+    }
+    return unauthorized();
+  }
   setContextDid(owner.did);
   ctx.waitUntil(touchAppPassword(env, owner.id));
 
