@@ -20,6 +20,9 @@
  *                      createRecord,putRecord,getRecord,listRecords,deleteRecord}
  */
 
+import { CID } from '../../backend/node_modules/multiformats/dist/src/cid.js';
+import { recordCid } from '../../backend/src/services/archive/dag-cbor.ts';
+
 const enc = new TextEncoder();
 
 function b64urlJson(value) {
@@ -197,33 +200,12 @@ async function recordMacHeader(kem, wantMac, uri, cidBytes) {
 }
 
 /**
- * A record as the fake stores it: the value plus a real CIDv1 (dag-cbor codec,
- * sha-256) — over the JSON rather than the DRISL encoding, which no client here
- * recomputes, but well-formed, because the record MAC covers the CID's bytes.
+ * A record as the fake stores it: the value plus its real CID (DAG-CBOR,
+ * sha-256), since a credentialed reader checks the value against the MAC'd CID.
  */
 async function storedRecord(value) {
-  const digest = new Uint8Array(
-    await crypto.subtle.digest('SHA-256', enc.encode(JSON.stringify(value)))
-  );
-  const cidBytes = Uint8Array.from([0x01, 0x71, 0x12, 0x20, ...digest]);
-  return { value, cid: `b${base32(cidBytes)}`, cidBytes };
-}
-
-function base32(bytes) {
-  const alphabet = 'abcdefghijklmnopqrstuvwxyz234567';
-  let bits = 0;
-  let acc = 0;
-  let out = '';
-  for (const byte of bytes) {
-    acc = (acc << 8) | byte;
-    bits += 8;
-    while (bits >= 5) {
-      out += alphabet[(acc >> (bits - 5)) & 31];
-      bits -= 5;
-    }
-  }
-  if (bits > 0) out += alphabet[(acc << (5 - bits)) & 31];
-  return out;
+  const cid = await recordCid(value);
+  return { value, cid, cidBytes: CID.parse(cid).bytes };
 }
 
 /** Compressed point bytes out of a P-256 `did:key`. */

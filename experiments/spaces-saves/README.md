@@ -29,14 +29,15 @@ only at a sandbox.
 
 ## What it checks
 
-14 checks, in three groups. The two that decide the spike:
+15 checks, in three groups. The two that decide the spike:
 
-- **privacy** — the outsider is denied both a direct read and a space credential.
-  If either succeeds, the "private and portable" claim is false and the spike
+- **privacy** — the outsider is denied both a direct read and a space credential,
+  and nobody gets a credential without a delegation token. If any succeeds, the "private and portable" claim is false and the spike
   should stop.
 - **portability** — a client holding nothing but a minted credential and the
   owner's public `#atproto_kem` key (no session, no cookie) reads the saved
-  record back out of the space, and checks the record MAC the host returns.
+  record back out of the space, and checks the record MAC the host returns plus
+  that the value matches the MAC'd CID.
 
 The rest cover create → get → list → delete and the credential round-trip cost.
 

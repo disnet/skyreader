@@ -17,6 +17,8 @@
 
 import type { SpaceCredential } from './credential';
 import type { XrpcCall } from './client';
+import { recordCid, type CborValue } from '../archive/dag-cbor';
+import { spaceRecordUri } from './refs';
 import {
   encapsulate,
   formatWantRecordMacHeader,
@@ -72,9 +74,11 @@ export function sessionCall(client: SessionXrpcClient): XrpcCall {
  * per repo.
  *
  * `authorKemKey` is the audience repo's `#atproto_kem` key (a P-256 `did:key`
- * from its DID doc). With it, `getRecord` negotiates a MAC and rejects a
- * response whose `Atproto-Space-Mac` doesn't check out; without it, the repo
- * host refuses a credentialed `getRecord` (see kem.ts). listRecords needs none.
+ * from its DID doc). `getRecord` needs it: the read negotiates a MAC, and the
+ * response is accepted only if it is the record asked for, its MAC checks out,
+ * and its value encodes to the MAC'd CID — the checks the alpha's own
+ * `verifyRecord` makes. Without the key a credentialed `getRecord` is refused
+ * here rather than trusted. listRecords needs none (and authenticates nothing).
  */
 export function credentialCall(
   host: string,
@@ -86,24 +90,54 @@ export function credentialCall(
     host,
     async (endpoint) => {
       const headers = await credential.authorize(audience);
-      if (!endpoint.startsWith('com.atproto.space.getRecord?') || !opts.authorKemKey) {
-        return { headers };
+      if (!endpoint.startsWith('com.atproto.space.getRecord?')) return { headers };
+      if (!opts.authorKemKey) {
+        throw new SpaceXrpcError(
+          "a credentialed getRecord needs the author's #atproto_kem key",
+          'KemKeyRequired'
+        );
       }
+      const params = new URLSearchParams(endpoint.slice(endpoint.indexOf('?') + 1));
+      const expectedUri = spaceRecordUri(
+        params.get('space') ?? '',
+        params.get('repo') ?? '',
+        params.get('collection') ?? '',
+        params.get('rkey') ?? ''
+      );
       const { keyShare, sharedSecret } = await encapsulate(opts.authorKemKey);
       return {
         headers: { ...headers, [WANT_MAC_HEADER]: formatWantRecordMacHeader(keyShare) },
         verify: async (response, body) => {
-          const { uri, cid } = (body ?? {}) as { uri?: unknown; cid?: unknown };
+          const { uri, cid, value } = (body ?? {}) as {
+            uri?: unknown;
+            cid?: unknown;
+            value?: unknown;
+          };
           const ok =
-            typeof uri === 'string' &&
+            uri === expectedUri &&
             typeof cid === 'string' &&
-            (await verifyRecordMac(sharedSecret, response.headers.get(MAC_HEADER), uri, cid));
+            (await verifyRecordMac(sharedSecret, response.headers.get(MAC_HEADER), uri, cid)) &&
+            (await valueMatchesCid(value, cid));
           if (!ok) throw new SpaceXrpcError('record MAC did not verify', 'BadSpaceMac');
         },
       };
     },
     opts.fetchImpl ?? fetch
   );
+}
+
+/**
+ * Whether a JSON record value encodes (DAG-CBOR) to `cid`. Plain JSON only: a
+ * value carrying `$link` / `$bytes` would need converting first, and fails here
+ * instead — the saved record has neither.
+ */
+async function valueMatchesCid(value: unknown, cid: string): Promise<boolean> {
+  if (typeof value !== 'object' || value === null) return false;
+  try {
+    return (await recordCid(value as CborValue)) === cid;
+  } catch {
+    return false;
+  }
 }
 
 /**
