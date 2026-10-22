@@ -131,6 +131,25 @@ describe('savesStore.editMetadata', () => {
     expect(enqueue).toHaveBeenCalledOnce();
   });
 
+  it('queues a feed save under its guid, where an unsynced create would be', async () => {
+    sync.isOnline = false;
+    savedRows.set(RKEY, { ...original, itemGuid: 'guid-1' });
+    await savesStore.load();
+
+    await savesStore.editMetadata(RKEY, { title: 'Mine' });
+
+    expect(enqueue).toHaveBeenCalledWith('update', 'saved', 'guid-1', expect.anything());
+  });
+
+  it('queues, rather than undoes, an edit of a save the server has yet to see', async () => {
+    api.updateSaved.mockRejectedValue(new ApiError('Not found', 404));
+
+    await savesStore.editMetadata(RKEY, { title: 'Mine' });
+
+    expect(savesStore.getByRkey(RKEY)!.title).toBe('Mine');
+    expect(enqueue).toHaveBeenCalledOnce();
+  });
+
   it('puts a rejected edit back and rethrows', async () => {
     api.updateSaved.mockRejectedValue(new ApiError('Title cannot be empty', 400));
 

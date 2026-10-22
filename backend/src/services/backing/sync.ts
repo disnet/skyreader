@@ -19,6 +19,7 @@ import { removeMember } from './write';
 import { createPDSClient } from '../pds-client';
 import { FeedProxyClient } from '../feed-proxy-client';
 import { fillExtractedContent } from '../saved-content';
+import { isEdited, type EditableColumn } from '../saved-metadata';
 import type { SaveBacking } from '../../routes/settings';
 
 // Open-driven poll cadence: skip a fresh snapshot if we polled within this window.
@@ -345,6 +346,7 @@ interface JoinedRow {
   source: string | null;
   item_guid: string | null;
   updated_at: number | null;
+  edited_fields: string | null;
 }
 
 function rowToView(row: JoinedRow): SavedArticleView {
@@ -357,15 +359,19 @@ function rowToView(row: JoinedRow): SavedArticleView {
     }
   }
   const url = row.url ?? row.m_url ?? '';
+  // The card's metadata fills what the row lacks, except where the reader
+  // cleared a field by hand: their empty is the answer.
+  const fill = <T>(column: EditableColumn, own: T | null, card: T | undefined): T | null =>
+    own ?? (isEdited(row.edited_fields, column) ? null : (card ?? null));
   return {
     rkey: row.rkey,
     // For a backed save there's no app.skyreader.feed.saved export — surface the
     // foreign item at-uri as the record handle instead of a synthesized one.
     uri: row.record_uri ?? row.external_item_uri,
     url,
-    title: row.title ?? meta.title ?? null,
-    author: row.author ?? meta.author ?? null,
-    description: row.description ?? meta.description ?? null,
+    title: fill('title', row.title, meta.title),
+    author: fill('author', row.author, meta.author),
+    description: fill('description', row.description, meta.description),
     content: row.content,
     contentType: row.content_type || 'webpage',
     domain: row.domain ?? meta.domain ?? null,
@@ -399,7 +405,7 @@ export async function listBackedSaved(
     `SELECT m.url AS m_url, m.metadata AS m_metadata, m.external_item_uri,
             s.rkey, s.record_uri, s.url, s.title, s.author, s.description, NULL AS content,
             s.content_type, s.domain, s.image, s.word_count, s.published_at, s.saved_at,
-            s.source, s.item_guid, s.updated_at
+            s.source, s.item_guid, s.updated_at, s.edited_fields
      FROM backed_collection_members m
      LEFT JOIN saved_articles s
        ON s.user_did = m.user_did AND s.url_normalized = m.url_normalized
@@ -412,7 +418,7 @@ export async function listBackedSaved(
     `SELECT NULL AS m_url, NULL AS m_metadata, NULL AS external_item_uri,
             s.rkey, s.record_uri, s.url, s.title, s.author, s.description, NULL AS content,
             s.content_type, s.domain, s.image, s.word_count, s.published_at, s.saved_at,
-            s.source, s.item_guid, s.updated_at
+            s.source, s.item_guid, s.updated_at, s.edited_fields
      FROM saved_articles s
      WHERE s.user_did = ?
        AND (s.url_normalized IS NULL OR NOT EXISTS (

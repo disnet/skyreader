@@ -618,8 +618,8 @@ class SyncQueue {
     payload: SavedPayload
   ): Promise<void> {
     switch (operation) {
-      case 'create':
-        await api.saveFromUrl(payload.url, payload.rkey, {
+      case 'create': {
+        const created = await api.saveFromUrl(payload.url, payload.rkey, {
           fromFeed: payload.fromFeed,
           source: payload.source as 'url' | 'feed' | 'document' | undefined,
           itemGuid: payload.itemGuid,
@@ -633,8 +633,23 @@ class SyncQueue {
           domain: payload.domain,
           doi: payload.doi,
         });
-        if (payload.metadata) await api.updateSaved(payload.rkey, payload.metadata);
+        // The save landed, so this entry is done whatever the edit does: a
+        // failed edit mustn't replay the create, so it waits as an update of
+        // its own (keyed by rkey, apart from this create's entry). The server
+        // may have filed the save under an existing save's rkey.
+        if (payload.metadata) {
+          const rkey = created.rkey || payload.rkey;
+          await api.updateSaved(rkey, payload.metadata).catch(async (err) => {
+            console.warn('Failed to apply queued edit to a new save, requeueing:', err);
+            await this.enqueue('update', 'saved', rkey, {
+              rkey,
+              url: payload.url,
+              metadata: payload.metadata,
+            });
+          });
+        }
         break;
+      }
       case 'update':
         if (payload.metadata) await api.updateSaved(payload.rkey, payload.metadata);
         break;

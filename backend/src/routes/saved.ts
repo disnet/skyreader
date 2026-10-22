@@ -36,7 +36,7 @@ import { storeFor } from '../services/saved-file-store';
 import {
   parseMetadataEdit,
   unlessEdited,
-  withEditedFields,
+  addEditedFields,
   type EditableColumn,
 } from '../services/saved-metadata';
 
@@ -396,7 +396,7 @@ async function handleContentUpdate(
 ): Promise<Response> {
   const publishedAt = body.publishedAt ? new Date(body.publishedAt).getTime() : null;
 
-  await env.DB.prepare(
+  const kept = await env.DB.prepare(
     `UPDATE saved_articles SET
        title = ${unlessEdited('title', 'COALESCE(?, title)')},
        author = ${unlessEdited('author', 'COALESCE(?, author)')},
@@ -413,7 +413,8 @@ async function handleContentUpdate(
          ELSE content_type
        END,
        updated_at = ?
-     WHERE id = ? AND user_did = ?`
+     WHERE id = ? AND user_did = ?
+     RETURNING title, author, description, published_at`
   )
     .bind(
       body.title || null,
@@ -434,7 +435,7 @@ async function handleContentUpdate(
       existing.id,
       session.did
     )
-    .run();
+    .first<KeptMetadata>();
   // A new capture of the same save: kept beside the earlier one, not over it.
   ctx.waitUntil(
     captureSnapshot(env, {
@@ -451,9 +452,25 @@ async function handleContentUpdate(
       rkey: existing.rkey,
       uri: existing.record_uri,
       updated: true,
+      // What the save now carries: a field the reader edited kept theirs.
+      ...keptMetadata(kept),
     }),
     { headers: { 'Content-Type': 'application/json' } }
   );
+}
+
+type KeptMetadata = Pick<SavedRow, 'title' | 'author' | 'description' | 'published_at'>;
+
+// A save's stored metadata in response shape, after a write that may have kept
+// the reader's own edits over the request's values. Nothing when no row came back.
+function keptMetadata(row: KeptMetadata | null) {
+  if (!row) return {};
+  return {
+    title: row.title,
+    author: row.author,
+    description: row.description,
+    publishedAt: row.published_at ? new Date(row.published_at).toISOString() : null,
+  };
 }
 
 // The file type a save's body came from, when it came from one. Only 'pdf' and
@@ -598,7 +615,7 @@ async function handleBackedSave(
   // Upsert enrichment (merge onto any stub a poll left) + membership, and clear any
   // tombstone for this URL (a re-save of something just unsaved). record_uri is NULL:
   // a backed save has no app.skyreader.feed.saved export.
-  await env.DB.batch([
+  const batchResults = await env.DB.batch([
     // The upsert moves an existing row to this save's rkey; its snapshots (and
     // their pictures) move with it.
     env.DB.prepare(
@@ -637,7 +654,8 @@ async function handleBackedSave(
          -- A body landing on an existing row is an in-place edit the client's
          -- cached copy doesn't have (excluded.saved_at is this request's now).
          updated_at = CASE WHEN excluded.content IS NOT NULL THEN excluded.saved_at ELSE updated_at END,
-         saved_at = excluded.saved_at`
+         saved_at = excluded.saved_at
+       RETURNING title, author, description, published_at`
     ).bind(
       session.did,
       body.rkey,
@@ -683,6 +701,8 @@ async function handleBackedSave(
        WHERE user_did = ? AND external_collection = ? AND url_normalized = ?`
     ).bind(session.did, backing.collectionUri, urlNormalized),
   ]);
+  // A re-save onto a row the reader edited keeps their fields; answer with those.
+  const kept = (batchResults[2]?.results?.[0] as KeptMetadata | undefined) ?? null;
   // The upsert above sets the row's rkey to this save's, so the snapshot keys on it.
   ctx.waitUntil(
     captureSnapshot(env, {
@@ -711,6 +731,7 @@ async function handleBackedSave(
       savedAt,
       source,
       itemGuid: body.itemGuid || null,
+      ...keptMetadata(kept),
     }),
     { headers: { 'Content-Type': 'application/json' } }
   );
@@ -1293,18 +1314,6 @@ export async function handleUpdateSaved(request: Request, env: Env): Promise<Res
   }
 
   try {
-    const row = await env.DB.prepare(
-      'SELECT id, edited_fields FROM saved_articles WHERE user_did = ? AND rkey = ?'
-    )
-      .bind(session.did, rkey)
-      .first<{ id: number; edited_fields: string | null }>();
-    if (!row) {
-      return new Response(JSON.stringify({ error: 'Not found' }), {
-        status: 404,
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
-
     // A reader's edit is a change other devices (and the search index) have to
     // pick up, so it stamps updated_at; the word-count backfill alone doesn't.
     let updatedAt: number | null = null;
@@ -1314,13 +1323,21 @@ export async function handleUpdateSaved(request: Request, env: Env): Promise<Res
         binds.push(parsedEdit.edit[column]);
       }
       updatedAt = Date.now();
-      sets.push('edited_fields = ?', 'updated_at = ?');
-      binds.push(withEditedFields(row.edited_fields, edited), updatedAt);
+      sets.push(`edited_fields = ${addEditedFields(edited)}`, 'updated_at = ?');
+      binds.push(updatedAt);
     }
 
-    await env.DB.prepare(`UPDATE saved_articles SET ${sets.join(', ')} WHERE id = ?`)
-      .bind(...binds, row.id)
+    const result = await env.DB.prepare(
+      `UPDATE saved_articles SET ${sets.join(', ')} WHERE user_did = ? AND rkey = ?`
+    )
+      .bind(...binds, session.did, rkey)
       .run();
+    if (!result.meta.changes) {
+      return new Response(JSON.stringify({ error: 'Not found' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
 
     return new Response(
       JSON.stringify({

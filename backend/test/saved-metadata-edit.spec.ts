@@ -125,6 +125,20 @@ describe('PATCH /api/saved/:rkey — editing metadata', () => {
     expect((await getRow()).title).toBe('Extracted Title');
   });
 
+  it('cuts an over-long summary rather than refusing the edit', async () => {
+    await saveIt();
+    expect((await patch({ description: 'y'.repeat(2_500) })).status).toBe(200);
+    expect((await getRow()).description).toHaveLength(2_000);
+  });
+
+  it('keeps both markers when two edits land at once', async () => {
+    await saveIt();
+    await Promise.all([patch({ title: 'A' }), patch({ author: 'B' })]);
+    const fields = (await getRow()).edited_fields;
+    expect(fields).toContain(' title ');
+    expect(fields).toContain(' author ');
+  });
+
   it("404s on a save that isn't the reader's", async () => {
     expect((await patch({ title: 'Nope' }, 'zzzzzzzzzzzzz')).status).toBe(404);
   });
@@ -165,6 +179,8 @@ describe('PATCH /api/saved/:rkey — editing metadata', () => {
       })
     );
     expect(res.status).toBe(200);
+    // The answer says what the save now carries, so the client shows the edit.
+    expect(res.body).toMatchObject({ title: 'Mine', author: 'Me', description: 'Fresh excerpt' });
 
     const row = await getRow();
     expect(row.content).toBe('<p>The whole article.</p>');

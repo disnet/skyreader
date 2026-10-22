@@ -6,6 +6,7 @@
   // later re-extraction of the same save.
   import Modal from '$lib/components/common/Modal.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
+  import { keyboardStore } from '$lib/stores/keyboard.svelte';
   import { decodeEntities } from '$lib/utils/entities';
   import type { SavedItem, SavedMetadataEdit } from '$lib/types';
 
@@ -19,15 +20,25 @@
   let saving = $state(false);
   let error = $state<string | null>(null);
 
-  // The date input speaks local calendar days, so show the day the reader would
-  // see in the list.
+  // A date the reader picks is stored at midday UTC (see changes()), so it's
+  // read back by its UTC day: that round-trips in every timezone.
   function toDateInput(iso: string | null): string {
     if (!iso) return '';
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return '';
-    const pad = (n: number) => String(n).padStart(2, '0');
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    return d.toISOString().slice(0, 10);
   }
+
+  // The page's shortcuts stand down while this is up, so a key pressed before a
+  // field has focus (s, e) can't unsave or archive the save being edited.
+  let isOpen = $derived(save !== null);
+  let titleInput = $state<HTMLInputElement | null>(null);
+  $effect(() => {
+    if (!isOpen) return;
+    const release = keyboardStore.suspend();
+    queueMicrotask(() => titleInput?.focus());
+    return release;
+  });
 
   // Fill the form once per save opened, not on every change to the row (which
   // would wipe what's being typed when a sync lands).
@@ -41,9 +52,9 @@
     filledFor = save.rkey;
     initial = {
       title: decodeEntities(save.title) || '',
-      author: save.author ?? '',
+      author: decodeEntities(save.author),
       published: toDateInput(save.publishedAt),
-      description: save.description ?? '',
+      description: decodeEntities(save.description),
     };
     ({ title, author, published, description } = initial);
     error = null;
@@ -97,7 +108,7 @@
     <form class="form" onsubmit={(e) => submit(e, target)}>
       <label class="field">
         <span class="label">Title</span>
-        <input type="text" bind:value={title} required maxlength="500" />
+        <input type="text" bind:this={titleInput} bind:value={title} required maxlength="500" />
       </label>
 
       <label class="field">
@@ -113,7 +124,7 @@
 
       <label class="field">
         <span class="label">Summary</span>
-        <textarea rows="3" bind:value={description} maxlength="2000"></textarea>
+        <textarea rows="3" bind:value={description}></textarea>
       </label>
 
       {#if error}
@@ -169,6 +180,14 @@
 
   textarea {
     resize: vertical;
+  }
+
+  /* iOS Safari zooms the viewport when a focused input is smaller than 16px. */
+  @media (hover: none) and (pointer: coarse) {
+    input,
+    textarea {
+      font-size: 1rem;
+    }
   }
 
   input:focus,

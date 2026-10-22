@@ -23,11 +23,21 @@ export function unlessEdited(column: EditableColumn, incoming: string): string {
   return `CASE WHEN instr(COALESCE(edited_fields, ''), ' ${column} ') > 0 THEN ${column} ELSE ${incoming} END`;
 }
 
-/** `edited_fields` with `columns` added. */
-export function withEditedFields(current: string | null, columns: EditableColumn[]): string {
-  const set = new Set((current ?? '').split(' ').filter(Boolean));
-  for (const c of columns) set.add(c);
-  return ` ${[...set].join(' ')} `;
+/** Whether the reader has edited `column` by hand, per a row's `edited_fields`. */
+export function isEdited(editedFields: string | null, column: EditableColumn): boolean {
+  return (editedFields ?? '').includes(` ${column} `);
+}
+
+/**
+ * SQL for `edited_fields` with `columns` added, computed from the row's own
+ * value inside the UPDATE so two edits landing at once can't drop each other's.
+ */
+export function addEditedFields(columns: EditableColumn[]): string {
+  let expr = `COALESCE(edited_fields, ' ')`;
+  for (const c of columns) {
+    expr = `CASE WHEN instr(${expr}, ' ${c} ') > 0 THEN ${expr} ELSE ${expr} || '${c} ' END`;
+  }
+  return expr;
 }
 
 export interface MetadataEdit {
@@ -62,8 +72,13 @@ export function parseMetadataEdit(
     if (!(key in body)) continue;
     const value = body[key];
     if (value !== null && typeof value !== 'string') return { error: `Invalid ${key}` };
-    const text = value?.trim() ?? '';
-    if (text.length > max) return { error: `${key[0].toUpperCase()}${key.slice(1)} is too long` };
+    let text = value?.trim() ?? '';
+    if (text.length > max) {
+      // An extracted summary can run past the cap; a light fix to one shouldn't
+      // be refused, so it's cut instead. An author that long isn't one.
+      if (key !== 'description') return { error: 'Author is too long' };
+      text = text.slice(0, max).trimEnd();
+    }
     edit[key] = text || null;
   }
 

@@ -81,3 +81,11 @@ test('the channel editor is at least 16px, rules included', async ({ authedPage:
   await expect(page.locator('#recent-days')).toBeVisible();
   await expectNoZoomingFields(page, 'the channel editor');
 });
+
+test("a save's details editor is at least 16px", async ({ authedPage: page, testUser }) => {
+  await openArticle(page, testUser);
+  await page.getByRole('button', { name: 'Style and actions' }).tap();
+  await page.getByRole('button', { name: 'Edit details' }).tap();
+  await expect(page.getByRole('dialog').locator('textarea')).toBeVisible();
+  await expectNoZoomingFields(page, 'the details editor');
+});

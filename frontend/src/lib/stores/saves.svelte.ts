@@ -526,15 +526,18 @@ function createSavesStore() {
         rkey: noteSave?.rkey ?? rkey,
         uri: result.uri,
         url: saveUrl,
-        title: extracted.title ?? noteSave?.title ?? null,
-        author: extracted.author,
-        description: extracted.description,
+        // The server answers with what it stored, which keeps a field the
+        // reader edited by hand over this extraction's.
+        title:
+          (result.title !== undefined ? result.title : extracted.title) ?? noteSave?.title ?? null,
+        author: result.author !== undefined ? result.author : extracted.author,
+        description: result.description !== undefined ? result.description : extracted.description,
         content: extracted.content,
         contentType: extracted.contentType ?? 'webpage',
         domain: extracted.domain,
         image: extracted.image,
         wordCount,
-        publishedAt: extracted.published,
+        publishedAt: result.publishedAt !== undefined ? result.publishedAt : extracted.published,
         // An upgrade keeps its place in the list: it was saved back then.
         savedAt: noteSave?.savedAt ?? result.savedAt,
         source: 'url',
@@ -1010,8 +1013,10 @@ function createSavesStore() {
     };
     await apply(changes);
 
+    // Under the key a still-unsynced create of this save was queued with (its
+    // guid, for a feed or document save), so the edit rides on that create.
     const queue = () =>
-      syncQueue.enqueue('update', 'saved', rkey, {
+      syncQueue.enqueue('update', 'saved', before.itemGuid || rkey, {
         rkey,
         url: before.url,
         metadata: edit,
@@ -1027,7 +1032,9 @@ function createSavesStore() {
       // updates pull doesn't re-fetch the body over it.
       if (updatedAt) await apply({ updatedAt });
     } catch (err) {
-      if (err instanceof ApiError && err.status >= 400 && err.status < 500) {
+      // Only a 400 is the server refusing the edit itself. A 404 is a save
+      // whose create hasn't synced yet, a 401 an expired session: both wait.
+      if (err instanceof ApiError && err.status === 400) {
         const restore: Partial<SavedItem> = {};
         for (const key of Object.keys(edit) as (keyof SavedMetadataEdit)[]) {
           restore[key] = before[key] as never;

@@ -10,6 +10,8 @@ let nextId = 1;
 function collection(match: (entry: SyncQueueEntry) => boolean) {
   return {
     toArray: async () => rows.filter(match),
+    sortBy: async (field: keyof SyncQueueEntry) =>
+      rows.filter(match).sort((a, b) => Number(a[field]) - Number(b[field])),
     first: async () => rows.find(match),
     count: async () => rows.filter(match).length,
   };
@@ -44,7 +46,8 @@ vi.mock('./db', () => ({
   },
 }));
 
-vi.mock('./api', () => ({ api: {} }));
+const api = { saveFromUrl: vi.fn(), updateSaved: vi.fn() };
+vi.mock('./api', () => ({ api }));
 
 const { syncQueue } = await import('./sync-queue');
 
@@ -94,5 +97,22 @@ describe('sync queue: saved metadata edits', () => {
       content: '<p>Body</p>',
       metadata: { title: 'Mine' },
     });
+  });
+
+  it('keeps an edit whose PATCH fails after its create landed, as an update', async () => {
+    api.saveFromUrl.mockResolvedValue({ rkey: 'bbbbbbbbbbbbb' });
+    api.updateSaved.mockRejectedValue(new TypeError('Failed to fetch'));
+    await syncQueue.enqueue('create', 'saved', 'guid-1', {
+      rkey: RKEY,
+      url: 'https://example.com/a',
+      metadata: { title: 'Mine' },
+    });
+
+    await syncQueue.processQueue();
+
+    expect(api.updateSaved).toHaveBeenCalledWith('bbbbbbbbbbbbb', { title: 'Mine' });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ operation: 'update', key: 'bbbbbbbbbbbbb' });
+    expect(payloadOf(rows[0]).metadata).toEqual({ title: 'Mine' });
   });
 });

@@ -297,9 +297,17 @@
   // A save's metadata as it stands now: the host may hold the row it opened
   // with, from before the reader edited its details. The body stays the
   // host's (the store's in-memory rows carry none).
-  let liveSave = $derived(
-    readerItem.type === 'saved' ? savesStore.getByRkey(readerItem.item.rkey) : undefined
-  );
+  // By rkey first (an upload has no guid or url to find it by), then the way
+  // the Shelf actions find it, which follows a re-save under a new rkey.
+  let liveSave = $derived.by(() => {
+    if (readerItem.type !== 'saved') return undefined;
+    const save = readerItem.item;
+    return (
+      savesStore.getByRkey(save.rkey) ??
+      (save.itemGuid ? savesStore.find(save.itemGuid) : undefined) ??
+      (save.url ? savesStore.find(save.url) : undefined)
+    );
+  });
   let shownItem = $derived.by((): FeedDisplayItem => {
     if (readerItem.type !== 'saved' || !liveSave) return readerItem;
     const { title, author, description, publishedAt } = liveSave;
@@ -1781,6 +1789,18 @@
                 >
                   <Icon name="link" size={18} />
                   <span>Connect on Semble</span>
+                </button>
+              {/if}
+              {#if liveSave}
+                <button
+                  class="sheet-action-btn"
+                  onclick={() => {
+                    savesStore.openEditor(liveSave!.rkey);
+                    styleSheetOpen = false;
+                  }}
+                >
+                  <Icon name="edit" size={18} />
+                  <span>Edit details</span>
                 </button>
               {/if}
               {#if itemUrl}
