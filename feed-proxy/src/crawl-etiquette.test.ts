@@ -81,7 +81,7 @@ describe('robots.txt on the crawl path', () => {
   it('records a disallowed feed as blocked and never fetches it', async () => {
     const robotsCalls: string[] = [];
     const { db, app } = createTestApp({
-      robots: robotsWith('User-agent: *\nDisallow: /private/', robotsCalls),
+      robots: robotsWith('User-agent: Skyreader\nDisallow: /private/', robotsCalls),
     });
     const feedCalls: string[] = [];
     mockFeedFetch(feedCalls);
@@ -111,7 +111,7 @@ describe('robots.txt on the crawl path', () => {
   it('fetches an allowed feed normally, checking robots.txt once per origin', async () => {
     const robotsCalls: string[] = [];
     const { db, app } = createTestApp({
-      robots: robotsWith('User-agent: *\nDisallow: /private/', robotsCalls),
+      robots: robotsWith('User-agent: Skyreader\nDisallow: /private/', robotsCalls),
     });
     const feedCalls: string[] = [];
     mockFeedFetch(feedCalls);
@@ -127,6 +127,20 @@ describe('robots.txt on the crawl path', () => {
     expect(feedCalls).toEqual([a, b]);
     expect(robotsCalls).toEqual(['https://example.com/robots.txt']);
     expect(row(db, a)?.error_count).toBe(0);
+  });
+
+  // `User-agent: *` rules are written for search crawlers; a subscribed feed is
+  // a reader's request (the Feedfetcher convention). Only a group naming us blocks.
+  it('fetches a feed that only the * group disallows', async () => {
+    const { db, app } = createTestApp({ robots: robotsWith('User-agent: *\nDisallow: /') });
+    const feedCalls: string[] = [];
+    mockFeedFetch(feedCalls);
+    const url = 'https://example.com/feed/';
+    expect(
+      (await app.request(`/feed?url=${encodeURIComponent(url)}`, { headers: SECRET })).status
+    ).toBe(200);
+    expect(feedCalls).toEqual([url]);
+    expect(row(db, url)?.error_count).toBe(0);
   });
 
   it('treats a missing robots.txt as no restrictions', async () => {
@@ -166,7 +180,7 @@ describe('robots.txt on the crawl path', () => {
       robots: robotsPerOrigin(
         {
           'https://a.example': 'User-agent: *\nDisallow:',
-          'https://b.example': 'User-agent: *\nDisallow: /private/',
+          'https://b.example': 'User-agent: Skyreader\nDisallow: /private/',
         },
         robotsCalls
       ),
@@ -197,7 +211,7 @@ describe('robots.txt on the crawl path', () => {
     const { db, app } = createTestApp({
       robots: robotsPerOrigin({
         'https://a.example': 'User-agent: *\nDisallow:',
-        'https://b.example': 'User-agent: *\nDisallow: /private/',
+        'https://b.example': 'User-agent: Skyreader\nDisallow: /private/',
       }),
     });
     const url = 'https://a.example/feed';

@@ -46,6 +46,7 @@ export default defineConfig({
           items: [{ slug: 'your-data' }, { slug: 'supporter' }],
         },
         { label: 'FAQ', slug: 'faq' },
+        { label: 'For site owners', slug: 'crawler' },
       ],
       pagination: false,
       credits: false,
