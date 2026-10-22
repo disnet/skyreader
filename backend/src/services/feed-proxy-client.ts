@@ -72,6 +72,9 @@ export class FeedProxyError extends Error {
   // Set with `pdf` when the file was an EPUB rather than a PDF, so the reader is
   // told which. `pdf` itself stays the "a file the extension can't help with" flag.
   format?: 'epub';
+  // True when our own timeout gave up on the proxy: nothing was learned about
+  // the target.
+  timedOut?: boolean;
   /**
    * HTTP status of the proxy response, when the failure came with one. Kept as a
    * field rather than only interpolated into the message so a log line can be
@@ -480,9 +483,11 @@ export class FeedProxyClient {
       });
     } catch (err) {
       if (err instanceof DOMException && err.name === 'TimeoutError') {
-        throw new FeedProxyError(
+        const error = new FeedProxyError(
           `The feed service didn't respond in time (after ${Math.round(timeoutMs / 1000)}s). It may be under load — try again shortly.`
         );
+        error.timedOut = true;
+        throw error;
       }
       throw err;
     }

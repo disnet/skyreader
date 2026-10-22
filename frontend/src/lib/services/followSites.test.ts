@@ -27,6 +27,14 @@ describe('siteCandidates', () => {
     ]);
     expect(parents).toEqual(new Set(['community.social']));
     expect(sites({ handle: 'd.community.social' }, parents)).toEqual([]);
+    // People with their own domains under a country suffix aren't a provider.
+    const uk = sharedHandleParents([
+      { handle: 'alice.co.uk' },
+      { handle: 'bob.co.uk' },
+      { handle: 'carol.co.uk' },
+    ]);
+    expect(uk.size).toBe(0);
+    expect(sites({ handle: 'dave.co.uk' }, uk)).toEqual(['handle:dave.co.uk']);
     // One account's own subdomain is still theirs.
     expect(sites({ handle: 'blog.someone.com' }, parents)).toEqual(['handle:blog.someone.com']);
   });
@@ -115,6 +123,35 @@ describe('findFollowFeeds', () => {
     const discover = vi.fn(async () => new Map<string, string[]>());
     await findFollowFeeds([writer], [publication], new Set(), discover);
     expect(discover).toHaveBeenCalledWith(['writer.substack.com']);
+  });
+
+  it('keeps the earlier feed for a site the lookup could not answer', async () => {
+    const before = await findFollowFeeds(
+      [writer],
+      [],
+      new Set(),
+      async () => new Map([['writer.example', ['https://writer.example/feed.xml']]])
+    );
+    // This time the handle's site comes back unknown (null) and the bio's isn't
+    // answered at all: the first is kept, the second was never found.
+    const after = await findFollowFeeds(
+      [writer],
+      [],
+      new Set(),
+      async () => new Map([['writer.example', null]]),
+      before
+    );
+    expect(after.map((f) => f.publicationUri)).toEqual(['https://writer.example/feed.xml']);
+
+    // A real "no feed" answer does drop it.
+    const gone = await findFollowFeeds(
+      [writer],
+      [],
+      new Set(),
+      async () => new Map([['writer.example', []]]),
+      before
+    );
+    expect(gone).toEqual([]);
   });
 
   it("doesn't call the backend when no follow has a site", async () => {

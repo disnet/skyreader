@@ -12,15 +12,16 @@ import { mapLimited } from './item-bodies';
  *
  * Body: `{ sites: string[] }` (at most MAX_SITES). Answers
  * `{ results: [{ site, feeds }] }` in the same order, where `site` echoes the
- * input and `feeds` lists the feed URLs found there (empty when none, or when the
- * site wasn't a usable public web address).
+ * input and `feeds` lists the feed URLs found there: empty when none (or the site
+ * isn't a usable public web address), null when the lookup failed and says
+ * nothing either way, so a client keeps whatever it found before.
  *
  * Each site's answer is cached in D1 for every reader (`site_feed_discovery`),
  * so a writer followed by many readers is discovered once. Only sites missing
  * from the cache, or gone stale, reach the feed proxy.
  */
 
-export const MAX_SITES = 40;
+export const MAX_SITES = 30;
 // Proxy discovers in flight per call: each is a site fetch plus a few probes.
 const DISCOVER_CONCURRENCY = 10;
 // Discover's first paint waits on a call, so one slow site mustn't hold it for
@@ -30,13 +31,19 @@ const DISCOVER_TIMEOUT_MS = 8_000;
 // A site that has a feed rarely loses it; one without a feed rarely grows one.
 const FOUND_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 const NONE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-// An edge error from in front of the proxy is usually a dead site (the proxy's
-// own answer doesn't survive Fly's edge on a 5xx), but could be the proxy, so
-// it's remembered only briefly.
-const EDGE_ERROR_TTL_MS = 24 * 60 * 60 * 1000;
+// A failed discover is usually a dead site (a provider subdomain with no web
+// server), but the same shapes come back when the proxy itself is down or
+// misconfigured: Fly's edge drops the proxy's own 5xx body, and a JSON error
+// carries no status. So it's remembered only for a few hours, which spares the
+// proxy repeat lookups without hiding a real blog for long after an outage.
+const ERROR_TTL_MS = 6 * 60 * 60 * 1000;
 // Feeds kept per site. The first is the one offered; a couple more cover a site
 // whose first advertised feed is a comments feed we drop.
 const MAX_FEEDS_PER_SITE = 3;
+
+// Hosts where a blog lives at a path (medium.com/@someone, write.as/someone).
+// Mirrors frontend/src/lib/services/followSites.ts.
+const PATH_PLATFORMS = ['medium.com', 'write.as'];
 
 /** A site's cache key and the URL to discover it at, or null when it isn't a
  *  public web address worth asking the proxy about. */
@@ -56,7 +63,9 @@ export function normalizeSite(input: string): { key: string; url: string } | nul
   // A dotted name with an alphabetic TLD: no IP literals, no localhost, no
   // single-label intranet names.
   if (!/^(?:[a-z0-9-]+\.)+[a-z][a-z0-9-]*[a-z0-9]$/.test(host)) return null;
-  const path = parsed.pathname.replace(/\/+$/, '');
+  // A site is its host, except where the path is the blog. Keeping arbitrary
+  // paths would let one caller bypass the cache with endless variants of a host.
+  const path = PATH_PLATFORMS.includes(host) ? parsed.pathname.replace(/\/+$/, '') : '';
   return { key: `${host}${path}`, url: `https://${host}${path || '/'}` };
 }
 
@@ -69,9 +78,10 @@ interface CacheRow {
   feeds_json: string;
 }
 
-// `ttl` null: a failure that says nothing about the site, so it isn't cached.
+// `ttl` null: we learned nothing about the site (our timeout, a network
+// error, load shedding), so nothing is cached and the answer is "unknown".
 interface Outcome {
-  feeds: string[];
+  feeds: string[] | null;
   ttl: number | null;
 }
 
@@ -81,20 +91,16 @@ async function discover(client: FeedProxyClient, url: string): Promise<Outcome> 
     const kept = feeds.filter((f) => !isCommentsFeed(f)).slice(0, MAX_FEEDS_PER_SITE);
     return { feeds: kept, ttl: kept.length > 0 ? FOUND_TTL_MS : NONE_TTL_MS };
   } catch (error) {
-    if (error instanceof FeedProxyError) {
-      // The proxy's own verdict on the site (blocked, unreachable, not HTML).
-      if (
-        error.status === undefined &&
-        error.message &&
-        !/didn't respond in time/.test(error.message)
-      ) {
-        return { feeds: [], ttl: NONE_TTL_MS };
+    if (error instanceof FeedProxyError && !error.timedOut) {
+      // The site refusing our fetcher is a real answer about the site.
+      if (error.blocked) return { feeds: [], ttl: NONE_TTL_MS };
+      if (error.status === undefined || error.status === 502) {
+        log.info('site_feed_discover_error', { url, ...serializeError(error) });
+        return { feeds: [], ttl: ERROR_TTL_MS };
       }
-      if (error.status === 502) return { feeds: [], ttl: EDGE_ERROR_TTL_MS };
     }
-    // Timeouts, load shedding, network errors: say nothing now, ask again later.
     log.warn('site_feed_discover_failed', { url, ...serializeError(error) });
-    return { feeds: [], ttl: null };
+    return { feeds: null, ttl: null };
   }
 }
 
@@ -115,7 +121,7 @@ export async function handleDiscoverSites(request: Request, env: Env): Promise<R
 
   const normalized = (sites as string[]).map(normalizeSite);
   const keys = [...new Set(normalized.filter((n) => n !== null).map((n) => n!.key))];
-  const answers = new Map<string, string[]>();
+  const answers = new Map<string, string[] | null>();
 
   if (keys.length > 0) {
     const now = Date.now();
@@ -167,7 +173,7 @@ export async function handleDiscoverSites(request: Request, env: Env): Promise<R
   return jsonResponse({
     results: (sites as string[]).map((site, i) => {
       const n = normalized[i];
-      return { site, feeds: n ? (answers.get(n.key) ?? []) : [] };
+      return { site, feeds: n ? (answers.get(n.key) ?? null) : [] };
     }),
   });
 }

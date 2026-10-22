@@ -1456,6 +1456,17 @@ async function runScheduled(
         reportError(error, { tags: { source: 'cron', phase: 'session-cleanup' } });
       }
 
+      // Expired site feed discoveries (routes/site-feeds.ts): a later scan
+      // rediscovers any site still followed, so expired rows are only weight.
+      try {
+        await env.DB.prepare('DELETE FROM site_feed_discovery WHERE expires_at < ?')
+          .bind(now)
+          .run();
+      } catch (error) {
+        log.error('cron_phase_failed', { phase: 'site-feed-cleanup', ...serializeError(error) });
+        reportError(error, { tags: { source: 'cron', phase: 'site-feed-cleanup' } });
+      }
+
       // Purge old label tombstones (soft-deleted archived/tagged AND read
       // rows — un-read is now a soft-delete that rides the forward read delta).
       // The retention must outlast any realistic delta-cursor staleness so a

@@ -1,4 +1,4 @@
-import { db, getMetadata, setMetadata } from '$lib/services/db';
+import { db, getMetadata, setMetadata, type FollowCacheEntry } from '$lib/services/db';
 import {
   ensureFollowGraph,
   expireFollowGraph,
@@ -39,9 +39,9 @@ const PAGE_SIZE = 20;
 // Re-scan an account's PDS for publications at most once a week.
 const SCAN_TTL = 7 * 24 * 60 * 60 * 1000;
 // Sites per backend call (the route's cap).
-const SITES_PER_CALL = 40;
-// A rate-limited site lookup waits and tries again this many times before the
-// pass gives up (and the next visit resumes it).
+const SITES_PER_CALL = 30;
+// A rate-limited site lookup waits and tries again this many times; after that
+// its sites go unanswered for this pass (and keep what was found before).
 const SITE_RETRIES = 3;
 // Set once this device has rescanned its cached follows for web feeds: rows
 // scanned before web feeds were looked for (and fetched without bios) would
@@ -59,8 +59,11 @@ async function hostingParents(): Promise<Set<string>> {
   return parentsMemo.parents;
 }
 
-async function discoverSites(sites: string[]): Promise<Map<string, string[]>> {
-  const out = new Map<string, string[]>();
+// Feeds per site from the backend. Never throws: a site the lookup couldn't
+// answer is simply missing, and findFollowFeeds keeps its earlier answer, so a
+// failed call never costs the publications scan it rides along with.
+async function discoverSites(sites: string[]): Promise<Map<string, string[] | null>> {
+  const out = new Map<string, string[] | null>();
   for (let i = 0; i < sites.length; i += SITES_PER_CALL) {
     const chunk = sites.slice(i, i + SITES_PER_CALL);
     for (let attempt = 0; ; attempt++) {
@@ -69,8 +72,12 @@ async function discoverSites(sites: string[]): Promise<Map<string, string[]>> {
         for (const r of results) out.set(r.site, r.feeds);
         break;
       } catch (e) {
-        if (!(e instanceof RateLimitError) || attempt >= SITE_RETRIES) throw e;
-        await new Promise((r) => setTimeout(r, Math.min(e.retryAfter, 60) * 1000));
+        if (e instanceof RateLimitError && attempt < SITE_RETRIES) {
+          await new Promise((r) => setTimeout(r, Math.min(e.retryAfter, 60) * 1000));
+          continue;
+        }
+        console.error('[followingPublications] site lookup failed:', e);
+        break;
       }
     }
   }
@@ -117,6 +124,13 @@ function createFollowingPublicationsStore() {
     });
   }
 
+  // Hidden accounts are never scanned. While the graph is still being walked, a
+  // row cached before bios were kept (description undefined) waits for the walk
+  // to refresh it, so its bio links aren't missed for a whole SCAN_TTL.
+  function scannable(f: FollowCacheEntry): boolean {
+    return !f.hidden && (f.description !== undefined || isFollowGraphComplete());
+  }
+
   // Are there follows we haven't scanned (or whose scan has gone stale)?
   // Hidden accounts never count — they're ignored regardless of scan age.
   async function hasUnscanned(): Promise<boolean> {
@@ -124,7 +138,7 @@ function createFollowingPublicationsStore() {
       (await db.follows
         .where('scannedAt')
         .below(Date.now() - SCAN_TTL)
-        .filter((f) => !f.hidden)
+        .filter(scannable)
         .count()) > 0
     );
   }
@@ -137,7 +151,7 @@ function createFollowingPublicationsStore() {
     const batch = await db.follows
       .where('scannedAt')
       .below(cutoff)
-      .filter((f) => !f.hidden)
+      .filter(scannable)
       .limit(PAGE_SIZE)
       .toArray();
     if (batch.length === 0) return;
@@ -151,8 +165,9 @@ function createFollowingPublicationsStore() {
     const elsewhere = new Set(
       publications.filter((p) => !scannedSet.has(p.did)).map((p) => p.publicationUri)
     );
+    const prior = publications.filter((p) => p.kind === 'feed' && scannedSet.has(p.did));
     const feeds = (
-      await findFollowFeeds(batch, found, await hostingParents(), discoverSites)
+      await findFollowFeeds(batch, found, await hostingParents(), discoverSites, prior)
     ).filter((f) => !elsewhere.has(f.publicationUri));
     const fresh = [...found, ...feeds];
     const now = Date.now();
@@ -162,7 +177,8 @@ function createFollowingPublicationsStore() {
       // found new ones, or that the account deleted a publication).
       await db.followingPublications.where('did').anyOf(scannedDids).delete();
       if (fresh.length) await db.followingPublications.bulkPut(fresh);
-      await db.follows.bulkPut(batch.map((b) => ({ ...b, scannedAt: now })));
+      // Only the stamp: the graph walk may have refreshed these rows meanwhile.
+      await db.follows.where('did').anyOf(scannedDids).modify({ scannedAt: now });
     });
 
     publications = [...publications.filter((p) => !scannedSet.has(p.did)), ...fresh];
@@ -183,6 +199,7 @@ function createFollowingPublicationsStore() {
         publications = [];
         loaded = false;
       }
+      parentsMemo = null;
       // Once per device: rescan follows cached before web feeds were looked
       // for, and refetch the graph so every row carries its bio.
       if (!(await getMetadata<boolean>(FEEDS_SCAN_KEY))) {
@@ -274,13 +291,13 @@ function createFollowingPublicationsStore() {
       displayName: follow.displayName,
       avatar: follow.avatar,
     });
-    // Feeds are a bonus here: a failed lookup mustn't leave the account hidden.
-    const feeds = await findFollowFeeds(
-      [follow],
-      found,
-      await hostingParents(),
-      discoverSites
-    ).catch(() => []);
+    // A feed another account we follow already brought in stays theirs.
+    const elsewhere = new Set(
+      publications.filter((p) => p.did !== did).map((p) => p.publicationUri)
+    );
+    const feeds = (
+      await findFollowFeeds([follow], found, await hostingParents(), discoverSites)
+    ).filter((f) => !elsewhere.has(f.publicationUri));
     const fresh = [...found, ...feeds];
     await db.transaction('rw', db.follows, db.followingPublications, async () => {
       await db.follows.update(did, { hidden: false, scannedAt: Date.now() });
@@ -300,7 +317,10 @@ function createFollowingPublicationsStore() {
         void fetchSingleFeed(sub, true, articlesStore.savedGuids).then(async (result) => {
           if (!result.success || !result.title) return;
           try {
-            await subscriptionsStore.update(id, { title: result.title, siteUrl: result.siteUrl });
+            await subscriptionsStore.update(id, {
+              title: result.title,
+              siteUrl: result.siteUrl ?? pub.url,
+            });
           } catch {
             // Keep the site's name as the title.
           }

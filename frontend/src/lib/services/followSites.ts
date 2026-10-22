@@ -106,6 +106,9 @@ const NOT_A_TLD = new Set([
   'jpg',
 ]);
 
+const COUNTRY_SECOND_LEVEL =
+  /^(?:co|com|org|net|ac|gov|edu|ltd|plc|me|ne|or|go|id|nom|gen|biz|info)\.[a-z]{2}$/;
+
 // Hosts where a blog lives at a path rather than a subdomain.
 const PATH_PLATFORMS = ['medium.com', 'write.as'];
 
@@ -136,7 +139,10 @@ export function sharedHandleParents(follows: Pick<FollowLite, 'handle'>[], min =
   const counts = new Map<string, number>();
   for (const f of follows) {
     const parent = f.handle ? parentOf(f.handle.toLowerCase()) : null;
-    if (parent) counts.set(parent, (counts.get(parent) ?? 0) + 1);
+    // A country's second-level suffix (co.uk, com.au) is shared by everyone
+    // with their own domain there, not a hosting provider.
+    if (parent && !COUNTRY_SECOND_LEVEL.test(parent))
+      counts.set(parent, (counts.get(parent) ?? 0) + 1);
   }
   return new Set([...counts].filter(([, n]) => n >= min).map(([p]) => p));
 }
@@ -232,13 +238,16 @@ function hostOf(url: string): string | null {
  * Web feeds for a batch of follows: one per site found at their domain handle or
  * bio links, skipping a site that is already one of their standard.site
  * publications (the publication is the better way to follow it). `discover`
- * answers feed URLs per site (the backend's discover-sites).
+ * answers feed URLs per site (the backend's discover-sites); a site it has no
+ * answer for (null or missing: the lookup failed) keeps the row in `prior`, the
+ * feeds found for these follows last time, rather than dropping it.
  */
 export async function findFollowFeeds(
   batch: FollowLite[],
   publications: FollowingPublication[],
   sharedParents: Set<string>,
-  discover: (sites: string[]) => Promise<Map<string, string[]>>
+  discover: (sites: string[]) => Promise<Map<string, string[] | null>>,
+  prior: FollowingPublication[] = []
 ): Promise<FollowingPublication[]> {
   const publicationHosts = new Set(publications.map((p) => `${p.did} ${hostOf(p.url) ?? ''}`));
   const wanted = batch.flatMap((follow) =>
@@ -252,10 +261,21 @@ export async function findFollowFeeds(
   const out: FollowingPublication[] = [];
   const seen = new Set<string>();
   for (const { follow, candidate } of wanted) {
-    const feedUrl = feedsBySite.get(candidate.site)?.[0];
+    const siteUrl = `https://${candidate.site}`;
+    const feeds = feedsBySite.get(candidate.site);
+    if (feeds == null) {
+      const kept = prior.find(
+        (p) => p.kind === 'feed' && p.did === follow.did && p.url === siteUrl
+      );
+      if (kept && !seen.has(kept.publicationUri)) {
+        seen.add(kept.publicationUri);
+        out.push(kept);
+      }
+      continue;
+    }
+    const feedUrl = feeds[0];
     if (!feedUrl || seen.has(feedUrl)) continue;
     seen.add(feedUrl);
-    const siteUrl = `https://${candidate.site}`;
     out.push({
       did: follow.did,
       handle: follow.handle,

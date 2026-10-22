@@ -44,10 +44,15 @@ async function discover(sites: string[]) {
 }
 
 describe('normalizeSite', () => {
-  it('keys a site by host and path, without scheme, www or trailing slash', () => {
+  it('keys a site by its host, without scheme or www', () => {
     expect(normalizeSite('https://www.Example.com/blog/')).toEqual({
-      key: 'example.com/blog',
-      url: 'https://example.com/blog',
+      key: 'example.com',
+      url: 'https://example.com/',
+    });
+    // Except where the path is the blog.
+    expect(normalizeSite('medium.com/@someone/')).toEqual({
+      key: 'medium.com/@someone',
+      url: 'https://medium.com/@someone',
     });
     expect(normalizeSite('someone.com')).toEqual({
       key: 'someone.com',
@@ -122,7 +127,8 @@ describe('POST /api/v2/feeds/discover-sites', () => {
     });
 
     const results = await discover(['dead.example', 'flaky.example']);
-    expect(results.map((r) => r.feeds)).toEqual([[], []]);
+    // A failure that says nothing about the site answers "unknown", not "none".
+    expect(results.map((r) => r.feeds)).toEqual([[], null]);
 
     const { results: rows } = await env.DB.prepare(
       'SELECT site FROM site_feed_discovery ORDER BY site'
@@ -133,7 +139,7 @@ describe('POST /api/v2/feeds/discover-sites', () => {
   it('rejects a malformed or oversized body', async () => {
     expect((await handleDiscoverSites(request({ sites: 'x' }), ENV)).status).toBe(400);
     expect((await handleDiscoverSites(request({ sites: [1] }), ENV)).status).toBe(400);
-    const many = Array.from({ length: 41 }, (_, i) => `s${i}.example`);
+    const many = Array.from({ length: 31 }, (_, i) => `s${i}.example`);
     expect((await handleDiscoverSites(request({ sites: many }), ENV)).status).toBe(400);
   });
 });

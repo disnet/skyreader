@@ -75,7 +75,9 @@ export async function fetchFollowsPage(
     handle: f.handle ?? null,
     displayName: f.displayName,
     avatar: f.avatar,
-    description: f.description,
+    // Always a string once fetched, so a row cached before bios were kept
+    // (undefined) can be told from one with an empty bio.
+    description: f.description ?? '',
   }));
   return { follows, cursor: data.cursor };
 }
