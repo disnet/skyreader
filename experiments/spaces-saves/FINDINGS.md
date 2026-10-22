@@ -9,7 +9,7 @@ app's client code — at the pinned versions in the next section. Everything mar
 _unverified_ needs a run of `npm run lifecycle` against a real spaces PDS, which
 has not happened yet: this environment has no Docker and no BPS invite, and
 `@atproto/pds@alpha` will not resolve here. The harness is written and green
-against an in-process fake (`npm run lifecycle:fake`, 14/14 — it writes with `putRecord`, the call the backend mirror uses), so the live run is
+against an in-process fake (`npm run lifecycle:fake`, 15/15 — it writes with `putRecord`, the call the backend mirror uses), so the live run is
 a protocol question, not a "does the script work" question.
 
 ## Pinned versions
@@ -160,7 +160,10 @@ Space refs are `at://{authorityDid}/space/{type}/{skey}` (string format
    carries no authentication of the records it returns.
 
    For us, a second client reading a save now needs the owner's KEM key (public,
-   in their DID doc) as well as a credential. `services/spaces/kem.ts`
+   in their DID doc) as well as a credential. The MAC covers only the uri and
+   CID, so, like the alpha's own `verifyRecord`, `credentialCall` also requires
+   the uri to be the one requested and the value to encode (DAG-CBOR) to that
+   CID, and refuses a credentialed `getRecord` outright when it has no KEM key. `services/spaces/kem.ts`
    implements the record MAC on WebCrypto plus `@noble/curves`. It was
    cross-checked against the alpha's own `decapsulate` / `computeRecordMac` /
    `parseWantMacHeader` (20/20 random rounds), and `spaces-kem.spec.ts` pins a
@@ -295,7 +298,7 @@ release so far.
 | DID doc: space-host signing key and service entry removed; `#atproto_pds` is the host, `#atproto` signs | #123 / #5691           | none (we already address the authority's PDS)             |
 | `notifySpaceDeleted` retried until delivered or the syncer's registration expires                       | #124 / #5697           | none (no syncer)                                          |
 
-Unchanged: everything in `com.atproto.simplespace.*`, the record write methods,
+Unchanged on the wire: everything in `com.atproto.simplespace.*` (`deleteSpace` now also queues `notifySpaceDeleted`), the record write methods,
 `listRecords`, `getDelegationToken`, the space/record URI formats, own-repo
 writes on plain session auth, and `@atproto/oauth-scopes`. All spec changes are
 collected in proposals PR #125.
