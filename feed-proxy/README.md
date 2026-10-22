@@ -364,7 +364,7 @@ Manage Account → Configurations → **Bot Submission Form**; verification meth
 User-Agent `Skyreader/1.0 (+https://skyreader.app)`. Approval lists the crawler in
 Cloudflare Radar's bot directory and exempts it from Bot Fight Mode on every
 Cloudflare-fronted site. Being verified requires the etiquette below — losing it is
-what happens if the crawler ignores robots.txt or crawl-delay.
+what happens if the crawler ignores robots.txt rules addressed to it, or crawl-delay.
 
 **Rotation:** mint a new key, set the secret on both apps, redeploy. Cloudflare
 re-reads the directory (it honours the `max-age=86400`), so expect up to a day of
@@ -374,11 +374,16 @@ unverified requests; the old key can't be served alongside the new one yet.
 
 The crawl — the warm loop and the demand-driven feed refreshes it shares — asks
 `/robots.txt` before fetching a feed (RFC 9309; per-origin cache, 24h; product
-token `skyreader`, falling back to `*`). A disallowed feed is recorded like a
-site-side block (`… is blocking automated access (its robots.txt disallows
-Skyreader …)`, retried daily) so the reader sees "Blocked by site" and the admin
-feed-health view counts it. `Crawl-delay` is honoured per host up to 60s; a fetch
-whose turn is more than 15s away is deferred to the next cycle rather than slept on.
+token `skyreader`). Only a group that **names Skyreader** can disallow a feed: a
+disallowed feed is recorded like a site-side block (`… is blocking automated
+access (its robots.txt disallows Skyreader …)`, retried daily) so the reader sees
+"Blocked by site" and the admin feed-health view counts it. `User-agent: *` rules
+are written for search crawlers, and every crawled feed is one a reader subscribed
+to, so their `Disallow` is not applied (the convention Google's Feedfetcher and the
+mainstream readers follow). `Crawl-delay` is honoured from whichever group applies
+(the named one, else `*`), per host up to 60s; a fetch whose turn is more than 15s
+away is deferred to the next cycle rather than slept on. How to block us is documented
+for site owners at docs.skyreader.app/crawler/.
 
 Redirects are re-checked: a feed that 301s into another path — or another host —
 is judged by the target's own robots.txt, and a disallow there is recorded the
@@ -393,13 +398,6 @@ a crawl: `POST /extract` (a reader clicked Save) and `GET /discover` (a reader
 typed a site into Subscribe). Deliberately lenient: an _unavailable_ robots.txt
 (5xx, timeout) is treated as no restrictions and re-probed after an hour, where the
 RFC would allow assuming a full disallow.
-
-A short list of public feed endpoints is exempt from `Disallow` (Crawl-delay still
-applies): sites that publish feeds for readers but disallow the path for every
-crawler, aimed at search indexing. Today that's YouTube's `/feeds/videos.xml`
-(`isExemptFeedEndpoint` in `src/robots.ts`). Every crawled feed is one a reader
-subscribed to, the same grounds Google's Feedfetcher uses. Keep the list to exact
-feed paths.
 
 ## YouTube feeds (Data API)
 

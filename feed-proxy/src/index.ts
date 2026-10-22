@@ -142,7 +142,8 @@ const EXTRACT_QUEUE_MAX = parseInt(process.env.EXTRACT_QUEUE_MAX || '20', 10);
 
 // Crawler etiquette + identity (src/robots.ts, src/web-bot-auth.ts).
 // ROBOTS_ENABLED=false is an escape hatch for local debugging only; in
-// production honouring robots.txt is a condition of being a verified bot.
+// production honouring the robots.txt rules addressed to Skyreader (and
+// Crawl-delay) is a condition of being a verified bot.
 const ROBOTS_ENABLED = (process.env.ROBOTS_ENABLED ?? 'true') !== 'false';
 // The private Ed25519 JWK (a Fly secret; mint one with `bun run keygen:web-bot-auth`)
 // and the https origin whose /.well-known/http-message-signatures-directory

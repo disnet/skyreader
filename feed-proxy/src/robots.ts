@@ -10,8 +10,8 @@
 // text in by hand.
 //
 // Why at all: honest self-identification is half of what makes a bot
-// "verified" to a CDN (see web-bot-auth.ts); obeying robots.txt and
-// crawl-delay is the other half, and the stated grounds for losing that status.
+// "verified" to a CDN (see web-bot-auth.ts); obeying the robots.txt rules
+// addressed to us, and crawl-delay, is the other half.
 //
 // Deviations from RFC 9309, chosen for a feed reader:
 //   - An UNAVAILABLE robots.txt (5xx, timeout, DNS failure) is treated as
@@ -21,8 +21,14 @@
 //   - Crawl-delay is honoured per host up to MAX_CRAWL_DELAY_MS, and a fetch
 //     whose turn is further off than the caller's patience is deferred to the
 //     next crawl cycle rather than slept on (see reserveSlot).
-//   - A short list of public feed endpoints is exempt from Disallow (see
-//     isExemptFeedEndpoint). Crawl-delay still applies to them.
+//   - Disallow is honoured only from a group that names Skyreader. A site's
+//     `User-agent: *` rules are written for search crawlers; every URL this
+//     path fetches is a feed a reader subscribed to, so — like Google's
+//     Feedfetcher and the mainstream readers — we don't treat a blanket
+//     Disallow as aimed at it. A site that wants us out says so by name
+//     (`User-agent: Skyreader`). Crawl-delay from the `*` group still applies
+//     when the named group sets none: spacing requests is good manners
+//     whoever it was written for.
 import { safeFetch } from './ssrf-guard';
 
 export interface RobotsRule {
@@ -63,23 +69,6 @@ const DEFAULT_MAX_ENTRIES = 5000;
 // slot, and anything above it is almost always a typo or a "go away" — which
 // robots.txt already has a proper spelling for (Disallow).
 export const MAX_CRAWL_DELAY_MS = 60 * 1000;
-
-// Public feed endpoints whose host disallows them for every crawler, aimed at
-// search indexing rather than feed readers: the site publishes and links these
-// feeds for people to subscribe to, and every mainstream reader polls them.
-// Each one is here because a reader subscribed to it, so we treat the Disallow
-// the way Google's Feedfetcher does for user-subscribed feeds. Keep this list
-// to exact, known feed paths; it is not a general robots.txt bypass.
-const EXEMPT_FEED_ENDPOINTS: ReadonlyArray<{ hosts: readonly string[]; path: string }> = [
-  // YouTube channel/playlist/user feeds: /feeds/videos.xml?channel_id=… etc.
-  // youtube.com/robots.txt has `Disallow: /feeds/videos.xml` under `*`.
-  { hosts: ['www.youtube.com', 'youtube.com', 'm.youtube.com'], path: '/feeds/videos.xml' },
-];
-
-export function isExemptFeedEndpoint(url: URL): boolean {
-  const host = url.hostname.toLowerCase();
-  return EXEMPT_FEED_ENDPOINTS.some((e) => e.path === url.pathname && e.hosts.includes(host));
-}
 
 function stripComment(line: string): string {
   const hash = line.indexOf('#');
@@ -148,26 +137,25 @@ export function parseRobotsTxt(text: string): RobotsGroup[] {
 }
 
 /**
- * The rules that apply to `productToken`: every group naming it, merged (RFC
- * 9309 §2.2.1); else every `*` group, merged; else null (no restrictions).
+ * What robots.txt asks of `productToken` on the crawl: the Allow/Disallow
+ * rules of every group naming it, merged (RFC 9309 §2.2.1), and a Crawl-delay
+ * from those groups, else from the `*` groups. The `*` groups' Allow/Disallow
+ * are not ours (see file comment). Null when nothing applies.
  */
 export function selectGroup(
   groups: RobotsGroup[],
   productToken = ROBOTS_PRODUCT_TOKEN
 ): RobotsGroup | null {
   const token = productToken.toLowerCase();
-  const merge = (matching: RobotsGroup[]): RobotsGroup | null => {
-    if (matching.length === 0) return null;
-    const merged: RobotsGroup = { agents: [token], rules: [] };
-    for (const g of matching) {
-      merged.rules.push(...g.rules);
-      if (g.crawlDelaySeconds !== undefined) merged.crawlDelaySeconds = g.crawlDelaySeconds;
-    }
-    return merged;
-  };
+  const lastDelay = (matching: RobotsGroup[]): number | undefined =>
+    matching.reduce<number | undefined>((d, g) => g.crawlDelaySeconds ?? d, undefined);
   const specific = groups.filter((g) => g.agents.includes(token));
-  if (specific.length > 0) return merge(specific);
-  return merge(groups.filter((g) => g.agents.includes('*')));
+  const star = groups.filter((g) => g.agents.includes('*'));
+  if (specific.length === 0 && star.length === 0) return null;
+  const merged: RobotsGroup = { agents: [token], rules: specific.flatMap((g) => g.rules) };
+  const delay = lastDelay(specific) ?? lastDelay(star);
+  if (delay !== undefined) merged.crawlDelaySeconds = delay;
+  return merged;
 }
 
 /**
@@ -269,7 +257,7 @@ export class RobotsPolicy {
 
   constructor(opts: RobotsPolicyOptions) {
     this.userAgent = opts.userAgent;
-    this.productToken = opts.productToken ?? ROBOTS_PRODUCT_TOKEN;
+    this.productToken = (opts.productToken ?? ROBOTS_PRODUCT_TOKEN).toLowerCase();
     this.fetchImpl = opts.fetch ?? ((url, init) => safeFetch(url, init));
     this.ttlMs = opts.ttlMs ?? DEFAULT_TTL_MS;
     this.unavailableTtlMs = opts.unavailableTtlMs ?? DEFAULT_UNAVAILABLE_TTL_MS;
@@ -298,8 +286,7 @@ export class RobotsPolicy {
       return { allowed: true, crawlDelayMs: 0 };
     }
     const entry = await this.entryFor(parsed.origin);
-    let verdict = evaluatePath(entry.group, robotsPathOf(parsed));
-    if (!verdict.allowed && isExemptFeedEndpoint(parsed)) verdict = { allowed: true };
+    const verdict = evaluatePath(entry.group, robotsPathOf(parsed));
     const delaySeconds = entry.group?.crawlDelaySeconds ?? 0;
     const crawlDelayMs = Math.min(Math.max(0, delaySeconds) * 1000, MAX_CRAWL_DELAY_MS);
     return { ...verdict, crawlDelayMs };

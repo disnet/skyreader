@@ -5,7 +5,6 @@ import {
   matchesPattern,
   evaluatePath,
   RobotsPolicy,
-  isExemptFeedEndpoint,
   MAX_CRAWL_DELAY_MS,
 } from './robots';
 
@@ -86,8 +85,14 @@ describe('selectGroup', () => {
     expect(g?.crawlDelaySeconds).toBe(2);
   });
 
-  it('falls back to the * group', () => {
-    expect(selectGroup(groups, 'otherbot')?.rules).toEqual([{ allow: false, pattern: '/all' }]);
+  it('takes only Crawl-delay from the * group, and only when no named group sets one', () => {
+    expect(selectGroup(groups, 'otherbot')).toEqual({ agents: ['otherbot'], rules: [] });
+    const g = selectGroup(
+      parseRobotsTxt('User-agent: *\nCrawl-delay: 10\n\nUser-agent: Skyreader\nDisallow: /m/'),
+      'skyreader'
+    );
+    expect(g?.rules).toEqual([{ allow: false, pattern: '/m/' }]);
+    expect(g?.crawlDelaySeconds).toBe(10);
   });
 
   it('returns null when nothing applies', () => {
@@ -117,7 +122,7 @@ describe('matchesPattern', () => {
 describe('evaluatePath', () => {
   it('lets the longest matching rule win, allow winning ties', () => {
     const g = selectGroup(
-      parseRobotsTxt(`User-agent: *\nDisallow: /\nAllow: /feed\nDisallow: /feed/private`),
+      parseRobotsTxt(`User-agent: Skyreader\nDisallow: /\nAllow: /feed\nDisallow: /feed/private`),
       'skyreader'
     );
     expect(evaluatePath(g, '/feed.xml')).toEqual({ allowed: true });
@@ -126,7 +131,10 @@ describe('evaluatePath', () => {
       matchedPattern: '/feed/private',
     });
     expect(evaluatePath(g, '/about')).toEqual({ allowed: false, matchedPattern: '/' });
-    const tie = selectGroup(parseRobotsTxt(`User-agent: *\nDisallow: /f\nAllow: /f`), 'skyreader');
+    const tie = selectGroup(
+      parseRobotsTxt(`User-agent: Skyreader\nDisallow: /f\nAllow: /f`),
+      'skyreader'
+    );
     expect(evaluatePath(tie, '/feed')).toEqual({ allowed: true });
   });
   it('allows everything with no group or no matching rule', () => {
@@ -136,18 +144,6 @@ describe('evaluatePath', () => {
         allowed: true,
       }
     );
-  });
-});
-
-describe('isExemptFeedEndpoint', () => {
-  it('matches only the exact YouTube feed path on YouTube hosts', () => {
-    expect(isExemptFeedEndpoint(new URL('https://www.youtube.com/feeds/videos.xml?user=x'))).toBe(
-      true
-    );
-    expect(isExemptFeedEndpoint(new URL('https://WWW.YouTube.com/feeds/videos.xml'))).toBe(true);
-    expect(isExemptFeedEndpoint(new URL('https://www.youtube.com/feeds/videos.xml2'))).toBe(false);
-    expect(isExemptFeedEndpoint(new URL('https://www.youtube.com/api/feed'))).toBe(false);
-    expect(isExemptFeedEndpoint(new URL('https://evil.example/feeds/videos.xml'))).toBe(false);
   });
 });
 
@@ -169,7 +165,7 @@ describe('RobotsPolicy', () => {
   }
 
   it('fetches /robots.txt for the origin once and applies its rules to paths', async () => {
-    const { p, calls } = policy(() => new Response('User-agent: *\nDisallow: /private/'));
+    const { p, calls } = policy(() => new Response('User-agent: Skyreader\nDisallow: /private/'));
     expect(await p.check('https://example.com/feed.xml')).toEqual({
       allowed: true,
       crawlDelayMs: 0,
@@ -182,23 +178,33 @@ describe('RobotsPolicy', () => {
     expect(calls).toEqual(['https://example.com/robots.txt']);
   });
 
-  it('exempts YouTube feeds from Disallow but not the rest of youtube.com', async () => {
+  it('ignores Disallow from the * group but still honours its Crawl-delay', async () => {
     const { p } = policy(
-      () =>
-        new Response(
-          'User-agent: *\nDisallow: /feeds/videos.xml\nDisallow: /feeds/other\nCrawl-delay: 2'
-        )
+      () => new Response('User-agent: *\nDisallow: /\nDisallow: /feed/\nCrawl-delay: 2')
     );
+    expect(await p.check('https://example.com/feed/')).toEqual({
+      allowed: true,
+      crawlDelayMs: 2000,
+    });
+    // YouTube's `Disallow: /feeds/videos.xml` sits under `*`, so it's allowed too.
+    const { p: yt } = policy(() => new Response('User-agent: *\nDisallow: /feeds/videos.xml'));
     expect(
-      await p.check('https://www.youtube.com/feeds/videos.xml?channel_id=UC1234567890')
-    ).toEqual({ allowed: true, crawlDelayMs: 2000 });
-    expect((await p.check('https://youtube.com/feeds/videos.xml?playlist_id=PL123')).allowed).toBe(
-      true
+      (await yt.check('https://www.youtube.com/feeds/videos.xml?channel_id=UC1')).allowed
+    ).toBe(true);
+  });
+
+  it('honours a group naming Skyreader over the * group', async () => {
+    const { p } = policy(
+      () => new Response('User-agent: *\nDisallow: /\n\nUser-agent: Skyreader\nDisallow: /members/')
     );
-    expect((await p.check('https://www.youtube.com/feeds/other')).allowed).toBe(false);
-    // Same path on another host is not exempt.
-    const { p: other } = policy(() => new Response('User-agent: *\nDisallow: /feeds/videos.xml'));
-    expect((await other.check('https://example.com/feeds/videos.xml')).allowed).toBe(false);
+    expect((await p.check('https://example.com/feed')).allowed).toBe(true);
+    expect(await p.check('https://example.com/members/feed')).toEqual({
+      allowed: false,
+      crawlDelayMs: 0,
+      matchedPattern: '/members/',
+    });
+    const { p: all } = policy(() => new Response('User-agent: skyreader/1.0\nDisallow: /'));
+    expect((await all.check('https://example.com/feed')).allowed).toBe(false);
   });
 
   it('sends the honest identity when fetching robots.txt', async () => {
@@ -252,7 +258,9 @@ describe('RobotsPolicy', () => {
             () =>
               resolve(
                 new Response(
-                  url.startsWith('https://example.com/') ? 'User-agent: *\nDisallow: /x' : ''
+                  url.startsWith('https://example.com/')
+                    ? 'User-agent: Skyreader\nDisallow: /x'
+                    : ''
                 )
               ),
             5
@@ -305,7 +313,8 @@ describe('RobotsPolicy', () => {
   });
 
   it('truncates an oversized robots.txt instead of failing', async () => {
-    const big = 'User-agent: *\nDisallow: /blocked\n' + '#'.repeat(600 * 1024) + '\nDisallow: /';
+    const big =
+      'User-agent: Skyreader\nDisallow: /blocked\n' + '#'.repeat(600 * 1024) + '\nDisallow: /';
     const { p } = policy(() => new Response(big));
     expect((await p.check('https://example.com/blocked/x')).allowed).toBe(false);
     // The trailing "Disallow: /" past 512 KiB was never read.
