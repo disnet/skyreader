@@ -3956,7 +3956,87 @@ describe('POST /extract', () => {
   });
 
   it('names the size limit when a PDF is too large to save', async () => {
-    const { db, app } = createTestApp();
+    const { extractPdf, calls } = fakeExtractor(async () => PARSED);
+    const { db, app } = createTestApp({ extractPdf });
+    fetchMock = mockFetch(
+      () =>
+        new Response('%PDF-1.7', {
+          headers: {
+            'Content-Type': 'application/pdf',
+            'Content-Length': String(51 * 1024 * 1024),
+          },
+        })
+    );
+
+    const res = await extract(app, 'https://example.com/huge.pdf');
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.error).toBe('This PDF is larger than 50 MB, the most Skyreader can save');
+    expect(json.blocked).toBe(false);
+    expect(json.pdf).toBe(true);
+    expect(calls).toHaveLength(0);
+
+    db.close();
+  });
+
+  it('names the size limit for an oversized PDF served as octet-stream', async () => {
+    const { extractPdf } = fakeExtractor(async () => PARSED);
+    const { db, app } = createTestApp({ extractPdf });
+    const big = new Uint8Array(51 * 1024 * 1024);
+    big.set(new TextEncoder().encode('%PDF-1.7\n'));
+    fetchMock = mockFetch(
+      () => new Response(big, { headers: { 'Content-Type': 'application/octet-stream' } })
+    );
+
+    const res = await extract(app, 'https://example.com/download?id=1');
+    const json = await res.json();
+
+    expect(json.error).toBe('This PDF is larger than 50 MB, the most Skyreader can save');
+    expect(json.pdf).toBe(true);
+
+    db.close();
+  });
+
+  // Pages keep the smaller cap: only a PDF is relayed rather than built into a DOM.
+  it('reads a PDF bigger than a page may be', async () => {
+    const { extractPdf, calls } = fakeExtractor(async () => PARSED);
+    const { db, app } = createTestApp({ extractPdf });
+    const pdf = new Uint8Array(20 * 1024 * 1024);
+    pdf.set(new TextEncoder().encode('%PDF-1.7\n'));
+    fetchMock = mockFetch(
+      () => new Response(pdf, { headers: { 'Content-Type': 'application/octet-stream' } })
+    );
+
+    const json = await (await extract(app, 'https://example.com/download?id=2')).json();
+
+    expect(json.title).toBe('Notes on Margins');
+    expect(calls[0].byteLength).toBe(pdf.byteLength);
+
+    db.close();
+  });
+
+  it('still refuses a page over the page cap read under the PDF cap', async () => {
+    const { extractPdf, calls } = fakeExtractor(async () => PARSED);
+    const { db, app } = createTestApp({ extractPdf });
+    const page = new Uint8Array(11 * 1024 * 1024).fill(0x20);
+    fetchMock = mockFetch(
+      () => new Response(page, { headers: { 'Content-Type': 'application/octet-stream' } })
+    );
+
+    const res = await extract(app, 'https://example.com/download?id=3');
+    const json = await res.json();
+
+    expect(json.error).toMatch(/too large|exceeds/i);
+    expect(json.pdf).toBeFalsy();
+    expect(calls).toHaveLength(0);
+
+    db.close();
+  });
+
+  it('refuses an oversized PDF as any PDF when the caller has no allowance', async () => {
+    const { extractPdf, calls } = fakeExtractor(async () => PARSED);
+    const { db, app } = createTestApp({ extractPdf });
     fetchMock = mockFetch(
       () =>
         new Response('%PDF-1.7', {
@@ -3967,30 +4047,14 @@ describe('POST /extract', () => {
         })
     );
 
-    const res = await extract(app, 'https://example.com/huge.pdf');
-    const json = await res.json();
+    const res = await app.request('/extract', {
+      method: 'POST',
+      headers: { 'X-Proxy-Secret': 'test-secret', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: 'https://example.com/huge.pdf', allowPdf: false }),
+    });
 
-    expect(res.status).toBe(200);
-    expect(json.error).toBe('This PDF is larger than 10 MB, the most Skyreader can save');
-    expect(json.blocked).toBe(false);
-    expect(json.pdf).toBe(true);
-
-    db.close();
-  });
-
-  it('names the size limit for an oversized PDF served as octet-stream', async () => {
-    const { db, app } = createTestApp();
-    const big = new Uint8Array(11 * 1024 * 1024);
-    big.set(new TextEncoder().encode('%PDF-1.7\n'));
-    fetchMock = mockFetch(
-      () => new Response(big, { headers: { 'Content-Type': 'application/octet-stream' } })
-    );
-
-    const res = await extract(app, 'https://example.com/download?id=1');
-    const json = await res.json();
-
-    expect(json.error).toBe('This PDF is larger than 10 MB, the most Skyreader can save');
-    expect(json.pdf).toBe(true);
+    expect(await res.json()).toMatchObject({ error: PDF_QUOTA_MESSAGE, pdf: true });
+    expect(calls).toHaveLength(0);
 
     db.close();
   });

@@ -79,7 +79,7 @@ const TIER_MAP: Record<string, TierLimits> = {
     fullTextSearch: true,
     pdfSaves: true,
     // The extractor's own cap (pdf-extractor/src/extract.ts MAX_PDF_BYTES).
-    maxPdfUploadBytes: 10 * MB,
+    maxPdfUploadBytes: 50 * MB,
     maxEpubUploadBytes: 30 * MB,
     maxPdfUploadsPerMonth: 200,
     maxPdfStorageBytes: 2048 * MB,

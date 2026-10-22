@@ -1,10 +1,12 @@
 import type { Env } from '../types';
 import { getRequestId } from '../utils/request-context';
+import type { StoredFileBody } from './saved-file-store';
 
 // The backend's own client for the pdf-extractor Worker, used for uploaded PDFs
 // (routes/saved-pdf.ts). A PDF saved by URL goes through the feed proxy instead,
 // which fetches it and calls the same Worker; an upload has no URL to fetch, so
-// its bytes are posted here directly. See pdf-extractor/CLAUDE.md for the contract.
+// its bytes are streamed here from where the upload was kept, so this Worker never
+// holds the whole file. See pdf-extractor/CLAUDE.md for the contract.
 
 /** Same shape as pdf-extractor/src/extract.ts and feed-proxy/src/pdf-extract.ts. */
 export interface PdfExtraction {
@@ -43,7 +45,7 @@ export function pdfExtractorConfigured(env: Env): boolean {
   return Boolean((env.PDF_EXTRACTOR_URL as string | undefined) && env.PDF_EXTRACTOR_SECRET);
 }
 
-export async function parsePdf(env: Env, bytes: ArrayBuffer): Promise<PdfExtraction> {
+export async function parsePdf(env: Env, file: StoredFileBody): Promise<PdfExtraction> {
   const base = (env.PDF_EXTRACTOR_URL as string).replace(/\/+$/, '');
   const headers = new Headers({
     Authorization: `Bearer ${env.PDF_EXTRACTOR_SECRET}`,
@@ -57,7 +59,8 @@ export async function parsePdf(env: Env, bytes: ArrayBuffer): Promise<PdfExtract
     response = await fetch(`${base}/extract`, {
       method: 'POST',
       headers,
-      body: bytes,
+      // A known length, so the extractor can refuse an over-size file unread.
+      body: file.body.pipeThrough(new FixedLengthStream(file.size)),
       signal: AbortSignal.timeout(PARSE_TIMEOUT_MS),
     });
   } catch (err) {

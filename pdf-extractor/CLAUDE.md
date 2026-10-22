@@ -16,7 +16,7 @@ so a large PDF can't exhaust the API isolate's memory.
 
 ## Contract
 
-- `POST /extract` — body is the PDF's bytes (≤ 10 MB), `Authorization: Bearer <EXTRACT_SECRET>`.
+- `POST /extract` — body is the PDF's bytes (≤ 50 MB), `Authorization: Bearer <EXTRACT_SECRET>`.
   `200` with a `PdfExtraction`; `422 { name, message }` for `PdfPasswordError` /
   `PdfUnreadableError` (the proxy rebuilds those, and falls back to the article extractor on
   unreadable when the PDF was only sniffed); `401`, `413`, `500 { message }` otherwise.
@@ -39,6 +39,10 @@ Parses are billed per CPU-ms, so three things bound them:
 - **Per URL:** the proxy caches a success for 7 days and a failure for 10 minutes.
 - **Per parse:** `[limits] cpu_ms = 10000`. Globally, the proxy's `EXTRACT_CONCURRENCY` (4) caps
   parses in flight.
+- **Memory:** an isolate has 128 MB, and a 50 MB, 300-page PDF peaks near 90 MB (the file plus
+  pdf.js's text pass; measured in Node with the same pdf.js build). Text extraction never decodes
+  images, so an image-heavy file costs little beyond its bytes. Raising `MAX_PDF_BYTES` past 50 MB
+  needs a parse that doesn't hold the whole file.
 
 ## Layout
 

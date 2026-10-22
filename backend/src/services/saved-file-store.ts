@@ -75,8 +75,14 @@ export interface SavedFileStore {
   /**
    * Keep a save's original. The same save always lands in the same place, so a
    * racing second write of it replaces the first rather than leaving a stray.
+   * A bare stream (length unknown) is written a part at a time, so the file is
+   * never held whole; if the stream errors, nothing is kept and its error is
+   * what put rejects with.
    */
-  put(meta: SavedFileMeta, bytes: ArrayBuffer | StoredFileBody): Promise<StoredFileRef>;
+  put(
+    meta: SavedFileMeta,
+    bytes: ArrayBuffer | StoredFileBody | ReadableStream<Uint8Array>
+  ): Promise<StoredFileRef>;
   /**
    * Keep a picture a snapshot captured. Keyed by its digest within the save, so
    * the same picture captured twice is kept once.
@@ -101,22 +107,74 @@ export function snapshotImageKey(did: string, saveRkey: string, sha256: string):
   return `images/${did}/${saveRkey}/${sha256}`;
 }
 
+// R2's multipart parts must all be one size (at least 5 MiB) bar the last, so
+// a streamed file is cut into parts of exactly this many bytes, and this is
+// all of it the Worker holds at once.
+const PART_BYTES = 5 * 1024 * 1024;
+
+/** Write a stream of unknown length to `key` as a multipart upload. */
+async function putStream(
+  bucket: R2Bucket,
+  key: string,
+  body: ReadableStream<Uint8Array>,
+  options: R2MultipartOptions
+): Promise<void> {
+  const upload = await bucket.createMultipartUpload(key, options);
+  const reader = body.getReader();
+  try {
+    const parts: R2UploadedPart[] = [];
+    let part = new Uint8Array(PART_BYTES);
+    let filled = 0;
+    const send = async (bytes: Uint8Array) => {
+      parts.push(await upload.uploadPart(parts.length + 1, bytes));
+    };
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      let offset = 0;
+      while (offset < value.byteLength) {
+        const n = Math.min(PART_BYTES - filled, value.byteLength - offset);
+        part.set(value.subarray(offset, offset + n), filled);
+        filled += n;
+        offset += n;
+        if (filled === PART_BYTES) {
+          await send(part);
+          part = new Uint8Array(PART_BYTES);
+          filled = 0;
+        }
+      }
+    }
+    // An upload needs at least one part, even an empty one.
+    if (filled > 0 || parts.length === 0) await send(part.subarray(0, filled));
+    await upload.complete(parts);
+  } catch (err) {
+    await reader.cancel(err).catch(() => {});
+    await upload.abort().catch(() => {});
+    throw err;
+  }
+}
+
 function r2Store(bucket: R2Bucket): SavedFileStore {
   return {
     storage: 'r2',
     async put(meta, bytes) {
       const key = savedFileKey(meta.did, meta.rkey, meta.kind);
-      // R2 needs a stream's length up front.
-      const value =
-        'body' in bytes ? bytes.body.pipeThrough(new FixedLengthStream(bytes.size)) : bytes;
-      await bucket.put(key, value, {
+      const options = {
         httpMetadata: { contentType: meta.mimeType },
         customMetadata: {
           did: meta.did,
           rkey: meta.rkey,
           ...(meta.filename ? { filename: meta.filename } : {}),
         },
-      });
+      };
+      if (bytes instanceof ReadableStream) {
+        await putStream(bucket, key, bytes, options);
+      } else {
+        // R2 needs a stream's length up front.
+        const value =
+          'body' in bytes ? bytes.body.pipeThrough(new FixedLengthStream(bytes.size)) : bytes;
+        await bucket.put(key, value, options);
+      }
       return { storage: 'r2', r2Key: key, blobCid: null, recordUri: null };
     },
     async putImage(meta, bytes) {

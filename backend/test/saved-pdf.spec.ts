@@ -162,6 +162,39 @@ describe('POST /api/saved/pdf', () => {
     expect(await parsesSpent()).toBe(1);
   });
 
+  // Bigger than one 5 MiB part, and not a whole number of them: the file is
+  // streamed to R2 a part at a time and must come back byte for byte, and what
+  // the extractor is sent is the file too.
+  it('keeps a file of several parts whole, and streams it to the extractor', async () => {
+    const big = new Uint8Array(12 * 1024 * 1024 + 7);
+    for (let i = 0; i < big.length; i += 4096) big[i] = (i / 4096) % 251;
+    big.set(PDF);
+    const hex = async (bytes: ArrayBuffer | Uint8Array) =>
+      [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))]
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join('');
+    let sent: ArrayBuffer | null = null;
+    const mock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      sent = await new Response(init!.body).arrayBuffer();
+      return Response.json(EXTRACTED);
+    });
+    globalThis.fetch = mock as unknown as typeof fetch;
+
+    const { status } = await call(upload(big));
+    expect(status).toBe(201);
+    // Compared by digest: a byte-wise diff of 12 MB is too big to print.
+    expect(await hex(sent!)).toBe(await hex(big));
+
+    const file = await env.DB.prepare(
+      'SELECT size, sha256, r2_key FROM saved_files WHERE user_did = ?'
+    )
+      .bind(DID)
+      .first<{ size: number; sha256: string; r2_key: string }>();
+    expect(file).toMatchObject({ size: big.byteLength, sha256: await hex(big) });
+    const object = await env.SAVED_FILES.get(file!.r2_key);
+    expect(await hex(await object!.arrayBuffer())).toBe(await hex(big));
+  });
+
   it('titles a PDF that names none after its file', async () => {
     extractorAnswers(Response.json({ ...EXTRACTED, title: null }));
     const { body } = await call(upload(PDF, { name: 'quarterly_report.PDF' }));
@@ -183,16 +216,18 @@ describe('POST /api/saved/pdf', () => {
     expect(status).toBe(415);
     expect(body.error).toBe('not_a_pdf');
     expect(mock).not.toHaveBeenCalled();
+    expect(await env.SAVED_FILES.head(savedFileKey(DID, RKEY))).toBeNull();
   });
 
   it('refuses a file over the size cap without parsing it', async () => {
     const mock = extractorAnswers(Response.json(EXTRACTED));
-    const big = new Uint8Array(10 * 1024 * 1024 + 1);
+    const big = new Uint8Array(50 * 1024 * 1024 + 1);
     big.set(PDF);
     const { status, body } = await call(upload(big));
     expect(status).toBe(413);
     expect(body.error).toBe('pdf_too_large');
     expect(mock).not.toHaveBeenCalled();
+    expect(await env.SAVED_FILES.head(savedFileKey(DID, RKEY))).toBeNull();
   });
 
   it('opens the existing save when the same file is uploaded again', async () => {
@@ -201,6 +236,8 @@ describe('POST /api/saved/pdf', () => {
     const { status, body } = await call(upload(PDF, { rkey: 'bbbbbbbbbbbbb' }));
     expect(status).toBe(409);
     expect(body).toMatchObject({ error: 'already_saved', rkey: RKEY });
+    expect(await env.SAVED_FILES.head(savedFileKey(DID, RKEY))).not.toBeNull();
+    expect(await env.SAVED_FILES.head(savedFileKey(DID, 'bbbbbbbbbbbbb'))).toBeNull();
   });
 
   it('holds to the monthly upload allowance', async () => {
@@ -268,6 +305,7 @@ describe('POST /api/saved/pdf', () => {
       .bind(DID)
       .first<{ n: number }>();
     expect(rows!.n).toBe(0);
+    expect(await env.SAVED_FILES.head(savedFileKey(DID, RKEY))).toBeNull();
   });
 
   it("doesn't charge for an extractor outage", async () => {

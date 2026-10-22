@@ -17,7 +17,6 @@ import {
   parseEpub,
   readStoredEpubEntry,
 } from '../services/epub';
-import { readCapped } from './feedback';
 import { readStagedOriginal } from '../services/linked-originals';
 import {
   STORED_FILE_COLUMNS,
@@ -27,10 +26,10 @@ import {
   storedFileBindings,
   storedFileRef,
   type SavedFileStore,
+  type StoredFileBody,
   type StoredFileColumns,
   type StoredFileRef,
 } from '../services/saved-file-store';
-import { sha256Hex } from '../utils/sha256';
 import { log } from '../utils/logger';
 import { captureSnapshot } from '../services/archive/snapshots';
 import { storedFileBytes } from '../services/archive/snapshot-images';
@@ -109,8 +108,8 @@ export function titleFromFilename(name: string | null): string | null {
 // first kilobyte (and some generators do).
 const PDF_SIGNATURE_WINDOW = 1024;
 
-function looksLikePdf(bytes: ArrayBuffer): boolean {
-  const head = new Uint8Array(bytes, 0, Math.min(bytes.byteLength, PDF_SIGNATURE_WINDOW));
+function looksLikePdf(bytes: Uint8Array): boolean {
+  const head = bytes.subarray(0, PDF_SIGNATURE_WINDOW);
   const sig = [0x25, 0x50, 0x44, 0x46, 0x2d];
   outer: for (let i = 0; i + sig.length <= head.length; i++) {
     for (let j = 0; j < sig.length; j++) {
@@ -121,14 +120,85 @@ function looksLikePdf(bytes: ArrayBuffer): boolean {
   return false;
 }
 
-function concatChunks(chunks: Uint8Array[], total: number): ArrayBuffer {
+function concatChunks(chunks: Uint8Array[], total: number): Uint8Array {
   const bytes = new Uint8Array(total);
   let offset = 0;
   for (const chunk of chunks) {
     bytes.set(chunk, offset);
     offset += chunk.byteLength;
   }
-  return bytes.buffer;
+  return bytes;
+}
+
+/** Why a file was turned away on its way into the store. */
+class FileRejected extends Error {
+  constructor(readonly reason: 'too_large' | 'wrong_type' | 'empty') {
+    super(`file rejected: ${reason}`);
+    this.name = 'FileRejected';
+  }
+}
+
+/**
+ * A file's bytes on their way to the store, checked as they pass, so it is
+ * never held whole: past `maxBytes`, empty, or not starting like a `kind`, the
+ * stream errors with FileRejected and the store keeps nothing. `done` gives the
+ * size and SHA-256 once the last byte has gone through.
+ */
+function checkedFile(body: ReadableStream<Uint8Array>, kind: UploadKind, maxBytes: number) {
+  const digest = new crypto.DigestStream('SHA-256');
+  const hasher = digest.getWriter();
+  const head = new Uint8Array(PDF_SIGNATURE_WINDOW);
+  let headBytes = 0;
+  let checked = false;
+  let size = 0;
+  const checkHead = () => {
+    checked = true;
+    const bytes = head.subarray(0, headBytes);
+    if (!(kind === 'pdf' ? looksLikePdf(bytes) : looksLikeZip(bytes))) {
+      throw new FileRejected('wrong_type');
+    }
+  };
+  const reader = body.getReader();
+  const step = async (controller: ReadableStreamDefaultController<Uint8Array>) => {
+    const { done, value } = await reader.read();
+    if (done) {
+      if (size === 0) throw new FileRejected('empty');
+      if (!checked) checkHead();
+      await hasher.close();
+      return controller.close();
+    }
+    size += value.byteLength;
+    if (size > maxBytes) throw new FileRejected('too_large');
+    if (!checked) {
+      const n = Math.min(value.byteLength, head.length - headBytes);
+      head.set(value.subarray(0, n), headBytes);
+      headBytes += n;
+      if (headBytes === head.length) checkHead();
+    }
+    await hasher.write(value);
+    controller.enqueue(value);
+  };
+  // Pulled by the store, so it reads the source only as fast as the store writes.
+  const stream = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        await step(controller);
+      } catch (err) {
+        // Refused or failed: stop pulling the source too.
+        await reader.cancel(err).catch(() => {});
+        throw err;
+      }
+    },
+    cancel(reason) {
+      return reader.cancel(reason);
+    },
+  });
+  const done = async () => ({ size, sha256: toHex(await digest.digest) });
+  return { stream, done };
+}
+
+function toHex(digest: ArrayBuffer): string {
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 function monthStart(now: Date): number {
@@ -161,18 +231,16 @@ interface ParsedUpload {
 
 type ParseOutcome = ParsedUpload | Response;
 
-// The pdf-extractor Worker reads a PDF, and the reader's daily allowance pays.
-async function parsePdfUpload(env: Env, did: string, bytes: ArrayBuffer): Promise<ParseOutcome> {
-  if (!(await hasPdfAllowance(env, did))) {
-    return json({ error: 'pdf_daily_limit_reached', message: PDF_QUOTA_MESSAGE }, 403);
-  }
+// The pdf-extractor Worker reads a PDF, streamed to it from the store, and the
+// reader's daily allowance (checked before the upload was taken) pays.
+async function parsePdfUpload(env: Env, did: string, file: StoredFileBody): Promise<ParseOutcome> {
   let pdf;
   try {
-    pdf = await parsePdf(env, bytes);
+    pdf = await parsePdf(env, file);
   } catch (err) {
     if (!(err instanceof PdfParseError)) throw err;
     if (err.charged) await chargePdfParse(env, did);
-    log.warn('pdf_upload_parse_failed', { message: err.message, size: bytes.byteLength });
+    log.warn('pdf_upload_parse_failed', { message: err.message, size: file.size });
     return json({ error: 'pdf_unreadable', message: err.message }, err.userFacing ? 422 : 502);
   }
   await chargePdfParse(env, did);
@@ -260,30 +328,28 @@ async function handleUpload(request: Request, env: Env, session: Session, kind: 
       },
       413
     );
+  const storageFull = (used: number) =>
+    json(
+      {
+        error: 'pdf_storage_full',
+        message:
+          'Your saved PDFs, EPUBs and article pictures are using all of your storage. Removing some saves frees space.',
+        limit: limits.maxPdfStorageBytes,
+        used,
+      },
+      403
+    );
   // Answered before a byte is read when the caller declares an over-size body;
-  // the capped read below is what actually holds.
-  const declared = Number(request.headers.get('Content-Length'));
+  // the checked stream below is what actually holds.
+  const declaredHeader = request.headers.get('Content-Length');
+  const declared = declaredHeader === null ? NaN : Number(declaredHeader);
   if (Number.isFinite(declared) && declared > maxBytes) return tooLarge();
-  const bytes = await readCapped(request.body, maxBytes);
-  if (bytes === null) return tooLarge();
-  if (bytes.byteLength === 0) return json({ error: 'Empty file' }, 400);
-  if (kind === 'pdf' && !looksLikePdf(bytes)) {
-    return json({ error: 'not_a_pdf', message: "That file isn't a PDF." }, 415);
-  }
-  // Any zip gets as far as the parser, which knows an EPUB by its package
-  // document; plenty of tools don't store the `mimetype` entry first.
-  if (kind === 'epub' && !looksLikeZip(new Uint8Array(bytes))) {
-    return json({ error: 'not_an_epub', message: "That file isn't an EPUB." }, 415);
-  }
+  if (!request.body || declared === 0) return json({ error: 'Empty file' }, 400);
 
-  const sha256 = await sha256Hex(bytes);
+  // Everything that can refuse the upload without its bytes is asked first, so
+  // a refused file isn't streamed in only to be thrown away.
   const now = new Date();
-  const [dupe, rkeyTaken, usage] = await env.DB.batch([
-    env.DB.prepare(
-      `SELECT f.rkey FROM saved_files f
-       JOIN saved_articles s ON s.user_did = f.user_did AND s.rkey = f.rkey
-       WHERE f.user_did = ? AND f.sha256 = ? LIMIT 1`
-    ).bind(session.did, sha256),
+  const [rkeyTaken, usage] = await env.DB.batch([
     env.DB.prepare('SELECT 1 AS taken FROM saved_articles WHERE user_did = ? AND rkey = ?').bind(
       session.did,
       rkey
@@ -297,15 +363,8 @@ async function handleUpload(request: Request, env: Env, session: Session, kind: 
        WHERE f.user_did = ?`
     ).bind(monthStart(now), session.did),
   ]);
-
-  // The same file again opens the save it already is (highlights and all).
-  const dupeRkey = (dupe.results[0] as { rkey: string } | undefined)?.rkey;
-  if (dupeRkey) {
-    return json(
-      { error: 'already_saved', message: `This ${kindName} is already saved.`, rkey: dupeRkey },
-      409
-    );
-  }
+  // Also what keeps the stream below from landing on another save's file: an
+  // upload is kept where its rkey says.
   if (rkeyTaken.results.length > 0) return json({ error: 'rkey already in use' }, 409);
 
   const { this_month } = usage.results[0] as { this_month: number };
@@ -322,22 +381,66 @@ async function handleUpload(request: Request, env: Env, session: Session, kind: 
       403
     );
   }
-  if (stored + bytes.byteLength > limits.maxPdfStorageBytes) {
-    return json(
-      {
-        error: 'pdf_storage_full',
-        message:
-          'Your saved PDFs, EPUBs and article pictures are using all of your storage. Removing some saves frees space.',
-        limit: limits.maxPdfStorageBytes,
-        used: stored,
-      },
-      403
-    );
+  if (stored + (Number.isFinite(declared) ? declared : 1) > limits.maxPdfStorageBytes) {
+    return storageFull(stored);
+  }
+  if (kind === 'pdf' && !(await hasPdfAllowance(env, session.did))) {
+    return json({ error: 'pdf_daily_limit_reached', message: PDF_QUOTA_MESSAGE }, 403);
   }
 
-  const parsed =
-    kind === 'pdf' ? await parsePdfUpload(env, session.did, bytes) : await parseEpubUpload(bytes);
-  if (parsed instanceof Response) return parsed;
+  // The file streams into the store as it arrives, checked on the way, so the
+  // Worker holds a part of it at a time rather than the whole thing. From here
+  // on, any refusal deletes what was kept.
+  const mimeType = MIME_TYPES[kind];
+  const checked = checkedFile(request.body, kind, maxBytes);
+  let file: StoredFileRef;
+  try {
+    file = await store.put({ did: session.did, rkey, kind, mimeType, filename }, checked.stream);
+  } catch (err) {
+    if (!(err instanceof FileRejected)) throw err;
+    if (err.reason === 'too_large') return tooLarge();
+    if (err.reason === 'empty') return json({ error: 'Empty file' }, 400);
+    return kind === 'pdf'
+      ? json({ error: 'not_a_pdf', message: "That file isn't a PDF." }, 415)
+      : json({ error: 'not_an_epub', message: "That file isn't an EPUB." }, 415);
+  }
+  const { size, sha256 } = await checked.done();
+  const discard = async (response: Response) => {
+    await store.delete(file).catch(() => {});
+    return response;
+  };
+
+  // The same file again opens the save it already is (highlights and all).
+  const dupe = await env.DB.prepare(
+    `SELECT f.rkey FROM saved_files f
+     JOIN saved_articles s ON s.user_did = f.user_did AND s.rkey = f.rkey
+     WHERE f.user_did = ? AND f.sha256 = ? LIMIT 1`
+  )
+    .bind(session.did, sha256)
+    .first<{ rkey: string }>();
+  if (dupe) {
+    return discard(
+      json(
+        { error: 'already_saved', message: `This ${kindName} is already saved.`, rkey: dupe.rkey },
+        409
+      )
+    );
+  }
+  if (stored + size > limits.maxPdfStorageBytes) return discard(storageFull(stored));
+
+  let parsed: ParseOutcome;
+  try {
+    const kept = await store.get(file);
+    if (!kept) throw new Error('upload missing from the store just after it was kept');
+    parsed =
+      kind === 'pdf'
+        ? await parsePdfUpload(env, session.did, kept)
+        : await parseEpubUpload(await new Response(kept.body).arrayBuffer());
+  } catch (err) {
+    await store.delete(file).catch(() => {});
+    throw err;
+  }
+  if (parsed instanceof Response) return discard(parsed);
 
   const title =
     parsed.title ||
@@ -347,10 +450,9 @@ async function handleUpload(request: Request, env: Env, session: Session, kind: 
   const publishedAt = Number.isFinite(publishedMs) ? publishedMs : null;
   const savedAt = Date.now();
   const recordUri = `at://${session.did}/${COLLECTION}/${rkey}`;
-  const mimeType = MIME_TYPES[kind];
 
-  // The file first: a row pointing at a missing file is worse than a stray file.
-  const file = await store.put({ did: session.did, rkey, kind, mimeType, filename }, bytes);
+  // The file is already kept: a row pointing at a missing file is worse than a
+  // stray file.
   try {
     await env.DB.batch([
       env.DB.prepare(
@@ -379,7 +481,7 @@ async function handleUpload(request: Request, env: Env, session: Session, kind: 
         ...storedFileBindings(file),
         filename,
         mimeType,
-        bytes.byteLength,
+        size,
         sha256,
         savedAt
       ),
@@ -408,7 +510,7 @@ async function handleUpload(request: Request, env: Env, session: Session, kind: 
   });
 
   log.info(`${kind}_uploaded`, {
-    size: bytes.byteLength,
+    size,
     wordCount: parsed.wordCount,
     ...parsed.extent,
   });
@@ -437,10 +539,10 @@ async function handleUpload(request: Request, env: Env, session: Session, kind: 
   );
 }
 
-// Largest PDF the viewer route will relay for a save made by link. Nothing parses
-// it here (the browser draws it), so it can be bigger than a parse allows. It's
+// Largest PDF the viewer route will relay for a save made by link: the most a
+// Supporter can upload, so any PDF that could be read can be shown. It's
 // streamed through, so the cap bounds the transfer, not what the Worker holds.
-const MAX_RELAYED_PDF_BYTES = 30 * 1024 * 1024;
+const MAX_RELAYED_PDF_BYTES = 50 * 1024 * 1024;
 const RELAY_TIMEOUT_MS = 20_000;
 
 function fileResponse(
@@ -554,22 +656,27 @@ async function storeLinkedOriginal(
     return 'unavailable';
   }
   const maxBytes = save.kind === 'pdf' ? limits.maxPdfUploadBytes : limits.maxEpubUploadBytes;
-  const bytes = await readCapped(upstream.body, maxBytes).catch(() => null);
-  const looksRight =
-    save.kind === 'pdf'
-      ? (b: ArrayBuffer) => looksLikePdf(b)
-      : (b: ArrayBuffer) => looksLikeZip(new Uint8Array(b));
-  if (!bytes || bytes.byteLength === 0 || !looksRight(bytes)) return 'unavailable';
-  if (stored + bytes.byteLength > limits.maxPdfStorageBytes) return 'storage_full';
+  if (!upstream.body || Number(upstream.headers.get('Content-Length')) > maxBytes) {
+    await upstream.body?.cancel().catch(() => {});
+    return 'unavailable';
+  }
+  // Streamed into the store, checked on the way (as an upload is), so the
+  // Worker never holds the whole file.
+  const checked = checkedFile(upstream.body, save.kind, maxBytes);
+  let file: StoredFileRef;
+  try {
+    file = await store.put(linkedFileMeta(did, save), checked.stream);
+  } catch {
+    return 'unavailable';
+  }
+  const { size, sha256 } = await checked.done();
+  if (stored + size > limits.maxPdfStorageBytes) {
+    await store.delete(file).catch(() => {});
+    return 'storage_full';
+  }
 
-  const file = await store.put(linkedFileMeta(did, save), bytes);
-  const result = await recordLinkedOriginal(env, store, did, save, {
-    ref: file,
-    size: bytes.byteLength,
-    sha256: await sha256Hex(bytes),
-  });
-  if (result === 'stored')
-    log.info(`${save.kind}_link_original_stored`, { size: bytes.byteLength });
+  const result = await recordLinkedOriginal(env, store, did, save, { ref: file, size, sha256 });
+  if (result === 'stored') log.info(`${save.kind}_link_original_stored`, { size });
   return result;
 }
 

@@ -151,8 +151,11 @@ inbox owner — and every subscription path checks `isNewsletterSubscription`. S
 **PDFs** are a Supporter feature (`TierLimits.pdfSaves`), by link or upload. By link, the proxy
 fetches and the pdf-extractor Worker parses; `FeedProxyClient.extract` sends `allowPdf: false` for a
 reader without the plan or out of their daily parses (`services/pdf-quota.ts`). An upload
-(`POST /api/saved/pdf`, raw bytes) is posted to the extractor directly
-(`services/pdf-extractor.ts`) and becomes an ordinary URL-less save (`source = 'upload'`,
+(`POST /api/saved/pdf`, raw bytes) is streamed into R2 as it arrives, checked on the way (size,
+signature, SHA-256; `checkedFile` in `routes/saved-pdf.ts`), and then streamed from R2 to the
+extractor (`services/pdf-extractor.ts`), so the API Worker never holds a whole file (up to 50 MB),
+only a 5 MiB multipart part (`SavedFileStore.put` with a bare stream); a refused or unreadable
+file is deleted again. It becomes an ordinary URL-less save (`source = 'upload'`,
 `content_type = 'pdf'`), so highlights and search key on its record uri like any other save. The
 original file is kept private in R2 (`SAVED_FILES`, one row per file in `saved_files`), served only
 to its owner at `GET /api/saved/<rkey>/file`, and deleted with the save. Uploads never reach the

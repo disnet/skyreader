@@ -35,7 +35,7 @@ A saved PDF opens as text, set for reading. For figures, tables, equations, and 
 
 A scanned PDF has no text to keep, and a password-protected one can't be read. A very long PDF keeps the text of its first pages, and says so at the end.
 
-Limits: a PDF can be up to 10 MB. You can upload 200 PDFs a month and keep up to 2 GB of PDF originals; removing a saved PDF frees its space. Up to 100 PDFs a day come through as text, by link or upload; past that, a saved link keeps just the link, and saving it again the next day brings in the text.
+Limits: a PDF can be up to 50 MB. You can upload 200 PDFs a month and keep up to 2 GB of PDF originals; removing a saved PDF frees its space. Up to 100 PDFs a day come through as text, by link or upload; past that, a saved link keeps just the link, and saving it again the next day brings in the text.
 
 On the free plan, saving a link to a PDF keeps the link, so you can still open it from your Queue.
 

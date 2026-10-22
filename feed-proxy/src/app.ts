@@ -454,6 +454,10 @@ const DEFAULT_WARM_TARGET_CYCLE_MS = 60 * 60 * 1000;
 const FIREHOSE_RELIST_MS = 24 * 60 * 60 * 1000; // 24 hours
 const ACTIVE_DOCUMENT_BACKOFF_MAX_MS = 6 * 60 * 60 * 1000;
 const MAX_RESPONSE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
+// A PDF saved by link may be bigger than a page: it is only relayed to the
+// extractor Worker (which takes up to this; pdf-extractor MAX_PDF_BYTES), not
+// built into a DOM, so it costs its bytes once rather than several times over.
+const MAX_PDF_SIZE_BYTES = 50 * 1024 * 1024; // 50 MB
 // Extracted article content is effectively immutable per URL; cache it for a long
 // time so repeat (and cross-user) saves of the same article are free.
 const EXTRACT_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
@@ -3076,9 +3080,20 @@ export function createApp(db: Database, config: AppConfig) {
           }
 
           const contentType = response.headers.get('Content-Type');
+          // The PDF cap applies to whatever could be a PDF this reader may have
+          // parsed: declared so, named so, or of no particular type (a PDF is
+          // often served as octet-stream). The sniff below decides which it is.
+          const pdfCapped =
+            !!pdfOpts.extractPdf &&
+            pdfOpts.allowPdf &&
+            (isDeclaredPdf(contentType) ||
+              /\.pdf$/i.test(new URL(url).pathname) ||
+              !contentType ||
+              /^(application\/octet-stream|binary\/octet-stream)\b/i.test(contentType));
+          const sizeLimit = pdfCapped ? MAX_PDF_SIZE_BYTES : MAX_RESPONSE_SIZE_BYTES;
           let bytes: Uint8Array<ArrayBuffer>;
           try {
-            bytes = await readBytesWithLimit(response, MAX_RESPONSE_SIZE_BYTES);
+            bytes = await readBytesWithLimit(response, sizeLimit);
           } catch (err) {
             // A book over the page limit is still the backend's to fetch: its cap
             // is the reader's plan's, not ours.
@@ -3100,13 +3115,22 @@ export function createApp(db: Database, config: AppConfig) {
                 /\.pdf$/i.test(new URL(url).pathname))
             ) {
               console.warn(`[Proxy] /extract ${url}: ${err.message}`);
+              // Without a parse to offer, it's refused as any PDF would be.
+              if (!pdfOpts.extractPdf || !pdfOpts.allowPdf) {
+                await extractPdfArticle(pdfOpts, new Uint8Array(0), url);
+              }
               throw new PdfExtractError(
-                `This PDF is larger than ${MAX_RESPONSE_SIZE_BYTES / (1024 * 1024)} MB, the most Skyreader can save`
+                `This PDF is larger than ${sizeLimit / (1024 * 1024)} MB, the most Skyreader can save`
               );
             }
             throw err;
           }
           if (isEpubResponse(bytes, contentType, url)) throw new EpubHandOff();
+          // Read under the PDF cap but not a PDF after all: a page still has the
+          // page cap.
+          if (bytes.byteLength > MAX_RESPONSE_SIZE_BYTES && !isPdf(bytes, contentType)) {
+            throw new ResponseTooLargeError(bytes.byteLength, MAX_RESPONSE_SIZE_BYTES);
+          }
           // Sniff as well as trust the header: plenty of servers send a PDF as
           // application/octet-stream, and a PDF decoded as text is mojibake.
           let extracted: ExtractedArticle;
