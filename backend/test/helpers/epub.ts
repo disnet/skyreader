@@ -109,6 +109,8 @@ export async function buildEpub(
     manifest?: string[];
     /** More metadata markup (an EPUB 2 `<meta name="cover">`), verbatim. */
     metadata?: string;
+    /** Entries kept uncompressed, as books keep their pictures. */
+    stored?: string[];
   } = {}
 ): Promise<Uint8Array> {
   const chapters = opts.chapters ?? [
@@ -143,26 +145,29 @@ export async function buildEpub(
       .join('\n    ')}
   </spine>
 </package>`;
-  return buildZip([
-    ['mimetype', 'application/epub+zip'],
+  return buildZip(
     [
-      'META-INF/container.xml',
-      `<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`,
-    ],
-    ['OEBPS/content.opf', opf],
-    ...chapters.map(
-      (c) =>
-        [
-          `OEBPS/text/${c.id}.xhtml`,
-          `<?xml version="1.0" encoding="UTF-8"?>
+      ['mimetype', 'application/epub+zip'],
+      [
+        'META-INF/container.xml',
+        `<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>`,
+      ],
+      ['OEBPS/content.opf', opf],
+      ...chapters.map(
+        (c) =>
+          [
+            `OEBPS/text/${c.id}.xhtml`,
+            `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">
 <head><title>${c.id}</title><link rel="stylesheet" href="../style.css"/></head>
 <body>${c.body}</body>
 </html>`,
-        ] as [string, string]
-    ),
-    ...(opts.ncx ? [['OEBPS/toc.ncx', opts.ncx] as [string, string]] : []),
-    ...(opts.extra ?? []),
-  ]);
+          ] as [string, string]
+      ),
+      ...(opts.ncx ? [['OEBPS/toc.ncx', opts.ncx] as [string, string]] : []),
+      ...(opts.extra ?? []),
+    ],
+    { stored: opts.stored }
+  );
 }

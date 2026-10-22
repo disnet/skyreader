@@ -19,7 +19,7 @@ export function uploadKind(file: File): UploadKind | null {
 export function uploadLimitsMb(limits?: UploadLimits | null): { pdf: number; epub: number } {
   return {
     pdf: Math.round((limits?.maxPdfUploadBytes ?? 50 * MB) / MB),
-    epub: Math.round((limits?.maxEpubUploadBytes ?? 30 * MB) / MB),
+    epub: Math.round((limits?.maxEpubUploadBytes ?? 50 * MB) / MB),
   };
 }
 
@@ -34,7 +34,7 @@ export function checkUpload(
   if (kind === 'pdf' && file.size > (limits?.maxPdfUploadBytes ?? 50 * MB)) {
     return { error: `PDFs up to ${max.pdf} MB can be uploaded.` };
   }
-  if (kind === 'epub' && file.size > (limits?.maxEpubUploadBytes ?? 30 * MB)) {
+  if (kind === 'epub' && file.size > (limits?.maxEpubUploadBytes ?? 50 * MB)) {
     return { error: `EPUBs up to ${max.epub} MB can be uploaded.` };
   }
   return { kind };

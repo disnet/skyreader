@@ -47,7 +47,7 @@ EPUBs are a [Supporter](/supporter/) feature too. Save a link to an EPUB, or upl
 
 Skyreader keeps the words and pictures, not the publisher's design. A book opens on its cover, which also stands for it on your Shelf. The book's own links work: a footnote marker or a chapter's contents takes you to that place in the text. Skyreader keeps the original of every EPUB you save, by link or upload; its pictures are read from it. If your storage is full when you save a book by link, its text still comes through, but its pictures wait until there's room. A book with DRM can't be read. A very long book keeps its first chapters, and says so at the end.
 
-Limits: an EPUB can be up to 30 MB. EPUBs share the PDF allowances: 200 uploads a month, and 2 GB of kept originals between them; removing a saved EPUB frees its space. Like uploaded PDFs, uploaded EPUBs are private to you and stay on Skyreader.
+Limits: an EPUB can be up to 50 MB. EPUBs share the PDF allowances: 200 uploads a month, and 2 GB of kept originals between them; removing a saved EPUB frees its space. Like uploaded PDFs, uploaded EPUBs are private to you and stay on Skyreader.
 
 ### Saving a YouTube video
 

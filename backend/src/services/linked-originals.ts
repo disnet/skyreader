@@ -1,6 +1,8 @@
 import type { Env } from '../types';
-import { log } from '../utils/logger';
 import { sha256Hex } from '../utils/sha256';
+import { FileRejected, checkedFile } from './checked-file';
+import { EpubError, epubTooLargeMessage, openEpubFromSite, type RangedFile } from './epub';
+import { putStream } from './saved-file-store';
 
 /**
  * The bytes of an EPUB saved by link, kept from the read that extracted it.
@@ -25,44 +27,67 @@ export async function stagedOriginalKey(did: string, url: string): Promise<strin
   return `${STAGED_PREFIX}epub/${did}/${await sha256Hex(new TextEncoder().encode(url))}.epub`;
 }
 
+/** A linked book staged in R2, open a range at a time. */
+export interface StagedBook {
+  file: RangedFile;
+  /** Drop it, when the read then failed. */
+  discard(): Promise<void>;
+}
+
 /**
- * Keep a linked book's bytes for the save that follows. Best effort: a failure
- * only means the save fetches the book itself. An object already there (an
- * earlier read, or a save's kept original) is left alone.
+ * Stream a linked book from its site into its staging place, checked on the way
+ * (services/checked-file.ts), so it's read from R2 a range at a time
+ * (services/epub.ts parseEpub) and never held whole in the Worker; the save
+ * that follows then keeps it rather than downloading it again. A book an
+ * earlier read staged is replaced, so the save keeps what this read saw.
  */
-export async function stageLinkedOriginal(
-  env: Env,
+export async function stageLinkedBook(
+  bucket: R2Bucket,
   did: string,
   url: string,
-  bytes: Uint8Array
-): Promise<void> {
-  if (!env.SAVED_FILES) return;
+  maxBytes: number
+): Promise<StagedBook> {
+  const key = await stagedOriginalKey(did, url);
+  const ranged = (size: number): RangedFile => ({
+    size: async () => size,
+    read: async (offset, length) => {
+      const object = await bucket.get(key, { range: { offset, length } });
+      return object ? new Uint8Array(await object.arrayBuffer()) : null;
+    },
+  });
+  const { body } = await openEpubFromSite(url, maxBytes);
+  const checked = checkedFile(body, 'epub', maxBytes);
   try {
-    const key = await stagedOriginalKey(did, url);
-    if (await env.SAVED_FILES.head(key)) return;
-    await env.SAVED_FILES.put(key, bytes, {
+    await putStream(bucket, key, checked.stream, {
       httpMetadata: { contentType: 'application/epub+zip' },
-      customMetadata: { did, sha256: await sha256Hex(bytes) },
+      customMetadata: { did },
     });
-  } catch (error) {
-    log.warn('epub_stage_failed', {
-      message: error instanceof Error ? error.message : String(error),
-    });
+  } catch (err) {
+    if (!(err instanceof FileRejected)) {
+      throw new EpubError("Couldn't fetch the EPUB from its site.");
+    }
+    throw new EpubError(
+      err.reason === 'too_large' ? epubTooLargeMessage(maxBytes) : "This file isn't an EPUB."
+    );
   }
+  const { size } = await checked.done();
+  return {
+    file: ranged(size),
+    discard: () => bucket.delete(key).catch(() => {}),
+  };
 }
 
 /** A staged book: its bytes, and a way to let go of it. */
 export interface StagedOriginal {
   body: ReadableStream<Uint8Array>;
   size: number;
-  sha256: string;
   /** Drop the staged object, once its bytes are kept (or not wanted). */
   remove(): Promise<void>;
 }
 
 /**
- * The book staged for a reader's save of `url`, or null when none is (or one
- * is but can't be used: it has no digest). The caller reads or cancels `body`.
+ * The book staged for a reader's save of `url`, or null when none is. The
+ * caller reads or cancels `body`.
  */
 export async function readStagedOriginal(
   env: Env,
@@ -74,15 +99,9 @@ export async function readStagedOriginal(
   const key = await stagedOriginalKey(did, url);
   const staged = await bucket.get(key);
   if (!staged) return null;
-  const sha256 = staged.customMetadata?.sha256;
-  if (!sha256) {
-    await staged.body.cancel().catch(() => {});
-    return null;
-  }
   return {
     body: staged.body,
     size: staged.size,
-    sha256,
     remove: () => bucket.delete(key),
   };
 }

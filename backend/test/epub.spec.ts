@@ -3,6 +3,32 @@ import { EpubError, looksLikeEpub, parseEpub } from '../src/services/epub';
 import { buildEpub, buildZip } from './helpers/epub';
 
 describe('parseEpub', () => {
+  // A kept book is parsed a range at a time: the same book, never held whole.
+  it('reads a book by range as it reads one in memory', async () => {
+    const epub = await buildEpub({
+      title: 'Ranged',
+      chapters: Array.from({ length: 9 }, (_, i) => ({
+        id: `ch${i + 1}`,
+        body: `<h1>Chapter ${i + 1}</h1><p>${'Words that fill a chapter. '.repeat(40)}</p>`,
+      })),
+      // A picture, so the book is bigger than the tail read that finds its file list.
+      extra: [['OEBPS/plate.bin', new Uint8Array(300_000).fill(7)]],
+      stored: ['OEBPS/plate.bin'],
+    });
+    const reads: number[] = [];
+    const ranged = {
+      size: async () => epub.byteLength,
+      read: async (offset: number, length: number) => {
+        reads.push(length);
+        return epub.slice(offset, offset + length);
+      },
+    };
+    const whole = await parseEpub(epub);
+    expect(await parseEpub(ranged)).toEqual(whole);
+    // Never the whole book, and never the picture it doesn't read.
+    expect(Math.max(...reads)).toBeLessThan(100_000);
+  });
+
   it('reads metadata and joins the spine into chapter sections', async () => {
     const epub = await buildEpub({
       title: 'Nineteen &amp; Eighty-Four',

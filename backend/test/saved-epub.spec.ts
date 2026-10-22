@@ -94,6 +94,26 @@ describe('POST /api/saved/epub', () => {
     globalThis.fetch = originalFetch;
   });
 
+  // Over the old 30 MB cap, and mostly a picture (stored, as books store their
+  // images): the book streams into R2 in parts and is read back by range.
+  it('reads a book bigger than one part from where it was kept', async () => {
+    const picture = new Uint8Array(31 * 1024 * 1024);
+    for (let i = 0; i < picture.length; i += 4096) picture[i] = (i / 4096) % 251;
+    const epub = await buildEpub({
+      title: 'Illustrated',
+      chapters: [{ id: 'ch1', body: '<h1>One</h1><p>A long caption under a large plate.</p>' }],
+      extra: [['OEBPS/plate.bin', picture]],
+      stored: ['OEBPS/plate.bin'],
+    });
+    const { status, body } = await call(upload(epub));
+    expect(status).toBe(201);
+    expect(body).toMatchObject({ title: 'Illustrated', chaptersKept: 1 });
+    const file = await env.DB.prepare('SELECT size FROM saved_files WHERE user_did = ?')
+      .bind(DID)
+      .first<{ size: number }>();
+    expect(file!.size).toBe(epub.byteLength);
+  });
+
   it('saves an upload as a URL-less EPUB save and keeps the original', async () => {
     const epub = await BOOK();
     const { status, body } = await call(upload(epub));

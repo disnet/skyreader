@@ -173,11 +173,13 @@ snapshot keeps go through it too (`putImage`). Snapshot bodies and staged linked
 originals and still use `SAVED_FILES` directly.
 
 **EPUBs** ride the same plan flag and the same upload/storage limits (`maxEpubUploadBytes` is their
-own, larger size cap), but are read in this Worker (`src/services/epub.ts`: unzip, walk the OPF
+own size cap, 50 MB like a PDF's), but are read in this Worker (`src/services/epub.ts`: unzip, walk the OPF
 spine, strip each chapter to reading markup with `HTMLRewriter`, one
 `<section data-epub-chapter="N">` per chapter, capped at 1 MB like a PDF's text), so they spend no
-daily parse allowance. An upload is `POST /api/saved/epub` (`content_type = 'epub'`, original kept in
-R2 like a PDF's). By link, the proxy's `/extract` recognises an EPUB and answers `epub: true`
+daily parse allowance. The book is never held whole: `parseEpub` takes a `RangedFile` and reads the
+zip's tail, its central directory, then one ranged read per entry (a few chapters ahead), so an
+upload is parsed from where it was kept and a linked book from where it was staged. An upload is
+`POST /api/saved/epub` (`content_type = 'epub'`, original kept in R2 like a PDF's). By link, the proxy's `/extract` recognises an EPUB and answers `epub: true`
 without caching; `FeedProxyClient.extract` then fetches and reads the book itself, and the save keeps
 its original like a linked PDF (`storeLinkedOriginalForUrl`). Pictures stay in the book: the text
 carries `<img data-epub-src="<path in zip>">`, and `GET /api/saved/<rkey>/asset?path=` serves one
@@ -186,9 +188,10 @@ sandboxed (an SVG must not run as a page on the API origin); a linked save with 
 keeps it on the first picture asked for — once per save, not per picture (`keepLinkedOriginalOnce`:
 an in-isolate promise plus a one-a-minute D1 claim in `rate_limits`; the other requests wait for its
 row), and answers `pdf_storage_full` when there's no room, which the reader turns into a note. The
-book is downloaded once per save by link: `extractEpub` stages the bytes it read in R2
-(`services/linked-originals.ts`, `staged/epub/<did>/<sha256(url)>.epub`), the save moves that object
-into place instead of fetching again, and the hourly cron sweeps staged books no save adopted. Ids and internal hrefs are scoped by spine position
+book is downloaded once per save by link: `extractEpub` streams it into R2 before reading it
+(`stageLinkedBook` in `services/linked-originals.ts`, `staged/epub/<did>/<sha256(url)>.epub`, replacing
+an earlier read's), the save moves that object into place instead of
+fetching again (hashing it on the way), and the hourly cron sweeps staged books no save adopted. Ids and internal hrefs are scoped by spine position
 (`#epub-c3-note12`, `epubAnchorId`), which the frontend's footnote navigation follows. The book's
 own table of contents (the EPUB 3 nav's `toc`, else the EPUB 2 NCX) rides the text as
 `data-toc-title` / `data-toc-level` on the element each entry lands on (its chapter's section when

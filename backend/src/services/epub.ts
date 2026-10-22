@@ -49,6 +49,8 @@ export const MAX_EPUB_CONTENT_BYTES = 1_000_000;
 const MAX_ENTRY_BYTES = 8 * 1024 * 1024;
 const MAX_TOTAL_INFLATED_BYTES = 64 * 1024 * 1024;
 const MAX_SPINE_ITEMS = 2000;
+// Chapters read ahead of the one being cleaned, for a book read by range.
+const CHAPTERS_AHEAD = 4;
 
 // ---------------------------------------------------------------------------
 // Sniffing
@@ -214,21 +216,70 @@ export async function inflateEntry(
   return out;
 }
 
-class Inflater {
-  private total = 0;
-  constructor(private readonly bytes: Uint8Array) {}
+/** A book open for reading: its file list, and each file's inflated bytes. */
+interface OpenZip {
+  entries: Map<string, ZipEntry>;
+  read(entry: ZipEntry): Promise<Uint8Array>;
+}
 
-  async read(entry: ZipEntry): Promise<Uint8Array> {
+/** Reads entries' stored data, inflating them within the whole-book budget. */
+function inflater(
+  entries: Map<string, ZipEntry>,
+  storedData: (entry: ZipEntry) => Promise<Uint8Array>
+): OpenZip {
+  let total = 0;
+  return {
+    entries,
+    async read(entry) {
+      return inflateEntry(entry, await storedData(entry), MAX_ENTRY_BYTES, (chunk) => {
+        total += chunk.byteLength;
+        if (total > MAX_TOTAL_INFLATED_BYTES) {
+          throw new EpubError('This EPUB is too large to read.');
+        }
+      });
+    },
+  };
+}
+
+function openZipBytes(bytes: Uint8Array): OpenZip {
+  if (!looksLikeZip(bytes)) throw new EpubError("This file isn't an EPUB.");
+  return inflater(readCentralDirectory(bytes), async (entry) => {
     const at = entry.localOffset;
-    const start = entryDataOffset(entry, this.bytes.subarray(at, at + LOCAL_HEADER_BYTES));
-    const data = this.bytes.subarray(start, start + entry.compressedSize);
-    return inflateEntry(entry, data, MAX_ENTRY_BYTES, (chunk) => {
-      this.total += chunk.byteLength;
-      if (this.total > MAX_TOTAL_INFLATED_BYTES) {
-        throw new EpubError('This EPUB is too large to read.');
-      }
-    });
-  }
+    const start = entryDataOffset(entry, bytes.subarray(at, at + LOCAL_HEADER_BYTES));
+    return bytes.subarray(start, start + entry.compressedSize);
+  });
+}
+
+// A local header's name and extra field usually match the central directory's,
+// so one ranged read with this much room fetches an entry's header and data
+// together; a longer extra field costs a second read.
+const LOCAL_HEADER_SLACK = 1024;
+
+/**
+ * A kept book read a range at a time, so it is never held whole: its tail, its
+ * file list, then one read per entry it parses.
+ */
+async function openZipRanged(file: RangedFile): Promise<OpenZip> {
+  const size = await file.size();
+  if (size === null) throw new EpubError("This file isn't an EPUB.");
+  const tailLength = Math.min(size, EOCD_SEARCH_BYTES);
+  const loc = locateCentralDirectory(await readRange(file, size - tailLength, tailLength));
+  if (loc.offset + loc.size > size) throw new EpubError("This EPUB's file list is damaged.");
+  const entries = parseCentralDirectory(await readRange(file, loc.offset, loc.size), loc.count);
+  return inflater(entries, async (entry) => {
+    if (entry.localOffset + LOCAL_HEADER_BYTES > size) throw new EpubError('This EPUB is damaged.');
+    const guess = Math.min(
+      size - entry.localOffset,
+      LOCAL_HEADER_BYTES + entry.name.length * 4 + LOCAL_HEADER_SLACK + entry.compressedSize
+    );
+    const head = await readRange(file, entry.localOffset, guess);
+    const start = entryDataOffset(entry, head.subarray(0, LOCAL_HEADER_BYTES));
+    if (start + entry.compressedSize > size) throw new EpubError('This EPUB is damaged.');
+    const end = start - entry.localOffset + entry.compressedSize;
+    return end <= head.length
+      ? head.subarray(start - entry.localOffset, end)
+      : readRange(file, start, entry.compressedSize);
+  });
 }
 
 function decodeText(bytes: Uint8Array): string {
@@ -808,11 +859,15 @@ export const MAX_LINKED_EPUB_BYTES = 30 * 1024 * 1024;
 const FETCH_TIMEOUT_MS = 20_000;
 
 /**
- * An EPUB from its URL, for a save by link. The feed proxy recognises one and
- * hands it back (it reads web pages, not books); the Worker's fetch reaches only
- * the public internet (global_fetch_strictly_public).
+ * An EPUB's body from its URL, for a save by link, refused unread when it says
+ * it's over `maxBytes`. The feed proxy recognises one and hands it back (it
+ * reads web pages, not books); the Worker's fetch reaches only the public
+ * internet (global_fetch_strictly_public).
  */
-export async function fetchEpub(url: string, maxBytes: number): Promise<Uint8Array> {
+export async function openEpubFromSite(
+  url: string,
+  maxBytes: number
+): Promise<{ body: ReadableStream<Uint8Array>; declared: number }> {
   let response: Response;
   try {
     response = await fetch(url, {
@@ -830,13 +885,27 @@ export async function fetchEpub(url: string, maxBytes: number): Promise<Uint8Arr
     await response.body?.cancel().catch(() => {});
     throw new EpubError("Couldn't fetch the EPUB from its site.");
   }
-  const tooLarge = `EPUBs up to ${Math.round(maxBytes / (1024 * 1024))} MB can be saved.`;
   const declared = Number(response.headers.get('Content-Length'));
   if (Number.isFinite(declared) && declared > maxBytes) {
     await response.body?.cancel().catch(() => {});
-    throw new EpubError(tooLarge);
+    throw new EpubError(epubTooLargeMessage(maxBytes));
   }
   if (!response.body) throw new EpubError("Couldn't fetch the EPUB from its site.");
+  return { body: response.body, declared };
+}
+
+/** The message for a book over the cap. */
+export function epubTooLargeMessage(maxBytes: number): string {
+  return `EPUBs up to ${Math.round(maxBytes / (1024 * 1024))} MB can be saved.`;
+}
+
+/**
+ * A linked EPUB held whole, for a read with no reader to stage it for (with
+ * one, services/linked-originals.ts stageLinkedBook streams it to R2 instead).
+ */
+export async function fetchEpub(url: string, maxBytes: number): Promise<Uint8Array> {
+  const { body, declared } = await openEpubFromSite(url, maxBytes);
+  const tooLarge = epubTooLargeMessage(maxBytes);
   // Read into one buffer rather than collecting chunks and joining them, which
   // holds the book twice at the peak. Sized by Content-Length when the site
   // sends one, grown by doubling (to the cap) when it doesn't.
@@ -844,7 +913,7 @@ export async function fetchEpub(url: string, maxBytes: number): Promise<Uint8Arr
     Number.isFinite(declared) && declared > 0 ? declared : Math.min(maxBytes, 1024 * 1024)
   );
   let total = 0;
-  const reader = response.body.getReader();
+  const reader = body.getReader();
   try {
     for (;;) {
       const { done, value } = await reader.read();
@@ -872,18 +941,18 @@ export async function fetchEpub(url: string, maxBytes: number): Promise<Uint8Arr
 // ---------------------------------------------------------------------------
 
 export async function parseEpub(
-  input: ArrayBuffer | Uint8Array,
+  input: ArrayBuffer | Uint8Array | RangedFile,
   opts: { maxContentBytes?: number } = {}
 ): Promise<EpubExtraction> {
-  const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
   const maxBytes = opts.maxContentBytes ?? MAX_EPUB_CONTENT_BYTES;
-  if (!looksLikeZip(bytes)) throw new EpubError("This file isn't an EPUB.");
-
-  const entries = readCentralDirectory(bytes);
-  const inflater = new Inflater(bytes);
+  const zip =
+    input instanceof ArrayBuffer || input instanceof Uint8Array
+      ? openZipBytes(input instanceof Uint8Array ? input : new Uint8Array(input))
+      : await openZipRanged(input);
+  const { entries } = zip;
   const readEntry = async (path: string): Promise<string | null> => {
     const entry = entries.get(path);
-    return entry ? decodeText(await inflater.read(entry)) : null;
+    return entry ? decodeText(await zip.read(entry)) : null;
   };
 
   const container = await readEntry('META-INF/container.xml');
@@ -949,8 +1018,23 @@ export async function parseEpub(
   let stoppedEarly = false;
   // Chapters are cleaned one at a time and the walk stops at the first one that
   // would pass the cap, so a long book never pays for the chapters it drops.
+  // A kept book is read a range at a time, so the next few chapters are fetched
+  // while this one is cleaned. (One left unread when the walk stops is dropped.)
+  const ahead = new Map<number, Promise<string | null>>();
+  const chapterAt = (i: number) => {
+    for (let j = i; j < Math.min(i + CHAPTERS_AHEAD, pkg.chapters.length); j++) {
+      if (!ahead.has(j)) {
+        const read = readEntry(pkg.chapters[j]);
+        read.catch(() => {});
+        ahead.set(j, read);
+      }
+    }
+    const read = ahead.get(i)!;
+    ahead.delete(i);
+    return read;
+  };
   for (const [i, path] of pkg.chapters.entries()) {
-    const xhtml = await readEntry(path);
+    const xhtml = await chapterAt(i);
     if (!xhtml) continue;
     const toc = tocByChapter.get(i + 1);
     const tocFound = new Set<string>();
