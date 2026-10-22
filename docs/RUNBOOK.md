@@ -392,8 +392,8 @@ Recovery is silent by design — the admin's Firehose Lag tile goes green and
   above, and redeploy if the next cron tick doesn't revive it.
 - `unreachable`: the socket never opened within the ~2s idle window. Usually Jetstream
   is down or unreachable from Cloudflare. Confirm with **Is it Jetstream?** below
-  before ruling the poller out: a handshake Jetstream rejects (an over-long URL, a
-  429) looks the same from here.
+  before ruling the poller out: a handshake Jetstream rejects (an over-long URL, or
+  rate limiting) looks the same from here.
 - `behind`: it read for the whole poll window, or up to the apply cap, so it is
   draining a backlog. Watch the number fall.
 - `dropped`: it opened and then got closed or errored. Usually Jetstream again, but
