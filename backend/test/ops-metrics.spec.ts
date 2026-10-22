@@ -364,7 +364,9 @@ describe('recordPollerStatus', () => {
         },
       } as unknown as Env;
 
-      const result = expect(recordPollerStatus(wedged)).rejects.toThrow(/timed out/);
+      const result = expect(recordPollerStatus(wedged)).rejects.toThrow(
+        new RegExp(`timed out after ${POLLER_PING_TIMEOUT_MS}ms`)
+      );
       await vi.advanceTimersByTimeAsync(POLLER_PING_TIMEOUT_MS);
       await result;
     } finally {

@@ -289,14 +289,15 @@ with it within minutes.
 **Fix:** confirm the trigger still exists in `wrangler.toml` (`crons = ["* * * * *"]`)
 and redeploy. Cloudflare has occasionally dropped triggers on failed deploys.
 
-If the failing phase is `poller-start` (the cron fires, but the poller ping fails or
-times out) and the poller-start errors read `internal error; reference = …`, the
-JetstreamPoller object itself is wedged on Cloudflare's side. On 2026-10-22 that ran
-02:29–03:28 UTC: each alarm was killed at the 15-minute wall limit, and it recovered
-on its own with no deploy. The cron gives up on the ping after
-`POLLER_PING_TIMEOUT_MS` (10s), so the runs stay short. There is nothing to fix in
-our code. Confirm the DO namespace's `internalError` count in the Workers analytics,
-and wait for it to clear.
+If the failing phase is `poller-start`, with errors reading `JetstreamPoller /start
+timed out after 10000ms` (or `internal error; reference = …` when the stub fails
+fast) and `ops-metrics:poller-status` failing alongside, the JetstreamPoller object
+itself is wedged on Cloudflare's side. On 2026-10-22 that ran 02:29–03:28 UTC: each
+alarm was killed at the 15-minute wall limit, and it recovered on its own with no
+deploy. Each poller call gives up after `POLLER_PING_TIMEOUT_MS` (10s), so a wedged
+run costs about 20s instead of hanging. There is nothing to fix in our code. Confirm
+the DO namespace's `internalError` count in the Workers analytics, and wait for it
+to clear.
 
 ### `proxy-warmer` heartbeat missed
 
