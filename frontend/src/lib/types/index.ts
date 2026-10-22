@@ -1330,6 +1330,15 @@ export interface SavedItem {
   coverPath?: string | null;
 }
 
+// A reader's own edit of a save's metadata (PATCH /api/saved/:rkey). A field
+// left out is untouched; null clears it. The title can't be cleared.
+export interface SavedMetadataEdit {
+  title?: string;
+  author?: string | null;
+  description?: string | null;
+  publishedAt?: string | null;
+}
+
 // Semble connections other people drew off one save (GET /api/saved/connections).
 // Only saves with at least one appear. Times are ms.
 export interface SavedConnectionActivity {

@@ -13,6 +13,7 @@
   import { auth } from '$lib/stores/auth.svelte';
   import { savedCoverUrl } from '$lib/services/api';
   import { shelfStore } from '$lib/stores/shelf.svelte';
+  import { savesStore } from '$lib/stores/saves.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { isSavedItemArchived } from '$lib/utils/savedPile';
   import { decodeEntities } from '$lib/utils/entities';
@@ -124,6 +125,11 @@
       variant: 'danger',
       section: 'Shelf',
       onclick: () => void shelfStore.setOnShelf(save, false),
+    });
+    items.push({
+      label: 'Edit details',
+      icon: 'edit',
+      onclick: () => savesStore.openEditor(save.rkey),
     });
     return items;
   });

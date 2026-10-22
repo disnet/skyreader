@@ -33,6 +33,12 @@ import {
 import { exactDoi } from '../services/export/identifiers';
 import { findSnapshotImage, snapshotImageUrl } from '../services/archive/snapshot-images';
 import { storeFor } from '../services/saved-file-store';
+import {
+  parseMetadataEdit,
+  unlessEdited,
+  withEditedFields,
+  type EditableColumn,
+} from '../services/saved-metadata';
 
 const COLLECTION = 'app.skyreader.feed.saved';
 
@@ -378,8 +384,9 @@ async function handleMetadataSave(
 // Upgrade an already-saved item's content in place (updateContent flag). Each
 // field only overwrites when the request provides a value — same new-wins
 // COALESCE shape as the backed-save upsert — so a sparse extraction never
-// blanks existing metadata. The rkey and record_uri are unchanged: this is the
-// same save, with better content.
+// blanks existing metadata, and a field the reader edited by hand keeps their
+// value (services/saved-metadata.ts). The rkey and record_uri are unchanged:
+// this is the same save, with better content.
 async function handleContentUpdate(
   env: Env,
   ctx: ExecutionContext,
@@ -391,14 +398,14 @@ async function handleContentUpdate(
 
   await env.DB.prepare(
     `UPDATE saved_articles SET
-       title = COALESCE(?, title),
-       author = COALESCE(?, author),
-       description = COALESCE(?, description),
+       title = ${unlessEdited('title', 'COALESCE(?, title)')},
+       author = ${unlessEdited('author', 'COALESCE(?, author)')},
+       description = ${unlessEdited('description', 'COALESCE(?, description)')},
        content = COALESCE(?, content),
        domain = COALESCE(?, domain),
        image = COALESCE(?, image),
        word_count = COALESCE(?, word_count),
-       published_at = COALESCE(?, published_at),
+       published_at = ${unlessEdited('published_at', 'COALESCE(?, published_at)')},
        doi = COALESCE(?, doi),
        content_type = CASE
          WHEN ? IS NOT NULL THEN ?
@@ -611,9 +618,9 @@ async function handleBackedSave(
        VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(user_did, url_normalized) DO UPDATE SET
          rkey = excluded.rkey,
-         title = COALESCE(excluded.title, title),
-         author = COALESCE(excluded.author, author),
-         description = COALESCE(excluded.description, description),
+         title = ${unlessEdited('title', 'COALESCE(excluded.title, title)')},
+         author = ${unlessEdited('author', 'COALESCE(excluded.author, author)')},
+         description = ${unlessEdited('description', 'COALESCE(excluded.description, description)')},
          content = COALESCE(excluded.content, content),
          -- The type describes the body: when the body above is the one already
          -- stored (this save brought no text, e.g. a failed PDF extraction), so
@@ -623,7 +630,7 @@ async function handleBackedSave(
          domain = COALESCE(excluded.domain, domain),
          image = COALESCE(excluded.image, image),
          word_count = COALESCE(excluded.word_count, word_count),
-         published_at = COALESCE(excluded.published_at, published_at),
+         published_at = ${unlessEdited('published_at', 'COALESCE(excluded.published_at, published_at)')},
          source = excluded.source,
          item_guid = COALESCE(excluded.item_guid, item_guid),
          doi = COALESCE(excluded.doi, doi),
@@ -1212,12 +1219,14 @@ export async function handleGetSavedBodies(request: Request, env: Env): Promise<
   });
 }
 
-// PATCH /api/saved/:rkey — update mutable fields on a saved item.
-// Currently only the precomputed word count, used by the frontend to backfill
-// old saves that were stored without one (so the read time stops falling back
-// to the short description and showing a misleading "1 min"). D1-only: the
-// word count is a derived display value and isn't part of the PDS record's
-// canonical data, so there's no PDS write here.
+// PATCH /api/saved/:rkey — update mutable fields on a saved item:
+//  - wordCount: the precomputed word count, used by the frontend to backfill old
+//    saves stored without one (so the read time stops falling back to the short
+//    description and showing a misleading "1 min").
+//  - title / author / description / publishedAt: the reader's own edit of the
+//    save's metadata (services/saved-metadata.ts), kept over later extractions.
+// D1-only, like saves themselves. A save backed by Semble or Margin keeps the
+// foreign card's metadata as it was: the edit is the reader's, in Skyreader.
 export async function handleUpdateSaved(request: Request, env: Env): Promise<Response> {
   if (request.method !== 'PATCH') {
     return new Response(JSON.stringify({ error: 'Method not allowed' }), {
@@ -1240,9 +1249,11 @@ export async function handleUpdateSaved(request: Request, env: Env): Promise<Res
     return invalidRkeyResponse();
   }
 
-  let body: { wordCount?: number };
+  let body: Record<string, unknown>;
   try {
-    body = (await request.json()) as { wordCount?: number };
+    const parsed = await request.json();
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error();
+    body = parsed as Record<string, unknown>;
   } catch {
     return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
       status: 400,
@@ -1250,35 +1261,74 @@ export async function handleUpdateSaved(request: Request, env: Env): Promise<Res
     });
   }
 
-  if (
-    body.wordCount == null ||
-    typeof body.wordCount !== 'number' ||
-    !Number.isFinite(body.wordCount) ||
-    body.wordCount < 0
-  ) {
-    return new Response(JSON.stringify({ error: 'Missing or invalid wordCount' }), {
+  const sets: string[] = [];
+  const binds: unknown[] = [];
+
+  if ('wordCount' in body) {
+    const wordCount = body.wordCount;
+    if (typeof wordCount !== 'number' || !Number.isFinite(wordCount) || wordCount < 0) {
+      return new Response(JSON.stringify({ error: 'Missing or invalid wordCount' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    sets.push('word_count = ?');
+    binds.push(Math.round(wordCount));
+  }
+
+  const parsedEdit = parseMetadataEdit(body);
+  if ('error' in parsedEdit) {
+    return new Response(JSON.stringify({ error: parsedEdit.error }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  const edited = Object.keys(parsedEdit.edit) as EditableColumn[];
+
+  if (sets.length === 0 && edited.length === 0) {
+    return new Response(JSON.stringify({ error: 'Nothing to update' }), {
       status: 400,
       headers: { 'Content-Type': 'application/json' },
     });
   }
 
   try {
-    const result = await env.DB.prepare(
-      'UPDATE saved_articles SET word_count = ? WHERE user_did = ? AND rkey = ?'
+    const row = await env.DB.prepare(
+      'SELECT id, edited_fields FROM saved_articles WHERE user_did = ? AND rkey = ?'
     )
-      .bind(Math.round(body.wordCount), session.did, rkey)
-      .run();
-
-    if (!result.meta.changes) {
+      .bind(session.did, rkey)
+      .first<{ id: number; edited_fields: string | null }>();
+    if (!row) {
       return new Response(JSON.stringify({ error: 'Not found' }), {
         status: 404,
         headers: { 'Content-Type': 'application/json' },
       });
     }
 
-    return new Response(JSON.stringify({ success: true }), {
-      headers: { 'Content-Type': 'application/json' },
-    });
+    // A reader's edit is a change other devices (and the search index) have to
+    // pick up, so it stamps updated_at; the word-count backfill alone doesn't.
+    let updatedAt: number | null = null;
+    if (edited.length > 0) {
+      for (const column of edited) {
+        sets.push(`${column} = ?`);
+        binds.push(parsedEdit.edit[column]);
+      }
+      updatedAt = Date.now();
+      sets.push('edited_fields = ?', 'updated_at = ?');
+      binds.push(withEditedFields(row.edited_fields, edited), updatedAt);
+    }
+
+    await env.DB.prepare(`UPDATE saved_articles SET ${sets.join(', ')} WHERE id = ?`)
+      .bind(...binds, row.id)
+      .run();
+
+    return new Response(
+      JSON.stringify({
+        success: true,
+        ...(updatedAt ? { updatedAt: new Date(updatedAt).toISOString() } : {}),
+      }),
+      { headers: { 'Content-Type': 'application/json' } }
+    );
   } catch (error) {
     console.error('Failed to update saved item:', error);
     return new Response(JSON.stringify({ error: 'Failed to update saved item' }), {

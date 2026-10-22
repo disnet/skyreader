@@ -34,6 +34,7 @@
   import BlueskyComposer from '$lib/components/feed/BlueskyComposer.svelte';
   import IntegrationSaveDialog from '$lib/components/feed/IntegrationSaveDialog.svelte';
   import ShelfCollectionPicker from '$lib/components/shelf/ShelfCollectionPicker.svelte';
+  import EditSavedDetails from '$lib/components/feed/EditSavedDetails.svelte';
   import { shelfStore } from '$lib/stores/shelf.svelte';
   import SembleConnectionDialog from '$lib/components/feed/SembleConnectionDialog.svelte';
   import SyncLimitBanner from '$lib/components/SyncLimitBanner.svelte';
@@ -503,6 +504,7 @@
 <BlueskyComposer />
 <IntegrationSaveDialog />
 <ShelfCollectionPicker />
+<EditSavedDetails />
 <SembleConnectionDialog />
 <GlobalFileDrop />
 

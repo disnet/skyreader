@@ -17,6 +17,10 @@ A save keeps the article as it was when you saved it, so it stays readable if th
 
 When Skyreader couldn't get the text at all, the note in its place links to the Wayback Machine's copy of the page from around the day you saved it.
 
+### Editing a save's details
+
+When a save's title or author came through wrong, or a PDF arrived as "untitled", fix it: choose **Edit details** from its **⋯** menu, in your Queue, on the Shelf, or while you're reading it. You can change the title, the author (separate several with a semicolon), the date it was published, and the summary. Your changes show everywhere the save does, including search and exports, and saving the page again later keeps them. They stay in Skyreader: a save backed by Semble or Margin keeps the card as it was there.
+
 ### Saving a link from inside an article
 
 Tap a link in an article to see where it goes before you leave. From there you can open it, copy it, save it to Skyreader, or add it to a [Semble](https://semble.so) or [Margin](https://margin.at) collection. Semble and Margin collections are public.

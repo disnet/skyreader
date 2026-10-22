@@ -3,6 +3,7 @@ import type { ExtractedArticle } from './feed-proxy-client';
 import { escapeHtml, htmlToText } from '../utils/html-text';
 import { captureSnapshot } from './archive/snapshots';
 import { exactDoi } from './export/identifiers';
+import { unlessEdited } from './saved-metadata';
 
 // Whether an extracted body has anything to read: text, or media standing in for
 // it. A page that builds its article with scripts extracts as an empty shell.
@@ -78,12 +79,12 @@ export async function fillExtractedContent(
     `UPDATE saved_articles SET
          content = ?,
          word_count = COALESCE(word_count, ?),
-         title = COALESCE(title, ?),
-         author = COALESCE(author, ?),
-         description = COALESCE(description, ?),
+         title = ${unlessEdited('title', 'COALESCE(title, ?)')},
+         author = ${unlessEdited('author', 'COALESCE(author, ?)')},
+         description = ${unlessEdited('description', 'COALESCE(description, ?)')},
          image = COALESCE(image, ?),
          domain = COALESCE(domain, ?),
-         published_at = COALESCE(published_at, ?),
+         published_at = ${unlessEdited('published_at', 'COALESCE(published_at, ?)')},
          doi = COALESCE(doi, ?),
          updated_at = ?${contentTypeClause}
        WHERE ${whereClause} AND content IS NULL

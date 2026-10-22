@@ -638,6 +638,14 @@
           integrationSaveStore.openPicker('margin', extractMarginMetadata(displayItem)),
       });
     }
+    if (displayItem.type === 'saved') {
+      const rkey = displayItem.item.rkey;
+      items.push({
+        label: 'Edit details',
+        icon: 'edit',
+        onclick: () => savesStore.openEditor(rkey),
+      });
+    }
     if (onRemove) {
       items.push({
         label: 'Delete',
