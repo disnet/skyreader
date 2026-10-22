@@ -13,6 +13,8 @@ import { generateSpaceSigningKey } from '../src/services/spaces/http-signature';
 import { SpaceCredential } from '../src/services/spaces/credential';
 import { SpacesClient } from '../src/services/spaces/client';
 import { credentialCall } from '../src/services/spaces/transport';
+import { SAVED_COLLECTION, savedSpaceRef, spaceRecordUri } from '../src/services/spaces/refs';
+import { recordCid } from '../src/services/archive/dag-cbor';
 
 // The record-MAC handshake a credentialed getRecord needs since
 // 0.0.0-spaces-alpha-20261022141228. The repo-host side below is written against
@@ -139,38 +141,69 @@ describe('space record MACs', () => {
     );
   });
 
-  it('a credentialed getRecord asks for a MAC and rejects a response without a valid one', async () => {
+  it('a credentialed getRecord accepts only the requested record, MAC-verified, its value matching its cid', async () => {
     const credential = new SpaceCredential(
       'cred-1',
       await generateSpaceSigningKey(),
       Date.now() + 60_000
     );
-    let tamper = false;
+    const repo = 'did:plc:spaceproto';
+    const read = { space: savedSpaceRef(repo), repo, collection: SAVED_COLLECTION, rkey: '3kabc' };
+    const uri = spaceRecordUri(read.space, repo, read.collection, read.rkey);
+    const value = { $type: SAVED_COLLECTION, url: 'https://example.com/a', wordCount: 12 };
+    const cid = await recordCid(value);
+
+    // How the host misbehaves, per case: the honest answer, then each attack.
+    let respond = (secret: Uint8Array) => ({
+      uri,
+      cid,
+      value,
+      mac: recordMacHeader(secret, uri, cid),
+    });
     const fetchImpl = (async (_url: string | URL | Request, init?: RequestInit) => {
       const want = (init!.headers as Record<string, string>)['atproto-space-want-mac'];
       const keyShare = /key_share="([^"]+)"/.exec(want)![1];
-      const secret = decapsulate(hexBytes(VECTOR.authorPrivateKey), keyShare);
-      // Tampered: a MAC over some other record, under the right secret.
-      const mac = recordMacHeader(secret, tamper ? `${VECTOR.uri}x` : VECTOR.uri, VECTOR.cid);
-      return new Response(JSON.stringify({ uri: VECTOR.uri, cid: VECTOR.cid, value: { a: 1 } }), {
+      const { mac, ...body } = respond(decapsulate(hexBytes(VECTOR.authorPrivateKey), keyShare));
+      return new Response(JSON.stringify(body), {
         status: 200,
-        headers: {
-          'atproto-space-mac': mac,
-        },
+        headers: { 'atproto-space-mac': mac },
       });
     }) as unknown as typeof fetch;
 
     const client = new SpacesClient(
-      credentialCall('https://host.test', credential, 'did:plc:spaceproto', {
+      credentialCall('https://host.test', credential, repo, {
         authorKemKey: VECTOR.authorKem,
         fetchImpl,
       })
     );
-    const read = { space: 's', repo: 'did:plc:spaceproto', collection: 'c', rkey: '3kabc' };
-    expect((await client.getRecord(read)).value).toEqual({ a: 1 });
+    expect((await client.getRecord(read)).value).toEqual(value);
 
-    tamper = true;
-    const error = await client.getRecord(read).catch((e) => e);
-    expect(error).toMatchObject({ code: 'BadSpaceMac' });
+    const attacks: Array<(secret: Uint8Array) => ReturnType<typeof respond>> = [
+      // A MAC over some other record, under the right secret.
+      (secret) => ({ uri, cid, value, mac: recordMacHeader(secret, `${uri}x`, cid) }),
+      // The real uri, cid and MAC, with the value swapped out.
+      (secret) => ({
+        uri,
+        cid,
+        value: { ...value, url: 'https://evil.test' },
+        mac: recordMacHeader(secret, uri, cid),
+      }),
+      // A different record, correctly MAC'd, in place of the one asked for.
+      (secret) => {
+        const other = `${read.space}/${repo}/${read.collection}/OTHER`;
+        return { uri: other, cid, value, mac: recordMacHeader(secret, other, cid) };
+      },
+    ];
+    for (const attack of attacks) {
+      respond = attack;
+      const error = await client.getRecord(read).catch((e) => e);
+      expect(error).toMatchObject({ code: 'BadSpaceMac' });
+    }
+
+    // No KEM key: refused here, never sent unauthenticated.
+    const keyless = new SpacesClient(
+      credentialCall('https://host.test', credential, repo, { fetchImpl })
+    );
+    expect(await keyless.getRecord(read).catch((e) => e)).toMatchObject({ code: 'KemKeyRequired' });
   });
 });

@@ -273,6 +273,22 @@ async function main() {
     else s.fail(error);
   }
 
+  // getSpaceCredential is unauthenticated and its delegation token optional
+  // (public spaces issue credentials without one); a member-list space must not.
+  s = step('nobody can mint a credential without a delegation token');
+  try {
+    const { generateSpaceSigningKey } =
+      await import('../../backend/src/services/spaces/http-signature.ts');
+    await xrpc('POST', 'com.atproto.space.getSpaceCredential', {
+      space,
+      credentialKid: (await generateSpaceSigningKey()).did,
+    });
+    s.fail(new Error('credential issued with no delegation token — the privacy claim fails'));
+  } catch (error) {
+    if (error.code) s.ok(error.code);
+    else s.fail(error);
+  }
+
   console.log('\nportability (the point of the spike)');
 
   s = step('owner mints a space credential (delegation -> credential bound to credentialKid)');
@@ -309,19 +325,25 @@ async function main() {
     s.fail(error);
   }
 
-  s = step('a credentialed getRecord that asks for no MAC is refused');
+  // Bypasses SpacesClient, which refuses this read itself (KemKeyRequired):
+  // the question is whether the host refuses it too.
+  s = step('the host refuses a credentialed getRecord that asks for no MAC');
   try {
     if (!credential) throw new Error('no credential');
-    await new SpacesClient(credentialCall(PDS_URL, credential, owner.did)).getRecord({
+    const params = new URLSearchParams({
       space,
       repo: owner.did,
       collection: SAVED_COLLECTION,
       rkey,
     });
-    s.fail(new Error('read succeeded without Atproto-Space-Want-Mac'));
+    const response = await fetch(`${PDS_URL}/xrpc/com.atproto.space.getRecord?${params}`, {
+      headers: { accept: 'application/json', ...(await credential.authorize(owner.did)) },
+    });
+    const body = await response.json().catch(() => ({}));
+    if (response.ok) s.fail(new Error('read succeeded without Atproto-Space-Want-Mac'));
+    else s.ok(`${response.status} ${body.error ?? ''}`.trim());
   } catch (error) {
-    if (error.code === 'BadSpaceMac') s.ok(error.code);
-    else s.fail(error);
+    s.fail(error);
   }
 
   s = step('an independent client reads the save with only that credential');
@@ -342,7 +364,7 @@ async function main() {
       rkey,
     });
     if (fetched.value?.url !== record.url) throw new Error('record did not match');
-    s.ok(`read "${fetched.value?.title}" out of the space, record MAC verified`);
+    s.ok(`read "${fetched.value?.title}" out of the space; uri, MAC and value-to-CID verified`);
   } catch (error) {
     s.fail(error);
   }
