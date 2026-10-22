@@ -72,7 +72,7 @@ const RATE_LIMITS: Record<string, RateLimitConfig> = {
   '/api/feeds/discover': EXPENSIVE_LIMIT,
   '/api/leaflet/resolve': EXPENSIVE_LIMIT,
   '/api/extract': EXPENSIVE_LIMIT,
-  // Each upload is up to 10 MB read into memory and one PDF parse; the plan's
+  // Each upload is up to 50 MB streamed to R2 and one PDF parse; the plan's
   // monthly and daily PDF caps bound the total, this bounds the burst.
   '/api/saved/pdf': { limit: 10, windowMs: 60000 },
   // Up to 30 MB read into memory and unzipped in the Worker; same burst bound.

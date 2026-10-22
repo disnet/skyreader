@@ -17,7 +17,7 @@ import { getDocumentProxy } from 'unpdf';
 // the Worker's CPU limit (wrangler.toml) and the proxy's request timeout.
 export const MAX_PDF_PAGES = 300;
 // The proxy refuses to fetch more than this, so anything bigger didn't come from it.
-export const MAX_PDF_BYTES = 10 * 1024 * 1024;
+export const MAX_PDF_BYTES = 50 * 1024 * 1024;
 // Reflowed HTML is stored inline on the save's D1 row, whose values cap at 2 MB
 // of bytes, not characters: CJK or Cyrillic text runs 2-3 bytes a character.
 // Stop at whole pages well under it; 1 MB is a long book's worth.
