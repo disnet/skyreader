@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { scanPublications } from './socialGraph';
+import { scanFollow, scanPublications } from './socialGraph';
 
 const DID = 'did:plc:someone';
 const PDS = 'https://pds.example';
@@ -53,5 +53,52 @@ describe('scanPublications', () => {
 
     const out = await scanPublications(FOLLOW);
     expect(out.map((p) => p.name)).toEqual(['An essay collection']);
+  });
+});
+
+describe('scanFollow', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('keeps the blog-like websites on a Sifa profile, with any feed they name', async () => {
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.startsWith('https://plc.directory/')) {
+        return new Response(
+          JSON.stringify({ service: [{ id: '#atproto_pds', serviceEndpoint: PDS }] }),
+          { status: 200 }
+        );
+      }
+      const collection = new URL(url).searchParams.get('collection');
+      const records =
+        collection === 'id.sifa.profile.externalAccount'
+          ? [
+              {
+                value: { platform: 'id.sifa.defs#platformWebsite', url: 'https://someone.example' },
+              },
+              {
+                value: {
+                  platform: 'id.sifa.defs#platformRss',
+                  url: 'https://blog.example',
+                  feedUrl: 'https://blog.example/feed.xml',
+                  label: 'Blog',
+                },
+              },
+              {
+                value: {
+                  platform: 'id.sifa.defs#platformGithub',
+                  url: 'https://github.com/someone',
+                },
+              },
+              { value: { platform: 'id.sifa.defs#platformWebsite', url: 'javascript:alert(1)' } },
+            ]
+          : [];
+      return new Response(JSON.stringify({ records }), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const { sifaLinks } = await scanFollow(FOLLOW);
+    expect(sifaLinks).toEqual([
+      { url: 'https://someone.example', feedUrl: undefined, label: undefined },
+      { url: 'https://blog.example', feedUrl: 'https://blog.example/feed.xml', label: 'Blog' },
+    ]);
   });
 });

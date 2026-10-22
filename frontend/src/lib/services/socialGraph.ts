@@ -126,39 +126,28 @@ interface PublicationRecord {
   // Skyreader's provenance marker on the publications it creates.
   skyreaderLinkblog?: string;
 }
-interface ListRecordsResponse {
-  records?: Array<{ uri: string; value: PublicationRecord }>;
-}
-
 function rkeyOf(uri: string): string {
   return uri.split('/').pop() || '';
 }
 
-/**
- * List one followed account's standard.site publications straight from their
- * PDS. Skips the account's Skyreader linkblog. Returns [] on any
- * failure (unresolved PDS, CORS block, network error) — never throws.
- */
-export async function scanPublications(follow: FollowLite): Promise<FollowingPublication[]> {
-  const pdsUrl = await resolvePdsUrl(follow.did);
-  if (!pdsUrl) return [];
-
-  let data: ListRecordsResponse | null = null;
+async function listRecords<T>(pdsUrl: string, did: string, collection: string): Promise<T[]> {
   try {
-    const params = new URLSearchParams({
-      repo: follow.did,
-      collection: PUBLICATION_COLLECTION,
-      limit: '100',
-    });
+    const params = new URLSearchParams({ repo: did, collection, limit: '100' });
     const res = await fetch(`${pdsUrl}/xrpc/com.atproto.repo.listRecords?${params}`);
-    if (res.ok) data = (await res.json()) as ListRecordsResponse;
+    if (!res.ok) return [];
+    return ((await res.json()) as { records?: T[] }).records ?? [];
   } catch (e) {
-    console.error(`[socialGraph] listRecords failed for ${follow.did}:`, e);
+    console.error(`[socialGraph] listRecords ${collection} failed for ${did}:`, e);
+    return [];
   }
-  if (!data?.records) return [];
+}
 
+function publicationsOf(
+  follow: FollowLite,
+  records: Array<{ uri: string; value: PublicationRecord }>
+): FollowingPublication[] {
   const out: FollowingPublication[] = [];
-  for (const record of data.records) {
+  for (const record of records) {
     const value = record.value || {};
     if (isSkyreaderLinkblog(record.uri, value)) continue;
 
@@ -180,4 +169,68 @@ export async function scanPublications(follow: FollowLite): Promise<FollowingPub
     });
   }
   return out;
+}
+
+/**
+ * A website or feed someone listed on their Sifa profile (sifa.id, a
+ * professional profile on the Atmosphere): an `id.sifa.profile.externalAccount`
+ * record. Only the kinds that can be a blog are kept; a GitHub or LinkedIn
+ * account is not.
+ */
+export interface SifaLink {
+  url: string;
+  feedUrl?: string;
+  label?: string;
+}
+
+const SIFA_LINK_COLLECTION = 'id.sifa.profile.externalAccount';
+const SIFA_BLOG_PLATFORMS = new Set([
+  'id.sifa.defs#platformRss',
+  'id.sifa.defs#platformWebsite',
+  'id.sifa.defs#platformOther',
+]);
+
+interface SifaLinkRecord {
+  value?: { platform?: string; url?: string; feedUrl?: string; label?: string };
+}
+
+function sifaLinksOf(records: SifaLinkRecord[]): SifaLink[] {
+  const isWeb = (u: unknown): u is string => typeof u === 'string' && /^https?:\/\//i.test(u);
+  const out: SifaLink[] = [];
+  for (const { value } of records) {
+    if (!value?.platform || !SIFA_BLOG_PLATFORMS.has(value.platform) || !isWeb(value.url)) continue;
+    out.push({
+      url: value.url,
+      feedUrl: isWeb(value.feedUrl) ? value.feedUrl : undefined,
+      label: typeof value.label === 'string' ? value.label.trim() || undefined : undefined,
+    });
+  }
+  return out;
+}
+
+/**
+ * Read one followed account's PDS for what discovery needs: their standard.site
+ * publications (minus their Skyreader linkblog) and the websites on their Sifa
+ * profile. Both are empty on any failure (unresolved PDS, CORS block, network
+ * error) — never throws.
+ */
+export async function scanFollow(
+  follow: FollowLite
+): Promise<{ publications: FollowingPublication[]; sifaLinks: SifaLink[] }> {
+  const pdsUrl = await resolvePdsUrl(follow.did);
+  if (!pdsUrl) return { publications: [], sifaLinks: [] };
+  const [publications, links] = await Promise.all([
+    listRecords<{ uri: string; value: PublicationRecord }>(
+      pdsUrl,
+      follow.did,
+      PUBLICATION_COLLECTION
+    ),
+    listRecords<SifaLinkRecord>(pdsUrl, follow.did, SIFA_LINK_COLLECTION),
+  ]);
+  return { publications: publicationsOf(follow, publications), sifaLinks: sifaLinksOf(links) };
+}
+
+/** Just the standard.site publications of one followed account (see scanFollow). */
+export async function scanPublications(follow: FollowLite): Promise<FollowingPublication[]> {
+  return (await scanFollow(follow)).publications;
 }

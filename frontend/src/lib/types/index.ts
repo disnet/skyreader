@@ -851,11 +851,12 @@ export interface FollowingPublication {
   displayName?: string;
   avatar?: string;
   // What kind of source this is: a standard.site publication on their PDS, or a
-  // web feed found at their domain handle or a site linked from their bio.
+  // web feed found at their domain handle, their Sifa profile, or a site linked
+  // from their bio.
   // Absent on rows cached before web feeds were discovered: a publication.
   kind?: 'publication' | 'feed';
   // Where the feed's site came from (kind 'feed' only).
-  siteSource?: 'handle' | 'profile';
+  siteSource?: 'handle' | 'profile' | 'sifa';
   // The row's key: the publication record to subscribe to
   // (at://did/site.standard.publication/<rkey>), or for kind 'feed' the feed URL.
   publicationUri: string;

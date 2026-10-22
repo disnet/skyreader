@@ -1,7 +1,8 @@
 // Where the people you follow might write, beyond the standard.site
-// publications on their PDS: the site at a domain handle (@someone.com usually
-// serves a blog), and the links in their Bluesky bio (a Substack, a Ghost site,
-// "read my essays at …"). Discover asks the backend to find feeds at these
+// publications on their PDS: the websites they list on a Sifa profile (sifa.id,
+// records on their own PDS, sometimes with the feed URL itself), the site at a
+// domain handle (@someone.com usually serves a blog), and the links in their
+// Bluesky bio (a Substack, a Ghost site, "read my essays at …"). Discover asks the backend to find feeds at these
 // sites (routes/site-feeds.ts, cached per site for everyone) and offers what it
 // finds as "the writing of people you follow".
 //
@@ -11,14 +12,23 @@
 
 import type { FollowingPublication } from '$lib/types';
 import { getFaviconUrl } from '$lib/utils/favicon';
-import type { FollowLite } from './socialGraph';
+import type { FollowLite, SifaLink } from './socialGraph';
 
 export interface SiteCandidate {
   /** What the backend is asked about: a host, or a host and path. */
   site: string;
   /** Where the guess came from, for the row's subtitle. */
-  source: 'handle' | 'profile';
+  source: 'handle' | 'profile' | 'sifa';
+  /** A feed the person named themselves (on Sifa): no lookup needed. */
+  feedUrl?: string;
+  /** Their own name for the site (on Sifa), for the row's title. */
+  label?: string;
 }
+
+/** A follow as discovery sees it: the cached row plus what their PDS lists. */
+export type FollowForSites = Pick<FollowLite, 'handle' | 'description'> & {
+  sifaLinks?: SifaLink[];
+};
 
 // Handles under these are accounts on a hosting provider, not someone's own
 // domain. Anything else shared by several follows is caught by
@@ -113,6 +123,7 @@ const COUNTRY_SECOND_LEVEL =
 const PATH_PLATFORMS = ['medium.com', 'write.as'];
 
 const MAX_PROFILE_LINKS = 2;
+const MAX_SIFA_LINKS = 3;
 
 // A URL in plain bio text, with or without its scheme. Bluesky bios are plain
 // text (links are only faceted in posts), so this is a scan, not a parse. The
@@ -147,49 +158,62 @@ export function sharedHandleParents(follows: Pick<FollowLite, 'handle'>[], min =
   return new Set([...counts].filter(([, n]) => n >= min).map(([p]) => p));
 }
 
+/** The site a link points at, as a candidate: its host (or host and path where
+ *  the path is the blog), or null for a link that isn't to a blog. */
+function siteOf(raw: string): string | null {
+  if (!/^https?:\/\//i.test(raw)) raw = `https://${raw}`;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return null;
+  }
+  const host = url.hostname.toLowerCase().replace(/^www\./, '');
+  const tld = host.slice(host.lastIndexOf('.') + 1);
+  if (NOT_A_TLD.has(tld)) return null;
+  if (hostMatches(host, NON_BLOG_HOSTS)) return null;
+  const path = url.pathname.replace(/\/+$/, '');
+  // The path is the blog: medium.com/@someone, write.as/someone.
+  if (PATH_PLATFORMS.includes(host)) return path ? `${host}${path}` : null;
+  // A fediverse or similar profile (/@name), not a blog.
+  if (path.startsWith('/@')) return null;
+  // The site's root, not the linked page: bio text is often cut short
+  // ("cassidoo.co/newslett"), and a blog advertises its feed site-wide.
+  return host;
+}
+
 function bioLinks(description: string): string[] {
   const out: string[] = [];
   for (const match of description.matchAll(BIO_URL)) {
-    let raw = match[0].replace(/[.,;:!?…]+$/, '');
-    if (!/^https?:\/\//i.test(raw)) raw = `https://${raw}`;
-    let url: URL;
-    try {
-      url = new URL(raw);
-    } catch {
-      continue;
-    }
-    const host = url.hostname.toLowerCase().replace(/^www\./, '');
-    const tld = host.slice(host.lastIndexOf('.') + 1);
-    if (NOT_A_TLD.has(tld)) continue;
-    if (hostMatches(host, NON_BLOG_HOSTS)) continue;
-    const path = url.pathname.replace(/\/+$/, '');
-    if (PATH_PLATFORMS.includes(host)) {
-      // The path is the blog: medium.com/@someone, write.as/someone.
-      if (path) out.push(`${host}${path}`);
-      continue;
-    }
-    // A fediverse or similar profile (/@name), not a blog.
-    if (path.startsWith('/@')) continue;
-    // The site's root, not the linked page: bio text is often cut short
-    // ("cassidoo.co/newslett"), and a blog advertises its feed site-wide.
-    out.push(host);
+    const site = siteOf(match[0].replace(/[.,;:!?…]+$/, ''));
+    if (site) out.push(site);
   }
   return out;
 }
 
 /**
- * The sites worth asking about for one follow: their domain handle, then up to
+ * The sites worth asking about for one follow: the websites on their Sifa
+ * profile (named by them, so the surest), their domain handle, then up to
  * MAX_PROFILE_LINKS other sites linked from their bio.
  */
 export function siteCandidates(
-  follow: Pick<FollowLite, 'handle' | 'description'>,
+  follow: FollowForSites,
   sharedParents: Set<string> = new Set()
 ): SiteCandidate[] {
   const out: SiteCandidate[] = [];
   const seen = new Set<string>();
   const handle = follow.handle?.toLowerCase();
 
-  if (handle && handle.includes('.') && !handle.startsWith('did:')) {
+  for (const link of follow.sifaLinks ?? []) {
+    if (out.length >= MAX_SIFA_LINKS) break;
+    // A listed feed is used as is; a listed site still has to be looked up.
+    const site = link.feedUrl ? siteLabel(link.url) : siteOf(link.url);
+    if (!site || seen.has(site)) continue;
+    seen.add(site);
+    out.push({ site, source: 'sifa', feedUrl: link.feedUrl, label: link.label });
+  }
+
+  if (handle && !seen.has(handle) && handle.includes('.') && !handle.startsWith('did:')) {
     const parent = parentOf(handle);
     const hosted =
       hostMatches(handle, PROVIDER_SUFFIXES) || (parent !== null && sharedParents.has(parent));
@@ -216,6 +240,7 @@ export function siteCandidates(
 export const SITE_SOURCE_LABEL: Record<SiteCandidate['source'], string> = {
   handle: 'their site',
   profile: 'linked from their profile',
+  sifa: 'on their Sifa profile',
 };
 
 /** "someone.com" or "someone.com/blog", for a row's title. */
@@ -243,7 +268,7 @@ function hostOf(url: string): string | null {
  * feeds found for these follows last time, rather than dropping it.
  */
 export async function findFollowFeeds(
-  batch: FollowLite[],
+  batch: (FollowLite & FollowForSites)[],
   publications: FollowingPublication[],
   sharedParents: Set<string>,
   discover: (sites: string[]) => Promise<Map<string, string[] | null>>,
@@ -257,12 +282,14 @@ export async function findFollowFeeds(
   );
   if (wanted.length === 0) return [];
 
-  const feedsBySite = await discover([...new Set(wanted.map((w) => w.candidate.site))]);
+  const toAsk = wanted.filter((w) => !w.candidate.feedUrl).map((w) => w.candidate.site);
+  const feedsBySite =
+    toAsk.length > 0 ? await discover([...new Set(toAsk)]) : new Map<string, string[] | null>();
   const out: FollowingPublication[] = [];
   const seen = new Set<string>();
   for (const { follow, candidate } of wanted) {
     const siteUrl = `https://${candidate.site}`;
-    const feeds = feedsBySite.get(candidate.site);
+    const feeds = candidate.feedUrl ? [candidate.feedUrl] : feedsBySite.get(candidate.site);
     if (feeds == null) {
       const kept = prior.find(
         (p) => p.kind === 'feed' && p.did === follow.did && p.url === siteUrl
@@ -284,7 +311,7 @@ export async function findFollowFeeds(
       kind: 'feed',
       siteSource: candidate.source,
       publicationUri: feedUrl,
-      name: siteLabel(candidate.site),
+      name: candidate.label || siteLabel(candidate.site),
       iconUrl: getFaviconUrl(siteUrl, 64),
       url: siteUrl,
     });

@@ -5,7 +5,7 @@ import {
   isFollowGraphComplete,
   resetFollowGraph,
 } from '$lib/services/followGraph';
-import { scanPublications, type FollowLite } from '$lib/services/socialGraph';
+import { scanFollow, type FollowLite } from '$lib/services/socialGraph';
 import { findFollowFeeds, sharedHandleParents } from '$lib/services/followSites';
 import { fetchAllDocuments, fetchSingleFeed } from '$lib/services/feedFetcher';
 import { api, RateLimitError } from '$lib/services/api';
@@ -16,8 +16,8 @@ import type { FollowingPublication } from '$lib/types';
 
 /**
  * Discover the writing of the people you follow on Bluesky: standard.site
- * publications on their PDS, and web feeds at their domain handle or at sites
- * linked from their bio. Cached in IndexedDB.
+ * publications on their PDS, and web feeds at their domain handle, the sites
+ * on their Sifa profile, or sites linked from their bio. Cached in IndexedDB.
  *
  *  - The follow graph itself is maintained by services/followGraph.ts (shared
  *    with the reading-rooms scan): cached, refetched on its own TTL, with the
@@ -156,8 +156,9 @@ function createFollowingPublicationsStore() {
       .toArray();
     if (batch.length === 0) return;
 
-    const results = await Promise.all(batch.map(scanPublications));
-    const found = results.flat();
+    const results = await Promise.all(batch.map(scanFollow));
+    const found = results.flatMap((r) => r.publications);
+    const withLinks = batch.map((b, i) => ({ ...b, sifaLinks: results[i].sifaLinks }));
     const scannedDids = batch.map((b) => b.did);
     const scannedSet = new Set(scannedDids);
     // A feed someone else we follow already brought in (two people linking the
@@ -167,7 +168,7 @@ function createFollowingPublicationsStore() {
     );
     const prior = publications.filter((p) => p.kind === 'feed' && scannedSet.has(p.did));
     const feeds = (
-      await findFollowFeeds(batch, found, await hostingParents(), discoverSites, prior)
+      await findFollowFeeds(withLinks, found, await hostingParents(), discoverSites, prior)
     ).filter((f) => !elsewhere.has(f.publicationUri));
     const fresh = [...found, ...feeds];
     const now = Date.now();
@@ -285,18 +286,18 @@ function createFollowingPublicationsStore() {
     hiddenAccounts = hiddenAccounts.filter((a) => a.did !== did);
     if (!follow) return;
 
-    const found = await scanPublications({
-      did: follow.did,
-      handle: follow.handle,
-      displayName: follow.displayName,
-      avatar: follow.avatar,
-    });
+    const { publications: found, sifaLinks } = await scanFollow(follow);
     // A feed another account we follow already brought in stays theirs.
     const elsewhere = new Set(
       publications.filter((p) => p.did !== did).map((p) => p.publicationUri)
     );
     const feeds = (
-      await findFollowFeeds([follow], found, await hostingParents(), discoverSites)
+      await findFollowFeeds(
+        [{ ...follow, sifaLinks }],
+        found,
+        await hostingParents(),
+        discoverSites
+      )
     ).filter((f) => !elsewhere.has(f.publicationUri));
     const fresh = [...found, ...feeds];
     await db.transaction('rw', db.follows, db.followingPublications, async () => {

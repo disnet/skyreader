@@ -167,3 +167,36 @@ describe('findFollowFeeds', () => {
     expect(discover).not.toHaveBeenCalled();
   });
 });
+
+describe('Sifa profile links', () => {
+  it('come first, and a listed feed needs no lookup', async () => {
+    const follow = {
+      did: 'did:plc:pro',
+      handle: 'pro.example',
+      sifaLinks: [
+        {
+          url: 'https://notes.pro.example/',
+          feedUrl: 'https://notes.pro.example/rss',
+          label: 'Notes',
+        },
+        { url: 'https://essays.example/' },
+        { url: 'https://github.com/pro' },
+      ],
+    };
+    expect(sites(follow)).toEqual([
+      'sifa:notes.pro.example',
+      'sifa:essays.example',
+      'handle:pro.example',
+    ]);
+
+    const discover = vi.fn(
+      async () => new Map([['essays.example', ['https://essays.example/feed']]])
+    );
+    const feeds = await findFollowFeeds([follow], [], new Set(), discover);
+    expect(discover).toHaveBeenCalledWith(['essays.example', 'pro.example']);
+    expect(feeds.map((f) => [f.publicationUri, f.name, f.siteSource])).toEqual([
+      ['https://notes.pro.example/rss', 'Notes', 'sifa'],
+      ['https://essays.example/feed', 'essays.example', 'sifa'],
+    ]);
+  });
+});
