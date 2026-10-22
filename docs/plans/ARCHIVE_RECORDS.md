@@ -50,6 +50,7 @@ repo the record lives in. The `rkey` is the record key, not a field.
 | `item_guid`                                            | `itemGuid`           |                                                          |
 | `doi`                                                  | `doi`                | the DOI the page declared in its `<head>` at save time   |
 | `edited_fields`                                        | `editedFields`       | metadata columns the reader edited by hand               |
+| `imported_from`                                        | `importedFrom`       | the read-later app an imported save came from            |
 | `saved_files.*`                                        | `file`               | `{ r2Key, filename, mimeType, size, sha256, createdAt }` |
 
 A NULL column is an absent field. `content` (the extracted body) rides inline for now. Before a

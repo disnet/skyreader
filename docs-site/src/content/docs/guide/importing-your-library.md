@@ -12,7 +12,7 @@ Coming from another read-later app? Bring your library with you. Open **Settings
 - **Tags**, as tags (up to ten an article).
 - **Highlights and their notes**, attached to their articles, wherever the export includes them.
 
-Articles already in your Library are left as they are. Importing the same file twice adds nothing new, so if an import stops partway, run it again.
+Articles already in your Library keep their tags and archive state, and take the export's highlights only if you haven't highlighted them in Skyreader. Importing the same file twice adds nothing new, so if an import stops partway, run it again.
 
 Imports don't count toward the monthly limit on saving links.
 

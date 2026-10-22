@@ -389,6 +389,8 @@ function omnivoreMetadata(json: unknown[]): { save: ImportedSave; slug?: string 
 export function omnivoreHighlights(markdown: string): ImportedHighlight[] {
   const highlights: ImportedHighlight[] = [];
   let current: ImportedHighlight | null = null;
+  // Omnivore writes a highlight's labels as the paragraph right after its quote.
+  let labelsNext = false;
   for (const block of markdown.replace(/\r\n/g, '\n').split(/\n\s*\n/)) {
     const trimmed = block.trim();
     if (!trimmed) continue;
@@ -401,7 +403,11 @@ export function omnivoreHighlights(markdown: string): ImportedHighlight[] {
         .trim();
       current = text ? { text } : null;
       if (current) highlights.push(current);
-    } else if (current && !/^(#[^\s#]+\s*)+$/.test(trimmed)) {
+      labelsNext = true;
+    } else if (labelsNext && trimmed.startsWith('#')) {
+      labelsNext = false;
+    } else if (current) {
+      labelsNext = false;
       current.note = current.note ? `${current.note}\n\n${trimmed}` : trimmed;
     }
   }

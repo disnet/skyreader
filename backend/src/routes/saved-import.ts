@@ -13,7 +13,7 @@
 import type { Env } from '../types';
 import { getSessionFromRequest } from '../services/oauth';
 import { getUserSettings } from './settings';
-import { savedUrlKey } from '../services/semble-connections';
+import { backfillSavedUrlKeys, savedUrlKey } from '../services/semble-connections';
 import { generateTid } from '../utils/tid';
 import { sha256Hex } from '../utils/sha256';
 import { chunkArray } from './reading';
@@ -459,6 +459,8 @@ export async function handleImportSaved(
   }
 
   try {
+    // Older saves have no url_key yet, and dedupe matches on it.
+    await backfillSavedUrlKeys(env, session.did);
     const { unreadRkeys, ...result } = await importSaves(
       env,
       session.did,

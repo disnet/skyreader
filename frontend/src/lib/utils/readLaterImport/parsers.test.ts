@@ -202,6 +202,12 @@ describe('Omnivore', () => {
     expect(saves[1]).toMatchObject({ archived: false, highlights: [] });
   });
 
+  it('reads labels with spaces as labels, not as the note', () => {
+    expect(omnivoreHighlights('> Quote one. \n\n#Read Later #idea\n\nMy note')).toEqual([
+      { text: 'Quote one.', note: 'My note' },
+    ]);
+  });
+
   it('reads a note-only highlights file as no highlights', () => {
     expect(omnivoreHighlights('Just a page note.\n\n')).toEqual([]);
   });
