@@ -455,8 +455,9 @@ const FIREHOSE_RELIST_MS = 24 * 60 * 60 * 1000; // 24 hours
 const ACTIVE_DOCUMENT_BACKOFF_MAX_MS = 6 * 60 * 60 * 1000;
 const MAX_RESPONSE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
 // A PDF saved by link may be bigger than a page: it is only relayed to the
-// extractor Worker (which takes up to this; pdf-extractor MAX_PDF_BYTES), not
-// built into a DOM, so it costs its bytes once rather than several times over.
+// extractor Worker (which takes up to this; pdf-extractor MAX_PDF_BYTES), never
+// built into a DOM, so it costs about twice its bytes while it's read rather
+// than Defuddle's several times over.
 const MAX_PDF_SIZE_BYTES = 50 * 1024 * 1024; // 50 MB
 // Extracted article content is effectively immutable per URL; cache it for a long
 // time so repeat (and cross-user) saves of the same article are free.
@@ -811,18 +812,28 @@ class PdfExtractError extends Error {
 // in the same shape a web page's extraction has. Its domain comes from the URL;
 // a PDF has no lead image. `onCall` runs just before the Worker is called: that
 // call is what a reader's daily PDF allowance counts.
+/** Why no PDF can be parsed for this caller, or null when one can. */
+function pdfRefusal(pdfOpts: {
+  extractPdf: PdfExtractor | undefined;
+  allowPdf: boolean;
+}): PdfExtractError | null {
+  if (!pdfOpts.extractPdf) return new PdfExtractError('Saving PDFs is not set up on this server');
+  if (!pdfOpts.allowPdf) return new PdfExtractError(PDF_QUOTA_MESSAGE);
+  return null;
+}
+
 async function extractPdfArticle(
   pdfOpts: { extractPdf: PdfExtractor | undefined; allowPdf: boolean; onCall: () => void },
   bytes: Uint8Array<ArrayBuffer>,
   url: string
 ): Promise<ExtractedArticle> {
-  const { extractPdf, allowPdf, onCall } = pdfOpts;
-  if (!extractPdf) throw new PdfExtractError('Saving PDFs is not set up on this server');
-  if (!allowPdf) throw new PdfExtractError(PDF_QUOTA_MESSAGE);
+  const { extractPdf, onCall } = pdfOpts;
+  const refusal = pdfRefusal(pdfOpts);
+  if (refusal) throw refusal;
   let pdf: Awaited<ReturnType<PdfExtractor>>;
   try {
     onCall();
-    pdf = await extractPdf(bytes);
+    pdf = await extractPdf!(bytes);
   } catch (err) {
     // Unreadable stays as it is: on the sniff-only path it means "not a PDF
     // after all", and the caller falls back to the article extractor.
@@ -3081,15 +3092,16 @@ export function createApp(db: Database, config: AppConfig) {
 
           const contentType = response.headers.get('Content-Type');
           // The PDF cap applies to whatever could be a PDF this reader may have
-          // parsed: declared so, named so, or of no particular type (a PDF is
-          // often served as octet-stream). The sniff below decides which it is.
+          // parsed: declared so, named so, or not declared as text (a PDF is
+          // often served as octet-stream or force-download). The sniff below
+          // decides which it is, and anything else keeps the page cap.
           const pdfCapped =
             !!pdfOpts.extractPdf &&
             pdfOpts.allowPdf &&
             (isDeclaredPdf(contentType) ||
               /\.pdf$/i.test(new URL(url).pathname) ||
               !contentType ||
-              /^(application\/octet-stream|binary\/octet-stream)\b/i.test(contentType));
+              !/^text\/|html|xml|json/i.test(contentType));
           const sizeLimit = pdfCapped ? MAX_PDF_SIZE_BYTES : MAX_RESPONSE_SIZE_BYTES;
           let bytes: Uint8Array<ArrayBuffer>;
           try {
@@ -3116,9 +3128,8 @@ export function createApp(db: Database, config: AppConfig) {
             ) {
               console.warn(`[Proxy] /extract ${url}: ${err.message}`);
               // Without a parse to offer, it's refused as any PDF would be.
-              if (!pdfOpts.extractPdf || !pdfOpts.allowPdf) {
-                await extractPdfArticle(pdfOpts, new Uint8Array(0), url);
-              }
+              const refusal = pdfRefusal(pdfOpts);
+              if (refusal) throw refusal;
               throw new PdfExtractError(
                 `This PDF is larger than ${sizeLimit / (1024 * 1024)} MB, the most Skyreader can save`
               );
@@ -3144,6 +3155,10 @@ export function createApp(db: Database, config: AppConfig) {
               extracted = await extractPdfArticle(pdfOpts, bytes, url);
             } catch (err) {
               if (!(err instanceof PdfUnreadableError)) throw err;
+              // Not a PDF after all, so a page, and a page has the page cap.
+              if (bytes.byteLength > MAX_RESPONSE_SIZE_BYTES) {
+                throw new ResponseTooLargeError(bytes.byteLength, MAX_RESPONSE_SIZE_BYTES);
+              }
               extracted = await extractArticle(new TextDecoder().decode(bytes), url);
             }
           } else {

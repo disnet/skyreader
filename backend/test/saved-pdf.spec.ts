@@ -56,6 +56,7 @@ async function reset(tier = 'supporter') {
   await env.DB.prepare('DELETE FROM sessions WHERE did IN (?, ?)').bind(DID, OTHER).run();
   await env.DB.prepare('DELETE FROM users WHERE did IN (?, ?)').bind(DID, OTHER).run();
   await env.DB.prepare('DELETE FROM rate_limits').run();
+  for (const rkey of [RKEY, 'bbbbbbbbbbbbb']) await env.SAVED_FILES.delete(savedFileKey(DID, rkey));
   await addUser(DID, SESSION, tier);
   await addUser(OTHER, OTHER_SESSION, 'supporter');
 }
@@ -238,6 +239,36 @@ describe('POST /api/saved/pdf', () => {
     expect(body).toMatchObject({ error: 'already_saved', rkey: RKEY });
     expect(await env.SAVED_FILES.head(savedFileKey(DID, RKEY))).not.toBeNull();
     expect(await env.SAVED_FILES.head(savedFileKey(DID, 'bbbbbbbbbbbbb'))).toBeNull();
+  });
+
+  it('opens the existing save for the same file even at the daily limit', async () => {
+    extractorAnswers(Response.json(EXTRACTED));
+    await call(upload(PDF));
+    await env.DB.prepare(
+      'INSERT OR REPLACE INTO rate_limits (did, endpoint, window_start, count) VALUES (?, ?, ?, 100)'
+    )
+      .bind(DID, PDF_QUOTA_ENDPOINT, pdfQuotaDay(Date.now()))
+      .run();
+    const { status, body } = await call(upload(PDF, { rkey: 'bbbbbbbbbbbbb' }));
+    expect(status).toBe(409);
+    expect(body).toMatchObject({ error: 'already_saved', rkey: RKEY });
+  });
+
+  // A save's file lands where its rkey says, so a refused upload must not take
+  // the file of a racing request for the same rkey that saved first.
+  it("leaves a file another request's row owns when refused", async () => {
+    await env.DB.prepare(
+      `INSERT INTO saved_files (user_did, rkey, r2_key, mime_type, size, sha256, created_at)
+       VALUES (?, ?, ?, 'application/pdf', 1, 'other', 0)`
+    )
+      .bind(DID, RKEY, savedFileKey(DID, RKEY))
+      .run();
+    extractorAnswers(
+      Response.json({ name: 'PdfUnreadableError', message: 'bad' }, { status: 422 })
+    );
+    const { status } = await call(upload(PDF));
+    expect(status).toBe(422);
+    expect(await env.SAVED_FILES.head(savedFileKey(DID, RKEY))).not.toBeNull();
   });
 
   it('holds to the monthly upload allowance', async () => {

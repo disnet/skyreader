@@ -30,6 +30,7 @@ import {
   type StoredFileColumns,
   type StoredFileRef,
 } from '../services/saved-file-store';
+import { hexDigest } from '../utils/sha256';
 import { log } from '../utils/logger';
 import { captureSnapshot } from '../services/archive/snapshots';
 import { storedFileBytes } from '../services/archive/snapshot-images';
@@ -130,6 +131,27 @@ function concatChunks(chunks: Uint8Array[], total: number): Uint8Array {
   return bytes;
 }
 
+/**
+ * Delete a file just kept for a save that then didn't go ahead, unless a
+ * saved_files row owns it by now: a save's file always lands in the same place,
+ * so a racing request for the same save may have written it there and won.
+ */
+async function deleteUnlessOwned(
+  env: Env,
+  store: SavedFileStore,
+  did: string,
+  rkey: string,
+  file: StoredFileRef
+): Promise<void> {
+  const owned = await env.DB.prepare(
+    'SELECT 1 AS x FROM saved_files WHERE user_did = ? AND rkey = ?'
+  )
+    .bind(did, rkey)
+    .first()
+    .catch(() => null);
+  if (!owned) await store.delete(file).catch(() => {});
+}
+
 /** Why a file was turned away on its way into the store. */
 class FileRejected extends Error {
   constructor(readonly reason: 'too_large' | 'wrong_type' | 'empty') {
@@ -193,12 +215,8 @@ function checkedFile(body: ReadableStream<Uint8Array>, kind: UploadKind, maxByte
       return reader.cancel(reason);
     },
   });
-  const done = async () => ({ size, sha256: toHex(await digest.digest) });
+  const done = async () => ({ size, sha256: hexDigest(await digest.digest) });
   return { stream, done };
-}
-
-function toHex(digest: ArrayBuffer): string {
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 function monthStart(now: Date): number {
@@ -346,51 +364,19 @@ async function handleUpload(request: Request, env: Env, session: Session, kind: 
   if (Number.isFinite(declared) && declared > maxBytes) return tooLarge();
   if (!request.body || declared === 0) return json({ error: 'Empty file' }, 400);
 
-  // Everything that can refuse the upload without its bytes is asked first, so
-  // a refused file isn't streamed in only to be thrown away.
-  const now = new Date();
-  const [rkeyTaken, usage] = await env.DB.batch([
-    env.DB.prepare('SELECT 1 AS taken FROM saved_articles WHERE user_did = ? AND rkey = ?').bind(
-      session.did,
-      rkey
-    ),
-    // The monthly count is uploads only (a PDF saved by link counts as a URL
-    // save). PDFs and EPUBs share it.
-    env.DB.prepare(
-      `SELECT COALESCE(SUM(CASE WHEN f.created_at >= ? AND s.source = 'upload' THEN 1 ELSE 0 END), 0) AS this_month
-       FROM saved_files f
-       LEFT JOIN saved_articles s ON s.user_did = f.user_did AND s.rkey = f.rkey
-       WHERE f.user_did = ?`
-    ).bind(monthStart(now), session.did),
-  ]);
-  // Also what keeps the stream below from landing on another save's file: an
-  // upload is kept where its rkey says.
-  if (rkeyTaken.results.length > 0) return json({ error: 'rkey already in use' }, 409);
-
-  const { this_month } = usage.results[0] as { this_month: number };
-  // Stored bytes count every kept original and every snapshot picture.
-  const stored = await storedFileBytes(env, session.did);
-  if (this_month >= limits.maxPdfUploadsPerMonth) {
-    return json(
-      {
-        error: 'pdf_upload_limit_reached',
-        message: `You've uploaded ${limits.maxPdfUploadsPerMonth} files this month.`,
-        limit: limits.maxPdfUploadsPerMonth,
-        resetsAt: nextMonth(now),
-      },
-      403
-    );
-  }
-  if (stored + (Number.isFinite(declared) ? declared : 1) > limits.maxPdfStorageBytes) {
-    return storageFull(stored);
-  }
-  if (kind === 'pdf' && !(await hasPdfAllowance(env, session.did))) {
-    return json({ error: 'pdf_daily_limit_reached', message: PDF_QUOTA_MESSAGE }, 403);
-  }
+  // An upload is kept where its rkey says, so a taken rkey is refused before
+  // the stream below could land on another save's file.
+  const rkeyTaken = await env.DB.prepare(
+    'SELECT 1 AS taken FROM saved_articles WHERE user_did = ? AND rkey = ?'
+  )
+    .bind(session.did, rkey)
+    .first();
+  if (rkeyTaken) return json({ error: 'rkey already in use' }, 409);
 
   // The file streams into the store as it arrives, checked on the way, so the
-  // Worker holds a part of it at a time rather than the whole thing. From here
-  // on, any refusal deletes what was kept.
+  // Worker holds a part of it at a time rather than the whole thing. Whatever
+  // needs its bytes or its digest is asked after; any refusal from there
+  // deletes what was kept (a refused file is rare, and costs only that write).
   const mimeType = MIME_TYPES[kind];
   const checked = checkedFile(request.body, kind, maxBytes);
   let file: StoredFileRef;
@@ -405,8 +391,10 @@ async function handleUpload(request: Request, env: Env, session: Session, kind: 
       : json({ error: 'not_an_epub', message: "That file isn't an EPUB." }, 415);
   }
   const { size, sha256 } = await checked.done();
+  // Refused after all: delete what was kept, unless a racing upload of the same
+  // rkey has since saved, in which case the file is now its row's.
   const discard = async (response: Response) => {
-    await store.delete(file).catch(() => {});
+    await deleteUnlessOwned(env, store, session.did, rkey, file);
     return response;
   };
 
@@ -426,7 +414,39 @@ async function handleUpload(request: Request, env: Env, session: Session, kind: 
       )
     );
   }
+
+  // The plan's limits come after the duplicate check, so a file already saved
+  // always opens its save, at any limit.
+  const now = new Date();
+  // The monthly count is uploads only (a PDF saved by link counts as a URL
+  // save). PDFs and EPUBs share it.
+  const { this_month } = (await env.DB.prepare(
+    `SELECT COALESCE(SUM(CASE WHEN f.created_at >= ? AND s.source = 'upload' THEN 1 ELSE 0 END), 0) AS this_month
+     FROM saved_files f
+     LEFT JOIN saved_articles s ON s.user_did = f.user_did AND s.rkey = f.rkey
+     WHERE f.user_did = ?`
+  )
+    .bind(monthStart(now), session.did)
+    .first<{ this_month: number }>())!;
+  if (this_month >= limits.maxPdfUploadsPerMonth) {
+    return discard(
+      json(
+        {
+          error: 'pdf_upload_limit_reached',
+          message: `You've uploaded ${limits.maxPdfUploadsPerMonth} files this month.`,
+          limit: limits.maxPdfUploadsPerMonth,
+          resetsAt: nextMonth(now),
+        },
+        403
+      )
+    );
+  }
+  // Stored bytes count every kept original and every snapshot picture.
+  const stored = await storedFileBytes(env, session.did);
   if (stored + size > limits.maxPdfStorageBytes) return discard(storageFull(stored));
+  if (kind === 'pdf' && !(await hasPdfAllowance(env, session.did))) {
+    return discard(json({ error: 'pdf_daily_limit_reached', message: PDF_QUOTA_MESSAGE }, 403));
+  }
 
   let parsed: ParseOutcome;
   try {
@@ -437,7 +457,7 @@ async function handleUpload(request: Request, env: Env, session: Session, kind: 
         ? await parsePdfUpload(env, session.did, kept)
         : await parseEpubUpload(await new Response(kept.body).arrayBuffer());
   } catch (err) {
-    await store.delete(file).catch(() => {});
+    await deleteUnlessOwned(env, store, session.did, rkey, file);
     throw err;
   }
   if (parsed instanceof Response) return discard(parsed);
@@ -671,7 +691,7 @@ async function storeLinkedOriginal(
   }
   const { size, sha256 } = await checked.done();
   if (stored + size > limits.maxPdfStorageBytes) {
-    await store.delete(file).catch(() => {});
+    await deleteUnlessOwned(env, store, did, save.rkey, file);
     return 'storage_full';
   }
 

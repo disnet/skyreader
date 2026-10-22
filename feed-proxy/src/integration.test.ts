@@ -4034,6 +4034,41 @@ describe('POST /extract', () => {
     db.close();
   });
 
+  it('reads a PDF served as force-download under the PDF cap', async () => {
+    const { extractPdf, calls } = fakeExtractor(async () => PARSED);
+    const { db, app } = createTestApp({ extractPdf });
+    const pdf = new Uint8Array(20 * 1024 * 1024);
+    pdf.set(new TextEncoder().encode('%PDF-1.7\n'));
+    fetchMock = mockFetch(
+      () => new Response(pdf, { headers: { 'Content-Type': 'application/force-download' } })
+    );
+
+    const json = await (await extract(app, 'https://example.com/download?id=9')).json();
+
+    expect(json.title).toBe('Notes on Margins');
+    expect(calls).toHaveLength(1);
+
+    db.close();
+  });
+
+  it('keeps the page cap for a sniffed PDF that turns out to be a page', async () => {
+    const { extractPdf, calls } = fakeExtractor(async () => {
+      throw new PdfUnreadableError('Invalid PDF structure.');
+    });
+    const { db, app } = createTestApp({ extractPdf });
+    const page = new Uint8Array(20 * 1024 * 1024).fill(0x20);
+    page.set(new TextEncoder().encode('<html>%PDF-1.7 '));
+    fetchMock = mockFetch(() => new Response(page));
+
+    const json = await (await extract(app, 'https://example.com/download?id=4')).json();
+
+    expect(calls).toHaveLength(1);
+    expect(json.error).toMatch(/too large|exceeds/i);
+    expect(json.content).toBeUndefined();
+
+    db.close();
+  });
+
   it('refuses an oversized PDF as any PDF when the caller has no allowance', async () => {
     const { extractPdf, calls } = fakeExtractor(async () => PARSED);
     const { db, app } = createTestApp({ extractPdf });
