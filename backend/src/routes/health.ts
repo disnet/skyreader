@@ -1,6 +1,7 @@
 import type { Env } from '../types';
 import { checkRateLimit } from '../services/rate-limit';
 import { ALARM_ACTIVE_WINDOW_MS } from '../durable-objects/jetstream-poller';
+import { withTimeout } from '../utils/with-timeout';
 
 // Two health endpoints with deliberately different jobs:
 //
@@ -80,18 +81,6 @@ function secretsMatch(provided: string, expected: string): boolean {
     mismatch |= provided.charCodeAt(i) ^ expected.charCodeAt(i);
   }
   return mismatch === 0;
-}
-
-async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout>;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
-  });
-  try {
-    return await Promise.race([promise, timeout]);
-  } finally {
-    clearTimeout(timer!);
-  }
 }
 
 interface CheckResult {
