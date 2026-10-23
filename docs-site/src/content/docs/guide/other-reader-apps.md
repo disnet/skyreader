@@ -18,11 +18,11 @@ Some apps ask only for the server and add the rest of the address themselves. If
 
 Make a separate password for each app. To sign an app out, **Revoke** its password in Settings. The list shows when each password was last used.
 
-An app password only lets an app read your sources and mark items read, unread, starred or unstarred. It can't change your settings or sign in to Skyreader on the web.
+An app password only lets an app read your sources, change your subscriptions and folders, and mark items read, unread, starred or unstarred. It can't change your settings or sign in to Skyreader on the web.
 
 ## What syncs
 
-- **Subscriptions and folders.** Each source appears with its folder. Adding, removing or renaming sources is done in Skyreader; the app picks the change up on its next sync.
+- **Subscriptions and folders.** Each source appears with its folder. Add a feed, unsubscribe, rename a source or move it between folders in either place, and the other catches up on its next sync. Publications in the Atmosphere are followed from Skyreader; once followed, you can rename, file or unsubscribe from them in the app too.
 - **Articles.** Each source's newest 100 articles, the same ones Skyreader shows. Older articles stay in Skyreader's archive.
 - **Publications.** Each one you follow appears as a feed, with its newest 100 posts. The app shows the text of each post; for anything richer, open it on the publication.
 - **Read and unread.** Marking an article read or unread in the app does the same in Skyreader, and the other way around. Unread counts match.
@@ -30,6 +30,6 @@ An app password only lets an app read your sources and mark items read, unread, 
 
 Articles you saved by link don't appear in other apps.
 
-## If starring doesn't work
+## If starring or subscribing doesn't work
 
-Starring saves to your Library as you, so it uses your Skyreader sign-in on the web. That sign-in lapses after a while unused. If the app reports an error when you star, open Skyreader in a browser and sign in again, then try again.
+Starring and subscription changes act as you, so they use your Skyreader sign-in on the web. That sign-in lapses after a while unused. If the app reports an error when you star or change a subscription, open Skyreader in a browser and sign in again, then try again.
