@@ -45,6 +45,40 @@ describe('recentReadsStore', () => {
     ]);
   });
 
+  it('knows a tracking-param variant is the same article', () => {
+    recentReadsStore.record('https://a.test/post?utm_source=rss', 'Post');
+    expect(recentReadsStore.previousBefore('https://a.test/post')).toBeNull();
+  });
+
+  it('refreshes the time of an article re-read days later', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-01T00:00:00Z'));
+    recentReadsStore.record('https://a.test/first', 'First');
+    vi.setSystemTime(Date.now() + PREVIOUS_READ_WINDOW_MS + 1);
+    recentReadsStore.record('https://a.test/first', 'First');
+    recentReadsStore.record('https://b.test/second', 'Second');
+
+    expect(recentReadsStore.previousBefore('https://b.test/second')?.title).toBe('First');
+  });
+
+  it("doesn't overwrite what another tab recorded", () => {
+    recentReadsStore.record('https://a.test/first', 'First');
+    // Another tab writes straight to storage.
+    const key = `skyreader-recent-reads:${did}`;
+    const theirs = JSON.parse(localStorage.getItem(key)!);
+    localStorage.setItem(
+      key,
+      JSON.stringify([{ url: 'https://c.test/other-tab', at: Date.now() }, ...theirs])
+    );
+    recentReadsStore.record('https://b.test/second', 'Second');
+
+    expect(recentReadsStore.entries.map((e) => e.url)).toEqual([
+      'https://b.test/second',
+      'https://c.test/other-tab',
+      'https://a.test/first',
+    ]);
+  });
+
   it('offers nothing once the previous read is days old', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-10-01T00:00:00Z'));

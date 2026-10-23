@@ -27,6 +27,7 @@
   import { matchesTerms, normalize, parseQuery } from '$lib/services/savedSearch';
   import { sembleSourceUrl } from '$lib/utils/semble';
   import { savedItemLabelKeys } from '$lib/utils/savedPile';
+  import { urlKey } from '$lib/utils/urlKey';
   import {
     NON_DIRECTIONAL_CONNECTION_TYPES,
     SEMBLE_CONNECTION_TYPES,
@@ -183,7 +184,7 @@
   }
 
   // Only built while the dialog is open: it reads every save's read activity.
-  let byRecency = $derived.by((): SearchItem[] => {
+  let byRecency = $derived.by((): Array<SearchItem & { at: number }> => {
     if (!open) return [];
     const dated: Array<SearchItem & { at: number }> = [
       ...recentReadsStore.entries.map((entry) => ({
@@ -207,17 +208,41 @@
     return dated.sort((a, b) => b.at - a.at);
   });
 
+  // Search also reaches cards that only live in the reader's Semble library,
+  // ranked by when they were made, so six matching saves can't hide them all.
+  let byRecencyWithCards = $derived.by((): Array<SearchItem & { at: number }> => {
+    if (sembleCards.length === 0) return byRecency;
+    const cards = sembleCards.map((card) => {
+      const made = card.createdAt ? Date.parse(card.createdAt) : NaN;
+      return {
+        key: card.uri,
+        url: card.url,
+        title: card.title,
+        author: card.author,
+        domain: hostOf(card.url),
+        at: Number.isNaN(made) ? 0 : made,
+      };
+    });
+    return [...byRecency, ...cards].sort((a, b) => b.at - a.at);
+  });
+
   /** Neither end of this edge: the article in either URL variant. */
   function isThisArticle(url: string): boolean {
-    return url === articleUrl || Boolean(source && sameArticle(url, source.url));
+    return sameArticle(url, articleUrl) || Boolean(source && sameArticle(url, source.url));
+  }
+
+  /** One entry per article, whichever URL variant each source holds it under. */
+  function dedupeKey(url: string): string {
+    return urlKey(url) ?? url;
   }
 
   let recent = $derived.by((): SearchItem[] => {
     const seen = new Set<string>();
     const out: SearchItem[] = [];
     for (const item of byRecency) {
-      if (isThisArticle(item.url) || seen.has(item.url)) continue;
-      seen.add(item.url);
+      const key = dedupeKey(item.url);
+      if (isThisArticle(item.url) || seen.has(key)) continue;
+      seen.add(key);
       out.push(item);
       if (out.length >= RECENT_LIMIT) break;
     }
@@ -227,23 +252,17 @@
   let results = $derived.by((): SearchItem[] => {
     const terms = parseQuery(query);
     if (terms.length === 0 || queryIsUrl) return [];
-    const candidates: SearchItem[] = [
-      ...byRecency,
-      ...sembleCards.map((card) => ({
-        key: card.uri,
-        url: card.url,
-        title: card.title,
-        author: card.author,
-        domain: hostOf(card.url),
-      })),
-    ];
+    const candidates: SearchItem[] = byRecencyWithCards;
     const seen = new Set<string>();
     const out: SearchItem[] = [];
     for (const item of candidates) {
       if (isThisArticle(item.url)) continue;
-      if (seen.has(item.url)) continue;
-      seen.add(item.url);
+      // Matched before it's marked seen: a recent read carries less than the
+      // save of the same article (no author), so it mustn't shadow the save.
       if (!matchesTerms(savedHaystack(item), terms)) continue;
+      const key = dedupeKey(item.url);
+      if (seen.has(key)) continue;
+      seen.add(key);
       out.push(item);
       if (out.length >= RESULT_LIMIT) break;
     }

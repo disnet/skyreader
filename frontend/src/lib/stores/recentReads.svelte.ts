@@ -7,6 +7,7 @@
 // nothing there keeps the order the last few articles were opened in. Losing it
 // (private window, cleared storage) only costs the suggestion.
 import { auth } from '$lib/stores/auth.svelte';
+import { urlKey } from '$lib/utils/urlKey';
 
 export interface RecentRead {
   url: string;
@@ -20,20 +21,12 @@ const KEY_PREFIX = 'skyreader-recent-reads:';
 const CAP = 20;
 /** "The article before this one" stops meaning anything after a couple of days. */
 export const PREVIOUS_READ_WINDOW_MS = 2 * 24 * 60 * 60 * 1000;
+/** Re-opening the top entry within this long doesn't rewrite storage. */
+const REFRESH_AFTER_MS = 60 * 1000;
 
-function isHttpUrl(value: string): boolean {
-  try {
-    const parsed = new URL(value);
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
-  } catch {
-    return false;
-  }
-}
-
-/** "/post" and "/post/#top" are the same article for "is this the one I'm on". */
+/** "/post", "/post/" and "/post?utm_source=…" are the same article. */
 export function sameArticle(a: string, b: string): boolean {
-  const strip = (url: string) => url.replace(/#.*$/, '').replace(/\/+$/, '');
-  return strip(a) === strip(b);
+  return a === b || (urlKey(a) ?? a) === (urlKey(b) ?? b);
 }
 
 function parse(raw: string | null): RecentRead[] {
@@ -53,37 +46,50 @@ function parse(raw: string | null): RecentRead[] {
   }
 }
 
-function load(did: string): RecentRead[] {
+/** Null when storage can't be read at all (blocked), as opposed to empty. */
+function load(did: string): RecentRead[] | null {
   try {
     return parse(localStorage.getItem(KEY_PREFIX + did));
   } catch {
-    return [];
+    return null;
   }
 }
 
 function createRecentReadsStore() {
-  // Loaded lazily per account and written through. The getter falls back to a
-  // plain storage read rather than filling this in, since it runs inside
-  // $derived, where writing state isn't allowed.
+  // Written through on every record, per account. Reads go to storage and only
+  // track this, since they run inside $derived, where writing state isn't
+  // allowed.
   let byDid = $state<Record<string, RecentRead[]>>({});
 
   function list(): RecentRead[] {
     const did = auth.user?.did;
     if (!did) return [];
-    return byDid[did] ?? load(did);
+    // Storage is the truth (another tab may have written since); the cached
+    // copy is what makes a read reactive, and the fallback when it's blocked.
+    const cached = byDid[did];
+    return load(did) ?? cached ?? [];
   }
 
   /** Note that the reader just read `url`. A guest can't connect, so isn't tracked. */
   function record(url: string, title?: string | null) {
     const did = auth.user?.did;
-    if (!did || !isHttpUrl(url)) return;
-    const current = byDid[did] ?? load(did);
+    if (!did || !urlKey(url)) return;
+    // From storage, not the cached list, so another tab's reads aren't
+    // overwritten by this one's older copy.
+    const current = load(did) ?? byDid[did] ?? [];
     const cleanTitle = title?.trim() || undefined;
+    const now = Date.now();
     const head = current[0];
-    // Re-opening what's already on top only refreshes it.
-    if (head && sameArticle(head.url, url) && head.title === cleanTitle) return;
+    if (
+      head &&
+      sameArticle(head.url, url) &&
+      head.title === cleanTitle &&
+      now - head.at < REFRESH_AFTER_MS
+    ) {
+      return;
+    }
     const next = [
-      { url, title: cleanTitle, at: Date.now() },
+      { url, title: cleanTitle, at: now },
       ...current.filter((entry) => !sameArticle(entry.url, url)),
     ].slice(0, CAP);
     byDid[did] = next;
@@ -94,7 +100,9 @@ function createRecentReadsStore() {
     }
   }
 
-  /** The article read before `url`, if it was recent enough to still be on the reader's mind. */
+  /** The newest read other than `url`, if recent enough to still be on the reader's mind.
+   *  Usually the article read just before it; after scrolling back up the
+   *  magazine, the one read after it — either way, what was just read. */
   function previousBefore(url: string, now = Date.now()): RecentRead | null {
     for (const entry of list()) {
       if (sameArticle(entry.url, url)) continue;

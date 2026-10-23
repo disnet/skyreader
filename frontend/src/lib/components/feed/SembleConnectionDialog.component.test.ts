@@ -357,10 +357,48 @@ describe('SembleConnectionDialog', () => {
     render();
     typeInField('rebuttal');
 
-    const titles = [...document.body.querySelectorAll('.results-popover .result-title')].map(
-      (el) => el.textContent?.trim()
+    const titles = [...document.body.querySelectorAll('.results-popover .result-title')].map((el) =>
+      el.textContent?.trim()
     );
     expect(titles[0]).toBe('A fresh rebuttal');
+  });
+
+  it('lists an article once, whichever URL variant each source holds', () => {
+    // r1 is saved without the slash.
+    recentReadsStore.record('https://other.test/the-rebuttal/', 'A careful rebuttal');
+    render();
+
+    expect(recentTitles().filter((t) => t === 'A careful rebuttal')).toHaveLength(1);
+  });
+
+  it("doesn't let a recent read hide the fuller save of the same article", () => {
+    savedArticles[0].author = 'Jane Smith' as never;
+    try {
+      recentReadsStore.record('https://other.test/the-rebuttal', 'A careful rebuttal');
+      render();
+      typeInField('smith');
+      expect(q('.results-popover .result-title')?.textContent).toBe('A careful rebuttal');
+    } finally {
+      savedArticles[0].author = null;
+    }
+  });
+
+  it('ranks a fresh Semble card ahead of older saves when searching', async () => {
+    sembleCards = [
+      {
+        uri: 'at://did:plc:reader/network.cosmik.card/c3',
+        cid: 'bafycard3',
+        url: 'https://semble-only.test/fresh-rebuttal',
+        title: 'A fresh rebuttal on Semble',
+        author: 'Someone',
+        createdAt: '2026-02-01T00:00:00.000Z',
+      } as never,
+    ];
+    render();
+    await vi.waitFor(() => {
+      typeInField('rebuttal');
+      expect(q('.results-popover .result-title')?.textContent).toBe('A fresh rebuttal on Semble');
+    });
   });
 
   it('opens with the other end filled when the opener names it', () => {

@@ -1212,7 +1212,8 @@
   $effect(() => {
     if (!expanded || !itemUrl) return;
     const url = itemUrl;
-    const title = itemTitle;
+    // itemTitle falls back to the URL; a title-less read is labelled by its host.
+    const title = itemTitle === itemUrl ? undefined : itemTitle;
     untrack(() => recentReadsStore.record(url, title));
   });
 
