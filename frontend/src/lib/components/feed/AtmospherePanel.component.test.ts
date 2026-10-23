@@ -73,6 +73,7 @@ function render(
     onSaveConnection?: (url: string) => void | Promise<void>;
     isConnectionSaved?: (url: string) => boolean;
     onCreateConnection?: () => void;
+    connectSuggestion?: { label: string; onConnect: () => void };
     connectionsNewSince?: number | null;
     newConnections?: number;
     onMarkConnectionsSeen?: () => void;
@@ -93,6 +94,7 @@ function render(
       onSaveConnection: props.onSaveConnection,
       isConnectionSaved: props.isConnectionSaved,
       onCreateConnection: props.onCreateConnection,
+      connectSuggestion: props.connectSuggestion,
       connectionsNewSince: props.connectionsNewSince,
       newConnections: props.newConnections,
       onMarkConnectionsSeen: props.onMarkConnectionsSeen,
@@ -261,6 +263,21 @@ describe('AtmospherePanel Semble connections', () => {
     expect(cta.textContent?.trim()).toBe('Draw the first connection');
     cta.click();
     expect(clicks.length).toBe(1);
+  });
+
+  // "This made me think of that", with "that" already named.
+  it('offers to connect to the previous read beside the connect control', () => {
+    const clicks: number[] = [];
+    const target = render({
+      onCreateConnection: () => {},
+      connectSuggestion: { label: 'Read last night', onConnect: () => clicks.push(1) },
+    });
+    const suggested = target.querySelector<HTMLButtonElement>('.semble-connect-suggested');
+    expect(suggested?.textContent?.trim()).toBe('Connect to “Read last night”');
+    suggested!.click();
+    expect(clicks.length).toBe(1);
+    // The plain control is still there, and still said once.
+    expect(target.querySelectorAll('.semble-connect').length).toBe(1);
   });
 
   it('offers it too when the context came back with nothing in it', () => {

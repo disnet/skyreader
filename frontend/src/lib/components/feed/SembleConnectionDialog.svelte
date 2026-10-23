@@ -21,9 +21,12 @@
   import { api } from '$lib/services/api';
   import { grantPermissions } from '$lib/services/permissions';
   import { savesStore } from '$lib/stores/saves.svelte';
+  import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
+  import { recentReadsStore, sameArticle } from '$lib/stores/recentReads.svelte';
   import { sembleConnectionStore } from '$lib/stores/sembleConnection.svelte';
   import { matchesTerms, normalize, parseQuery } from '$lib/services/savedSearch';
   import { sembleSourceUrl } from '$lib/utils/semble';
+  import { savedItemLabelKeys } from '$lib/utils/savedPile';
   import {
     NON_DIRECTIONAL_CONNECTION_TYPES,
     SEMBLE_CONNECTION_TYPES,
@@ -42,6 +45,8 @@
 
   /** Saved articles offered at once. The field is for finding one, not browsing. */
   const RESULT_LIMIT = 6;
+  /** Recent reads and saves offered before the reader types anything. */
+  const RECENT_LIMIT = 5;
   /** Semble's lexicon caps the note here (atproto string maxLength = UTF-8 bytes). */
   const MAX_NOTE_BYTES = 1000;
 
@@ -59,6 +64,7 @@
   let sembleCards = $state<SembleCard[]>([]);
   let cardsLoading = $state(false);
   let cardsLoadedForOpen = false;
+  let targetSeededForOpen = false;
 
   // Whether this session can write a connection at all. Read once and cached for
   // the tab: it's a property of the session, and every existing session lacks the
@@ -77,7 +83,18 @@
       sembleCards = [];
       cardsLoading = false;
       cardsLoadedForOpen = false;
+      targetSeededForOpen = false;
       return;
+    }
+    // An opener that already knows the other end ("Connect to what you just
+    // read") hands it over, so the sentence opens complete.
+    if (!targetSeededForOpen) {
+      targetSeededForOpen = true;
+      const seeded = sembleConnectionStore.target;
+      if (seeded) {
+        targetUrl = seeded.url;
+        targetTitle = seeded.title;
+      }
     }
     void savesStore.load();
     if (!cardsLoadedForOpen) {
@@ -155,10 +172,63 @@
     return normalize([item.title, item.author, item.domain, item.url].filter(Boolean).join(' '));
   }
 
+  // Most connections are "this made me think of that", so what the reader has
+  // read or saved lately comes first: before they type, as the list itself,
+  // and after, as the order matches come in. A save counts from whichever is
+  // later, saving it or last reading it.
+  function savedAt(item: SavedItem): number {
+    const activity = itemLabelsStore.getReadActivity(savedItemLabelKeys(item));
+    const saved = Date.parse(item.savedAt);
+    return Math.max(activity?.lastActivityAt ?? 0, Number.isNaN(saved) ? 0 : saved);
+  }
+
+  // Only built while the dialog is open: it reads every save's read activity.
+  let byRecency = $derived.by((): SearchItem[] => {
+    if (!open) return [];
+    const dated: Array<SearchItem & { at: number }> = [
+      ...recentReadsStore.entries.map((entry) => ({
+        key: `recent:${entry.url}`,
+        url: entry.url,
+        title: entry.title,
+        domain: hostOf(entry.url),
+        at: entry.at,
+      })),
+      ...savesStore.articles
+        .filter((item) => isHttpUrl(item.url))
+        .map((item) => ({
+          key: item.uri,
+          url: item.url,
+          title: item.title ?? undefined,
+          author: item.author ?? undefined,
+          domain: item.domain ?? undefined,
+          at: savedAt(item),
+        })),
+    ];
+    return dated.sort((a, b) => b.at - a.at);
+  });
+
+  /** Neither end of this edge: the article in either URL variant. */
+  function isThisArticle(url: string): boolean {
+    return url === articleUrl || Boolean(source && sameArticle(url, source.url));
+  }
+
+  let recent = $derived.by((): SearchItem[] => {
+    const seen = new Set<string>();
+    const out: SearchItem[] = [];
+    for (const item of byRecency) {
+      if (isThisArticle(item.url) || seen.has(item.url)) continue;
+      seen.add(item.url);
+      out.push(item);
+      if (out.length >= RECENT_LIMIT) break;
+    }
+    return out;
+  });
+
   let results = $derived.by((): SearchItem[] => {
     const terms = parseQuery(query);
     if (terms.length === 0 || queryIsUrl) return [];
     const candidates: SearchItem[] = [
+      ...byRecency,
       ...sembleCards.map((card) => ({
         key: card.uri,
         url: card.url,
@@ -166,18 +236,11 @@
         author: card.author,
         domain: hostOf(card.url),
       })),
-      ...savesStore.articles.map((item: SavedItem) => ({
-        key: item.uri,
-        url: item.url,
-        title: item.title ?? undefined,
-        author: item.author ?? undefined,
-        domain: item.domain ?? undefined,
-      })),
     ];
     const seen = new Set<string>();
     const out: SearchItem[] = [];
     for (const item of candidates) {
-      if (item.url === articleUrl) continue;
+      if (isThisArticle(item.url)) continue;
       if (seen.has(item.url)) continue;
       seen.add(item.url);
       if (!matchesTerms(savedHaystack(item), terms)) continue;
@@ -408,6 +471,23 @@
                 {cardsLoading ? 'Checking your Semble cards…' : 'No matches. Paste a URL instead.'}
               </p>
             {/if}
+          </div>
+        {/if}
+        {#if !query.trim() && recent.length > 0}
+          <!-- In the dialog's flow, not floating: it's there before any typing,
+               so the one tap it saves doesn't need a search first. -->
+          <div class="recent">
+            <p class="recent-label" id="semble-recent-label">Recent</p>
+            <ul class="results" aria-labelledby="semble-recent-label">
+              {#each recent as item (item.key)}
+                <li>
+                  <button type="button" class="result" onclick={() => chooseSaved(item)}>
+                    <span class="result-title">{labelFor(item.url, item.title)}</span>
+                    <span class="result-host">{hostOf(item.url)}</span>
+                  </button>
+                </li>
+              {/each}
+            </ul>
           </div>
         {/if}
       </div>
@@ -662,6 +742,17 @@
   }
 
   .result-host {
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+  }
+
+  .recent {
+    margin-top: 0.5rem;
+  }
+
+  .recent-label {
+    margin: 0 0 0.125rem;
+    padding: 0 0.5rem;
     font-size: var(--text-sm);
     color: var(--color-text-secondary);
   }

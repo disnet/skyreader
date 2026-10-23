@@ -50,7 +50,11 @@
   import { isFailedSaveBody } from '$lib/utils/saveAnywhere';
   import { readProgressKeys } from '$lib/utils/readProgressKeys';
   import { integrationSaveStore } from '$lib/stores/integrationSave.svelte';
-  import { sembleConnectionStore } from '$lib/stores/sembleConnection.svelte';
+  import {
+    connectToPreviousRead,
+    sembleConnectionStore,
+  } from '$lib/stores/sembleConnection.svelte';
+  import { recentReadsStore } from '$lib/stores/recentReads.svelte';
   import { toggleSavedLink } from '$lib/utils/saveLink';
   import { preferences } from '$lib/stores/preferences.svelte';
   import ArticleCardView from './ArticleCardView.svelte';
@@ -1202,6 +1206,26 @@
     });
   }
 
+  // Opening a card is reading it, so the next one opened can offer to connect
+  // back to this one. Expanded only: a keyboard cursor passing over a card
+  // isn't reading it.
+  $effect(() => {
+    if (!expanded || !itemUrl) return;
+    const url = itemUrl;
+    const title = itemTitle;
+    untrack(() => recentReadsStore.record(url, title));
+  });
+
+  let connectSuggestion = $derived(
+    expanded && auth.user && itemUrl
+      ? connectToPreviousRead({
+          url: itemUrl,
+          title: itemTitle,
+          cardUrl: atmosphere.sembleContext?.cardUrl ?? null,
+        })
+      : undefined
+  );
+
   function saveToMargin() {
     integrationSaveStore.openPicker('margin', {
       url: integrationTarget.url,
@@ -1322,6 +1346,7 @@
   onOpenAuthor={(did) => sidebarStore.openAddFeedModalForDid(did)}
   onSaveConnection={auth.user ? toggleSavedLink : undefined}
   onCreateConnection={auth.user && itemUrl ? createConnection : undefined}
+  {connectSuggestion}
   isConnectionSaved={(url) => savesStore.isSaved(url)}
   onMentionClick={(did) => sidebarStore.openAddFeedModalForDid(did)}
   onCloseOverflow={() => (overflowMenuOpen = false)}

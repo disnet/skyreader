@@ -333,6 +333,8 @@ export interface ArticleCardViewProps {
   /** Draw a Semble connection of the reader's own from this article. Absent when
    *  the reader can't write one (signed out). */
   onCreateConnection?: () => void;
+  /** One tap to connect this article to the one read just before it. */
+  connectSuggestion?: { label: string; onConnect: () => void };
   /** Reactive saved-state predicate for a connected article's URL. */
   isConnectionSaved?: (url: string) => boolean;
   // A @mention in the note/body was clicked — open the add-feed dialog for the DID.

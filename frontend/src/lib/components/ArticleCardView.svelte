@@ -118,6 +118,7 @@
     onOpenAuthor,
     onSaveConnection,
     onCreateConnection,
+    connectSuggestion,
     isConnectionSaved,
     onMentionClick,
     onCloseOverflow,
@@ -556,6 +557,7 @@
         {onOpenAuthor}
         {onSaveConnection}
         {onCreateConnection}
+        {connectSuggestion}
         {isConnectionSaved}
       />
       <div class="article-actions">

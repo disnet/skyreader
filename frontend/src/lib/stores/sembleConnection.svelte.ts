@@ -16,6 +16,7 @@ import { api, ScopeUpgradeError } from '$lib/services/api';
 import { auth } from '$lib/stores/auth.svelte';
 import { toastStore } from '$lib/stores/toast.svelte';
 import { mentionLaneItemsStore } from '$lib/stores/mentionLaneItems.svelte';
+import { recentReadsStore } from '$lib/stores/recentReads.svelte';
 import { sembleCardUrl, sembleSourceUrl } from '$lib/utils/semble';
 import type { SembleConnectionType } from '$lib/types';
 
@@ -25,6 +26,12 @@ export interface SembleConnectionSource {
   title?: string;
   /** This URL's card page on semble.so, when the panel already resolved one. */
   cardUrl?: string | null;
+}
+
+/** The other end, already chosen by the surface that opened the dialog. */
+export interface SembleConnectionTarget {
+  url: string;
+  title?: string;
 }
 
 export interface SembleConnectionSubmission {
@@ -41,10 +48,12 @@ function createSembleConnectionStore() {
   let open = $state(false);
   let submitting = $state(false);
   let source = $state<SembleConnectionSource | null>(null);
+  let target = $state<SembleConnectionTarget | null>(null);
 
-  function openFor(data: SembleConnectionSource) {
+  function openFor(data: SembleConnectionSource, other?: SembleConnectionTarget) {
     if (!data.url) return;
     source = data;
+    target = other?.url ? other : null;
     open = true;
   }
 
@@ -52,6 +61,7 @@ function createSembleConnectionStore() {
     if (submitting) return;
     open = false;
     source = null;
+    target = null;
   }
 
   async function submit(input: SembleConnectionSubmission) {
@@ -84,6 +94,7 @@ function createSembleConnectionStore() {
 
       open = false;
       source = null;
+      target = null;
       toastStore.update(toastId, 'success', 'Connected on Semble', {
         label: 'View',
         href: article.cardUrl || sembleCardUrl(article.url) || undefined,
@@ -95,6 +106,7 @@ function createSembleConnectionStore() {
         toastStore.remove(toastId);
         open = false;
         source = null;
+        target = null;
         return;
       }
       console.error('Failed to create Semble connection:', err);
@@ -144,7 +156,12 @@ function createSembleConnectionStore() {
     get source() {
       return source;
     },
-    /** Open the dialog with `data` as the fixed end of the edge. */
+    /** The other end the dialog opened with, if the opener already knew it. */
+    get target() {
+      return target;
+    },
+    /** Open the dialog with `data` as the fixed end of the edge, and `other` as
+     *  the other end when the opener can already guess it. */
     openFor,
     close,
     submit,
@@ -152,3 +169,28 @@ function createSembleConnectionStore() {
 }
 
 export const sembleConnectionStore = createSembleConnectionStore();
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * "Connect to <the article you read before this one>?" for the end of an
+ * article: the dialog opens with both ends filled, so the reader only picks the
+ * relation. Undefined when there's no recent previous read to offer.
+ */
+export function connectToPreviousRead(
+  source: SembleConnectionSource
+): { label: string; onConnect: () => void } | undefined {
+  const previous = recentReadsStore.previousBefore(source.url);
+  if (!previous) return undefined;
+  return {
+    label: previous.title || hostOf(previous.url),
+    onConnect: () =>
+      sembleConnectionStore.openFor(source, { url: previous.url, title: previous.title }),
+  };
+}

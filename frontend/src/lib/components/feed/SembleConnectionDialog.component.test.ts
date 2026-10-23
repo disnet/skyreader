@@ -82,19 +82,37 @@ vi.mock('$lib/stores/saves.svelte', () => ({
   },
 }));
 
+const readActivity = new Map<string, number>();
+vi.mock('$lib/stores/itemLabels.svelte', () => ({
+  itemLabelsStore: {
+    getReadActivity: (keys: string[]) => {
+      const at = Math.max(0, ...keys.map((key) => readActivity.get(key) ?? 0));
+      return at ? { lastActivityAt: at, progress: null } : null;
+    },
+  },
+}));
+
 const Host = (await import('./SembleConnectionDialog.test-host.svelte')).default;
 const { sembleConnectionStore } = await import('$lib/stores/sembleConnection.svelte');
+const { recentReadsStore } = await import('$lib/stores/recentReads.svelte');
 
 let component: Record<string, unknown> | undefined;
 
-function render(source?: { url: string; title?: string; cardUrl?: string }) {
+function render(
+  source?: { url: string; title?: string; cardUrl?: string },
+  other?: { url: string; title?: string }
+) {
   const target = document.createElement('div');
   document.body.appendChild(target);
-  component = mount(Host, { target, props: source ? { source } : undefined }) as Record<
-    string,
-    unknown
-  >;
+  const props = { ...(source ? { source } : {}), ...(other ? { other } : {}) };
+  component = mount(Host, { target, props }) as Record<string, unknown>;
   flushSync();
+}
+
+function recentTitles(): string[] {
+  return [...document.body.querySelectorAll('.recent .result-title')].map(
+    (el) => el.textContent?.trim() ?? ''
+  );
 }
 
 function q<T extends Element>(selector: string): T | null {
@@ -118,6 +136,8 @@ function typeInField(value: string) {
 
 beforeEach(() => {
   createSembleConnection.mockClear();
+  localStorage.clear();
+  readActivity.clear();
   scopeStatus = { semble: true, margin: false, sembleConnections: true };
   sembleCards = [
     {
@@ -293,6 +313,65 @@ describe('SembleConnectionDialog', () => {
     flushSync();
 
     expect(q<HTMLButtonElement>('.btn-primary')!.disabled).toBe(true);
+  });
+
+  it('lists recent reads and saves before the reader types, newest first', () => {
+    // r1 was saved first but read just now, so it outranks r2's later save.
+    readActivity.set('r1', Date.parse('2026-01-05T00:00:00.000Z'));
+    recentReadsStore.record('https://elsewhere.test/read-last-night', 'Read last night');
+    render();
+
+    expect(recentTitles()).toEqual(['Read last night', 'A careful rebuttal']);
+  });
+
+  it('leaves the article itself, in any URL variant, out of the recent list', () => {
+    recentReadsStore.record('https://example.test/the-article/', 'The Article again');
+    render();
+
+    expect(recentTitles()).not.toContain('The Article again');
+    // The save holding the slash variant is the same article too.
+    expect(recentTitles()).not.toContain('The resolved article variant');
+  });
+
+  it('takes a recent read as the other end in one tap', () => {
+    recentReadsStore.record('https://elsewhere.test/read-last-night', 'Read last night');
+    render();
+
+    q<HTMLButtonElement>('.recent .result')!.click();
+    flushSync();
+    expect(q('.chosen-url')!.textContent).toBe('https://elsewhere.test/read-last-night');
+    expect(q<HTMLButtonElement>('.btn-primary')!.disabled).toBe(false);
+  });
+
+  it('puts recent matches ahead of older ones when searching', () => {
+    sembleCards = [
+      {
+        uri: 'at://did:plc:reader/network.cosmik.card/c2',
+        cid: 'bafycard2',
+        url: 'https://semble-only.test/an-old-rebuttal',
+        title: 'An old rebuttal on Semble',
+        author: 'Someone',
+      },
+    ];
+    recentReadsStore.record('https://elsewhere.test/fresh-rebuttal', 'A fresh rebuttal');
+    render();
+    typeInField('rebuttal');
+
+    const titles = [...document.body.querySelectorAll('.results-popover .result-title')].map(
+      (el) => el.textContent?.trim()
+    );
+    expect(titles[0]).toBe('A fresh rebuttal');
+  });
+
+  it('opens with the other end filled when the opener names it', () => {
+    render(
+      { url: 'https://example.test/the-article', title: 'The Article' },
+      { url: 'https://elsewhere.test/read-last-night', title: 'Read last night' }
+    );
+
+    expect(q('.chosen-url')!.textContent).toBe('https://elsewhere.test/read-last-night');
+    expect(q('.search-input')).toBeNull();
+    expect(q<HTMLButtonElement>('.btn-primary')!.disabled).toBe(false);
   });
 
   it('offers the Semble permission up front when the session lacks the scope', async () => {

@@ -13,7 +13,11 @@
   import { savesStore } from '$lib/stores/saves.svelte';
   import { integrationSaveStore } from '$lib/stores/integrationSave.svelte';
   import { blueskyComposerStore } from '$lib/stores/blueskyComposer.svelte';
-  import { sembleConnectionStore } from '$lib/stores/sembleConnection.svelte';
+  import {
+    connectToPreviousRead,
+    sembleConnectionStore,
+  } from '$lib/stores/sembleConnection.svelte';
+  import { recentReadsStore } from '$lib/stores/recentReads.svelte';
   import { savedConnectionsStore } from '$lib/stores/savedConnections.svelte';
   import { profileService } from '$lib/services/profiles';
   import { withLocalConnections } from '$lib/utils/localSembleConnections';
@@ -60,6 +64,19 @@
 
   $effect(() => {
     if (linkPostUrl) linkPostContentStore.fetch(linkPostUrl);
+  });
+
+  // What the reader has read, in order, so the next article's end can offer to
+  // connect back to this one. The fullscreen reader (`eager`) shows one article,
+  // so opening it is reading it; in the stacked magazine an article counts once
+  // the reader reaches its end (see `loadWhenNear`).
+  function noteRead() {
+    const data = extractSembleMetadata(readerItem);
+    recentReadsStore.record(data.url, data.title);
+  }
+
+  $effect(() => {
+    if (eager && itemUrl) untrack(noteRead);
   });
 
   // A save with new Semble connections opens its discussion on Connections with
@@ -203,6 +220,7 @@
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries.some((entry) => entry.isIntersecting)) {
+          if (!eager) noteRead();
           atmosphere.openStream();
           observer.disconnect();
         }
@@ -235,6 +253,17 @@
       cardUrl: atmosphere.sembleContext?.cardUrl ?? null,
     });
   }
+
+  // Only for the signed-in, like the connect control it sits beside.
+  let connectSuggestion = $derived.by(() => {
+    if (!auth.user || !itemUrl) return undefined;
+    const data = extractSembleMetadata(readerItem);
+    return connectToPreviousRead({
+      url: data.url,
+      title: data.title,
+      cardUrl: atmosphere.sembleContext?.cardUrl ?? null,
+    });
+  });
 
   function createInLane(id: LaneId) {
     if (id === 'semble') {
@@ -276,6 +305,7 @@
       onOpenAuthor={(did) => sidebarStore.openAddFeedModalForDid(did)}
       onSaveConnection={auth.user ? toggleSavedLink : undefined}
       onCreateConnection={auth.user && itemUrl ? createConnection : undefined}
+      {connectSuggestion}
       isConnectionSaved={(url) => savesStore.isSaved(url)}
       {connectionsNewSince}
       newConnections={savedItem ? savedConnectionsStore.unseen(savedItem.rkey) : 0}
