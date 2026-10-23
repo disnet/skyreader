@@ -10,12 +10,13 @@
   import { linkblogDiscoveryStore } from '$lib/stores/linkblogDiscovery.svelte';
   import { followingPublicationsStore } from '$lib/stores/followingPublications.svelte';
 
-  // Two kinds of source, one tab each. One search and one "Hide added" cover
-  // both, and each tab's count follows them, so a search shows where its
-  // matches are before you switch.
-  type Tab = 'linkblogs' | 'publications';
+  // Two kinds of source, one tab each, publications first: the writing of the
+  // people you follow is what most readers come here for. One search and one
+  // "Hide added" cover both, and each tab's count follows them, so a search
+  // shows where its matches are before you switch.
+  type Tab = 'publications' | 'linkblogs';
   let tab = $state<Tab>(
-    page.url.searchParams.get('tab') === 'publications' ? 'publications' : 'linkblogs'
+    page.url.searchParams.get('tab') === 'linkblogs' ? 'linkblogs' : 'publications'
   );
 
   let query = $state('');
@@ -25,15 +26,15 @@
 
   // Start both loads up front so the inactive tab's count fills in too.
   onMount(() => {
-    linkblogDiscoveryStore.loadDiscover();
     followingPublicationsStore.load();
+    linkblogDiscoveryStore.loadDiscover();
   });
 
   // Keep the tab in the URL so a reload or a shared link lands on it.
   function select(next: Tab) {
     tab = next;
     const url = new URL(page.url);
-    if (next === 'linkblogs') url.searchParams.delete('tab');
+    if (next === 'publications') url.searchParams.delete('tab');
     else url.searchParams.set('tab', next);
     replaceState(url, page.state);
   }
@@ -54,19 +55,19 @@
       value={tab}
       onchange={select}
       options={[
-        { id: 'linkblogs', label: 'Linkblogs', count: linkblogCount },
         { id: 'publications', label: 'Publications', count: publicationCount },
+        { id: 'linkblogs', label: 'Linkblogs', count: linkblogCount },
       ]}
     />
   </div>
 
   <!-- Both stay mounted so each keeps its count, scroll window and expanded
        accounts while the other is showing. -->
-  <div role="tabpanel" hidden={tab !== 'linkblogs'}>
-    <LinkblogDiscovery {query} {hideAdded} bind:shownCount={linkblogCount} />
-  </div>
   <div role="tabpanel" hidden={tab !== 'publications'}>
     <FollowingPublications {query} {hideAdded} bind:shownCount={publicationCount} />
+  </div>
+  <div role="tabpanel" hidden={tab !== 'linkblogs'}>
+    <LinkblogDiscovery {query} {hideAdded} bind:shownCount={linkblogCount} />
   </div>
 </div>
 
