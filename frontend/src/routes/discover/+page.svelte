@@ -26,8 +26,8 @@
 
   // Start both loads up front so the inactive tab's count fills in too.
   onMount(() => {
-    followingPublicationsStore.load();
     linkblogDiscoveryStore.loadDiscover();
+    followingPublicationsStore.load();
   });
 
   // Keep the tab in the URL so a reload or a shared link lands on it.

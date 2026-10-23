@@ -1,7 +1,7 @@
 <script lang="ts" generics="T extends string">
   // Quiet pill tabs with counts: which slice of a list of sources to show.
   // Shared by Manage Sources (All / Atmosphere / Web / Parked) and Discover
-  // (Linkblogs / Publications) so the two pages switch views the same way.
+  // (Publications / Linkblogs) so the two pages switch views the same way.
   interface Option {
     id: T;
     label: string;
