@@ -51,6 +51,8 @@
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && open) {
+        // Taken: closing the menu shouldn't also end select mode.
+        e.preventDefault();
         open = false;
         wrapper?.querySelector<HTMLButtonElement>('.trigger')?.focus();
       }

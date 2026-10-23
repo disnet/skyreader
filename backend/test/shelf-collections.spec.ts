@@ -275,6 +275,101 @@ describe('/api/shelf/collections', () => {
     );
   });
 
+  it('a bulk add racing another past the cap inserts nothing, and never shares positions', async () => {
+    await call('POST', '/api/shelf/collections', { id: C1, name: 'Imported' });
+    const ours = Array.from({ length: 600 }, (_, i) => `3kourrkey${String(i).padStart(5, '0')}`);
+    const theirs = Array.from({ length: 1500 }, (_, i) => `3kthrrkey${String(i).padStart(5, '0')}`);
+    // Another writer lands 1,500 members between this request's read of the
+    // members and its insert.
+    const prepare = env.DB.prepare.bind(env.DB);
+    let raced = false;
+    const spy = vi.spyOn(env.DB, 'prepare').mockImplementation((sql: string) => {
+      const stmt = prepare(sql);
+      if (raced || !sql.startsWith('SELECT saved_rkey FROM shelf_collection_items')) return stmt;
+      raced = true;
+      const bind = stmt.bind.bind(stmt);
+      stmt.bind = (...args: unknown[]) => {
+        const bound = bind(...args);
+        const all = bound.all.bind(bound);
+        bound.all = (async () => {
+          const result = await all();
+          await prepare(
+            `INSERT INTO shelf_collection_items (user_did, collection_id, saved_rkey, position, added_at)
+             SELECT ?, ?, value, key, 0 FROM json_each(?)`
+          )
+            .bind(TEST_DID, C1, JSON.stringify(theirs))
+            .run();
+          return result;
+        }) as typeof bound.all;
+        return bound;
+      };
+      return stmt;
+    });
+    let res;
+    try {
+      res = await call('POST', `/api/shelf/collections/${C1}/items`, { rkeys: ours });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(res.status).toBe(409);
+    expect(res.body.room).toBe(500);
+    const items = (await list())[0].items.map((i) => i.rkey);
+    expect(items).toHaveLength(1500);
+
+    // With room, positions follow the members actually there, not a stale read.
+    expect(
+      (await call('POST', `/api/shelf/collections/${C1}/items`, { rkeys: [R1, R2] })).status
+    ).toBe(200);
+    const positions = await env.DB.prepare(
+      'SELECT COUNT(DISTINCT position) AS d, COUNT(*) AS n FROM shelf_collection_items WHERE collection_id = ?'
+    )
+      .bind(C1)
+      .first<{ d: number; n: number }>();
+    expect(positions).toEqual({ d: 1502, n: 1502 });
+    expect((await list())[0].items.slice(-2).map((i) => i.rkey)).toEqual([R1, R2]);
+  });
+
+  it('counts only the saves not yet in the collection against its room', async () => {
+    await call('POST', '/api/shelf/collections', { id: C1, name: 'Imported' });
+    const rkeys = Array.from({ length: 1998 }, (_, i) => `3kbulkrkey${String(i).padStart(4, '0')}`);
+    await call('POST', `/api/shelf/collections/${C1}/items`, { rkeys });
+    // R1 lands between this request's read and its insert; R2 still fits.
+    const prepare = env.DB.prepare.bind(env.DB);
+    let raced = false;
+    const spy = vi.spyOn(env.DB, 'prepare').mockImplementation((sql: string) => {
+      const stmt = prepare(sql);
+      if (raced || !sql.startsWith('SELECT saved_rkey FROM shelf_collection_items')) return stmt;
+      raced = true;
+      const bind = stmt.bind.bind(stmt);
+      stmt.bind = (...args: unknown[]) => {
+        const bound = bind(...args);
+        const all = bound.all.bind(bound);
+        bound.all = (async () => {
+          const result = await all();
+          await prepare(
+            `INSERT INTO shelf_collection_items (user_did, collection_id, saved_rkey, position, added_at)
+             VALUES (?, ?, ?, 5000, 0)`
+          )
+            .bind(TEST_DID, C1, R1)
+            .run();
+          return result;
+        }) as typeof bound.all;
+        return bound;
+      };
+      return stmt;
+    });
+    let res;
+    try {
+      res = await call('POST', `/api/shelf/collections/${C1}/items`, { rkeys: [R1, R2] });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(res.status).toBe(200);
+    const items = (await list())[0].items.map((i) => i.rkey);
+    expect(items).toHaveLength(2000);
+    expect(items.at(-1)).toBe(R2);
+  });
+
   it('removes many members at once', async () => {
     await call('POST', '/api/shelf/collections', { id: C1, name: 'Books' });
     await call('POST', '/api/shelf/collections', { id: C2, name: 'Papers' });

@@ -40,14 +40,26 @@
   onMount(() => {
     // The picker lists collections; have them ready before it opens.
     void shelfStore.load();
-    const onKey = (e: KeyboardEvent) => {
-      // Leave a modal (the picker) its own Escape.
-      if (e.key === 'Escape' && !shelfStore.pickerSaves && !e.defaultPrevented) {
-        librarySelection.end();
+    // Escape ends select mode only when nothing else claims it. Whether a dialog
+    // (the picker) was open is noted in the capture phase, before its own
+    // handler closes it; the decision waits for the bubble phase, so a handler
+    // that takes the key (the saved search, a menu) can preventDefault first.
+    let dialogOpen = false;
+    const noteDialog = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        dialogOpen = Boolean(shelfStore.pickerSaves || document.querySelector('[role="dialog"]'));
       }
     };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || e.defaultPrevented || dialogOpen) return;
+      librarySelection.end();
+    };
+    window.addEventListener('keydown', noteDialog, true);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', noteDialog, true);
+      window.removeEventListener('keydown', onKey);
+    };
   });
 </script>
 

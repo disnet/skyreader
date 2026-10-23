@@ -103,6 +103,7 @@ function createShelfStore() {
       try {
         if (loadedFor !== did) {
           const cached = await getMetadata<ShelfCollection[]>(CACHE_KEY).catch(() => null);
+          if (loadToken !== token) return;
           collections = Array.isArray(cached) ? sortCollections(cached) : [];
         }
         if (!syncStore.isOnline) {
@@ -110,13 +111,14 @@ function createShelfStore() {
           return;
         }
         const { collections: fresh } = await api.getShelfCollections();
+        // A forced reload that started since has the newer list.
+        if (loadToken !== token) return;
         collections = sortCollections(fresh);
         loadedFor = did;
         await persist();
       } catch (e) {
         console.error('[shelf] Failed to load collections:', e);
       } finally {
-        // A forced reload that started since owns `loading` now.
         if (loadToken === token) {
           inflight = null;
           loading = false;

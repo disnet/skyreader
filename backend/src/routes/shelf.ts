@@ -258,11 +258,10 @@ async function addItem(request: Request, env: Env, did: string, id: string): Pro
   if (!(await collectionExists(env, did, id))) return json({ error: 'Not found' }, 404);
 
   const current = await env.DB.prepare(
-    `SELECT saved_rkey, position FROM shelf_collection_items
-      WHERE user_did = ? AND collection_id = ?`
+    `SELECT saved_rkey FROM shelf_collection_items WHERE user_did = ? AND collection_id = ?`
   )
     .bind(did, id)
-    .all<{ saved_rkey: string; position: number }>();
+    .all<{ saved_rkey: string }>();
   const members = current.results ?? [];
   const memberSet = new Set(members.map((m) => m.saved_rkey));
   const fresh = rkeys.filter((r) => !memberSet.has(r));
@@ -281,23 +280,51 @@ async function addItem(request: Request, env: Env, did: string, id: string): Pro
     );
   }
 
-  const maxPos = members.reduce((max, m) => Math.max(max, m.position), -1);
   const now = Math.floor(Date.now() / 1000);
   // One INSERT for the lot: D1 caps bound parameters at 100 per statement and
   // statements at 1,000 per invocation, so the rkeys ride as one JSON array and
-  // json_each's index gives each its position. (`WHERE true` keeps SQLite from
-  // reading ON CONFLICT as part of the SELECT's join.)
-  await env.DB.batch([
+  // json_each's index gives each its position. The cap and the next position
+  // are read inside the statement too, so two bulk adds racing can't both pass
+  // the check above and overfill the collection or share positions; the loser
+  // inserts nothing. (`WHERE` also keeps SQLite from reading ON CONFLICT as part
+  // of the SELECT's join.)
+  const [inserted] = await env.DB.batch([
     env.DB.prepare(
       `INSERT INTO shelf_collection_items (user_did, collection_id, saved_rkey, position, added_at)
-       SELECT ?1, ?2, value, ?3 + key, ?4 FROM json_each(?5) WHERE true
+       SELECT ?1, ?2, j.value,
+              (SELECT COALESCE(MAX(position), -1) + 1 FROM shelf_collection_items
+                WHERE user_did = ?1 AND collection_id = ?2) + j.key,
+              ?3
+         FROM json_each(?4) AS j
+        WHERE (SELECT COUNT(*) FROM shelf_collection_items
+                WHERE user_did = ?1 AND collection_id = ?2)
+            + (SELECT COUNT(*) FROM json_each(?4) WHERE value NOT IN (
+                 SELECT saved_rkey FROM shelf_collection_items
+                  WHERE user_did = ?1 AND collection_id = ?2)) <= ?5
        ON CONFLICT(user_did, collection_id, saved_rkey) DO NOTHING`
-    ).bind(did, id, maxPos + 1, now, JSON.stringify(fresh)),
+    ).bind(did, id, now, JSON.stringify(fresh), MAX_ITEMS_PER_COLLECTION),
     env.DB.prepare(
       'UPDATE shelf_collections SET updated_at = ? WHERE user_did = ? AND id = ?'
     ).bind(now, did, id),
   ]);
-  return json({ success: true, added: fresh.length });
+  if ((inserted.meta.changes ?? 0) === 0) {
+    // Nothing went in: either a concurrent add got there first with the same
+    // saves (fine), or it filled the room these needed.
+    const after = await env.DB.prepare(
+      `SELECT saved_rkey FROM shelf_collection_items WHERE user_did = ? AND collection_id = ?`
+    )
+      .bind(did, id)
+      .all<{ saved_rkey: string }>();
+    const present = new Set((after.results ?? []).map((r) => r.saved_rkey));
+    const room = Math.max(0, MAX_ITEMS_PER_COLLECTION - present.size);
+    if (fresh.filter((r) => !present.has(r)).length > room) {
+      return json(
+        { error: `A collection can hold at most ${MAX_ITEMS_PER_COLLECTION} items`, room },
+        409
+      );
+    }
+  }
+  return json({ success: true, added: inserted.meta.changes ?? 0 });
 }
 
 // DELETE /api/shelf/collections/:id/items {rkeys} — take several saves out at

@@ -427,7 +427,8 @@
       </section>
     {/if}
 
-    {#if continueItems.length > 0}
+    <!-- The lanes step aside in select mode: a tap there would open, not select. -->
+    {#if continueItems.length > 0 && !selecting}
       <HomeLane
         title="Continue reading"
         icon="clock"
@@ -440,7 +441,7 @@
       />
     {/if}
 
-    {#if connectedSaves.length > 0}
+    {#if connectedSaves.length > 0 && !selecting}
       <NewConnections
         entries={connectedSaves}
         onOpen={open}
@@ -502,7 +503,7 @@
         />
       {/if}
     {:else}
-      {#if !collection && (inProgress.length > 0 || connectedSaves.length > 0)}
+      {#if !collection && !selecting && (inProgress.length > 0 || connectedSaves.length > 0)}
         <h2 class="section-label">Everything</h2>
       {/if}
       <div class={view === 'grid' ? 'grid' : 'list'}>

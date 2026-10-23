@@ -34,19 +34,22 @@
     return room === 0 ? 'Full' : `Room for ${room.toLocaleString()}`;
   }
 
-  async function toggle(collection: ShelfCollection) {
+  async function toggle(collection: ShelfCollection, input: HTMLInputElement) {
     if (!saves || busy) return;
     busy = true;
     try {
       if (heldIn(collection) === rkeys.size) {
         await shelfStore.removeItems(collection.id, [...rkeys]);
-      } else if (saves.length === 1) {
-        await shelfStore.addItem(collection.id, saves[0]);
       } else {
         await shelfStore.addItems(collection.id, saves);
       }
     } finally {
       busy = false;
+      // A refused change leaves the store as it was, so nothing re-renders the
+      // box the browser already flipped: put it back to what's true.
+      const held = heldIn(collection);
+      input.checked = held > 0 && held === rkeys.size;
+      input.indeterminate = held > 0 && held < rkeys.size;
     }
   }
 
@@ -94,7 +97,7 @@
                 checked={held > 0 && held === rkeys.size}
                 indeterminate={held > 0 && held < rkeys.size}
                 disabled={busy || !shelfStore.canWrite || (held === 0 && note !== null)}
-                onchange={() => toggle(collection)}
+                onchange={(e) => toggle(collection, e.currentTarget)}
               />
               <span class="name">{collection.name}</span>
               {#if note}<span class="count full-note">{note}</span>{/if}
