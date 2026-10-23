@@ -137,6 +137,11 @@ import {
 import { handleBskySources } from './routes/bsky-sources';
 import { refreshBskySourcesIfDue } from './services/bsky-sources';
 import { purgeFollowLinks } from './services/follow-links-store';
+import {
+  handleSpacesAppAccess,
+  handleSpacesCredentialRead,
+  handleSpacesSavedDiff,
+} from './routes/dev-spaces';
 import { handleGetSettings, handleUpdateSettings } from './routes/settings';
 import {
   handleGetNewsletters,
@@ -806,6 +811,32 @@ async function route(
     case url.pathname === '/api/recommends':
       if (!session) return unauthorizedResponse(headers);
       response = await handleRecommends(request, env);
+      break;
+
+    // atproto Spaces spike: read-back diff of the saved-space mirror against D1.
+    // Mounted only when the dev-only SPACES_SAVES_ENABLED var is set, so this
+    // case never matches in production (see routes/dev-spaces.ts).
+    case url.pathname === '/api/dev/spaces/saved-diff' &&
+      env.SPACES_SAVES_ENABLED === 'true' &&
+      request.method === 'GET':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleSpacesSavedDiff(env, session);
+      break;
+
+    // atproto Spaces spike, "a true second client": pin the saved-space to this
+    // client_id (or reopen it), and read it back through a space credential.
+    case url.pathname === '/api/dev/spaces/app-access' &&
+      env.SPACES_SAVES_ENABLED === 'true' &&
+      request.method === 'POST':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleSpacesAppAccess(request, env, session);
+      break;
+
+    case url.pathname === '/api/dev/spaces/credential-read' &&
+      env.SPACES_SAVES_ENABLED === 'true' &&
+      request.method === 'GET':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleSpacesCredentialRead(request, env, session);
       break;
 
     // Saved routes

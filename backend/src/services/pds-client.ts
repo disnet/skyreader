@@ -150,6 +150,12 @@ interface RequestOptions {
    * getTimeline can be read on the user's behalf. Needs a matching `rpc:` scope.
    */
   proxy?: string;
+  /**
+   * Accept a 2xx with an empty body as success (`{}`), rather than failing the
+   * JSON parse. Void XRPC procedures may answer that way; the typed helpers
+   * don't need it, so it's opt-in.
+   */
+  allowEmptyBody?: boolean;
 }
 
 /** The Bluesky appview, as a service-proxy target. */
@@ -423,7 +429,13 @@ export class PDSClient {
         };
       }
 
-      const data = (await response.json()) as T;
+      let data: T;
+      if (opts.allowEmptyBody) {
+        const text = await response.text();
+        data = (text ? JSON.parse(text) : {}) as T;
+      } else {
+        data = (await response.json()) as T;
+      }
       console.log(`[PDSClient] ${method} ${endpoint} succeeded`);
       return { result: { success: true, data }, staleEndpoint: false };
     } catch (error) {
@@ -440,6 +452,22 @@ export class PDSClient {
         staleEndpoint: true,
       };
     }
+  }
+
+  /**
+   * Call an arbitrary XRPC method on this session's PDS with the session's auth.
+   * The typed helpers below cover `com.atproto.repo.*`; this is the escape hatch
+   * for namespaces that don't warrant their own method here (the Spaces spike
+   * calls `com.atproto.simplespace.*` / `com.atproto.space.*` through it).
+   *
+   * `endpoint` is the NSID plus, for GETs, an already-encoded query string.
+   */
+  async xrpc<T = unknown>(
+    method: 'GET' | 'POST',
+    endpoint: string,
+    body?: unknown
+  ): Promise<PDSResult<T>> {
+    return this.request<T>(method, endpoint, body, { allowEmptyBody: true });
   }
 
   /**
