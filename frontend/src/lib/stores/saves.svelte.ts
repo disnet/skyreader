@@ -143,9 +143,12 @@ function createSavesStore() {
   // metadata key); echoed to /api/saved so an unchanged snapshot isn't re-shipped.
   const SNAPSHOT_DIGEST_KEY = 'savedSnapshotDigest';
   // Server-clock high-water mark for GET /api/saved/updates (Dexie metadata key).
-  const UPDATES_SINCE_KEY = 'savedUpdatesSince';
-  // Safety valve on update paging (each page is up to 200 edits).
-  const MAX_UPDATE_PAGES = 10;
+  // V2: the first key's mark ran past saves it skipped as unknown (an import's,
+  // see pullUpdates), so devices start this one over from zero to pick them up.
+  const UPDATES_SINCE_KEY = 'savedUpdatesSinceV2';
+  // Safety valve on update paging (each page is up to 200 rows; an import can
+  // bring thousands at once).
+  const MAX_UPDATE_PAGES = 25;
 
   // The list endpoint returns metadata only (the body is the bulk of a row and
   // we already cache it). Fill each item's `content` in place: reuse the cached
@@ -200,23 +203,42 @@ function createSavesStore() {
   // Each page is applied (via `apply`) and only then is the mark advanced past
   // it, so a long backlog makes progress across refreshes and a page whose
   // bodies didn't all load is retried from where it started.
+  //
+  // The same stream carries saves this device has never listed: ones dated
+  // before the newest cached save (an import from another app, keeping each
+  // article's original saved date), which the newest-first refresh stops short
+  // of. Those go to `add`, unless an unsave of them is still queued here.
   async function pullUpdates(
     localByRkey: Map<string, SavedItem>,
-    apply: (rows: SavedItem[]) => Promise<void>
+    apply: (rows: SavedItem[]) => Promise<void>,
+    add: (rows: SavedItem[]) => Promise<void>
   ): Promise<void> {
     let since = (await getMetadata<number>(UPDATES_SINCE_KEY)) ?? 0;
+    let unsaving: Set<string> | null = null;
     for (let pageNo = 0; pageNo < MAX_UPDATE_PAGES; pageNo++) {
       const page = await api.getSavedUpdates(since);
       const changed: SavedItem[] = [];
+      const added: SavedItem[] = [];
       for (const u of page.articles) {
         const local = localByRkey.get(u.rkey);
-        // Unknown rkeys are left to the list refresh (a local delete may be
-        // queued); an unchanged stamp means we already hold this edit.
-        if (!local || (local.updatedAt ?? null) === (u.updatedAt ?? null)) continue;
+        if (!local) {
+          unsaving ??= await syncQueue.pendingSavedRkeys('delete');
+          if (!unsaving.has(u.rkey)) added.push({ ...u, content: null });
+          continue;
+        }
+        // An unchanged stamp means we already hold this edit.
+        if ((local.updatedAt ?? null) === (u.updatedAt ?? null)) continue;
         changed.push({ ...local, ...u, content: null });
       }
       const hydrated = changed.length > 0 ? await hydrateBodies(changed, new Map()) : [];
       if (hydrated.length > 0) await apply(hydrated);
+      // A new save lands whether or not its body loaded (an import's has none
+      // until it's opened), as the list refresh's do.
+      if (added.length > 0) {
+        await hydrateBodies(added, new Map());
+        await add(added);
+        for (const a of added) localByRkey.set(a.rkey, a);
+      }
       // A body that failed to load keeps the mark here, so the next refresh
       // asks for this page again.
       if (hydrated.length !== changed.length) return;
@@ -240,6 +262,23 @@ function createSavesStore() {
       const u = byRkey.get(a.rkey);
       return u ? toLightSaved(u) : a;
     });
+    rebuildMaps();
+    await safeBulkPut(db.saved, live);
+    savedSearchStore.invalidate();
+  }
+
+  // Saves removed on this device this session. A save listed by an updates
+  // page fetched before its delete reached the server mustn't come back.
+  const removedRkeys = new Set<string>();
+
+  // Add saves the list refresh never sent (see pullUpdates), into the list as
+  // it stands now.
+  async function addListed(rows: SavedItem[]) {
+    const present = new Set(articles.map((a) => a.rkey));
+    const live = rows.filter((r) => !present.has(r.rkey) && !removedRkeys.has(r.rkey));
+    if (live.length === 0) return;
+    pushWordCountBackfills(backfillWordCounts(live));
+    articles = [...articles, ...live.map(toLightSaved)].sort(compareSavedNewestFirst);
     rebuildMaps();
     await safeBulkPut(db.saved, live);
     savedSearchStore.invalidate();
@@ -387,7 +426,7 @@ function createSavesStore() {
           ...cached.map((c) => [c.rkey, c] as const),
           ...fresh.map((f) => [f.rkey, f] as const),
         ]);
-        await pullUpdates(localByRkey, applyUpdated);
+        await pullUpdates(localByRkey, applyUpdated, addListed);
       } catch (err) {
         console.warn('Failed to fetch saved updates:', err);
       }
@@ -942,6 +981,7 @@ function createSavesStore() {
     if (!item) return;
 
     // Optimistically remove from local state
+    removedRkeys.add(item.rkey);
     articles = articles.filter((a) => a.itemGuid !== guid);
     rebuildMaps();
     savedSearchStore.remove(item.rkey, guid);
@@ -971,6 +1011,7 @@ function createSavesStore() {
     const item = articles.find((a) => a.rkey === rkey);
 
     // Optimistically remove from local state
+    removedRkeys.add(rkey);
     articles = articles.filter((a) => a.rkey !== rkey);
     rebuildMaps();
     contentCache.delete(rkey);
