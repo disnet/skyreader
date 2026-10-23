@@ -241,7 +241,9 @@
                   class="like"
                   class:liked={connection.liked}
                   aria-pressed={!!connection.liked}
-                  aria-label="Like {curatorName(connection.curatorDid)}’s connection to {label}"
+                  aria-label="Like {curatorName(
+                    connection.curatorDid
+                  )}’s connection {connection.direction === 'out' ? 'to' : 'from'} {label}"
                   title={connection.liked ? 'Liked' : 'Like'}
                   onclick={() => onLike(connection)}
                 >

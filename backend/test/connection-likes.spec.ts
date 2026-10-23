@@ -148,7 +148,9 @@ describe('liking a connection', () => {
     vi.spyOn(didResolver, 'resolvePdsUrl').mockResolvedValue('https://curator.pds');
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(new Response(JSON.stringify({ uri: CONN_URI, cid: 'bafyfetched' })));
+      .mockResolvedValue(
+        new Response(JSON.stringify({ uri: CONN_URI, cid: 'bafyfetched', value: {} }))
+      );
 
     expect((await like()).status).toBe(201);
     const asked = new URL(String(fetchSpy.mock.calls[0][0]));
@@ -163,6 +165,21 @@ describe('liking a connection', () => {
       .bind(CONN_URI)
       .first<{ cid: string }>();
     expect(row?.cid).toBe('bafyfetched');
+  });
+
+  it('tells a gone connection from an unreachable curator', async () => {
+    await connect();
+    const { putRecord } = mockPds();
+    vi.spyOn(didResolver, 'resolvePdsUrl').mockResolvedValue('https://curator.pds');
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+
+    fetchSpy.mockResolvedValueOnce(new Response('busy', { status: 503 }));
+    expect((await like()).status).toBe(503);
+    fetchSpy.mockResolvedValueOnce(new Response('{}', { status: 404 }));
+    expect((await like()).status).toBe(404);
+    expect(putRecord).not.toHaveBeenCalled();
+    // Neither left a claim behind.
+    expect(await liked()).toBe(false);
   });
 
   it('only likes connections it has seen', async () => {

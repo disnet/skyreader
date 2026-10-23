@@ -11,6 +11,7 @@ import { grantsScopes } from '../services/scope-check';
 import { LIKE_SCOPES } from '../config/scopes';
 import { insufficientScopesResponse } from './auth';
 import { resolvePdsUrl } from '../utils/did-resolver';
+import { getRecordPublicWithCid } from '../services/backing/read';
 import { generateTid } from '../utils/tid';
 import { log } from '../utils/logger';
 
@@ -117,14 +118,26 @@ async function handleLike(request: Request, env: Env, session: Session): Promise
     return json({ liked: false });
   }
 
-  // Only connections the poller kept: those are the ones the reader is shown,
-  // and it keeps the curator from being anyone a request names.
+  // Only connections the poller kept, so the CID lookup below only ever asks a
+  // curator the firehose named, never anyone a request does.
   const connection = await env.DB.prepare(
     'SELECT curator_did, cid FROM semble_connections WHERE uri = ?'
   )
     .bind(uri)
     .first<{ curator_did: string; cid: string | null }>();
   if (!connection) return json({ error: 'Connection not found' }, 404);
+
+  // Looked up before the claim, so a slow curator PDS can't strand a row.
+  let cid = connection.cid;
+  if (!cid) {
+    try {
+      cid = await fetchConnectionCid(env, connection.curator_did, uri);
+    } catch (e) {
+      log.warn('connection_cid_lookup_failed', { uri, error: String(e) });
+      return json({ error: 'Could not reach the connection’s server' }, 503);
+    }
+    if (!cid) return json({ error: 'Connection not found' }, 404);
+  }
 
   const rkey = generateTid();
   const claim = await env.DB.prepare(
@@ -139,12 +152,6 @@ async function handleLike(request: Request, env: Env, session: Session): Promise
     env.DB.prepare('DELETE FROM connection_likes WHERE user_did = ? AND rkey = ?')
       .bind(session.did, rkey)
       .run();
-
-  const cid = connection.cid ?? (await fetchConnectionCid(env, connection.curator_did, uri));
-  if (!cid) {
-    await release();
-    return json({ error: 'Connection not found' }, 404);
-  }
 
   const result = await pds.putRecord(LIKE_COLLECTION, rkey, {
     $type: LIKE_COLLECTION,
@@ -164,7 +171,7 @@ async function handleLike(request: Request, env: Env, session: Session): Promise
 /**
  * The connection's current CID, from the curator's PDS, for rows the poller
  * indexed before it kept CIDs. Kept on the row once found. Null when the record
- * is gone or the PDS can't be reached.
+ * is gone; throws when the curator's PDS can't be found or reached.
  */
 async function fetchConnectionCid(
   env: Env,
@@ -172,22 +179,18 @@ async function fetchConnectionCid(
   uri: string
 ): Promise<string | null> {
   const rkey = uri.split('/').pop() ?? '';
+  if (!rkey) return null;
   const pdsUrl = await resolvePdsUrl(curatorDid);
-  if (!pdsUrl || !rkey) return null;
-  try {
-    const url = new URL(`${pdsUrl}/xrpc/com.atproto.repo.getRecord`);
-    url.searchParams.set('repo', curatorDid);
-    url.searchParams.set('collection', SEMBLE_CONNECTION_COLLECTION);
-    url.searchParams.set('rkey', rkey);
-    const res = await fetch(url.toString());
-    if (!res.ok) return null;
-    const data = (await res.json()) as { cid?: unknown };
-    if (typeof data.cid !== 'string' || !data.cid) return null;
-    await env.DB.prepare('UPDATE semble_connections SET cid = ? WHERE uri = ?')
-      .bind(data.cid, uri)
-      .run();
-    return data.cid;
-  } catch {
-    return null;
-  }
+  if (!pdsUrl) throw new Error(`no PDS for ${curatorDid}`);
+  const record = await getRecordPublicWithCid(
+    pdsUrl,
+    curatorDid,
+    SEMBLE_CONNECTION_COLLECTION,
+    rkey
+  );
+  if (!record?.cid) return null;
+  await env.DB.prepare('UPDATE semble_connections SET cid = ? WHERE uri = ?')
+    .bind(record.cid, uri)
+    .run();
+  return record.cid;
 }

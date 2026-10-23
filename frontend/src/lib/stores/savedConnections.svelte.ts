@@ -54,9 +54,12 @@ function createSavedConnectionsStore() {
   let clearedAt = new Map<string, number>();
   // Clears the server hasn't recorded yet.
   const pending = new Set<string>();
-  // connection uri → the like state a request is still writing, so a list
-  // fetched meanwhile doesn't flip the heart back.
-  const pendingLikes = new Map<string, boolean>();
+  // connection uri → the reader's last like choice here, and when. A list
+  // fetched before it (or while it's still being written) mustn't flip the
+  // heart back, as `clearedAt` does for clears.
+  let likes = new Map<string, { liked: boolean; at: number }>();
+  // Likes being written. A tap meanwhile is queued, not dropped.
+  const writingLikes = new Set<string>();
   let loadedFor: string | null = null;
   let loadedAt = 0;
   let inFlight: { did: string; promise: Promise<void> } | null = null;
@@ -66,7 +69,8 @@ function createSavedConnectionsStore() {
     clearedNewest = new Map();
     clearedAt = new Map();
     pending.clear();
-    pendingLikes.clear();
+    likes = new Map();
+    writingLikes.clear();
     loadedFor = null;
   }
 
@@ -89,7 +93,7 @@ function createSavedConnectionsStore() {
         const next = new Map<string, SavedConnectionActivity>();
         for (const raw of items) {
           // A backend from before `newest` sends none.
-          const item = { ...raw, newest: withPendingLikes(raw.newest ?? []) };
+          const item = { ...raw, newest: withLikes(raw.newest ?? [], startedAt) };
           const cleared = clearedAt.get(item.rkey);
           // A list from before the clear, or from before the server recorded it.
           next.set(
@@ -114,11 +118,14 @@ function createSavedConnectionsStore() {
     return promise;
   }
 
-  function withPendingLikes(list: SavedConnectionDetail[]): SavedConnectionDetail[] {
-    if (pendingLikes.size === 0) return list;
-    return list.map((c) =>
-      pendingLikes.has(c.uri) ? { ...c, liked: pendingLikes.get(c.uri) } : c
-    );
+  function withLikes(list: SavedConnectionDetail[], startedAt: number): SavedConnectionDetail[] {
+    if (likes.size === 0) return list;
+    return list.map((c) => {
+      const choice = likes.get(c.uri);
+      return choice && (choice.at >= startedAt || writingLikes.has(c.uri))
+        ? { ...c, liked: choice.liked }
+        : c;
+    });
   }
 
   /** Set one connection's like state wherever this store shows it. */
@@ -144,16 +151,29 @@ function createSavedConnectionsStore() {
    * put back if the write fails.
    */
   async function like(uri: string, liked: boolean): Promise<void> {
-    if (pendingLikes.has(uri)) return;
-    pendingLikes.set(uri, liked);
+    likes.set(uri, { liked, at: Date.now() });
     setLiked(uri, liked);
+    // The write running now sends this choice when it's done.
+    if (writingLikes.has(uri)) return;
+    writingLikes.add(uri);
+    let saved = !liked;
     try {
-      await api.likeSavedConnection(uri, liked);
-    } catch (e) {
-      console.error('[savedConnections] Failed to like:', e);
-      setLiked(uri, !liked);
+      // Until the server holds the reader's latest choice: a quick second tap
+      // (an undo) is sent after the first, not lost.
+      while (likes.get(uri)?.liked !== saved) {
+        const want = !saved;
+        try {
+          await api.likeSavedConnection(uri, want);
+          saved = want;
+        } catch (e) {
+          console.error('[savedConnections] Failed to like:', e);
+          likes.set(uri, { liked: saved, at: Date.now() });
+          setLiked(uri, saved);
+          return;
+        }
+      }
     } finally {
-      pendingLikes.delete(uri);
+      writingLikes.delete(uri);
     }
   }
 

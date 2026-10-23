@@ -167,7 +167,7 @@ test.describe('Semble connections on saves', () => {
       await authedPage.goto('/shelf');
       const tile = authedPage.getByRole('group', { name: /A Liked Essay/ });
       await expect(tile).toBeVisible({ timeout: 15_000 });
-      const heart = tile.getByRole('button', { name: /^Like .*connection to/ });
+      const heart = tile.getByRole('button', { name: /^Like .*connection from elsewhere/ });
       await expect(heart).toHaveAttribute('aria-pressed', 'false');
 
       const answered = () =>
