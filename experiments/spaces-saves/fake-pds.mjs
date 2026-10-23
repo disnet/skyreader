@@ -15,6 +15,12 @@
  * Implements only what the lifecycle touches:
  *   com.atproto.server.{createAccount,createSession}
  *   com.atproto.identity.getRecommendedDidCredentials  (just the KEM key)
+ *   com.atproto.simplespace.updateSpace               (app access only)
+ * plus a stand-in PLC directory (`plcOrigin`) serving each account's DID doc.
+ *
+ * App access is enforced where the alpha enforces it — only in
+ * getSpaceCredential. The fake takes a client attestation's `iss` at its word;
+ * the real authority verifies it against the client metadata's JWKS.
  *   com.atproto.simplespace.{createSpace,getSpace}  (spaceType + read/write policies)
  *   com.atproto.space.{getDelegationToken,getSpaceCredential,
  *                      createRecord,putRecord,getRecord,listRecords,deleteRecord}
@@ -229,7 +235,10 @@ function error(code, message) {
   return e;
 }
 
-export function createFakePds(origin = 'https://fake-spaces-pds.test') {
+export function createFakePds(
+  origin = 'https://fake-spaces-pds.test',
+  plcOrigin = 'https://fake-plc.test'
+) {
   const accounts = new Map(); // handle -> {did, password, accessJwt}
   const kemKeys = new Map(); // did -> {privateKey, pub, did}
   const sessions = new Map(); // accessJwt -> did
@@ -298,13 +307,15 @@ export function createFakePds(origin = 'https://fake-spaces-pds.test') {
     },
 
     'com.atproto.server.createSession': async (_req, _url, body) => {
-      const account = accounts.get(body.identifier);
+      const account =
+        accounts.get(body.identifier) ??
+        [...accounts.values()].find((a) => a.did === body.identifier);
       if (!account || account.password !== body.password) {
         throw error('AuthenticationRequired', 'bad credentials');
       }
       const accessJwt = `access-${next()}`;
       sessions.set(accessJwt, account.did);
-      return { did: account.did, handle: body.identifier, accessJwt, refreshJwt: 'refresh' };
+      return { did: account.did, accessJwt, refreshJwt: 'refresh' };
     },
 
     'com.atproto.identity.getRecommendedDidCredentials': async (req) => {
@@ -356,6 +367,14 @@ export function createFakePds(origin = 'https://fake-spaces-pds.test') {
     // Unauthenticated since the Oct 22 alpha: the delegation token and the key
     // to bind (`credentialKid`) both travel in the body. The token is optional
     // in the lexicon (public spaces), but a member-list space gates on the user.
+    'com.atproto.simplespace.updateSpace': async (req, _url, body) => {
+      const did = requireSession(req.headers);
+      const space = requireSpace(body.space);
+      if (space.authority !== did) throw error('NotSpaceOwner', 'not the space owner');
+      if (body.appAccess) space.appAccess = body.appAccess;
+      return {};
+    },
+
     'com.atproto.space.getSpaceCredential': async (_req, _url, body) => {
       if (!/^did:key:zDn/.test(body?.credentialKid ?? '')) {
         throw error('InvalidRequest', 'credentialKid must be a P-256 did:key');
@@ -375,6 +394,17 @@ export function createFakePds(origin = 'https://fake-spaces-pds.test') {
         throw error('InvalidDelegationToken', 'delegation is for another space');
       }
       assertMember(space, delegation.did);
+      if (space.appAccess.$type === 'com.atproto.simplespace.defs#allowList') {
+        let clientId;
+        try {
+          clientId = JSON.parse(Buffer.from(body.clientAttestation.split('.')[1], 'base64url')).iss;
+        } catch {
+          clientId = undefined;
+        }
+        if (!clientId || !space.appAccess.allowed.includes(clientId)) {
+          throw error('AppNotAuthorized', 'Application not authorized for this space');
+        }
+      }
 
       const kid = body.credentialKid;
       const exp = Math.floor(Date.now() / 1000) + 600;
@@ -468,6 +498,7 @@ export function createFakePds(origin = 'https://fake-spaces-pds.test') {
   async function fakeFetch(input, init = {}) {
     const request = new Request(input, init);
     const url = new URL(request.url);
+    if (url.origin === plcOrigin) return didDocResponse(decodeURIComponent(url.pathname.slice(1)));
     if (url.origin !== origin) throw new Error(`fake PDS got a request for ${url.origin}`);
 
     const nsid = url.pathname.replace('/xrpc/', '');
@@ -496,5 +527,24 @@ export function createFakePds(origin = 'https://fake-spaces-pds.test') {
     }
   }
 
-  return { origin, fetch: fakeFetch };
+  /** A PLC-shaped DID doc: Multikey verification methods and the PDS service. */
+  function didDocResponse(did) {
+    const kem = kemKeys.get(did);
+    if (!kem) return Response.json({ message: `DID not registered: ${did}` }, { status: 404 });
+    return Response.json({
+      '@context': ['https://www.w3.org/ns/did/v1'],
+      id: did,
+      verificationMethod: [
+        {
+          id: `${did}#atproto_kem`,
+          type: 'Multikey',
+          controller: did,
+          publicKeyMultibase: kem.did.slice('did:key:'.length),
+        },
+      ],
+      service: [{ id: '#atproto_pds', type: 'AtprotoPersonalDataServer', serviceEndpoint: origin }],
+    });
+  }
+
+  return { origin, plcOrigin, fetch: fakeFetch };
 }

@@ -8,6 +8,8 @@
   },
   "scripts": {
     "lifecycle": "node --import ./ts-resolve.mjs ./lifecycle.mjs",
-    "lifecycle:fake": "node --import ./ts-resolve.mjs ./lifecycle.mjs --fake"
+    "lifecycle:fake": "node --import ./ts-resolve.mjs ./lifecycle.mjs --fake",
+    "second-client": "node --import ./ts-resolve.mjs ./second-client.mjs",
+    "second-client:fake": "node --import ./ts-resolve.mjs ./second-client.mjs --fake"
   }
 }

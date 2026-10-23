@@ -148,6 +148,29 @@ describe('space credential exchange', () => {
     });
   });
 
+  it('carries a client attestation when the app has one, and mints a fresh one per exchange', async () => {
+    const bodies: Record<string, unknown>[] = [];
+    const fetchImpl = (async (_url: string | URL | Request, init?: RequestInit) => {
+      bodies.push(JSON.parse(init!.body as string));
+      return new Response(JSON.stringify({ credential: 'cred-1' }), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    let minted = 0;
+    const input = {
+      space: SPACE,
+      authorityPdsUrl: 'https://pds.test',
+      getDelegationToken: async () => 'deleg-1',
+      getClientAttestation: async () => `attest-${++minted}`,
+      fetchImpl,
+    };
+    await mintSpaceCredential(input);
+    await mintSpaceCredential(input);
+    await mintSpaceCredential({ ...input, getClientAttestation: undefined });
+
+    expect(bodies.map((b) => b.clientAttestation)).toEqual(['attest-1', 'attest-2', undefined]);
+    expect('clientAttestation' in bodies[2]).toBe(false);
+  });
+
   it('surfaces the alpha error code when the exchange is refused', async () => {
     const fetchImpl = (async () =>
       new Response(JSON.stringify({ error: 'UserNotAuthorized', message: 'nope' }), {

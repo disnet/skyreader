@@ -223,6 +223,50 @@ compact `r‖s`, base64 in a structured-field byte sequence. No part of the URL 
 method is signed. `http-signature.ts` was cross-checked against the alpha's
 `verifyCredentialSig` (20/20, and a retargeted audience is rejected).
 
+## A second app reading the space _(observed from the alpha source; live run pending)_
+
+Follow-up spike 1. `second-client.mjs` plays an app that isn't Skyreader: it
+resolves the reader's DID doc through PLC for the PDS and `#atproto_kem` key,
+signs in with its own session, and tries both read paths. Read off
+`@atproto/pds` / `@atproto/space` at `…20261022141228`:
+
+- **App access gates credentials, not sessions.** `appAccess` is checked in one
+  place, `SimpleSpaceManager.authorizeCredential`, when `getSpaceCredential`
+  issues a credential. A session read of the reader's own repo
+  (`assertSpaceRead`) never looks at it. So `#allowList` decides which apps can
+  _sync_ the space; what an app can read through the reader's own session is
+  decided by the OAuth scopes the reader granted it (`space:` permissions), and
+  a password session has them all. "Private to Skyreader" therefore needs both:
+  the allowList for credentials and the reader not granting other apps a
+  `space:` scope for it.
+- **App identity is a client attestation.** `getSpaceCredential` takes an
+  optional `clientAttestation`: a `private_key_jwt`-shaped JWT, `typ`
+  `atproto-client-attestation+jwt`, `iss` = `sub` = the client_id,
+  `aud` = `<spaceDid>#atproto_pds`, 60s, single-use `jti`. The authority fetches
+  the client_id's metadata and verifies the signature against its `jwks` (or
+  `jwks_uri`). Without one, `#allowList` answers `AppNotAuthorized`.
+  `createClientAttestation` (`services/client-auth.ts`) signs one with
+  Skyreader's existing client key.
+- **Only a confidential client can be on an allowList.** Local dev runs as the
+  localhost public client, which publishes no keys, so pinning a space to it
+  locks every credential out, Skyreader's own included. Proving "Skyreader
+  allowed, others refused" end to end needs a deployed client with
+  `CLIENT_SIGNING_KEY` and the spike flag on.
+- **App passwords can't get delegation tokens.** `getDelegationToken` requires
+  full access (`com.atproto.access`), so an app-password session can't mint a
+  credential. The second client uses the test account's password, or would
+  need OAuth with a `space:` read permission for the space.
+
+How to run it: in a dev session, save something, then
+`SPACES_OWNER_DID=… SPACES_PASSWORD=… npm run second-client` (`#open`: the
+credential is issued and the MAC-verified read succeeds). Then
+`POST /api/dev/spaces/app-access {"mode":"allowList"}` and run it again: the
+unattested credential should come back `AppNotAuthorized` while the session read
+still works. `GET /api/dev/spaces/credential-read` is Skyreader's own read through
+the credential path, with an attestation when it is a confidential client.
+`npm run second-client:fake` runs both modes against the fake (13/13), which
+takes an attestation's `iss` at its word.
+
 ## Latency, size limits, sync — _unverified_
 
 Not measurable without a live PDS. A live run should record:
