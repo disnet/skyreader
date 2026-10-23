@@ -20,6 +20,8 @@
   import ShelfItem from './ShelfItem.svelte';
   import LibraryIntro from '$lib/components/library/LibraryIntro.svelte';
   import NewConnections from '$lib/components/library/NewConnections.svelte';
+  import SelectionBar from '$lib/components/library/SelectionBar.svelte';
+  import { librarySelection } from '$lib/stores/librarySelection.svelte';
   import HomeLane from '$lib/components/feed/HomeLane.svelte';
   import type { LaneCardVM } from '$lib/components/feed/homeLane';
   import { savedCoverUrl } from '$lib/services/api';
@@ -94,9 +96,17 @@
       sortChoice = null;
       editing = false;
       loadedCount = PAGE_SIZE;
+      librarySelection.end();
     }
     prevCollectionId = id;
   });
+
+  // --- Select mode (bulk add to / remove from a collection) ---
+  let canSelect = $derived(librarySelection.available);
+  let selecting = $derived(librarySelection.active);
+
+  // Leaving the Shelf ends the selection, so the Queue doesn't open in it.
+  $effect(() => () => librarySelection.end());
 
   function selectCollection(id: string | null) {
     const url = new URL(page.url);
@@ -119,6 +129,7 @@
   let baseSaves = $derived(collection ? shelfStore.itemsIn(collection.id) : shelfStore.items);
   let allEntries = $derived(baseSaves.map(entryFor));
   let entries = $derived(sortShelf(filterShelf(allEntries, kind, query), sort));
+  let entrySaves = $derived(entries.map((e) => e.save));
   let inProgress = $derived(
     !collection && kind === 'all' && !query.trim() ? continueReading(allEntries) : []
   );
@@ -305,8 +316,19 @@
     </div>
   </header>
 
-  <div class="shelf-body">
-    <LibraryIntro mode="shelf" />
+  <div class="shelf-body" class:selecting>
+    <!-- Select sits where the Queue's does: on the Library switch's row. -->
+    <div class="library-intro-row">
+      <LibraryIntro mode="shelf" />
+      {#if canSelect && allEntries.length > 0}
+        <button
+          class="select-btn"
+          aria-pressed={selecting}
+          onclick={() => (selecting ? librarySelection.end() : librarySelection.start())}
+          >{selecting ? 'Done' : 'Select'}</button
+        >
+      {/if}
+    </div>
 
     {#if !auth.isGuest}
       <nav class="collections" aria-label="Collections">
@@ -496,6 +518,9 @@
             onOpen={() => open(entry.save)}
             onToggleArchive={(archived) =>
               void setSavedRowArchived(displayItemFor(entry.save), archived)}
+            {selecting}
+            selected={selecting && librarySelection.has(entry.save.rkey)}
+            onToggleSelect={() => librarySelection.toggle(entry.save.rkey)}
           />
         {/each}
       </div>
@@ -506,6 +531,10 @@
       />
     {/if}
   </div>
+
+  {#if selecting && !readerItem}
+    <SelectionBar saves={entrySaves} {collection} />
+  {/if}
 
   {#if mobileStore.isMobile && !readerItem}
     <MobileBottomBar
@@ -892,6 +921,32 @@
     background: var(--color-sidebar-active);
   }
 
+  .library-intro-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  .select-btn {
+    padding: 0.4rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    background: var(--color-bg);
+    color: var(--color-text);
+    font-size: var(--text-sm);
+    cursor: pointer;
+  }
+
+  .select-btn:hover {
+    border-color: var(--color-text-secondary);
+  }
+
+  .select-btn[aria-pressed='true'] {
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+  }
+
   @container (max-width: 36rem) {
     .controls {
       grid-template-columns: minmax(0, 1fr) auto;
@@ -918,6 +973,11 @@
   .list {
     display: flex;
     flex-direction: column;
+  }
+
+  /* Room under the last item so the selection bar never sits on it. */
+  .shelf-body.selecting {
+    padding-bottom: 5rem;
   }
 
   @media (max-width: 480px) {

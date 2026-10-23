@@ -16,6 +16,9 @@
   import { savedConnectionsStore } from '$lib/stores/savedConnections.svelte';
   import { savedSearchStore } from '$lib/stores/savedSearch.svelte';
   import { useReaderStack } from '$lib/hooks/useReaderStack.svelte';
+  import SelectionBar from '$lib/components/library/SelectionBar.svelte';
+  import { librarySelection, saveForRow } from '$lib/stores/librarySelection.svelte';
+  import type { SavedItem } from '$lib/types';
 
   interface Props {
     onReaderChange?: (open: boolean) => void;
@@ -63,6 +66,38 @@
       if (readerItem?.key !== key) openReader(item);
     }
   });
+
+  // --- Select mode (bulk add to / remove from a collection) ---
+  let selecting = $derived(librarySelection.active);
+  // Every save the Queue holds right now (all pages), for Select all. Built only
+  // while selecting: it resolves each row to its save.
+  let selectableSaves = $derived.by((): SavedItem[] => {
+    if (!selecting) return [];
+    const seen = new Set<string>();
+    const out: SavedItem[] = [];
+    for (const row of feedViewStore.allSavedItems) {
+      const save = saveForRow(row);
+      if (save && !seen.has(save.rkey)) {
+        seen.add(save.rkey);
+        out.push(save);
+      }
+    }
+    return out;
+  });
+
+  function toggleRow(item: FeedDisplayItem) {
+    const save = saveForRow(item);
+    if (save) librarySelection.toggle(save.rkey);
+  }
+
+  function isRowChecked(item: FeedDisplayItem): boolean {
+    if (!selecting) return false;
+    const save = saveForRow(item);
+    return save ? librarySelection.has(save.rkey) : false;
+  }
+
+  // Leaving the Queue ends the selection, so the Shelf doesn't open in it.
+  $effect(() => () => librarySelection.end());
 
   // Cross-view search hint: matches sitting in the tab the user isn't looking at.
   let otherViewCount = $derived(feedViewStore.savedSearchOtherViewCount);
@@ -134,7 +169,11 @@
   />
 {/if}
 
-<div class="bookmark-list" class:hidden-behind-reader={readerItem !== null}>
+{#if selecting && !readerItem}
+  <SelectionBar saves={selectableSaves} />
+{/if}
+
+<div class="bookmark-list" class:hidden-behind-reader={readerItem !== null} class:selecting>
   {#each feedViewStore.savedItems as displayItem, index (displayItem.key)}
     <div bind:this={articleElements[index]}>
       <SavedCard
@@ -144,6 +183,9 @@
         onHover={() => handleSelect(index)}
         onArchive={() => handleArchive(displayItem)}
         onRemove={() => handleRemoveBookmark(displayItem)}
+        {selecting}
+        checked={isRowChecked(displayItem)}
+        onToggleSelect={() => toggleRow(displayItem)}
       />
     </div>
   {/each}
@@ -189,6 +231,11 @@
   .bookmark-list {
     display: flex;
     flex-direction: column;
+  }
+
+  /* Room under the last row so the selection bar never sits on it. */
+  .bookmark-list.selecting {
+    padding-bottom: 5rem;
   }
 
   .hidden-behind-reader {

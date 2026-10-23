@@ -92,6 +92,8 @@ When someone on [Semble](https://semble.so) connects something to an article you
 
 Collections group what's on your Shelf, like a course's readings or a project's sources. Create one with **New collection**, then add items with **Add to collection**, from their **⋯** menu in the Queue or on the Shelf, or from the reader's **⋯** menu. An item can be in more than one collection. A collection keeps its own order (**Move up** and **Move down** in the item menu) and can carry a short description. Your collections are also listed under **Library** in the sidebar and the feed switcher, so you can open one from anywhere. To change their order, drag one up or down the sidebar. On a phone, press and hold one and choose **Move up** or **Move down**.
 
+To file many items at once, choose **Select** above the Queue or the Shelf, tap the items you want (or **Select all**), then **Add to collection**. In a collection, **Remove** takes the selected items out of it. A collection holds up to 2,000 items.
+
 Collections are private to Skyreader and need an account and a connection.
 
 ## Highlights

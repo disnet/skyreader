@@ -30,6 +30,9 @@ import { toastStore } from './toast.svelte';
 
 const CACHE_KEY = 'shelfCollections';
 
+/** How many saves a collection holds (routes/shelf.ts MAX_ITEMS_PER_COLLECTION). */
+export const MAX_COLLECTION_ITEMS = 2000;
+
 /** Kinds of save that are on the Shelf unless taken off. */
 export function isReferenceKind(save: Pick<SavedItem, 'contentType'>): boolean {
   return save.contentType === 'pdf' || save.contentType === 'epub';
@@ -44,9 +47,12 @@ function createShelfStore() {
   let orderSend: Promise<unknown> = Promise.resolve();
   let loadedFor = $state<string | null>(null);
   let loading = $state(false);
-  // The save the collection picker (ShelfCollectionPicker, mounted in AppShell)
-  // is open for, or null when it's closed.
-  let pickerSave = $state<SavedItem | null>(null);
+  let inflight: Promise<void> | null = null;
+  let loadToken: object | null = null;
+  // The saves the collection picker (ShelfCollectionPicker, mounted in AppShell)
+  // is open for: one from an item's menu, or the Library's selection. Null when
+  // it's closed.
+  let pickerSaves = $state<SavedItem[] | null>(null);
 
   // rkey → ids of the collections holding it.
   let membership = $derived.by(() => {
@@ -85,25 +91,40 @@ function createShelfStore() {
       return;
     }
     if (loadedFor === did && !force) return;
-    if (loadedFor !== did) {
-      const cached = await getMetadata<ShelfCollection[]>(CACHE_KEY).catch(() => null);
-      collections = Array.isArray(cached) ? sortCollections(cached) : [];
-    }
-    if (!syncStore.isOnline) {
-      loadedFor = did;
-      return;
-    }
+    // One load at a time, and `loading` from the first await: the cached and
+    // fresh lists replace `collections` whole, so a collection created while a
+    // load is in flight would vanish (the picker holds its create until done).
+    if (inflight && !force) return inflight;
     loading = true;
-    try {
-      const { collections: fresh } = await api.getShelfCollections();
-      collections = sortCollections(fresh);
-      loadedFor = did;
-      await persist();
-    } catch (e) {
-      console.error('[shelf] Failed to load collections:', e);
-    } finally {
-      loading = false;
-    }
+    const token = {};
+    loadToken = token;
+    const run = (async () => {
+      await Promise.resolve();
+      try {
+        if (loadedFor !== did) {
+          const cached = await getMetadata<ShelfCollection[]>(CACHE_KEY).catch(() => null);
+          collections = Array.isArray(cached) ? sortCollections(cached) : [];
+        }
+        if (!syncStore.isOnline) {
+          loadedFor = did;
+          return;
+        }
+        const { collections: fresh } = await api.getShelfCollections();
+        collections = sortCollections(fresh);
+        loadedFor = did;
+        await persist();
+      } catch (e) {
+        console.error('[shelf] Failed to load collections:', e);
+      } finally {
+        // A forced reload that started since owns `loading` now.
+        if (loadToken === token) {
+          inflight = null;
+          loading = false;
+        }
+      }
+    })();
+    inflight = run;
+    return run;
   }
 
   /**
@@ -207,6 +228,65 @@ function createShelfStore() {
       },
       () => api.addToShelfCollection(id, save.rkey),
       "Couldn't add to the collection"
+    );
+  }
+
+  /** Room left in a collection before the cap. */
+  function roomIn(id: string): number {
+    return Math.max(0, MAX_COLLECTION_ITEMS - (find(id)?.items.length ?? 0));
+  }
+
+  /**
+   * File several saves in a collection at once, in the order given; ones already
+   * in it keep their place. All or nothing at the cap, like the server: a reader
+   * told "room for 120 more" can narrow the selection, where a partial add would
+   * leave them guessing which saves made it.
+   */
+  async function addItems(id: string, saves: SavedItem[]) {
+    const c = find(id);
+    if (!c) return false;
+    const members = new Set(c.items.map((i) => i.rkey));
+    const fresh = [...new Map(saves.map((s) => [s.rkey, s])).values()].filter(
+      (s) => !members.has(s.rkey)
+    );
+    if (fresh.length === 0) return true;
+    const room = roomIn(id);
+    if (fresh.length > room) {
+      const toast = toastStore.add("Couldn't add to the collection");
+      toastStore.update(
+        toast,
+        'error',
+        room === 0
+          ? `“${c.name}” is full (${MAX_COLLECTION_ITEMS.toLocaleString()} items)`
+          : `“${c.name}” has room for ${room.toLocaleString()} more`
+      );
+      return false;
+    }
+    const rkeys = fresh.map((s) => s.rkey);
+    return mutate(
+      () => {
+        const now = Math.floor(Date.now() / 1000);
+        find(id)?.items.push(...rkeys.map((rkey) => ({ rkey, addedAt: now })));
+      },
+      () => api.addManyToShelfCollection(id, rkeys),
+      "Couldn't add to the collection"
+    );
+  }
+
+  /** Take several saves out of a collection at once. */
+  async function removeItems(id: string, rkeys: string[]) {
+    const c = find(id);
+    if (!c) return false;
+    const drop = new Set(rkeys);
+    const members = c.items.filter((i) => drop.has(i.rkey)).map((i) => i.rkey);
+    if (members.length === 0) return true;
+    return mutate(
+      () => {
+        const target = find(id);
+        if (target) target.items = target.items.filter((i) => !drop.has(i.rkey));
+      },
+      () => api.removeManyFromShelfCollection(id, members),
+      "Couldn't remove from the collection"
     );
   }
 
@@ -320,15 +400,18 @@ function createShelfStore() {
     get canWrite() {
       return canWrite();
     },
-    get pickerSave() {
-      return pickerSave;
+    get pickerSaves() {
+      return pickerSaves;
     },
-    openPicker(save: SavedItem) {
-      pickerSave = save;
+    /** Open the collection picker for one save, or several (a Library selection). */
+    openPicker(saves: SavedItem | SavedItem[]) {
+      const list = Array.isArray(saves) ? saves : [saves];
+      if (list.length === 0) return;
+      pickerSaves = list;
       void load();
     },
     closePicker() {
-      pickerSave = null;
+      pickerSaves = null;
     },
     load,
     find,
@@ -336,7 +419,10 @@ function createShelfStore() {
     update,
     remove,
     addItem,
+    addItems,
     removeItem,
+    removeItems,
+    roomIn,
     moveItem,
     reorderCollections,
     collectionIdsFor,

@@ -214,6 +214,88 @@ describe('/api/shelf/collections', () => {
     expect((await list())[0].items.map((i) => i.rkey)).toEqual(reversed);
   });
 
+  it('adds many members at once, in order, skipping ones already there', async () => {
+    await call('POST', '/api/shelf/collections', { id: C1, name: 'Books' });
+    await call('POST', `/api/shelf/collections/${C1}/items`, { rkey: R2 });
+    const res = await call('POST', `/api/shelf/collections/${C1}/items`, {
+      rkeys: [R3, R2, R1, R3],
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.added).toBe(2);
+    expect((await list())[0].items.map((i) => i.rkey)).toEqual([R2, R3, R1]);
+  });
+
+  it('validates a bulk add', async () => {
+    await call('POST', '/api/shelf/collections', { id: C1, name: 'Books' });
+    const path = `/api/shelf/collections/${C1}/items`;
+    expect((await call('POST', path, { rkeys: [] })).status).toBe(400);
+    expect((await call('POST', path, { rkeys: [R1, 'nope'] })).status).toBe(400);
+    expect((await call('POST', path, { rkeys: R1 })).status).toBe(400);
+    const tooMany = Array.from(
+      { length: 2001 },
+      (_, i) => `3kbulkrkey${String(i).padStart(4, '0')}`
+    );
+    expect((await call('POST', path, { rkeys: tooMany })).status).toBe(400);
+  });
+
+  it('adds up to the cap in one request, then refuses a bulk add past the cap whole', async () => {
+    await call('POST', '/api/shelf/collections', { id: C1, name: 'Imported' });
+    const rkeys = Array.from({ length: 1999 }, (_, i) => `3kbulkrkey${String(i).padStart(4, '0')}`);
+    const prepare = vi.spyOn(env.DB, 'prepare');
+    try {
+      expect((await call('POST', `/api/shelf/collections/${C1}/items`, { rkeys })).status).toBe(
+        200
+      );
+      expect(prepare.mock.calls.length).toBeLessThan(20);
+    } finally {
+      prepare.mockRestore();
+    }
+
+    const over = await call('POST', `/api/shelf/collections/${C1}/items`, { rkeys: [R1, R2] });
+    expect(over.status).toBe(409);
+    expect(over.body.room).toBe(1);
+    // Nothing from the refused request landed.
+    let items = (await list())[0].items.map((i) => i.rkey);
+    expect(items).toHaveLength(1999);
+    expect(items).not.toContain(R1);
+
+    // Members already there don't count against the room.
+    expect(
+      (await call('POST', `/api/shelf/collections/${C1}/items`, { rkeys: [rkeys[0], R1] })).status
+    ).toBe(200);
+    items = (await list())[0].items.map((i) => i.rkey);
+    expect(items).toHaveLength(2000);
+    expect(items.at(-1)).toBe(R1);
+    expect((await call('POST', `/api/shelf/collections/${C1}/items`, { rkey: R2 })).status).toBe(
+      409
+    );
+    // Re-adding a member at the cap is still a no-op success.
+    expect((await call('POST', `/api/shelf/collections/${C1}/items`, { rkey: R1 })).status).toBe(
+      200
+    );
+  });
+
+  it('removes many members at once', async () => {
+    await call('POST', '/api/shelf/collections', { id: C1, name: 'Books' });
+    await call('POST', '/api/shelf/collections', { id: C2, name: 'Papers' });
+    await call('POST', `/api/shelf/collections/${C1}/items`, { rkeys: [R1, R2, R3] });
+    await call('POST', `/api/shelf/collections/${C2}/items`, { rkeys: [R1] });
+
+    const res = await call('DELETE', `/api/shelf/collections/${C1}/items`, {
+      rkeys: [R1, R3, '3knotamember01'],
+    });
+    expect(res.status).toBe(200);
+    const [books, papers] = await list();
+    expect(books.items.map((i) => i.rkey)).toEqual([R2]);
+    // Only the named collection changes.
+    expect(papers.items.map((i) => i.rkey)).toEqual([R1]);
+
+    expect((await call('DELETE', `/api/shelf/collections/${C1}/items`, {})).status).toBe(400);
+    expect(
+      (await call('DELETE', `/api/shelf/collections/${C1}/items`, { rkeys: ['bad'] })).status
+    ).toBe(400);
+  });
+
   it('deletes a collection with its memberships', async () => {
     await call('POST', '/api/shelf/collections', { id: C1, name: 'Books' });
     await call('POST', `/api/shelf/collections/${C1}/items`, { rkey: R1 });
