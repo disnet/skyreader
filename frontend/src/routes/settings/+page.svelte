@@ -37,6 +37,7 @@
   import {
     api,
     RateLimitError,
+    type AppPasswordList,
     type BillingSubscription,
     type NewsletterInbox,
   } from '$lib/services/api';
@@ -72,13 +73,17 @@
     { id: 'library', label: 'Library & privacy' },
     { id: 'linkblog', label: 'Linkblog' },
     { id: 'newsletters', label: 'Newsletters' },
+    { id: 'other-apps', label: 'Other reader apps' },
     { id: 'save-anywhere', label: 'Save from anywhere' },
     { id: 'about', label: 'About' },
   ] as const;
   const sections = $derived(
     auth.user
       ? allSections
-      : allSections.filter((section) => section.id !== 'account' && section.id !== 'newsletters')
+      : allSections.filter(
+          (section) =>
+            section.id !== 'account' && section.id !== 'newsletters' && section.id !== 'other-apps'
+        )
   );
 
   // Which group the reader is in, for the nav's current marker: the last one
@@ -322,6 +327,7 @@
     // Non-blocking; null for anyone without a Polar subscription.
     void loadBillingSubscription();
     void loadNewsletters();
+    void loadAppPasswords();
   });
 
   // ── Newsletters ──
@@ -374,6 +380,74 @@
     } catch (error) {
       newsletterError = error instanceof Error ? error.message : 'Could not unblock that sender';
     }
+  }
+
+  // ── Other reader apps ──
+  // App passwords for RSS apps that sync over the Google Reader API. A new
+  // password is shown once, until the reader leaves the page.
+  let appPasswords = $state<AppPasswordList | null>(null);
+  let newAppPasswordName = $state('');
+  let createdAppPassword = $state<{ name: string; password: string } | null>(null);
+  let appPasswordBusy = $state(false);
+  let appPasswordError = $state<string | null>(null);
+
+  async function loadAppPasswords() {
+    if (!syncStore.isOnline) return;
+    try {
+      appPasswords = await api.getAppPasswords();
+      appPasswordError = null;
+    } catch (error) {
+      console.error('Failed to load app passwords:', error);
+      appPasswordError = "Couldn't load your app passwords. Reload the page to try again.";
+    }
+  }
+
+  async function createAppPassword(event: SubmitEvent) {
+    event.preventDefault();
+    const name = newAppPasswordName.trim();
+    if (!name) return;
+    appPasswordBusy = true;
+    appPasswordError = null;
+    try {
+      const created = await api.createAppPassword(name);
+      createdAppPassword = { name: created.name, password: created.password };
+      newAppPasswordName = '';
+      await loadAppPasswords();
+    } catch (error) {
+      appPasswordError = error instanceof Error ? error.message : 'Could not create a password';
+    } finally {
+      appPasswordBusy = false;
+    }
+  }
+
+  async function revokeAppPassword(id: number, name: string) {
+    if (!confirm(`Revoke the password for ${name}? That app will be signed out.`)) return;
+    appPasswordError = null;
+    try {
+      await api.revokeAppPassword(id);
+      if (appPasswords) {
+        appPasswords = {
+          ...appPasswords,
+          passwords: appPasswords.passwords.filter((p) => p.id !== id),
+        };
+      }
+      if (createdAppPassword?.name === name) createdAppPassword = null;
+    } catch (error) {
+      appPasswordError = error instanceof Error ? error.message : 'Could not revoke that password';
+    }
+  }
+
+  function appPasswordUse(entry: { createdAt: number; lastUsedAt: number | null }): string {
+    const day = (seconds: number) =>
+      new Date(seconds * 1000).toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      });
+    const created = `Created ${day(entry.createdAt)}`;
+    return entry.lastUsedAt
+      ? `${created} · last used ${day(entry.lastUsedAt)}`
+      : `${created} · not used yet`;
   }
 
   // The renewal/end date behind the plan badge, straight from Polar via the
@@ -1617,6 +1691,114 @@
       </section>
     {/if}
 
+    {#if auth.user}
+      <!-- ── Other reader apps ──────────────────────────────────── -->
+      <section class="group" id="other-apps" aria-labelledby="other-apps-title">
+        <h2 id="other-apps-title">Other reader apps</h2>
+        <p class="group-lead">
+          Read in NetNewsWire, Reeder, ReadKit or Unread, with read and starred state kept in step
+          with Skyreader. Add Skyreader in the app as a FreshRSS or Google Reader account.
+          {@render docsLink('otherApps')}
+        </p>
+
+        <div class="panel">
+          {#if !appPasswords}
+            <div class="row">
+              <p class="loading">
+                {#if !syncStore.isOnline}Available when online.{:else if appPasswordError}Not
+                  loaded.{:else}Loading…{/if}
+              </p>
+            </div>
+          {:else}
+            <div class="row stack">
+              <div class="row-text">
+                <span class="row-label">Server address</span>
+                <p class="row-desc">Sign in with your handle and an app password.</p>
+              </div>
+              <code class="newsletter-address">{appPasswords.serverUrl}</code>
+              <div class="button-row">
+                <button
+                  class="btn btn-secondary"
+                  onclick={() => copyText(appPasswords!.serverUrl, 'greader-server')}
+                >
+                  {copiedKey === 'greader-server' ? 'Copied' : 'Copy address'}
+                </button>
+              </div>
+              <p class="row-desc">Username: <code>{appPasswords.username}</code></p>
+            </div>
+
+            {#if createdAppPassword}
+              <div class="row stack">
+                <div class="row-text">
+                  <span class="row-label">Password for {createdAppPassword.name}</span>
+                  <p class="row-desc">Copy it into the app now. It won't be shown again.</p>
+                </div>
+                <code class="newsletter-address">{createdAppPassword.password}</code>
+                <div class="button-row">
+                  <button
+                    class="btn btn-primary"
+                    onclick={() => copyText(createdAppPassword!.password, 'greader-password')}
+                  >
+                    {copiedKey === 'greader-password' ? 'Copied' : 'Copy password'}
+                  </button>
+                  <button class="btn btn-secondary" onclick={() => (createdAppPassword = null)}>
+                    Done
+                  </button>
+                </div>
+              </div>
+            {/if}
+
+            <div class="row stack">
+              <div class="row-text">
+                <span class="row-label">App passwords</span>
+                <p class="row-desc">
+                  Make one for each app. Revoking a password signs that app out.
+                </p>
+              </div>
+              {#if appPasswords.passwords.length > 0}
+                <ul class="blocked-senders">
+                  {#each appPasswords.passwords as entry (entry.id)}
+                    <li>
+                      <span class="blocked-sender">
+                        {entry.name}
+                        <span class="app-password-use">{appPasswordUse(entry)}</span>
+                      </span>
+                      <button
+                        class="btn btn-secondary"
+                        onclick={() => revokeAppPassword(entry.id, entry.name)}
+                      >
+                        Revoke
+                      </button>
+                    </li>
+                  {/each}
+                </ul>
+              {/if}
+              <form class="app-password-form" onsubmit={createAppPassword}>
+                <input
+                  aria-label="App name"
+                  class="field"
+                  type="text"
+                  bind:value={newAppPasswordName}
+                  maxlength="60"
+                  placeholder="App name, like NetNewsWire"
+                />
+                <button
+                  class="btn btn-primary"
+                  type="submit"
+                  disabled={appPasswordBusy || !newAppPasswordName.trim()}
+                >
+                  {appPasswordBusy ? 'Creating…' : 'Create password'}
+                </button>
+              </form>
+            </div>
+          {/if}
+        </div>
+        {#if appPasswordError}
+          <p class="status-error">{appPasswordError}</p>
+        {/if}
+      </section>
+    {/if}
+
     <!-- ── Save from anywhere ──────────────────────────────────── -->
     <section class="group" id="save-anywhere" aria-labelledby="save-anywhere-title">
       <h2 id="save-anywhere-title">Save from anywhere</h2>
@@ -2083,6 +2265,23 @@
     font-size: var(--text-md);
     color: var(--color-text-secondary);
     overflow-wrap: anywhere;
+    min-width: 0;
+  }
+
+  .app-password-use {
+    display: block;
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+  }
+
+  .app-password-form {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+
+  .app-password-form .field {
+    flex: 1 1 14rem;
     min-width: 0;
   }
 

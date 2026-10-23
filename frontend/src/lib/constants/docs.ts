@@ -19,6 +19,7 @@ export const docsPages = {
   highlights: '/guide/saving-and-highlights/#highlights',
   sharingAndLinkblog: '/guide/sharing-and-your-linkblog/',
   readingRooms: '/guide/reading-rooms/',
+  otherApps: '/guide/other-reader-apps/',
   yourData: '/your-data/',
   atmosphericSync: '/your-data/#subscriptions-and-atmospheric-sync',
   supporter: '/supporter/',

@@ -46,7 +46,7 @@ const READ_POSITIONS_MAX_LIMIT = 1000;
  * The conflict clause the read writers share — the same user-time
  * last-write-wins guard as the label route. See migration 0076.
  */
-const READ_UPSERT_CONFLICT = `ON CONFLICT(user_did, item_key, label) DO UPDATE SET
+export const READ_UPSERT_CONFLICT = `ON CONFLICT(user_did, item_key, label) DO UPDATE SET
         props = excluded.props,
         item_type = excluded.item_type,
         rkey = CASE
@@ -58,7 +58,7 @@ const READ_UPSERT_CONFLICT = `ON CONFLICT(user_did, item_key, label) DO UPDATE S
         client_updated_at = excluded.client_updated_at
       WHERE excluded.client_updated_at >= COALESCE(item_labels_cache.client_updated_at, 0)`;
 
-const UNREAD_UPSERT_CONFLICT = `ON CONFLICT(user_did, item_key, label) DO UPDATE SET
+export const UNREAD_UPSERT_CONFLICT = `ON CONFLICT(user_did, item_key, label) DO UPDATE SET
         deleted_at = excluded.deleted_at,
         updated_at = excluded.updated_at,
         client_updated_at = excluded.client_updated_at

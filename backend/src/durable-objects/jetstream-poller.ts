@@ -48,7 +48,7 @@ interface JetstreamEvent {
   };
 }
 
-interface DocumentPollStats {
+interface DocumentPollStats extends SocketOutcome {
   processed: number;
   errors: number;
   /** The cycle stopped on the apply cap rather than on an empty stream. */
@@ -61,8 +61,24 @@ interface DocumentPollStats {
   skipped: boolean;
 }
 
+/**
+ * How a cycle's socket ended, for the lag alert's diagnosis. Absent when the cycle
+ * never tried to connect (ingest paused, no authors, or it threw first). `opened`
+ * false with any exit means it never connected: the idle check runs from before
+ * `open`, so a socket that doesn't answer within ~2s exits `idle` unopened.
+ */
+export interface SocketOutcome {
+  exit?: PollExit;
+  opened?: boolean;
+}
+
+interface SubscriptionPollStats extends SocketOutcome {
+  processed: number;
+  errors: number;
+}
+
 interface PollStats {
-  subscriptions: { processed: number; errors: number };
+  subscriptions: SubscriptionPollStats;
   documents: DocumentPollStats;
   duration: number;
   lastPollAt: number;
@@ -163,7 +179,7 @@ type StreamName = 'subscriptions' | 'documents';
  * Why a poll cycle stopped reading. Only `idle` means "Jetstream had nothing left";
  * `apply-cap` means we deliberately stopped early and carried the cursor.
  */
-type PollExit = 'idle' | 'poll-timeout' | 'closed' | 'socket-error' | 'apply-cap';
+export type PollExit = 'idle' | 'poll-timeout' | 'closed' | 'socket-error' | 'apply-cap';
 
 const CURSOR_KEY = {
   subscriptions: 'cursor_subscriptions',
@@ -485,6 +501,12 @@ class JetstreamPollerBase implements DurableObject {
         documentsCapStreak: stats.documents.capStreak,
         documentsAuthors: stats.documents.authors,
         documentsLagMs,
+        // Why each socket stopped. A lag alert is only actionable once you know
+        // whether we were reading a backlog or never got a connection at all.
+        subscriptionsExit: stats.subscriptions.exit ?? null,
+        subscriptionsOpened: stats.subscriptions.opened ?? null,
+        documentsExit: stats.documents.exit ?? null,
+        documentsOpened: stats.documents.opened ?? null,
         durationMs: stats.duration,
       });
     } catch (error) {
@@ -582,10 +604,7 @@ class JetstreamPollerBase implements DurableObject {
   // --- Subscriptions Stream ---
   // Watches globally (all app.skyreader.feed.subscription events) but only
   // processes events for users who have sync enabled in Skyreader
-  private async pollSubscriptionsStream(): Promise<{
-    processed: number;
-    errors: number;
-  }> {
+  private async pollSubscriptionsStream(): Promise<SubscriptionPollStats> {
     // Fetch sync-enabled DIDs upfront to check before inserting
     const syncEnabledDids = await this.getSyncEnabledDidsSet();
 
@@ -612,10 +631,13 @@ class JetstreamPollerBase implements DurableObject {
       let cleanedUp = false;
       let opened = false;
 
+      // A failed cleanup still has to settle the promise: left pending, the alarm
+      // handler never reaches the `finally` that schedules the next cycle.
       const cleanupWithCatch = (exit: PollExit) =>
-        cleanup(exit).catch((e) =>
-          console.error('[JetstreamPoller] subscriptions cleanup error:', e)
-        );
+        cleanup(exit).catch((e) => {
+          console.error('[JetstreamPoller] subscriptions cleanup error:', e);
+          resolve({ processed, errors, exit, opened });
+        });
       // Connection writes apply one at a time, in stream order: a create and a
       // delete of the same edge in one burst must not land the wrong way round.
       let connectionQueue: Promise<unknown> = Promise.resolve();
@@ -652,7 +674,7 @@ class JetstreamPollerBase implements DurableObject {
         // running before the socket connects, so a Jetstream that never answers
         // would otherwise idle out and be recorded as "caught up".
         if (opened && exit === 'idle') await this.markCaughtUp('subscriptions');
-        resolve({ processed, errors });
+        resolve({ processed, errors, exit, opened });
       };
 
       try {
@@ -776,8 +798,21 @@ class JetstreamPollerBase implements DurableObject {
       // edits of the same rkey.
       let queue: Promise<void> = Promise.resolve();
 
+      // Settles on failure too, for the same reason as the subscriptions stream.
       const cleanupWithCatch = (exit: PollExit) =>
-        cleanup(exit).catch((e) => console.error('[JetstreamPoller] documents cleanup error:', e));
+        cleanup(exit).catch((e) => {
+          console.error('[JetstreamPoller] documents cleanup error:', e);
+          resolve({
+            processed: drain.applied,
+            errors: drain.errors,
+            capped: drain.capped,
+            capStreak: priorStreak,
+            authors: dids.length,
+            skipped: false,
+            exit,
+            opened,
+          });
+        });
 
       const pollTimeout = setTimeout(() => cleanupWithCatch('poll-timeout'), POLL_TIMEOUT_MS);
       const idleCheck = setInterval(() => {
@@ -838,6 +873,8 @@ class JetstreamPollerBase implements DurableObject {
           capStreak,
           authors: dids.length,
           skipped: false,
+          exit,
+          opened,
         });
       };
 

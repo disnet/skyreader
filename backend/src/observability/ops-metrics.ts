@@ -2,6 +2,7 @@ import type { Env } from '../types';
 import { log, serializeError } from '../utils/logger';
 import { reportError, reportMessage } from './sentry';
 import { withTimeout } from '../utils/with-timeout';
+import { ALARM_ACTIVE_WINDOW_MS, type SocketOutcome } from '../durable-objects/jetstream-poller';
 
 // The cron's second job: leave behind what it learned.
 //
@@ -192,8 +193,8 @@ export async function readSystemStatus<T>(
 interface PollerStatusResponse {
   lag?: { subscriptionsMs?: number | null; documentsMs?: number | null };
   lastStats?: {
-    subscriptions?: { processed?: number; errors?: number };
-    documents?: {
+    subscriptions?: SocketOutcome & { processed?: number; errors?: number };
+    documents?: SocketOutcome & {
       processed?: number;
       errors?: number;
       capped?: boolean;
@@ -214,6 +215,41 @@ interface PollerStatusResponse {
  * ~10 minutes of every cycle hitting the cap is not a spike any more.
  */
 export const DOCUMENT_CAP_SATURATION_ALERT_STREAK = 10;
+
+/**
+ * What the last cycle's socket says about a lagging stream, attached to the lag
+ * alert so it answers "us or Jetstream?" on its own.
+ *
+ *   - `stalled`: the last finished cycle is older than two alarm intervals, so its
+ *     socket says nothing about now. The poller itself has stopped cycling.
+ *   - `unreachable`: the socket never opened (within the ~2s idle window). Usually
+ *     Jetstream or the network to it; 2026-10-22 21:29–22:19 was this, on prod and
+ *     staging at once. A handshake Jetstream rejects lands here too.
+ *   - `dropped`: it opened, then closed or errored before draining.
+ *   - `behind`: it read until the poll window or the apply cap ran out, so it is
+ *     working through a backlog.
+ *   - `caught-up`: it drained, which marks the stream current, so this should not
+ *     sit next to a lag alert; if it does, the caught-up write itself failed.
+ *   - `unknown`: no socket ran last cycle (it threw first, or there's no stats yet).
+ */
+export type StreamDiagnosis =
+  'stalled' | 'unreachable' | 'dropped' | 'behind' | 'caught-up' | 'unknown';
+
+export function diagnoseStream(
+  outcome: SocketOutcome | undefined,
+  lastPollAt: number | undefined,
+  now: number
+): StreamDiagnosis {
+  if (typeof lastPollAt === 'number' && now - lastPollAt > ALARM_ACTIVE_WINDOW_MS) {
+    return 'stalled';
+  }
+  const { exit, opened } = outcome ?? {};
+  if (!exit) return 'unknown';
+  if (!opened) return 'unreachable';
+  if (exit === 'idle') return 'caught-up';
+  if (exit === 'poll-timeout' || exit === 'apply-cap') return 'behind';
+  return 'dropped';
+}
 
 export interface LagAlertDecision {
   /** Send an event now. */
@@ -362,15 +398,22 @@ export async function recordPollerStatus(env: Env, now = Date.now()): Promise<Po
   await writeSystemStatus(env, 'poller_status', value, now);
 
   if (documentsDecision.alert) {
+    const diagnosis = diagnoseStream(documents, status.lastStats?.lastPollAt, now);
     log.error('documents_stream_lag_high', {
       lagMs: documentsLagMs,
       thresholdMs: FIREHOSE_LAG_ALERT_MS,
+      diagnosis,
+      exit: documents?.exit ?? null,
     });
     reportMessage(`Document stream lag above ${Math.round(FIREHOSE_LAG_ALERT_MS / 60000)}m`, {
       level: 'error',
       fingerprint: ['documents-stream-lag-high'],
-      tags: { source: 'cron', check: 'documents-lag' },
-      extra: { lagMs: documentsLagMs, authors: value.documentsAuthors },
+      tags: { source: 'cron', check: 'documents-lag', diagnosis },
+      extra: {
+        lagMs: documentsLagMs,
+        authors: value.documentsAuthors,
+        exit: documents?.exit ?? null,
+      },
     });
   } else if (documentsDecision.recovered) {
     log.info('documents_stream_lag_recovered', {
@@ -390,17 +433,21 @@ export async function recordPollerStatus(env: Env, now = Date.now()): Promise<Po
   }
 
   if (decision.alert) {
+    const subscriptions = status.lastStats?.subscriptions;
+    const diagnosis = diagnoseStream(subscriptions, status.lastStats?.lastPollAt, now);
     log.error('firehose_lag_high', {
       lagMs,
       thresholdMs: FIREHOSE_LAG_ALERT_MS,
       lastPollAt: value.lastPollAt,
+      diagnosis,
+      exit: subscriptions?.exit ?? null,
     });
     reportMessage(`Firehose lag above ${Math.round(FIREHOSE_LAG_ALERT_MS / 60000)}m`, {
       level: 'error',
       // One issue for the condition, not one per occurrence.
       fingerprint: ['firehose-lag-high'],
-      tags: { source: 'cron', check: 'firehose-lag' },
-      extra: { lagMs, lastPollAt: value.lastPollAt },
+      tags: { source: 'cron', check: 'firehose-lag', diagnosis },
+      extra: { lagMs, lastPollAt: value.lastPollAt, exit: subscriptions?.exit ?? null },
     });
   } else if (decision.recovered) {
     log.info('firehose_lag_recovered', { lagMs, thresholdMs: FIREHOSE_LAG_ALERT_MS });
