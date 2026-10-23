@@ -30,7 +30,7 @@ import {
 import { mintSpaceCredential } from '../services/spaces/credential';
 import { credentialCall } from '../services/spaces/transport';
 import { createClientAttestation } from '../services/client-auth';
-import { resolveClientIdentity } from '../services/oauth';
+import { resolveClientIdentity, type ClientIdentity } from '../services/oauth';
 import { resolveAtprotoKemKey } from '../utils/did-resolver';
 import {
   readSavedRowsForSpace,
@@ -114,6 +114,26 @@ export async function handleSpacesSavedDiff(env: Env, session: Session): Promise
   });
 }
 
+/**
+ * Whether the alpha could verify an attestation from this deployment: it needs a
+ * confidential client (a signing key whose JWKS the client metadata publishes)
+ * at a client_id the authority can fetch, which rules out loopback hosts.
+ */
+function canAttest(env: Env, identity: ClientIdentity): boolean {
+  if (identity.isPublicClient || !(env as { CLIENT_SIGNING_KEY?: string }).CLIENT_SIGNING_KEY) {
+    return false;
+  }
+  const host = new URL(identity.clientId).hostname;
+  return host !== 'localhost' && host !== '127.0.0.1' && host !== '[::1]';
+}
+
+/** The response for a space that isn't there, keeping a failed probe distinct. */
+function unavailable(status: string): Response {
+  return status === 'failed'
+    ? json({ error: 'space_probe_failed', status }, 502)
+    : json({ error: 'spaces_unavailable', status }, 503);
+}
+
 function errorReport(step: string, error: unknown): Record<string, unknown> {
   const e = error as { code?: unknown; status?: unknown; message?: unknown };
   return {
@@ -139,8 +159,8 @@ export async function handleSpacesAppAccess(
 ): Promise<Response> {
   if (!spacesSavesEnabled(env)) return json({ error: 'Not found' }, 404);
 
-  const body = (await request.json().catch(() => ({}))) as { mode?: unknown };
-  if (body.mode !== 'open' && body.mode !== 'allowList') {
+  const body = (await request.json().catch(() => null)) as { mode?: unknown } | null;
+  if (body?.mode !== 'open' && body?.mode !== 'allowList') {
     return json({ error: 'mode must be "open" or "allowList"' }, 400);
   }
 
@@ -152,7 +172,7 @@ export async function handleSpacesAppAccess(
 
   const client = spacesClientForSession(session);
   const { space, status } = await resolveSavedSpace(session, client, { create: false });
-  if (!space) return json({ error: 'spaces_unavailable', status }, 503);
+  if (!space) return unavailable(status);
 
   try {
     await client.updateSpace({ space, appAccess });
@@ -161,9 +181,10 @@ export async function handleSpacesAppAccess(
       space,
       appAccess: view.appAccess,
       clientId: identity.clientId,
-      // A public (localhost) client can't sign an attestation, so pinning the
-      // space to it locks every credential out, Skyreader's included.
-      publicClient: identity.isPublicClient,
+      // When this deployment can't attest (a public or loopback client), pinning
+      // the space to it locks every credential out, Skyreader's included —
+      // still the setup that shows an unknown app being refused.
+      canAttest: canAttest(env, identity),
     });
   } catch (error) {
     return json(errorReport('updateSpace', error), 502);
@@ -185,11 +206,19 @@ export async function handleSpacesCredentialRead(
 
   const client = spacesClientForSession(session);
   const { space, status } = await resolveSavedSpace(session, client, { create: false });
-  if (!space) return json({ error: 'spaces_unavailable', status }, 503);
+  if (!space) return unavailable(status);
 
   const identity = resolveClientIdentity(env, new URL(request.url));
-  const attested = !identity.isPublicClient;
+  const attested = canAttest(env, identity);
   const report: Record<string, unknown> = { space, clientId: identity.clientId, attested };
+
+  // Before minting: a doc with no KEM key can't be read, so don't spend a
+  // delegation token finding that out.
+  const kemKey = await resolveAtprotoKemKey(session.did);
+  report.kemKey = kemKey;
+  if (!kemKey) {
+    return json({ ...report, ok: false, step: 'kemKey', message: 'DID doc has no #atproto_kem' });
+  }
 
   let credential;
   try {
@@ -203,12 +232,6 @@ export async function handleSpacesCredentialRead(
     });
   } catch (error) {
     return json({ ...report, ...errorReport('credential', error) });
-  }
-
-  const kemKey = await resolveAtprotoKemKey(session.did);
-  report.kemKey = kemKey;
-  if (!kemKey) {
-    return json({ ...report, ok: false, step: 'kemKey', message: 'DID doc has no #atproto_kem' });
   }
 
   const reader = new SpacesClient(

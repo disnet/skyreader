@@ -15,15 +15,15 @@
  * Implements only what the lifecycle touches:
  *   com.atproto.server.{createAccount,createSession}
  *   com.atproto.identity.getRecommendedDidCredentials  (just the KEM key)
- *   com.atproto.simplespace.updateSpace               (app access only)
+ *   com.atproto.simplespace.updateSpace
+ *   com.atproto.simplespace.{createSpace,getSpace}  (spaceType + read/write policies)
+ *   com.atproto.space.{getDelegationToken,getSpaceCredential,
+ *                      createRecord,putRecord,getRecord,listRecords,deleteRecord}
  * plus a stand-in PLC directory (`plcOrigin`) serving each account's DID doc.
  *
  * App access is enforced where the alpha enforces it — only in
  * getSpaceCredential. The fake takes a client attestation's `iss` at its word;
  * the real authority verifies it against the client metadata's JWKS.
- *   com.atproto.simplespace.{createSpace,getSpace}  (spaceType + read/write policies)
- *   com.atproto.space.{getDelegationToken,getSpaceCredential,
- *                      createRecord,putRecord,getRecord,listRecords,deleteRecord}
  */
 
 import { CID } from '../../backend/node_modules/multiformats/dist/src/cid.js';
@@ -364,17 +364,19 @@ export function createFakePds(
       return { token };
     },
 
-    // Unauthenticated since the Oct 22 alpha: the delegation token and the key
-    // to bind (`credentialKid`) both travel in the body. The token is optional
-    // in the lexicon (public spaces), but a member-list space gates on the user.
     'com.atproto.simplespace.updateSpace': async (req, _url, body) => {
       const did = requireSession(req.headers);
       const space = requireSpace(body.space);
       if (space.authority !== did) throw error('NotSpaceOwner', 'not the space owner');
-      if (body.appAccess) space.appAccess = body.appAccess;
+      for (const field of ['readPolicy', 'writePolicy', 'appAccess']) {
+        if (body[field]) space[field] = body[field];
+      }
       return {};
     },
 
+    // Unauthenticated since the Oct 22 alpha: the delegation token and the key
+    // to bind (`credentialKid`) both travel in the body. The token is optional
+    // in the lexicon (public spaces), but a member-list space gates on the user.
     'com.atproto.space.getSpaceCredential': async (_req, _url, body) => {
       if (!/^did:key:zDn/.test(body?.credentialKid ?? '')) {
         throw error('InvalidRequest', 'credentialKid must be a P-256 did:key');
