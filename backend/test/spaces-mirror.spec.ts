@@ -108,6 +108,23 @@ describe('spaces mirror — flag gate', () => {
     );
     expect(res.status).toBe(404);
   });
+
+  it('leaves the second-client routes unmounted when the flag is unset', async () => {
+    const appAccess = await call(
+      new IncomingRequest('http://localhost/api/dev/spaces/app-access', {
+        method: 'POST',
+        headers: { Cookie: `session_id=${SESSION}`, Origin: env.FRONTEND_URL },
+        body: JSON.stringify({ mode: 'allowList' }),
+      })
+    );
+    expect(appAccess.status).toBe(404);
+    const read = await call(
+      new IncomingRequest('http://localhost/api/dev/spaces/credential-read', {
+        headers: { Cookie: `session_id=${SESSION}`, Origin: env.FRONTEND_URL },
+      })
+    );
+    expect(read.status).toBe(404);
+  });
 });
 
 describe('spaces mirror — best effort with the flag on', () => {
@@ -163,6 +180,20 @@ describe('spaces mirror — best effort with the flag on', () => {
     expect(res.status).toBe(502);
     expect(res.body.error).toBe('space_probe_failed');
     expect(res.body.status).toBe('failed');
+  });
+
+  it('refuses an app-access mode it does not know, and a missing body', async () => {
+    for (const body of [JSON.stringify({ mode: 'closed' }), 'null', '']) {
+      const res = await call(
+        new IncomingRequest('http://localhost/api/dev/spaces/app-access', {
+          method: 'POST',
+          headers: { Cookie: `session_id=${SESSION}`, Origin: env.FRONTEND_URL },
+          body,
+        }),
+        { SPACES_SAVES_ENABLED: 'true' }
+      );
+      expect(res.status).toBe(400);
+    }
   });
 
   it('creates and caches the personal space when the probe returns SpaceNotFound', async () => {
