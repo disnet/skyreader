@@ -383,8 +383,30 @@ one per minute**: first crossing, then a reminder every 30 minutes while it last
 Recovery is silent by design — the admin's Firehose Lag tile goes green and
 `event = firehose_lag_recovered` appears in the logs.
 
-**Check:** the Ops panel (Firehose Lag, Last Poll, Poll Errors), then
-`event = jetstream_poll` in Workers Logs. `durationMs` at the 8s poll timeout with
+**Check:** first the event's `diagnosis` tag, which reads the last cycle's socket
+(`diagnoseStream` in `backend/src/observability/ops-metrics.ts`; the raw exit is in
+`extra.exit`):
+
+- `stalled`: the last finished cycle is more than two minutes old, so the poller has
+  stopped cycling. This is the poller, not Jetstream: see `jetstream_alarm_stuck`
+  above, and redeploy if the next cron tick doesn't revive it.
+- `unreachable`: the socket never opened within the ~2s idle window. Usually Jetstream
+  is down or unreachable from Cloudflare. Confirm with **Is it Jetstream?** below
+  before ruling the poller out: a handshake Jetstream rejects (an over-long URL, or
+  rate limiting) looks the same from here.
+- `behind`: it read for the whole poll window, or up to the apply cap, so it is
+  draining a backlog. Watch the number fall.
+- `dropped`: it opened and then got closed or errored. Usually Jetstream again, but
+  check `jetstream_poll` for errors.
+- `caught-up`: the last cycle drained, which marks the stream current, so this
+  shouldn't arrive with a lag alert. If it does, the caught-up write failed; look for
+  `Error recording ... caught-up time` in the logs.
+- `unknown`: no socket ran. The cycle threw before connecting (look for
+  `jetstream_poll_failed`), or the poller is on a build from before the field.
+
+Then the Ops panel (Firehose Lag, Last Poll, Poll Errors), then
+`event = jetstream_poll` in Workers Logs (`subscriptionsExit` / `subscriptionsOpened`
+per cycle). `durationMs` at the 8s poll timeout with
 events processing means the stream is delivering faster than one cycle can drain;
 a short `durationMs` with lag still climbing means cycles are ending without ever
 connecting, which is Jetstream being unreachable. Cross-check the poller's
@@ -393,6 +415,30 @@ backlog, and one at the live edge points at the drain signal instead.
 **Fix:** usually none — a backlog after a Jetstream outage drains on its own; watch
 that the number is falling. If it's flat or growing over 30 minutes, redeploy the
 backend to recycle the DO (it resumes from its stored cursor, so nothing is lost).
+
+**Is it Jetstream?** Two quick tells. First, if staging lags by the same amount at
+the same time, the cause is upstream: the two pollers are separate objects, and they
+only share Jetstream. Second, replay from before the lag began and look for a
+hole in Jetstream's own data. Identity and account events reach every subscriber
+whatever the collection filter, several a second network-wide, so a gap of minutes
+means Jetstream had no data for that stretch:
+
+```bash
+node -e '
+const from = Date.parse(process.argv[1]) * 1000, iso = (us) => new Date(us / 1000).toISOString();
+for (const h of ["jetstream1.us-east", "jetstream2.us-east", "jetstream1.us-west", "jetstream2.us-west"]) {
+  const ws = new WebSocket(`wss://${h}.bsky.network/subscribe?wantedCollections=app.skyreader.feed.subscription&cursor=${from}`);
+  let prev = from, gaps = [];
+  ws.onerror = (e) => console.log(h, "error", e.message);
+  ws.onmessage = (e) => { const t = JSON.parse(e.data).time_us; if (prev && t - prev > 60e6) gaps.push(iso(prev) + " -> " + iso(t)); prev = t; };
+  setTimeout(() => { ws.close(); console.log(h, "reached", iso(prev), "gaps", gaps); }, 8000);
+}' 2026-10-22T21:00:00Z
+```
+
+On 2026-10-22 this showed every instance empty from about 21:29 to 22:19 UTC (us-west
+from 21:04), and prod and staging lagged together to within a minute. No
+poller change or redeploy can help with that, and failing over to another instance
+wouldn't have either. The backlog drained on its own once Jetstream had data again.
 
 ### `documents_stream_lag_high` (Sentry message)
 
@@ -408,8 +454,10 @@ alerts: an ingest paused with `documents_ingest_enabled = '0'` (its lag climbs b
 construction, and the tile says "Paused"), and an empty subscribed-author set
 (nothing to be behind on, so the stream marks itself caught up).
 
-**Check:** the Ops panel's **Document Stream Lag** and **Document Ingest** tiles,
-then `event = jetstream_poll` in Workers Logs — `documentsProcessed`,
+**Check:** the event's `diagnosis` tag first, read exactly as for
+`firehose_lag_high` above (`unreachable` means Jetstream, so run **Is it
+Jetstream?** there). Then the Ops panel's **Document Stream Lag** and **Document
+Ingest** tiles, then `event = jetstream_poll` in Workers Logs — `documentsProcessed`,
 `documentsCapped`, `documentsAuthors`. A cycle capping every minute is the next
 alert, not this one. `documentsAuthors: 0` with lag climbing means no subscription
 rows carry `source_type = 'atproto.documents'`, which is a data problem, not a

@@ -2,6 +2,7 @@ import { env } from 'cloudflare:test';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   decideLagAlert,
+  diagnoseStream,
   readSystemStatus,
   writeSystemStatus,
   recordPollerStatus,
@@ -21,6 +22,7 @@ import {
   type CronLastRunValue,
 } from '../src/observability/ops-metrics';
 import type { Env } from '../src/types';
+import type { PollExit } from '../src/durable-objects/jetstream-poller';
 
 // Phase 2 of the observability plan: the cron stops discarding what it learns.
 
@@ -245,6 +247,40 @@ describe('document cache frozen alerting', () => {
   });
 });
 
+describe('diagnoseStream', () => {
+  // The lag alert's one job beyond "it's late" is to say whose fault it is.
+  const NOW = 1_000_000_000;
+  const fresh = NOW - 30_000;
+  const d = (exit: PollExit | undefined, opened: boolean | undefined, lastPollAt = fresh) =>
+    diagnoseStream({ exit, opened }, lastPollAt, NOW);
+
+  it('reads a socket that never opened as Jetstream being unreachable', () => {
+    // 2026-10-22: every cycle on prod and staging while Jetstream had no data. The
+    // idle check runs from before `open`, so a silent connect idles out unopened.
+    expect(d('idle', false)).toBe('unreachable');
+    expect(d('socket-error', false)).toBe('unreachable');
+  });
+
+  it('separates a backlog from a dropped connection once the socket opened', () => {
+    expect(d('poll-timeout', true)).toBe('behind');
+    expect(d('apply-cap', true)).toBe('behind');
+    expect(d('closed', true)).toBe('dropped');
+    expect(d('socket-error', true)).toBe('dropped');
+    expect(d('idle', true)).toBe('caught-up');
+  });
+
+  it('says stalled when the last cycle is too old to speak for now', () => {
+    // A killed alarm leaves the last good cycle's stats behind; reading them as
+    // current would call a dead poller "caught up".
+    expect(d('idle', true, NOW - 10 * 60_000)).toBe('stalled');
+  });
+
+  it('says unknown when no socket ran', () => {
+    expect(diagnoseStream(undefined, fresh, NOW)).toBe('unknown');
+    expect(d(undefined, undefined)).toBe('unknown');
+  });
+});
+
 describe('recordPollerStatus', () => {
   it('stores lag, last-cycle counts and alarm state', async () => {
     const value = await recordPollerStatus(envWithPollerStatus(pollerStatusBody(30_000)), 5000);
@@ -275,6 +311,47 @@ describe('recordPollerStatus', () => {
 
     const row = await readSystemStatus<PollerStatusValue>(env as Env, 'poller_status');
     expect(row?.value.lagAlertAt).toBe(now);
+  });
+
+  it('says on the alert whether Jetstream was reachable', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const body = pollerStatusBody(
+      FIREHOSE_LAG_ALERT_MS + 60_000,
+      {
+        processed: 0,
+        errors: 0,
+        capped: false,
+        capStreak: 0,
+        authors: 7,
+        skipped: false,
+        exit: 'closed',
+        opened: true,
+      },
+      FIREHOSE_LAG_ALERT_MS + 60_000
+    );
+    body.lastStats.subscriptions = {
+      processed: 0,
+      errors: 0,
+      exit: 'idle',
+      opened: false,
+    } as typeof body.lastStats.subscriptions;
+    body.lastStats.lastPollAt = 1_000_000_000 - 30_000;
+
+    await recordPollerStatus(envWithPollerStatus(body), 1_000_000_000);
+
+    const byEvent = new Map(
+      errors.mock.calls
+        .map(([entry]) => entry as { event?: string; diagnosis?: string; exit?: string })
+        .map((entry) => [entry?.event, entry])
+    );
+    expect(byEvent.get('firehose_lag_high')).toMatchObject({
+      diagnosis: 'unreachable',
+      exit: 'idle',
+    });
+    expect(byEvent.get('documents_stream_lag_high')).toMatchObject({
+      diagnosis: 'dropped',
+      exit: 'closed',
+    });
   });
 
   it('records the document stream alongside subscriptions', async () => {
