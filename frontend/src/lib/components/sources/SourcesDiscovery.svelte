@@ -110,9 +110,9 @@
   }
 
   // People the reader follows, in the order most likely to be wanted: more from
-  // authors already here, then their own standard.site follows, then friends'
-  // linkblogs, then publications and blogs found across the follow graph. One
-  // URI, one row.
+  // authors already here, then their own standard.site follows, then
+  // publications and blogs found across the follow graph, then friends'
+  // linkblogs (as on Discover, publications come first). One URI, one row.
   let fromFollows = $derived.by((): Suggestion[] => {
     const out: Suggestion[] = [];
     const seen = new Set<string>(subscribedPubUris);
@@ -149,18 +149,6 @@
       }
     }
 
-    for (const p of linkblogDiscoveryStore.friends) {
-      push({
-        key: p.publicationUri,
-        title: p.displayName?.trim() || at(p.handle, p.did),
-        subtitle: `${at(p.handle, p.did)} · Skyreader linkblog`,
-        iconUrl: p.avatar ?? null,
-        iconRound: true,
-        fallbackIcon: 'link',
-        add: () => linkblogDiscoveryStore.subscribe(p),
-      });
-    }
-
     // Their standard.site publications and the feeds at their sites.
     for (const p of followingPublicationsStore.publications) {
       const feed = p.kind === 'feed';
@@ -174,6 +162,19 @@
         iconRound: !p.iconUrl,
         fallbackIcon: feed ? 'rss' : 'standard-site',
         add: () => followingPublicationsStore.subscribe(p),
+      });
+    }
+
+    // Their Skyreader linkblogs.
+    for (const p of linkblogDiscoveryStore.friends) {
+      push({
+        key: p.publicationUri,
+        title: p.displayName?.trim() || at(p.handle, p.did),
+        subtitle: `${at(p.handle, p.did)} · Skyreader linkblog`,
+        iconUrl: p.avatar ?? null,
+        iconRound: true,
+        fallbackIcon: 'link',
+        add: () => linkblogDiscoveryStore.subscribe(p),
       });
     }
     return out;
