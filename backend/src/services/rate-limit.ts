@@ -107,6 +107,18 @@ const RATE_LIMITS: Record<string, RateLimitConfig> = {
   // resolution fetch that an unauthenticated caller could otherwise spam.
   '/xrpc:service-auth': EXPENSIVE_LIMIT,
 
+  // Google Reader API clients (routes/greader.ts), one bucket per reader for
+  // every call. A sync is a burst: unread and starred ids, then contents in
+  // chunks and edit-tag in chunks, so it gets a light limit. Sign-in, and any
+  // call carrying a wrong token, is keyed by IP: a password is 100 random bits,
+  // but nothing should get to guess at that rate.
+  '/api/greader': LIGHT_LIMIT,
+  '/api/greader:login': { limit: 10, windowMs: 60000 },
+  // An edit-tag that stars or unstars: up to 50 saves through the save routes
+  // each (routes/greader.ts), so a client pushing its whole starred set
+  // catches up in a few minutes without unbounded writes.
+  '/api/greader:star': { limit: 20, windowMs: 60000 },
+
   // PDS sync operations (allow retries for hasMore batching)
   '/api/sync/full': { limit: 20, windowMs: 300000 },
   // Individual sync operations (6 per hour)

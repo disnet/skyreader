@@ -107,6 +107,8 @@ import {
 import { handleShelfCollections } from './routes/shelf';
 import { handleSavedConnections } from './routes/saved-connections';
 import { handleNotificationSeen } from './routes/notifications';
+import { handleAppPasswords } from './routes/app-passwords';
+import { greaderSubpath, handleGReader } from './routes/greader';
 import { handleUpdates } from './routes/updates';
 import { handleExport } from './routes/export';
 import {
@@ -367,6 +369,14 @@ async function route(
   // Skipping per-DID rate limiting is correct here: the signature is the gate.
   if (url.pathname === '/api/webhook/polar') {
     return withCors(await handlePolarWebhook(request, env), headers);
+  }
+
+  // The Google Reader API for other RSS apps (routes/greader.ts). Those apps sign
+  // in with an app password, never a session, so they're answered before session
+  // resolution; the handler authenticates and rate-limits them itself.
+  const greaderPath = greaderSubpath(url.pathname);
+  if (greaderPath !== null) {
+    return withCors(await handleGReader(request, env, ctx, greaderPath), headers);
   }
 
   // Track user activity for authenticated requests (non-blocking)
@@ -831,6 +841,11 @@ async function route(
     case url.pathname === '/api/notifications/seen':
       if (!session) return unauthorizedResponse(headers);
       response = await handleNotificationSeen(request, env, session.did);
+      break;
+    // App passwords for other RSS apps (routes/app-passwords.ts)
+    case url.pathname === '/api/app-passwords' || url.pathname.startsWith('/api/app-passwords/'):
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleAppPasswords(request, env, session);
       break;
     case url.pathname === '/api/updates':
       if (!session) return unauthorizedResponse(headers);
