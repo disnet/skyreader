@@ -722,6 +722,7 @@
         onHover={(save) => void savesStore.prefetchContent(save.rkey)}
         onMarkSeen={(save) => savedConnectionsStore.markSeen(save.rkey)}
         onClearAll={() => savedConnectionsStore.markAllSeen()}
+        onLike={(connection) => void savedConnectionsStore.like(connection.uri, !connection.liked)}
       />
     {/if}
   {:else if id === HOME_SECTION.follows}

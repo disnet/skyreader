@@ -179,6 +179,7 @@ describe('Semble connections off saves', () => {
         type: 'RELATED',
         note: 'A reply to it',
         indexedAt: 3000,
+        liked: false,
       },
       {
         uri: `at://${CURATOR}/network.cosmik.connection/3kconnrec00001`,
@@ -188,6 +189,7 @@ describe('Semble connections off saves', () => {
         type: 'RELATED',
         note: null,
         indexedAt: 2000,
+        liked: false,
       },
     ]);
 

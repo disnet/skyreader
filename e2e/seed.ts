@@ -372,6 +372,7 @@ export async function cleanupTestData(user: TestUser) {
     `DELETE FROM channels WHERE user_did = '${user.did}'`,
     `DELETE FROM item_labels_cache WHERE user_did = '${user.did}'`,
     `DELETE FROM semble_connection_seen WHERE user_did = '${user.did}'`,
+    `DELETE FROM connection_likes WHERE user_did = '${user.did}'`,
     `DELETE FROM saved_articles WHERE user_did = '${user.did}'`,
     `DELETE FROM shelf_collection_items WHERE user_did = '${user.did}'`,
     `DELETE FROM shelf_collections WHERE user_did = '${user.did}'`,

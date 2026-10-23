@@ -1657,6 +1657,14 @@ class ApiClient {
     });
   }
 
+  /** Like a connection, or take the like back. */
+  async likeSavedConnection(uri: string, liked: boolean): Promise<{ liked: boolean }> {
+    return this.fetch('/api/saved/connections/like', {
+      method: liked ? 'POST' : 'DELETE',
+      body: JSON.stringify({ uri }),
+    });
+  }
+
   // --- The notification bell (routes/notifications.ts, routes/updates.ts) ---
 
   async getNotificationSeen(): Promise<{ ids: string[]; primed: boolean }> {

@@ -54,6 +54,9 @@ function createSavedConnectionsStore() {
   let clearedAt = new Map<string, number>();
   // Clears the server hasn't recorded yet.
   const pending = new Set<string>();
+  // connection uri → the like state a request is still writing, so a list
+  // fetched meanwhile doesn't flip the heart back.
+  const pendingLikes = new Map<string, boolean>();
   let loadedFor: string | null = null;
   let loadedAt = 0;
   let inFlight: { did: string; promise: Promise<void> } | null = null;
@@ -63,6 +66,7 @@ function createSavedConnectionsStore() {
     clearedNewest = new Map();
     clearedAt = new Map();
     pending.clear();
+    pendingLikes.clear();
     loadedFor = null;
   }
 
@@ -85,7 +89,7 @@ function createSavedConnectionsStore() {
         const next = new Map<string, SavedConnectionActivity>();
         for (const raw of items) {
           // A backend from before `newest` sends none.
-          const item = { ...raw, newest: raw.newest ?? [] };
+          const item = { ...raw, newest: withPendingLikes(raw.newest ?? []) };
           const cleared = clearedAt.get(item.rkey);
           // A list from before the clear, or from before the server recorded it.
           next.set(
@@ -108,6 +112,49 @@ function createSavedConnectionsStore() {
     })();
     inFlight = { did, promise };
     return promise;
+  }
+
+  function withPendingLikes(list: SavedConnectionDetail[]): SavedConnectionDetail[] {
+    if (pendingLikes.size === 0) return list;
+    return list.map((c) =>
+      pendingLikes.has(c.uri) ? { ...c, liked: pendingLikes.get(c.uri) } : c
+    );
+  }
+
+  /** Set one connection's like state wherever this store shows it. */
+  function setLiked(uri: string, liked: boolean): void {
+    const touch = (list: SavedConnectionDetail[]) =>
+      list.some((c) => c.uri === uri)
+        ? list.map((c) => (c.uri === uri ? { ...c, liked } : c))
+        : list;
+    const nextActivity = new Map(byRkey);
+    for (const [rkey, activity] of byRkey) {
+      const newest = touch(activity.newest);
+      if (newest !== activity.newest) nextActivity.set(rkey, { ...activity, newest });
+    }
+    byRkey = nextActivity;
+    const nextNewest = new Map(clearedNewest);
+    for (const [rkey, list] of clearedNewest) nextNewest.set(rkey, touch(list));
+    clearedNewest = nextNewest;
+  }
+
+  /**
+   * Like a connection (or take the like back): a public
+   * community.lexicon.interaction.like in the reader's repo. Shown at once, and
+   * put back if the write fails.
+   */
+  async function like(uri: string, liked: boolean): Promise<void> {
+    if (pendingLikes.has(uri)) return;
+    pendingLikes.set(uri, liked);
+    setLiked(uri, liked);
+    try {
+      await api.likeSavedConnection(uri, liked);
+    } catch (e) {
+      console.error('[savedConnections] Failed to like:', e);
+      setLiked(uri, !liked);
+    } finally {
+      pendingLikes.delete(uri);
+    }
   }
 
   function unseen(rkey: string): number {
@@ -181,6 +228,7 @@ function createSavedConnectionsStore() {
     newest,
     markSeen,
     markAllSeen,
+    like,
     /**
      * The saves among `saves` with new connections, most recently connected
      * first: the New connections lane on the Shelf and on Home.

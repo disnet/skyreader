@@ -712,6 +712,7 @@ class JetstreamPollerBase implements DurableObject {
                 operation: data.commit.operation,
                 rkey: data.commit.rkey,
                 record: data.commit.record as SembleConnectionRecord | undefined,
+                cid: data.commit.cid,
               };
               connectionQueue = connectionQueue
                 .then(() => applySembleConnectionCommit(this.env, did, commit))

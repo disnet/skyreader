@@ -1,10 +1,21 @@
-import type { Env } from '../types';
+import type { Env, Session } from '../types';
 import { isValidRkey } from '../utils/validation';
 import {
   backfillSavedUrlKeys,
   listSavedConnectionActivity,
   markSavedConnectionsSeen,
+  SEMBLE_CONNECTION_COLLECTION,
 } from '../services/semble-connections';
+import { createPDSClient } from '../services/pds-client';
+import { grantsScopes } from '../services/scope-check';
+import { LIKE_SCOPES } from '../config/scopes';
+import { insufficientScopesResponse } from './auth';
+import { resolvePdsUrl } from '../utils/did-resolver';
+import { generateTid } from '../utils/tid';
+import { log } from '../utils/logger';
+
+/** Lexicon Community's shared like: a strongRef to any record. */
+export const LIKE_COLLECTION = 'community.lexicon.interaction.like';
 
 /**
  * Semble connections other people drew off the reader's saves
@@ -13,6 +24,14 @@ import {
  *   GET  /api/saved/connections       — per-save activity: { items: [{ rkey, unseen, latestAt, seenAt, newest }] },
  *                                       `newest` describing a few of the unseen edges
  *   POST /api/saved/connections/seen  — { rkey }: the reader looked at that save's connections
+ *   POST   /api/saved/connections/like — { uri }: like that connection → { liked: true }
+ *   DELETE /api/saved/connections/like — { uri }: take the like back → { liked: false }
+ *
+ * A like is a community.lexicon.interaction.like in the reader's own repo whose
+ * subject is a strongRef to the network.cosmik.connection, so any app reading
+ * that shared lexicon sees it. `connection_likes` is the index ("have I liked
+ * this?") and holds the rkey an unlike deletes. As with recommends, the row is
+ * claimed before the PDS write so two taps racing mint one record.
  *
  * Small and whole: only saves with a connection appear, so the client fetches
  * the list rather than paging a delta.
@@ -27,9 +46,10 @@ function json(body: unknown, status = 200): Response {
 export async function handleSavedConnections(
   request: Request,
   env: Env,
-  userDid: string
+  session: Session
 ): Promise<Response> {
   const path = new URL(request.url).pathname;
+  const userDid = session.did;
 
   if (path === '/api/saved/connections') {
     if (request.method !== 'GET') return json({ error: 'Method not allowed' }, 405);
@@ -54,5 +74,120 @@ export async function handleSavedConnections(
     return json({ success: marked });
   }
 
+  if (path === '/api/saved/connections/like') {
+    if (request.method !== 'POST' && request.method !== 'DELETE') {
+      return json({ error: 'Method not allowed' }, 405);
+    }
+    return handleLike(request, env, session);
+  }
+
   return json({ error: 'Not found' }, 404);
+}
+
+async function handleLike(request: Request, env: Env, session: Session): Promise<Response> {
+  if (!grantsScopes(session.grantedScopes, LIKE_SCOPES)) return insufficientScopesResponse();
+
+  let body: { uri?: unknown };
+  try {
+    body = (await request.json()) as typeof body;
+  } catch {
+    return json({ error: 'Invalid JSON body' }, 400);
+  }
+  const uri = typeof body?.uri === 'string' ? body.uri : '';
+  if (!uri.startsWith('at://')) return json({ error: 'Invalid uri' }, 400);
+
+  const pds = createPDSClient(session);
+
+  if (request.method === 'DELETE') {
+    const row = await env.DB.prepare(
+      'SELECT rkey FROM connection_likes WHERE user_did = ? AND subject_uri = ?'
+    )
+      .bind(session.did, uri)
+      .first<{ rkey: string }>();
+    if (!row) return json({ liked: false });
+    const result = await pds.deleteRecord(LIKE_COLLECTION, row.rkey);
+    if (!result.success) {
+      if (/scope/i.test(result.error)) return insufficientScopesResponse();
+      log.error('connection_unlike_failed', { pdsUrl: session.pdsUrl, error: result.error });
+      return json({ error: result.error }, result.retryable ? 503 : 502);
+    }
+    await env.DB.prepare('DELETE FROM connection_likes WHERE user_did = ? AND rkey = ?')
+      .bind(session.did, row.rkey)
+      .run();
+    return json({ liked: false });
+  }
+
+  // Only connections the poller kept: those are the ones the reader is shown,
+  // and it keeps the curator from being anyone a request names.
+  const connection = await env.DB.prepare(
+    'SELECT curator_did, cid FROM semble_connections WHERE uri = ?'
+  )
+    .bind(uri)
+    .first<{ curator_did: string; cid: string | null }>();
+  if (!connection) return json({ error: 'Connection not found' }, 404);
+
+  const rkey = generateTid();
+  const claim = await env.DB.prepare(
+    `INSERT OR IGNORE INTO connection_likes (user_did, subject_uri, rkey, created_at)
+     VALUES (?, ?, ?, ?)`
+  )
+    .bind(session.did, uri, rkey, Date.now())
+    .run();
+  if (!claim.meta.changes) return json({ liked: true });
+
+  const release = () =>
+    env.DB.prepare('DELETE FROM connection_likes WHERE user_did = ? AND rkey = ?')
+      .bind(session.did, rkey)
+      .run();
+
+  const cid = connection.cid ?? (await fetchConnectionCid(env, connection.curator_did, uri));
+  if (!cid) {
+    await release();
+    return json({ error: 'Connection not found' }, 404);
+  }
+
+  const result = await pds.putRecord(LIKE_COLLECTION, rkey, {
+    $type: LIKE_COLLECTION,
+    subject: { uri, cid },
+    createdAt: new Date().toISOString(),
+  });
+  if (!result.success) {
+    // Release the claim so a retry can write; it never reached the repo.
+    await release();
+    if (/scope/i.test(result.error)) return insufficientScopesResponse();
+    log.error('connection_like_failed', { pdsUrl: session.pdsUrl, error: result.error });
+    return json({ error: result.error }, result.retryable ? 503 : 502);
+  }
+  return json({ liked: true }, 201);
+}
+
+/**
+ * The connection's current CID, from the curator's PDS, for rows the poller
+ * indexed before it kept CIDs. Kept on the row once found. Null when the record
+ * is gone or the PDS can't be reached.
+ */
+async function fetchConnectionCid(
+  env: Env,
+  curatorDid: string,
+  uri: string
+): Promise<string | null> {
+  const rkey = uri.split('/').pop() ?? '';
+  const pdsUrl = await resolvePdsUrl(curatorDid);
+  if (!pdsUrl || !rkey) return null;
+  try {
+    const url = new URL(`${pdsUrl}/xrpc/com.atproto.repo.getRecord`);
+    url.searchParams.set('repo', curatorDid);
+    url.searchParams.set('collection', SEMBLE_CONNECTION_COLLECTION);
+    url.searchParams.set('rkey', rkey);
+    const res = await fetch(url.toString());
+    if (!res.ok) return null;
+    const data = (await res.json()) as { cid?: unknown };
+    if (typeof data.cid !== 'string' || !data.cid) return null;
+    await env.DB.prepare('UPDATE semble_connections SET cid = ? WHERE uri = ?')
+      .bind(data.cid, uri)
+      .run();
+    return data.cid;
+  } catch {
+    return null;
+  }
 }

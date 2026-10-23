@@ -865,9 +865,10 @@ async function route(
       break;
     // Semble connections drawn off the reader's saves (routes/saved-connections.ts)
     case url.pathname === '/api/saved/connections' ||
-      url.pathname === '/api/saved/connections/seen':
+      url.pathname === '/api/saved/connections/seen' ||
+      url.pathname === '/api/saved/connections/like':
       if (!session) return unauthorizedResponse(headers);
-      response = await handleSavedConnections(request, env, session.did);
+      response = await handleSavedConnections(request, env, session);
       break;
     // Uploaded PDFs and EPUBs (Supporter) — routes/saved-pdf.ts
     case url.pathname === '/api/saved/pdf':
