@@ -9,7 +9,7 @@ import {
   handleDeleteSubscription,
   handleUpdateSubscription,
 } from './subscriptions';
-import { FeedProxyClient } from '../services/feed-proxy-client';
+import { FeedProxyClient, FeedProxyError } from '../services/feed-proxy-client';
 import { itemBodyKey } from './item-bodies';
 import { documentBlobUrl, documentHtml } from '../services/document-html';
 import {
@@ -1130,10 +1130,11 @@ async function handleMarkAllAsRead(
 
 // --- subscription editing ------------------------------------------------------
 
-// Subscription changes carried out per request. Each subscribe crawls the feed
-// once, as the web app's does; past this the request answers 503 and the
-// client's retry finds the first ones done (already subscribed, already gone).
+// Subscriptions named per request. Clients send one at a time; a request
+// naming more is refused outright, since a retry would only repeat the first.
 const MAX_SUBSCRIPTION_CHANGES = 20;
+// Rows per bulk update: the route binds one parameter per row, under D1's 100.
+const BULK_UPDATE_CHUNK = 80;
 
 /** A subscription row the reader can edit, found by the stream key it's listed under. */
 interface EditableSubscription {
@@ -1159,16 +1160,20 @@ async function findSubscriptions(
   )
     .bind(did, streamKey)
     .all<{ record_uri: string; category: string | null; is_documents: number }>();
-  return rows.results.map((row) => ({
-    rkey: row.record_uri.split('/').pop()!,
-    category: row.category,
-    isDocuments: row.is_documents === 1,
-  }));
+  // A record another app wrote under a key that isn't a TID can't be edited
+  // on the web either; it's left as it is rather than failing the request.
+  return rows.results
+    .map((row) => ({
+      rkey: row.record_uri.split('/').pop()!,
+      category: row.category,
+      isDocuments: row.is_documents === 1,
+    }))
+    .filter((sub) => isValidRkey(sub.rkey));
 }
 
 function labelParam(value: string | null): string | null {
-  const match = value ? /^user\/[^/]+\/label\/(.+)$/.exec(value) : null;
-  return match ? match[1] : null;
+  const stream = value ? parseStreamId(value) : null;
+  return stream?.kind === 'label' ? stream.label : null;
 }
 
 /** A web feed URL from a stream id or a bare URL, or null. */
@@ -1277,6 +1282,14 @@ async function subscriptionFailure(response: Response, what: string): Promise<Re
   return text('Could not change the subscription\n', 502);
 }
 
+/** A spend from the subscription rate limit, or the 429 refusing it. */
+async function subscriptionRateLimit(env: Env, did: string): Promise<Response | null> {
+  const rateLimit = await checkRateLimit(env, did, GREADER_SUBSCRIPTION_RATE_LIMIT_KEY);
+  return rateLimit.allowed
+    ? null
+    : text('Rate limit exceeded\n', 429, { 'Retry-After': String(rateLimit.retryAfter ?? 60) });
+}
+
 /** The session and rate limit a subscription change needs, or the response refusing it. */
 async function subscriptionWriter(
   env: Env,
@@ -1286,13 +1299,34 @@ async function subscriptionWriter(
 ): Promise<SubscriptionWriter | Response> {
   const sessionId = await findSessionIdForDid(env, did);
   if (!sessionId) return subscriptionsSignInAgain();
-  const rateLimit = await checkRateLimit(env, did, GREADER_SUBSCRIPTION_RATE_LIMIT_KEY);
-  if (!rateLimit.allowed) {
-    return text('Rate limit exceeded\n', 429, {
-      'Retry-After': String(rateLimit.retryAfter ?? 60),
-    });
-  }
+  const limited = await subscriptionRateLimit(env, did);
+  if (limited) return limited;
   return new SubscriptionWriter(env, ctx, request, sessionId);
+}
+
+/**
+ * Subscribe, then file and name the feed when it was already there: the web
+ * route leaves an existing (or reactivated parked) row's folder and name as
+ * they were, which is right for the web but drops what an app asked for.
+ */
+async function subscribeWith(
+  writer: SubscriptionWriter,
+  feedUrl: string,
+  opts: { title?: string; category?: string }
+): Promise<Response | null> {
+  const response = await writer.subscribe(feedUrl, opts);
+  const failure = await subscriptionFailure(response, 'subscribe');
+  if (failure || (!opts.title && !opts.category)) return failure;
+  const body = (await response.json().catch(() => null)) as {
+    rkey?: string;
+    alreadySubscribed?: boolean;
+    reactivated?: boolean;
+  } | null;
+  if (!body?.rkey || !(body.alreadySubscribed || body.reactivated)) return null;
+  const changes: { customTitle?: string; category?: string } = {};
+  if (opts.title) changes.customTitle = opts.title;
+  if (opts.category) changes.category = opts.category;
+  return subscriptionFailure(await writer.update(body.rkey, changes), 'subscribe');
 }
 
 /**
@@ -1306,7 +1340,9 @@ async function handleQuickAdd(
   did: string,
   params: URLSearchParams
 ): Promise<Response> {
-  const query = params.get('quicklink') ?? '';
+  // `quickadd` is what NetNewsWire, FreshRSS and Miniflux use; some older
+  // clients sent `quicklink`.
+  const query = params.get('quickadd') ?? params.get('quicklink') ?? '';
   const url = feedUrlParam(query.trim());
   if (!url) return text('Give a web address to subscribe to\n', 400);
   const writer = await subscriptionWriter(env, ctx, request, did);
@@ -1316,16 +1352,28 @@ async function handleQuickAdd(
   try {
     feedUrl = (await new FeedProxyClient(env).discoverFeeds(url)).feeds[0];
   } catch (error) {
-    log.warn('greader_quickadd_discover_failed', {
-      error: error instanceof Error ? error.message : String(error),
-    });
+    const message = error instanceof Error ? error.message : String(error);
+    log.warn('greader_quickadd_discover_failed', { error: message });
+    // A site that refuses the crawler has no feed we can follow; anything else
+    // is our failure, and the app should say so rather than "not found".
+    if (!(error instanceof FeedProxyError && error.blocked)) {
+      return text('Could not look for a feed there; try again\n', 502);
+    }
+    return json({ query, numResults: 0, error: message });
   }
   // No feed found is an answer, not an error: clients read numResults.
   if (!feedUrl) return json({ query, numResults: 0 });
 
   const failure = await subscriptionFailure(await writer.subscribe(feedUrl, {}), 'quickadd');
   if (failure) return failure;
-  const sub = (await loadSubscriptions(env, did)).get(feedUrl);
+  const sub = await env.DB.prepare(
+    `SELECT COALESCE(NULLIF(sc.custom_title, ''), NULLIF(sc.title, ''), f.title) AS title
+       FROM subscriptions_cache sc LEFT JOIN feeds f ON f.feed_url = sc.feed_url
+      WHERE sc.user_did = ? AND sc.feed_url = ? AND sc.active = 1
+      ORDER BY sc.id LIMIT 1`
+  )
+    .bind(did, feedUrl)
+    .first<{ title: string | null }>();
   return json({
     query,
     numResults: 1,
@@ -1352,6 +1400,9 @@ async function handleSubscriptionEdit(
   }
   const streams = params.getAll('s');
   if (streams.length === 0) return text('No subscription given\n', 400);
+  if (streams.length > MAX_SUBSCRIPTION_CHANGES) {
+    return text(`At most ${MAX_SUBSCRIPTION_CHANGES} subscriptions per request\n`, 400);
+  }
   const title = params.get('t')?.trim() || undefined;
   const addLabel = labelParam(params.get('a'));
   const removeLabel = labelParam(params.get('r'));
@@ -1359,16 +1410,20 @@ async function handleSubscriptionEdit(
   const writer = await subscriptionWriter(env, ctx, request, did);
   if (writer instanceof Response) return writer;
 
-  for (const stream of streams.slice(0, MAX_SUBSCRIPTION_CHANGES)) {
+  for (const [index, stream] of streams.entries()) {
     if (action === 'subscribe') {
       const feedUrl = feedUrlParam(stream);
       // Atmosphere publications are followed in Skyreader, which writes their
       // portable follow record; an at:// stream lands here.
       if (!feedUrl) return text('Follow publications in Skyreader\n', 400);
-      const failure = await subscriptionFailure(
-        await writer.subscribe(feedUrl, { title, category: addLabel ?? undefined }),
-        'subscribe'
-      );
+      // Each subscribe crawls the feed, so each spends the allowance; the
+      // first was spent getting the writer.
+      const limited = index > 0 ? await subscriptionRateLimit(env, did) : null;
+      if (limited) return limited;
+      const failure = await subscribeWith(writer, feedUrl, {
+        title,
+        category: addLabel ?? undefined,
+      });
       if (failure) return failure;
       continue;
     }
@@ -1391,9 +1446,6 @@ async function handleSubscriptionEdit(
       if (failure) return failure;
     }
   }
-  if (streams.length > MAX_SUBSCRIPTION_CHANGES) {
-    return text('More to do; retry\n', 503, { 'Retry-After': '1' });
-  }
   return text('OK');
 }
 
@@ -1409,14 +1461,21 @@ async function handleFolderEdit(
   params: URLSearchParams,
   rename: boolean
 ): Promise<Response> {
-  const from = labelParam(params.get('s'));
+  // disable-tag may name several folders; rename-tag names one.
+  const from = (rename ? [params.get('s')] : params.getAll('s')).map(labelParam);
   const to = rename ? labelParam(params.get('dest')) : null;
-  if (!from || (rename && !to)) return text('Unknown folder\n', 400);
+  if (from.length === 0 || from.some((label) => !label) || (rename && !to)) {
+    return text('Unknown folder\n', 400);
+  }
+  if (from.length > MAX_SUBSCRIPTION_CHANGES) {
+    return text(`At most ${MAX_SUBSCRIPTION_CHANGES} folders per request\n`, 400);
+  }
 
   const rows = await env.DB.prepare(
-    `SELECT record_uri FROM subscriptions_cache WHERE user_did = ? AND category = ?`
+    `SELECT record_uri FROM subscriptions_cache
+      WHERE user_did = ?1 AND category IN (${from.map((_, i) => `?${i + 2}`).join(',')})`
   )
-    .bind(did, from)
+    .bind(did, ...from)
     .all<{ record_uri: string }>();
   // The bulk route refuses a whole batch over one malformed key; a row with
   // one can't be edited on the web either, so it's left as it is.
@@ -1427,11 +1486,14 @@ async function handleFolderEdit(
 
   const writer = await subscriptionWriter(env, ctx, request, did);
   if (writer instanceof Response) return writer;
-  const failure = await subscriptionFailure(
-    await writer.updateMany(rkeys, { category: to }),
-    rename ? 'rename-tag' : 'disable-tag'
-  );
-  return failure ?? text('OK');
+  for (const chunk of chunkArray(rkeys, BULK_UPDATE_CHUNK)) {
+    const failure = await subscriptionFailure(
+      await writer.updateMany(chunk, { category: to }),
+      rename ? 'rename-tag' : 'disable-tag'
+    );
+    if (failure) return failure;
+  }
+  return text('OK');
 }
 
 // --- entry point ---------------------------------------------------------------

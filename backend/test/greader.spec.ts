@@ -922,7 +922,7 @@ describe('editing subscriptions', () => {
   it('quick-adds the feed a site advertises', async () => {
     proxyDiscovers([FEED_A]);
     const res = await call('reader/api/0/subscription/quickadd', {
-      form: { quicklink: 'https://example.com/' },
+      form: { quickadd: 'https://example.com/' },
     });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual(
@@ -931,14 +931,43 @@ describe('editing subscriptions', () => {
     expect((await rows()).map((r) => r.feed_url)).toEqual([FEED_A]);
 
     // Adding it again changes nothing.
-    await call('reader/api/0/subscription/quickadd', { form: { quicklink: FEED_A } });
+    await call('reader/api/0/subscription/quickadd', { form: { quickadd: FEED_A } });
     expect(await rows()).toHaveLength(1);
+  });
+
+  it('says when it could not look for a feed, rather than that there is none', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('down', { status: 502 }));
+    const res = await call('reader/api/0/subscription/quickadd', {
+      form: { quickadd: 'https://example.com/' },
+    });
+    expect(res.status).toBe(502);
+    expect(await rows()).toEqual([]);
+  });
+
+  it('files a feed the reader already follows when an app subscribes to it', async () => {
+    proxyDiscovers([]);
+    await addSubscription(DID, FEED_A);
+    const res = await call('reader/api/0/subscription/edit', {
+      form: { ac: 'subscribe', s: `feed/${FEED_A}`, a: 'user/-/label/Tech' },
+    });
+    expect(res.status).toBe(200);
+    expect(await rows()).toEqual([expect.objectContaining({ feed_url: FEED_A, category: 'Tech' })]);
+  });
+
+  it('refuses a request naming too many subscriptions', async () => {
+    const res = await call('reader/api/0/subscription/edit', {
+      form: {
+        ac: 'unsubscribe',
+        s: Array.from({ length: 21 }, (_, i) => `feed/https://x.example/${i}`),
+      },
+    });
+    expect(res.status).toBe(400);
   });
 
   it('answers no results when a site has no feed', async () => {
     proxyDiscovers([]);
     const res = await call('reader/api/0/subscription/quickadd', {
-      form: { quicklink: 'https://example.com/' },
+      form: { quickadd: 'https://example.com/' },
     });
     expect(await res.json()).toEqual(expect.objectContaining({ numResults: 0 }));
     expect(await rows()).toEqual([]);
@@ -986,8 +1015,10 @@ describe('editing subscriptions', () => {
       form: { s: 'user/-/label/Tech', dest: 'user/-/label/Computing' },
     });
     expect((await rows()).map((r) => r.category)).toEqual(['Computing', 'Computing', 'Other']);
-    await call('reader/api/0/disable-tag', { form: { s: 'user/-/label/Computing' } });
-    expect((await rows()).map((r) => r.category)).toEqual([null, null, 'Other']);
+    await call('reader/api/0/disable-tag', {
+      form: { s: ['user/-/label/Computing', 'user/-/label/Other'] },
+    });
+    expect((await rows()).map((r) => r.category)).toEqual([null, null, null]);
   });
 
   it('can rename or drop a followed publication, but not follow one', async () => {
