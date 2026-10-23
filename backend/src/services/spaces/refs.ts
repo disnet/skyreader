@@ -9,8 +9,10 @@
 
 /**
  * The space *type* NSID. A space type is just an NSID naming the modality of the
- * space; the alpha does not require a lexicon document for it (the reference app,
- * bluesky-social/bulletin, ships none for `my.bulletin.board`).
+ * space. The space and record XRPCs need no lexicon document for it, but OAuth
+ * does: a `space:` scope naming this type needs a published `type: "space"`
+ * declaration, which is why the dev sign-in scope uses `space:*` for now
+ * (FINDINGS.md finding 3).
  */
 export const SAVED_SPACE_TYPE = 'app.skyreader.space.saved';
 
