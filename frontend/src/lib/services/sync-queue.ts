@@ -6,6 +6,7 @@ import type {
   MagazineItemSnapshot,
   MagazineParams,
   MagazinePosition,
+  SavedMetadataEdit,
   ShareDraft,
 } from '$lib/types';
 
@@ -56,6 +57,9 @@ export interface SavedPayload {
   publishedAt?: string;
   domain?: string;
   doi?: string;
+  // The reader's edit of the save's metadata: an 'update' carries only this,
+  // and an edit made before the save itself synced rides on its 'create'.
+  metadata?: SavedMetadataEdit;
 }
 
 export interface IntegrationPayload {
@@ -209,6 +213,18 @@ class SyncQueue {
     newPayload: SyncPayload
   ): { operation: SyncOperation; payload: SyncPayload } | null {
     const existingOp = existing.operation;
+
+    // Edits to a save's metadata accumulate: a second offline edit (of another
+    // field) must not drop the first, and an edit of a save still waiting to be
+    // created rides on that create.
+    if (existing.collection === 'saved' && newOperation === 'update' && existingOp !== 'delete') {
+      const prev = JSON.parse(existing.payload) as SavedPayload;
+      const next = newPayload as SavedPayload;
+      return {
+        operation: existingOp,
+        payload: { ...prev, metadata: { ...prev.metadata, ...next.metadata } },
+      };
+    }
 
     // Same key, create -> delete: Remove both (never synced)
     if (existingOp === 'create' && newOperation === 'delete') {
@@ -602,8 +618,8 @@ class SyncQueue {
     payload: SavedPayload
   ): Promise<void> {
     switch (operation) {
-      case 'create':
-        await api.saveFromUrl(payload.url, payload.rkey, {
+      case 'create': {
+        const created = await api.saveFromUrl(payload.url, payload.rkey, {
           fromFeed: payload.fromFeed,
           source: payload.source as 'url' | 'feed' | 'document' | undefined,
           itemGuid: payload.itemGuid,
@@ -617,6 +633,25 @@ class SyncQueue {
           domain: payload.domain,
           doi: payload.doi,
         });
+        // The save landed, so this entry is done whatever the edit does: a
+        // failed edit mustn't replay the create, so it waits as an update of
+        // its own (keyed by rkey, apart from this create's entry). The server
+        // may have filed the save under an existing save's rkey.
+        if (payload.metadata) {
+          const rkey = created.rkey || payload.rkey;
+          await api.updateSaved(rkey, payload.metadata).catch(async (err) => {
+            console.warn('Failed to apply queued edit to a new save, requeueing:', err);
+            await this.enqueue('update', 'saved', rkey, {
+              rkey,
+              url: payload.url,
+              metadata: payload.metadata,
+            });
+          });
+        }
+        break;
+      }
+      case 'update':
+        if (payload.metadata) await api.updateSaved(payload.rkey, payload.metadata);
         break;
       case 'delete':
         if (payload.itemGuid) {

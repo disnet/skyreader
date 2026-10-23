@@ -1,5 +1,5 @@
 import { db, getMetadata, setMetadata } from '$lib/services/db';
-import { safePut, safeBulkPut } from '$lib/services/safeDb.svelte';
+import { safePut, safeBulkPut, safeUpdate } from '$lib/services/safeDb.svelte';
 import {
   api,
   ApiError,
@@ -28,7 +28,7 @@ import { computeContentStats } from '$lib/services/articleMerge';
 import { savedSearchStore } from './savedSearch.svelte';
 import { compareSavedNewestFirst } from '$lib/utils/savedPile';
 import { epubCoverPath } from '$lib/utils/epubContent';
-import type { Article, SavedItem } from '$lib/types';
+import type { Article, SavedItem, SavedMetadataEdit } from '$lib/types';
 
 /**
  * Whether save writes/reads can reach the backend at all.
@@ -526,15 +526,18 @@ function createSavesStore() {
         rkey: noteSave?.rkey ?? rkey,
         uri: result.uri,
         url: saveUrl,
-        title: extracted.title ?? noteSave?.title ?? null,
-        author: extracted.author,
-        description: extracted.description,
+        // The server answers with what it stored, which keeps a field the
+        // reader edited by hand over this extraction's.
+        title:
+          (result.title !== undefined ? result.title : extracted.title) ?? noteSave?.title ?? null,
+        author: result.author !== undefined ? result.author : extracted.author,
+        description: result.description !== undefined ? result.description : extracted.description,
         content: extracted.content,
         contentType: extracted.contentType ?? 'webpage',
         domain: extracted.domain,
         image: extracted.image,
         wordCount,
-        publishedAt: extracted.published,
+        publishedAt: result.publishedAt !== undefined ? result.publishedAt : extracted.published,
         // An upgrade keeps its place in the list: it was saved back then.
         savedAt: noteSave?.savedAt ?? result.savedAt,
         source: 'url',
@@ -992,6 +995,61 @@ function createSavesStore() {
     }
   }
 
+  // The reader's own edit of a save's title, author, description or date.
+  // Applied here at once; the server keeps it over any later re-extraction of
+  // the same save. A rejected edit (an empty title, say) is put back and
+  // rethrown for the editor to show; one that can't reach the server waits in
+  // the sync queue like any other save write.
+  async function editMetadata(rkey: string, edit: SavedMetadataEdit): Promise<void> {
+    const before = articles.find((a) => a.rkey === rkey);
+    if (!before || Object.keys(edit).length === 0) return;
+
+    const changes: Partial<SavedItem> = { ...edit };
+    const apply = async (fields: Partial<SavedItem>) => {
+      articles = articles.map((a) => (a.rkey === rkey ? { ...a, ...fields } : a));
+      rebuildMaps();
+      await safeUpdate(db.saved, rkey, fields).catch(() => {});
+      savedSearchStore.invalidate();
+    };
+    await apply(changes);
+
+    // Under the key a still-unsynced create of this save was queued with (its
+    // guid, for a feed or document save), so the edit rides on that create.
+    const queue = () =>
+      syncQueue.enqueue('update', 'saved', before.itemGuid || rkey, {
+        rkey,
+        url: before.url,
+        metadata: edit,
+      } as SavedPayload);
+
+    if (!canReachBackend()) {
+      await queue();
+      return;
+    }
+    try {
+      const { updatedAt } = await api.updateSaved(rkey, edit);
+      // This device already holds the edit: take the server's stamp so the next
+      // updates pull doesn't re-fetch the body over it.
+      if (updatedAt) await apply({ updatedAt });
+    } catch (err) {
+      // Only a 400 is the server refusing the edit itself. A 404 is a save
+      // whose create hasn't synced yet, a 401 an expired session: both wait.
+      if (err instanceof ApiError && err.status === 400) {
+        const restore: Partial<SavedItem> = {};
+        for (const key of Object.keys(edit) as (keyof SavedMetadataEdit)[]) {
+          restore[key] = before[key] as never;
+        }
+        await apply(restore);
+        throw err;
+      }
+      console.error('Failed to edit saved item, queueing:', err);
+      await queue();
+    }
+  }
+
+  // Which save the details editor (EditSavedDetails, mounted in AppShell) is open on.
+  let editingRkey = $state<string | null>(null);
+
   // The save behind an arbitrary item key — a feed guid, a document record uri,
   // or a url — resolved down the same guid → url → canonical-url ladder that
   // isSaved() answers yes on. Callers that only ask "is this saved?" and
@@ -1021,6 +1079,10 @@ function createSavesStore() {
     if (exact) return exact;
     const key = urlKey(url);
     return key ? savedByUrlKey.get(key) : undefined;
+  }
+
+  function getByRkey(rkey: string): SavedItem | undefined {
+    return articles.find((a) => a.rkey === rkey);
   }
 
   function getByGuid(guid: string): SavedItem | undefined {
@@ -1148,6 +1210,16 @@ function createSavesStore() {
     set pendingOpenKey(key: string | null) {
       pendingOpenKey = key;
     },
+    get editing() {
+      return editingRkey ? (articles.find((a) => a.rkey === editingRkey) ?? null) : null;
+    },
+    openEditor(rkey: string) {
+      editingRkey = rkey;
+    },
+    closeEditor() {
+      editingRkey = null;
+    },
+    editMetadata,
     load,
     saveFromUrl,
     uploadFile,
@@ -1160,6 +1232,7 @@ function createSavesStore() {
     getByUri,
     getByUrl,
     getByGuid,
+    getByRkey,
     getContent,
     prefetchContent,
   };

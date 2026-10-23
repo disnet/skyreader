@@ -157,7 +157,7 @@ export async function collectExport(env: Env, did: string): Promise<ExportDocume
     env.DB.prepare(
       `SELECT id, rkey, record_uri, url, url_normalized, url_key, title, author, description,
               NULL AS content, content_type, domain, image, word_count, published_at,
-              saved_at, created_at, updated_at, source, item_guid, doi,
+              saved_at, created_at, updated_at, source, item_guid, doi, edited_fields,
               CASE WHEN content_type = 'pdf' THEN substr(content, 1, ?) END AS first_page_html
          FROM saved_articles WHERE user_did = ?
         ORDER BY saved_at DESC, id DESC`

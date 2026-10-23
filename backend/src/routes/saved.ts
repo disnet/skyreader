@@ -33,6 +33,12 @@ import {
 import { exactDoi } from '../services/export/identifiers';
 import { findSnapshotImage, snapshotImageUrl } from '../services/archive/snapshot-images';
 import { storeFor } from '../services/saved-file-store';
+import {
+  parseMetadataEdit,
+  unlessEdited,
+  addEditedFields,
+  type EditableColumn,
+} from '../services/saved-metadata';
 
 const COLLECTION = 'app.skyreader.feed.saved';
 
@@ -378,8 +384,9 @@ async function handleMetadataSave(
 // Upgrade an already-saved item's content in place (updateContent flag). Each
 // field only overwrites when the request provides a value — same new-wins
 // COALESCE shape as the backed-save upsert — so a sparse extraction never
-// blanks existing metadata. The rkey and record_uri are unchanged: this is the
-// same save, with better content.
+// blanks existing metadata, and a field the reader edited by hand keeps their
+// value (services/saved-metadata.ts). The rkey and record_uri are unchanged:
+// this is the same save, with better content.
 async function handleContentUpdate(
   env: Env,
   ctx: ExecutionContext,
@@ -389,16 +396,16 @@ async function handleContentUpdate(
 ): Promise<Response> {
   const publishedAt = body.publishedAt ? new Date(body.publishedAt).getTime() : null;
 
-  await env.DB.prepare(
+  const kept = await env.DB.prepare(
     `UPDATE saved_articles SET
-       title = COALESCE(?, title),
-       author = COALESCE(?, author),
-       description = COALESCE(?, description),
+       title = ${unlessEdited('title', 'COALESCE(?, title)')},
+       author = ${unlessEdited('author', 'COALESCE(?, author)')},
+       description = ${unlessEdited('description', 'COALESCE(?, description)')},
        content = COALESCE(?, content),
        domain = COALESCE(?, domain),
        image = COALESCE(?, image),
        word_count = COALESCE(?, word_count),
-       published_at = COALESCE(?, published_at),
+       published_at = ${unlessEdited('published_at', 'COALESCE(?, published_at)')},
        doi = COALESCE(?, doi),
        content_type = CASE
          WHEN ? IS NOT NULL THEN ?
@@ -406,7 +413,8 @@ async function handleContentUpdate(
          ELSE content_type
        END,
        updated_at = ?
-     WHERE id = ? AND user_did = ?`
+     WHERE id = ? AND user_did = ?
+     RETURNING title, author, description, published_at`
   )
     .bind(
       body.title || null,
@@ -427,7 +435,7 @@ async function handleContentUpdate(
       existing.id,
       session.did
     )
-    .run();
+    .first<KeptMetadata>();
   // A new capture of the same save: kept beside the earlier one, not over it.
   ctx.waitUntil(
     captureSnapshot(env, {
@@ -444,9 +452,25 @@ async function handleContentUpdate(
       rkey: existing.rkey,
       uri: existing.record_uri,
       updated: true,
+      // What the save now carries: a field the reader edited kept theirs.
+      ...keptMetadata(kept),
     }),
     { headers: { 'Content-Type': 'application/json' } }
   );
+}
+
+type KeptMetadata = Pick<SavedRow, 'title' | 'author' | 'description' | 'published_at'>;
+
+// A save's stored metadata in response shape, after a write that may have kept
+// the reader's own edits over the request's values. Nothing when no row came back.
+function keptMetadata(row: KeptMetadata | null) {
+  if (!row) return {};
+  return {
+    title: row.title,
+    author: row.author,
+    description: row.description,
+    publishedAt: row.published_at ? new Date(row.published_at).toISOString() : null,
+  };
 }
 
 // The file type a save's body came from, when it came from one. Only 'pdf' and
@@ -591,7 +615,7 @@ async function handleBackedSave(
   // Upsert enrichment (merge onto any stub a poll left) + membership, and clear any
   // tombstone for this URL (a re-save of something just unsaved). record_uri is NULL:
   // a backed save has no app.skyreader.feed.saved export.
-  await env.DB.batch([
+  const batchResults = await env.DB.batch([
     // The upsert moves an existing row to this save's rkey; its snapshots (and
     // their pictures) move with it.
     env.DB.prepare(
@@ -611,9 +635,9 @@ async function handleBackedSave(
        VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(user_did, url_normalized) DO UPDATE SET
          rkey = excluded.rkey,
-         title = COALESCE(excluded.title, title),
-         author = COALESCE(excluded.author, author),
-         description = COALESCE(excluded.description, description),
+         title = ${unlessEdited('title', 'COALESCE(excluded.title, title)')},
+         author = ${unlessEdited('author', 'COALESCE(excluded.author, author)')},
+         description = ${unlessEdited('description', 'COALESCE(excluded.description, description)')},
          content = COALESCE(excluded.content, content),
          -- The type describes the body: when the body above is the one already
          -- stored (this save brought no text, e.g. a failed PDF extraction), so
@@ -623,14 +647,15 @@ async function handleBackedSave(
          domain = COALESCE(excluded.domain, domain),
          image = COALESCE(excluded.image, image),
          word_count = COALESCE(excluded.word_count, word_count),
-         published_at = COALESCE(excluded.published_at, published_at),
+         published_at = ${unlessEdited('published_at', 'COALESCE(excluded.published_at, published_at)')},
          source = excluded.source,
          item_guid = COALESCE(excluded.item_guid, item_guid),
          doi = COALESCE(excluded.doi, doi),
          -- A body landing on an existing row is an in-place edit the client's
          -- cached copy doesn't have (excluded.saved_at is this request's now).
          updated_at = CASE WHEN excluded.content IS NOT NULL THEN excluded.saved_at ELSE updated_at END,
-         saved_at = excluded.saved_at`
+         saved_at = excluded.saved_at
+       RETURNING title, author, description, published_at`
     ).bind(
       session.did,
       body.rkey,
@@ -676,6 +701,8 @@ async function handleBackedSave(
        WHERE user_did = ? AND external_collection = ? AND url_normalized = ?`
     ).bind(session.did, backing.collectionUri, urlNormalized),
   ]);
+  // A re-save onto a row the reader edited keeps their fields; answer with those.
+  const kept = (batchResults[2]?.results?.[0] as KeptMetadata | undefined) ?? null;
   // The upsert above sets the row's rkey to this save's, so the snapshot keys on it.
   ctx.waitUntil(
     captureSnapshot(env, {
@@ -704,6 +731,7 @@ async function handleBackedSave(
       savedAt,
       source,
       itemGuid: body.itemGuid || null,
+      ...keptMetadata(kept),
     }),
     { headers: { 'Content-Type': 'application/json' } }
   );
@@ -1212,12 +1240,14 @@ export async function handleGetSavedBodies(request: Request, env: Env): Promise<
   });
 }
 
-// PATCH /api/saved/:rkey — update mutable fields on a saved item.
-// Currently only the precomputed word count, used by the frontend to backfill
-// old saves that were stored without one (so the read time stops falling back
-// to the short description and showing a misleading "1 min"). D1-only: the
-// word count is a derived display value and isn't part of the PDS record's
-// canonical data, so there's no PDS write here.
+// PATCH /api/saved/:rkey — update mutable fields on a saved item:
+//  - wordCount: the precomputed word count, used by the frontend to backfill old
+//    saves stored without one (so the read time stops falling back to the short
+//    description and showing a misleading "1 min").
+//  - title / author / description / publishedAt: the reader's own edit of the
+//    save's metadata (services/saved-metadata.ts), kept over later extractions.
+// D1-only, like saves themselves. A save backed by Semble or Margin keeps the
+// foreign card's metadata as it was: the edit is the reader's, in Skyreader.
 export async function handleUpdateSaved(request: Request, env: Env): Promise<Response> {
   if (request.method !== 'PATCH') {
     return new Response(JSON.stringify({ error: 'Method not allowed' }), {
@@ -1240,9 +1270,11 @@ export async function handleUpdateSaved(request: Request, env: Env): Promise<Res
     return invalidRkeyResponse();
   }
 
-  let body: { wordCount?: number };
+  let body: Record<string, unknown>;
   try {
-    body = (await request.json()) as { wordCount?: number };
+    const parsed = await request.json();
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error();
+    body = parsed as Record<string, unknown>;
   } catch {
     return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
       status: 400,
@@ -1250,25 +1282,56 @@ export async function handleUpdateSaved(request: Request, env: Env): Promise<Res
     });
   }
 
-  if (
-    body.wordCount == null ||
-    typeof body.wordCount !== 'number' ||
-    !Number.isFinite(body.wordCount) ||
-    body.wordCount < 0
-  ) {
-    return new Response(JSON.stringify({ error: 'Missing or invalid wordCount' }), {
+  const sets: string[] = [];
+  const binds: unknown[] = [];
+
+  if ('wordCount' in body) {
+    const wordCount = body.wordCount;
+    if (typeof wordCount !== 'number' || !Number.isFinite(wordCount) || wordCount < 0) {
+      return new Response(JSON.stringify({ error: 'Missing or invalid wordCount' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    sets.push('word_count = ?');
+    binds.push(Math.round(wordCount));
+  }
+
+  const parsedEdit = parseMetadataEdit(body);
+  if ('error' in parsedEdit) {
+    return new Response(JSON.stringify({ error: parsedEdit.error }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  const edited = Object.keys(parsedEdit.edit) as EditableColumn[];
+
+  if (sets.length === 0 && edited.length === 0) {
+    return new Response(JSON.stringify({ error: 'Nothing to update' }), {
       status: 400,
       headers: { 'Content-Type': 'application/json' },
     });
   }
 
   try {
-    const result = await env.DB.prepare(
-      'UPDATE saved_articles SET word_count = ? WHERE user_did = ? AND rkey = ?'
-    )
-      .bind(Math.round(body.wordCount), session.did, rkey)
-      .run();
+    // A reader's edit is a change other devices (and the search index) have to
+    // pick up, so it stamps updated_at; the word-count backfill alone doesn't.
+    let updatedAt: number | null = null;
+    if (edited.length > 0) {
+      for (const column of edited) {
+        sets.push(`${column} = ?`);
+        binds.push(parsedEdit.edit[column]);
+      }
+      updatedAt = Date.now();
+      sets.push(`edited_fields = ${addEditedFields(edited)}`, 'updated_at = ?');
+      binds.push(updatedAt);
+    }
 
+    const result = await env.DB.prepare(
+      `UPDATE saved_articles SET ${sets.join(', ')} WHERE user_did = ? AND rkey = ?`
+    )
+      .bind(...binds, session.did, rkey)
+      .run();
     if (!result.meta.changes) {
       return new Response(JSON.stringify({ error: 'Not found' }), {
         status: 404,
@@ -1276,9 +1339,13 @@ export async function handleUpdateSaved(request: Request, env: Env): Promise<Res
       });
     }
 
-    return new Response(JSON.stringify({ success: true }), {
-      headers: { 'Content-Type': 'application/json' },
-    });
+    return new Response(
+      JSON.stringify({
+        success: true,
+        ...(updatedAt ? { updatedAt: new Date(updatedAt).toISOString() } : {}),
+      }),
+      { headers: { 'Content-Type': 'application/json' } }
+    );
   } catch (error) {
     console.error('Failed to update saved item:', error);
     return new Response(JSON.stringify({ error: 'Failed to update saved item' }), {

@@ -517,6 +517,31 @@ describe('listBackedSaved — membership ⋈ enrichment ∪ native-only', () => 
     expect(byUrl['https://c.test/z']).toMatchObject({ title: 'Native C' });
   });
 
+  it("keeps a field the reader cleared instead of the card's value", async () => {
+    await env.DB.prepare(
+      `INSERT INTO saved_articles
+         (user_did, rkey, url, url_normalized, title, author, edited_fields, source, saved_at, created_at)
+       VALUES (?, 'rk1', 'https://a.test/x', 'https://a.test/x', 'Mine', NULL, ' title author ', 'url', 100, 100)`
+    )
+      .bind(DID)
+      .run();
+    await env.DB.prepare(
+      `INSERT INTO backed_collection_members
+         (user_did, external_collection, url_normalized, url, external_provider, external_item_uri, external_link_uri, metadata)
+       VALUES (?, ?, 'https://a.test/x', 'https://a.test/x', 'semble', 'at://card/1', 'at://link/1', ?)`
+    )
+      .bind(
+        DID,
+        COLLECTION,
+        JSON.stringify({ title: 'Card', author: 'Card Author', description: 'Card summary' })
+      )
+      .run();
+
+    const [view] = await listBackedSaved(env, DID, BACKING);
+    // Cleared by hand: stays empty. Never edited: still filled from the card.
+    expect(view).toMatchObject({ title: 'Mine', author: null, description: 'Card summary' });
+  });
+
   it('does not double-count a legacy save whose URL is also a collection member', async () => {
     await env.DB.prepare(
       `INSERT INTO saved_articles

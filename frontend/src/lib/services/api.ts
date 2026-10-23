@@ -38,6 +38,7 @@ import type {
   User,
   SavedItem,
   LibrarySource,
+  SavedMetadataEdit,
 } from '$lib/types';
 import { getLinkPostTitle, isLinkPost } from '$lib/utils/linkPost';
 import type { BskySourceKind } from '$lib/utils/bskySources';
@@ -2512,9 +2513,13 @@ class ApiClient {
     });
   }
 
-  // Patch mutable fields on an existing saved item (currently just the
-  // precomputed word count, used to backfill old saves that lack one).
-  async updateSaved(rkey: string, fields: { wordCount?: number }): Promise<{ success: boolean }> {
+  // Patch mutable fields on an existing saved item: the precomputed word count
+  // (backfilling old saves that lack one) and the reader's own edit of its
+  // metadata. A metadata edit answers with the save's new updatedAt.
+  async updateSaved(
+    rkey: string,
+    fields: { wordCount?: number } & SavedMetadataEdit
+  ): Promise<{ success: boolean; updatedAt?: string }> {
     return this.fetch(`/api/saved/${rkey}`, {
       method: 'PATCH',
       body: JSON.stringify(fields),

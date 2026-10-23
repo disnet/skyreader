@@ -104,11 +104,11 @@
   // so the reader offers these wherever it is hosted rather than only on the
   // pages that used to own the picker's state.
   function saveToSemble() {
-    integrationSaveStore.openPicker('semble', extractSembleMetadata(readerItem));
+    integrationSaveStore.openPicker('semble', extractSembleMetadata(shownItem));
   }
 
   function saveToMargin() {
-    integrationSaveStore.openPicker('margin', extractMarginMetadata(readerItem));
+    integrationSaveStore.openPicker('margin', extractMarginMetadata(shownItem));
   }
 
   // Drawing an edge from what you just read. The discussion at the end of the
@@ -117,7 +117,7 @@
   // So it also sits in the reader's own menus, where it never depends on what
   // the Atmosphere happened to return.
   function connectOnSemble() {
-    const data = extractSembleMetadata(readerItem);
+    const data = extractSembleMetadata(shownItem);
     sembleConnectionStore.openFor({
       url: data.url,
       title: data.title,
@@ -294,8 +294,28 @@
   }
   let showOriginalPdf = $derived(Boolean(originalPdfSrc) && pdfViewPref === 'original');
 
+  // A save's metadata as it stands now: the host may hold the row it opened
+  // with, from before the reader edited its details. The body stays the
+  // host's (the store's in-memory rows carry none).
+  // By rkey first (an upload has no guid or url to find it by), then the way
+  // the Shelf actions find it, which follows a re-save under a new rkey.
+  let liveSave = $derived.by(() => {
+    if (readerItem.type !== 'saved') return undefined;
+    const save = readerItem.item;
+    return (
+      savesStore.getByRkey(save.rkey) ??
+      (save.itemGuid ? savesStore.find(save.itemGuid) : undefined) ??
+      (save.url ? savesStore.find(save.url) : undefined)
+    );
+  });
+  let shownItem = $derived.by((): FeedDisplayItem => {
+    if (readerItem.type !== 'saved' || !liveSave) return readerItem;
+    const { title, author, description, publishedAt } = liveSave;
+    return { ...readerItem, item: { ...readerItem.item, title, author, description, publishedAt } };
+  });
+
   // Normalize data from different item types using shared utility
-  let normalized = $derived(normalizeDisplayItem(readerItem, sub));
+  let normalized = $derived(normalizeDisplayItem(shownItem, sub));
   let title = $derived(normalized.title);
   let itemUrl = $derived(normalized.url);
   // Semble and Margin both key on the URL, so an emailed newsletter with no web
@@ -565,7 +585,7 @@
     if (linkPostUrl && readerItem.type === 'document') {
       return linkPostArticle?.author ? `by ${linkPostArticle.author}` : '';
     }
-    return getAuthorLabel(readerItem, authorProfile);
+    return getAuthorLabel(shownItem, authorProfile);
   });
 
   // The bar's subtitle: the most specific source we know — the feed, then the
@@ -1093,6 +1113,15 @@
       });
     }
 
+    if (liveSave) {
+      const rkey = liveSave.rkey;
+      items.push({
+        label: 'Edit details',
+        icon: 'edit',
+        onclick: () => savesStore.openEditor(rkey),
+      });
+    }
+
     if (onRemove) {
       items.push({
         label: deleteConfirming ? 'Confirm delete?' : 'Delete',
@@ -1135,6 +1164,8 @@
     ) {
       return;
     }
+    // The details editor floats over the reader: its keys are its own.
+    if (savesStore.editing) return;
     if (tagMenuOpen) {
       e.stopPropagation();
       return;
@@ -1758,6 +1789,18 @@
                 >
                   <Icon name="link" size={18} />
                   <span>Connect on Semble</span>
+                </button>
+              {/if}
+              {#if liveSave}
+                <button
+                  class="sheet-action-btn"
+                  onclick={() => {
+                    savesStore.openEditor(liveSave!.rkey);
+                    styleSheetOpen = false;
+                  }}
+                >
+                  <Icon name="edit" size={18} />
+                  <span>Edit details</span>
                 </button>
               {/if}
               {#if itemUrl}
