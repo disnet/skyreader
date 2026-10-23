@@ -100,6 +100,12 @@ export interface ExchangeCredentialInput {
   space: string;
   /** The key the credential gets bound to. */
   key: SpaceSigningKey;
+  /**
+   * Proof of which app is asking (see `createClientAttestation`). Optional in the
+   * lexicon; an `#allowList` space refuses a request without one
+   * (`AppNotAuthorized`).
+   */
+  clientAttestation?: string;
   fetchImpl?: typeof fetch;
 }
 
@@ -120,6 +126,7 @@ export async function exchangeSpaceCredential(input: ExchangeCredentialInput): P
       space: input.space,
       credentialKid: input.key.did,
       delegationToken: input.delegationToken,
+      ...(input.clientAttestation ? { clientAttestation: input.clientAttestation } : {}),
     }),
   });
 
@@ -142,6 +149,8 @@ export interface MintCredentialInput {
   authorityPdsUrl: string;
   /** Leg 1 — supplied by the caller because it needs the user's session auth. */
   getDelegationToken: (space: string) => Promise<string>;
+  /** Mints a fresh, single-use client attestation for this exchange, if the app has one. */
+  getClientAttestation?: () => Promise<string>;
   fetchImpl?: typeof fetch;
 }
 
@@ -154,6 +163,7 @@ export async function mintSpaceCredential(input: MintCredentialInput): Promise<S
     delegationToken,
     space: input.space,
     key,
+    clientAttestation: await input.getClientAttestation?.(),
     fetchImpl: input.fetchImpl,
   });
   const exp = jwtExpirySeconds(token);

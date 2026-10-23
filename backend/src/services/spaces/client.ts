@@ -106,6 +106,16 @@ export class SpacesClient {
     return this.call<SpaceView>('GET', `com.atproto.simplespace.getSpace?${params}`);
   }
 
+  /** Replace any of the space's policies or app access; omitted fields are kept. */
+  updateSpace(input: {
+    space: string;
+    readPolicy?: SpacePolicy;
+    writePolicy?: SpacePolicy;
+    appAccess?: SpaceAppAccess;
+  }): Promise<void> {
+    return this.call<void>('POST', 'com.atproto.simplespace.updateSpace', input);
+  }
+
   /** Upsert a member. Replaced `addMember` in the September alpha. */
   putMember(space: string, member: SpaceMember): Promise<void> {
     return this.call<void>('POST', 'com.atproto.simplespace.putMember', { space, ...member });
