@@ -168,24 +168,25 @@ describe('findFollowFeeds', () => {
   });
 });
 
-describe('Sifa profile links', () => {
+describe('links listed on Bluesky and Sifa profiles', () => {
   it('come first, and a listed feed needs no lookup', async () => {
     const follow = {
       did: 'did:plc:pro',
       handle: 'pro.example',
-      sifaLinks: [
+      profileLinks: [
         {
+          source: 'sifa' as const,
           url: 'https://notes.pro.example/',
           feedUrl: 'https://notes.pro.example/rss',
           label: 'Notes',
         },
-        { url: 'https://essays.example/' },
-        { url: 'https://github.com/pro' },
+        { source: 'bluesky' as const, url: 'https://essays.example/' },
+        { source: 'bluesky' as const, url: 'https://github.com/pro' },
       ],
     };
     expect(sites(follow)).toEqual([
       'sifa:notes.pro.example',
-      'sifa:essays.example',
+      'bluesky:essays.example',
       'handle:pro.example',
     ]);
 
@@ -196,7 +197,7 @@ describe('Sifa profile links', () => {
     expect(discover).toHaveBeenCalledWith(['essays.example', 'pro.example']);
     expect(feeds.map((f) => [f.publicationUri, f.name, f.siteSource])).toEqual([
       ['https://notes.pro.example/rss', 'Notes', 'sifa'],
-      ['https://essays.example/feed', 'essays.example', 'sifa'],
+      ['https://essays.example/feed', 'essays.example', 'bluesky'],
     ]);
   });
 });

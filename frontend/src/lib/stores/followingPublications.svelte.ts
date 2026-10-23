@@ -16,8 +16,8 @@ import type { FollowingPublication } from '$lib/types';
 
 /**
  * Discover the writing of the people you follow on Bluesky: standard.site
- * publications on their PDS, and web feeds at their domain handle, the sites
- * on their Sifa profile, or sites linked from their bio. Cached in IndexedDB.
+ * publications on their PDS, and web feeds at their domain handle, the links
+ * on their Bluesky and Sifa profiles, or sites linked from their bio. Cached in IndexedDB.
  *
  *  - The follow graph itself is maintained by services/followGraph.ts (shared
  *    with the reading-rooms scan): cached, refetched on its own TTL, with the
@@ -158,7 +158,7 @@ function createFollowingPublicationsStore() {
 
     const results = await Promise.all(batch.map(scanFollow));
     const found = results.flatMap((r) => r.publications);
-    const withLinks = batch.map((b, i) => ({ ...b, sifaLinks: results[i].sifaLinks }));
+    const withLinks = batch.map((b, i) => ({ ...b, profileLinks: results[i].profileLinks }));
     const scannedDids = batch.map((b) => b.did);
     const scannedSet = new Set(scannedDids);
     // A feed someone else we follow already brought in (two people linking the
@@ -286,14 +286,14 @@ function createFollowingPublicationsStore() {
     hiddenAccounts = hiddenAccounts.filter((a) => a.did !== did);
     if (!follow) return;
 
-    const { publications: found, sifaLinks } = await scanFollow(follow);
+    const { publications: found, profileLinks } = await scanFollow(follow);
     // A feed another account we follow already brought in stays theirs.
     const elsewhere = new Set(
       publications.filter((p) => p.did !== did).map((p) => p.publicationUri)
     );
     const feeds = (
       await findFollowFeeds(
-        [{ ...follow, sifaLinks }],
+        [{ ...follow, profileLinks }],
         found,
         await hostingParents(),
         discoverSites

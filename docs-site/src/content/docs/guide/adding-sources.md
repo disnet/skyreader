@@ -57,7 +57,7 @@ You don't have to be in Skyreader to add to it:
 
 ## Discover
 
-The **Discover** page suggests the writing of the people you follow on Bluesky, on two tabs: their Skyreader linkblogs, and their publications. Publications covers their standard.site publications and the blogs and newsletters Skyreader finds at their sites: the site at a domain handle (someone.com), the websites listed on their [Sifa](https://sifa.id) profile, and sites linked from their Bluesky profile, like a Substack or Ghost blog. Each has a one-tap subscribe. One search covers both tabs, and each tab shows how many match. To stop seeing an account's suggestions, choose **Hide account** on its row.
+The **Discover** page suggests the writing of the people you follow on Bluesky, on two tabs: their Skyreader linkblogs, and their publications. Publications covers their standard.site publications and the blogs and newsletters Skyreader finds at their sites: the site at a domain handle (someone.com), the links on their Bluesky profile and their [Sifa](https://sifa.id) profile, and sites mentioned in their bio, like a Substack or Ghost blog. Each has a one-tap subscribe. One search covers both tabs, and each tab shows how many match. To stop seeing an account's suggestions, choose **Hide account** on its row.
 
 **Manage Sources** shows a few of these suggestions under **Find more**, after your own sources, and so does Home while your library is still empty.
 

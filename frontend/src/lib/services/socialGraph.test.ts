@@ -59,7 +59,9 @@ describe('scanPublications', () => {
 describe('scanFollow', () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it('keeps the blog-like websites on a Sifa profile, with any feed they name', async () => {
+  const PROFILE_LINK = (rkey: string) => `at://${DID}/app.bsky.actor.link/${rkey}`;
+
+  function stub(byCollection: Record<string, unknown>, profile: unknown) {
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString();
       if (url.startsWith('https://plc.directory/')) {
@@ -68,37 +70,68 @@ describe('scanFollow', () => {
           { status: 200 }
         );
       }
-      const collection = new URL(url).searchParams.get('collection');
-      const records =
-        collection === 'id.sifa.profile.externalAccount'
-          ? [
-              {
-                value: { platform: 'id.sifa.defs#platformWebsite', url: 'https://someone.example' },
-              },
-              {
-                value: {
-                  platform: 'id.sifa.defs#platformRss',
-                  url: 'https://blog.example',
-                  feedUrl: 'https://blog.example/feed.xml',
-                  label: 'Blog',
-                },
-              },
-              {
-                value: {
-                  platform: 'id.sifa.defs#platformGithub',
-                  url: 'https://github.com/someone',
-                },
-              },
-              { value: { platform: 'id.sifa.defs#platformWebsite', url: 'javascript:alert(1)' } },
-            ]
-          : [];
+      const params = new URL(url).searchParams;
+      if (url.includes('com.atproto.repo.getRecord')) {
+        return new Response(JSON.stringify(profile), { status: profile ? 200 : 400 });
+      }
+      const records = byCollection[params.get('collection') ?? ''] ?? [];
       return new Response(JSON.stringify({ records }), { status: 200 });
     }) as unknown as typeof fetch;
+  }
 
-    const { sifaLinks } = await scanFollow(FOLLOW);
-    expect(sifaLinks).toEqual([
-      { url: 'https://someone.example', feedUrl: undefined, label: undefined },
-      { url: 'https://blog.example', feedUrl: 'https://blog.example/feed.xml', label: 'Blog' },
+  it('keeps the links a Bluesky profile shows, in its order, then Sifa websites', async () => {
+    stub(
+      {
+        'app.bsky.actor.link': [
+          { uri: PROFILE_LINK('a'), value: { url: 'https://first.example', title: 'Blog' } },
+          { uri: PROFILE_LINK('b'), value: { url: 'https://second.example' } },
+          // Not on the profile: removed from it, so not shown.
+          { uri: PROFILE_LINK('c'), value: { url: 'https://hidden.example' } },
+          { uri: PROFILE_LINK('d'), value: { url: 'javascript:alert(1)' } },
+        ],
+        'id.sifa.profile.externalAccount': [
+          { value: { platform: 'id.sifa.defs#platformWebsite', url: 'https://someone.example' } },
+          {
+            value: {
+              platform: 'id.sifa.defs#platformRss',
+              url: 'https://blog.example',
+              feedUrl: 'https://blog.example/feed.xml',
+              label: 'Blog',
+            },
+          },
+          { value: { platform: 'id.sifa.defs#platformGithub', url: 'https://github.com/someone' } },
+        ],
+      },
+      {
+        value: {
+          links: [
+            { uri: PROFILE_LINK('b'), cid: 'x' },
+            { uri: PROFILE_LINK('d'), cid: 'x' },
+            { uri: PROFILE_LINK('a'), cid: 'x' },
+          ],
+        },
+      }
+    );
+
+    const { profileLinks } = await scanFollow(FOLLOW);
+    expect(profileLinks).toEqual([
+      { source: 'bluesky', url: 'https://second.example', label: undefined },
+      { source: 'bluesky', url: 'https://first.example', label: 'Blog' },
+      { source: 'sifa', url: 'https://someone.example', feedUrl: undefined, label: undefined },
+      {
+        source: 'sifa',
+        url: 'https://blog.example',
+        feedUrl: 'https://blog.example/feed.xml',
+        label: 'Blog',
+      },
     ]);
+  });
+
+  it('skips the link list when the profile shows none', async () => {
+    stub({}, { value: { description: 'no links' } });
+    const { profileLinks } = await scanFollow(FOLLOW);
+    expect(profileLinks).toEqual([]);
+    const calls = (globalThis.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls;
+    expect(calls.some(([u]) => String(u).includes('app.bsky.actor.link'))).toBe(false);
   });
 });

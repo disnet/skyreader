@@ -1,6 +1,7 @@
 // Where the people you follow might write, beyond the standard.site
-// publications on their PDS: the websites they list on a Sifa profile (sifa.id,
-// records on their own PDS, sometimes with the feed URL itself), the site at a
+// publications on their PDS: the links under their Bluesky bio and the websites
+// on a Sifa profile (sifa.id), both records on their own PDS (Sifa's sometimes
+// with the feed URL itself), the site at a
 // domain handle (@someone.com usually serves a blog), and the links in their
 // Bluesky bio (a Substack, a Ghost site, "read my essays at …"). Discover asks the backend to find feeds at these
 // sites (routes/site-feeds.ts, cached per site for everyone) and offers what it
@@ -12,22 +13,22 @@
 
 import type { FollowingPublication } from '$lib/types';
 import { getFaviconUrl } from '$lib/utils/favicon';
-import type { FollowLite, SifaLink } from './socialGraph';
+import type { FollowLite, ProfileLink } from './socialGraph';
 
 export interface SiteCandidate {
   /** What the backend is asked about: a host, or a host and path. */
   site: string;
   /** Where the guess came from, for the row's subtitle. */
-  source: 'handle' | 'profile' | 'sifa';
+  source: 'handle' | 'profile' | ProfileLink['source'];
   /** A feed the person named themselves (on Sifa): no lookup needed. */
   feedUrl?: string;
-  /** Their own name for the site (on Sifa), for the row's title. */
+  /** Their own name for the link, for the row's title. */
   label?: string;
 }
 
 /** A follow as discovery sees it: the cached row plus what their PDS lists. */
 export type FollowForSites = Pick<FollowLite, 'handle' | 'description'> & {
-  sifaLinks?: SifaLink[];
+  profileLinks?: ProfileLink[];
 };
 
 // Handles under these are accounts on a hosting provider, not someone's own
@@ -123,7 +124,9 @@ const COUNTRY_SECOND_LEVEL =
 const PATH_PLATFORMS = ['medium.com', 'write.as'];
 
 const MAX_PROFILE_LINKS = 2;
-const MAX_SIFA_LINKS = 3;
+// Sites taken from the links someone lists on their profiles (a Bluesky
+// profile allows ten, most of them social accounts this filters out anyway).
+const MAX_LISTED_LINKS = 3;
 
 // A URL in plain bio text, with or without its scheme. Bluesky bios are plain
 // text (links are only faceted in posts), so this is a scan, not a parse. The
@@ -192,8 +195,8 @@ function bioLinks(description: string): string[] {
 }
 
 /**
- * The sites worth asking about for one follow: the websites on their Sifa
- * profile (named by them, so the surest), their domain handle, then up to
+ * The sites worth asking about for one follow: the links on their Bluesky and
+ * Sifa profiles (named by them, so the surest), their domain handle, then up to
  * MAX_PROFILE_LINKS other sites linked from their bio.
  */
 export function siteCandidates(
@@ -204,13 +207,13 @@ export function siteCandidates(
   const seen = new Set<string>();
   const handle = follow.handle?.toLowerCase();
 
-  for (const link of follow.sifaLinks ?? []) {
-    if (out.length >= MAX_SIFA_LINKS) break;
+  for (const link of follow.profileLinks ?? []) {
+    if (out.length >= MAX_LISTED_LINKS) break;
     // A listed feed is used as is; a listed site still has to be looked up.
     const site = link.feedUrl ? siteLabel(link.url) : siteOf(link.url);
     if (!site || seen.has(site)) continue;
     seen.add(site);
-    out.push({ site, source: 'sifa', feedUrl: link.feedUrl, label: link.label });
+    out.push({ site, source: link.source, feedUrl: link.feedUrl, label: link.label });
   }
 
   if (handle && !seen.has(handle) && handle.includes('.') && !handle.startsWith('did:')) {
@@ -240,6 +243,7 @@ export function siteCandidates(
 export const SITE_SOURCE_LABEL: Record<SiteCandidate['source'], string> = {
   handle: 'their site',
   profile: 'linked from their profile',
+  bluesky: 'linked from their profile',
   sifa: 'on their Sifa profile',
 };
 
