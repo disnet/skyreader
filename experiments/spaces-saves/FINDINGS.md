@@ -112,14 +112,29 @@ Space refs are `at://{authorityDid}/space/{type}/{skey}` (string format
    earlier version of this file said there is no `space:` scope at all. There is
    — `@atproto/oauth-scopes` has parsed a bare
    `space:<type>?authority=…&skey=…&collection=…&action=…&manage=…` since the
-   August alpha — the reference app just doesn't use it. Whether the hosted
-   alpha's auth server accepts it as a direct request is _unverified_.
+   August alpha — the reference app just doesn't use it. The hosted alpha's auth
+   server accepts it as a direct request _(observed, Oct 22 alpha)_, subject to
+   the declaration lookup in finding 3.
    Actions are `read_self | read | create | update | delete` (`read` implies
    `read_self`; the default is everything but `read_self`); `authority` accepts a
    DID, `self` or `*`, and `skey` defaults to `*`.
 
-3. **The space type needs no lexicon document.** _(observed)_ It is just an NSID.
-   The reference app ships none for `my.bulletin.board`.
+3. **OAuth needs a published space declaration for the space type.** _(observed,
+   Oct 22 alpha)_ An earlier version of this file said the space type needs no
+   lexicon document, since the reference app shipped none for
+   `my.bulletin.board`. That holds for the space and record XRPCs on a password
+   session, but not for OAuth. The auth server's `LexiconManager` resolves every
+   concrete type in a `space:` scope (bare, or expanded from an `include:`
+   permission set) to a published lexicon whose `main` def is
+   `{type: "space", key, name, collections[]}`. If it can't, `/oauth/authorize`
+   redirects back with `invalid_scope` / "Unable to retrieve space declarations"
+   before the sign-in screen. At token issuance it also fills a bare
+   `space:<type>` grant's `collection` from the declaration's `collections`. A
+   wildcard type (`space:*`) skips the lookup. The dev sign-in uses that
+   (`SAVED_SPACE_SCOPE` in `backend/src/config/scopes.ts`) because
+   `app.skyreader.space.saved` isn't published (no
+   `_lexicon.space.skyreader.app` record). Publishing the declaration would let
+   the scope name the type again.
 
 4. **`createSpace` takes no member list.** _(observed)_ Policy and app-access
    only; membership is managed afterwards via `putMember` (`addMember` until the
