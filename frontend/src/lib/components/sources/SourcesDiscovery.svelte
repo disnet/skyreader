@@ -33,6 +33,7 @@
   import SourceList from './SourceList.svelte';
   import SourceSectionHeader from './SourceSectionHeader.svelte';
   import { feedLimitLine } from '$lib/utils/limitCopy';
+  import { SITE_SOURCE_LABEL } from '$lib/services/followSites';
 
   interface Props {
     /** More publications from Atmosphere accounts the reader already subscribes to. */
@@ -80,11 +81,11 @@
     return handle && !handle.startsWith('did:') ? `@${handle}` : did;
   }
 
+  // Every subscription's feedUrl: a publication's at:// URI, or a web feed's URL
+  // (the key a suggestion from people you follow carries for either).
   let subscribedPubUris = $derived(
     new Set(
-      subscriptionsStore.subscriptions
-        .filter((s) => s.sourceType === 'atproto.documents' && s.feedUrl)
-        .map((s) => s.feedUrl as string)
+      subscriptionsStore.subscriptions.filter((s) => s.feedUrl).map((s) => s.feedUrl as string)
     )
   );
 
@@ -110,7 +111,8 @@
 
   // People the reader follows, in the order most likely to be wanted: more from
   // authors already here, then their own standard.site follows, then friends'
-  // linkblogs, then publications found across the follow graph. One URI, one row.
+  // linkblogs, then publications and blogs found across the follow graph. One
+  // URI, one row.
   let fromFollows = $derived.by((): Suggestion[] => {
     const out: Suggestion[] = [];
     const seen = new Set<string>(subscribedPubUris);
@@ -159,14 +161,18 @@
       });
     }
 
+    // Their standard.site publications and the feeds at their sites.
     for (const p of followingPublicationsStore.publications) {
+      const feed = p.kind === 'feed';
       push({
         key: p.publicationUri,
         title: p.name?.trim() || formatUrl(p.url),
-        subtitle: `${at(p.handle, p.did)} · ${formatUrl(p.url)}`,
+        subtitle: feed
+          ? `${at(p.handle, p.did)} · ${SITE_SOURCE_LABEL[p.siteSource ?? 'handle']}`
+          : `${at(p.handle, p.did)} · ${formatUrl(p.url)}`,
         iconUrl: p.iconUrl || p.avatar || null,
         iconRound: !p.iconUrl,
-        fallbackIcon: 'standard-site',
+        fallbackIcon: feed ? 'rss' : 'standard-site',
         add: () => followingPublicationsStore.subscribe(p),
       });
     }

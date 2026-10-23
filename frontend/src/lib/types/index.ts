@@ -850,7 +850,15 @@ export interface FollowingPublication {
   handle: string | null;
   displayName?: string;
   avatar?: string;
-  // The publication record to subscribe to (at://did/site.standard.publication/<rkey>).
+  // What kind of source this is: a standard.site publication on their PDS, or a
+  // web feed found at their domain handle, a link on their Bluesky or Sifa
+  // profile, or a site linked from their bio.
+  // Absent on rows cached before web feeds were discovered: a publication.
+  kind?: 'publication' | 'feed';
+  // Where the feed's site came from (kind 'feed' only).
+  siteSource?: 'handle' | 'profile' | 'bluesky' | 'sifa';
+  // The row's key: the publication record to subscribe to
+  // (at://did/site.standard.publication/<rkey>), or for kind 'feed' the feed URL.
   publicationUri: string;
   name: string;
   description?: string;

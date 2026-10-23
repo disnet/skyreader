@@ -32,10 +32,18 @@ export interface FollowLite {
   handle: string | null;
   displayName?: string;
   avatar?: string;
+  // Their Bluesky bio: where links to their blog or newsletter usually are.
+  description?: string;
 }
 
 interface GetFollowsResponse {
-  follows?: Array<{ did: string; handle?: string; displayName?: string; avatar?: string }>;
+  follows?: Array<{
+    did: string;
+    handle?: string;
+    displayName?: string;
+    avatar?: string;
+    description?: string;
+  }>;
   cursor?: string;
 }
 
@@ -67,6 +75,9 @@ export async function fetchFollowsPage(
     handle: f.handle ?? null,
     displayName: f.displayName,
     avatar: f.avatar,
+    // Always a string once fetched, so a row cached before bios were kept
+    // (undefined) can be told from one with an empty bio.
+    description: f.description ?? '',
   }));
   return { follows, cursor: data.cursor };
 }
@@ -115,39 +126,28 @@ interface PublicationRecord {
   // Skyreader's provenance marker on the publications it creates.
   skyreaderLinkblog?: string;
 }
-interface ListRecordsResponse {
-  records?: Array<{ uri: string; value: PublicationRecord }>;
-}
-
 function rkeyOf(uri: string): string {
   return uri.split('/').pop() || '';
 }
 
-/**
- * List one followed account's standard.site publications straight from their
- * PDS. Skips the account's Skyreader linkblog. Returns [] on any
- * failure (unresolved PDS, CORS block, network error) — never throws.
- */
-export async function scanPublications(follow: FollowLite): Promise<FollowingPublication[]> {
-  const pdsUrl = await resolvePdsUrl(follow.did);
-  if (!pdsUrl) return [];
-
-  let data: ListRecordsResponse | null = null;
+async function listRecords<T>(pdsUrl: string, did: string, collection: string): Promise<T[]> {
   try {
-    const params = new URLSearchParams({
-      repo: follow.did,
-      collection: PUBLICATION_COLLECTION,
-      limit: '100',
-    });
+    const params = new URLSearchParams({ repo: did, collection, limit: '100' });
     const res = await fetch(`${pdsUrl}/xrpc/com.atproto.repo.listRecords?${params}`);
-    if (res.ok) data = (await res.json()) as ListRecordsResponse;
+    if (!res.ok) return [];
+    return ((await res.json()) as { records?: T[] }).records ?? [];
   } catch (e) {
-    console.error(`[socialGraph] listRecords failed for ${follow.did}:`, e);
+    console.error(`[socialGraph] listRecords ${collection} failed for ${did}:`, e);
+    return [];
   }
-  if (!data?.records) return [];
+}
 
+function publicationsOf(
+  follow: FollowLite,
+  records: Array<{ uri: string; value: PublicationRecord }>
+): FollowingPublication[] {
   const out: FollowingPublication[] = [];
-  for (const record of data.records) {
+  for (const record of records) {
     const value = record.value || {};
     if (isSkyreaderLinkblog(record.uri, value)) continue;
 
@@ -169,4 +169,120 @@ export async function scanPublications(follow: FollowLite): Promise<FollowingPub
     });
   }
   return out;
+}
+
+/**
+ * A website someone lists on their own profile, as a record on their PDS:
+ *  - `bluesky`: the links under a Bluesky bio, `app.bsky.actor.link` records
+ *    that the profile record's `links` lists (in display order; a record it
+ *    doesn't list isn't shown, so isn't kept).
+ *  - `sifa`: `id.sifa.profile.externalAccount` records from a Sifa profile
+ *    (sifa.id, a professional profile on the Atmosphere), only the kinds that
+ *    can be a blog (not a GitHub or LinkedIn account), with any feed they name.
+ */
+export interface ProfileLink {
+  source: 'bluesky' | 'sifa';
+  url: string;
+  feedUrl?: string;
+  label?: string;
+}
+
+const BSKY_LINK_COLLECTION = 'app.bsky.actor.link';
+const SIFA_LINK_COLLECTION = 'id.sifa.profile.externalAccount';
+const SIFA_BLOG_PLATFORMS = new Set([
+  'id.sifa.defs#platformRss',
+  'id.sifa.defs#platformWebsite',
+  'id.sifa.defs#platformOther',
+]);
+
+const isWeb = (u: unknown): u is string => typeof u === 'string' && /^https?:\/\//i.test(u);
+const labelOf = (l: unknown): string | undefined =>
+  typeof l === 'string' ? l.trim() || undefined : undefined;
+
+interface SifaLinkRecord {
+  value?: { platform?: string; url?: string; feedUrl?: string; label?: string };
+}
+
+function sifaLinksOf(records: SifaLinkRecord[]): ProfileLink[] {
+  const out: ProfileLink[] = [];
+  for (const { value } of records) {
+    if (!value?.platform || !SIFA_BLOG_PLATFORMS.has(value.platform) || !isWeb(value.url)) continue;
+    out.push({
+      source: 'sifa',
+      url: value.url,
+      feedUrl: isWeb(value.feedUrl) ? value.feedUrl : undefined,
+      label: labelOf(value.label),
+    });
+  }
+  return out;
+}
+
+interface BskyLinkRecord {
+  uri: string;
+  value?: { url?: string; title?: string };
+}
+
+async function bskyLinksOf(pdsUrl: string, did: string): Promise<ProfileLink[]> {
+  // Cheap check first: most profiles have no links, and then there's no list
+  // to read.
+  let shown: string[] = [];
+  try {
+    const params = new URLSearchParams({
+      repo: did,
+      collection: 'app.bsky.actor.profile',
+      rkey: 'self',
+    });
+    const res = await fetch(`${pdsUrl}/xrpc/com.atproto.repo.getRecord?${params}`);
+    if (!res.ok) return [];
+    const profile = (await res.json()) as { value?: { links?: Array<{ uri?: unknown }> } };
+    const links = profile.value?.links;
+    if (!Array.isArray(links)) return [];
+    shown = links.map((l) => l?.uri).filter((u): u is string => typeof u === 'string');
+  } catch (e) {
+    console.error(`[socialGraph] profile read failed for ${did}:`, e);
+    return [];
+  }
+  if (shown.length === 0) return [];
+
+  const byUri = new Map(
+    (await listRecords<BskyLinkRecord>(pdsUrl, did, BSKY_LINK_COLLECTION)).map((r) => [r.uri, r])
+  );
+  const out: ProfileLink[] = [];
+  for (const uri of shown) {
+    const value = byUri.get(uri)?.value;
+    if (!isWeb(value?.url)) continue;
+    out.push({ source: 'bluesky', url: value.url, label: labelOf(value.title) });
+  }
+  return out;
+}
+
+/**
+ * Read one followed account's PDS for what discovery needs: their standard.site
+ * publications (minus their Skyreader linkblog) and the websites on their
+ * Bluesky and Sifa profiles. All empty on any failure (unresolved PDS, CORS
+ * block, network error) — never throws.
+ */
+export async function scanFollow(
+  follow: FollowLite
+): Promise<{ publications: FollowingPublication[]; profileLinks: ProfileLink[] }> {
+  const pdsUrl = await resolvePdsUrl(follow.did);
+  if (!pdsUrl) return { publications: [], profileLinks: [] };
+  const [publications, bsky, sifa] = await Promise.all([
+    listRecords<{ uri: string; value: PublicationRecord }>(
+      pdsUrl,
+      follow.did,
+      PUBLICATION_COLLECTION
+    ),
+    bskyLinksOf(pdsUrl, follow.did),
+    listRecords<SifaLinkRecord>(pdsUrl, follow.did, SIFA_LINK_COLLECTION),
+  ]);
+  return {
+    publications: publicationsOf(follow, publications),
+    profileLinks: [...bsky, ...sifaLinksOf(sifa)],
+  };
+}
+
+/** Just the standard.site publications of one followed account (see scanFollow). */
+export async function scanPublications(follow: FollowLite): Promise<FollowingPublication[]> {
+  return (await scanFollow(follow)).publications;
 }
