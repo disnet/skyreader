@@ -118,6 +118,9 @@ const RATE_LIMITS: Record<string, RateLimitConfig> = {
   // each (routes/greader.ts), so a client pushing its whole starred set
   // catches up in a few minutes without unbounded writes.
   '/api/greader:star': { limit: 20, windowMs: 60000 },
+  // Subscribing, unsubscribing and folder changes from an app, each through
+  // the web app's subscription routes; a subscribe also crawls the feed.
+  '/api/greader:subscription': { limit: 20, windowMs: 60000 },
 
   // PDS sync operations (allow retries for hasMore batching)
   '/api/sync/full': { limit: 20, windowMs: 300000 },

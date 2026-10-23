@@ -1,5 +1,5 @@
 import { env, createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   DOC_ID_BASE,
   handleGReader,
@@ -56,7 +56,7 @@ async function addSubscription(
   )
     .bind(
       did,
-      `at://${did}/app.skyreader.feed.subscription/${Math.random().toString(36).slice(2)}`,
+      `at://${did}/app.skyreader.feed.subscription/${Math.random().toString(36).slice(2).padEnd(13, '0')}`,
       feedUrl,
       opts.title ?? 'Feed',
       opts.sourceType ?? null,
@@ -266,11 +266,6 @@ describe('subscriptions', () => {
       tags: Array<{ id: string }>;
     };
     expect(tags.tags.map((t) => t.id)).toContain('user/-/label/Tech');
-  });
-
-  it('leaves subscription editing to Skyreader', async () => {
-    const res = await call('reader/api/0/subscription/quickadd', { form: { quickadd: FEED_B } });
-    expect(res.status).toBe(501);
   });
 });
 
@@ -884,6 +879,168 @@ describe('standard.site documents', () => {
     expect(documentHtml({ textContent: 'First\n\nSecond <x>' }, AUTHOR)).toBe(
       '<p>First</p>\n<p>Second &lt;x&gt;</p>'
     );
+  });
+});
+
+describe('editing subscriptions', () => {
+  beforeEach(async () => {
+    await env.DB.prepare(
+      `INSERT INTO sessions (session_id, did, handle, pds_url, access_token, refresh_token, dpop_private_key, expires_at, granted_scopes)
+       VALUES ('greader-session', ?, ?, 'https://pds.test', 'tok', 'rtok', '{}', ?, ?)`
+    )
+      .bind(DID, HANDLE, Date.now() + 3_600_000, GRANULAR_SCOPES)
+      .run();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /** The feed proxy finds `feeds` at any address; every other fetch fails. */
+  function proxyDiscovers(feeds: string[]) {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url.includes('/discover')) return Response.json({ feeds, standardSites: [] });
+      return new Response('offline', { status: 503 });
+    });
+  }
+
+  async function rows() {
+    const result = await env.DB.prepare(
+      `SELECT feed_url, title, custom_title, category FROM subscriptions_cache
+        WHERE user_did = ? ORDER BY id`
+    )
+      .bind(DID)
+      .all<{
+        feed_url: string;
+        title: string | null;
+        custom_title: string | null;
+        category: string | null;
+      }>();
+    return result.results;
+  }
+
+  it('quick-adds the feed a site advertises', async () => {
+    proxyDiscovers([FEED_A]);
+    const res = await call('reader/api/0/subscription/quickadd', {
+      form: { quicklink: 'https://example.com/' },
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(
+      expect.objectContaining({ numResults: 1, streamId: `feed/${FEED_A}` })
+    );
+    expect((await rows()).map((r) => r.feed_url)).toEqual([FEED_A]);
+
+    // Adding it again changes nothing.
+    await call('reader/api/0/subscription/quickadd', { form: { quicklink: FEED_A } });
+    expect(await rows()).toHaveLength(1);
+  });
+
+  it('answers no results when a site has no feed', async () => {
+    proxyDiscovers([]);
+    const res = await call('reader/api/0/subscription/quickadd', {
+      form: { quicklink: 'https://example.com/' },
+    });
+    expect(await res.json()).toEqual(expect.objectContaining({ numResults: 0 }));
+    expect(await rows()).toEqual([]);
+  });
+
+  it('subscribes, renames, files and unsubscribes with subscription/edit', async () => {
+    proxyDiscovers([]);
+    const subscribe = await call('reader/api/0/subscription/edit', {
+      form: { ac: 'subscribe', s: `feed/${FEED_A}`, t: 'Feed A', a: 'user/-/label/Tech' },
+    });
+    expect(subscribe.status).toBe(200);
+    expect(await rows()).toEqual([
+      expect.objectContaining({ feed_url: FEED_A, title: 'Feed A', category: 'Tech' }),
+    ]);
+
+    await call('reader/api/0/subscription/edit', {
+      form: { ac: 'edit', s: `feed/${FEED_A}`, t: 'Renamed', a: 'user/-/label/News' },
+    });
+    expect(await rows()).toEqual([
+      expect.objectContaining({ custom_title: 'Renamed', category: 'News' }),
+    ]);
+
+    // Taking it out of a folder it isn't in leaves it be; out of its own clears it.
+    await call('reader/api/0/subscription/edit', {
+      form: { ac: 'edit', s: `feed/${FEED_A}`, r: 'user/-/label/Tech' },
+    });
+    expect((await rows())[0].category).toBe('News');
+    await call('reader/api/0/subscription/edit', {
+      form: { ac: 'edit', s: `feed/${FEED_A}`, r: 'user/-/label/News' },
+    });
+    expect((await rows())[0].category).toBeNull();
+
+    const unsubscribe = await call('reader/api/0/subscription/edit', {
+      form: { ac: 'unsubscribe', s: `feed/${FEED_A}` },
+    });
+    expect(unsubscribe.status).toBe(200);
+    expect(await rows()).toEqual([]);
+  });
+
+  it('renames and removes folders', async () => {
+    await addSubscription(DID, FEED_A, { category: 'Tech' });
+    await addSubscription(DID, FEED_B, { category: 'Tech' });
+    await addSubscription(DID, FEED_OTHER, { category: 'Other' });
+    await call('reader/api/0/rename-tag', {
+      form: { s: 'user/-/label/Tech', dest: 'user/-/label/Computing' },
+    });
+    expect((await rows()).map((r) => r.category)).toEqual(['Computing', 'Computing', 'Other']);
+    await call('reader/api/0/disable-tag', { form: { s: 'user/-/label/Computing' } });
+    expect((await rows()).map((r) => r.category)).toEqual([null, null, 'Other']);
+  });
+
+  it('can rename or drop a followed publication, but not follow one', async () => {
+    const author = 'did:plc:writer1';
+    await env.DB.prepare(
+      `INSERT INTO subscriptions_cache (user_did, record_uri, feed_url, title, source_type, subject_did, active)
+       VALUES (?, ?, '', 'Writer', 'atproto.documents', ?, 1)`
+    )
+      .bind(DID, `at://${DID}/app.skyreader.feed.subscription/3docsub0000aa`, author)
+      .run();
+    await call('reader/api/0/subscription/edit', {
+      form: { ac: 'edit', s: `feed/at://${author}`, t: 'My writer' },
+    });
+    expect((await rows())[0].custom_title).toBe('My writer');
+
+    const follow = await call('reader/api/0/subscription/edit', {
+      form: { ac: 'subscribe', s: 'feed/at://did:plc:someone' },
+    });
+    expect(follow.status).toBe(400);
+
+    await call('reader/api/0/subscription/edit', {
+      form: { ac: 'unsubscribe', s: `feed/at://${author}` },
+    });
+    expect(await rows()).toEqual([]);
+  });
+
+  it("only touches the reader's own subscriptions", async () => {
+    await addSubscription(OTHER_DID, FEED_A, { category: 'Tech' });
+    await call('reader/api/0/subscription/edit', {
+      form: { ac: 'unsubscribe', s: `feed/${FEED_A}` },
+    });
+    await call('reader/api/0/disable-tag', { form: { s: 'user/-/label/Tech' } });
+    const other = await env.DB.prepare(
+      'SELECT category FROM subscriptions_cache WHERE user_did = ?'
+    )
+      .bind(OTHER_DID)
+      .all<{ category: string }>();
+    expect(other.results).toEqual([{ category: 'Tech' }]);
+  });
+
+  it('needs a Skyreader session, and then changes nothing', async () => {
+    await env.DB.prepare('DELETE FROM sessions WHERE did = ?').bind(DID).run();
+    await addSubscription(DID, FEED_A);
+    const res = await call('reader/api/0/subscription/edit', {
+      form: { ac: 'unsubscribe', s: `feed/${FEED_A}` },
+    });
+    expect(res.status).toBe(403);
+    expect(await rows()).toHaveLength(1);
+  });
+
+  it('takes changes only by POST', async () => {
+    const res = await call('reader/api/0/subscription/edit?ac=unsubscribe&s=feed/x');
+    expect(res.status).toBe(405);
   });
 });
 
