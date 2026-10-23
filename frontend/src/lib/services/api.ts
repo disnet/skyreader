@@ -1716,6 +1716,24 @@ class ApiClient {
     );
   }
 
+  /** Add several saves at once, in order. All or nothing past the 2,000-item cap. */
+  async addManyToShelfCollection(
+    id: string,
+    rkeys: string[]
+  ): Promise<{ success: boolean; added: number }> {
+    return this.fetch(`/api/shelf/collections/${encodeURIComponent(id)}/items`, {
+      method: 'POST',
+      body: JSON.stringify({ rkeys }),
+    });
+  }
+
+  async removeManyFromShelfCollection(id: string, rkeys: string[]): Promise<{ success: boolean }> {
+    return this.fetch(`/api/shelf/collections/${encodeURIComponent(id)}/items`, {
+      method: 'DELETE',
+      body: JSON.stringify({ rkeys }),
+    });
+  }
+
   /** Set the order of the collections themselves (their ids, top first). */
   async reorderShelfCollections(ids: string[]): Promise<{ success: boolean }> {
     return this.fetch('/api/shelf/collections', {

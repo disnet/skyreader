@@ -52,15 +52,16 @@ Tags stay what they are: loose, cross-cutting labels that also filter the Saved 
 
 API (`backend/src/routes/shelf.ts`, all session-only, all scoped to the caller's DID):
 
-| Method   | Path                                     | Notes                                            |
-| -------- | ---------------------------------------- | ------------------------------------------------ |
-| `GET`    | `/api/shelf/collections`                 | Every collection with its members, in order      |
-| `POST`   | `/api/shelf/collections`                 | `{id, name, description?}`; idempotent on `id`   |
-| `PATCH`  | `/api/shelf/collections/:id`             | `{name?, description?, position?}`               |
-| `DELETE` | `/api/shelf/collections/:id`             | Removes memberships too; the saves are untouched |
-| `POST`   | `/api/shelf/collections/:id/items`       | `{rkey}`; appends; idempotent                    |
-| `DELETE` | `/api/shelf/collections/:id/items/:rkey` | Idempotent                                       |
-| `PUT`    | `/api/shelf/collections/:id/items`       | `{rkeys}`; named first, unnamed keep their order |
+| Method   | Path                                     | Notes                                                                               |
+| -------- | ---------------------------------------- | ----------------------------------------------------------------------------------- |
+| `GET`    | `/api/shelf/collections`                 | Every collection with its members, in order                                         |
+| `POST`   | `/api/shelf/collections`                 | `{id, name, description?}`; idempotent on `id`                                      |
+| `PATCH`  | `/api/shelf/collections/:id`             | `{name?, description?, position?}`                                                  |
+| `DELETE` | `/api/shelf/collections/:id`             | Removes memberships too; the saves are untouched                                    |
+| `POST`   | `/api/shelf/collections/:id/items`       | `{rkey}` or `{rkeys}`; appends; idempotent; a bulk add past the cap adds none (409) |
+| `DELETE` | `/api/shelf/collections/:id/items`       | `{rkeys}`; bulk remove; idempotent                                                  |
+| `DELETE` | `/api/shelf/collections/:id/items/:rkey` | Idempotent                                                                          |
+| `PUT`    | `/api/shelf/collections/:id/items`       | `{rkeys}`; named first, unnamed keep their order                                    |
 
 Limits: 200 collections, 2,000 items each, 100-char names, 1,000-char descriptions. Deleting a save
 (`DELETE /api/saved/:rkey`, `/by-guid/`) drops its memberships. A member whose save disappears any

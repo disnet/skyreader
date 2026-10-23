@@ -9,6 +9,7 @@
   import PopoverMenu from '$lib/components/PopoverMenu.svelte';
   import LibraryChip from '$lib/components/library/LibraryChip.svelte';
   import ConnectionsBadge from '$lib/components/library/ConnectionsBadge.svelte';
+  import SelectCheck from '$lib/components/library/SelectCheck.svelte';
   import { savedConnectionsStore } from '$lib/stores/savedConnections.svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import { savedCoverUrl } from '$lib/services/api';
@@ -33,6 +34,10 @@
     onOpen: () => void;
     /** Archive it in the Queue, or move it back to the inbox. It stays on the Shelf either way. */
     onToggleArchive: (archived: boolean) => void;
+    /** Select mode: a tap toggles the item instead of opening it. */
+    selecting?: boolean;
+    selected?: boolean;
+    onToggleSelect?: () => void;
   }
 
   let {
@@ -45,7 +50,15 @@
     isLast = false,
     onOpen,
     onToggleArchive,
+    selecting = false,
+    selected = false,
+    onToggleSelect,
   }: Props = $props();
+
+  function activate() {
+    if (selecting) onToggleSelect?.();
+    else onOpen();
+  }
 
   let save = $derived(entry.save);
   let title = $derived(decodeEntities(save.title || '') || save.domain || save.url || 'Untitled');
@@ -142,10 +155,11 @@
 {/snippet}
 
 {#if view === 'grid'}
-  <article class="shelf-card" class:menu-open={menuOpen}>
+  <article class="shelf-card" class:menu-open={menuOpen} class:selected>
     <!-- The cover repeats the title button below it, so it's one tab stop and
          one name, not two. -->
-    <button class="cover-btn" onclick={onOpen} tabindex="-1" aria-hidden="true">
+    <button class="cover-btn" class:selecting onclick={activate} tabindex="-1" aria-hidden="true">
+      {#if selecting}<span class="cover-check"><SelectCheck checked={selected} /></span>{/if}
       {#if image && !imageFailed}
         <img
           class="cover-img"
@@ -168,7 +182,9 @@
       {/if}
     </button>
     <div class="card-body">
-      <button class="card-title" onclick={onOpen}>{title}</button>
+      <button class="card-title" onclick={activate} aria-pressed={selecting ? selected : undefined}
+        >{title}</button
+      >
       <div class="card-meta">
         <span class="kind">{SHELF_KIND_LABEL[kind]}</span>
         {#if byline}<span class="byline">{byline}</span>{/if}
@@ -179,16 +195,22 @@
           {#if archived}{@render archivedChip()}{/if}
         </div>
       {/if}
-      <div class="card-menu">
-        <PopoverMenu items={menuItems} bind:open={menuOpen} />
-      </div>
+      {#if !selecting}
+        <div class="card-menu">
+          <PopoverMenu items={menuItems} bind:open={menuOpen} />
+        </div>
+      {/if}
     </div>
   </article>
 {:else}
-  <article class="row" class:menu-open={menuOpen}>
-    <button class="row-main" onclick={onOpen}>
+  <article class="row" class:menu-open={menuOpen} class:selected>
+    <button class="row-main" onclick={activate} aria-pressed={selecting ? selected : undefined}>
       <span class="row-icon" aria-hidden="true">
-        <Icon name={kind === 'article' ? 'file-text' : 'book-open'} size={16} />
+        {#if selecting}
+          <SelectCheck checked={selected} />
+        {:else}
+          <Icon name={kind === 'article' ? 'file-text' : 'book-open'} size={16} />
+        {/if}
       </span>
       <span class="row-text">
         <span class="row-title">{title}</span>
@@ -210,9 +232,11 @@
         </span>
       </span>
     </button>
-    <div class="row-menu">
-      <PopoverMenu items={menuItems} bind:open={menuOpen} />
-    </div>
+    {#if !selecting}
+      <div class="row-menu">
+        <PopoverMenu items={menuItems} bind:open={menuOpen} />
+      </div>
+    {/if}
   </article>
 {/if}
 
@@ -315,6 +339,28 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  /* Top right, with the typographic cover's title stepping aside for it. */
+  .cover-check {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    z-index: 1;
+    display: flex;
+  }
+
+  .cover-btn.selecting .cover-type {
+    padding-right: 2rem;
+  }
+
+  .shelf-card.selected .cover-btn {
+    outline: 2px solid var(--color-primary);
+    outline-offset: -1px;
+  }
+
+  .row.selected {
+    background: var(--color-sidebar-active);
   }
 
   .progress {

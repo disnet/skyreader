@@ -1973,6 +1973,11 @@ function createFeedViewStore() {
     get savedItems(): FeedDisplayItem[] {
       return isSavedView ? savedItemsAll.slice(0, loadedArticleCount) : [];
     },
+    /** Every row the saved view would show, not just the pages loaded so far:
+     *  what the Library's Select all covers. */
+    get allSavedItems(): FeedDisplayItem[] {
+      return isSavedView ? savedItemsAll : [];
+    },
     get selectedKey() {
       return selectedKey;
     },

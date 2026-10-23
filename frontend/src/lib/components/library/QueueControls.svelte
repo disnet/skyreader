@@ -6,6 +6,7 @@
   import { onMount } from 'svelte';
   import Icon from '$lib/components/Icon.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
+  import { librarySelection } from '$lib/stores/librarySelection.svelte';
 
   const VIEWS = [
     { value: 'inbox', label: 'Inbox' },
@@ -50,6 +51,8 @@
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && open) {
+        // Taken: closing the menu shouldn't also end select mode.
+        e.preventDefault();
         open = false;
         wrapper?.querySelector<HTMLButtonElement>('.trigger')?.focus();
       }
@@ -64,6 +67,14 @@
 </script>
 
 <div class="queue-controls">
+  {#if librarySelection.available}
+    <button
+      class="trigger select"
+      aria-pressed={librarySelection.active}
+      onclick={() => (librarySelection.active ? librarySelection.end() : librarySelection.start())}
+      >{librarySelection.active ? 'Done' : 'Select'}</button
+    >
+  {/if}
   <div class="menu-wrap" bind:this={wrapper}>
     <button
       class="trigger"
@@ -126,6 +137,7 @@
     display: flex;
     align-items: center;
     justify-content: flex-end;
+    gap: 0.5rem;
     margin-bottom: 0.5rem;
   }
 
@@ -162,6 +174,11 @@
 
   .trigger :global(svg) {
     color: var(--color-text-secondary);
+  }
+
+  .trigger.select[aria-pressed='true'] {
+    border-color: var(--color-primary);
+    color: var(--color-primary);
   }
 
   .dot,

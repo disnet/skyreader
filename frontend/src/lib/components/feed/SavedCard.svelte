@@ -34,6 +34,8 @@
   import { SHELF_KIND_LABEL, shelfKind } from '$lib/utils/shelf';
   import LibraryChip from '$lib/components/library/LibraryChip.svelte';
   import ConnectionsBadge from '$lib/components/library/ConnectionsBadge.svelte';
+  import SelectCheck from '$lib/components/library/SelectCheck.svelte';
+  import { saveForRow } from '$lib/stores/librarySelection.svelte';
   import { savedConnectionsStore } from '$lib/stores/savedConnections.svelte';
   import { isFailedSaveBody } from '$lib/utils/saveAnywhere';
 
@@ -45,6 +47,9 @@
     onRemove,
     onHover,
     matchSnippet,
+    selecting = false,
+    checked = false,
+    onToggleSelect,
   }: {
     displayItem: FeedDisplayItem;
     /** A saved search's match: the passage it matched on, matches marked. */
@@ -54,7 +59,16 @@
     onArchive?: () => void;
     onRemove?: () => void;
     onHover?: () => void;
+    /** The Library's select mode: a tap toggles the row (when it's a save) instead of opening it. */
+    selecting?: boolean;
+    checked?: boolean;
+    onToggleSelect?: () => void;
   } = $props();
+
+  function activate() {
+    if (selecting) onToggleSelect?.();
+    else onOpen?.();
+  }
 
   // Normalize data across item types
   let itemKey = $derived(displayItem.key);
@@ -381,6 +395,8 @@
   const SWIPE_THRESHOLD = 60;
 
   function handleTouchStart(e: TouchEvent) {
+    // Select mode is all taps: no swipe-for-actions under it.
+    if (selecting) return;
     touchStartX = e.touches[0].clientX;
     touchStartY = e.touches[0].clientY;
     swipeActive = true;
@@ -548,10 +564,7 @@
 
   // The save behind this row, for the Shelf actions (a feed article or document
   // row is saved under its guid / record uri or its url).
-  let shelfSave = $derived.by(() => {
-    if (displayItem.type === 'saved') return displayItem.item;
-    return savesStore.find(itemKey) ?? (url ? savesStore.find(url) : undefined);
-  });
+  let shelfSave = $derived(saveForRow(displayItem));
   let onShelf = $derived(shelfSave ? shelfStore.isOnShelf(shelfSave) : false);
   let newConnections = $derived(shelfSave ? savedConnectionsStore.unseen(shelfSave.rkey) : 0);
 
@@ -664,12 +677,15 @@
 <article
   class="bookmark-card"
   class:selected
+  class:checked={selecting && checked}
+  class:unselectable={selecting && !shelfSave}
   class:menu-open={popoverOpen}
   role="button"
   tabindex="0"
+  aria-pressed={selecting && shelfSave ? checked : undefined}
   onmouseenter={() => onHover?.()}
   onkeydown={(e) => {
-    if (e.key === 'Enter') onOpen?.();
+    if (e.key === 'Enter') activate();
   }}
   ontouchstart={handleTouchStart}
   use:nonPassiveTouchMove
@@ -690,11 +706,13 @@
             popoverOpen = false;
             return;
           }
-          onOpen?.();
+          activate();
         }}
       >
         <span class="row-icon" aria-hidden="true">
-          {#if kindLabel}
+          {#if selecting && shelfSave}
+            <SelectCheck {checked} />
+          {:else if kindLabel}
             <Icon name="book-open" size={16} />
           {:else if faviconUrl}
             <img src={faviconUrl} alt="" class="favicon" />
@@ -748,7 +766,9 @@
       </div>
 
       <div class="card-actions" bind:this={tagMenuAnchorRef}>
-        <PopoverMenu items={popoverMenuItems} bind:open={popoverOpen} />
+        {#if !selecting}
+          <PopoverMenu items={popoverMenuItems} bind:open={popoverOpen} />
+        {/if}
       </div>
     </div>
     <div class="swipe-reveal">
@@ -828,6 +848,16 @@
 
   .bookmark-card.selected {
     background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.03));
+  }
+
+  .bookmark-card.checked {
+    background-color: var(--color-sidebar-active);
+  }
+
+  /* A row with no save behind it can't go in a collection. */
+  .bookmark-card.unselectable {
+    opacity: 0.5;
+    cursor: default;
   }
 
   /* The Shelf list row's anatomy (shelf/ShelfItem.svelte): an icon beside the
@@ -947,6 +977,10 @@
   @media (prefers-color-scheme: dark) {
     .bookmark-card:hover {
       background-color: var(--color-bg-hover, rgba(255, 255, 255, 0.05));
+    }
+
+    .bookmark-card.checked {
+      background-color: var(--color-sidebar-active);
     }
 
     /* The light tint composites to near-black over the dark background, which

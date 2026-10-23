@@ -164,4 +164,73 @@ test.describe('Shelf', () => {
     await expect(authedPage).toHaveURL(/\/shelf\?collection=/);
     await expect(authedPage.getByRole('heading', { name: 'Course reading' })).toBeVisible();
   });
+
+  test('select all in the Queue files many saves at once; Remove takes some back out', async ({
+    authedPage,
+    testUser,
+  }) => {
+    for (const n of [1, 2, 3]) {
+      await seedSavedArticle(testUser, {
+        url: `https://example.com/bulk-${n}`,
+        title: `Bulk Article ${n}`,
+        domain: 'example.com',
+      });
+    }
+
+    await authedPage.goto('/saved');
+    await expect(authedPage.locator('.bookmark-card', { hasText: 'Bulk Article 3' })).toBeVisible({
+      timeout: 15_000,
+    });
+
+    await authedPage.getByRole('button', { name: 'Select', exact: true }).click();
+    const bar = authedPage.getByRole('toolbar', { name: 'Selection' });
+    await bar.getByRole('button', { name: /^Select all/ }).click();
+    await expect(bar.getByText('3 selected')).toBeVisible();
+
+    // A tap toggles in select mode instead of opening the reader.
+    await authedPage.locator('.bookmark-card', { hasText: 'Bulk Article 2' }).click();
+    await expect(bar.getByText('2 selected')).toBeVisible();
+    await expect(authedPage).not.toHaveURL(/[?&]read=/);
+    await authedPage.locator('.bookmark-card', { hasText: 'Bulk Article 2' }).click();
+
+    await bar.getByRole('button', { name: 'Add to collection' }).click();
+    await expect(authedPage.getByText('3 items')).toBeVisible();
+    await authedPage.getByPlaceholder('New collection').fill('Bulk reading');
+    const added = authedPage.waitForResponse(
+      (r) => r.url().includes('/items') && r.request().method() === 'POST'
+    );
+    await authedPage
+      .getByLabel('Add to collection')
+      .getByRole('button', { name: 'Add', exact: true })
+      .click();
+    const addResponse = await added;
+    expect(addResponse.status()).toBe(200);
+    expect(addResponse.request().postDataJSON().rkeys).toHaveLength(3);
+    await authedPage.keyboard.press('Escape');
+
+    // On the Shelf, in the collection: select one and take it out.
+    await authedPage.goto('/shelf');
+    await authedPage.getByRole('button', { name: /^Bulk reading/ }).click();
+    await authedPage.getByRole('button', { name: 'List' }).click();
+    await expect(authedPage.getByRole('button', { name: /Bulk Article 1/ })).toBeVisible({
+      timeout: 15_000,
+    });
+    await authedPage.getByRole('button', { name: 'Select', exact: true }).click();
+    await authedPage.getByRole('button', { name: /Bulk Article 1/ }).click();
+    const removed = authedPage.waitForResponse(
+      (r) => r.url().endsWith('/items') && r.request().method() === 'DELETE'
+    );
+    await authedPage
+      .getByRole('toolbar', { name: 'Selection' })
+      .getByRole('button', { name: 'Remove' })
+      .click();
+    expect((await removed).status()).toBe(200);
+
+    await authedPage.reload();
+    await authedPage.getByRole('button', { name: /^Bulk reading/ }).click();
+    await expect(authedPage.getByRole('button', { name: /Bulk Article 2/ })).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(authedPage.getByRole('button', { name: /Bulk Article 1/ })).toHaveCount(0);
+  });
 });

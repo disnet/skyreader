@@ -226,36 +226,125 @@ async function deleteCollection(env: Env, did: string, id: string): Promise<Resp
   return json({ success: true });
 }
 
-// POST /api/shelf/collections/:id/items {rkey} — add a save to the end.
-// Idempotent: adding a member that's already there keeps its place.
+/**
+ * The rkeys a write names: `{rkey}` for one, `{rkeys}` for a bulk edit from the
+ * Library's selection. Deduped, in the order given; null when malformed.
+ */
+function parseRkeys(body: Record<string, unknown>): string[] | null {
+  const raw = 'rkeys' in body ? body.rkeys : [body.rkey];
+  if (
+    !Array.isArray(raw) ||
+    raw.length === 0 ||
+    raw.length > MAX_ITEMS_PER_COLLECTION ||
+    raw.some((r) => typeof r !== 'string' || !isValidRkey(r))
+  ) {
+    return null;
+  }
+  return [...new Set(raw as string[])];
+}
+
+// POST /api/shelf/collections/:id/items {rkey} | {rkeys} — add saves to the end,
+// in the order given. Idempotent: a member that's already there keeps its place.
+// All or nothing at the cap: a bulk add that wouldn't fit adds none, so the
+// reader isn't left guessing which half of a selection landed.
 async function addItem(request: Request, env: Env, did: string, id: string): Promise<Response> {
   const body = await readJson(request);
   if (!body) return badRequest('Invalid JSON body');
-  const rkey = body.rkey;
-  if (typeof rkey !== 'string' || !isValidRkey(rkey)) return badRequest('Invalid rkey');
+  const rkeys = parseRkeys(body);
+  if (!rkeys) {
+    return badRequest('rkey must be a valid rkey, or rkeys an array of up to 2000 of them');
+  }
 
   if (!(await collectionExists(env, did, id))) return json({ error: 'Not found' }, 404);
 
-  const stats = await env.DB.prepare(
-    `SELECT COUNT(*) AS n, MAX(position) AS maxPos
-       FROM shelf_collection_items WHERE user_did = ? AND collection_id = ?`
+  const current = await env.DB.prepare(
+    `SELECT saved_rkey FROM shelf_collection_items WHERE user_did = ? AND collection_id = ?`
   )
     .bind(did, id)
-    .first<{ n: number; maxPos: number | null }>();
-  if ((stats?.n ?? 0) >= MAX_ITEMS_PER_COLLECTION) {
-    return json({ error: `A collection can hold at most ${MAX_ITEMS_PER_COLLECTION} items` }, 409);
+    .all<{ saved_rkey: string }>();
+  const members = current.results ?? [];
+  const memberSet = new Set(members.map((m) => m.saved_rkey));
+  const fresh = rkeys.filter((r) => !memberSet.has(r));
+  if (fresh.length === 0) return json({ success: true, added: 0 });
+  if (members.length + fresh.length > MAX_ITEMS_PER_COLLECTION) {
+    const room = Math.max(0, MAX_ITEMS_PER_COLLECTION - members.length);
+    return json(
+      {
+        error:
+          room === 0
+            ? `A collection can hold at most ${MAX_ITEMS_PER_COLLECTION} items`
+            : `A collection can hold at most ${MAX_ITEMS_PER_COLLECTION} items; this one has room for ${room} more`,
+        room,
+      },
+      409
+    );
   }
 
-  const nowMs = Date.now();
-  const now = Math.floor(nowMs / 1000);
-  await env.DB.prepare(
-    `INSERT INTO shelf_collection_items (user_did, collection_id, saved_rkey, position, added_at)
-     VALUES (?, ?, ?, ?, ?)
-     ON CONFLICT(user_did, collection_id, saved_rkey) DO NOTHING`
-  )
-    .bind(did, id, rkey, (stats?.maxPos ?? -1) + 1, now)
-    .run();
-  await touchCollection(env, did, id, now);
+  const now = Math.floor(Date.now() / 1000);
+  // One INSERT for the lot: D1 caps bound parameters at 100 per statement and
+  // statements at 1,000 per invocation, so the rkeys ride as one JSON array and
+  // json_each's index gives each its position. The cap and the next position
+  // are read inside the statement too, so two bulk adds racing can't both pass
+  // the check above and overfill the collection or share positions; the loser
+  // inserts nothing. (`WHERE` also keeps SQLite from reading ON CONFLICT as part
+  // of the SELECT's join.)
+  const [inserted] = await env.DB.batch([
+    env.DB.prepare(
+      `INSERT INTO shelf_collection_items (user_did, collection_id, saved_rkey, position, added_at)
+       SELECT ?1, ?2, j.value,
+              (SELECT COALESCE(MAX(position), -1) + 1 FROM shelf_collection_items
+                WHERE user_did = ?1 AND collection_id = ?2) + j.key,
+              ?3
+         FROM json_each(?4) AS j
+        WHERE (SELECT COUNT(*) FROM shelf_collection_items
+                WHERE user_did = ?1 AND collection_id = ?2)
+            + (SELECT COUNT(*) FROM json_each(?4) WHERE value NOT IN (
+                 SELECT saved_rkey FROM shelf_collection_items
+                  WHERE user_did = ?1 AND collection_id = ?2)) <= ?5
+       ON CONFLICT(user_did, collection_id, saved_rkey) DO NOTHING`
+    ).bind(did, id, now, JSON.stringify(fresh), MAX_ITEMS_PER_COLLECTION),
+    env.DB.prepare(
+      'UPDATE shelf_collections SET updated_at = ? WHERE user_did = ? AND id = ?'
+    ).bind(now, did, id),
+  ]);
+  if ((inserted.meta.changes ?? 0) === 0) {
+    // Nothing went in: either a concurrent add got there first with the same
+    // saves (fine), or it filled the room these needed.
+    const after = await env.DB.prepare(
+      `SELECT saved_rkey FROM shelf_collection_items WHERE user_did = ? AND collection_id = ?`
+    )
+      .bind(did, id)
+      .all<{ saved_rkey: string }>();
+    const present = new Set((after.results ?? []).map((r) => r.saved_rkey));
+    const room = Math.max(0, MAX_ITEMS_PER_COLLECTION - present.size);
+    if (fresh.filter((r) => !present.has(r)).length > room) {
+      return json(
+        { error: `A collection can hold at most ${MAX_ITEMS_PER_COLLECTION} items`, room },
+        409
+      );
+    }
+  }
+  return json({ success: true, added: inserted.meta.changes ?? 0 });
+}
+
+// DELETE /api/shelf/collections/:id/items {rkeys} — take several saves out at
+// once. Idempotent; names that aren't members are ignored.
+async function removeItems(request: Request, env: Env, did: string, id: string): Promise<Response> {
+  const body = await readJson(request);
+  if (!body || !('rkeys' in body)) return badRequest('rkeys is required');
+  const rkeys = parseRkeys(body);
+  if (!rkeys) return badRequest('rkeys must be an array of up to 2000 valid rkeys');
+  const now = Math.floor(Date.now() / 1000);
+  await env.DB.batch([
+    env.DB.prepare(
+      `DELETE FROM shelf_collection_items
+        WHERE user_did = ?1 AND collection_id = ?2
+          AND saved_rkey IN (SELECT value FROM json_each(?3))`
+    ).bind(did, id, JSON.stringify(rkeys)),
+    env.DB.prepare(
+      'UPDATE shelf_collections SET updated_at = ? WHERE user_did = ? AND id = ?'
+    ).bind(now, did, id),
+  ]);
   return json({ success: true });
 }
 
@@ -424,6 +513,7 @@ export async function handleShelfCollections(
     if (parts.length === 2) {
       if (method === 'POST') return await addItem(request, env, did, id);
       if (method === 'PUT') return await reorderItems(request, env, did, id);
+      if (method === 'DELETE') return await removeItems(request, env, did, id);
       return json({ error: 'Method not allowed' }, 405);
     }
 

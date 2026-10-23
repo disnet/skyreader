@@ -1,37 +1,68 @@
 <script lang="ts">
-  // "Add to collection" for one save, mounted once in AppShell and driven by
-  // shelfStore.pickerSave, so every surface that holds a save can offer it.
-  // Each checkbox applies at once (no confirm step): membership is cheap to undo
-  // and the list is short. Making a collection here also files the save in it.
+  // "Add to collection" for one save, or for the Library's selection, mounted
+  // once in AppShell and driven by shelfStore.pickerSaves, so every surface that
+  // holds a save can offer it. Each checkbox applies at once (no confirm step):
+  // membership is cheap to undo and the list is short. With several saves a
+  // collection holding some of them shows mixed; ticking it files the rest,
+  // unticking takes them all out. Making a collection here also files the saves.
   import Modal from '$lib/components/common/Modal.svelte';
   import Icon from '$lib/components/Icon.svelte';
-  import { shelfStore } from '$lib/stores/shelf.svelte';
+  import { MAX_COLLECTION_ITEMS, shelfStore } from '$lib/stores/shelf.svelte';
+  import type { ShelfCollection } from '$lib/types';
 
-  let save = $derived(shelfStore.pickerSave);
-  let memberOf = $derived(new Set(save ? shelfStore.collectionIdsFor(save) : []));
+  let saves = $derived(shelfStore.pickerSaves);
+  let rkeys = $derived(new Set(saves?.map((s) => s.rkey) ?? []));
   let newName = $state('');
   let busy = $state(false);
+  // More saves than any collection holds: say so up front rather than make an
+  // empty collection and then refuse to fill it.
+  let tooMany = $derived(rkeys.size > MAX_COLLECTION_ITEMS);
 
-  async function toggle(id: string) {
-    if (!save || busy) return;
+  /** How many of the saves this collection already holds. */
+  function heldIn(collection: ShelfCollection): number {
+    let n = 0;
+    for (const item of collection.items) if (rkeys.has(item.rkey)) n++;
+    return n;
+  }
+
+  /** Why the rest of the saves can't go in, or null when they fit. */
+  function fullNote(collection: ShelfCollection, held: number): string | null {
+    const missing = rkeys.size - held;
+    if (missing === 0) return null;
+    const room = shelfStore.roomIn(collection.id);
+    if (missing <= room) return null;
+    return room === 0 ? 'Full' : `Room for ${room.toLocaleString()}`;
+  }
+
+  async function toggle(collection: ShelfCollection, input: HTMLInputElement) {
+    if (!saves || busy) return;
     busy = true;
     try {
-      if (memberOf.has(id)) await shelfStore.removeItem(id, save.rkey);
-      else await shelfStore.addItem(id, save);
+      if (heldIn(collection) === rkeys.size) {
+        await shelfStore.removeItems(collection.id, [...rkeys]);
+      } else {
+        await shelfStore.addItems(collection.id, saves);
+      }
     } finally {
       busy = false;
+      // A refused change leaves the store as it was, so nothing re-renders the
+      // box the browser already flipped: put it back to what's true.
+      const held = heldIn(collection);
+      input.checked = held > 0 && held === rkeys.size;
+      input.indeterminate = held > 0 && held < rkeys.size;
     }
   }
 
   async function createAndAdd(e: SubmitEvent) {
     e.preventDefault();
-    if (!save || busy || !newName.trim()) return;
+    // Not while collections load: the fresh list would replace the new one.
+    if (!saves || busy || tooMany || shelfStore.loading || !newName.trim()) return;
     busy = true;
     try {
       const id = await shelfStore.create(newName);
       if (id) {
         newName = '';
-        await shelfStore.addItem(id, save);
+        await shelfStore.addItems(id, saves);
       }
     } finally {
       busy = false;
@@ -44,23 +75,33 @@
   }
 </script>
 
-<Modal open={save !== null} onclose={close} title="Add to collection" maxWidth="400px">
-  {#if save}
-    <p class="subject">{save.title || save.url || 'Untitled'}</p>
+<Modal open={saves !== null} onclose={close} title="Add to collection" maxWidth="400px">
+  {#if saves}
+    <p class="subject">
+      {#if saves.length === 1}
+        {saves[0].title || saves[0].url || 'Untitled'}
+      {:else}
+        {saves.length.toLocaleString()} items
+      {/if}
+    </p>
 
     {#if shelfStore.collections.length > 0}
       <ul class="list">
         {#each shelfStore.collections as collection (collection.id)}
+          {@const held = heldIn(collection)}
+          {@const note = fullNote(collection, held)}
           <li>
-            <label class="row">
+            <label class="row" class:full={note !== null}>
               <input
                 type="checkbox"
-                checked={memberOf.has(collection.id)}
-                disabled={busy || !shelfStore.canWrite}
-                onchange={() => toggle(collection.id)}
+                checked={held > 0 && held === rkeys.size}
+                indeterminate={held > 0 && held < rkeys.size}
+                disabled={busy || !shelfStore.canWrite || (held === 0 && note !== null)}
+                onchange={(e) => toggle(collection, e.currentTarget)}
               />
               <span class="name">{collection.name}</span>
-              <span class="count">{collection.items.length}</span>
+              {#if note}<span class="count full-note">{note}</span>{/if}
+              <span class="count">{collection.items.length.toLocaleString()}</span>
             </label>
           </li>
         {/each}
@@ -77,10 +118,20 @@
         placeholder="New collection"
         maxlength="100"
         bind:value={newName}
-        disabled={busy || !shelfStore.canWrite}
+        disabled={busy || tooMany || shelfStore.loading || !shelfStore.canWrite}
       />
-      <button type="submit" class="new-btn" disabled={busy || !newName.trim()}>Add</button>
+      <button
+        type="submit"
+        class="new-btn"
+        disabled={busy || tooMany || shelfStore.loading || !newName.trim()}>Add</button
+      >
     </form>
+
+    {#if tooMany}
+      <p class="note">
+        A collection holds up to {MAX_COLLECTION_ITEMS.toLocaleString()} items. Select fewer to add them.
+      </p>
+    {/if}
 
     {#if !shelfStore.canWrite}
       <p class="note">Collections need an account and a connection.</p>
@@ -137,6 +188,10 @@
   .count {
     font-size: var(--text-xs);
     color: var(--color-text-secondary);
+  }
+
+  .row.full {
+    cursor: default;
   }
 
   .empty,
