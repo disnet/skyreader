@@ -11,8 +11,9 @@ Coming from another read-later app? Bring your library with you. Open **Settings
 - **Your archive.** Anything you'd archived there goes straight to your Archive here, so your Queue holds only what you still meant to read.
 - **Tags**, as tags (up to ten an article).
 - **Highlights and their notes**, attached to their articles, wherever the export includes them.
+- **A collection on your [Shelf](/guide/saving-and-highlights/#your-library-queue-and-shelf)** holding everything from the export, named for the app it came from, such as “Imported from Pocket”. A collection holds up to 2,000 articles, so a bigger library continues in “Imported from Pocket (2)”.
 
-Articles already in your Library keep their tags and archive state, and take the export's highlights only if you haven't highlighted them in Skyreader. Importing the same file twice adds nothing new, so if an import stops partway, run it again.
+Articles already in your Library join the collection too. They keep their tags and archive state, and take the export's highlights only if you haven't highlighted them in Skyreader. Importing the same file twice adds nothing new, so if an import stops partway, run it again.
 
 Imports don't count toward the monthly limit on saving links.
 

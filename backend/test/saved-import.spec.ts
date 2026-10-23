@@ -14,7 +14,13 @@ const DID = 'did:plc:savedimport';
 const SESSION = 'sess-saved-import';
 
 async function reset() {
-  for (const table of ['saved_articles', 'item_labels_cache', 'user_settings']) {
+  for (const table of [
+    'saved_articles',
+    'item_labels_cache',
+    'user_settings',
+    'shelf_collections',
+    'shelf_collection_items',
+  ]) {
     await env.DB.prepare(`DELETE FROM ${table} WHERE user_did = ?`).bind(DID).run();
   }
   await env.DB.prepare('DELETE FROM rate_limits WHERE did = ?').bind(DID).run();
@@ -307,6 +313,68 @@ describe('POST /api/saved/import', () => {
     expect(status).toBe(409);
     expect(body.error).toBe('backing_enabled');
     expect(await saves()).toEqual([]);
+  });
+
+  it('files every article from an export in a collection named for its app', async () => {
+    await importItems([{ url: 'https://example.com/a', title: 'A' }]);
+    const [a] = await saves();
+    await importItems([
+      { url: 'https://example.com/a', title: 'A' },
+      { url: 'https://example.com/b', title: 'B' },
+    ]);
+    await importItems([{ url: 'https://example.com/b', title: 'B' }], 'instapaper');
+
+    const rows = (
+      await env.DB.prepare(
+        `SELECT c.name, i.saved_rkey FROM shelf_collections c
+           JOIN shelf_collection_items i ON i.user_did = c.user_did AND i.collection_id = c.id
+          WHERE c.user_did = ? ORDER BY c.name, i.position`
+      )
+        .bind(DID)
+        .all<{ name: string; saved_rkey: string }>()
+    ).results;
+    const b = (await saves()).find((s: any) => s.url === 'https://example.com/b');
+    expect(rows).toEqual([
+      { name: 'Imported from Instapaper', saved_rkey: b.rkey },
+      { name: 'Imported from Pocket', saved_rkey: a.rkey },
+      { name: 'Imported from Pocket', saved_rkey: b.rkey },
+    ]);
+  });
+
+  it('runs a full import collection on into a second one', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    await env.DB.prepare(
+      `INSERT INTO shelf_collections (user_did, id, name, position, created_at, updated_at)
+       VALUES (?, 'importfull000', 'Imported from Pocket', 0, ?, ?)`
+    )
+      .bind(DID, now, now)
+      .run();
+    const fill = Array.from({ length: 1999 }, (_, i) =>
+      env.DB.prepare(
+        `INSERT INTO shelf_collection_items (user_did, collection_id, saved_rkey, position, added_at)
+         VALUES (?, 'importfull000', ?, ?, ?)`
+      ).bind(DID, `filler${String(i).padStart(7, '0')}`, i, now)
+    );
+    await env.DB.batch(fill);
+
+    await importItems([
+      { url: 'https://example.com/1', title: '1' },
+      { url: 'https://example.com/2', title: '2' },
+      { url: 'https://example.com/3', title: '3' },
+    ]);
+    const counts = (
+      await env.DB.prepare(
+        `SELECT c.name, COUNT(i.saved_rkey) AS n FROM shelf_collections c
+           LEFT JOIN shelf_collection_items i ON i.user_did = c.user_did AND i.collection_id = c.id
+          WHERE c.user_did = ? GROUP BY c.id ORDER BY c.name`
+      )
+        .bind(DID)
+        .all<{ name: string; n: number }>()
+    ).results;
+    expect(counts).toEqual([
+      { name: 'Imported from Pocket', n: 2000 },
+      { name: 'Imported from Pocket (2)', n: 2 },
+    ]);
   });
 
   it('rejects an unknown source and an oversized batch', async () => {

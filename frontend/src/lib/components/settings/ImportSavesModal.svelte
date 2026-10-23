@@ -3,6 +3,7 @@
   import { api } from '$lib/services/api';
   import { savesStore } from '$lib/stores/saves.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
+  import { shelfStore } from '$lib/stores/shelf.svelte';
   import {
     IMPORT_SOURCE_NAMES,
     parseExportFiles,
@@ -41,6 +42,7 @@
     }
     return {
       from: [...sources].map((s) => IMPORT_SOURCE_NAMES[s]).join(' and '),
+      sources: sources.size,
       archived,
       highlights,
       tags: tags.size,
@@ -110,7 +112,11 @@
     step = 'complete';
     // Bring the new saves and their labels into this device now rather than at
     // the next refresh.
-    await Promise.allSettled([savesStore.load(), itemLabelsStore.pullDelta()]);
+    await Promise.allSettled([
+      savesStore.load(),
+      itemLabelsStore.pullDelta(),
+      shelfStore.load(true),
+    ]);
   }
 
   $effect(() => {
@@ -158,7 +164,12 @@
       {#if summary.highlights > 0}
         <li>{plural(summary.highlights, 'highlight')}, attached to their articles</li>
       {/if}
-      <li>Articles already in your Library are left as they are.</li>
+      <li>
+        {summary.sources === 1
+          ? `They all go in a Shelf collection, “Imported from ${summary.from}”.`
+          : 'They go in a Shelf collection for each app, named “Imported from” the app.'}
+      </li>
+      <li>Articles already in your Library are otherwise left as they are.</li>
       <li>Each article's text is fetched the first time you open it.</li>
     </ul>
     {#each warnings as warning}

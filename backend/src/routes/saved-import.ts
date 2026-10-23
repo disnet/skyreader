@@ -21,6 +21,7 @@ import { FeedProxyClient } from '../services/feed-proxy-client';
 import { fillExtractedContent } from '../services/saved-content';
 import { checkRateLimit } from '../services/rate-limit';
 import { log, serializeError } from '../utils/logger';
+import { MAX_COLLECTIONS, MAX_ITEMS_PER_COLLECTION } from './shelf';
 
 const COLLECTION = 'app.skyreader.feed.saved';
 
@@ -207,6 +208,7 @@ async function highlightProps(item: CleanItem, fallbackCreatedAt: number) {
 }
 
 interface ExistingSave {
+  rkey: string;
   url: string;
   url_key: string | null;
   record_uri: string | null;
@@ -221,7 +223,7 @@ async function findExisting(env: Env, did: string, items: CleanItem[]): Promise<
     const urlIn = urls.map(() => '?').join(',');
     const keyClause = keys.length ? ` OR url_key IN (${keys.map(() => '?').join(',')})` : '';
     const result = await env.DB.prepare(
-      `SELECT url, url_key, record_uri FROM saved_articles
+      `SELECT rkey, url, url_key, record_uri FROM saved_articles
         WHERE user_did = ? AND (url IN (${urlIn})${keyClause})`
     )
       .bind(did, ...urls, ...keys)
@@ -239,6 +241,116 @@ async function findExisting(env: Env, did: string, items: CleanItem[]): Promise<
  * what they deleted. Returns the counts and the rkeys of the new saves that are
  * still unread, newest first (the ones worth extracting first).
  */
+const SOURCE_NAMES: Record<ImportSource, string> = {
+  pocket: 'Pocket',
+  omnivore: 'Omnivore',
+  instapaper: 'Instapaper',
+  readwise: 'Readwise Reader',
+  matter: 'Matter',
+};
+
+/** The Shelf collection an import from `source` files into, and its overflow names. */
+export function importCollectionName(source: ImportSource, part = 1): string {
+  const base = `Imported from ${SOURCE_NAMES[source]}`;
+  return part === 1 ? base : `${base} (${part})`;
+}
+
+/**
+ * Files an import's articles in a Shelf collection named for the app they came
+ * from (routes/shelf.ts), created on the first import. A library bigger than a
+ * collection holds runs on into "… (2)" and so on. An article already in one of
+ * them isn't added again, so re-running an import leaves them as they were.
+ * A reader already at the collection limit gets the saves without one.
+ */
+async function fileInImportCollection(
+  env: Env,
+  did: string,
+  source: ImportSource,
+  rkeys: string[],
+  nowSec: number
+): Promise<void> {
+  if (rkeys.length === 0) return;
+  const base = importCollectionName(source);
+  const { results: owned } = await env.DB.prepare(
+    `SELECT c.id, c.name,
+            (SELECT COUNT(*) FROM shelf_collection_items i
+              WHERE i.user_did = c.user_did AND i.collection_id = c.id) AS n,
+            (SELECT MAX(position) FROM shelf_collection_items i
+              WHERE i.user_did = c.user_did AND i.collection_id = c.id) AS maxPos
+       FROM shelf_collections c
+      WHERE c.user_did = ? AND (c.name = ? OR c.name LIKE ?)
+      ORDER BY c.created_at ASC, c.id ASC`
+  )
+    .bind(did, base, `${base} (%)`)
+    .all<{ id: string; name: string; n: number; maxPos: number | null }>();
+
+  let pending = rkeys;
+  if (owned.length > 0) {
+    const ids = owned.map((c) => c.id);
+    const filed = new Set<string>();
+    // Ids and rkeys together stay under D1's bound-parameter cap.
+    for (const chunk of chunkArray(rkeys, Math.max(1, 90 - ids.length))) {
+      const { results } = await env.DB.prepare(
+        `SELECT saved_rkey FROM shelf_collection_items
+          WHERE user_did = ? AND collection_id IN (${ids.map(() => '?').join(',')})
+            AND saved_rkey IN (${chunk.map(() => '?').join(',')})`
+      )
+        .bind(did, ...ids, ...chunk)
+        .all<{ saved_rkey: string }>();
+      for (const row of results) filed.add(row.saved_rkey);
+    }
+    pending = rkeys.filter((rkey) => !filed.has(rkey));
+  }
+  if (pending.length === 0) return;
+
+  const statements: D1PreparedStatement[] = [];
+  let current = owned.at(-1);
+  let room = current ? MAX_ITEMS_PER_COLLECTION - current.n : 0;
+  let position = (current?.maxPos ?? -1) + 1;
+  let part = owned.length;
+  let collections: { n: number; maxPos: number | null } | null = null;
+  let filledExisting = false;
+  for (const rkey of pending) {
+    if (!current || room <= 0) {
+      collections ??= await env.DB.prepare(
+        'SELECT COUNT(*) AS n, MAX(position) AS maxPos FROM shelf_collections WHERE user_did = ?'
+      )
+        .bind(did)
+        .first<{ n: number; maxPos: number | null }>();
+      if (!collections || collections.n >= MAX_COLLECTIONS) break;
+      part++;
+      collections.n++;
+      collections.maxPos = (collections.maxPos ?? -1) + 1;
+      current = { id: generateTid(), name: importCollectionName(source, part), n: 0, maxPos: null };
+      statements.push(
+        env.DB.prepare(
+          `INSERT INTO shelf_collections (user_did, id, name, description, position, created_at, updated_at)
+           VALUES (?, ?, ?, NULL, ?, ?, ?)`
+        ).bind(did, current.id, current.name, collections.maxPos, nowSec, nowSec)
+      );
+      room = MAX_ITEMS_PER_COLLECTION;
+      position = 0;
+    }
+    statements.push(
+      env.DB.prepare(
+        `INSERT INTO shelf_collection_items (user_did, collection_id, saved_rkey, position, added_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(user_did, collection_id, saved_rkey) DO NOTHING`
+      ).bind(did, current.id, rkey, position++, nowSec)
+    );
+    room--;
+    filledExisting ||= current === owned.at(-1);
+  }
+  if (filledExisting) {
+    statements.push(
+      env.DB.prepare(
+        'UPDATE shelf_collections SET updated_at = ? WHERE user_did = ? AND id = ?'
+      ).bind(nowSec, did, owned.at(-1)!.id)
+    );
+  }
+  if (statements.length > 0) await env.DB.batch(statements);
+}
+
 export async function importSaves(
   env: Env,
   did: string,
@@ -308,11 +420,14 @@ export async function importSaves(
   };
 
   const unread: { rkey: string; savedAt: number }[] = [];
+  // Every article in the export, new or already saved, in the export's order.
+  const members: string[] = [];
   for (const item of items) {
     const match =
       existingByUrl.get(item.url) ?? (item.urlKey ? existingByUrl.get(`key:${item.urlKey}`) : null);
     if (match) {
       result.duplicates++;
+      if (!members.includes(match.rkey)) members.push(match.rkey);
       // Highlights from the export still find the save they belong to. A save
       // with no record uri (a Semble/Margin-backed stub) has no key to file them under.
       if (match.record_uri && item.highlights.length > 0) {
@@ -323,6 +438,7 @@ export async function importSaves(
 
     const rkey = generateTid();
     const recordUri = `at://${did}/${COLLECTION}/${rkey}`;
+    members.push(rkey);
     statements.push(
       env.DB.prepare(
         `INSERT INTO saved_articles (user_did, rkey, record_uri, url, url_key, title, author, description,
@@ -363,6 +479,7 @@ export async function importSaves(
       if ((written[index]?.meta?.changes ?? 0) > 0) result.highlights += count;
     }
   }
+  await fileInImportCollection(env, did, source, members, nowSec);
   result.unreadRkeys = unread.sort((a, b) => b.savedAt - a.savedAt).map((u) => u.rkey);
   return result;
 }
