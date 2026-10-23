@@ -156,6 +156,8 @@ export interface MintCredentialInput {
 
 /** Legs 1 + 2. */
 export async function mintSpaceCredential(input: MintCredentialInput): Promise<SpaceCredential> {
+  // Attestation first: if signing it fails, no single-use delegation token is spent.
+  const clientAttestation = await input.getClientAttestation?.();
   const delegationToken = await input.getDelegationToken(input.space);
   const key = await generateSpaceSigningKey();
   const token = await exchangeSpaceCredential({
@@ -163,7 +165,7 @@ export async function mintSpaceCredential(input: MintCredentialInput): Promise<S
     delegationToken,
     space: input.space,
     key,
-    clientAttestation: await input.getClientAttestation?.(),
+    clientAttestation,
     fetchImpl: input.fetchImpl,
   });
   const exp = jwtExpirySeconds(token);
