@@ -26,8 +26,9 @@ export const SAVED_COLLECTION = 'app.skyreader.feed.saved';
 
 /**
  * OAuth permission set that would be requested (as `include:<nsid>`) to get space
- * access for a real user. NOT requested by this spike — see `config/scopes.ts` and
- * the risks section of the spike memo.
+ * access for a real user. Not requested: it isn't published, so the spike asks for
+ * the equivalent bare `space:` scope instead (SAVED_SPACE_SCOPE in
+ * `config/scopes.ts`). See the risks section of the spike memo.
  */
 export const SAVED_SPACE_PERMISSION_SET = 'app.skyreader.space.savedAccess';
 

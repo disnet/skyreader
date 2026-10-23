@@ -383,7 +383,10 @@ async function buildAuthorizationUrl(
     // has no earlier copy cached. Remembered features are re-requested at every
     // sign-in, so without this one app's outage would lock its users out of
     // Skyreader. The granular form asks for the same access without any set.
-    const granularScopes = buildRequestedScopes({ OAUTH_PERMISSION_SETS: 'false' }, featureList);
+    const granularScopes = buildRequestedScopes(
+      { ...env, OAUTH_PERMISSION_SETS: 'false' },
+      featureList
+    );
     if (!par.ok && par.errorText.includes('invalid_scope') && granularScopes !== requestedScopes) {
       console.warn('PAR rejected the permission sets, asking for granular scopes:', par.errorText);
       requestedScopes = granularScopes;
