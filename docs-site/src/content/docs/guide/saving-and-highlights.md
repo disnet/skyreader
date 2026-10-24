@@ -98,7 +98,7 @@ Collections are private to Skyreader unless you link one, and need an account an
 
 #### Linking a collection to Semble or Margin
 
-A collection can stay in step with one of your [Semble](https://semble.so) or [Margin](https://margin.at) collections. Open it on the Shelf and choose **Link to Semble or Margin**, then pick one of your collections there, or let Skyreader make a new one with the same name. From then on, adding or removing an item in either place does the same in the other. Something added in Semble or Margin becomes a save in your Library and joins the collection. Changes made there come in when you open the collection, or with **Sync now**.
+A collection can stay in step with one of your [Semble](https://semble.so) or [Margin](https://margin.at) collections. Open it on the Shelf and choose **Link to Semble or Margin**, then pick one of your collections there, or let Skyreader make a new one with the same name. From then on, adding or removing an item in either place does the same in the other. Something added in Semble or Margin becomes a save in your Library and joins the collection. Changes made there come in when you open the collection.
 
 **A linked collection is public**, because Semble and Margin collections are. Uploaded PDFs and EPUBs stay private and aren't copied over, and your highlights and notes stay in Skyreader. The collection's order is kept in Skyreader. **Unlink** stops the syncing; both collections keep what they hold.
 

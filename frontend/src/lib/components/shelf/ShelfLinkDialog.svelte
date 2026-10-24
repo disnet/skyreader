@@ -23,7 +23,6 @@
 
   type Provider = 'semble' | 'margin';
   const label = (p: Provider) => (p === 'semble' ? 'Semble' : 'Margin');
-  const DISPLAY_LIMIT = 8;
 
   let provider = $state<Provider>('semble');
   // '' = make a new collection named after this one.
@@ -34,11 +33,21 @@
   let error = $state<string | null>(null);
 
   let all = $derived(collectionsStore.collections[provider]);
+  // Readers can keep hundreds of collections: alphabetical, so a name stays
+  // where you'd look for it, narrowed by name or description as you type.
+  let sorted = $derived(
+    [...all].sort((a, b) =>
+      (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' })
+    )
+  );
   let filtered = $derived.by(() => {
     const q = search.trim().toLowerCase();
-    return q ? all.filter((c) => (c.name || '').toLowerCase().includes(q)) : all;
+    if (!q) return sorted;
+    return sorted.filter(
+      (c) =>
+        (c.name || '').toLowerCase().includes(q) || (c.description || '').toLowerCase().includes(q)
+    );
   });
-  let visible = $derived(filtered.slice(0, DISPLAY_LIMIT));
   let granted = $derived(scopes?.[provider] ?? false);
 
   // Each open starts fresh, and asks which providers Skyreader may write to.
@@ -127,6 +136,15 @@
       Allow {label(provider)} access
     </button>
   {:else}
+    {#if all.length > 0}
+      <input
+        class="search"
+        type="search"
+        placeholder="Search your {label(provider)} collections…"
+        aria-label="Search your collections"
+        bind:value={search}
+      />
+    {/if}
     <div class="choices" role="radiogroup" aria-label="Choose a collection">
       <label class="choice" class:selected={chosenUri === ''}>
         <input type="radio" value="" bind:group={chosenUri} disabled={busy} />
@@ -140,30 +158,20 @@
       {#if collectionsStore.loading[provider] && all.length === 0}
         <p class="muted">Loading your collections…</p>
       {:else if all.length > 0}
-        {#if all.length > DISPLAY_LIMIT}
-          <input
-            class="search"
-            type="search"
-            placeholder="Search your collections…"
-            aria-label="Search your collections"
-            bind:value={search}
-          />
-        {/if}
-        {#each visible as c (c.uri)}
-          <label class="choice" class:selected={chosenUri === c.uri}>
-            <input type="radio" value={c.uri} bind:group={chosenUri} disabled={busy} />
-            <Icon name="folder" size={16} />
-            <span class="choice-text">
-              <span class="choice-name">{c.name || 'Untitled'}</span>
-              {#if c.description}<span class="choice-meta">{c.description}</span>{/if}
-            </span>
-          </label>
-        {/each}
-        {#if filtered.length > visible.length}
-          <p class="muted small">
-            Showing {visible.length} of {filtered.length}. Search to find the rest.
-          </p>
-        {/if}
+        <div class="list">
+          {#each filtered as c (c.uri)}
+            <label class="choice" class:selected={chosenUri === c.uri}>
+              <input type="radio" value={c.uri} bind:group={chosenUri} disabled={busy} />
+              <Icon name="folder" size={16} />
+              <span class="choice-text">
+                <span class="choice-name">{c.name || 'Untitled'}</span>
+                {#if c.description}<span class="choice-meta">{c.description}</span>{/if}
+              </span>
+            </label>
+          {:else}
+            <p class="muted small">No collections match “{search.trim()}”.</p>
+          {/each}
+        </div>
       {/if}
     </div>
 
@@ -268,8 +276,18 @@
     white-space: nowrap;
   }
 
+  .list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    max-height: min(18rem, 40vh);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
   .search {
     width: 100%;
+    margin-bottom: 0.5rem;
     padding: 0.45rem 0.6rem;
     border: 1px solid var(--color-border);
     border-radius: 6px;

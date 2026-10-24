@@ -482,13 +482,6 @@
                   Synced {formatRelativeTime(collection.link.syncedAt)}.
                 {/if}
               </span>
-              <button
-                class="text-btn"
-                onclick={() => collection && shelfStore.sync(collection.id, { force: true })}
-                disabled={!shelfStore.canWrite || shelfStore.syncingId === collection.id}
-              >
-                Sync now
-              </button>
               <button class="text-btn" onclick={unlinkCollection} disabled={!shelfStore.canWrite}>
                 Unlink
               </button>

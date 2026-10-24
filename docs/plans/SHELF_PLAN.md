@@ -118,8 +118,8 @@ tombstones are needed. Every foreign write goes through the reconcile, which hol
 lock (`link_lock_until`, compare-and-set); a local change sets `link_dirty`, which skips the
 one-minute gate and sends a running reconcile round again.
 
-It runs: inline when linking, on `POST …/sync` (the client calls it on opening a linked collection,
-and on **Sync now**), and behind the response after a local add/remove/delete-save (at most two
+It runs: inline when linking, on `POST …/sync` (the client calls it on opening a linked collection;
+there's no manual sync button, since opening already does it), and behind the response after a local add/remove/delete-save (at most two
 collections per request, sharing its subrequest cap). Not behind `GET /api/shelf/collections`,
 which would race the client's sync-on-open. The lock's expiry is also the run's token: every later
 write checks it, so a run that outlived its lock, or whose link was changed under it, stops.
