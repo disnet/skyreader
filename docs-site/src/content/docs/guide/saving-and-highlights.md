@@ -126,11 +126,11 @@ Once posted, it's a public Bluesky post like any other: manage it in Bluesky.
 
 ## The Highlights page
 
-The **Highlights** page keeps every highlight in one place to manage. Search them (press `/`), or narrow the list to **Pinned**, **With notes**, **On Margin**, a tag, or one article. Sort by newest, oldest, or by article.
+The **Highlights** page keeps every highlight in one place to manage. Search them, or narrow the list to **Pinned**, **With notes**, **On Margin**, a tag, or one source (on a phone, choose **Only this source** from a highlight's **⋯** menu). Sort by newest, oldest, or by source.
 
 - **Pin** the few that matter and they stay on a shelf at the top.
 - **Tag** a highlight to gather passages across articles. Tags are yours alone, on the highlight, and the picker suggests the tags you already use.
-- The **⋯** menu on each highlight publishes it to Margin, posts it to Bluesky, takes it out of review, or removes it.
+- The **⋯** menu on each highlight narrows to its source, publishes it to Margin, posts it to Bluesky, takes it out of review, or removes it.
 
 ## The review deck
 

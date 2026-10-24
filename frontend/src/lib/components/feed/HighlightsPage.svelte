@@ -192,7 +192,7 @@
   let isFiltered = $derived(
     filter.view !== 'all' ||
       filter.tag !== null ||
-      filter.sourceKey !== null ||
+      activeSource !== null ||
       filter.query.trim() !== ''
   );
 
@@ -214,7 +214,11 @@
 
   // --- Results ----------------------------------------------------------------
 
-  let matches = $derived(filterHighlights(rows, filter));
+  // A source filter whose last highlight was removed would narrow the list to
+  // nothing with no chip left to say why; drop it instead.
+  let matches = $derived(
+    filterHighlights(rows, activeSource ? filter : { ...filter, sourceKey: null })
+  );
 
   // Pins lead the page as their own shelf. In the Pinned view they ARE the list,
   // so there's no shelf above it.
@@ -241,20 +245,6 @@
     void sort;
     loadedCount = PAGE_SIZE;
   });
-
-  // "/" jumps to the search field, as in the rest of the app's lists.
-  let searchEl = $state<HTMLInputElement | null>(null);
-  let mobileSearchEl = $state<HTMLInputElement | null>(null);
-
-  function onWindowKeydown(e: KeyboardEvent) {
-    if (e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey) return;
-    const target = e.target as HTMLElement | null;
-    if (target?.closest('input, textarea, [contenteditable="true"]')) return;
-    const field = mobileStore.isMobile ? mobileSearchEl : searchEl;
-    if (!field) return;
-    e.preventDefault();
-    field.focus();
-  }
 
   function onSearchKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape' && filter.query) {
@@ -330,20 +320,31 @@
   function moreItems(row: HighlightLibraryRow, card: boolean) {
     const items = [];
     if (card) {
-      const anchor = () =>
-        document
-          .querySelector(`[data-pinned-card="${CSS.escape(row.id)}"]`)
-          ?.getBoundingClientRect() ?? new DOMRect();
+      const cardEl = () =>
+        document.querySelector<HTMLElement>(`[data-pinned-card="${CSS.escape(row.id)}"]`);
       items.push({
         label: 'Tag',
         icon: 'tag',
-        onclick: () =>
-          (tagEditor = { itemKey: row.source.itemKey, id: row.id, anchorRect: anchor() }),
+        onclick: () => {
+          const el = cardEl();
+          if (el) openTagEditor(el, row);
+        },
       });
       items.push({
         label: row.note ? 'Edit note' : 'Add a note',
         icon: 'message-circle',
-        onclick: () => (noteEditor = { row, anchorRect: anchor() }),
+        onclick: () => {
+          const el = cardEl();
+          if (el) noteEditor = { row, anchorRect: el.getBoundingClientRect() };
+        },
+      });
+    }
+    // The rail's source list isn't on narrow screens, so the menu offers it too.
+    if (filter.sourceKey !== row.source.itemKey) {
+      items.push({
+        label: 'Only this source',
+        icon: 'filter',
+        onclick: () => (filter.sourceKey = row.source.itemKey),
       });
     }
     // A Margin note is a record in the reader's own atproto repo, anchored on
@@ -407,17 +408,17 @@
     })();
   }
 
-  // Tag picker — anchored to the tag button; edits apply as they're made.
-  let tagEditor = $state<{ itemKey: string; id: string; anchorRect: DOMRect } | null>(null);
+  // Tag picker — anchored to the tag button (it follows it on scroll); edits
+  // apply as they're made.
+  let tagEditor = $state<{ itemKey: string; id: string; anchor: HTMLElement } | null>(null);
   let tagEditorRow = $derived(
     tagEditor
       ? rows.find((r) => r.id === tagEditor!.id && r.source.itemKey === tagEditor!.itemKey)
       : null
   );
 
-  function openTagEditor(event: MouseEvent, row: HighlightLibraryRow) {
-    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-    tagEditor = { itemKey: row.source.itemKey, id: row.id, anchorRect: rect };
+  function openTagEditor(anchor: HTMLElement, row: HighlightLibraryRow) {
+    tagEditor = { itemKey: row.source.itemKey, id: row.id, anchor };
   }
 
   function handleTagsChange(tags: string[]) {
@@ -447,8 +448,6 @@
   }
 </script>
 
-<svelte:window onkeydown={onWindowKeydown} />
-
 {#snippet tagChips(row: HighlightLibraryRow)}
   {#each row.tags as tag (tag)}
     <button
@@ -475,7 +474,7 @@
     {#if !card}
       <button
         class="action-btn"
-        onclick={(e) => openTagEditor(e, row)}
+        onclick={(e) => openTagEditor(e.currentTarget, row)}
         title="Tag"
         aria-label="Tag"
       >
@@ -555,7 +554,6 @@
         <label class="search-field">
           <Icon name="search" size={15} />
           <input
-            bind:this={searchEl}
             bind:value={filter.query}
             onkeydown={onSearchKeydown}
             type="search"
@@ -586,6 +584,7 @@
               <button
                 class="rail-item"
                 class:active={filter.tag?.toLowerCase() === tag.toLowerCase()}
+                aria-pressed={filter.tag?.toLowerCase() === tag.toLowerCase()}
                 onclick={() => toggleTagFilter(tag)}
               >
                 <span class="hash">#</span>
@@ -602,6 +601,7 @@
             <button
               class="rail-item source-item"
               class:active={filter.sourceKey === source.itemKey}
+              aria-pressed={filter.sourceKey === source.itemKey}
               onclick={() => toggleSourceFilter(source.itemKey)}
               title={source.title}
             >
@@ -624,7 +624,6 @@
           <label class="search-field">
             <Icon name="search" size={15} />
             <input
-              bind:this={mobileSearchEl}
               bind:value={filter.query}
               onkeydown={onSearchKeydown}
               type="search"
@@ -665,6 +664,7 @@
               class="active-filter"
               onclick={() => (filter.sourceKey = null)}
               title="Clear source filter"
+              aria-label={`Clear source filter: ${activeSource.title}`}
             >
               <span class="active-filter-label">{activeSource.title}</span>
               <Icon name="x" size={12} />
@@ -675,6 +675,7 @@
               class="active-filter"
               onclick={() => (filter.tag = null)}
               title="Clear tag filter"
+              aria-label={`Clear tag filter: ${filter.tag}`}
             >
               <span class="active-filter-label">#{filter.tag}</span>
               <Icon name="x" size={12} />
@@ -834,7 +835,7 @@
 
 {#if tagEditor && tagEditorRow}
   <HighlightTagPicker
-    anchorRect={tagEditor.anchorRect}
+    anchor={tagEditor.anchor}
     tags={tagEditorRow.tags}
     vocabulary={tagVocabulary}
     onChange={handleTagsChange}
@@ -1489,11 +1490,6 @@
       margin-bottom: 0.75rem;
     }
 
-    /* 16px keeps iOS from zooming the page on focus. */
-    .compact-controls .search-field input {
-      font-size: 16px;
-    }
-
     .chip-row {
       display: flex;
       gap: 0.375rem;
@@ -1566,22 +1562,21 @@
       display: none;
     }
 
+    /* A plain stack: a horizontal scroller would clip each card's ⋯ menu. */
     .pinned-grid {
-      display: flex;
-      overflow-x: auto;
-      scroll-snap-type: x mandatory;
-      margin: 0 -1rem;
-      padding: 0 1rem 0.25rem;
-      scrollbar-width: none;
-    }
-
-    .pinned-card {
-      flex: 0 0 82%;
-      scroll-snap-align: start;
+      grid-template-columns: minmax(0, 1fr);
     }
 
     .source-link {
       max-width: 12rem;
+    }
+  }
+
+  /* iOS Safari zooms into any focused field under 16px (see e2e/ios-zoom). */
+  @media (hover: none) and (pointer: coarse) {
+    .search-field input,
+    .sort select {
+      font-size: 16px;
     }
   }
 

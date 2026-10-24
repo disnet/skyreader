@@ -5,7 +5,8 @@
   import { normalizeHighlightTags } from '$lib/utils/highlightAliases';
 
   interface Props {
-    anchorRect: DOMRect;
+    /** The button the picker opened from; it follows it as the page scrolls. */
+    anchor: HTMLElement;
     /** The highlight's tags as they stand. */
     tags: string[];
     /** Every tag the reader already uses, most-used first — the suggestions. */
@@ -14,7 +15,11 @@
     onClose: () => void;
   }
 
-  let { anchorRect, tags, vocabulary, onChange, onClose }: Props = $props();
+  let { anchor, tags, vocabulary, onChange, onClose }: Props = $props();
+
+  // Where the anchor was at open, for when a re-render has since replaced it.
+  // svelte-ignore state_referenced_locally
+  let lastRect = anchor.getBoundingClientRect();
 
   let el = $state<HTMLDivElement | null>(null);
   let inputEl = $state<HTMLInputElement | null>(null);
@@ -62,22 +67,30 @@
     draft = '';
   }
 
+  // Escape closes from anywhere in the picker, not only the field.
+  function onRootKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      onClose();
+    }
+  }
+
   function onKeydown(e: KeyboardEvent) {
     if (e.key === 'Enter') {
       e.preventDefault();
       submit();
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      e.stopPropagation();
-      onClose();
-    } else if (e.key === 'Backspace' && !draft && tags.length > 0) {
-      // Backspace in an empty field takes the last tag back off, as in a chip input.
+    } else if (e.key === 'Backspace' && !e.repeat && !draft && tags.length > 0) {
+      // Backspace in an empty field takes the last tag back off, as in a chip
+      // input — but not on auto-repeat, so holding it to clear a typo can't run
+      // on into the committed tags.
       onChange(tags.slice(0, -1));
     }
   }
 
   function reposition() {
-    if (el) positionFloating(anchorRect, el, { gap: 6, align: 'end' });
+    if (anchor.isConnected) lastRect = anchor.getBoundingClientRect();
+    if (el) positionFloating(lastRect, el, { gap: 6, align: 'end' });
   }
 
   function onPointerDown(e: PointerEvent) {
@@ -87,6 +100,8 @@
   onMount(async () => {
     document.addEventListener('pointerdown', onPointerDown, true);
     window.addEventListener('resize', reposition);
+    document.addEventListener('scroll', reposition, true);
+    window.visualViewport?.addEventListener('resize', reposition);
     await tick();
     reposition();
     inputEl?.focus();
@@ -95,6 +110,10 @@
   onDestroy(() => {
     document.removeEventListener('pointerdown', onPointerDown, true);
     window.removeEventListener('resize', reposition);
+    document.removeEventListener('scroll', reposition, true);
+    window.visualViewport?.removeEventListener('resize', reposition);
+    // Hand focus back to the button the picker opened from.
+    if (el?.contains(document.activeElement) && anchor.isConnected) anchor.focus();
   });
 
   $effect(() => {
@@ -109,6 +128,8 @@
   class="tag-picker"
   role="dialog"
   aria-label="Tag highlight"
+  tabindex="-1"
+  onkeydown={onRootKeydown}
   style="position: fixed; z-index: 200;"
 >
   <div class="field">

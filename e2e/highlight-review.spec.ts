@@ -456,7 +456,9 @@ test.describe('highlight review', () => {
     // Nothing was deleted: all three are still in the list, one marked.
     await authedPage.goto('/highlights');
     await expect(authedPage.getByText('3 highlights')).toBeVisible({ timeout: 15_000 });
-    await expect(authedPage.getByText('Not in review')).toHaveCount(1);
+    await expect(
+      authedPage.locator('.highlight-row').filter({ hasText: 'Not in review' })
+    ).toHaveCount(1);
 
     // And it survived the round trip through D1: reopening deals two, not three.
     await authedPage.goto('/highlights/review');
@@ -595,14 +597,19 @@ test.describe('highlight review', () => {
     await hidden;
 
     await authedPage.goto('/highlights');
-    const restore = authedPage.getByRole('button', { name: 'Put back in the review deck' });
-    await expect(restore).toBeVisible({ timeout: 15_000 });
+    // The list's own "Not in review" view finds it; the row's menu restores it.
+    await authedPage.getByRole('button', { name: /^Not in review/ }).click();
+    const row = authedPage.locator('.highlight-list .highlight-row');
+    await expect(row).toHaveCount(1, { timeout: 15_000 });
+    await row.hover();
+    await row.getByRole('button', { name: '⋯' }).click();
     const restored = authedPage.waitForResponse(
       (res) => res.url().includes('/api/labels') && res.request().method() === 'POST'
     );
-    await restore.click();
+    await authedPage.getByRole('menuitem', { name: 'Put back in review' }).click();
     await restored;
-    await expect(authedPage.getByText('Not in review')).toHaveCount(0);
+    // The "Not in review" view it was found in is empty now.
+    await expect(row).toHaveCount(0);
 
     await authedPage.goto('/highlights/review');
     await expect(authedPage.getByText('1 of 2')).toBeVisible({ timeout: 15_000 });

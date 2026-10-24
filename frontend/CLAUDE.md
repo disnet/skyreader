@@ -216,7 +216,7 @@ See [`docs/RUNBOOK.md`](../docs/RUNBOOK.md) for sampling and recovery details.
 | `/discover`          | Discover new feeds                              |
 | `/saved`             | Library › Queue: Inbox / Archive of saves       |
 | `/shelf`             | Library › Shelf: kept saves, books, PDFs; colls |
-| `/highlights`        | Every highlight, grouped by source article      |
+| `/highlights`        | Highlight library: search, filter, pin, tag     |
 | `/highlights/review` | Review deck — a few highlights, one at a time   |
 | `/search`            | Legacy link: opens the search overlay           |
 | `/settings`          | Account and sync status                         |
@@ -297,8 +297,9 @@ to be confused with `savedSearch.svelte.ts`, which searches the saved library.
 ### Highlights
 
 Highlights live in the `highlights` label's opaque `props.highlights` array, merged per-highlight by
-id across alias rows (`utils/highlightAliases.ts`). Three things ride that array beyond the quote
-itself: `lastReviewedAt` (the review deck's repeat-avoidance, synced for free), `reviewIntent`
+id across alias rows (`utils/highlightAliases.ts`). Several things ride that array beyond the quote
+itself: `pinnedAt` and `tags` (set from the `/highlights` library, whose pure filter/sort/facet logic
+is `utils/highlightLibrary.ts`; tags are per-highlight, separate from item `tag:` labels), `lastReviewedAt` (the review deck's repeat-avoidance, synced for free), `reviewIntent`
 (`soon`/`later`/`someday`/`never` — the deck's frequency tuning; `later` is the neutral default, and
 even `never` only stops the highlight being dealt, it stays in the list and on Margin), and
 `sourceUrl`/`sourceTitle` (source metadata: stamped on every new highlight from its article, and set

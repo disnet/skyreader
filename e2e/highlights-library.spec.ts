@@ -1,5 +1,6 @@
 import { test, expect } from './fixtures';
 import { seedItemLabel, seedSavedArticle, type TestUser } from './seed';
+import { PHONE, expectNoZoomingFields } from './ios-zoom';
 
 // The highlights page is a library: narrow by view, tag, source and search, and
 // pin and tag highlights in place. Pins and tags ride the highlights label like
@@ -117,5 +118,26 @@ test.describe('highlights library', () => {
     await rail.getByRole('button', { name: /memory/ }).click();
     await expect(authedPage.locator('.highlight-list .highlight-row')).toHaveCount(1);
     await expect(authedPage.locator('.highlight-list')).toContainText('argue with');
+  });
+
+  test.describe('on a phone', () => {
+    test.use(PHONE);
+
+    test('its fields are big enough that iOS does not zoom, and a source can be chosen', async ({
+      authedPage,
+      testUser,
+    }) => {
+      await seed(testUser);
+      await authedPage.goto('/highlights');
+      const row = authedPage.locator('.highlight-row', { hasText: 'optimised for recency' });
+      await expect(row).toBeVisible({ timeout: 15_000 });
+      await expectNoZoomingFields(authedPage, '/highlights');
+
+      // No rail on a phone: the row's menu narrows to its source instead.
+      await row.getByRole('button', { name: '⋯' }).click();
+      await authedPage.getByRole('menuitem', { name: 'Only this source' }).click();
+      await expect(authedPage.locator('.highlight-list .highlight-row')).toHaveCount(1);
+      await expect(authedPage.getByRole('button', { name: /^Clear source filter/ })).toBeVisible();
+    });
   });
 });
