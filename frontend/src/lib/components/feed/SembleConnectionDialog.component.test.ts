@@ -432,6 +432,13 @@ describe('SembleConnectionDialog', () => {
     expect(q('.search-input')).not.toBeNull();
   });
 
+  it('says the connection will be public before it is drawn', () => {
+    render();
+    expect(q('.public-note')?.textContent?.trim()).toBe(
+      'Connections are public on Semble, including the note.'
+    );
+  });
+
   it('offers the Semble permission up front when the session lacks the scope', async () => {
     scopeStatus = { semble: true, margin: false, sembleConnections: false };
     render();

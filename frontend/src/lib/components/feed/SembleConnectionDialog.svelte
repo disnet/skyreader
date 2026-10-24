@@ -574,6 +574,13 @@
         {MAX_NOTE_BYTES - noteBytes} characters left
       </p>
     {/if}
+
+    <!-- Said where the reader commits to it, note included: the edge and its
+         "why" are a public record on Semble, unlike a save. -->
+    <p class="public-note">
+      <Icon name="globe" size={13} />
+      Connections are public on Semble, including the note.
+    </p>
   </div>
 
   {#snippet footer()}
@@ -827,6 +834,15 @@
 
   .search-library:hover {
     color: var(--color-primary);
+  }
+
+  .public-note {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    margin: 0;
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
   }
 
   .chosen {
