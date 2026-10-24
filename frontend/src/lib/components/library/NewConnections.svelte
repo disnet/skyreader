@@ -48,7 +48,7 @@
 
   let { entries, onOpen, onHover, onMarkSeen, onClearAll }: Props = $props();
 
-  let linkMenu = $state<LinkMenuState | null>(null);
+  let linkMenu = $state<(LinkMenuState & { from: SavedItem }) | null>(null);
   // Where focus goes back to when the menu closes.
   let linkMenuAnchor: HTMLElement | null = null;
 
@@ -56,11 +56,14 @@
   // click (new tab, new window) is the browser's.
   // No link text: the label is read off the URL, and the menu would hand it to a
   // save or a Semble card as the page's title.
-  function openLinkMenu(e: MouseEvent, url: string) {
+  // `from` is the save the tile is about, so the menu can offer to connect
+  // back: the reader's own edge between their save and the page someone
+  // linked to it.
+  function openLinkMenu(e: MouseEvent, url: string, from: SavedItem) {
     if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
     e.preventDefault();
     linkMenuAnchor = e.currentTarget as HTMLElement;
-    linkMenu = { url, linkText: '', anchorRect: linkMenuAnchor.getBoundingClientRect() };
+    linkMenu = { url, linkText: '', anchorRect: linkMenuAnchor.getBoundingClientRect(), from };
   }
 
   // A keyboard close (Escape, or an action) hands focus back to the link; a
@@ -218,7 +221,7 @@
                     href={connection.otherUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    onclick={(e) => openLinkMenu(e, connection.otherUrl)}>{label}</a
+                    onclick={(e) => openLinkMenu(e, connection.otherUrl, save)}>{label}</a
                   >
                 </span>
                 {#if rel || connection.note}
@@ -280,6 +283,10 @@
       url={linkMenu.url}
       linkText={linkMenu.linkText}
       anchorRect={linkMenu.anchorRect}
+      connectFrom={linkMenu.from.url
+        ? { url: linkMenu.from.url, title: saveTitle(linkMenu.from) }
+        : undefined}
+      connectLabel="Connect back on Semble…"
       onClose={closeLinkMenu}
     />
   {/key}

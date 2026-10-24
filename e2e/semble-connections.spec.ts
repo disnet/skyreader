@@ -112,6 +112,14 @@ test.describe('Semble connections on saves', () => {
       // Focus goes back to the link the menu came from.
       await expect(link).toBeFocused();
 
+      // The reader can add their own edge back: the dialog opens with their
+      // save and the page someone linked to it.
+      await link.click();
+      await menu.getByRole('menuitem', { name: 'Connect back on Semble…' }).click();
+      await expect(authedPage.locator('.chosen-url')).toHaveText(otherUrl);
+      await authedPage.getByRole('button', { name: 'Cancel' }).click();
+      await expect(authedPage.locator('.chosen-url')).toHaveCount(0);
+
       // Home carries the same lane.
       await authedPage.goto('/home');
       await expect(tile).toBeVisible({ timeout: 15_000 });

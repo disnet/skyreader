@@ -66,7 +66,7 @@ Articles carry a **Discussion** section at the end that gathers what people acro
 
 To add yours, use the buttons under **Add yours**. **Bluesky** writes a post from your own account, with the article's link card under your words; it's public like any Bluesky post.
 
-To connect an article to another one on Semble, choose **Connect this to something** (or **Draw the first connection**), then pick how they relate. The other end can be any link, but what you've read and saved lately is listed first. If you read something else in the last couple of days, a section above the Discussion offers to connect the two in one tap, or to pick something else from your library. Connections are public on Semble.
+To connect an article to another one on Semble, choose **Connect this to something** (or **Draw the first connection**), then pick how they relate. The other end can be any link, but what you've read and saved lately is listed first. If you read something else in the last couple of days, a section above the Discussion offers to connect the two in one tap, or to pick something else from your library. To connect the article to a page it links to, tap the link and choose **Connect on Semble…**. Connections are public on Semble.
 
 ## The daily magazine
 
