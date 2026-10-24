@@ -10,7 +10,7 @@ import {
 import type { ExtractedArticle } from '$lib/services/api';
 import { generateTid } from '$lib/utils/tid';
 import { urlKey } from '$lib/utils/urlKey';
-import { syncQueue, type SavedPayload } from '$lib/services/sync-queue';
+import { syncQueue, SAVED_DELETE_BATCH, type SavedPayload } from '$lib/services/sync-queue';
 import { syncStore } from './sync.svelte';
 import { auth } from './auth.svelte';
 import { extractArticle } from '$lib/services/extract';
@@ -69,9 +69,6 @@ function toLightSaved(item: SavedItem): SavedItem {
   const coverPath = item.contentType === 'epub' ? epubCoverPath(content) : null;
   return { ...rest, content: null, ...(coverPath ? { coverPath } : {}) };
 }
-
-/** How many deletes a bulk delete keeps in flight. */
-const REMOVE_MANY_CONCURRENCY = 4;
 
 function createSavesStore() {
   let articles = $state<SavedItem[]>([]);
@@ -352,10 +349,13 @@ function createSavesStore() {
         return;
       }
 
+      // A save whose delete is still queued (a bulk delete cut short by a
+      // refresh) is listed by the server until the queue drains. It stays gone.
+      const unsaving = await syncQueue.pendingSavedRkeys('delete');
+      const stillSaved = (rkey: string) => !removedDuringLoad.has(rkey) && !unsaving.has(rkey);
+
       if (first.full) {
-        const snapshot = (first.articles as SavedItem[]).filter(
-          (a) => !removedDuringLoad.has(a.rkey)
-        );
+        const snapshot = (first.articles as SavedItem[]).filter((a) => stillSaved(a.rkey));
 
         // The snapshot is authoritative about collection MEMBERSHIP, which is
         // why it replaces rather than merges — an item removed in Semble or
@@ -406,7 +406,7 @@ function createSavesStore() {
             caughtUp = true;
             break;
           }
-          if (!removedDuringLoad.has(a.rkey)) fresh.push(a);
+          if (stillSaved(a.rkey)) fresh.push(a);
         }
         if (caughtUp || !page.cursor) break;
         page = await api.getSaved({ limit: PAGE_SIZE, cursor: page.cursor });
@@ -1047,27 +1047,24 @@ function createSavesStore() {
         await api.deleteSaved(rkey);
       } catch (err) {
         console.error('Failed to delete saved item, queueing:', err);
-        await syncQueue.enqueue('delete', 'saved', rkey, {
-          rkey,
-          url: item?.url || '',
-        } as SavedPayload);
+        await syncQueue.enqueueSavedDeletes([{ rkey, url: item?.url || '' }]);
       }
     } else {
-      await syncQueue.enqueue('delete', 'saved', rkey, {
-        rkey,
-        url: item?.url || '',
-      } as SavedPayload);
+      // Through the bulk path's queueing, so it also drops a queued create or
+      // edit of this save (those are keyed by guid, not rkey).
+      await syncQueue.enqueueSavedDeletes([{ rkey, url: item?.url || '' }]);
     }
   }
 
   /**
    * Delete several saves (the Library's select mode). They leave the list in one
    * step (one filter and one map rebuild, not one per save, which froze the tab
-   * for a few thousand), then each is deleted on the server exactly as one at a
-   * time would be (a backed save leaves its Semble/Margin collection, an
-   * unreachable server queues it), a few at once. A tab closed part way leaves
-   * the rest on the server, and they come back on the next load rather than
-   * being lost.
+   * for a few thousand), then go to the server's bulk delete, 500 a request,
+   * which removes them everywhere at once and cleans up behind them (stored files,
+   * collections, a backed Library's Semble/Margin records). Every delete is
+   * queued before the first request and cleared as the server confirms it, so a
+   * refresh, a closed tab or a dropped connection part way leaves the rest in
+   * the sync queue, which sends them the same way.
    */
   async function removeMany(rkeys: string[], onProgress?: (done: number) => void) {
     const gone = new Set(rkeys);
@@ -1084,17 +1081,34 @@ function createSavesStore() {
       console.error('Failed to delete saved items locally:', err);
     });
 
-    const queue = [...gone];
-    let done = 0;
-    const worker = async () => {
-      for (let rkey = queue.shift(); rkey !== undefined; rkey = queue.shift()) {
-        await deleteOnServer(rkey, items.get(rkey)).catch((err) => {
-          console.error('Failed to delete saved item:', err);
-        });
-        onProgress?.(++done);
+    const queued = await syncQueue
+      .enqueueSavedDeletes(
+        [...gone].map((rkey) => ({ rkey, url: items.get(rkey)?.url || '' }) as SavedPayload)
+      )
+      .catch((err) => {
+        console.error('Failed to queue saved deletes:', err);
+        return null;
+      });
+    const toSend = queued ?? [...gone];
+    let done = gone.size - toSend.length;
+    if (done > 0) onProgress?.(done);
+    if (!canReachBackend()) return;
+    for (let i = 0; i < toSend.length; i += SAVED_DELETE_BATCH) {
+      const chunk = toSend.slice(i, i + SAVED_DELETE_BATCH);
+      try {
+        await api.deleteSavedMany(chunk);
+      } catch (err) {
+        // The rest wait in the queue for the next sync.
+        console.warn('Failed to delete saved items, left queued:', err);
+        return;
       }
-    };
-    await Promise.all(Array.from({ length: REMOVE_MANY_CONCURRENCY }, worker));
+      if (queued) {
+        await syncQueue.clearSavedDeletes(chunk).catch((err) => {
+          console.error('Failed to clear sent saved deletes:', err);
+        });
+      }
+      onProgress?.((done += chunk.length));
+    }
   }
 
   // The reader's own edit of a save's title, author, description or date.

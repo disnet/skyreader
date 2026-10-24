@@ -1,5 +1,5 @@
 import { db, type SyncQueueEntry } from './db';
-import { api } from './api';
+import { api, ApiError } from './api';
 import { toUnifiedReadItem } from './readSync';
 import { marginPublishQueue } from '$lib/stores/marginPublishQueue.svelte';
 import type {
@@ -120,6 +120,30 @@ type SyncPayload =
   | MagazinePayload
   | ShareDraftPayload;
 
+/** Saves one bulk delete request carries (the backend's MAX_BULK_DELETE). */
+export const SAVED_DELETE_BATCH = 500;
+
+/** The save a queued saved entry is about, whatever key it was queued under. */
+function payloadRkey(entry: SyncQueueEntry): string | null {
+  try {
+    const rkey = (JSON.parse(entry.payload) as { rkey?: unknown }).rkey;
+    return typeof rkey === 'string' ? rkey : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A queued save delete by rkey, which the bulk delete endpoint can carry. */
+function isBulkSavedDelete(entry: SyncQueueEntry): boolean {
+  if (entry.collection !== 'saved' || entry.operation !== 'delete') return false;
+  try {
+    const payload = JSON.parse(entry.payload) as SavedPayload;
+    return !payload.itemGuid && payload.rkey === entry.key;
+  } catch {
+    return false;
+  }
+}
+
 class SyncQueue {
   private processing = false;
   private onPendingCountChange: ((count: number) => void) | null = null;
@@ -153,6 +177,64 @@ class SyncQueue {
     key: string,
     payload: SyncPayload
   ): Promise<void> {
+    await this.write(operation, collection, key, payload);
+    await this.notifyPendingCount();
+  }
+
+  /**
+   * Queue the deletes of several saves at once (the Library's bulk delete), in
+   * one transaction and before any is sent. Each is cleared as the server
+   * confirms it (`clearSavedDeletes`), so a delete a refresh or a closed tab cuts
+   * short still finishes from the queue instead of leaving the rest on the
+   * server. Returns the rkeys still to delete there.
+   *
+   * A save's create and edits are queued under the key they were made with (a
+   * feed save's guid, a document's record uri), so they're matched here by the
+   * rkey in their payload. A create still waiting to be sent means the save
+   * never reached the server: it and its edits just go, and there's nothing to
+   * send. Edits of a save that did reach it go too; the delete supersedes them.
+   */
+  async enqueueSavedDeletes(saves: SavedPayload[]): Promise<string[]> {
+    const toSend: string[] = [];
+    await db.transaction('rw', db.syncQueue, async () => {
+      const queued = new Map<string, SyncQueueEntry[]>();
+      for (const entry of await db.syncQueue.where('collection').equals('saved').toArray()) {
+        const rkey = entry.status === 'held' ? null : payloadRkey(entry);
+        if (rkey) queued.set(rkey, [...(queued.get(rkey) ?? []), entry]);
+      }
+      for (const save of saves) {
+        const entries = queued.get(save.rkey) ?? [];
+        const unsent = entries.some((e) => e.operation === 'create' && e.status === 'pending');
+        const superseded = entries.filter(
+          (e) => e.operation === 'update' || (unsent && e.operation === 'create')
+        );
+        if (superseded.length > 0) await db.syncQueue.bulkDelete(superseded.map((e) => e.id!));
+        if (unsent) continue;
+        if (await this.write('delete', 'saved', save.rkey, save)) toSend.push(save.rkey);
+      }
+    });
+    await this.notifyPendingCount();
+    return toSend;
+  }
+
+  /** Drop the queued deletes of these saves: the server has confirmed them. */
+  async clearSavedDeletes(rkeys: string[]): Promise<void> {
+    await db.transaction('rw', db.syncQueue, async () => {
+      for (const rkey of rkeys) {
+        const entry = await this.liveEntry('saved', rkey);
+        if (entry?.operation === 'delete') await db.syncQueue.delete(entry.id!);
+      }
+    });
+    await this.notifyPendingCount();
+  }
+
+  /** The queue write behind `enqueue`. False when it cancelled a queued entry out. */
+  private async write(
+    operation: SyncOperation,
+    collection: SyncCollection,
+    key: string,
+    payload: SyncPayload
+  ): Promise<boolean> {
     // Check for existing entry with same collection+key. A HELD entry (parked by
     // an expired session, owned by a DID that may never come back) is not a
     // conflict partner: merging into one would leak the previous account's write
@@ -166,6 +248,7 @@ class SyncQueue {
       if (resolved === null) {
         // Cancel out - delete the existing entry
         await db.syncQueue.delete(existing.id!);
+        return false;
       } else {
         // Update existing entry
         await db.syncQueue.update(existing.id!, {
@@ -186,8 +269,7 @@ class SyncQueue {
         status: 'pending',
       });
     }
-
-    await this.notifyPendingCount();
+    return true;
   }
 
   /**
@@ -269,6 +351,7 @@ class SyncQueue {
       // Partition items into batchable and non-batchable
       const readingCreateBatch: SyncQueueEntry[] = [];
       const socialReadingCreateBatch: SyncQueueEntry[] = [];
+      const savedDeleteBatch: SyncQueueEntry[] = [];
       const individualItems: SyncQueueEntry[] = [];
 
       for (const item of pendingItems) {
@@ -276,6 +359,8 @@ class SyncQueue {
           readingCreateBatch.push(item);
         } else if (item.collection === 'socialReading' && item.operation === 'create') {
           socialReadingCreateBatch.push(item);
+        } else if (isBulkSavedDelete(item)) {
+          savedDeleteBatch.push(item);
         } else {
           individualItems.push(item);
         }
@@ -291,6 +376,16 @@ class SyncQueue {
       // Process social reading creates in bulk
       if (socialReadingCreateBatch.length > 0) {
         const result = await this.processBatchSocialReadingCreates(socialReadingCreateBatch);
+        processed += result.processed;
+        failed += result.failed;
+      }
+
+      // Save deletes in bulk, before the saves' other writes: a create queued
+      // before a delete of the same save was cancelled out when the delete was
+      // queued (enqueueSavedDeletes), so any create still here is a later one (a
+      // re-save of the same article), and it must land after the delete.
+      if (savedDeleteBatch.length > 0) {
+        const result = await this.processBatchSavedDeletes(savedDeleteBatch);
         processed += result.processed;
         failed += result.failed;
       }
@@ -315,6 +410,31 @@ class SyncQueue {
       await this.notifyPendingCount();
     }
 
+    return { processed, failed };
+  }
+
+  /** Queued save deletes, a bulk request (of up to 500) at a time. */
+  private async processBatchSavedDeletes(
+    items: SyncQueueEntry[]
+  ): Promise<{ processed: number; failed: number }> {
+    let processed = 0;
+    let failed = 0;
+    for (let i = 0; i < items.length; i += SAVED_DELETE_BATCH) {
+      // Left 'pending' while in flight: nothing returns an entry from
+      // 'processing', and a refresh mid-request would strand the whole batch.
+      // Sending one twice is harmless; the bulk delete skips saves already gone.
+      const batch = items.slice(i, i + SAVED_DELETE_BATCH);
+      try {
+        await api.deleteSavedMany(batch.map((item) => item.key));
+        await db.syncQueue.bulkDelete(batch.map((item) => item.id!));
+        processed += batch.length;
+      } catch (e) {
+        console.error('Bulk saved delete sync failed:', e);
+        for (const item of batch) {
+          if ((await this.handleItemError(item, e as Error)) === 'failed') failed++;
+        }
+      }
+    }
     return { processed, failed };
   }
 
@@ -654,10 +774,16 @@ class SyncQueue {
         if (payload.metadata) await api.updateSaved(payload.rkey, payload.metadata);
         break;
       case 'delete':
-        if (payload.itemGuid) {
-          await api.deleteSavedByGuid(payload.itemGuid);
-        } else {
-          await api.deleteSaved(payload.rkey);
+        try {
+          if (payload.itemGuid) {
+            await api.deleteSavedByGuid(payload.itemGuid);
+          } else {
+            await api.deleteSaved(payload.rkey);
+          }
+        } catch (err) {
+          // Already gone: a bulk delete that sent this one and was cut off
+          // before it could clear the entry. The delete is done.
+          if (!(err instanceof ApiError && err.status === 404)) throw err;
         }
         break;
     }
@@ -788,6 +914,9 @@ class SyncQueue {
       // Held entries belong to a signed-out account; their saves are not in
       // this library, so they must not shield rows from a snapshot replace.
       if (entry.status === 'held') continue;
+      // A delete that failed for good never reached the server, whose save then
+      // still stands: it mustn't hide it here.
+      if (operation === 'delete' && entry.status === 'failed') continue;
       try {
         const payload = JSON.parse(entry.payload) as { rkey?: unknown };
         if (typeof payload.rkey === 'string') rkeys.add(payload.rkey);

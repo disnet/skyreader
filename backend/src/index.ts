@@ -101,6 +101,7 @@ import {
   handleUpdateSaved,
   handleDeleteSaved,
   handleDeleteSavedByGuid,
+  handleDeleteSavedMany,
   handleSetBacking,
   handleGetSavedSnapshots,
   handleGetSnapshotImage,
@@ -213,6 +214,7 @@ import {
   POLLER_PING_TIMEOUT_MS,
 } from './observability/ops-metrics';
 import { log, serializeError } from './utils/logger';
+import { runJobs, type Job } from './services/jobs';
 import { withTimeout } from './utils/with-timeout';
 import { d1Summary } from './utils/d1-timing';
 import { classifyRoute, runWithRequestContext, setContextDid } from './utils/request-context';
@@ -827,6 +829,10 @@ async function route(
       if (!session) return unauthorizedResponse(headers);
       response = await handleSavedStatus(request, env);
       break;
+    case url.pathname === '/api/saved/delete':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleDeleteSavedMany(request, env, ctx);
+      break;
     case url.pathname.startsWith('/api/saved/by-guid/'):
       if (!session) return unauthorizedResponse(headers);
       response = await handleDeleteSavedByGuid(request, env, ctx);
@@ -1291,6 +1297,13 @@ const handler = {
         throw error;
       }
     });
+  },
+
+  // Background jobs (services/jobs.ts).
+  async queue(batch: MessageBatch, env: Env): Promise<void> {
+    return runWithRequestContext({ requestId: crypto.randomUUID(), route: 'queue' }, () =>
+      runJobs(batch as MessageBatch<Job>, env)
+    );
   },
 
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {

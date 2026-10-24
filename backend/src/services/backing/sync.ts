@@ -26,7 +26,7 @@ import type { SaveBacking } from '../../routes/settings';
 const POLL_GATE_MS = 60_000;
 // Tombstone backstop: a suppression older than this is force-cleared so a
 // permanently-stuck foreign delete can't hide a URL forever (Phase 4).
-const TOMBSTONE_TTL_MS = 10 * 60_000;
+export const TOMBSTONE_TTL_MS = 10 * 60_000;
 
 interface MemberMetadata {
   title?: string;

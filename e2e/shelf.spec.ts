@@ -271,16 +271,12 @@ test.describe('Shelf', () => {
       message = d.message();
       void d.accept();
     });
-    // Both deletes, by URL: two waitForResponse on one predicate settle together
-    // on the first.
-    const deleted = new Set<string>();
-    authedPage.on('response', (r) => {
-      if (/\/api\/saved\/[a-z0-9]+$/.test(r.url()) && r.request().method() === 'DELETE') {
-        deleted.add(r.url());
-      }
-    });
+    // One bulk request carries both.
+    const deleted = authedPage.waitForResponse(
+      (r) => r.url().endsWith('/api/saved/delete') && r.request().method() === 'POST'
+    );
     await bar.getByRole('button', { name: 'Delete' }).click();
-    await expect.poll(() => deleted.size, { timeout: 15_000 }).toBe(2);
+    expect(await (await deleted).json()).toEqual({ deleted: 2 });
     expect(message).toContain('Delete 2 items');
     await expect(authedPage.locator('.bookmark-card', { hasText: 'Doomed Article 1' })).toHaveCount(
       0
@@ -295,5 +291,61 @@ test.describe('Shelf', () => {
     await expect(
       authedPage.locator('.bookmark-card', { hasText: /Doomed Article [12]/ })
     ).toHaveCount(0);
+  });
+
+  test('a Delete cut short by a refresh finishes after the page reloads', async ({
+    authedPage,
+    testUser,
+  }) => {
+    for (const n of [1, 2, 3]) {
+      await seedSavedArticle(testUser, {
+        url: `https://example.com/interrupted-${n}`,
+        title: `Interrupted Article ${n}`,
+        domain: 'example.com',
+      });
+    }
+    const card = (n: number) =>
+      authedPage.locator('.bookmark-card', { hasText: `Interrupted Article ${n}` });
+
+    await authedPage.goto('/saved');
+    await expect(card(3)).toBeVisible({ timeout: 15_000 });
+    await authedPage.getByRole('button', { name: 'Select', exact: true }).click();
+    await card(1).click();
+    await card(2).click();
+
+    // The server never answers, as though the tab were closed mid-delete.
+    const bulkDelete = '**/api/saved/delete';
+    let hung = 0;
+    await authedPage.route(bulkDelete, () => {
+      hung++;
+    });
+    authedPage.once('dialog', (d) => void d.accept());
+    await authedPage
+      .getByRole('toolbar', { name: 'Selection' })
+      .getByRole('button', { name: 'Delete' })
+      .click();
+    await expect.poll(() => hung, { timeout: 15_000 }).toBe(1);
+    await expect(card(1)).toHaveCount(0);
+
+    // The queued deletes go out once the page is back.
+    await authedPage.unroute(bulkDelete);
+    const resent = authedPage.waitForResponse(
+      (r) => r.url().endsWith('/api/saved/delete') && r.request().method() === 'POST' && r.ok(),
+      { timeout: 20_000 }
+    );
+    await authedPage.reload();
+    await expect(card(3)).toBeVisible({ timeout: 15_000 });
+    await expect(card(1)).toHaveCount(0);
+    // (It may find them gone already: a request cut off by the reload can still
+    // land, and the bulk delete is safe to repeat.)
+    await resent;
+
+    // And the server no longer has them.
+    const titles = await authedPage.evaluate(async () => {
+      const res = await fetch('/api/saved?limit=50');
+      const body = (await res.json()) as { articles: { title: string }[] };
+      return body.articles.map((a) => a.title);
+    });
+    expect(titles.filter((t) => t.startsWith('Interrupted'))).toEqual(['Interrupted Article 3']);
   });
 });
