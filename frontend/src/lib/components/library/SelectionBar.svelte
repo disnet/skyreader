@@ -43,28 +43,34 @@
 
   async function deleteSelected() {
     if (selected.length === 0 || busy) return;
-    const n = selected.length;
-    const what = n === 1 ? '1 item' : `${n.toLocaleString()} items`;
-    // With Semble or Margin backing the Saved list is that public collection,
-    // so a delete reaches it too: say so before it happens.
-    const provider = saveBackingStore.backing?.provider;
-    const backedBy = provider === 'semble' ? 'Semble' : provider === 'margin' ? 'Margin' : null;
-    const ok = confirm(
-      `Delete ${what} from your Library?` +
-        (backedBy ? `\n\nThey also come out of your ${backedBy} collection.` : '') +
-        `\n\nThis can't be undone.`
-    );
-    if (!ok) return;
     busy = true;
+    // What's selected now is what the confirm names and what gets deleted.
     const rkeys = selected.map((s) => s.rkey);
-    const toast = toastStore.add(`Deleting ${what}…`);
+    const n = rkeys.length;
+    const what = n === 1 ? '1 item' : `${n.toLocaleString()} items`;
     try {
+      // With Semble or Margin backing the Saved list is that public collection,
+      // so a delete reaches it too: say so before it happens (waiting for the
+      // lookup if it hasn't come back yet).
+      if (!saveBackingStore.loaded) await saveBackingStore.load();
+      const provider = saveBackingStore.backing?.provider;
+      const backedBy = provider === 'semble' ? 'Semble' : provider === 'margin' ? 'Margin' : null;
+      const ok = confirm(
+        `Delete ${what} from your Library?` +
+          (backedBy
+            ? `\n\n${n === 1 ? 'It also comes' : 'They also come'} out of your ${backedBy} collection.`
+            : '') +
+          `\n\nThis can't be undone.`
+      );
+      if (!ok) return;
+      const toast = toastStore.add(`Deleting ${what}…`);
       await savesStore.removeMany(rkeys, (done) => {
         if (n > 1)
           toastStore.update(toast, 'pending', `Deleting ${what}… ${done.toLocaleString()} done`);
       });
       shelfStore.forgetSaves(rkeys);
-      librarySelection.clear();
+      // Only what was deleted: the reader may have started another selection.
+      librarySelection.deselect(rkeys);
       toastStore.update(toast, 'success', n === 1 ? 'Deleted 1 item' : `Deleted ${what}`);
     } finally {
       busy = false;
@@ -136,7 +142,7 @@
   <button
     class="action-btn primary"
     onclick={() => shelfStore.openPicker(selected)}
-    disabled={selected.length === 0}
+    disabled={selected.length === 0 || busy}
   >
     <Icon name="folder-plus" size={14} />
     <span class="long">Add to collection</span><span class="short">Add</span>
@@ -248,8 +254,8 @@
   }
 
   /* A phone: shorter words, no icons (Delete keeps its trash can, and only
-     that), and on the narrowest screens a second
-     line rather than a squeeze. */
+     that), and a second line when
+     the actions don't fit (a collection's Remove, Delete and Add). */
   @media (max-width: 30rem) {
     .selection-bar {
       gap: 0.375rem;
@@ -271,7 +277,7 @@
     }
   }
 
-  @media (max-width: 22rem) {
+  @media (max-width: 30rem) {
     .selection-bar {
       flex-wrap: wrap;
       row-gap: 0.25rem;

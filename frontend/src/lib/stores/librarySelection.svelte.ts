@@ -57,6 +57,13 @@ function createLibrarySelection() {
       for (const save of saves) next.add(save.rkey);
       selected = next;
     },
+    /** Unselect these (saves just deleted), leaving the rest. */
+    deselect(rkeys: string[]) {
+      if (!rkeys.some((r) => selected.has(r))) return;
+      const next = new Set(selected);
+      for (const r of rkeys) next.delete(r);
+      selected = next;
+    },
     clear() {
       if (selected.size) selected = new Set();
     },

@@ -258,8 +258,9 @@ test.describe('Shelf', () => {
     const bar = authedPage.getByRole('toolbar', { name: 'Selection' });
 
     // Dismissing the confirm deletes nothing.
-    authedPage.once('dialog', (d) => void d.dismiss());
+    const dismissed = authedPage.waitForEvent('dialog').then((d) => d.dismiss());
     await bar.getByRole('button', { name: 'Delete' }).click();
+    await dismissed;
     await expect(bar.getByText('2 selected')).toBeVisible();
     await expect(
       authedPage.locator('.bookmark-card', { hasText: 'Doomed Article 1' })
@@ -270,15 +271,16 @@ test.describe('Shelf', () => {
       message = d.message();
       void d.accept();
     });
-    const deletes = Promise.all(
-      [0, 1].map(() =>
-        authedPage.waitForResponse(
-          (r) => /\/api\/saved\/[a-z0-9]+$/.test(r.url()) && r.request().method() === 'DELETE'
-        )
-      )
-    );
+    // Both deletes, by URL: two waitForResponse on one predicate settle together
+    // on the first.
+    const deleted = new Set<string>();
+    authedPage.on('response', (r) => {
+      if (/\/api\/saved\/[a-z0-9]+$/.test(r.url()) && r.request().method() === 'DELETE') {
+        deleted.add(r.url());
+      }
+    });
     await bar.getByRole('button', { name: 'Delete' }).click();
-    await deletes;
+    await expect.poll(() => deleted.size, { timeout: 15_000 }).toBe(2);
     expect(message).toContain('Delete 2 items');
     await expect(authedPage.locator('.bookmark-card', { hasText: 'Doomed Article 1' })).toHaveCount(
       0

@@ -273,6 +273,12 @@ function createSavesStore() {
   // Saves removed on this device this session. A save listed by an updates
   // page fetched before its delete reached the server mustn't come back.
   const removedRkeys = new Set<string>();
+  // The removals each load in flight has to leave out (see load).
+  const loadRemovals = new Set<Set<string>>();
+  function noteRemoved(rkey: string) {
+    removedRkeys.add(rkey);
+    for (const set of loadRemovals) set.add(rkey);
+  }
 
   // Add saves the list refresh never sent (see pullUpdates), into the list as
   // it stands now.
@@ -290,6 +296,12 @@ function createSavesStore() {
   async function load() {
     loading = true;
     error = null;
+    // A save deleted while this load is in flight (a bulk delete right after a
+    // page opens) stays deleted, whichever of the cache read or the server page
+    // saw it first. Only this load's window: an rkey deleted before it began is
+    // already gone from both.
+    const removedDuringLoad = new Set<string>();
+    loadRemovals.add(removedDuringLoad);
     try {
       // Load from local cache first. The in-memory list is kept "light" (no
       // body); IndexedDB retains the full rows.
@@ -301,9 +313,9 @@ function createSavesStore() {
       // sort this way; the cache path returns early for a guest and for an
       // unchanged backed snapshot, so it has to as well or those two cases
       // render a "recent" lane that isn't.
-      const cached = (await db.saved.orderBy('rkey').reverse().toArray()).sort(
-        compareSavedNewestFirst
-      );
+      const cached = (await db.saved.orderBy('rkey').reverse().toArray())
+        .filter((c) => !removedDuringLoad.has(c.rkey))
+        .sort(compareSavedNewestFirst);
       const cachedByRkey = new Map(cached.map((c) => [c.rkey, c]));
       const firstLoad = cached.length === 0;
       if (!firstLoad) {
@@ -341,7 +353,9 @@ function createSavesStore() {
       }
 
       if (first.full) {
-        const snapshot = first.articles as SavedItem[];
+        const snapshot = (first.articles as SavedItem[]).filter(
+          (a) => !removedDuringLoad.has(a.rkey)
+        );
 
         // The snapshot is authoritative about collection MEMBERSHIP, which is
         // why it replaces rather than merges — an item removed in Semble or
@@ -363,7 +377,7 @@ function createSavesStore() {
         await hydrateBodies(snapshot, cachedByRkey);
         const backfilled = backfillWordCounts(snapshot);
         const kept = [...unsent, ...snapshot].sort(compareSavedNewestFirst);
-        articles = kept.map(toLightSaved);
+        articles = kept.filter((a) => !removedDuringLoad.has(a.rkey)).map(toLightSaved);
         rebuildMaps();
         await db.saved.clear();
         if (kept.length > 0) {
@@ -392,7 +406,7 @@ function createSavesStore() {
             caughtUp = true;
             break;
           }
-          fresh.push(a);
+          if (!removedDuringLoad.has(a.rkey)) fresh.push(a);
         }
         if (caughtUp || !page.cursor) break;
         page = await api.getSaved({ limit: PAGE_SIZE, cursor: page.cursor });
@@ -408,7 +422,9 @@ function createSavesStore() {
       const merged = [
         ...fresh.map(toLightSaved),
         ...cached.filter((c) => !freshKeys.has(c.rkey)).map(toLightSaved),
-      ].sort(compareSavedNewestFirst);
+      ]
+        .filter((a) => !removedDuringLoad.has(a.rkey))
+        .sort(compareSavedNewestFirst);
 
       articles = merged;
       rebuildMaps();
@@ -437,6 +453,7 @@ function createSavesStore() {
       console.error('Failed to load saved items:', err);
       // Keep cached data if backend fails
     } finally {
+      loadRemovals.delete(removedDuringLoad);
       loading = false;
     }
   }
@@ -984,7 +1001,7 @@ function createSavesStore() {
     if (!item) return;
 
     // Optimistically remove from local state
-    removedRkeys.add(item.rkey);
+    noteRemoved(item.rkey);
     articles = articles.filter((a) => a.itemGuid !== guid);
     rebuildMaps();
     savedSearchStore.remove(item.rkey, guid);
@@ -1014,13 +1031,17 @@ function createSavesStore() {
     const item = articles.find((a) => a.rkey === rkey);
 
     // Optimistically remove from local state
-    removedRkeys.add(rkey);
+    noteRemoved(rkey);
     articles = articles.filter((a) => a.rkey !== rkey);
     rebuildMaps();
     contentCache.delete(rkey);
     savedSearchStore.remove(rkey, item?.itemGuid);
     await db.saved.delete(rkey);
+    await deleteOnServer(rkey, item);
+  }
 
+  /** Delete a save on the server, or queue the delete when that can't happen now. */
+  async function deleteOnServer(rkey: string, item: SavedItem | undefined) {
     if (canReachBackend()) {
       try {
         await api.deleteSaved(rkey);
@@ -1040,23 +1061,36 @@ function createSavesStore() {
   }
 
   /**
-   * Delete several saves (the Library's select mode). Each goes through
-   * `remove`, so a backed save leaves its Semble/Margin collection and an
-   * unreachable server queues the rest, exactly as one at a time; a few run at
-   * once so a large selection doesn't take a request's round trip per save.
-   * Each leaves the list as its turn comes, so a tab closed part way leaves the
-   * undeleted ones showing rather than hidden and still on the server.
+   * Delete several saves (the Library's select mode). They leave the list in one
+   * step (one filter and one map rebuild, not one per save, which froze the tab
+   * for a few thousand), then each is deleted on the server exactly as one at a
+   * time would be (a backed save leaves its Semble/Margin collection, an
+   * unreachable server queues it), a few at once. A tab closed part way leaves
+   * the rest on the server, and they come back on the next load rather than
+   * being lost.
    */
   async function removeMany(rkeys: string[], onProgress?: (done: number) => void) {
-    const queue = [...new Set(rkeys)];
+    const gone = new Set(rkeys);
+    const items = new Map<string, SavedItem>();
+    for (const a of articles) if (gone.has(a.rkey)) items.set(a.rkey, a);
+    for (const rkey of gone) {
+      noteRemoved(rkey);
+      contentCache.delete(rkey);
+      savedSearchStore.remove(rkey, items.get(rkey)?.itemGuid);
+    }
+    articles = articles.filter((a) => !gone.has(a.rkey));
+    rebuildMaps();
+    await db.saved.bulkDelete([...gone]).catch((err) => {
+      console.error('Failed to delete saved items locally:', err);
+    });
+
+    const queue = [...gone];
     let done = 0;
     const worker = async () => {
       for (let rkey = queue.shift(); rkey !== undefined; rkey = queue.shift()) {
-        try {
-          await remove(rkey);
-        } catch (err) {
+        await deleteOnServer(rkey, items.get(rkey)).catch((err) => {
           console.error('Failed to delete saved item:', err);
-        }
+        });
         onProgress?.(++done);
       }
     };

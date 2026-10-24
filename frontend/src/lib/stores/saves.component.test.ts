@@ -41,12 +41,15 @@ function whereEquals(rows: () => Record<string, unknown>[], field: string, val: 
 }
 
 vi.mock('$lib/services/db', () => ({
+  getMetadata: async () => null,
+  setMetadata: async () => {},
   db: {
     saved: {
       orderBy: () => ({ reverse: () => ({ toArray: async () => [...savedRows.values()] }) }),
       get: async (rkey: string) => savedRows.get(rkey),
       put: async (item: SavedItem) => void savedRows.set(item.rkey, item),
       delete: async (rkey: string) => void savedRows.delete(rkey),
+      bulkDelete: async (rkeys: string[]) => rkeys.forEach((r) => savedRows.delete(r)),
       clear: async () => savedRows.clear(),
       where: (field: string) => ({
         equals: (val: unknown) =>
@@ -293,6 +296,30 @@ describe('savesStore in guest mode', () => {
     expect(savedRows.size).toBe(0);
     expect(enqueue).toHaveBeenCalledTimes(6);
     expect(progress.at(-1)).toBe(6);
+  });
+
+  it('a save bulk-deleted while a load is in flight stays deleted', async () => {
+    authState.isGuest = false;
+    const row = (rkey: string, n: number) =>
+      ({ rkey, url: `https://example.com/race-${n}`, title: `Race ${n}`, savedAt: n }) as never;
+    savedRows.set('3kraceraceaa1', row('3kraceraceaa1', 1));
+    savedRows.set('3kraceraceaa2', row('3kraceraceaa2', 2));
+    let answer!: (v: unknown) => void;
+    api.getSaved.mockReturnValueOnce(new Promise((r) => (answer = r)));
+    api.getSavedBodies.mockResolvedValue({ bodies: {} });
+    api.deleteSaved.mockResolvedValue({ success: true });
+
+    const loading = savesStore.load();
+    await vi.waitFor(() => expect(api.getSaved).toHaveBeenCalled());
+    await savesStore.removeMany(['3kraceraceaa1']);
+    // The server's page was read before the delete reached it.
+    answer({
+      articles: [row('3kraceraceaa3', 3), row('3kraceraceaa2', 2), row('3kraceraceaa1', 1)],
+      cursor: null,
+    });
+    await loading;
+
+    expect(savesStore.articles.map((a) => a.rkey)).toEqual(['3kraceraceaa3', '3kraceraceaa2']);
   });
 
   it('getContent never falls back to the network for a guest', async () => {
