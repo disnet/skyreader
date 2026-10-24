@@ -151,3 +151,51 @@ describe('selector mutation', () => {
     expect(result.highlights[0].selector.suffix).toBe(' and on');
   });
 });
+
+describe('pin and tag mutations', () => {
+  it('pins and unpins, and treats unpinning an unpinned highlight as a no-op', () => {
+    const pinned = mutateHighlightUnion([highlight('a')], {
+      type: 'pin',
+      highlightId: 'a',
+      pinnedAt: 5,
+    });
+    expect(pinned.highlights[0].pinnedAt).toBe(5);
+
+    const unpinned = mutateHighlightUnion(pinned.highlights, {
+      type: 'pin',
+      highlightId: 'a',
+      pinnedAt: null,
+    });
+    expect(unpinned.changed).toBe(true);
+    expect('pinnedAt' in unpinned.highlights[0]).toBe(false);
+
+    expect(
+      mutateHighlightUnion(unpinned.highlights, { type: 'pin', highlightId: 'a', pinnedAt: null })
+        .changed
+    ).toBe(false);
+  });
+
+  it('normalizes tags and drops the field when they are cleared', () => {
+    const tagged = mutateHighlightUnion([highlight('a')], {
+      type: 'tags',
+      highlightId: 'a',
+      tags: [' essay ', 'Essay', '', 'attention'],
+    });
+    expect(tagged.highlights[0].tags).toEqual(['essay', 'attention']);
+
+    expect(
+      mutateHighlightUnion(tagged.highlights, {
+        type: 'tags',
+        highlightId: 'a',
+        tags: ['essay', 'attention'],
+      }).changed
+    ).toBe(false);
+
+    const cleared = mutateHighlightUnion(tagged.highlights, {
+      type: 'tags',
+      highlightId: 'a',
+      tags: [],
+    });
+    expect('tags' in cleared.highlights[0]).toBe(false);
+  });
+});

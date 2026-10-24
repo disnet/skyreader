@@ -118,7 +118,7 @@ Highlights are private to Skyreader and sync across your devices. Two optional M
 
 ### Posting a highlight to Bluesky
 
-Choose the Bluesky button on a highlight (in the reader, the **Highlights** page, or the review deck) to post it from your own account. In the reader, the button is there as soon as you select text, so you can post a passage without highlighting it first. The first time, Skyreader asks for permission to post for you.
+Choose **Post to Bluesky** on a highlight (in the reader, the **⋯** menu on the **Highlights** page, or the review deck) to post it from your own account. In the reader, the button is there as soon as you select text, so you can post a passage without highlighting it first. The first time, Skyreader asks for permission to post for you.
 
 The passage goes out as an image (a text shot): the quote set in the article's type, signed with the article's title and site, with the quote itself as the image's description. Your note becomes the post's text, which you can edit before posting; the article's link rides in the text. Switch **Quote as** to **Text** to quote the passage in the text instead, with the article's link card. Either way the post holds 300 characters; a ring appears as you near the limit.
 
@@ -126,11 +126,19 @@ Once posted, it's a public Bluesky post like any other: manage it in Bluesky.
 
 ### Connecting from a passage
 
-Choose the Semble button on a selection or a highlight in the reader to connect the article to another one on Semble. The passage is quoted at the start of the connection's note, followed by your highlight's note if it has one, so the connection says why. Like posting, connecting from a selection doesn't also highlight it. Connections are public on Semble.
+Choose **Connect on Semble** on a selection or a highlight in the reader to connect the article to another one on Semble. The passage is quoted at the start of the connection's note, followed by your highlight's note if it has one, so the connection says why. Like posting, connecting from a selection doesn't also highlight it. Connections are public on Semble.
+
+## The Highlights page
+
+The **Highlights** page keeps every highlight in one place to manage. Search them, or narrow the list to **Pinned**, **With notes**, **On Margin**, a tag, or one source (on a phone, choose **Only this source** from a highlight's **⋯** menu). Sort by newest, oldest, or by source.
+
+- **Pin** the few that matter and they stay on a shelf at the top.
+- **Tag** a highlight to gather passages across articles. Tags are yours alone, on the highlight, and the picker suggests the tags you already use.
+- The **⋯** menu on each highlight narrows to its source, publishes it to Margin, posts it to Bluesky, takes it out of review, or removes it.
 
 ## The review deck
 
-The **Highlights** page collects every highlight, grouped by article. Its **Review** deck deals you a small handful at a time, so old highlights resurface instead of piling up. Each highlight carries a review intent: **soon**, **later**, **someday**, or **never** (kept, but out of rotation). A few keys drive the whole deck: arrow keys to move, `e` to edit the note, `o` to open the article.
+The **Highlights** page's **Review** deck deals you a small handful at a time, so old highlights resurface instead of piling up. Each highlight carries a review intent: **soon**, **later**, **someday**, or **never** (kept, but out of rotation). A few keys drive the whole deck: arrow keys to move, `e` to edit the note, `o` to open the article.
 
 ![The review deck: one highlight at a time with Next and Later, and single-key shortcuts listed below](../../../assets/screenshots/review-deck.png)
 

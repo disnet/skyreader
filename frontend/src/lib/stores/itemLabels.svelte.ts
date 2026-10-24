@@ -2190,6 +2190,41 @@ function createItemLabelsStore() {
     );
   }
 
+  /**
+   * Pin a highlight to the top of the highlights list, or pass false to unpin.
+   * Same union write as every other highlight mutation.
+   */
+  async function setHighlightPinned(itemKey: string, highlightId: string, pinned: boolean) {
+    const context = highlightContext(itemKey);
+    const mutation = mutateHighlightUnion(context.highlights, {
+      type: 'pin',
+      highlightId,
+      pinnedAt: pinned ? Date.now() : null,
+    });
+    if (!mutation.changed) return;
+    await persistHighlightUnion(
+      itemKey,
+      context.labels[0]?.itemType || 'saved',
+      mutation.highlights
+    );
+  }
+
+  /** Replace a highlight's tags (an empty list clears them). */
+  async function setHighlightTags(itemKey: string, highlightId: string, tags: string[]) {
+    const context = highlightContext(itemKey);
+    const mutation = mutateHighlightUnion(context.highlights, {
+      type: 'tags',
+      highlightId,
+      tags,
+    });
+    if (!mutation.changed) return;
+    await persistHighlightUnion(
+      itemKey,
+      context.labels[0]?.itemType || 'saved',
+      mutation.highlights
+    );
+  }
+
   // --- Derived helpers ---
 
   function getSavedArticles(): SavedArticle[] {
@@ -2321,6 +2356,8 @@ function createItemLabelsStore() {
     setHighlightSelector,
     markHighlightReviewed,
     setHighlightReviewIntent,
+    setHighlightPinned,
+    setHighlightTags,
     // Derived helpers
     getSavedArticles,
     getSavedItemKeys,

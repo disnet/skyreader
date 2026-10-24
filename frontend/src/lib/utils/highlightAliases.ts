@@ -34,7 +34,9 @@ export type HighlightMutation =
       margin: { uri: string; rkey: string } | null;
     }
   | { type: 'reviewed'; highlightId: string; at: number }
-  | { type: 'intent'; highlightId: string; intent: ReviewIntent | null };
+  | { type: 'intent'; highlightId: string; intent: ReviewIntent | null }
+  | { type: 'pin'; highlightId: string; pinnedAt: number | null }
+  | { type: 'tags'; highlightId: string; tags: string[] };
 
 /** Resolve every persisted key for one save, preferring its article guid. */
 export function resolveHighlightAliases(
@@ -119,6 +121,25 @@ export function mutateHighlightUnion(
     } else {
       next[index] = { ...current, reviewIntent: mutation.intent };
     }
+  } else if (mutation.type === 'pin') {
+    if ((current.pinnedAt ?? null) === null && mutation.pinnedAt === null) {
+      return { highlights, changed: false };
+    }
+    if (mutation.pinnedAt === null) {
+      const { pinnedAt: _pinnedAt, ...unpinned } = current;
+      next[index] = unpinned;
+    } else {
+      next[index] = { ...current, pinnedAt: mutation.pinnedAt };
+    }
+  } else if (mutation.type === 'tags') {
+    const tags = normalizeHighlightTags(mutation.tags);
+    if (sameTags(current.tags ?? [], tags)) return { highlights, changed: false };
+    if (tags.length === 0) {
+      const { tags: _tags, ...untagged } = current;
+      next[index] = untagged;
+    } else {
+      next[index] = { ...current, tags };
+    }
   } else if (mutation.type === 'reviewed') {
     // Only ever moves forward: an out-of-order write (a slow device flushing an
     // older review) must not make a highlight look due again.
@@ -137,4 +158,25 @@ export function mutateHighlightUnion(
     next[index] = withoutMargin;
   }
   return { highlights: next, changed: true };
+}
+
+/**
+ * Trim, drop empties and de-duplicate a highlight's tags, case-insensitively,
+ * keeping the first spelling the reader used.
+ */
+export function normalizeHighlightTags(tags: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of tags) {
+    const tag = raw.trim();
+    const key = tag.toLowerCase();
+    if (!tag || seen.has(key)) continue;
+    seen.add(key);
+    out.push(tag);
+  }
+  return out;
+}
+
+function sameTags(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((tag, i) => tag === b[i]);
 }
