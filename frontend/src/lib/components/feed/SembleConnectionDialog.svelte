@@ -575,11 +575,11 @@
       </p>
     {/if}
 
-    <!-- Said where the reader commits to it, note included: the edge and its
+    <!-- Said where the reader commits to it: the edge and its
          "why" are a public record on Semble, unlike a save. -->
     <p class="public-note">
       <Icon name="globe" size={13} />
-      Connections are public on Semble, including the note.
+      Connections are public on Semble.
     </p>
   </div>
 

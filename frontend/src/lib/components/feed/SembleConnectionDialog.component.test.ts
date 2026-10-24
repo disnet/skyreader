@@ -434,9 +434,7 @@ describe('SembleConnectionDialog', () => {
 
   it('says the connection will be public before it is drawn', () => {
     render();
-    expect(q('.public-note')?.textContent?.trim()).toBe(
-      'Connections are public on Semble, including the note.'
-    );
+    expect(q('.public-note')?.textContent?.trim()).toBe('Connections are public on Semble.');
   });
 
   it('offers the Semble permission up front when the session lacks the scope', async () => {
