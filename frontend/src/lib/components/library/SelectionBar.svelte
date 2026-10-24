@@ -4,10 +4,14 @@
   // ones scrolled into view), and what to do with them. Collections are the bulk
   // edit: "Add to collection" opens the same picker an item's menu does, for the
   // whole selection; in a collection, "Remove" takes the selection out of it.
+  // "Delete" deletes the selected saves themselves, after a confirm.
   import { onMount } from 'svelte';
   import Icon from '$lib/components/Icon.svelte';
   import { librarySelection } from '$lib/stores/librarySelection.svelte';
   import { shelfStore } from '$lib/stores/shelf.svelte';
+  import { savesStore } from '$lib/stores/saves.svelte';
+  import { toastStore } from '$lib/stores/toast.svelte';
+  import { saveBackingStore } from '$lib/stores/saveBacking.svelte';
   import type { SavedItem, ShelfCollection } from '$lib/types';
 
   interface Props {
@@ -37,9 +41,47 @@
     }
   }
 
+  async function deleteSelected() {
+    if (selected.length === 0 || busy) return;
+    busy = true;
+    // What's selected now is what the confirm names and what gets deleted.
+    const rkeys = selected.map((s) => s.rkey);
+    const n = rkeys.length;
+    const what = n === 1 ? '1 item' : `${n.toLocaleString()} items`;
+    try {
+      // With Semble or Margin backing the Saved list is that public collection,
+      // so a delete reaches it too: say so before it happens (waiting for the
+      // lookup if it hasn't come back yet).
+      if (!saveBackingStore.loaded) await saveBackingStore.load();
+      const provider = saveBackingStore.backing?.provider;
+      const backedBy = provider === 'semble' ? 'Semble' : provider === 'margin' ? 'Margin' : null;
+      const ok = confirm(
+        `Delete ${what} from your Library?` +
+          (backedBy
+            ? `\n\n${n === 1 ? 'It also comes' : 'They also come'} out of your ${backedBy} collection.`
+            : '') +
+          `\n\nThis can't be undone.`
+      );
+      if (!ok) return;
+      const toast = toastStore.add(`Deleting ${what}…`);
+      await savesStore.removeMany(rkeys, (done) => {
+        if (n > 1)
+          toastStore.update(toast, 'pending', `Deleting ${what}… ${done.toLocaleString()} done`);
+      });
+      shelfStore.forgetSaves(rkeys);
+      // Only what was deleted: the reader may have started another selection.
+      librarySelection.deselect(rkeys);
+      toastStore.update(toast, 'success', n === 1 ? 'Deleted 1 item' : `Deleted ${what}`);
+    } finally {
+      busy = false;
+    }
+  }
+
   onMount(() => {
     // The picker lists collections; have them ready before it opens.
     void shelfStore.load();
+    // Delete's confirm names the backing collection, when there is one.
+    void saveBackingStore.load();
     // Escape ends select mode only when nothing else claims it. Whether a dialog
     // (the picker) was open is noted in the capture phase, before its own
     // handler closes it; the decision waits for the bubble phase, so a handler
@@ -89,9 +131,18 @@
     </button>
   {/if}
   <button
+    class="action-btn danger"
+    onclick={deleteSelected}
+    disabled={selected.length === 0 || busy}
+    aria-label="Delete"
+  >
+    <Icon name="trash" size={14} />
+    <span class="long">Delete</span>
+  </button>
+  <button
     class="action-btn primary"
     onclick={() => shelfStore.openPicker(selected)}
-    disabled={selected.length === 0}
+    disabled={selected.length === 0 || busy}
   >
     <Icon name="folder-plus" size={14} />
     <span class="long">Add to collection</span><span class="short">Add</span>
@@ -158,6 +209,10 @@
     color: var(--color-text);
   }
 
+  .action-btn.danger {
+    color: var(--color-error);
+  }
+
   .action-btn.primary {
     border-color: var(--color-primary);
     background: var(--color-primary);
@@ -198,8 +253,9 @@
     display: none;
   }
 
-  /* A phone: shorter words, no icons, and on the narrowest screens a second
-     line rather than a squeeze. */
+  /* A phone: shorter words, no icons (Delete keeps its trash can, and only
+     that), and a second line when
+     the actions don't fit (a collection's Remove, Delete and Add). */
   @media (max-width: 30rem) {
     .selection-bar {
       gap: 0.375rem;
@@ -208,7 +264,7 @@
 
     .all-count,
     .long,
-    .action-btn :global(svg) {
+    .action-btn:not(.danger) :global(svg) {
       display: none;
     }
 
@@ -221,7 +277,7 @@
     }
   }
 
-  @media (max-width: 22rem) {
+  @media (max-width: 30rem) {
     .selection-bar {
       flex-wrap: wrap;
       row-gap: 0.25rem;
