@@ -772,18 +772,19 @@ class SyncQueue {
    * Get count of pending items
    */
   /**
-   * The rkeys of saves whose create has not reached the backend yet (queued, in
-   * flight, or failed and still retryable).
+   * The rkeys of saves whose create (or, with `operation`, delete) has not
+   * reached the backend yet (queued, in flight, or failed and still retryable).
    *
    * An external-backed snapshot is authoritative about collection MEMBERSHIP,
    * but it cannot know about a save that was never sent — so a wholesale
-   * replace has to be told which rows to leave alone. See savesStore.load().
+   * replace has to be told which rows to leave alone. A pending delete is a
+   * save the server still lists that mustn't come back. See savesStore.load().
    */
-  async pendingSavedRkeys(): Promise<Set<string>> {
+  async pendingSavedRkeys(operation: SyncOperation = 'create'): Promise<Set<string>> {
     const rkeys = new Set<string>();
     const entries = await db.syncQueue.where('collection').equals('saved').toArray();
     for (const entry of entries) {
-      if (entry.operation !== 'create') continue;
+      if (entry.operation !== operation) continue;
       // Held entries belong to a signed-out account; their saves are not in
       // this library, so they must not shield rows from a snapshot replace.
       if (entry.status === 'held') continue;

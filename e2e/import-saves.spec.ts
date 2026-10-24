@@ -1,0 +1,41 @@
+import { test, expect } from './fixtures';
+
+// Settings → Import saves, end to end: a Pocket CSV goes in, its unread save
+// lands in the Queue and its archived one in the Archive, with its tag.
+
+const POCKET_CSV =
+  'title,url,time_added,tags,status\n' +
+  'Imported Unread Article,https://example.com/import-unread,1700000000,,unread\n' +
+  'Imported Archived Article,https://example.com/import-archived,1690000000,history,archive\n';
+
+test.describe('Import saves', () => {
+  test('imports a Pocket export into the Queue and Archive', async ({ authedPage }) => {
+    await authedPage.goto('/settings');
+    await authedPage.getByRole('button', { name: 'Import saves' }).click();
+
+    await authedPage.locator('input[type="file"][accept*=".zip"]').setInputFiles({
+      name: 'part_000000.csv',
+      mimeType: 'text/csv',
+      buffer: Buffer.from(POCKET_CSV),
+    });
+    await expect(
+      authedPage.getByText('Found 2 articles from Pocket, 1 of them archived.')
+    ).toBeVisible();
+    await expect(authedPage.getByText('1 tag, kept as tags')).toBeVisible();
+
+    const done = authedPage.waitForResponse((r) => r.url().includes('/api/saved/import'));
+    await authedPage.getByRole('button', { name: 'Import 2 articles' }).click();
+    expect((await done).status()).toBe(200);
+    await expect(authedPage.getByText('Added to your Library')).toBeVisible();
+    await authedPage.getByRole('button', { name: 'Done' }).click();
+
+    await authedPage.goto('/saved');
+    await expect(authedPage.getByText('Imported Unread Article')).toBeVisible({ timeout: 15_000 });
+    await expect(authedPage.getByText('Imported Archived Article')).toHaveCount(0);
+
+    await authedPage.getByRole('button', { name: 'Showing Inbox, newest first' }).click();
+    await authedPage.getByRole('button', { name: 'Archive', exact: true }).click();
+    await expect(authedPage.getByText('Imported Archived Article')).toBeVisible();
+    await expect(authedPage.getByText('history')).toBeVisible();
+  });
+});

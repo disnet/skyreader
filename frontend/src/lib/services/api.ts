@@ -2536,10 +2536,35 @@ class ApiClient {
   // Hydrate article bodies for the given rkeys. Returns a map rkey → body (null
   // when the row has no stored content yet, e.g. a backed stub awaiting
   // extraction). The client calls this only for saves it hasn't cached locally.
-  async getSavedBodies(rkeys: string[]): Promise<{ bodies: Record<string, string | null> }> {
+  // `extract` (one rkey, the save being opened): fetch the text of a save
+  // imported from another app first, if it's still waiting for it.
+  async getSavedBodies(
+    rkeys: string[],
+    opts: { extract?: boolean } = {}
+  ): Promise<{ bodies: Record<string, string | null> }> {
     return this.fetch('/api/saved/bodies', {
       method: 'POST',
-      body: JSON.stringify({ rkeys }),
+      body: JSON.stringify(opts.extract ? { rkeys, extract: true } : { rkeys }),
+    });
+  }
+
+  // A batch of saves read from another read-later app's export (at most 100).
+  async importSaved(
+    source: string,
+    items: Array<{
+      url: string;
+      title?: string;
+      author?: string;
+      description?: string;
+      savedAt?: number;
+      archived: boolean;
+      tags: string[];
+      highlights: Array<{ text: string; note?: string; createdAt?: number }>;
+    }>
+  ): Promise<{ added: number; duplicates: number; invalid: number; highlights: number }> {
+    return this.fetch('/api/saved/import', {
+      method: 'POST',
+      body: JSON.stringify({ source, items }),
     });
   }
 

@@ -67,6 +67,12 @@ Limits: 200 collections, 2,000 items each, 100-char names, 1,000-char descriptio
 (`DELETE /api/saved/:rkey`, `/by-guid/`) drops its memberships. A member whose save disappears any
 other way (a backed-collection snapshot removing it, say) is skipped by the client when it renders.
 
+An import from another read-later app (`routes/saved-import.ts`) files everything in the export,
+new and already-saved, in a collection named "Imported from <app>", created on the first import.
+Past 2,000 items it continues in "Imported from <app> (2)" and so on; an article already in one of
+them isn't added again, so a re-run import changes nothing. At the 200-collection cap the saves
+import without one.
+
 **Sync.** The set is small, so the client fetches it whole (`shelfStore.load`, once per account per
 session, after boot) and caches it in Dexie `metadata` for offline display. Writes are optimistic,
 need the network and an account, and **roll back with a toast** on failure rather than queueing. A

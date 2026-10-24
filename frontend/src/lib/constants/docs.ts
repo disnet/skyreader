@@ -17,6 +17,7 @@ export const docsPages = {
   siteBlocksSaving: '/guide/saving-and-highlights/#when-a-site-wont-let-skyreader-read-it',
   saveBacking: '/guide/saving-and-highlights/#backing-your-saves-with-semble-or-margin',
   highlights: '/guide/saving-and-highlights/#highlights',
+  importLibrary: '/guide/importing-your-library/',
   sharingAndLinkblog: '/guide/sharing-and-your-linkblog/',
   readingRooms: '/guide/reading-rooms/',
   otherApps: '/guide/other-reader-apps/',

@@ -25,6 +25,7 @@
   import SaveBackingPicker from '$lib/components/settings/SaveBackingPicker.svelte';
   import LinkblogTargetPicker from '$lib/components/settings/LinkblogTargetPicker.svelte';
   import DeleteLinkblogModal from '$lib/components/settings/DeleteLinkblogModal.svelte';
+  import ImportSavesModal from '$lib/components/settings/ImportSavesModal.svelte';
   import Diagnostics from '$lib/components/settings/Diagnostics.svelte';
   import HighlightSettings from '$lib/components/settings/HighlightSettings.svelte';
   import SettingToggle from '$lib/components/settings/SettingToggle.svelte';
@@ -143,6 +144,7 @@
   ];
 
   let showImportModal = $state(false);
+  let showImportSavesModal = $state(false);
   let exportingAs = $state<LibraryExportFormat | null>(null);
   let exportError = $state<string | null>(null);
 
@@ -1314,6 +1316,31 @@
         <div class="row">
           <SaveBackingPicker bind:backing allowExport returnUrl="/settings" />
         </div>
+        {#if auth.user}
+          <div class="row inline wrap">
+            <div class="row-text">
+              <span class="row-label">Import from another app</span>
+              <span class="row-desc">
+                {#if savesPublic}
+                  Switch back to saving on Skyreader to import, then back your saves again.
+                {:else}
+                  Saves, tags, archive and highlights from Pocket, Omnivore, Instapaper, Readwise
+                  Reader or Matter.
+                {/if}
+                {@render docsLink('importLibrary')}
+              </span>
+            </div>
+            <div class="button-row">
+              <button
+                class="btn btn-secondary"
+                onclick={() => (showImportSavesModal = true)}
+                disabled={savesPublic}
+              >
+                Import saves
+              </button>
+            </div>
+          </div>
+        {/if}
         <div class="row inline wrap">
           <div class="row-text">
             <span class="row-label">Download a copy</span>
@@ -1954,6 +1981,7 @@
 </div>
 
 <ImportOPMLModal open={showImportModal} onclose={() => (showImportModal = false)} />
+<ImportSavesModal open={showImportSavesModal} onclose={() => (showImportSavesModal = false)} />
 
 <DeleteLinkblogModal
   open={showDeleteLinkblogConfirm}

@@ -39,6 +39,8 @@ import {
   addEditedFields,
   type EditableColumn,
 } from '../services/saved-metadata';
+import { extractImportedSaves, OPEN_EXTRACT_RATE_KEY } from './saved-import';
+import { checkRateLimit } from '../services/rate-limit';
 
 const COLLECTION = 'app.skyreader.feed.saved';
 
@@ -240,7 +242,7 @@ export async function handleCreateSaved(
     const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).getTime();
     const countResult = await env.DB.prepare(
       `SELECT COUNT(*) as count FROM saved_articles
-       WHERE user_did = ? AND source = 'url' AND saved_at >= ?`
+       WHERE user_did = ? AND source = 'url' AND imported_from IS NULL AND saved_at >= ?`
     )
       .bind(session.did, monthStart)
       .first<{ count: number }>();
@@ -1197,9 +1199,9 @@ export async function handleGetSavedBodies(request: Request, env: Env): Promise<
     });
   }
 
-  let body: { rkeys?: unknown };
+  let body: { rkeys?: unknown; extract?: unknown };
   try {
-    body = (await request.json()) as { rkeys?: unknown };
+    body = (await request.json()) as { rkeys?: unknown; extract?: unknown };
   } catch {
     return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
       status: 400,
@@ -1218,6 +1220,20 @@ export async function handleGetSavedBodies(request: Request, env: Env): Promise<
       status: 400,
       headers: { 'Content-Type': 'application/json' },
     });
+  }
+
+  // The reader opening one save asks for its text to be fetched if it was
+  // imported without it (routes/saved-import.ts). Bulk hydration never does.
+  if (body.extract === true && rkeys.length === 1) {
+    const waiting = await env.DB.prepare(
+      `SELECT 1 FROM saved_articles WHERE user_did = ? AND rkey = ?
+          AND imported_from IS NOT NULL AND content IS NULL AND url != ''`
+    )
+      .bind(session.did, rkeys[0])
+      .first();
+    if (waiting && (await checkRateLimit(env, session.did, OPEN_EXTRACT_RATE_KEY)).allowed) {
+      await extractImportedSaves(env, session.did, rkeys);
+    }
   }
 
   const bodies: Record<string, string | null> = {};

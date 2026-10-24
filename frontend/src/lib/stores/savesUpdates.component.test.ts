@@ -117,7 +117,7 @@ describe('in-place edits to an already-cached save', () => {
     expect(savedRows.get('older')?.updatedAt).toBe(EDITED_AT);
     expect(savesStore.articles.find((a) => a.rkey === 'older')?.title).toBe('Full Title');
     expect(await savesStore.getContent('older')).toBe('new body');
-    expect(metadataRows.get('savedUpdatesSince')).toBe(1234);
+    expect(metadataRows.get('savedUpdatesSinceV2')).toBe(1234);
   });
 
   it('skips an edit the cache already holds', async () => {
@@ -127,11 +127,11 @@ describe('in-place edits to an already-cached save', () => {
 
     expect(api.getSavedBodies).not.toHaveBeenCalled();
     expect(savedRows.get('older')?.content).toBe('old body');
-    expect(metadataRows.get('savedUpdatesSince')).toBe(1234);
+    expect(metadataRows.get('savedUpdatesSinceV2')).toBe(1234);
   });
 
   it('leaves the mark in place when the new body fails to load', async () => {
-    metadataRows.set('savedUpdatesSince', 99);
+    metadataRows.set('savedUpdatesSinceV2', 99);
     api.getSavedBodies.mockRejectedValue(new Error('offline'));
 
     await savesStore.load();
@@ -139,7 +139,7 @@ describe('in-place edits to an already-cached save', () => {
     expect(api.getSavedUpdates).toHaveBeenCalledWith(99);
     expect(savedRows.get('older')?.content).toBe('old body');
     expect(savedRows.get('older')?.updatedAt).toBeUndefined();
-    expect(metadataRows.get('savedUpdatesSince')).toBe(99);
+    expect(metadataRows.get('savedUpdatesSinceV2')).toBe(99);
   });
 
   it('refetches a stale body from an external-backed snapshot', async () => {
@@ -184,7 +184,7 @@ describe('in-place edits to an already-cached save', () => {
     // refresh resumes from page two rather than from the start.
     expect(savedRows.get('older')?.content).toBe('new body');
     expect(savedRows.get('second')?.content).toBe('old body');
-    expect(metadataRows.get('savedUpdatesSince')).toBe(500);
+    expect(metadataRows.get('savedUpdatesSinceV2')).toBe(500);
   });
 
   it('does not resurrect a save removed while updates were in flight', async () => {
@@ -198,5 +198,46 @@ describe('in-place edits to an already-cached save', () => {
 
     expect(savesStore.articles.map((a) => a.rkey)).not.toContain('older');
     expect(savedRows.has('older')).toBe(false);
+  });
+});
+
+describe('saves the list refresh never sent', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    savedRows.clear();
+    metadataRows.clear();
+    pendingSavedRkeys.mockResolvedValue(new Set<string>());
+    // The newest save is cached, so the refresh stops at once.
+    const newest = save('newest', '2026-05-01T00:00:00Z');
+    savedRows.set('newest', newest);
+    api.getSaved.mockResolvedValue({ full: false, cursor: null, articles: [meta(newest)] });
+    // An import: saved years ago, written just now.
+    api.getSavedUpdates.mockResolvedValue({
+      articles: [
+        meta(save('imported', '2022-11-07T00:00:00Z', { content: null, updatedAt: EDITED_AT })),
+      ],
+      next: 1234,
+      more: false,
+    });
+    api.getSavedBodies.mockResolvedValue({ bodies: { imported: null } });
+  });
+
+  it('adds an older save written elsewhere, in saved order, with no body yet', async () => {
+    await savesStore.load();
+
+    expect(savesStore.articles.map((a) => a.rkey)).toEqual(['newest', 'imported']);
+    expect(savedRows.has('imported')).toBe(true);
+    expect(metadataRows.get('savedUpdatesSinceV2')).toBe(1234);
+  });
+
+  it('leaves out a save whose unsave is still queued', async () => {
+    pendingSavedRkeys.mockImplementation(async (op?: string) =>
+      op === 'delete' ? new Set(['imported']) : new Set<string>()
+    );
+
+    await savesStore.load();
+
+    expect(savesStore.articles.map((a) => a.rkey)).toEqual(['newest']);
+    expect(savedRows.has('imported')).toBe(false);
   });
 });

@@ -118,6 +118,7 @@ import {
   handleUploadEpub,
   handleUploadPdf,
 } from './routes/saved-pdf';
+import { handleImportSaved } from './routes/saved-import';
 import { handleExtract } from './routes/extract';
 import {
   handleCreateRoom,
@@ -837,6 +838,11 @@ async function route(
     case url.pathname === '/api/saved/bodies':
       if (!session) return unauthorizedResponse(headers);
       response = await handleGetSavedBodies(request, env);
+      break;
+    // A library from another read-later app (routes/saved-import.ts)
+    case url.pathname === '/api/saved/import':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleImportSaved(request, env, ctx);
       break;
     case url.pathname === '/api/saved/updates':
       if (!session) return unauthorizedResponse(headers);
