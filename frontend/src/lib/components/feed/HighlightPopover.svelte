@@ -287,19 +287,6 @@
         <Icon name="margin" size={20} />
       </button>
     {/if}
-    {#if onPostToBluesky}
-      <button
-        class="popover-btn icon-only"
-        use:tooltip={'Post to Bluesky'}
-        aria-label="Post to Bluesky"
-        onclick={() => {
-          onPostToBluesky?.();
-          onClose();
-        }}
-      >
-        <Icon name="bluesky" size={20} />
-      </button>
-    {/if}
     {#if onConnectOnSemble}
       <button
         class="popover-btn icon-only"
@@ -311,6 +298,19 @@
         }}
       >
         <Icon name="semble" size={20} />
+      </button>
+    {/if}
+    {#if onPostToBluesky}
+      <button
+        class="popover-btn icon-only"
+        use:tooltip={'Post to Bluesky'}
+        aria-label="Post to Bluesky"
+        onclick={() => {
+          onPostToBluesky?.();
+          onClose();
+        }}
+      >
+        <Icon name="bluesky" size={20} />
       </button>
     {/if}
   {:else if mode === 'view'}
@@ -383,19 +383,6 @@
         </button>
       {/if}
     {/if}
-    {#if onPostToBluesky}
-      <button
-        class="popover-btn icon-only"
-        use:tooltip={'Post to Bluesky'}
-        aria-label="Post to Bluesky"
-        onclick={() => {
-          onPostToBluesky?.();
-          onClose();
-        }}
-      >
-        <Icon name="bluesky" size={20} />
-      </button>
-    {/if}
     {#if onConnectOnSemble}
       <button
         class="popover-btn icon-only"
@@ -407,6 +394,19 @@
         }}
       >
         <Icon name="semble" size={20} />
+      </button>
+    {/if}
+    {#if onPostToBluesky}
+      <button
+        class="popover-btn icon-only"
+        use:tooltip={'Post to Bluesky'}
+        aria-label="Post to Bluesky"
+        onclick={() => {
+          onPostToBluesky?.();
+          onClose();
+        }}
+      >
+        <Icon name="bluesky" size={20} />
       </button>
     {/if}
     {#if onSaveNote || onQuoteToShare || onSaveToMargin || onPostToBluesky || onConnectOnSemble}
