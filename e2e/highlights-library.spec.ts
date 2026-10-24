@@ -94,7 +94,7 @@ test.describe('highlights library', () => {
     // Pin and Publish show without hovering: they used to hide until hover,
     // and readers couldn't find them.
     await expect(row.getByRole('button', { name: 'Pin to top' })).toBeVisible();
-    await expect(row.getByRole('button', { name: 'Publish to Margin' })).toBeVisible();
+    await expect(row.getByRole('button', { name: 'Publish to Margin (public)' })).toBeVisible();
 
     let written = labelWrite(authedPage);
     await row.getByRole('button', { name: 'Pin to top' }).click();
@@ -102,8 +102,11 @@ test.describe('highlights library', () => {
 
     const pinned = authedPage.locator('.pinned-card', { hasText: 'optimised for recency' });
     await expect(pinned).toBeVisible();
+    // A pinned card has no room for the button, so its menu offers Publish.
+    await pinned.getByRole('button', { name: '⋯' }).click();
+    await expect(authedPage.getByRole('menuitem', { name: 'Publish to Margin' })).toBeVisible();
+    await authedPage.keyboard.press('Escape');
 
-    await authedPage.locator('.highlight-row', { hasText: 'argue with' }).hover();
     await authedPage
       .locator('.highlight-row', { hasText: 'argue with' })
       .getByRole('button', { name: 'Tag' })

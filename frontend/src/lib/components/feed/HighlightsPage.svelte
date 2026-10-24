@@ -40,6 +40,7 @@
     maybeImportMarginHighlights,
     marginImportTruncated,
   } from '$lib/services/marginHighlightImport';
+  import { SvelteSet } from 'svelte/reactivity';
   import PopoverMenu from '$lib/components/PopoverMenu.svelte';
   import HighlightTagPicker from '$lib/components/feed/HighlightTagPicker.svelte';
   import {
@@ -283,8 +284,19 @@
     void deleteHighlight(pending.source.itemKey, pending.highlight);
   }
 
+  // Publishing is one tap now, so guard against a second tap landing while
+  // the first is still in flight: that would create a second public note.
+  let publishing = new SvelteSet<string>();
+
   function handleSaveToMargin(row: HighlightLibraryRow) {
-    void saveHighlightToMargin(row.source.itemKey, row.highlight, row.source.url, row.source.title);
+    if (publishing.has(row.id)) return;
+    publishing.add(row.id);
+    void saveHighlightToMargin(
+      row.source.itemKey,
+      row.highlight,
+      row.source.url,
+      row.source.title
+    ).finally(() => publishing.delete(row.id));
   }
 
   function handlePostToBluesky(row: HighlightLibraryRow) {
@@ -497,11 +509,19 @@
         <button
           class="action-btn"
           onclick={() => handleSaveToMargin(row)}
+          disabled={publishing.has(row.id)}
           title="Publish to Margin (public)"
-          aria-label="Publish to Margin"
+          aria-label="Publish to Margin (public)"
         >
           <Icon name="margin" size={15} />
         </button>
+      {:else if row.isMargin}
+        <!-- Holds Publish's place once it's done, so the buttons don't shift
+             under the pointer, and says where the highlight now lives. -->
+        <span class="action-btn published" title="Published on Margin">
+          <Icon name="margin" size={15} />
+          <span class="sr-only">Published on Margin</span>
+        </span>
       {/if}
     {/if}
     <span class="more">
@@ -523,11 +543,6 @@
       <span class="dot">·</span>
     {/if}
     <span class="time">{formatRelativeTime(row.createdAt)}</span>
-    {#if row.isMargin}
-      <span class="flag" title="Published on Margin">
-        <Icon name="margin" size={12} />
-      </span>
-    {/if}
     {#if REVIEW_INTENT_BADGE[row.intent]}
       <span class="flag">
         <Icon name={row.intent === 'never' ? 'circle-slash' : 'clock'} size={12} />
@@ -1451,6 +1466,20 @@
   .action-btn:hover {
     background: var(--color-bg-secondary);
     color: var(--color-text);
+  }
+
+  .action-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .action-btn.published {
+    cursor: default;
+    opacity: 0.45;
+  }
+
+  .action-btn.published:hover {
+    background: none;
   }
 
   .action-btn.on {
