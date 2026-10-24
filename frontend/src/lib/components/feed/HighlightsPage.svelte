@@ -315,6 +315,12 @@
     never: 'Not in review',
   };
 
+  // A Margin note is a record in the reader's own atproto repo, anchored on
+  // the article's link, so it needs an account and a URL.
+  function canPublish(row: HighlightLibraryRow): boolean {
+    return !row.isMargin && Boolean(row.source.url) && !auth.isGuest;
+  }
+
   // A pinned card has room for the pin and this menu only, so its menu also
   // carries Tag and Note, anchored on the card itself.
   function moreItems(row: HighlightLibraryRow, card: boolean) {
@@ -347,9 +353,8 @@
         onclick: () => (filter.sourceKey = row.source.itemKey),
       });
     }
-    // A Margin note is a record in the reader's own atproto repo, anchored on
-    // the article's link, so it needs an account and a URL.
-    if (!row.isMargin && row.source.url && !auth.isGuest) {
+    // Rows have their own Publish button; a pinned card only has room for the menu.
+    if (card && canPublish(row)) {
       items.push({
         label: 'Publish to Margin',
         icon: 'margin',
@@ -488,6 +493,16 @@
       >
         <Icon name="message-circle" size={15} />
       </button>
+      {#if canPublish(row)}
+        <button
+          class="action-btn"
+          onclick={() => handleSaveToMargin(row)}
+          title="Publish to Margin (public)"
+          aria-label="Publish to Margin"
+        >
+          <Icon name="margin" size={15} />
+        </button>
+      {/if}
     {/if}
     <span class="more">
       <PopoverMenu items={moreItems(row, card)} />
@@ -1408,29 +1423,13 @@
     color: var(--color-primary);
   }
 
-  /* Actions sit at the row's right edge. On a mouse they appear with the row's
-     hover so the list reads as text, not a toolbar; a pin stays visible, since
-     it's a state, not just an action. */
+  /* Actions sit at the row's right edge, always shown: hiding them until hover
+     made pinning and publishing hard to find. */
   .row-actions {
     display: flex;
     align-items: center;
     gap: 0.125rem;
     flex-shrink: 0;
-  }
-
-  @media (hover: hover) and (pointer: fine) {
-    .highlight-row .row-actions > :not(.pin-btn.on),
-    .pinned-card .row-actions > :not(.pin-btn.on) {
-      opacity: 0;
-      transition: opacity 0.15s;
-    }
-
-    .highlight-row:hover .row-actions > *,
-    .highlight-row:focus-within .row-actions > *,
-    .pinned-card:hover .row-actions > *,
-    .pinned-card:focus-within .row-actions > * {
-      opacity: 1;
-    }
   }
 
   .action-btn {

@@ -91,7 +91,11 @@ test.describe('highlights library', () => {
     const row = authedPage.locator('.highlight-row', { hasText: 'optimised for recency' });
     await expect(row).toBeVisible({ timeout: 15_000 });
 
-    await row.hover();
+    // Pin and Publish show without hovering: they used to hide until hover,
+    // and readers couldn't find them.
+    await expect(row.getByRole('button', { name: 'Pin to top' })).toBeVisible();
+    await expect(row.getByRole('button', { name: 'Publish to Margin' })).toBeVisible();
+
     let written = labelWrite(authedPage);
     await row.getByRole('button', { name: 'Pin to top' }).click();
     await written;
