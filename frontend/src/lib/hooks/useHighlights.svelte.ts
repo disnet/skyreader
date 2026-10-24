@@ -10,6 +10,8 @@ import {
 import { toastStore } from '$lib/stores/toast.svelte';
 import { auth } from '$lib/stores/auth.svelte';
 import { blueskyComposerStore } from '$lib/stores/blueskyComposer.svelte';
+import { noteFromPassage, sembleConnectionStore } from '$lib/stores/sembleConnection.svelte';
+import { mentionLaneItemsStore } from '$lib/stores/mentionLaneItems.svelte';
 import {
   saveHighlightToMargin as saveToMargin,
   removeHighlightFromMargin,
@@ -1107,6 +1109,45 @@ export function useHighlights(params: HighlightParams) {
     });
   }
 
+  /**
+   * Draw a Semble connection from the popover's passage: the Connect dialog
+   * opens on this article with the quote starting the note, since the
+   * connection record has no field for the passage itself. Like posting, a
+   * fresh selection isn't also saved as a highlight; an existing highlight
+   * brings its own note along after the quote.
+   */
+  function connectPopoverOnSemble() {
+    const state = popoverState;
+    if (!state) return;
+    let quote: string | undefined;
+    let highlightNote: string | undefined;
+    if (state.mode === 'create') {
+      quote = state.pendingSelector?.exact;
+      pendingTouchSelector = null;
+      window.getSelection()?.removeAllRanges();
+    } else if (state.highlightId) {
+      const hl = itemLabelsStore
+        .getHighlights(params.itemKey())
+        .find((h) => h.id === state.highlightId);
+      quote = hl?.selector.exact;
+      highlightNote = hl?.note;
+    }
+    const url = params.itemUrl?.();
+    popoverState = null;
+    const note = quote ? noteFromPassage(quote, highlightNote) : '';
+    if (!url || !note) return;
+    sembleConnectionStore.openFor(
+      {
+        url,
+        title: params.itemTitle?.(),
+        // Semble keys cards by exact URL string; if the discussion has already
+        // resolved this article's card page, that's the variant to name.
+        cardUrl: mentionLaneItemsStore.get(url, 'semble')?.sembleContext?.cardUrl ?? null,
+      },
+      { note }
+    );
+  }
+
   /** Toggle highlight on the paragraph at the given index (for keyboard shortcut) */
   function toggleParagraphHighlight(paragraphIndex: number) {
     const container = params.contentEl();
@@ -1318,6 +1359,12 @@ export function useHighlights(params: HighlightParams) {
     // and a post needs the article's link to point at.
     get postPopoverHighlightToBluesky() {
       return auth.isGuest || !params.itemUrl?.() ? undefined : postPopoverHighlightToBluesky;
+    },
+    // A connection is a record in the reader's own repo between two URLs, so
+    // it needs a signed-in account (as every other way into the dialog does)
+    // and the article's link.
+    get connectPopoverOnSemble() {
+      return !auth.user || !params.itemUrl?.() ? undefined : connectPopoverOnSemble;
     },
     get popoverHighlightSavedToMargin() {
       return isPopoverHighlightSavedToMargin();

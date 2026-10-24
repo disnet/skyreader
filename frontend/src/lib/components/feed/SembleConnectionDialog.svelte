@@ -23,7 +23,7 @@
   import { savesStore } from '$lib/stores/saves.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { recentReadsStore, sameArticle } from '$lib/stores/recentReads.svelte';
-  import { sembleConnectionStore } from '$lib/stores/sembleConnection.svelte';
+  import { MAX_NOTE_BYTES, sembleConnectionStore } from '$lib/stores/sembleConnection.svelte';
   import { matchesTerms, normalize, parseQuery } from '$lib/services/savedSearch';
   import { sembleSourceUrl } from '$lib/utils/semble';
   import { savedItemLabelKeys } from '$lib/utils/savedPile';
@@ -50,8 +50,6 @@
   const RECENT_LIMIT = 5;
   /** Alternatives offered under an end that's already chosen. */
   const OTHERS_LIMIT = 3;
-  /** Semble's lexicon caps the note here (atproto string maxLength = UTF-8 bytes). */
-  const MAX_NOTE_BYTES = 1000;
 
   let open = $derived(sembleConnectionStore.open);
   let source = $derived(sembleConnectionStore.source);
@@ -90,6 +88,10 @@
       targetUrl = seeded.url;
       targetTitle = seeded.title;
     }
+    // Opened from a passage: the quote starts the note, so the edge says why.
+    const seededNote = sembleConnectionStore.initialNote;
+    note = seededNote;
+    noteRows = Math.min(6, Math.max(2, Math.ceil(seededNote.length / 60)));
   });
 
   $effect(() => {
@@ -370,6 +372,10 @@
   // ── The sentence, and whether it can be drawn ───────────────────────────
   let noteBytes = $derived(new TextEncoder().encode(note.trim()).length);
   let noteTooLong = $derived(noteBytes > MAX_NOTE_BYTES);
+  // Two lines for a "why", more when a quoted passage opened the dialog, so
+  // the quote isn't cut off in a box that has to be scrolled. Set once at
+  // open, so the box doesn't resize under the reader as they type.
+  let noteRows = $state(2);
   let sameUrl = $derived(Boolean(targetUrl) && targetUrl === articleUrl);
   let canSubmit = $derived(
     Boolean(source) && Boolean(targetUrl) && !sameUrl && !noteTooLong && !submitting
@@ -565,7 +571,7 @@
 
     <textarea
       class="note"
-      rows="2"
+      rows={noteRows}
       placeholder="Why? (optional)"
       aria-label="Note"
       bind:value={note}></textarea>

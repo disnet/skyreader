@@ -100,11 +100,16 @@ let component: Record<string, unknown> | undefined;
 
 function render(
   source?: { url: string; title?: string; cardUrl?: string },
-  other?: { url: string; title?: string }
+  other?: { url: string; title?: string },
+  note?: string
 ) {
   const target = document.createElement('div');
   document.body.appendChild(target);
-  const props = { ...(source ? { source } : {}), ...(other ? { other } : {}) };
+  const props = {
+    ...(source ? { source } : {}),
+    ...(other ? { other } : {}),
+    ...(note ? { note } : {}),
+  };
   component = mount(Host, { target, props }) as Record<string, unknown>;
   flushSync();
 }
@@ -430,6 +435,22 @@ describe('SembleConnectionDialog', () => {
     flushSync();
     expect(q('.chosen')).toBeNull();
     expect(q('.search-input')).not.toBeNull();
+  });
+
+  it('opens with the passage it was drawn from in the note, and sends it', async () => {
+    render(
+      { url: 'https://example.test/the-article', title: 'The Article' },
+      undefined,
+      '“A passage.”'
+    );
+    expect(q<HTMLTextAreaElement>('.note')!.value).toBe('“A passage.”');
+
+    typeInField('https://other.test/the-rebuttal');
+    q<HTMLButtonElement>('.btn-primary')!.click();
+    await vi.waitFor(() => expect(createSembleConnection).toHaveBeenCalled());
+    expect(createSembleConnection).toHaveBeenCalledWith(
+      expect.objectContaining({ note: '“A passage.”' })
+    );
   });
 
   it('says the connection will be public before it is drawn', () => {

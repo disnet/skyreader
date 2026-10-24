@@ -2064,6 +2064,7 @@
     onRemove={highlightsHook.removePopoverHighlightWithUndo}
     onSaveToMargin={highlightsHook.savePopoverHighlightToMargin}
     onPostToBluesky={highlightsHook.postPopoverHighlightToBluesky}
+    onConnectOnSemble={highlightsHook.connectPopoverOnSemble}
     onSaveNote={highlightsHook.saveNoteFromPopover}
     onNote={showOriginalPdf ? undefined : highlightsHook.noteFromPopover}
     onQuoteToShare={composerOpenHere ? quoteSelectionToShare : undefined}

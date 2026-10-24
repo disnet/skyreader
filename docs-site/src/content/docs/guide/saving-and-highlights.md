@@ -124,6 +124,10 @@ The passage goes out as an image (a text shot): the quote set in the article's t
 
 Once posted, it's a public Bluesky post like any other: manage it in Bluesky.
 
+### Connecting from a passage
+
+Choose **Connect on Semble** on a selection or a highlight in the reader to connect the article to another one on Semble. The passage is quoted at the start of the connection's note, followed by your highlight's note if it has one, so the connection says why. Like posting, connecting from a selection doesn't also highlight it. Connections are public on Semble.
+
 ## The Highlights page
 
 The **Highlights** page keeps every highlight in one place to manage. Search them, or narrow the list to **Pinned**, **With notes**, **On Margin**, a tag, or one source (on a phone, choose **Only this source** from a highlight's **⋯** menu). Sort by newest, oldest, or by source.

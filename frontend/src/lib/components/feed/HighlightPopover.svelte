@@ -26,6 +26,9 @@
     /** Post this passage — the selection or the highlight — to Bluesky
      *  (opens the post dialog). */
     onPostToBluesky?: () => void;
+    /** Connect this article to another on Semble, from this passage: the quote
+     *  starts the connection's note. */
+    onConnectOnSemble?: () => void;
     existingNote?: string;
     marginSaved?: boolean;
     // Which sub-view to open into: 'toolbar' (action buttons, the default) or
@@ -52,6 +55,7 @@
     onSaveNote,
     onQuoteToShare,
     onPostToBluesky,
+    onConnectOnSemble,
     existingNote = '',
     marginSaved = false,
     initialView = 'toolbar',
@@ -283,6 +287,19 @@
         <Icon name="margin" size={20} />
       </button>
     {/if}
+    {#if onConnectOnSemble}
+      <button
+        class="popover-btn icon-only"
+        use:tooltip={'Connect on Semble (public)'}
+        aria-label="Connect on Semble"
+        onclick={() => {
+          onConnectOnSemble?.();
+          onClose();
+        }}
+      >
+        <Icon name="semble" size={20} />
+      </button>
+    {/if}
     {#if onPostToBluesky}
       <button
         class="popover-btn icon-only"
@@ -366,6 +383,19 @@
         </button>
       {/if}
     {/if}
+    {#if onConnectOnSemble}
+      <button
+        class="popover-btn icon-only"
+        use:tooltip={'Connect on Semble (public)'}
+        aria-label="Connect on Semble"
+        onclick={() => {
+          onConnectOnSemble?.();
+          onClose();
+        }}
+      >
+        <Icon name="semble" size={20} />
+      </button>
+    {/if}
     {#if onPostToBluesky}
       <button
         class="popover-btn icon-only"
@@ -379,7 +409,7 @@
         <Icon name="bluesky" size={20} />
       </button>
     {/if}
-    {#if onSaveNote || onQuoteToShare || onSaveToMargin || onPostToBluesky}
+    {#if onSaveNote || onQuoteToShare || onSaveToMargin || onPostToBluesky || onConnectOnSemble}
       <span class="divider" aria-hidden="true"></span>
     {/if}
     <!-- Trash, not ✕: an ✕ on a floating bar reads as "close this bar". -->
