@@ -1446,7 +1446,7 @@ export async function handleDeleteSaved(
     await deleteSavedFile(env, session.did, rkey);
     await deleteSnapshots(env, session.did, [rkey]);
     // …and so do its places in Shelf collections.
-    await removeSavedFromCollections(env, session.did, [rkey]);
+    await removeSavedFromCollections(env, session.did, [rkey], { session, ctx });
 
     const settings = await getUserSettings(env, session.did);
     if (settings.backing.provider !== 'skyreader' && row.url_normalized) {
@@ -1533,7 +1533,7 @@ export async function handleDeleteSavedByGuid(
       session.did,
       guidRkeys.results.map((r) => r.rkey)
     );
-    await removeSavedFromCollections(env, session.did, [row.rkey]);
+    await removeSavedFromCollections(env, session.did, [row.rkey], { session, ctx });
 
     const settings = await getUserSettings(env, session.did);
     if (settings.backing.provider !== 'skyreader' && row.url_normalized) {

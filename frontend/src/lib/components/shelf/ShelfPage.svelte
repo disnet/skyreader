@@ -18,6 +18,8 @@
   import BottomSheet from '$lib/components/common/BottomSheet.svelte';
   import NotificationList from '$lib/components/NotificationList.svelte';
   import ShelfItem from './ShelfItem.svelte';
+  import ShelfLinkDialog from './ShelfLinkDialog.svelte';
+  import { formatRelativeTime } from '$lib/utils/date';
   import LibraryIntro from '$lib/components/library/LibraryIntro.svelte';
   import NewConnections from '$lib/components/library/NewConnections.svelte';
   import SelectionBar from '$lib/components/library/SelectionBar.svelte';
@@ -95,6 +97,7 @@
     if (prevCollectionId !== undefined && id !== prevCollectionId) {
       sortChoice = null;
       editing = false;
+      linkOpen = false;
       loadedCount = PAGE_SIZE;
       librarySelection.end();
     }
@@ -251,6 +254,32 @@
     const id = collection.id;
     selectCollection(null);
     await shelfStore.remove(id);
+  }
+
+  // --- Linked to Semble / Margin ---
+  let linkOpen = $state(false);
+  const providerLabel = (p: 'semble' | 'margin') => (p === 'semble' ? 'Semble' : 'Margin');
+
+  // Opening a linked collection brings in what changed over there (the server
+  // gates it to once a minute). Keyed on the id so it runs once per visit.
+  let syncedOnOpen: string | null = null;
+  $effect(() => {
+    const id = collection?.link ? collection.id : null;
+    if (id && id !== syncedOnOpen) {
+      syncedOnOpen = id;
+      void shelfStore.sync(id);
+    } else if (!id) {
+      syncedOnOpen = null;
+    }
+  });
+
+  async function unlinkCollection() {
+    if (!collection?.link) return;
+    const ok = confirm(
+      `Unlink “${collection.name}” from ${providerLabel(collection.link.provider)}?\n\n` +
+        'Both keep what they hold now. Changes stop flowing between them.'
+    );
+    if (ok) await shelfStore.unlink(collection.id);
   }
 
   // A link to a collection that's gone (deleted on another device) drops back
@@ -419,12 +448,51 @@
               <Icon name="edit" size={14} />
               Edit
             </button>
+            {#if !collection.link}
+              <button
+                class="text-btn"
+                onclick={() => (linkOpen = true)}
+                disabled={!shelfStore.canWrite}
+              >
+                <Icon name="link" size={14} />
+                Link to Semble or Margin
+              </button>
+            {/if}
           </div>
           {#if collection.description}
             <p class="collection-desc">{collection.description}</p>
           {/if}
+          {#if collection.link}
+            <p class="collection-link">
+              <Icon name="link" size={13} />
+              <span>
+                Linked to
+                <a
+                  href="https://pdsls.dev/{collection.link.uri}"
+                  target="_blank"
+                  rel="noopener noreferrer">{providerLabel(collection.link.provider)}</a
+                >, public.
+                {#if shelfStore.syncingId === collection.id}
+                  Syncing…
+                {:else if collection.link.syncedAt}
+                  Synced {formatRelativeTime(collection.link.syncedAt)}.
+                {/if}
+              </span>
+              <button
+                class="text-btn"
+                onclick={() => collection && shelfStore.sync(collection.id, { force: true })}
+                disabled={!shelfStore.canWrite || shelfStore.syncingId === collection.id}
+              >
+                Sync now
+              </button>
+              <button class="text-btn" onclick={unlinkCollection} disabled={!shelfStore.canWrite}>
+                Unlink
+              </button>
+            </p>
+          {/if}
         {/if}
       </section>
+      <ShelfLinkDialog open={linkOpen} {collection} onclose={() => (linkOpen = false)} />
     {/if}
 
     <!-- The lanes step aside in select mode: a tap there would open, not select. -->
@@ -764,6 +832,22 @@
     line-height: var(--leading-tight);
     color: var(--color-text);
     overflow-wrap: anywhere;
+  }
+
+  .collection-link {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.25rem 0.375rem;
+    margin: 0.375rem 0 0;
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+  }
+
+  .collection-link a {
+    color: inherit;
+    text-decoration: underline;
+    text-underline-offset: 2px;
   }
 
   .collection-desc {

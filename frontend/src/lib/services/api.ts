@@ -20,6 +20,8 @@ import type {
   SaveBacking,
   SembleCollection,
   ShelfCollection,
+  ShelfCollectionLink,
+  ShelfLinkSync,
   SavedConnectionActivity,
   SembleCard,
   SembleConnectionType,
@@ -1739,6 +1741,31 @@ class ApiClient {
     return this.fetch('/api/shelf/collections', {
       method: 'PUT',
       body: JSON.stringify({ ids }),
+    });
+  }
+
+  /** Keep a collection in step with one of the reader's Semble/Margin collections
+   *  (a new one named after it when `collectionUri` is left out). */
+  async linkShelfCollection(
+    id: string,
+    data: { provider: 'semble' | 'margin'; collectionUri?: string }
+  ): Promise<{ success: boolean; link: ShelfCollectionLink; sync: ShelfLinkSync }> {
+    return this.fetch(`/api/shelf/collections/${encodeURIComponent(id)}/link`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async unlinkShelfCollection(id: string): Promise<{ success: boolean }> {
+    return this.fetch(`/api/shelf/collections/${encodeURIComponent(id)}/link`, {
+      method: 'DELETE',
+    });
+  }
+
+  async syncShelfCollection(id: string, force = false): Promise<ShelfLinkSync> {
+    return this.fetch(`/api/shelf/collections/${encodeURIComponent(id)}/sync`, {
+      method: 'POST',
+      body: JSON.stringify({ force }),
     });
   }
 

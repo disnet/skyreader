@@ -913,7 +913,7 @@ async function route(
     case url.pathname === '/api/shelf/collections' ||
       url.pathname.startsWith('/api/shelf/collections/'):
       if (!session) return unauthorizedResponse(headers);
-      response = await handleShelfCollections(request, env, session.did);
+      response = await handleShelfCollections(request, env, session, ctx);
       break;
 
     // Settings routes

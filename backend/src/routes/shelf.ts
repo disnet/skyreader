@@ -1,5 +1,22 @@
-import type { Env } from '../types';
+import type { Env, Session } from '../types';
 import { isValidRkey } from '../utils/validation';
+import { parseAtUri } from '../utils/canonical-url';
+import { createPDSClient } from '../services/pds-client';
+import {
+  createCollection as createForeignCollection,
+  listCollectionNames,
+} from '../services/backing/write';
+import { backfillUrlNormalized, uniqueCollectionName } from '../services/backing/enable';
+import { extractMissingBackedContent } from '../services/backing/sync';
+import {
+  collectionNsidFor,
+  markShelfLinkDirty,
+  reconcileShelfLink,
+  LINK_SYNC_GATE_MS,
+  type ReconcileResult,
+} from '../services/shelf-link';
+import { hasIntegrationScopes } from './integrations';
+import { getUserSettings } from './settings';
 
 /**
  * Shelf collections — user-made, ordered groups of saves.
@@ -29,6 +46,10 @@ interface CollectionRow {
   position: number;
   created_at: number;
   updated_at: number;
+  link_provider: string | null;
+  link_uri: string | null;
+  link_synced_at: number | null;
+  link_dirty: number;
 }
 
 interface ItemRow {
@@ -92,11 +113,19 @@ async function touchCollection(env: Env, did: string, id: string, now: number): 
     .run();
 }
 
-// GET /api/shelf/collections — every collection with its members, in order.
-async function listCollections(env: Env, did: string): Promise<Response> {
+// GET /api/shelf/collections — every collection with its members, in order. A
+// linked collection that's due is reconciled behind the response (one per
+// request, the longest-waiting), so the next load shows the other side's changes.
+async function listCollections(
+  env: Env,
+  session: Session,
+  ctx: ExecutionContext
+): Promise<Response> {
+  const did = session.did;
   const [collections, items] = await env.DB.batch([
     env.DB.prepare(
-      `SELECT id, name, description, position, created_at, updated_at
+      `SELECT id, name, description, position, created_at, updated_at,
+              link_provider, link_uri, link_synced_at, link_dirty
          FROM shelf_collections WHERE user_did = ?
         ORDER BY position ASC, created_at ASC`
     ).bind(did),
@@ -117,17 +146,57 @@ async function listCollections(env: Env, did: string): Promise<Response> {
     list.push({ rkey: item.saved_rkey, addedAt: item.added_at });
   }
 
+  const rows = (collections.results ?? []) as unknown as CollectionRow[];
+  const now = Date.now();
+  const due = rows
+    .filter(
+      (c) =>
+        c.link_uri && (c.link_dirty === 1 || now - (c.link_synced_at ?? 0) >= LINK_SYNC_GATE_MS)
+    )
+    .sort((a, b) => (a.link_synced_at ?? 0) - (b.link_synced_at ?? 0))[0];
+  if (due) scheduleReconcile(env, session, ctx, [due.id]);
+
   return json({
-    collections: ((collections.results ?? []) as unknown as CollectionRow[]).map((c) => ({
+    collections: rows.map((c) => ({
       id: c.id,
       name: c.name,
       description: c.description,
       position: c.position,
       createdAt: c.created_at,
       updatedAt: c.updated_at,
+      link: linkView(c),
       items: byCollection.get(c.id) ?? [],
     })),
   });
+}
+
+function linkView(
+  c: Pick<CollectionRow, 'link_provider' | 'link_uri' | 'link_synced_at'>
+): { provider: string; uri: string; syncedAt: number | null } | null {
+  if (!c.link_uri || !c.link_provider) return null;
+  return { provider: c.link_provider, uri: c.link_uri, syncedAt: c.link_synced_at };
+}
+
+/** Reconcile these collections behind the response. Unlinked ones are skipped. */
+function scheduleReconcile(env: Env, session: Session, ctx: ExecutionContext, ids: string[]): void {
+  for (const id of ids) {
+    ctx.waitUntil(
+      reconcileShelfLink(env, session, id).catch((err) => {
+        console.error('[shelf-link] background reconcile failed:', err);
+      })
+    );
+  }
+}
+
+/** A local change to these collections: owe their links a reconcile, and start it. */
+async function linkedChanged(
+  env: Env,
+  session: Session,
+  ctx: ExecutionContext,
+  ids: string[]
+): Promise<void> {
+  const linked = await markShelfLinkDirty(env, session.did, ids);
+  scheduleReconcile(env, session, ctx, linked);
 }
 
 // POST /api/shelf/collections — create. Idempotent on the client-minted id, so
@@ -215,9 +284,14 @@ async function updateCollection(
 }
 
 // DELETE /api/shelf/collections/:id — the collection and its memberships. The
-// saves themselves are untouched. Idempotent: deleting a missing one succeeds.
+// saves themselves are untouched, and so is a linked Semble/Margin collection:
+// it's the reader's own. Idempotent: deleting a missing one succeeds.
 async function deleteCollection(env: Env, did: string, id: string): Promise<Response> {
   await env.DB.batch([
+    env.DB.prepare('DELETE FROM shelf_link_members WHERE user_did = ? AND collection_id = ?').bind(
+      did,
+      id
+    ),
     env.DB.prepare(
       'DELETE FROM shelf_collection_items WHERE user_did = ? AND collection_id = ?'
     ).bind(did, id),
@@ -247,7 +321,14 @@ function parseRkeys(body: Record<string, unknown>): string[] | null {
 // in the order given. Idempotent: a member that's already there keeps its place.
 // All or nothing at the cap: a bulk add that wouldn't fit adds none, so the
 // reader isn't left guessing which half of a selection landed.
-async function addItem(request: Request, env: Env, did: string, id: string): Promise<Response> {
+async function addItem(
+  request: Request,
+  env: Env,
+  session: Session,
+  ctx: ExecutionContext,
+  id: string
+): Promise<Response> {
+  const did = session.did;
   const body = await readJson(request);
   if (!body) return badRequest('Invalid JSON body');
   const rkeys = parseRkeys(body);
@@ -324,12 +405,20 @@ async function addItem(request: Request, env: Env, did: string, id: string): Pro
       );
     }
   }
+  if (inserted.meta.changes) await linkedChanged(env, session, ctx, [id]);
   return json({ success: true, added: inserted.meta.changes ?? 0 });
 }
 
 // DELETE /api/shelf/collections/:id/items {rkeys} — take several saves out at
 // once. Idempotent; names that aren't members are ignored.
-async function removeItems(request: Request, env: Env, did: string, id: string): Promise<Response> {
+async function removeItems(
+  request: Request,
+  env: Env,
+  session: Session,
+  ctx: ExecutionContext,
+  id: string
+): Promise<Response> {
+  const did = session.did;
   const body = await readJson(request);
   if (!body || !('rkeys' in body)) return badRequest('rkeys is required');
   const rkeys = parseRkeys(body);
@@ -345,17 +434,26 @@ async function removeItems(request: Request, env: Env, did: string, id: string):
       'UPDATE shelf_collections SET updated_at = ? WHERE user_did = ? AND id = ?'
     ).bind(now, did, id),
   ]);
+  await linkedChanged(env, session, ctx, [id]);
   return json({ success: true });
 }
 
 // DELETE /api/shelf/collections/:id/items/:rkey — idempotent.
-async function removeItem(env: Env, did: string, id: string, rkey: string): Promise<Response> {
-  await env.DB.prepare(
+async function removeItem(
+  env: Env,
+  session: Session,
+  ctx: ExecutionContext,
+  id: string,
+  rkey: string
+): Promise<Response> {
+  const did = session.did;
+  const removed = await env.DB.prepare(
     'DELETE FROM shelf_collection_items WHERE user_did = ? AND collection_id = ? AND saved_rkey = ?'
   )
     .bind(did, id, rkey)
     .run();
   await touchCollection(env, did, id, Math.floor(Date.now() / 1000));
+  if (removed.meta.changes) await linkedChanged(env, session, ctx, [id]);
   return json({ success: true });
 }
 
@@ -456,28 +554,205 @@ async function reorderItems(
 
 /**
  * Drop a save from every collection. Called when the save itself is deleted, so
- * a collection never carries a member nothing can open.
+ * a collection never carries a member nothing can open. With `link`, a linked
+ * collection that held it is reconciled, which takes it out over there too.
  */
 export async function removeSavedFromCollections(
   env: Env,
   did: string,
-  rkeys: string[]
+  rkeys: string[],
+  link?: { session: Session; ctx: ExecutionContext }
 ): Promise<void> {
   if (rkeys.length === 0) return;
+  const held = link
+    ? await env.DB.prepare(
+        `SELECT DISTINCT i.collection_id FROM shelf_collection_items i
+           JOIN shelf_collections c ON c.user_did = i.user_did AND c.id = i.collection_id
+          WHERE i.user_did = ? AND c.link_uri IS NOT NULL
+            AND i.saved_rkey IN (${rkeys.map(() => '?').join(', ')})`
+      )
+        .bind(did, ...rkeys)
+        .all<{ collection_id: string }>()
+    : null;
   await env.DB.prepare(
     `DELETE FROM shelf_collection_items
       WHERE user_did = ? AND saved_rkey IN (${rkeys.map(() => '?').join(', ')})`
   )
     .bind(did, ...rkeys)
     .run();
+  if (link && held && held.results.length > 0) {
+    await linkedChanged(
+      env,
+      link.session,
+      link.ctx,
+      held.results.map((r) => r.collection_id)
+    );
+  }
+}
+
+function syncView(result: ReconcileResult) {
+  if (!result.synced) return { synced: false, reason: result.reason };
+  return {
+    synced: true,
+    imported: result.imported.length,
+    removed: result.removed,
+    pushed: result.pushed,
+    deleted: result.deleted,
+    pending: result.pending,
+    complete: result.complete,
+  };
+}
+
+/** Fill in the bodies of saves a reconcile brought in, behind the response. */
+function extractImported(env: Env, did: string, ctx: ExecutionContext, result: ReconcileResult) {
+  if (!result.synced || result.imported.length === 0) return;
+  ctx.waitUntil(
+    extractMissingBackedContent(env, did, { limit: 20 }).catch((err) => {
+      console.error('[shelf-link] extracting imported saves failed:', err);
+    })
+  );
+}
+
+// PUT /api/shelf/collections/:id/link {provider, collectionUri?} — keep this
+// collection in step with one of the reader's own Semble or Margin collections,
+// or with a new one named after it when `collectionUri` is left out. Linking
+// brings the foreign members in and starts writing this collection's linkable
+// members over there; the first reconcile runs before the response.
+async function linkCollection(
+  request: Request,
+  env: Env,
+  session: Session,
+  ctx: ExecutionContext,
+  id: string
+): Promise<Response> {
+  const did = session.did;
+  const body = await readJson(request);
+  if (!body) return badRequest('Invalid JSON body');
+  const provider = body.provider;
+  if (provider !== 'semble' && provider !== 'margin') {
+    return badRequest("provider must be 'semble' or 'margin'");
+  }
+  if (!hasIntegrationScopes(session, provider)) {
+    return json(
+      {
+        error: 'scope_upgrade_required',
+        message: `Additional permissions are needed for ${provider}.`,
+        integration: provider,
+        feature: provider,
+      },
+      403
+    );
+  }
+  const collection = await env.DB.prepare(
+    'SELECT name, description, link_uri FROM shelf_collections WHERE user_did = ? AND id = ?'
+  )
+    .bind(did, id)
+    .first<{ name: string; description: string | null; link_uri: string | null }>();
+  if (!collection) return json({ error: 'Not found' }, 404);
+
+  let uri: string;
+  if (body.collectionUri !== undefined) {
+    if (typeof body.collectionUri !== 'string') return badRequest('collectionUri must be a string');
+    const ref = parseAtUri(body.collectionUri);
+    // Only the reader's own: the other side's additions become their saves.
+    if (!ref || ref.did !== did || ref.collection !== collectionNsidFor(provider) || !ref.rkey) {
+      return badRequest(`collectionUri must be one of your own ${provider} collections`);
+    }
+    uri = `at://${ref.did}/${ref.collection}/${ref.rkey}`;
+  } else {
+    const pds = createPDSClient(session);
+    const existing = await listCollectionNames(pds, provider);
+    const created = await createForeignCollection(
+      pds,
+      provider,
+      uniqueCollectionName(collection.name, existing),
+      { description: collection.description ?? undefined }
+    );
+    uri = created.uri;
+  }
+
+  if (collection.link_uri !== uri) {
+    const settings = await getUserSettings(env, did);
+    if (settings.backing.provider !== 'skyreader' && settings.backing.collectionUri === uri) {
+      return json({ error: 'That collection already backs your whole Library' }, 409);
+    }
+    const taken = await env.DB.prepare(
+      'SELECT id FROM shelf_collections WHERE user_did = ? AND link_uri = ? AND id != ?'
+    )
+      .bind(did, uri, id)
+      .first();
+    if (taken) return json({ error: 'Another Shelf collection is linked to that one' }, 409);
+
+    // Key legacy saves first, so one already here isn't brought in a second time.
+    await backfillUrlNormalized(env, did);
+    await env.DB.batch([
+      env.DB.prepare(
+        'DELETE FROM shelf_link_members WHERE user_did = ? AND collection_id = ?'
+      ).bind(did, id),
+      env.DB.prepare(
+        `UPDATE shelf_collections
+            SET link_provider = ?, link_uri = ?, link_synced_at = NULL, link_dirty = 1,
+                link_lock_until = NULL
+          WHERE user_did = ? AND id = ?`
+      ).bind(provider, uri, did, id),
+    ]);
+  }
+
+  const result = await reconcileShelfLink(env, session, id, { force: true });
+  extractImported(env, did, ctx, result);
+  return json({
+    success: true,
+    link: { provider, uri, syncedAt: result.synced ? Date.now() : null },
+    sync: syncView(result),
+  });
+}
+
+// DELETE /api/shelf/collections/:id/link — stop keeping it in step. Both sides
+// keep what they hold; nothing in the reader's repo is touched.
+async function unlinkCollection(env: Env, did: string, id: string): Promise<Response> {
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM shelf_link_members WHERE user_did = ? AND collection_id = ?').bind(
+      did,
+      id
+    ),
+    env.DB.prepare(
+      `UPDATE shelf_collections
+          SET link_provider = NULL, link_uri = NULL, link_synced_at = NULL, link_dirty = 0,
+              link_lock_until = NULL
+        WHERE user_did = ? AND id = ?`
+    ).bind(did, id),
+  ]);
+  return json({ success: true });
+}
+
+// POST /api/shelf/collections/:id/sync {force?} — reconcile now (inside the gate
+// only with `force`). The client calls it on opening a linked collection, and
+// again while `pending` says members are still waiting to be written.
+async function syncCollection(
+  request: Request,
+  env: Env,
+  session: Session,
+  ctx: ExecutionContext,
+  id: string
+): Promise<Response> {
+  const body = (await readJson(request)) ?? {};
+  if (!(await collectionExists(env, session.did, id))) return json({ error: 'Not found' }, 404);
+  const result = await reconcileShelfLink(env, session, id, { force: body.force === true });
+  if (!result.synced && result.reason === 'not-linked') {
+    return json({ error: 'This collection isn’t linked' }, 409);
+  }
+  extractImported(env, session.did, ctx, result);
+  return json(syncView(result));
 }
 
 /** Router for everything under /api/shelf/collections. */
 export async function handleShelfCollections(
   request: Request,
   env: Env,
-  did: string
+  session: Session,
+  ctx: ExecutionContext
 ): Promise<Response> {
+  const did = session.did;
   const url = new URL(request.url);
   let parts: string[];
   try {
@@ -493,7 +768,7 @@ export async function handleShelfCollections(
 
   try {
     if (parts.length === 0) {
-      if (method === 'GET') return await listCollections(env, did);
+      if (method === 'GET') return await listCollections(env, session, ctx);
       if (method === 'POST') return await createCollection(request, env, did);
       if (method === 'PUT') return await reorderCollections(request, env, did);
       return json({ error: 'Method not allowed' }, 405);
@@ -508,18 +783,28 @@ export async function handleShelfCollections(
       return json({ error: 'Method not allowed' }, 405);
     }
 
+    if (parts.length === 2 && parts[1] === 'link') {
+      if (method === 'PUT') return await linkCollection(request, env, session, ctx, id);
+      if (method === 'DELETE') return await unlinkCollection(env, did, id);
+      return json({ error: 'Method not allowed' }, 405);
+    }
+    if (parts.length === 2 && parts[1] === 'sync') {
+      if (method === 'POST') return await syncCollection(request, env, session, ctx, id);
+      return json({ error: 'Method not allowed' }, 405);
+    }
+
     if (parts[1] !== 'items' || parts.length > 3) return json({ error: 'Not found' }, 404);
 
     if (parts.length === 2) {
-      if (method === 'POST') return await addItem(request, env, did, id);
+      if (method === 'POST') return await addItem(request, env, session, ctx, id);
       if (method === 'PUT') return await reorderItems(request, env, did, id);
-      if (method === 'DELETE') return await removeItems(request, env, did, id);
+      if (method === 'DELETE') return await removeItems(request, env, session, ctx, id);
       return json({ error: 'Method not allowed' }, 405);
     }
 
     const rkey = parts[2];
     if (!isValidRkey(rkey)) return badRequest('Invalid rkey');
-    if (method === 'DELETE') return await removeItem(env, did, id, rkey);
+    if (method === 'DELETE') return await removeItem(env, session, ctx, id, rkey);
     return json({ error: 'Method not allowed' }, 405);
   } catch (error) {
     console.error('Shelf collections request failed:', error);
