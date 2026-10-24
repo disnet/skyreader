@@ -219,7 +219,8 @@ export async function exportNativeSaves(
   env: Env,
   session: Session,
   backing: Extract<SaveBacking, { provider: 'semble' | 'margin' }>,
-  opts: { offset?: number; limit?: number } = {}
+  /** `rkeys` limits the export to those saves (the ones an import just added). */
+  opts: { offset?: number; limit?: number; rkeys?: string[] } = {}
 ): Promise<ExportBatchResult> {
   const pds = createPDSClient(session);
 
@@ -238,13 +239,14 @@ export async function exportNativeSaves(
     opts.limit !== undefined
       ? ` LIMIT ${Math.max(0, opts.limit)} OFFSET ${Math.max(0, opts.offset ?? 0)}`
       : '';
+  const only = opts.rkeys ? ` AND rkey IN (${opts.rkeys.map(() => '?').join(',')})` : '';
   const rows = await env.DB.prepare(
     `SELECT id, rkey, url, url_normalized, title, author, description, published_at, source, item_guid
      FROM saved_articles
-     WHERE user_did = ? AND url IS NOT NULL AND url != ''
+     WHERE user_did = ? AND url IS NOT NULL AND url != ''${only}
      ORDER BY id${slice}`
   )
-    .bind(session.did)
+    .bind(session.did, ...(opts.rkeys ?? []))
     .all<NativeSaveRow>();
 
   let exported = 0;

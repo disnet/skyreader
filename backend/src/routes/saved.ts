@@ -778,6 +778,8 @@ export async function handleSetBacking(request: Request, env: Env): Promise<Resp
     exportExisting?: boolean;
     offset?: number;
     limit?: number;
+    /** exportBatch: just these saves (the ones an import added) instead of an offset slice. */
+    rkeys?: unknown;
   };
   try {
     body = (await request.json()) as typeof body;
@@ -810,6 +812,25 @@ export async function handleSetBacking(request: Request, env: Env): Promise<Resp
       const MAX_LIMIT = 50;
       const limit = Math.min(Math.max(1, Math.floor(body.limit ?? DEFAULT_LIMIT)), MAX_LIMIT);
       const offset = Math.max(0, Math.floor(body.offset ?? 0));
+      if (body.rkeys !== undefined) {
+        const rkeys = body.rkeys;
+        if (
+          !Array.isArray(rkeys) ||
+          rkeys.length > MAX_LIMIT ||
+          !rkeys.every((r) => typeof r === 'string' && isValidRkey(r))
+        ) {
+          return new Response(JSON.stringify({ error: `rkeys: at most ${MAX_LIMIT} rkeys` }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        const { exported, scanned } = await exportNativeSaves(env, session, settings.backing, {
+          rkeys: rkeys as string[],
+        });
+        return new Response(JSON.stringify({ exported, scanned, total: rkeys.length }), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
       const total = await countExportableSaves(env, session.did);
       const { exported, scanned } = await exportNativeSaves(env, session, settings.backing, {
         offset,

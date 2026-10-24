@@ -305,6 +305,20 @@ describe('exportNativeSaves — batched cursor', () => {
     expect(res.scanned).toBe(2);
     expect(res.exported).toBe(1); // first failed, second succeeded
   });
+
+  it('with rkeys, exports only those saves', async () => {
+    mockCreateMember();
+    await seedSaves(['https://a.test/1', 'https://b.test/2']);
+
+    const res = await exportNativeSaves(env, fakeSession, backing, { rkeys: ['rk1'] });
+    expect(res).toEqual({ exported: 1, scanned: 1 });
+    const urls = (
+      await env.DB.prepare('SELECT url FROM backed_collection_members WHERE user_did = ?')
+        .bind(DID)
+        .all<{ url: string }>()
+    ).results.map((r) => r.url);
+    expect(urls).toEqual(['https://b.test/2']);
+  });
 });
 
 describe('disableBacking', () => {

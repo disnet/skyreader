@@ -20,6 +20,7 @@ async function reset() {
     'user_settings',
     'shelf_collections',
     'shelf_collection_items',
+    'backed_collection_members',
   ]) {
     await env.DB.prepare(`DELETE FROM ${table} WHERE user_did = ?`).bind(DID).run();
   }
@@ -123,7 +124,7 @@ describe('POST /api/saved/import', () => {
       { url: 'https://www.example.org/b', title: 'Article B', savedAt: savedAt + 5000 },
     ]);
     expect(status).toBe(200);
-    expect(body).toEqual({ added: 2, duplicates: 0, invalid: 0, highlights: 1 });
+    expect(body).toMatchObject({ added: 2, duplicates: 0, invalid: 0, highlights: 1 });
 
     const rows = await saves();
     expect(rows.map((r) => r.url)).toEqual(['https://www.example.org/b', 'https://example.com/a']);
@@ -225,7 +226,7 @@ describe('POST /api/saved/import', () => {
         highlights: [{ text: 'From two.' }],
       },
     ]);
-    expect(body).toEqual({ added: 1, duplicates: 1, invalid: 0, highlights: 2 });
+    expect(body).toMatchObject({ added: 1, duplicates: 1, invalid: 0, highlights: 2 });
     const [row] = await saves();
     const l = await labels(row.record_uri);
     expect(l.highlights.props.highlights).toHaveLength(2);
@@ -240,7 +241,7 @@ describe('POST /api/saved/import', () => {
       { title: 'no url' },
       { url: 'https://example.com/ok', highlights: [{ text: 'x'.repeat(5001) }, { text: '  ' }] },
     ]);
-    expect(body).toEqual({ added: 1, duplicates: 0, invalid: 3, highlights: 0 });
+    expect(body).toMatchObject({ added: 1, duplicates: 0, invalid: 3, highlights: 0 });
   });
 
   it('dates a save with a missing or impossible date to now', async () => {
@@ -305,14 +306,29 @@ describe('POST /api/saved/import', () => {
     expect(opened.body.bodies[row.rkey]).toBe('<p>Fetched on open.</p>');
   });
 
-  it('refuses while saves are backed by Semble or Margin', async () => {
+  it('imports while saves are backed, skipping URLs already in the backing collection', async () => {
+    const collection = `at://${DID}/network.cosmik.collection/abc`;
     await env.DB.prepare(`INSERT INTO user_settings (user_did, backing) VALUES (?, ?)`)
-      .bind(DID, `semble:at://${DID}/network.cosmik.collection/abc`)
+      .bind(DID, `semble:${collection}`)
       .run();
-    const { status, body } = await importItems([{ url: 'https://example.com/a' }]);
-    expect(status).toBe(409);
-    expect(body.error).toBe('backing_enabled');
-    expect(await saves()).toEqual([]);
+    await env.DB.prepare(
+      `INSERT INTO backed_collection_members
+         (user_did, external_collection, url_normalized, url, external_provider, external_item_uri, external_link_uri)
+       VALUES (?, ?, 'https://example.com/backed', 'https://example.com/backed', 'semble', 'at://card/0', 'at://link/0')`
+    )
+      .bind(DID, collection)
+      .run();
+
+    const { status, body } = await importItems([
+      { url: 'https://example.com/backed' },
+      { url: 'https://example.com/new' },
+    ]);
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ added: 1, duplicates: 1 });
+    const [added] = await saves();
+    expect(added.url).toBe('https://example.com/new');
+    // The new save's rkey comes back, for the browser to copy into the collection.
+    expect(body.rkeys).toEqual([added.rkey]);
   });
 
   it('files every article from an export in a collection named for its app', async () => {

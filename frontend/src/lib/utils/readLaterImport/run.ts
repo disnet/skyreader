@@ -8,6 +8,8 @@ export interface ImportTotals {
   duplicates: number;
   invalid: number;
   highlights: number;
+  /** The new saves, for copying into a Semble/Margin backing collection. */
+  rkeys: string[];
 }
 
 export type ImportBatch = (
@@ -37,7 +39,7 @@ export async function runImport(
   onProgress: (done: number, total: number) => void,
   wait: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms))
 ): Promise<ImportTotals> {
-  const totals: ImportTotals = { added: 0, duplicates: 0, invalid: 0, highlights: 0 };
+  const totals: ImportTotals = { added: 0, duplicates: 0, invalid: 0, highlights: 0, rkeys: [] };
   const bySource = new Map<ImportSource, ImportedSave[]>();
   for (const save of importOrder(saves)) {
     const group = bySource.get(save.source);
@@ -59,6 +61,7 @@ export async function runImport(
           totals.duplicates += result.duplicates;
           totals.invalid += result.invalid;
           totals.highlights += result.highlights;
+          totals.rkeys.push(...(result.rkeys ?? []));
           break;
         } catch (err) {
           const retryAfter = (err as { retryAfter?: unknown }).retryAfter;
